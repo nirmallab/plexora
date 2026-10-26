@@ -65,16 +65,16 @@ function fakeElement(id) {
     };
 }
 
-// `roi_actions` is deliberately absent: the row's compaction is styling, and
-// the method reaches for it with `?.` precisely so a DOM this small is enough.
 const IDS = [
     "roi_save_to_source", "roi_export_button", "roi_map_to_cells",
-    "roi_map_info", "roi_destination", "roi_destination_name",
+    "roi_destination", "roi_destination_name",
     "roi_destination_hint", "roi_save_to_source_label",
 ];
 
+let CONTEXT = null;
+
 function loadController() {
-    const context = createContext({
+    const context = CONTEXT = createContext({
         window: {}, document: { getElementById: () => null },
         console, setTimeout, clearTimeout, JSON, Math, Object, Array, String,
         Number, Boolean, Promise, crypto: { randomUUID: () => "x" },
@@ -112,24 +112,18 @@ function panel({ hasTable, kind = null, features = 0, remembered = "", typed = "
     const { elements } = panel({ hasTable: false, features: 2 });
     check("no cell data means no Map to cells button",
         elements.get("roi_map_to_cells").hidden, true);
-    check("...and no ? explaining a button that is not there",
-        elements.get("roi_map_info").hidden, true);
 }
 
 {
     const { elements } = panel({ hasTable: true, features: 0 });
     check("nothing drawn means no Map to cells button",
         elements.get("roi_map_to_cells").hidden, true);
-    check("...and the ? goes with it",
-        elements.get("roi_map_info").hidden, true);
 }
 
 {
     const { controller, elements } = panel({ hasTable: true, features: 2 });
     check("cells plus regions is what the button is for",
         elements.get("roi_map_to_cells").hidden, false);
-    check("...and the ? that explains it",
-        elements.get("roi_map_info").hidden, false);
     check("...and it knows which columns it will write",
         controller.mapColumnNames(), ["rois_category", "rois_name"]);
 }
@@ -196,6 +190,36 @@ function panel({ hasTable, kind = null, features = 0, remembered = "", typed = "
         hasTable: true, features: 1, kind: "anndata", remembered: "reviewer_b" });
     check("where this project last saved is the default prefix",
         controller.mapPrefix(), "reviewer_b");
+}
+
+// -- the card's help -------------------------------------------------------
+
+const mapSection = () => RoiSidebarController.helpSections()
+    .find((section) => section.title === "Map to cells");
+
+{
+    CONTEXT.window.__plexora = undefined;
+    check("with no panel open, the help still explains Map to cells",
+        Boolean(mapSection()), true);
+    check("...naming the default columns",
+        /rois_category.*rois_name/.test(mapSection().text), true);
+}
+
+{
+    const { controller } = panel({
+        hasTable: true, features: 1, kind: "anndata", typed: "pass2" });
+    CONTEXT.window.__plexora = { plugins: new Map([["roi", { sidebarController: controller }]]) };
+    check("the help names the columns the current save name will write",
+        /pass2_category.*pass2_name/.test(mapSection().text), true);
+}
+
+{
+    const { controller } = panel({ hasTable: false, features: 1 });
+    CONTEXT.window.__plexora = { plugins: new Map([["roi", { sidebarController: controller }]]) };
+    check("a project with no cell table is not told about Map to cells",
+        mapSection(), undefined);
+    check("...but still gets the rest of the help",
+        RoiSidebarController.helpSections().length >= 5, true);
 }
 
 const report = {

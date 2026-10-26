@@ -404,6 +404,46 @@ def test_replace_is_the_users_answer_and_the_route_takes_it(client):
     assert post(client, "map_to_cells", replace=True).get_json()["success"] is True
 
 
+def test_a_preview_says_what_would_be_written_and_writes_nothing(client, tmp_path):
+    """The confirmation's request. It must leave the file exactly as it was:
+    the user has not said yes yet."""
+    post(client, "operations", base_revision=0,
+         operations=[create(geometry=QUADRANT, name="Tumor 1")])
+    before = (tmp_path / "cells.csv").read_bytes()
+
+    payload = post(client, "map_to_cells", preview=True).get_json()
+    assert payload["success"] is True
+    assert payload["preview"] is True
+    assert payload["n_cells"] == 4
+    assert payload["n_assigned"] == 2
+    assert payload["n_regions"] == 1 and payload["n_regions_used"] == 1
+    assert payload["columns"] == ["rois_category", "rois_name"]
+    assert payload["existing"] == []
+    assert payload["location"] == "file"
+    assert payload["path"].endswith("cells.csv")
+    assert (tmp_path / "cells.csv").read_bytes() == before
+
+
+def test_a_preview_over_an_existing_mapping_says_so_with_a_free_name(client):
+    post(client, "operations", base_revision=0, operations=[create()])
+    post(client, "map_to_cells")
+    payload = post(client, "map_to_cells", preview=True).get_json()
+    assert payload["success"] is True
+    assert payload["existing"] == ["rois_category", "rois_name"]
+    assert payload["suggestion"] == "rois_2"
+
+
+def test_the_free_name_is_free_for_both_of_its_columns(client):
+    """`rois_2` is not free once `rois_2_category` exists, though no column is
+    called `rois_2` -- the suggestion has to be checked as the columns it
+    makes."""
+    post(client, "operations", base_revision=0, operations=[create()])
+    post(client, "map_to_cells")
+    post(client, "map_to_cells", name="rois_2")
+    payload = post(client, "map_to_cells", preview=True).get_json()
+    assert payload["suggestion"] == "rois_3"
+
+
 def test_an_unknown_datasource_is_a_bad_request(client):
     response = client.post("/plugins/roi/api/map_to_cells", json={"datasource": "nope"})
     assert response.status_code == 400

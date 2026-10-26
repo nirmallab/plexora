@@ -138,3 +138,44 @@ def test_mismatched_coordinate_lengths_are_refused():
     features = [feature("r-1", "c-tumor", "Tumor 1", square(0, 0, 10, 10))]
     with pytest.raises(ValueError):
         mapping.assign(features, CATEGORIES, [1, 2], [1])
+
+
+# -- the preview's summary -------------------------------------------------
+#
+# What the Map to cells confirmation shows. Totals, never a list per category:
+# the category list has no upper bound, and only a few empty regions are named.
+
+
+def test_the_summary_counts_cells_regions_overlaps_and_empty_regions():
+    features = [
+        feature("r-1", "c-tumor", "Tumor 1", square(0, 0, 10, 10)),
+        feature("r-2", "c-tumor", "Tumor 2", square(5, 5, 15, 15)),
+        feature("r-3", "c-necrosis", "Necrosis 1", square(100, 100, 110, 110)),
+    ]
+    summary = {}
+    labels, _ = mapping.assign(features, CATEGORIES, [2, 7, 50], [2, 7, 50],
+                               summary=summary)
+    assert labels == ["Tumor", "Tumor", mapping.UNASSIGNED]
+    assert summary == {
+        "n_cells": 3, "n_assigned": 2, "n_overlap": 1,
+        "n_regions": 3, "n_regions_used": 2,
+        "n_categories": 2, "n_categories_used": 1,
+        "n_empty_regions": 1, "empty_regions": ["Necrosis 1"],
+    }
+
+
+def test_the_summary_names_only_a_few_empty_regions():
+    features = [feature(f"r-{i}", "c-tumor", f"Tumor {i}", square(i * 20, 0, i * 20 + 5, 5))
+                for i in range(6)]
+    summary = {}
+    mapping.assign(features, CATEGORIES, [1000], [1000], summary=summary)
+    assert summary["n_empty_regions"] == 6
+    assert len(summary["empty_regions"]) == mapping.EMPTY_EXAMPLES
+
+
+def test_no_cells_still_fills_the_summary():
+    summary = {}
+    mapping.assign([feature("r-1", "c-tumor", "Tumor 1", square(0, 0, 10, 10))],
+                   CATEGORIES, [], [], summary=summary)
+    assert summary["n_cells"] == 0 and summary["n_assigned"] == 0
+    assert summary["n_empty_regions"] == 1

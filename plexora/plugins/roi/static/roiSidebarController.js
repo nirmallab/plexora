@@ -156,7 +156,6 @@ class RoiSidebarController {
         this.renderer.setEnabled(Boolean(visible));
         if (!visible) {
             this.tools.disarm();
-            this.el("roi_map_info_dialog")?.close();
             return;
         }
         this.renderer.attach();
@@ -178,10 +177,6 @@ class RoiSidebarController {
         // A row menu is portaled out of this panel, so hiding the panel leaves
         // it floating over whatever the user came back to.
         RoiTree.closePopup();
-        // The info dialog lives inside the panel, so hiding the panel takes it
-        // off the screen without closing it -- and it would be waiting, open,
-        // over whatever the user came back to.
-        this.el("roi_map_info_dialog")?.close();
     }
 
     destroy() {
@@ -205,88 +200,6 @@ class RoiSidebarController {
         for (const button of document.querySelectorAll("#roi_toolbar [data-tool]")) {
             button.addEventListener("click", () => this.tools.setTool(button.dataset.tool));
         }
-        const help = this.el("roi_help_button");
-        help?.addEventListener("click", (event) => {
-            event.stopPropagation();
-            // Off the button's own aria-expanded, so a second click on the ?
-            // shuts what the first one opened instead of closing and
-            // reopening it in the same gesture.
-            if (help.getAttribute("aria-expanded") === "true") RoiTree.closePopup();
-            else RoiTree.popup(help, this.helpContent(), { align: "right" });
-        });
-    }
-
-    /**
-     * Everything the panel used to say in prose, on demand.
-     *
-     * It was two lines under the toolbar and four shortcut chips inside it,
-     * permanently, for something read once. A ? costs one icon and holds more
-     * than the panel had room to print.
-     */
-    helpContent() {
-        const card = document.createElement("div");
-        card.className = "roi-help";
-        const mod = /Mac|iPhone|iPad/.test(navigator.platform) ? "\u2318" : "Ctrl";
-
-        const section = (title, rows) => {
-            const heading = document.createElement("div");
-            heading.className = "roi-help-title";
-            heading.textContent = title;
-            card.append(heading);
-            for (const [text, key] of rows) {
-                const row = document.createElement("div");
-                row.className = "roi-help-row";
-                const label = document.createElement("span");
-                label.textContent = text;
-                row.append(label);
-                if (key) {
-                    const kbd = document.createElement("kbd");
-                    kbd.className = "roi-kbd";
-                    kbd.textContent = key;
-                    row.append(kbd);
-                }
-                card.append(row);
-            }
-        };
-
-        section("Tools", [
-            ["Select", "V"], ["Polygon", "P"], ["Freehand", "F"], ["Rectangle", "R"],
-            ["Magic select", "E"],
-        ]);
-        section("The image", [
-            ["Pan (hold and drag)", "Space"],
-            ["Zoom", "Wheel"],
-        ]);
-        section("Drawing", [
-            ["Polygon: click to add a point", ""],
-            ["Finish a polygon", "Enter"],
-            ["Remove the last point", "\u232b"],
-            ["Cancel, then deselect", "Esc"],
-        ]);
-        section("Magic select", [
-            ["Add: click something to outline it, again to grow it", ""],
-            ["Remove: click an area to take it out", "\u21e7 Click"],
-            ["Box: drag round a large object", ""],
-            ["Scribble: draw a line over a long or patchy one, or a loop round it", ""],
-            ["Scribble out what it should leave out", "\u21e7 Drag"],
-            ["Refine a region: select it, click inside", ""],
-            ["Finish the outline", "Esc"],
-        ]);
-        section("Regions", [
-            ["Delete the selected region", "\u232b"],
-            ["Rename (or double-click)", "F2"],
-            ["Undo", `${mod}Z`],
-            ["Redo", `${mod}\u21e7Z`],
-            ["Collapse or expand a category", "\u2190 \u2192"],
-        ]);
-
-        const note = document.createElement("div");
-        note.className = "roi-help-note";
-        note.textContent = "Click a category to draw into it. New regions are "
-            + "named after it and land under it. Magic select sets itself up the "
-            + "first time you use it (a short one-time download).";
-        card.append(note);
-        return card;
     }
 
     /**
@@ -426,17 +339,6 @@ class RoiSidebarController {
             fromCells.addEventListener("click", () => this.regionFromCells());
         }
         this.el("roi_destination_close")?.addEventListener("click", () => this.closeDestination());
-
-        this.el("roi_map_info")?.addEventListener("click", () => this.openMapInfo());
-        const info = this.el("roi_map_info_dialog");
-        this.el("roi_map_info_close")?.addEventListener("click", () => info?.close());
-        // Clicking outside the dialog closes it. The <dialog> element IS the
-        // backdrop's hit area -- the visible panel is its padding box -- so a
-        // click landing on the dialog itself and not on anything inside it is a
-        // click on the backdrop.
-        info?.addEventListener("click", (event) => {
-            if (event.target === info) info.close();
-        });
 
         const destination = this.el("roi_destination_name");
         // Live, so the line underneath always names the entry the button is
@@ -1006,9 +908,8 @@ class RoiSidebarController {
      *
      * Map to cells sits on the same row rather than under it. Under, it read
      * as the step after saving; it is not one, and neither is a prerequisite
-     * of the other. Its ? is hidden and shown with it for the same reason.
-     * Five controls do not fit a 288px column at full width, so Import and
-     * Export give up their labels when Map to cells is on the row.
+     * of the other. It is a glyph, so Import and Export keep their words
+     * whatever else is on the row; what it does is under the card's ?.
      */
     renderSourceButton() {
         const native = this.el("roi_save_to_source");
@@ -1071,17 +972,10 @@ class RoiSidebarController {
         // put labels on. A project that is nothing but an image has neither
         // button; a CSV project has the download and this one.
         const mapper = this.el("roi_map_to_cells");
-        const info = this.el("roi_map_info");
         if (mapper) {
             const canMap = Boolean(this._destination
                 && this._destination.hasTable) && anything;
             mapper.hidden = !canMap;
-            // The ? goes with the button, not with the panel: an explanation of
-            // a control that is not on screen is a control of its own.
-            if (info) info.hidden = !canMap;
-            // `?.` and not a bare call: the map-button probe drives this
-            // method against a stub DOM that knows only the ids it asserts on.
-            this.el("roi_actions")?.classList.toggle("is-compact", canMap);
         }
 
         // The field cannot outlive the button that opened it: undoing the last
@@ -1113,30 +1007,12 @@ class RoiSidebarController {
      *
      * The blank `mapPrefix()` returns is the server's cue to use `rois`, so
      * that default is spelled out here too -- this is the one thing in the
-     * dialog that is about the user's project rather than about the feature,
-     * and "it depends" is not what they came to read.
+     * card's help that is about the user's project rather than about the
+     * feature, and "it depends" is not what they came to read.
      */
     mapColumnNames() {
         const prefix = this.mapPrefix() || "rois";
         return [`${prefix}_category`, `${prefix}_name`];
-    }
-
-    /**
-     * What Map to cells does, at length.
-     *
-     * Filled in at open rather than at render: the column names follow the save
-     * name, which the user can be typing while the panel is open, and a dialog
-     * nobody has looked at yet is the cheapest place in the panel to be right.
-     */
-    openMapInfo() {
-        const dialog = this.el("roi_map_info_dialog");
-        if (!dialog) return;
-        const [category, name] = this.mapColumnNames();
-        const categoryCell = this.el("roi_map_info_category");
-        const nameCell = this.el("roi_map_info_name");
-        if (categoryCell) categoryCell.textContent = category;
-        if (nameCell) nameCell.textContent = name;
-        dialog.showModal();
     }
 
     /**
@@ -1172,43 +1048,63 @@ class RoiSidebarController {
         if (data.roi?.id) this.store.select?.(data.roi.id);
     }
 
-    async mapToCells(replace = false) {
+    /**
+     * Check, confirm, then write.
+     *
+     * The write goes into the user's own file and Plexora has no undo for it,
+     * so the first request is a preview: the server runs the assignment and
+     * says what it found and where it would go, and nothing is written until
+     * the user has seen that and said yes. An existing mapping is decided in
+     * the same dialog -- replace it, or write beside it under a free name --
+     * rather than in a second one after the first.
+     *
+     * The write runs the assignment again rather than reusing the preview's:
+     * the table can change while the dialog is open, and what is written
+     * should be what it holds when the user presses the button.
+     */
+    async mapToCells(retried = false) {
         const button = this.el("roi_map_to_cells");
         if (!button || button.hidden) return;
 
         button.disabled = true;
         try {
-            const result = await window.PlexoraStatus.track(
-                "Mapping ROIs to cells",
-                this.api.mapToCells(this.mapPrefix(), replace));
-            const data = result.data || {};
-
-            if (!result.ok || !data.success) {
-                if (data.needs && !replace) {
-                    const collected = await this.ctx.requirements?.require([data.needs]);
+            const preview = await window.PlexoraStatus.track(
+                "Finding the cells in each ROI",
+                this.api.mapToCells(this.mapPrefix(), false, true));
+            const found = preview.data || {};
+            if (!preview.ok || !found.success) {
+                if (found.needs && !retried) {
+                    const collected = await this.ctx.requirements?.require([found.needs]);
                     // Retried once, and only once: a second refusal means the
                     // answer did not fix it, and asking again in a loop is how
                     // a modal becomes impossible to get out of.
-                    if (collected) return this.mapToCells(replace);
-                    this.notify(data.error || "Plexora needs one more answer first.");
+                    if (collected) return this.mapToCells(true);
+                    this.notify(found.error || "Plexora needs one more answer first.");
                     return;
                 }
-                if (data.error === "column_exists") {
-                    const suggestion = data.suggestion;
-                    const proceed = await window.PlexoraConfirm.fromText(
-                        `Your cells already have a "${this.mapPrefix() || "rois"}" mapping.\n\n`
-                        + "Replace it? The existing values in those two columns will be lost."
-                        + (suggestion ? `\n\nCancel to save it as "${suggestion}" instead.` : ""),
-                        { confirm: "Replace" });
-                    if (proceed) return this.mapToCells(true);
-                    if (suggestion) {
-                        const field = this.el("roi_destination_name");
-                        if (field) field.value = suggestion;
-                        this.renderSourceButton();
-                    }
-                    return;
-                }
-                this.notify(data.error || "The cells could not be annotated.");
+                this.notify(found.error || "The cells could not be annotated.");
+                return;
+            }
+
+            const choice = await this.confirmMapping(found);
+            if (!choice) return;
+            if (choice === "rename" && found.suggestion) {
+                const field = this.el("roi_destination_name");
+                if (field) field.value = found.suggestion;
+                this.renderSourceButton();
+            }
+
+            const result = await window.PlexoraStatus.track(
+                "Writing ROI columns to the cell table",
+                this.api.mapToCells(this.mapPrefix(), choice === "replace"));
+            const data = result.data || {};
+            if (!result.ok || !data.success) {
+                // Only possible if the columns appeared while the dialog was
+                // open: the preview said they were free.
+                this.notify(data.error === "column_exists"
+                    ? "Those columns were added to the file since the check. "
+                        + "Press Map to cells again to see them."
+                    : (data.error || "The cells could not be annotated."));
                 return;
             }
 
@@ -1216,11 +1112,104 @@ class RoiSidebarController {
             // cached for its browser-side gate may now be stale.
             this.ctx.viewer?.numericData?.invalidateColumns?.();
             const columns = (data.columns || []).join(" and ");
-            this.notify(`${data.n_assigned} of ${data.n_cells} cells are in an ROI. `
+            this.notify(`${RoiSidebarController.count(data.n_assigned)} of `
+                + `${RoiSidebarController.count(data.n_cells)} cells are in an ROI. `
                 + `Wrote ${columns}.`);
         } finally {
             button.disabled = false;
         }
+    }
+
+    /**
+     * The confirmation: what will be written, where, and to how many cells.
+     *
+     * Totals only. A breakdown by category is a list as long as the project's
+     * category list, which has no upper bound; "how many cells, in how many of
+     * my regions" is what tells a user whether this is the mapping they meant,
+     * at any size. The regions that caught nothing are named, a few at most,
+     * because those are the usual sign of a region on the wrong plane or frame.
+     *
+     * Resolves "write", "replace", "rename" (write under the suggested free
+     * name), or null for no.
+     */
+    confirmMapping(found) {
+        const n = RoiSidebarController.count;
+        const el = (tag, className, text) => {
+            const node = document.createElement(tag);
+            if (className) node.className = className;
+            if (text !== undefined) node.textContent = text;
+            return node;
+        };
+        const root = el("div", "roi-map-preview");
+
+        const headline = el("p", "roi-map-headline");
+        if (found.n_assigned > 0) {
+            headline.append(el("strong", "", n(found.n_assigned)),
+                ` of ${n(found.n_cells)} cells fall in a region`);
+        } else {
+            headline.textContent = `None of the ${n(found.n_cells)} cells falls in a region`;
+        }
+        root.append(headline);
+
+        const facts = el("ul", "roi-map-facts");
+        const fact = (text) => facts.append(el("li", "", text));
+        const plural = (value, one, many) => `${n(value)} ${value === 1 ? one : many}`;
+        if (found.n_assigned > 0) {
+            const regions = found.n_regions_used === found.n_regions
+                ? `In ${found.n_regions === 1 ? "the one region" : `all ${n(found.n_regions)} regions`}`
+                : `In ${n(found.n_regions_used)} of ${plural(found.n_regions, "region", "regions")}`;
+            fact(`${regions}, across ${plural(found.n_categories_used, "category", "categories")}.`);
+        } else {
+            fact("Both columns would be blank for every cell.");
+        }
+        if (found.n_overlap > 0) {
+            fact(`${plural(found.n_overlap, "cell is", "cells are")} in more than one region; `
+                + "their values are joined with _.");
+        }
+        if (found.n_empty_regions > 0 && found.n_assigned > 0) {
+            const shown = (found.empty_regions || []).join(", ");
+            const more = found.n_empty_regions - (found.empty_regions || []).length;
+            fact(`${plural(found.n_empty_regions, "region holds", "regions hold")} no cells: `
+                + shown + (more > 0 ? `, and ${n(more)} more` : "") + ".");
+        }
+        if (found.location === "obs") {
+            fact("Cells of other images in this file keep their values.");
+        }
+        root.append(facts);
+
+        const target = el("dl", "roi-map-target");
+        target.append(el("dt", "", "Writes to"));
+        const where = el("dd", "");
+        where.append(el("code", "roi-map-path", found.path || ""));
+        if (found.location === "obs") where.append(el("span", "roi-map-where", " (obs)"));
+        target.append(where);
+        target.append(el("dt", "", "Columns"));
+        const columns = el("dd", "roi-map-columns");
+        for (const column of found.columns || []) columns.append(el("code", "", column));
+        const existing = (found.existing || []).length > 0;
+        columns.append(el("span", `roi-map-badge ${existing ? "is-replace" : "is-new"}`,
+            existing ? "Already exist" : "New"));
+        target.append(columns);
+        root.append(target);
+
+        const choices = [{ value: null, label: "Cancel", focus: existing }];
+        if (existing) {
+            if (found.suggestion) {
+                choices.push({ value: "rename", label: `Write as ${found.suggestion}` });
+            }
+            choices.push({ value: "replace", label: "Replace columns", kind: "danger" });
+        } else {
+            choices.push({ value: "write", label: "Write to file", kind: "primary", focus: true });
+        }
+        return window.PlexoraConfirm.choose({
+            title: "Write ROI labels to your cells?",
+            body: existing
+                ? "These columns are already in your file. Replacing them loses "
+                    + "their current values; Plexora cannot undo it."
+                : "This adds two columns to your file. Plexora cannot undo it.",
+            content: root,
+            choices,
+        });
     }
 
     /**
@@ -1259,8 +1248,129 @@ class RoiSidebarController {
      *  so the same project gets the same palette every time. Also what the
      *  colour picker on a category row offers, so recolouring one lands on the
      *  same ten a new one would have been given. */
+    /** A count as the user reads one: 52,107, not 52107. */
+    static count(value) {
+        return Number(value || 0).toLocaleString("en-US");
+    }
+
     static nextColor(index) {
         return RoiSidebarController.PALETTE[index % RoiSidebarController.PALETTE.length];
+    }
+
+    /**
+     * The card's help, in the order the panel is used: make a category, draw
+     * into it, tidy what was drawn, take it elsewhere, label the cells.
+     *
+     * Built at open, from the live controller when there is one: Map to cells
+     * names the two columns the current save name will produce, and is left
+     * out once the project is known to have no cell table to write them to.
+     */
+    static helpSections() {
+        const live = window.__plexora?.plugins?.get?.("roi")?.sidebarController;
+        const [category, name] = live?.mapColumnNames?.() || ["rois_category", "rois_name"];
+        const hasTable = live?._destination ? live._destination.hasTable !== false : true;
+
+        const sections = [
+            {
+                title: "Start with a category",
+                icon: "fas fa-layer-group",
+                text: "Every region belongs to a category, such as Tumour or Stroma. "
+                    + "Add one with New category (beside the tools), then click it to draw into it: new "
+                    + "regions land under it and are named after it (Tumour 1, Tumour 2).",
+                points: [
+                    "The eye on a row hides that region or category on the image; the "
+                        + "eye at the end of the Categories heading hides them all.",
+                    "A category's ⋯ renames, recolours, locks or deletes it with its regions.",
+                ],
+                shortcuts: [{ keys: ["←", "→"], label: "Collapse or expand a category" }],
+            },
+            {
+                title: "Draw",
+                icon: "fas fa-pen-nib",
+                text: "Pick a tool from the row at the top of the panel. Polygon places "
+                    + "a point per click; Freehand and Rectangle follow a press and drag.",
+                shortcuts: [
+                    { keys: "P", label: "Polygon" },
+                    { keys: "F", label: "Freehand" },
+                    { keys: "R", label: "Rectangle" },
+                    { keys: "Enter", label: "Finish a polygon (or double-click)" },
+                    { keys: "⌫", label: "Remove the polygon's last point" },
+                    { keys: "Esc", label: "Cancel the shape, then deselect" },
+                    { keys: "Space", label: "Hold and drag to pan" },
+                ],
+            },
+            {
+                title: "Magic select",
+                icon: "fas fa-wand-magic-sparkles",
+                text: "Click something on the image and Plexora outlines it. The bar "
+                    + "that appears on the image sets how you point at it. It sets "
+                    + "itself up the first time you use it (a short one-time download).",
+                points: [
+                    "Add: click to outline; click again to grow the outline.",
+                    "Remove: click an area to take it out.",
+                    "Box: drag round a large object.",
+                    "Scribble: draw over a long or patchy object, or a loop round it.",
+                    "To refine a region later, select it and click inside it.",
+                ],
+                shortcuts: [
+                    { keys: "E", label: "Magic select" },
+                    { keys: "⇧ Click", label: "Remove an area" },
+                    { keys: "⇧ Drag", label: "Scribble out what to leave out" },
+                    { keys: "Esc", label: "Finish the outline" },
+                ],
+            },
+            {
+                title: "Edit regions",
+                icon: "fas fa-arrow-pointer",
+                text: "With Select, click a region to select it, drag it to move it, or "
+                    + "drag a handle to reshape it. A region's ⋯ renames, locks, hides, "
+                    + "moves it to another category or deletes it; a locked region "
+                    + "cannot be moved or reshaped.",
+                shortcuts: [
+                    { keys: "V", label: "Select" },
+                    { keys: "⌫", label: "Delete the selected region" },
+                    { keys: "F2", label: "Rename (or double-click the name)" },
+                    { keys: "Mod+Z", label: "Undo" },
+                    { keys: "Mod+Shift+Z", label: "Redo" },
+                ],
+            },
+            {
+                title: "Import, export and save",
+                icon: "fas fa-file-export",
+                text: "Regions are kept with this sample as you work. The buttons at "
+                    + "the foot of the panel take them in and out:",
+                points: [
+                    "Import reads a GeoJSON file of regions.",
+                    "Export downloads these regions as a GeoJSON file.",
+                    "Save, for an AnnData or SpatialData project, writes them into your "
+                        + "file. The first press shows the name and where it will land; "
+                        + "the second writes.",
+                ],
+            },
+        ];
+        if (hasTable) {
+            sections.push({
+                title: "Map to cells",
+                icon: "fas fa-table-cells",
+                text: "The grid button at the foot of the panel finds the region(s) each "
+                    + `cell falls in and writes two columns onto the cell table: ${category} `
+                    + `(the category, e.g. Tumour) and ${name} (the region, e.g. Tumour 1). `
+                    + "The names follow the save name.",
+                points: [
+                    "A cell in overlapping regions gets their values joined with _; a "
+                        + "category is listed once.",
+                    "Cells outside every region are left blank. Only the cells of the "
+                        + "image on screen are touched.",
+                    "Nothing is written until you confirm: the button first shows how "
+                        + "many cells fall in a region and which file and columns it "
+                        + "will write, and asks before replacing columns already there.",
+                    "A hidden region is still mapped: the eye is a viewing aid, not a filter.",
+                    "Save keeps the shapes; Map to cells labels the cells. Neither needs "
+                        + "the other.",
+                ],
+            });
+        }
+        return sections;
     }
 }
 
@@ -1278,12 +1388,15 @@ if (window.Plexora) {
     window.Plexora.registerPlugin({
         name: "roi",
         // What the `?` on the ROI card explains (views/pluginHelp.js); `docs`
-        // is its page on the documentation site.
+        // is its page on the documentation site. The only help this panel has:
+        // the keys, the tools and Map to cells used to sit behind two more ?s
+        // inside the body, which made three for one card.
         help: {
             summary: "Draw regions of interest on the image and keep them with this "
-                + "sample. With a cell table, Plexora records which region each cell "
-                + "falls in, so the regions can be used in analysis.",
+                + "sample. With a cell table, Plexora can also record which region "
+                + "each cell falls in, so the regions can be used in analysis.",
             docs: "plugins/roi",
+            sections: () => RoiSidebarController.helpSections(),
         },
         // ROI draws its own overlay and never colours cells, so it does not
         // claim the cell layer -- claiming is exclusive, and taking it would

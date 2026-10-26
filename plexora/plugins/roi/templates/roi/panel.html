@@ -73,17 +73,18 @@
                 title="Magic select (E) -- click something to outline it; the bar on the image switches between Add, Remove, Box and Scribble; click inside a selected region to refine it">
             <span class="fas fa-wand-magic-sparkles"></span>
         </button>
-        {# Where the prose that used to sit under the toolbar went. #}
-        <button id="roi_help_button" class="roi-tool roi-help-button" type="button"
-                aria-haspopup="true" aria-expanded="false" title="Keyboard and mouse help">
-            <span class="fas fa-question"></span>
+        {# On the tools' row and their height, at its far end: a category is
+           what the tools draw into, so the control that makes one sits with
+           them rather than in a heading row of its own. It reveals the name
+           field under the Categories heading. #}
+        <button id="roi_category_new" class="roi-new-category" type="button"
+                title="Add a category. New ROIs are drawn into the active category.">
+            <span class="fas fa-plus"></span><span>New category</span>
         </button>
     </div>
 
-    {# Making a category is the first thing to do in an empty project and a
-       rare thing afterwards, so it is a button at the TOP of the section --
-       where the eye is already going -- that reveals a field, rather than a
-       field standing open at the bottom under everything it creates. #}
+    {# The heading, and the eye that hides every category at once. New
+       category is on the tools' row above; its field opens under here. #}
     <div class="roi-section-head">
         <label class="control-label">Categories</label>
         <div class="roi-section-actions">
@@ -93,10 +94,6 @@
             <button id="roi_category_all_eye" class="roi-all-eye" type="button" hidden
                     title="Hide all categories">
                 <span class="fas fa-eye"></span><span class="fas fa-eye-slash"></span>
-            </button>
-            <button id="roi_category_new" class="roi-new-category" type="button"
-                    title="Add a category. New ROIs are drawn into the active category.">
-                <span class="fas fa-plus"></span><span>New category</span>
             </button>
         </div>
     </div>
@@ -139,15 +136,16 @@
        buttons competing with the list.
 
        Exactly one save destination is ever offered: a project with a native
-       file gets the write, and Export is the download beside it. When a cell
-       table puts "Map to cells" on the row too, Import and Export drop to
-       their icons so five controls still fit the column. #}
+       file gets the write, and Export is the download beside it. Import and
+       Export always keep their words -- they are what a user goes looking
+       for at the end of a session -- and Map to cells is the grid glyph at the
+       end of the row, explained under the ? in the card's header. #}
     <div id="roi_actions" class="roi-actions">
-        <button id="roi_import_button" class="roi-action" data-compact type="button"
+        <button id="roi_import_button" class="roi-action roi-action-labelled" type="button"
                 title="Import ROIs from a GeoJSON file">
             <span class="fas fa-file-import"></span><span class="roi-action-text">Import</span>
         </button>
-        <button id="roi_export_button" class="roi-action" data-compact type="button" hidden
+        <button id="roi_export_button" class="roi-action roi-action-labelled" type="button" hidden
                 title="Download these ROIs as a GeoJSON file">
             <span class="fas fa-download"></span><span class="roi-action-text">Export</span>
         </button>
@@ -169,67 +167,12 @@
             <span class="fas fa-object-group"></span><span class="roi-action-text">From cells</span>
         </button>
         {% endif %}
-        <button id="roi_map_to_cells" class="roi-action" type="button" hidden>
-            <span class="fas fa-table-cells"></span><span class="roi-action-text">Map to cells</span>
-        </button>
-
-        {# The one control on this panel whose result a user cannot see before
-           pressing it -- it writes onto their own rows, and the rules it writes
-           by (overlaps, image scope, what a blank means) do not fit in a line
-           of hint text under a button. #}
-        <button id="roi_map_info" class="roi-action roi-action-icon" type="button" hidden
-                title="What does Map to cells do?" aria-haspopup="dialog">
-            <span class="fas fa-question"></span>
+        <button id="roi_map_to_cells" class="roi-action roi-action-icon" type="button" hidden
+                aria-label="Map to cells"
+                title="Map to cells -- write the ROI each cell falls in onto the cell table">
+            <span class="fas fa-table-cells"></span>
         </button>
     </div>
-
-    {# Opened by the ? above. Plain <dialog>: it is modal, Escape closes it and
-       focus is handled by the browser, none of which is worth reimplementing.
-       The prose is static -- it is the same for every project -- except for the
-       one line naming the columns, which follows the save name. #}
-    <dialog id="roi_map_info_dialog" class="roi-modal">
-        <div class="roi-modal-head">
-            <h3 class="roi-modal-title">Map to cells</h3>
-            <button id="roi_map_info_close" class="icon-button roi-modal-close"
-                    type="button" title="Close">
-                <span class="fas fa-xmark"></span>
-            </button>
-        </div>
-        <div class="roi-modal-body">
-            <p>Assigns each cell to the ROI(s) that contain it and writes the
-               annotations directly to the data table.</p>
-
-            <p>For the current save name, Plexora creates:</p>
-
-            {# The only two values in here that are about THIS project. Written
-               by openMapInfo() from the save name, not hard-coded: a fixed pair
-               of names would be wrong for every user who saved under their own,
-               and this dialog exists to tell them what they are about to get. #}
-            <ul id="roi_map_info_columns" class="roi-modal-note">
-                <li><code id="roi_map_info_category">rois_category</code>
-                    &mdash; ROI category, e.g. Tumour</li>
-                <li><code id="roi_map_info_name">rois_name</code>
-                    &mdash; specific ROI name, e.g. Tumour 1</li>
-            </ul>
-
-            <p>If a cell falls within overlapping ROIs, values are joined with
-               <code>_</code>. Duplicate categories are collapsed, while distinct
-               ROI names are retained.</p>
-
-            <p>Cells outside all ROIs are left blank. Only cells belonging to the
-               currently displayed image are evaluated; cells from other images
-               are not modified.</p>
-
-            <p>Existing columns are not overwritten automatically. If they
-               already exist, Plexora prompts you to replace them or use a new
-               save name.</p>
-
-            <p class="roi-modal-aside"><strong>Note:</strong> Map to cells saves
-               ROI assignments to individual cells. The separate Save function
-               saves the ROI shapes themselves. A hidden region is still
-               mapped &mdash; the eye is a viewing aid, not a filter.</p>
-        </div>
-    </dialog>
 
     {# No resting save indicator. It sat at the foot of the panel saying
        "Saved" for the whole of every session -- a permanent line of furniture

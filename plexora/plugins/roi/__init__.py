@@ -22,7 +22,7 @@ adapter code) is left to the factory.
 
 from plexora.api.plugin import Plugin, Requires
 
-VERSION = "20261024_drop_router"
+VERSION = "20261025_roi_map_button"
 
 
 def _blueprint():

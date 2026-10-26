@@ -471,6 +471,8 @@ def map_to_cells():
         "id_column": schema_.cell_id,
         "prefix": body.get('name'),
         "replace": bool(body.get('replace')),
+        # What the write would do, and no write: the panel's confirmation.
+        "preview": bool(body.get('preview')),
     })
     if not result.get("ok"):
         if result.get("reason") == tableops.COLUMN_EXISTS:

@@ -150,12 +150,6 @@
     }
 }
 
-/* Pushed to the far end, away from the four it is not one of. */
-.roi-help-button {
-    font-size: 11px;
-    margin-left: auto;
-}
-
 /* Still used by the hint under the destination field. */
 .roi-hint {
     color: var(--text-muted);
@@ -166,8 +160,7 @@
 
 /* -- categories and their regions --------------------------------------- */
 
-/* The label and the control that adds one, on the same line: making a category
-   belongs at the TOP of what it fills, not under everything it created. */
+/* The label, and the eye that hides every category, on one line. */
 .roi-section-head {
     align-items: center;
     display: flex;
@@ -185,7 +178,7 @@
     margin-bottom: var(--space-1);
 }
 
-/* Beside New category and the same height, quiet: it is the second thing. */
+/* At the end of the Categories heading, quiet: it is the second thing. */
 .roi-all-eye {
     align-items: center;
     background: none;
@@ -226,7 +219,7 @@
 
 /* The panel's first step in an empty project, so it reads as a button and
    not as a link: an accent tint and outline, the one coloured control on the
-   panel. */
+   panel. At the far end of the tools' row and exactly their height. */
 .roi-new-category {
     align-items: center;
     background: var(--accent-channel-tint);
@@ -239,8 +232,10 @@
     font-size: 11px;
     font-weight: 600;
     gap: 5px;
-    height: 24px;
+    height: 26px;
+    margin-left: auto;
     padding: 0 10px;
+    white-space: nowrap;
 }
 
 /* Same as the banners: hidden while the field it opens is showing. */
@@ -582,19 +577,11 @@
    heading. The small ones on this panel sit inside rows of text and set their
    own smaller width, which that floor was quietly overriding -- leaving each of
    them wider than it is tall. Squares, as drawn. */
-.roi-destination-close,
-.roi-modal-close {
+.roi-destination-close {
     min-width: 0;
 }
 
-.roi-modal-close {
-    flex: 0 0 auto;
-    font-size: 12px;
-    height: 26px;
-    width: 26px;
-}
-
-/* -- menus, and the ? popover -------------------------------------------- */
+/* -- menus ---------------------------------------------------------------- */
 
 /* Above the sidebar and above the card that owns this panel: these are hung on
    a row that scrolls inside a column that scrolls. */
@@ -654,56 +641,6 @@
 .roi-menu-item.is-destructive:hover:not(:disabled) {
     background: var(--accent-danger-soft);
     color: var(--accent-danger);
-}
-
-.roi-help {
-    background: var(--surface-1);
-    border: 1px solid var(--border-subtle);
-    border-radius: var(--radius-md);
-    box-shadow: var(--shadow-md);
-    padding: var(--space-3);
-    width: 250px;
-}
-
-.roi-help-title {
-    color: var(--text-muted);
-    font-size: 10px;
-    letter-spacing: 0.06em;
-    margin: var(--space-2) 0 4px;
-    text-transform: uppercase;
-}
-
-.roi-help-title:first-child {
-    margin-top: 0;
-}
-
-.roi-help-row {
-    align-items: center;
-    color: var(--text-secondary);
-    display: flex;
-    font-size: 11px;
-    gap: var(--space-2);
-    justify-content: space-between;
-    line-height: 1.8;
-}
-
-.roi-kbd {
-    background: rgba(255, 255, 255, 0.1);
-    border: 1px solid var(--border-subtle);
-    border-radius: 3px;
-    flex: 0 0 auto;
-    font-family: inherit;
-    font-size: 10px;
-    padding: 1px 4px;
-}
-
-.roi-help-note {
-    border-top: 1px solid var(--border-subtle);
-    color: var(--text-muted);
-    font-size: 11px;
-    line-height: 1.5;
-    margin-top: var(--space-3);
-    padding-top: var(--space-2);
 }
 
 /* -- text inputs --------------------------------------------------------- */
@@ -818,117 +755,120 @@
     text-overflow: ellipsis;
 }
 
-/* A project with cells puts five controls on this row, which do not fit 272px
-   at full width. The two that are always the same two words give up their
-   labels -- their glyphs are the standard ones and their tooltips are intact
-   -- so that Save and Map to cells keep theirs, which are the ones that differ
-   by project. */
-.roi-action-icon,
-.roi-actions.is-compact .roi-action[data-compact] {
+/* Map to cells: a glyph at the end of the row, so the words go to Import and
+   Export, the two a user looks for at the end of a session. What it does is
+   under the ? in the card's header. */
+.roi-action-icon {
     flex: 0 0 26px;
     padding: 0;
     width: 26px;
 }
 
-.roi-action-icon .roi-action-text,
-.roi-actions.is-compact .roi-action[data-compact] .roi-action-text {
-    display: none;
-}
-
-/* -- what Map to cells does --------------------------------------------- */
-
-/* A plugin's own dialog rather than core's `.requirements-modal`: that one is
-   core's element, rendered from any plugin's requirements, and styling it from
-   here would be this plugin reaching into core (tests/test_plugin_css_boundary.py).
-   The widths and the backdrop match it on purpose -- a user should not be able
-   to tell that two different parts of the app drew these. */
-.roi-modal {
-    background: var(--surface-1);
-    border: 1px solid var(--border-strong);
-    border-radius: var(--radius-lg);
-    box-shadow: var(--shadow-lg);
+/* Import and Export: the same pill, read first. */
+.roi-action-labelled {
     color: var(--text-primary);
-    max-height: 86vh;
-    overflow: auto;
-    padding: 0;
-    width: min(560px, 92vw);
+    font-weight: 500;
 }
 
-.roi-modal::backdrop {
-    background: rgba(0, 0, 0, 0.62);
-}
+/* -- the Map to cells confirmation ---------------------------------------
 
-.roi-modal-head {
-    align-items: center;
-    background: var(--surface-1);
-    border-bottom: 1px solid var(--border-subtle);
+   Content inside core's confirm dialog (PlexoraConfirm.choose): these classes
+   are this plugin's own, on nodes it built, so nothing here styles the
+   dialog itself. Totals first, then where they go. */
+.roi-map-preview {
     display: flex;
-    gap: var(--space-2);
-    justify-content: space-between;
-    padding: var(--space-4) var(--space-6);
-    /* The body is long enough to scroll, and a heading that scrolls away takes
-       with it the only control that closes the thing. */
-    position: sticky;
-    top: 0;
+    flex-direction: column;
+    gap: var(--space-3);
+    margin: var(--space-2) 0 0;
 }
 
-.roi-modal-title {
-    font-size: 1.05rem;
-    font-weight: 600;
+.roi-map-headline {
+    color: var(--text-secondary);
+    font-size: 13px;
     margin: 0;
 }
 
-.roi-modal-body {
-    font-size: 12.5px;
-    line-height: 1.6;
-    padding: var(--space-4) var(--space-6) var(--space-6);
+.roi-map-headline strong {
+    color: var(--text-primary);
+    font-size: 18px;
+    font-variant-numeric: tabular-nums;
+    font-weight: 600;
+    margin-right: 2px;
 }
 
-.roi-modal-body p {
+.roi-map-facts {
     color: var(--text-secondary);
-    margin: 0 0 var(--space-3);
+    font-size: 12px;
+    line-height: 1.5;
+    margin: 0;
+    padding-left: 16px;
 }
 
-.roi-modal-body ul {
-    color: var(--text-secondary);
-    margin: 0 0 var(--space-3);
-    padding-left: var(--space-4);
+.roi-map-facts li + li {
+    margin-top: 3px;
 }
 
-.roi-modal-body li {
-    margin-bottom: var(--space-1);
+.roi-map-target {
+    background: var(--surface-2);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-sm);
+    column-gap: var(--space-3);
+    display: grid;
+    font-size: 12px;
+    grid-template-columns: auto 1fr;
+    margin: 0;
+    padding: var(--space-2) var(--space-3);
+    row-gap: 6px;
 }
 
-/* The last line, which is not about how the feature works but about which of
-   the two buttons a user wanted. Separated so it does not read as a sixth rule
-   of the mapping. */
-.roi-modal-body .roi-modal-aside {
-    border-top: 1px solid var(--border-subtle);
-    margin-bottom: 0;
-    padding-top: var(--space-3);
+.roi-map-target dt {
+    color: var(--text-muted);
 }
 
-.roi-modal-body code {
+.roi-map-target dd {
+    color: var(--text-primary);
+    margin: 0;
+    min-width: 0;
+}
+
+.roi-map-target code {
     background: rgba(255, 255, 255, 0.08);
     border-radius: 3px;
     font-size: 11.5px;
     padding: 1px 4px;
-    /* Column names run to `plexora_rois_category`; in a 560px dialog that is
-       fine, at 92vw on a phone it is what breaks the layout. */
+}
+
+/* Paths run long, and a 440px dialog on a phone is narrower still. */
+.roi-map-path {
     overflow-wrap: anywhere;
 }
 
-/* The only part of this dialog that is about THIS project rather than about
-   the feature: the names the two columns will actually get. Boxed so the eye
-   lands on it, and unbulleted because each line already opens with the column
-   name set in code -- a bullet in front of that is one marker too many. */
-.roi-modal-body .roi-modal-note {
-    background: var(--surface-2);
-    border: 1px solid var(--border-subtle);
-    border-radius: var(--radius-sm);
-    color: var(--text-primary);
-    list-style: none;
-    padding: var(--space-2) var(--space-3);
+.roi-map-where {
+    color: var(--text-muted);
+}
+
+.roi-map-columns {
+    align-items: center;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+}
+
+.roi-map-badge {
+    border-radius: 999px;
+    font-size: 10.5px;
+    font-weight: 600;
+    padding: 1px 8px;
+}
+
+.roi-map-badge.is-new {
+    background: var(--accent-channel-soft);
+    color: var(--accent-channel);
+}
+
+.roi-map-badge.is-replace {
+    background: var(--accent-danger-soft);
+    color: var(--accent-danger);
 }
 
 /* -- what the panel says when something went wrong ---------------------- */

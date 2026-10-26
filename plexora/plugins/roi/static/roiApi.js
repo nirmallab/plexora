@@ -116,7 +116,8 @@ class RoiApi {
                 // key without it, which is the guard that stops one annotation
                 // pass landing on another -- this flag is the user's answer to
                 // being asked, not a convenience.
-                replace: Boolean(replace)
+                replace: Boolean(replace),
+                preview: Boolean(preview)
             })
         });
         return this._read(response);
@@ -129,8 +130,12 @@ class RoiApi {
      * user's file, this puts two columns on their rows. `name` is the same
      * destination name the saves take, because the columns are derived from it
      * -- one name to keep track of, not two.
+     *
+     * `preview` runs the assignment and writes nothing: the answer is what the
+     * write would do (cells, regions, the file, whether the columns exist),
+     * for the confirmation the panel shows first.
      */
-    async mapToCells(name, replace) {
+    async mapToCells(name, replace, preview = false) {
         const response = await fetch(this.url('plugins/roi/api/map_to_cells'), {
             method: 'POST',
             headers: { 'Accept': 'application/json', 'Content-Type': 'application/json' },

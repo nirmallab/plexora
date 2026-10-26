@@ -242,7 +242,10 @@ class RoiTree {
 
         const remove = RoiTree.rowAction("roi-row-delete", '<span class="fas fa-xmark"></span>');
 
-        el.append(chevron, colorMount, label, count, lock, eye, more, remove);
+        // The eye leads the name rather than trailing with the row's actions:
+        // on a category it is the control used most, and in front of the
+        // colour and the name it reads as "this one, shown or not".
+        el.append(chevron, eye, colorMount, label, count, lock, more, remove);
 
         const children = document.createElement("div");
         children.className = "roi-children";

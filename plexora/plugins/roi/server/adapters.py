@@ -307,6 +307,53 @@ def cell_column_names(prefix):
     return f"{prefix}_category", f"{prefix}_name"
 
 
+def cell_columns_target(dataset, prefix=None):
+    """Where "Map to cells" would write, and whether its columns are taken.
+
+    The preview's half of `write_cell_columns`, and nothing is written: the
+    column names the user would get, the file they land in, and which of the
+    two already exist there -- so the confirmation can say "replaces" before
+    the user presses anything, rather than the write refusing afterwards.
+
+    Only the columns are read: an obs group's `column-order` attribute, or one
+    row of a flat table. Reading the whole of either to learn its header would
+    make the preview cost what the write does.
+    """
+    from plexora.server.models.adapters import is_flat_table, read_flat_table
+
+    category_column, name_column = cell_column_names(prefix)
+    kind = dataset.source_kind
+    if is_flat_table(kind):
+        source = dataset.table.source
+        if source is None or not source.path:
+            raise ValueError("no table file is recorded for this project")
+        path, location = source.path, "file"
+        columns = list(read_flat_table(source.path, kind, n_rows=1).columns)
+    elif kind in ("anndata", "spatialdata"):
+        path, location = _table_path(dataset), "obs"
+        with _open_group(path) as handle:
+            order = handle["obs"].attrs.get("column-order")
+            if order is None:
+                try:
+                    from anndata.io import read_elem
+                except ImportError:  # pragma: no cover - older anndata fallback
+                    from anndata._io.specs import read_elem
+                columns = list(read_elem(handle["obs"]).columns)
+            else:
+                columns = [str(column) for column in list(order)]
+    else:
+        raise ValueError("this project has no cell-level data to annotate")
+
+    taken = [c for c in (category_column, name_column) if c in columns]
+    return {
+        "path": str(path),
+        "location": location,
+        "columns": [category_column, name_column],
+        "existing": taken,
+        "suggestion": _suggest_prefix(category_column, columns) if taken else None,
+    }
+
+
 def write_cell_columns(dataset, labels, names, prefix=None, replace=False):
     """Write two ROI annotation columns onto this project's cells.
 
@@ -556,9 +603,21 @@ def _table_path(dataset):
 
 
 def _suggest_prefix(category_column, taken):
-    """A free destination name, given that `<name>_category` is taken."""
+    """A free destination name, given that `<name>_category` is taken.
+
+    Free means both of ITS columns are: what is checked against the table is
+    `<candidate>_category` and `<candidate>_name`, not the bare candidate --
+    which is never a column, so checking it would offer `rois_2` on a table
+    that already has `rois_2_category`.
+    """
     base = category_column[: -len("_category")]
-    return _suggest(base, {str(c) for c in taken})
+    taken = {str(c) for c in taken}
+    stem = base.rstrip("0123456789_") or base
+    for index in range(2, 1000):
+        candidate = f"{stem}_{index}"
+        if f"{candidate}_category" not in taken and f"{candidate}_name" not in taken:
+            return candidate
+    return f"{stem}_{len(taken) + 1}"  # pragma: no cover - a thousand collisions
 
 
 def _shapely(geometry, sgeom):
