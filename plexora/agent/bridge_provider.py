@@ -94,6 +94,19 @@ class PlexoraProvider(Adapter):
             raise BridgeError("capability_unavailable", f"Plexora has no tool {tool!r}",
                               provider=PROVIDER,
                               hint="bridge_capabilities lists what Plexora offers") from None
+        # A write into the user's source files, or one that cannot be undone,
+        # is approved by a person for that one call -- by the chat's approval
+        # card or by the client's own confirmation of a direct tool call.
+        # Reached through the bridge, the `confirm` inside these arguments
+        # was written by whoever composed the bridge call, which nobody
+        # approved; so these are only ever run directly.
+        if capability.permission in ("source_file_write", "destructive"):
+            raise BridgeError(
+                "invalid_input",
+                f"{capability.tool_name} needs the user's approval for this one call, "
+                f"which a bridge call cannot carry",
+                provider=PROVIDER,
+                hint=f"call {capability.tool_name} directly so the user is asked")
         if expected_revision is not None and \
                 "expected_revision" in capability.input_model.model_fields:
             arguments.setdefault("expected_revision", expected_revision)

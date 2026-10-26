@@ -297,8 +297,13 @@ def storage_options_for(url, options: Optional[Mapping[str, Any]] = None) -> dic
     options = dict(options or {})
     scheme = _scheme(url)
     if scheme in ("http", "https"):
+        from plexora.server.utils import host_policy
+
         return {
             "asynchronous": True,
+            # Every connection, redirects included, checked against the
+            # machine's link-local network; see host_policy.
+            "get_client": host_policy.get_client,
             "client_kwargs": {
                 "trust_env": True,
                 "timeout": aiohttp.ClientTimeout(total=None, sock_connect=5,
@@ -1790,6 +1795,10 @@ def open_store(url, options: Optional[Mapping[str, Any]] = None) -> tuple[ChunkC
         if store is not None:
             return store, subpath
     _require_scheme(root)
+    if _scheme(root) in ("http", "https"):
+        from plexora.server.utils import host_policy
+
+        host_policy.check_host(urlsplit(root).hostname)
     from zarr.storage import FsspecStore
     from zarr.storage._fsspec import ALLOWED_EXCEPTIONS
 

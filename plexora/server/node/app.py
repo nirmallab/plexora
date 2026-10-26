@@ -633,7 +633,7 @@ def serve_node(serve, token=None, host="127.0.0.1", port=8642, *, node_id=None,
     from waitress import serve as waitress_serve
 
     from plexora import _logging
-    from plexora._resources import platform_word, worker_threads
+    from plexora._resources import WAITRESS_LIMITS, platform_word, worker_threads
 
     # Warnings to stderr; stdout stays the announce `plexora connect` parses.
     _logging.configure()
@@ -727,8 +727,7 @@ def serve_node(serve, token=None, host="127.0.0.1", port=8642, *, node_id=None,
         app,
         host=host,
         port=port,
-        max_request_body_size=1073741824000000,
-        max_request_header_size=85899345920000,
+        **WAITRESS_LIMITS,
         threads=worker_threads(),
     )
 

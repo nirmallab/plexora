@@ -1,0 +1,9 @@
+# zizmor policy for this repository.
+rules:
+  unpinned-uses:
+    config:
+      policies:
+        # The org's own reusable workflows and actions, released by tag from
+        # nirmallab/.github; everything else is pinned to a full commit SHA.
+        "nirmallab/*": ref-pin
+        "*": hash-pin

@@ -1,4 +1,6 @@
 # Copy to .dev.vars for `wrangler dev`. Dummy values only; never commit .dev.vars.
+# Not "production": a missing key then falls back to a development stand-in.
+ENVIRONMENT="development"
 TELEMETRY_HMAC_KEY="dev-only-hmac-key-change-me"
 IP_HASH_KEY="dev-only-ip-pepper"
 ADMIN_TOKEN="dev-only-admin-token"

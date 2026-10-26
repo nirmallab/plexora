@@ -113,7 +113,8 @@ def _rig(monkeypatch, tmp_path):
     monkeypatch.setitem(sys.modules, "plexora", package)
     monkeypatch.setitem(sys.modules, "plexora._lifetime", lifetime)
     monkeypatch.setitem(sys.modules, "plexora._resources",
-                        types.SimpleNamespace(worker_threads=lambda: 8))
+                        types.SimpleNamespace(worker_threads=lambda: 8,
+                                              WAITRESS_LIMITS={}))
     monkeypatch.setitem(sys.modules, "plexora.server", types.ModuleType("plexora.server"))
     monkeypatch.setitem(sys.modules, "plexora.server.models", models)
     for name in ("PLEXORA_DESKTOP", "PLEXORA_AUTH_TOKEN", "PLEXORA_DATA_PATH",

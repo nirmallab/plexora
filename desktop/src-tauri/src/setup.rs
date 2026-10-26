@@ -12,7 +12,7 @@ pub fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     let handle = app.handle().clone();
 
     let args: Vec<String> = std::env::args().skip(1).collect();
-    opens::queue(&handle, opens::from_args(&args, std::env::current_dir().ok().as_deref()));
+    opens::deliver(&handle, opens::from_args(&args, std::env::current_dir().ok().as_deref()));
 
     // Installed builds register the scheme through the bundler; this covers a
     // development build on Windows and Linux, and is harmless otherwise.
@@ -22,8 +22,7 @@ pub fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     }
     let for_links = handle.clone();
     app.deep_link().on_open_url(move |event| {
-        let opened: Vec<_> = event.urls().iter().filter_map(opens::from_url).collect();
-        opens::queue(&for_links, opened);
+        opens::deliver(&for_links, opens::from_urls(&event.urls()));
     });
 
     windows::create_splash(&handle)?;

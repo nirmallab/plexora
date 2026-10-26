@@ -11,7 +11,7 @@
  */
 import { Hono } from 'hono';
 
-import { dayOf, knob, nowSeconds, secondsToMidnight } from '../env';
+import { dayOf, ipPepper, knob, nowSeconds, secondsToMidnight, tokenSecret } from '../env';
 import { type AppEnv, countryOf, NO_STORE } from '../http';
 import {
   addPending,
@@ -73,6 +73,16 @@ telemetry.post('/register', async (c) => {
   const state = await currentState(env, now);
   if (state === 'stop') return stopped(env, now);
 
+  // A deploy missing either secret mints nothing and writes nothing: tokens
+  // under a key in this repository could be forged by anyone.
+  const pepper = ipPepper(env);
+  if (!pepper || !tokenSecret(env)) {
+    console.error('register refused: TELEMETRY_HMAC_KEY or IP_HASH_KEY is not set');
+    return reply({ error: 'Registration is not available right now.', config: await configFor(env, state, null, now) }, 503, {
+      'Retry-After': '3600',
+    });
+  }
+
   let body: unknown;
   try {
     const bytes = await readBody(c.req.raw, REGISTER_MAX_BYTES, REGISTER_MAX_BYTES);
@@ -97,7 +107,7 @@ telemetry.post('/register', async (c) => {
   // Peppered, and keyed by day: the stored hash cannot be linked across days
   // or reversed without the pepper, and the address itself is never stored.
   const address = c.req.header('CF-Connecting-IP') ?? 'none';
-  const ipHash = (await hmacHex(env.IP_HASH_KEY || 'plexora-dev-only-pepper', `${day}|${address}`)).slice(0, 32);
+  const ipHash = (await hmacHex(pepper, `${day}|${address}`)).slice(0, 32);
   const limit = knob(env, 'REGISTER_LIMIT_PER_DAY');
 
   let quota: number;
@@ -110,11 +120,19 @@ telemetry.post('/register', async (c) => {
            ON CONFLICT(ip_hash, day) DO UPDATE SET n = n + 1 RETURNING n`,
         )
         .bind(ipHash, day),
-      upsertInstall(db, installId, client, country, now, '(SELECT n FROM register_quota WHERE ip_hash = ?1 AND day = ?2) <= ?3', [
-        ipHash,
-        day,
-        limit,
-      ]),
+      // Registration proves nothing about who holds an install id, so a
+      // second one for the same id only says it is still alive: the
+      // install's description changes through its token-bearing uploads.
+      upsertInstall(
+        db,
+        installId,
+        client,
+        country,
+        now,
+        '(SELECT n FROM register_quota WHERE ip_hash = ?1 AND day = ?2) <= ?3',
+        [ipHash, day, limit],
+        'last_seen',
+      ),
       budgetStatement(env, day, { register_requests: 1, d1_rows_written: 3 }),
     ]);
     for (const result of results) addPending('d1_rows_read', result.meta.rows_read ?? 0);

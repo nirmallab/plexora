@@ -1329,7 +1329,7 @@ class FigureQuickEdit {
         // would rebuild every panel of the page and lose the selection
         // handles, mid-drag, for a picture that has merely changed.
         const image = canvas.surfaceEl?.querySelector(
-            `.fb-panel[data-panel-id="${panelId}"] .fb-panel-image`);
+            `.fb-panel[data-panel-id="${FigureSchema.cssEscape(panelId)}"] .fb-panel-image`);
         if (image) image.src = url;
     }
 

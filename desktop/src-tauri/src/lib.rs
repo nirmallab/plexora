@@ -20,6 +20,8 @@ mod windows;
 
 use std::sync::Arc;
 
+use tauri::Manager;
+
 /// The server, shared by every command and thread that needs to reach it.
 pub struct ServerState(pub Arc<server::Server>);
 
@@ -61,31 +63,54 @@ pub fn run() {
         .manage(windows::WindowState::default())
         .manage(downloads::Downloads::default())
         .manage(updates::PendingUpdate::default())
+        .manage(commands::HandedPaths::default())
         .on_menu_event(menu::on_event)
-        .invoke_handler(tauri::generate_handler![
-            commands::pick_paths,
-            commands::save_bytes,
-            commands::read_file,
-            commands::reveal_path,
-            commands::open_in_browser,
-            commands::open_url,
-            commands::quit_app,
-            commands::new_window,
-            commands::close_window,
-            commands::server_info,
-            commands::take_pending_opens,
-            commands::notify,
-            commands::copy_image,
-            commands::toggle_fullscreen,
-            commands::is_fullscreen,
-            commands::shell_action,
-            commands::report_capabilities,
-            updates::check_update,
-            updates::install_update,
-        ])
+        // A file dropped on a window is one the page may read (`read_file`).
+        // Recorded here, before the page can hear of the drop: the page's
+        // event is delivered after this handler returns.
+        .on_window_event(|window, event| {
+            if let tauri::WindowEvent::DragDrop(tauri::DragDropEvent::Drop { paths, .. }) = event {
+                window.state::<commands::HandedPaths>().add(paths);
+            }
+        })
+        .invoke_handler(|invoke| {
+            // Only the page this launch's server serves may call the shell.
+            if let Err(reason) = commands::check_caller(invoke.message.webview_ref()) {
+                log::warn!("refused {}: {reason}", invoke.message.command());
+                invoke.resolver.reject(reason);
+                return true;
+            }
+            handler(invoke)
+        })
         .setup(setup::setup)
         .build(tauri::generate_context!())
         .expect("error while building the Plexora desktop app");
 
     app.run(lifecycle::on_run_event);
+}
+
+/// Every command the page can call. `check_caller` runs before each one.
+fn handler(invoke: tauri::ipc::Invoke<tauri::Wry>) -> bool {
+    let commands: fn(tauri::ipc::Invoke<tauri::Wry>) -> bool = tauri::generate_handler![
+        commands::pick_paths,
+        commands::save_bytes,
+        commands::read_file,
+        commands::reveal_path,
+        commands::open_in_browser,
+        commands::open_url,
+        commands::quit_app,
+        commands::new_window,
+        commands::close_window,
+        commands::server_info,
+        commands::take_pending_opens,
+        commands::notify,
+        commands::copy_image,
+        commands::toggle_fullscreen,
+        commands::is_fullscreen,
+        commands::shell_action,
+        commands::report_capabilities,
+        updates::check_update,
+        updates::install_update,
+    ];
+    commands(invoke)
 }

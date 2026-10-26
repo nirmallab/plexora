@@ -13,6 +13,7 @@ if __name__ == "__main__":
 
     from waitress import serve
     from plexora import app
+    from plexora._resources import WAITRESS_LIMITS
 
     # use port 8000 if no port is specified via command line argument
     port = 8000 if len(sys.argv) < 2 or not str.isdigit(sys.argv[1]) else sys.argv[1]
@@ -34,6 +35,11 @@ if __name__ == "__main__":
     # inside a container, which is why the Docker image passes a host
     # explicitly, and not fine on a workstation or an HPC login node.
     host = os.environ.get("PLEXORA_HOST", "127.0.0.1")
+    # Bound to loopback, the viewer answers only loopback's own names, which
+    # is what stops a rebound DNS name reaching it (see plexora._guard). A
+    # container binds 0.0.0.0 and is reached by whatever name it is given.
+    if host in ("127.0.0.1", "localhost", "::1") and app.config.get("PLEXORA_TRUSTED_HOSTS") is None:
+        app.config["PLEXORA_TRUSTED_HOSTS"] = []
 
     from plexora import cli
 
@@ -43,7 +49,6 @@ if __name__ == "__main__":
         app,
         host=host,
         port=port,
-        max_request_body_size=1073741824000000,
-        max_request_header_size=85899345920000,
+        **WAITRESS_LIMITS,
         threads=8,
     )

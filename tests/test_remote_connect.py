@@ -2136,3 +2136,32 @@ def test_a_connected_sibling_still_keeps_the_machine_up(
     assert compute.deleted == [] and compute.stopped == []
     assert viewer.state == remote_sessions.STATE_CONNECTED
     viewer.stop()
+
+
+# -- the Settings API and ssh options -----------------------------------------
+
+def _save(client, **fields):
+    return client.post("/settings/remotes", json={"name": "lab", **fields})
+
+
+def test_settings_refuses_an_address_ssh_would_read_as_a_flag(client):
+    response = _save(client, target="-oProxyCommand=x")
+    assert response.status_code == 400
+
+
+def test_settings_refuses_a_new_option_that_runs_a_program(client):
+    response = _save(client, target="me@login.example.edu",
+                     ssh_opts=["ProxyCommand=nc %h %p"])
+    assert response.status_code == 400
+    assert "runs a program" in response.get_json()["error"]
+
+
+def test_an_option_the_profile_already_had_survives_an_edit(client):
+    from plexora.server.models import remotes as remote_store
+    from plexora.server.models.remotes import Remote
+
+    remote_store.save(Remote(name="lab", target="me@login.example.edu",
+                             ssh_opts=("ProxyCommand=ssh -W %h:%p bastion",)))
+    response = _save(client, target="me@login2.example.edu",
+                     ssh_opts=["ProxyCommand=ssh -W %h:%p bastion"])
+    assert response.status_code == 200

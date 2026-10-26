@@ -334,7 +334,7 @@ class FigureCanvas {
     focusObject(id) {
         if (!id) return;
         const el = this.surfaceEl.querySelector(
-            `[data-panel-id="${id}"], [data-annotation-id="${id}"]`);
+            `[data-panel-id="${FigureSchema.cssEscape(id)}"], [data-annotation-id="${FigureSchema.cssEscape(id)}"]`);
         el?.focus({ preventScroll: true });
     }
 
@@ -763,7 +763,9 @@ class FigureCanvas {
             `width:${this.toPx(geometry.w_mm)}px`,
             `height:${this.toPx(geometry.h_mm)}px`,
             `z-index:${1000 + annotation.z}`,
-            `color:${annotation.style.color}`,
+            // Escaped although the server checks colours: this string is an
+            // attribute value, and a quote in it would end the attribute.
+            `color:${FigureSchema.escapeHtml(annotation.style.color)}`,
         ].join(";");
 
         if (annotation.type === "text") {
@@ -781,9 +783,9 @@ class FigureCanvas {
                     >${this.shapeMarkup(annotation)}${this.shapeFurniture(annotation, selected)}</div>`;
         }
         const fill = annotation.style.fill
-            ? `background:${annotation.style.fill};` : "";
-        return `<div class="fb-annotation fb-annotation-${annotation.type}${selected}"
-                     style="${style};${rotation}${fill}border-color:${annotation.style.color};
+            ? `background:${FigureSchema.escapeHtml(annotation.style.fill)};` : "";
+        return `<div class="fb-annotation fb-annotation-${FigureSchema.escapeHtml(annotation.type)}${selected}"
+                     style="${style};${rotation}${fill}border-color:${FigureSchema.escapeHtml(annotation.style.color)};
                             border-width:${Math.max(1,
                                 annotation.style.line_width_pt * this.scale / FigureCanvas.PT_PER_MM)}px"
                      data-annotation-id="${FigureSchema.escapeHtml(annotation.annotation_id)}"
@@ -2300,8 +2302,8 @@ class FigureCanvas {
 
     elementFor(item) {
         const selector = item.kind === "panel"
-            ? `.fb-panel[data-panel-id="${item.id}"]`
-            : `.fb-annotation[data-annotation-id="${item.id}"]`;
+            ? `.fb-panel[data-panel-id="${FigureSchema.cssEscape(item.id)}"]`
+            : `.fb-annotation[data-annotation-id="${FigureSchema.cssEscape(item.id)}"]`;
         return this.surfaceEl.querySelector(selector);
     }
 

@@ -11,6 +11,7 @@ import * as q from '../telemetry/queries';
 import { accessConfigured } from './access';
 import { api } from './api';
 import { adminIdentity, checkAdminToken, clearSessionCookie, mintSessionCookie, setSessionCookie } from './auth';
+import { loginAttempt } from './limit';
 import {
   BackupsPage,
   BudgetPage,
@@ -46,6 +47,10 @@ admin.use('*', async (c, next) => {
 admin.get('/login', (c) => page(c, (<LoginPage next={safeNext(c.req.query('next'))} access={accessConfigured(c.env)} />).toString()));
 
 admin.post('/login', async (c) => {
+  // Counted before the token is looked at, so a right guess past the limit
+  // is refused like a wrong one and says nothing.
+  const gate = await loginAttempt(c.env, c.req.header('CF-Connecting-IP'), nowSeconds());
+  if (!gate.ok) return jsonError(c, gate.status, gate.error, { 'Retry-After': String(gate.retryAfter) });
   const body = await readJson(c);
   if (typeof body.token !== 'string' || !(await checkAdminToken(c, body.token))) {
     return jsonError(c, 401, 'Wrong token.');

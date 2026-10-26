@@ -1,0 +1,28 @@
+# Monthly, grouped, after a week's cooldown: one pull request per ecosystem
+# and month rather than one per package and day. Security updates (when the
+# repository setting is on) arrive outside this schedule, as they should.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule: {interval: monthly}
+    cooldown: {default-days: 7}
+    groups: {actions: {patterns: ["*"]}}
+
+  - package-ecosystem: uv
+    directory: /
+    schedule: {interval: monthly}
+    cooldown: {default-days: 7}
+    groups: {python: {patterns: ["*"]}}
+
+  - package-ecosystem: cargo
+    directory: /desktop/src-tauri
+    schedule: {interval: monthly}
+    cooldown: {default-days: 7}
+    groups: {crates: {patterns: ["*"]}}
+
+  - package-ecosystem: npm
+    directories: [/plexora/client, /backend, /desktop, /website]
+    schedule: {interval: monthly}
+    cooldown: {default-days: 7}
+    groups: {npm: {patterns: ["*"]}}

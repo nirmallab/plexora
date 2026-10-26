@@ -1,7 +1,8 @@
-import { env, SELF } from 'cloudflare:test';
+import { createExecutionContext, env, SELF, waitOnExecutionContext } from 'cloudflare:test';
 import { describe, expect, it } from 'vitest';
 
-import { dayOf, addDays } from '../../src/env';
+import worker from '../../src/index';
+import { dayOf, addDays, type Env } from '../../src/env';
 import { ingestStatements } from '../../src/telemetry/ingest';
 import { cleanBatch } from '../../src/telemetry/schema';
 import { buildLine, fromBase64, gunzip, gzip, toBase64 } from '../../src/telemetry/store';
@@ -63,6 +64,74 @@ describe('register', () => {
     // Nothing identifying is stored: only a hash.
     const row = await env.TELEMETRY_DB.prepare('SELECT ip_hash FROM register_quota').first<{ ip_hash: string }>();
     expect(row!.ip_hash).not.toContain('198.51');
+  });
+});
+
+describe('register: an existing install', () => {
+  it('re-registering moves last_seen and keeps the description the install gave', async () => {
+    const id = hexId('e');
+    expect((await register(id, { plexora_version: '0.0.25', os: 'mac' })).status).toBe(200);
+    await env.TELEMETRY_DB.prepare('UPDATE installs SET last_seen = 1000, first_seen = 1000 WHERE install_id = ?').bind(id).run();
+    // Anyone can call /register with any id: it must not rewrite the row.
+    const again = await register(id, { plexora_version: '9.9.9', os: 'linux' }, '198.51.100.77');
+    expect(again.status).toBe(200);
+    const row = await env.TELEMETRY_DB.prepare('SELECT * FROM installs WHERE install_id = ?').bind(id).first<Record<string, unknown>>();
+    expect(row).toMatchObject({ version: '0.0.25', os: 'mac', first_seen: 1000 });
+    expect(Number(row!.last_seen)).toBeGreaterThan(1000);
+  });
+
+  it('an upload under the install token still refreshes the description', async () => {
+    const id = hexId('f');
+    const token = String(((await (await register(id, { plexora_version: '0.0.24', os: 'mac' })).json()) as Record<string, unknown>).install_token);
+    expect((await upload(sampleBatch(id), token)).status).toBe(202);
+    const row = await env.TELEMETRY_DB.prepare('SELECT * FROM installs WHERE install_id = ?').bind(id).first<Record<string, unknown>>();
+    expect(row).toMatchObject({ version: '0.0.25', os: 'windows' });
+  });
+});
+
+describe('production without its secrets', () => {
+  async function call(request: Request, missing: (keyof Env)[]) {
+    const bindings = { ...env } as Record<string, unknown>;
+    for (const name of missing) delete bindings[name];
+    expect(bindings.ENVIRONMENT).toBe('production');
+    const ctx = createExecutionContext();
+    const response = await worker.fetch(request, bindings as unknown as Env, ctx);
+    await waitOnExecutionContext(ctx);
+    return response;
+  }
+
+  const registration = (id: string) =>
+    new Request(`${BASE}/v1/telemetry/register`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'CF-Connecting-IP': '203.0.113.50' },
+      body: JSON.stringify({ schema: 1, install_id: id, client: { plexora_version: '0.0.25', os: 'mac' } }),
+    });
+
+  it('register is 503 with the config block, mints no token and writes no row, for either missing key', async () => {
+    for (const missing of [['TELEMETRY_HMAC_KEY'], ['IP_HASH_KEY']] as (keyof Env)[][]) {
+      const id = hexId('9');
+      const response = await call(registration(id), missing);
+      expect(response.status).toBe(503);
+      const body = (await response.json()) as Record<string, unknown>;
+      expect(body.install_token).toBeUndefined();
+      expect(Object.keys(body.config as object).sort()).toEqual(CONFIG_KEYS);
+      expect(Number(response.headers.get('Retry-After'))).toBeGreaterThan(0);
+      expect(await count('installs', 'install_id = ?', id)).toBe(0);
+    }
+  });
+
+  it('an upload is 401 even with a token that was valid under the key', async () => {
+    const id = hexId('8');
+    const token = await tokenFor(id);
+    const batch = sampleBatch(id);
+    const body = await gzipBytes(JSON.stringify(batch));
+    const request = new Request(`${BASE}/v1/telemetry/events`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Content-Encoding': 'gzip', Authorization: `Bearer ${token}` },
+      body,
+    });
+    expect((await call(request, ['TELEMETRY_HMAC_KEY'])).status).toBe(401);
+    expect(await count('batches', 'install_id = ?', id)).toBe(0);
   });
 });
 

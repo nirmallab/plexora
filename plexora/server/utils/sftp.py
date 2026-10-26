@@ -867,27 +867,22 @@ def head_copy(url, limit: int = HEAD_BYTES):
     always is.
     """
     import hashlib
-    import os
-    import tempfile
-    from pathlib import Path
+
+    from plexora.server.utils import head_cache
 
     path = path_of(url)
     client = require_client(target_of(url))
     attrs = client.stat(path)
     size = int(attrs.size or 0)
     key = hashlib.sha1(f"{url}\0{size}\0{attrs.mtime}".encode()).hexdigest()[:16]
-    local = (Path(tempfile.gettempdir()) / "plexora-sftp-heads" / key
-             / path.rsplit("/", 1)[-1])
+    local = head_cache.place("sftp-heads", key, path.rsplit("/", 1)[-1])
     whole = size <= limit
     if not local.exists():
         data = client.read_range(path, 0, min(size, limit))
         if not whole:
             cut = data.rfind(b"\n")
             data = data[:cut + 1] if cut > 0 else data
-        local.parent.mkdir(parents=True, exist_ok=True)
-        partial = local.with_name(local.name + ".partial")
-        partial.write_bytes(data)
-        os.replace(partial, local)
+        head_cache.write(local, data)
     return local, whole
 
 

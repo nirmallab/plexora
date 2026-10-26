@@ -15,6 +15,8 @@ export interface Env {
   ADMIN_TOKEN?: string;
   ADMIN_COOKIE_KEY?: string;
 
+  /** `production` on the deployed Worker ([vars]); anything else is development. */
+  ENVIRONMENT?: string;
   PUBLIC_BASE_URL?: string;
   ACCESS_TEAM_DOMAIN?: string;
   ACCESS_AUD?: string;
@@ -40,6 +42,8 @@ export const DEFAULTS = {
   MAX_CLEAN_BYTES: 131072,
   MAX_EVENTS: 200,
   REGISTER_LIMIT_PER_DAY: 200,
+  LOGIN_LIMIT_PER_HOUR: 10,
+  LOGIN_GLOBAL_LIMIT_PER_HOUR: 30,
   EVENTS_PER_INSTALL_PER_HOUR: 12,
   EVENTS_PER_INSTALL_PER_DAY: 96,
   DEDUPE_DAYS: 3,
@@ -74,6 +78,36 @@ export const DEFAULTS = {
 } as const;
 
 export type Knob = keyof typeof DEFAULTS;
+
+export function isProduction(env: Env): boolean {
+  return env.ENVIRONMENT === 'production';
+}
+
+/** The secrets that sign tokens and pepper address hashes. */
+export type KeySecret = 'TELEMETRY_HMAC_KEY' | 'IP_HASH_KEY';
+
+/**
+ * A signing secret, or, outside production only, a fixed development stand-in
+ * so `wrangler dev` works with no secrets at all. In production an unset
+ * secret is null and the caller refuses: a literal key in this repository
+ * would let anyone forge install tokens or reverse the address hashes.
+ */
+export function signingSecret(env: Env, name: KeySecret, devStandIn: string): string | null {
+  const value = env[name];
+  if (typeof value === 'string' && value !== '') return value;
+  return isProduction(env) ? null : devStandIn;
+}
+
+export const DEV_TELEMETRY_KEY = 'plexora-dev-only-telemetry-key';
+export const DEV_IP_PEPPER = 'plexora-dev-only-pepper';
+
+export function tokenSecret(env: Env): string | null {
+  return signingSecret(env, 'TELEMETRY_HMAC_KEY', DEV_TELEMETRY_KEY);
+}
+
+export function ipPepper(env: Env): string | null {
+  return signingSecret(env, 'IP_HASH_KEY', DEV_IP_PEPPER);
+}
 
 /** A numeric `[vars]` value, or its default when absent or not a number. */
 export function knob(env: Env, name: Knob): number {

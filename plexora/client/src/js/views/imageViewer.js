@@ -3426,7 +3426,23 @@ class ImageViewer {
         const legend = document.getElementById("viewer_channel_legend");
         if (!legend) return;
         const active = this.getActiveLegendChannels();
-        legend.innerHTML = active.map((slot) => '<span class="legend-row"><span class="legend-swatch" style="background:' + slot.colorHex + '"></span><span class="legend-name">' + slot.name + '</span></span>').join("");
+        // Built as nodes, never as markup: a channel name comes from the
+        // image's own metadata or an uploaded channel file, and as innerHTML
+        // a name such as `<img onerror=...>` ran as script in the viewer.
+        // The colour is set as a style property, where an odd value is
+        // simply ignored rather than parsed into the element.
+        legend.replaceChildren(...active.map((slot) => {
+            const row = document.createElement("span");
+            row.className = "legend-row";
+            const swatch = document.createElement("span");
+            swatch.className = "legend-swatch";
+            swatch.style.background = String(slot.colorHex || "");
+            const name = document.createElement("span");
+            name.className = "legend-name";
+            name.textContent = String(slot.name);
+            row.append(swatch, name);
+            return row;
+        }));
         legend.style.display = active.length ? "flex" : "none";
     }
 

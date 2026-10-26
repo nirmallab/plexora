@@ -6,6 +6,7 @@ from pathlib import Path
 from plexora import paths, get_config
 from plexora.server.utils import brightfield
 from plexora.server.utils import fast_png
+from plexora.server.utils import safe_pickle
 from plexora.server.utils import image_pyramid
 from plexora.server.utils import segmentation_pyramid
 from plexora.server.models.adapters import MetadataColumn, get_adapter
@@ -1625,7 +1626,7 @@ def _read_cached_index(directory, expected):
                        sorted(k for k in expected if manifest.get(k) != expected[k]))
             return None
         with open(directory / "index.pickle", "rb") as handle:
-            return SpatialIndex.from_state(pickle.load(handle))
+            return SpatialIndex.from_state(safe_pickle.load(handle))
     except FileNotFoundError:
         return None
     except Exception as exc:
@@ -2392,7 +2393,7 @@ def get_saved_channel_list(datasource_name):
     channel_list = database_model.get(database_model.ChannelList, datasource=datasource_name)
     if channel_list is None:
         return None
-    return pickle.loads(channel_list.cells)
+    return safe_pickle.loads(channel_list.cells)
 
 
 def rename_saved_channels(datasource_name, renames):

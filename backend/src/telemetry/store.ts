@@ -277,6 +277,10 @@ const INSTALL_UPDATE = INSTALL_COLUMNS.map((col) => `${col} = COALESCE(excluded.
 /**
  * The installs upsert, guarded by `whereSql` (S2 only runs when S1 landed;
  * /register only when the address is under its quota). First_seen is kept.
+ *
+ * `onConflict` says what an existing row takes: `all` (an upload under the
+ * install's own token) refreshes the description, `last_seen` (/register,
+ * which anyone can call with any id) touches nothing but the time.
  */
 export function upsertInstall(
   db: D1Database,
@@ -286,6 +290,7 @@ export function upsertInstall(
   now: number,
   whereSql: string,
   whereBinds: unknown[],
+  onConflict: 'all' | 'last_seen' = 'all',
 ): D1PreparedStatement {
   const offset = 3 + INSTALL_COLUMNS.length;
   const where = whereSql.replace(/\?(\d+)/g, (_, n: string) => `?${Number(n) + offset}`);
@@ -294,7 +299,7 @@ export function upsertInstall(
       `INSERT INTO installs (install_id, first_seen, last_seen, ${INSTALL_COLUMNS.join(', ')})
        SELECT ?1, ?2, ?3, ${INSTALL_COLUMNS.map((_, i) => `?${i + 4}`).join(', ')}
        WHERE ${where}
-       ON CONFLICT(install_id) DO UPDATE SET last_seen = excluded.last_seen, ${INSTALL_UPDATE}`,
+       ON CONFLICT(install_id) DO UPDATE SET last_seen = excluded.last_seen${onConflict === 'all' ? `, ${INSTALL_UPDATE}` : ''}`,
     )
     .bind(installId, now, now, ...installValues(client, country), ...whereBinds);
 }
