@@ -49,7 +49,9 @@ def tissue_cells(survey: dict, view=VIEW):
             px1 = int((cx + view[0] / 2 - x0) * sx)
             py0 = int((cy - view[1] / 2 - y0) * sy)
             py1 = int((cy + view[1] / 2 - y0) * sy)
-            patch = picture[max(0, py0):max(0, py1), max(0, px0):max(0, px1)]
+            if px0 < 0 or py0 < 0 or px1 > w or py1 > h:
+                continue                      # not all of it in the picture: unseen
+            patch = picture[py0:py1, px0:px1]
             score = float(patch.mean()) if patch.size else 0.0
             cells.append((int(cx), int(cy), score))
     return cells

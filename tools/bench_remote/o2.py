@@ -1,13 +1,12 @@
 """The far side of the remote-access benchmark: a data node in a SLURM job.
 
 Everything here runs over the system ssh, as Plexora's own connections do.
-Every connection to the login node -- control commands (srun steps,
-fadvise, /proc reads), the node's launch, and the tunnel's hop -- goes
-through ONE multiplexed ssh master, authenticated once and kept for the
-session: each new login would cost the user a Duo push. The tunnel to the
-compute node is opened once per session too and outlives node restarts
-(the node always comes back on the same port), so a cold node start is the
-job step and the process start, not a fresh login.
+Every command runs in ONE long-lived shell on the job's compute node, opened
+through a compute-node ssh master that hops via the login master; the
+tunnel is a forward added to that master. On O2 every new session on the
+login node (even a multiplexed one) runs Duo, so the run opens none: the
+node is started from that shell (inside the job's cgroup, which the ssh
+session is adopted into) rather than with srun from the login node.
 
 Nothing here touches anything but the user's own processes and files:
 the page cache is dropped for the benchmark's file only (`posix_fadvise`
@@ -43,7 +42,6 @@ class Site:
     cpus: int = 10
     control_path: str = "~/.ssh/plx-bench-%r@%h:%p"
     node: str = ""                  # compute host, filled in by `locate`
-    tunnel: subprocess.Popen | None = None
     tunnel_ports: tuple = ()
 
     def master_options(self) -> list:
@@ -58,66 +56,96 @@ class Site:
         match = _re.search(r"pid=(\d+)", done.stderr + done.stdout)
         return int(match.group(1)) if match else None
 
+    def compute_master(self) -> list:
+        """ssh options for the session's one connection INTO the compute node,
+        hopping through the login master. Opened on first use and kept for
+        12 h: a login on the compute node is a Duo push, so it happens once."""
+        # The hop names the login master's socket literally: inside a
+        # ProxyCommand, ssh expands %h to the COMPUTE host, and a templated
+        # ControlPath there opened a second login (one more Duo push) per hop.
+        login_socket = str(Path(self.control_path.replace("%r@%h:%p", self.login + ":22")).expanduser())
+        hop = " ".join(["ssh", "-o", "BatchMode=yes", "-o", "ControlMaster=no",
+                        "-o", f"ControlPath={login_socket}", "-W", "%h:%p", self.login])
+        compute_socket = str(Path(f"~/.ssh/plx-bench-compute-{self.node}").expanduser())
+        return ["-o", "BatchMode=yes", "-o", "ControlMaster=auto",
+                "-o", f"ControlPath={compute_socket}", "-o", "ControlPersist=12h",
+                "-o", f"ProxyCommand={hop}"]
+
     def ensure_tunnel(self, local_port: int, node_port: int) -> float:
-        """The forward to the compute node's loopback, hopping through the
-        master; seconds spent opening it (0 when it was already up)."""
-        if self.tunnel and self.tunnel.poll() is None and self.tunnel_ports == (local_port, node_port):
+        """The forward to the node's loopback port, added to the compute
+        master (`ssh -O forward`), so a node restart opens nothing new.
+        Seconds spent (0 when it was already up)."""
+        if self.tunnel_ports == (local_port, node_port):
             return 0.0
         self.close_tunnel()
-        hop = " ".join(["ssh", *self.master_options(), "-W", "%h:%p", self.login])
+        target = f"{self.login.split('@')[0]}@{self.node}"
         t0 = time.time()
-        self.tunnel = subprocess.Popen(
-            ["ssh", "-N", "-o", "BatchMode=yes", "-o", "ExitOnForwardFailure=yes",
-             "-o", "ServerAliveInterval=30", "-o", f"ProxyCommand={hop}",
-             f"{self.login.split('@')[0]}@{self.node}",
-             "-L", f"{local_port}:127.0.0.1:{node_port}"],
-            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
+        check = subprocess.run(["ssh", *self.compute_master(), "-O", "check", target],
+                               capture_output=True, text=True)
+        if check.returncode != 0:
+            # The one login on the compute node this session makes.
+            subprocess.run(["ssh", *self.compute_master(), "-fN", target], check=True, timeout=180)
+        done = subprocess.run(["ssh", *self.compute_master(), "-O", "forward",
+                               "-L", f"{local_port}:127.0.0.1:{node_port}", target],
+                              capture_output=True, text=True, timeout=60)
+        if done.returncode != 0:
+            raise RuntimeError(f"could not add the forward: {done.stderr.strip()}")
         self.tunnel_ports = (local_port, node_port)
-        # Up once the local port listens.
-        while time.time() - t0 < 120:
-            try:
-                with socket.create_connection(("127.0.0.1", local_port), timeout=1):
-                    return time.time() - t0
-            except OSError:
-                if self.tunnel.poll() is not None:
-                    raise RuntimeError("the tunnel to the compute node closed")
-                time.sleep(0.2)
-        raise RuntimeError("the tunnel to the compute node did not open")
+        return time.time() - t0
 
     def close_tunnel(self) -> None:
-        if self.tunnel and self.tunnel.poll() is None:
-            try:
-                os.killpg(os.getpgid(self.tunnel.pid), signal.SIGTERM)
-                self.tunnel.wait(timeout=10)
-            except Exception:  # noqa: BLE001
-                pass
-        self.tunnel = None
+        """Take the forward off the compute master (the master stays up)."""
+        if self.tunnel_ports and self.node:
+            local_port, node_port = self.tunnel_ports
+            subprocess.run(["ssh", *self.compute_master(), "-O", "cancel",
+                            "-L", f"{local_port}:127.0.0.1:{node_port}",
+                            f"{self.login.split('@')[0]}@{self.node}"],
+                           capture_output=True, text=True, timeout=60)
         self.tunnel_ports = ()
 
-    def ssh(self, command: str, *, timeout: float = 120, check: bool = True) -> str:
-        """Run `command` on the login node over the shared control master."""
-        argv = ["ssh", *self.master_options(), self.login, command]
-        done = subprocess.run(argv, capture_output=True, text=True, timeout=timeout)
-        if check and done.returncode != 0:
-            raise RuntimeError(f"ssh {command[:80]!r} failed: {done.stderr.strip()[-400:]}")
-        return _strip_banner(done.stdout)
+    def compute_master_pid(self) -> int | None:
+        if not self.node:
+            return None
+        done = subprocess.run(["ssh", *self.compute_master(), "-O", "check",
+                               f"{self.login.split('@')[0]}@{self.node}"],
+                              capture_output=True, text=True)
+        import re as _re
+        match = _re.search(r"pid=(\d+)", done.stderr + done.stdout)
+        return int(match.group(1)) if match else None
+
+    def shell(self) -> "RemoteShell":
+        """The run's one session on the compute node (inside the job's
+        cgroup), opened on first use through the compute master. Every
+        command goes down it: a session on the login node is a Duo push."""
+        if getattr(self, "_shell", None) is None or not self._shell.alive:
+            target = f"{self.login.split('@')[0]}@{self.node}"
+            self._shell = RemoteShell(["ssh", *self.compute_master(), target,
+                                       "bash --noprofile --norc -s"])
+        return self._shell
+
+    def ssh(self, command: str, *, timeout: float = 300, check: bool = True) -> str:
+        """`command` on the cluster: the compute node's shell sees the same
+        filesystems and the same SLURM as the login node."""
+        return self.shell().run(command, timeout=timeout, check=check)
 
     def on_node(self, command: str, *, timeout: float = 300) -> str:
-        """Run `command` on the job's compute node (an overlapping step)."""
-        step = (f"srun --jobid={self.job} --overlap -N1 -n1 -c1 bash -c "
-                f"{shlex.quote(command)}")
-        return self.ssh(step, timeout=timeout)
+        """`command` on the job's compute node."""
+        return self.shell().run(command, timeout=timeout)
+
+    def close(self) -> None:
+        self.close_tunnel()
+        if getattr(self, "_shell", None) is not None:
+            self._shell.close()
+            self._shell = None
 
     def locate(self) -> dict:
-        """The job's state and node; waits while it is pending."""
-        while True:
-            out = self.ssh(f"squeue -h -j {self.job} -o '%T %N %M %l'", check=False).split()
-            if not out:
-                raise RuntimeError(f"job {self.job} is not in the queue")
-            if out[0] == "RUNNING":
-                self.node = out[1]
-                return {"state": out[0], "node": out[1], "elapsed": out[2], "limit": out[3]}
-            time.sleep(15)
+        """The job's state; its node is fixed in the configuration."""
+        out = self.ssh(f"squeue -h -j {self.job} -o '%T %N %M %l'", check=False).split()
+        if not out or out[0] != "RUNNING":
+            raise RuntimeError(f"job {self.job} is not running: {out}")
+        if out[1].split(".")[0] != self.node.split(".")[0]:
+            raise RuntimeError(f"job {self.job} is on {out[1]}, not {self.node}")
+        return {"state": out[0], "node": out[1], "elapsed": out[2], "limit": out[3]}
 
     def facts(self) -> dict:
         """The compute node: CPU model, cores, memory, load, kernel."""
@@ -171,7 +199,7 @@ class Node:
     node_id: str = "bench-o2"
     env: dict = field(default_factory=dict)
     log_dir: Path = Path(".")
-    launcher: subprocess.Popen | None = None
+    log_path: str = ""
     tunnel: subprocess.Popen | None = None
     timings: dict = field(default_factory=dict)
 
@@ -180,50 +208,30 @@ class Node:
         return f"http://127.0.0.1:{self.local_port}"
 
     def start(self, timeout: float = 600) -> dict:
-        """Launch the node in the job and wait for its announce line; then the
-        tunnel, and wait for /health through it."""
+        """Start the node on the compute node (in the job's cgroup, through
+        the run's shell) and wait for its announce line; then the forward,
+        and wait for /health through it."""
         s = self.site
         env = " ".join(f"{k}={shlex.quote(str(v))}" for k, v in {
             "PLEXORA_DATA_PATH": s.data_root, "PLEXORA_TELEMETRY": "off", **self.env}.items())
+        self.log_path = f"{s.data_root}/node-{int(time.time())}.log"
         serve = (f"{s.python_env}/bin/plexora node serve --host 127.0.0.1 "
                  f"--port {self.node_port} --token {self.token} --node-id {self.node_id} "
                  f"--dynamic --manifest {s.data_root}/manifest.json "
                  f"--allow-origin {self.allow_origin}")
-        remote = (f"srun --jobid={s.job} --overlap -N1 -n1 -c{s.cpus} "
-                  f"env {env} {serve}")
-        log = open(self.log_dir / f"node-{int(time.time())}.log", "w", encoding="utf-8")
         t0 = time.time()
-        # -tt: ending this ssh hangs the remote step up, as a closed terminal would.
-        self.launcher = subprocess.Popen(
-            ["ssh", "-tt", *s.master_options(), s.login, remote],
-            stdout=subprocess.PIPE, stderr=subprocess.STDOUT, stdin=subprocess.PIPE,
-            text=True, bufsize=1, start_new_session=True)
+        s.on_node(f"nohup env {env} {serve} > {self.log_path} 2>&1 < /dev/null & echo started")
         announced = None
         deadline = t0 + timeout
         while time.time() < deadline:
-            line = self.launcher.stdout.readline()
-            if not line:
-                if self.launcher.poll() is not None:
-                    raise RuntimeError("the node exited before announcing itself")
-                continue
-            match = ANNOUNCE.search(line)
-            log.write(ANNOUNCE.sub("[plexora-node] (announce)", line))
-            log.flush()
-            if match:
+            out = s.on_node(f"grep -c '\\[plexora-node\\]' {self.log_path} 2>/dev/null || true")
+            if out.strip().splitlines() and out.strip().splitlines()[-1].strip() not in ("", "0"):
                 announced = time.time()
                 break
+            time.sleep(0.5)
         if announced is None:
-            raise RuntimeError("the node did not announce itself in time")
-        # Keep draining its output so the pipe never blocks it.
-        import threading
-
-        def drain():
-            for line in self.launcher.stdout:
-                log.write(line)
-            log.close()
-        threading.Thread(target=drain, daemon=True).start()
-        if not s.node:
-            raise RuntimeError("the job's compute node is not known (Site.locate)")
+            tail = s.on_node(f"tail -5 {self.log_path}")
+            raise RuntimeError(f"the node did not announce itself in time: {tail}")
         opened = s.ensure_tunnel(self.local_port, self.node_port)
         healthy = self.wait_health(deadline)
         self.timings = {"t_node_announce": announced - t0, "t_tunnel_open": opened,
@@ -249,25 +257,75 @@ class Node:
         return self.site.master_pid()
 
     def stop(self) -> None:
-        for proc in (self.launcher,):
-            if proc and proc.poll() is None:
-                try:
-                    os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
-                except (ProcessLookupError, PermissionError):
-                    pass
-        for proc in (self.launcher,):
-            if proc:
-                try:
-                    proc.wait(timeout=15)
-                except subprocess.TimeoutExpired:
-                    os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
-        # Belt and braces: no node of ours may outlive its block.
+        """End this benchmark's node and nothing else of the user's."""
+        pattern = shlex.quote(_own_node(self.node_id))
         try:
-            pattern = shlex.quote(_own_node(self.node_id))
-            self.site.on_node(f"pkill -u $USER -f {pattern}; sleep 1; pgrep -u $USER -f {pattern} || true",
-                              timeout=120)
-        except Exception:
+            self.site.on_node(f"pkill -u $USER -f {pattern}; sleep 1; "
+                              f"pkill -9 -u $USER -f {pattern}; true", timeout=120)
+        except Exception:  # noqa: BLE001
             pass
+
+
+class RemoteShell:
+    """One long-lived remote bash, fed commands on stdin; each command's
+    output ends at a marker line carrying its exit status."""
+
+    def __init__(self, argv: list):
+        import queue
+        import threading
+
+        self.proc = subprocess.Popen(argv, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                                     stderr=subprocess.STDOUT, text=True, bufsize=1,
+                                     start_new_session=True)
+        self.lines: "queue.Queue[str | None]" = queue.Queue()
+        self.lock = threading.Lock()
+
+        def pump():
+            for line in self.proc.stdout:
+                self.lines.put(line)
+            self.lines.put(None)
+        threading.Thread(target=pump, daemon=True).start()
+        self.run("echo ready", timeout=180)
+
+    @property
+    def alive(self) -> bool:
+        return self.proc.poll() is None
+
+    def run(self, command: str, *, timeout: float = 300, check: bool = False) -> str:
+        import queue
+        import uuid
+
+        marker = f"__plx_done_{uuid.uuid4().hex}__"
+        with self.lock:
+            self.proc.stdin.write(f"{{ {command}\n}} 2>&1; echo {marker} $?\n")
+            self.proc.stdin.flush()
+            out, deadline = [], time.time() + timeout
+            while True:
+                try:
+                    line = self.lines.get(timeout=max(0.1, deadline - time.time()))
+                except queue.Empty:
+                    raise TimeoutError(f"remote command timed out: {command[:80]}")
+                if line is None:
+                    raise RuntimeError("the remote shell ended")
+                if line.startswith(marker):
+                    status = int(line.split()[1])
+                    break
+                out.append(line)
+        text = _strip_banner("".join(out))
+        if check and status != 0:
+            raise RuntimeError(f"{command[:80]!r} failed ({status}): {text[-400:]}")
+        return text
+
+    def close(self) -> None:
+        try:
+            self.proc.stdin.write("exit\n")
+            self.proc.stdin.flush()
+            self.proc.wait(timeout=10)
+        except Exception:  # noqa: BLE001
+            try:
+                os.killpg(os.getpgid(self.proc.pid), signal.SIGTERM)
+            except Exception:  # noqa: BLE001
+                pass
 
 
 def _own_node(node_id: str) -> str:

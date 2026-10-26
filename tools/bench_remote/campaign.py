@@ -129,10 +129,11 @@ def laptop_state() -> dict:
 class Primary:
     """A Plexora on this laptop, serving the bench data root, user's HOME kept."""
 
-    def __init__(self, cfg: dict):
+    def __init__(self, cfg: dict, port: int | None = None, data: str = "data", env=None):
         self.cfg = cfg
-        self.port = int(cfg["primary_port"])
-        self.data = Path(cfg["bench_dir"]).expanduser() / "data"
+        self.port = int(port or cfg["primary_port"])
+        self.data = Path(cfg["bench_dir"]).expanduser() / data
+        self.env = env or {}
         self.info = None
 
     @property
@@ -141,7 +142,7 @@ class Primary:
 
     def start(self) -> float:
         t0 = time.time()
-        env = {"PLEXORA_TELEMETRY": "off", **self.cfg.get("primary_env", {})}
+        env = {"PLEXORA_TELEMETRY": "off", **self.cfg.get("primary_env", {}), **self.env}
         self.info = serve_start(self.data, self.port, env, python=PY, root=ROOT, real_home=True)
         return time.time() - t0
 
@@ -243,10 +244,18 @@ class Campaign:
         self.raw = self.out / "raw"
         self.raw.mkdir(parents=True, exist_ok=True)
         self.bench = Path(cfg["bench_dir"]).expanduser()
+        # One Plexora per arm on this laptop. The SFTP one is started once and
+        # kept, so the run makes one SFTP login (a Duo push on O2), and is
+        # flushed back to the snapshot before each cold block instead of
+        # restarted; the node arm's is restarted per block (no ssh involved).
         self.primary = Primary(cfg)
+        self.primary_s = Primary(cfg, port=int(cfg.get("primary_port_s", int(cfg["primary_port"]) + 1)),
+                                 data="data", env={"PLEXORA_BENCH_FLUSH": "1"})
+        self.primary_n = Primary(cfg, data="data-node")
         c = cfg["cluster"]
         self.site = o2.Site(login=c["login"], job=str(c["job"]), python_env=c["python_env"],
-                            data_root=c["node_data_root"], file=c["file"], cpus=int(c.get("cpus", 10)))
+                            data_root=c["node_data_root"], file=c["file"], cpus=int(c.get("cpus", 10)),
+                            node=c.get("node", ""))
         self.node = None
         self.snapshot = self.bench / "remote_cache.snapshot"
         if self.cfg["bench_dir"] in ("", "/") or "Application Support/plexora" in str(self.bench):
@@ -267,7 +276,7 @@ class Campaign:
     def new_node(self) -> o2.Node:
         c = self.cfg["cluster"]
         return o2.Node(site=self.site, token=c["token"], node_port=int(c["node_port"]),
-                       local_port=int(c["tunnel_port"]), allow_origin=self.primary.base,
+                       local_port=int(c["tunnel_port"]), allow_origin=self.primary_n.base,
                        node_id=self.cfg["node_name"], env=c.get("node_env", {}),
                        log_dir=self.raw)
 
@@ -284,27 +293,35 @@ class Campaign:
         return self.node.start()
 
     # -- arms
+    def primary_for(self, arm: str) -> Primary:
+        return self.primary_n if arm == "N" else self.primary_s
+
     def prepare(self, arm: str, state: str) -> dict:
         """Bring `arm` to the start of a cold (C1) run; return what it cost."""
         prep = {"arm": arm, "state": state}
-        self.primary.stop()
         if arm == "N":
+            self.primary_n.stop()
             prep["fadvise"] = self.site.drop_file_cache()
             prep["node"] = self.node_up()
-            prep["t_primary"] = self.primary.start()
+            prep["t_primary"] = self.primary_n.start()
             t0 = time.time()
-            self.primary.register_node(self.node)
+            self.primary_n.register_node(self.node)
             prep["t_register"] = time.time() - t0
         else:
-            self.node_down()
-            cache = self.primary.data / ".remote_cache"
-            if state == "C1" and self.snapshot.exists():
+            ps = self.primary_s
+            if not ps.info:
+                ps.stop()
+                cache = ps.data / ".remote_cache"
                 shutil.rmtree(cache, ignore_errors=True)
-                # APFS clone: instant, and the snapshot stays as it was.
                 subprocess.run(["cp", "-cR", str(self.snapshot), str(cache)], check=True)
-            prep["cache_bytes"] = _du(cache)
-            prep["t_primary"] = self.primary.start()
-            prep["t_connect"] = self.primary.connect_sftp()
+                prep["t_primary"] = ps.start()
+                prep["t_connect"] = ps.connect_sftp()
+                prep["first_start"] = True
+            t0 = time.time()
+            prep["flush"] = http("POST", f"{ps.base}/volume/_bench/flush",
+                                 {"keep": str(self.snapshot / "index.sqlite")}, timeout=600)
+            prep["t_flush"] = time.time() - t0
+            prep["cache_bytes"] = _du(ps.data / ".remote_cache")
         return prep
 
     def counters(self, arm: str, dataset: str) -> dict:
@@ -316,8 +333,8 @@ class Campaign:
             except Exception as error:  # noqa: BLE001
                 out["node_io"] = {"error": repr(error)}
         else:
-            out["wire"] = nettop(self.primary.sftp_pid())
-            perf = self.primary.perf(dataset) or {}
+            out["wire"] = nettop(self.primary_s.sftp_pid())
+            perf = self.primary_s.perf(dataset) or {}
             out["sftp"] = perf.get("sftp")
             out["remote"] = {k: v for k, v in (perf.get("remote") or {}).items() if k != "disk"}
             out["remote_disk"] = (perf.get("remote") or {}).get("disk", {}).get("used_bytes")
@@ -343,7 +360,7 @@ class Campaign:
 
             tour_params = {**params, "waypoints": wp}
             out = self.raw / f"{label}-b{block:02d}-{arm}-{int(time.time())}.json"
-            result = run_tour(self.cfg, self.primary, dataset, tour_params, out, between)
+            result = run_tour(self.cfg, self.primary_for(arm), dataset, tour_params, out, between)
             marks.append(("end", self.counters(arm, dataset)))
             row["tour_file"] = out.name
             row["error"] = result.get("error")
@@ -569,8 +586,9 @@ def main(argv=None):
             camp.blocks(which, cfg["tour"])
         finally:
             camp.node_down()
-            camp.primary.stop()
-            camp.site.close_tunnel()
+            camp.primary_n.stop()
+            camp.primary_s.stop()
+            camp.site.close()
     elif args.cmd == "c0":
         lo, _, hi = args.reps.partition("-")
         try:

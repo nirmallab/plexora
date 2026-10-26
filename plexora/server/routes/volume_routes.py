@@ -987,6 +987,59 @@ def _sftp_perf(_datasource) -> dict:
 _PERF_PROVIDERS.update(remote=_remote_perf, sftp=_sftp_perf)
 
 
+@app.route('/volume/_bench/flush', methods=['POST'])
+def bench_flush():
+    """Empty this process's image caches, for a benchmark that must start a
+    run cold without restarting the process (and so without a new login to a
+    files-only server, which can cost a Duo push). Off unless the server was
+    started with PLEXORA_BENCH_FLUSH=1: a 404 otherwise.
+
+    Clears the level cache, the decoded-chunk cache, the encoded tile cache
+    and the remote block memory; and, given `keep` (the path of a copy of the
+    chunk cache's index.sqlite), drops every on-disk chunk-cache entry that
+    copy does not list -- the cache back to what it held when the copy was
+    taken. Open file handles and windows already computed are kept, as a
+    restarted process that reopened the file would rebuild them.
+    """
+    import os
+    import sqlite3
+
+    if os.environ.get("PLEXORA_BENCH_FLUSH") != "1":
+        abort(404)
+    from plexora.server.routes import data_routes
+    from plexora.server.utils import remote_store
+    from plexora.server.volume import chunk_cache
+
+    serve.clear()
+    chunk_cache.CACHE.clear()
+    with data_routes._tile_png_cache_lock:
+        data_routes._tile_png_cache.clear()
+    remote_store._block_memory.clear()
+    dropped = kept = 0
+    keep = (request.get_json(silent=True) or {}).get("keep")
+    if keep:
+        with sqlite3.connect(f"file:{keep}?mode=ro", uri=True) as db:
+            wanted = set(db.execute(
+                "SELECT store_id, key, range_start, range_end FROM entries").fetchall())
+        index = remote_store.cache_index()
+        index.flush()
+        with index._lock:
+            rows = index._db.execute(
+                "SELECT store_id, key, range_start, range_end FROM entries").fetchall()
+        for store_id, key, start, end in rows:
+            if (store_id, key, start, end) in wanted:
+                kept += 1
+                continue
+            path = index.value_path(store_id, key, (start, end))
+            index.forget(store_id, key, (start, end))
+            try:
+                path.unlink()
+            except OSError:
+                pass
+            dropped += 1
+    return jsonify(ok=True, dropped=dropped, kept=kept)
+
+
 @app.route('/volume/<string:datasource>/section', methods=['GET'])
 def section_geometry(datasource):
     """What a section pane's tile source needs for `view=xzy<y>` / `yzx<x>`:
