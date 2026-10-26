@@ -1888,7 +1888,7 @@ class FigureWorkspace {
                 if (!made) continue;
                 canvas.previewOverrides.set(panelId, made.dataURL);
                 const image = canvas.surfaceEl?.querySelector(
-                    `.fb-panel[data-panel-id="${panelId}"] .fb-panel-image`);
+                    `.fb-panel[data-panel-id="${FigureSchema.cssEscape(panelId)}"] .fb-panel-image`);
                 if (image) image.src = made.dataURL;
                 await this.api.putPreview(this.figureId, panelId,
                                           panel.render_revision, made.blob,
@@ -2590,7 +2590,7 @@ class FigureWorkspace {
         // canvas, which does not know an editor exists.
         if (this.textEditor?.active) {
             const element = this.canvas.surfaceEl.querySelector(
-                `[data-annotation-id="${this.textEditor.annotationId}"]`);
+                `[data-annotation-id="${FigureSchema.cssEscape(this.textEditor.annotationId)}"]`);
             // Measured before it is hidden. `visibility: hidden` keeps the
             // layout box, so the order does not strictly matter -- but the
             // editor follows the annotation's new geometry, leading and

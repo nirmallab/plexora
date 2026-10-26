@@ -241,7 +241,7 @@ class FigureContextBar {
         let box = null;
         for (const id of this.ids) {
             const element = this.canvas.surfaceEl.querySelector(
-                `[data-panel-id="${id}"], [data-annotation-id="${id}"]`);
+                `[data-panel-id="${FigureSchema.cssEscape(id)}"], [data-annotation-id="${FigureSchema.cssEscape(id)}"]`);
             if (!element) continue;
             const rect = element.getBoundingClientRect();
             box = box ? {

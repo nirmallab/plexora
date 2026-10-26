@@ -544,6 +544,23 @@ const FigureSchema = {
             }[c]));
     },
 
+    /**
+     * A value for a quoted attribute selector: `[data-panel-id="${...}"]`.
+     *
+     * The server checks ids, but a selector built from one must not lean on
+     * that: a quote in it ends the string and `querySelector` throws, or
+     * matches something else. CSS.escape where the page has it -- every
+     * browser does; the fallback escapes what a quoted CSS string cannot hold
+     * as written.
+     */
+    cssEscape(value) {
+        const text = String(value === undefined || value === null ? "" : value);
+        if (typeof CSS !== "undefined" && CSS && typeof CSS.escape === "function") {
+            return CSS.escape(text);
+        }
+        return text.replace(/[\\"]/g, "\\$&").replace(/\n/g, "\\a ");
+    },
+
     /** "3 minutes ago" for a timestamp, "" for anything unparseable. */
     timeAgo(iso) {
         if (!iso) return "";

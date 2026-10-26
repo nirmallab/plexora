@@ -65,7 +65,7 @@ class FigureTextEditor {
         this.pending = (options && options.marks) || null;
 
         const target = this.canvas.surfaceEl.querySelector(
-            `[data-annotation-id="${annotationId}"]`);
+            `[data-annotation-id="${FigureSchema.cssEscape(annotationId)}"]`);
         if (!target) return;
 
         this.annotationId = annotationId;
@@ -212,7 +212,7 @@ class FigureTextEditor {
             .forEach((editor) => editor.remove());
         if (restore !== false && this.annotationId) {
             const target = this.canvas.surfaceEl.querySelector(
-                `[data-annotation-id="${this.annotationId}"]`);
+                `[data-annotation-id="${FigureSchema.cssEscape(this.annotationId)}"]`);
             if (target) target.style.visibility = "";
         }
         this.el = null;
