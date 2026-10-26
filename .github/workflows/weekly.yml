@@ -110,7 +110,8 @@ jobs:
       - name: The committed bundle is the build
         run: python scripts/release.py client --verify-only
       - name: Karma
-        run: npm test --prefix plexora/client
+        # karma.conf.js starts a windowed Chrome; the runner has no display.
+        run: xvfb-run -a npm test --prefix plexora/client
 
   lock:
     runs-on: ubuntu-latest
