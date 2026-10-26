@@ -17,8 +17,7 @@ pub fn on_run_event(app: &AppHandle, event: RunEvent) {
         }
         #[cfg(target_os = "macos")]
         RunEvent::Opened { urls } => {
-            let opened: Vec<_> = urls.iter().filter_map(opens::from_url).collect();
-            opens::queue(app, opened);
+            opens::deliver(app, opens::from_urls(&urls));
         }
         _ => {}
     }

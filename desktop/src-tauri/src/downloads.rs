@@ -101,6 +101,10 @@ fn offer_save(app: &AppHandle, label: String, staged: PathBuf) {
         if let Some(dir) = staged.parent() {
             let _ = std::fs::remove_dir(dir);
         }
+        if let Some(path) = &result.path {
+            // The toast's "Show in Finder" reveals it, wherever it went.
+            app.state::<crate::commands::HandedPaths>().add([path]);
+        }
         let _ = app.emit_to(&label, "plexora://download-finished", result);
     });
 }
