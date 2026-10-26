@@ -1072,6 +1072,18 @@ class RoiSidebarController {
                 "Finding the cells in each ROI",
                 this.api.mapToCells(this.mapPrefix(), false, true));
             const found = preview.data || {};
+            // A reply that is not a preview came from code that does not know
+            // the flag -- a cached roiApi.js, or a data node on an older
+            // Plexora -- and was handled as a WRITE. Say so plainly rather
+            // than show it as the answer to a question it was never asked.
+            if (found.preview !== true && (found.success || found.error === "column_exists")) {
+                this.notify(found.success
+                    ? "Part of Plexora is out of date, so the columns were written without "
+                        + "the check. Reload the page (or restart Plexora) before mapping again."
+                    : "Part of Plexora is out of date and skipped the check; nothing was "
+                        + "written. Reload the page (or restart Plexora) and try again.");
+                return;
+            }
             if (!preview.ok || !found.success) {
                 if (found.needs && !retried) {
                     const collected = await this.ctx.requirements?.require([found.needs]);
