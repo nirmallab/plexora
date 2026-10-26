@@ -223,11 +223,11 @@ check("...and the other instance's row keeps its enabled state",
     !layer.list.children[0]._classes.has("is-disabled")
     && reference.list.children[0]._classes.has("is-disabled"));
 
-layer.slot.expanded = true;
-layer.sidebar.applySlotExpansion(layer.slot);
-check("applySlotExpansion expands its own row only",
-    layer.list.children[0].querySelector(".channel-slot-detail")._classes.has("is-expanded")
-    && !reference.list.children[0].querySelector(".channel-slot-detail")._classes.has("is-expanded"));
+reference.sidebar.selectedSlot = -1;
+layer.sidebar.selectSlot(0, { enable: false });
+check("selectSlot marks its own row only",
+    layer.list.children[0]._classes.has("is-selected")
+    && !reference.list.children[0]._classes.has("is-selected"));
 
 layer.slot.preAutoRange = { range: [1, 2] };
 layer.sidebar.syncSlotAutoButton(layer.slot);

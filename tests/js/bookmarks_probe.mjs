@@ -227,7 +227,7 @@ check("again, it closes", tray.root.hidden === true && bookmarkButton.getAttribu
 // -- K --------------------------------------------------------------------------------------
 const keydown = documentListeners.keydown.at(-1);
 const press = (extra = {}) => {
-    const event = { key: "k", repeat: false, defaultPrevented: false, prevented: false,
+    const event = { key: "m", repeat: false, defaultPrevented: false, prevented: false,
                     preventDefault() { this.prevented = true; }, ...extra };
     keydown(event);
     return event;

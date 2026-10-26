@@ -1,5 +1,5 @@
 /**
- * bookmarkTray.js - the bookmarks tray, its toolbar icon, and K.
+ * bookmarkTray.js - the bookmarks tray, its toolbar icon, and M.
  *
  * A floating glass tray along the bottom of the canvas (canvasLayout's
  * bottom-center dock, so the legend, the minimap, the cut panel and the
@@ -15,7 +15,7 @@
  *   button) only opens and closes the tray. It shows only where bookmarks
  *   can be kept (a store registered).
  *
- *   K bookmarks the view from anywhere on the viewer, the tray open or not:
+ *   M bookmarks the view from anywhere on the viewer, the tray open or not:
  *   not while typing, with a modifier, held, with a dialog or a confirm up,
  *   or when another handler took it first (Video Studio's K, in its editor).
  *
@@ -88,11 +88,11 @@
         return !global.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches;
     }
 
-    /** Whether K, as the key event `event`, is the bookmark key. */
+    /** Whether M, as the key event `event`, is the bookmark key. */
     function isBookmarkKey(event) {
         if (!event || event.repeat || event.defaultPrevented) return false;
         if (event.metaKey || event.ctrlKey || event.altKey || event.shiftKey) return false;
-        if (String(event.key || "").toLowerCase() !== "k") return false;
+        if (String(event.key || "").toLowerCase() !== "m") return false;
         if (typing()) return false;
         if (document.querySelector("dialog[open]") || global.PlexoraConfirm?.modalOpen?.()) return false;
         return true;
@@ -107,7 +107,7 @@
             this.button = null;
             this.items = new Map();       // bookmark id -> {node, img, label, entry}
             this.open = false;
-            //: False while a routed page (Settings) is over the viewer: K is
+            //: False while a routed page (Settings) is over the viewer: M is
             //: not the viewer's then (views/datasetNav.js does the same).
             this.viewerShown = true;
             this._off = [];
@@ -125,9 +125,9 @@
             this.count = el("span", "plx-bookmark-count");
             title.append(icon("bookmark", "far"), el("span", null, { text: "Saved views" }), this.count);
             this.saveButton = el("button", "plx-bookmark-save", {
-                type: "button", title: "Save this view (K)", "aria-keyshortcuts": "K" });
+                type: "button", title: "Save this view (M)", "aria-keyshortcuts": "M" });
             this.saveButton.append(icon("plus"), el("span", null, { text: "Save view" }),
-                                   el("kbd", "plx-bookmark-kbd", { text: "K" }));
+                                   el("kbd", "plx-bookmark-kbd", { text: "M" }));
             this.saveButton.addEventListener("click", () => this.save());
             const close = el("button", "plx-bookmark-close", {
                 type: "button", title: "Close saved views", "aria-label": "Close saved views" });
@@ -138,7 +138,7 @@
             // and a chevron shows on a side only while there is more there.
             this.body = el("div", "plx-bookmark-body");
             this.list = el("ul", "plx-bookmark-list", { "aria-label": "Saved views" });
-            this.empty = el("p", "plx-bookmark-empty", { text: "No saved views yet. Press K to save this one." });
+            this.empty = el("p", "plx-bookmark-empty", { text: "No saved views yet. Press M to save this one." });
             this.prev = el("button", "plx-bookmark-nav is-prev", {
                 type: "button", title: "Earlier saved views", "aria-label": "Earlier saved views", tabindex: "-1" });
             this.prev.appendChild(icon("chevron-left"));

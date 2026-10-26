@@ -211,12 +211,12 @@ function makeSidebar(slotState = {}) {
     sidebar.dataLayer.saveChannelList = (...args) => { saved = args; return Promise.resolve(); };
     sidebar.persistChannelList();
     const meta = saved[5];
-    assert.deepEqual(meta.CD3, { source: "gating", curve: "asinh", cofactor: 60, display_rev: "r1" });
+    assert.deepEqual(meta.CD3, { source: "gating", curve: "asinh", cofactor: 60, display_rev: "r1", position: 0 });
     const mine = makeSidebar({ rangeSource: "legacy", userRangeChanged: true });
     mine.persist = true;
     mine.dataLayer.saveChannelList = (...args) => { saved = args; return Promise.resolve(); };
     mine.persistChannelList();
-    assert.deepEqual(saved[5].CD3, { source: "user", curve: "linear" });
+    assert.deepEqual(saved[5].CD3, { source: "user", curve: "linear", position: 0 });
     ok("a saved row carries its source and curve; a legacy one saves as the user's");
 }
 

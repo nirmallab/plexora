@@ -12,7 +12,7 @@
  *   - a dialog on the figure canvas ("Captures" in the panel tray), where
  *     `onAdd` puts the selection into the figure that is already open;
  *   - the same dialog as BOOKMARKS ("Bookmarks" in the panel tray,
- *     `bookmarks: true`): only the views saved in the viewer (K), each with
+ *     `bookmarks: true`): only the views saved in the viewer (M), each with
  *     its own two actions -- Go to view (`onGo`) and Add to figure
  *     (`onAddOne`, straight onto the page) -- and nothing to tick or delete;
  *   - the Captures tab on the Figures page, where `onAdd` asks which figure
@@ -148,7 +148,7 @@ class FigureCaptureBinGrid {
                            aria-label="Search captures by image">
                 </div>
                 <button class="fb-bin-chip" type="button" data-role="bookmarked" aria-pressed="false"
-                        title="Show only the views bookmarked in the viewer (K)">
+                        title="Show only the views bookmarked in the viewer (M)">
                     <span class="fas fa-bookmark" aria-hidden="true"></span>
                     <span>Bookmarked</span>
                 </button>

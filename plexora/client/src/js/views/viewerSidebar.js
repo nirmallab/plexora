@@ -75,6 +75,11 @@ async function plexoraMapWithLimit(items, limit, fn) {
 //: How long an auto-levelled range takes to arrive on screen (easeSlotRange):
 //: the channel fade's own length, so a channel switched on comes in and
 //: develops its contrast in one movement.
+/** views/popoverPortal.js's top-level `PopoverPortal`, when the page has it. */
+function plexoraPortal() {
+    return typeof PopoverPortal !== "undefined" ? PopoverPortal : null;
+}
+
 const RANGE_EASE_MS = 240;
 //: How long a gating calibration's window takes to arrive on a channel the
 //: user has not set (syncGatingContrast): long enough to be seen happening.
@@ -153,7 +158,20 @@ class ViewerSidebar {
         // their concrete type -- see registerModule() and pluginRegistry.js.
         this.sidebarModules = [];
         this.maxChannelSlots = 15;
-        this.initialChannelSlots = 4;
+        this.initialChannelSlots = 5;
+        //: The slot the shared contrast bar is editing. -1 until one is
+        //: chosen; `resolveSelectedSlot` picks the first channel showing.
+        this.selectedSlot = -1;
+        //: The one slider every slot shares, over the slot list.
+        this.contrastSlider = null;
+        this.contrastBar = null;
+        //: J/K review: slot 2 steps through every channel of the image with
+        //: the others off. `{slot, at, snapshot}` while it runs; Esc puts the
+        //: snapshot back. Null otherwise.
+        this.review = null;
+        this.histogram = null;
+        this._slotSortable = null;
+        this._channelKeyListener = null;
         this.defaultColors = [
             { label: "Blue", hex: "#2388ff", rgb: { r: 35, g: 136, b: 255 } },
             { label: "Red", hex: "#ff2d2d", rgb: { r: 255, g: 45, b: 45 } },
@@ -226,8 +244,21 @@ class ViewerSidebar {
         }
         window.clearTimeout(this._saveChannelsTimer);
         this._saveChannelsTimer = null;
-        this.channelSlotSliders.forEach((slider) => slider.destroy?.());
         this.channelSlotSliders.clear();
+        this.contrastSlider?.destroy?.();
+        this.contrastSlider = null;
+        this.closeHistogram();
+        if (this.histogram) {
+            this.histogram.slider?.destroy?.();
+            plexoraPortal()?.detach?.(this.histogram.popover);
+            this.histogram = null;
+        }
+        this._slotSortable?.destroy?.();
+        this._slotSortable = null;
+        if (this._channelKeyListener) {
+            document.removeEventListener?.("keydown", this._channelKeyListener);
+            this._channelKeyListener = null;
+        }
         this.colorPickers.forEach((picker) => picker.destroy?.());
         this.colorPickers.clear();
         this.markerSelects.forEach((select) => select.destroy?.());
@@ -401,6 +432,8 @@ class ViewerSidebar {
         this.setupSidebarShell();
         this.sidebarModules.forEach((m) => m.setup && m.setup());
         this.bindActions();
+        this.ensureContrastBar();
+        this.bindChannelKeys();
 
         const maxLabel = this.el("max-channels");
         if (maxLabel) maxLabel.textContent = this.maxChannelSlots;
@@ -457,6 +490,7 @@ class ViewerSidebar {
                 }
             }));
         this._restoring = false;
+        this.syncContrastBar();
 
         // Not persisted after a launch or a carried restore either. The default
         // branch above writes its guess so the project has a starting point; a
@@ -614,19 +648,56 @@ class ViewerSidebar {
         row.setAttribute("id", this.slotId("channel_slot", slot.index));
         row.style.setProperty("--slot-color", slot.colorHex);
 
+        // ONE LINE PER CHANNEL: eye, colour, marker, the Selected pill, Auto
+        // and remove. The row itself is what drags (ensureSlotSortable). The window is not in the row any more -- every slot
+        // shares the contrast bar over the list (ensureContrastBar), which
+        // edits whichever row is selected. A click anywhere on the row that
+        // is not one of its own buttons selects it.
         const top = document.createElement("div");
         top.classList.add("channel-slot-top");
         row.appendChild(top);
-
-        const toggle = document.createElement("input");
-        toggle.type = "checkbox";
-        toggle.classList.add("channel-toggle-switch");
-        toggle.checked = slot.enabled;
-        toggle.title = "Toggle channel";
-        toggle.addEventListener("change", (event) => {
-            this.setSlotEnabled(slot.index, event.target.checked);
+        row.addEventListener("click", (event) => {
+            // The path the click took, not `target.closest`: the Auto button
+            // swaps its icon inside its own click handler (wand, busy,
+            // revert), so by the time the click reaches the row the icon it
+            // hit is detached, `closest` finds no button, and the row read it
+            // as a click on itself and turned the channel off.
+            const path = event.composedPath?.() || [];
+            const within = (selector) => path.some((node) => node?.matches?.(selector))
+                || Boolean(event.target?.closest?.(selector));
+            if (within(".channel-slot-eye, .channel-slot-actions, .color-swatch-mount")) return;
+            const current = this.channelSlots[slot.index];
+            // The name opens the marker search and turns nothing on yet: a
+            // channel that is off comes on when a marker is picked, or when
+            // the list is closed without one (the search's onClose).
+            if (within(".marker-combobox")) {
+                if (current && current.name && !current.enabled) this._enableOnClose = current.index;
+                if (current && current.index !== this.selectedSlot) this.selectSlot(current.index, { enable: false });
+                return;
+            }
+            // A second click on the selected row turns it off, and a third on
+            // again.
+            if (current && current.index === this.selectedSlot && current.name) {
+                this.setSlotEnabled(current.index, !current.enabled);
+                return;
+            }
+            this.selectSlot(slot.index);
         });
-        top.appendChild(toggle);
+
+        const eye = document.createElement("button");
+        eye.type = "button";
+        eye.classList.add("channel-slot-eye");
+        eye.innerHTML = '<span class="fas fa-eye channel-eye-on" aria-hidden="true"></span>'
+            + '<span class="fas fa-eye-slash channel-eye-off" aria-hidden="true"></span>';
+        eye.addEventListener("click", () => {
+            // A press already did its work (sweepEyes); this is its click.
+            if (this._eyeSweepClick) return;
+            const current = this.channelSlots[slot.index];
+            if (current?.name) this.setSlotEnabled(current.index, !current.enabled);
+        });
+        eye.addEventListener("pointerdown", (event) => this.sweepEyes(slot.index, event));
+        top.appendChild(eye);
+        this.paintEye(eye, slot);
 
         const colorMount = document.createElement("div");
         top.appendChild(colorMount);
@@ -636,6 +707,10 @@ class ViewerSidebar {
         });
         this.colorPickers.set(slot.index, colorPicker);
 
+        // The marker search, unchanged: type into the name to find another
+        // channel for this slot. Only as wide as the name until it is
+        // focused (fitMarkerName), so the space after it selects the row
+        // rather than opening the list.
         const comboMount = document.createElement("div");
         top.appendChild(comboMount);
         const markerSelect = new SearchableSelect(comboMount, {
@@ -644,30 +719,30 @@ class ViewerSidebar {
             placeholder: "Select marker…",
             describeOption: (name) => this.describeMarkerOption(name, slot.index),
             onChange: (name) => this.setSlotMarker(slot.index, name, { keepColor: true, enable: true }),
+            onClose: ({ picked }) => {
+                if (this._enableOnClose !== slot.index) return;
+                this._enableOnClose = null;
+                // Picked: onChange, right after this, turns it on with the new marker.
+                if (picked) return;
+                const current = this.channelSlots[slot.index];
+                if (current && current.name && !current.enabled) this.setSlotEnabled(current.index, true);
+            },
         });
         this.markerSelects.set(slot.index, markerSelect);
 
-        // The three icons that end the line -- fold, Auto, remove -- as one
-        // cluster, 2px apart, so the 7px the main controls are spaced by is
-        // not paid twice more at the narrow end of a 300px sidebar.
+        // The Selected pill leads the actions, so a row without it keeps its
+        // icons exactly where every other row has them.
         const actions = document.createElement("div");
         actions.classList.add("channel-slot-actions");
         top.appendChild(actions);
 
-        const expandToggle = document.createElement("button");
-        expandToggle.type = "button";
-        expandToggle.classList.add("channel-slot-expand-toggle");
-        expandToggle.classList.toggle("is-expanded", Boolean(slot.expanded));
-        expandToggle.title = "Show threshold range";
-        expandToggle.innerHTML = '<span class="fas fa-chevron-down"></span>';
-        expandToggle.addEventListener("click", () => this.toggleSlotExpanded(slot.index));
-        actions.appendChild(expandToggle);
+        const badge = document.createElement("span");
+        badge.classList.add("channel-slot-badge");
+        badge.textContent = "Selected";
+        actions.appendChild(badge);
 
-        // Auto, on the line that is always showing rather than inside the
-        // fold: levelling a channel should not need the slider opened first.
-        // Still `.slider-auto-button` for its revert and busy states (and for
-        // syncSlotAutoButton's lookup); `.channel-slot-auto` sizes it to the
-        // chevron beside it.
+        // `.slider-auto-button` for its revert and busy states (and for
+        // syncSlotAutoButton's lookup); `.channel-slot-auto` sizes it.
         const auto = document.createElement("button");
         auto.type = "button";
         auto.classList.add("slider-auto-button", "channel-slot-auto");
@@ -683,31 +758,133 @@ class ViewerSidebar {
         remove.addEventListener("click", () => this.removeChannelSlot(slot.index));
         actions.appendChild(remove);
 
-        const detail = document.createElement("div");
-        detail.classList.add("channel-slot-detail");
-        detail.classList.toggle("is-expanded", Boolean(slot.expanded));
-
-        // ONE LINE: `1 ---o=====o--- 255`. The window used to take two, a
-        // header carrying the pair of number boxes above the track, because
-        // two bordered boxes and their gaps are a third of a 300px sidebar and
-        // the track needed the rest. Drawn as plain text until they are
-        // clicked they cost three or five characters each -- see
-        // sizeRangeFields -- which the line can spare, so the numbers went
-        // back to the ends of the slider they belong to and the row they were
-        // parked on is gone.
-        const rangeRow = document.createElement("div");
-        rangeRow.classList.add("slider-auto-row");
-
-        const slider = document.createElement("div");
-        slider.classList.add("sidebar-slider");
-        slider.setAttribute("id", this.slotId("channel_slot_slider", slot.index));
-        rangeRow.appendChild(slider);
-
-        detail.appendChild(rangeRow);
-
-        row.appendChild(detail);
-
+        row.classList.toggle("is-selected", slot.index === this.selectedSlot);
+        this.fitMarkerName(slot, row);
         return row;
+    }
+
+    /**
+     * Size a row's marker field to its name. Measured, because an <input>
+     * does not size itself to its value, and a width in `ch` is a guess in a
+     * proportional face. While the field is focused the stylesheet widens
+     * it to the whole row, which is also the width its list opens at.
+     */
+    fitMarkerName(slot, row = this.slotRow(slot?.index)) {
+        const input = row?.querySelector?.(".marker-combobox-input");
+        if (!input || typeof getComputedStyle !== "function") return;
+        // A row being built is not on the page yet, and a detached field has
+        // no computed font: measuring it then gives a width too narrow to
+        // show the name. Once it is attached, measure it.
+        if (input.isConnected === false) {
+            if (!input._fitQueued && typeof requestAnimationFrame === "function") {
+                input._fitQueued = true;
+                requestAnimationFrame(() => {
+                    input._fitQueued = false;
+                    if (input.isConnected) this.fitMarkerName(slot, row);
+                });
+            }
+            return;
+        }
+        // The slot's own name, not the field: the field may still hold the
+        // previous marker, or a half-typed search.
+        const text = slot?.name || input.value || input.placeholder || "";
+        const canvas = ViewerSidebar._measure || (ViewerSidebar._measure = document.createElement("canvas"));
+        const ctx = canvas.getContext?.("2d");
+        if (!ctx) return;
+        const style = getComputedStyle(input);
+        // From its parts: WebKit can leave the `font` shorthand empty.
+        ctx.font = `${style.fontStyle || "normal"} ${style.fontWeight || "400"} ${style.fontSize} ${style.fontFamily}`;
+        const pad = (parseFloat(style.paddingLeft) || 0) + (parseFloat(style.paddingRight) || 0)
+            + (parseFloat(style.borderLeftWidth) || 0) + (parseFloat(style.borderRightWidth) || 0);
+        input.style.setProperty("--name-width", `${Math.ceil(ctx.measureText(text).width + pad + 2)}px`);
+    }
+
+    /** Whether any row's channel is on: what the bar's eye shows. */
+    anySlotEnabled() {
+        return this.channelSlots.some((slot) => slot?.name && slot.visible && slot.enabled);
+    }
+
+    /** The bar's eye: every row with a channel on, or every one off. */
+    setAllSlotsEnabled(enabled) {
+        this.channelSlots.forEach((slot) => {
+            if (slot?.name && slot.visible && slot.enabled !== enabled) {
+                this.setSlotEnabled(slot.index, enabled);
+            }
+        });
+        this.paintContrastHeader();
+    }
+
+    /**
+     * Press an eye and drag along the column: every row the pointer passes
+     * is set to ONE state, not flipped. Which state comes from the rows
+     * swept, as they were before the press: mostly on, they go off; mostly
+     * off, they come on; a tie goes the way a click on the first eye would.
+     * So a row already in that state is left alone, and a row the pointer
+     * leaves again (dragging back) gets its own state back. A press with no
+     * drag sweeps one row, which is a click.
+     */
+    sweepEyes(startIndex, event) {
+        if (event.button !== undefined && event.button !== 0) return;
+        const eye = event.currentTarget;
+        const entries = this.channelSlots
+            .filter((slot) => slot?.name && slot.visible && this.slotRow(slot.index))
+            .map((slot) => ({ slot, row: this.slotRow(slot.index), was: slot.enabled }))
+            .sort((a, b) => a.row.getBoundingClientRect().top - b.row.getBoundingClientRect().top);
+        const start = entries.findIndex((entry) => entry.slot.index === startIndex);
+        if (start < 0) return;
+        let end = start;
+        const apply = () => {
+            const lo = Math.min(start, end);
+            const hi = Math.max(start, end);
+            const swept = entries.slice(lo, hi + 1);
+            const on = swept.filter((entry) => entry.was).length;
+            const off = swept.length - on;
+            const target = on === off ? !entries[start].was : on < off;
+            entries.forEach((entry, at) => {
+                const want = at >= lo && at <= hi ? target : entry.was;
+                if (entry.slot.enabled !== want) this.setSlotEnabled(entry.slot.index, want);
+            });
+        };
+        const rowAt = (y) => {
+            for (let at = 0; at < entries.length; at += 1) {
+                const box = entries[at].row.getBoundingClientRect();
+                if (y < box.bottom || at === entries.length - 1) return at;
+            }
+            return end;
+        };
+        const move = (moveEvent) => {
+            const at = rowAt(moveEvent.clientY);
+            if (at === end) return;
+            end = at;
+            apply();
+        };
+        const finish = () => {
+            eye.removeEventListener("pointermove", move);
+            eye.removeEventListener("pointerup", finish);
+            eye.removeEventListener("pointercancel", finish);
+            eye.removeEventListener("lostpointercapture", finish);
+            this.el("channel_slot_list")?.classList.remove("channel-eye-sweeping");
+            // The click this press ends in has been handled already.
+            this._eyeSweepClick = true;
+            setTimeout(() => { this._eyeSweepClick = false; }, 0);
+        };
+        // Captured, so the drag keeps reporting once it leaves this eye.
+        try { eye.setPointerCapture?.(event.pointerId); } catch (error) { /* synthetic event */ }
+        eye.addEventListener("pointermove", move);
+        eye.addEventListener("pointerup", finish);
+        eye.addEventListener("pointercancel", finish);
+        eye.addEventListener("lostpointercapture", finish);
+        this.el("channel_slot_list")?.classList.add("channel-eye-sweeping");
+        apply();
+    }
+
+    /** A row's eye: what it says matches whether the channel is drawn. */
+    paintEye(button, slot) {
+        if (!button) return;
+        const label = slot.enabled ? `Hide ${slot.name || "channel"}` : `Show ${slot.name || "channel"}`;
+        button.title = label;
+        button.setAttribute("aria-label", label);
+        button.setAttribute("aria-pressed", slot.enabled ? "true" : "false");
     }
 
     applyInitialChannels() {
@@ -867,9 +1044,15 @@ class ViewerSidebar {
         // touched this slot's slider.
         if (this.isHdMode() && !slot.userRangeChanged) {
             this.channelList.ensureChannelStats(slot.name).then(() => {
-                // Nor a contrast show's slot: its window is on screen already.
-                if (slot.userRangeChanged || slot.rangeSource === "agent") return;
-                slot.range = this.getRawImageRange(slot.name);
+                // Only the placeholder: a window anyone has set stays. Nor a
+                // contrast show's slot (`agent`), and not one auto-levelling
+                // set or is setting -- every later switch-on put the full
+                // range back over the fitted window, on the slider only (the
+                // canvas kept the fit until the next switch-on drew it).
+                if (slot.userRangeChanged || slot.autoLeveled || slot.autoLeveling
+                        || slot.rangeEase || slot.rangeSource) return;
+                // Drawn as well: the canvas and the slider show one window.
+                this.setSlotRange(slot.index, this.getRawImageRange(slot.name), false);
                 this.channelList.sel[fullName] = slot.range;
                 this.syncSlotDom(slot);
             });
@@ -915,49 +1098,10 @@ class ViewerSidebar {
      * back off the scale, did not.
      */
     syncChannelSlider(slot) {
-        if (!slot || !slot.name) return;
-        let slider = this.channelSlotSliders.get(slot.index);
-        // Built the first time a slot is opened, not before: most slots are
-        // never expanded, and a control nobody has asked to see is DOM nobody
-        // needs.
-        if (!slider && !slot.expanded) return;
-        const target = this.el(`channel_slot_slider_${slot.index}`);
-        if (!target) return;
-        const { min, max } = this.contrastBounds(slot.name);
-        const held = [Math.max(slot.range[0], min), Math.max(slot.range[1], min)];
-        if (slider) {
-            slider.setBounds({ min, max });
-            slider.set(held, { silent: true });
-            this.sizeRangeFields(slider, max);
-            return;
-        }
-        slider = new PlexoraSlider(target, {
-            mode: "range", scale: "log", min, max, step: 1,
-            low: held[0], high: held[1],
-            // Whole numbers. A contrast window is a count of photons on an
-            // integer grid (`step: 1` above), so `formatValue`'s two decimals
-            // were two characters of noise -- and on a 16-bit channel they are
-            // what pushed "65535.00" out of a sidebar-sized box. `integer`
-            // and not only the format, so a typed 1234.6 is saved as the
-            // 1235 the box then shows rather than as a number nobody sees.
-            decimals: 0, integer: true,
-            format: (value) => String(Math.round(value)),
-            fieldIds: {
-                low: this.slotId("channel_slot_min", slot.index),
-                high: this.slotId("channel_slot_max", slot.index),
-            },
-            ariaLabels: ["Contrast window minimum", "Contrast window maximum"],
-            // Inline, at the two ends of the track they describe: no
-            // `fieldsSlot`, because there is no longer a second row to put
-            // them on. See createChannelSlot.
-            //
-            // Per tick: a BRUSH_MOVE, which imageViewer coalesces into one
-            // repaint per animation frame. On release: the 400ms save.
-            onInput: (values) => this.setSlotRange(slot.index, values, true),
-            onChange: () => this.scheduleSaveChannels(),
-        });
-        this.sizeRangeFields(slider, max);
-        this.channelSlotSliders.set(slot.index, slider);
+        // One slider for every slot now: it follows the selected one. Any
+        // other slot has nothing to draw until it is selected.
+        if (!slot || !slot.name || slot.index !== this.selectedSlot) return;
+        this.bindContrastSlider(slot);
     }
 
     /**
@@ -1016,21 +1160,602 @@ class ViewerSidebar {
         if (commit) this.scheduleSaveChannels();
     }
 
+    /** Kept for callers from when each row folded open: selects it. */
     toggleSlotExpanded(slotIndex) {
-        const slot = this.channelSlots[slotIndex];
-        if (!slot) return;
-        slot.expanded = !slot.expanded;
-        this.applySlotExpansion(slot);
+        this.selectSlot(slotIndex, { enable: false });
     }
 
+    /**
+     * Kept for callers from when each row had its own fold: a slot whose
+     * marker or range changed brings the contrast bar up to date if it is
+     * the one the bar is showing.
+     */
     applySlotExpansion(slot) {
-        const row = this.slotRow(slot.index);
-        if (!row) return;
-        const detail = row.querySelector(".channel-slot-detail");
-        const toggle = row.querySelector(".channel-slot-expand-toggle");
-        if (detail) detail.classList.toggle("is-expanded", Boolean(slot.expanded));
-        if (toggle) toggle.classList.toggle("is-expanded", Boolean(slot.expanded));
-        if (slot.expanded) this.syncChannelSlider(slot);
+        if (slot && slot.index === this.selectedSlot) this.syncContrastBar();
+    }
+
+    // -- the shared contrast bar --------------------------------------------
+
+    /**
+     * Select a slot: the contrast bar edits it from now on. Selecting a
+     * channel that is off turns it on (`enable`), and leaves every other
+     * channel as it was -- selection is not visibility.
+     */
+    selectSlot(slotIndex, { enable = true } = {}) {
+        const slot = this.channelSlots[slotIndex];
+        if (!slot || !slot.visible) return;
+        const before = this.selectedSlot;
+        this.selectedSlot = slotIndex;
+        if (enable && slot.name && !slot.enabled) this.setSlotEnabled(slotIndex, true);
+        if (before !== slotIndex) {
+            const old = this.slotRow(before);
+            if (old) old.classList.toggle("is-selected", false);
+        }
+        this.syncContrastBar();
+    }
+
+    /**
+     * The selected slot. With none (first load, or the selected row was
+     * removed) it falls back to slot 2 -- the row J/K stepped through before
+     * any row could be selected, and the one gating mirrors its marker into
+     * -- then the first channel showing, then the first named row.
+     */
+    resolveSelectedSlot() {
+        const usable = (slot) => slot && slot.visible && slot.name;
+        let slot = this.channelSlots[this.selectedSlot];
+        if (!usable(slot)) {
+            slot = (usable(this.channelSlots[1]) ? this.channelSlots[1] : null)
+                || this.channelSlots.find((s) => usable(s) && s.enabled)
+                || this.channelSlots.find(usable) || null;
+            this.selectedSlot = slot ? slot.index : -1;
+        }
+        return slot;
+    }
+
+    /** Whether the bare J/K/Esc keys are this instance's: only the viewer's
+     *  own sidebar, never a layer's panel or Quick Edit's copy. */
+    ownsChannelKeys() {
+        return this.root === document && !this.idPrefix && this.persist;
+    }
+
+    /**
+     * Build the bar over the slot list, once. Built here rather than in the
+     * template so every copy of the channel markup -- the reference image's,
+     * each registered layer's, Quick Edit's -- gets the same control.
+     */
+    ensureContrastBar() {
+        if (this.contrastBar) return this.contrastBar;
+        const list = this.el("channel_slot_list");
+        if (!list || !list.parentNode || typeof list.parentNode.insertBefore !== "function") return null;
+        const keys = this.ownsChannelKeys();
+        const bar = document.createElement("div");
+        bar.className = "channel-contrast";
+        bar.setAttribute("id", `${this.idPrefix}channel_contrast`);
+        bar.innerHTML = `
+            <div class="channel-contrast-top">
+                <button type="button" class="channel-contrast-icon channel-contrast-eye">
+                    <span class="fas fa-eye channel-eye-on" aria-hidden="true"></span>
+                    <span class="fas fa-eye-slash channel-eye-off" aria-hidden="true"></span>
+                </button>
+                <span class="channel-contrast-title"><span class="channel-contrast-word">Contrast</span><span class="channel-contrast-dot">·</span><span class="channel-contrast-name"></span></span>
+                <button type="button" class="channel-contrast-icon channel-contrast-hist" title="Histogram" aria-label="Histogram" aria-haspopup="dialog" aria-expanded="false">
+                    <span class="fas fa-chart-simple" aria-hidden="true"></span>
+                </button>
+                <button type="button" class="channel-contrast-icon channel-contrast-clear" title="Clear: the full range" aria-label="Clear: the full range">
+                    <span class="fas fa-eraser" aria-hidden="true"></span>
+                </button>
+                <span class="channel-contrast-count"></span>
+                <button type="button" class="channel-contrast-nav channel-contrast-prev" title="Previous channel${keys ? " (J)" : ""}" aria-label="Previous channel"${keys ? ' aria-keyshortcuts="J"' : ""}>
+                    <span class="fas fa-chevron-left" aria-hidden="true"></span>${keys ? '<kbd class="plx-kbd">J</kbd>' : ""}
+                </button>
+                <button type="button" class="channel-contrast-nav channel-contrast-next" title="Next channel${keys ? " (K)" : ""}" aria-label="Next channel"${keys ? ' aria-keyshortcuts="K"' : ""}>
+                    ${keys ? '<kbd class="plx-kbd">K</kbd>' : ""}<span class="fas fa-chevron-right" aria-hidden="true"></span>
+                </button>
+            </div>
+            <div class="slider-auto-row channel-contrast-range"><div class="sidebar-slider"></div></div>`;
+        list.parentNode.insertBefore(bar, list);
+        const on = (selector, fn) => bar.querySelector(selector)?.addEventListener("click", fn);
+        on(".channel-contrast-eye", () => this.setAllSlotsEnabled(!this.anySlotEnabled()));
+        on(".channel-contrast-hist", (event) => {
+            event.stopPropagation();
+            this.toggleHistogram();
+        });
+        on(".channel-contrast-clear", () => this.clearSelectedRange());
+        on(".channel-contrast-prev", () => this.stepChannel(-1));
+        on(".channel-contrast-next", () => this.stepChannel(1));
+        this.contrastBar = bar;
+        this.ensureSlotSortable(list);
+        document.fonts?.ready?.then?.(() => this.channelSlots.forEach((slot) => this.fitMarkerName(slot)));
+        return bar;
+    }
+
+    /** Everything the bar shows, from the selected slot. */
+    syncContrastBar() {
+        const slot = this.resolveSelectedSlot();
+        this.channelSlots.forEach((s) => {
+            this.slotRow(s.index)?.classList.toggle("is-selected", s.index === this.selectedSlot);
+        });
+        this.paintContrastHeader();
+        if (slot) this.bindContrastSlider(slot);
+        this.syncHistogram();
+    }
+
+    /** The bar's top line: eye, name, n/N. Cheap; runs on every syncSlotDom. */
+    paintContrastHeader() {
+        const bar = this.contrastBar;
+        if (!bar) return;
+        const slot = this.channelSlots[this.selectedSlot];
+        const usable = Boolean(slot && slot.visible && slot.name);
+        bar.classList.toggle("is-empty", !usable);
+        // The eye is every slot's, not the selected one's: on while any is.
+        const anyOn = this.anySlotEnabled();
+        bar.classList.toggle("is-off", !anyOn);
+        const name = bar.querySelector(".channel-contrast-name");
+        if (name) {
+            name.textContent = usable ? slot.name : "No channel";
+            name.title = usable ? slot.name : "";
+        }
+        const eye = bar.querySelector(".channel-contrast-eye");
+        if (eye) {
+            const label = anyOn ? "Hide every channel" : "Show every channel";
+            eye.title = label;
+            eye.setAttribute("aria-label", label);
+            eye.setAttribute("aria-pressed", anyOn ? "true" : "false");
+            eye.disabled = !this.channelSlots.some((s) => s?.name && s.visible);
+        }
+        const count = bar.querySelector(".channel-contrast-count");
+        const columns = this.columns || [];
+        const at = usable ? columns.indexOf(slot.name) : -1;
+        if (count) count.textContent = at >= 0 ? `${at + 1}/${columns.length}` : "";
+        for (const selector of [".channel-contrast-hist", ".channel-contrast-clear"]) {
+            const button = bar.querySelector(selector);
+            if (button) button.disabled = !usable;
+        }
+        for (const selector of [".channel-contrast-prev", ".channel-contrast-next"]) {
+            const button = bar.querySelector(selector);
+            if (button) button.disabled = columns.length < 1;
+        }
+    }
+
+    /**
+     * Point the one slider at `slot`: its domain and its window. Built the
+     * first time, afterwards only told. `channelSlotSliders` keeps the
+     * old per-slot shape -- the selected slot maps to the shared slider and
+     * every other slot to nothing -- so `updateSlotReadout`, the HD remap and
+     * an agent's eased drag all reach it without knowing it is shared.
+     */
+    bindContrastSlider(slot) {
+        const bar = this.ensureContrastBar();
+        const target = bar?.querySelector(".channel-contrast-range .sidebar-slider");
+        if (!target || !slot?.name) return;
+        const { min, max } = this.contrastBounds(slot.name);
+        const held = [Math.max(slot.range[0], min), Math.max(slot.range[1], min)];
+        let slider = this.contrastSlider;
+        if (slider) {
+            slider.setBounds({ min, max });
+            slider.set(held, { silent: true });
+        } else {
+            slider = new PlexoraSlider(target, {
+                mode: "range", scale: "log", min, max, step: 1,
+                low: held[0], high: held[1],
+                decimals: 0, integer: true,
+                format: (value) => String(Math.round(value)),
+                fieldIds: {
+                    low: `${this.idPrefix}channel_contrast_min`,
+                    high: `${this.idPrefix}channel_contrast_max`,
+                },
+                ariaLabels: ["Contrast window minimum", "Contrast window maximum"],
+                // Each box as wide as its number, so the track takes the rest
+                // of the bar: up to four digits low, five high (a 16-bit
+                // maximum); a longer low end is cut, whole in its tooltip.
+                fitFields: { low: 4, high: 5 },
+                // Per tick: a BRUSH_MOVE, which imageViewer coalesces into one
+                // repaint per animation frame. On release: the 400ms save.
+                onInput: (values) => {
+                    if (this.selectedSlot >= 0) this.setSlotRange(this.selectedSlot, values, true);
+                },
+                onChange: () => this.scheduleSaveChannels(),
+            });
+            this.contrastSlider = slider;
+        }
+        this.sizeRangeFields(slider, max);
+        this.channelSlotSliders.clear();
+        this.channelSlotSliders.set(slot.index, slider);
+    }
+
+    /**
+     * Clear: the selected channel's slider back to its base position, the
+     * whole range, as if dragged there. Revert is the row's button: the
+     * window that was on screen is kept as its way back (revertSlotRange),
+     * the same way back Auto leaves, with the remembered override too, since
+     * this one is a range set by hand.
+     */
+    clearSelectedRange() {
+        const slot = this.resolveSelectedSlot();
+        if (!slot) return;
+        const full = this.getImageRange(slot.name);
+        const moved = Number(slot.range[0]) !== Number(full[0]) || Number(slot.range[1]) !== Number(full[1]);
+        if (moved) {
+            slot.preAutoRange = {
+                range: [...slot.range],
+                userRangeChanged: slot.userRangeChanged,
+                autoLeveled: slot.autoLeveled,
+                rangeSource: slot.rangeSource || null,
+                curve: slot.curve || null,
+                override: slot.name && this.markerRangeOverrides.has(slot.name)
+                    ? [...this.markerRangeOverrides.get(slot.name)] : null,
+            };
+        }
+        this.setSlotRange(slot.index, full, true);
+        this.updateSlotReadout(slot);
+        this.syncSlotAutoButton(slot);
+        this.scheduleSaveChannels();
+    }
+
+    // -- J/K: step the selected row through every channel --------------------
+
+    /**
+     * The next (`dir` 1) or previous (-1) channel of the image, in the
+     * SELECTED row, starting from the marker that row holds. Every other
+     * row is left exactly as it is, on or off, and a channel one of them is
+     * showing is stepped over.
+     *
+     * Each step is an ordinary marker change, saved like one. The first
+     * step on a row remembers what that row held -- marker, on or off,
+     * window -- and Esc (`endReview`) puts back every row J/K changed; a
+     * window tuned on the way is kept for that channel, as any edit is.
+     */
+    stepChannel(dir) {
+        const names = this.columns || [];
+        const n = names.length;
+        if (!n || !this.el("channel_slot_list")) return;
+        let slot = this.resolveSelectedSlot();
+        // Nothing to start from (no named row): a row of its own.
+        if (!slot) {
+            const used = this.channelSlots.filter((s) => s.name).map((s) => s.name);
+            slot = this.channelSlots.find((s) => !s.visible) || this.createAdditionalSlot(used);
+            if (!slot) return;
+        }
+        if (!this.review) this.review = { selected: this.selectedSlot, touched: new Map() };
+        if (!this.review.touched.has(slot.index)) {
+            this.review.touched.set(slot.index, {
+                name: slot.name,
+                enabled: Boolean(slot.enabled),
+                visible: Boolean(slot.visible),
+                range: Array.isArray(slot.range) ? [...slot.range] : slot.range,
+                userRangeChanged: slot.userRangeChanged,
+                autoLeveled: slot.autoLeveled,
+                rangeSource: slot.rangeSource || null,
+                curve: slot.curve || null,
+            });
+        }
+        // Skipping any channel another row is already showing: putting it
+        // here too would switch that row off (a channel is drawn once).
+        const shownElsewhere = new Set(this.channelSlots
+            .filter((s) => s.index !== slot.index && s.enabled && s.name).map((s) => s.name));
+        let at = names.indexOf(slot.name);
+        if (at < 0) at = dir > 0 ? -1 : n;
+        let next = -1;
+        for (let step = 1; step <= n; step++) {
+            const candidate = (((at + dir * step) % n) + n) % n;
+            if (!shownElsewhere.has(names[candidate])) { next = candidate; break; }
+        }
+        if (next < 0) return;
+        this.setSlotMarker(slot.index, names[next], { keepColor: true, enable: true, reveal: true });
+        if (!slot.enabled) this.setSlotEnabled(slot.index, true);
+        this.selectSlot(slot.index, { enable: false });
+        this.slotRow(slot.index)?.scrollIntoView?.({ block: "nearest" });
+    }
+
+    /** Put back every row J/K changed. Returns false when there is none. */
+    endReview() {
+        const review = this.review;
+        if (!review) return false;
+        this.review = null;
+        review.touched.forEach((was, i) => {
+            const slot = this.channelSlots[i];
+            if (!slot) return;
+            if (!was.visible) {
+                this.removeChannelSlot(i);
+                return;
+            }
+            if (!was.name) return;
+            if (slot.name !== was.name) {
+                if (slot.enabled) this.setSlotEnabled(i, false);
+                this.setSlotMarker(i, was.name, { keepColor: true });
+                slot.userRangeChanged = was.userRangeChanged;
+                slot.autoLeveled = was.autoLeveled;
+                slot.rangeSource = was.rangeSource;
+                slot.curve = was.curve;
+                if (Array.isArray(was.range)) this.setSlotRange(i, was.range, false);
+            }
+            if (Boolean(slot.enabled) !== was.enabled) this.setSlotEnabled(i, was.enabled);
+        });
+        this.selectedSlot = review.selected;
+        this.syncContrastBar();
+        this.scheduleSaveChannels();
+        return true;
+    }
+
+    bindChannelKeys() {
+        if (this._channelKeyListener || !this.ownsChannelKeys() || !this.el("channel_slot_list")) return;
+        if (typeof document.addEventListener !== "function") return;
+        this._channelKeyListener = (event) => this.onChannelKey(event);
+        document.addEventListener("keydown", this._channelKeyListener);
+        // Not while a routed page (Settings) is over the viewer: the same
+        // two events the bookmark key and dataset nav follow.
+        this._viewerShown = true;
+        window.addEventListener?.("plexora:viewer-hidden", () => { this._viewerShown = false; });
+        window.addEventListener?.("plexora:viewer-shown", () => { this._viewerShown = true; });
+    }
+
+    onChannelKey(event) {
+        if (!event || event.defaultPrevented || event.metaKey || event.ctrlKey || event.altKey) return;
+        if (window.PlexoraShortcuts?.isTyping?.()) return;
+        if (document.querySelector?.("dialog[open]") || window.PlexoraConfirm?.modalOpen?.()) return;
+        const key = String(event.key || "").toLowerCase();
+        if (key === "escape") {
+            if (this.histogram?.open) {
+                this.closeHistogram();
+            } else if (!this.endReview()) {
+                return;
+            }
+            event.preventDefault();
+            return;
+        }
+        if (event.shiftKey) return;
+        if (key !== "j" && key !== "k") return;
+        if (this._viewerShown === false) return;
+        event.preventDefault();
+        this.stepChannel(key === "k" ? 1 : -1);
+    }
+
+    // -- reordering -----------------------------------------------------------
+
+    /** Drag a row to reorder, on the library the layer cards use. The row
+     *  is the handle; its controls are not, so they still click. */
+    ensureSlotSortable(list) {
+        if (this._slotSortable || typeof window.Sortable !== "function") return;
+        this._slotSortable = new window.Sortable(list, {
+            draggable: ".channel-slot",
+            filter: "input, button, .color-swatch-mount",
+            preventOnFilter: false,
+            animation: 150,
+            forceFallback: Boolean(window.PlexoraDesktop),
+            ghostClass: "is-drop-target",
+            chosenClass: "is-dragging",
+            // A review owns the rows; the order is the user's composite.
+            onMove: () => !this.review,
+            onEnd: () => {
+                const order = Array.from(list.children)
+                    .map((row) => Number(row.getAttribute("data-slot")))
+                    .filter((index) => Number.isInteger(index));
+                this.applySlotOrder(order);
+            },
+        });
+    }
+
+    /**
+     * Rows in a new order, `order[i]` naming the slot that now goes i-th.
+     *
+     * Slots are addressed by index everywhere -- their row ids, their colour
+     * pickers and marker selects, every plugin that names slot 2 -- so the
+     * rows stay where they are and their CONTENTS move: marker, colour,
+     * window, on or off travel together, and each row is redrawn from what
+     * it now holds. The picture is the same set of channels; what follows
+     * the order (the legend, which six the 3-D view draws, captures) is told
+     * through CHANNELS_CHANGE.
+     */
+    applySlotOrder(order) {
+        const list = this.el("channel_slot_list");
+        const count = this.channelSlots.length;
+        const valid = Array.isArray(order) && order.length === count
+            && new Set(order).size === count && order.every((i) => i >= 0 && i < count);
+        if (valid && !this.review && order.some((from, to) => from !== to)) {
+            const contents = order.map((from) => {
+                const { index, ...rest } = this.channelSlots[from];
+                return rest;
+            });
+            const selectedWas = this.selectedSlot;
+            this.channelSlots.forEach((slot, to) => {
+                Object.keys(slot).forEach((key) => { if (key !== "index") delete slot[key]; });
+                Object.assign(slot, contents[to]);
+            });
+            this.selectedSlot = order.indexOf(selectedWas);
+            this.channelSlots.forEach((slot) => this.syncSlotDom(slot));
+            this.channelList.selections = this.channelSlots
+                .filter((slot) => slot.enabled && slot.name).map((slot) => slot.name);
+            const first = this.channelList.selections[0];
+            if (first) {
+                this.eventHandler.trigger(ChannelList.events.CHANNELS_CHANGE, {
+                    selections: this.channelList.selections, name: first, status: true,
+                });
+            }
+            this.scheduleSaveChannels();
+        }
+        // The DOM back in index order, whatever the drag left it in.
+        if (list) this.channelSlots.forEach((slot) => {
+            const row = this.slotRow(slot.index);
+            if (row) list.appendChild(row);
+        });
+        this.syncContrastBar();
+    }
+
+    // -- histogram popover ----------------------------------------------------
+
+    toggleHistogram() {
+        if (this.histogram?.open) this.closeHistogram();
+        else this.openHistogram();
+    }
+
+    ensureHistogram() {
+        if (this.histogram) return this.histogram;
+        const popover = document.createElement("div");
+        popover.className = "channel-histogram-popover";
+        popover.setAttribute("role", "dialog");
+        popover.setAttribute("aria-label", "Histogram");
+        popover.hidden = true;
+        popover.innerHTML = `
+            <div class="channel-histogram-head">
+                <span class="channel-histogram-title">Histogram<span class="channel-histogram-name"></span></span>
+                <button type="button" class="channel-histogram-close" title="Close" aria-label="Close histogram">
+                    <span class="fas fa-xmark" aria-hidden="true"></span>
+                </button>
+            </div>
+            <canvas class="channel-histogram-canvas" height="72"></canvas>
+            <div class="channel-histogram-slider"></div>
+            <div class="channel-histogram-fields"></div>
+            <div class="channel-histogram-note"></div>`;
+        popover.addEventListener("click", (event) => event.stopPropagation());
+        popover.querySelector(".channel-histogram-close")
+            .addEventListener("click", () => this.closeHistogram());
+        const portal = plexoraPortal();
+        if (portal) portal.attach(popover);
+        else document.body?.appendChild?.(popover);
+        const onDocumentClick = (event) => {
+            if (!this.contrastBar?.contains(event.target)) this.closeHistogram();
+        };
+        const onResize = () => this.closeHistogram();
+        this.histogram = { popover, slider: null, open: false, onDocumentClick, onResize, bounds: null };
+        return this.histogram;
+    }
+
+    openHistogram() {
+        const slot = this.resolveSelectedSlot();
+        const bar = this.contrastBar;
+        if (!slot || !bar) return;
+        const hist = this.ensureHistogram();
+        hist.open = true;
+        plexoraPortal()?.reseat?.(hist.popover);
+        const rect = bar.getBoundingClientRect();
+        hist.popover.style.left = `${Math.round(rect.left)}px`;
+        hist.popover.style.top = `${Math.round(rect.bottom + 6)}px`;
+        hist.popover.style.width = `${Math.round(rect.width)}px`;
+        hist.popover.hidden = false;
+        requestAnimationFrame(() => { if (hist.open) hist.popover.classList.add("is-open"); });
+        bar.querySelector(".channel-contrast-hist")?.setAttribute("aria-expanded", "true");
+        bar.classList.add("has-histogram");
+        document.addEventListener("click", hist.onDocumentClick);
+        window.addEventListener("resize", hist.onResize);
+        this.syncHistogram();
+    }
+
+    closeHistogram() {
+        const hist = this.histogram;
+        if (!hist || !hist.open) return;
+        hist.open = false;
+        hist.popover.classList.remove("is-open");
+        window.setTimeout(() => { if (!hist.open) hist.popover.hidden = true; }, 150);
+        this.contrastBar?.querySelector(".channel-contrast-hist")?.setAttribute("aria-expanded", "false");
+        this.contrastBar?.classList.remove("has-histogram");
+        document.removeEventListener("click", hist.onDocumentClick);
+        window.removeEventListener("resize", hist.onResize);
+    }
+
+    /** The open popover, in step with the selected slot. No-op when closed. */
+    syncHistogram() {
+        const hist = this.histogram;
+        if (!hist || !hist.open || this._histogramEmitting) return;
+        const slot = this.channelSlots[this.selectedSlot];
+        if (!slot || !slot.name) return;
+        const name = hist.popover.querySelector(".channel-histogram-name");
+        if (name) name.textContent = ` · ${slot.name}`;
+        const { min, max } = this.contrastBounds(slot.name);
+        const held = [Math.max(slot.range[0], min), Math.max(slot.range[1], min)];
+        if (!hist.slider) {
+            hist.slider = new PlexoraSlider(hist.popover.querySelector(".channel-histogram-slider"), {
+                mode: "range", scale: "log", min, max, step: 1,
+                low: held[0], high: held[1], decimals: 0, integer: true,
+                format: (value) => String(Math.round(value)),
+                fieldsSlot: hist.popover.querySelector(".channel-histogram-fields"),
+                ariaLabels: ["Histogram minimum", "Histogram maximum"],
+                onInput: (values) => {
+                    if (this.selectedSlot < 0) return;
+                    this._histogramEmitting = true;
+                    try {
+                        this.setSlotWindow(this.selectedSlot, values);
+                    } finally {
+                        this._histogramEmitting = false;
+                    }
+                    this.drawHistogram();
+                },
+                onChange: () => this.scheduleSaveChannels(),
+            });
+        } else {
+            hist.slider.setBounds({ min, max });
+            hist.slider.set(held, { silent: true });
+        }
+        this.sizeRangeFields(hist.slider, max);
+        // The boxes live in their own row (`fieldsSlot`), out of reach of
+        // the width set on the slider's root.
+        hist.popover.querySelector(".channel-histogram-fields")?.style?.setProperty(
+            "--plx-number-width", `calc(${Math.max(2, String(Math.round(max)).length)}ch + 20px)`);
+        const fullName = this.dataLayer.getFullChannelName(slot.name);
+        if (!this.databaseDescription?.[fullName]?.image_histogram && !hist.fetching) {
+            hist.fetching = slot.name;
+            Promise.resolve(this.channelList.ensureChannelStats?.(slot.name)).catch(() => {})
+                .then(() => {
+                    hist.fetching = null;
+                    if (this.channelSlots[this.selectedSlot]?.name === slot.name) this.drawHistogram();
+                });
+        }
+        this.drawHistogram();
+    }
+
+    /**
+     * The channel's intensity histogram (get_image_channel_stats: 50 bins of
+     * log intensity over the overview) on the slider's own log axis, so a
+     * bar sits over the handle position of the intensity it counts. Inside
+     * the window it takes the channel's colour.
+     */
+    drawHistogram() {
+        const hist = this.histogram;
+        const canvas = hist?.popover.querySelector(".channel-histogram-canvas");
+        const slot = this.channelSlots[this.selectedSlot];
+        if (!canvas || !slot?.name || !hist.slider) return;
+        const ratio = window.devicePixelRatio || 1;
+        const width = Math.max(1, Math.round(canvas.clientWidth || 260));
+        const height = 72;
+        canvas.width = Math.round(width * ratio);
+        canvas.height = Math.round(height * ratio);
+        const ctx = canvas.getContext?.("2d");
+        if (!ctx) return;
+        ctx.setTransform(ratio, 0, 0, ratio, 0, 0);
+        ctx.clearRect(0, 0, width, height);
+        const note = hist.popover.querySelector(".channel-histogram-note");
+        const stats = this.databaseDescription?.[this.dataLayer.getFullChannelName(slot.name)];
+        const bins = stats?.image_histogram;
+        if (note) note.textContent = Array.isArray(bins) && bins.length ? "" : "Loading the histogram…";
+        if (!Array.isArray(bins) || !bins.length) return;
+        const inset = (PlexoraSlider.THUMB || 12) / 2;
+        const span = width - 2 * inset;
+        const slider = hist.slider;
+        const packet = this.isHdMode() ? null : this.quantWindow(slot.name);
+        // A raw intensity in the slider's units: raw in HD, bytes otherwise.
+        const toDomain = (raw) => (packet
+            ? ((raw - packet.qmin) / Math.max(packet.qmax - packet.qmin, 1)) * 255 : raw);
+        const xOf = (raw) => {
+            const value = Math.min(slider.max, Math.max(slider.min, toDomain(raw)));
+            return inset + slider.fraction(value) * span;
+        };
+        const step = bins.length > 1 ? Number(bins[1].x) - Number(bins[0].x) : 0.1;
+        const peak = Math.max(...bins.map((b) => Number(b.y) || 0), 1e-12);
+        const [low, high] = slot.range.map(Number);
+        const colour = slot.colorHex || "#38bdf8";
+        bins.forEach((bin) => {
+            const x0 = xOf(Math.exp(Number(bin.x) - step / 2));
+            const x1 = xOf(Math.exp(Number(bin.x) + step / 2));
+            const barHeight = Math.sqrt((Number(bin.y) || 0) / peak) * (height - 4);
+            const centre = toDomain(Math.exp(Number(bin.x)));
+            ctx.fillStyle = centre >= low && centre <= high ? colour : "rgba(142, 160, 184, 0.45)";
+            ctx.fillRect(x0, height - barHeight, Math.max(1, x1 - x0 - 0.5), barHeight);
+        });
+        // The window's two edges.
+        ctx.fillStyle = "rgba(248, 250, 252, 0.85)";
+        for (const edge of [low, high]) {
+            const x = inset + slider.fraction(Math.min(slider.max, Math.max(slider.min, edge))) * span;
+            ctx.fillRect(Math.round(x) - 0.5, 0, 1, height);
+        }
     }
 
     describeMarkerOption(name, currentSlotIndex) {
@@ -1074,6 +1799,7 @@ class ViewerSidebar {
                 dataRange: [...slot.range],
             });
         }
+        if (slotIndex === this.selectedSlot) this.syncHistogram();
     }
 
     /**
@@ -1137,16 +1863,17 @@ class ViewerSidebar {
     }
 
     /**
-     * Put back the window that was on screen when Auto was pressed.
+     * Put back the window that was on screen when Auto or Clear was pressed.
      *
      * The two flags travel with the range because they are part of what
      * "before" was: a channel that had never been levelled must be free to
      * level itself again the next time it is switched on, exactly as it would
      * have been had Auto never been pressed.
      *
-     * `markerRangeOverrides` is not touched. Auto never wrote to it -- both
-     * of its passes go through `setSlotRange(..., false)` -- so there is
-     * nothing of the user's in there for this to undo.
+     * After Auto, `markerRangeOverrides` is not touched. Auto never wrote to
+     * it -- both of its passes go through `setSlotRange(..., false)` -- so
+     * there is nothing of the user's in there for this to undo. Clear
+     * (clearSelectedRange) did write it, and its way back says what it held.
      */
     revertSlotRange(slotIndex) {
         const slot = this.channelSlots[slotIndex];
@@ -1161,6 +1888,11 @@ class ViewerSidebar {
         slot.userRangeChanged = before.userRangeChanged;
         slot.autoLeveled = before.autoLeveled;
         slot.rangeSource = before.rangeSource || null;
+        // Only Clear writes the override, so only its way back carries one.
+        if ("override" in before && slot.name) {
+            if (before.override) this.markerRangeOverrides.set(slot.name, before.override);
+            else this.markerRangeOverrides.delete(slot.name);
+        }
         const curves = globalThis.PlexoraDisplayCurve;
         if (curves && !curves.same(slot.curve, before.curve)) {
             this.setSlotCurve?.(slotIndex, before.curve, { save: false, source: null });
@@ -1661,8 +2393,8 @@ class ViewerSidebar {
         if (!row) return;
         row.classList.toggle("is-agent-adjusting", Boolean(on));
         if (!on) return;
-        slot.expanded = true;
-        this.applySlotExpansion(slot);
+        // Selected, so the shared slider is the one that moves.
+        this.selectSlot(slot.index, { enable: false });
         try {
             row.scrollIntoView({ block: "nearest", behavior: "smooth" });
         } catch (error) {
@@ -2071,10 +2803,10 @@ class ViewerSidebar {
         slot.preAutoRange = null;
         slot.curve = null;
         slot.rangeSource = null;
-        this.channelSlotSliders.get(slotIndex)?.destroy();
-        this.channelSlotSliders.delete(slotIndex);
+        // The bar moves to the next channel showing, if this was its slot.
+        if (slotIndex === this.selectedSlot) this.selectedSlot = -1;
         this.syncSlotDom(slot);
-        this.applySlotExpansion(slot);
+        this.syncContrastBar();
         this.updateSelectedCount();
         this.scheduleSaveChannels();
     }
@@ -2085,14 +2817,20 @@ class ViewerSidebar {
         row.classList.toggle("is-hidden", !slot.visible);
         row.classList.toggle("is-disabled", !slot.enabled);
         row.style.setProperty("--slot-color", slot.colorHex);
-        const toggle = row.querySelector(".channel-toggle-switch");
-        if (toggle) toggle.checked = slot.enabled;
+        row.classList.toggle("is-selected", slot.index === this.selectedSlot);
+        this.paintEye(row.querySelector(".channel-slot-eye"), slot);
         const colorPicker = this.colorPickers.get(slot.index);
         if (colorPicker) colorPicker.setValue(slot.colorHex);
         const markerSelect = this.markerSelects.get(slot.index);
         if (markerSelect) markerSelect.setValue(slot.name);
+        // After setValue: measured before it, the field kept the width of
+        // the marker it held before, and a longer new name was cut short.
+        this.fitMarkerName(slot, row);
         this.syncSlotAutoButton(slot);
         this.updateSlotReadout(slot);
+        // Every slot's change, not only the selected one's: the bar's eye
+        // says whether any channel is on.
+        this.paintContrastHeader();
     }
 
     /**
@@ -2168,8 +2906,10 @@ class ViewerSidebar {
             if (slot && slot.enabled && slot.name && !keep.has(slot.name)) this.deactivateChannel(slot);
         });
         this.channelSlots = [];
-        this.channelSlotSliders.forEach((slider) => slider.destroy());
+        // The shared slider outlives the rows: it is re-bound to whichever
+        // slot is selected once they are rebuilt.
         this.channelSlotSliders.clear();
+        this.selectedSlot = -1;
         this.colorPickers.clear();
         this.markerSelects.clear();
     }
@@ -2411,21 +3151,42 @@ class ViewerSidebar {
     }
 
     async applySavedChannels(rows) {
-        const activeRows = rows.filter((row) => row && row.channel_active);
+        // Every row the user had, on or off: an on row is `channel_active`,
+        // an off one is a row with a `position` (persistChannelList), so ten
+        // rows come back as ten and not as the default five. In the order
+        // the user left them; rows saved before rows said keep image order,
+        // and sort after those that do.
+        const slotRows = rows.filter((row) => row
+            && (row.channel_active || Number.isInteger(row.position)))
+            .map((row, i) => ({ row, i }))
+            .sort((a, b) => {
+                const pa = Number.isInteger(a.row.position) ? a.row.position : Infinity;
+                const pb = Number.isInteger(b.row.position) ? b.row.position : Infinity;
+                return pa === pb ? a.i - b.i : pa - pb;
+            })
+            .map(({ row }) => row)
+            .slice(0, this.maxChannelSlots);
+        const activeRows = slotRows.filter((row) => row.channel_active);
         this.curveMode = this.savedCurveMode(activeRows);
         const slotList = this.el("channel_slot_list");
         if (!slotList) return;
         this.discardChannelSlots(new Set(activeRows.map((row) => row.channel)));
 
-        const count = Math.min(Math.max(activeRows.length, this.initialChannelSlots), this.maxChannelSlots);
-        // Slots beyond the active rows aren't assigned by a saved row at all, but they should
+        const count = Math.min(Math.max(slotRows.length, this.initialChannelSlots), this.maxChannelSlots);
+        // Slots beyond the saved rows aren't assigned by a saved row at all, but they should
         // still show a marker (off) rather than sit empty, matching the pre-restore default look.
-        const usedNames = new Set(activeRows.slice(0, count).map((row) => row.channel));
+        const usedNames = new Set(slotRows.map((row) => row.channel));
         const fallbackNames = this.columns.filter((name) => !usedNames.has(name));
         let fallbackIdx = 0;
         for (let i = 0; i < count; i++) {
-            const color = this.getDefaultColor(i);
-            const name = i < activeRows.length ? "" : (fallbackNames[fallbackIdx++] || "");
+            const saved = slotRows[i];
+            // An off row is back with its marker and colour, still off; an on
+            // row is filled in below, once its stats are here.
+            const off = saved && !saved.channel_active;
+            const color = off
+                ? { rgb: { r: saved.r, g: saved.g, b: saved.b }, hex: this.rgbToHex(saved.r, saved.g, saved.b) }
+                : this.getDefaultColor(i);
+            const name = saved ? (off ? saved.channel : "") : (fallbackNames[fallbackIdx++] || "");
             const slot = {
                 index: i,
                 name,
@@ -2435,7 +3196,7 @@ class ViewerSidebar {
                 visible: true,
                 expanded: false,
                 range: this.getImageRange(name),
-                userColorChanged: false,
+                userColorChanged: Boolean(off),
                 userRangeChanged: false,
                 autoLeveled: false,
                 autoLeveling: false,
@@ -2460,7 +3221,7 @@ class ViewerSidebar {
         // used to put 6 of them in flight simultaneously and occupy every worker.
         // The ceiling comes from the server, so a big node still restores as wide
         // as it ever did.
-        const restoredNames = activeRows.slice(0, count).map((row) => row.channel);
+        const restoredNames = activeRows.map((row) => row.channel);
         const restoreTask = window.PlexoraStatus?.begin("Restoring");
         try {
             await plexoraMapWithLimit(restoredNames, plexoraChannelConcurrency(), (name) =>
@@ -2469,9 +3230,9 @@ class ViewerSidebar {
             restoreTask?.done();
         }
 
-        for (const [i, row] of activeRows.slice(0, count).entries()) {
+        for (const [i, row] of slotRows.entries()) {
             const slot = this.channelSlots[i];
-            if (!slot) continue;
+            if (!slot || !row.channel_active) continue;
             this.setSlotMarker(slot.index, row.channel, { keepColor: true, enable: true, force: true });
             // setSlotMarker's markerChanged branch always resets userRangeChanged/autoLeveled
             // to false and (since slot.enabled) synchronously schedules autoLevelChannelIfNeeded
@@ -2570,8 +3331,21 @@ class ViewerSidebar {
         const listRanges = {};
         const listMeta = {};
         const bitMax = this.dataLayer.imageBitRange[1];
-        this.channelSlots.forEach((slot) => {
-            if (!slot.name || !slot.enabled) return;
+        // On rows first: an off row naming the same channel as an on one
+        // (one row per channel is saved) must not take its place.
+        const ordered = [...this.channelSlots].sort((a, b) => Number(b.enabled) - Number(a.enabled));
+        ordered.forEach((slot) => {
+            if (!slot.name || !slot.visible) return;
+            if (!slot.enabled) {
+                // An off row is kept too, as its marker, colour and place,
+                // so the rows the user had come back (applySavedChannels).
+                // Its window is the channel's remembered one, already above.
+                const offIdx = imageChannels[this.dataLayer.getFullChannelName(slot.name)];
+                if (offIdx === undefined || listMeta[slot.name]) return;
+                listColors[offIdx] = { color: { ...slot.color, opacity: 1 } };
+                listMeta[slot.name] = { position: slot.index };
+                return;
+            }
             const fullName = this.dataLayer.getFullChannelName(slot.name);
             const idx = imageChannels[fullName];
             if (idx === undefined) return;
@@ -2597,6 +3371,9 @@ class ViewerSidebar {
                 curve: curve ? "asinh" : "linear",
                 ...(curve ? { cofactor: curve.cofactor } : {}),
                 ...(source === "gating" && slot.displayRev ? { display_rev: slot.displayRev } : {}),
+                // Where the row sits, so a reorder survives a reload: the
+                // rows themselves are written in image order.
+                position: slot.index,
             };
         });
         return this.dataLayer.saveChannelList(imageChannelsIdx, activeChannels, listColors, listRanges,

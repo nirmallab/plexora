@@ -335,7 +335,7 @@
                 hdMode: undefined,
             });
         sidebar.maxChannelSlots = Math.min(MAX_SLOTS, names.length);
-        sidebar.initialChannelSlots = Math.max(1, Math.min(4, names.length));
+        sidebar.initialChannelSlots = Math.max(1, Math.min(5, names.length));
 
         /**
          * WHERE THIS PANEL'S CHANGES ARE SAVED -- overridden on the instance

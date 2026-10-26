@@ -98,7 +98,7 @@
     {# Must precede the two widgets below: both hand their popup to it on construction. #}
     <script src="{{ data.base_url }}/client/src/js/views/popoverPortal.js?v=20261014_import_progressive"></script>
     <script src="{{ data.base_url }}/client/src/js/views/popoverMenu.js?v=20261016_log_brightness"></script>
-    <script src="{{ data.base_url }}/client/src/js/views/searchableSelect.js?v=20260928_gene_taken"></script>
+    <script src="{{ data.base_url }}/client/src/js/views/searchableSelect.js?v=20261025_contrast5"></script>
     <script src="{{ data.base_url }}/client/src/js/views/colorSwatchPicker.js?v=20260920_gene_groups_dialog"></script>
     {# The selected-genes tree and its group dialog, which the Transcripts and
        Visium HD layer sections both draw. Core's so that neither plugin reads
@@ -107,11 +107,11 @@
     <script src="{{ data.base_url }}/client/src/js/views/geneGroupModal.js?v=20260928_gene_taken"></script>
     <script src="{{ data.base_url }}/client/src/js/views/viewerControls.js?v=20261021_pro"></script>
     <script src="{{ data.base_url }}/client/src/js/views/scaleCalibration.js?v=20260910_scalebar_pencil"></script>
-    <script src="{{ data.base_url }}/client/src/js/views/viewerSidebar.js?v=20261018_display_contrast3"></script>
+    <script src="{{ data.base_url }}/client/src/js/views/viewerSidebar.js?v=20261025_contrast12"></script>
     {# After viewerSidebar (whose class it instantiates) and before
        layerManager (which mounts it). Both only have to be PRESENT -- the
        mount happens when a card is built -- but the order is what says so. #}
-    <script src="{{ data.base_url }}/client/src/js/views/layerChannelPanel.js?v=20260924_ui_pass"></script>
+    <script src="{{ data.base_url }}/client/src/js/views/layerChannelPanel.js?v=20261025_contrast"></script>
     <script src="{{ data.base_url }}/client/src/js/views/layerManager.js?v=20261016_log_brightness"></script>
     {# Before the plugin assets at the bottom of this block: a layer section's
        own script may ask PlexoraLayerSections whether it is one. #}
@@ -186,7 +186,7 @@
        is one of these, so it loads with the rest of the shell rather than
        with any one panel -- and before gradientRange.js and toolLoader.js,
        both of which build with it. #}
-    <script src="{{ data.base_url }}/client/src/js/views/slider.js?v=20261016_display_contrast" defer></script>
+    <script src="{{ data.base_url }}/client/src/js/views/slider.js?v=20261025_contrast" defer></script>
     {# The colour bar with two handles over it, and the palettes behind the
        button beside it. Core's because two plugins draw it -- Cell Explorer's
        numeric columns and the transcript density map -- and a control the
