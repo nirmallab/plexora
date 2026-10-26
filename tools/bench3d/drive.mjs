@@ -47,15 +47,33 @@ function parseArgs(argv) {
     return out;
 }
 
-function kindOf(address) {
+export function kindOf(address) {
     if (/\/volume\/[^/]+\/level/.test(address)) return "level";
     if (/\/volume\/[^/]+\/bricks?\b/.test(address)) return "brick";
     if (/view=(t\d+)?(xzy|yzx)/.test(address)) return "section";
     if (/\/generated\/data\//.test(address)) return "tile";
+    // A data node's own tiles, fetched by the browser directly (one at a
+    // time, or several in one batch request).
+    if (/\/node\/v1\/(image|seg|segmentation)\/[^?]*\/tile\//.test(address)) return "tile";
+    if (/\/node\/v1\/batch\b/.test(address)) return "batch";
+    if (/\/node\/v1\/image\/[^/]+\/level\b/.test(address)) return "level";
+    if (/\/node\/v1\/image\/[^/]+\/block\b/.test(address)) return "brick";
     if (/\.glsl(\?|$)/.test(address)) return "shader";
     if (/\/(stats|gmm|quantization)/.test(address)) return "stats";
     if (/\/volume\//.test(address)) return "volume";
     return "other";
+}
+
+/**
+ * Where a response's bytes came from: `node-direct` (the browser asked a data
+ * node itself), `node-proxy` (the viewer fetched it from a node on the page's
+ * behalf: its Server-Timing has a `node` phase) or `local` (this server read
+ * the file itself).
+ */
+export function originOf(address, timing) {
+    if (/\/node\/v1\//.test(address)) return "node-direct";
+    if (timing && typeof timing.node === "number") return "node-proxy";
+    return "local";
 }
 
 /**
@@ -165,6 +183,7 @@ export class Browser {
             record.status = p.response.status;
             record.disk = record.disk || Boolean(p.response.fromDiskCache || p.response.fromMemoryCache);
             record.timing = parseServerTiming(headers["server-timing"]);
+            record.origin = originOf(record.url, record.timing);
             record.ttfb = p.response.timing ? p.response.timing.receiveHeadersEnd : null;
             record.queued = p.response.timing ? p.response.timing.sendStart : null;
             break;
@@ -335,6 +354,13 @@ export class Browser {
 export function netSummary(records) {
     const out = {};
     for (const r of records) {
+        // Bytes by where they came from, beside the by-kind table.
+        if (r.origin) {
+            const o = ((out.byOrigin ||= {})[r.origin] ||= { n: 0, bytes: 0, disk: 0 });
+            o.n += 1;
+            o.bytes += r.bytes || 0;
+            if (r.disk) o.disk += 1;
+        }
         const k = (out[r.kind] ||= { n: 0, bytes: 0, disk: 0, s304: 0, canceled: 0, failed: 0,
                                     cacheHit: 0, cacheMiss: 0, chunkHit: 0, chunkMiss: 0,
                                     phases: {} });

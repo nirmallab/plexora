@@ -322,6 +322,13 @@ class SFTPClient:
         self._handles_lock = threading.Lock()
         self._executor: Optional[ThreadPoolExecutor] = None
         self._executor_lock = threading.Lock()
+        #: What crossed this conversation, for `stats()`: requests sent and
+        #: replies received, their bytes on the wire (SFTP framing included),
+        #: READ requests and the data they returned, and the time each
+        #: request waited for its reply.
+        self.counters = {"requests": 0, "replies": 0, "bytes_out": 0, "bytes_in": 0,
+                         "reads": 0, "read_bytes": 0, "wait_s": 0.0}
+        self._sent_at: dict[int, float] = {}
         self._reader = threading.Thread(target=self._read_loop, daemon=True,
                                         name=f"plexora-sftp-{self.label}")
         self._reader.start()
@@ -416,9 +423,15 @@ class SFTPClient:
         future: Future = Future()
         future.add_done_callback(lambda _: self._slots.release())
         request_id = next(self._ids) & 0xFFFFFFFF
+        body = struct.pack(">BI", ptype, request_id) + payload
         with self._pending_lock:
             self._pending[request_id] = future
-        body = struct.pack(">BI", ptype, request_id) + payload
+            counters = self.counters
+            counters["requests"] += 1
+            counters["bytes_out"] += 4 + len(body)
+            if ptype == _READ:
+                counters["reads"] += 1
+            self._sent_at[request_id] = time.monotonic()
         try:
             self._write(struct.pack(">I", len(body)) + body)
         except BaseException as exc:
@@ -489,6 +502,14 @@ class SFTPClient:
         if len(body) < 5:
             return
         (request_id,) = struct.unpack_from(">I", body, 1)
+        counters = self.counters
+        counters["replies"] += 1
+        counters["bytes_in"] += 4 + len(body)
+        if ptype == _DATA:
+            counters["read_bytes"] += max(0, len(body) - 9)
+        sent = self._sent_at.pop(request_id, None)
+        if sent is not None:
+            counters["wait_s"] += time.monotonic() - sent
         with self._pending_lock:
             future = self._pending.pop(request_id, None)
         if future is not None and not future.done():
@@ -773,6 +794,27 @@ def require_client(target) -> SFTPClient:
     if client is None:
         raise SFTPNotConnected(canonical_target(target))
     return client
+
+
+def stats() -> dict:
+    """What every registered client has sent and received so far, by target.
+
+    Counters only grow while a client lives; a reconnect starts a new client
+    at zero. `wait_s` is summed over requests, so concurrent requests count
+    their overlap once each.
+    """
+    import os
+
+    with _clients_lock:
+        clients = dict(_clients)
+    out = {}
+    for key, client in clients.items():
+        counts = dict(client.counters)
+        counts["wait_s"] = round(counts["wait_s"], 3)
+        counts["alive"] = client.alive
+        counts["ssh_pid"] = getattr(client.process, "pid", None)
+        out[key] = counts
+    return {"pid": os.getpid(), "clients": out}
 
 
 def connected_targets() -> list:
