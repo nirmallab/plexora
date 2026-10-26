@@ -32,6 +32,7 @@ from dataclasses import replace
 from pathlib import Path
 
 from flask import jsonify, request
+from werkzeug.exceptions import RequestEntityTooLarge
 
 from plexora import app, get_config, get_config_names, paths
 from plexora.datasource import (
@@ -973,6 +974,20 @@ UPLOAD_SUFFIXES = (".csv", ".tsv", ".txt", ".parquet")
 #: send through a browser, and refusing it early beats filling a scratch disk.
 UPLOAD_MAX_BYTES = 512 * 1024 * 1024
 
+#: What multipart framing adds around the file itself: the boundaries and the
+#: part headers. Generous, so a file just under the limit is never refused for
+#: its envelope.
+UPLOAD_MULTIPART_SLACK = 1024 * 1024
+
+
+def _too_large(what):
+    return jsonify(
+        ok=False,
+        error=f"{what} is larger than this server accepts through a "
+              f"browser. Put it somewhere the server can read, or connect "
+              f"this computer as a data node.",
+    ), 400
+
 #: How long a staged file survives if nothing imports it. Long enough that a
 #: user who uploads and then goes to find their image still has it; short
 #: enough that an abandoned import does not sit on the disk for a week.
@@ -992,7 +1007,19 @@ def upload_data_file():
     every import route treats it as one, so nothing downstream learns that a
     browser was involved.
     """
-    upload = request.files.get('file')
+    # Bounded BEFORE request.files is touched: reading it parses the whole
+    # multipart body into a temporary file, so a check after that is a check
+    # on a disk that has already been filled. The declared length turns an
+    # honest oversized upload away at once; the per-request cap stops one
+    # whose length was not declared (chunked) at the cap while it streams.
+    limit = UPLOAD_MAX_BYTES + UPLOAD_MULTIPART_SLACK
+    if (request.content_length or 0) > limit:
+        return _too_large("The file")
+    request.max_content_length = limit
+    try:
+        upload = request.files.get('file')
+    except RequestEntityTooLarge:
+        return _too_large("The file")
     if upload is None or not (upload.filename or '').strip():
         return jsonify(ok=False, error="No file was sent."), 400
 
@@ -1021,12 +1048,7 @@ def upload_data_file():
         # header is the client's claim about the body, and this is the only
         # number that is a fact.
         shutil.rmtree(staged, ignore_errors=True)
-        return jsonify(
-            ok=False,
-            error=f"{filename} is larger than this server accepts through a "
-                  f"browser. Put it somewhere the server can read, or connect "
-                  f"this computer as a data node.",
-        ), 400
+        return _too_large(filename)
 
     return jsonify(ok=True, path=str(target), name=filename)
 

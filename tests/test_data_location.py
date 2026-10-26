@@ -231,6 +231,39 @@ def test_an_abandoned_upload_is_swept(client, plexora_data_root):
     assert not staged.parent.exists()
 
 
+def test_an_upload_declared_too_large_is_refused_before_it_is_read(
+        client, plexora_data_root, monkeypatch):
+    """Checked from the declared length before the multipart body is parsed:
+    parsing it is what writes it to a temporary file."""
+    import io
+
+    from plexora.server.routes import import_routes
+
+    monkeypatch.setattr(import_routes, "UPLOAD_MAX_BYTES", 10)
+    monkeypatch.setattr(import_routes, "UPLOAD_MULTIPART_SLACK", 10)
+    answer = client.post("/upload_data_file", data={
+        "file": (io.BytesIO(b"x" * 500), "big.csv"),
+    }, content_type="multipart/form-data")
+
+    assert answer.status_code == 400
+    assert "larger than this server accepts" in answer.get_json()["error"]
+    assert not import_routes._uploads_root().exists() or \
+        not any(import_routes._uploads_root().iterdir())
+
+
+def test_an_upload_just_under_the_limit_still_lands(client, plexora_data_root,
+                                                     monkeypatch):
+    import io
+
+    from plexora.server.routes import import_routes
+
+    monkeypatch.setattr(import_routes, "UPLOAD_MAX_BYTES", 600)
+    answer = client.post("/upload_data_file", data={
+        "file": (io.BytesIO(b"a,b\n" + b"1,2\n" * 140), "cells.csv"),
+    }, content_type="multipart/form-data").get_json()
+    assert answer["ok"] is True
+
+
 # -- the wiring around it ----------------------------------------------------
 
 
@@ -428,3 +461,16 @@ def test_a_field_with_nowhere_to_go_opens_the_connection_dialog(probe):
     assert "with nothing connected, Remote opens the connection dialog" in probe, probe
     assert "...and the machine it opened is the one the field adopts" in probe, probe
     assert "...and backing out of it leaves the field on This computer" in probe, probe
+
+
+def test_a_mask_at_a_web_address_never_creates_a_folder_under_the_working_directory(
+        tmp_path, monkeypatch):
+    from plexora import paths
+
+    monkeypatch.chdir(tmp_path)
+    for root in ("sftp://me@transfer.example.edu/n/scratch/seg",
+                 Path("sftp://me@transfer.example.edu/n/scratch/seg"),
+                 "https://data.example.org/x.zarr"):
+        assert paths.is_writable(root) is False
+    assert list(tmp_path.iterdir()) == []
+    assert paths.is_writable(tmp_path / "out") is True

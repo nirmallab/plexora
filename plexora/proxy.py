@@ -1,5 +1,19 @@
 import os
+import secrets
 import sys
+
+
+def _proxy_injects_headers():
+    """Whether this jupyter-server-proxy adds `request_headers_override`
+    headers to what it forwards (4.1.0 and later). An older one ignores the
+    key, and a token it never forwards would refuse every request."""
+    try:
+        from importlib.metadata import version
+
+        major, minor = (int(part) for part in version("jupyter-server-proxy").split(".")[:2])
+    except Exception:
+        return False
+    return (major, minor) >= (4, 1)
 
 
 def setup_plexora():
@@ -43,9 +57,20 @@ def setup_plexora():
     if data_dir:
         environment["PLEXORA_DATA_PATH"] = data_dir
 
+    # The server listens on this node's loopback, which every other account
+    # on a shared hub node can also reach. The proxy is the only way in that
+    # the person who launched it uses, so the proxy carries a token on every
+    # request it forwards and the browser never needs to hold one.
+    headers = {}
+    if _proxy_injects_headers():
+        token = secrets.token_urlsafe(24)
+        environment["PLEXORA_AUTH_TOKEN"] = token
+        headers["X-Plexora-Token"] = token
+
     return {
         "command": command,
         "environment": environment,
+        **({"request_headers_override": headers} if headers else {}),
         "absolute_url": False,
         "new_browser_tab": False,
         "timeout": 30,

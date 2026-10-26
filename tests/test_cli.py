@@ -1,3 +1,4 @@
+import json
 import os
 import socket
 import sys
@@ -80,6 +81,14 @@ def test_open_browser_waits_on_health_url_but_opens_requested_url():
 
     assert waited == ["http://127.0.0.1:8000/"]
     assert opened == ["http://127.0.0.1:8000/demo"]
+
+
+@pytest.fixture(autouse=True)
+def _claim_the_auth_token(monkeypatch):
+    """main() writes the token it chose into os.environ (so a restart after an
+    update inherits it). Claimed here so no test leaves one behind for every
+    server a later test starts."""
+    monkeypatch.setenv("PLEXORA_AUTH_TOKEN", "")
 
 
 def _fake_serve(monkeypatch, served):
@@ -1599,3 +1608,87 @@ def test_dataset_create_scan_registers(tmp_path, capsys):
     assert cli._run_dataset(args) == 2
     args = cli.build_parser("dataset").parse_args(["create", "Alone", "--dry-run"])
     assert cli._run_dataset(args) == 2
+
+
+# -- the terminal viewer's token ---------------------------------------------
+
+@pytest.fixture
+def _token_env(monkeypatch, tmp_path):
+    """main() writes the token into os.environ for a restart to inherit; claim
+    the variable so it does not outlive the test, and give the fake paths a
+    data root to keep the reused token in."""
+    monkeypatch.setenv("PLEXORA_AUTH_TOKEN", "")
+    monkeypatch.setenv("PLEXORA_BASE_URL", "")
+    served = {}
+    _fake_serve(monkeypatch, served)
+    sys.modules["plexora"].paths.data_root = lambda: tmp_path
+    monkeypatch.setattr(cli, "should_open_browser", lambda **kwargs: False)
+    return served, tmp_path
+
+
+def test_the_terminal_server_mints_a_token_and_prints_it_in_the_url(_token_env, capsys):
+    served, root = _token_env
+    cli.main(["--port", "0", "--no-detect"])
+
+    config = sys.modules["plexora"].app.config
+    token = config["PLEXORA_AUTH_TOKEN"]
+    assert token and f"?token={token}" in capsys.readouterr().out
+    assert config["PLEXORA_TRUSTED_HOSTS"] == []
+    # Kept owner-only and reused, so a tab left open survives a restart.
+    saved = root / cli.SERVER_TOKEN_FILE
+    assert json.loads(saved.read_text())["token"] == token
+    if os.name != "nt":
+        assert (saved.stat().st_mode & 0o077) == 0
+    assert config["PLEXORA_AUTH_COOKIE_MAX_AGE"] == cli.SERVER_TOKEN_COOKIE_SECONDS
+
+
+def test_the_same_token_comes_back_on_the_next_launch(_token_env, monkeypatch):
+    served, root = _token_env
+    first = cli.server_token(root)
+    assert cli.server_token(root) == first
+
+
+def test_a_token_file_others_could_read_is_replaced(_token_env):
+    if os.name == "nt":
+        pytest.skip("POSIX modes")
+    _served, root = _token_env
+    first = cli.server_token(root)
+    os.chmod(root / cli.SERVER_TOKEN_FILE, 0o644)
+    assert cli.server_token(root) != first
+
+
+def test_no_token_serves_the_old_open_way(_token_env, capsys):
+    cli.main(["--port", "0", "--no-detect", "--no-token"])
+    assert not sys.modules["plexora"].app.config.get("PLEXORA_AUTH_TOKEN")
+    assert "?token=" not in capsys.readouterr().out
+
+
+def test_an_inherited_token_is_kept_rather_than_replaced(_token_env, monkeypatch):
+    """The restart after an update: the page's cookie must still hold."""
+    monkeypatch.setenv("PLEXORA_AUTH_TOKEN", "from-before-the-restart")
+    cli.main(["--port", "0", "--no-detect"])
+    assert sys.modules["plexora"].app.config["PLEXORA_AUTH_TOKEN"] == "from-before-the-restart"
+
+
+def test_remote_stays_tokenless_for_an_older_connect(_token_env, monkeypatch):
+    """`plexora connect` reads only the port off the ready line; a remote newer
+    than the laptop would otherwise refuse every request the laptop makes."""
+    monkeypatch.setattr(cli, "_print_remote_instructions", lambda args, port: None)
+    cli.main(["--remote", "--port", "0", "--no-detect"])
+    config = sys.modules["plexora"].app.config
+    assert not config.get("PLEXORA_AUTH_TOKEN")
+    assert config["PLEXORA_TRUSTED_HOSTS"] == []
+
+
+def test_a_network_bind_gets_a_token_for_this_launch_only(_token_env):
+    served, root = _token_env
+    cli.main(["--port", "0", "--no-detect", "--host", "0.0.0.0"])
+    config = sys.modules["plexora"].app.config
+    assert config["PLEXORA_AUTH_TOKEN"]
+    assert not (root / cli.SERVER_TOKEN_FILE).exists()
+    assert config.get("PLEXORA_TRUSTED_HOSTS") is None
+
+
+def test_with_token_joins_onto_an_existing_query():
+    assert cli.with_token("http://h/?a=1", "t") == "http://h/?a=1&token=t"
+    assert cli.with_token("http://h/", None) == "http://h/"

@@ -450,3 +450,18 @@ def machine_facts(disk_path=None):
         except Exception:
             pass
     return facts
+
+
+#: The request limits every waitress server in Plexora is started with.
+#:
+#: The body is effectively unbounded on purpose: an upload is a whole image or
+#: table, and the routes that take one stream it to disk. The header cap is
+#: not: it used to be 85 GB, which is no cap at all -- waitress buffers the
+#: request line and headers in memory before any route runs, so one request
+#: with an endless header could take the process's memory. 32 MiB is far above
+#: anything the viewer sends (the longest is a tile or selection query string)
+#: and bounds that.
+WAITRESS_LIMITS = {
+    "max_request_body_size": 1073741824000000,
+    "max_request_header_size": 32 * 1024 * 1024,
+}

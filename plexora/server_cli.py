@@ -35,9 +35,15 @@ def main(argv=None):
 
     from waitress import serve
     from plexora import app, _clean_base_url
-    from plexora._resources import worker_threads
+    from plexora._resources import WAITRESS_LIMITS, worker_threads
 
     app.config["PLEXORA_NOTEBOOK_MODE"] = args.notebook_mode or app.config.get("PLEXORA_NOTEBOOK_MODE", False)
+    # A sidecar the notebook frames directly is reached at 127.0.0.1, so it
+    # answers only loopback's own names (DNS rebinding; see plexora._guard).
+    # Behind a hub's proxy the Host is the hub's to choose.
+    if (args.host in ("127.0.0.1", "localhost", "::1") and not args.base_url
+            and app.config.get("PLEXORA_TRUSTED_HOSTS") is None):
+        app.config["PLEXORA_TRUSTED_HOSTS"] = []
     if args.base_url is not None:
         app.config["PLEXORA_BASE_URL"] = _clean_base_url(args.base_url)
     # Plugin registration (Blueprint mounting) already happened inside
@@ -83,8 +89,7 @@ def main(argv=None):
         host=args.host,
         port=int(args.port),
         _server=cli._capturing_server(served),
-        max_request_body_size=1073741824000000,
-        max_request_header_size=85899345920000,
+        **WAITRESS_LIMITS,
         # Sized from the allocation rather than hardcoded: most workers block
         # on the serialized image reader rather than computing, so the pool is
         # deliberately wider than the core count -- what matters is that one

@@ -56,7 +56,23 @@ public:
     example: roi,cell_explorer
   - name: PLEXORA_AUTH_TOKEN
     group: Server
-    description: When set, the viewer only opens from a URL carrying `?token=<value>`. `plexora --ood` and the desktop app set it for you.
+    description: When set, the viewer only opens from a URL carrying `?token=<value>` (or the cookie that URL sets, or an `X-Plexora-Token` header). `plexora`, `plexora --ood`, the desktop app and a Jupyter proxy mount set it for you; one already in the environment wins.
+  - name: PLEXORA_TRUSTED_HOSTS
+    group: Server
+    description: Comma-separated host names a loopback-bound viewer answers to besides localhost and IP addresses -- the same as `plexora --allowed-host`. Any other Host is refused, which is what stops a rebound DNS name reaching the viewer.
+    example: lab-box
+  - name: PLEXORA_ALLOWED_ORIGINS
+    group: Server
+    description: Comma-separated origins whose changes the viewer accepts although the browser calls them another site, for a reverse proxy that rewrites the Host on the way in.
+    example: https://portal.example.org
+  - name: PLEXORA_ALLOW_FRAMING
+    group: Server
+    description: Set to 1 to let another site show the viewer in a frame. On already in notebook mode, Colab and behind a hub's proxy.
+    example: "1"
+  - name: PLEXORA_ALLOW_LINK_LOCAL_URLS
+    group: Server
+    description: Set to 1 to let a web address reach this machine's link-local network (169.254.x.x, fe80::), which is refused by default because a cloud VM's metadata server answers there.
+    example: "1"
   - name: PLEXORA_LOG_LEVEL
     group: Server
     description: What the server logs to stderr (`DEBUG`, `INFO`, `WARNING`, `ERROR`). `INFO` says what it loads and builds, once each; `plexora -v` is `DEBUG`. Every mode; the desktop server applies it to every library's messages too.
@@ -227,6 +243,7 @@ internal:
 
 ignore:
   PLEXORA_MODEL_: The prefix of PLEXORA_MODEL_<TIER> in plexora/ai/delegation.py.
+  PLEXORA_AUTH_COOKIE_MAX_AGE: Flask config key.
   PLEXORA_CAN_RESTART: Flask config key.
   PLEXORA_DESKTOP__: A Rust format-string fragment, not a name.
   PLEXORA_IDLE: Shell heredoc marker in plexora/gcloud.py.

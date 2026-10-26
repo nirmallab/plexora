@@ -105,7 +105,47 @@ export PLEXORA_PLUGINS=roi,cell_explorer
 
 <Param name={"PLEXORA_AUTH_TOKEN"}>
 
-When set, the viewer only opens from a URL carrying `?token=<value>`. `plexora --ood` and the desktop app set it for you.
+When set, the viewer only opens from a URL carrying `?token=<value>` (or the cookie that URL sets, or an `X-Plexora-Token` header). `plexora`, `plexora --ood`, the desktop app and a Jupyter proxy mount set it for you; one already in the environment wins.
+
+</Param>
+
+<Param name={"PLEXORA_TRUSTED_HOSTS"}>
+
+Comma-separated host names a loopback-bound viewer answers to besides localhost and IP addresses -- the same as `plexora --allowed-host`. Any other Host is refused, which is what stops a rebound DNS name reaching the viewer.
+
+```bash
+export PLEXORA_TRUSTED_HOSTS=lab-box
+```
+
+</Param>
+
+<Param name={"PLEXORA_ALLOWED_ORIGINS"}>
+
+Comma-separated origins whose changes the viewer accepts although the browser calls them another site, for a reverse proxy that rewrites the Host on the way in.
+
+```bash
+export PLEXORA_ALLOWED_ORIGINS=https://portal.example.org
+```
+
+</Param>
+
+<Param name={"PLEXORA_ALLOW_FRAMING"}>
+
+Set to 1 to let another site show the viewer in a frame. On already in notebook mode, Colab and behind a hub's proxy.
+
+```bash
+export PLEXORA_ALLOW_FRAMING=1
+```
+
+</Param>
+
+<Param name={"PLEXORA_ALLOW_LINK_LOCAL_URLS"}>
+
+Set to 1 to let a web address reach this machine's link-local network (169.254.x.x, fe80::), which is refused by default because a cloud VM's metadata server answers there.
+
+```bash
+export PLEXORA_ALLOW_LINK_LOCAL_URLS=1
+```
 
 </Param>
 
