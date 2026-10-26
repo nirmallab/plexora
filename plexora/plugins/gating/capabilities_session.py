@@ -235,6 +235,12 @@ class SessionOptions(AgentModel):
                         "expected and one not-expected partner channel from the panel "
                         "context (reading guide `collage_t2m`). Off, the looks are the "
                         "two-panel cells.")
+    split_views: Literal["off", "bright_rechecks"] = Field(
+        "off", description="bright_rechecks: a look at candidates (a recheck of a gate) "
+        "draws each cell as three panels side by side -- the DNA alone, the marker alone "
+        "from the display's black to the gate at mid-grey, and the two combined (reading "
+        "guide `collage_split`) -- for a marker that is not dim; a dim marker's looks stay "
+        "morphology | context. off: never (unmeasured; `tiles` wins where both apply).")
     absence_check: bool = Field(False, description="Before a marker's first look, show six "
                                 "regions of the tissue with nothing marked and ask whether "
                                 "any cell is clearly positive by its own stain: none in any "
