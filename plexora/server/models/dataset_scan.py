@@ -972,15 +972,14 @@ def _remote_table(entry, place):
 def _node_head_copy(node, entry, limit=None):
     """`(local path, whole)`: the first rows of a file on a node, kept here."""
     import hashlib
-    import tempfile
 
     from plexora import nodes as node_api
-    from plexora.server.utils import sftp
+    from plexora.server.utils import head_cache, sftp
 
     limit = limit or sftp.HEAD_BYTES
     key = hashlib.sha1(f"{node}\0{entry.path}\0{entry.size}\0{entry.mtime_ns}"
                        .encode()).hexdigest()[:16]
-    local = Path(tempfile.gettempdir()) / "plexora-node-heads" / key / entry.name
+    local = head_cache.place("node-heads", key, entry.name)
     whole = 0 < entry.size <= limit
     if not local.exists():
         response = node_api.open_file_on_node(node, entry.path, timeout=60.0)
@@ -991,10 +990,7 @@ def _node_head_copy(node, entry, limit=None):
         if not whole:
             cut = data.rfind(b"\n")
             data = data[:cut + 1] if cut > 0 else data
-        local.parent.mkdir(parents=True, exist_ok=True)
-        partial = local.with_name(local.name + ".partial")
-        partial.write_bytes(data)
-        os.replace(partial, local)
+        head_cache.write(local, data)
     return local, whole
 
 
