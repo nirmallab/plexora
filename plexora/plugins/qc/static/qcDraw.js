@@ -1,8 +1,11 @@
 /**
  * qcDraw.js - drawing a QC region by hand, without leaving the QC panel.
  *
- * The ROI tool's Freehand, restated at the size QC needs: press and drag round
- * an artifact, release to keep it. The region is stored through the ROI
+ * The ROI tool's Freehand, Polygon and Rectangle, restated at the size QC
+ * needs (`shape`, picked on QcShapeBar, the bar on the image): Freehand,
+ * press and drag round an artifact and release; Rectangle, drag a box;
+ * Polygon, click its corners and finish with a double-click, Enter or a click
+ * on the first one (Backspace takes the last back, a drag still pans). The region is stored through the ROI
  * plugin's own `create_roi` (the QC route `/regions/draw`), so it is an ROI
  * like any other and the ROI panel, when opened, shows and edits it -- but
  * opening that panel is never needed to make one.
@@ -28,9 +31,12 @@ class QcFreehand {
         this.spaceHeld = false;
         this.stroke = null;         // [[x, y]] while a stroke is being drawn
         this.color = "#fbbf24";
-        this.onStroke = null;       // (points) => void, a finished stroke
+        this.shape = "freehand";    // freehand | polygon | rectangle
+        this.hover = null;          // the pointer, a polygon's rubber band
+        this.onStroke = null;       // (points, shape) => void, a finished shape
         this.onModeChange = null;   // () => void
         this._handlers = [];
+        this._onMove = (event) => this.move(event);
         this._onKeyDown = (event) => this.keyDown(event);
         this._onKeyUp = (event) => { if (event.key === " ") this.releaseSpace(); };
         this._onBlur = () => this.releaseSpace();
@@ -42,6 +48,9 @@ class QcFreehand {
     //: A stroke enclosing less than this many square screen pixels is a stray
     //: press, not a region.
     static get MIN_AREA_PX() { return 36; }
+    //: Screen pixels from a polygon's first corner that a click closes it.
+    static get CLOSE_PX() { return 8; }
+    static get SHAPES() { return ["freehand", "polygon", "rectangle"]; }
 
     /** Draw mode on, in `color`. */
     start(color) {
@@ -55,6 +64,9 @@ class QcFreehand {
             on("canvas-press", (e) => this.press(e));
             on("canvas-drag", (e) => this.dragging(e));
             on("canvas-drag-end", (e) => this.dragEnd(e));
+            on("canvas-click", (e) => this.click(e));
+            on("canvas-double-click", (e) => this.doubleClick(e));
+            this.viewer.canvas?.addEventListener("pointermove", this._onMove);
             document.addEventListener("keydown", this._onKeyDown);
             document.addEventListener("keyup", this._onKeyUp);
             window.addEventListener("blur", this._onBlur);
@@ -63,6 +75,14 @@ class QcFreehand {
         this.applyCursor();
         this.onModeChange?.();
         return true;
+    }
+
+    /** Which shape a gesture draws; drawing goes on if it was off. */
+    setShape(shape) {
+        if (!QcFreehand.SHAPES.includes(shape)) return;
+        this.cancelStroke();
+        this.shape = shape;
+        this.start();
     }
 
     /** Pan mode: the viewer's own navigation, with the listeners still up
@@ -80,6 +100,7 @@ class QcFreehand {
         this.drawing = false;
         for (const [name, fn] of this._handlers) this.viewer?.removeHandler(name, fn);
         this._handlers = [];
+        this.viewer?.canvas?.removeEventListener("pointermove", this._onMove);
         document.removeEventListener("keydown", this._onKeyDown);
         document.removeEventListener("keyup", this._onKeyUp);
         window.removeEventListener("blur", this._onBlur);
@@ -90,6 +111,10 @@ class QcFreehand {
 
     get active() {
         return this._handlers.length > 0;
+    }
+
+    get polygon() {
+        return this.shape === "polygon";
     }
 
     // -- the viewer ---------------------------------------------------------------
@@ -139,7 +164,8 @@ class QcFreehand {
     // -- the pointer ----------------------------------------------------------------
 
     press(event) {
-        if (!this.drawing || this.spaceHeld) return;
+        // A polygon is built from clicks; a press there may be a pan.
+        if (!this.drawing || this.spaceHeld || this.polygon) return;
         const point = this.toImage(event.position);
         if (!point) return;
         this.stroke = [this.clamp(point)];
@@ -147,34 +173,103 @@ class QcFreehand {
     }
 
     dragging(event) {
-        if (!this.stroke) return;
+        if (!this.stroke || this.polygon) return;
         event.preventDefaultAction = true;
         const point = this.toImage(event.position);
         if (!point) return;
-        this.stroke.push(this.clamp(point));
+        if (this.shape === "rectangle") this.stroke[1] = this.clamp(point);
+        else this.stroke.push(this.clamp(point));
         this.showStroke();
     }
 
     dragEnd(event) {
-        if (!this.stroke) return;
+        if (!this.stroke || this.polygon) return;
         event.preventDefaultAction = true;   // no flick-momentum pan
-        const raw = this.stroke;
+        const raw = this.shape === "rectangle" ? QcFreehand.box(this.stroke) : this.stroke;
         this.cancelStroke();
         const scale = this.imagePerScreen();
-        const points = QcFreehand.simplify(QcFreehand.dedupe(raw, scale * 0.75),
-                                           scale * QcFreehand.SIMPLIFY_PX);
+        const points = this.shape === "rectangle" ? raw
+            : QcFreehand.simplify(QcFreehand.dedupe(raw, scale * 0.75),
+                                  scale * QcFreehand.SIMPLIFY_PX);
+        this.finish(points);
+    }
+
+    /** A click places a polygon's next corner; on its first one, closes it. */
+    click(event) {
+        if (!this.polygon) {
+            // A press with no drag after it leaves nothing half drawn.
+            if (event.quick && this.stroke) this.cancelStroke();
+            return;
+        }
+        if (!this.drawing || this.spaceHeld || !event.quick) return;
+        event.preventDefaultAction = true;   // a click here is a corner, not a zoom
+        const point = this.toImage(event.position);
+        if (!point) return;
+        const corner = this.clamp(point);
+        const corners = this.stroke || [];
+        const near = this.imagePerScreen() * QcFreehand.CLOSE_PX;
+        if (corners.length >= 3 && Math.hypot(corner[0] - corners[0][0],
+                                              corner[1] - corners[0][1]) <= near) {
+            this.finishPolygon();
+            return;
+        }
+        const last = corners[corners.length - 1];
+        if (!last || Math.hypot(corner[0] - last[0], corner[1] - last[1]) > near / 4) {
+            this.stroke = [...corners, corner];
+        }
+        this.showStroke();
+    }
+
+    doubleClick(event) {
+        if (!this.drawing || !this.polygon) return;
+        event.preventDefaultAction = true;
+        if (this.stroke) this.finishPolygon();
+    }
+
+    /** The pointer, for the edge from a polygon's last corner to it. */
+    move(event) {
+        if (!this.polygon || !this.stroke || !this.viewer?.canvas || !window.OpenSeadragon) return;
+        const rect = this.viewer.canvas.getBoundingClientRect();
+        const point = this.toImage(new window.OpenSeadragon.Point(event.clientX - rect.left,
+                                                                  event.clientY - rect.top));
+        this.hover = point ? this.clamp(point) : null;
+        this.showStroke();
+    }
+
+    finishPolygon() {
+        const corners = this.stroke || [];
+        this.cancelStroke();
+        this.finish(QcFreehand.dedupe(corners, this.imagePerScreen() * 0.75));
+    }
+
+    /** A finished ring, kept unless it is a stray press. */
+    finish(points) {
         if (points.length < 3) return;
+        const scale = this.imagePerScreen();
         if (Math.abs(QcFreehand.area(points)) < QcFreehand.MIN_AREA_PX * scale * scale) return;
         this.onStroke?.(points.map(([x, y]) => [Math.round(x * 100) / 100,
-                                                Math.round(y * 100) / 100]));
+                                                Math.round(y * 100) / 100]), this.shape);
+    }
+
+    /** The drag's two corners as the box's four. */
+    static box([[x0, y0], [x1, y1] = [x0, y0]]) {
+        return [[x0, y0], [x1, y0], [x1, y1], [x0, y1]];
     }
 
     showStroke() {
-        this.overlay.draft = this.stroke ? { points: this.stroke, color: this.color } : null;
+        let points = this.stroke;
+        if (points && this.shape === "rectangle") {
+            const box = QcFreehand.box(points);
+            points = [...box, box[0]];
+        } else if (points && this.polygon && this.hover) {
+            points = [...points, this.hover];
+        }
+        this.overlay.draft = points && points.length ? { points, color: this.color } : null;
         this.overlay.schedule();
     }
 
     cancelStroke() {
+        this.hover = null;
         if (!this.stroke && !this.overlay.draft) return;
         this.stroke = null;
         this.overlay.draft = null;
@@ -199,7 +294,17 @@ class QcFreehand {
             }
         } else if (event.key === "Escape" && this.drawing) {
             event.preventDefault();
-            this.pan();
+            // A polygon half made goes first; a second Escape pans.
+            if (this.polygon && this.stroke) this.cancelStroke();
+            else this.pan();
+        } else if (event.key === "Enter" && this.polygon && this.stroke) {
+            event.preventDefault();
+            this.finishPolygon();
+        } else if (event.key === "Backspace" && this.polygon && this.stroke) {
+            event.preventDefault();
+            this.stroke = this.stroke.slice(0, -1);
+            if (!this.stroke.length) this.cancelStroke();
+            else this.showStroke();
         }
     }
 
@@ -272,7 +377,138 @@ window.QcFreehand = QcFreehand;
 
 
 /**
- * Magic select in the QC panel (key E, or the wand on the draw bar): click an
+ * The by-hand bar on the image, magic select's bar's twin (core's
+ * magicToolbar.js styles, so the two read as one family): the category in
+ * hand -- its colour and name; a click changes it -- then Freehand, Polygon
+ * and Rectangle, then × to stop. Up while a category is in hand for drawing
+ * by hand (the + in ROI QC's header); magic select has its own bar, and the
+ * two never show at once. Mounted where that one is, at the top centre.
+ */
+class QcShapeBar {
+
+    constructor() {
+        this.root = null;
+        this.buttons = {};
+        this.onShape = null;      // (shape) => void
+        this.onCategory = null;   // (anchor) => void
+        this.onClose = null;      // () => void
+    }
+
+    static get SHAPES() {
+        return [
+            { id: "freehand", icon: "fas fa-pen-nib", label: "Freehand",
+              title: "Freehand -- press and drag round the artifact" },
+            { id: "polygon", icon: "fas fa-draw-polygon", label: "Polygon",
+              title: "Polygon -- click its corners; double-click, Enter or a click on the "
+                   + "first corner finishes; Backspace takes the last one back" },
+            { id: "rectangle", icon: "far fa-square", label: "Rectangle",
+              title: "Rectangle -- drag a box round the artifact" },
+        ];
+    }
+
+    static host() {
+        return document.getElementById("openseadragon_wrapper")
+            || document.querySelector(".openseadragon-container")?.parentElement || null;
+    }
+
+    build() {
+        const root = document.createElement("div");
+        root.className = "plx-magic-bar qc-shape-bar";
+        root.setAttribute("role", "toolbar");
+        root.setAttribute("aria-label", "Draw a QC region");
+        const category = document.createElement("button");
+        category.type = "button";
+        category.className = "qc-shape-bar-category";
+        category.title = "Change what you are marking";
+        category.setAttribute("aria-haspopup", "true");
+        category.setAttribute("aria-expanded", "false");
+        const dot = document.createElement("span");
+        dot.className = "qc-shape-bar-dot";
+        dot.setAttribute("aria-hidden", "true");
+        const label = document.createElement("span");
+        label.className = "qc-shape-bar-label";
+        category.append(dot, label);
+        category.addEventListener("click", (event) => {
+            event.stopPropagation();
+            this.onCategory?.(category);
+        });
+        root.appendChild(category);
+        const group = document.createElement("div");
+        group.className = "plx-magic-bar-modes";
+        group.setAttribute("role", "radiogroup");
+        group.setAttribute("aria-label", "Shape");
+        for (const shape of QcShapeBar.SHAPES) {
+            const button = document.createElement("button");
+            button.type = "button";
+            button.className = "plx-magic-bar-button";
+            button.dataset.mode = shape.id;
+            button.setAttribute("role", "radio");
+            button.setAttribute("aria-checked", "false");
+            button.setAttribute("aria-label", shape.label);
+            button.title = shape.title;
+            const icon = document.createElement("span");
+            icon.className = shape.icon;
+            icon.setAttribute("aria-hidden", "true");
+            button.appendChild(icon);
+            button.addEventListener("click", (event) => {
+                event.stopPropagation();
+                this.onShape?.(shape.id);
+            });
+            group.appendChild(button);
+            this.buttons[shape.id] = button;
+        }
+        root.appendChild(group);
+        const close = document.createElement("button");
+        close.type = "button";
+        close.className = "plx-magic-bar-button plx-magic-bar-close";
+        close.title = "Done drawing";
+        close.setAttribute("aria-label", "Done drawing");
+        const x = document.createElement("span");
+        x.className = "fas fa-xmark";
+        x.setAttribute("aria-hidden", "true");
+        close.appendChild(x);
+        close.addEventListener("click", (event) => {
+            event.stopPropagation();
+            this.onClose?.();
+        });
+        root.appendChild(close);
+        // A press on the bar is never a press on the image under it.
+        for (const name of ["pointerdown", "mousedown", "click", "dblclick", "wheel"]) {
+            root.addEventListener(name, (event) => event.stopPropagation());
+        }
+        this.root = root;
+        this.label = label;
+        this.category = category;
+    }
+
+    /** Up (or updated) with `shape` lit (null: none, the pointer pans) and the
+     *  category's name and colour. */
+    show({ shape, words, color }) {
+        const mount = QcShapeBar.host();
+        if (!mount) return;
+        if (!this.root) this.build();
+        if (this.root.parentNode !== mount) mount.appendChild(this.root);
+        this.root.hidden = false;
+        this.root.style.setProperty("--qc-row-color", color || "#fbbf24");
+        this.label.textContent = words || "";
+        this.category.title = `Marking ${words || "a region"}: click to change what you are marking`;
+        for (const [id, button] of Object.entries(this.buttons)) {
+            button.setAttribute("aria-checked", id === shape ? "true" : "false");
+        }
+    }
+
+    hide() {
+        if (!this.root) return;
+        this.root.hidden = true;
+        this.root.parentNode?.removeChild(this.root);
+    }
+}
+
+window.QcShapeBar = QcShapeBar;
+
+
+/**
+ * Magic select in the QC panel (key E, or the wand in ROI QC's header): click an
  * artifact and its outline appears as a QC region in the category in hand.
  * A floating bar on the image switches what a click does -- Add (include; a
  * drag pans), Remove (take away; Shift-click in Add too), Box (drag round a

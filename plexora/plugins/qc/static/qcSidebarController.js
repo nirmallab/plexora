@@ -37,8 +37,9 @@
  *
  * Marking a region by hand never leaves this panel: picking a category (an
  * artifact class, or one the user names under "Custom") puts QC's own
- * Freehand in hand (qcDraw.js) and raises the drawing bar -- Select/Pan and
- * Draw, the category, Space to pan -- and each stroke is saved as an ordinary
+ * Freehand, Polygon or Rectangle in hand (qcDraw.js) on a bar on the image --
+ * the category, the shapes, × -- (the wand: magic select, with core's bar) and
+ * each shape is saved as an ordinary
  * ROI (the ROI plugin's `create_roi`, through `/regions/draw`) and taken into
  * QC at once, with the channels that were on screen kept beside it. The ROI
  * panel is never opened; opened later, it shows these regions like any other,
@@ -81,9 +82,15 @@ class QcSidebarController {
         this.overlay = new QcRegionOverlay(ctx);
         this.overlay.isVisible = (region) => this.regionVisible(region);
         this.freehand = new QcFreehand(ctx, this.overlay);
-        this.freehand.onStroke = (points) => this.saveStroke(points);
+        this.freehand.onStroke = (points, shape) => this.saveStroke(points, shape);
         this.freehand.onModeChange = () => this.renderDrawbar();
+        // By hand (+): Freehand, Polygon or Rectangle from a bar on the image.
+        this.shapeBar = new QcShapeBar();
+        this.shapeBar.onShape = (shape) => this.setShape(shape);
+        this.shapeBar.onCategory = (anchor) => this.openDrawMenu(anchor, { mode: "draw" });
+        this.shapeBar.onClose = () => this.stopDrawing();
         this.drawTarget = null;       // {target, label, words, color}: the category in hand
+        this.drawKind = null;         // "magic" (the wand) or "hand" (+): whose bar is up
         this.lastTarget = null;       // the last category drawn in, for E with nothing in hand
         // Magic select (qcDraw.js QcMagic): click an artifact, its outline is a region.
         this.magic = new QcMagic(ctx, this.overlay, this.freehand);
@@ -95,7 +102,7 @@ class QcSidebarController {
         this.magic.onEscape = () => this.setDrawMode("pan");
         this.magic.onClose = () => this.setDrawMode("pan");
         this.magic.onBusy = (busy) => {
-            this.el("qc_mode_magic")?.setAttribute("aria-busy", busy ? "true" : "false");
+            this.el("qc_magic")?.setAttribute("aria-busy", busy ? "true" : "false");
         };
         this._onMagicKey = (event) => this.magicKey(event);
         this.cellLayer = new QcCellLayer(ctx, QcSidebarController.PLUGIN);
@@ -149,30 +156,21 @@ class QcSidebarController {
         this.el("qc_refresh")?.addEventListener("click", () => this.refresh());
         this.el("qc_draw")?.addEventListener("click", (event) => {
             event.stopPropagation();
-            this.openDrawMenu(event.currentTarget);
+            this.openDrawMenu(event.currentTarget, { mode: "draw" });
         });
         this.el("qc_magic")?.addEventListener("click", (event) => {
             event.stopPropagation();
             // The header wand puts magic select away when it is on (E goes
-            // back to drawing instead, the draw bar's own toggle).
+            // back to drawing by hand instead).
             if (this.magic.active) this.stopDrawing();
             else this.toggleMagic(event.currentTarget);
         });
-        this.el("qc_start_ai")?.addEventListener("click", () => this.askForSession());
         for (const tool of document.querySelectorAll("#qc_panel_section .qc-tool[data-tool]")) {
             tool.querySelector(".qc-tool-fold")?.addEventListener("click",
                 () => this.toggleFold(tool.dataset.tool));
         }
         this.renderFolds();
         this.el("qc_roi_eye")?.addEventListener("click", () => this.setRoiMuted(!this.roiMuted));
-        this.el("qc_mode_pan")?.addEventListener("click", () => this.setDrawMode("pan"));
-        this.el("qc_mode_draw")?.addEventListener("click", () => this.setDrawMode("draw"));
-        this.el("qc_mode_magic")?.addEventListener("click", () => this.setDrawMode("magic"));
-        this.el("qc_drawbar_category")?.addEventListener("click", (event) => {
-            event.stopPropagation();
-            this.openDrawMenu(event.currentTarget, { align: "left" });
-        });
-        this.el("qc_drawbar_close")?.addEventListener("click", () => this.stopDrawing());
         this.el("qc_download")?.addEventListener("click", (event) => {
             event.stopPropagation();
             this.openDownloadMenu(event.currentTarget);
@@ -239,6 +237,7 @@ class QcSidebarController {
         this.artifacts.destroy();
         this.freehand.stop();
         this.magic.stop();
+        this.shapeBar.hide();
         document.removeEventListener("keydown", this._onMagicKey);
         window.clearTimeout(this._messageTimer);
         window.clearTimeout(this._drawnTimer);
@@ -410,6 +409,12 @@ class QcSidebarController {
         }
         await this.reload();
         return true;
+    }
+
+    /** How many ROI edits the state read's dry-run sync would take in. */
+    static waitingEdits(sync) {
+        return ["adopted", "edited", "deleted", "relabelled", "removed", "locked", "rescoped"]
+            .reduce((n, key) => n + (((sync || {})[key] || []).length), 0);
     }
 
     async approve(roiId, action) {
@@ -598,7 +603,8 @@ class QcSidebarController {
      *  (`{class}`, kept as the region's class), or one the user names
      *  (`{label}`) -- and put magic select (in Scribble) in hand for it. The
      *  ROI tool is not opened: the user stays here. `mode` "draw" puts QC's
-     *  Freehand in hand instead; so does a server that cannot run the model. */
+     *  own Freehand, Polygon and Rectangle in hand instead (the bar on the
+     *  image picks one); so does a server that cannot run the model. */
     async startDrawing(target, { mode = "magic" } = {}) {
         if (mode === "magic" && !(await QcSidebarController.magicUsable())) mode = "draw";
         const made = await this.act("Preparing the category", () => this.api.addCategory(target));
@@ -618,20 +624,41 @@ class QcSidebarController {
                 this.message("The image is not ready to draw on yet");
                 return false;
             }
+            this.drawKind = "magic";
             this.setDrawMode("magic");
             this.message(`Drag round the ${words.toLowerCase()} to outline it. The bar on `
                 + "the image switches between Add, Remove, Box and Scribble");
             return true;
         }
         this.magic.stop();
+        this.drawKind = "hand";
         if (!this.freehand.start(color)) {
             this.drawTarget = null;
             this.message("The image is not ready to draw on yet");
             return false;
         }
         this.renderDrawbar();
-        this.message(`Draw round the ${words.toLowerCase()}: press and drag. Hold Space to pan`);
+        this.shapeMessage();
         return true;
+    }
+
+    /** One of the bar's shapes in hand, for the category in hand. */
+    setShape(shape) {
+        if (!this.drawTarget) return;
+        this.magic.stop();
+        this.drawKind = "hand";
+        this.freehand.setShape(shape);
+        this.renderDrawbar();
+        this.shapeMessage();
+    }
+
+    shapeMessage() {
+        const words = (this.drawTarget?.words || "artifact").toLowerCase();
+        const how = {
+            polygon: `Click round the ${words}; double-click or Enter finishes`,
+            rectangle: `Drag a box round the ${words}`,
+        }[this.freehand.shape] || `Draw round the ${words}: press and drag`;
+        this.message(`${how}. Hold Space to pan`);
     }
 
     /** Whether this server can run magic select at all (it may still need
@@ -651,17 +678,20 @@ class QcSidebarController {
         this.magic.stop();
         this.freehand.stop();
         this.drawTarget = null;
+        this.drawKind = null;
         this.renderDrawbar();
     }
 
-    /** The draw bar's three pointers: pan (the viewer's own drag), draw
-     *  (freehand) and magic (click to outline). */
+    /** The three pointers: pan (the viewer's own drag), draw (by hand) and
+     *  magic (click to outline). */
     setDrawMode(mode) {
         if (!this.drawTarget) return;
         if (mode === "magic") {
+            this.drawKind = "magic";
             this.freehand.pan();
             this.magic.start(this.drawTarget.color);
         } else if (mode === "draw") {
+            this.drawKind = "hand";
             this.magic.stop();
             this.freehand.start(this.drawTarget.color);
         } else {
@@ -762,12 +792,13 @@ class QcSidebarController {
         return snapshots.restoreViewport(view, { immediately: false });
     }
 
-    /** A finished stroke: an ROI in the category in hand, taken into QC. */
-    async saveStroke(points) {
+    /** A finished stroke, polygon or box: an ROI in the category in hand,
+     *  taken into QC. */
+    async saveStroke(points, shape = "freehand") {
         const target = this.drawTarget;
         if (!target) return;
         const done = await this.act("Saving the region", () => this.api.drawRegion(
-            { ...target.target, points, method: "freehand", views: this.currentView() }));
+            { ...target.target, points, method: shape, views: this.currentView() }));
         if (!done) return;
         // Known to the ROI watch already, so it is not taken in twice.
         this._roiWatch?.known.add(done.roi?.id);
@@ -781,6 +812,14 @@ class QcSidebarController {
 
     renderDrawbar() {
         this.el("qc_magic")?.setAttribute("aria-pressed", this.magic.active ? "true" : "false");
+        const byHand = Boolean(this.drawTarget) && this.drawKind === "hand" && !this.magic.active;
+        this.el("qc_draw")?.setAttribute("aria-pressed", byHand ? "true" : "false");
+        if (byHand) {
+            this.shapeBar.show({ shape: this.freehand.drawing ? this.freehand.shape : null,
+                                 words: this.drawTarget.words, color: this.drawTarget.color });
+        } else {
+            this.shapeBar.hide();
+        }
         // While a drag draws (the pen, or magic select's Box and Scribble),
         // say once, quietly, how to move the image.
         const hints = window.PlexoraCanvasHint;
@@ -791,19 +830,6 @@ class QcSidebarController {
                 hints.hide(this);
             }
         }
-        const bar = this.el("qc_drawbar");
-        if (!bar) return;
-        const target = this.drawTarget;
-        bar.hidden = !target;
-        if (!target) return;
-        bar.style.setProperty("--qc-row-color", target.color);
-        const label = this.el("qc_drawbar_label");
-        if (label) label.textContent = target.words;
-        const magic = this.magic.active;
-        const drawing = this.freehand.drawing && !magic;
-        this.el("qc_mode_magic")?.setAttribute("aria-checked", magic ? "true" : "false");
-        this.el("qc_mode_draw")?.setAttribute("aria-checked", drawing ? "true" : "false");
-        this.el("qc_mode_pan")?.setAttribute("aria-checked", drawing || magic ? "false" : "true");
     }
 
     /** What is on screen now, as a region drawn under it should remember it:
@@ -908,21 +934,6 @@ class QcSidebarController {
         const done = await this.refresh({ views: Object.keys(views).length ? views : null,
                                           quiet: true });
         if (done) ids.forEach((id) => watch.pending.delete(id));
-    }
-
-    /** "Run AI QC session": a session is run by the user's agent, so the
-     *  words that start one are put where they can be pasted. */
-    askForSession() {
-        const words = "QC this image";
-        const say = (copied) => this.message(`Ask your AI agent to "${words}"`
-            + (copied ? " (copied)" : "") + ".");
-        try {
-            if (navigator.clipboard?.writeText) {
-                navigator.clipboard.writeText(words).then(() => say(true), () => say(false));
-                return;
-            }
-        } catch (error) { /* said without the copy */ }
-        say(false);
     }
 
     // -- what is hidden -----------------------------------------------------------
@@ -1677,7 +1688,7 @@ class QcSidebarController {
                 { label: "Zoom to all", onSelect: () => this.activate(spec) },
                 hideItem(spec.key),
                 { label: `Mark another by hand`, className: "is-sectioned",
-                  hint: "Draw another region in this category, with Freehand",
+                  hint: "Draw another region in this category: Freehand, Polygon or Rectangle",
                   onSelect: () => this.startDrawing(target, { mode: "draw" }) },
                 { label: "Mark another with magic select",
                   hint: "Click an artifact and its outline becomes a region in this category (E)",
@@ -2124,7 +2135,12 @@ class QcSidebarController {
         const download = this.el("qc_download");
         if (download) download.hidden = !summary;
         const refresh = this.el("qc_refresh");
-        if (refresh) refresh.hidden = !summary && !drawn;
+        if (refresh) {
+            const waiting = QcSidebarController.waitingEdits((this.state || {}).sync);
+            refresh.hidden = !waiting;
+            refresh.title = `Take in ${waiting} ROI edit${waiting === 1 ? "" : "s"} made outside `
+                + "this panel (by an agent, or in another window), and recompute the cells";
+        }
         if (!summary) {
             node.textContent = drawn ? String(drawn) : "";
             node.title = "";
@@ -2389,7 +2405,7 @@ if (window.Plexora) {
                 "Click a region to fit the view to it -- a region you drew comes back "
                 + "the way it was on screen (view, zoom, HD mode, channels); click a cell "
                 + "reason to frame the cells it flagged.",
-                "Magic select (E, or the wand on the draw bar): click an artifact and its "
+                "Magic select (E, or the wand in ROI QC's header): click an artifact and its "
                 + "outline becomes a region. The bar that floats on the image switches "
                 + "between Add (click to include), Remove (click to take away), Box "
                 + "(drag round a large object) and Scribble (draw a line over a long or "

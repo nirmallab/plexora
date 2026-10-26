@@ -348,8 +348,9 @@ def _category_for(ds, body):
             "revision": revision}
 
 
-#: How a region drawn in the QC panel was drawn: by hand, or by magic select.
-DRAW_METHODS = ("freehand", "sam")
+#: How a region drawn in the QC panel was drawn: by hand (the ROI tool's
+#: shapes), or by magic select.
+DRAW_METHODS = ("freehand", "polygon", "rectangle", "sam")
 
 
 def _views_argument(roi_id, views):
@@ -367,8 +368,8 @@ def draw_region():
     """A region drawn in the QC panel: `{datasource, category | class | label,
     points | geometry, method, views}`. `points` is one hand-drawn ring;
     `geometry` a GeoJSON (Multi)Polygon in full-resolution pixels (magic
-    select's outline, holes kept). `method` (freehand | sam) is recorded on the
-    ROI as provenance. A `class` (a subtype typed into the picker) is kept as
+    select's outline, holes kept). `method` (freehand | polygon | rectangle |
+    sam) is recorded on the ROI as provenance. A `class` (a subtype typed into the picker) is kept as
     the region's class through a `qc-class:` token in its notes.
     Written as an ordinary ROI through the ROI plugin's own
     `create_roi` (so the ROI panel shows it, and it can be edited there like

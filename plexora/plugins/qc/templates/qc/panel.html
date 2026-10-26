@@ -44,10 +44,19 @@
 
    ROI QC: the regions, by category, in the ROI panel's own shape (the tree,
    qcTree.js) -- because they ARE ROIs. Marking one by hand happens here,
-   never in the ROI panel: the drawing bar (`qc_drawbar`) is up while a
-   category is in hand. `data-mode` on the section (loading / empty / result)
+   never in the ROI panel: the wand marks one with magic select, + by hand
+   (Freehand, Polygon, Rectangle on a bar on the image, qcDraw.js QcShapeBar);
+   each has its bar on the image while a category is in hand.
+   `data-mode` on the section (loading / empty / result)
    says whether there is anything in ROI QC yet. #}
 <section class="sidebar-section qc-panel" id="qc_panel_section" data-mode="loading">
+    {# Lifted into the card's header (`data-tool-extras`, toolLoader.liftExtras):
+       the whole result's downloads and "Save into file", in reach while every
+       tool below is folded. #}
+    <div data-tool-extras>
+        <button id="qc_download" class="icon-button" type="button" aria-haspopup="true" aria-expanded="false" hidden
+                title="Download the QC result, or save it into your file" aria-label="Download the QC result"><span class="fas fa-download" aria-hidden="true"></span></button>
+    </div>
 
     {# -- Registration QC ------------------------------------------------------ #}
     <div class="qc-tool" id="qc_tool_reg" data-tool="reg" data-open="true" data-state="inactive">
@@ -356,58 +365,26 @@
             {# Native `title`, not a styled tooltip: `.tool-card-body` clips its
                overflow and this row is near its top edge (the ROI toolbar's note). #}
             <span class="qc-tool-actions" role="toolbar" aria-label="ROI QC">
-                {# Magic select, in plain sight: on the draw bar alone it was out of
-                   reach until a category had been picked with +. #}
+                {# Only while ROI edits made elsewhere -- by an agent, in another
+                   window -- wait to be taken in (the state read's dry-run
+                   `sync`); this window's own ROI panel edits are taken in as
+                   they are saved (qcSidebarController.watchRoi). #}
+                <button id="qc_refresh" class="qc-tool-run" type="button" hidden
+                        title="Take in ROI edits made outside this panel, and recompute the cells"
+                        aria-label="Take in ROI edits"><span class="fas fa-arrows-rotate"></span></button>
+                {# Magic select, in plain sight; + beside it draws by hand. #}
                 <button id="qc_magic" class="qc-tool-run" type="button" aria-pressed="false"
                         aria-haspopup="true" aria-expanded="false"
                         title="Magic select (E): pick what you are marking, then click the artifact to outline it"
                         aria-label="Magic select"><span class="fas fa-wand-magic-sparkles"></span></button>
                 <button id="qc_draw" class="qc-tool-run" type="button" aria-haspopup="true" aria-expanded="false"
-                        title="Add a QC region: pick (or name) a category, then drag round the artifact (magic select; the pen is on the draw bar)"
-                        aria-label="Add a QC region"><span class="fas fa-plus"></span></button>
+                        title="Draw a QC region by hand: pick (or name) a category, then draw it with Freehand, Polygon or Rectangle from the bar on the image"
+                        aria-label="Draw a QC region by hand"><span class="fas fa-plus"></span></button>
                 <button id="qc_roi_eye" class="qc-tool-eye qc-eye" type="button" aria-pressed="true"
                         title="Hide everything ROI QC draws"><span class="fas fa-eye"></span><span class="fas fa-eye-slash"></span></button>
             </span>
         </div>
         <div class="qc-tool-body" id="qc_roi_body">
-            <div class="qc-tool-sub">
-                <span class="qc-tool-views" role="toolbar" aria-label="ROI QC views">
-                    {% if licensed('ai:qc:session') %}
-                    <button id="qc_start_ai" class="qc-tool-icon" type="button"
-                            title="An AI QC session is run by your agent: ask it to &quot;QC this image&quot; (click to copy that)"><span class="fas fa-robot"></span></button>
-                    {% endif %}
-                    <button id="qc_refresh" class="qc-tool-icon" type="button" hidden
-                            title="Apply my ROI edits: take in regions drawn, reshaped or deleted in the ROI panel, and recompute the cells"><span class="fas fa-arrows-rotate"></span></button>
-                    <button id="qc_download" class="qc-tool-icon" type="button" aria-haspopup="true" aria-expanded="false" hidden
-                            title="Download the QC result"><span class="fas fa-download"></span></button>
-                </span>
-            </div>
-            <div class="qc-drawbar" id="qc_drawbar" hidden>
-                <div class="qc-modes" role="radiogroup" aria-label="Pointer">
-                    <button id="qc_mode_pan" class="qc-mode" type="button" role="radio" aria-checked="false"
-                            title="Select / pan: drag moves the image (Esc)">
-                        <span class="fas fa-arrow-pointer"></span>
-                    </button>
-                    <button id="qc_mode_draw" class="qc-mode" type="button" role="radio" aria-checked="true"
-                            title="Draw: press and drag round the artifact">
-                        <span class="fas fa-pen"></span>
-                    </button>
-                    <button id="qc_mode_magic" class="qc-mode" type="button" role="radio" aria-checked="false"
-                            title="Magic select (E): click the artifact to outline it; the bar on the image switches between Add, Remove, Box and Scribble">
-                        <span class="fas fa-wand-magic-sparkles"></span>
-                    </button>
-                </div>
-                <button id="qc_drawbar_category" class="qc-drawbar-category" type="button"
-                        aria-haspopup="true" aria-expanded="false" title="Change what you are marking">
-                    <span class="qc-drawbar-dot" aria-hidden="true"></span>
-                    <span class="qc-drawbar-label" id="qc_drawbar_label"></span>
-                </button>
-                <span class="qc-drawbar-keys" title="Hold Space to move the image while drawing"><kbd>Space</kbd> pan</span>
-                <button id="qc_drawbar_close" class="qc-drawbar-close" type="button"
-                        title="Done marking regions" aria-label="Done marking regions">
-                    <span class="fas fa-xmark"></span>
-                </button>
-            </div>
             <div class="qc-head" id="qc_result">
                 <div class="qc-status" id="qc_status_row" data-state="loading">
                     <span class="qc-status-dot" aria-hidden="true"></span>
