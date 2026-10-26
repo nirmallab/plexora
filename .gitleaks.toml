@@ -1,0 +1,24 @@
+# gitleaks configuration: the default rules, plus the known test fixtures that
+# look like secrets and are not.
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Test fixtures and documented placeholders"
+paths = [
+  '''(^|/)vitest\.workers\.config\.ts$''',
+  '''^tools/ai_e2e\.py$''',
+  '''(^|/)tests?/''',
+  '''(^|/)plexora/plugins/[^/]+/tests/''',
+  '''\.dev\.vars\.example$''',
+  '''(^|/)package-lock\.json$''',
+  '''(^|/)uv\.lock$''',
+  '''(^|/)Cargo\.lock$''',
+]
+regexTarget = "line"
+regexes = [
+  '''ACCESS_AUD\s*=''',
+  '''PUBLIC_KEYS_JSON''',
+  '''dev-[a-z-]*-key''',
+  '''sk-ant-test-[A-Za-z0-9_-]+''',
+]

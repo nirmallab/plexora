@@ -1,0 +1,60 @@
+# osv-scanner configuration for the security workflows.
+#
+# Every entry is a dependency Plexora cannot move on its own (it arrives with
+# Tauri's Linux webview stack) and expires, so it is looked at again rather
+# than forgotten. Add one only with a reason and an ignoreUntil.
+
+[[IgnoredVulns]]
+id = "RUSTSEC-2024-0429"
+ignoreUntil = 2027-01-31
+reason = "glib 0.18 via tauri's gtk-rs 0.18 chain (Linux webview only); fixed in glib 0.20, which needs Tauri to move to gtk-rs 0.20."
+
+[[IgnoredVulns]]
+id = "GHSA-wrw7-89jp-8q8g"
+ignoreUntil = 2027-01-31
+reason = "Same advisory as RUSTSEC-2024-0429 (glib VariantStrIter)."
+
+[[IgnoredVulns]]
+id = "RUSTSEC-2024-0370"
+ignoreUntil = 2027-01-31
+reason = "proc-macro-error is unmaintained; build-time only, pulled in by the gtk-rs 0.18 macros."
+
+[[IgnoredVulns]]
+id = "RUSTSEC-2025-0075"
+ignoreUntil = 2027-01-31
+reason = "unic-* unmaintained (urlpattern via tauri); no known vulnerability, informational."
+
+[[IgnoredVulns]]
+id = "RUSTSEC-2025-0080"
+ignoreUntil = 2027-01-31
+reason = "unic-* unmaintained (urlpattern via tauri); informational."
+
+[[IgnoredVulns]]
+id = "RUSTSEC-2025-0081"
+ignoreUntil = 2027-01-31
+reason = "unic-* unmaintained (urlpattern via tauri); informational."
+
+[[IgnoredVulns]]
+id = "RUSTSEC-2025-0098"
+ignoreUntil = 2027-01-31
+reason = "unic-* unmaintained (urlpattern via tauri); informational."
+
+[[IgnoredVulns]]
+id = "RUSTSEC-2025-0100"
+ignoreUntil = 2027-01-31
+reason = "unic-* unmaintained (urlpattern via tauri); informational."
+
+[[IgnoredVulns]]
+id = "RUSTSEC-2026-0370"
+ignoreUntil = 2027-01-31
+reason = "zvariant via zbus (Linux D-Bus, tray/notifications); waits on Tauri's zbus bump."
+
+[[IgnoredVulns]]
+id = "RUSTSEC-2026-0371"
+ignoreUntil = 2027-01-31
+reason = "zbus_names via zbus (Linux D-Bus); waits on Tauri's zbus bump."
+
+[[IgnoredVulns]]
+id = "RUSTSEC-2026-0372"
+ignoreUntil = 2027-01-31
+reason = "zvariant_derive via zbus (Linux D-Bus); waits on Tauri's zbus bump."
