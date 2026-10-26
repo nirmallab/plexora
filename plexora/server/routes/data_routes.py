@@ -527,6 +527,10 @@ def _local_mask_report(datasource):
         return []
     if paths.mask_output_preference() == 'project':
         return []
+    # A mask read from a web or SFTP address has no folder here to be
+    # read-only; it is never written beside its source.
+    if is_addressed(source):
+        return []
     served_dir, source_dir = Path(served).parent, Path(source).parent
     # Probed rather than inferred alone: projects imported before pyramids
     # were written beside their masks keep theirs in the derived root, and
