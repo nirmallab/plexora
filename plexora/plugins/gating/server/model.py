@@ -14,6 +14,7 @@ from sklearn.mixture import GaussianMixture
 
 from plexora import api
 from plexora.plugins.gating.server.database import LEGACY_STATE_TABLE
+from plexora.server.utils import safe_pickle
 
 #: Identifies this plugin's storage namespace. Must stay 'gating' -- it is what
 #: `plugin_gating_state` is keyed on, and changing it would strand saved gates.
@@ -120,7 +121,7 @@ def get_saved_gating_list(datasource_name):
     cells = _store(datasource_name).get_state()
     if cells is None:
         return None
-    return pickle.loads(cells)
+    return safe_pickle.loads(cells)
 
 
 #: Components in the auto-gate fit.
@@ -467,7 +468,7 @@ def gate_rows(ds) -> list:
     blob = _stored_blob(ds)
     if not blob:
         return []
-    rows = pickle.loads(blob)
+    rows = safe_pickle.loads(blob)
     return [dict(row) for row in rows or [] if isinstance(row, dict)]
 
 
