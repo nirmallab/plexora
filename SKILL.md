@@ -10575,7 +10575,7 @@ and says to read the log first, because the version that confidently asserted
 somebody to check a network that was fine.
 
 **`IMAGE_FAMILY` is `debian-13`, and it is about Python.** Plexora's
-`requires-python` is `>=3.12,<3.14`; Debian 12 ships 3.11, so a bookworm VM
+`requires-python` is `>=3.12,<3.15`; Debian 12 ships 3.11, so a bookworm VM
 mounts the bucket, verifies access, builds the venv and *then* fails with
 `No matching distribution found for plexora` — which reads as "no such
 package". Trixie ships 3.13. `MIN_PYTHON = (3, 12)` is written here because
@@ -14149,4 +14149,5 @@ count was reported with this change, so the Validation baseline is unchanged.
 - `data_model.py` and `imageViewer.js` are both large and load-bearing. Read the
   surrounding comments; several encode hard-won reasons (the `qmax` full-res
   requirement, the WebP-vs-PNG alpha corruption, the black fill).
-- Keep `requires-python = ">=3.12,<3.14"` unless a dependency forces otherwise.
+- Keep `requires-python = ">=3.12,<3.15"` unless a dependency forces otherwise;
+  raise the ceiling only once the whole suite has passed on the new version.

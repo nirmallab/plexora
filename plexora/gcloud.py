@@ -1020,7 +1020,7 @@ GCSFUSE_TEMP = "~/.plexora-gcsfuse-tmp"
 MOUNT_RECORD = "~/.plexora-mount"
 
 #: The image a rented VM is built from. **Debian 13, not 12, and the reason is
-#: Python.** Plexora's own `requires-python` is `>=3.12,<3.14`; Debian 12
+#: Python.** Plexora's own `requires-python` is `>=3.12,<3.15`; Debian 12
 #: (bookworm) ships Python 3.11, so `pip install plexora` on one ends in
 #: "No matching distribution found for plexora" after everything else about
 #: the connection has worked perfectly. Trixie ships 3.13.

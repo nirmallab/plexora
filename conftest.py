@@ -342,10 +342,13 @@ def _finish_agent_jobs(plexora_data_root):
     jobs = sys.modules.get("plexora.agent.jobs")
     if jobs is None:
         return
-    alive = jobs.drain(30)
+    # 120 s, not 30: a job that finishes in seconds on a quiet machine can
+    # take a minute on a shared 4-vCPU runner with four xdist workers, and a
+    # job that truly hangs is still caught -- just later.
+    alive = jobs.drain(120)
     jobs._reset_for_tests()
     if alive:  # pragma: no cover - a job that hung
-        raise RuntimeError(f"{[t.name for t in alive]} still running after 30s; it would "
+        raise RuntimeError(f"{[t.name for t in alive]} still running after 120s; it would "
                            f"have written into the real data root")
 
 
