@@ -280,7 +280,10 @@ function bootHelp({ mac = true } = {}) {
         normalize: (spec) => (String(spec).includes("+") ? String(spec).toLowerCase() : ""),
         format: (spec) => (mac ? "⌘" : "Ctrl+") + String(spec).split("+").pop().toUpperCase(),
     };
-    context.PlexoraConfirm = { tell: (options) => { told = options; return Promise.resolve(true); } };
+    context.PlexoraConfirm = {
+        tell: (options) => { told = options; return Promise.resolve(true); },
+        choose: (options) => { told = options; return Promise.resolve(null); },
+    };
     createContext(context);
     runInContext(readFileSync(HELP, "utf8"), context);
     return { help: context.PlexoraPluginHelp, told: () => told };
@@ -327,13 +330,48 @@ check("notes are text bullets, and a tool with nothing extra gets no block", () 
     assert.equal(help._content({ help: { summary: "s" } }), null);
 });
 
-check("open hands the summary and the table to the confirm dialog", async () => {
+check("sections make a guide: titled parts with their own text, points and keys", () => {
+    const { help } = bootHelp();
+    const content = help._content({
+        help: { summary: "s", sections: () => [
+            { title: "Draw", icon: "fas fa-pen-nib", text: "<b>Pick</b> a tool.",
+              points: ["one", " "], shortcuts: [{ keys: "P", label: "Polygon" }] },
+            { title: " " },
+        ] },
+        openKey: "⌘B", label: "ROI",
+    });
+    assert.equal(content.className, "plx-tool-help is-guide");
+    const grid = content.children.find((c) => c.className === "plx-tool-help-sections");
+    assert.equal(grid.children.length, 1, "a section with no title is dropped");
+    const [head, text, points, table] = grid.children[0].children;
+    assert.equal(head.children[0].className, "plx-tool-help-section-icon fas fa-pen-nib");
+    assert.equal(head.children[1].textContent, "Draw");
+    assert.equal(text.textContent, "<b>Pick</b> a tool.", "text stays text");
+    assert.equal(points.children.length, 1);
+    assert.deepEqual(rowsOf({ children: [table] }), [{ keys: ["P"], label: "Polygon" }]);
+    const foot = content.children.find((c) => c.className === "plx-tool-help-foot");
+    assert.equal(foot.children[0].children[1].textContent, "Open or close ROI",
+        "the card's own key goes in the foot, not in a section");
+});
+
+check("an icon that is not a class list is dropped, and sections that throw are none", () => {
+    const { help } = bootHelp();
+    const content = help._content({ help: { summary: "s", sections: [
+        { title: "T", icon: "fa\" onload=\"x" }] } });
+    const head = content.children[0].children[0].children[0];
+    assert.equal(head.children.length, 1);
+    assert.equal(help._content({ help: { summary: "s", sections: () => { throw new Error("x"); } } }),
+        null);
+});
+
+check("open hands the summary and the table to a dialog closed by its X", async () => {
     const t = bootHelp();
     t.help.open({ name: "gating", label: "Thresholding",
                   help: { summary: "Gate one marker." }, openKey: "⌘B" });
     assert.equal(t.told().title, "Thresholding");
     assert.equal(t.told().body, "Gate one marker.");
-    assert.equal(t.told().confirm, "Close");
+    assert.equal(t.told().close, true, "closed by the X in its corner");
+    assert.equal(t.told().choices.length, 0, "...and no Close button under it");
     assert.ok(t.told().content, "the open/close row alone still earns a table");
     const none = bootHelp();
     none.help.open({ name: "x", help: {} });

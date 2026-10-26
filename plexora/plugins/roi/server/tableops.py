@@ -48,6 +48,11 @@ def map_to_cells(dataset, payload):
     order, so splitting them would mean sending a million labels back to the
     primary only to send them straight out again -- and would open a window in
     which the table could be reloaded between the two halves.
+
+    `preview` stops short of the write: the assignment runs, and what it
+    found comes back with where it would go -- the confirmation the panel
+    shows first. The write that follows runs the assignment again rather than
+    trusting a copy, so what is written is what the table holds then.
     """
     from plexora.plugins.roi.server import adapters, mapping
 
@@ -78,9 +83,18 @@ def map_to_cells(dataset, payload):
     id_column = payload.get("id_column")
     cell_ids = (frame[id_column].to_numpy() if id_column and id_column in frame.columns
                 else None)
+    preview = bool(payload.get("preview"))
+    summary = {} if preview else None
     labels, names = mapping.assign(
         payload.get("features") or [], payload.get("categories") or [],
-        frame[x_column].to_numpy(), frame[y_column].to_numpy(), zs, ts, cell_ids)
+        frame[x_column].to_numpy(), frame[y_column].to_numpy(), zs, ts, cell_ids,
+        summary=summary)
+    if preview:
+        try:
+            target = adapters.cell_columns_target(dataset, prefix=payload.get("prefix"))
+        except ValueError as exc:
+            return _refused(INVALID, message=str(exc))
+        return _done({"preview": True, **summary, **target})
 
     try:
         result = adapters.write_cell_columns(

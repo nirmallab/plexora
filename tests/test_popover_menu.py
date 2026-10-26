@@ -32,7 +32,9 @@ CHECKS = [
     "help lists the plugin's keys and then core's open/close row",
     'a chord is printed per platform, and several keys share a row',
     'notes are text bullets, and a tool with nothing extra gets no block',
-    'open hands the summary and the table to the confirm dialog',
+    'sections make a guide: titled parts with their own text, points and keys',
+    'an icon that is not a class list is dropped, and sections that throw are none',
+    'open hands the summary and the table to a dialog closed by its X',
 ]
 
 

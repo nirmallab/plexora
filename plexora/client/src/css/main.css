@@ -5282,6 +5282,135 @@ dialog .file-source .data-location-place {
     text-decoration: underline;
 }
 
+/* A help with `sections` (pluginHelp.js guide()): wider, and laid out as
+   titled parts in two columns that fill top to bottom, so a part is read
+   whole rather than broken across a row by its neighbour's height. */
+.plx-confirm:has(.plx-tool-help.is-guide) {
+    width: min(780px, 94vw);
+}
+
+/* Open only: a display on the closed dialog would outrank its display:none.
+   The parts scroll and the title, summary and X stay put -- a dialog that
+   scrolls as a whole takes its only way out off the top with it. */
+.plx-confirm[open]:has(.plx-tool-help.is-guide) {
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+}
+
+.plx-tool-help.is-guide {
+    flex: 1 1 auto;
+    margin: var(--space-2) calc(-1 * var(--space-5)) calc(-1 * var(--space-5));
+    min-height: 0;
+    overflow: auto;
+    padding: 0 var(--space-5) var(--space-5);
+}
+
+/* `choose({ choices: [] })`, as a help does: no answers, so no row for them. */
+.plx-dialog-actions:empty {
+    display: none;
+}
+
+.plx-tool-help-sections {
+    column-count: 2;
+    column-gap: var(--space-3);
+}
+
+@media (max-width: 680px) {
+    .plx-tool-help-sections {
+        column-count: 1;
+    }
+}
+
+.plx-tool-help-section {
+    background: var(--surface-2);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-md);
+    break-inside: avoid;
+    display: inline-block;
+    margin: 0 0 var(--space-3);
+    padding: var(--space-3);
+    width: 100%;
+    box-sizing: border-box;
+}
+
+.plx-tool-help-section-title {
+    align-items: center;
+    color: var(--text-primary);
+    display: flex;
+    font-size: 13px;
+    font-weight: 600;
+    gap: var(--space-2);
+    margin: 0 0 6px;
+}
+
+.plx-tool-help-section-icon {
+    align-items: center;
+    background: var(--accent-channel-soft);
+    border-radius: var(--radius-sm);
+    color: var(--accent-channel);
+    display: inline-flex;
+    flex: 0 0 auto;
+    font-size: 11px;
+    height: 22px;
+    justify-content: center;
+    width: 22px;
+}
+
+.plx-tool-help-section-text {
+    color: var(--text-secondary);
+    font-size: 12px;
+    line-height: 1.55;
+    margin: 0;
+}
+
+.plx-tool-help-points {
+    color: var(--text-secondary);
+    font-size: 12px;
+    line-height: 1.5;
+    margin: var(--space-2) 0 0;
+    padding-left: 16px;
+}
+
+.plx-tool-help-points li + li {
+    margin-top: 3px;
+}
+
+.plx-tool-help-section .plx-tool-help-shortcuts {
+    margin-top: var(--space-2);
+}
+
+/* One key column per section, so the labels line up down a part. */
+.plx-tool-help-section .plx-tool-help-keys {
+    width: 64px;
+}
+
+.plx-tool-help-section .plx-tool-help-shortcuts tr:last-child td {
+    padding-bottom: 0;
+}
+
+.plx-tool-help-foot {
+    align-items: center;
+    border-top: 1px solid var(--border-subtle);
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-3);
+    justify-content: space-between;
+    padding-top: var(--space-3);
+}
+
+.plx-tool-help-open {
+    align-items: center;
+    color: var(--text-secondary);
+    display: inline-flex;
+    font-size: 12px;
+    gap: var(--space-2);
+}
+
+.plx-tool-help-foot .plx-tool-help-docs {
+    margin-top: 0;
+}
+
 /* A key cap: the same box the canvas's overlay hint uses. */
 .plx-kbd {
     background: var(--border-subtle);

@@ -38,7 +38,8 @@ JOINER = "_"
 UNASSIGNED = ""
 
 
-def assign(features, categories, xs, ys, zs=None, ts=None, cell_ids=None):
+def assign(features, categories, xs, ys, zs=None, ts=None, cell_ids=None,
+           summary=None):
     """(category_label, roi_name) for each point, in point order.
 
     `features` is the ROI list for one image, in document order; `categories`
@@ -64,6 +65,11 @@ def assign(features, categories, xs, ys, zs=None, ts=None, cell_ids=None):
 
     Returns two lists as long as `xs`. A point in no region gets UNASSIGNED in
     both, never a partial answer in one.
+
+    `summary`, when a dict is passed, is filled with what the assignment found
+    (see `_summarize`) -- what the Map to cells preview shows before anything
+    is written. An argument rather than a third return value, so the callers
+    that only want the labels are unchanged.
     """
     count = len(xs)
     if len(ys) != count:
@@ -71,6 +77,8 @@ def assign(features, categories, xs, ys, zs=None, ts=None, cell_ids=None):
     names = [UNASSIGNED] * count
     labels = [UNASSIGNED] * count
     if not count or not features:
+        if summary is not None:
+            summary.update(_summarize(features, categories, {}, count))
         return labels, names
 
     import numpy as np
@@ -164,7 +172,46 @@ def assign(features, categories, xs, ys, zs=None, ts=None, cell_ids=None):
         names[row] = JOINER.join(matched_names)
         labels[row] = JOINER.join(matched_labels)
 
+    if summary is not None:
+        summary.update(_summarize(features, categories, hits, count))
     return labels, names
+
+
+#: How many regions that caught no cells the preview names. The rest are a
+#: count: a project can hold hundreds of regions, and a confirmation that lists
+#: them all is one nobody reads to the end.
+EMPTY_EXAMPLES = 3
+
+
+def _summarize(features, categories, hits, count):
+    """Totals for one assignment, and nothing per category.
+
+    `hits` maps a row to the regions (feature indices) that hold it. Counts
+    only, deliberately: the number of categories is unbounded, so a breakdown
+    by category is a list that grows with the project -- the totals answer
+    "is this what I meant?" at any size. The empty regions are the exception
+    worth naming, a few of them: a region that holds no cell is usually one
+    drawn on the wrong plane or frame, and its name is how a user finds it.
+    """
+    by_id = {c["id"]: c for c in categories}
+    used = set()
+    for matched in hits.values():
+        used.update(matched)
+    empty = [features[index].get("name") or "Unnamed"
+             for index in range(len(features)) if index not in used]
+    used_categories = {features[index].get("category_id") for index in used}
+    return {
+        "n_cells": int(count),
+        "n_assigned": len(hits),
+        "n_overlap": sum(1 for matched in hits.values() if len(set(matched)) > 1),
+        "n_regions": len(features),
+        "n_regions_used": len(used),
+        "n_categories": len({f.get("category_id") for f in features
+                             if f.get("category_id") in by_id}),
+        "n_categories_used": len(used_categories & set(by_id)),
+        "n_empty_regions": len(empty),
+        "empty_regions": empty[:EMPTY_EXAMPLES],
+    }
 
 
 def solid_sections(feature, solid):
