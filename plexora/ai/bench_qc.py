@@ -357,20 +357,30 @@ def register(data_root, name, artifacts, *, size=1024, grid=40, seed=0):
     config_path.write_text(json.dumps(config), encoding="utf-8")
     # The cells truth calls bad: in an excluding region (all but the whole-
     # channel classes, and staining -- judged per channel, never a region),
-    # or lost.
+    # or lost. A region out of focus in a cycle the cells were not segmented
+    # from leaves the cells standing and makes that cycle's markers
+    # unreliable in them (`bad_marker_cells`): focus is per acquisition.
+    from plexora.plugins.qc.server import cycles as cycle_rules
     from plexora.plugins.qc.server import schemas
 
+    segmentation = next((c for c in channels if cycle_rules.is_nuclear(c)), None)
     bad = set()
+    bad_markers = {}
     for region in truth["regions"]:
         if region["class"] == "illumination_or_shading" \
                 or region["class"] in schemas.STAINING_REGION_CLASSES:
             continue
+        marker_level = region["class"] == "out_of_focus" \
+            and segmentation not in (region.get("channels") or ())
         for cell in cells:
             if region["mask"][int(cell["y"]), int(cell["x"])]:
-                bad.add(cell["id"])
+                if marker_level:
+                    bad_markers.setdefault(cell["id"], set()).update(region["channels"])
+                else:
+                    bad.add(cell["id"])
     bad |= {cid for cid, reasons in truth["cells"].items() if reasons}
     return {"name": name, "cells": cells, "truth": truth, "bad_cells": bad,
-            "channels": channels}
+            "bad_marker_cells": bad_markers, "channels": channels}
 
 
 # -- scoring ---------------------------------------------------------------------------------
@@ -564,6 +574,33 @@ def score_cells(failing, made):
             "false_removal": len(failing & good) / len(good) if good else None}
 
 
+#: The marker reasons a marker-level truth region is called by.
+MARKER_TRUTH_REASONS = ("region:out_of_focus",)
+
+
+def score_markers(cells, made):
+    """Recall and precision of the (cell, marker) pairs the truth calls
+    unreliable while the cell stands (`bad_marker_cells`): recall over every
+    flag that excludes or warns; precision over the flags of the classes such
+    truth is made of (`MARKER_TRUTH_REASONS`), so a scene's staining flags do
+    not count against it."""
+    truth = {(cid, m) for cid, markers in (made.get("bad_marker_cells") or {}).items()
+             for m in markers}
+    if cells is None or not cells.height or "marker_flags" not in cells.columns:
+        return {"marker_recall": 0.0 if truth else None, "marker_precision": None}
+    flagged, called = set(), set()
+    for cid, entries in zip(cells["cell_id"].to_list(), cells["marker_flags"].to_list()):
+        for entry in entries or ():
+            marker, reason, status = (entry.split("|") + ["", ""])[:3]
+            if status not in ("exclude", "warn"):
+                continue
+            flagged.add((int(cid), marker))
+            if reason in MARKER_TRUTH_REASONS:
+                called.add((int(cid), marker))
+    return {"marker_recall": len(flagged & truth) / len(truth) if truth else None,
+            "marker_precision": len(called & truth) / len(called) if called else None}
+
+
 def run_scene(session, made, arm, agent_style, *, seed=0, cell_um=25.0):
     from plexora.agent import invoke, jobs
     from plexora.plugins.qc.server import candidates as cand
@@ -655,6 +692,7 @@ def run_scene(session, made, arm, agent_style, *, seed=0, cell_um=25.0):
                    region_recall=recall, region_precision=precision, region_iou=iou,
                    channel_accuracy=right / len(truth_channels) if truth_channels else None,
                    replayed=status.get("replayed"), **score_cells(failing, made),
+                   **score_markers(cells, made),
                    **agent_text.cost(vision_tokens=vtokens))
         # Reruns from the memo: each scene is scored once, from scratch.
         invoke(session, "qc_session_finish", {"session_id": sid, "action": "rollback"})
@@ -733,8 +771,8 @@ def summarise(rows) -> dict:
         out[arm] = {key: _mean([r.get(key) for r in mine]) for key in (
             "region_recall", "region_precision", "region_iou", "region_iou_px",
             "envelope_iou_px", "excess_fraction", "channel_accuracy",
-            "cell_recall", "cell_precision", "false_removal", "packets", "vision_tokens",
-            "seconds", *COST_KEYS)}
+            "cell_recall", "cell_precision", "false_removal", "marker_recall",
+            "marker_precision", "packets", "vision_tokens", "seconds", *COST_KEYS)}
         out[arm]["cost_by_kind"] = _by_kind_totals(mine)
     return out
 
@@ -742,12 +780,12 @@ def summarise(rows) -> dict:
 def to_markdown(summary, rows, *, title) -> str:
     keys = ("region_recall", "region_precision", "region_iou", "region_iou_px",
             "envelope_iou_px", "excess_fraction", "channel_accuracy",
-            "cell_recall", "cell_precision", "false_removal", "packets", "vision_tokens",
-            "seconds")
+            "cell_recall", "cell_precision", "false_removal", "marker_recall",
+            "marker_precision", "packets", "vision_tokens", "seconds")
     lines = [f"# {title}", "", "| arm | " + " | ".join(keys) + " |",
              "|---|" + "---|" * len(keys)]
     for arm, values in summary.items():
-        lines.append(f"| {arm} | " + " | ".join("-" if values[k] is None else str(values[k])
+        lines.append(f"| {arm} | " + " | ".join("-" if values.get(k) is None else str(values[k])
                                                 for k in keys) + " |")
     lines += ["", "## Cost", "",
              "Agent-facing text the session arm's scripted agent received -- every `qc_next` "

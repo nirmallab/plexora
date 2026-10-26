@@ -18,6 +18,7 @@ import math
 from flask import Blueprint, abort, request, send_file
 
 from plexora import api
+from plexora.plugins.qc.server import tableops  # noqa: F401  (registers qc.write_cells)
 
 qc_bp = Blueprint("qc", __name__, template_folder="../templates",
                   static_folder="../static", static_url_path="/static")
@@ -497,8 +498,9 @@ def export():
 
 @qc_bp.route("/download/<project>", methods=["GET"])
 def download(project):
-    """A file of the project's active QC result: cells.csv, regions.geojson,
-    provenance.json, findings.csv, summary.json, report.html, report.pdf."""
+    """A file of the project's active QC result: cells.csv, cells.h5ad,
+    regions.geojson, provenance.json, findings.csv, summary.json, report.html,
+    report.pdf."""
     from plexora.plugins.qc.server import results
 
     kind = request.args.get("kind", "cells.csv")
@@ -509,13 +511,18 @@ def download(project):
         if not path:
             abort(404)
         return send_file(path, as_attachment=kind.endswith("pdf"))
-    answer = _invoke("export_qc", {"project": project, "what": "both"})
+    # Only what the file needs: an AnnData of a million cells is not made
+    # for a CSV download.
+    what = {"cells.csv": "cells", "cells.h5ad": "anndata", "regions.geojson": "rois",
+            "provenance.json": "provenance", "findings.csv": "provenance"}.get(kind, "rois")
+    answer = _invoke("export_qc", {"project": project, "what": what})
     response = answer[0] if isinstance(answer, tuple) else answer
     payload = json.loads(response.get_data())
     if not payload.get("ok"):
         abort(404)
     files = payload.get("files") or {}
-    path = {"cells.csv": files.get("cells"), "regions.geojson": files.get("regions"),
+    path = {"cells.csv": files.get("cells"), "cells.h5ad": files.get("anndata"),
+            "regions.geojson": files.get("regions"),
             "provenance.json": files.get("provenance"),
             "findings.csv": files.get("findings"),
             "summary.json": files.get("summary"), "result.json": files.get("result")}.get(kind)
@@ -768,6 +775,38 @@ def segmentation_write():
     if thresholds:
         arguments["seg_thresholds"] = thresholds
     return _invoke("write_qc_to_source", arguments, allow_source_writes=True)
+
+
+@qc_bp.route("/cells/write", methods=["POST"])
+def cells_write():
+    """The QC calls (and Segmentation QC's, `what` "both") into the project's
+    own table file: the user pressed "Save into file" and confirmed it, as for
+    Segmentation QC's Save. `replace` only as the answer to the conflict a
+    first attempt returns."""
+    body = _body()
+    project = body.get("datasource") or body.get("project")
+    if not project:
+        abort(400)
+    what = body.get("what") if body.get("what") in ("qc", "both") else "qc"
+    return _invoke("write_qc_to_source", {"project": project, "confirm": True, "what": what,
+                                          "replace": bool(body.get("replace"))},
+                   allow_source_writes=True)
+
+
+@qc_bp.route("/categories/exclusion", methods=["POST"])
+def categories_exclusion():
+    """Which categories count toward exclusions: `{datasource,
+    disabled_categories: [...]}`, the whole set (the panel's "Counts toward
+    exclusions" switch). Not `/categories`, which makes a category to draw in."""
+    body = _body()
+    project = body.get("datasource") or body.get("project")
+    disabled = body.get("disabled_categories")
+    if not project or not isinstance(disabled, list):
+        abort(400)
+    arguments = {"project": project, "disabled_categories": [str(c) for c in disabled]}
+    if body.get("expected_revision"):
+        arguments["expected_revision"] = body["expected_revision"]
+    return _invoke("set_qc_categories", arguments)
 
 
 @qc_bp.route("/segmentation/run", methods=["POST"])

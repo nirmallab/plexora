@@ -296,7 +296,8 @@ def test_the_panel_runs_previews_sets_and_writes_regions(tmp_path):
     row = next(r for r in meta if r["roi_id"] == roi_id)
     assert row["created_by"] == "blur" and row["detector"] == "blur"
     assert row["class"] == "out_of_focus" and row["approved_action"] == "exclude"
-    assert row["channels"] == ["DNA_2"]
+    # Focus is per acquisition: DNA_2's cycle (DNA_2, CD20) is the region's.
+    assert row["channels"] == ["DNA_2", "CD20"] and row["scope"] == "cycle"
     rois = _ok(invoke(session, "list_rois", {"project": "qcsynth"}))
     feature = next(r for r in rois["rois"] if r["id"] == roi_id)
     assert feature["category_id"] == "qc_blur_focus"
@@ -310,10 +311,12 @@ def test_the_panel_runs_previews_sets_and_writes_regions(tmp_path):
         _ok(invoke(session, "set_qc_strictness", {"project": "qcsynth", "preset": preset}))
         rois = _ok(invoke(session, "list_rois", {"project": "qcsynth"}))
         assert next(r for r in rois["rois"] if r["id"] == roi_id)["name"] == feature["name"]
-    # The cells inside are flagged for it.
+    # The cells inside have that cycle's markers flagged for it, and are kept
+    # (the cells were segmented from DNA_1, another cycle).
     cells = results.cells("qcsynth")
-    flagged = [r for r in cells.to_dicts() if "region:out_of_focus" in (r["reasons"] or [])]
-    assert flagged
+    flagged = [r for r in cells.to_dicts()
+               if any("|region:out_of_focus|" in f for f in r["marker_flags"] or [])]
+    assert flagged and all(r["pass"] for r in flagged)
     # Another channel's write leaves this channel's regions alone.
     other = _post(client, "blur/regions/write", {"channel": "DNA_1"})
     assert other["ok"] and other["removed"] == [] and other["written"] == []

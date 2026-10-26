@@ -309,7 +309,8 @@ def test_a_noted_cell_is_kept_in_every_export(ds, tmp_path):
     assert written.height == frame.height
     noted = written.filter(pl.col("noted").fill_null("") != "")
     assert noted.height == 5 and noted["pass"].all()
-    assert noted["qc_category"].is_null().all()
+    assert (noted["category"].fill_null("") == "").all()
+    assert (noted["status"] == "pass").all()
     assert source_write._category("", ["seg_under"], ["seg_under"]) == ""
     assert source_write._category("", ["seg_large", "seg_under"], ["seg_under"]) \
         == "segmentation"

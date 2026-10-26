@@ -667,14 +667,33 @@ def clear_blur(call, inp):
     return {"receipt": receipt.model_dump(mode="json"), "cleared": gone}
 
 
-def _blur_candidate(fp, k, region, summary, evaluation, bar=None):
+def _blur_scope(call, project, channel):
+    """(scope, channels, cycles) of a blur region measured on `channel`.
+
+    Focus is set per acquisition, not per filter: a channel out of focus says
+    its cycle was, so the region flags every marker of that cycle -- when the
+    cycles are known well enough (`cycles.resolved`: the user's groups, or
+    repeated DNA channels at equal gaps). Unresolved, the measured channel
+    alone. Whole cells only when the cycle holds the stain the cells were
+    segmented from (`class_rules.region_level`). Brightfield (no channel) is
+    every channel."""
+    if not channel:
+        return "all_channels", [], []
+    cycle, members, ok = _cycle_channels(call, project, channel, with_resolved=True)
+    if ok and cycle is not None and channel in members:
+        return "cycle", members, [int(cycle)]
+    return "channel", [channel], [int(cycle)] if cycle is not None else []
+
+
+def _blur_candidate(fp, k, region, summary, evaluation, bar=None, scope=None):
     blur = _blur()
     channel = summary.get("channel")
     bar = bar or {}
+    scope, channels, cycles = scope or ("all_channels", [channel] if channel else [], [])
     return _check_candidate(
         "blur", blur.VERSION, "out_of_focus", f"{fp}:{k}",
-        {**region, "max": region["max_blur"]}, channels=[channel] if channel else [],
-        scope="all_channels",
+        {**region, "max": region["max_blur"]}, channels=channels,
+        scope=scope, cycles=cycles,
         threshold={"threshold": evaluation["threshold"],
                    "threshold_source": bar.get("source") or "auto",
                    "auto_threshold": bar.get("auto"),
@@ -713,18 +732,24 @@ def write_blur_regions(call, inp):
             {"value": inp.threshold, "auto": summary.get("auto_threshold"), "source": "user",
              "offset_steps": None}
         per_bar[label] = (evaluation, bar)
+        scope = _blur_scope(call, project, summary.get("channel"))
         records = [_blur_candidate(summary["fingerprint"], n, region, summary, evaluation,
-                                   bar)
+                                   bar, scope)
                    for n, region in enumerate(evaluation["regions"], start=1)
                    if region.get("geometry")]
         work.append((label, records))
     if not work:
         raise AgentError("precondition_missing", "run Blur QC first (run_blur_check): no "
                          "listed channel has a result with evaluable tissue")
+    # A region scoped to its cycle lists every channel of it: the channel it
+    # was measured on (its candidate's metrics) is what it is replaced by.
+    measured = _measured_channels(project, "blur")
     written, kept, removed, receipts, per_key, revisions = _write_regions(
         call, project, detector="blur", klass="out_of_focus",
         covered={label for label, _r in work}, work=work,
-        row_keys=lambda row: list(row.get("channels") or []) or [blur.BRIGHTFIELD])
+        row_keys=lambda row: [measured[row.get("candidate_id")]]
+        if measured.get(row.get("candidate_id"))
+        else list(row.get("channels") or []) or [blur.BRIGHTFIELD])
     per_channel = {}
     for label, (evaluation, bar) in per_bar.items():
         per_channel[label] = {"written": per_key.get(label, {}).get("written", []),
@@ -1177,19 +1202,41 @@ def _save_reg_offset(project, comparison, steps):
         reg.save_state(project, {**state, "offsets": offsets})
 
 
-def _cycle_channels(call, project, channel):
-    """(cycle, channels imaged with `channel`), from the channel names."""
-    from plexora.plugins.qc.server import cycles
+def _cycle_channels(call, project, channel, *, with_resolved=False):
+    """(cycle, channels imaged with `channel`) -- the user's groups
+    (`set_qc_cycles`) when stated, else inferred from the channel names; with
+    `with_resolved`, also whether the cycles are certain (`cycles.resolved`)."""
+    from plexora.plugins.qc.server import cycles, results
 
     names = _registration().channel_names(call.session.project(project))
     try:
-        found = cycles.infer(names)
+        override = results.load(project).get("cycles_override")
     except Exception:
-        return None, [channel]
+        override = None
+    try:
+        found = cycles.infer(names, override=override)
+    except Exception:
+        return (None, [channel], False) if with_resolved else (None, [channel])
+    ok = cycles.resolved(found)[0]
     for cycle in found.get("cycles") or []:
         if channel in (cycle.get("channels") or []):
-            return cycle.get("index"), list(cycle.get("channels"))
-    return None, [channel]
+            out = cycle.get("index"), list(cycle.get("channels"))
+            return (*out, ok) if with_resolved else out
+    return (None, [channel], ok) if with_resolved else (None, [channel])
+
+
+def _measured_channels(project, detector):
+    """{candidate id: the channel label its check measured} of the active
+    result's `detector` candidates."""
+    from plexora.plugins.qc.server import results
+
+    try:
+        result = results.active(results.load(project))
+    except Exception:
+        return {}
+    return {cid: (c.get("metrics") or {}).get("channel")
+            for cid, c in ((result or {}).get("candidates") or {}).items()
+            if c.get("detector") == detector and (c.get("metrics") or {}).get("channel")}
 
 
 def write_registration_regions(call, inp):

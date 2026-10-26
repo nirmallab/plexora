@@ -100,17 +100,67 @@ def eligible_columns(dataset) -> list[str]:
 
 
 def describe_all(dataset) -> list[dict]:
-    """A descriptor per eligible column.
+    """A descriptor per eligible column, then one per derived annotation.
 
-    Cached against the datasource, so opening the dropdown on a five-million-row
-    table does not re-scan every column each time. `Dataset.cached` entries die
-    with the load generation, so a project whose data was re-read cannot be
-    served descriptors derived from the previous table.
+    The table's columns are cached against the datasource, so opening the
+    dropdown on a five-million-row table does not re-scan every column each
+    time. `Dataset.cached` entries die with the load generation, so a project
+    whose data was re-read cannot be served descriptors derived from the
+    previous table. The derived ones (`derived`) are not: QC's status changes
+    with every region drawn, while the table stays the same.
     """
-    return dataset.cached(
+    columns = dataset.cached(
         ("cell_explorer", "variables"),
         lambda: [describe(dataset, name) for name in eligible_columns(dataset)],
     )
+    return [*columns, *derived(dataset, {c["name"] for c in columns})]
+
+
+def annotations(dataset) -> dict:
+    """The per-cell annotations plugins derive (`ProjectData.annotations`):
+    QC's status and category, coloured by without a write into the file.
+    {} when there are none, or they cannot be read right now."""
+    read = getattr(dataset, "annotations", None)
+    if read is None:
+        return {}
+    try:
+        return read() or {}
+    except Exception:  # an annotation that cannot be read leaves the table's own
+        return {}
+
+
+def derived(dataset, taken=()) -> list[dict]:
+    """A descriptor per derived annotation whose name no column of the table
+    already has: categorical, its levels and colours as the provider gave
+    them, marked `derived` so the dropdown can say where it came from."""
+    out = []
+    for name, body in annotations(dataset).items():
+        if name in taken:
+            continue
+        values = np.asarray(body.get("values") or [], dtype=object)
+        descriptor = _describe_values(name, values, declared=body.get("categories"))
+        descriptor.update(derived=True, label=body.get("label") or name,
+                          provider=body.get("provider"),
+                          description=body.get("description"),
+                          colors=dict(body.get("colors") or {}),
+                          fingerprint=body.get("fingerprint"))
+        # Labels, whatever the count: a status is never a scale.
+        if descriptor.get("kind") != "categorical":
+            descriptor.update(kind="categorical", ambiguous=False,
+                              **_categorical_payload(*as_text(values),
+                                                     body.get("categories")))
+        out.append(descriptor)
+    return out
+
+
+def column_values(dataset, column, descriptor=None):
+    """One column's values, one per loaded row: a derived annotation's from
+    its provider, else the table's."""
+    if descriptor is not None and descriptor.get("derived"):
+        body = annotations(dataset).get(column)
+        if body is not None:
+            return np.asarray(body.get("values") or [], dtype=object)
+    return np.asarray(dataset.table.metadata_values(column).values)
 
 
 def describe(dataset, column: str) -> dict:

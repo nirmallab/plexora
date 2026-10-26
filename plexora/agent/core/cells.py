@@ -63,7 +63,7 @@ def cell_gallery(call, inp):
                       rendered["png"])
 
 
-class ExplainInput(ProjectInput):
+class ExplainInput(ProjectInput, QcInput):
     cell_id: int = Field(description="The cell's id, as the table's id column has it.")
     marker: str | None = Field(None, description="A marker to focus on: drawn in the crop "
                                "and reported for each neighbour.")
@@ -80,10 +80,18 @@ class ExplainInput(ProjectInput):
 def explain_cell(call, inp):
     from plexora.agent.cell_explain import explain_cell as explain
 
+    from plexora.agent import cell_exclusions
+
     result, png = explain(call.session, call.data, cell_id=inp.cell_id, marker=inp.marker,
                           k=inp.k, within_um=inp.within_um, crop_um=inp.crop_um,
                           crop_px=inp.crop_px, include_crop=inp.include_crop,
                           include_metadata=inp.include_metadata)
+    # What QC says of the cell, under the asked mode (`qc`): whether it is
+    # left out, which markers it is not called for, and why. None without QC.
+    try:
+        result["qc"] = cell_exclusions.explain(call.data, inp.cell_id)
+    except Exception as exc:  # the explanation stands without it
+        result["qc"] = {"error": str(exc)}
     return with_image(result, png) if png is not None else result
 
 
@@ -105,7 +113,8 @@ def capabilities():
             name="cell.explain", tool_name="explain_cell", owner="core",
             purpose="One cell explained: every marker's value and percentile, its "
                     "strongest markers, the regions it lies in, its nearest neighbours "
-                    "with distances, and a crop with it outlined.",
+                    "with distances, a crop with it outlined, and what QC says of it "
+                    "(left out or not, the markers it is not called for, and why).",
             permission="read", input_model=ExplainInput, handler=explain_cell,
             requires=_NEEDS_CELLS, visual_output=True, egress="rendered_pixels",
             reads=("image", "mask", "table", "rois"),

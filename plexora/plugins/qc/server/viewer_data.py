@@ -329,7 +329,46 @@ def _marker_statuses(frame):
 
 
 #: How a marker flag's status reads in the panel.
-MARKER_STATUS = {"exclude": "unreliable", "warn": "flagged"}
+MARKER_STATUS = {"exclude": "unreliable", "warn": "flagged", "note": "noted"}
+
+
+def _category_counts(frame, summary, disabled):
+    """{category: {n_excluded, n_flagged, n_marker_only, n_noted, n_any,
+    fraction, fraction_flagged, enabled}}: the derive's own distinct counts,
+    or, for calls derived before it kept them, counted from the frame."""
+    from plexora.plugins.qc.server.cells import columns
+
+    stored = summary.get("by_category")
+    if stored is not None:
+        return stored
+    n = int(summary.get("n") or frame.height) or 1
+    built = columns.build(frame)
+    out = {}
+    for category in columns.CATEGORY_COLUMNS:
+        if category == "custom":
+            continue
+        counts = {word: int((built[category] == word).sum())
+                  for word in columns.STATUS_RANK}
+        n_any = sum(counts.values())
+        out[category] = {"n_excluded": counts["excluded"], "n_flagged": counts["flagged"],
+                         "n_marker_only": counts["channel"], "n_noted": counts["noted"],
+                         "n_any": n_any, "fraction": n_any / n,
+                         "fraction_flagged": (n_any - counts["noted"]) / n,
+                         "enabled": category not in disabled}
+    return out
+
+
+def _where(ds):
+    """(table kind, whether the table is on a data node)."""
+    try:
+        kind = ds.source_kind
+    except Exception:
+        kind = None
+    try:
+        on_node = ds.project.resources.get("table") is not None
+    except Exception:
+        on_node = False
+    return kind, on_node
 
 
 def _dismissed(result):
@@ -375,12 +414,21 @@ def cells(ds, project, result_id=None, *, max_ids=MAX_TOTAL_IDS) -> dict:
     if stored and stored != result.get("result_id"):
         return {**empty, "note": "cell calls are kept for the active result only"}
     summary = result.get("cells") or {}
+    document = results.load(project)
+    disabled = results.disabled_categories(document)
+    table_kind, on_node = _where(ds)
     base = {"available": True, "result_id": result.get("result_id"),
             "n": int(summary.get("n") or frame.height),
             "n_fail": int(summary.get("n_fail") or 0),
             "n_warn": int(summary.get("n_warn") or 0),
             "n_noted": int(summary.get("n_noted") or 0),
             "n_marker_flagged": int(summary.get("n_marker_flagged") or 0),
+            "n_flagged_any": int(summary.get("n_flagged_any") or 0),
+            # Distinct cells per category (a cell with two reasons of one
+            # category is one cell), against `n`: the panel's "% of cells".
+            "categories": _category_counts(frame, summary, disabled),
+            "disabled_categories": disabled,
+            "table_kind": table_kind, "source_on_node": on_node,
             "dismissed": _dismissed(result)}
     statuses = _statuses(frame, result)
     marker_statuses = _marker_statuses(frame)
@@ -408,8 +456,9 @@ def cells(ds, project, result_id=None, *, max_ids=MAX_TOTAL_IDS) -> dict:
     cell_rows = sorted(grouped(statuses, ["reason", "status"]), key=lambda g: (
         category_rank(schemas.category_of_reason(g["reason"])),
         rank_status.get(g["status"], 1), order.get(g["reason"], 999), g["reason"]))
+    marker_rank = {"exclude": 0, "warn": 1, "note": 2}
     marker_rows = sorted(grouped(marker_statuses, ["marker", "reason", "status"]),
-                         key=lambda g: (0 if g["status"] == "exclude" else 1,
+                         key=lambda g: (marker_rank.get(g["status"], 1),
                                         str(g["marker"]), g["reason"]))
     recorded = summary.get("evidence")
     legacy = None
@@ -791,6 +840,28 @@ def _nearest_centroid(ds, project, x, y, radius, planes=None):
     if not distance <= max(radius, reach, 1.0):
         return None
     return int(ids[row])
+
+
+def cell_by_id(ds, project, cell_id) -> dict | None:
+    """QC's record of one cell by id (`provenance.cell_record`): `calls:
+    False` with a `note` when QC has no current calls, None for a cell the
+    calls do not hold."""
+    from plexora.plugins.qc.server import provenance
+
+    held = _hover_context(ds, project)
+    if held["frame"] is None:
+        if held["result"] is None:
+            return None
+        return {"cell_id": int(cell_id), "calls": False, "note": held["note"],
+                "segqc": _segqc_row(project, cell_id)}
+    at = _find(held["index"], cell_id)
+    if at is None:
+        return None
+    row = held["frame"].row(at, named=True)
+    return provenance.cell_record(
+        held["result"], row, regions=held["regions"], fractions=_fractions(held, cell_id),
+        segqc=_segqc_row(project, cell_id), class_colors=held["class_colors"],
+        reason_colors=held["reason_colors"])
 
 
 def cell_at(ds, project, x, y, *, radius=0.0, planes=None) -> dict:

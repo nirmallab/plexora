@@ -1,13 +1,19 @@
 """QC results as files other tools read: cells CSV, regions GeoJSON, summary.
 
     <agent_root>/exports/qc_<project>_<result_id>_<stamp>/
-        cells.csv            one row per cell: pass, action, reasons (the whole
-                             cell's), qc_category (its primary reason's) and
-                             categories, flag_source (direct: read on the cell;
-                             roi: inherited from a region; both),
-                             unreliable_markers and marker_flags
-                             ("marker|reason|status": one channel's value),
-                             ROI ids
+        cells.csv            one row per cell, the columns every QC export
+                             writes (`cells/columns.py`): status (pass /
+                             flagged / excluded) and pass, the reasons (the
+                             whole cell's), category (its primary reason's)
+                             and categories, one column per category (its
+                             strongest status there: excluded / flagged /
+                             channel / noted), unreliable_markers and
+                             marker_flags ("marker|reason|status": one
+                             channel's value), ROI ids, flag_source (direct /
+                             roi / both) and source (auto / manual / ai)
+        cells.h5ad           the same as an obs-only AnnData (no X), with the
+                             obsm frames and uns["plexora_qc"] a source write
+                             would add -- `what="anndata"`; join on cell_id
         qc_regions.geojson   every QC region (geometry as the ROI plugin holds
                              it, the user's edits included) with its category,
                              subtype, score, threshold and its source, the
@@ -22,8 +28,8 @@
         summary.json         the counts, with their denominators
         result.json          the whole result document
 
-`what` picks: "rois" (the GeoJSON), "cells" (cells.csv), "provenance" (the
-two provenance files), "both" (all of them).
+`what` picks: "rois" (the GeoJSON), "cells" (cells.csv), "anndata"
+(cells.h5ad), "provenance" (the two provenance files), "both" (all of them).
 
 Segmentation QC rides along when it has a result: cells.csv gains
 seg_qc_status / seg_qc_under_score / seg_qc_over_score / seg_qc_reason /
@@ -44,11 +50,11 @@ from datetime import datetime, timezone
 
 from plexora.plugins.qc.server import provenance, results, roi_link, schemas
 
-WHATS = ("rois", "cells", "provenance", "both")
+WHATS = ("rois", "cells", "anndata", "provenance", "both")
 #: The columns cells.csv adds to each cell's call: its category, every
 #: category its reasons fall in, and whether they were read on the cell
 #: (`direct`), inherited from a region (`roi`) or both.
-CELL_CATEGORY_COLUMNS = ("qc_category", "categories", "flag_source")
+CELL_CATEGORY_COLUMNS = ("category", "categories", "flag_source")
 
 
 def _root(project, result_id):
@@ -180,64 +186,60 @@ def _sizes(project):
     return found[1].select("cell_id", *[found[1][n].alias(f"seg_qc_{n}") for n in names])
 
 
-def _categories(cells):
-    """qc_category (the primary reason's, else the first reason's that does
-    more than note the cell), categories (every such reason's, in category
-    order) and flag_source (direct: a reason read on the cell; roi: one from
-    a region it sits in; both). A noted reason is in `noted` alone."""
+def cells_csv(cells, path, seg=None, sizes=None, result=None, roi_meta=None):
+    """cells.csv: the canonical columns (`cells/columns.py`), Segmentation QC's
+    beside them when it has a result."""
     import polars as pl
 
-    order = {k: i for i, k in enumerate(schemas.category_order())}
-
-    def of(reasons):
-        return sorted({schemas.category_of_reason(r) for r in reasons or []},
-                      key=lambda c: order.get(c, 99))
-
-    def source(reasons):
-        region = any(str(r).startswith("region:") for r in reasons or [])
-        direct = any(not str(r).startswith("region:") for r in reasons or [])
-        return "both" if region and direct else "roi" if region else \
-            "direct" if direct else None
-
-    reasons = cells["reasons"].to_list() if "reasons" in cells.columns else [[]] * cells.height
-    if "noted_by" in cells.columns:
-        reasons = [[r for r in rs or [] if r not in set(noted or [])]
-                   for rs, noted in zip(reasons, cells["noted_by"].to_list())]
-    primary = cells["primary_reason"].to_list() if "primary_reason" in cells.columns \
-        else [""] * cells.height
-    categories = [of(r) for r in reasons]
-    first = [schemas.category_of_reason(p) if p else (c[0] if c else None)
-             for p, c in zip(primary, categories)]
-    return (pl.Series("qc_category", first, dtype=pl.Utf8),
-            pl.Series("categories", [";".join(c) for c in categories], dtype=pl.Utf8),
-            pl.Series("flag_source", [source(r) for r in reasons], dtype=pl.Utf8))
-
-
-def cells_csv(cells, path, seg=None, sizes=None):
-    import polars as pl
+    from plexora.plugins.qc.server.cells import columns
 
     frame = None
     if cells is not None:
         # Every cell, the ones outside the tissue too (`background`): an
         # annotation column, never a dropped row.
-        frame = cells.select([c for c in ("cell_id", "pass", "action", "primary_reason",
-                                          "reasons", "reason_count", "noted_by",
-                                          "background", "unreliable_markers",
-                                          "marker_flags", "roi_ids", "roi_method")
-                              if c in cells.columns])
-        frame = frame.with_columns(*_categories(cells))
-        frame = frame.with_columns([pl.col(c).list.join(";") for c in (
-            "reasons", "noted_by", "unreliable_markers", "marker_flags", "roi_ids")
-            if c in frame.columns])
-        if "noted_by" in frame.columns:
-            frame = frame.rename({"noted_by": "noted"})
+        frame = columns.build(cells, result, roi_meta)
+        frame = frame.drop([c for c in ("row",) if c in frame.columns])
     if seg is not None:
         seg = _seg_columns(seg)
         if sizes is not None:
             seg = seg.join(sizes, on="cell_id", how="left")
         frame = seg if frame is None else frame.with_columns(
-            pl.col("cell_id").cast(pl.Int64)).join(seg, on="cell_id", how="left")
+            pl.col("cell_id").cast(pl.Int64)).join(seg, on="cell_id", how="left",
+                                                   maintain_order="left")
     frame.write_csv(path)
+
+
+def cells_h5ad(ds, cells, result, document, path, roi_meta=None):
+    """cells.h5ad: one obs row per call (index the cell id as text), the
+    canonical columns, the three obsm frames and uns["plexora_qc"] -- no X.
+    Join it onto a table with `adata.obs.join(qc.obs, on=<id column>)`, or
+    by index when the table's index is the cell id."""
+    import anndata
+    import pandas as pd
+
+    from plexora.plugins.qc.server.cells import columns
+
+    canon = columns.build(cells, result, roi_meta)
+    canon = canon.drop([c for c in ("row",) if c in canon.columns])
+    obs = canon.to_pandas()
+    obs.index = pd.Index(obs["cell_id"].astype(str).to_numpy())
+    if obs.index.has_duplicates:  # a time series: one row per frame of a cell
+        obs.index = pd.Index([f"{cid}-{i}" for i, cid in enumerate(obs["cell_id"])])
+    for name in columns.CATEGORICAL:
+        if name in obs.columns:
+            obs[name] = obs[name].astype("string").astype("category")
+    for name in (*columns.LIST_COLUMNS, "categories"):
+        if name in obs.columns:
+            obs[name] = obs[name].astype("string")
+    obsm = {}
+    for key, frame in columns.obsm_frames(cells, list(ds.table.markers)).items():
+        if frame.width:
+            body = frame.to_pandas().astype("boolean")
+            body.index = obs.index
+            obsm[key] = body
+    adata = anndata.AnnData(obs=obs, obsm=obsm,
+                            uns={"plexora_qc": columns.uns_body(ds, result, document)})
+    adata.write_h5ad(path)
 
 
 def provenance_files(ds, project, result, folder, files):
@@ -293,17 +295,27 @@ def export(call, project, *, what="both", result_id=None):
         path = folder / "qc_regions.geojson"
         path.write_text(json.dumps(regions_geojson(ds, result)), encoding="utf-8")
         files["regions"] = str(path)
-    if what in ("cells", "both"):
+    if what in ("cells", "anndata", "both"):
         cells = results.cells(project)
-        if cells is not None and cells.height and \
-                (result_id is None or result_id == document.get("active_result_id")):
-            path = folder / "cells.csv"
-            cells_csv(cells, path, seg, sizes)
-            files["cells"] = str(path)
-        elif seg is not None:
-            path = folder / "cells.csv"
-            cells_csv(None, path, seg, sizes)
-            files["cells"] = str(path)
+        current = cells is not None and cells.height and \
+            (result_id is None or result_id == document.get("active_result_id"))
+        meta = results.roi_meta(project) if current else None
+        if what in ("cells", "both"):
+            if current:
+                path = folder / "cells.csv"
+                cells_csv(cells, path, seg, sizes, result=result, roi_meta=meta)
+                files["cells"] = str(path)
+            elif seg is not None:
+                path = folder / "cells.csv"
+                cells_csv(None, path, seg, sizes)
+                files["cells"] = str(path)
+        if what in ("anndata", "both") and current:
+            path = folder / "cells.h5ad"
+            try:
+                cells_h5ad(ds, cells, result, document, path, roi_meta=meta)
+                files["anndata"] = str(path)
+            except ImportError:  # anndata is optional at runtime
+                pass
     if what in ("provenance", "both"):
         provenance_files(ds, project, result, folder, files)
     summary = results.summary(result)

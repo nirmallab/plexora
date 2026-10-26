@@ -87,6 +87,15 @@ class CellExplorerApi {
      *               inference, or null to take it
      * @param signal an AbortSignal for the caller's current generation
      */
+    /** Drop every cached copy of one column (a derived column whose values
+     *  moved: QC's calls changed). */
+    forget(column) {
+        const prefix = `${this.datasource}:${column}:`;
+        for (const key of [...this._cache.keys()]) {
+            if (String(key).startsWith(prefix)) this._cache.delete(key);
+        }
+    }
+
     async values(column, kind, signal) {
         const key = this.cacheKey(column, kind);
         const cached = this._cache.get(key);

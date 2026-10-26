@@ -20,7 +20,7 @@ Kept import-light, like every descriptor module.
 
 from plexora.api.plugin import Plugin, Requires
 
-VERSION = "20261012_license_tiers"
+VERSION = "20261025_qc_cells"
 
 
 def _blueprint():
@@ -45,6 +45,12 @@ def _cell_exclusions():
     from plexora.plugins.qc.server.exclusions import factory
 
     return factory()
+
+
+def _cell_annotations():
+    from plexora.plugins.qc.server.exclusions import annotations_factory
+
+    return annotations_factory()
 
 
 PLUGIN = Plugin(
@@ -90,4 +96,7 @@ PLUGIN = Plugin(
     # The cells automatic gating (and anything else that estimates from the
     # table) must leave out: plexora/agent/cell_exclusions.py.
     cell_exclusions_factory=_cell_exclusions,
+    # QC's status and category per cell, for Cell Explorer and explain_cell
+    # to read without a source write: plexora/agent/cell_exclusions.py.
+    cell_annotations_factory=_cell_annotations,
 )

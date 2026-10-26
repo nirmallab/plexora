@@ -231,9 +231,102 @@ def providers() -> list:
 
 
 def _reset_for_tests():
-    global _PROVIDERS
+    global _PROVIDERS, _ANNOTATORS
     with _PROVIDERS_LOCK:
         _PROVIDERS = None
+        _ANNOTATORS = None
+
+
+def explain(ds, cell_id) -> dict | None:
+    """What QC says of one cell, for `explain_cell`: {mode, call_mode,
+    left_out (whole cell, under the current mode), not_called_for (markers it
+    is left out of), findings [each provider's own account]}; None when no
+    provider knows anything of it."""
+    cell_id = int(cell_id)
+    record = current(ds)
+    findings = []
+    for name, provider in providers():
+        explainer = getattr(provider, "explain", None)
+        if explainer is None:
+            continue
+        try:
+            found = explainer(ds, cell_id)
+        except Exception as exc:  # one provider's failure is said, not raised
+            found = {"error": str(exc)}
+        if found is not None:
+            findings.append({"provider": name, **found})
+    if record is None and not findings:
+        return None
+    left_out = bool(record is not None and np.isin(cell_id, record.whole))
+    not_called_for = sorted(m for m, ids in (record.by_marker if record else {}).items()
+                            if np.isin(cell_id, ids)) if record is not None else []
+    return {"mode": record.mode if record is not None else current_mode(),
+            "call_mode": current_call_mode(), "left_out": left_out,
+            "not_called_for": not_called_for, "findings": findings}
+
+
+# -- per-cell annotations ---------------------------------------------------------
+#
+# The other seam a QC layer offers: not which cells to leave out, but what it
+# says of each one -- a status, a category -- for Cell Explorer to colour by,
+# `explain_cell` to report, and anything else that reads the table's cells,
+# with no source write and no import of the plugin. `Plugin.
+# cell_annotations_factory` returns `provider(ds) -> {name: annotation}`.
+
+_ANNOTATORS = None
+
+
+def _load_annotators() -> list:
+    from plexora.server import plugins as plugin_registry
+
+    names = plugin_registry.requested()
+    if names is None:
+        names = plugin_registry.available_names()
+    found = []
+    for name in names:
+        if name not in plugin_registry.available_names():
+            continue
+        plugin = plugin_registry.load(name)
+        factory = getattr(plugin, "cell_annotations_factory", None) if plugin else None
+        if factory is None:
+            continue
+        try:
+            provider = factory()
+        except Exception as exc:  # pragma: no cover - a broken third-party plugin
+            _log.warning("plugin %r cell annotations failed to load: %s", name, exc)
+            continue
+        if provider is not None:
+            found.append((name, provider))
+    return found
+
+
+def annotators() -> list:
+    global _ANNOTATORS
+    with _PROVIDERS_LOCK:
+        if _ANNOTATORS is None:
+            _ANNOTATORS = _load_annotators()
+        return list(_ANNOTATORS)
+
+
+def annotations(ds) -> dict:
+    """{name: annotation} every installed provider derives for `ds`'s cells,
+    the first provider of a name winning. `values` is one per row of the
+    loaded table (None where the provider says nothing). {} without a table
+    or a provider."""
+    if not getattr(getattr(ds, "table", None), "available", False):
+        return {}
+    out = {}
+    for plugin, provider in annotators():
+        try:
+            found = provider(ds) or {}
+        except Exception as exc:  # one broken provider never hides the others
+            _log.warning("cell annotations from %r failed: %s", plugin, exc)
+            continue
+        for name, body in found.items():
+            if name in out or not isinstance(body, dict):
+                continue
+            out[name] = {"kind": "category", "provider": plugin, **body}
+    return out
 
 
 def _merge(records) -> ExclusionRecord | None:
@@ -427,6 +520,9 @@ def describe(ds, record=_NONE, marker=None, n_total=None) -> dict:
                 "n_clipped_z"):
         if key in record.source:
             out[key] = record.source[key]
+    # Categories the user stopped counting: their cells are noted, not left out.
+    if record.source.get("disabled_categories"):
+        out["disabled_categories"] = list(record.source["disabled_categories"])
     if marker is not None:
         out["marker"] = marker
         out["n_marker_only"] = int(record.by_marker.get(marker, np.empty(0)).size)

@@ -306,10 +306,15 @@ def marker_reason_records(result) -> list:
     return out
 
 
-def categories_summary(regions, cell_reasons, marker_reasons, *, n_cells=0) -> list:
+def categories_summary(regions, cell_reasons, marker_reasons, *, n_cells=0,
+                       by_category=None) -> list:
     """Per category (the five, then review, then custom ones present): how
-    many regions by action, cells excluded and warned by its reasons, marker
-    flags, and the subtypes seen."""
+    many regions by action, the subtypes seen, and the cells. `cells_*` are
+    DISTINCT cells (`by_category`, the derive's own count: a cell with two
+    reasons of one category is one cell) with `fraction` of the table's cells
+    and whether the category counts toward exclusions (`enabled`); the
+    `*_by_reason` sums add each reason's cells and count such a cell twice --
+    kept for the findings table, which is per reason."""
     order = list(schemas.category_order())
     extra = [r["category"] for r in regions if r["category"] not in order]
     out = []
@@ -324,9 +329,17 @@ def categories_summary(regions, cell_reasons, marker_reasons, *, n_cells=0) -> l
         subtypes = list(dict.fromkeys(
             [r["class_words"] for r in mine]
             + [r["words"] for r in reasons if not r["reason"].startswith("region:")]))
+        distinct = (by_category or {}).get(category) or {}
         out.append({"category": category, "words": schemas.category_words(category),
                     "color": schemas.category_color(category), "regions": actions,
                     "n_regions": len(mine),
+                    "cells_excluded": distinct.get("n_excluded"),
+                    "cells_flagged": distinct.get("n_flagged"),
+                    "cells_marker_only": distinct.get("n_marker_only"),
+                    "cells_noted": distinct.get("n_noted"),
+                    "cells_any": distinct.get("n_any"),
+                    "fraction": distinct.get("fraction"),
+                    "enabled": distinct.get("enabled", True),
                     "cells_excluded_by_reason": sum(r["n_excluded"] for r in reasons),
                     "cells_warned_by_reason": sum(r["n_warned"] for r in reasons),
                     "cells_noted_by_reason": sum(r.get("n_noted") or 0 for r in reasons),
@@ -372,7 +385,14 @@ def vocabulary() -> dict:
                         for r in (*schemas.REASONS, *schemas.MARKER_REASONS)},
             "threshold_sources": list(schemas.THRESHOLD_SOURCES),
             "methods": list(schemas.REGION_METHODS),
-            "origins": list(schemas.REGION_ORIGINS)}
+            "origins": list(schemas.REGION_ORIGINS),
+            "columns": _columns_dictionary()}
+
+
+def _columns_dictionary():
+    from plexora.plugins.qc.server.cells import columns
+
+    return columns.dictionary()
 
 
 def document(ds, project, result, *, checks=None, files=None) -> dict:
@@ -393,7 +413,9 @@ def document(ds, project, result, *, checks=None, files=None) -> dict:
             "vocabulary": vocabulary(),
             "checks": checks if checks is not None else (result or {}).get("checks") or {},
             "regions": region_list, "cell_reasons": reasons, "marker_reasons": markers,
-            "categories": categories_summary(region_list, reasons, markers, n_cells=n_cells),
+            "categories": categories_summary(
+                region_list, reasons, markers, n_cells=n_cells,
+                by_category=((result or {}).get("cells") or {}).get("by_category")),
             "summary": results.summary(result), "files": files or {}}
 
 
@@ -499,6 +521,9 @@ def cell_record(result, row, *, cell_id=None, regions=None, fractions=None, segq
     result = result or {}
     cells = result.get("cells") or {}
     evidence = cells.get("evidence") or {}
+    # A category switched off for exclusions: its reasons read "flagged
+    # (category off)" rather than as notes of their own (`category_enabled`).
+    disabled = set((cells.get("exclusion_filter") or {}).get("disabled_categories") or ())
     regions = regions or {}
     fractions = fractions or {}
     row = row or {}
@@ -534,7 +559,9 @@ def cell_record(result, row, *, cell_id=None, regions=None, fractions=None, segq
             "side": None, "cutoff": None, "space": (ev.get("cutoffs") or {}).get("space"),
             "offset_steps": None,
             "threshold_source": None if region else ev.get("threshold_source"),
-            "verdict": None, "notes": None, "via_regions": []}
+            "verdict": None, "notes": None, "via_regions": [],
+            "category_enabled": category not in disabled,
+            "filtered": bool(ev.get("filtered"))}
         if region:
             klass = reason.split(":", 1)[1]
             record["via_regions"] = [
@@ -555,7 +582,8 @@ def cell_record(result, row, *, cell_id=None, regions=None, fractions=None, segq
                  "definition": schemas.MARKER_REASON_DEFINITIONS.get(reason, ""),
                  "color": viewer_data.reason_color(reason, class_colors, reason_colors),
                  "status": viewer_data.MARKER_STATUS.get(status, status),
-                 "value": None, "cutoff": None, "space": None, "via_regions": []}
+                 "value": None, "cutoff": None, "space": None, "via_regions": [],
+                 "category_enabled": schemas.category_of_reason(reason) not in disabled}
         if reason.startswith("region:"):
             rois = {e.get("roi_id") for e in marker_evidence
                     if e.get("marker") == marker and e.get("reason") == reason}

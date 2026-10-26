@@ -88,9 +88,12 @@ def _area_cell(region, pixel_um):
     return text
 
 
-def affected_area(scan, regions, image_size):
-    """{union_px, on_tissue_px, tissue_px, tissue_fraction, method} of the
-    regions' union, rasterised on the scan's overview tissue mask."""
+def affected_area(scan, regions, image_size, *, tissue=None):
+    """{union_px, on_tissue_px, tissue_px, tissue_fraction, method, source}
+    of the regions' union, rasterised on the scan's overview tissue mask --
+    or, with no scan (regions drawn by hand, the checks run alone), on the
+    project's own tissue mask (`tissue.for_project`, `source: "overview"`).
+    An area, never a count of cells: the panel says "% of tissue area"."""
     import cv2
     from shapely.geometry import MultiPolygon, shape
     from shapely.ops import unary_union
@@ -101,7 +104,11 @@ def affected_area(scan, regions, image_size):
     union_px = float(union.area) if union is not None else 0.0
     out = {"union_px": union_px, "image_px": float(width * height),
            "image_fraction": union_px / max(1.0, float(width * height))}
+    held = tissue
     tissue = scan.shared("tissue_overview") if scan is not None else None
+    source = "scan"
+    if tissue is None and held is not None and held.get("mask") is not None:
+        tissue, source = np.asarray(held["mask"]), "overview"
     if tissue is None or union is None:
         out.update(on_tissue_px=None, tissue_px=None, tissue_fraction=None,
                    method=(scan.meta.get("tissue") or {}).get("method") if scan else None)
@@ -124,8 +131,10 @@ def affected_area(scan, regions, image_size):
     on_tissue = float((on & canvas.astype(bool)).sum()) * per_px
     out.update(on_tissue_px=on_tissue, tissue_px=tissue_px,
                tissue_fraction=on_tissue / tissue_px if tissue_px else None,
-               method=(scan.meta.get("tissue") or {}).get("method"),
-               overview_level=scan.meta.get("overview_level"))
+               method=(scan.meta.get("tissue") or {}).get("method") if source == "scan"
+               else (held or {}).get("method"),
+               overview_level=scan.meta.get("overview_level") if source == "scan" else None,
+               source=source)
     return out
 
 
@@ -173,8 +182,16 @@ def build(call, project, result) -> dict:
     scan = _scan_for(result)
     excluded = [r for r in rows if r["action"] == "exclude"]
     warned = [r for r in rows if r["action"] == "warn"]
-    area = affected_area(scan, excluded, (width, height))
-    warn_area = affected_area(scan, warned, (width, height))
+    held = None
+    if scan is None or scan.shared("tissue_overview") is None:
+        from plexora.plugins.qc.server import tissue as tissue_mask
+
+        try:
+            held = tissue_mask.for_project(session, project)
+        except Exception:  # an image that cannot be read: no tissue fraction
+            held = None
+    area = affected_area(scan, excluded, (width, height), tissue=held)
+    warn_area = affected_area(scan, warned, (width, height), tissue=held)
     cells = result.get("cells") or {}
     tissue_meta = result.get("tissue") or (scan.meta.get("tissue") if scan else {}) or {}
     denominators = {

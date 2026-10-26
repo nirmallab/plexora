@@ -876,6 +876,17 @@ class Plugin:
     #: `capabilities_factory` is one.
     cell_exclusions_factory: Any = None
 
+    #: Zero-argument callable returning `provider(ds) -> {name: annotation}`:
+    #: per-cell values this plugin derives -- QC's status and category, say --
+    #: that core and other plugins may read without the plugin's own files or
+    #: a write into the user's table (plexora/agent/cell_exclusions.py
+    #: `annotations`, `ProjectData.annotations`). An annotation is `{kind:
+    #: "category", values (one per loaded table row; None for none),
+    #: categories, colors, label, provider, fingerprint}`. Data only: nothing
+    #: here is drawn or routed. A factory for the same reason
+    #: `capabilities_factory` is one.
+    cell_annotations_factory: Any = None
+
     #: Which navbar menu lists this tool: "tools" (the default) or "view".
     #: Read server-side when the page splits its tool rows between the two
     #: menus, so it stays out of `describe()` -- the client never needs it.

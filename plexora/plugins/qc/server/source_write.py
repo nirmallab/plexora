@@ -1,6 +1,9 @@
 """QC calls into the user's own file -- only when asked, and only QC's keys.
 
+The columns are `cells/columns.py`'s, with the prefix `plexora_qc_`:
+
     AnnData / SpatialData table:
+        obs["plexora_qc_status"]          category: pass / flagged / excluded
         obs["plexora_qc_pass"]            nullable boolean (other images' rows <NA>)
         obs["plexora_qc_primary_reason"]  category ("" for a passing cell)
         obs["plexora_qc_category"]        category: the primary reason's category
@@ -9,27 +12,36 @@
                                           review) -- a warned cell's first
                                           reason's; "" for a clean cell, and
                                           for one with notes only
+        obs["plexora_qc_categories"]      string, ";"-joined
+        obs["plexora_qc_blur_focus"] ...  category, one per category (and
+                                          `custom`): excluded / flagged / channel
+                                          (a marker of it unreliable; the cell
+                                          stands) / noted / ""
+        obs["plexora_qc_reasons"], ["_excluded_by"], ["_noted"],
+        ["_unreliable_markers"], ["_marker_flags"], ["_roi_ids"]
+                                          strings, ";"-joined
         obs["plexora_qc_reason_count"]    Int64
-        obs["plexora_qc_unreliable_markers"]  string, ";"-joined ("" for none)
-        obs["plexora_qc_noted"]           string, ";"-joined: the reasons that
-                                          only note the cell (kept, recorded)
         obs["plexora_qc_background"]      nullable boolean: outside the feathered
                                           tissue (the Background ROI), whatever
                                           it does to the cell (noted unless the
                                           user made it exclude)
+        obs["plexora_qc_roi_method"], ["_flag_source"], ["_source"]  category
         obsm["plexora_qc_flags"]          DataFrame, one boolean column per
                                           whole-cell reason (noted ones too)
         obsm["plexora_qc_marker_flags"]   DataFrame, one boolean column per
                                           marker: True where that marker's
-                                          value is unreliable for the cell
-        uns["plexora_qc"]                 version, definitions (cell and
-                                          marker reasons), the categories and
-                                          which reason is in which, strictness,
-                                          ids
+                                          value is excluded for the cell
+        obsm["plexora_qc_marker_warn"]    the same for markers only warned
+        uns["plexora_qc"]                 version "2", definitions, the column
+                                          dictionary, and `results` keyed by
+                                          image id (each image's result id,
+                                          settings, inputs and regions)
+    SpatialData, besides the table:
+        shapes["plexora_qc_regions"]      the regions behind the calls, mapped
+                                          onto the mask's labels element
+                                          (`spatialdata_write`)
     CSV / Parquet:
-        the four scalar columns, plexora_qc_background, plexora_qc_reasons,
-        plexora_qc_noted and plexora_qc_unreliable_markers (";"-joined), and
-        plexora_qc_marker_flags (";"-joined "marker|reason|status")
+        the same columns, the whole file backed up first
 
 Every input row is kept: a cell outside the tissue is annotated, never dropped.
 
@@ -56,15 +68,21 @@ always the stored ones. `what` writes the QC calls, Segmentation QC, or both.
 `plexora_qc_pass` is about the whole cell. A cell that passes can still have
 a marker it should not be read in: filter on both.
 
-The row alignment, the per-image mask and the consolidated-zarr handling are
-the ROI plugin's (`roi.server.adapters`), which already writes cell columns
-safely: rows of another image in a shared file are never touched, an existing
-QC column is refused unless `replace`, and `obs` is backed up before it is
-rewritten (an h5py rewrite is not atomic).
+Two halves, because the file may be on a data node: `gather` reads QC's own
+store (on the primary) into a payload, and `apply` -- the `qc.write_cells`
+table operation (`tableops.py`) -- writes it wherever the table is. Rows are
+placed by `row` (each call's row in the table as loaded) with an id check, so
+a repeated id (a time series) and a corrected id both land right. In a file
+shared by several images only this project's rows are touched: a column
+"exists" when THIS image's rows hold values in it, `replace` clears and
+rewrites those rows alone, and the other images' values stay. `obs` (or the
+whole flat file) is backed up before it is rewritten.
 """
 
 from __future__ import annotations
 
+import base64
+import io
 import json
 from datetime import datetime, timezone
 from pathlib import Path
@@ -72,70 +90,34 @@ from pathlib import Path
 import numpy as np
 
 from plexora.plugins.qc.server import results, schemas
+from plexora.plugins.qc.server.cells import columns as qc_columns
 
-OBS_COLUMNS = ("plexora_qc_pass", "plexora_qc_primary_reason", "plexora_qc_category",
-               "plexora_qc_reason_count", "plexora_qc_unreliable_markers", "plexora_qc_noted",
-               "plexora_qc_background")
+#: The obs / flat columns of the QC calls (every canonical column but the id).
+QC_COLUMNS = tuple(f"{qc_columns.PREFIX}{c}" for c in qc_columns.ORDER if c != "cell_id")
+OBS_COLUMNS = QC_COLUMNS
 FLAT_REASONS = "plexora_qc_reasons"
 FLAT_MARKER_FLAGS = "plexora_qc_marker_flags"
-OBSM_KEY = "plexora_qc_flags"
-OBSM_MARKERS = "plexora_qc_marker_flags"
+OBSM_KEY = qc_columns.OBSM_REASONS
+OBSM_MARKERS = qc_columns.OBSM_MARKERS
+OBSM_MARKERS_WARN = qc_columns.OBSM_MARKERS_WARN
+OBSM_KEYS = (OBSM_KEY, OBSM_MARKERS, OBSM_MARKERS_WARN)
 UNS_KEY = "plexora_qc"
 SEG_OBS_COLUMNS = ("plexora_seg_qc_status", "plexora_seg_qc_under_score",
                    "plexora_seg_qc_over_score", "plexora_seg_qc_partner_id")
 SEG_CATEGORIES = ("under_segmented", "over_segmented", "large", "small", "irregular")
 SEG_UNS_KEY = "plexora_seg_qc"
 MAX_ROWS = 2_000_000
+OPERATION = "qc.write_cells"
+
+_BOOLEAN = {"plexora_qc_pass", "plexora_qc_background"}
+_INT = {"plexora_qc_reason_count"}
+_CATEGORY = {f"{qc_columns.PREFIX}{c}" for c in qc_columns.CATEGORICAL}
 
 
 class Exists(Exception):
     def __init__(self, existing):
         super().__init__("the file already holds QC columns")
         self.existing = existing
-
-
-def _per_row(ds, cells):
-    """(pass, primary, count, reasons, flags {reason: bool[]}, unreliable,
-    marker_flags, markers {marker: bool[]}, category, noted, background)
-    aligned with the loaded table's rows (None for rows without a call)."""
-    frame = ds.table.frame()
-    cell_id = ds.schema.cell_id if ds.schema else None
-    column = cell_id if cell_id and cell_id in frame.columns else "id"
-    ids = frame[column].cast(float, strict=False).to_numpy() if column in frame.columns \
-        else np.arange(frame.height, dtype=float)
-    lookup = {int(cid): i for i, cid in enumerate(cells["cell_id"].to_list())}
-    rows = [lookup.get(int(v)) if np.isfinite(v) else None for v in ids]
-    passes = cells["pass"].to_list()
-    primary = cells["primary_reason"].to_list()
-    count = cells["reason_count"].to_list()
-    reasons = cells["reasons"].to_list()
-    out_pass = [passes[r] if r is not None else None for r in rows]
-    out_primary = [primary[r] or "" if r is not None else None for r in rows]
-    out_count = [int(count[r]) if r is not None else None for r in rows]
-    out_reasons = [";".join(reasons[r]) if r is not None else None for r in rows]
-    flags = {}
-    for reason in schemas.REASONS:
-        flags[reason] = [reason in reasons[r] if r is not None else None for r in rows]
-    unreliable = cells["unreliable_markers"].to_list() if "unreliable_markers" in cells.columns \
-        else [[] for _ in range(cells.height)]
-    per_flag = cells["marker_flags"].to_list() if "marker_flags" in cells.columns \
-        else [[] for _ in range(cells.height)]
-    out_unreliable = [";".join(unreliable[r] or []) if r is not None else None for r in rows]
-    out_marker_flags = [";".join(per_flag[r] or []) if r is not None else None for r in rows]
-    markers = {}
-    for marker in ds.table.markers:
-        markers[marker] = [marker in (unreliable[r] or []) if r is not None else None
-                           for r in rows]
-    noted = cells["noted_by"].to_list() if "noted_by" in cells.columns \
-        else [[] for _ in range(cells.height)]
-    out_category = [_category(primary[r], reasons[r], noted[r]) if r is not None else None
-                    for r in rows]
-    out_noted = [";".join(noted[r] or []) if r is not None else None for r in rows]
-    outside = cells["background"].to_list() if "background" in cells.columns \
-        else ["background" in (reasons[r] or []) for r in range(cells.height)]
-    out_background = [bool(outside[r]) if r is not None else None for r in rows]
-    return (out_pass, out_primary, out_count, out_reasons, flags, out_unreliable,
-            out_marker_flags, markers, out_category, out_noted, out_background)
 
 
 def _category(primary, reasons, noted=None):
@@ -148,37 +130,23 @@ def _category(primary, reasons, noted=None):
     return schemas.category_of_reason(left[0]) if left else ""
 
 
-def _table_ids(ds):
-    frame = ds.table.frame()
-    cell_id = ds.schema.cell_id if ds.schema else None
-    column = cell_id if cell_id and cell_id in frame.columns else "id"
-    return frame[column].cast(float, strict=False).to_numpy() if column in frame.columns \
-        else np.arange(frame.height, dtype=float)
+# -- frames over the wire -----------------------------------------------------------------
 
 
-def _seg_per_row(ds, seg):
-    """(status, under, over, partner, {category: bool[]}) aligned with the
-    loaded table's rows; `seg` is `segqc.calls`'s frame."""
-    lookup = {int(cid): i for i, cid in enumerate(seg["cell_id"].to_list())}
-    rows = [lookup.get(int(v)) if np.isfinite(v) else None for v in _table_ids(ds)]
-    words = seg["status"].to_list()
-    under = seg["under_score"].to_list()
-    over = seg["over_score"].to_list()
-    partner = seg["partner_id"].to_list()
-    flags = {}
-    for name in SEG_CATEGORIES:
-        if name in seg.columns:
-            column = seg[name].to_list()
-            flags[name] = [bool(column[r]) if r is not None else None for r in rows]
-    return ([words[r] if r is not None else "" for r in rows],
-            [float(under[r]) if r is not None else None for r in rows],
-            [float(over[r]) if r is not None else None for r in rows],
-            [int(partner[r]) if r is not None and partner[r] else None for r in rows],
-            flags)
+def encode(frame) -> str:
+    """A polars frame as base64 Parquet (dtypes kept; the payload is JSON)."""
+    buffer = io.BytesIO()
+    frame.write_parquet(buffer)
+    return base64.b64encode(buffer.getvalue()).decode("ascii")
 
 
-def _seg_columns(flags):
-    return list(SEG_OBS_COLUMNS) + [f"plexora_seg_qc_{name}" for name in flags]
+def decode(text):
+    import polars as pl
+
+    return pl.read_parquet(io.BytesIO(base64.b64decode(text)))
+
+
+# -- gathering, on the primary ------------------------------------------------------------
 
 
 def _seg_uns_body(summary, th):
@@ -202,26 +170,22 @@ def _segmentation(ds, thresholds=None):
     return found
 
 
-def _uns_body(result, document):
-    from plexora.plugins.qc.server import provenance
+def _regions_payload(ds, result):
+    """The regions behind the calls, with their outlines, for a SpatialData
+    shapes element."""
+    from plexora.plugins.qc.server import roi_link
 
-    return {"version": schemas.RESULT_VERSION,
-            "definitions": json.dumps(schemas.REASON_DEFINITIONS),
-            "marker_definitions": json.dumps(schemas.MARKER_REASON_DEFINITIONS),
-            "categories": json.dumps(provenance.vocabulary()),
-            "strictness": json.dumps(document.get("strictness") or {}),
-            "session_id": str(result.get("session_id") or ""),
-            "result_id": str(result["result_id"]),
-            "created_at": datetime.now(timezone.utc).isoformat(),
-            "software_version": str(result.get("software_version") or ""),
-            "summary": json.dumps(results.summary(result), default=str)}
+    rows = {r["roi_id"]: r for r in qc_columns.region_rows(ds, result)}
+    out = []
+    for region in roi_link.live_regions(ds, result):
+        row = rows.get(region["roi_id"])
+        if row is not None and region.get("geometry"):
+            out.append({**row, "geometry": region["geometry"]})
+    return out
 
 
-def write(ds, *, replace=False, what="both", thresholds=None):
-    """Write the active result's calls (`what` "qc"), Segmentation QC's at
-    `thresholds` ("segmentation"), or both, into the project's own table file."""
-    from plexora.server.models.adapters import is_flat_table
-
+def gather(ds, *, what="both", thresholds=None) -> dict:
+    """Everything a write needs from QC's store, as a JSON-safe payload."""
     document = results.load(ds.name)
     result = results.active(document)
     cells = results.cells(ds.name) if what != "segmentation" else None
@@ -236,61 +200,209 @@ def write(ds, *, replace=False, what="both", thresholds=None):
         if frame is not None and frame.height > MAX_ROWS:
             raise OverflowError(f"{frame.height} cells is more than a source write handles "
                                 f"({MAX_ROWS}); export CSV instead")
-    kind = ds.source_kind
-    values = _per_row(ds, cells) if has_calls else None
-    seg_values = (_seg_per_row(ds, seg[1]), seg[0], seg[2]) if seg else None
+    loaded = ds.table.frame()
+    payload = {"n_rows": int(loaded.height) if loaded is not None else 0,
+               "image_id": qc_columns.image_id(ds), "kind": ds.source_kind}
+    if has_calls:
+        canon = qc_columns.build(cells, result, results.roi_meta(ds.name))
+        obsm = qc_columns.obsm_frames(cells, list(ds.table.markers))
+        payload.update(
+            cells=encode(canon),
+            obsm={key: encode(frame) for key, frame in obsm.items() if frame.width},
+            uns=qc_columns.uns_body(ds, result, document),
+            result_id=result["result_id"],
+            legacy=("row" not in cells.columns))
+        if ds.source_kind == "spatialdata":
+            payload["regions"] = _regions_payload(ds, result)
+            payload["seg_scale"] = int(getattr(ds.project.segmentation, "scale", 1) or 1)
+    if seg is not None:
+        summary, frame, th = seg
+        payload["seg"] = {"frame": encode(frame), "uns": _seg_uns_body(summary, th)}
+    return payload
+
+
+# -- applying, wherever the table is -----------------------------------------------------
+
+
+def _table_ids(dataset):
+    """Each loaded row's cell id (float; NaN where it has none), by the rule
+    the calls were derived with (`label_overlay.cell_ids`)."""
+    frame = dataset.table.frame()
+    cell_id = dataset.schema.cell_id if dataset.schema else None
+    column = cell_id if cell_id and cell_id in frame.columns else "id"
+    if column not in frame.columns:
+        return np.arange(frame.height, dtype=float)
+    return frame[column].cast(float, strict=False).fill_null(float("nan")).to_numpy()
+
+
+def _positions(dataset, canon, legacy):
+    """The loaded-table row of each call, checked against the table's ids."""
+    ids = _table_ids(dataset)
+    called = canon["cell_id"].to_numpy().astype(np.int64)
+    if not legacy and "row" in canon.columns:
+        rows = canon["row"].to_numpy().astype(np.int64)
+        if rows.size and (rows.max() >= ids.size or rows.min() < 0):
+            raise ValueError("the table has fewer rows than when QC derived its calls; "
+                             "refresh QC and try again")
+        if rows.size and not np.array_equal(ids[rows], called.astype(float)):
+            raise ValueError("the table's cell ids are not the ones QC derived its calls "
+                             "from; refresh QC and try again")
+        return rows
+    # Derived before rows were stored: the first row of each id.
+    order = np.argsort(np.where(np.isfinite(ids), ids, np.inf), kind="stable")
+    sorted_ids = ids[order]
+    at = np.searchsorted(sorted_ids, called.astype(float))
+    at = np.clip(at, 0, max(sorted_ids.size - 1, 0))
+    found = sorted_ids[at] == called if sorted_ids.size else np.zeros(called.size, bool)
+    rows = np.where(found, order[at], -1)
+    return rows
+
+
+def _aligned(frame, rows, n):
+    """`frame`'s columns spread over `n` rows (None where no call)."""
+    import polars as pl
+
+    keep = rows >= 0
+    placed = frame.filter(pl.Series(keep)).with_columns(
+        pl.Series("__row", rows[keep], dtype=pl.Int64))
+    full = pl.DataFrame({"__row": pl.Series(np.arange(n, dtype=np.int64))})
+    return full.join(placed, on="__row", how="left").sort("__row").drop("__row")
+
+
+def _seg_aligned(dataset, seg_frame):
+    """Segmentation QC's columns over the loaded rows, by cell id."""
+    import polars as pl
+
+    ids = _table_ids(dataset)
+    table = pl.DataFrame({"__row": np.arange(ids.size, dtype=np.int64),
+                          "cell_id": pl.Series(ids).cast(pl.Int64, strict=False)})
+    seg = seg_frame.with_columns(pl.col("cell_id").cast(pl.Int64)).unique(
+        subset=["cell_id"], keep="first")
+    joined = table.join(seg, on="cell_id", how="left", maintain_order="left").sort("__row")
+    status = "status_word" if "status_word" in joined.columns else "status"
+    picked = [pl.col(status).cast(pl.Utf8).fill_null("").alias("plexora_seg_qc_status"),
+              pl.col("under_score").cast(pl.Float32).alias("plexora_seg_qc_under_score"),
+              pl.col("over_score").cast(pl.Float32).alias("plexora_seg_qc_over_score"),
+              pl.when(pl.col("partner_id") > 0).then(pl.col("partner_id")).otherwise(None)
+              .cast(pl.Int64).alias("plexora_seg_qc_partner_id")]
+    picked += [pl.col(name).cast(pl.Boolean).alias(f"plexora_seg_qc_{name}")
+               for name in SEG_CATEGORIES if name in joined.columns]
+    return joined.select(picked)
+
+
+def _qc_frame(dataset, payload):
+    """(canonical columns prefixed, {obsm key: frame}) over the loaded rows."""
+    canon = decode(payload["cells"])
+    rows = _positions(dataset, canon, payload.get("legacy"))
+    n = int(payload["n_rows"])
+    body = qc_columns.with_prefix(canon.drop([c for c in ("row", "cell_id")
+                                              if c in canon.columns]))
+    aligned = _aligned(body, rows, n)
+    obsm = {key: _aligned(decode(text), rows, n)
+            for key, text in (payload.get("obsm") or {}).items()}
+    return aligned, obsm
+
+
+def apply(dataset, payload, *, replace=False):
+    """Write a `gather`ed payload into this dataset's own file."""
+    from plexora.server.models.adapters import is_flat_table
+
+    kind = dataset.source_kind
+    loaded = dataset.table.frame()
+    n = int(payload.get("n_rows") or 0)
+    if loaded is None or loaded.height != n:
+        raise ValueError(f"this project's table had {n} cells when QC was read but has "
+                         f"{0 if loaded is None else loaded.height} here; reopen the project "
+                         "and try again")
+    qc = _qc_frame(dataset, payload) if payload.get("cells") else None
+    seg = None
+    if payload.get("seg"):
+        seg = (_seg_aligned(dataset, decode(payload["seg"]["frame"])), payload["seg"]["uns"])
     if is_flat_table(kind):
-        return _write_flat(ds, kind, values, replace, seg_values)
+        return _write_flat(dataset, kind, qc, seg, replace)
     if kind in ("anndata", "spatialdata"):
-        return _write_anndata(ds, values, result, document, replace, seg_values)
+        return _write_anndata(dataset, payload, qc, seg, replace)
     raise LookupError("this project has no cell-level file to write into")
 
 
-def _write_flat(ds, kind, values, replace, seg_values=None):
+def write(ds, *, replace=False, what="both", thresholds=None):
+    """Write the active result's calls (`what` "qc"), Segmentation QC's at
+    `thresholds` ("segmentation"), or both, into the project's own table file
+    -- through `qc.write_cells`, so a table on a data node is written there."""
+    from plexora.plugins.qc.server import tableops
+
+    payload = gather(ds, what=what, thresholds=thresholds)
+    answer = tableops.run_write(ds, {**payload, "replace": bool(replace)})
+    if payload.get("cells"):
+        with results.lock(ds.name):
+            document = results.load(ds.name)
+            results.record_source_write(document, {
+                "path": answer.get("path"), "kind": ds.source_kind,
+                "image_id": payload["image_id"], "result_id": payload.get("result_id"),
+                "columns_version": qc_columns.COLUMNS_VERSION,
+                "columns": [c for c in answer.get("columns") or ()
+                            if c.startswith(qc_columns.PREFIX)],
+                "status_column": f"{qc_columns.PREFIX}status",
+                "pass_column": f"{qc_columns.PREFIX}pass",
+                "obsm": [k for k in OBSM_KEYS if k in (answer.get("obsm_keys") or ())],
+                "backup": answer.get("backup"), "on_node": answer.get("on_node", False)})
+            results.save(ds.name, document)
+    return answer
+
+
+# -- flat files -----------------------------------------------------------------------------
+
+
+def _backup_folder(dataset):
+    """Where this end keeps backups: QC's store folder, or None when there is
+    none (then the write says so)."""
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S")
+    try:
+        folder = results._store(dataset.name).directory() / "backups" / stamp
+        folder.mkdir(parents=True, exist_ok=True)
+        return folder
+    except Exception:
+        return None
+
+
+def _flat_series(name, column):
+    import polars as pl
+
+    if name in _BOOLEAN:
+        return column.cast(pl.Boolean).alias(name)
+    if name in _INT:
+        return column.cast(pl.Int64).alias(name)
+    return column.cast(pl.Utf8).alias(name)
+
+
+def _write_flat(dataset, kind, qc, seg, replace):
     import contextlib
     import os
+    import shutil
     import tempfile
-
-    import polars as pl
 
     from plexora.server.models.adapters import read_flat_table, write_flat_table
 
-    source = ds.table.source
+    source = dataset.table.source
     frame = read_flat_table(source.path, kind)
-    written = ([*OBS_COLUMNS, FLAT_REASONS, FLAT_MARKER_FLAGS] if values else []) \
-        + (_seg_columns(seg_values[0][4]) if seg_values else [])
+    added = []
+    if qc is not None:
+        added += [_flat_series(name, qc[0][name]) for name in qc[0].columns]
+    if seg is not None:
+        added += [seg[0][name] for name in seg[0].columns]
+    written = [s.name for s in added]
     taken = [c for c in written if c in frame.columns]
     if taken and not replace:
         raise Exists(taken)
-    n_rows = len(values[0]) if values else len(seg_values[0][0])
-    if frame.height != n_rows:
-        raise ValueError(f"this project's table has {n_rows} cells but the file now "
+    if frame.height != (added[0].len() if added else frame.height):
+        raise ValueError(f"this project's table has {added[0].len()} cells but the file now "
                          f"has {frame.height} rows; reopen the project and try again")
-    columns = []
-    passes = []
-    if values:
-        passes, primary, count, reasons, _flags, unreliable, marker_flags, _markers, \
-            category, noted, background = values
-        columns += [
-            pl.Series("plexora_qc_pass", passes, dtype=pl.Boolean),
-            pl.Series("plexora_qc_primary_reason", primary, dtype=pl.Utf8),
-            pl.Series("plexora_qc_category", category, dtype=pl.Utf8),
-            pl.Series("plexora_qc_reason_count", count, dtype=pl.Int64),
-            pl.Series(FLAT_REASONS, reasons, dtype=pl.Utf8),
-            pl.Series("plexora_qc_unreliable_markers", unreliable, dtype=pl.Utf8),
-            pl.Series(FLAT_MARKER_FLAGS, marker_flags, dtype=pl.Utf8),
-            pl.Series("plexora_qc_noted", noted, dtype=pl.Utf8),
-            pl.Series("plexora_qc_background", background, dtype=pl.Boolean)]
-    if seg_values:
-        (status, under, over, partner, flags), _summary, _th = seg_values
-        columns += [
-            pl.Series("plexora_seg_qc_status", status, dtype=pl.Utf8),
-            pl.Series("plexora_seg_qc_under_score", under, dtype=pl.Float32),
-            pl.Series("plexora_seg_qc_over_score", over, dtype=pl.Float32),
-            pl.Series("plexora_seg_qc_partner_id", partner, dtype=pl.Int64)]
-        columns += [pl.Series(f"plexora_seg_qc_{name}", per, dtype=pl.Boolean)
-                    for name, per in flags.items()]
-    frame = frame.with_columns(columns)
+    folder = _backup_folder(dataset)
+    backup = None
+    if folder is not None:
+        backup = str(folder / Path(source.path).name)
+        shutil.copy2(source.path, backup)
+    frame = frame.with_columns(added)
     directory = os.path.dirname(os.path.abspath(source.path)) or "."
     handle, temporary = tempfile.mkstemp(suffix=Path(source.path).suffix, dir=directory)
     os.close(handle)
@@ -301,125 +413,84 @@ def _write_flat(ds, kind, values, replace, seg_values=None):
         with contextlib.suppress(OSError):
             os.unlink(temporary)
         raise
-    return {"path": source.path, "columns": written, "n_cells": n_rows,
-            "n_fail": sum(1 for v in passes if v is False),
-            "segmentation_qc": bool(seg_values)}
+    passes = qc[0]["plexora_qc_pass"].to_list() if qc is not None else []
+    return {"path": source.path, "columns": written, "n_cells": frame.height,
+            "n_fail": sum(1 for v in passes if v is False), "backup": backup,
+            "segmentation_qc": seg is not None, "source_kind": kind}
 
 
-def _write_anndata(ds, values, result, document, replace, seg_values=None):
-    import pandas as pd
+# -- AnnData / SpatialData tables -----------------------------------------------------------
 
+
+def _held(obs, mask, column):
+    """Whether this project's rows hold values in `column`."""
+    if column not in obs.columns:
+        return False
+    values = obs[column].iloc[np.flatnonzero(mask)]
     try:
-        from anndata.io import read_elem, write_elem
-    except ImportError:  # pragma: no cover
-        from anndata._io.specs import read_elem, write_elem
-
-    from plexora.plugins.roi.server import adapters
-
-    path = adapters._table_path(ds)
-    source = ds.table.source
-    obs_written = (list(OBS_COLUMNS) if values else []) \
-        + (_seg_columns(seg_values[0][4]) if seg_values else [])
-    with adapters._open_group(path) as handle:
-        obs = read_elem(handle["obs"])
-        existing = [c for c in obs_written if c in obs.columns]
-        if values:
-            for key in (OBSM_KEY, OBSM_MARKERS):
-                if "obsm" in handle and key in handle["obsm"]:
-                    existing.append(f"obsm/{key}")
-            if "uns" in handle and UNS_KEY in handle["uns"]:
-                existing.append(f"uns/{UNS_KEY}")
-        if seg_values and "uns" in handle and SEG_UNS_KEY in handle["uns"]:
-            existing.append(f"uns/{SEG_UNS_KEY}")
-    if existing and not replace:
-        raise Exists(existing)
-    n_rows = len(values[0]) if values else len(seg_values[0][0])
-    mask = adapters._project_rows(ds, obs)
-    if int(mask.sum()) != n_rows:
-        raise ValueError(f"this project's table has {n_rows} cells but the file now has "
-                         f"{int(mask.sum())} matching rows; reopen the project and try again")
-    backup = _backup(ds, obs)
-    # A replace starts from nothing: a row this write has no call for must
-    # not keep the previous run's value.
-    obs = obs.drop(columns=[c for c in obs_written if c in obs.columns])
-    if seg_values:
-        (status, under, over, partner, flags), seg_summary, seg_th = seg_values
-        obs = _assign(obs, mask, "plexora_seg_qc_status", status, ds, "category")
-        obs = _assign(obs, mask, "plexora_seg_qc_under_score", under, ds, "float32")
-        obs = _assign(obs, mask, "plexora_seg_qc_over_score", over, ds, "float32")
-        obs = _assign(obs, mask, "plexora_seg_qc_partner_id", partner, ds, "Int64")
-        for name, per in flags.items():
-            obs = _assign(obs, mask, f"plexora_seg_qc_{name}", per, ds, "boolean")
-    if not values:
-        with adapters._open_group(path, writable=True) as handle:
-            del handle["obs"]
-            write_elem(handle, "obs", obs)
-            if "uns" not in handle:
-                handle.create_group("uns")
-            if SEG_UNS_KEY in handle["uns"]:
-                del handle["uns"][SEG_UNS_KEY]
-            write_elem(handle["uns"], SEG_UNS_KEY, _seg_uns_body(seg_summary, seg_th))
-        return {"path": str(path), "columns": obs_written, "uns": SEG_UNS_KEY,
-                "n_cells": n_rows, "n_fail": 0, "backup": backup,
-                "source_kind": ds.source_kind, "table": getattr(source, "table", None),
-                "segmentation_qc": True}
-    passes, primary, count, _reasons, flags, unreliable, _marker_flags, markers, category, \
-        noted, background = values
-    obs = _assign(obs, mask, "plexora_qc_pass", passes, ds, "boolean")
-    obs = _assign(obs, mask, "plexora_qc_primary_reason", primary, ds, "category")
-    obs = _assign(obs, mask, "plexora_qc_category", category, ds, "category")
-    obs = _assign(obs, mask, "plexora_qc_reason_count", count, ds, "Int64")
-    obs = _assign(obs, mask, "plexora_qc_unreliable_markers", unreliable, ds, "string")
-    obs = _assign(obs, mask, "plexora_qc_noted", noted, ds, "string")
-    obs = _assign(obs, mask, "plexora_qc_background", background, ds, "boolean")
-    flag_frame = pd.DataFrame(index=obs.index)
-    for reason, per in flags.items():
-        column = _assign(pd.DataFrame(index=obs.index), mask, reason, per, ds, "boolean")
-        flag_frame[reason] = column[reason]
-    flag_frame.index = flag_frame.index.astype(str)
-    marker_frame = pd.DataFrame(index=obs.index)
-    for marker, per in markers.items():
-        column = _assign(pd.DataFrame(index=obs.index), mask, marker, per, ds, "boolean")
-        marker_frame[marker] = column[marker]
-    marker_frame.index = marker_frame.index.astype(str)
-    with adapters._open_group(path, writable=True) as handle:
-        del handle["obs"]
-        write_elem(handle, "obs", obs)
-        if "obsm" not in handle:
-            handle.create_group("obsm")
-        for key, body in ((OBSM_KEY, flag_frame), (OBSM_MARKERS, marker_frame)):
-            if key in handle["obsm"]:
-                del handle["obsm"][key]
-            write_elem(handle["obsm"], key, body)
-        if "uns" not in handle:
-            handle.create_group("uns")
-        if UNS_KEY in handle["uns"]:
-            del handle["uns"][UNS_KEY]
-        write_elem(handle["uns"], UNS_KEY, _uns_body(result, document))
-        if seg_values:
-            if SEG_UNS_KEY in handle["uns"]:
-                del handle["uns"][SEG_UNS_KEY]
-            write_elem(handle["uns"], SEG_UNS_KEY, _seg_uns_body(seg_summary, seg_th))
-    return {"path": str(path), "columns": obs_written, "obsm": OBSM_KEY,
-            "obsm_markers": OBSM_MARKERS, "uns": UNS_KEY,
-            "n_cells": len(passes), "n_fail": sum(1 for v in passes if v is False),
-            "backup": backup, "source_kind": ds.source_kind,
-            "table": getattr(source, "table", None), "segmentation_qc": bool(seg_values)}
+        values = values.astype("object")
+        return bool(values.map(lambda v: not (v is None or v is _NA() or v != v
+                                              or v == "")).any())
+    except Exception:
+        return bool(values.notna().any())
 
 
-def _assign(frame, mask, column, values, ds, dtype):
-    """One column onto the masked rows, aligned by cell id (the ROI adapter's
-    rule), then cast to a nullable dtype."""
+def _NA():
     import pandas as pd
 
-    from plexora.plugins.roi.server import adapters
+    return pd.NA
 
-    frame = adapters._assign_column(frame, mask, column, [None if v is None else v
-                                                          for v in values],
-                                    ds, ds.table.source, categorical=False)
-    series = frame[column]
+
+def _obs_positions(dataset, obs, mask):
+    """The obs row of each loaded table row (-1 for none). By identifier
+    where the project has one (`obs_id_field`, matched against the table's
+    own ids -- before any correction, `table_correction.raw_cell_id_column`),
+    never by position: a project is routinely a subset of its file's obs. In
+    file order otherwise, which the row-count check has confirmed."""
+    import pandas as pd
+
+    from plexora.server.models import table_correction
+
+    positions = np.flatnonzero(np.asarray(mask))
+    spec = dataset.project.dataset
+    id_field = getattr(spec, "obs_id_field", None)
+    frame = dataset.table.frame()
+    key = dataset.schema.cell_id if dataset.schema else None
+    roles = getattr(spec, "roles", None)
+    raw = table_correction.raw_cell_id_column(roles, getattr(spec, "correction", None)) \
+        if roles is not None else None
+    if raw and frame is not None and raw in frame.columns:
+        key = raw
+    if not (id_field and id_field in obs.columns and frame is not None and key
+            and key in frame.columns):
+        return positions
+    theirs = pd.Series(positions, index=obs[id_field].astype(str).to_numpy()[positions])
+    theirs = theirs[~theirs.index.duplicated(keep="first")]
+    mine = pd.Index([str(v) for v in frame[key].to_list()])
+    found = theirs.reindex(mine)
+    return found.fillna(-1).astype(np.int64).to_numpy()
+
+
+def _place(obs, mask, column, values, dtype, at=None):
+    """`values` (one per loaded row; None for none) onto this project's rows
+    of `column` -- `at` the obs row of each (`_obs_positions`), default the
+    masked rows in order -- keeping every other row's value; cast to a
+    nullable dtype."""
+    import pandas as pd
+
+    series = obs[column].astype("object") if column in obs.columns else pd.Series(
+        [None] * len(obs), index=obs.index, dtype="object")
+    series = series.copy()
+    # This project's rows start empty: a row this write has no call for must
+    # not keep a previous run's value.
+    series.iloc[np.flatnonzero(mask)] = None
+    at = np.flatnonzero(mask) if at is None else np.asarray(at)
+    clean = [None if v is None or (isinstance(v, float) and v != v) else v for v in values]
+    hit = at >= 0
+    series.iloc[at[hit]] = [v for v, h in zip(clean, hit) if h]
     if dtype == "boolean":
         series = series.map(lambda v: pd.NA if v is None or v is pd.NA or v != v
+                            else bool(v) if isinstance(v, (bool, np.bool_))
                             else str(v) == "True").astype("boolean")
     elif dtype == "Int64":
         series = pd.to_numeric(series, errors="coerce").astype("Int64")
@@ -429,16 +500,184 @@ def _assign(frame, mask, column, values, ds, dtype):
         series = pd.to_numeric(series, errors="coerce").astype("float32")
     elif dtype == "category":
         series = series.astype("string").astype("category")
-    elif dtype == "string":
+    else:
         series = series.astype("string")
-    frame[column] = series
-    return frame
+    obs[column] = series
+    return obs
 
 
-def _backup(ds, obs):
-    stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S")
-    folder = results._store(ds.name).directory() / "backups" / stamp
-    folder.mkdir(parents=True, exist_ok=True)
+def _dtype_of(name):
+    if name in _BOOLEAN:
+        return "boolean"
+    if name in _INT:
+        return "Int64"
+    if name in _CATEGORY:
+        return "category"
+    return "string"
+
+
+def _obsm_overlay(existing, obs, mask, frame, index, at):
+    """An obsm frame over every obs row: `existing`'s values kept for rows
+    outside `mask`, `frame`'s (one per loaded row, placed at `at`) on it;
+    columns the union."""
+    import pandas as pd
+
+    names = list(dict.fromkeys([*(existing.columns if existing is not None else []),
+                                *frame.columns]))
+    out = pd.DataFrame(index=index)
+    hit = np.asarray(at) >= 0
+    for name in names:
+        column = (existing[name].astype("object").to_numpy().copy()
+                  if existing is not None and name in existing.columns
+                  else np.full(len(index), None, dtype=object))
+        if existing is not None and len(column) != len(index):
+            column = np.full(len(index), None, dtype=object)
+        column[np.flatnonzero(mask)] = None
+        values = np.asarray(frame[name].to_list() if name in frame.columns
+                            else [None] * hit.size, dtype=object)
+        column[np.asarray(at)[hit]] = values[hit]
+        out[name] = pd.Series(column, index=index).map(
+            lambda v: pd.NA if v is None or v is pd.NA or v != v else bool(v)).astype("boolean")
+    return out
+
+
+def _uns_merged(existing, body):
+    """`body` with the `results` of every other image `existing` holds."""
+    if not existing or str(existing.get("version")) != qc_columns.COLUMNS_VERSION:
+        return body
+    try:
+        mine = json.loads(body.get("results") or "{}")
+        theirs = json.loads(existing.get("results") or "{}")
+    except (TypeError, ValueError):
+        return body
+    theirs.update(mine)
+    return {**body, "results": json.dumps(theirs, default=str)}
+
+
+def _write_anndata(dataset, payload, qc, seg, replace):
+    try:
+        from anndata.io import read_elem, write_elem
+    except ImportError:  # pragma: no cover
+        from anndata._io.specs import read_elem, write_elem
+
+    from plexora.plugins.qc.server import spatialdata_write
+    from plexora.plugins.roi.server import adapters
+
+    path = adapters._table_path(dataset)
+    source = dataset.table.source
+    qc_frame, obsm = qc if qc is not None else (None, {})
+    obs_written = (list(qc_frame.columns) if qc_frame is not None else []) \
+        + (list(seg[0].columns) if seg is not None else [])
+    with adapters._open_group(path) as handle:
+        obs = read_elem(handle["obs"])
+        attrs = spatialdata_write.table_attrs(handle, read_elem)
+        held_obsm = {}
+        for key in obsm:
+            if "obsm" in handle and key in handle["obsm"]:
+                try:
+                    held_obsm[key] = read_elem(handle["obsm"][key])
+                except Exception:
+                    held_obsm[key] = None
+        uns_now = {}
+        for key in (UNS_KEY, SEG_UNS_KEY):
+            if "uns" in handle and key in handle["uns"]:
+                try:
+                    uns_now[key] = read_elem(handle["uns"][key])
+                except Exception:
+                    uns_now[key] = {}
+    mask = adapters._project_rows(dataset, obs)
+    n = int(payload["n_rows"])
+    if int(mask.sum()) != n:
+        raise ValueError(f"this project's table has {n} cells but the file now has "
+                         f"{int(mask.sum())} matching rows; reopen the project and try again")
+    notes = []
+    if qc_frame is not None and attrs:
+        notes += spatialdata_write.check_table(attrs, obs, mask, dataset)
+    # "Exists" is about this image's rows: another image's columns in a
+    # shared file are not in the way.
+    existing = [c for c in obs_written if _held(obs, mask, c)]
+    for key, held in held_obsm.items():
+        if held is not None and len(held) == len(obs) and any(
+                _held(held, mask, c) for c in held.columns):
+            existing.append(f"obsm/{key}")
+    image = str(payload.get("image_id") or "")
+    if qc_frame is not None and UNS_KEY in uns_now:
+        body = uns_now[UNS_KEY] or {}
+        try:
+            mine = image in json.loads(body.get("results") or "{}")
+        except (TypeError, ValueError, AttributeError):
+            mine = False
+        if mine or (str(body.get("version")) != qc_columns.COLUMNS_VERSION and existing):
+            existing.append(f"uns/{UNS_KEY}")
+    if seg is not None and SEG_UNS_KEY in uns_now and any(
+            c.startswith("plexora_seg_qc_") for c in existing):
+        existing.append(f"uns/{SEG_UNS_KEY}")
+    if existing and not replace:
+        raise Exists(existing)
+    backup = _backup(dataset, obs)
+    at = _obs_positions(dataset, obs, mask)
+    if seg is not None:
+        for name in seg[0].columns:
+            dtype = "category" if name == "plexora_seg_qc_status" else "float32" \
+                if name.endswith("_score") else "Int64" if name.endswith("_partner_id") \
+                else "boolean"
+            obs = _place(obs, mask, name, seg[0][name].to_list(), dtype, at)
+    if qc_frame is not None:
+        for name in qc_frame.columns:
+            obs = _place(obs, mask, name, qc_frame[name].to_list(), _dtype_of(name), at)
+    index = obs.index.astype(str)
+    frames = {key: _obsm_overlay(held_obsm.get(key) if held_obsm.get(key) is not None
+                                 and len(held_obsm[key]) == len(obs) else None,
+                                 obs, mask, body.to_pandas() if hasattr(body, "to_pandas")
+                                 else body, index, at)
+              for key, body in obsm.items()}
+    with adapters._open_group(path, writable=True) as handle:
+        del handle["obs"]
+        write_elem(handle, "obs", obs)
+        if frames:
+            if "obsm" not in handle:
+                handle.create_group("obsm")
+            for key, body in frames.items():
+                if key in handle["obsm"]:
+                    del handle["obsm"][key]
+                write_elem(handle["obsm"], key, body)
+        if "uns" not in handle:
+            handle.create_group("uns")
+        if qc_frame is not None:
+            if UNS_KEY in handle["uns"]:
+                del handle["uns"][UNS_KEY]
+            write_elem(handle["uns"], UNS_KEY, _uns_merged(uns_now.get(UNS_KEY),
+                                                             payload["uns"]))
+        if seg is not None:
+            if SEG_UNS_KEY in handle["uns"]:
+                del handle["uns"][SEG_UNS_KEY]
+            write_elem(handle["uns"], SEG_UNS_KEY, seg[1])
+    out = {"path": str(path), "columns": obs_written, "n_cells": n, "backup": backup,
+           "source_kind": dataset.source_kind, "table": getattr(source, "table", None),
+           "segmentation_qc": seg is not None, "image_id": image}
+    if qc_frame is not None:
+        passes = qc_frame["plexora_qc_pass"].to_list()
+        out.update(obsm=OBSM_KEY, obsm_markers=OBSM_MARKERS, obsm_markers_warn=OBSM_MARKERS_WARN,
+                   obsm_keys=list(frames), uns=UNS_KEY,
+                   n_fail=sum(1 for v in passes if v is False))
+    else:
+        out.update(uns=SEG_UNS_KEY, n_fail=0)
+    if qc_frame is not None and dataset.source_kind == "spatialdata":
+        shapes = spatialdata_write.write_regions(dataset, payload.get("regions") or [],
+                                                 image_id=image,
+                                                 seg_scale=payload.get("seg_scale") or 1,
+                                                 replace=replace)
+        out["shapes"] = shapes
+        notes += shapes.pop("notes", [])
+    if notes:
+        out["notes"] = notes
+    return out
+
+
+def _backup(dataset, obs):
+    folder = _backup_folder(dataset)
+    if folder is None:
+        return None
     target = folder / "obs.parquet"
     try:
         obs.to_parquet(target)

@@ -51,6 +51,19 @@ recorded beside a passing cell, note is recorded and changes nothing --
 Every call keeps what triggered it (`summary["evidence"]`, `["marker_evidence"]`):
 the channels, the cutoffs, the test and its numbers. The viewer shows those
 channels when the call is clicked.
+
+A category switched off for exclusions (`document["exclusion_filter"]`,
+`set_qc_categories`) keeps every finding and its evidence, but each reason
+of that category is a note: its cells stay listed, drawn and exported, and
+nothing leaves them out. Marker flags of that category become `note`
+flags (`marker|reason|note`), never `unreliable_markers`. A dismissed
+finding beats a category switched off, which beats the strictness preset.
+
+Each cell's worst status per category (`category_status`, "category|status"
+with status excluded > flagged > channel > noted) and the distinct counts
+per category (`summary["by_category"]`) are computed here, from the same
+masks as the calls, so no reader recounts reasons (a cell with two reasons
+of one category is one cell).
 """
 
 from __future__ import annotations
@@ -333,8 +346,12 @@ def _dna_flags(ids, dna, table, markers):
     return (status, no_nucleus), evidence, lost
 
 
+#: The per-cell status words of a category, strongest first.
+CATEGORY_STATUSES = ("excluded", "flagged", "channel", "noted")
+
+
 def derive(ds, result, table, *, pairs=None, geometries=None, seg=None, dna=None,
-           hints=None, tissue=None):
+           hints=None, tissue=None, categories=None, disabled=()):
     """(cells DataFrame, pairs DataFrame, summary). `geometries` {roi_id:
     GeoJSON} are the regions as the ROI document holds them now (the user's
     edits, the traced outline); a region missing there is read from its
@@ -344,9 +361,20 @@ def derive(ds, result, table, *, pairs=None, geometries=None, seg=None, dna=None
     `tissue` the project's tissue mask (`tissue.for_project`): the cells
     under a detection, and the tissue's rim, are tested like a region's
     (`DETECTED_REASONS`, `RIM_REASON`); the panel's backgrounds are compared
-    (`channel_findings`)."""
+    (`channel_findings`). `categories` {membership key: category} are the
+    regions' own categories (a custom category's region has a generic
+    class); `disabled` the categories switched off for exclusions."""
     ids, keep = _rows(ds)
     n = int(ids.size)
+    disabled = {str(c) for c in disabled or ()} - {schemas.BACKGROUND["id"]}
+    #: (category, reason) -> {status: mask}, for the regions' cell reasons
+    cell_hits = {}
+    #: (category, marker, reason) -> {status: mask}, for the regions' marker flags
+    marker_hits = {}
+
+    def zeros():
+        return {"exclude": np.zeros(n, dtype=bool), "warn": np.zeros(n, dtype=bool),
+                "note": np.zeros(n, dtype=bool)}
     cycles = result.get("cycles") or []
     segmentation = class_rules.segmentation_channel(ds, cycles)
     markers = list(ds.table.markers)
@@ -354,15 +382,21 @@ def derive(ds, result, table, *, pairs=None, geometries=None, seg=None, dna=None
     warn = {r: np.zeros(n, dtype=bool) for r in schemas.REASONS}
     note = {r: np.zeros(n, dtype=bool) for r in schemas.REASONS}
     by_status = {"exclude": exclude, "warn": warn, "note": note}
-    #: (marker, reason) -> {"exclude": mask, "warn": mask}
+    #: (marker, reason) -> {"exclude": mask, "warn": mask, "note": mask}
     flags = {}
     evidence = {}
     marker_evidence = []
 
-    def flag(marker, reason, status, mask):
-        entry = flags.setdefault((marker, reason), {"exclude": np.zeros(n, dtype=bool),
-                                                    "warn": np.zeros(n, dtype=bool)})
+    def flag(marker, reason, status, mask, category=None):
+        entry = flags.get((marker, reason))
+        if entry is None:
+            entry = flags[(marker, reason)] = zeros()
         entry[status] |= mask
+        if category is not None:
+            hit = marker_hits.get((category, marker, reason))
+            if hit is None:
+                hit = marker_hits[(category, marker, reason)] = zeros()
+            hit[status] |= mask
 
     # -- Segmentation QC's calls ------------------------------------------------
     if seg is not None:
@@ -396,14 +430,9 @@ def derive(ds, result, table, *, pairs=None, geometries=None, seg=None, dna=None
     # consolidated ROI (keyed `<roi id>#<n>`, `roi_link.membership_meta`).
     region_meta = roi_link.membership_meta(result)
     threshold = float(table["cells.roi_overlap_fraction"])
-    index = {int(cid): i for i, cid in enumerate(ids.tolist())}
-    members = {}             # roi_id -> [(row, fraction, method)]
-    if pairs is not None and pairs.height:
-        for cid, roi_id, fraction, method in pairs.select(
-                ["cell_id", "roi_id", "fraction", "method"]).iter_rows():
-            row = index.get(int(cid))
-            if roi_id in region_meta and row is not None:
-                members.setdefault(roi_id, []).append((row, float(fraction), method))
+    members = _members(ids, pairs, region_meta)   # key -> (rows, fractions, methods)
+    no_rows = (np.zeros(0, dtype=np.int64), np.zeros(0, dtype=np.float64),
+               np.zeros(0, dtype=object))
 
     def note_region(key, rows, method_of):
         roi_id = roi_link.parent_of(key)
@@ -413,6 +442,9 @@ def derive(ds, result, table, *, pairs=None, geometries=None, seg=None, dna=None
                 listed.append(roi_id)
             method = method_of[row]
             roi_method[row] = method if roi_method[row] in (None, method) else "mixed"
+
+    def category_of(key, klass):
+        return (categories or {}).get(key) or schemas.category_of_class(klass)
 
     levels = {}
     for roi_id, candidate in region_meta.items():
@@ -440,8 +472,7 @@ def derive(ds, result, table, *, pairs=None, geometries=None, seg=None, dna=None
     for marker, rois in marker_regions.items():
         mask = np.zeros(n, dtype=bool)
         for roi_id in rois:
-            for row, _f, _m in members.get(roi_id, ()):
-                mask[row] = True
+            mask[members.get(roi_id, no_rows)[0]] = True
         in_marker_region[marker] = mask
 
     rules = schemas.MARKER_EVIDENCE
@@ -454,20 +485,33 @@ def derive(ds, result, table, *, pairs=None, geometries=None, seg=None, dna=None
         klass = candidate.get("class") or "other_technical"
         reason = schemas.region_reason(klass)
         level, channels = levels[roi_id]
-        entries = members.get(roi_id, [])
-        method_of = {row: method for row, _f, method in entries}
-        if level != "cell" and action == "note":
+        category = category_of(roi_id, klass)
+        # A category switched off: its findings are recorded as notes.
+        filtered = category in disabled and action in ("exclude", "warn")
+        if filtered:
+            action = "note"
+        rows_all, fractions, methods = members.get(roi_id, no_rows)
+        method_of = dict(zip(rows_all.tolist(), methods.tolist()))
+        if level != "cell" and action == "note" and not filtered:
             continue  # a note is about the whole cell; no marker is noted
+        # A mask overlap below the bar is a graze; a centroid or a named cell is in.
+        over_bar = rows_all[~((methods == "mask") & (fractions < threshold))]
         if level == "cell":
-            rows = [row for row, fraction, method in entries
-                    if not (method == "mask" and fraction < threshold)]
+            rows = over_bar
             by_status[action][reason][rows] = True
-            note_region(roi_id, rows, method_of)
+            hit = cell_hits.get((category, reason))
+            if hit is None:
+                hit = cell_hits[(category, reason)] = zeros()
+            hit[action][rows] = True
+            note_region(roi_id, rows.tolist(), method_of)
             ev = evidence.setdefault(reason, {"level": "cell", "rois": [], "channels": []})
             if roi_link.parent_of(roi_id) not in ev["rois"]:
                 ev["rois"].append(roi_link.parent_of(roi_id))
             ev["channels"] = list(dict.fromkeys([*ev["channels"],
                                                  *(candidate.get("channels") or [])]))
+            if filtered:
+                ev.setdefault("filtered", {"category": category, "rois": []})
+                ev["filtered"]["rois"].append(roi_link.parent_of(roi_id))
             continue
         raising = klass in schemas.SIGNAL_RAISING_CLASSES
         for channel in channels:
@@ -475,23 +519,21 @@ def derive(ds, result, table, *, pairs=None, geometries=None, seg=None, dna=None
             record = {"roi_id": roi_link.parent_of(roi_id), "class": klass, "reason": reason,
                       "channel": channel,
                       "marker": marker, "status": action, "channels": [marker or channel],
-                      "test": "signal" if raising else "overlap"}
+                      "test": "signal" if raising else "overlap",
+                      **({"filtered": category} if filtered else {})}
             if marker is None:
                 marker_evidence.append({**record, "borne_out": False, "n_flagged": 0,
                                         "why": "the table does not measure this channel"})
                 continue
             if raising:
                 # Any overlap: a speck on a tenth of a cell is most of its mean.
-                rows = np.array([row for row, fraction, _m in entries if fraction > 0],
-                                dtype=np.int64)
+                rows = rows_all[fractions > 0]
             else:
-                rows = np.array([row for row, fraction, method in entries
-                                 if not (method == "mask" and fraction < threshold)],
-                                dtype=np.int64)
+                rows = over_bar
             if not raising:
                 mask = np.zeros(n, dtype=bool)
                 mask[rows] = True
-                flag(marker, reason, action, mask)
+                flag(marker, reason, action, mask, category)
                 note_region(roi_id, rows.tolist(), method_of)
                 marker_evidence.append({**record, "borne_out": True,
                                         "n_inside": int(rows.size),
@@ -516,7 +558,7 @@ def derive(ds, result, table, *, pairs=None, geometries=None, seg=None, dna=None
             mask = np.zeros(n, dtype=bool)
             mask[chosen] = True
             if test["borne_out"]:
-                flag(marker, reason, action, mask)
+                flag(marker, reason, action, mask, category)
                 note_region(roi_id, chosen.tolist(), method_of)
             marker_evidence.append({**record, **test, "reference": basis, "ring_px": ring_px,
                                     "n_flagged": int(mask.sum())})
@@ -537,17 +579,20 @@ def derive(ds, result, table, *, pairs=None, geometries=None, seg=None, dna=None
             continue
         klass = candidate.get("class") or "other_technical"
         reason = f"region:{klass}"
+        category = schemas.category_of_class(klass)
+        filtered = category in disabled
+        status = "note" if filtered else action
         for channel in candidate.get("channels") or []:
             marker = class_rules.table_column(channel, markers)
             record = {"candidate_id": candidate.get("id"), "class": klass, "reason": reason,
-                      "channel": channel, "marker": marker, "status": action,
+                      "channel": channel, "marker": marker, "status": status,
                       "channels": [marker or channel], "test": "channel_level",
-                      "channel_level": True}
+                      "channel_level": True, **({"filtered": category} if filtered else {})}
             if marker is None:
                 marker_evidence.append({**record, "borne_out": False, "n_flagged": 0,
                                         "why": "the table does not measure this channel"})
                 continue
-            flag(marker, reason, action, np.ones(n, dtype=bool))
+            flag(marker, reason, status, np.ones(n, dtype=bool), category)
             marker_evidence.append({**record, "borne_out": True, "n_flagged": n})
 
     # -- the user's dismissals ------------------------------------------------
@@ -560,10 +605,14 @@ def derive(ds, result, table, *, pairs=None, geometries=None, seg=None, dna=None
             exclude[reason][:] = False
             warn[reason][:] = False
             note[reason][:] = False
+            for key in [k for k in cell_hits if k[1] == reason]:
+                cell_hits.pop(key)
             if reason in evidence:
                 evidence[reason]["dismissed"] = {"by": entry.get("by"), "at": entry.get("at")}
         elif entry["finding"] == "marker":
             flags.pop((entry.get("marker"), reason), None)
+            for key in [k for k in marker_hits if k[1:] == (entry.get("marker"), reason)]:
+                marker_hits.pop(key)
             for ev in marker_evidence:
                 if ev.get("marker") == entry.get("marker") and ev.get("reason") == reason:
                     ev["dismissed"] = {"by": entry.get("by"), "at": entry.get("at")}
@@ -571,18 +620,59 @@ def derive(ds, result, table, *, pairs=None, geometries=None, seg=None, dna=None
             if reason == schemas.RIM_REASON and rim is not None:
                 rim["dismissed"] = {"by": entry.get("by"), "at": entry.get("at")}
 
+    # -- the reasons that are not a region's: their category is the reason's ---
+    for reason in schemas.REASONS:
+        if reason.startswith("region:") or reason == "background":
+            continue
+        category = schemas.category_of_reason(reason)
+        if category in disabled and (exclude[reason].any() or warn[reason].any()):
+            demoted = int((exclude[reason] | warn[reason]).sum())
+            note[reason] |= exclude[reason] | warn[reason]
+            exclude[reason][:] = False
+            warn[reason][:] = False
+            if reason in evidence:
+                evidence[reason]["filtered"] = {"category": category, "n": demoted}
+        if exclude[reason].any() or warn[reason].any() or note[reason].any():
+            cell_hits[(category, reason)] = {"exclude": exclude[reason], "warn": warn[reason],
+                                             "note": note[reason]}
+    for (marker, reason), entry in flags.items():
+        if reason.startswith("region:"):
+            continue
+        category = schemas.category_of_reason(reason)
+        if category in disabled and (entry["exclude"].any() or entry["warn"].any()):
+            entry["note"] |= entry["exclude"] | entry["warn"]
+            entry["exclude"][:] = False
+            entry["warn"][:] = False
+            for ev in marker_evidence:
+                if ev.get("marker") == marker and ev.get("reason") == reason:
+                    ev["filtered"] = category
+        marker_hits[(category, marker, reason)] = entry
+
     # -- the calls ------------------------------------------------------------
     no_nucleus = exclude["no_nucleus"] | warn["no_nucleus"] | note["no_nucleus"]
     # Outside the tissue, whatever the user made the background do.
     background = exclude["background"] | warn["background"] | note["background"]
+    category_status, by_category = _categories(n, cell_hits, marker_hits, disabled)
     frame, failing, warned, by_marker, noted_any, flagged_any, unreliable_any = _cells_frame(
-        ids, result["result_id"], exclude, warn, note, flags, roi_ids, roi_method, background)
+        ids, result["result_id"], exclude, warn, note, flags, roi_ids, roi_method, background,
+        rows=np.flatnonzero(keep), category_status=category_status)
     by_reason = {r: int(exclude[r].sum()) for r in schemas.REASONS if exclude[r].any()}
     warn_by_reason = {r: int(warn[r].sum()) for r in schemas.REASONS if warn[r].any()}
     only_noted = {r: note[r] & ~exclude[r] & ~warn[r] for r in schemas.REASONS}
     note_by_reason = {r: int(m.sum()) for r, m in only_noted.items() if m.any()}
+    marker_noted = {}
+    for (marker, reason), entry in flags.items():
+        count = int(np.count_nonzero(entry["note"]))
+        if count:
+            marker_noted.setdefault(marker, {})[reason] = count
     summary = {"n": n, "n_fail": int(failing.sum()), "n_warn": int((~failing & warned).sum()),
                "n_noted": int(noted_any.sum()),
+               # Every cell anything flagged (excluded, warned, or a marker
+               # excluded or warned), each once.
+               "n_flagged_any": int((failing | warned | flagged_any).sum()),
+               "by_category": by_category,
+               "disabled_categories": sorted(disabled),
+               "marker_noted": marker_noted,
                "n_background": int(background.sum()),
                "n_no_nucleus": int(no_nucleus.sum()),
                # Both reasons are listed on such a cell, not de-duplicated.
@@ -688,6 +778,77 @@ def _detections_and_rim(ds, keep, markers, values_of, xs, ys, hints, tissue, qua
     return out
 
 
+def _members(ids, pairs, region_meta):
+    """{membership key: (rows, fractions, methods)} from the stored pairs.
+    By row, not by id: a table that repeats an id (one cell per time point)
+    has every one of its rows in the region."""
+    if pairs is None or not pairs.height or not region_meta:
+        return {}
+    lookup = pl.DataFrame({"cell_id": pl.Series(np.asarray(ids, dtype=np.int64)),
+                           "_row": pl.Series(np.arange(ids.size, dtype=np.int64))})
+    joined = (pairs.select(["cell_id", "roi_id", "fraction", "method"])
+              .with_columns(pl.col("cell_id").cast(pl.Int64))
+              .filter(pl.col("roi_id").is_in(list(region_meta)))
+              .join(lookup, on="cell_id", how="inner")
+              .sort(["roi_id", "_row"]))
+    if not joined.height:
+        return {}
+    keys = joined["roi_id"].to_numpy()
+    rows = joined["_row"].to_numpy()
+    fractions = joined["fraction"].cast(pl.Float64).to_numpy()
+    methods = np.asarray(joined["method"].to_list(), dtype=object)
+    starts = np.flatnonzero(np.r_[True, keys[1:] != keys[:-1]])
+    ends = np.r_[starts[1:], keys.size]
+    return {str(keys[a]): (rows[a:b], fractions[a:b], methods[a:b])
+            for a, b in zip(starts.tolist(), ends.tolist())}
+
+
+def _categories(n, cell_hits, marker_hits, disabled):
+    """(List(Utf8) "category|status" per cell, {category: counts}). A cell's
+    status in a category is its strongest: excluded, flagged (warned), channel
+    (a marker of it excluded or warned; the cell stands), noted. Counts are
+    distinct cells."""
+    order = [c for c in schemas.category_order() if c != schemas.BACKGROUND["id"]]
+    seen = [k[0] for k in cell_hits] + [k[0] for k in marker_hits]
+    order += [c for c in dict.fromkeys(seen) if c not in order and c != schemas.BACKGROUND["id"]]
+    labels, masks, counts = [], [], {}
+    for category in order:
+        excluded = np.zeros(n, dtype=bool)
+        warned = np.zeros(n, dtype=bool)
+        noted = np.zeros(n, dtype=bool)
+        channel = np.zeros(n, dtype=bool)
+        for (c, _reason), hit in cell_hits.items():
+            if c == category:
+                excluded |= hit["exclude"]
+                warned |= hit["warn"]
+                noted |= hit["note"]
+        for (c, _marker, _reason), hit in marker_hits.items():
+            if c == category:
+                channel |= hit["exclude"] | hit["warn"]
+                noted |= hit["note"]
+        flagged = warned & ~excluded
+        channel &= ~excluded & ~warned
+        noted &= ~excluded & ~warned & ~channel
+        status = {"excluded": excluded, "flagged": flagged, "channel": channel, "noted": noted}
+        numbers = {f"n_{k}": int(np.count_nonzero(v)) for k, v in status.items()}
+        n_any = sum(numbers.values())
+        if not n_any and category not in schemas.category_order():
+            continue
+        counts[category] = {"n_excluded": numbers["n_excluded"],
+                            "n_flagged": numbers["n_flagged"],
+                            "n_marker_only": numbers["n_channel"],
+                            "n_noted": numbers["n_noted"], "n_any": n_any,
+                            "fraction": (n_any / n) if n else 0.0,
+                            "fraction_flagged": ((n_any - numbers["n_noted"]) / n) if n else 0.0,
+                            "enabled": category not in disabled}
+        for word in CATEGORY_STATUSES:
+            if status[word].any():
+                labels.append(f"{category}|{word}")
+                masks.append(status[word])
+    column, _rows = _listed(n, masks, labels)
+    return column, counts
+
+
 def _list_column(n, rows, values):
     """A List(Utf8) Series of `n` rows from flat pairs: `rows` ascending (a
     row's values in their order), `values` a Utf8 Series beside them. A row
@@ -717,10 +878,14 @@ def _listed(n, masks, labels):
     return _list_column(n, rows, values), rows
 
 
-def _cells_frame(ids, result_id, exclude, warn, note, flags, roi_ids, roi_method, background):
+def _cells_frame(ids, result_id, exclude, warn, note, flags, roi_ids, roi_method, background,
+                 *, rows=None, category_status=None):
     """The per-cell frame from the reasons' masks ({reason: bool[n]} by
     status), the marker flags ({(marker, reason): {status: bool[n]}}), the
     regions (`roi_ids` {row: [roi id]}, `roi_method`) and `background`.
+    `rows` is each cell's row in the table as loaded (`row`: how a writer
+    puts the calls back on the right rows, repeated ids and all), and
+    `category_status` the cell's status per category (`_categories`).
     Returns (frame, failing, warned, by_marker, noted_any, flagged_any,
     unreliable_any). Column by column from flat arrays: lists of lists for
     200k cells were most of `derive`'s time."""
@@ -747,19 +912,25 @@ def _cells_frame(ids, result_id, exclude, warn, note, flags, roi_ids, roi_method
     by_marker = {}
     flag_labels, flag_masks = [], []
     excluded_markers = {}    # marker -> its cells with any excluding flag
+    flagged_any = np.zeros(n, dtype=bool)
     for (marker, reason), masks in sorted(flags.items()):
-        for status in ("exclude", "warn"):
-            mask = masks[status]
+        for status in ("exclude", "warn", "note"):
+            mask = masks.get(status)
+            if mask is None:
+                continue
             count = int(np.count_nonzero(mask))
             if not count:
                 continue
-            by_marker.setdefault(marker, {}).setdefault(reason, {})[status] = count
             flag_labels.append(f"{marker}|{reason}|{status}")
             flag_masks.append(mask)
+            if status == "note":
+                continue  # recorded on the cell; counts toward nothing
+            flagged_any |= mask
+            by_marker.setdefault(marker, {}).setdefault(reason, {})[status] = count
             if status == "exclude":
                 prior = excluded_markers.get(marker)
                 excluded_markers[marker] = mask.copy() if prior is None else prior | mask
-    marker_flags, flag_rows = _listed(n, flag_masks, flag_labels)
+    marker_flags, _flag_rows = _listed(n, flag_masks, flag_labels)
     unreliable_names = sorted(excluded_markers)
     unreliable, unreliable_rows = _listed(n, [excluded_markers[m] for m in unreliable_names],
                                           unreliable_names)
@@ -769,8 +940,14 @@ def _cells_frame(ids, result_id, exclude, warn, note, flags, roi_ids, roi_method
                                         [len(roi_ids[row]) for row in region_rows]),
                            pl.Series(region_values, dtype=pl.Utf8))
     action = np.where(failing, "exclude", np.where(warned, "warn", "pass"))
+    if rows is None:
+        rows = np.arange(n, dtype=np.int64)
+    if category_status is None:
+        category_status = _list_column(n, np.zeros(0, dtype=np.int64),
+                                       pl.Series([], dtype=pl.Utf8))
     frame = pl.DataFrame({
         "cell_id": pl.Series(ids, dtype=pl.Int64),
+        "row": pl.Series(np.asarray(rows, dtype=np.int64), dtype=pl.Int64),
         "pass": pl.Series(~failing, dtype=pl.Boolean),
         "action": pl.Series(action.tolist(), dtype=pl.Utf8),
         "primary_reason": pl.Series(primary.tolist(), dtype=pl.Utf8),
@@ -784,6 +961,7 @@ def _cells_frame(ids, result_id, exclude, warn, note, flags, roi_ids, roi_method
         "marker_flags": marker_flags,
         "roi_ids": regions,
         "roi_method": pl.Series(roi_method.tolist(), dtype=pl.Utf8),
+        "category_status": category_status,
         "result_id": pl.repeat(result_id, n, dtype=pl.Utf8, eager=True),
     })
 
@@ -792,24 +970,57 @@ def _cells_frame(ids, result_id, exclude, warn, note, flags, roi_ids, roi_method
         out[rows] = True
         return out
 
-    return (frame, failing, warned, by_marker, any_of(noted_rows), any_of(flag_rows),
+    return (frame, failing, warned, by_marker, any_of(noted_rows), flagged_any,
             any_of(unreliable_rows))
 
 
-def _regions_and_pairs(ds, result):
+def _regions_and_pairs(ds, result, *, previous=None):
+    """(regions, pairs, per_roi). With `previous` (the stored pairs and
+    per-region record), a region whose outline, planes and named cells hash
+    as they did keeps its pairs: only new and changed regions are read from
+    the mask, and a deleted one's pairs are dropped."""
     from plexora.plugins.qc.server import propagate, roi_link
 
     regions = roi_link.membership_regions(ds, result)
-    area = None
-    try:
-        area_name = _area_column(ds)
-        if area_name:
-            values = ds.table.columns([area_name])[area_name]
-            area = float(np.nanmedian(values))
-    except Exception:
+    hashes = {r["roi_id"]: roi_link.membership_hash(r) for r in regions}
+    kept_ids, kept_pairs, kept_record = set(), None, {}
+    if previous is not None:
+        old_pairs, old_record = previous
+        if old_pairs is not None and "geometry_hash" in old_pairs.columns:
+            for key, entry in (old_record or {}).items():
+                if key in hashes and isinstance(entry, dict) \
+                        and entry.get("geometry_hash") == hashes[key]:
+                    kept_ids.add(key)
+                    kept_record[key] = entry
+            kept_pairs = old_pairs.filter(pl.col("roi_id").is_in(list(kept_ids))) \
+                if kept_ids and old_pairs.height else None
+    todo = [r for r in regions if r["roi_id"] not in kept_ids]
+    if todo:
         area = None
-    diameter = 2 * np.sqrt(area / np.pi) if area else None
-    pairs, per_roi = propagate.propagate(ds, regions, median_diameter_px=diameter)
+        try:
+            area_name = _area_column(ds)
+            if area_name:
+                values = ds.table.columns([area_name])[area_name]
+                area = float(np.nanmedian(values))
+        except Exception:
+            area = None
+        diameter = 2 * np.sqrt(area / np.pi) if area else None
+        fresh, per_roi = propagate.propagate(ds, todo, median_diameter_px=diameter)
+    else:
+        fresh, per_roi = pl.DataFrame(schema={k: v for k, v in results.CELL_ROIS_SCHEMA.items()
+                                              if k != "geometry_hash"}), {}
+    fresh = fresh.with_columns(pl.col("roi_id").replace_strict(
+        hashes, default=None, return_dtype=pl.Utf8).alias("geometry_hash"))
+    for key in [r["roi_id"] for r in todo]:
+        per_roi.setdefault(key, {"method": "none", "n_cells": 0})["geometry_hash"] = hashes[key]
+    for key, entry in kept_record.items():
+        per_roi[key] = {**entry, "reused": True}
+    if kept_pairs is not None and kept_pairs.height:
+        pairs = pl.concat([kept_pairs.select(list(results.CELL_ROIS_SCHEMA)),
+                           fresh.select(list(results.CELL_ROIS_SCHEMA))],
+                          how="vertical_relaxed")
+    else:
+        pairs = fresh.select(list(results.CELL_ROIS_SCHEMA))
     return regions, pairs, per_roi
 
 
@@ -886,6 +1097,8 @@ def write_for_active(call, project, *, refresh_regions=True):
     propagated again, unless `refresh_regions=False`)."""
     from plexora.plugins.qc.server import strictness
 
+    from plexora.plugins.qc.server.cells import inputs as cell_inputs
+
     session = call.session
     ds = session.data(project)
     if not ds.table.available:
@@ -898,22 +1111,39 @@ def write_for_active(call, project, *, refresh_regions=True):
         preset = (document.get("strictness") or {}).get("preset") or "standard"
         custom = (document.get("strictness") or {}).get("thresholds")
         table = strictness.thresholds(preset, custom if preset == "custom" else None)
+        disabled = results.disabled_categories(document)
+        now = cell_inputs.fingerprints(ds, document)
+        stored = (result.get("cells") or {}).get("inputs")
+        full = cell_inputs.needs_full(stored, now)
+        # A mask, table, pixel size or transform changed under stored pairs:
+        # they are read again whatever the caller asked.
+        refresh_regions = refresh_regions or (full and stored is not None)
         pairs = None
         per_roi = None
         geometries = None
         if refresh_regions:
-            regions, pairs, per_roi = _regions_and_pairs(ds, result)
+            if full:
+                from plexora.plugins.qc.server.cells import areas
+
+                areas.forget(project)
+                previous = None
+            else:
+                previous = (results.cell_rois(project),
+                            (result.get("cells") or {}).get("propagation"))
+            regions, pairs, per_roi = _regions_and_pairs(ds, result, previous=previous)
         else:
             from plexora.plugins.qc.server import roi_link
 
             regions = roi_link.membership_regions(ds, result)
         geometries = {r["roi_id"]: r.get("geometry") for r in regions}
+        categories = {r["roi_id"]: r.get("category") for r in regions if r.get("category")}
         seg, seg_state = segmentation_calls(session, project)
         dna, dna_state = dna_calls(session, project)
         hints = reviewed_hints(result, results.scan_hints(project, result.get("result_id")))
         frame, pairs, summary = derive(ds, result, table, pairs=pairs, geometries=geometries,
                                        seg=seg, dna=dna, hints=hints,
-                                       tissue=_tissue(session, project))
+                                       tissue=_tissue(session, project),
+                                       categories=categories, disabled=disabled)
         summary["seg_flags"] = seg_state
         summary["dna_flags"] = dna_state
         summary["warnings"] = [
@@ -946,6 +1176,8 @@ def write_for_active(call, project, *, refresh_regions=True):
         from plexora.plugins.qc.server.exclusions import roi_revision
 
         result["cells"]["roi_revision"] = roi_revision(project)
+        result["cells"]["inputs"] = now
+        result["cells"]["exclusion_filter"] = {"disabled_categories": disabled}
         results.put_result(document, result)
         results.save(project, document)
     return summary

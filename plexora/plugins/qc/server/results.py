@@ -51,17 +51,106 @@ ROI_META_SCHEMA = {
     "written_category_id": pl.Utf8, "operation_id": pl.Utf8,
 }
 
+#: `geometry_hash` is the region as it was read (`roi_link.membership_hash`):
+#: a pair whose region still hashes the same is kept, not read again.
 CELL_ROIS_SCHEMA = {"cell_id": pl.Int64, "roi_id": pl.Utf8, "fraction": pl.Float32,
-                    "method": pl.Utf8}
+                    "method": pl.Utf8, "geometry_hash": pl.Utf8}
 
 _LOCKS: dict = {}
 _GUARD = threading.Lock()
 
 
+class _ProjectLock:
+    """A re-entrant lock that also holds an advisory lock on the store's
+    folder while it is held: a server and a headless `plexora ai run qc` on
+    the same project are two processes, and the thread lock alone let one
+    overwrite the other's document."""
+
+    def __init__(self, datasource):
+        self._datasource = str(datasource)
+        self._lock = threading.RLock()
+        self._depth = 0
+        self._handle = None
+
+    def _path(self):
+        try:
+            return _store(self._datasource).directory() / "qc.lock"
+        except Exception:  # no store folder (a test double): the thread lock alone
+            return None
+
+    def _take_file(self):
+        path = self._path()
+        if path is None:
+            return
+        try:
+            handle = open(path, "a+b")
+        except OSError:
+            return
+        try:
+            if _fcntl is not None:
+                _fcntl.flock(handle.fileno(), _fcntl.LOCK_EX)
+            elif _msvcrt is not None:
+                handle.seek(0)
+                _msvcrt.locking(handle.fileno(), _msvcrt.LK_LOCK, 1)
+        except OSError:
+            handle.close()
+            return
+        self._handle = handle
+
+    def _drop_file(self):
+        handle, self._handle = self._handle, None
+        if handle is None:
+            return
+        try:
+            if _fcntl is not None:
+                _fcntl.flock(handle.fileno(), _fcntl.LOCK_UN)
+            elif _msvcrt is not None:
+                handle.seek(0)
+                _msvcrt.locking(handle.fileno(), _msvcrt.LK_UNLCK, 1)
+        except OSError:
+            pass
+        finally:
+            handle.close()
+
+    def acquire(self, blocking=True, timeout=-1):
+        if not self._lock.acquire(blocking, timeout):
+            return False
+        self._depth += 1
+        if self._depth == 1:
+            self._take_file()
+        return True
+
+    def release(self):
+        if self._depth == 1:
+            self._drop_file()
+        self._depth -= 1
+        self._lock.release()
+
+    def __enter__(self):
+        self.acquire()
+        return self
+
+    def __exit__(self, *exc):
+        self.release()
+        return False
+
+
+try:
+    import fcntl as _fcntl
+    _msvcrt = None
+except ImportError:  # Windows
+    _fcntl = None
+    try:
+        import msvcrt as _msvcrt
+    except ImportError:
+        _msvcrt = None
+
+
 def lock(datasource):
-    """The read-modify-write lock of one project's QC store."""
+    """The read-modify-write lock of one project's QC store (re-entrant, and
+    held across processes for its outermost hold)."""
     with _GUARD:
-        return _LOCKS.setdefault(str(datasource), threading.RLock())
+        return _LOCKS.setdefault(str(datasource), _ProjectLock(datasource))
 
 
 def now_iso():
@@ -80,7 +169,41 @@ def _store(datasource):
 def empty_document() -> dict:
     return {"schema_version": SCHEMA_VERSION, "revision_seq": 0, "active_result_id": None,
             "results": {}, "archived": [],
-            "strictness": {"preset": "standard", "thresholds": None}}
+            "strictness": {"preset": "standard", "thresholds": None},
+            # Categories whose findings stay recorded but leave no cell out
+            # (`set_qc_categories`): reversible, nothing is deleted.
+            "exclusion_filter": {"disabled_categories": [], "disabled_reasons": []},
+            # Where the cells' calls were written into the user's own files
+            # (`source_write`): what the SCIMAP Pro hand-off may point at.
+            "source_writes": []}
+
+
+def disabled_categories(document) -> list:
+    """The categories switched off for exclusions, in the order listed."""
+    raw = (document.get("exclusion_filter") or {}).get("disabled_categories") or []
+    return [str(c) for c in raw]
+
+
+#: How many source writes the ledger keeps.
+KEEP_SOURCE_WRITES = 20
+
+
+def record_source_write(document, entry):
+    """Note one write of the calls into the user's file (newest last)."""
+    ledger = [e for e in document.get("source_writes") or []
+              if not (e.get("path") == entry.get("path")
+                      and e.get("image_id") == entry.get("image_id"))]
+    ledger.append({**entry, "at": entry.get("at") or now_iso()})
+    document["source_writes"] = ledger[-KEEP_SOURCE_WRITES:]
+    return document
+
+
+def last_source_write(document, result_id=None):
+    """The newest ledger entry (for `result_id`, when given), or None."""
+    for entry in reversed(document.get("source_writes") or []):
+        if result_id is None or entry.get("result_id") == result_id:
+            return entry
+    return None
 
 
 def load(datasource) -> dict:

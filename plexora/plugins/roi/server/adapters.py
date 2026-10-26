@@ -248,8 +248,6 @@ def save_to_spatialdata(dataset, state, element_name=DEFAULT_ELEMENT,
     try:
         import geopandas as gpd
         import shapely.geometry as sgeom
-        import spatialdata
-        from spatialdata.models import ShapesModel
         from spatialdata.transformations import Identity
     except ImportError as exc:  # pragma: no cover - optional at runtime
         raise ValueError(f"SpatialData export needs {exc.name!r} to be installed") from exc
@@ -273,14 +271,7 @@ def save_to_spatialdata(dataset, state, element_name=DEFAULT_ELEMENT,
         })
 
     frame = gpd.GeoDataFrame(rows, geometry=geometries)
-    element = ShapesModel.parse(frame, transformations={"global": Identity()})
-
-    # Only the shapes group: reading the tables would materialize every one of
-    # them, which on a real store is hundreds of megabytes of embeddings nobody
-    # asked for (the same trap the importer documents).
-    sdata = spatialdata.read_zarr(store, selection=("shapes",))
-    sdata.shapes[element_name] = element
-    sdata.write_element(element_name)
+    write_shapes_element(dataset, frame, element_name, {"global": Identity()})
 
     return {
         "path": str(store),
@@ -289,6 +280,57 @@ def save_to_spatialdata(dataset, state, element_name=DEFAULT_ELEMENT,
         "n_rois": len(rows),
         "coordinate_system": "global",
     }
+
+
+def write_shapes_element(dataset, frame, element_name, transformations=None, *,
+                         replace=False, owned_by=None, image_id=None):
+    """Write a GeoDataFrame as a shapes element of the project's store.
+
+    A new name is written. An existing one is refused, unless `replace` AND
+    every row of it was written by `owned_by` (its `producer` column): then
+    the rows of `image_id` are swapped for `frame`'s and the other images'
+    kept -- an element somebody else wrote is never overwritten, whatever
+    `replace` says. Everything is checked before anything is deleted; the
+    delete-then-write that follows is spatialdata's own."""
+    try:
+        import pandas as pd
+        import spatialdata
+        from spatialdata.models import ShapesModel
+        from spatialdata.transformations import Identity
+    except ImportError as exc:  # pragma: no cover - optional at runtime
+        raise ValueError(f"SpatialData export needs {exc.name!r} to be installed") from exc
+
+    store = _spatialdata_store(dataset)
+    taken = existing_shapes(dataset)
+    transformations = transformations or {"global": Identity()}
+    # Only the shapes group: reading the tables would materialize every one of
+    # them, which on a real store is hundreds of megabytes of embeddings nobody
+    # asked for (the same trap the importer documents).
+    sdata = spatialdata.read_zarr(store, selection=("shapes",))
+    if element_name in taken:
+        # Overwriting an element in place is offered only for one's own
+        # element: spatialdata's writer refuses it, and the workaround --
+        # delete then rewrite -- has a window in which the data is gone.
+        old = sdata.shapes.get(element_name) if hasattr(sdata.shapes, "get") \
+            else sdata.shapes[element_name]
+        ours = owned_by is not None and old is not None and "producer" in old.columns \
+            and set(old["producer"].astype(str)) <= {owned_by}
+        if not (replace and ours):
+            raise ElementExists(taken, _suggest(element_name, taken))
+        if image_id is not None and "image_id" in old.columns:
+            kept = old[old["image_id"].astype(str) != str(image_id)]
+            if len(kept):
+                frame = pd.concat([kept.drop(columns=[c for c in kept.columns
+                                                      if c not in frame.columns]),
+                                   frame], ignore_index=True)
+        element = ShapesModel.parse(frame, transformations=transformations)
+        sdata.delete_element_from_disk(element_name)
+    else:
+        element = ShapesModel.parse(frame, transformations=transformations)
+    sdata.shapes[element_name] = element
+    sdata.write_element(element_name)
+    return {"path": str(store), "name": element_name, "element": f"shapes/{element_name}",
+            "n_rows": len(frame)}
 
 
 # -- ROI columns on the cells -------------------------------------------
@@ -460,9 +502,19 @@ def _assign_column(obs, mask, column, values, dataset, source, categorical):
     import numpy as np
     import pandas as pd
 
-    id_field = getattr(dataset.project.dataset, "obs_id_field", None)
+    from plexora.server.models import table_correction
+
+    spec = dataset.project.dataset
+    id_field = getattr(spec, "obs_id_field", None)
     frame = dataset.table.frame()
     cell_id = dataset.schema.cell_id if dataset.schema else None
+    # The file's obs holds the table's own ids; a table correction points the
+    # cell-id role at corrected ones (raw + offset), which would match the
+    # neighbouring row. Key by the column the corrected ids were made from.
+    raw = table_correction.raw_cell_id_column(spec.roles, getattr(spec, "correction", None)) \
+        if spec is not None and getattr(spec, "roles", None) is not None else None
+    if raw and frame is not None and raw in frame.columns:
+        cell_id = raw
 
     series = obs[column] if column in obs.columns else pd.Series(
         [None] * len(obs), index=obs.index, dtype="object")

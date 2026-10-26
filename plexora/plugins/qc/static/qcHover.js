@@ -438,10 +438,21 @@ class QcHoverCard {
         return reason.words;
     }
 
+    /** A reason's status as the card writes it; one of a category switched
+     *  off reads "flagged (category off)", not as a note of its own. */
+    static reasonDetail(reason) {
+        if (reason.category_enabled === false) return "flagged (category off)";
+        return reason.status === "fail" ? "excluded" : reason.status === "note" ? "noted"
+            : "warned";
+    }
+
     static markerLine(marker) {
         const n = QcHoverCard.number;
         const text = `${marker.marker} · ${QcHoverCard.lowerFirst(marker.words)}`;
-        let detail = marker.status ? `(${marker.status})` : "";
+        // A category switched off for exclusions: its flags are notes now.
+        const status = marker.category_enabled === false ? "flagged, category off"
+            : marker.status;
+        let detail = status ? `(${status})` : "";
         if (typeof marker.value === "number" && typeof marker.cutoff === "number") {
             detail = `${n(marker.value)} > ${n(marker.cutoff)} ${detail}`.trim();
         } else if ((marker.via_regions || []).length) {
@@ -514,7 +525,7 @@ class QcHoverCard {
             const cap = QcHoverCard.MAX_ITEMS;
             const items = others.slice(0, cap).map((r) => ({
                 text: QcHoverCard.reasonSentence(r),
-                detail: r.status === "fail" ? "excluded" : "warned",
+                detail: QcHoverCard.reasonDetail(r),
                 color: r.color,
             }));
             if (others.length > cap) items.push({ text: `+${others.length - cap} more in the panel`, more: true });
