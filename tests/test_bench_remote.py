@@ -35,6 +35,9 @@ def _load(name):
     sys.path.insert(0, str(BENCH))
     spec = importlib.util.spec_from_file_location(f"bench_remote_{name}", BENCH / f"{name}.py")
     module = importlib.util.module_from_spec(spec)
+    # Registered before it runs: a @dataclass under postponed annotations looks
+    # its own module up in sys.modules.
+    sys.modules[spec.name] = module
     spec.loader.exec_module(module)
     return module
 
