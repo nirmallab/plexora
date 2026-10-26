@@ -202,10 +202,15 @@ def test_an_older_node_that_sends_no_size_still_plans(root, o2, monkeypatch):
     first = _by_name(plan)["LSP1"]
     assert first["mask"]["path"].endswith("unmicst-LSP1/cell.ome.tif")
     assert first["table"]["path"].endswith("LSP1--unmicst_cell.csv")
+    # Not checkable before registration, so not in the spec; read, and
+    # applied once each sample is registered and its count is known.
     assert first["channels"]["names"] is None
-    assert "Restarting the data node" in first["channels"]["warning"]
+    assert first["channels"]["names_after"] == ["DNA", "CD3", "CD8"]
     [(_id, spec)] = dataset_build.specs_for(plan, only=[first["id"]])
     assert "channel_names" not in spec
+    plexora.create_dataset_from_directory("Run", str(root / "run"), node="hms-o2")
+    names = [c["name"] for c in plexora.get_config()["LSP1"]["imageData"]]
+    assert names[-3:] == ["DNA", "CD3", "CD8"]
 
 
 def test_a_folder_on_a_node_is_checked_by_one_stat(root, o2, monkeypatch):

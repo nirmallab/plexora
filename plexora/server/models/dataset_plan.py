@@ -1170,11 +1170,33 @@ def _channels_slot(entry, project, user=False):
         slot["warning"] = (f"{entry.name} does not list {count} names; the image "
                            "keeps its own channel names.")
     elif not count:
-        # A data node from before `/detect` reported a size.
-        slot["warning"] = (f"The image's channel count is not known here, so "
-                           f"{entry.name} is not applied. Restarting the data "
-                           "node on the current version fixes this.")
+        # The image's channel count is not known yet: a data node from before
+        # `/detect` reported a size. A list whose header names its column is
+        # still read, and applied once each image is registered and its count
+        # is known (`dataset_build.name_channels_after`) -- when it matches.
+        later = _sheet_names(entry)
+        if later:
+            slot["names_after"] = later
+        else:
+            slot["warning"] = (f"{entry.name} has no marker_name column, and the "
+                               "image's channel count is not known here, so it is "
+                               "not applied.")
     return slot
+
+
+def _sheet_names(entry):
+    """Every name a channel list holds, when its header says which column."""
+    from plexora.server.models.import_proposal import _marker_sheet
+    from plexora.server.utils import channel_file
+
+    try:
+        sheet = _marker_sheet(entry.proxy or entry.path)
+        if sheet is None or sheet[2] is None:
+            return None
+        grid, column, has_header = sheet
+        return list(channel_file.names(grid, column, has_header)) or None
+    except Exception:  # noqa: BLE001 -- an unreadable list is no list
+        return None
 
 
 def _project_dict(project, any_mask, any_table):
