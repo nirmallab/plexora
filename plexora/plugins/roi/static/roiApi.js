@@ -116,8 +116,7 @@ class RoiApi {
                 // key without it, which is the guard that stops one annotation
                 // pass landing on another -- this flag is the user's answer to
                 // being asked, not a convenience.
-                replace: Boolean(replace),
-                preview: Boolean(preview)
+                replace: Boolean(replace)
             })
         });
         return this._read(response);
@@ -146,7 +145,8 @@ class RoiApi {
                 // does not: the server refuses an existing column without it,
                 // and that refusal is the guard against one mapping pass
                 // silently erasing another.
-                replace: Boolean(replace)
+                replace: Boolean(replace),
+                preview: Boolean(preview)
             })
         });
         return this._read(response);

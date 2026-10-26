@@ -416,3 +416,22 @@ def test_the_probe_notices_a_re_anchor_that_never_re_tests_the_pointer(tmp_path)
     returncode, report = _run("roi_hover_probe.mjs", source)
     assert returncode == 1
     assert report["failures"]
+
+
+# -- what the API sends -----------------------------------------------------
+
+def test_the_api_sends_what_each_route_reads():
+    """Bodies as the browser sends them. A flag on the wrong request reads as
+    working in every test that posts its own body."""
+    returncode, report = _run("roi_api_body_probe.mjs")
+    assert not report["failures"], json.dumps(report["failures"], indent=2)
+    assert returncode == 0 and report["checked"] >= 3
+
+
+def test_the_api_probe_notices_a_preview_that_is_not_sent(tmp_path):
+    source = _mutate(tmp_path, "roiApi.js",
+                     "replace: Boolean(replace),\n                preview: Boolean(preview)",
+                     "replace: Boolean(replace)")
+    returncode, report = _run("roi_api_body_probe.mjs", source)
+    assert returncode == 1
+    assert report["failures"]
