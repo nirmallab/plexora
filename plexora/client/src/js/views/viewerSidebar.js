@@ -158,7 +158,7 @@ class ViewerSidebar {
         // their concrete type -- see registerModule() and pluginRegistry.js.
         this.sidebarModules = [];
         this.maxChannelSlots = 15;
-        this.initialChannelSlots = 4;
+        this.initialChannelSlots = 5;
         //: The slot the shared contrast bar is editing. -1 until one is
         //: chosen; `resolveSelectedSlot` picks the first channel showing.
         this.selectedSlot = -1;
@@ -3145,30 +3145,42 @@ class ViewerSidebar {
     }
 
     async applySavedChannels(rows) {
-        // In the order the user left the rows (`position`); rows saved
-        // before rows said keep image order, and sort after those that do.
-        const activeRows = rows.filter((row) => row && row.channel_active)
+        // Every row the user had, on or off: an on row is `channel_active`,
+        // an off one is a row with a `position` (persistChannelList), so ten
+        // rows come back as ten and not as the default five. In the order
+        // the user left them; rows saved before rows said keep image order,
+        // and sort after those that do.
+        const slotRows = rows.filter((row) => row
+            && (row.channel_active || Number.isInteger(row.position)))
             .map((row, i) => ({ row, i }))
             .sort((a, b) => {
                 const pa = Number.isInteger(a.row.position) ? a.row.position : Infinity;
                 const pb = Number.isInteger(b.row.position) ? b.row.position : Infinity;
                 return pa === pb ? a.i - b.i : pa - pb;
             })
-            .map(({ row }) => row);
+            .map(({ row }) => row)
+            .slice(0, this.maxChannelSlots);
+        const activeRows = slotRows.filter((row) => row.channel_active);
         this.curveMode = this.savedCurveMode(activeRows);
         const slotList = this.el("channel_slot_list");
         if (!slotList) return;
         this.discardChannelSlots(new Set(activeRows.map((row) => row.channel)));
 
-        const count = Math.min(Math.max(activeRows.length, this.initialChannelSlots), this.maxChannelSlots);
-        // Slots beyond the active rows aren't assigned by a saved row at all, but they should
+        const count = Math.min(Math.max(slotRows.length, this.initialChannelSlots), this.maxChannelSlots);
+        // Slots beyond the saved rows aren't assigned by a saved row at all, but they should
         // still show a marker (off) rather than sit empty, matching the pre-restore default look.
-        const usedNames = new Set(activeRows.slice(0, count).map((row) => row.channel));
+        const usedNames = new Set(slotRows.map((row) => row.channel));
         const fallbackNames = this.columns.filter((name) => !usedNames.has(name));
         let fallbackIdx = 0;
         for (let i = 0; i < count; i++) {
-            const color = this.getDefaultColor(i);
-            const name = i < activeRows.length ? "" : (fallbackNames[fallbackIdx++] || "");
+            const saved = slotRows[i];
+            // An off row is back with its marker and colour, still off; an on
+            // row is filled in below, once its stats are here.
+            const off = saved && !saved.channel_active;
+            const color = off
+                ? { rgb: { r: saved.r, g: saved.g, b: saved.b }, hex: this.rgbToHex(saved.r, saved.g, saved.b) }
+                : this.getDefaultColor(i);
+            const name = saved ? (off ? saved.channel : "") : (fallbackNames[fallbackIdx++] || "");
             const slot = {
                 index: i,
                 name,
@@ -3178,7 +3190,7 @@ class ViewerSidebar {
                 visible: true,
                 expanded: false,
                 range: this.getImageRange(name),
-                userColorChanged: false,
+                userColorChanged: Boolean(off),
                 userRangeChanged: false,
                 autoLeveled: false,
                 autoLeveling: false,
@@ -3203,7 +3215,7 @@ class ViewerSidebar {
         // used to put 6 of them in flight simultaneously and occupy every worker.
         // The ceiling comes from the server, so a big node still restores as wide
         // as it ever did.
-        const restoredNames = activeRows.slice(0, count).map((row) => row.channel);
+        const restoredNames = activeRows.map((row) => row.channel);
         const restoreTask = window.PlexoraStatus?.begin("Restoring");
         try {
             await plexoraMapWithLimit(restoredNames, plexoraChannelConcurrency(), (name) =>
@@ -3212,9 +3224,9 @@ class ViewerSidebar {
             restoreTask?.done();
         }
 
-        for (const [i, row] of activeRows.slice(0, count).entries()) {
+        for (const [i, row] of slotRows.entries()) {
             const slot = this.channelSlots[i];
-            if (!slot) continue;
+            if (!slot || !row.channel_active) continue;
             this.setSlotMarker(slot.index, row.channel, { keepColor: true, enable: true, force: true });
             // setSlotMarker's markerChanged branch always resets userRangeChanged/autoLeveled
             // to false and (since slot.enabled) synchronously schedules autoLevelChannelIfNeeded
@@ -3313,8 +3325,21 @@ class ViewerSidebar {
         const listRanges = {};
         const listMeta = {};
         const bitMax = this.dataLayer.imageBitRange[1];
-        this.channelSlots.forEach((slot) => {
-            if (!slot.name || !slot.enabled) return;
+        // On rows first: an off row naming the same channel as an on one
+        // (one row per channel is saved) must not take its place.
+        const ordered = [...this.channelSlots].sort((a, b) => Number(b.enabled) - Number(a.enabled));
+        ordered.forEach((slot) => {
+            if (!slot.name || !slot.visible) return;
+            if (!slot.enabled) {
+                // An off row is kept too, as its marker, colour and place,
+                // so the rows the user had come back (applySavedChannels).
+                // Its window is the channel's remembered one, already above.
+                const offIdx = imageChannels[this.dataLayer.getFullChannelName(slot.name)];
+                if (offIdx === undefined || listMeta[slot.name]) return;
+                listColors[offIdx] = { color: { ...slot.color, opacity: 1 } };
+                listMeta[slot.name] = { position: slot.index };
+                return;
+            }
             const fullName = this.dataLayer.getFullChannelName(slot.name);
             const idx = imageChannels[fullName];
             if (idx === undefined) return;

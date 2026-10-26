@@ -32,3 +32,21 @@ def test_the_sidebar_sends_and_reads_it():
               / "js" / "views" / "viewerSidebar.js").read_text(encoding="utf-8")
     assert "position: slot.index," in source
     assert "a.row.position" in source
+
+
+def test_off_rows_are_kept_and_come_back():
+    """Ten rows open come back as ten, not the default five.
+
+    Only rows that were on used to be saved, so every reload rebuilt the
+    default number of rows and refilled them. An off row is now saved too,
+    as its colour and `position` with `channel_active` false, and the sidebar
+    restores every row that has one.
+    """
+    from pathlib import Path
+    source = (Path(__file__).resolve().parent.parent / "plexora" / "client" / "src"
+              / "js" / "views" / "viewerSidebar.js").read_text(encoding="utf-8")
+    assert "listMeta[slot.name] = { position: slot.index };" in source
+    assert "row.channel_active || Number.isInteger(row.position)" in source
+    assert "this.initialChannelSlots = 5;" in source
+    off = data_model._row_meta({"position": 7})
+    assert off == {"position": 7}
