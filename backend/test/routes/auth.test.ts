@@ -4,7 +4,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { resetAccessCache, verifyAccessJwt } from '../../src/admin/access';
 import type { Env } from '../../src/env';
 import { base64url } from '../../src/telemetry/tokens';
-import { admin, ADMIN_TOKEN, BASE } from './helpers';
+import { admin, ADMIN_TOKEN, BASE, count } from './helpers';
 
 const TEAM = 'plexora-test.cloudflareaccess.com';
 const AUD = 'aud-123';
@@ -141,5 +141,48 @@ describe('admin auth', () => {
     });
     expect(form.status).toBe(415);
     expect(await env.TELEMETRY_DB.prepare('SELECT COUNT(*) AS n FROM client_config').first('n')).toBe(0);
+  });
+});
+
+describe('admin token sign-in limit', () => {
+  const login = (token: string, ip: string) =>
+    SELF.fetch(`${BASE}/admin/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'CF-Connecting-IP': ip },
+      body: JSON.stringify({ token }),
+    });
+
+  it('allows 10 attempts an hour per address and 30 in all; past either even the right token is refused', async () => {
+    await env.TELEMETRY_DB.prepare(`DELETE FROM register_quota WHERE ip_hash LIKE 'login:%'`).run();
+    for (let i = 0; i < 10; i += 1) expect((await login('wrong', '198.51.100.20')).status).toBe(401);
+    const blocked = await login(ADMIN_TOKEN, '198.51.100.20');
+    expect(blocked.status).toBe(429);
+    expect(blocked.headers.get('Set-Cookie')).toBeNull();
+    const wait = Number(blocked.headers.get('Retry-After'));
+    expect(wait).toBeGreaterThan(0);
+    expect(wait).toBeLessThanOrEqual(3600);
+
+    // Another address still gets in.
+    const other = await login(ADMIN_TOKEN, '198.51.100.21');
+    expect(other.status).toBe(200);
+
+    // 11 counted so far; 19 more from many addresses fill the global window.
+    for (let i = 0; i < 19; i += 1) expect((await login('wrong', `203.0.113.${100 + i}`)).status).toBe(401);
+    expect((await login(ADMIN_TOKEN, '192.0.2.1')).status).toBe(429);
+
+    // A refused attempt moves no counter, and no address is stored.
+    const global = await env.TELEMETRY_DB.prepare(`SELECT n, day FROM register_quota WHERE ip_hash = 'login:*'`).first<{ n: number; day: string }>();
+    expect(global!.n).toBe(30);
+    expect(global!.day).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}$/);
+    expect(await count('register_quota', `ip_hash LIKE 'login:%' AND ip_hash LIKE '%198.51%'`)).toBe(0);
+    expect(await count('register_quota', `ip_hash LIKE 'login:%' AND n > 10 AND ip_hash != 'login:*'`)).toBe(0);
+  });
+
+  it('production with no IP_HASH_KEY refuses the token sign-in', async () => {
+    const { loginAttempt } = await import('../../src/admin/limit');
+    const bindings = { ...env } as Record<string, unknown>;
+    delete bindings.IP_HASH_KEY;
+    const gate = await loginAttempt(bindings as unknown as Env, '198.51.100.30', Math.floor(Date.now() / 1000));
+    expect(gate).toMatchObject({ ok: false, status: 503 });
   });
 });
