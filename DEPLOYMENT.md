@@ -1247,7 +1247,7 @@ The swap makes the smallest tier slow rather than uncertain.
 
 ### The image, and why it is Debian 13
 
-Plexora's `requires-python` is `>=3.12,<3.14`. Debian 12 (bookworm) ships
+Plexora's `requires-python` is `>=3.12,<3.15`. Debian 12 (bookworm) ships
 Python 3.11, so a VM built from it mounts the bucket perfectly and then fails
 the last step with:
 

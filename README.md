@@ -18,8 +18,8 @@ pip install plexora
 plexora
 ```
 
-`plexora` starts the viewer and opens it in your browser. Python 3.12 or 3.13
-is required. A desktop app for macOS, Windows and Linux is on the
+`plexora` starts the viewer and opens it in your browser. Python 3.12, 3.13 or
+3.14 is required. A desktop app for macOS, Windows and Linux is on the
 [releases page](https://github.com/nirmallab/plexora/releases). See
 [Installation](https://nirmallab.github.io/plexora/docs/getting-started/installation/).
 

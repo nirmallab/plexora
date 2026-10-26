@@ -1,9 +1,16 @@
 name: Docs
 
 # The documentation site (website/), built from this repository and published
-# to GitHub Pages. Every pull request checks that the generated reference is
-# current and that the site builds with no broken links; every push to main
-# (or a manual run) also deploys it.
+# to GitHub Pages. Every pull request checks that the site builds with no
+# broken links and that the documentation tests pass; every push to main (or a
+# manual run) also deploys it.
+#
+# The generated pages (the reference from the Python, the browser API from the
+# JavaScript) are regenerated here before the build, so the site always
+# matches the code. Whether the committed copies are current is ci.yml's
+# check, where it fails the push that let them drift; here it is a warning.
+# When it was a failure here, a forgotten regeneration kept the site from
+# deploying at all: 85 of 90 runs were red and nothing published after 10-22.
 #
 # One-time setup: repository Settings > Pages > Source: "GitHub Actions".
 # A custom domain later needs only website/public/CNAME and the domain in the
@@ -19,8 +26,6 @@ on:
 
 permissions:
   contents: read
-  pages: write
-  id-token: write
 
 concurrency:
   group: pages-${{ github.ref }}
@@ -31,8 +36,9 @@ env:
 
 jobs:
   check:
-    name: Generated reference is current
+    name: Documentation tests
     runs-on: ubuntu-22.04
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7
         with:
@@ -43,8 +49,19 @@ jobs:
       - uses: astral-sh/setup-uv@v6
       - name: Install Plexora
         run: uv pip install --system -e ".[dev,spatial,jupyter]"
-      - name: Reference pages match the code
-        run: python tools/docs/sync_docs.py check
+      - name: Reference pages, regenerated
+        run: |
+          python tools/docs/sync_docs.py generate
+          if ! git diff --quiet -- website; then
+            echo "::warning::The committed reference pages were stale; the site is built from regenerated ones. Run python tools/docs/sync_docs.py generate and commit: $(git diff --name-only -- website | tr '\n' ' ')"
+          fi
+      - uses: actions/upload-artifact@v4
+        with:
+          name: generated-pages
+          path: |
+            website/content
+            website/generated
+          retention-days: 1
       - name: Documentation tests
         run: python -m pytest -q -p no:randomly tests/test_docs_coverage.py tests/test_docs_docstrings.py tests/test_docs_signatures.py tests/test_docs_envvars.py tests/test_docs_examples.py tests/test_docs_links.py tests/test_docs_freshness.py
       # Offline: the pricing page's copy of the platform's prices is whole and
@@ -56,6 +73,7 @@ jobs:
     name: Build the site
     needs: check
     runs-on: ubuntu-22.04
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v7
       # sync_docs.py needs tomllib (3.11+); the runner's python3 is 3.10.
@@ -71,12 +89,22 @@ jobs:
         # No `static_site_generator: next`: that input rewrites next.config.mjs
         # and breaks its createMDX() wrapper. The base path is passed below.
         uses: actions/configure-pages@v6
-      - name: Record the commit source links point at
-        run: python3 tools/docs/sync_docs.py version --source-ref "${{ github.sha }}"
       - name: Install
         run: npm ci --prefix website
-      - name: Browser API pages match the JavaScript
-        run: npm run generate:browser-api --prefix website -- --check
+      - uses: actions/download-artifact@v4
+        with:
+          name: generated-pages
+          path: website
+      # After the download, which carries a version.json of its own.
+      - name: Record the commit source links point at
+        run: python3 tools/docs/sync_docs.py version --source-ref "${{ github.sha }}"
+      - name: Browser API pages, regenerated
+        run: |
+          npm run generate:browser-api --prefix website
+          pages=website/content/docs/plugin-api/browser
+          if ! git diff --quiet -- "$pages"; then
+            echo "::warning::The committed browser API pages were stale; the site is built from regenerated ones. Run npm run generate:browser-api --prefix website and commit: $(git diff --name-only -- "$pages" | tr '\n' ' ')"
+          fi
       - name: Build
         env:
           NEXT_PUBLIC_BASE_PATH: ${{ steps.pages.outputs.base_path }}
@@ -92,8 +120,12 @@ jobs:
   deploy:
     name: Deploy to GitHub Pages
     needs: build
-    if: github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch'
+    if: github.event_name != 'pull_request' && (github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch')
     runs-on: ubuntu-22.04
+    timeout-minutes: 10
+    permissions:
+      pages: write
+      id-token: write
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}

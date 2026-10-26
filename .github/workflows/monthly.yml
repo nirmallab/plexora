@@ -1,0 +1,92 @@
+name: monthly
+
+# Tier 3 of the nirmallab CI (https://github.com/nirmallab/.github): on the 2nd
+# of the month and by hand. weekly.yml covers Linux; this adds the rest of
+# the nine {Linux, Windows, macOS} x {3.12, 3.13, 3.14} combinations, plus:
+#
+#   conformance   `plexora mcp serve` against the spatialbridge conformance
+#                 suite, the protocol SCIMAP Pro speaks to it
+#   upgrade       what `uv lock --upgrade` would change, as a report: an
+#                 upstream release that breaks Plexora (wsidicom's did) shows
+#                 up here before it shows up in a release
+#
+# All on hosted runners: this repository is public, so they are free, and it
+# never runs on the self-hosted machines -- a public repository's pull request
+# could otherwise run a stranger's code on them. GitHub allows five macOS jobs
+# at once per organisation; the six here queue for each other.
+
+on:
+  schedule:
+    - cron: "17 5 2 * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: monthly-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  suite:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows, macos]
+        python: ["3.12", "3.13", "3.14"]
+        shard: [1, 2]
+    uses: nirmallab/.github/.github/workflows/python-tests.yml@v1
+    with:
+      label: ${{ matrix.os }} py${{ matrix.python }} shard ${{ matrix.shard }}/2
+      runs-on: ${{ matrix.os == 'windows' && '"windows-latest"' || '"macos-latest"' }}
+      python: ${{ matrix.python }}
+      sync-args: --locked --extra dev --extra spatial --extra wsi --extra remote --extra jupyter --extra ai --extra bridge
+      node-version: "22"
+      setup: npm ci --prefix plexora/client --no-audit --no-fund
+      pytest-args: -m "not perf"
+      workers: "4"
+      shard: ${{ matrix.shard }}/2
+      durations-file: ci/durations.json
+      durations-run-id: latest
+      session-timeout-minutes: 40
+      timeout-minutes: 50
+
+  conformance:
+    uses: nirmallab/.github/.github/workflows/python-tests.yml@v1
+    with:
+      label: conformance
+      python: "3.13"
+      sync-args: --locked --extra dev --extra ai --extra bridge
+      # The suite's one test lives in the package's __init__.py, which pytest
+      # only collects when told to.
+      pytest-args: --peer "plexora mcp serve" -o python_files=__init__.py --pyargs spatialbridge.conformance
+      workers: "0"
+      timeout-minutes: 15
+
+  upgrade:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+      - uses: astral-sh/setup-uv@v6
+      - name: What an upgrade would change
+        run: |
+          uv lock --upgrade --dry-run 2>&1 | tee upgrade.txt
+          {
+            echo "### uv lock --upgrade --dry-run"
+            echo '```'
+            grep -E "^(Update|Add|Remove)" upgrade.txt || echo "nothing to upgrade"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  report:
+    needs: [suite, conformance, upgrade]
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: nirmallab/.github/actions/ci-report@v1
+        with:
+          # Windows and macOS durations differ from Linux; weekly.yml owns the file.
+          durations: "false"
