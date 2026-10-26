@@ -69,6 +69,14 @@ LAYOUTS = {
             "per_row": 6, "max_width": 778},
     "flips": {"panels": ("morphology", "merge"), "grid": (2, 1), "per_row": 6,
               "max_width": 1024, "offered": True},
+    # Gating's split looks (`SessionOptions.split_views`: a dim marker, and
+    # every look at candidates): the DNA alone, the marker alone from the
+    # display's black to the gate at mid-grey (`marker_gate`) -- dim stain the
+    # display window leaves dark shows grey -- and the two combined, side by
+    # side, ticks on each. Not `gate_relative`: its ramp of gate/4 to gate*4
+    # drew PCNA's background mid-grey too (lsp11385, 2026-10-20).
+    "split": {"panels": ("nuclear", "marker_gate", "merge"), "grid": (3, 1), "per_row": 6,
+              "max_width": 1440, "ticks": True},
     "strip": {"panels": ("morphology", "merge"), "grid": (2, 1), "per_row": 6,
               "max_width": 832, "row_label_px": 64},
     "quadrants": {"panels": ("a", "b"), "grid": (2, 1), "per_row": 6, "max_width": 768,
@@ -89,6 +97,15 @@ RENDERER = "plexora.agent.evidence.collage/3"
 
 #: Where a partner's gate sits on its panel's grey ramp (`co` / `anti`).
 PARTNER_GATE_GREY = 0.4
+
+#: Where the marker's own gate sits on a split look's marker panel
+#: (`marker_gate`): below it grey, above it brighter, black the display's.
+MARKER_GATE_GREY = 0.5
+
+#: The blur (crop pixels, Gaussian sigma) on that panel's marker: a gate is
+#: on a cell's mean, and pixel noise can sit above it (lsp11385 PCNA: noise
+#: p99 497 against a gate of 336), so unblurred the dim fills were speckle.
+MARKER_GATE_BLUR_PX = 2.0
 
 #: The whole image with positives marked (`render_overview`), not a grid layout.
 OVERVIEW = "overview"
@@ -231,12 +248,34 @@ def _panel(crop, kind, spec):
     if kind == "nuclear":
         if not nuclear:
             return np.zeros((size, size, 3), dtype=np.uint8)
-        return cropmod.blend(crop, [_layer(windows, nuclear, NUCLEAR_GREY)], size)
+        panel = cropmod.blend(crop, [_layer(windows, nuclear, NUCLEAR_GREY)], size)
+        return cropmod.mark_centre(panel, crop, spec["radius_px"]) if spec.get("ticks") \
+            else panel
     if kind in ("marker", "a"):
         name = marker if kind == "marker" else spec["a"]
         return cropmod.blend(crop, [_layer(windows, name, WHITE)], size)
     if kind == "b":
         return cropmod.blend(crop, [_layer(windows, spec["b"], WHITE)], size)
+    if kind == "marker_gate":
+        import copy
+
+        from scipy.ndimage import gaussian_filter
+
+        from plexora.server.utils import display_curve
+
+        black, white = (float(v) for v in windows[marker]["window"])
+        curve = windows[marker].get("curve")
+        if spec.get("gate") is not None and float(spec["gate"]) > black:
+            white = display_curve.white_for(black, float(spec["gate"]), MARKER_GATE_GREY, curve)
+        blurred = copy.copy(crop)
+        blurred.planes = dict(crop.planes)
+        if crop.planes.get(marker) is not None:
+            blurred.planes[marker] = gaussian_filter(
+                np.asarray(crop.planes[marker], dtype=np.float32), MARKER_GATE_BLUR_PX)
+        panel = cropmod.blend(blurred, [{"name": marker, "window": [black, white],
+                                         "curve": curve, "color": WHITE}], size)
+        return cropmod.mark_centre(panel, crop, spec["radius_px"]) if spec.get("ticks") \
+            else panel
     if kind == "morphology":
         from plexora.agent.evidence import calibration
 
@@ -283,9 +322,11 @@ def _panel(crop, kind, spec):
                                       "color": WHITE}], size)
         return cropmod.outline(panel, crop, target=cropmod.OUTLINE_COLOR, neighbours=None)
     if kind == "gate_relative":
-        return cropmod.log_window_panel(crop, marker, spec["gate"], size,
-                                        to_log=spec.get("to_log", True),
-                                        half_width=spec.get("half_width"))
+        panel = cropmod.log_window_panel(crop, marker, spec["gate"], size,
+                                         to_log=spec.get("to_log", True),
+                                         half_width=spec.get("half_width"))
+        return cropmod.mark_centre(panel, crop, spec["radius_px"]) if spec.get("ticks") \
+            else panel
     if kind.startswith("ref"):
         name = kind.split(":", 1)[1] if ":" in kind else (spec.get("references") or [None])[0]
         if not name:
@@ -410,6 +451,7 @@ def render_collage(session, data, *, layout, rows, marker, gate=None, high=None,
             "gate": pixel_gate(gate), "references": references, "a": a, "b": b,
             "to_log": to_log or table_log,
             "half_width": half_width, "radius_px": radius_px,
+            "ticks": bool(spec_layout.get("ticks")),
             "partners": {k: partners.get(k) for k in ("co", "anti") if partners.get(k) in
                          partner_names}, "partner_windows": partner_windows}
     manifest_rows = []

@@ -446,6 +446,21 @@ class Engine(BaseEngine):
         (`SessionOptions.tiles`)."""
         return bool(self.options["tiles"])
 
+    def split_on(self, unit, look) -> bool:
+        """Whether a look draws its cells as DNA | marker | combined
+        (`SessionOptions.split_views`): under `bright_rechecks`, a look at
+        candidates (`t4`) of a marker that is not dim -- no `weak_signal`,
+        class not `continuous` / `long_tail`. Split on every dim marker's look
+        and recheck (2026-10-20 A/B) the dim ones lost (pooled |gap| 0.537 ->
+        0.669; p193 CD8a and SOX9 by more than 0.3): the gate sits near their
+        background, which then draws grey everywhere and reads as haze. The
+        rechecks of the other markers gained (0.248 -> 0.168); this option
+        is that finding, still to be confirmed on images it was not found on."""
+        if self.options["split_views"] != "bright_rechecks" or look != "t4":
+            return False
+        return not ("weak_signal" in (unit.get("flags") or ())
+                    or unit.get("class") in ("continuous", "long_tail"))
+
     def split_row(self, unit, a, b):
         """The points a mixed row from `a` to `b` is split into
         (`lattice.split`), joined to the unit's frozen lattice; [] when the

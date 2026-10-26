@@ -96,6 +96,20 @@ READING_GUIDE = {
                         "current gate outward: row i1 is the cells between the current gate and "
                         "candidate c1, row i2 between c1 and c2, and so on. Judge every row on "
                         "its own"),
+    "collage_split": ("each cell is three panels side by side, four magenta ticks on the "
+                      "judged cell's nucleus in each. Left, the DNA alone in grey: where the "
+                      "nucleus is. Middle, the marker alone in grey, lightly blurred (a gate is "
+                      "on a cell's mean, not its brightest pixel), black where the display is "
+                      "black and the current gate at mid-grey: the cell's own stain is grey "
+                      "filling or ringing the nucleus the left panel shows; brighter than "
+                      "mid-grey is above the gate, bright cells go white. Right, the two "
+                      "combined: blue nuclei, the marker in yellow at one fixed window for the "
+                      "whole marker, outlines thin and grey -- whose nucleus the stain sits "
+                      "on. Caption = value and the current call (+/-)"),
+    "collage_flips_split": ("each cell is the three panels of `collage_split`. Rows run from "
+                            "the current gate outward: row i1 is the cells between the "
+                            "current gate and candidate c1, row i2 between c1 and c2, and so "
+                            "on. Judge every row on its own"),
     "collage_flips": ("each cell is two panels, morphology | context, as in the first look, "
                       "the judged nucleus between four magenta ticks. Rows run from the "
                       "current gate outward: row i1 is the cells between the current gate "
@@ -696,13 +710,16 @@ def _images(packet, pairs):
     return images
 
 
-def _multiview(engine, unit, ds, reference=None):
+def _multiview(engine, unit, ds, reference=None, look=None):
     """(layout, partners, evidence) for a look's collage with tiles on
     (`SessionOptions.tiles`): the 2 x 2 multi-view layout `t2m` and the
     partner channels its `co` / `anti` panels show -- the reference, when a
-    look asked for one, in the panel its relation belongs to. (None, None,
-    {}) without tiles: the look is today's."""
+    look asked for one, in the panel its relation belongs to. Without tiles,
+    `split` (DNA | marker | combined) where `engine.split_on` says so for
+    the `look`, else (None, None, {}): the look is morphology | context."""
     if not engine.tiles_on():
+        if look is not None and engine.split_on(unit, look):
+            return "split", None, {}
         return None, None, {}
     partners = dict(engine.partner_panels(unit) or {})
     partners.setdefault("markers", {})
@@ -720,6 +737,8 @@ def _multiview(engine, unit, ds, reference=None):
 
 
 def _panel_words(layout, partners):
+    if layout == "split":
+        return "DNA | marker, mid-grey = the gate | combined"
     if layout != "t2m":
         return None
     names = (partners or {}).get("markers") or {}
@@ -940,7 +959,7 @@ def t4_candidates(engine, units):
              for index, iv in enumerate(intervals)}
     rows = views.flip_rows(ordered, labels=names) if check is None \
         else _check_rows(ds, unit, check, names)
-    layout, partner_panels, multiview = _multiview(engine, unit, ds)
+    layout, partner_panels, multiview = _multiview(engine, unit, ds, look="t4")
     main = collage.render_collage(
         engine.call.session, ds, layout=layout or "flips", rows=rows, marker=channel,
         gate=current, high=unit.get("high"), fmt=_fmt(engine),
@@ -967,10 +986,12 @@ def t4_candidates(engine, units):
                    for iv, pair in zip(intervals, _pairs(rows)) for row in pair]
     compartment = (unit.get("context") or {}).get("compartment")
     stain = f"{compartment} {unit['marker']}" if compartment else unit["marker"]
-    t4_guide = ["rows", "collage_t2m", "collage_flips_m" if layout else "collage_flips",
-                "sheet_candidates", "sheet", "partners"]
-    if not layout:
-        t4_guide.remove("collage_t2m")
+    t4_guide = ["rows", "collage_t2m", "collage_flips_m", "sheet_candidates", "sheet",
+                "partners"]
+    if layout == "split":
+        t4_guide[1:3] = ["collage_split", "collage_flips_split"]
+    elif not layout:
+        t4_guide[1:3] = ["collage_flips"]
     question = (f"{unit['marker']} ({ds.name}): each row holds the cells that change "
                 "call between neighbouring thresholds, nearest the current gate first. "
                 f"For EVERY row, do those cells carry their OWN {stain} stain, around "
