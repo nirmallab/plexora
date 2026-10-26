@@ -26,8 +26,8 @@ const pro = [
 const afterPaying = [
   {
     icon: CreditCard,
-    title: 'Pay by card',
-    body: 'Buy takes you to account.biocognia.com with your seats and licence type filled in: sign in with your email, choose Buy by card, and Paddle, the merchant of record, takes the payment and the tax. Plexora never sees a card.',
+    title: 'Check out on BioCognia',
+    body: 'Buy takes you to the checkout at biocognia.com with your seats and licence type filled in. No account is needed: give the email the keys go to, and Paddle, the merchant of record, takes the card and the tax. Plexora never sees a card.',
   },
   {
     icon: Mail,
@@ -102,8 +102,9 @@ export default function PricingPage() {
           ))}
         </ol>
         <p className="text-sm text-fd-muted-foreground">
-          Bought more than one seat? Your account is now a team: invite people under Team › Members and give each a seat
-          under Team › Seats. Each person gets their own key by email when given a seat. Lost an email?{' '}
+          Bought more than one seat? The others wait in your account: invite people under Team › Members, which makes the
+          account a team, and give each a seat under Team › Seats. Each person gets their own key by email when given a
+          seat. Lost an email?{' '}
           <a href={licencesUrl} className="font-medium text-fd-primary hover:underline">
             Your licences
           </a>{' '}

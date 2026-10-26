@@ -23,14 +23,16 @@ export const accountUrl = 'https://account.biocognia.com';
 export const startUrl = `${accountUrl}/start?product=plexora`;
 /** Start a 30-day trial of Plexora Pro (sign-in first, then one button). */
 export const trialUrl = `${accountUrl}/portal/trial?product=plexora`;
-/** Buy Plexora Pro: the portal's Plans & prices, where checkout opens. */
-export const buyUrl = `${accountUrl}/portal/billing?product=plexora`;
+/** BioCognia's own site, where every BioCognia product is bought. */
+export const storeUrl = 'https://biocognia.com';
+/** Buy Plexora Pro: BioCognia's checkout, or its request for access while
+ * sales are by invitation. It needs no account. */
+export const buyUrl = `${storeUrl}/buy?offer=plexora`;
 
 export type UseClass = 'academic' | 'commercial';
 
-/** The pricing page's Buy: Plans & prices with the seats and use class chosen
- * there filled in (they survive sign-in). One seat is an individual account;
- * two or more make the account a team. */
+/** The pricing page's Buy: BioCognia's checkout with the seats and use class
+ * chosen here filled in, so nobody chooses twice. */
 export function buyHref(seats: number, useClass: UseClass): string {
   const count = Math.max(1, Math.floor(seats));
   return `${buyUrl}&seats=${count}&use_class=${useClass}`;
