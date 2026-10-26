@@ -42,7 +42,9 @@ cron */15 ─▶ one slice of one step: fold → export → verify → purge_bat
   `failed` `purge_unverified` row.
 - **Admin.** Access JWT (RS256, verified against the team certs) → `Bearer
   ADMIN_TOKEN` (constant-time) → a stateless HMAC cookie (`HttpOnly;
-  SameSite=Lax; Path=/admin`, `Secure` on https). Every page is HTML or JSON by
+  SameSite=Lax; Path=/admin`, `Secure` on https). The token sign-in
+  (`POST /admin/login`) takes 10 attempts an hour per address and 30 in all
+  (`src/admin/limit.ts`; counters in `register_quota`). Every page is HTML or JSON by
   `Accept`. Mutations need JSON and same-origin `Sec-Fetch-Site`/`Origin`. The
   CSP is `default-src 'none'`, with the one inline script and stylesheet pinned
   by hash. Charts are inline SVG and nothing loads from outside.
@@ -87,6 +89,12 @@ npx wrangler secret put ADMIN_TOKEN
 npx wrangler deploy
 curl -s https://<telemetry host>/healthz
 ```
+
+`ENVIRONMENT = "production"` in `[vars]`: with `TELEMETRY_HMAC_KEY` or
+`IP_HASH_KEY` unset, registration answers 503, no token verifies and the token
+sign-in is refused. Only a non-production Worker (`.dev.vars`) falls back to
+the development stand-ins in `src/env.ts`. A second registration of an install
+id moves its `last_seen` only; the description changes through its uploads.
 
 To rotate the HMAC key, move the old value to `TELEMETRY_HMAC_KEY_PREVIOUS`
 and set a new `TELEMETRY_HMAC_KEY`. Old tokens keep working and get

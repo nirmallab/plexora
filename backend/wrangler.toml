@@ -39,6 +39,11 @@ crons = ["*/15 * * * *"]
 # Every value is a string, parsed by src/env.ts knob(). Editing one needs a
 # redeploy but never a code change.
 [vars]
+# Production refuses to mint or verify install tokens, hash addresses or take
+# a token sign-in while TELEMETRY_HMAC_KEY / IP_HASH_KEY are unset, instead of
+# falling back to the development stand-ins in src/env.ts. `.dev.vars` sets
+# "development" for `wrangler dev`.
+ENVIRONMENT = "production"
 PUBLIC_BASE_URL = "https://analytics.plexoraapp.com"
 ACCESS_TEAM_DOMAIN = "dawn-night-f2f0.cloudflareaccess.com"
 ACCESS_AUD = "c72556d80ece5aa35f7f7ffda15babb0aa73eb32ede079ec0e58b7cadad50c13"
@@ -62,6 +67,9 @@ MAX_DECOMPRESSED_BYTES = "524288"
 MAX_CLEAN_BYTES = "131072"
 MAX_EVENTS = "200"
 REGISTER_LIMIT_PER_DAY = "200"
+# Admin token sign-in attempts per hour: per address, and all addresses together.
+LOGIN_LIMIT_PER_HOUR = "10"
+LOGIN_GLOBAL_LIMIT_PER_HOUR = "30"
 EVENTS_PER_INSTALL_PER_HOUR = "12"
 EVENTS_PER_INSTALL_PER_DAY = "96"
 DEDUPE_DAYS = "3"
@@ -101,6 +109,6 @@ EXPORT_MAX_DAYS = "7"
 # Secrets, set with `wrangler secret put <NAME>`; never in this file.
 #   TELEMETRY_HMAC_KEY           install-token HMAC key (openssl rand -base64 32)
 #   TELEMETRY_HMAC_KEY_PREVIOUS  the previous key during a rotation (optional)
-#   IP_HASH_KEY                  pepper for the registration quota's IP hash
+#   IP_HASH_KEY                  pepper for the registration and sign-in limits' IP hash
 #   ADMIN_TOKEN                  admin bearer token and sign-in secret
 #   ADMIN_COOKIE_KEY             admin cookie HMAC key (optional; derived from ADMIN_TOKEN)

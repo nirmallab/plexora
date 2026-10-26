@@ -11,7 +11,7 @@
  * still honoured, and the response says `rotate: true` so the client
  * re-registers and picks up a token under the current key.
  */
-import type { Env } from '../env';
+import { type Env, tokenSecret } from '../env';
 
 export const TOKEN_PREFIX = 'PLEXORAT1';
 
@@ -58,10 +58,11 @@ export function hmacKey(secret: string): Promise<CryptoKey> {
   return key;
 }
 
-function currentSecret(env: Env): string {
-  // Local development only: with no secret set nothing would work at all. A
-  // deployed Worker always has the secret (the runbook sets it first).
-  return env.TELEMETRY_HMAC_KEY || 'plexora-dev-only-telemetry-key';
+/** Thrown by mintToken when production has no TELEMETRY_HMAC_KEY. */
+export class SigningKeyMissing extends Error {
+  constructor() {
+    super('TELEMETRY_HMAC_KEY is not set.');
+  }
 }
 
 export async function mintToken(
@@ -77,8 +78,10 @@ export async function mintToken(
     iat: issuedAt,
     exp: issuedAt + ttlSeconds,
   };
+  const secret = tokenSecret(env);
+  if (!secret) throw new SigningKeyMissing();
   const body = base64url(encoder.encode(JSON.stringify(payload)));
-  const signature = await crypto.subtle.sign('HMAC', await hmacKey(currentSecret(env)), encoder.encode(body));
+  const signature = await crypto.subtle.sign('HMAC', await hmacKey(secret), encoder.encode(body));
   return { token: `${TOKEN_PREFIX}.${body}.${base64url(new Uint8Array(signature))}`, expires: payload.exp };
 }
 
@@ -97,6 +100,10 @@ export async function verifyToken(
   atSeconds: number,
 ): Promise<VerifiedToken | null> {
   if (!token || token.length > 1024) return null;
+  // Production without the key verifies nothing, not even under the previous
+  // key: a half-configured deploy is refused rather than half-trusted.
+  const current = tokenSecret(env);
+  if (!current) return null;
   const parts = token.split('.');
   if (parts.length !== 3 || parts[0] !== TOKEN_PREFIX) return null;
   const [, body, sig] = parts as [string, string, string];
@@ -108,7 +115,7 @@ export async function verifyToken(
     return null;
   }
   let rotate = false;
-  if (!(await verifyWith(currentSecret(env), body, signature))) {
+  if (!(await verifyWith(current, body, signature))) {
     const previous = env.TELEMETRY_HMAC_KEY_PREVIOUS;
     if (!previous || !(await verifyWith(previous, body, signature))) return null;
     rotate = true;
