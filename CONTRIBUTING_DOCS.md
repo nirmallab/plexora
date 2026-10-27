@@ -244,9 +244,11 @@ your own projects:
 ```bash
 # 1. A scratch data root holding copies of the demo projects shots.mjs names
 #    (project folders plus their entries in config.json; images stay where they are).
-# 2. An empty licence directory, so the app runs as the free app.
+# 2. An empty licence directory, so the app runs as the free app. --no-token
+#    because the capture script does not send the viewer token (every page is
+#    a 403 without it); the server listens on 127.0.0.1 only.
 BIOCOGNIA_DIR=/tmp/plx-free BIOCOGNIA_OFFLINE=1 PLEXORA_TELEMETRY=off \
-  plexora --data-dir /tmp/plx-shots --port 8791 --no-browser &
+  plexora --data-dir /tmp/plx-shots --port 8791 --no-browser --no-token &
 curl -s http://127.0.0.1:8791/license/status     # "state": "free"
 # 3. Capture everything, or one shot.
 node tools/docs/screenshots.mjs --base http://127.0.0.1:8791

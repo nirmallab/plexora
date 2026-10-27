@@ -210,6 +210,21 @@ const QUIET = [
     { move: [1100, 20] },
 ];
 
+/** Orion crop's H&E layer off, so Cell Explorer colours sit on the multiplex
+ * image; the cards' folds are left as they are. */
+const HE_OFF = { eval: `(() => {
+    const he = document.querySelector("#layer_card_list > .layer-card");
+    if (he && !he.classList.contains("is-layer-off")) he.querySelector(".layer-card-eye").click();
+})()` };
+
+/** The Cell Explorer card open and the image cards folded above it. */
+const EXPLORER_OPEN = { eval: `(() => {
+    const cards = [...document.querySelectorAll("#layer_card_list > .layer-card")];
+    for (const card of cards) if (!card.classList.contains("is-collapsed")) card.querySelector(".layer-card-collapse")?.click();
+    const explorer = document.getElementById("cell_explorer_panel_section")?.closest(".layer-card, [class*=card]");
+    if (explorer?.classList.contains("is-collapsed")) explorer.querySelector(".layer-card-collapse, [class*=collapse]")?.click();
+})()` };
+
 /** Close any toast a first visit raises. */
 const DISMISS = { eval: "document.querySelectorAll('.plx-toast-dismiss').forEach((b) => b.click())" };
 
@@ -252,8 +267,9 @@ export const SHOTS = [
     {
         name: "features/viewer-depth-strip",
         url: "/f8iic-smallchunk",
-        steps: [DISMISS],
+        steps: [DISMISS, { click: "[data-depth-mode=slab]" }, { wait: 4000 }, ...QUIET],
         after: 2500,
+        limit: 60000,
     },
     {
         name: "features/viewer-3d",
@@ -298,7 +314,24 @@ export const SHOTS = [
         steps: [{ click: "#project-view-list" }],
         after: 600,
     },
-    { name: "features/projects-settings-data-dir", url: "/settings", limit: 8000 },
+    {
+        // The capture server's data root is a scratch folder named by
+        // --data-dir; a reader's default location is shown in its place, and
+        // the "set by the environment" notice that flag raises is hidden.
+        name: "features/projects-settings-data-dir",
+        url: "/settings",
+        steps: [{ eval: `(() => {
+            const panel = document.getElementById("settings_panel_data");
+            for (const el of panel.querySelectorAll("*")) {
+                if (el.children.length) continue;
+                if (el.textContent.includes("shots-root") || el.textContent.startsWith("/")) el.textContent = "~/Library/Application Support/plexora";
+                el.textContent = el.textContent.replace(/ · chosen by .*$/, "");
+            }
+            const notice = [...panel.querySelectorAll("*")].find((e) => e.textContent.trim().startsWith("Set by the environment"));
+            (notice?.closest("[class*=notice], [class*=callout], [class*=warn], [class*=card]") || notice?.parentElement)?.style.setProperty("display", "none");
+        })()` }, ...QUIET],
+        limit: 8000,
+    },
     {
         name: "features/export-menu",
         url: "/exemplar-001",
@@ -309,7 +342,7 @@ export const SHOTS = [
         name: "features/remote-connect",
         url: "/",
         steps: [{ click: "#quick_view_where" }, { wait: 300 }, { eval: "[...document.querySelectorAll('[role=menuitem], button, li')].find((e) => /Add a server/.test(e.textContent) && e.offsetParent)?.click()" },
-                { wait: 600 }, { eval: "[...document.querySelectorAll('button')].find((b) => /Add a new server/.test(b.textContent) && b.offsetParent)?.click()" }],
+                ...QUIET],
         after: 1000,
     },
 
@@ -357,7 +390,7 @@ export const SHOTS = [
     {
         name: "plugins/card-anatomy",
         url: "/exemplar-001?tool=roi",
-        steps: [EXEMPLAR, importRois("exemplar-001"), { goto: "/exemplar-001?tool=roi" }],
+        steps: [EXEMPLAR, importRois("exemplar-001"), { goto: "/exemplar-001?tool=roi" }, view(0.33, 0.24, 0.33, 0.3), ...QUIET],
         after: 2000,
     },
     {
@@ -398,19 +431,19 @@ export const SHOTS = [
     {
         name: "plugins/qc-segmentation",
         url: "/exemplar-001?tool=qc",
-        steps: [EXEMPLAR],
+        steps: [EXEMPLAR, { if: "document.getElementById('qc_seg_fold')?.getAttribute('aria-expanded') !== 'true' || !document.getElementById('qc_seg_body')?.offsetHeight", then: [{ click: "#qc_seg_fold" }] }, { wait: 2500 }, EXPLORER_OPEN, { wait: 800 }, ...QUIET],
         after: 2500,
     },
     {
         name: "plugins/cell-explorer",
         url: "/Orion%20crop?tool=cell_explorer",
-        steps: [],
+        steps: [HE_OFF, { eval: "__plexora.plugins.get('cell_explorer').sidebarController.select('phenotype')" }, { wait: 2500 }, EXPLORER_OPEN, { wait: 800 }, ...QUIET],
         after: 3000,
     },
     {
         name: "plugins/cell-explorer-numeric",
         url: "/Orion%20crop?tool=cell_explorer",
-        steps: [],
+        steps: [HE_OFF, { eval: "__plexora.plugins.get('cell_explorer').sidebarController.select('Area')" }, { wait: 3000 }, EXPLORER_OPEN, { wait: 800 }, ...QUIET],
         after: 3000,
     },
     {

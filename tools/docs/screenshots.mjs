@@ -12,7 +12,8 @@
 // Run it against a Plexora that is (1) unlicensed, so no paid control appears
 // (BIOCOGNIA_DIR pointing at an empty folder does that), and (2) started with
 // --data-dir on a copy of the demo projects shots.mjs names, never your own
-// data root: opening a project writes to it. CONTRIBUTING_DOCS.md has the
+// data root: opening a project writes to it, and (3) with --no-token, as no
+// viewer token is sent. CONTRIBUTING_DOCS.md has the
 // whole recipe. Chrome is driven over the DevTools protocol with Node 22's
 // built-in WebSocket; nothing to install.
 import { spawn } from "node:child_process";
