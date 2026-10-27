@@ -760,7 +760,7 @@
       ]
     }
   },
-  "route_count": 247,
+  "route_count": 248,
   "routes": [
     "DELETE /nodes/<name>/resources/<resource_id>",
     "DELETE /project/<string:name>/layers/<path:layer_id>",
@@ -1005,6 +1005,7 @@
     "POST /volume/<string:datasource>/surfaces/estimate",
     "POST /volume/<string:datasource>/surfaces/import",
     "POST /volume/<string:datasource>/tracks",
+    "POST /volume/_bench/flush",
     "PUT /project/<string:name>/layers/order",
     "PUT /view_state/<string:datasource>",
     "PUT /view_transform/<string:datasource>",

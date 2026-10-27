@@ -931,7 +931,7 @@
       ]
     }
   },
-  "route_count": 270,
+  "route_count": 271,
   "routes": [
     "DELETE /nodes/<name>/resources/<resource_id>",
     "DELETE /plugins/figure_builder/api/captures",
@@ -1197,6 +1197,7 @@
     "POST /volume/<string:datasource>/surfaces/estimate",
     "POST /volume/<string:datasource>/surfaces/import",
     "POST /volume/<string:datasource>/tracks",
+    "POST /volume/_bench/flush",
     "PUT /plugins/figure_builder/api/figures/<figure_id>",
     "PUT /plugins/figure_builder/api/figures/<figure_id>/thumbnail",
     "PUT /project/<string:name>/layers/order",

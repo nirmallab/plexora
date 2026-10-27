@@ -760,7 +760,7 @@
       ]
     }
   },
-  "route_count": 260,
+  "route_count": 261,
   "routes": [
     "DELETE /nodes/<name>/resources/<resource_id>",
     "DELETE /plugins/video_studio/api/videos/<video_id>",
@@ -1017,6 +1017,7 @@
     "POST /volume/<string:datasource>/surfaces/estimate",
     "POST /volume/<string:datasource>/surfaces/import",
     "POST /volume/<string:datasource>/tracks",
+    "POST /volume/_bench/flush",
     "PUT /plugins/video_studio/api/videos/<video_id>",
     "PUT /project/<string:name>/layers/order",
     "PUT /view_state/<string:datasource>",
