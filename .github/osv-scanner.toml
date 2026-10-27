@@ -73,3 +73,8 @@ id = "RUSTSEC-2026-0369"
 ignoreUntil = 2027-01-31
 reason = "zip 4 via tauri-plugin-updater (Windows only; 2.14.0, the latest, still requires zip ^4). It extracts only update archives whose minisign signature has already verified, and the updater is off until PLEXORA_UPDATER_PUBKEY is set."
 
+
+[[IgnoredVulns]]
+id = "GHSA-qwgh-2vcv-g2f7"
+ignoreUntil = 2027-01-31
+reason = "block-buffer 0.10.4 via digest 0.10 and sha2 0.10, which only tauri-codegen (build time) and wry require; the fix is block-buffer 0.12.1, which needs sha2 0.11, so it waits on Tauri. Reaching it needs a hash's compress callback to panic and the panic to be caught mid-update, and sha2's compression never panics."

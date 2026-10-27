@@ -228,7 +228,7 @@ mistune==3.3.4
     # via nbconvert
 more-itertools==11.1.0
     # via annsel
-msgpack==1.2.1
+msgpack==1.2.4
     # via distributed
 multidict==6.7.1
     # via
