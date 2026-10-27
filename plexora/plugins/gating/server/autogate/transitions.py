@@ -316,7 +316,8 @@ def _look(engine, packet, answer, *, where):
         return _outcome(unit, asked=True)
     if answer.within:
         return _within(engine, unit, packet, answer)
-    direction, why = words.direction_from_rows(answer.rows, answer.pattern)
+    direction, why = words.direction_from_rows(answer.rows, answer.pattern,
+                                               mixed_down=engine.vision_first_on())
     _read_look(unit, answer, direction, why)
     if direction == "no_positives":
         return _no_positives(engine, unit, where)
@@ -778,8 +779,13 @@ def apply_regression(engine, packet, answer):
                      "the whole-image view shows an artifact driving the positives")
         return _outcome(unit)
     # cannot_tell: a gate that failed a whole-image check and that the image
-    # does not vouch for is not accepted.
+    # does not vouch for is not accepted -- unless the looks placed it with
+    # vision first: then it stands, at low confidence (`confidence_for`).
     unit["regression_confirmed"] = False
+    if engine.vision_first_on() and unit.get("own_seen") and unit.get("path") in ("t2", "t3", "t4"):
+        unit["vision_kept"] = True
+        engine.finalize(unit, method=unit.get("method") or "ai_accepted")
+        return _outcome(unit)
     engine.close(unit, "manual_review_recommended",
                  "the gate failed a whole-image check and the whole-image view could not "
                  "settle it; it is written for manual review", proposed=unit.get("candidate"))
@@ -987,7 +993,8 @@ def apply_display(engine, packet, answer):
     on the project's calibration as a choice (`record_choices`) that every
     later picture -- and the viewer, for channels nobody set -- draws with. A
     row the answer leaves out keeps the rule (`rule:no_answer`); a key that is
-    not a row is refused."""
+    not a row is refused. What the answer says it saw (`_observed`) is kept
+    with the row's choice."""
     from plexora.agent.errors import AgentError
     from plexora.agent.evidence import calibration
 
@@ -997,7 +1004,10 @@ def apply_display(engine, packet, answer):
     entry = (display.setdefault("projects", {})).setdefault(project, {"status": "pending"})
     channels = entry.get("rows") or {}
     markers = [r["marker"] for r in evidence.get("rows") or []]
-    unknown = sorted((set(answer.background_ok) | set(answer.structure_ok)) - set(markers))
+    keyed = set()
+    for field in ("background_ok", "structure_ok", *OBSERVED_FIELDS):
+        keyed |= set(getattr(answer, field, None) or {})
+    unknown = sorted(keyed - set(markers))
     if unknown:
         raise AgentError("invalid_input", f"not a row of this grid: {', '.join(unknown)}",
                          detail={"rows": markers})
@@ -1021,12 +1031,17 @@ def apply_display(engine, packet, answer):
         choice.update(answers={"background_ok": background, "structure_ok": structure},
                       packet_id=packet.get("packet_id"), agent=engine.options["agent"],
                       at=_now())
+        seen = _observed(answer, marker, (entry.get("spread") or {}).get(channel) or {})
+        if seen:
+            choice["observed"] = seen
+            entry.setdefault("observed", {})[marker] = _observed_line(seen)
         choices[channel] = choice
         chosen[marker] = {"channel": channel, "column": choice["column"],
                           "chosen_by": choice["chosen_by"]}
     revision = None
     if choices:
         _record, revision = calibration.record_choices(project, choices)
+        engine.forget_observed(project)
     entry.setdefault("chosen", {}).update({m: c["chosen_by"] for m, c in chosen.items()})
     entry["asked"] = sorted(set(entry.get("asked") or ()) | set(entry.get("out") or ())
                             | {c["channel"] for c in chosen.values()})
@@ -1038,6 +1053,46 @@ def apply_display(engine, packet, answer):
         *(entry.get("unshown") or []),
         *[c["channel"] for c in chosen.values() if c["chosen_by"] != "rule:no_answer"]]))
     return {"project": project, "chosen": chosen, "revision": revision}
+
+
+#: The fields of a contrast check's answer about what it saw (`DisplaySetupAnswer`).
+OBSERVED_FIELDS = ("pattern_seen", "stain_location", "bright_artifact", "dim_stained")
+
+
+def _observed(answer, marker, tiles):
+    """What a contrast check's answer says it saw of one row, or None when
+    it says nothing about it: {pattern_seen, stain_location, bright: [{id,
+    cell_id, x, y, value, artifact}], dim: [{..., stained}], notes?, flags?}
+    -- each tile of the spread strip with the cell it showed (`tiles`, from
+    the strip's manifest). A tile id the row did not show is dropped."""
+    said = {field: (getattr(answer, field, None) or {}).get(marker) for field in OBSERVED_FIELDS}
+    if all(value is None for value in said.values()):
+        return None
+    artifacts = set(said["bright_artifact"] or ())
+    stained = set(said["dim_stained"] or ())
+    out = {"pattern_seen": said["pattern_seen"], "stain_location": said["stain_location"],
+           "bright": [{"id": t, **cell, "artifact": t in artifacts}
+                      for t, cell in tiles.items() if t.startswith("b")],
+           "dim": [{"id": t, **cell, "stained": t in stained}
+                   for t, cell in tiles.items() if t.startswith("d")],
+           "answered": sorted(f for f, value in said.items() if value is not None)}
+    if answer.notes:
+        out["notes"] = answer.notes
+    if answer.artifact_flags:
+        out["flags"] = list(answer.artifact_flags)
+    return out
+
+
+def _observed_line(seen):
+    """What a check saw of one row, in one line (the session status)."""
+    from plexora.plugins.gating.server.autogate.engine import observed_line
+
+    stained = [d for d in seen.get("dim") or [] if d.get("stained")]
+    debris = [b for b in seen.get("bright") or [] if b.get("artifact")]
+    return observed_line({"pattern_seen": seen.get("pattern_seen"),
+                          "stain_location": seen.get("stain_location"),
+                          "n_dim": len(seen.get("dim") or []), "dim_stained": stained,
+                          "n_bright": len(seen.get("bright") or []), "artifacts": debris})
 
 
 def strike_display(engine, packet):

@@ -25,7 +25,7 @@ def versions() -> tuple:
 
     return (schemas.PROFILE_VERSION, lattice.VERSION, scoring.VERSION, calibration.VERSION,
             f"scale:{calibration.SCALE}", collage.RENDERER, display_grid.RENDERER,
-            absence.RENDERER)
+            display_grid.SPREAD_RENDERER, absence.RENDERER)
 
 
 def key(packet, images, *, versions=()) -> str:

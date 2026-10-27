@@ -3121,7 +3121,10 @@ deliberately left out and what should be built next.
   background draws as a faint floor rather than clipped), `background`,
   `noise_p99` and the `titre` (the bright cells' p99, their brightest
   structure), re-anchoring on the `low` band when the negatives band is
-  itself stained; `measure_nuclear` reads the nuclear stain on its own
+  itself stained, and `cells.spread` holds a few bright and near cells
+  picked far apart (`_spread`) for the contrast check's second picture,
+  because debris sits in a few places and a real stain across the tissue;
+  `measure_nuclear` reads the nuclear stain on its own
   cells, banded on its table column with no background band because every
   cell is stained -- `typical` the p30-50 band's disc p99 median, `black`
   their discs' low percentile (the gaps between nuclei), `titre` the bright
@@ -3152,12 +3155,16 @@ deliberately left out and what should be built next.
   a time, because a session's bulk pass and the viewer's first-open
   calibration may both be at it. Anchoring white on the brightest cells' raw
   maximum let a few bright cells, a fold or an aggregate set the scale, and a
-  cell at a human's gate drew black; `calibration.VERSION` is 6 (the nuclear stain measured on its own cells) and a stored
+  cell at a human's gate drew black; `calibration.VERSION` is 7 (6: the nuclear stain measured on its own cells; 7: spread picks, and a choice's `observed`, read back by `calibration.observed`) and a stored
   record carries the QC fingerprint it was anchored under, so a QC change
   recomputes it), `display_grid.py` (the contrast check: markers in rows,
   the five ladder columns side by side as 2 x 2 level-0 crops, pixels at
   white in `calibration.CLIP_COLOR`, columns unmarked so the picture does not
-  suggest an answer; `RENDERER` `display_grid/1`), `display_contrast.py` (the
+  suggest an answer; `RENDERER` `display_grid/1`; `render_spread_strip` is
+  the second picture, bright tiles `b1..` and dim tiles `d1..` from
+  `cells.spread` at the rule's column, `SPREAD_RENDERER` in the memo
+  versions, because the grid cannot show whether the brightest stain is the
+  cells' own and whether dim cells carry it), `display_contrast.py` (the
   same calibration offered to the viewer, through `calibration.view_spec`, so
   `entries` offers the markers at the lifted window and the nuclear stain on
   its own nuclei rather than leaving it to the viewer's levelling, each
@@ -3354,6 +3361,19 @@ deliberately left out and what should be built next.
   (`Engine.partner_panels` over `partners.partner_plan`), 64 px a panel,
   reading guide `collage_t2m`/`collage_flips_m` — and adds `tiles:1` to a
   packet's memo key (off, the key is the old one byte for byte).
+  `SessionOptions.observations` (`off` default | `use`,
+  `schemas.OBSERVATION_MODES`; experimental) makes gating use what the
+  contrast check saw (`AUTOMATIC_GATING.md` §2d): `Engine.observed_for`
+  reads `calibration.observed`, `observed_brief` puts it in every look's
+  evidence, `observed_start` adds the dim stained cells' anchor as an
+  `obs:dim` candidate (lattice family `obs`) and brings a higher start down
+  to it, never below the onset or across a judged row, `note_observed` sets
+  the soft flags `bright_artifacts`/`observed_off_pattern` and the report's
+  "contrast check saw" line, the context sheet keeps its fields off the
+  debris and may show a `dim_stained` field (`gate_sampling`'s `around=`),
+  and `bulk.decide_first` sends a clean T1 split with a finding to a look
+  instead of accepting it; on, an `observed:` digest joins the memo key
+  (`tests/test_contrast_observations.py`).
   `Engine._migrate` resumes a session stored with the model: `hybrid`
   `tiles`/`full` becomes `tiles: True`, a unit `awaiting_correction` goes
   back to `awaiting_regression`, an outstanding `correction_check` is
@@ -3460,9 +3480,14 @@ deliberately left out and what should be built next.
   every later picture is drawn with what it settles: `packets.display_setup`
   sends an `agent/evidence/display_grid` sheet, the answer
   (`DisplaySetupAnswer`: `background_ok`/`structure_ok`, column ids per
-  marker) goes through `transitions.apply_display` to `calibration.
+  marker, and the optional `pattern_seen`/`stain_location`/
+  `bright_artifact`/`dim_stained` maps about the spread strip, optional so an
+  answer remembered from before it still replays) goes through
+  `transitions.apply_display` to `calibration.
   pick_column`/`record_choices` -- code picks the column, the model never
-  types a window -- and a row left out keeps the rule (`rule:no_answer`).
+  types a window -- and a row left out keeps the rule (`rule:no_answer`);
+  what it saw is stored as the choice's `observed`. A strip that cannot be
+  drawn is logged (`display_spread_unavailable`) and the grid goes alone.
   `Engine.display_due` holds an image's looks until its check is settled
   (it waits on the bulk pass's calibration), `settle_display` rolls the
   per-image states (`schemas.DISPLAY_STATES`) up, and `struck_out` →
@@ -4250,7 +4275,9 @@ deliberately left out and what should be built next.
   `marker,value` file, `bench.reference_csv`; `--truth-column "Human gate"`
   picks the gates column of a wider file); `--variants
   baseline,tiles` runs one session per variant (`bench.variant_arm`,
-  `bench.VARIANTS`; `tiles` is `{"tiles": True}`), the tiles arm against
+  `bench.VARIANTS`; `tiles` is `{"tiles": True}`, `observed` is
+  `{"observations": "use"}`, answered from the truth by
+  `TruthAgent.spread_answer`), the tiles arm against
   the baseline; `--synthetic spatial` runs `bench_data.SPATIAL_SCENARIOS` (scenes with
   per-cell causes), and the summary's `causes` (`bench.cause_scores`,
   `CAUSE_METRICS`) says where each arm's errors fall; `--score-session ID` scores a
@@ -9851,7 +9878,9 @@ in **5.6 s**.
   as inferred, never as the sample's diagnosis.
 - **`tiles: false` is a session without it, byte for byte**
   (`SessionOptions.tiles`); `tiles:1` joins a packet's memo key only while
-  it is on, so turning it on is a new look, never a remembered one.
+  it is on, so turning it on is a new look, never a remembered one. The same
+  holds for `observations: "off"`: the `observed:` digest joins the key only
+  with `use`.
 - **A spatial regression check may hold or reject, never move a gate**
   (`engine.SPATIAL_CHECKS`: `edge_ratio`, `spatial_tiles`), because they say
   where positives are, not how many.

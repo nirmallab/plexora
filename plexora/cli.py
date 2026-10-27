@@ -1672,8 +1672,9 @@ def _build_ai_parser():
                        help="Gating: the ablation's variants, comma-separated -- "
                             "baseline, tiles (every look drawn as the 2 x 2 multi-view "
                             "block), absence (the absence check on), check (the classifier "
-                            "check on), no_classifier (no classifier layer); each runs its "
-                            "own session (default baseline).")
+                            "check on), no_classifier (no classifier layer), observed (what "
+                            "the contrast check saw, used by gating: experimental); each runs "
+                            "its own session (default baseline).")
     bench.add_argument("--truth-column", dest="truth_column", default=None, metavar="NAME",
                        help="With --truth csv:<path>: the header column holding the gates "
                             "(\"Human gate\"); the markers are the first column.")
