@@ -212,7 +212,8 @@ def test_the_viewer_contrast_stands_on_glass_under_the_pointer():
     assert "opacity: 1;" in shown and "pointer-events: auto;" in shown
     # No grip: the pane is the affordance, and six dots need a gutter it lacks.
     assert "#gate_contrast_control::before {\n    content: none;" in styles
-    assert ("#openseadragon.brightfield-ground ~ .plx-canvas-safe "
+    # By the ground's class, not core's viewer id (test_plugin_css_boundary).
+    assert ("\n.brightfield-ground ~ .plx-canvas-safe "
             "#gate_contrast_control::after {") in styles
     # The rail is not a place to grab it.
     track = styles[styles.index(".gate-contrast-slider {"):]

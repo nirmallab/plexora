@@ -494,15 +494,15 @@
           "tool_panel_slot": "gating/panel.html"
         },
         "active_tool_scripts": [
-          "/plugins/gating/static/gatingApi.js?v=20261024_drop_router",
-          "/plugins/gating/static/csvGatingList.js?v=20261024_drop_router",
-          "/plugins/gating/static/gatingPlanes.js?v=20261024_drop_router",
-          "/plugins/gating/static/gatingClassifier.js?v=20261024_drop_router",
-          "/plugins/gating/static/gatingSidebarController.js?v=20261024_drop_router",
-          "/plugins/gating/static/gatingAgentBridge.js?v=20261024_drop_router"
+          "/plugins/gating/static/gatingApi.js?v=20261027_gating_ground_class",
+          "/plugins/gating/static/csvGatingList.js?v=20261027_gating_ground_class",
+          "/plugins/gating/static/gatingPlanes.js?v=20261027_gating_ground_class",
+          "/plugins/gating/static/gatingClassifier.js?v=20261027_gating_ground_class",
+          "/plugins/gating/static/gatingSidebarController.js?v=20261027_gating_ground_class",
+          "/plugins/gating/static/gatingAgentBridge.js?v=20261027_gating_ground_class"
         ],
         "active_tool_styles": [
-          "/plugins/gating/static/gating.css?v=20261024_drop_router"
+          "/plugins/gating/static/gating.css?v=20261027_gating_ground_class"
         ],
         "available_tools": [
           {
@@ -773,12 +773,12 @@
         "/client/src/js/views/toolLoader.js?v=20261025_dataset_answers",
         "/client/src/js/services/pageBoot.js?v=20260825_app_shell",
         "/client/src/js/services/appRouter.js?v=20261002_hash_tab",
-        "/plugins/gating/static/gatingApi.js?v=20261024_drop_router",
-        "/plugins/gating/static/csvGatingList.js?v=20261024_drop_router",
-        "/plugins/gating/static/gatingPlanes.js?v=20261024_drop_router",
-        "/plugins/gating/static/gatingClassifier.js?v=20261024_drop_router",
-        "/plugins/gating/static/gatingSidebarController.js?v=20261024_drop_router",
-        "/plugins/gating/static/gatingAgentBridge.js?v=20261024_drop_router",
+        "/plugins/gating/static/gatingApi.js?v=20261027_gating_ground_class",
+        "/plugins/gating/static/csvGatingList.js?v=20261027_gating_ground_class",
+        "/plugins/gating/static/gatingPlanes.js?v=20261027_gating_ground_class",
+        "/plugins/gating/static/gatingClassifier.js?v=20261027_gating_ground_class",
+        "/plugins/gating/static/gatingSidebarController.js?v=20261027_gating_ground_class",
+        "/plugins/gating/static/gatingAgentBridge.js?v=20261027_gating_ground_class",
         "/client/src/js/services/viewerLoader.js?v=20260915_center_loader",
         "/client/src/js/services/viewSnapshot.js?v=20261004_magic_select",
         "/client/src/js/services/segmentService.js?v=20261011_merge",
@@ -846,7 +846,7 @@
         "/client/src/css/quickView.css?v=20261021_native_drop",
         "/client/src/css/agentPanel.css?v=20261018_agent_panel_margin",
         "/client/src/css/chatPanel.css?v=20261011_fold",
-        "/plugins/gating/static/gating.css?v=20261024_drop_router"
+        "/plugins/gating/static/gating.css?v=20261027_gating_ground_class"
       ],
       "tool_mounts": [
         [

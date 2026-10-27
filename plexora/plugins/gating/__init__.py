@@ -12,7 +12,7 @@ scipy/sklearn/anndata/h5py.
 
 from plexora.api.plugin import Plugin, Requires
 
-VERSION = "20261024_drop_router"
+VERSION = "20261027_gating_ground_class"
 
 
 def _blueprint():
