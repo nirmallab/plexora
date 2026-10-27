@@ -11,6 +11,7 @@ import { type AppEnv, NO_STORE } from './http';
 import { addPending, cachedState } from './telemetry/budget';
 import { scheduled } from './telemetry/cron';
 import { telemetry } from './telemetry/ingest';
+import { SCHEMA_VERSION, VECTORS_FINGERPRINT } from './telemetry/schema';
 
 const app = new Hono<AppEnv>();
 
@@ -25,10 +26,19 @@ app.use('*', async (_c, next) => {
 // No CORS on /v1: the only caller is the Plexora server process, never a page.
 app.route('/v1/telemetry', telemetry);
 
-/** Liveness, from the isolate cache only: never a D1 read. */
+/**
+ * Liveness, from the isolate cache only: never a D1 read. `vectors` names the
+ * allowlist this deploy validates against, so a release can check that the
+ * live Worker knows everything the client it ships can say
+ * (scripts/release.py telemetry).
+ */
 app.get('/healthz', (c) => {
   const now = nowSeconds();
-  return c.json({ ok: true, ts: now, budget_state: cachedState(now) }, 200, NO_STORE);
+  return c.json(
+    { ok: true, ts: now, budget_state: cachedState(now), schema: SCHEMA_VERSION, vectors: VECTORS_FINGERPRINT },
+    200,
+    NO_STORE,
+  );
 });
 
 app.route('/admin', admin);

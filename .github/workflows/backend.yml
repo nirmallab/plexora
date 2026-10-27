@@ -1,7 +1,13 @@
 name: backend
 
 # The telemetry Worker (backend/): typecheck and its vitest projects, on the
-# pushes that change it. weekly.yml runs the same every Monday.
+# pushes that change it, and on main a deploy of what passed. weekly.yml runs
+# the tests every Monday.
+#
+# The deploy is one of two ways the Worker stays current; the other is
+# scripts/release.py, which deploys it from a release machine before any
+# build that needs it. Without the Cloudflare secrets (backend/README.md, "One-
+# time setup") the deploy job says so and does nothing.
 
 on:
   push:
@@ -37,3 +43,46 @@ jobs:
       - run: npm ci --no-audit --no-fund
       - run: npm run typecheck
       - run: npm test
+
+  deploy:
+    needs: test
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    concurrency:
+      group: backend-deploy
+      cancel-in-progress: false
+    steps:
+      - id: gate
+        name: Cloudflare credentials
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          if [ -n "$CLOUDFLARE_API_TOKEN" ] && [ -n "$CLOUDFLARE_ACCOUNT_ID" ]; then
+            echo "deploy=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "::notice::CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID are not set, so CI does not deploy the Worker; python scripts/release.py telemetry does (backend/README.md)."
+            echo "deploy=false" >> "$GITHUB_OUTPUT"
+          fi
+      - if: steps.gate.outputs.deploy == 'true'
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
+      # No dependency cache: what this job installs is what it deploys.
+      - if: steps.gate.outputs.deploy == 'true'
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: "22"
+      # Installed without the token in the environment: install scripts never see it.
+      - if: steps.gate.outputs.deploy == 'true'
+        working-directory: backend
+        run: npm ci --no-audit --no-fund
+      # Deploys, then waits until /healthz reports this commit's vectors. The
+      # test job above already ran typecheck and the tests.
+      - if: steps.gate.outputs.deploy == 'true'
+        name: Deploy and verify
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: python3 scripts/release.py --skip-tests telemetry --deploy

@@ -11,7 +11,7 @@ part of the Python wheel and shares no code with SCIMAP Pro's backend.
 client ──POST /v1/telemetry/register──▶ token (PLEXORAT1.<b64url payload>.<HMAC>)
 client ──POST /v1/telemetry/events (gzip JSON)──▶ cleanBatch (vectors) ──▶ one db.batch():
         S1 batches row (events_json + events_gz)   S2 installs upsert (only with session.summary)
-        S3 budget_daily upsert RETURNING ──▶ 202 {accepted, rejected, dropped, duplicate, rotate, config}
+        S3 budget_daily upsert RETURNING ──▶ 202 {accepted, rejected, dropped, unknown, duplicate, rotate, config}
 cron */15 ─▶ one slice of one step: fold → export → verify → purge_batches → purge_rollups
              → archive_sweep → finalize (+ r2_reconcile on Sundays, monthly_export/verify on the 1st)
 ```
@@ -20,10 +20,26 @@ cron */15 ─▶ one slice of one step: fold → export → verify → purge_bat
   generated from the Python client's `schema.py` (`scripts/sync_telemetry_vectors.py`;
   never hand-edit). `src/telemetry/schema.ts` is a generic interpreter of its
   type language (`enum, pattern, int, bool, hist, list, map, struct`). Nothing
-  in the Worker names a field for validation. An invalid event is rejected
-  whole (counted in `rejected`); it is never trimmed into shape. Unknown keys
-  are never copied. Diagnostics-level fields are stripped when the effective
-  level is anonymous (client `mode`, `client_config`, or budget state).
+  in the Worker names a field for validation. The vectors are compiled in at
+  deploy time, so a Plexora release can know words a deployed Worker does
+  not; the interpreter is built for that. The wire format decides *shape*
+  and the vectors decide *vocabulary*:
+  - a shape fault (wrong JSON type, unknown envelope or row key, bad count or
+    histogram, unknown event type) rejects the event, counted in `rejected`;
+    in the envelope or client block (not an object, no `install_id`) it
+    rejects the batch or registration with 400;
+  - a vocabulary fault (a field the vectors do not name, a value they do not
+    allow) drops just that value, counted in `unknown`, and keeps the rest. A
+    counter row with an unknown key or dim goes whole (dropping the dim
+    would merge buckets), and so does a list item or map entry, so a plugin
+    with an unknown id is dropped rather than kept as `{version}`.
+
+  Nothing unknown is ever stored, whichever way it fails. Diagnostics-level
+  fields are stripped when the effective level is anonymous (client `mode`,
+  `client_config`, or budget state). `/healthz` reports `schema` and
+  `vectors`, the fingerprint of the allowlist this deploy was built with
+  (also in the Usage page's header); `unknown > 0` in a 202 means the
+  Worker is behind the client and should be redeployed.
 - **Ingest writes ≤ 3 D1 rows** (2 without a session summary). Every table is
   `WITHOUT ROWID` and there are no secondary indexes, so each write is one
   row. Both are asserted in the tests.
@@ -77,6 +93,41 @@ with exactly `level_max, upload_interval_s, sample, disabled_until`.
 
 ## Runbook (the owner runs this; deployed at https://analytics.plexoraapp.com)
 
+### Deploying
+
+Nobody needs to remember to. The Worker is deployed:
+
+- by `scripts/release.py` before anything is built for a new version:
+  `bump`, `all --release` and `ci` each compare this checkout's vectors
+  fingerprint with the live `/healthz` and deploy `backend/` (typecheck,
+  tests, `wrangler deploy`, then wait until `/healthz` reports the new
+  fingerprint) when they differ. A dev build (`all --dev`) only warns;
+- by `.github/workflows/backend.yml` on every push to `main` that changes
+  `backend/`, once the two GitHub secrets below exist.
+
+By hand, from a machine that has run `npx wrangler login`:
+
+```bash
+python scripts/release.py telemetry           # deploy if the live Worker is behind
+python scripts/release.py telemetry --check   # only say; exit 1 if it is behind
+python scripts/release.py telemetry --deploy  # deploy anyway (a Worker-only change)
+```
+
+### One-time setup
+
+1. **Each release machine:** `cd backend && npm ci && npx wrangler login`.
+   `python scripts/release.py doctor` shows `wrangler login` with the account,
+   or `NOT logged in`.
+2. **CI (optional, for the push-to-main deploy):** an API token from the
+   Cloudflare dashboard's "Edit Cloudflare Workers" template, plus
+   *Account · D1 · Edit*, scoped to this account and the `plexoraapp.com` zone;
+   then `gh secret set CLOUDFLARE_API_TOKEN` and
+   `gh secret set CLOUDFLARE_ACCOUNT_ID` (the account id from
+   `npx wrangler whoami`). Until they exist the deploy job logs a notice and
+   does nothing.
+
+### Initial setup (once per Cloudflare account)
+
 ```bash
 cd backend && npm i
 npx wrangler d1 create plexora-telemetry            # paste database_id into wrangler.toml
@@ -115,4 +166,5 @@ workers project (`test/routes/*.test.ts`) applies `schema.sql` in workerd and
 covers ingest, budget, fold, archive, retention, cron, admin and auth.
 `npm run typecheck` runs `tsc --noEmit`.
 `test/fixtures/sample-batch.json` is generated by the Python client and must
-clean with `rejected == 0`; it is the cross-language contract.
+clean with `rejected == 0` and `unknown == 0`; it is the cross-language
+contract.

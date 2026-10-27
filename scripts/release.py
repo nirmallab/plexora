@@ -9,6 +9,10 @@ Tauri CLI; `doctor` says exactly what is missing and how to install it.
     python scripts/release.py bump patch --commit --tag
     python scripts/release.py all --dev          # wheel + runtime + installer + validate
     python scripts/release.py ci --bump patch    # tag, let GitHub build all three OSes
+    python scripts/release.py telemetry          # deploy the telemetry Worker if it is behind
+
+`bump`, `all --release` and `ci` run `telemetry` themselves: no build ships
+ahead of the Worker it uploads to (see "the telemetry Worker" below).
 
 Desktop installers cannot be cross-built (NSIS, DMG and .deb each need
 their own OS), so `all` builds for the machine it runs on and `ci` drives the
@@ -208,6 +212,7 @@ class Ctx:
     yes: bool = False
     verbose: bool = False
     dry_run: bool = False
+    skip_telemetry: bool = False
 
     def __post_init__(self):
         self.target = self.target or host_triple()
@@ -467,6 +472,16 @@ def cmd_bump(ctx, args):
         run(["git", "commit", "-m", f"Release {version}"])
     if args.tag:
         run(["git", "tag", "-a", f"v{version}", "-m", f"Plexora {version}"])
+    if not ctx.skip_telemetry:
+        # A new version is about to be built: the Worker it will upload to
+        # goes first. Only a warning here -- the bump itself is done, and
+        # `all --release` and `ci` refuse to build past a Worker that is behind.
+        try:
+            cmd_telemetry(ctx)
+        except StepError as exc:
+            say(f"warning: the telemetry Worker was not deployed: {exc}")
+            if exc.hint:
+                say(f"  hint: {exc.hint}")
     return version
 
 
@@ -527,6 +542,21 @@ def cmd_doctor(ctx, args):
     tauri_cli = DESKTOP / "node_modules" / "@tauri-apps" / "cli"
     rows.append(("tauri-cli", "installed" if tauri_cli.exists() else "not yet",
                  "" if tauri_cli.exists() else "npm ci --prefix desktop (release.py does it)"))
+    wrangler = BACKEND / "node_modules" / "wrangler" / "package.json"
+    try:
+        wrangler_version = json.loads(wrangler.read_text(encoding="utf-8"))["version"]
+    except (OSError, ValueError, KeyError):
+        wrangler_version = None
+    rows.append(("wrangler", wrangler_version or "not yet",
+                 "" if wrangler_version else "npm ci --prefix backend (release.py does it)"))
+    if not args.ci:
+        if os.environ.get("CLOUDFLARE_API_TOKEN"):
+            who = "CLOUDFLARE_API_TOKEN"
+        else:
+            who = wrangler_identity(which("npx")) if wrangler_version and which("npx") else None
+        rows.append(("wrangler login", who or "NOT logged in", "" if who else
+                     "cd backend && npx wrangler login   (once per machine: release builds "
+                     "deploy the telemetry Worker)"))
 
     width = max(len(row[0]) for row in rows)
     for name, found, install in rows:
@@ -546,6 +576,13 @@ def cmd_doctor(ctx, args):
     if _in_synced_folder(ROOT):
         say("  note          the repository is in a synced folder; build products "
             "are kept outside it (PLEXORA_BUILD_DIR overrides).")
+    try:
+        local = local_vectors_fingerprint()
+    except StepError:
+        local = "unreadable"
+    live, shown = live_vectors(deployed_health(timeout=5.0))
+    say(f"  telemetry     vectors here {local}; live Worker {shown}"
+        + ("" if live == local else "  (release.py telemetry deploys it)"))
     signing = _signing_state(ctx)
     say(f"  signing       {signing}")
     if ctx.dev:
@@ -1513,6 +1550,179 @@ def cmd_validate(ctx, args):
         validate_launch(ctx, artifact)
 
 
+# -- the telemetry Worker --------------------------------------------------------
+#
+# Every build uploads its usage counts to the Worker in backend/, which checks
+# them against the allowlist compiled into it at deploy time
+# (backend/vectors/plexora-vectors.json, generated from
+# plexora/telemetry/schema.py). A Worker older than the client drops what it
+# does not know, so a release that adds a count, a plugin or an enum value
+# loses it until the Worker is redeployed. Every path that makes a release --
+# `bump`, `all --release`, `ci` -- therefore asks the live Worker which
+# allowlist it has (`/healthz` reports the vectors' fingerprint) and deploys
+# backend/ when it is not this checkout's. A machine deploys once it has run
+# `npx wrangler login` in backend/; CI deploys with CLOUDFLARE_API_TOKEN.
+
+BACKEND = ROOT / "backend"
+VECTORS = BACKEND / "vectors" / "plexora-vectors.json"
+TELEMETRY_ENDPOINT = "https://analytics.plexoraapp.com"
+WRANGLER_ENV = {"WRANGLER_SEND_METRICS": "false"}
+
+
+def telemetry_healthz() -> str:
+    base = os.environ.get("PLEXORA_TELEMETRY_ENDPOINT", "").strip() or TELEMETRY_ENDPOINT
+    return base.rstrip("/") + "/healthz"
+
+
+def vectors_fingerprint(data: dict) -> str:
+    """plexora/telemetry/schema.py's `fingerprint`, stdlib only (a test pins
+    the two together)."""
+    body = {key: value for key, value in data.items() if key != "fingerprint"}
+    text = json.dumps(body, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()[:16]
+
+
+def local_vectors_fingerprint() -> str:
+    """The fingerprint the committed vectors state, once it is shown to be
+    theirs."""
+    name = VECTORS.relative_to(ROOT).as_posix()
+    try:
+        data = json.loads(VECTORS.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        raise StepError(f"Cannot read {name}: {exc}") from None
+    stated = data.get("fingerprint")
+    if not stated or stated != vectors_fingerprint(data):
+        raise StepError(f"{name} has no fingerprint, or one that does not match its contents.",
+                        "Run `python scripts/sync_telemetry_vectors.py` and commit the result.")
+    return stated
+
+
+def deployed_health(timeout=10.0) -> dict | None:
+    """The live Worker's /healthz, or None when it cannot be read."""
+    request = urllib.request.Request(telemetry_healthz(), headers={
+        "User-Agent": "plexora-release", "Cache-Control": "no-cache"})
+    try:
+        with urllib.request.urlopen(request, timeout=timeout) as response:
+            data = json.loads(response.read(65536).decode("utf-8"))
+    except Exception:
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def live_vectors(health: dict | None) -> tuple[str | None, str]:
+    """The live fingerprint, and how to say it when there is none."""
+    live = (health or {}).get("vectors")
+    if live:
+        return live, live
+    return None, "unreachable" if health is None else "none (deployed before fingerprints)"
+
+
+def wrangler_identity(npx) -> str | None:
+    """Who `wrangler deploy` would deploy as, or None when it is not logged
+    in. stdin is an empty pipe, so wrangler can never stop here to open a
+    browser."""
+    try:
+        done = subprocess.run([npx, "wrangler", "whoami"], cwd=BACKEND, input="",
+                              capture_output=True, text=True, encoding="utf-8",
+                              errors="replace", timeout=60, env={**os.environ, **WRANGLER_ENV})
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    return parse_whoami(done.returncode, (done.stdout or "") + (done.stderr or ""))
+
+
+def parse_whoami(returncode: int, text: str) -> str | None:
+    if returncode != 0 or "not authenticated" in text.lower():
+        return None
+    match = re.search(r"You are logged in with an? ([^,.\n]+)"
+                      r"(?:, associated with the email (\S+?)\.?(?=\s|$))?", text)
+    if not match:
+        return None
+    return match.group(2) or match.group(1)
+
+
+def deploy_worker(ctx):
+    """Typecheck, test and deploy backend/ with wrangler."""
+    npm, npx = which("npm"), which("npx")
+    if not npm or not npx:
+        raise StepError("npm is not installed or not on PATH.", "Run `python scripts/release.py doctor`.")
+    if not (BACKEND / "node_modules").exists():
+        run([npm, "ci"], cwd=BACKEND, ctx=ctx)
+    if not ctx.skip_tests:
+        run([npm, "run", "typecheck"], cwd=BACKEND, ctx=ctx)
+        run([npm, "test"], cwd=BACKEND, ctx=ctx)
+    if not os.environ.get("CLOUDFLARE_API_TOKEN") and not ctx.dry_run:
+        who = wrangler_identity(npx)
+        if who is None:
+            raise StepError("wrangler is not logged in to Cloudflare, so the telemetry Worker "
+                            "cannot be deployed from this machine.",
+                            "Once per machine: cd backend && npx wrangler login"
+                            "   (or build with --skip-telemetry and deploy it from elsewhere)")
+        say(f"wrangler: logged in as {who}")
+    run([npx, "wrangler", "deploy"], cwd=BACKEND, ctx=ctx, env=WRANGLER_ENV, timeout=600, input="")
+
+
+def wait_for_worker(expected, ctx, timeout=90.0, every=5.0):
+    """Until /healthz reports `expected`: a deploy takes a few seconds to reach
+    every location, and this is the check that it did."""
+    if ctx.dry_run:
+        return
+    deadline = time.monotonic() + timeout
+    while True:
+        seen = (deployed_health() or {}).get("vectors")
+        if seen == expected:
+            say(f"The live Worker now validates against vectors {expected}.")
+            return
+        if time.monotonic() >= deadline:
+            raise StepError(f"The telemetry Worker still reports vectors {seen or 'nothing'} after "
+                            f"the deploy; expected {expected}.",
+                            "Check `cd backend && npx wrangler deployments list`, then rerun "
+                            "`python scripts/release.py telemetry`.")
+        time.sleep(every)
+
+
+def cmd_telemetry(ctx, args=None):
+    """Make sure the live Worker validates against this checkout's vectors, and
+    deploy backend/ when it does not (or always, with --deploy). `--check`
+    only says, and fails when the Worker is behind."""
+    check_only = bool(getattr(args, "check", False))
+    always = bool(getattr(args, "deploy", False))
+    step("Telemetry Worker")
+    if not ctx.skip_tests:
+        # The vectors must be schema.py's before they are compared with anything.
+        run([sys.executable, ROOT / "scripts" / "sync_telemetry_vectors.py", "--check"], ctx=ctx)
+    local = local_vectors_fingerprint()
+    live, shown = live_vectors(deployed_health())
+    say(f"vectors here {local}; live {shown}")
+    if live == local and not always:
+        say("The live Worker validates against these vectors.")
+        return "current"
+    if check_only:
+        raise StepError(f"The telemetry Worker is behind this checkout (live {shown}, here {local}): "
+                        "it does not know everything a build from here can send.",
+                        "Deploy it: python scripts/release.py telemetry")
+    deploy_worker(ctx)
+    wait_for_worker(local, ctx)
+    return "deployed"
+
+
+def telemetry_for_build(ctx):
+    """`all`'s step: a release build deploys the Worker when it is behind; a
+    dev build only warns, and never fails for it."""
+    if ctx.skip_telemetry:
+        say("\n(telemetry Worker not checked: --skip-telemetry)")
+        return
+    if not ctx.dev:
+        cmd_telemetry(ctx)
+        return
+    try:
+        cmd_telemetry(ctx, argparse.Namespace(check=True, deploy=False))
+    except StepError as exc:
+        say(f"warning: {exc}")
+        if exc.hint:
+            say(f"  hint: {exc.hint}")
+        say("  (a dev build only warns; `all --release` deploys it)")
+
+
 # -- all / ci / clean ----------------------------------------------------------
 
 
@@ -1525,6 +1735,7 @@ def cmd_all(ctx, args):
     if stale:
         raise StepError("Version out of step:\n  " + "\n  ".join(stale),
                         "Run `python scripts/release.py propagate`.")
+    telemetry_for_build(ctx)
     if not ctx.skip_wheel:
         cmd_wheel(ctx)
     cmd_runtime(ctx, argparse.Namespace(prune_profile="safe", no_smoke=False))
@@ -1551,6 +1762,11 @@ def cmd_ci(ctx, args):
     run(["git", "push", remote, "HEAD"])
     if not args.no_gate:
         gate()
+    if not ctx.skip_telemetry:
+        # Before the tag: release.yml's preflight refuses a tag whose vectors
+        # the live Worker does not have. A failure here leaves the tag
+        # unpushed, and rerunning `ci` carries on from it.
+        cmd_telemetry(ctx)
     run(["git", "push", remote, f"v{version}"])
     say("waiting for the Release workflow to start...")
     run_id = None
@@ -1650,6 +1866,8 @@ def build_parser():
                         help="Allow steps that install software (installer validation).")
     parser.add_argument("--verbose", action="store_true")
     parser.add_argument("--dry-run", action="store_true")
+    parser.add_argument("--skip-telemetry", action="store_true",
+                        help="Neither check nor deploy the telemetry Worker (bump, all, ci).")
     subs = parser.add_subparsers(dest="command", required=True)
 
     doctor = subs.add_parser("doctor", help="Check the toolchain.")
@@ -1696,7 +1914,15 @@ def build_parser():
     manifest.add_argument("directory", nargs="?")
     manifest.add_argument("--version", default=None)
 
-    everything = subs.add_parser("all", help="tests, client, wheel, runtime, bundle, collect, validate")
+    telemetry = subs.add_parser("telemetry",
+                                help="Deploy the telemetry Worker when the live one is behind this checkout.")
+    telemetry_mode = telemetry.add_mutually_exclusive_group()
+    telemetry_mode.add_argument("--check", action="store_true",
+                                help="Only say; fail when the live Worker is behind.")
+    telemetry_mode.add_argument("--deploy", action="store_true",
+                                help="Deploy even when it is current (a Worker-only change).")
+
+    everything = subs.add_parser("all", help="tests, client, telemetry, wheel, runtime, bundle, collect, validate")
     everything.add_argument("--sign", action="store_true")
     everything.add_argument("--no-validate", action="store_true")
 
@@ -1716,7 +1942,7 @@ COMMANDS = {
     "client": cmd_client, "wheel": cmd_wheel, "test": cmd_tests,
     "runtime": cmd_runtime, "bundle": cmd_bundle, "collect": cmd_collect,
     "validate": cmd_validate, "checksums": cmd_checksums, "manifest": cmd_manifest,
-    "all": cmd_all,
+    "telemetry": cmd_telemetry, "all": cmd_all,
     "ci": cmd_ci, "clean": cmd_clean,
 }
 
@@ -1730,7 +1956,7 @@ def main(argv=None):
                   clean=not args.no_clean, skip_tests=args.skip_tests,
                   skip_client=args.skip_client, skip_wheel=args.skip_wheel,
                   force=args.force, yes=args.yes, verbose=args.verbose,
-                  dry_run=args.dry_run)
+                  dry_run=args.dry_run, skip_telemetry=args.skip_telemetry)
         COMMANDS[args.command](ctx, args)
     except StepError as exc:
         print(f"\nrelease.py: {exc}", file=sys.stderr)

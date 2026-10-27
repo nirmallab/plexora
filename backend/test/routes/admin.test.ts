@@ -7,6 +7,7 @@ import worker from '../../src/index';
 import { dayOf, type Env } from '../../src/env';
 import { dailyKey } from '../../src/telemetry/archive';
 import { tick } from '../../src/telemetry/cron';
+import { VECTORS_FINGERPRINT } from '../../src/telemetry/schema';
 import { CLIENT_JS } from '../../src/ui/client';
 import { STYLES } from '../../src/ui/styles';
 import { admin, ADMIN_TOKEN, adminPost, BASE, count, hexId, sampleBatch, seconds, tokenFor, upload } from './helpers';
@@ -56,6 +57,8 @@ describe('admin pages', () => {
       expect(html).not.toMatch(/ style="/);
       expect(html).not.toMatch(/ on[a-z]+="/);
       expect(html).toContain(`<script>${CLIENT_JS}</script>`);
+      // Which allowlist this deploy validates against, on the page that would look empty without it.
+      if (path === 'usage') expect(html).toContain(`vectors ${VECTORS_FINGERPRINT}`);
     }
   });
 

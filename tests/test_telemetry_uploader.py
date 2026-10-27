@@ -114,6 +114,53 @@ def test_401_re_registers_and_retries(started):
     assert len(fake.of("/v1/telemetry/register")) == 2
 
 
+def test_a_refused_registration_is_kept_and_explained(started):
+    """A service whose allowlist is older than this client refuses the
+    client block: the batch must wait, the backoff must start, and status
+    must say why instead of only "never sent"."""
+    t, fake = started
+    queue_rows(t)
+    fake.script("/v1/telemetry/register", 400,
+                {"error": "The client block does not match the schema."})
+    assert uploader.upload_once(t) == "unregistered"
+    assert fake.of("/v1/telemetry/events") == []
+    assert t.queue.pending()["batches_waiting"] == 1
+    now = state(t)
+    assert now["register_status"] == 400
+    assert now["register_error"] == "The client block does not match the schema."
+    assert now["last_outcome"] == "unregistered"
+    assert now["failures"] == 1 and now["backoff_until"] > time.time() + 30
+    shown = uploader.status(t.queue)
+    assert shown["registered"] is False
+    assert "refused to register this install (HTTP 400: The client block" in shown["problem"]
+    assert uploader.upload_once(t) == "backoff"
+    # Fixed service, forced send: the same batch goes, and the reason is gone.
+    assert uploader.upload_once(t, force=True) == "sent"
+    after = state(t)
+    assert "register_status" not in after and "register_error" not in after
+    assert uploader.status(t.queue)["problem"] is None
+    assert t.queue.pending()["batches_waiting"] == 0
+
+
+def test_an_unreachable_registration_says_it_will_retry(started, monkeypatch):
+    t, _fake = started
+    monkeypatch.setenv("PLEXORA_TELEMETRY_ENDPOINT", "http://127.0.0.1:9")
+    queue_rows(t)
+    assert uploader.upload_once(t) == "unregistered"
+    assert state(t)["register_status"] == "unreachable"
+    assert "could not be reached" in uploader.status(t.queue)["problem"]
+
+
+def test_a_busy_registration_says_it_will_retry(started):
+    t, fake = started
+    queue_rows(t)
+    fake.script("/v1/telemetry/register", 503, {"error": "busy"})
+    assert uploader.upload_once(t) == "unregistered"
+    problem = uploader.status(t.queue)["problem"]
+    assert "not registering installs right now (HTTP 503: busy)" in problem
+    assert "try again later" in problem
+
+
 def test_413_halves_the_batch(started):
     t, fake = started
     queue_rows(t)

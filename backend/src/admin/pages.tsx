@@ -74,7 +74,8 @@ export function UsagePage(props: { d: R<typeof usage>; who: string }) {
   const split = (rows: { name: string; installs: number }[]) => rows.map((r) => ({ name: r.name, value: r.installs }));
 
   return (
-    <Layout title="Usage" active="usage" who={props.who} lede={rangeLede(d.filters)}>
+    <Layout title="Usage" active="usage" who={props.who} lede={rangeLede(d.filters)}
+      actions={<span class="muted small mono" title="The allowlist this deploy validates against (GET /healthz says the same)">schema {VECTORS.schema} · vectors {VECTORS.fingerprint}</span>}>
       <FilterForm filters={d.filters} />
       <Stats>
         <Stat label="Active today" value={num(d.dau)} sub={`installs on ${d.filters.to}`} />

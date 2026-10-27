@@ -1674,6 +1674,13 @@ everything after being moved, and boots `--desktop` once) → `bundle` (Tauri)
 (installs the installer silently into a temporary folder, runs the app's
 `--smoke-test`, uninstalls). Each step can be run on its own.
 
+Between `client` and `wheel`, `all --release` (and `bump`, and `ci` before it
+pushes the tag) deploys the telemetry Worker in `backend/` when the live one
+does not have this checkout's allowlist, so no build uploads to a Worker
+older than itself; `all --dev` only warns. A release machine needs
+`cd backend && npm ci && npx wrangler login` once (`doctor` shows it).
+`release.py telemetry` does that step alone; see docs/RELEASING.md.
+
 Installers need their own OS to build, so `release.py ci --bump patch` tags a
 release and lets `.github/workflows/release.yml` build Windows, both macOS
 architectures and Linux, then downloads the results.

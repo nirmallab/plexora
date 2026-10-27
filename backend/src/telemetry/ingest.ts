@@ -26,7 +26,7 @@ import {
   noteCounters,
   retryAfterMidnight,
 } from './budget';
-import { type CleanBatch, cleanBatch, cleanClient, SCHEMA_VERSION } from './schema';
+import { type CleanBatch, cleanBatch, cleanClient, SCHEMA_VERSION, tally, VECTORS_FINGERPRINT } from './schema';
 import {
   BodyTooLarge,
   buildLine,
@@ -49,6 +49,22 @@ type Reply = Record<string, unknown>;
 
 function reply(body: Reply, status: 200 | 202 | 400 | 401 | 403 | 413 | 415 | 429 | 503, headers: Record<string, string> = {}) {
   return Response.json(body, { status, headers: { ...NO_STORE, ...headers } });
+}
+
+let warnedUnknown = false;
+
+/**
+ * Once per isolate: clients are sending what this deploy's allowlist does not
+ * know, so the vectors in this Worker are older than a release. Logs only the
+ * version, the count and the fingerprint -- never the values themselves.
+ */
+function warnUnknown(where: string, unknown: number, version: unknown) {
+  if (unknown <= 0 || warnedUnknown) return;
+  warnedUnknown = true;
+  const safe = typeof version === 'string' && /^[0-9A-Za-z.+-]{1,48}$/.test(version) ? version : 'unknown';
+  console.warn(
+    `${where}: ${unknown} value(s) from plexora ${safe} are not in vectors ${VECTORS_FINGERPRINT}; redeploy the Worker`,
+  );
 }
 
 async function stopped(env: AppEnv['Bindings'], now: number, version?: string | null) {
@@ -97,10 +113,15 @@ telemetry.post('/register', async (c) => {
   if (typeof installId !== 'string' || !/^[0-9a-f]{32}$/.test(installId)) {
     return reply({ error: 'install_id must be 32 lowercase hex characters.' }, 400);
   }
-  const client = cleanClient(record.client ?? {});
+  // Lenient: a client newer than this deploy keeps what the vectors know and
+  // registers anyway. Only a block that is not an object, or names another
+  // install, is refused.
+  const unknown = tally();
+  const client = cleanClient(record.client ?? {}, unknown);
   if (!client || ('install_id' in client && client.install_id !== installId)) {
     return reply({ error: 'The client block does not match the schema.' }, 400);
   }
+  warnUnknown('register', unknown.unknown, (client as { plexora_version?: unknown }).plexora_version);
 
   const day = dayOf(now);
   const country = countryOf(c.req.raw);
@@ -155,7 +176,10 @@ telemetry.post('/register', async (c) => {
     });
   }
   const minted = await mintToken(env, installId, now, knob(env, 'INSTALL_TOKEN_TTL_DAYS') * 86400);
-  return reply({ schema: SCHEMA_VERSION, install_token: minted.token, expires: minted.expires, config }, 200);
+  return reply(
+    { schema: SCHEMA_VERSION, install_token: minted.token, expires: minted.expires, unknown: unknown.unknown, config },
+    200,
+  );
 });
 
 // ---------------------------------------------------------------------------
@@ -207,10 +231,12 @@ telemetry.post('/events', async (c) => {
   const stored = buildLine(batch, day, now, countryOf(c.req.raw));
   if (stored.line.length > knob(env, 'MAX_CLEAN_BYTES')) return reply({ error: 'Batch too large once cleaned.' }, 413);
 
+  warnUnknown('events', batch.unknown, version);
   const base = {
     schema: SCHEMA_VERSION,
     rejected: batch.rejected,
     dropped: batch.dropped,
+    unknown: batch.unknown,
     rotate: token.rotate,
   };
 

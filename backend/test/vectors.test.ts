@@ -7,7 +7,7 @@ import { readFileSync } from 'node:fs';
 
 import { describe, expect, it } from 'vitest';
 
-import { compileVectors, SUPPORTED_TAGS, type Vectors } from '../src/telemetry/schema';
+import { compileVectors, SUPPORTED_TAGS, type Vectors, VECTORS_FINGERPRINT } from '../src/telemetry/schema';
 
 const vectors = JSON.parse(
   readFileSync(new URL('../vectors/plexora-vectors.json', import.meta.url), 'utf8'),
@@ -31,6 +31,11 @@ describe('plexora-vectors.json', () => {
     expect(vectors.caps).toMatchObject({ max_events: expect.any(Number), max_rows: expect.any(Number) });
     expect(Object.keys(vectors.events).length).toBeGreaterThan(0);
     expect(vectors.client.install_id).toBeDefined();
+  });
+
+  it('names itself: a 16-hex fingerprint that /healthz reports', () => {
+    expect(vectors.fingerprint).toMatch(/^[0-9a-f]{16}$/);
+    expect(VECTORS_FINGERPRINT).toBe(vectors.fingerprint);
   });
 
   it('uses only supported type tags', () => {

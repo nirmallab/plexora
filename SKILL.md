@@ -119,8 +119,8 @@ Entry points:
 | `plexora/telemetry/` | Optional, anonymous, allowlisted usage telemetry — see the **Telemetry** section below for the package map and the invariants. `docs/TELEMETRY.md` is the user-facing explanation. |
 | `plexora/licensing/` | Free/Pro. `manifest.py` says what the roots ARE (which a plan carries is the BioCognia platform's to say): `ai` (every AI path), `volume` ("Plexora 3D" -- `volume:surfaces`, `volume:objects`, `volume:segmentation`, `volume:analysis`; *viewing* a stack -- planes, projections, sections, the volume view, a 3-D mask over it -- stays Free), `transcriptomics` (`transcriptomics:xenium`, `transcriptomics:visium`; without it a 10x run is not even offered at import, `import_proposal._licensed`), and `mcp` (external MCP access), which is off by default (`OFF_BY_DEFAULT`): not part of Pro or its trial, never sold, turned on for a licence by an administrator. First-party plugins licensed as a whole (`PLUGINS`, `plugin:video_studio`) are part of Pro. `pro_default()` is every root not off by default plus every `plugin:<name>` in `PLUGINS` -- what the platform's `plexora.pro` plan must grant exactly (a trial is Pro with `trial: true`, not a plan), which `tools/bioc_sync.py --check` fails on, because plans are edited only on the platform and would otherwise drift from the roots declared here. A `plugin:<name>` not in `PLUGINS` is a third-party plugin (`third_party()`), off by default too, whose refusal says it comes from its maker. `guards.require_entitlement` is the server's refusal (the `license` block). See Key Invariants for "not granted means not shown". |
 | `plexora/vision/` | **Magic select**'s model, a core package that imports no plugin. `sam.py` is the status, one-time setup and inference seam: `_INFER` serialises inference, `QUEUE` holds 4 waiters and the fifth gets a 429, `use_backend` swaps the backend for tests, and `prime` runs from `data_model.prime_hot_code` so the first click does not pay the import. `sam_backend.py` has `OnnxSamBackend`, which picks GPU providers (CUDA, ROCm, MIGraphX, DML, CoreML) for the fixed-shape encoder and keeps the decoder on CPU unless the provider is CUDA-class, because the decoder is small and its dynamic shapes are what GPU providers handle worst; the CoreML compile cache lives under `<model dir>/cache/coreml`; `PLEXORA_SEGMENT_DEVICE` forces a device; `FakeSamBackend` is the test double. `sam_weights.py` pins `MODEL_FILES` by sha256 and downloads from `RELEASE_BASE`, the release `segment-model-v1` of the public repository `nirmallab/plexora-models` (public because the code repository is private and anonymous downloads from its releases 404; a new weights version is a new release there plus new pins); `PLEXORA_SEGMENT_MODEL_URL` points at a mirror. `model_files.py` is the verified download every model shares (a file gets its real name only after its sha256 matched, so a half-finished download is never loaded); `sam_weights.py` delegates to it. `segment.py` turns a view plus prompts into a polygon: an embedding LRU of 8 keyed by image/level/crop/channels, reads inside the SHELF lock and inference outside it, and `mask_prompt` to refine an existing outline. `cli.py` is `plexora ai segment install\|status\|remove`. See **Magic select** at the end of this map. |
-| `backend/` | The Cloudflare Worker that ingests telemetry (`backend/README.md`). Not part of the Python wheel; its own toolchain, tested with `cd backend && npm test`. |
-| `scripts/release.py` | One stdlib-only script, the desktop app's release pipeline end to end: `doctor` (checks the toolchain), `bump`, `propagate [--check]` (pushes `pyproject.toml`'s version into `tauri.conf.json`, both `Cargo.toml`s -- `src-tauri` and the workspace -- and both `package.json`s; `--check` is what CI and a pre-release run to confirm nothing was hand-edited out of step), `client` (the frontend build), `wheel`, `runtime` (the embedded Python), `bundle [--sign]`, `collect`, `validate`, `checksums`, `manifest` (writes `latest.json` for the updater -- `updater_manifest`/`updater_artifacts`), `all`, `ci`, `clean`. `release.yml` passes the signing secrets/vars through and runs `manifest` in the publish job, uploading the `.sig`/`.app.tar.gz` alongside the installers. Meant to be run directly, not imported. |
+| `backend/` | The Cloudflare Worker that ingests telemetry (`backend/README.md`). Not part of the Python wheel; its own toolchain, tested with `cd backend && npm test`. Deployed by `scripts/release.py telemetry` and by `backend.yml`'s `deploy` job on a push to main (a notice and nothing else without the `CLOUDFLARE_API_TOKEN`/`CLOUDFLARE_ACCOUNT_ID` secrets). |
+| `scripts/release.py` | One stdlib-only script, the desktop app's release pipeline end to end: `doctor` (checks the toolchain), `bump`, `propagate [--check]` (pushes `pyproject.toml`'s version into `tauri.conf.json`, both `Cargo.toml`s -- `src-tauri` and the workspace -- and both `package.json`s; `--check` is what CI and a pre-release run to confirm nothing was hand-edited out of step), `client` (the frontend build), `wheel`, `runtime` (the embedded Python), `bundle [--sign]`, `collect`, `validate`, `checksums`, `manifest` (writes `latest.json` for the updater -- `updater_manifest`/`updater_artifacts`), `telemetry [--check|--deploy]` (compares the live Worker's `/healthz` `vectors` fingerprint with the committed vectors' and runs `npx wrangler deploy` from `backend/` when they differ; `--check` only says, and fails when behind), `all`, `ci`, `clean`. `bump`, `all --release` and `ci` run `telemetry` themselves, so no build ships ahead of the Worker it uploads to; `all --dev` only warns; the global `--skip-telemetry` skips it, and `doctor` shows `wrangler`, `wrangler login` and telemetry rows. `release.yml`'s preflight runs `--skip-tests telemetry --check` on a tag (it holds no Cloudflare credentials) and its build matrix passes `--skip-telemetry`. `release.yml` passes the signing secrets/vars through and runs `manifest` in the publish job, uploading the `.sig`/`.app.tar.gz` alongside the installers. Meant to be run directly, not imported. |
 
 **Server** (`plexora/server/`)
 
@@ -7087,10 +7087,14 @@ fully inert air-gapped. `docs/TELEMETRY.md` is the full write-up; this is the
 map. Package (`plexora/telemetry/`): `config.py` (mode resolution --
 `PLEXORA_TELEMETRY`, `DO_NOT_TRACK`, `PLEXORA_TESTING`, `settings.json`'s
 `telemetry.mode`), `schema.py` (the allowlist -- every event, key and enum,
-plus `FEATURE_KEYS`), `client.py` (the in-process aggregator, `count`/
+plus `FEATURE_KEYS`, and `fingerprint()`, the 16-hex name of the vectors),
+`client.py` (the in-process aggregator, `count`/
 `observe`/`emit`, the writer thread), `queue.py` (`queue.sqlite`, rollback
 journal, capped at 10 MB/30 days), `uploader.py` (the one HTTPS thread,
-closed hourly windows, backoff), `redact.py` (the second privacy check before
+closed hourly windows, backoff; keeps why `/register` last failed as
+`register_status`/`register_error`, which `status()` turns into `problem` via
+`registration_problem(state)` for `plexora telemetry status|send` and
+Settings > Usage data), `redact.py` (the second privacy check before
 upload), `flask_hooks.py` / `performance.py` (request and tile-phase timing,
 `Server-Timing`), `node_hooks.py` (a node's own counters, folded into the
 primary's on `hello`), `agent_hooks.py`/`dataset.py`/`sample.py`/
@@ -7122,7 +7126,21 @@ services/{telemetry,performanceTelemetry,errors}.js` is the browser side;
   means editing it there first, then running `python
   scripts/sync_telemetry_vectors.py` to regenerate `backend/vectors/` and
   `backend/test/fixtures/` -- drift between the two fails both the Worker's
-  own tests and `tests/test_telemetry_schema.py`.
+  own tests and `tests/test_telemetry_schema.py`. The vectors carry their own
+  `fingerprint` (`schema.fingerprint()`, sha256 of the key-sorted JSON less
+  that key; `release.py` keeps a stdlib copy and a test pins the two), and
+  the Worker's `/healthz` reports it as `vectors` beside `schema`, so a
+  release can ask the live Worker whether it knows everything the build can
+  say -- and deploy it when not.
+- **The Worker is strict on shape, lenient on vocabulary**, because a client
+  released after the deploy knows words its allowlist does not. A shape fault
+  (wrong JSON type, unknown envelope or row key, unknown event type) rejects
+  the event or batch as before; a key or value the vectors do not name is
+  dropped where it sits and counted in `unknown`, which the `/events` 202 and
+  the `/register` 200 bodies carry. List items, map entries and counter rows
+  are atomic -- dropped whole, never trimmed -- because dropping one dim would
+  merge two buckets into a different, valid one. Nothing unknown is ever
+  stored.
 - **Tests opt in; the suite defaults off.** The root `conftest.py` pins
   `PLEXORA_TELEMETRY=off` for every test (belt and braces alongside the
   suite's own auto-detection) and joins telemetry's writer/uploader threads
@@ -7141,9 +7159,13 @@ services/{telemetry,performanceTelemetry,errors}.js` is the browser side;
 - **A plugin counts a feature, not a table lookup.** `ctx.telemetry.feature(name)`
   where `name` is one of `schema.FEATURE_KEYS` -- a plugin cannot invent a new
   key by calling it, the same allowlist-first rule as everywhere else here.
-- **Nothing uploads until the Worker exists.** `config.DEFAULT_ENDPOINT` is
-  empty; with no endpoint configured the queue still fills (bounded, visible
-  in `plexora telemetry preview`) but no uploader thread starts.
+- **Uploads go to the deployed Worker.** `config.DEFAULT_ENDPOINT` is
+  `https://analytics.plexoraapp.com` (since 0.0.30; 0.0.29 and earlier
+  shipped it empty and never upload). A non-empty
+  `PLEXORA_TELEMETRY_ENDPOINT` overrides it (an empty one does not). With no
+  endpoint at all -- the suite, whose conftest empties the default -- the
+  queue still fills (bounded, visible in `plexora telemetry preview`) but no
+  uploader thread starts.
 - **`backend/` is not part of the Python wheel.** A separate Cloudflare
   Worker (Hono/TypeScript, D1 + R2), its own toolchain, tested with `cd
   backend && npm test`; see `backend/README.md`.
@@ -10211,6 +10233,7 @@ python -m pytest -q -p no:randomly
 # The release script's own checks -- toolchain present, versions in sync
 python scripts/release.py doctor
 python scripts/release.py propagate --check   # tauri.conf.json/Cargo.toml/both package.json vs pyproject.toml
+python scripts/release.py --skip-tests telemetry --check   # live Worker's /healthz vectors vs backend/vectors/
 # desktopBridge.js against a probe, not a real Tauri window
 node tests/js/desktop_bridge_probe.mjs
 # The Rust side, from desktop/src-tauri -- on this Windows machine, with no VS
@@ -13040,7 +13063,10 @@ see the **Telemetry** section above). New Python test files:
 `test_telemetry_uploader.py`, plus the shared `tests/telemetry_fixtures.py`
 (`FakeIngest`, the `telemetry_enabled` fixture) and four new probes
 (`tests/js/telemetry_probe.mjs`, `telemetry_errors_probe.mjs`,
-`telemetry_perf_probe.mjs`, `telemetry_rows_probe.mjs`). `backend/` is a
+`telemetry_perf_probe.mjs`, `telemetry_rows_probe.mjs`); later
+`tests/test_settings_telemetry_page.py`, which drives
+`tests/js/settings_telemetry_probe.mjs` (Settings > Usage data showing a
+refused registration). `backend/` is a
 separate Node/TypeScript test tree, `cd backend && npm test`, not run by
 `pytest`. No fresh full-suite count taken after this pass either -- another
 pytest run was already in progress in this tree and starting a second would

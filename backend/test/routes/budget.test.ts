@@ -5,6 +5,7 @@ import worker from '../../src/index';
 import { dayOf } from '../../src/env';
 import { forceStop, isQuotaError, resetBudgetCache } from '../../src/telemetry/budget';
 import { BASE, budgetRow, count, hexId, sampleBatch, seconds, setBudget, tokenFor, upload } from './helpers';
+import vectorsFile from '../../vectors/plexora-vectors.json';
 
 const SHARE = 40000;
 
@@ -121,5 +122,10 @@ describe('/healthz', () => {
     const body = (await response.json()) as Record<string, unknown>;
     expect(body.ok).toBe(true);
     expect(['ok', 'unknown']).toContain(body.budget_state);
+    // What release.py compares: the allowlist this deploy validates against.
+    expect(Object.keys(body).sort()).toEqual(['budget_state', 'ok', 'schema', 'ts', 'vectors']);
+    expect(body.schema).toBe(1);
+    expect(body.vectors).toBe(vectorsFile.fingerprint);
+    expect(body.vectors).toMatch(/^[0-9a-f]{16}$/);
   });
 });

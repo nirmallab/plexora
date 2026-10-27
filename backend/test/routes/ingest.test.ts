@@ -40,9 +40,20 @@ describe('register', () => {
     expect(up.status).toBe(202);
   });
 
-  it('refuses a bad id, an unknown client key, and a body over 4 KB', async () => {
+  it('refuses a bad id, a client block that is not an object, and a body over 4 KB', async () => {
     expect((await register('nothex')).status).toBe(400);
-    expect((await register(hexId(), { hostname: 'lab-mac' })).status).toBe(400);
+    const notAnObject = await SELF.fetch(`${BASE}/v1/telemetry/register`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ schema: 1, install_id: hexId(), client: 'x' }),
+    });
+    expect(notAnObject.status).toBe(400);
+    const missingId = await SELF.fetch(`${BASE}/v1/telemetry/register`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ schema: 1, client: {} }),
+    });
+    expect(missingId.status).toBe(400);
     const big = await SELF.fetch(`${BASE}/v1/telemetry/register`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -64,6 +75,36 @@ describe('register', () => {
     // Nothing identifying is stored: only a hash.
     const row = await env.TELEMETRY_DB.prepare('SELECT ip_hash FROM register_quota').first<{ ip_hash: string }>();
     expect(row!.ip_hash).not.toContain('198.51');
+  });
+});
+
+describe('register: a client newer than this deploy', () => {
+  it('registers with what it knows, stores nothing it does not, and then uploads', async () => {
+    const id = hexId('r');
+    const response = await register(id, {
+      plugins: [{ id: 'gating', version: '0.0.31' }, { id: 'new_plugin', version: '0.0.31' }],
+      hostname: 'lab-mac',
+      mode: 'full',
+    });
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as Record<string, unknown>;
+    expect(String(body.install_token)).toMatch(/^PLEXORAT1\./);
+    expect(body.unknown).toBe(3);
+    const row = await env.TELEMETRY_DB.prepare('SELECT * FROM installs WHERE install_id = ?').bind(id).first<Record<string, unknown>>();
+    expect(row).not.toBeNull();
+    expect(row).toMatchObject({ version: '0.0.25', os: 'mac' });
+    expect(JSON.stringify(row)).not.toContain('new_plugin');
+    expect(JSON.stringify(row)).not.toContain('lab-mac');
+
+    const batch = sampleBatch(id);
+    batch.client.plugins = [{ id: 'new_plugin', version: '0.0.31' }];
+    batch.client.hostname = 'lab-mac';
+    const up = await upload(batch, String(body.install_token));
+    expect(up.status).toBe(202);
+    expect(await up.json()).toMatchObject({ accepted: batch.events.length, rejected: 0, unknown: 2 });
+    const stored = await env.TELEMETRY_DB.prepare('SELECT * FROM batches WHERE install_id = ?').bind(id).first<Record<string, unknown>>();
+    expect(JSON.stringify(stored)).not.toContain('new_plugin');
+    expect(JSON.stringify(stored)).not.toContain('lab-mac');
   });
 });
 
@@ -143,7 +184,8 @@ describe('events: the happy path', () => {
     expect(response.status).toBe(202);
     const body = (await response.json()) as Record<string, unknown>;
     expect(body).toMatchObject({ schema: 1, accepted: batch.events.length, rejected: 0, dropped: 0, duplicate: false, rotate: false });
-    expect(Object.keys(body).sort()).toEqual(['accepted', 'config', 'dropped', 'duplicate', 'rejected', 'rotate', 'schema']);
+    expect(Object.keys(body).sort()).toEqual(['accepted', 'config', 'dropped', 'duplicate', 'rejected', 'rotate', 'schema', 'unknown']);
+    expect(body.unknown).toBe(0);
     expect(Object.keys(body.config as object).sort()).toEqual(CONFIG_KEYS);
     expect(response.headers.get('Cache-Control')).toBe('no-store');
     expect(response.headers.get('Access-Control-Allow-Origin')).toBeNull();
@@ -258,15 +300,16 @@ describe('events: refusals, cheapest first', () => {
     expect(response.status).toBe(413);
   });
 
-  it('400 on broken gzip, invalid JSON, a wrong schema or an unknown client key', async () => {
+  it('400 on broken gzip, invalid JSON, a wrong schema or a client block without an install id', async () => {
     const id = hexId('l');
     const token = await tokenFor(id);
     expect((await upload(null, token, { raw: new Uint8Array([1, 2, 3, 4]) })).status).toBe(400);
     expect((await upload(null, token, { raw: await gzipBytes('{"schema": 1,') })).status).toBe(400);
     expect((await upload({ ...sampleBatch(id), schema: 2 }, token)).status).toBe(400);
     const batch = sampleBatch(id);
-    batch.client.hostname = 'lab-mac';
+    delete (batch.client as Record<string, unknown>).install_id;
     expect((await upload(batch, token)).status).toBe(400);
+    expect((await upload({ ...sampleBatch(id), client: 'x' }, token)).status).toBe(400);
   });
 
   it('accepts an identity-encoded body (wrangler dev)', async () => {
@@ -276,23 +319,25 @@ describe('events: refusals, cheapest first', () => {
 });
 
 describe('events: the allowlist', () => {
-  it('rejects an event with an unknown key whole, keeps the others, never stores the key', async () => {
+  it('drops an unknown prop or row, rejects an unknown event, and never stores either', async () => {
     const id = hexId('n');
     const batch = sampleBatch(id);
     (eventOf(batch, 'dataset.opened').props as Record<string, unknown>).path = '/Users/someone/secret.ome.tiff';
     (eventOf(batch, 'tool.summary').rows as Record<string, unknown>[])[0]!.d = { tool: 'gating', user: 'someone' };
     batch.events.push({ type: 'made.up', window: '2026-09-27T14', props: {} });
     const response = await upload(batch, await tokenFor(id));
-    const body = (await response.json()) as { accepted: number; rejected: number };
-    expect(body.rejected).toBe(3);
-    expect(body.accepted).toBe(batch.events.length - 3);
+    const body = (await response.json()) as { accepted: number; rejected: number; unknown: number };
+    expect(body.rejected).toBe(1);
+    expect(body.unknown).toBe(2);
+    expect(body.accepted).toBe(batch.events.length - 1);
     const row = await env.TELEMETRY_DB.prepare('SELECT events_json FROM batches WHERE install_id = ?').bind(id).first<{ events_json: string }>();
     expect(row!.events_json).not.toContain('secret');
     expect(row!.events_json).not.toContain('someone');
-    expect(row!.events_json).not.toContain('"type":"dataset.opened"');
+    expect(row!.events_json).not.toContain('made.up');
+    expect(row!.events_json).toContain('"type":"dataset.opened"');
   });
 
-  it('accepts ext:<8hex> plugin ids and rejects anything else of that shape', async () => {
+  it('accepts ext:<8hex> plugin ids and drops anything else of that shape', async () => {
     const id = hexId('o');
     const token = await tokenFor(id);
     const good = sampleBatch(id);
@@ -301,7 +346,7 @@ describe('events: the allowlist', () => {
     for (const tool of ['ext:1A2B3C4D', 'ext:1a2b3c4', 'ext:1a2b3c4d5', 'my_plugin']) {
       const bad = sampleBatch(id);
       bad.events = [{ type: 'tool.summary', window: '2026-09-27T14', rows: [{ k: 'open', d: { tool }, n: 1 }] }];
-      expect(await (await upload(bad, token)).json()).toMatchObject({ accepted: 0, rejected: 1 });
+      expect(await (await upload(bad, token)).json()).toMatchObject({ accepted: 0, rejected: 0, dropped: 1, unknown: 1 });
     }
   });
 

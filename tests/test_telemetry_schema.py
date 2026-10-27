@@ -94,6 +94,21 @@ def test_vectors_are_json_and_complete():
     assert "patient" not in text
 
 
+def test_vectors_fingerprint_is_canonical():
+    """The fingerprint is what /healthz reports and what release.py compares:
+    it must be a pure function of the rest of the vectors, and in the file."""
+    import re
+    from pathlib import Path
+
+    path = Path(__file__).resolve().parent.parent / "backend" / "vectors" / "plexora-vectors.json"
+    on_disk = json.loads(path.read_text(encoding="utf-8"))
+    stated = on_disk.pop("fingerprint")
+    assert re.fullmatch(r"[0-9a-f]{16}", stated)
+    assert schema.fingerprint(on_disk) == stated == schema.vectors()["fingerprint"]
+    changed = {**on_disk, "first_party": on_disk["first_party"] + ["new_plugin"]}
+    assert schema.fingerprint(changed) != stated
+
+
 def test_vectors_file_matches_schema():
     import subprocess
     import sys

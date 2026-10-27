@@ -55,6 +55,28 @@ def test_send_without_an_endpoint(telemetry_enabled, monkeypatch):
     assert out == "Upload: no_endpoint" and code == 1
 
 
+def test_status_and_send_explain_a_refused_registration(telemetry_enabled):
+    t, fake = telemetry_enabled
+    t.start(None, "terminal", upload=False)
+    t._ready.wait(5)
+    t.count("tool.summary", "open", tool="roi")
+    t.sync()
+    fake.script("/v1/telemetry/register", 400,
+                {"error": "The client block does not match the schema."})
+    code, out = run(["send"])
+    assert code == 1
+    first, _, why = out.partition("\n")
+    assert first == "Upload: unregistered"
+    assert why.startswith("The telemetry service refused to register this install (HTTP 400")
+    code, out = run(["status"])
+    assert "refused to register this install" in out
+    assert "(the service did not answer)" not in out
+    fake.script("/v1/telemetry/register", 400, {"error": "nope"})
+    code, out = run(["send", "--json"])
+    answer = json.loads(out)
+    assert answer["outcome"] == "unregistered" and "HTTP 400: nope" in answer["problem"]
+
+
 def test_reached_through_the_main_cli(capsys):
     assert cli.main(["telemetry", "status"]) == 0
     assert "Telemetry: off" in capsys.readouterr().out

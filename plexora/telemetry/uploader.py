@@ -20,6 +20,7 @@ Outcomes:
 | 413                        | delete        | none; halve batch size |
 | 429 / 503                  | keep          | Retry-After, else next step |
 | other 5xx, timeout, DNS    | keep          | next step           |
+| register refused / failed  | keep          | next step; reason kept for status |
 
 No secret ships with the client. `POST /v1/telemetry/register` exchanges the
 random install id for an HMAC install token bound to it; that token is what
@@ -190,8 +191,12 @@ def upload_once(telemetry, *, include_open=False, force=False) -> str:
         token = _token(telemetry, queue, client)
         if token is None:
             queue.unack(batch_id)
-            _backoff(queue, state)
+            # Re-read: register() has just written why it failed, and the
+            # copy taken above would erase it.
+            _backoff(queue, queue.get_state("uploader", {}) or {})
+            _record(queue, "unregistered")
             return "unregistered"
+        state = queue.get_state("uploader", {}) or {}
         status, answer, headers = _post(base + EVENTS_PATH, payload, token=token, gzip=True)
         outcome = _handle(queue, state, batch_id, status, answer, headers, telemetry)
         state = queue.get_state("uploader", {}) or {}
@@ -320,11 +325,46 @@ def register(telemetry, queue, client):
                       separators=(",", ":")).encode("utf-8")
     status, answer, _headers = _post(config.endpoint() + REGISTER_PATH, body)
     if status != 200 or not isinstance(answer, dict) or not answer.get("install_token"):
+        error = answer.get("error") if isinstance(answer, dict) else None
+        _note_registration(queue, "unreachable" if status is None else status,
+                           error if isinstance(error, str) else None)
         return None
     queue.set_state("token", {"token": answer["install_token"], "install_id": install,
                               "expires": answer.get("expires") or 0})
+    _note_registration(queue, None, None)
     _apply_config(queue, answer.get("config"), telemetry)
     return answer["install_token"]
+
+
+def _note_registration(queue, status, error):
+    """Keep why the last registration failed (or forget it, on success), so
+    `status()` can say so instead of only "never sent"."""
+    state = queue.get_state("uploader", {}) or {}
+    if status is None:
+        if "register_status" not in state and "register_error" not in state:
+            return
+        state.pop("register_status", None)
+        state.pop("register_error", None)
+    else:
+        state["register_status"] = status
+        state["register_error"] = (error or "")[:200] or None
+    queue.set_state("uploader", state)
+
+
+def registration_problem(state) -> str | None:
+    """One sentence on why this install has no token, or None."""
+    code = (state or {}).get("register_status")
+    if code is None:
+        return None
+    if code == "unreachable":
+        return "The telemetry service could not be reached; Plexora will try again later."
+    error = (state or {}).get("register_error")
+    detail = f"HTTP {code}: {error}" if error else f"HTTP {code}"
+    if isinstance(code, int) and 400 <= code < 500 and code != 429:
+        return (f"The telemetry service refused to register this install ({detail}). "
+                f"Updating Plexora, or redeploying the service, fixes this.")
+    return (f"The telemetry service is not registering installs right now ({detail}); "
+            f"Plexora will try again later.")
 
 
 # -- HTTP ---------------------------------------------------------------------
@@ -399,6 +439,9 @@ def status(queue) -> dict:
         "last_outcome": state.get("last_outcome"),
         "failures": int(state.get("failures") or 0),
         "backoff_until": state.get("backoff_until") or None,
+        "register_status": state.get("register_status"),
+        "register_error": state.get("register_error"),
+        "problem": None if token.get("token") else registration_problem(state),
         "server": server,
         "running": bool(_thread is not None and _thread.is_alive()),
     }

@@ -60,9 +60,11 @@ def _print_status(status, log):
     else:
         log(f"Last upload: {_when(uploader.get('last_upload'))}; last attempt: "
             f"{uploader.get('last_outcome') or 'none'}")
+        if uploader.get("problem"):
+            log(uploader["problem"])
         if uploader.get("backoff_until"):
-            log(f"Next attempt not before {_when(uploader['backoff_until'])} "
-                f"(the service did not answer).")
+            log(f"Next attempt not before {_when(uploader['backoff_until'])}"
+                + ("." if uploader.get("problem") else " (the service did not answer)."))
     log("Off: `plexora telemetry off`, PLEXORA_TELEMETRY=off, or DO_NOT_TRACK=1.")
 
 
@@ -105,7 +107,15 @@ def run(argv, log=print) -> int:
         from plexora.telemetry.client import telemetry
 
         outcome = uploader.upload_once(telemetry, include_open=True, force=True)
-        log(json.dumps({"outcome": outcome}) if args.json else f"Upload: {outcome}")
+        problem = None
+        if outcome not in ("sent", "nothing") and telemetry.queue is not None:
+            problem = uploader.status(telemetry.queue).get("problem")
+        if args.json:
+            log(json.dumps({"outcome": outcome, "problem": problem}))
+        else:
+            log(f"Upload: {outcome}")
+            if problem:
+                log(problem)
         return 0 if outcome in ("sent", "nothing") else 1
     status = report.status()
     if args.json:

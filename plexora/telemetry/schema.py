@@ -732,6 +732,21 @@ def validate_upload_row(event: str, row, mode: str = D) -> bool:
 # -- the vectors file ---------------------------------------------------------
 
 
+def fingerprint(doc: dict) -> str:
+    """Which allowlist this is, in 16 hex: sha256 of the vectors' compact,
+    key-sorted JSON, leaving out the `fingerprint` key itself.
+
+    The Worker reports it on `/healthz`, so a release can ask the live
+    service whether it validates against the allowlist the release ships
+    (scripts/release.py keeps a stdlib copy of this; a test pins the two)."""
+    import hashlib
+    import json
+
+    body = {k: v for k, v in doc.items() if k != "fingerprint"}
+    text = json.dumps(body, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()[:16]
+
+
 def vectors() -> dict:
     """Everything the Worker needs to validate an upload, as plain JSON."""
     events = {}
@@ -749,7 +764,7 @@ def vectors() -> dict:
                                       for d, f in key.dims.items()}}
                          for k, key in spec.keys.items()},
             }
-    return {
+    doc = {
         "schema": SCHEMA_VERSION,
         "modes": list(MODES),
         "first_party": list(FIRST_PARTY),
@@ -767,3 +782,5 @@ def vectors() -> dict:
         "reserved_license_fields": list(RESERVED_LICENSE_FIELDS),
         "events": events,
     }
+    doc["fingerprint"] = fingerprint(doc)
+    return doc

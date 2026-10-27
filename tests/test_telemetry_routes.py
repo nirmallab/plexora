@@ -141,6 +141,22 @@ def test_reset_mints_a_new_id_and_clears_the_queue(telemetry_enabled):
     assert t.queue.snapshot() == ([], [])
 
 
+def test_status_and_send_carry_a_refused_registration(telemetry_enabled):
+    t, fake = telemetry_enabled
+    t.start(plexora.app, "terminal", upload=False)
+    t.count("tool.summary", "open", tool="roi")
+    t.sync()
+    fake.script("/v1/telemetry/register", 400,
+                {"error": "The client block does not match the schema."})
+    assert client().post("/telemetry/send").status_code == 415
+    answer = client().post("/telemetry/send", json={}).get_json()
+    assert answer["outcome"] == "unregistered"
+    assert answer["status"]["uploader"]["register_status"] == 400
+    assert "refused to register" in answer["status"]["uploader"]["problem"]
+    status = client().get("/telemetry/status").get_json()
+    assert "refused to register" in status["uploader"]["problem"]
+
+
 def test_settings_page_has_the_section():
     page = client().get("/settings").get_data(as_text=True)
     assert 'id="settings_panel_telemetry"' in page

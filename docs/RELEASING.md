@@ -38,7 +38,7 @@ python scripts/release.py ci --bump patch   # tag v<X.Y.Z> and let GitHub build 
 compiler for the odd wheel) and what to install for whatever is missing.
 
 `all` runs, in order: `client` (verifies the committed JavaScript bundle
-rather than rebuilding it) → `wheel` → `runtime` (downloads the pinned
+rather than rebuilding it) → `telemetry` (see below) → `wheel` → `runtime` (downloads the pinned
 Python interpreter, installs Plexora's locked dependencies into it, proves
 it still imports everything after being relocated, and boots `--desktop`
 once) → `bundle` (the Tauri installer) → `collect` (into a `release/<version>/`
@@ -52,14 +52,39 @@ Desktop installers cannot be cross-built — an NSIS installer, a DMG and a
 `.deb` each need their own operating system — so `all` only ever builds for
 the machine it runs on.
 
+## The telemetry Worker
+
+Every build, desktop or pip, uploads its anonymous usage counts to the
+Worker in `backend/`, which only counts what its allowlist (compiled in when
+it was deployed) knows. So no version is built ahead of it: `bump`,
+`all --release` and `ci` each ask the live Worker which allowlist it has
+(`/healthz`) and, when it is not this checkout's, typecheck, test and deploy
+`backend/`, then wait until `/healthz` shows the new one. `all --dev` only
+warns. On its own:
+
+```bash
+python scripts/release.py telemetry           # deploy if the live Worker is behind
+python scripts/release.py telemetry --check   # only say
+```
+
+It needs, once per release machine, `cd backend && npm ci && npx wrangler
+login` (`doctor` shows whether that is done). `--skip-telemetry` leaves the
+Worker alone, for a build on a machine that cannot deploy it; a tag built
+that way still fails the release preflight until the Worker is current.
+
+The wheel is uploaded to PyPI by hand, after `all --release` or `ci` has
+built it, and by then the Worker has already been deployed, so a published
+wheel is never ahead of it.
+
 ## Cutting a real release
 
 ```bash
 python scripts/release.py ci --bump patch
 ```
 
-Bumps the version, commits and tags it, pushes both, and watches the
-**Release** workflow that tag starts.
+Bumps the version, commits and tags it, pushes the commit, waits for a
+full-suite run to pass on it, deploys the telemetry Worker if it is behind,
+pushes the tag, and watches the **Release** workflow that tag starts.
 
 `.github/workflows/release.yml` triggers on a pushed `v*` tag (or a manual
 run, which builds unsigned, unpublished installers for testing). It runs
@@ -67,7 +92,9 @@ three jobs:
 
 1. **preflight** — checks that `pyproject.toml`'s version, the tag, and
    every propagated copy agree; verifies the committed client bundle rather
-   than rebuilding it; builds the wheel and sdist; runs the full test suite.
+   than rebuilding it; builds the wheel and sdist; checks that a full-suite
+   run (`weekly.yml` or `monthly.yml`) passed on the tagged commit; and checks
+   that the live telemetry Worker already has this tag's allowlist.
 2. **build** — a matrix of Windows (x86_64), macOS (Apple silicon) and
    Linux (x86_64), each building its own installer. There is no Intel macOS
    build: `llvmlite`, which Plexora needs through `numba`, no longer

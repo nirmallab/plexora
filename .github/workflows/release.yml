@@ -83,6 +83,12 @@ jobs:
           done
           echo "::error::No successful weekly.yml or monthly.yml run exists for $GITHUB_SHA. Run: gh workflow run weekly.yml --ref main (on this commit), wait for it to pass, then re-run this workflow."
           exit 1
+      # One GET of /healthz: the Worker every build uploads to already
+      # validates against this tag's vectors. `release.py ci` deploys it
+      # before pushing the tag; this job holds no Cloudflare credentials.
+      - name: The telemetry Worker knows this release's vectors
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: python scripts/release.py --skip-tests telemetry --check
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: python-dist
@@ -173,7 +179,8 @@ jobs:
           mode=--dev
           [[ "$GITHUB_REF" == refs/tags/v* ]] && mode=--release
           python scripts/release.py $mode --build-dir build --release-dir release \
-            --target ${{ matrix.target }} --skip-tests --skip-client --skip-wheel --yes all
+            --target ${{ matrix.target }} --skip-tests --skip-client --skip-wheel \
+            --skip-telemetry --yes all
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: desktop-${{ matrix.target }}

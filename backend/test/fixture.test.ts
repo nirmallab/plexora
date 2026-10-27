@@ -11,17 +11,19 @@ import { cleanBatch } from '../src/telemetry/schema';
 const fixture = JSON.parse(readFileSync(new URL('./fixtures/sample-batch.json', import.meta.url), 'utf8'));
 
 describe('test/fixtures/sample-batch.json', () => {
-  it('passes cleanBatch with rejected == 0 and nothing dropped', () => {
+  it('passes cleanBatch with rejected == 0, nothing dropped and nothing unknown', () => {
     const result = cleanBatch(fixture);
     if (!result.ok) throw new Error(result.error);
     expect(result.batch.rejected).toBe(0);
     expect(result.batch.dropped).toBe(0);
+    expect(result.batch.unknown).toBe(0);
     expect(result.batch.events).toHaveLength(fixture.events.length);
   });
 
   it('survives cleaning unchanged in diagnostics mode (nothing silently trimmed)', () => {
     const result = cleanBatch(fixture);
     if (!result.ok) throw new Error(result.error);
+    expect(result.batch.unknown).toBe(0);
     expect(JSON.parse(JSON.stringify(result.batch.events))).toEqual(fixture.events);
     expect(result.batch.client).toEqual(fixture.client);
   });

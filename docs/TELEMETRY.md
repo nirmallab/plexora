@@ -72,7 +72,13 @@ data node ── cumulative counts on /node/v1/hello ──▶ primary folds the
   `scripts/sync_telemetry_vectors.py`), stores one compact row per upload in
   D1, rolls up daily, archives each day to R2 as a verified `.jsonl.gz`
   before purging it, and degrades ingestion before it reaches the Cloudflare
-  free-tier limits. See `backend/README.md`.
+  free-tier limits. A client newer than the deployed service is never
+  refused for it: what the service's allowlist does not know is dropped and
+  counted (`unknown` in its answer), and the rest is kept. See
+  `backend/README.md`.
+- **A refusal is visible.** If the service will not register an install,
+  `plexora telemetry status`, `plexora telemetry send` and Settings › Usage
+  data say so, with the service's status and reason, instead of "never sent".
 
 ## Adding a count
 
@@ -85,6 +91,13 @@ data node ── cumulative counts on /node/v1/hello ──▶ primary folds the
 3. Run `python scripts/sync_telemetry_vectors.py` and commit the regenerated
    `backend/vectors/` and `backend/test/fixtures/` files; the Worker's tests
    and `tests/test_telemetry_schema.py` fail on drift.
+4. Nothing else. The service only counts what its deployed allowlist knows,
+   so it is redeployed whenever the vectors change: by
+   `scripts/release.py` before a version is built (`bump`, `all --release`,
+   `ci`; `python scripts/release.py telemetry` does it alone), and by
+   `backend.yml` on the push to `main`. Until then the new value is dropped
+   and counted as `unknown`, never refused. `GET /healthz` names the live
+   allowlist (`vectors`, a fingerprint the vectors file also carries).
 
 Never count on a request thread anything but an in-memory increment: no
 SQLite, no JSON, no network, no datasource load.

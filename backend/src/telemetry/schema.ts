@@ -8,11 +8,20 @@
  * type spec is compiled once per isolate into a closure (regexes built once),
  * so validating a batch is a walk over the payload and nothing more.
  *
- * Rules, all deliberate:
- *   * unknown keys are never copied: a struct, a record's props, a row or a
- *     client block with an unknown key is invalid, not trimmed;
- *   * an invalid event is rejected whole and counted, the rest of the batch
- *     is still accepted; an invalid client block or envelope rejects the batch;
+ * Rules, all deliberate. The wire format decides *shape*, the vectors decide
+ * *vocabulary*, and the two fail differently, because a client released
+ * after this Worker was deployed knows words this allowlist does not:
+ *   * a shape fault -- wrong JSON type, an unknown envelope or row key, a bad
+ *     count or histogram, an unknown event type, a missing install_id --
+ *     rejects the event (or, in the envelope or client block, the batch);
+ *   * a vocabulary fault -- a struct or client key the vectors do not name, a
+ *     value they do not allow -- drops just that value where it sits and
+ *     counts it in `unknown`; the rest is kept. A counter row with an unknown
+ *     key or dim is dropped whole (dropping the dim would merge buckets), and
+ *     so is a list item or map entry: those are atomic, so a plugin with an
+ *     unknown id goes, not just its id;
+ *   * unknown values are never copied anywhere: what is not allowlisted is
+ *     not stored, whichever way it fails;
  *   * diagnostics-level fields are *stripped* (not rejected) when the
  *     effective level is anonymous -- that is policy, not validation.
  */
@@ -55,11 +64,14 @@ export interface Vectors {
   ms_labels: string[];
   first_party: string[];
   feature_keys: string[];
+  /** 16 hex naming this allowlist; /healthz reports it (schema.py `fingerprint`). */
+  fingerprint: string;
   [other: string]: unknown;
 }
 
 export const VECTORS = rawVectors as unknown as Vectors;
 export const SCHEMA_VERSION = VECTORS.schema;
+export const VECTORS_FINGERPRINT = VECTORS.fingerprint;
 
 /** Every type tag the interpreter understands; vectors.test.ts pins this. */
 export const SUPPORTED_TAGS = ['enum', 'pattern', 'int', 'bool', 'hist', 'list', 'map', 'struct'] as const;
@@ -69,7 +81,24 @@ const MAX_COUNT = 1e12;
 
 const INVALID: unique symbol = Symbol('invalid');
 type Invalid = typeof INVALID;
-type Validator = (value: unknown, level: Level) => unknown | Invalid;
+/** A counter row the vectors do not know: dropped and counted, the event kept. */
+const UNKNOWN: unique symbol = Symbol('unknown');
+type Unknown = typeof UNKNOWN;
+
+/** How many values one batch or client block lost to the allowlist. */
+export interface Tally {
+  unknown: number;
+}
+
+export function tally(): Tally {
+  return { unknown: 0 };
+}
+
+type Validator = (value: unknown, level: Level, t?: Tally) => unknown | Invalid;
+
+function note(t: Tally | undefined) {
+  if (t) t.unknown += 1;
+}
 
 function isObject(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
@@ -79,8 +108,15 @@ function isCount(value: unknown, max = MAX_COUNT): value is number {
   return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 && value <= max;
 }
 
-/** Compiles one type spec into a validator. Throws on an unknown tag. */
-export function compile(spec: TypeSpec, histBins = VECTORS.hist_bins): Validator {
+/**
+ * Compiles one type spec into a validator. Throws on an unknown tag.
+ *
+ * Lenient (the default), a list, map or struct drops what the vectors do not
+ * know and counts it in the tally; `strict`, any fault anywhere inside makes
+ * the whole value INVALID. List items, map values and counter dims are
+ * compiled strict, which is what makes them atomic.
+ */
+export function compile(spec: TypeSpec, histBins = VECTORS.hist_bins, strict = false): Validator {
   switch (spec.t) {
     case 'enum': {
       const allowed = new Set(spec.v ?? []);
@@ -110,14 +146,18 @@ export function compile(spec: TypeSpec, histBins = VECTORS.hist_bins): Validator
           : INVALID;
     case 'list': {
       if (!spec.of) throw new Error('list spec without "of"');
-      const item = compile(spec.of, histBins);
+      const item = compile(spec.of, histBins, true);
       const max = spec.max ?? 64;
-      return (value, level) => {
+      return (value, level, t) => {
         if (!Array.isArray(value) || value.length > max) return INVALID;
         const out: unknown[] = [];
         for (const entry of value) {
           const clean = item(entry, level);
-          if (clean === INVALID) return INVALID;
+          if (clean === INVALID) {
+            if (strict) return INVALID;
+            note(t);
+            continue;
+          }
           out.push(clean);
         }
         return out;
@@ -127,50 +167,57 @@ export function compile(spec: TypeSpec, histBins = VECTORS.hist_bins): Validator
       if (!spec.k || !spec.v || typeof spec.v !== 'object' || Array.isArray(spec.v)) {
         throw new Error('map spec without "k"/"v"');
       }
-      const key = compile(spec.k, histBins);
-      const val = compile(spec.v as unknown as TypeSpec, histBins);
+      const key = compile(spec.k, histBins, true);
+      const val = compile(spec.v as unknown as TypeSpec, histBins, true);
       const max = spec.max ?? 64;
-      return (value, level) => {
+      return (value, level, t) => {
         if (!isObject(value)) return INVALID;
         const entries = Object.entries(value);
         if (entries.length > max) return INVALID;
         const out: Record<string, unknown> = {};
         for (const [name, entry] of entries) {
-          if (key(name, level) === INVALID) return INVALID;
-          const clean = val(entry, level);
-          if (clean === INVALID) return INVALID;
+          const clean = key(name, level) === INVALID ? INVALID : val(entry, level);
+          if (clean === INVALID) {
+            if (strict) return INVALID;
+            note(t);
+            continue;
+          }
           out[name] = clean;
         }
         return out;
       };
     }
     case 'struct':
-      return compileFields(spec.f ?? {}, histBins);
+      return compileFields(spec.f ?? {}, histBins, strict);
     default:
       throw new Error(`unsupported type tag ${JSON.stringify(spec.t)}`);
   }
 }
 
 /**
- * A struct: every present key must be known, every field is optional, and a
+ * A struct: every field is optional, a key the vectors do not name or a value
+ * they do not allow is dropped and counted (strict: makes it INVALID), and a
  * field whose minimum mode is diagnostics is dropped at the anonymous level.
  * Nested fields without an `m` inherit their parent's, which the caller has
  * already applied.
  */
-function compileFields(fields: Record<string, TypeSpec>, histBins: number): Validator {
+function compileFields(fields: Record<string, TypeSpec>, histBins: number, strict = false): Validator {
   const compiled = new Map<string, { check: Validator; diagnostics: boolean }>();
   for (const [name, spec] of Object.entries(fields)) {
-    compiled.set(name, { check: compile(spec, histBins), diagnostics: spec.m === 'diagnostics' });
+    compiled.set(name, { check: compile(spec, histBins, strict), diagnostics: spec.m === 'diagnostics' });
   }
-  return (value, level) => {
+  return (value, level, t) => {
     if (!isObject(value)) return INVALID;
     const out: Record<string, unknown> = {};
     for (const [name, entry] of Object.entries(value)) {
       const field = compiled.get(name);
-      if (!field) return INVALID;
-      const clean = field.check(entry, level);
-      if (clean === INVALID) return INVALID;
-      if (field.diagnostics && level === 'anonymous') continue;
+      const clean = field ? field.check(entry, level, t) : INVALID;
+      if (clean === INVALID) {
+        if (strict) return INVALID;
+        note(t);
+        continue;
+      }
+      if (field!.diagnostics && level === 'anonymous') continue;
       out[name] = clean;
     }
     return out;
@@ -220,7 +267,9 @@ export function compileVectors(vectors: Vectors): Compiled {
         const dims = new Map<string, { check: Validator; diagnostics: boolean }>();
         for (const [dim, dimSpec] of Object.entries(keySpec.dims ?? {})) {
           dims.set(dim, {
-            check: compile(dimSpec, vectors.hist_bins),
+            // Strict: a dim is part of the bucket's identity, so a value it
+            // only partly knows must not become a different, valid one.
+            check: compile(dimSpec, vectors.hist_bins, true),
             diagnostics: dimSpec.m === 'diagnostics',
           });
         }
@@ -292,6 +341,11 @@ export interface CleanBatch {
   rejected: number;
   /** Events removed by the level or priority policy, never invalid ones. */
   dropped: number;
+  /**
+   * Values (fields, list items, map entries, counter rows) dropped because
+   * the vectors do not know them: a client newer than this deploy.
+   */
+  unknown: number;
 }
 
 export type CleanResult = { ok: true; batch: CleanBatch } | { ok: false; error: string };
@@ -311,10 +365,11 @@ const ROW_KEYS = new Set(['k', 'd', 'n', 'h', 's', 'mx']);
 
 /**
  * The client block alone. Used by /register (which sends it without
- * install_id and session_id) as well as by cleanBatch.
+ * install_id and session_id) as well as by cleanBatch. Null only when it is
+ * not an object; what the vectors do not know is dropped and counted in `t`.
  */
-export function cleanClient(raw: unknown): CleanClient | Omit<CleanClient, 'install_id'> | null {
-  const clean = vectorsCompiled().client(raw, 'diagnostics');
+export function cleanClient(raw: unknown, t?: Tally): CleanClient | Omit<CleanClient, 'install_id'> | null {
+  const clean = vectorsCompiled().client(raw, 'diagnostics', t);
   return clean === INVALID ? null : (clean as CleanClient);
 }
 
@@ -334,7 +389,8 @@ export function cleanBatch(raw: unknown, options: CleanOptions = {}): CleanResul
   if (typeof raw.batch_id !== 'string' || !/^[0-9a-f]{32}$/.test(raw.batch_id)) {
     return { ok: false, error: 'batch_id must be 32 lowercase hex characters.' };
   }
-  const client = c.client(raw.client, 'diagnostics');
+  const t = tally();
+  const client = c.client(raw.client, 'diagnostics', t);
   if (client === INVALID || typeof (client as CleanClient).install_id !== 'string') {
     return { ok: false, error: 'The client block does not match the schema.' };
   }
@@ -355,7 +411,7 @@ export function cleanBatch(raw: unknown, options: CleanOptions = {}): CleanResul
   let rejected = 0;
   let dropped = 0;
   for (const entry of raw.events) {
-    const event = cleanEvent(c, entry, level);
+    const event = cleanEvent(c, entry, level, t);
     if (event === INVALID) {
       rejected += 1;
     } else if (event === null || priorityOf(event.type) > maxPriority) {
@@ -373,12 +429,16 @@ export function cleanBatch(raw: unknown, options: CleanOptions = {}): CleanResul
       events,
       rejected,
       dropped,
+      unknown: t.unknown,
     },
   };
 }
 
-/** A clean event, INVALID, or null when the level policy emptied it. */
-function cleanEvent(c: Compiled, raw: unknown, level: Level): CleanEvent | Invalid | null {
+/**
+ * A clean event, INVALID, or null when the level policy (or the allowlist,
+ * row by row) emptied it.
+ */
+function cleanEvent(c: Compiled, raw: unknown, level: Level, t: Tally): CleanEvent | Invalid | null {
   if (!isObject(raw) || typeof raw.type !== 'string') return INVALID;
   const spec = c.events.get(raw.type);
   if (!spec) return INVALID;
@@ -386,7 +446,7 @@ function cleanEvent(c: Compiled, raw: unknown, level: Level): CleanEvent | Inval
 
   if (spec.kind === 'record') {
     for (const key of Object.keys(raw)) if (!RECORD_KEYS.has(key)) return INVALID;
-    const props = spec.props!(raw.props, level);
+    const props = spec.props!(raw.props, level, t);
     if (props === INVALID) return INVALID;
     return { type: raw.type, window: raw.window, props: props as Record<string, unknown> };
   }
@@ -397,41 +457,44 @@ function cleanEvent(c: Compiled, raw: unknown, level: Level): CleanEvent | Inval
     return INVALID;
   }
   const out: CleanRow[] = [];
+  // Counted once the event is known to be kept: a rejected event's rows are
+  // in `rejected`, not here.
+  let unknownRows = 0;
   for (const row of rows) {
     const clean = cleanRow(c, spec.keys!, row, level);
     if (clean === INVALID) return INVALID;
+    if (clean === UNKNOWN) {
+      unknownRows += 1;
+      continue;
+    }
     if (clean !== null) out.push(clean);
   }
+  t.unknown += unknownRows;
   if (out.length === 0) return null;
   return { type: raw.type, window: raw.window, rows: out };
 }
 
+/**
+ * A clean row; INVALID for a shape fault (which rejects the event); UNKNOWN
+ * for a key, dim or dim value the vectors do not know (the row alone goes);
+ * null when the level policy drops it.
+ */
 function cleanRow(
   c: Compiled,
   keys: Map<string, CompiledKey>,
   raw: unknown,
   level: Level,
-): CleanRow | Invalid | null {
+): CleanRow | Invalid | Unknown | null {
   if (!isObject(raw) || typeof raw.k !== 'string') return INVALID;
   for (const key of Object.keys(raw)) if (!ROW_KEYS.has(key)) return INVALID;
-  const key = keys.get(raw.k);
-  if (!key) return INVALID;
   if (!isCount(raw.n)) return INVALID;
+  if (raw.d !== undefined && !isObject(raw.d)) return INVALID;
+  const key = keys.get(raw.k);
+  if (!key) return UNKNOWN;
 
-  const dims: Record<string, string | number | boolean> = {};
-  if (raw.d !== undefined) {
-    if (!isObject(raw.d)) return INVALID;
-    for (const [name, value] of Object.entries(raw.d)) {
-      const dim = key.dims.get(name);
-      if (!dim) return INVALID;
-      const clean = dim.check(value, level);
-      if (clean === INVALID) return INVALID;
-      if (dim.diagnostics && level === 'anonymous') continue;
-      dims[name] = clean as string | number | boolean;
-    }
-  }
-
-  const row: CleanRow = { k: raw.k, d: dims, n: raw.n };
+  // Shape before vocabulary: a malformed row rejects its event even when it
+  // also carries a dim this allowlist does not know.
+  const row: CleanRow = { k: raw.k, d: {}, n: raw.n };
   const histFields = raw.h !== undefined || raw.s !== undefined || raw.mx !== undefined;
   if (key.agg === 'count') {
     if (histFields) return INVALID;
@@ -446,6 +509,17 @@ function cleanRow(
       if (value === undefined) continue;
       if (typeof value !== 'number' || !Number.isFinite(value) || value < 0) return INVALID;
       row[field] = value;
+    }
+  }
+
+  if (raw.d !== undefined) {
+    for (const [name, value] of Object.entries(raw.d as Record<string, unknown>)) {
+      const dim = key.dims.get(name);
+      if (!dim) return UNKNOWN;
+      const clean = dim.check(value, level);
+      if (clean === INVALID) return UNKNOWN;
+      if (dim.diagnostics && level === 'anonymous') continue;
+      row.d[name] = clean as string | number | boolean;
     }
   }
   // Validated first, dropped second: an invalid diagnostics row still rejects.

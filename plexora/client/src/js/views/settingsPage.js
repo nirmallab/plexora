@@ -2131,9 +2131,15 @@
         if (outcome) {
             const words = { sent: "Sent.", nothing: "Nothing to send.", backoff: "The service did not answer recently; try again later.",
                             off: "Telemetry is off.", no_endpoint: "No telemetry service is configured.",
-                            failed: "The service could not be reached." };
+                            failed: "The service could not be reached.",
+                            unregistered: "Not sent: this install is not registered with the service.",
+                            rejected: "Not sent: the service refused the upload.",
+                            paused: "The service has paused uploads from this version." };
             bits.push(words[outcome] || `Upload: ${outcome}.`);
         }
+        // Why there is no token, in the uploader's own words: without it a
+        // refused registration looks exactly like "Nothing sent yet."
+        if (status.endpoint_configured && up.problem) bits.push(up.problem);
         text(meta, bits.join(" "));
         const send = el("settings_telemetry_send");
         if (send) send.hidden = !status.endpoint_configured || status.mode === "off";

@@ -203,8 +203,11 @@ def test_the_script_parses_every_documented_subcommand():
     for argv in (["doctor"], ["bump", "patch"], ["propagate", "--check"], ["client", "--verify-only"],
                  ["wheel"], ["runtime"], ["bundle", "--sign"], ["collect"],
                  ["validate", "--bundle-dir"], ["checksums"], ["all"], ["ci", "--bump", "minor"],
-                 ["clean", "--all"]):
+                 ["clean", "--all"], ["telemetry"], ["telemetry", "--check"], ["telemetry", "--deploy"]):
         assert parser.parse_args(argv).command == argv[0]
+    assert parser.parse_args(["--skip-telemetry", "all"]).skip_telemetry
+    with pytest.raises(SystemExit):
+        parser.parse_args(["telemetry", "--check", "--deploy"])
 
 
 def test_relative_directories_become_absolute(tmp_path, monkeypatch):
@@ -279,3 +282,133 @@ def test_a_dev_build_is_never_offered_updates(ctx, monkeypatch):
     assert ctx.dev
     assert overlay["plugins"]["updater"]["pubkey"] == ""
     assert "createUpdaterArtifacts" not in overlay["bundle"]
+
+
+# -- the telemetry Worker ------------------------------------------------------
+
+
+@pytest.fixture
+def worker(ctx, monkeypatch):
+    """`ctx` with the live Worker and the deploy replaced: `live` is what
+    /healthz reports (None = unreachable), `deploys` counts deploys, and a
+    deploy makes /healthz report `after_deploy`."""
+    ctx.skip_tests = True  # no sync_telemetry_vectors.py run
+    state = {"live": None, "deploys": 0, "after_deploy": None}
+
+    def health(timeout=10.0):
+        return None if state["live"] is None else {"ok": True, "schema": 1, "vectors": state["live"]}
+
+    def deploy(_ctx):
+        state["deploys"] += 1
+        state["live"] = state["after_deploy"]
+
+    clock = iter(range(0, 10_000, 30))
+    monkeypatch.setattr(release, "deployed_health", health)
+    monkeypatch.setattr(release, "deploy_worker", deploy)
+    monkeypatch.setattr(release.time, "sleep", lambda _s: None)
+    monkeypatch.setattr(release.time, "monotonic", lambda: next(clock))
+    return ctx, state
+
+
+def test_release_py_fingerprints_the_vectors_exactly_as_the_client_does():
+    from plexora.telemetry import schema
+
+    data = json.loads(release.VECTORS.read_text(encoding="utf-8"))
+    assert release.vectors_fingerprint(data) == schema.fingerprint(data) == data["fingerprint"]
+    assert release.local_vectors_fingerprint() == data["fingerprint"]
+
+
+def test_vectors_whose_fingerprint_does_not_recompute_are_refused(tmp_path, monkeypatch):
+    data = json.loads(release.VECTORS.read_text(encoding="utf-8"))
+    data["first_party"].append("new_plugin")  # edited by hand, not regenerated
+    stale = tmp_path / "backend" / "vectors" / "plexora-vectors.json"
+    stale.parent.mkdir(parents=True)
+    stale.write_text(json.dumps(data), encoding="utf-8")
+    monkeypatch.setattr(release, "ROOT", tmp_path)
+    monkeypatch.setattr(release, "VECTORS", stale)
+    with pytest.raises(release.StepError, match="does not match its contents"):
+        release.local_vectors_fingerprint()
+
+
+def test_a_current_worker_is_left_alone(worker):
+    ctx, state = worker
+    state["live"] = release.local_vectors_fingerprint()
+    assert release.cmd_telemetry(ctx) == "current"
+    assert state["deploys"] == 0
+
+
+def test_check_says_behind_and_never_deploys(worker):
+    ctx, state = worker
+    state["live"] = "0" * 16
+    with pytest.raises(release.StepError, match="behind this checkout"):
+        release.cmd_telemetry(ctx, release.argparse.Namespace(check=True, deploy=False))
+    state["live"] = None
+    with pytest.raises(release.StepError, match="live unreachable"):
+        release.cmd_telemetry(ctx, release.argparse.Namespace(check=True, deploy=False))
+    assert state["deploys"] == 0
+
+
+def test_a_worker_that_is_behind_is_deployed_and_then_verified(worker):
+    ctx, state = worker
+    state["live"] = "0" * 16
+    state["after_deploy"] = release.local_vectors_fingerprint()
+    assert release.cmd_telemetry(ctx) == "deployed"
+    assert state["deploys"] == 1
+
+
+def test_a_deploy_the_live_worker_does_not_show_fails(worker):
+    ctx, state = worker
+    state["live"] = state["after_deploy"] = "0" * 16
+    with pytest.raises(release.StepError, match="still reports vectors 0000000000000000"):
+        release.cmd_telemetry(ctx)
+    assert state["deploys"] == 1
+
+
+def test_deploy_redeploys_a_current_worker(worker):
+    ctx, state = worker
+    state["live"] = state["after_deploy"] = release.local_vectors_fingerprint()
+    assert release.cmd_telemetry(ctx, release.argparse.Namespace(check=False, deploy=True)) == "deployed"
+    assert state["deploys"] == 1
+
+
+def test_a_dev_build_only_warns_about_the_worker(worker, capsys):
+    ctx, state = worker
+    assert ctx.dev
+    release.telemetry_for_build(ctx)  # unreachable: no exception
+    assert "warning: The telemetry Worker is behind" in capsys.readouterr().out
+    assert state["deploys"] == 0
+
+
+def test_a_release_build_deploys_a_worker_that_is_behind(worker):
+    ctx, state = worker
+    ctx.dev = False
+    state["live"] = "0" * 16
+    state["after_deploy"] = release.local_vectors_fingerprint()
+    release.telemetry_for_build(ctx)
+    assert state["deploys"] == 1
+
+
+def test_skip_telemetry_skips_it(worker, monkeypatch):
+    ctx, _state = worker
+    ctx.dev = False
+    ctx.skip_telemetry = True
+    monkeypatch.setattr(release, "cmd_telemetry", lambda *_a, **_k: pytest.fail("checked"))
+    release.telemetry_for_build(ctx)
+
+
+def test_a_dry_run_bump_never_touches_the_worker(ctx, monkeypatch):
+    ctx.dry_run = True
+    monkeypatch.setattr(release, "cmd_telemetry", lambda *_a, **_k: pytest.fail("deployed"))
+    release.cmd_bump(ctx, release.argparse.Namespace(spec="99.0.0", commit=False, tag=False))
+
+
+@pytest.mark.parametrize(("code", "text", "who"), [
+    (0, "👋 You are logged in with an OAuth Token, associated with the email someone@lab.org.\n", "someone@lab.org"),
+    (0, "You are logged in with an API Token, associated with the email ci@lab.org.", "ci@lab.org"),
+    (0, "👋 You are logged in with an API Token. Unable to retrieve email for this user.", "API Token"),
+    (0, "You are not authenticated. Please run `wrangler login`.", None),
+    (1, "You are logged in with an OAuth Token, associated with the email someone@lab.org.", None),
+    (0, "Getting User settings...", None),
+])
+def test_wrangler_whoami_is_read(code, text, who):
+    assert release.parse_whoami(code, text) == who
