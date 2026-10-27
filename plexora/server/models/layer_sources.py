@@ -32,7 +32,7 @@ import threading
 from collections import OrderedDict
 
 from plexora.server.models.project import Project, config_generation
-from plexora.server.utils import colormaps
+from plexora.server.utils import brightfield, colormaps
 
 #: How many layer pyramids stay open. Each pins a file handle and whatever the
 #: reader keeps behind it, and a scene with more than a handful of image layers
@@ -759,6 +759,13 @@ def layer_tile(project_name, layer_id, channel, level, tile, quality="fast",
         return None
 
     channel_num, is_segmentation = data_model._parse_channel(str(channel))
+    rgb = bool((layer.render or {}).get("rgb")) and not is_segmentation
+    if rgb:
+        # An rgb layer's tile is the picture, whichever channel the url names.
+        # Its record lists one stub per sample (`<stem>_0` .. `_2`), and the
+        # viewer asks for the first -- which read ONE sample, served grey: an
+        # H&E added as a layer looked like plane 0 of a multiplex.
+        channel_num = brightfield.RGB_CHANNEL_KEY
     pixels = data_model.read_tile(
         opened.channels, channel_num, level, tile,
         opened.tile_width, opened.tile_height)
@@ -772,7 +779,7 @@ def layer_tile(project_name, layer_id, channel, level, tile, quality="fast",
         if window:
             qmin, qmax = window
 
-    if style and not is_segmentation and channel_num is not None:
+    if style and not rgb and not is_segmentation and channel_num is not None:
         low = style["lo"] if style["lo"] is not None else (qmin or 0)
         high = style["hi"] if style["hi"] is not None else (qmax or 65535)
         span = max(1, int(high) - int(low))

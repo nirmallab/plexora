@@ -513,6 +513,8 @@ def decide(item, open_):
                            f"Add {name} to {title} as a layer?",
                            reason="adds_layer", route=_layers_route(sample, path),
                            sample=sample)
+        if open_ and kind == "bundle" and not fit.get("withImage"):
+            return _decide_imageless_bundle(item, open_)
         return _new_sample(item, open_)
 
     if kind == "folder":
@@ -537,6 +539,32 @@ def _new_sample(item, open_):
         return action
     return _action("open_dialog", item, "auto", f"Import {name}",
                    reason="needs_dialog")
+
+
+def _decide_imageless_bundle(item, open_):
+    """A store with no image of its own -- shapes, cells, a mask -- dropped on
+    an open sample. It cannot be a sample (`register_image_datasource` refuses
+    a store with no image), so it is offered to the open one. Asked, never
+    done on its own: nothing about a store says which slide it was made from,
+    and what it brings may replace what the slide already has. A store with
+    several tables is settled by the dialog `addToSample` opens."""
+    fit, path = item.get("fit") or {}, item["path"]
+    name = Path(str(path)).name
+    sample, title = open_["name"], open_["title"]
+    brings = fit.get("brings") or []
+    replaces = [what for role, what, has in (
+        ("mask", "a segmentation mask", open_["hasMask"]),
+        ("table", "cell data", open_["hasTable"])) if role in brings and has]
+    if replaces:
+        message = (f"{title} already has {' and '.join(replaces)}. "
+                   f"Replace with what {name} holds?")
+        reason = "bundle_replaces"
+    else:
+        message = f"Add {name} to {title}?"
+        reason = "bundle_to_open"
+    return _action("add_layer", item, "needs_confirm", message, reason=reason,
+                   route=_layers_route(sample, path), sample=sample,
+                   reload="mask" in brings)
 
 
 def _decide_image(item, open_):

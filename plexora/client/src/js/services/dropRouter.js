@@ -132,6 +132,8 @@ window.PlexoraDropRouter = (function () {
         related_to_open: "Add to this sample?",
         open_and_attach: "Open the sample these files belong to?",
         adds_layer: "Add as a layer?",
+        bundle_to_open: "Add to this sample?",
+        bundle_replaces: "Replace what this sample has?",
         overwrites_gates: "Load gates?",
     };
 
@@ -243,10 +245,12 @@ window.PlexoraDropRouter = (function () {
         }
         const verb = {
             attach_mask: "Attach", attach_table: action.reason === "table_exists" ? "Replace" : "Attach",
-            apply_channel_names: "Replace names", add_layer: "Add",
+            apply_channel_names: "Replace names",
+            add_layer: action.reason === "bundle_replaces" ? "Replace" : "Add",
             open_project: "Open", upload_gates: "Load gates",
         }[action.kind] || "Continue";
-        const danger = ["table_exists", "names_present", "overwrites_gates"].includes(action.reason);
+        const danger = ["table_exists", "names_present", "overwrites_gates",
+                        "bundle_replaces"].includes(action.reason);
         const value = await ask.choose({
             title, body,
             choices: [

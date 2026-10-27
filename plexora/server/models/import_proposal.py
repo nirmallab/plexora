@@ -3368,6 +3368,31 @@ def _declared(raw, answers) -> str | None:
     return value if value in ("mask", "table", "layer") else None
 
 
+def _without_left_out(layers, questions, said, *, scoped=False):
+    """One pick's rows less those its ✕ took out, and the questions about them.
+
+    A store or a run is ONE pick and many rows, and the ✕ on one of them
+    leaves that row out and keeps the rest: `left-out:<pick>` is a list of
+    the rows' `src`. Not their ids -- a folder holding two slides' masks can
+    name both `cellRing`. The image a new sample is drawn in is never left
+    out on its own; without it there is no sample, so its ✕ removes the pick.
+    Added to a sample that exists (`scoped`), that image is only a layer --
+    `_scoped_sample` demotes it after this -- and goes like any other row.
+    """
+    if not isinstance(said, (list, tuple)) or not said:
+        return layers, questions
+    gone = {str(src) for src in said}
+
+    def left_out(layer):
+        return str(layer.src) in gone and (scoped or not layer.reference)
+
+    scopes = {f"layer:{layer.id}" for layer in layers if left_out(layer)}
+    if not scopes:
+        return layers, questions
+    return ([layer for layer in layers if not left_out(layer)],
+            [question for question in questions if question.scope not in scopes])
+
+
 def _attached(raw, answers) -> str | None:
     """The `SampleProposal.key` a pick was added to, or None if it was loose."""
     return str(_said(answers, "sample-for:", raw) or "").strip() or None
@@ -3415,6 +3440,9 @@ def inspect_paths(paths, *, node=None, answers=None, sample=None) -> Proposal:
         else:
             layers, path_questions, bundle, path_warnings = _detect(
                 raw, mine, declared)
+        layers, path_questions = _without_left_out(
+            layers, path_questions, _said(answers, "left-out:", raw),
+            scoped=bool(sample))
         for question in path_questions:
             question.pick = index
             question.id = _per_pick(question.id, raw)

@@ -926,6 +926,19 @@ check("a second layer's card arrives folded",
         "its bytes are already the picture: no channel to pick, no window");
     stack.unregister("rgb_layer");
 
+    // What an H&E added as a layer is actually recorded with: one stub per
+    // colour sample, not the `rgb` key.
+    stack.register("he_stubs", {
+        kind: "image", label: "H&E",
+        spec: { render: { rgb: true },
+                channels: [0, 1, 2].map((i) => ({ name: `he_${i}`, src: `/he/he_${i}/` })) },
+    });
+    check("an rgb layer's colour samples are not offered as channels",
+        findAll(cardFor("he_stubs"), (n) => n.className?.includes?.("layer-card-channel")
+            || n.className?.includes?.("layer-card-swatch")).length === 0,
+        "a Channel menu of three and a swatch made an H&E layer read as a multiplex");
+    stack.unregister("he_stubs");
+
     // Unregistering re-renders through the panel's own subscription, which is
     // where a card whose layer has gone is dropped.
     stack.unregister("mx");

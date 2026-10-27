@@ -1246,6 +1246,7 @@ window.PlexoraImportSample = (function () {
     function forgetAbout(pick) {
         delete state.answers[`sample-for:${pick}`];
         delete state.answers[`added-as:${pick}`];
+        delete state.answers[`left-out:${pick}`];
         const at = (state.picked || []).indexOf(pick);
         (state.proposal?.samples || []).forEach((sample) => {
             (sample.layers || []).forEach((layer) => {
@@ -2272,7 +2273,7 @@ window.PlexoraImportSample = (function () {
         // is the one thing on this screen worth correcting before importing.
         row.appendChild(roleBadge(layer));
         const pick = pickOf(layer);
-        if (pick) row.appendChild(removeButton(pick));
+        if (pick) row.appendChild(removeButton(pick, layer));
         // Just added from this card's row, which has closed: a brief tint so
         // the eye lands on where the file went rather than on the gap it left.
         if (pick && pick === state.arrived) row.classList.add("is-arrived");
@@ -2514,22 +2515,47 @@ window.PlexoraImportSample = (function () {
      *
      * `pick` is the index of the entry in the array that produced this
      * proposal, which `state.picked` holds -- so a bundle's six rows all
-     * resolve to the one folder that was picked, and removing any of them
-     * removes the run.
+     * resolve to the one folder that was picked (and `removeRow` decides
+     * whether a ✕ takes the row or the run).
      */
     function pickOf(row) {
         if (!row || row.pick === null || row.pick === undefined) return null;
         return state.picked[row.pick] ?? null;
     }
 
-    function removeButton(pick) {
+    function removeButton(pick, layer = null) {
         const button = el("button", "plx-import-remove");
         button.type = "button";
         button.title = "Leave this out";
         button.setAttribute("aria-label", "Leave this out");
         button.innerHTML = '<span class="fas fa-xmark" aria-hidden="true"></span>';
-        button.addEventListener("click", () => removePick(pick));
+        button.addEventListener("click", () => (layer ? removeRow(pick, layer)
+                                                      : removePick(pick)));
         return button;
+    }
+
+    /**
+     * The ✕ on one row. A file picked on its own IS its row, so the pick
+     * goes. A store or a run is many rows, and the ✕ on one of them leaves
+     * just that row out -- taking the whole store was the dialog emptying
+     * under you for one unwanted layer. Its reference image, and the last row
+     * it has left, are still the pick itself: there is no sample without
+     * them. Said as `left-out:<pick>`, a list of the rows' `src`, so the
+     * server leaves them out of every inspection and of the import.
+     */
+    function removeRow(pick, layer) {
+        const rows = (state.proposal?.samples || [])
+            .flatMap((sample) => sample.layers || [])
+            .filter((row) => row.pick === layer.pick);
+        if (layer.reference || rows.length <= 1 || !layer.src) {
+            removePick(pick);
+            return;
+        }
+        const key = `left-out:${pick}`;
+        const gone = Array.isArray(state.answers[key]) ? state.answers[key] : [];
+        state.answers[key] = [...gone, String(layer.src)];
+        (layer.needs || []).forEach((id) => { delete state.answers[id]; });
+        inspect();
     }
 
     /**

@@ -496,6 +496,137 @@ def test_a_table_of_several_images_none_of_them_this_one_opens_the_dialog(client
     assert action["sample"] == sample
 
 
+# -- a SpatialData store with no image of its own -------------------------------
+
+def _imageless_store(name, tables=("cells",), images=()):
+    """Cells (and nothing to draw them in) as SpatialData: what a pipeline
+    writes beside the slide it segmented. `images` puts pictures beside them,
+    which makes it no longer image-less -- for the tests that need a store
+    of several rows."""
+    anndata = pytest.importorskip("anndata")
+    spatialdata = pytest.importorskip("spatialdata")
+    import pandas as pd
+    from spatialdata.models import Image2DModel
+
+    def table(seed):
+        adata = anndata.AnnData(
+            X=np.ones((6, 2), dtype=np.float32),
+            obs=pd.DataFrame(index=[f"cell_{i}" for i in range(6)]),
+            var=pd.DataFrame(index=["CD3", "CD8"]))
+        adata.obsm["spatial"] = np.random.default_rng(seed).random(
+            (6, 2)).astype(np.float32) * 100
+        return adata
+
+    pictures = {i: Image2DModel.parse(np.ones((2, 128, 128), dtype=np.uint16),
+                                      dims=("c", "y", "x")) for i in images}
+    path = _source() / name
+    spatialdata.SpatialData(
+        images=pictures,
+        tables={t: table(i) for i, t in enumerate(tables)}).write(path)
+    return str(path)
+
+
+def test_a_store_with_no_image_is_offered_to_the_open_sample(client):
+    sample = _register(client, "slide.ome.tif")
+    store = _imageless_store("cells.zarr")
+    plan = _plan(client, paths=[store], datasource=sample)
+    action = _only(plan)
+    assert action["kind"] == "add_layer"
+    assert action["status"] == "needs_confirm"
+    assert action["reason"] == "bundle_to_open"
+    assert action["route"] == {"method": "POST", "path": "import/layers",
+                               "json": {"sample": sample, "paths": [store],
+                                        "answers": {}}}
+    assert plan["summary"]["hint"] == f"Add as a layer to {sample}"
+
+    # And the route it names attaches the store's cells to that sample.
+    response = client.post("/import/layers", json=action["route"]["json"])
+    assert response.status_code == 200, response.get_json()
+    dataset = Project.load(sample).dataset
+    assert (dataset.src, dataset.table) == (store, "cells")
+
+
+def test_a_store_of_several_tables_leaves_the_choice_to_the_dialog(client):
+    sample = _register(client, "slide.ome.tif")
+    store = _imageless_store("many.zarr", tables=("cells", "tiles"))
+    action = _only(_plan(client, paths=[store], datasource=sample))
+    assert action["reason"] == "bundle_to_open"
+    # What `addToSample` inspects before posting: a table with no answer is
+    # a need, and a need opens the dialog on this sample.
+    scoped = import_proposal.inspect_paths([store], sample=sample).samples[0]
+    assert [l.role for l in scoped.layers if l.needs] == ["table"]
+
+
+def test_one_row_of_a_store_is_left_out_and_the_rest_added(client):
+    """The ✕ on one row of a store takes that row, not the store: the dialog
+    sends `left-out:<pick>`, and the import reads the store without it."""
+    sample = _register(client, "slide.ome.tif")
+    store = _imageless_store("both.zarr", images=("he",))
+    rows = import_proposal.inspect_paths([store], sample=sample).samples[0].layers
+    image = next(r for r in rows if r.kind == "image")
+    table = next(r for r in rows if r.role == "table")
+    assert len(rows) == 2
+
+    answers = {f"left-out:{store}": [image.src]}
+    left = import_proposal.inspect_paths(
+        [store], sample=sample, answers=answers).samples[0].layers
+    assert [r.src for r in left] == [table.src]
+
+    response = client.post("/import/layers", json={
+        "sample": sample, "paths": [store], "answers": answers})
+    assert response.status_code == 200, response.get_json()
+    project = Project.load(sample)
+    assert project.dataset.src == store
+    assert [l.src for l in project.spatial_layers] == []
+
+
+def test_leaving_out_a_stores_table_takes_its_question_with_it(client):
+    store = _imageless_store("rows.zarr", tables=("cells", "tiles"), images=("he",))
+    whole = import_proposal.inspect_paths([store]).samples[0]
+    table = next(r for r in whole.layers if r.role == "table")
+    assert any(q.scope == f"layer:{table.id}" for q in whole.questions)
+
+    left = import_proposal.inspect_paths(
+        [store], answers={f"left-out:{store}": [table.src]}).samples[0]
+    assert [r.role for r in left.layers] == ["image"]
+    assert not [q for q in left.questions if q.scope == f"layer:{table.id}"]
+
+
+def test_a_stores_reference_image_is_never_left_out_on_its_own(client):
+    store = _imageless_store("ref.zarr", images=("he",))
+    reference = next(r for r in import_proposal.inspect_paths([store])
+                     .samples[0].layers if r.reference)
+    left = import_proposal.inspect_paths(
+        [store], answers={f"left-out:{store}": [reference.src]}).samples[0]
+    assert reference.src in [r.src for r in left.layers]
+
+
+def _bundle(**fit):
+    base = {"existing": None, "withImage": False, "brings": ["table"],
+            "questions": 0, "onePress": True}
+    return {"pick": 0, "path": "/x/s.zarr", "kind": "bundle",
+            "label": "s.zarr", "fit": {**base, **fit}}
+
+
+@pytest.mark.parametrize("fit, open_, kind, reason", [
+    ({}, OPEN, "add_layer", "bundle_to_open"),
+    ({"questions": 1}, OPEN, "add_layer", "bundle_to_open"),
+    ({}, {**OPEN, "hasTable": True}, "add_layer", "bundle_replaces"),
+    ({"brings": ["mask"]}, {**OPEN, "hasMask": True}, "add_layer", "bundle_replaces"),
+    ({"brings": ["mask"]}, {**OPEN, "hasTable": True}, "add_layer", "bundle_to_open"),
+    # A store with its own image is a sample of its own, as before.
+    ({"withImage": True}, OPEN, "import_new", None),
+    # With nothing open there is nothing to add it to.
+    ({}, None, "import_new", None),
+])
+def test_decide_imageless_bundle(fit, open_, kind, reason):
+    action = drop_plan.decide(_bundle(**fit), open_)
+    assert (action["kind"], action["reason"]) == (kind, reason)
+    if kind == "add_layer":
+        assert action["status"] == "needs_confirm"
+        assert action["effects"]["reload"] is ("mask" in _bundle(**fit)["fit"]["brings"])
+
+
 # -- a failure part-way ---------------------------------------------------------
 
 def test_a_table_that_fails_puts_back_the_mask_attached_with_it(client, monkeypatch):

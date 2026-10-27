@@ -200,6 +200,36 @@ def test_the_etag_carries_the_config_generation_not_the_load_generation(client, 
     assert after != before
 
 
+def test_an_rgb_layer_serves_the_picture_whichever_stub_is_asked_for(client, scene,
+                                                                      tmp_path):
+    """An H&E added as a layer is recorded with one stub per colour sample, and
+    the viewer asks for the first. Each used to read that ONE sample, grey --
+    the slide drawn as plane 0 of a multiplex -- and a colour tinted it."""
+    import io
+
+    from PIL import Image
+
+    picture = np.zeros((256, 256, 3), dtype=np.uint8)
+    picture[..., 0], picture[..., 1], picture[..., 2] = 200, 120, 180
+    path = tmp_path / "slide_he.tif"
+    tifffile.imwrite(path, picture, photometric="rgb", tile=(256, 256))
+    scene.with_layer(LayerSpec(
+        id="stain", kind="image", label="H&E", src=str(path), modality="he",
+        width=256, height=256, max_level=1, tile_width=256, tile_height=256,
+        channels=tuple({"name": f"stain_{i}", "fullname": f"stain_{i}"}
+                       for i in range(3)),
+        render={"rgb": True},
+    )).save()
+    layer_sources.forget()
+
+    for query in ("", "?color=ff0000"):
+        response = client.get(f"/generated/layer/demo/stain/stain_0/0/0_0{query}")
+        assert response.status_code == 200, query
+        bands = np.asarray(Image.open(io.BytesIO(response.data)).convert("RGB"))
+        means = [round(float(bands[..., i].mean())) for i in range(3)]
+        assert all(abs(m - w) <= 3 for m, w in zip(means, (200, 120, 180))), (query, means)
+
+
 def test_the_route_404s_for_a_layer_that_has_no_pixels(client):
     assert client.get("/generated/layer/demo/nope/c_0/0/0_0").status_code == 404
 

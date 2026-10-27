@@ -802,21 +802,23 @@ window.PlexoraLayerManager = (function () {
      * (views/layerChannelPanel.js), which is several channels at once with a
      * colour and a contrast window each, all of them free repaints.
      *
-     * So this is for the one image layer that has no channel to pick and
-     * nothing for that panel to control: an rgb slide, whose tiles arrive
-     * already coloured. It also stands in on a build with no panel module, so
-     * such a build degrades rather than going blank.
+     * So this is only what stands in on a build with no panel module, so such
+     * a build degrades rather than going blank. NOT for an rgb slide: its
+     * record lists one stub per colour sample, and a "Channel" menu of three
+     * and a colour swatch made an H&E added as a layer read as a multiplex
+     * whose first plane was showing. Its tiles are the picture; the card's
+     * Opacity is all it has.
      */
     function buildChannelRow(layer) {
         const spec = layer.spec || {};
         const channels = spec.channels || [];
         if (layer.kind !== "image") return null;
         if (layer.id === baseId()) return null;
+        if ((spec.render || {}).rgb) return null;
         if (!channels.length) return null;
         // Superseded for any layer that gets the reference image's own
         // channel controls, which is every layer whose pixels are channel
-        // planes. This row is what is left for the one case that has no
-        // channel to pick: an rgb layer, whose bytes are already the picture.
+        // planes, on any build that has the panel.
         if (hasChannelPanel(layer)) return null;
 
         const row = document.createElement("div");
