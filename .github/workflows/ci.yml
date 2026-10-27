@@ -1,0 +1,102 @@
+name: ci
+
+# Tier 1 of the nirmallab CI (https://github.com/nirmallab/.github): every push
+# to main and every pull request, one Linux job on 3.13 (the Python the
+# desktop app ships), three to five minutes. Before this, the Python suite ran
+# only in the release preflight: 300 commits a month landed untested.
+#
+#   - the tests ci/selection.toml picks for what changed: a fixed fast core,
+#     plus the test files that import the changed modules (a plugin's own
+#     tests for a change inside it), within a time budget. The job summary
+#     lists what was picked and why, and what was deferred to the weekly run;
+#   - the committed generated pages are current: the reference from the
+#     Python and, when the client changed, the browser API from the
+#     JavaScript. Here a stale page fails the push that caused it; docs.yml
+#     regenerates them anyway, so the site never waits on it;
+#   - the wheel, built and imported in a clean environment.
+#
+# weekly.yml runs the whole suite on every Python; monthly.yml on Windows and
+# macOS too. This repository is public, so none of it costs Actions minutes;
+# the limits that matter are wall clock and five concurrent macOS jobs.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      scope:
+        description: auto (from the diff), core (the broad set) or full (the whole suite)
+        type: choice
+        options: [auto, core, full]
+        default: auto
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  UV_LINK_MODE: copy
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: ${{ inputs.scope == 'full' && 45 || 15 }}
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+
+      - id: select
+        uses: nirmallab/.github/actions/select-tests@v1
+        with:
+          scope: ${{ inputs.scope || 'auto' }}
+
+      - if: steps.select.outputs.scope != 'none'
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: "22"
+
+      - if: steps.select.outputs.scope != 'none'
+        uses: nirmallab/.github/actions/setup-python-uv@v1
+        with:
+          python: "3.13"
+          sync-args: --locked --extra dev --extra spatial --extra wsi --extra remote --extra jupyter --extra ai --extra bridge
+
+      - name: Client packages for the JS probes
+        if: steps.select.outputs.scope != 'none'
+        run: npm ci --prefix plexora/client --no-audit --no-fund
+
+      - name: Reference pages match the code
+        if: steps.select.outputs.scope != 'none'
+        run: uv run --no-sync python tools/docs/sync_docs.py check || { echo "::error::Run python tools/docs/sync_docs.py generate and commit the result."; exit 1; }
+
+      - name: Browser API pages match the JavaScript
+        if: contains(steps.select.outputs.flags, 'browser_api')
+        run: |
+          npm ci --prefix website --no-audit --no-fund
+          npm run generate:browser-api --prefix website -- --check \
+            || { echo "::error::Run npm run generate:browser-api --prefix website and commit the result."; exit 1; }
+
+      - if: steps.select.outputs.scope != 'none'
+        uses: nirmallab/.github/actions/pytest-run@v1
+        with:
+          label: py3.13 ${{ steps.select.outputs.scope }}
+          tests: ${{ steps.select.outputs.tests }}
+          # Unshuffled, so a failure here reproduces from the summary alone.
+          args: -p no:randomly -m "not perf"
+          workers: "4"
+          durations-file: ci/durations.json
+          session-timeout-minutes: ${{ inputs.scope == 'full' && 38 || 8 }}
+          job-timeout-minutes: ${{ inputs.scope == 'full' && 45 || 15 }}
+
+      - if: steps.select.outputs.scope != 'none'
+        uses: nirmallab/.github/actions/build-smoke@v1
+        with:
+          python: "3.13"
+          import: plexora
+          commands: plexora --help > /dev/null

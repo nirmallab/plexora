@@ -136,6 +136,10 @@
         if (/\/volume\/[^/]+\/bricks?\b/.test(address)) return "brick";
         if (/view=(t\d+)?(xzy|yzx)/.test(address)) return "section";
         if (/\/generated\/data\//.test(address)) return "tile";
+        if (/\/node\/v1\/(image|seg|segmentation)\/[^?]*\/tile\//.test(address)) return "tile";
+        if (/\/node\/v1\/batch\b/.test(address)) return "batch";
+        if (/\/node\/v1\/image\/[^/]+\/level\b/.test(address)) return "level";
+        if (/\/node\/v1\/image\/[^/]+\/block\b/.test(address)) return "brick";
         if (/\.glsl(\?|$)/.test(address)) return "shader";
         if (/\/(stats|gmm|quantization)/.test(address)) return "stats";
         return "";

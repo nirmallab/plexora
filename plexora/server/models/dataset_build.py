@@ -123,10 +123,13 @@ def specs_for(plan, only=None) -> list:
     return found
 
 
-def spec_document(plan, name, description="") -> dict:
-    """The file `plexora dataset create NAME --from FILE` reads, for this plan."""
+def spec_document(plan, name, description="", only=None) -> dict:
+    """The file `plexora dataset create NAME --from FILE` reads, for this plan.
+
+    @param only - project ids to keep (the samples ticked in the dialog).
+    """
     return {"name": name, "description": description or "",
-            "projects": [spec for _id, spec in specs_for(plan)]}
+            "projects": [spec for _id, spec in specs_for(plan, only)]}
 
 
 def build(plan, *, name, description="", exist_ok=False, only=None,
@@ -216,6 +219,33 @@ def build(plan, *, name, description="", exist_ok=False, only=None,
 def _settle(record, by_id):
     project = by_id[record["id"]]
     record["status"] = "adopted" if project.get("existing") else "created"
+    said = name_channels_after(record["name"], project)
+    if said:
+        record["warnings"].append(said)
+
+
+def name_channels_after(name, project) -> str | None:
+    """Apply a channel list the plan could not check before registration.
+
+    On a data node the plan may not know an image's channel count
+    (`dataset_plan._channels_slot`), so the names wait until the sample is
+    registered and the count is in its record. Applied when the lengths
+    match, the way the viewer's own channel-names upload applies a list.
+
+    @returns A sentence when the list was not applied, else None.
+    """
+    from plexora.datasource import rename_channels
+
+    names = (project.get("channels") or {}).get("names_after")
+    if not names:
+        return None
+    try:
+        # Just registered, so nothing has it cached (as `import_sample`'s own
+        # `_name_reference_channels`).
+        rename_channels(name, list(names))
+    except (ValueError, KeyError) as error:
+        return f"Channel names not applied: {error}"
+    return None
 
 
 def check_name(name, *, exist_ok=False) -> None:

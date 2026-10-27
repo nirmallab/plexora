@@ -37,6 +37,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import threading
 import time
 from pathlib import Path
@@ -721,6 +722,9 @@ def project_roots(name) -> list[Path]:
     return [root for root in roots() if (root / name).is_dir()]
 
 
+_URL_SHAPED = re.compile(r"^[A-Za-z][A-Za-z0-9+.-]+:/")
+
+
 def is_writable(root) -> bool:
     """Whether a root accepts writes, probed once per process per root.
 
@@ -729,6 +733,12 @@ def is_writable(root) -> bool:
     exists beside a shared image should be read where it is, but one that has
     to be built has to go somewhere this user can actually write.
     """
+    # Never a web address: probing creates the folder it asks about, and
+    # `Path("sftp://host/dir")` is the relative path `sftp:/host/dir` -- a
+    # tree of empty folders under whatever directory the server was started
+    # in. Two letters or more before the colon, so `C:/` stays a drive.
+    if _URL_SHAPED.match(str(root).replace("\\", "/")):
+        return False
     path = Path(root)
     key = f"writable:{path}"
     with _cache_lock:

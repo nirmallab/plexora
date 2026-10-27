@@ -1,0 +1,43 @@
+name: client
+
+# The browser client (plexora/client/): the Karma suite, and the committed
+# bundle matching a fresh build, on the pushes that change it. weekly.yml runs
+# the same every Monday.
+
+on:
+  push:
+    branches: [main]
+    paths: ["plexora/client/**", ".github/workflows/client.yml"]
+  pull_request:
+    paths: ["plexora/client/**", ".github/workflows/client.yml"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: client-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: plexora/client/package-lock.json
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: "3.13"
+      - run: npm ci --prefix plexora/client --no-audit --no-fund
+      - name: The committed bundle is the build
+        run: python scripts/release.py client --verify-only
+      - name: Karma
+        # karma.conf.js starts a windowed Chrome; the runner has no display.
+        run: xvfb-run -a npm test --prefix plexora/client

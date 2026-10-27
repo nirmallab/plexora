@@ -1,12 +1,21 @@
 name: Docs
 
 # The documentation site (website/), built from this repository and published
-# to GitHub Pages. Every pull request checks that the generated reference is
-# current and that the site builds with no broken links; every push to main
-# (or a manual run) also deploys it, and so does every successful Release, so
-# the download buttons name the new installers the moment they exist. That is
-# `workflow_run`, not `release: published`: the release is created with
-# GITHUB_TOKEN, and events raised by GITHUB_TOKEN start no other workflow.
+# to GitHub Pages. Every pull request checks that the site builds with no
+# broken links and that the documentation tests pass; every push to main (or a
+# manual run) also deploys it.
+#
+# The generated pages (the reference from the Python, the browser API from the
+# JavaScript) are regenerated here before the build, so the site always
+# matches the code. Whether the committed copies are current is ci.yml's
+# check, where it fails the push that let them drift; here it is a warning.
+# When it was a failure here, a forgotten regeneration kept the site from
+# deploying at all: 85 of 90 runs were red and nothing published after 10-22.
+#
+# Every Release also redeploys it (release.yml's last step dispatches this
+# workflow), so the download buttons name the new installers the moment they
+# exist. Not `release: published` or `workflow_run`: a release created with
+# GITHUB_TOKEN starts no other workflow, and zizmor refuses workflow_run.
 #
 # One-time setup: repository Settings > Pages > Source: "GitHub Actions".
 # A custom domain later needs only website/public/CNAME and the domain in the
@@ -19,14 +28,9 @@ on:
     branches: [main]
     paths-ignore: ["desktop/**", "backend/**"]
   workflow_dispatch:
-  workflow_run:
-    workflows: [Release]
-    types: [completed]
 
 permissions:
   contents: read
-  pages: write
-  id-token: write
 
 concurrency:
   group: pages-${{ github.ref }}
@@ -37,21 +41,33 @@ env:
 
 jobs:
   check:
-    name: Generated reference is current
-    if: github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success'
+    name: Documentation tests
     runs-on: ubuntu-22.04
+    timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          persist-credentials: false
           fetch-depth: 0
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:
           python-version: "3.13"
-      - uses: astral-sh/setup-uv@v6
+      - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6.8.0
       - name: Install Plexora
         run: uv pip install --system -e ".[dev,spatial,jupyter]"
-      - name: Reference pages match the code
-        run: python tools/docs/sync_docs.py check
+      - name: Reference pages, regenerated
+        run: |
+          python tools/docs/sync_docs.py generate
+          if ! git diff --quiet -- website; then
+            echo "::warning::The committed reference pages were stale; the site is built from regenerated ones. Run python tools/docs/sync_docs.py generate and commit: $(git diff --name-only -- website | tr '\n' ' ')"
+          fi
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: generated-pages
+          path: |
+            website/content
+            website/generated
+          retention-days: 1
       - name: Documentation tests
         run: python -m pytest -q -p no:randomly tests/test_docs_coverage.py tests/test_docs_docstrings.py tests/test_docs_signatures.py tests/test_docs_envvars.py tests/test_docs_examples.py tests/test_docs_links.py tests/test_docs_freshness.py
       - name: The committed release record is well-formed
@@ -61,13 +77,16 @@ jobs:
     name: Build the site
     needs: check
     runs-on: ubuntu-22.04
+    timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       # sync_docs.py needs tomllib (3.11+); the runner's python3 is 3.10.
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:
           python-version: "3.13"
-      - uses: actions/setup-node@v7
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: "22"
           cache: npm
@@ -75,13 +94,23 @@ jobs:
       - id: pages
         # No `static_site_generator: next`: that input rewrites next.config.mjs
         # and breaks its createMDX() wrapper. The base path is passed below.
-        uses: actions/configure-pages@v6
-      - name: Record the commit source links point at
-        run: python3 tools/docs/sync_docs.py version --source-ref "${{ github.sha }}"
+        uses: actions/configure-pages@45bfe0192ca1faeb007ade9deae92b16b8254a0d # v6.0.0
       - name: Install
         run: npm ci --prefix website
-      - name: Browser API pages match the JavaScript
-        run: npm run generate:browser-api --prefix website -- --check
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: generated-pages
+          path: website
+      # After the download, which carries a version.json of its own.
+      - name: Record the commit source links point at
+        run: python3 tools/docs/sync_docs.py version --source-ref "${{ github.sha }}"
+      - name: Browser API pages, regenerated
+        run: |
+          npm run generate:browser-api --prefix website
+          pages=website/content/docs/reference/plugin-api/browser
+          if ! git diff --quiet -- "$pages"; then
+            echo "::warning::The committed browser API pages were stale; the site is built from regenerated ones. Run npm run generate:browser-api --prefix website and commit: $(git diff --name-only -- "$pages" | tr '\n' ' ')"
+          fi
       - name: Pages compile, components exist, links resolve
         env:
           CHECK_MDX_STRICT_LINKS: "1"
@@ -111,18 +140,22 @@ jobs:
           for url in $urls; do
             curl -fsSIL -o /dev/null --retry 3 "$url" && echo "ok $url"
           done
-      - uses: actions/upload-pages-artifact@v5
+      - uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
         with:
           path: website/out
 
   deploy:
     name: Deploy to GitHub Pages
     needs: build
-    if: github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch' || github.event_name == 'workflow_run'
+    if: github.event_name != 'pull_request' && (github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch')
     runs-on: ubuntu-22.04
+    timeout-minutes: 10
+    permissions:
+      pages: write
+      id-token: write
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - id: deployment
-        uses: actions/deploy-pages@v5
+        uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346 # v5.0.1

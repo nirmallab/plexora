@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest';
 
-import type { Env } from '../src/env';
+import { DEV_IP_PEPPER, DEV_TELEMETRY_KEY, type Env, ipPepper, tokenSecret } from '../src/env';
 import { percentile } from '../src/telemetry/hist';
-import { base64url, bearer, mintToken, verifyToken } from '../src/telemetry/tokens';
+import { base64url, bearer, mintToken, SigningKeyMissing, verifyToken } from '../src/telemetry/tokens';
 
 const ID = 'ab'.repeat(16);
 const env = (current: string, previous?: string) =>
@@ -33,6 +33,30 @@ describe('install tokens', () => {
     const { token } = await mintToken(env('old'), ID, 1000, 1000);
     expect(await verifyToken(env('new', 'old'), token, 1500)).toMatchObject({ rotate: true });
     expect(await verifyToken(env('new'), token, 1500)).toBeNull();
+  });
+
+  it('production with no TELEMETRY_HMAC_KEY mints nothing and verifies nothing, not even under the previous key', async () => {
+    const { token } = await mintToken(env('k1'), ID, 1000, 1000);
+    const production = (keys: Record<string, string | undefined>) => ({ ENVIRONMENT: 'production', ...keys }) as unknown as Env;
+    await expect(mintToken(production({}), ID, 1000, 1000)).rejects.toBeInstanceOf(SigningKeyMissing);
+    await expect(mintToken(production({ TELEMETRY_HMAC_KEY: '' }), ID, 1000, 1000)).rejects.toBeInstanceOf(SigningKeyMissing);
+    expect(await verifyToken(production({ TELEMETRY_HMAC_KEY_PREVIOUS: 'k1' }), token, 1500)).toBeNull();
+    // Nor does a token made with the development stand-in pass in production.
+    const dev = await mintToken({} as Env, ID, 1000, 1000);
+    expect(await verifyToken(production({}), dev.token, 1500)).toBeNull();
+    expect(await verifyToken(production({ TELEMETRY_HMAC_KEY: 'k1' }), dev.token, 1500)).toBeNull();
+  });
+
+  it('outside production a missing key falls back to the development stand-in', async () => {
+    const dev = { ENVIRONMENT: 'development' } as unknown as Env;
+    const { token } = await mintToken(dev, ID, 1000, 1000);
+    expect(await verifyToken({} as Env, token, 1500)).toMatchObject({ rotate: false });
+    expect(tokenSecret(dev)).toBe(DEV_TELEMETRY_KEY);
+    expect(ipPepper(dev)).toBe(DEV_IP_PEPPER);
+    const production = { ENVIRONMENT: 'production' } as unknown as Env;
+    expect(tokenSecret(production)).toBeNull();
+    expect(ipPepper(production)).toBeNull();
+    expect(ipPepper({ ENVIRONMENT: 'production', IP_HASH_KEY: 'p' } as unknown as Env)).toBe('p');
   });
 
   it('bearer parsing', () => {

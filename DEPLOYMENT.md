@@ -53,6 +53,18 @@ and a [reference section](#reference) at the end.
 > (loopback — your machine only) by default, and why every remote pattern
 > below uses an SSH tunnel rather than opening a port. Do not put it on a
 > public interface.
+>
+> Two more guards sit on top of loopback. **A viewer started with `plexora`
+> needs its token**: the URL it opens and prints ends in `?token=…`, the page
+> trades that for a cookie, and the token is kept (owner-only) in
+> `server_token.json` in your data directory, so a tab you leave open survives
+> a restart. Another account on the same machine cannot use the port without
+> it. `--no-token` serves without one; `plexora --remote`, notebook sidecars on
+> loopback and the Docker image have none (see each section). **And no other
+> web page can drive the viewer**: a change (a POST, a delete) sent by a page on
+> another site, or on another port of this machine, is refused, and a viewer on
+> loopback answers only to `localhost`, `*.localhost` and IP addresses, so a
+> rebound DNS name cannot reach it (`--allowed-host NAME` adds a name).
 
 ---
 
@@ -1235,7 +1247,7 @@ The swap makes the smallest tier slow rather than uncertain.
 
 ### The image, and why it is Debian 13
 
-Plexora's `requires-python` is `>=3.12,<3.14`. Debian 12 (bookworm) ships
+Plexora's `requires-python` is `>=3.12,<3.15`. Debian 12 (bookworm) ships
 Python 3.11, so a VM built from it mounts the bucket perfectly and then fails
 the last step with:
 
@@ -1743,7 +1755,11 @@ all.
 | `PLEXORA_BASE_URL` | Mount path prefix, for a reverse proxy |
 | `PLEXORA_NOTEBOOK_MODE` | Marks the process as a notebook sidecar (set for you) |
 | `PLEXORA_DOCKER` | Marks the process as containerised (set by the image) |
-| `PLEXORA_AUTH_TOKEN` | Require this token to reach the server. Set for you on the Open OnDemand routes; unset everywhere else, where loopback is the boundary |
+| `PLEXORA_AUTH_TOKEN` | Require this token to reach the server (`?token=`, the cookie it sets, or an `X-Plexora-Token` header). Set for you by `plexora` (reused from `server_token.json`), `--desktop`, `--ood` and a Jupyter proxy mount; a token already in the environment wins |
+| `PLEXORA_TRUSTED_HOSTS` | Extra host names a loopback viewer answers to, comma-separated (the CLI's `--allowed-host`) |
+| `PLEXORA_ALLOWED_ORIGINS` | Origins whose changes are accepted although the browser calls them another site -- a reverse proxy that rewrites the Host |
+| `PLEXORA_ALLOW_FRAMING` | Let another site frame the viewer (set for you in notebook mode, Colab and a hub's proxy) |
+| `PLEXORA_ALLOW_LINK_LOCAL_URLS` | Let a web address reach this machine's link-local network, which is refused by default because a cloud VM's metadata server answers there |
 | `PLEXORA_NODE_TOKEN` | Default `--token` for `plexora node serve` |
 | `PLEXORA_NODE_HOST` | Default bind address for `plexora node serve` |
 | `PLEXORA_DESKTOP` | Marks the process as the desktop app's server (set by `--desktop`) |

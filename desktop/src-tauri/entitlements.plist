@@ -2,9 +2,12 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <!--
   Hardened-runtime exceptions for the embedded Python. numba/llvmlite JIT
-  compile machine code (unsigned executable memory); the runtime's wheels load
-  libraries signed by nobody in particular (library validation off); and
-  Python itself honours DYLD_* only for debugging, which the shell scrubs.
+  compile machine code (unsigned executable memory). Library validation stays
+  off because a build without APPLE_SIGNING_IDENTITY signs the runtime ad hoc
+  (scripts/release.py sign_runtime), with no team identity for the loader to
+  match, and because Python can load native code the release never signed.
+  DYLD_* is not honoured: nothing relies on it, and the shell scrubs it from
+  the server's environment anyway (server.rs).
 -->
 <plist version="1.0">
 <dict>
@@ -13,8 +16,6 @@
     <key>com.apple.security.cs.allow-jit</key>
     <true/>
     <key>com.apple.security.cs.disable-library-validation</key>
-    <true/>
-    <key>com.apple.security.cs.allow-dyld-environment-variables</key>
     <true/>
     <key>com.apple.security.network.client</key>
     <true/>

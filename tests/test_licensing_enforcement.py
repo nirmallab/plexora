@@ -119,9 +119,15 @@ MUST_BE_FREE = ("gating.set", "gating.get", "gating.get_all", "gating.distributi
 
 @pytest.fixture
 def session(tmp_path):
+    """Exactly these four plugins registered, from an empty registry. It is
+    process-wide, so without the reset the classification asserted below would
+    be whatever an earlier test in the same worker happened to leave in it --
+    and the plugins left here would in turn change later tests' answers."""
     make_synthetic_project(tmp_path)
+    registry._reset_for_tests()
     registry.discover(["gating", "roi", "qc", "segmentation"])
-    return AgentSession()
+    yield AgentSession()
+    registry._reset_for_tests()
 
 
 def _audit(tmp_path):

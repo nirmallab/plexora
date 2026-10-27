@@ -80,6 +80,9 @@ def test_bad_requests_are_structured_errors(session):
 
 def test_an_uncalibrated_image_needs_a_pixel_crop(tmp_path):
     make_synthetic_project(tmp_path, "raw", calibrated=False)
+    # The capability is gating's: registered here rather than left to whichever
+    # earlier test in this worker happened to discover it.
+    registry.discover(["gating"])
     session = AgentSession()
     refused = invoke(session, "render_cell_gallery", {"project": "raw", "cell_ids": [1],
                                                       "crop_um": 30})

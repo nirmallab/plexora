@@ -21,9 +21,10 @@ where you are.
 ```bash
 plexora [-h] [--version] [--host HOST] [--port PORT] [--data-dir DATA_DIR]
                [--data-dir-default DATA_DIR_DEFAULT] [--base-url BASE_URL] [--plugins PLUGINS]
-               [-r] [--login-host LOGIN_HOST] [--bind-node] [--ood] [--also-serve KIND:ID=PATH]
-               [--node-port NODE_PORT] [--node-allow-origin ORIGIN] [--no-detect]
-               [--allow-source-writes] [--desktop] [-v] [--browser | --no-browser]
+               [-r] [--login-host LOGIN_HOST] [--bind-node] [--ood] [--no-token]
+               [--allowed-host NAME] [--also-serve KIND:ID=PATH] [--node-port NODE_PORT]
+               [--node-allow-origin ORIGIN] [--no-detect] [--allow-source-writes] [--desktop] [-v]
+               [--browser | --no-browser]
                [datasource]
 ```
 
@@ -94,6 +95,18 @@ With --remote on a cluster, bind all interfaces so the login node can forward to
 <Param name={"--ood"}>
 
 Serving from inside an Open OnDemand session: bind all interfaces, mount under the portal's /rnode/ proxy and print a token-protected URL to open through the portal.
+
+</Param>
+
+<Param name={"--no-token"}>
+
+Serve without the per-user access token (the URL then needs no ?token=). Pages from other sites are still refused writes.
+
+</Param>
+
+<Param name={"--allowed-host NAME"} kind={"repeatable"}>
+
+A host name, besides localhost and IP addresses, this viewer answers to -- e.g. an /etc/hosts alias for 127.0.0.1. Repeat for each.
 
 </Param>
 

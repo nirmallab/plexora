@@ -347,9 +347,8 @@ def _qc_left_out(data, cells) -> set:
 def _stored_gate(data, marker):
     """The gate gating has stored for a marker, read from its store without
     importing the plugin: the pickled rows the sidebar writes."""
-    import pickle
-
     from plexora import api
+    from plexora.server.utils import safe_pickle
 
     desc = data.table.describe().get(marker) or {}
     low, high = desc.get("min"), desc.get("max")
@@ -357,7 +356,7 @@ def _stored_gate(data, marker):
     blob = api.store(data.name, "gating").get_state()
     if blob:
         try:
-            for row in pickle.loads(blob) or []:
+            for row in safe_pickle.loads(blob) or []:
                 if isinstance(row, dict) and row.get("channel") == marker:
                     if row.get("gate_start") is not None:
                         low, high = row["gate_start"], row["gate_end"]

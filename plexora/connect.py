@@ -868,6 +868,53 @@ def srun_command_line(srun_args, launch_line):
 KEEPALIVE_OPTIONS = ("ServerAliveInterval=30", "ServerAliveCountMax=3")
 
 
+#: ssh options that make ssh run a program on THIS machine. A profile saved
+#: with `plexora connect --save` may carry one (a ProxyCommand through a
+#: bastion is ordinary); one arriving over the Settings API may not, because
+#: that is a web request, and a request is not the person at the keyboard.
+COMMAND_SSH_OPTIONS = frozenset({
+    "proxycommand", "localcommand", "permitlocalcommand", "knownhostscommand",
+    "remotecommand", "match", "include", "pkcs11provider",
+    "securitykeyprovider", "identityagent", "controlpath",
+})
+
+
+def ssh_option_error(option):
+    """Why `option` may not come in over the Settings API, or None."""
+    text = str(option or "").strip()
+    name = text.replace("=", " ", 1).split(None, 1)[0].lower() if text else ""
+    if text.startswith("-"):
+        return f"An ssh option is a NAME=VALUE pair, not a flag: {text!r}."
+    if name in COMMAND_SSH_OPTIONS:
+        return (f"{text.split('=', 1)[0]} cannot be set from Settings: it runs a "
+                f"program on this computer. Save it with `plexora connect "
+                f"--save` in a terminal, or in ~/.ssh/config.")
+    if any(ch in text for ch in "\r\n\0"):
+        return "An ssh option must be on one line."
+    return None
+
+
+def _refuse_flag_shaped(*hosts):
+    """Never hand ssh a host it would read as one of its own flags."""
+    for host in hosts:
+        if host and str(host).startswith("-"):
+            raise ValueError(f"not an ssh host: {host!r}")
+
+
+def address_error(value, what="address"):
+    """Why `value` cannot be an ssh destination or jump host, or None.
+
+    ssh reads a leading "-" as one of its own flags rather than as the host,
+    and an option carried that way is not one anybody reviewed.
+    """
+    text = str(value or "")
+    if text.startswith("-"):
+        return f"The {what} cannot start with “-”."
+    if any(ch.isspace() or ord(ch) < 32 for ch in text):
+        return f"The {what} cannot contain spaces or control characters."
+    return None
+
+
 def _ssh_options(ssh_opts):
     """`-o` flags for one ssh, keepalive first and the caller's able to win.
 
@@ -957,6 +1004,7 @@ def direct_ssh_argv(target, local_port, remote_port, launch_line, *, jump=None,
     Without one the pipes are clean. The teardown the pty was there for is
     handed to `--exit-on-stdin-close` instead (see `node_command_line`).
     """
+    _refuse_flag_shaped(target, jump)
     argv = ["ssh", *(["-t"] if tty else []), *_ssh_options(ssh_opts)]
     if jump:
         argv += ["-J", jump]
@@ -1022,6 +1070,7 @@ def gcloud_node_ssh_argv(gcloud, local_port, remote_port, launch_line, *,
 
 def job_ssh_argv(target, launch_line, *, jump=None, ssh_opts=()):
     """The process that holds the SLURM job open. No forward -- see below."""
+    _refuse_flag_shaped(target, jump)
     argv = ["ssh", "-t", *_ssh_options(ssh_opts)]
     if jump:
         argv += ["-J", jump]
@@ -1045,6 +1094,7 @@ def tunnel_ssh_argv(target, local_port, node, node_port, *, user=None,
     the internal network -- fewer moving parts, in exchange for the port being
     visible to everyone else on the cluster while it runs.
     """
+    _refuse_flag_shaped(target, node)
     argv = ["ssh", "-N", *_ssh_options(ssh_opts)]
     if bind_node:
         argv += ["-L", f"{local_port}:{node}:{node_port}"]

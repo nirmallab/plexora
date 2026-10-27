@@ -91,6 +91,56 @@ def browser_url(host, port, base_url="", datasource=None):
     return f"http://{_public_host(host)}:{int(port)}{path or '/'}"
 
 
+def with_token(url, token):
+    """`url` with `token` appended to its query, or `url` itself when none."""
+    if not token:
+        return url
+    joiner = "&" if "?" in url else "?"
+    return f"{url}{joiner}token={quote(token, safe='')}"
+
+
+#: Where `plexora` keeps the access token it reuses across launches, inside
+#: the data root and owner-readable only (the nodes.json discipline).
+SERVER_TOKEN_FILE = "server_token.json"
+
+#: How long a browser keeps the reused token's cookie: a pinned tab survives
+#: the server restarting, and a month later the printed link is needed again.
+SERVER_TOKEN_COOKIE_SECONDS = 30 * 24 * 3600
+
+
+def server_token(data_root):
+    """This account's reusable viewer token, made on first use.
+
+    One token across launches rather than one per launch, so a tab the user
+    left open -- or pinned -- keeps working when the server restarts. The
+    file is owner-only; a copy anyone else could have read is replaced, not
+    trusted. Returns None when the data root cannot hold it, and the caller
+    mints a token for this launch only.
+    """
+    import json
+    import stat
+
+    from plexora.server.models.secret_store import write_private_json
+
+    path = Path(data_root) / SERVER_TOKEN_FILE
+    try:
+        info = path.stat()
+        private = os.name == "nt" or not (info.st_mode & (stat.S_IRWXG | stat.S_IRWXO))
+        owned = os.name == "nt" or info.st_uid == os.getuid()
+        if private and owned:
+            token = json.loads(path.read_text(encoding="utf-8")).get("token")
+            if isinstance(token, str) and len(token) >= 16:
+                return token
+    except (OSError, ValueError, AttributeError):
+        pass
+    token = secrets.token_urlsafe(24)
+    try:
+        write_private_json(path, {"token": token})
+    except OSError:
+        return None
+    return token
+
+
 def should_open_browser(env=None, system=None, preference="auto"):
     """Whether the friendly CLI should open a browser.
 
@@ -1089,6 +1139,21 @@ def build_parser(command=None):
         help="Serving from inside an Open OnDemand session: bind all "
              "interfaces, mount under the portal's /rnode/ proxy and print a "
              "token-protected URL to open through the portal.",
+    )
+    parser.add_argument(
+        "--no-token",
+        action="store_true",
+        help="Serve without the per-user access token (the URL then needs no "
+             "?token=). Pages from other sites are still refused writes.",
+    )
+    parser.add_argument(
+        "--allowed-host",
+        action="append",
+        default=[],
+        metavar="NAME",
+        help="A host name, besides localhost and IP addresses, this viewer "
+             "answers to -- e.g. an /etc/hosts alias for 127.0.0.1. Repeat "
+             "for each.",
     )
     parser.add_argument(
         "--also-serve",
@@ -3120,7 +3185,7 @@ def _run_desktop(args):
 
     from waitress.server import create_server
     from plexora import app, paths
-    from plexora._resources import worker_threads
+    from plexora._resources import WAITRESS_LIMITS, worker_threads
 
     try:
         startup_notices = [line for line in [paths.first_run_notice()] if line]
@@ -3158,8 +3223,7 @@ def _run_desktop(args):
     server = create_server(
         app,
         sockets=[sock],
-        max_request_body_size=1073741824000000,
-        max_request_header_size=85899345920000,
+        **WAITRESS_LIMITS,
         threads=worker_threads(),
     )
     port = sock.getsockname()[1]
@@ -3200,6 +3264,44 @@ def _run_desktop(args):
             pass
         flush_std()
     return 0
+
+
+def _is_loopback(host):
+    return str(host) in ("127.0.0.1", "localhost", "::1")
+
+
+def _terminal_token(args, host, detected_kind, paths):
+    """The token a viewer started from a terminal is guarded by, or None.
+
+    Every launch that a person opens in their own browser gets one, so that
+    another account on the same machine -- a shared workstation, a login
+    node -- cannot use the port. Not given one:
+
+    * `--remote`: `plexora connect` reads only the port off the ready line, and
+      a remote newer than the laptop's Plexora would refuse every request the
+      older laptop made. Loopback plus the browser guard still apply there.
+    * a hub's proxy or Colab: the page is framed by, or proxied through,
+      another origin, where a SameSite cookie does not arrive.
+    * `--no-token`.
+
+    A token already in the environment wins -- the restart after an update,
+    a launcher that chose its own.
+    """
+    inherited = os.environ.get("PLEXORA_AUTH_TOKEN")
+    if inherited:
+        return inherited
+    if args.no_token or args.remote or detected_kind in ("proxy", "colab"):
+        return None
+    if _is_loopback(host):
+        try:
+            token = server_token(paths.data_root())
+        except Exception:
+            token = None
+        if token:
+            return token
+    # Reachable from the network: a token for this launch only, so a link
+    # shared with a colleague stops working when the server does.
+    return secrets.token_urlsafe(16)
 
 
 def main(argv=None):
@@ -3367,7 +3469,7 @@ def main(argv=None):
 
     from waitress import serve
     from plexora import app, paths, _clean_base_url as app_clean_base_url
-    from plexora._resources import worker_threads
+    from plexora._resources import WAITRESS_LIMITS, worker_threads
 
     # Resolved here rather than at the first request, so that an account whose
     # sources disagree gets a sentence and an exit code instead of a traceback
@@ -3394,6 +3496,23 @@ def main(argv=None):
     # console script happens before main() gets to see a single argument.
     if ood_token:
         app.config["PLEXORA_AUTH_TOKEN"] = ood_token
+    view_token = ood_token or _terminal_token(args, host, detected_kind, paths)
+    if view_token and not ood_token:
+        # In the environment too: a restart after an in-app update inherits
+        # it, so the page's cookie still holds.
+        os.environ["PLEXORA_AUTH_TOKEN"] = view_token
+        app.config["PLEXORA_AUTH_TOKEN"] = view_token
+        if _is_loopback(host):
+            app.config["PLEXORA_AUTH_COOKIE_MAX_AGE"] = SERVER_TOKEN_COOKIE_SECONDS
+    # Bound to loopback, answer only loopback's own names (DNS rebinding; see
+    # plexora._guard). Not behind a hub's proxy or a configured origin, whose
+    # Host is theirs to choose.
+    if _is_loopback(host) and detected_kind not in ("proxy", "colab", "origin"):
+        app.config["PLEXORA_TRUSTED_HOSTS"] = [
+            *(app.config.get("PLEXORA_TRUSTED_HOSTS") or []), *(args.allowed_host or [])]
+    # Hosted notebooks show what they proxy inside a frame of their own.
+    if detected_kind in ("proxy", "colab"):
+        app.config["PLEXORA_ALLOW_FRAMING"] = True
     # Both flags say the same thing about the one fact a data form needs: the
     # person filling it in is not sitting at this machine. Recorded rather than
     # detected, because it is only ever known by being told -- see
@@ -3440,6 +3559,7 @@ def main(argv=None):
             for line in colab_instructions():
                 print(line)
             print("")
+        url = with_token(url, None if ood_token else view_token)
         print(f"Serving Plexora at {url}")
 
     # --remote and --ood both mean nobody is sitting at this machine, so a
@@ -3453,7 +3573,7 @@ def main(argv=None):
         preference = "no"
     if should_open_browser(preference=preference):
         print("Opening browser...")
-        _schedule_browser_open(url, health_url, ood_token)
+        _schedule_browser_open(url, health_url, view_token)
     elif preference == "auto":
         print("Browser auto-open skipped: headless environment detected.")
 
@@ -3482,8 +3602,7 @@ def main(argv=None):
             app,
             host=host,
             port=port,
-            max_request_body_size=1073741824000000,
-            max_request_header_size=85899345920000,
+            **WAITRESS_LIMITS,
             # See server_cli for why this is wider than the core count.
             threads=worker_threads(),
             _server=_capturing_server(served),

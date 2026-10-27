@@ -613,12 +613,17 @@ def create_dataset_from_directory(name, *roots, overrides=None, description="",
     from plexora.server.models import dataset_build
 
     plan = plan_dataset(*roots, overrides=overrides, node=node)
-    specs = [spec for _id, spec in dataset_build.specs_for(plan)]
-    if not specs:
+    pairs = dataset_build.specs_for(plan)
+    if not pairs:
         raise ValueError("No images to register were found under "
                          + ", ".join(str(root) for root in roots))
-    return create_dataset(name, projects=specs, description=description,
-                          exist_ok=exist_ok)
+    dataset = create_dataset(name, projects=[spec for _id, spec in pairs],
+                             description=description, exist_ok=exist_ok)
+    by_id = {project["id"]: project for project in plan["projects"]}
+    for project_id, spec in pairs:
+        if spec.get("name") in dataset.projects:
+            dataset_build.name_channels_after(spec["name"], by_id[project_id])
+    return dataset
 
 
 def project_from_spec(spec, node=None) -> str:

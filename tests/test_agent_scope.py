@@ -14,9 +14,15 @@ pytestmark = pytest.mark.pro
 
 @pytest.fixture
 def session(tmp_path):
+    """Exactly gating and roi registered. The registry is process-wide, and
+    which plugins are in it decides the answer: after a test that discovered
+    QC and segmentation, "RNA velocity" matches one of their capabilities and
+    comes back `can_analyze` rather than `outside_domain`."""
     make_synthetic_project(tmp_path)
+    registry._reset_for_tests()
     registry.discover(["gating", "roi"])
-    return AgentSession()
+    yield AgentSession()
+    registry._reset_for_tests()
 
 
 def _scope(session, request, **kwargs):

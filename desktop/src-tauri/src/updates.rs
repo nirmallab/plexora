@@ -130,6 +130,13 @@ pub async fn check_update(app: AppHandle) -> Result<UpdateInfo, String> {
 
 #[tauri::command]
 pub async fn install_update(app: AppHandle) -> Result<(), String> {
+    // Asked again here, not only by check_update: a build with no update key
+    // must never download and install anything, whoever calls this.
+    if !signing_configured(&app) {
+        return Err(format!(
+            "This build of Plexora cannot update itself. The new version can be downloaded from {RELEASES_URL}."
+        ));
+    }
     let pending = app.state::<PendingUpdate>().0.lock().unwrap().clone();
     let update = match pending {
         Some(update) => update,

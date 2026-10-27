@@ -26,6 +26,7 @@ CHECKS = (
     "a taken name is reported, not built",
     "closing stops a scan but leaves a build running",
     "the edits keep one placement per file",
+    "each sample has a tick, and the header box says all, some or none",
     "names and paths are escaped in the table",
 )
 

@@ -44,7 +44,7 @@ def _resolve(datasource, tool_name):
     hardcodes -- core used to test `image_kind == 'rgb'` directly, which only
     ever encoded what gating in particular could not handle.
     """
-    project = Project.find(datasource)
+    project = _with_dataset_answers(datasource)
     plugin = plugin_registry.find(app, tool_name)
     if project is None or plugin is None or not plugin.requires.applies_to(project):
         return FALLBACK, None, project
@@ -63,6 +63,27 @@ def _resolve(datasource, tool_name):
     if plugin.requires.optional_missing_from(project):
         return OFFER, plugin, project
     return OPEN, plugin, project
+
+
+def _with_dataset_answers(datasource):
+    """The project, after borrowing its dataset's table answers if it can.
+
+    Before anything is asked: a sample whose table has the same columns as one
+    already answered in its dataset is not asked again (`dataset_answers`).
+    """
+    from flask import g
+
+    from plexora.server.models import dataset_answers
+
+    project = Project.find(datasource)
+    if project is not None and dataset_answers.table_donor(project) is not None:
+        donor = dataset_answers.adopt_table_answers(datasource)
+        if donor:
+            # Said on the panel's reply, so the page can say whose answers
+            # these are and the user can tell a table that differs.
+            g.answered_from = donor
+            project = Project.find(datasource)
+    return project
 
 
 def _locked(plugin) -> bool:
@@ -255,8 +276,11 @@ def tool_panel(datasource, tool_name):
 
         return jsonify(guards.locked_payload(plugin.entitlement, tool=plugin.name,
                                              label=plugin.label)), 403
+    from flask import g
+
+    answered_from = g.get("answered_from")
     if outcome in (COLLECT, OFFER):
-        return jsonify({"needs": _needs(plugin, project)})
+        return jsonify({"needs": _needs(plugin, project), "answered_from": answered_from})
     if outcome == FALLBACK:
         return jsonify({"redirect": f"{base_url}/{datasource}"}), 400
 
@@ -269,6 +293,7 @@ def tool_panel(datasource, tool_name):
         "fragments": fragments,
         "scripts": plugin.asset_urls("scripts", base_url),
         "styles": plugin.asset_urls("styles", base_url),
+        "answered_from": answered_from,
     })
 
 
@@ -313,7 +338,7 @@ def project_requirements(datasource):
     key is a 400 naming it rather than a silently shorter form: a typo that
     quietly asks nothing is the failure this route exists to replace.
     """
-    project = Project.find(datasource)
+    project = _with_dataset_answers(datasource)
     if project is None:
         return jsonify(success=False, error="Unknown datasource"), 404
 

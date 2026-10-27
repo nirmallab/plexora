@@ -522,6 +522,32 @@ def _address_error(target):
     return None
 
 
+def _remote_error(remote, existing=None):
+    """Why this profile cannot be saved from Settings, or None.
+
+    The address, then the jump host, then any ssh option that is new in this
+    save -- one the profile already carried came from `plexora connect
+    --save` or a hand-edited remotes.json, and editing the address in
+    Settings is not a reason to drop it.
+    """
+    from plexora import connect
+
+    problem = _address_error(remote.target) or connect.address_error(remote.target)
+    if problem:
+        return problem
+    if remote.jump and remote.jump != (existing.jump if existing else None):
+        problem = connect.address_error(remote.jump, "jump host")
+        if problem:
+            return problem
+    already = set(existing.ssh_opts) if existing else set()
+    for option in remote.ssh_opts or ():
+        if option not in already:
+            problem = connect.ssh_option_error(option)
+            if problem:
+                return problem
+    return None
+
+
 @app.route('/settings/remotes')
 def settings_remotes():
     from plexora.server.models import remote_sessions, remotes as remote_store
@@ -576,8 +602,9 @@ def settings_recipes_save(recipe_id):
         return jsonify(error="Give this server a short name, e.g. “hpc”."), 400
     if "/" in name or name.startswith("_"):
         return jsonify(error="Use a plain name -- letters, digits and dashes."), 400
-    remote = _remote_payload(body, name, remote_store.find(name))
-    problem = _address_error(remote.target)
+    existing = remote_store.find(name)
+    remote = _remote_payload(body, name, existing)
+    problem = _remote_error(remote, existing)
     if problem:
         return jsonify(error=problem), 400
     remote_store.save(remote)
@@ -601,8 +628,9 @@ def settings_remotes_save():
         return jsonify(error="Give this server a short name, e.g. “hpc”."), 400
     if "/" in name or name.startswith("_"):
         return jsonify(error="Use a plain name -- letters, digits and dashes."), 400
-    remote = _remote_payload(payload, name, remote_store.find(name))
-    problem = _address_error(remote.target)
+    existing = remote_store.find(name)
+    remote = _remote_payload(payload, name, existing)
+    problem = _remote_error(remote, existing)
     if problem:
         return jsonify(error=problem), 400
     remote_store.save(remote)

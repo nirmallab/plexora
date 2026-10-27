@@ -17,7 +17,7 @@ cd plexora
 
 ### Create an environment and install Plexora, editable
 
-Any Python 3.12 or 3.13 environment works — conda, `venv`, `uv`, whatever
+Any Python 3.12, 3.13 or 3.14 environment works — conda, `venv`, `uv`, whatever
 you already use:
 
 ```bash

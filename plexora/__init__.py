@@ -38,6 +38,7 @@ configure_thread_pools()
 # here. `plexora._url` is a leaf module -- it imports nothing from this package
 # -- so pulling it in mid-initialisation is safe.
 from plexora._url import clean_prefix as _clean_base_url
+from plexora import _guard
 
 # The installed distribution's version. Read from package metadata rather than
 # duplicated here, so pyproject.toml stays the one place a release bumps.
@@ -49,8 +50,29 @@ try:
 except _PackageNotFoundError:  # a source checkout that was never installed
     __version__ = "0"
 
-#: Where the entry URL's `?token=` is remembered for the rest of the session.
-AUTH_COOKIE = "plexora_auth"
+#: Where the entry URL's `?token=` is remembered for the rest of the session --
+#: the historical name. The cookie is now named per port
+#: (`_guard.auth_cookie_name`); this one is still accepted when read.
+AUTH_COOKIE = _guard.LEGACY_COOKIE
+
+#: GET routes that change something, judged as writes by the browser guard.
+_ACTING_GETS = frozenset({"settings_remotes_askpass_answer", "volume_prepare"})
+
+#: Responses that carry a credential and must never sit in a cache.
+_NEVER_CACHED = frozenset({"resource_routing", "settings_remotes_askpass_prompt",
+                           "settings_remotes_askpass_answer"})
+
+
+def _env_list(name):
+    """A comma-separated environment variable as a list; None when unset."""
+    raw = os.environ.get(name)
+    if raw is None:
+        return None
+    return [part.strip() for part in raw.split(",") if part.strip()]
+
+
+def _refused(message):
+    return (message + "\n", 403, {"Content-Type": "text/plain; charset=utf-8"})
 
 #: What the unavailable-resource handler has already said, and the load it said
 #: it for. One screenful of the viewer is dozens of tile requests and every one
@@ -142,34 +164,98 @@ def create_app(plugins=None):
     # --desktop`). Pages read it to offer "Open in Browser" and to prefer the
     # shell's own dialogs; routes read it to answer `/desktop/info` honestly.
     app.config["PLEXORA_DESKTOP"] = os.environ.get("PLEXORA_DESKTOP", "").lower() in ("1", "true", "yes")
-    # Set only by the paths that bind an address other than loopback for a
-    # single user -- the Open OnDemand routes, which need the portal's web host
-    # to be able to reach the node. Everything else leaves it empty and the
-    # guard below is inert, which is what keeps the Docker image (deliberately
-    # 0.0.0.0, deliberately shared) unauthenticated as it has always been.
+    # The server token. Minted by every launcher that starts a viewer for a
+    # person (`plexora`, `--desktop`, `--ood`, `--remote`) and read here from
+    # the environment, which is also how a restart after an update and a
+    # notebook sidecar inherit it. Empty means no token: the Docker image
+    # (deliberately 0.0.0.0, deliberately shared), a loopback notebook sidecar
+    # (an iframe on another site, where a SameSite cookie never arrives) and
+    # `--no-token`. Those rely on the browser guard below instead.
     app.config["PLEXORA_AUTH_TOKEN"] = os.environ.get("PLEXORA_AUTH_TOKEN", "")
+    # How long the browser keeps the token's cookie. None = until the browser
+    # closes, the right answer for a token minted per launch; a launcher that
+    # reuses one token across launches (`plexora`, see cli.server_token) sets a
+    # lifetime so a pinned tab survives the server restarting.
+    app.config["PLEXORA_AUTH_COOKIE_MAX_AGE"] = None
+    # Host names a loopback-bound viewer answers besides IP literals and
+    # localhost. None = no Host check at all, which is what a viewer bound to
+    # a network address (Docker, --bind-node) and every bare create_app() get;
+    # the launchers that bind loopback switch it on with a list.
+    app.config["PLEXORA_TRUSTED_HOSTS"] = _env_list("PLEXORA_TRUSTED_HOSTS")
+    # Origins whose writes are accepted although the browser calls them
+    # another site -- a reverse proxy that rewrites the Host on the way in.
+    app.config["PLEXORA_ALLOWED_ORIGINS"] = _env_list("PLEXORA_ALLOWED_ORIGINS") or []
+    # Whether a page on another origin may frame the viewer. Notebook mode
+    # implies it (the sidecar is always framed by the notebook's own origin);
+    # the launchers set it for hosted notebooks (Colab, a hub's proxy).
+    app.config["PLEXORA_ALLOW_FRAMING"] = os.environ.get(
+        "PLEXORA_ALLOW_FRAMING", "").lower() in ("1", "true", "yes")
 
-    # Registered unconditionally and consulted per request, NOT registered only
-    # when a token exists: create_app() runs once per interpreter (see the
-    # docstring), so a second call cannot add it later -- a test, or any caller
-    # that sets the token after import, would silently get an unguarded app.
+    # Every hook below is registered unconditionally and consults app.config
+    # per request, NOT registered only when a setting is on: create_app() runs
+    # once per interpreter (see the docstring), so a second call cannot add
+    # one later -- a test, or any caller that sets the token after import,
+    # would silently get an unguarded app.
+    @app.before_request
+    def require_trusted_host():
+        """Refuse a Host a loopback viewer does not have (DNS rebinding).
+
+        Skipped when a token is set: a rebound name is a different host to the
+        browser, so it never carries this viewer's cookie, and the token check
+        refuses it anyway.
+        """
+        trusted = app.config.get("PLEXORA_TRUSTED_HOSTS")
+        if trusted is None or app.config.get("PLEXORA_AUTH_TOKEN"):
+            return None
+        if _guard.trusted_host(request.host, trusted):
+            return None
+        return _refused(
+            f"This viewer does not answer to the name {_guard.host_name(request.host)!r}. "
+            "Open it at the address printed in your terminal "
+            "(or start it with --allowed-host NAME)."
+        )
+
+    @app.before_request
+    def refuse_cross_site_writes():
+        """Refuse a write another web page made the browser send.
+
+        See plexora._guard for what passes. The two GETs that act -- the
+        askpass answer, and preparing a volume -- are judged as writes.
+        """
+        reason = _guard.cross_site_refusal(
+            request.method, request.headers,
+            acting=request.endpoint in _ACTING_GETS,
+            allowed_origins=app.config.get("PLEXORA_ALLOWED_ORIGINS") or (),
+        )
+        if reason is None:
+            return None
+        return _refused(f"Refused {reason}: Plexora only accepts changes made "
+                        "from its own pages.")
+
     @app.before_request
     def require_auth_token():
         expected = app.config.get("PLEXORA_AUTH_TOKEN") or ""
         if not expected:
             return None
-        supplied = request.args.get("token") or request.cookies.get(AUTH_COOKIE) or ""
-        if hmac.compare_digest(str(supplied), str(expected)):
+        if _token_supplied(expected):
             return None
         # Nothing is exempt, health checks included: whoever started this
         # server knows the token and passes it, and a same-node neighbour is
         # precisely who the token is keeping out.
-        return (
+        return _refused(
             "This viewer requires a token. Use the exact link printed in your "
-            "notebook or terminal.\n",
-            403,
-            {"Content-Type": "text/plain; charset=utf-8"},
+            "notebook or terminal (it ends in ?token=...)."
         )
+
+    def _token_supplied(expected):
+        candidates = (
+            request.args.get("token"),
+            request.headers.get(_guard.TOKEN_HEADER),
+            request.cookies.get(_guard.auth_cookie_name(request.host)),
+            request.cookies.get(_guard.LEGACY_COOKIE),
+        )
+        return any(value and hmac.compare_digest(str(value), str(expected))
+                   for value in candidates)
 
     @app.after_request
     def remember_auth_token(response):
@@ -182,28 +268,44 @@ def create_app(plugins=None):
         Scoped to this server's own mount path, not "/": under Open OnDemand
         every job on the cluster is proxied through one portal origin, so a
         cookie at "/" would be sent to -- and overwritten by -- every other
-        Plexora and every other OnDemand app the user opens.
+        Plexora and every other OnDemand app the user opens. Named per port
+        for the same reason on a laptop: see _guard.auth_cookie_name.
         """
         expected = app.config.get("PLEXORA_AUTH_TOKEN") or ""
         supplied = request.args.get("token") or ""
         if expected and supplied and hmac.compare_digest(str(supplied), str(expected)):
             response.set_cookie(
-                AUTH_COOKIE,
+                _guard.auth_cookie_name(request.host),
                 expected,
+                max_age=app.config.get("PLEXORA_AUTH_COOKIE_MAX_AGE"),
                 httponly=True,
                 samesite="Lax",
+                secure=request.is_secure,
                 path=app.config.get("PLEXORA_BASE_URL") or "/",
             )
         return response
 
     @app.after_request
-    def add_notebook_headers(response):
-        # X-Frame-Options: SAMEORIGIN would block the direct (non-proxy) notebook
-        # iframe flow, since the sidecar server (127.0.0.1:<port>) is always a
-        # different origin than the Jupyter page embedding it. A loopback
-        # sidecar is not on a network at all; the one case that is -- the Open
-        # OnDemand bind -- is behind the token above, which a framing page
-        # cannot read out of an HttpOnly cookie.
+    def add_security_headers(response):
+        """The headers that cost nothing and close whole classes of mistake.
+
+        nosniff: a tile, a CSV or an uploaded file is never re-read as script.
+        Referrer-Policy: a page's URL -- a project path, an entry URL's token
+        -- never leaves for another site in a Referer.
+        X-Frame-Options: no other site frames the viewer to steer clicks,
+        except where being framed is the point: a notebook sidecar is always
+        on another origin than the notebook embedding it, and hosted
+        notebooks frame what they proxy. A framing page there still cannot
+        read the HttpOnly cookie or anything inside the frame.
+        """
+        headers = response.headers
+        headers.setdefault("X-Content-Type-Options", "nosniff")
+        headers.setdefault("Referrer-Policy", "same-origin")
+        if not (app.config.get("PLEXORA_NOTEBOOK_MODE")
+                or app.config.get("PLEXORA_ALLOW_FRAMING")):
+            headers.setdefault("X-Frame-Options", "SAMEORIGIN")
+        if request.endpoint in _NEVER_CACHED:
+            headers["Cache-Control"] = "no-store"
         return response
 
     # The one failure the provider layer is built to survive, answered as one.

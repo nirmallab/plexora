@@ -141,3 +141,10 @@ def test_retry_only_the_failed(client, tmp_path):
                   lambda b: b["status"] != "pending")
     assert [p["name"] for p in built["projects"]] == ["B"]
     assert built["dataset"]["projects"] == ["B"]
+
+
+def test_a_spec_keeps_only_the_samples_ticked(client, tmp_path):
+    root = fx.layout_a(tmp_path / "cohort")
+    token, _body = _scan(client, root)
+    spec = client.get(f"/datasets/scan/{token}/spec?name=Some&only=p:a&only=p:c")
+    assert [p["name"] for p in json.loads(spec.data)["projects"]] == ["A", "C"]

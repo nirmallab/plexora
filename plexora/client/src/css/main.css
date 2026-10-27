@@ -7537,7 +7537,7 @@ dialog .file-source .data-location-place {
    uncoloured, as the import rows are -- so a column of green reads as "done"
    and the one amber chip is the row to look at. */
 .plx-dsb {
-    --plx-dsb-grid: 28px minmax(110px, 1fr) minmax(0, 1.25fr) minmax(0, 1.25fr) minmax(0, 1.25fr) 124px;
+    --plx-dsb-grid: 22px 24px minmax(110px, 1fr) minmax(0, 1.25fr) minmax(0, 1.25fr) minmax(0, 1.25fr) 124px;
     width: min(1060px, 96vw);
 }
 
@@ -7885,6 +7885,17 @@ dialog .file-source .data-location-place {
 
 .plx-dsb-row.is-busy {
     opacity: 0.55;
+}
+
+/* A sample left out of the dataset: there, but quiet. */
+.plx-dsb-row.is-left-out > .plx-dsb-cell:not(.plx-dsb-pickcell) {
+    opacity: 0.45;
+}
+
+.plx-dsb-pickcell {
+    align-items: center;
+    display: flex;
+    justify-content: center;
 }
 
 /* A file held over a sample: the row, and the column it would land in. */

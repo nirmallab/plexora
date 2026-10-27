@@ -1,0 +1,140 @@
+name: weekly
+
+# Tier 2 of the nirmallab CI (https://github.com/nirmallab/.github), Monday
+# 05:17 UTC and by hand (it is also the release gate: `scripts/release.py ci`
+# runs it on the commit it is about to tag).
+#
+#   linux     the full suite on 3.12, 3.13 and 3.14, four shards each balanced
+#             on recorded durations, four xdist workers per shard
+#   perf      the timing tests (PLEXORA_PERF=1 -m perf). A shared runner is
+#             noisy, so this one is reported and never fails the run
+#   backend   the telemetry Worker's vitest projects and typecheck
+#   client    the Karma suite and the committed bundle matching a fresh build
+#   lock      uv.lock still resolves from pyproject.toml
+#
+# Then one report: every job's outcome, failing tests, whether the shards add
+# up to the whole suite, and the merged durations the next run balances on.
+# Public repository: none of this is billed.
+
+on:
+  schedule:
+    - cron: "17 5 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: weekly-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  linux:
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.12", "3.13", "3.14"]
+        shard: [1, 2, 3, 4]
+    uses: nirmallab/.github/.github/workflows/python-tests.yml@v1
+    with:
+      label: linux py${{ matrix.python }} shard ${{ matrix.shard }}/4
+      python: ${{ matrix.python }}
+      sync-args: --locked --extra dev --extra spatial --extra wsi --extra remote --extra jupyter --extra ai --extra bridge
+      node-version: "22"
+      setup: npm ci --prefix plexora/client --no-audit --no-fund
+      pytest-args: -m "not perf"
+      workers: "4"
+      shard: ${{ matrix.shard }}/4
+      durations-file: ci/durations.json
+      durations-run-id: latest
+      session-timeout-minutes: 20
+      timeout-minutes: 25
+
+  perf:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    # Reported, never failing the run (and so never the release gate).
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: "22"
+      - uses: nirmallab/.github/actions/setup-python-uv@v1
+        with:
+          python: "3.13"
+          sync-args: --locked --extra dev --extra spatial --extra wsi --extra remote --extra jupyter --extra ai --extra bridge
+          env: PLEXORA_PERF=1
+      - run: npm ci --prefix plexora/client --no-audit --no-fund
+      - uses: nirmallab/.github/actions/pytest-run@v1
+        with:
+          label: perf
+          args: -m perf -p no:randomly
+          workers: "0"
+          job-timeout-minutes: 20
+
+  backend:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci --no-audit --no-fund
+      - run: npm run typecheck
+      - run: npm test
+
+  client:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: plexora/client/package-lock.json
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: "3.13"
+      - run: npm ci --prefix plexora/client --no-audit --no-fund
+      # The bundle is committed so installing Plexora never needs Node; this
+      # rebuilds it and fails when the committed one differs.
+      - name: The committed bundle is the build
+        run: python scripts/release.py client --verify-only
+      - name: Karma
+        # karma.conf.js starts a windowed Chrome; the runner has no display.
+        run: xvfb-run -a npm test --prefix plexora/client
+
+  lock:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6.8.0
+      - run: uv lock --check
+
+  report:
+    needs: [linux, perf, backend, client, lock]
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: nirmallab/.github/actions/ci-report@v1
+        with:
+          optional: perf

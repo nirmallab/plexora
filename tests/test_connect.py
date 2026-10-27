@@ -2377,3 +2377,31 @@ def test_stopping_a_connection_on_windows_ends_what_it_started(tmp_path):
     listed = subprocess.run(["tasklist", "/FI", f"PID eq {child}", "/NH"],
                             capture_output=True, text=True).stdout
     assert str(child) not in listed
+
+
+# -- what a saved profile may tell ssh ----------------------------------------
+
+def test_a_host_that_looks_like_a_flag_is_never_handed_to_ssh():
+    from plexora import connect
+
+    with pytest.raises(ValueError):
+        connect.direct_ssh_argv("-oProxyCommand=x", 1, 2, "plexora --remote")
+    with pytest.raises(ValueError):
+        connect.job_ssh_argv("me@host", "plexora", jump="-oX=y")
+
+
+@pytest.mark.parametrize("option", ["ProxyCommand=nc %h %p", "LocalCommand=touch x",
+                                    "proxycommand nc %h %p", "KnownHostsCommand=x",
+                                    "-oProxyCommand=x"])
+def test_settings_may_not_add_an_option_that_runs_a_program(option):
+    from plexora import connect
+
+    assert connect.ssh_option_error(option)
+
+
+@pytest.mark.parametrize("option", ["ServerAliveInterval=60", "Port=2222",
+                                    "IdentityFile=~/.ssh/lab", "StrictHostKeyChecking=accept-new"])
+def test_ordinary_ssh_options_still_pass(option):
+    from plexora import connect
+
+    assert connect.ssh_option_error(option) is None

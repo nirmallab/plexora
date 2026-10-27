@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import json
 import os
+import secrets
 import stat
 from pathlib import Path
 
@@ -32,9 +33,15 @@ def write_private_json(path, raw) -> None:
     path = Path(path)
     with _CONFIG_LOCK:
         path.parent.mkdir(parents=True, exist_ok=True)
-        tmp = path.with_name(f"{path.name}.{os.getpid()}.tmp")
+        # Created owner-only and exclusively, under a name nobody can guess:
+        # opened with the default umask the file was world-readable from its
+        # first byte until the chmod, and a fixed name could be planted ahead
+        # of time as a symlink to somewhere else.
+        tmp = path.with_name(f"{path.name}.{os.getpid()}.{secrets.token_hex(6)}.tmp")
+        flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0)
         try:
-            with tmp.open("w", encoding="utf-8") as handle:
+            fd = os.open(tmp, flags, stat.S_IRUSR | stat.S_IWUSR)
+            with os.fdopen(fd, "w", encoding="utf-8") as handle:
                 json.dump(raw, handle, indent=4)
                 handle.flush()
                 os.fsync(handle.fileno())

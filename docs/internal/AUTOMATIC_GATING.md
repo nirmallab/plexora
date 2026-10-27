@@ -111,6 +111,12 @@ but two split markers lost more than the pre-registered 0.30 (p193 CD8a 0.06 ->
 CD163 0.33 -> 0.13). Removed by the user's rule; the code, test and result are
 in `~/gatevision/splitab/`. The looks stay morphology | context.
 
+The narrower finding is in the code, off: `SessionOptions.split_views =
+"bright_rechecks"` splits only a look at candidates of a marker that is not dim
+(feature/split-recheck, merged 2026-10-26). Its confirmation round on three
+held-out images is pre-registered in `~/gatevision/splitab/PLAN-recheck.md` and
+has not run; if it misses that plan's bar, remove the option.
+
 ## 2d. Absence, wide mixed rows, whole-image disagreement (2026-10-18)
 
 Five rules, each a session switch, from the region-look study, the user's

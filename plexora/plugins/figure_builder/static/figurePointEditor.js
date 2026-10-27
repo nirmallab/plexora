@@ -478,7 +478,7 @@ class FigurePointEditor {
         const annotation = this.annotation;
         if (!annotation || !this.canvas.surfaceEl) return;
         const element = this.canvas.surfaceEl.querySelector(
-            `[data-annotation-id="${this.annotationId}"]`);
+            `[data-annotation-id="${FigureSchema.cssEscape(this.annotationId)}"]`);
         if (!element) return;
         element.outerHTML = this.canvas.annotationMarkup(this.draft(annotation));
     }
