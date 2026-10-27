@@ -53,8 +53,9 @@ struct Progress {
 }
 
 /// Whether this build carries the public key the updater verifies with.
-/// A build made without `TAURI_SIGNING_PRIVATE_KEY` has none, and asking the
-/// updater anyway would only fail later with a signature error.
+/// The key is committed in `tauri.conf.json`; a build that empties it has
+/// none, and asking the updater anyway would only fail later with a signature
+/// error.
 fn signing_configured(app: &AppHandle) -> bool {
     app.config()
         .plugins

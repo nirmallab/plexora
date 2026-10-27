@@ -5223,8 +5223,8 @@ deliberately left out and what should be built next.
   does), and now `checkUpdate()`/`installUpdate()`/`onUpdateProgress(cb)` —
   the desktop side of `views/updateDialog.js`'s state machine, backed by
   `desktop/src-tauri/src/updates.rs`'s `check_update`/`install_update`
-  commands (tauri-plugin-updater); a build with no signing key set
-  (`plugins.updater.pubkey` empty in `tauri.conf.json`) answers `kind:
+  commands (tauri-plugin-updater); a build with no updater public key
+  (`plugins.updater.pubkey`, committed in `tauri.conf.json`) answers `kind:
   "unsupported"` rather than pretending to check. Native file drops arrive as a
   cancelable `plexora:native-drop` `CustomEvent` carrying paths, not bytes; a
   drop nobody cancels goes to `PlexoraDropRouter.unclaimed` (below), and only

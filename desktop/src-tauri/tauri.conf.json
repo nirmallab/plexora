@@ -68,7 +68,7 @@
       }
     },
     "updater": {
-      "pubkey": "",
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEMyQjAwN0JDQzk2Q0ZFQTYKUldTbS9tekp2QWV3d3NVNWNaQmxyVXlZZHFKSVdndzFLd1lkRTgyblR4Tk5LSlA3VlFKVjlaUXoK",
       "endpoints": ["https://github.com/nirmallab/plexora/releases/latest/download/latest.json"],
       "windows": { "installMode": "passive" }
     }
