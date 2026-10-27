@@ -71,11 +71,10 @@ def test_a_controller_can_be_built_from_a_plugin_context(report):
     """Loading without throwing is not the same as working: a class can define
     fine and still name something that does not exist when it is used."""
     _, data = report
-    # Rectangle, not Select: the panel opens with a drawing tool already in
-    # hand, and a controller built on Select is the regression that puts a
-    # click back between opening the panel and drawing anything.
+    # No tool: the panel opens with nothing in hand, so the first drag after
+    # opening it pans the image instead of drawing a region nobody asked for.
     assert data["controller"] == {
-        "tool": "rectangle", "state": "drawing.rectangle", "status": "saved",
+        "tool": None, "state": "idle.select", "status": "saved",
         "ready": False,
     }
 

@@ -22,7 +22,7 @@ adapter code) is left to the factory.
 
 from plexora.api.plugin import Plugin, Requires
 
-VERSION = "20261025_roi_api_preview"
+VERSION = "20261027_roi_tools_on_image"
 
 
 def _blueprint():
@@ -69,6 +69,7 @@ PLUGIN = Plugin(
         "roiRenderer.js",
         "roiTools.js",
         "roiTree.js",
+        "roiToolbar.js",
         "roiSidebarController.js",
         # Answers Figure Builder's two capture/restore events. A listener
         # nobody dispatches to never fires, so this costs a build without

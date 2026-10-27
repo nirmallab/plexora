@@ -1,9 +1,10 @@
 /**
  * roiSidebarController.js - the panel, and the plugin's registration.
  *
- * Everything user-facing that is not on the image itself: the tool buttons, the
- * new-category control, the save indicator, the import/export/save row, and the
- * two banners that appear when saving cannot proceed. The category-and-region
+ * Everything user-facing that is not on the image itself: the new-category
+ * field, the save indicator, the import/export/save row, and the two banners
+ * that appear when saving cannot proceed. The tools are on the image
+ * (roiToolbar.js), shown and kept current from here. The category-and-region
  * tree between them is roiTree.js, which owns its own rows and calls back here
  * for every edit -- this file keeps the commit/undo bookkeeping in one place.
  *
@@ -28,10 +29,17 @@ class RoiSidebarController {
         ctx.view?.addSectionOverlay?.("regions", (query) => this.renderer.sectionSpans(query));
         this.tools = new RoiInteraction(ctx, this.store, this.renderer);
         this.tools.onNotify = (message) => this.notify(message);
-        this.tools.onBusy = (busy) => {
-            const button = this.el("roi_tool_magic");
-            if (button) button.setAttribute("aria-busy", busy ? "true" : "false");
-        };
+        // The wand on the bar opens magic select, and a second click puts it
+        // away; every other tool is picked.
+        this.toolbar = new RoiToolbar({
+            onTool: (tool) => {
+                if (tool === "magic") this.tools.toggleMagic();
+                else this.tools.setTool(tool);
+            },
+        });
+        this.tools.magicBars = this.toolbar.magicBars();
+        // A carry started from a row's menu is busy too, with the options shut.
+        this.tools.onBusy = (busy) => this.toolbar.setBusy(busy);
         // The tree decides what a click on a row MEANS; every one of these
         // decides what it DOES, because doing it is a commit with an undo
         // beside it and that bookkeeping belongs together.
@@ -58,9 +66,6 @@ class RoiSidebarController {
         this._messageTimer = null;
         this._unsubscribe = null;
         this._destinationOpen = false;
-        //: Guards the new-category field against the blur that follows Enter
-        //: making a second, empty category out of the same keystroke.
-        this._creating = false;
         //: Unsubscribes the wait for a clean store, while a reload another
         //: writer asked for is held back behind unsaved work.
         this._remoteWait = null;
@@ -69,7 +74,6 @@ class RoiSidebarController {
     // -- lifecycle -------------------------------------------------------
 
     setup() {
-        this.bindToolbar();
         this.bindNewCategory();
         this.bindTransfer();
         this.bindBanners();
@@ -109,7 +113,20 @@ class RoiSidebarController {
         this.renderer.attach();
         this.tools.arm();
         this.render();
+        this.syncToolbar();
         this.ensureDefaultCategory();
+    }
+
+    /** The tools bar is on the image exactly while the tools are armed: a
+     *  bar left over another tool's session would offer a pen that is not
+     *  listening. */
+    syncToolbar() {
+        if (this.tools.armed) {
+            this.toolbar.show();
+            this.renderToolbar();
+        } else {
+            this.toolbar.hide();
+        }
     }
 
     /**
@@ -156,10 +173,12 @@ class RoiSidebarController {
         this.renderer.setEnabled(Boolean(visible));
         if (!visible) {
             this.tools.disarm();
+            this.syncToolbar();
             return;
         }
         this.renderer.attach();
         if (window.PlexoraToolLoader?.activeTool() === "roi") this.tools.arm();
+        this.syncToolbar();
         this.renderer.schedule();
     }
 
@@ -173,6 +192,7 @@ class RoiSidebarController {
      */
     onHide() {
         this.tools.disarm();
+        this.syncToolbar();
         this.renderer.setEnabled(false);
         // A row menu is portaled out of this panel, so hiding the panel leaves
         // it floating over whatever the user came back to.
@@ -186,6 +206,7 @@ class RoiSidebarController {
         RoiTree.closePopup();
         this.tree.destroy();
         this.tools.destroy();
+        this.toolbar.destroy();
         this.renderer.destroy();
         this.store.destroy();
     }
@@ -196,23 +217,18 @@ class RoiSidebarController {
 
     // -- wiring ----------------------------------------------------------
 
-    bindToolbar() {
-        for (const button of document.querySelectorAll("#roi_toolbar [data-tool]")) {
-            button.addEventListener("click", () => this.tools.setTool(button.dataset.tool));
-        }
-    }
-
     /**
-     * The new-category control: a button that becomes a field.
+     * The new-category field: always open, under the Categories heading.
      *
-     * At the top of the section rather than under the list it fills, because
-     * making a category is the first thing to do in an empty project and the
-     * thing a user goes looking for when they need another one -- and a field
-     * standing open at the bottom of everything it creates is neither.
+     * Enter makes the category -- the key the field's Enter cap names, and the
+     * cap itself for a mouse. Leaving the field keeps what was typed and makes
+     * nothing: a field that is always on screen is clicked away from all the
+     * time, and a category made by the click that was going somewhere else is
+     * one nobody asked for.
      */
     bindNewCategory() {
         const input = this.el("roi_category_name");
-        this.el("roi_category_new")?.addEventListener("click", () => this.openNewCategory());
+        this.el("roi_category_new")?.addEventListener("click", () => this.submitNewCategory());
         this.el("roi_category_all_eye")?.addEventListener("click", () => this.toggleAllCategories());
         // Bound to the key rather than a form's submit -- see the note in
         // panel.html on why there is no form.
@@ -226,22 +242,6 @@ class RoiSidebarController {
                 this.closeNewCategory();
             }
         });
-        input?.addEventListener("blur", () => {
-            if (this._creating) return;
-            if (input.value.trim()) this.submitNewCategory();
-            else this.closeNewCategory();
-        });
-    }
-
-    openNewCategory() {
-        const row = this.el("roi_category_new_row");
-        const input = this.el("roi_category_name");
-        if (!row || !input) return;
-        row.hidden = false;
-        const button = this.el("roi_category_new");
-        if (button) button.hidden = true;
-        input.value = "";
-        input.focus();
     }
 
     /** Hide every category, or -- when all are already hidden -- show every
@@ -276,25 +276,28 @@ class RoiSidebarController {
         button.setAttribute("aria-pressed", allHidden ? "true" : "false");
     }
 
+    /** Empty the field and let go of it, so V/P/F/R/E reach the tools again
+     *  rather than being typed into the next name. */
     closeNewCategory() {
-        const row = this.el("roi_category_new_row");
-        if (row) row.hidden = true;
-        const button = this.el("roi_category_new");
-        if (button) button.hidden = false;
         const input = this.el("roi_category_name");
-        if (input) input.value = "";
+        if (!input) return;
+        input.value = "";
+        input.blur();
     }
 
     submitNewCategory() {
         const input = this.el("roi_category_name");
         if (!input) return;
-        this._creating = true;
-        // Refused rather than closed on a duplicate name: the text is still
-        // in the field and still wrong, and closing would throw it away
+        // An empty field: the Enter cap is not shown, but Enter still lands.
+        if (!input.value.trim()) {
+            input.focus();
+            return;
+        }
+        // Refused rather than emptied on a duplicate name: the text is still
+        // in the field and still wrong, and emptying it would throw it away
         // without the user having agreed to that.
         if (this.createCategory(input.value)) this.closeNewCategory();
         else { input.focus(); input.select(); }
-        this._creating = false;
     }
 
     bindTransfer() {
@@ -829,6 +832,8 @@ class RoiSidebarController {
         this.renderStatus();
         this.renderSourceButton();
         this.renderAllEye();
+        const name = this.el("roi_category_name");
+        if (name) name.disabled = !this.store.editable;
         const add = this.el("roi_category_new");
         if (add) add.disabled = !this.store.editable;
     }
@@ -849,22 +854,14 @@ class RoiSidebarController {
     }
 
     renderToolbar() {
-        for (const button of document.querySelectorAll("#roi_toolbar [data-tool]")) {
-            const active = button.dataset.tool === this.tools.tool;
-            button.classList.toggle("is-active", active);
-            button.setAttribute("aria-pressed", active ? "true" : "false");
-            // Select stays available whenever the pointer works at all; the
-            // three that MAKE a shape also need a category to put it in.
-            // Magic select is routinely both active and disabled -- it is the
-            // tool in hand on a project with no category yet -- and reads as
-            // chosen and waiting rather than as nothing at all. See roi.css.
-            // Magic select can also refine a selected region with no category.
-            button.disabled = button.dataset.tool === "select"
-                ? !this.tools.ready
-                : button.dataset.tool === "magic"
-                    ? !(this.tools.canDraw || (this.tools.ready && this.store.selected))
-                    : !this.tools.canDraw;
-        }
+        // Select stays available whenever the pointer works at all; the three
+        // that MAKE a shape also need a category to put it in. Magic select
+        // can also refine a selected region with no category.
+        this.toolbar.render(this.tools.tool, (tool) => (tool === "select"
+            ? !this.tools.ready
+            : tool === "magic"
+                ? !(this.tools.canDraw || (this.tools.ready && this.store.selected))
+                : !this.tools.canDraw));
     }
 
     /**
@@ -1287,7 +1284,7 @@ class RoiSidebarController {
                 title: "Start with a category",
                 icon: "fas fa-layer-group",
                 text: "Every region belongs to a category, such as Tumour or Stroma. "
-                    + "Add one with New category (beside the tools), then click it to draw into it: new "
+                    + "Type a name in Add new category and press Enter, then click it to draw into it: new "
                     + "regions land under it and are named after it (Tumour 1, Tumour 2).",
                 points: [
                     "The eye on a row hides that region or category on the image; the "
@@ -1299,7 +1296,7 @@ class RoiSidebarController {
             {
                 title: "Draw",
                 icon: "fas fa-pen-nib",
-                text: "Pick a tool from the row at the top of the panel. Polygon places "
+                text: "Pick a tool from the bar at the top of the image. Polygon places "
                     + "a point per click; Freehand and Rectangle follow a press and drag.",
                 shortcuts: [
                     { keys: "P", label: "Polygon" },
@@ -1314,9 +1311,10 @@ class RoiSidebarController {
             {
                 title: "Magic select",
                 icon: "fas fa-wand-magic-sparkles",
-                text: "Click something on the image and Plexora outlines it. The bar "
-                    + "that appears on the image sets how you point at it. It sets "
-                    + "itself up the first time you use it (a short one-time download).",
+                text: "Click something on the image and Plexora outlines it. Its options "
+                    + "open beside the wand on the tools bar and set how you point at it; "
+                    + "click the wand again to put them away. It sets itself up the first "
+                    + "time you use it (a short one-time download).",
                 points: [
                     "Add: click to outline; click again to grow the outline.",
                     "Remove: click an area to take it out.",
@@ -1333,7 +1331,7 @@ class RoiSidebarController {
             },
             {
                 title: "Edit regions",
-                icon: "fas fa-arrow-pointer",
+                icon: "fas fa-hand",
                 text: "With Select, click a region to select it, drag it to move it, or "
                     + "drag a handle to reshape it. A region's ⋯ renames, locks, hides, "
                     + "moves it to another category or deletes it; a locked region "

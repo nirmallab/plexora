@@ -4,7 +4,7 @@
 
    Nothing is lifted into that header. Import, export and save act on the whole
    region set, but they are the END of the workflow this panel reads top to
-   bottom -- tool, category, regions -- so they sit at the bottom of the body as
+   bottom -- category, regions -- so they sit at the bottom of the body as
    a row of small pills, the way the image layer card carries its opacity and
    channel-names controls. A `data-tool-extras` div would have put them above
    the title instead, which is where the eye finds them first. #}
@@ -33,58 +33,11 @@
         </div>
     </div>
 
-    {# One row of icons, no label above it: four tools whose glyphs say what
-       they are, with the shortcut and the gesture in the tooltip rather than
-       printed permanently underneath. Native `title` and not `data-tooltip`,
-       because `.tool-card-body` clips its overflow and this is the first row
-       in it -- a styled bubble would be cut off at the top edge.
+    {# No tools here: they float over the image while this panel is on screen
+       (roiToolbar.js), where the drawing happens. The panel starts with what
+       they draw into. #}
 
-       The three that MAKE a shape start disabled, because until the store has
-       loaded this panel does not yet know whether there is a category to put
-       one in -- and offering a live pen that refuses every stroke is worse
-       than one that visibly waits. The first render decides. Freehand is the
-       one already pressed. #}
-    <div id="roi_toolbar" class="roi-toolbar" role="toolbar" aria-label="Drawing tools">
-        <button id="roi_tool_select" class="roi-tool" data-tool="select" type="button"
-                aria-pressed="false"
-                title="Select (V) -- click to select, drag to move, drag a handle to reshape">
-            <span class="fas fa-arrow-pointer"></span>
-        </button>
-        <button id="roi_tool_polygon" class="roi-tool" data-tool="polygon" type="button" disabled
-                aria-pressed="false"
-                title="Polygon (P) -- click to place points; Enter or double-click finishes; Backspace removes the last point">
-            <span class="fas fa-draw-polygon"></span>
-        </button>
-        <button id="roi_tool_freehand" class="roi-tool" data-tool="freehand" type="button" disabled
-                aria-pressed="false"
-                title="Freehand (F) -- press and drag">
-            <span class="fas fa-pen-nib"></span>
-        </button>
-        <button id="roi_tool_rectangle" class="roi-tool" data-tool="rectangle" type="button" disabled
-                aria-pressed="false"
-                title="Rectangle (R) -- press and drag">
-            <span class="far fa-square"></span>
-        </button>
-        {# Magic select: click an artifact and its outline appears. Enabled like
-           the others once a category exists; it sets itself up the first time
-           it is armed (services/segmentService.js). #}
-        <button id="roi_tool_magic" class="roi-tool" data-tool="magic" type="button" disabled
-                aria-pressed="false"
-                title="Magic select (E) -- click something to outline it; the bar on the image switches between Add, Remove, Box and Scribble; click inside a selected region to refine it">
-            <span class="fas fa-wand-magic-sparkles"></span>
-        </button>
-        {# On the tools' row and their height, at its far end: a category is
-           what the tools draw into, so the control that makes one sits with
-           them rather than in a heading row of its own. It reveals the name
-           field under the Categories heading. #}
-        <button id="roi_category_new" class="roi-new-category" type="button"
-                title="Add a category. New ROIs are drawn into the active category.">
-            <span class="fas fa-plus"></span><span>New category</span>
-        </button>
-    </div>
-
-    {# The heading, and the eye that hides every category at once. New
-       category is on the tools' row above; its field opens under here. #}
+    {# The heading, and the eye that hides every category at once. #}
     <div class="roi-section-head">
         <label class="control-label">Categories</label>
         <div class="roi-section-actions">
@@ -97,14 +50,27 @@
             </button>
         </div>
     </div>
-    {# Deliberately not a <form>. This markup is server-rendered and on screen
+    {# A new category: a field the width of the list it adds to, always open,
+       because naming one is the panel's first step on a new project and the
+       thing a user comes back for when they need another. The plus says what
+       it is for; the Enter cap appears once there is a name to add, and says
+       how (a click on it does the same). Disabled until the first render
+       knows the regions can be edited.
+
+       Deliberately not a <form>. This markup is server-rendered and on screen
        before the plugin's scripts have finished loading, so for a moment there
        is nobody to call preventDefault -- and an Enter in that window submits
        natively and NAVIGATES THE PAGE, taking the panel and anything unsaved
        with it. No form, no default action to suppress. #}
-    <div id="roi_category_new_row" class="roi-new-category-row" hidden>
-        <input id="roi_category_name" class="roi-input" type="text" autocomplete="off" spellcheck="false"
-               maxlength="200" placeholder="Category name, then Enter">
+    <div class="roi-category-add">
+        <span class="fas fa-plus roi-category-add-icon" aria-hidden="true"></span>
+        <input id="roi_category_name" class="roi-input roi-category-add-input" type="text"
+               autocomplete="off" spellcheck="false" maxlength="200"
+               placeholder="Add new category" aria-label="New category name" disabled>
+        <button id="roi_category_new" class="roi-category-add-submit" type="button" disabled
+                title="Add category (Enter)" aria-label="Add category">
+            <span class="fas fa-arrow-turn-down fa-rotate-90" aria-hidden="true"></span>
+        </button>
     </div>
     {# Categories with their regions nested under them, built by roiTree.js.
        A project starts with none: the names are the user's to choose, so the

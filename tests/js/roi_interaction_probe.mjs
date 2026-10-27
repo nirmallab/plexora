@@ -407,31 +407,44 @@ const at = (x, y) => ({ position: { x, y }, preventDefaultAction: false });
     check("disarming unsubscribes again", viewer.world.handlers.has("add-item"), false);
 }
 
-// -- the pen is already in hand -----------------------------------------
+// -- no tool in hand until one is picked --------------------------------
 
 {
-    // The panel used to open on Select, so drawing anything began with a click
-    // on a toolbar button -- a step that teaches nothing and is taken every
-    // single session. Asserted on a freshly constructed tool rather than after
-    // setTool(), because doing it through setTool in onShow() is what would
-    // scold an empty project with "Add a category first" on every open.
+    // The panel used to open on Rectangle, so the first drag after opening it
+    // -- often a pan, by someone who opened it to look -- drew a region. It now
+    // opens with nothing in hand: the image pans until a tool is picked.
     const store = makeStore();
     store.features = [];
     const tools = makeTools(store);
 
-    check("a fresh panel is holding the rectangle", tools.tool, "rectangle");
-    check("...in the state that draws", tools.state, "drawing.rectangle");
-    check("...and E going back to Rectangle", tools.previousTool, "rectangle");
+    check("a fresh panel holds no tool", tools.tool, null);
+    check("...in a state that draws nothing", tools.state, "idle.select");
+    check("...and E going back to no tool", tools.previousTool, null);
     check("...and has said nothing about it", tools.said, []);
 
-    // No press on the toolbar first: the first drag draws a square.
+    const pan = at(60, 60);
+    tools.press(at(10, 10));
+    tools.dragging(pan);
+    tools.dragEnd(at(110, 110));
+    check("a drag before a tool is picked is the viewer's", pan.preventDefaultAction, false);
+    check("...and draws nothing", store.committed, []);
+    check("...and still asks for nothing", tools.said, []);
+
+    const categories = store.categories;
+    store.categories = [];
+    tools.press(at(10, 10));
+    check("with no category either, a press says nothing", tools.said, []);
+    store.categories = categories;
+
+    // Picking the tool is what makes the next drag draw.
+    tools.setTool("rectangle");
     tools.press(at(10, 10));
     tools.dragging(at(60, 60));
     tools.dragging(at(110, 110));
     tools.dragEnd(at(110, 110));
 
     const drawn = store.features[0];
-    check("the first gesture drew a region",
+    check("the first drag after picking Rectangle drew a region",
         store.committed[0]?.redo?.map((o) => o.op), ["roi.create"]);
     check("...it landed in the active category", drawn?.category_id, "c");
     check("...named after it", drawn?.name, "Tumor 1");

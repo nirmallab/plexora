@@ -261,19 +261,36 @@ def test_the_interaction_probe_catches_a_press_that_commits_too_early(tmp_path):
     assert any("SECOND shape" in name for name in names), names
 
 
-def test_the_interaction_probe_catches_a_panel_that_opens_on_select(tmp_path):
-    """Drawing is why the panel is open. Constructing on Select puts a click on
-    a toolbar button between opening it and drawing anything -- every session,
-    for no information -- and it fails silently: the tools work perfectly, they
-    are just the wrong one."""
+def test_the_interaction_probe_catches_a_panel_that_opens_with_a_tool_in_hand(tmp_path):
+    """Opening the panel is not choosing a tool. Constructing on Rectangle turns
+    the first drag after opening it -- often a pan, by someone who opened it to
+    look -- into a region nobody asked for, and it fails silently: the tools
+    work perfectly, one is just already in hand."""
     mutated = _mutate(
         tmp_path, "roiTools.js",
+        '        this.tool = null;\n        this.state = "idle.select";',
         '        this.tool = "rectangle";\n        this.state = "drawing.rectangle";',
-        '        this.tool = "select";\n        this.state = "idle.select";',
     )
     returncode, report = _run("roi_interaction_probe.mjs", mutated)
     assert returncode == 1
-    assert any("rectangle" in failure["check"] for failure in report["failures"])
+    names = [failure["check"] for failure in report["failures"]]
+    assert any("no tool" in name for name in names), names
+    assert any("viewer's" in name for name in names), names
+
+
+def test_the_interaction_probe_catches_a_toolless_press_that_draws(tmp_path):
+    """The constructor holding no tool is half of it: a press that does not
+    return before the drawing branches still nags an empty project for a
+    category on every pan."""
+    mutated = _mutate(
+        tmp_path, "roiTools.js",
+        "        if (!this.tool) return;\n        if (this.spaceHeld) {",
+        "        if (this.spaceHeld) {",
+    )
+    returncode, report = _run("roi_interaction_probe.mjs", mutated)
+    assert returncode == 1
+    names = [failure["check"] for failure in report["failures"]]
+    assert any("says nothing" in name for name in names), names
 
 
 def test_the_interaction_probe_catches_a_name_that_reuses_a_deleted_number(tmp_path):

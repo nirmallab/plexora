@@ -208,8 +208,8 @@ function makeTools(store, segment = fakeSegment(around)) {
           datasource: "s1" },
         store, renderer);
     tools.armed = true;
-    // Magic select is the tool a fresh panel holds; each check here turns it
-    // on deliberately (setTool) to watch what that does, so start on the pen.
+    // A fresh panel holds no tool; each check here turns magic select on
+    // deliberately (setTool) to watch what that does, so start on the pen.
     tools.setTool("freehand");
     segment.ready = 0;
     bar.log = [];
@@ -269,9 +269,29 @@ window.PlexoraCanvasHint = {
     hide() { hintLog.push(["hide"]); },
 };
 
-await check("a fresh panel holds magic select in Box, and arming it starts the setup", async () => {
+/** A panel shown again with magic select still in hand from the last time. */
+function shownAgainWithMagic(status) {
+    const fresh = freshTools(status);
+    fresh.tools.setTool("magic");
+    fresh.segment.ready = 0;
+    bar.current = null;
+    return fresh;
+}
+
+await check("a fresh panel holds no tool, and arming it starts nothing", async () => {
     const { tools, segment } = freshTools({ state: "weights_missing" });
-    assert.equal(tools.tool, "magic");
+    assert.equal(tools.tool, null);
+    tools.arm();
+    await settled();
+    assert.equal(tools.tool, null);
+    assert.equal(segment.ready, 0);
+    same(bar.current, null);
+    same(tools.said, []);
+    tools.disarm();
+});
+
+await check("magic select still in hand when the panel is shown again starts the setup", async () => {
+    const { tools, segment } = shownAgainWithMagic({ state: "weights_missing" });
     assert.equal(tools.magicMode, "box");
     tools.arm();
     await settled();
@@ -282,7 +302,7 @@ await check("a fresh panel holds magic select in Box, and arming it starts the s
 });
 
 await check("...and a server that cannot run the model gets freehand instead", async () => {
-    const { tools, segment } = freshTools({ state: "not_installed_runtime" });
+    const { tools, segment } = shownAgainWithMagic({ state: "not_installed_runtime" });
     tools.arm();
     await settled();
     assert.equal(tools.tool, "freehand");
@@ -290,10 +310,23 @@ await check("...and a server that cannot run the model gets freehand instead", a
     tools.disarm();
 });
 
+await check("E with no tool in hand, and E again, puts it back down", () => {
+    const { tools } = freshTools({ state: "ready" });
+    tools.armed = true;
+    tools.keyDown(key("e"));
+    assert.equal(tools.tool, "magic");
+    tools.keyDown(key("e"));
+    assert.equal(tools.tool, null);
+    assert.equal(tools.state, "idle.select");
+    same(bar.current, null);
+});
+
 await check("'Hold Space to pan' is up while a drawing tool is in hand, and only then", async () => {
     const { tools } = freshTools({ state: "ready" });
     hintLog.length = 0;
     tools.arm();
+    same(hintLog.at(-1), ["hide"]);   // no tool: a drag pans already
+    tools.setTool("freehand");
     same(hintLog.at(-1), ["show", "Space", "Hold to pan"]);
     tools.setTool("select");
     same(hintLog.at(-1), ["hide"]);

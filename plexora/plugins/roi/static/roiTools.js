@@ -60,17 +60,14 @@ class RoiInteraction {
         this.renderer = renderer;
         this.viewer = ctx.viewer?.viewer || null;
 
-        // Rectangle from the first frame: drawing is why the panel is open,
-        // and making the user pick a tool before they can draw is a click that
-        // teaches them nothing. Rectangle rather than magic select because it
-        // works at once on every server -- magic select needs a model that may
-        // still be downloading, or may not run there at all. Set here rather
-        // than through setTool() in onShow(), which would scold a project with
-        // no categories with "Add a category first" every time the panel
-        // opened -- the first stroke nudges instead, once there is one with
-        // nowhere to go.
-        this.tool = "rectangle";
-        this.state = "drawing.rectangle";
+        // No tool in hand until the user picks one from the toolbar (or its
+        // key). A panel opened to look -- at the list, at a region's numbers
+        // -- leaves the image as it was: a drag pans it, rather than drawing
+        // a rectangle nobody asked for. Not Select either, which would move
+        // whatever region the drag happened to start on. press() leaves every
+        // gesture to the viewer until a tool is chosen.
+        this.tool = null;
+        this.state = "idle.select";
         this.armed = false;
 
         this.draftPoints = [];
@@ -86,13 +83,17 @@ class RoiInteraction {
         //: tool E goes back to.
         this.magic = null;
         this.magicBusy = false;
-        this.previousTool = "rectangle";
+        this.previousTool = null;
         //: How a click prompts while magic select is on -- the floating bar's
         //: Add / Remove / Box / Scribble (services/magicToolbar.js). Box
         //: first: a drag around the object says "all of this, and nothing
         //: past here" where one click often finds only its nearest part.
         this.magicMode = "box";
         this.magicBar = null;
+        //: Where magic select's options are shown: the panel's own tools bar
+        //: (RoiToolbar.magicBars), set by the controller; core's floating bar
+        //: (services/magicToolbar.js) when nothing set one.
+        this.magicBars = null;
 
         //: What the pointer is over, plus the frame handle throttling the moves
         //: that decide it. Kept outside the state machine on purpose: hovering
@@ -198,7 +199,7 @@ class RoiInteraction {
         this.renderer.setEnabled(true);
         // disarm() leaves "idle.select" behind via cancelDraft(), so a panel
         // shown a second time would be holding a pen in a select state.
-        this.state = this.tool === "select" ? "idle.select" : `drawing.${this.tool}`;
+        this.state = this.restingState;
         if (this.tool === "magic") {
             this.showMagicBar();
             this.magicFallback();
@@ -235,7 +236,7 @@ class RoiInteraction {
     showPanHint() {
         const hints = window.PlexoraCanvasHint;
         if (!hints) return;
-        if (this.armed && this.tool !== "select") {
+        if (this.armed && this.tool && this.tool !== "select") {
             hints.show(this, { key: "Space", text: "Hold to pan" });
         } else {
             hints.hide(this);
@@ -358,13 +359,22 @@ class RoiInteraction {
 
     // -- tools -----------------------------------------------------------
 
+    /** The state between gestures with the tool in hand. With none, it is
+     *  Select's idle: nothing a press could start acts there but a Select
+     *  press, and press() returns before one with no tool. */
+    get restingState() {
+        return this.tool && this.tool !== "select" ? `drawing.${this.tool}` : "idle.select";
+    }
+
+    /** `null` puts every tool down (magic select's E and × go back to it when
+     *  it was what was in hand before). */
     setTool(tool) {
         if (this.tool === tool) return;
         this.cancelDraft();
         if (tool === "magic" && this.tool !== "magic") this.previousTool = this.tool;
         if (tool !== "magic") this.hideMagicBar();
         this.tool = tool;
-        this.state = tool === "select" ? "idle.select" : `drawing.${tool}`;
+        this.state = this.restingState;
         this.applyCursor();
         this.showPanHint();
         this.store.changed();
@@ -379,12 +389,13 @@ class RoiInteraction {
             if (!this.store.activeCategory && !this.store.selected) this.needCategory();
             return;
         }
-        if (tool !== "select" && !this.store.activeCategory) this.needCategory();
+        if (tool && tool !== "select" && !this.store.activeCategory) this.needCategory();
     }
 
-    /** E: magic select on, or back to whatever was in hand before it. */
+    /** E: magic select on, or back to whatever was in hand before it --
+     *  nothing, if it was picked before any other tool. */
     toggleMagic() {
-        if (this.tool === "magic") this.setTool(this.previousTool || "freehand");
+        if (this.tool === "magic") this.setTool(this.previousTool);
         else this.setTool("magic");
     }
 
@@ -413,8 +424,8 @@ class RoiInteraction {
                 : (this.canDraw || this.store.selected ? "crosshair" : ""));
             return;
         }
-        const drawing =
-            this.ready && !this.spaceHeld && this.tool !== "select" && this.canDraw;
+        const drawing = this.ready && !this.spaceHeld
+            && this.tool && this.tool !== "select" && this.canDraw;
         this.setCursor(drawing ? "crosshair" : "");
     }
 
@@ -422,6 +433,9 @@ class RoiInteraction {
 
     press(event) {
         if (!this.ready) return;
+        // No tool picked yet: the press is the viewer's, so a drag pans and
+        // nothing asks for a category.
+        if (!this.tool) return;
         if (this.spaceHeld) {
             this.state = "panning.temporary";
             return;
@@ -669,7 +683,7 @@ class RoiInteraction {
                 return;
             }
             default:
-                this.state = this.tool === "select" ? "idle.select" : `drawing.${this.tool}`;
+                this.state = this.restingState;
         }
     }
 
@@ -1008,7 +1022,7 @@ class RoiInteraction {
         this.pending = null;
         this.hideDraft();
         if (this.state.startsWith("drawing.")) {
-            this.state = this.tool === "select" ? "idle.select" : `drawing.${this.tool}`;
+            this.state = this.restingState;
         }
         return had;
     }
@@ -1394,9 +1408,10 @@ class RoiInteraction {
         this.onBusy?.(busy);
     }
 
-    /** The floating bar: Add / Remove / Box, and × to put magic select away. */
+    /** Magic select's options: Add / Remove / Box / Scribble, opened out of
+     *  the tools bar beside the wand (`magicBars`). */
     showMagicBar() {
-        const bars = window.PlexoraMagicBar;
+        const bars = this.magicBars || window.PlexoraMagicBar;
         if (!bars || !this.armed) return;
         // Through planes is Plexora 3D: without it the bar has no such button
         // (magicToolbar.js draws it only for an owner that can carry).
@@ -1405,7 +1420,7 @@ class RoiInteraction {
         this.magicBar = bars.show({
             owner: this, mode: this.magicMode,
             onMode: (mode) => this.setMagicMode(mode),
-            onClose: () => this.setTool(this.previousTool || "freehand"),
+            onClose: () => this.setTool(this.previousTool),
             onCarry: carry,
         });
         this.magicBar?.setCanCarry?.(true);

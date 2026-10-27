@@ -105,6 +105,7 @@ if (!problems.length) {
         "globalThis.__names = { RoiApi: typeof RoiApi, RoiGeometry: typeof RoiGeometry,"
         + " RoiStore: typeof RoiStore, RoiRenderer: typeof RoiRenderer,"
         + " RoiInteraction: typeof RoiInteraction, RoiTree: typeof RoiTree,"
+        + " RoiToolbar: typeof RoiToolbar,"
         + " RoiSidebarController: typeof RoiSidebarController };",
         ctx);
     for (const [name, kind] of Object.entries(ctx.__names)) {

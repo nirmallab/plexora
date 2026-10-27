@@ -19,8 +19,10 @@ SCRIPTS = [REPO_ROOT / "plexora" / "client" / "src" / "js" / "services" / "segme
            REPO_ROOT / "plexora" / "plugins" / "roi" / "static" / "roiTools.js"]
 
 CHECKS = (
-    "a fresh panel holds magic select in Box, and arming it starts the setup",
+    "a fresh panel holds no tool, and arming it starts nothing",
+    "magic select still in hand when the panel is shown again starts the setup",
     "...and a server that cannot run the model gets freehand instead",
+    "E with no tool in hand, and E again, puts it back down",
     "'Hold Space to pan' is up while a drawing tool is in hand, and only then",
     "arming magic select starts the one-time setup, once",
     "a click makes one region, filed as magic select's, and selects it",
