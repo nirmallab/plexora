@@ -1,8 +1,8 @@
 'use client';
 
 // The pricing page's calculator: use class and seats in, the price per seat and
-// the total out, and Buy, which goes to the portal's Plans & prices with the
-// seats and use class filled in, where Paddle's checkout opens. Every number
+// the total out, and Buy, which goes to BioCognia's checkout at biocognia.com
+// with the seats and use class filled in; nothing is bought here. Every number
 // comes from data/pricebook.json, the website's copy of the platform's prices
 // (tools/sync_pricing.py keeps it right); nothing here is a price. One price per
 // seat: the total is that price times the seats.
@@ -120,12 +120,12 @@ export function SeatCalculator() {
         </p>
         <p className="flex items-center gap-1.5 text-sm text-fd-muted-foreground">
           Launch price. Standard: <s>{money(quote.standardUnit)}</s>
-          <span title="The price for new subscriptions once launch pricing ends. A subscription bought now keeps its launch price for as long as it runs.">
+          <span title="The price once launch pricing ends.">
             <Info className="size-3.5" aria-hidden="true" />
           </span>
         </p>
         <p className="text-sm">
-          {plural(seats, 'seat')} · <strong>{money(quote.total)}</strong> a year{' '}
+          {plural(seats, 'seat')} · <strong>{money(quote.total)}</strong> for a year{' '}
           <s className="text-fd-muted-foreground">{money(quote.standardTotal)}</s>
         </p>
         <p className="text-sm text-fd-muted-foreground">{book.notes.renewal}</p>
@@ -136,11 +136,12 @@ export function SeatCalculator() {
           href={buyHref(seats, quote.tier.audience)}
           className="inline-flex items-center justify-center gap-2 rounded-lg bg-fd-primary px-4 py-2.5 text-sm font-semibold text-fd-primary-foreground"
         >
-          Buy {plural(seats, 'seat')} · {money(quote.total)}/year
+          Buy {plural(seats, 'seat')} on BioCognia · {money(quote.total)}
           <ArrowRight className="size-4" aria-hidden="true" />
         </a>
         <p className="text-center text-xs text-fd-muted-foreground">
-          One seat is an individual account; two or more make a team you can invite people to.
+          Checkout is at biocognia.com, with these seats filled in. No account needed: the licence keys go to the email
+          you give there.
         </p>
         <a href={trialUrl} className="text-center text-sm font-medium text-fd-primary hover:underline">
           Or start a 30-day free trial, no card

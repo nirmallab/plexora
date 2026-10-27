@@ -26,7 +26,7 @@
     }
   },
   "notes": {
-    "renewal": "A subscription renews at the price it was bought at. Introductory pricing is locked for the life of the subscription.",
+    "renewal": "One payment for a year. Nothing renews by itself: we email you before it ends, and you renew by buying again.",
     "creditsPerSeat": 1000
   }
 }

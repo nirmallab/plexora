@@ -63,4 +63,5 @@ def test_the_pricing_url_is_a_page_the_site_builds():
     assert links.PRICING_URL == f"{links.DOCS_URL}pricing/"
     assert (ROOT / "website" / "app" / "(home)" / "pricing" / "page.tsx").exists()
     site = (ROOT / "website" / "lib" / "site.ts").read_text(encoding="utf-8")
-    assert "buyUrl = `${accountUrl}/portal/billing?product=plexora`" in site
+    assert "storeUrl = 'https://biocognia.com'" in site
+    assert "buyUrl = `${storeUrl}/buy?offer=plexora`" in site
