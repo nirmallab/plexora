@@ -372,14 +372,11 @@
                 <button id="qc_refresh" class="qc-tool-run" type="button" hidden
                         title="Take in ROI edits made outside this panel, and recompute the cells"
                         aria-label="Take in ROI edits"><span class="fas fa-arrows-rotate"></span></button>
-                {# Magic select, in plain sight; + beside it draws by hand. #}
-                <button id="qc_magic" class="qc-tool-run" type="button" aria-pressed="false"
+                {# Pick (or name) what you are marking; the drawing bar on the
+                   image then has every way to draw it, by hand or magic select. #}
+                <button id="qc_add_roi" class="qc-add-roi" type="button" aria-pressed="false"
                         aria-haspopup="true" aria-expanded="false"
-                        title="Magic select (E): pick what you are marking, then click the artifact to outline it"
-                        aria-label="Magic select"><span class="fas fa-wand-magic-sparkles"></span></button>
-                <button id="qc_draw" class="qc-tool-run" type="button" aria-haspopup="true" aria-expanded="false"
-                        title="Draw a QC region by hand: pick (or name) a category, then draw it with Freehand, Polygon or Rectangle from the bar on the image"
-                        aria-label="Draw a QC region by hand"><span class="fas fa-plus"></span></button>
+                        title="Pick what you are marking, then draw it with the tools on the image"><span class="fas fa-plus" aria-hidden="true"></span><span>Add ROIs</span></button>
                 <button id="qc_roi_eye" class="qc-tool-eye qc-eye" type="button" aria-pressed="true"
                         title="Hide everything ROI QC draws"><span class="fas fa-eye"></span><span class="fas fa-eye-slash"></span></button>
             </span>

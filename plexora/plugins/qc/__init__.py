@@ -20,7 +20,7 @@ Kept import-light, like every descriptor module.
 
 from plexora.api.plugin import Plugin, Requires
 
-VERSION = "20261026_qc_draw"
+VERSION = "20261027_add_rois"
 
 
 def _blueprint():

@@ -310,36 +310,34 @@ await check("...and is left alone while typing, with a modifier, a dialog, or an
     }
 });
 
-await check("toggleMagic: off when on, on in the category in hand, else the last one reopened", () => {
+await check("toggleMagic: the wand in the category in hand, else the last category reopened in it", () => {
     const c = controller();
-    const modes = [];
-    c.setDrawMode = (mode) => modes.push(mode);
+    const tools = [];
+    c.pickTool = (tool) => tools.push(tool);
     const drawn = [];
-    c.startDrawing = (target, options) => { drawn.push([target, options]); return Promise.resolve(true); };
-    c.magic = { active: true };
-    c.toggleMagic();
-    c.magic = { active: false };
+    c.startDrawing = (target, ...rest) => { drawn.push([target, ...rest]); return Promise.resolve(true); };
     c.drawTarget = { color: "#fff" };
     c.toggleMagic();
-    same(modes, ["draw", "magic"]);
+    same(tools, ["magic"]);
     c.drawTarget = null;
     c.lastTarget = { category: "blur_focus" };
     c.toggleMagic();
-    same(drawn, [[{ category: "blur_focus" }, { mode: "magic" }]]);
+    same(drawn, [[{ category: "blur_focus" }]]);
+    assert.equal(c.drawTool, "magic");
 });
 
-await check("toggleMagic with nothing in hand opens the picker at the header wand, in magic mode", () => {
+await check("toggleMagic with nothing in hand opens the picker at Add ROIs, to start in magic select", () => {
     const c = controller();
     const opened = [];
-    c.openDrawMenu = (at, options) => opened.push([at, options]);
-    c.magic = { active: false };
+    c.openDrawMenu = (at, ...rest) => opened.push([at, ...rest]);
+    const add = { id: "qc_add_roi" };
+    c.el = (id) => (id === "qc_add_roi" ? add : null);
     c.drawTarget = null;
     c.lastTarget = null;
-    const wand = { id: "qc_magic" };
-    c.toggleMagic(wand);
-    assert.equal(opened.length, 1);
-    assert.equal(opened[0][0], wand);
-    same(opened[0][1], { mode: "magic" });
+    c.toggleMagic();
+    same(opened, [[add]]);
+    assert.equal(opened[0][0], add);
+    assert.equal(c.drawTool, "magic");
 });
 
 function drawingController(state) {
@@ -349,57 +347,117 @@ function drawingController(state) {
                                           color: "#f97316" }) };
     c.categoryWords = () => "blur";
     c.hover = { gesture() {} };
-    c.modes = [];
-    c.setDrawMode = (mode) => c.modes.push(mode);
+    c.used = [];
+    c.useTool = (tool) => {
+        c.used.push(tool);
+        c.magic.active = tool === "magic";
+        c.freehand.drawing = Boolean(tool) && tool !== "magic" && tool !== "pan";
+        if (c.freehand.drawing) c.freehand.shape = tool;
+    };
     c.renderDrawbar = () => {};
-    c.freehand = { start: () => true, pan() {}, stop() {} };
+    c.freehand = { start: () => true, pan() {}, stop() {}, drawing: false, shape: "freehand" };
     c.magic = { stop() {}, active: false };
+    c.drawBar = { categories: [], setCategory(category) { this.categories.push(category); } };
     window.PlexoraSegment = { ...RealSegment, status: async () => state };
     return c;
 }
 
-await check("startDrawing puts magic select in hand by default; the pen only when asked", async () => {
+await check("startDrawing puts no tool in hand: the bar shows the category, the pointer pans", async () => {
     try {
         const c = drawingController({ state: "ready" });
         assert.equal(await c.startDrawing({ category: "blur_focus" }), true);
-        same(c.modes, ["magic"]);
-        assert.ok(/Drag round/.test(c.said.at(-1)), c.said.at(-1));
-        const pen = drawingController({ state: "ready" });
-        await pen.startDrawing({ category: "blur_focus" }, { mode: "draw" });
-        same(pen.modes, []);
+        same(c.used, [null]);
+        same(c.drawBar.categories, [{ words: "Blur", color: "#f97316" }]);
+        assert.ok(/pick a tool/.test(c.said.at(-1)), c.said.at(-1));
+    } finally {
+        window.PlexoraSegment = RealSegment;
+    }
+});
+
+await check("...a category changed while drawing keeps the tool in hand; after ×, the next has none", async () => {
+    try {
+        const c = drawingController({ state: "ready" });
+        c.drawTarget = { words: "Fold", color: "#000" };
+        c.freehand.drawing = true;
+        c.freehand.shape = "polygon";
+        await c.startDrawing({ category: "blur_focus" });
+        same(c.used, ["polygon"]);
+        assert.ok(/Click round the blur/.test(c.said.at(-1)), c.said.at(-1));
+        c.stopDrawing();
+        await c.startDrawing({ category: "blur_focus" });
+        same(c.used, ["polygon", null]);
+    } finally {
+        window.PlexoraSegment = RealSegment;
+    }
+});
+
+await check("E's category starts in magic select, once -- the pen where the server cannot run the model", async () => {
+    try {
+        const c = drawingController({ state: "ready" });
+        c.drawTool = "magic";
+        await c.startDrawing({ category: "blur_focus" });
+        same(c.used, ["magic"]);
+        assert.ok(/Drag round the blur/.test(c.said.at(-1)), c.said.at(-1));
+        assert.equal(c.drawTool, null);
+        const pen = drawingController({ state: "not_installed_runtime" });
+        pen.drawTool = "magic";
+        await pen.startDrawing({ category: "blur_focus" });
+        same(pen.used, ["freehand"]);
         assert.ok(/press and drag/.test(pen.said.at(-1)), pen.said.at(-1));
     } finally {
         window.PlexoraSegment = RealSegment;
     }
 });
 
-await check("...and the pen where the server cannot run the model", async () => {
-    try {
-        const c = drawingController({ state: "not_installed_runtime" });
-        await c.startDrawing({ category: "blur_focus" });
-        same(c.modes, []);
-        assert.ok(/press and drag/.test(c.said.at(-1)), c.said.at(-1));
-    } finally {
-        window.PlexoraSegment = RealSegment;
-    }
-});
-
-await check("setDrawMode switches the pen and the wand, and does nothing with no category", () => {
+await check("pickTool: a shape, the wand, the wand again back to the tool before it -- or to none", () => {
     const c = controller();
     const log = [];
-    c.freehand = { pan: () => log.push("pen.pan"), start: (color) => log.push(`pen.start ${color}`) };
-    c.magic = { start: (color) => log.push(`magic.start ${color}`), stop: () => log.push("magic.stop") };
-    c.renderDrawbar = () => log.push("render");
+    c.freehand = { drawing: false, shape: "freehand",
+                   pan() { this.drawing = false; log.push("pen.pan"); },
+                   setShape(shape) { this.shape = shape; this.drawing = true; log.push(`pen.${shape}`); } };
+    c.magic = { active: false,
+                start(color) { this.active = true; log.push(`magic.start ${color}`); },
+                stop() { this.active = false; } };
+    c.renderDrawbar = () => {};
     c.drawTarget = null;
-    c.setDrawMode("magic");
+    c.pickTool("rectangle");
     same(log, []);
+    c.drawTarget = { color: "#abc", words: "Blur" };
+    c.handTool = null;
+    c.panLit = false;
+    assert.equal(c.toolInHand(), null);
+    c.pickTool("magic");
+    c.pickTool("magic");
+    assert.equal(c.toolInHand(), null);
+    log.length = 0;
+    c.pickTool("rectangle");
+    assert.equal(c.toolInHand(), "rectangle");
+    c.pickTool("magic");
+    assert.equal(c.toolInHand(), "magic");
+    c.pickTool("magic");
+    assert.equal(c.toolInHand(), "rectangle");
+    c.pickTool("pan");
+    assert.equal(c.toolInHand(), "pan");
+    c.pickTool("magic");
+    c.pickTool("magic");
+    assert.equal(c.toolInHand(), "pan");
+    same(log, ["pen.rectangle", "pen.pan", "magic.start #abc", "pen.rectangle", "pen.pan",
+               "pen.pan", "magic.start #abc", "pen.pan"]);
+});
+
+await check("renderDrawbar shows the bar with the tool in hand lit while a category is in hand", () => {
+    const c = controller();
+    const log = [];
+    c.el = () => null;
+    c.freehand = { drawing: true, shape: "polygon" };
+    c.magic = { active: false };
+    c.drawBar = { show: () => log.push("show"), hide: () => log.push("hide"),
+                  render: (tool) => log.push(`render ${tool}`) };
     c.drawTarget = { color: "#abc" };
-    c.setDrawMode("magic");
-    c.setDrawMode("draw");
-    c.setDrawMode("pan");
-    same(log, ["pen.pan", "magic.start #abc", "render",
-               "magic.stop", "pen.start #abc", "render",
-               "magic.stop", "pen.pan", "render"]);
+    c.renderDrawbar();
+    c.drawTarget = null;
+    c.renderDrawbar();
+    same(log, ["show", "render polygon", "hide"]);
 });
 
 // -- storing an outline ------------------------------------------------------------
@@ -445,7 +503,7 @@ await check("saveGeometry stores a new outline as magic select's, with the view 
 
 // -- QcMagic ---------------------------------------------------------------------
 
-/** PlexoraMagicBar, recording: what was shown, for whom, and what it was told. */
+/** The drawing bar's magicBars(), recording: what was shown, for whom, and what it was told. */
 const bar = {
     log: [],
     current: null,
@@ -459,7 +517,6 @@ const bar = {
     },
     hide() { bar.log.push(["hide"]); bar.current = null; },
 };
-window.PlexoraMagicBar = bar;
 
 function magicHarness(answer) {
     const viewer = { handlers: [], addHandler(name) { this.handlers.push(name); },
@@ -470,6 +527,7 @@ function magicHarness(answer) {
     const overlay = { draft: null, prompts: null, schedule() {} };
     const pen = new window.QcFreehand(ctx, overlay);
     const magic = new window.QcMagic(ctx, overlay, pen);
+    magic.bars = bar;
     const segment = { ...RealSegment, ready: 0, calls: [],
                       ensureReady() { segment.ready += 1; return Promise.resolve(true); },
                       point(request) { segment.calls.push(request); return Promise.resolve(answer(request)); } };
@@ -579,24 +637,6 @@ await check("QcMagic: the bar shows in Box on start and goes on stop", () => {
         assert.equal(magic.mode, "remove", "starting again keeps the mode in hand");
         magic.stop();
         assert.equal(bar.current, null);
-        assert.equal(magic.active, false);
-    } finally {
-        window.PlexoraSegment = RealSegment;
-    }
-});
-
-await check("QcMagic: the bar's close is the controller's onClose, else a stop", () => {
-    const { magic } = magicHarness(square);
-    try {
-        let closed = 0;
-        magic.onClose = () => { closed += 1; };
-        magic.start();
-        magic.setMode("add");   // Box is the default; this check clicks
-        bar.current.onClose();
-        assert.equal(closed, 1);
-        assert.equal(magic.active, true);
-        magic.onClose = null;
-        bar.current.onClose();
         assert.equal(magic.active, false);
     } finally {
         window.PlexoraSegment = RealSegment;

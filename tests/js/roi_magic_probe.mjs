@@ -32,7 +32,7 @@
  * Built on roi_interaction_probe.mjs's harness (its store, viewer and
  * renderer stand-ins), with the REAL segmentService.js's planner and Session
  * and a fake `point()` that answers a square around the click, and a
- * recording PlexoraMagicBar.
+ * recording stand-in for the drawing bar's magicBars().
  *
  * Run directly: `node tests/js/roi_magic_probe.mjs`
  * Prints `ok  <check>` per check held; exit 1 if any did not.
@@ -166,7 +166,7 @@ const SNAPSHOT = { sample: "s1", viewport: { x: 0, y: 0, width: 1000, height: 10
                    channels: [] };
 window.PlexoraViewSnapshot = { capture: () => SNAPSHOT, sameView: () => true };
 
-/** PlexoraMagicBar, recording: what was shown, for whom, and what it was told. */
+/** The drawing bar's magicBars(), recording: what was shown, for whom, and what it was told. */
 const bar = {
     log: [],
     current: null,
@@ -180,7 +180,6 @@ const bar = {
     },
     hide() { bar.log.push(["hide"]); bar.current = null; },
 };
-window.PlexoraMagicBar = bar;
 
 function fakeViewer() {
     const world = {
@@ -208,6 +207,7 @@ function makeTools(store, segment = fakeSegment(around)) {
           datasource: "s1" },
         store, renderer);
     tools.armed = true;
+    tools.magicBars = bar;
     // A fresh panel holds no tool; each check here turns magic select on
     // deliberately (setTool) to watch what that does, so start on the pen.
     tools.setTool("freehand");
@@ -258,6 +258,7 @@ function freshTools(status) {
         { viewer: { viewer: fakeViewer() }, config: { width: 1000, height: 1000 },
           datasource: "s1" },
         store, renderer);
+    tools.magicBars = bar;
     tools.said = [];
     tools.onNotify = (message) => tools.said.push(message);
     return { tools, segment, store };

@@ -2,7 +2,7 @@
  * qcDraw.js - drawing a QC region by hand, without leaving the QC panel.
  *
  * The ROI tool's Freehand, Polygon and Rectangle, restated at the size QC
- * needs (`shape`, picked on QcShapeBar, the bar on the image): Freehand,
+ * needs (`shape`, picked on the drawing bar on the image): Freehand,
  * press and drag round an artifact and release; Rectangle, drag a box;
  * Polygon, click its corners and finish with a double-click, Enter or a click
  * on the first one (Backspace takes the last back, a drag still pans). The region is stored through the ROI
@@ -377,147 +377,17 @@ window.QcFreehand = QcFreehand;
 
 
 /**
- * The by-hand bar on the image, magic select's bar's twin (core's
- * magicToolbar.js styles, so the two read as one family): the category in
- * hand -- its colour and name; a click changes it -- then Freehand, Polygon
- * and Rectangle, then × to stop. Up while a category is in hand for drawing
- * by hand (the + in ROI QC's header); magic select has its own bar, and the
- * two never show at once. Mounted where that one is, at the top centre.
- */
-class QcShapeBar {
-
-    constructor() {
-        this.root = null;
-        this.buttons = {};
-        this.onShape = null;      // (shape) => void
-        this.onCategory = null;   // (anchor) => void
-        this.onClose = null;      // () => void
-    }
-
-    static get SHAPES() {
-        return [
-            { id: "freehand", icon: "fas fa-pen-nib", label: "Freehand",
-              title: "Freehand -- press and drag round the artifact" },
-            { id: "polygon", icon: "fas fa-draw-polygon", label: "Polygon",
-              title: "Polygon -- click its corners; double-click, Enter or a click on the "
-                   + "first corner finishes; Backspace takes the last one back" },
-            { id: "rectangle", icon: "far fa-square", label: "Rectangle",
-              title: "Rectangle -- drag a box round the artifact" },
-        ];
-    }
-
-    static host() {
-        return document.getElementById("openseadragon_wrapper")
-            || document.querySelector(".openseadragon-container")?.parentElement || null;
-    }
-
-    build() {
-        const root = document.createElement("div");
-        root.className = "plx-magic-bar qc-shape-bar";
-        root.setAttribute("role", "toolbar");
-        root.setAttribute("aria-label", "Draw a QC region");
-        const category = document.createElement("button");
-        category.type = "button";
-        category.className = "qc-shape-bar-category";
-        category.title = "Change what you are marking";
-        category.setAttribute("aria-haspopup", "true");
-        category.setAttribute("aria-expanded", "false");
-        const dot = document.createElement("span");
-        dot.className = "qc-shape-bar-dot";
-        dot.setAttribute("aria-hidden", "true");
-        const label = document.createElement("span");
-        label.className = "qc-shape-bar-label";
-        category.append(dot, label);
-        category.addEventListener("click", (event) => {
-            event.stopPropagation();
-            this.onCategory?.(category);
-        });
-        root.appendChild(category);
-        const group = document.createElement("div");
-        group.className = "plx-magic-bar-modes";
-        group.setAttribute("role", "radiogroup");
-        group.setAttribute("aria-label", "Shape");
-        for (const shape of QcShapeBar.SHAPES) {
-            const button = document.createElement("button");
-            button.type = "button";
-            button.className = "plx-magic-bar-button";
-            button.dataset.mode = shape.id;
-            button.setAttribute("role", "radio");
-            button.setAttribute("aria-checked", "false");
-            button.setAttribute("aria-label", shape.label);
-            button.title = shape.title;
-            const icon = document.createElement("span");
-            icon.className = shape.icon;
-            icon.setAttribute("aria-hidden", "true");
-            button.appendChild(icon);
-            button.addEventListener("click", (event) => {
-                event.stopPropagation();
-                this.onShape?.(shape.id);
-            });
-            group.appendChild(button);
-            this.buttons[shape.id] = button;
-        }
-        root.appendChild(group);
-        const close = document.createElement("button");
-        close.type = "button";
-        close.className = "plx-magic-bar-button plx-magic-bar-close";
-        close.title = "Done drawing";
-        close.setAttribute("aria-label", "Done drawing");
-        const x = document.createElement("span");
-        x.className = "fas fa-xmark";
-        x.setAttribute("aria-hidden", "true");
-        close.appendChild(x);
-        close.addEventListener("click", (event) => {
-            event.stopPropagation();
-            this.onClose?.();
-        });
-        root.appendChild(close);
-        // A press on the bar is never a press on the image under it.
-        for (const name of ["pointerdown", "mousedown", "click", "dblclick", "wheel"]) {
-            root.addEventListener(name, (event) => event.stopPropagation());
-        }
-        this.root = root;
-        this.label = label;
-        this.category = category;
-    }
-
-    /** Up (or updated) with `shape` lit (null: none, the pointer pans) and the
-     *  category's name and colour. */
-    show({ shape, words, color }) {
-        const mount = QcShapeBar.host();
-        if (!mount) return;
-        if (!this.root) this.build();
-        if (this.root.parentNode !== mount) mount.appendChild(this.root);
-        this.root.hidden = false;
-        this.root.style.setProperty("--qc-row-color", color || "#fbbf24");
-        this.label.textContent = words || "";
-        this.category.title = `Marking ${words || "a region"}: click to change what you are marking`;
-        for (const [id, button] of Object.entries(this.buttons)) {
-            button.setAttribute("aria-checked", id === shape ? "true" : "false");
-        }
-    }
-
-    hide() {
-        if (!this.root) return;
-        this.root.hidden = true;
-        this.root.parentNode?.removeChild(this.root);
-    }
-}
-
-window.QcShapeBar = QcShapeBar;
-
-
-/**
- * Magic select in the QC panel (key E, or the wand in ROI QC's header): click an
- * artifact and its outline appears as a QC region in the category in hand.
- * A floating bar on the image switches what a click does -- Add (include; a
+ * Magic select in the QC panel (key E, or the wand on the drawing bar): click
+ * an artifact and its outline appears as a QC region in the category in hand.
+ * Its options open out of the wand on the bar (core's services/drawToolbar.js,
+ * through `bars`) and switch what a click does -- Add (include; a
  * drag pans), Remove (take away; Shift-click in Add too), Box (drag round a
  * large or textured object) and Scribble (a line drawn over the object, sent
  * as points along it, or a loop round it, sent as its box; Shift for a line
  * over what to leave out). Clicks build up the outline being made; a box or a
  * scribble outlines a whole object by itself, so each starts its own. Begun
- * inside the selected QC region, any of them redraws that region instead;
- * × on the bar puts magic select away. The ROI tool's magic select, at QC's size: the
+ * inside the selected QC region, any of them redraws that region instead.
+ * The ROI tool's magic select, at QC's size: the
  * same planner and prompt bookkeeping (services/segmentService.js), QC's own
  * routes to store the result (`/regions/draw` with a geometry, and
  * `/regions/reshape`), through callbacks the controller supplies.
@@ -538,8 +408,11 @@ class QcMagic {
         this.spaceHeld = false;
         this.color = "#fbbf24";
         this.session = null;     // {session: PlexoraSegment.Session, snapshot}
-        //: How a click prompts: the floating bar's Add / Remove / Box / Scribble.
+        //: How a click prompts: the bar's Add / Remove / Box / Scribble.
         this.mode = "box";
+        //: Where the options are shown (PlexoraDrawBar.magicBars), set by the
+        //: controller; `bar` is this tool's handle on them while it is on.
+        this.bars = null;
         this.bar = null;
         this.dragOrigin = null;
         this.box = null;
@@ -552,7 +425,6 @@ class QcMagic {
         this.onBusy = null;               // (busy) => void
         this.onModeChange = null;         // () => void
         this.onEscape = null;             // () => void, Esc with nothing to cancel
-        this.onClose = null;              // () => void, the bar's ×
         this._handlers = [];
         this._onKeyDown = (event) => this.keyDown(event);
         this._onKeyUp = (event) => { if (event.key === " ") this.releaseSpace(); };
@@ -603,14 +475,12 @@ class QcMagic {
         this.onModeChange?.();
     }
 
-    /** The floating bar on the image: Add / Remove / Box / Scribble, and × to close. */
+    /** Add / Remove / Box / Scribble, opened out of the wand on the bar. */
     showBar() {
-        const bars = window.PlexoraMagicBar;
-        if (!bars) return;
-        this.bar = bars.show({
+        if (!this.bars) return;
+        this.bar = this.bars.show({
             owner: this, mode: this.mode,
             onMode: (mode) => this.setMode(mode),
-            onClose: () => (this.onClose ? this.onClose() : this.stop()),
         });
     }
 

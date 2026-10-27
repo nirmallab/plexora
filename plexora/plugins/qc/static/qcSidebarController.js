@@ -35,10 +35,11 @@
  * AI session, or derived from another QC -- and one drawn by hand can be
  * renamed or deleted here.
  *
- * Marking a region by hand never leaves this panel: picking a category (an
- * artifact class, or one the user names under "Custom") puts QC's own
- * Freehand, Polygon or Rectangle in hand (qcDraw.js) on a bar on the image --
- * the category, the shapes, × -- (the wand: magic select, with core's bar) and
+ * Marking a region by hand never leaves this panel: Add ROIs, then a
+ * category (an artifact class, or one the user names under "Custom"), puts
+ * the drawing bar on the image (core's services/drawToolbar.js, the ROI
+ * panel's own) -- the category, Pan, Polygon, Freehand, Rectangle, magic
+ * select, × -- with QC's own pen and magic select behind it (qcDraw.js), and
  * each shape is saved as an ordinary
  * ROI (the ROI plugin's `create_roi`, through `/regions/draw`) and taken into
  * QC at once, with the channels that were on screen kept beside it. The ROI
@@ -84,14 +85,20 @@ class QcSidebarController {
         this.freehand = new QcFreehand(ctx, this.overlay);
         this.freehand.onStroke = (points, shape) => this.saveStroke(points, shape);
         this.freehand.onModeChange = () => this.renderDrawbar();
-        // By hand (+): Freehand, Polygon or Rectangle from a bar on the image.
-        this.shapeBar = new QcShapeBar();
-        this.shapeBar.onShape = (shape) => this.setShape(shape);
-        this.shapeBar.onCategory = (anchor) => this.openDrawMenu(anchor, { mode: "draw" });
-        this.shapeBar.onClose = () => this.stopDrawing();
+        // The drawing bar on the image while a category is in hand: what is
+        // being marked (a click changes it), the tools, and × when done.
+        this.drawBar = new PlexoraDrawBar({
+            id: "qc_draw_bar", buttonId: "qc_draw_tool", label: "Add QC regions",
+            tools: [{ id: "pan", icon: "fas fa-hand", label: "Pan" }, ...PlexoraDrawBar.TOOLS],
+            onTool: (tool) => this.pickTool(tool),
+            onCategory: (anchor) => this.openDrawMenu(anchor, { align: "left" }),
+            onClose: () => this.stopDrawing(),
+        });
         this.drawTarget = null;       // {target, label, words, color}: the category in hand
-        this.drawKind = null;         // "magic" (the wand) or "hand" (+): whose bar is up
         this.lastTarget = null;       // the last category drawn in, for E with nothing in hand
+        this.drawTool = null;         // once: the tool the next category starts in (E: magic)
+        this.handTool = null;         // what the wand goes back to: the last tool not magic
+        this.panLit = false;          // Pan picked on the bar (else nothing is in hand)
         // Magic select (qcDraw.js QcMagic): click an artifact, its outline is a region.
         this.magic = new QcMagic(ctx, this.overlay, this.freehand);
         this.magic.selected = () => this.magicSelected();
@@ -99,11 +106,8 @@ class QcSidebarController {
         this.magic.onCommit = (change) => this.saveGeometry(change);
         this.magic.onMessage = (text) => this.message(text);
         this.magic.onModeChange = () => this.renderDrawbar();
-        this.magic.onEscape = () => this.setDrawMode("pan");
-        this.magic.onClose = () => this.setDrawMode("pan");
-        this.magic.onBusy = (busy) => {
-            this.el("qc_magic")?.setAttribute("aria-busy", busy ? "true" : "false");
-        };
+        this.magic.onEscape = () => this.setDrawMode(null);
+        this.magic.bars = this.drawBar.magicBars();
         this._onMagicKey = (event) => this.magicKey(event);
         this.cellLayer = new QcCellLayer(ctx, QcSidebarController.PLUGIN);
         this.cellLayer.isVisible = (group) => this.cellGroupVisible(group);
@@ -154,16 +158,9 @@ class QcSidebarController {
             if (button) this.setStrictness(button.dataset.preset);
         });
         this.el("qc_refresh")?.addEventListener("click", () => this.refresh());
-        this.el("qc_draw")?.addEventListener("click", (event) => {
+        this.el("qc_add_roi")?.addEventListener("click", (event) => {
             event.stopPropagation();
-            this.openDrawMenu(event.currentTarget, { mode: "draw" });
-        });
-        this.el("qc_magic")?.addEventListener("click", (event) => {
-            event.stopPropagation();
-            // The header wand puts magic select away when it is on (E goes
-            // back to drawing by hand instead).
-            if (this.magic.active) this.stopDrawing();
-            else this.toggleMagic(event.currentTarget);
+            this.openDrawMenu(event.currentTarget);
         });
         for (const tool of document.querySelectorAll("#qc_panel_section .qc-tool[data-tool]")) {
             tool.querySelector(".qc-tool-fold")?.addEventListener("click",
@@ -237,7 +234,7 @@ class QcSidebarController {
         this.artifacts.destroy();
         this.freehand.stop();
         this.magic.stop();
-        this.shapeBar.hide();
+        this.drawBar.destroy();
         document.removeEventListener("keydown", this._onMagicKey);
         window.clearTimeout(this._messageTimer);
         window.clearTimeout(this._drawnTimer);
@@ -601,12 +598,14 @@ class QcSidebarController {
 
     /** Make the QC category -- one of the five (`{category}`), a subtype's
      *  (`{class}`, kept as the region's class), or one the user names
-     *  (`{label}`) -- and put magic select (in Scribble) in hand for it. The
-     *  ROI tool is not opened: the user stays here. `mode` "draw" puts QC's
-     *  own Freehand, Polygon and Rectangle in hand instead (the bar on the
-     *  image picks one); so does a server that cannot run the model. */
-    async startDrawing(target, { mode = "magic" } = {}) {
-        if (mode === "magic" && !(await QcSidebarController.magicUsable())) mode = "draw";
+     *  (`{label}`) -- and put it in hand, with the drawing bar on the image.
+     *  The ROI tool is not opened: the user stays here. As in the ROI panel,
+     *  no tool is in hand until one is clicked; a category picked while
+     *  drawing keeps the tool in hand, and E starts in magic select (the pen
+     *  on a server that cannot run the model). */
+    async startDrawing(target) {
+        const keep = this.drawTarget ? this.toolInHand() : this.drawTool;
+        this.drawTool = null;
         const made = await this.act("Preparing the category", () => this.api.addCategory(target));
         if (!made) return false;
         if (made.custom) this.loadVocabulary();
@@ -618,47 +617,62 @@ class QcSidebarController {
         this.drawTarget = { target: kept, label: made.label, words, color };
         this.lastTarget = target;
         this.hover.gesture();
-        if (mode === "magic") {
-            if (!this.freehand.start(color)) {
-                this.drawTarget = null;
-                this.message("The image is not ready to draw on yet");
-                return false;
-            }
-            this.drawKind = "magic";
-            this.setDrawMode("magic");
-            this.message(`Drag round the ${words.toLowerCase()} to outline it. The bar on `
-                + "the image switches between Add, Remove, Box and Scribble");
-            return true;
-        }
-        this.magic.stop();
-        this.drawKind = "hand";
         if (!this.freehand.start(color)) {
             this.drawTarget = null;
             this.message("The image is not ready to draw on yet");
             return false;
         }
-        this.renderDrawbar();
-        this.shapeMessage();
+        this.drawBar.setCategory({ words, color });
+        let tool = keep;
+        if (tool === "magic" && !(await QcSidebarController.magicUsable())) tool = "freehand";
+        this.useTool(tool);
+        this.toolMessage();
         return true;
+    }
+
+    /** What is in hand: "magic", a shape, "pan", or null (nothing: the
+     *  pointer pans all the same). */
+    toolInHand() {
+        if (this.magic.active) return "magic";
+        if (this.freehand.drawing) return this.freehand.shape;
+        return this.panLit ? "pan" : null;
+    }
+
+    /** A tool picked on the bar. The wand is a toggle: picked while it is in
+     *  hand, it goes back to the tool before it. */
+    pickTool(tool) {
+        if (!this.drawTarget) return;
+        if (tool === "magic" && this.magic.active) tool = this.handTool;
+        this.useTool(tool);
+        this.toolMessage();
+    }
+
+    useTool(tool) {
+        if (tool === "magic" || tool === "pan" || !tool) this.setDrawMode(tool || null);
+        else this.setShape(tool);
     }
 
     /** One of the bar's shapes in hand, for the category in hand. */
     setShape(shape) {
         if (!this.drawTarget) return;
         this.magic.stop();
-        this.drawKind = "hand";
         this.freehand.setShape(shape);
+        this.handTool = this.freehand.shape;
+        this.panLit = false;
         this.renderDrawbar();
-        this.shapeMessage();
     }
 
-    shapeMessage() {
-        const words = (this.drawTarget?.words || "artifact").toLowerCase();
-        const how = {
-            polygon: `Click round the ${words}; double-click or Enter finishes`,
-            rectangle: `Drag a box round the ${words}`,
-        }[this.freehand.shape] || `Draw round the ${words}: press and drag`;
-        this.message(`${how}. Hold Space to pan`);
+    /** What to do now, in the status line. */
+    toolMessage() {
+        if (!this.drawTarget) return;
+        const words = this.drawTarget.words.toLowerCase();
+        const tool = this.toolInHand();
+        const how = tool === "magic" ? `Drag round the ${words} to outline it`
+            : tool === "polygon" ? `Click round the ${words}; double-click or Enter finishes`
+            : tool === "rectangle" ? `Drag a box round the ${words}`
+            : tool === "freehand" ? `Draw round the ${words}: press and drag`
+            : `Marking ${words}: pick a tool on the bar on the image to draw it`;
+        this.message(tool === "pan" || !tool ? how : `${how}. Hold Space to pan`);
     }
 
     /** Whether this server can run magic select at all (it may still need
@@ -674,29 +688,26 @@ class QcSidebarController {
         }
     }
 
+    /** × on the bar, or the panel going. */
     stopDrawing() {
         this.magic.stop();
         this.freehand.stop();
         this.drawTarget = null;
-        this.drawKind = null;
         this.renderDrawbar();
     }
 
-    /** The three pointers: pan (the viewer's own drag), draw (by hand) and
-     *  magic (click to outline). */
+    /** The pointer: magic (click to outline), or the viewer's own drag --
+     *  "pan", lit on the bar, or null, nothing in hand. A shape is `setShape`. */
     setDrawMode(mode) {
         if (!this.drawTarget) return;
         if (mode === "magic") {
-            this.drawKind = "magic";
             this.freehand.pan();
             this.magic.start(this.drawTarget.color);
-        } else if (mode === "draw") {
-            this.drawKind = "hand";
-            this.magic.stop();
-            this.freehand.start(this.drawTarget.color);
         } else {
             this.magic.stop();
             this.freehand.pan();
+            this.panLit = mode === "pan";
+            this.handTool = this.panLit ? "pan" : null;
         }
         this.renderDrawbar();
     }
@@ -714,21 +725,20 @@ class QcSidebarController {
         this.toggleMagic();
     }
 
-    toggleMagic(anchor = null) {
-        if (this.magic.active) {
-            this.setDrawMode("draw");
-            return;
-        }
+    /** Magic select on, or back to the tool before it; with nothing in hand,
+     *  the last category again, else the picker -- in magic select. */
+    toggleMagic() {
         if (this.drawTarget) {
-            this.setDrawMode("magic");
+            this.pickTool("magic");
             return;
         }
+        this.drawTool = "magic";
         if (this.lastTarget) {
-            this.startDrawing(this.lastTarget, { mode: "magic" });
+            this.startDrawing(this.lastTarget);
             return;
         }
-        const at = anchor || this.el("qc_magic") || this.el("qc_draw");
-        if (at) this.openDrawMenu(at, { mode: "magic" });
+        const at = this.el("qc_add_roi");
+        if (at) this.openDrawMenu(at);
     }
 
     /** The selected QC region as magic select's planner wants it. */
@@ -810,15 +820,15 @@ class QcSidebarController {
                                `r:${drawn.roi_id}`)) this.redraw();
     }
 
+    /** The bar on the image while a category is in hand, the tool in hand
+     *  lit; Add ROIs pressed while it is up. */
     renderDrawbar() {
-        this.el("qc_magic")?.setAttribute("aria-pressed", this.magic.active ? "true" : "false");
-        const byHand = Boolean(this.drawTarget) && this.drawKind === "hand" && !this.magic.active;
-        this.el("qc_draw")?.setAttribute("aria-pressed", byHand ? "true" : "false");
-        if (byHand) {
-            this.shapeBar.show({ shape: this.freehand.drawing ? this.freehand.shape : null,
-                                 words: this.drawTarget.words, color: this.drawTarget.color });
+        this.el("qc_add_roi")?.setAttribute("aria-pressed", this.drawTarget ? "true" : "false");
+        if (this.drawTarget) {
+            this.drawBar.show();
+            this.drawBar.render(this.toolInHand());
         } else {
-            this.shapeBar.hide();
+            this.drawBar.hide();
         }
         // While a drag draws (the pen, or magic select's Box and Scribble),
         // say once, quietly, how to move the image.
@@ -1687,12 +1697,9 @@ class QcSidebarController {
             return [
                 { label: "Zoom to all", onSelect: () => this.activate(spec) },
                 hideItem(spec.key),
-                { label: `Mark another by hand`, className: "is-sectioned",
-                  hint: "Draw another region in this category: Freehand, Polygon or Rectangle",
-                  onSelect: () => this.startDrawing(target, { mode: "draw" }) },
-                { label: "Mark another with magic select",
-                  hint: "Click an artifact and its outline becomes a region in this category (E)",
-                  onSelect: () => this.startDrawing(target, { mode: "magic" }) },
+                { label: "Add another", className: "is-sectioned",
+                  hint: "Mark another region in this category, with the tools on the image",
+                  onSelect: () => this.startDrawing(target) },
                 ...QcSidebarController.resetItem(spec, this),
                 { label: `Delete all ${members.length} region${members.length === 1 ? "" : "s"}…`,
                   className: "is-sectioned is-destructive",
@@ -1904,8 +1911,7 @@ class QcSidebarController {
                 return;
             }
             QcTree.closePopup();
-            this.startDrawing(QcSidebarController.pickerTarget(words, categories, classes),
-                              { mode: options.mode });
+            this.startDrawing(QcSidebarController.pickerTarget(words, categories, classes));
         });
         input.addEventListener("input", () => row.classList.remove("is-refused"));
 
@@ -1913,19 +1919,18 @@ class QcSidebarController {
             ...categories.map((item) => ({
                 label: item.words, color: item.color,
                 hint: item.help ? `${item.words}: ${item.help}` : item.words,
-                onSelect: () => this.startDrawing({ category: item.id }, { mode: options.mode }),
+                onSelect: () => this.startDrawing({ category: item.id }),
             })),
             ...custom.map((item, i) => ({
                 label: item.words, color: item.color,
                 className: i === 0 ? "is-sectioned" : "",
                 hint: `Draw a "${item.words}" region`,
-                onSelect: () => this.startDrawing({ label: item.words }, { mode: options.mode }),
+                onSelect: () => this.startDrawing({ label: item.words }),
             })),
         ];
         const help = QcSidebarController.pickerHelp(categories);
         QcTree.menu(anchor, items, {
-            heading: options.mode === "magic" ? "Mark a region with magic select"
-                : "Mark a region by hand", before: row, help,
+            heading: "What are you marking?", before: row, help,
             headingAction: {
                 icon: "circle-question", title: "What the categories mean",
                 onClick: (button) => {
@@ -2405,14 +2410,18 @@ if (window.Plexora) {
                 "Click a region to fit the view to it -- a region you drew comes back "
                 + "the way it was on screen (view, zoom, HD mode, channels); click a cell "
                 + "reason to frame the cells it flagged.",
-                "Magic select (E, or the wand in ROI QC's header): click an artifact and its "
-                + "outline becomes a region. The bar that floats on the image switches "
-                + "between Add (click to include), Remove (click to take away), Box "
-                + "(drag round a large object) and Scribble (draw a line over a long or "
-                + "patchy one, or a loop round it; Shift-drag over what to leave out). "
-                + "Clicks build up one outline; each box or scribble starts its own. Esc "
-                + "finishes it and × puts magic select away. It sets itself up the first "
-                + "time you use it (a short one-time download).",
+                "Add ROIs in ROI QC's header: pick (or name) what you are marking, and "
+                + "a bar on the image has the ways to draw it -- Pan, Polygon, Freehand, "
+                + "Rectangle and magic select. Click the category on the bar to change "
+                + "it; × when you are done.",
+                "Magic select (the wand, or E): click an artifact and its outline "
+                + "becomes a region. Its options open beside the wand: Add (click to "
+                + "include), Remove (click to take away), Box (drag round a large "
+                + "object) and Scribble (draw a line over a long or patchy one, or a "
+                + "loop round it; Shift-drag over what to leave out). Clicks build up "
+                + "one outline; each box or scribble starts its own. Esc finishes it, "
+                + "and the wand again puts it away. It sets itself up the first time "
+                + "you use it (a short one-time download).",
                 "Click a category's or a reason's dot to change its colour.",
                 "A filled dot excludes; a ring only flags. The eyes hide what is drawn, "
                 + "never what is counted.",

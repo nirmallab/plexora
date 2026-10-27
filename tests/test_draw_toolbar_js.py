@@ -1,7 +1,8 @@
-"""The ROI tools bar on the image (roiToolbar.js), run in node against the
-shipped scripts with the real RoiInteraction behind it.
+"""The drawing tools' bar on the image (core's services/drawToolbar.js), run
+in node against the shipped scripts with the real RoiInteraction behind it,
+and as the QC panel builds it.
 
-The checks live in tests/js/roi_toolbar_probe.mjs; this pins their lines, so a
+The checks live in tests/js/draw_toolbar_probe.mjs; this pins their lines, so a
 check that is deleted or renamed fails here rather than silently reducing what
 is covered.
 """
@@ -12,9 +13,9 @@ from pathlib import Path
 
 import pytest
 
-REPO_ROOT = Path(__file__).resolve().parents[4]
-PROBE = REPO_ROOT / "tests" / "js" / "roi_toolbar_probe.mjs"
-SCRIPT = REPO_ROOT / "plexora" / "plugins" / "roi" / "static" / "roiToolbar.js"
+REPO_ROOT = Path(__file__).resolve().parent.parent
+PROBE = REPO_ROOT / "tests" / "js" / "draw_toolbar_probe.mjs"
+SCRIPT = REPO_ROOT / "plexora" / "client" / "src" / "js" / "services" / "drawToolbar.js"
 
 CHECKS = (
     "the bar is built when first shown, over the image, with five tools and none lit",
@@ -29,7 +30,11 @@ CHECKS = (
     "the wand breathes while an outline is on its way",
     "Through planes is offered on a z-stack, with Plexora 3D, and only there",
     "disarming the tools folds the options",
+    "a button's name shows under the bar while the pointer is on it, with no system tooltip",
     "options opened before the bar is on screen are out from its first frame",
+    "an owner with a category gets it before the tools, named and coloured, and × after",
+    "the category asks its owner, × closes, and a tool is picked",
+    "the ROI panel's bar has neither",
 )
 
 node = shutil.which("node")

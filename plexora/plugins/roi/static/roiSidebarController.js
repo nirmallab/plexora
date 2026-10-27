@@ -4,7 +4,7 @@
  * Everything user-facing that is not on the image itself: the new-category
  * field, the save indicator, the import/export/save row, and the two banners
  * that appear when saving cannot proceed. The tools are on the image
- * (roiToolbar.js), shown and kept current from here. The category-and-region
+ * (core's services/drawToolbar.js), shown and kept current from here. The category-and-region
  * tree between them is roiTree.js, which owns its own rows and calls back here
  * for every edit -- this file keeps the commit/undo bookkeeping in one place.
  *
@@ -29,9 +29,12 @@ class RoiSidebarController {
         ctx.view?.addSectionOverlay?.("regions", (query) => this.renderer.sectionSpans(query));
         this.tools = new RoiInteraction(ctx, this.store, this.renderer);
         this.tools.onNotify = (message) => this.notify(message);
-        // The wand on the bar opens magic select, and a second click puts it
-        // away; every other tool is picked.
-        this.toolbar = new RoiToolbar({
+        // The tools on the image (core's services/drawToolbar.js). The wand
+        // opens magic select, and a second click puts it away; every other
+        // tool is picked.
+        this.toolbar = new PlexoraDrawBar({
+            id: "roi_toolbar", buttonId: "roi_tool", label: "ROI tools",
+            tools: [{ id: "select", icon: "fas fa-hand", label: "Select" }, ...PlexoraDrawBar.TOOLS],
             onTool: (tool) => {
                 if (tool === "magic") this.tools.toggleMagic();
                 else this.tools.setTool(tool);

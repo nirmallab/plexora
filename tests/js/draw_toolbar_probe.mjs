@@ -1,6 +1,7 @@
 /**
- * The ROI tools bar on the image: roiToolbar.js, driven the way the panel's
- * controller drives it, with the REAL RoiInteraction behind it.
+ * The drawing tools' bar on the image: core's services/drawToolbar.js, driven
+ * the way the ROI panel's controller drives it, with the REAL RoiInteraction
+ * behind it -- and with the QC panel's extras, the category and ×.
  *
  * What is pinned is what fails quietly -- a bar that renders and is wrong:
  *
@@ -31,6 +32,7 @@ import assert from "node:assert/strict";
 
 const REPO = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const STATIC = join(REPO, "plexora/plugins/roi/static");
+const SERVICES = join(REPO, "plexora/client/src/js/services");
 
 class FakeElement {
     constructor(tag) {
@@ -47,6 +49,7 @@ class FakeElement {
         this.inert = false;
         this.title = "";
         this.type = "";
+        this.textContent = "";
         this.style = { setProperty: (key, value) => { this.style[key] = value; } };
         const element = this;
         this.classList = {
@@ -75,6 +78,8 @@ class FakeElement {
         this.children.push(child);
         return child;
     }
+
+    append(...children) { for (const child of children) this.appendChild(child); }
 
     remove() {
         if (!this.parentNode) return;
@@ -132,8 +137,8 @@ const ctx = createContext({
 runInContext(readFileSync(join(STATIC, "roiGeometry.js"), "utf8"), ctx);
 runInContext(readFileSync(join(STATIC, "roiTools.js"), "utf8")
              + "\n;globalThis.__Tools = RoiInteraction;", ctx, { filename: "roiTools.js" });
-runInContext(readFileSync(join(STATIC, "roiToolbar.js"), "utf8")
-             + "\n;globalThis.__Toolbar = RoiToolbar;", ctx, { filename: "roiToolbar.js" });
+runInContext(readFileSync(join(SERVICES, "drawToolbar.js"), "utf8")
+             + "\n;globalThis.__Toolbar = PlexoraDrawBar;", ctx, { filename: "drawToolbar.js" });
 
 const failures = [];
 function check(name, fn) {
@@ -159,6 +164,8 @@ function panel() {
     tools.armed = true;
     const picked = [];
     const toolbar = new ctx.__Toolbar({
+        id: "roi_toolbar", buttonId: "roi_tool", label: "ROI tools",
+        tools: [{ id: "select", icon: "fas fa-hand", label: "Select" }, ...ctx.__Toolbar.TOOLS],
         onTool: (tool) => {
             picked.push(tool);
             if (tool === "magic") tools.toggleMagic();
@@ -322,6 +329,29 @@ check("disarming the tools folds the options", () => {
     toolbar.hide();
 });
 
+check("a button's name shows under the bar while the pointer is on it, with no system tooltip", () => {
+    const { toolbar } = panel();
+    toolbar.show();
+    const fire = (element, name) => {
+        for (const fn of element.listeners.get(name) || []) fn({ type: name, target: element });
+    };
+    assert.equal(toolbar.name.classList.contains("is-shown"), false);
+    fire(button(toolbar, "polygon"), "pointerenter");
+    assert.equal(toolbar.name.textContent, "Polygon");
+    assert.equal(toolbar.name.classList.contains("is-shown"), true);
+    fire(button(toolbar, "polygon"), "pointerleave");
+    assert.equal(toolbar.name.classList.contains("is-shown"), false);
+    fire(toolbar.modeButtons.scribble, "focus");
+    assert.equal(toolbar.name.textContent, "Scribble");
+    assert.equal(toolbar.name.classList.contains("is-shown"), true);
+    toolbar.hide();
+    assert.equal(toolbar.name.classList.contains("is-shown"), false);
+    for (const each of [...Object.values(toolbar.buttons), ...Object.values(toolbar.modeButtons),
+                        toolbar.carry]) {
+        assert.equal(each.title, "", each.getAttribute("aria-label"));
+    }
+});
+
 check("options opened before the bar is on screen are out from its first frame", () => {
     const { tools, toolbar } = panel();
     tools.setTool("magic");
@@ -329,6 +359,58 @@ check("options opened before the bar is on screen are out from its first frame",
     toolbar.show();
     assert.equal(toolbar.root.classList.contains("is-magic"), true);
     assert.equal(toolbar.drawer.inert, false);
+    toolbar.hide();
+});
+
+/** The QC panel's bar: the category in hand before the tools, × after. */
+function qcBar() {
+    const picked = [];
+    const asked = [];
+    let closed = 0;
+    const toolbar = new ctx.__Toolbar({
+        id: "qc_draw_bar", buttonId: "qc_draw_tool", label: "Add QC regions",
+        tools: [{ id: "pan", icon: "fas fa-hand", label: "Pan" }, ...ctx.__Toolbar.TOOLS],
+        onTool: (tool) => picked.push(tool),
+        onCategory: (anchor) => asked.push(anchor),
+        onClose: () => { closed += 1; },
+    });
+    return { toolbar, picked, asked, closed: () => closed };
+}
+
+check("an owner with a category gets it before the tools, named and coloured, and × after", () => {
+    const { toolbar } = qcBar();
+    toolbar.setCategory({ words: "Tissue fold", color: "#f97316" });
+    toolbar.show();
+    const kids = toolbar.root.children;
+    assert.equal(kids[0], toolbar.category);
+    assert.equal(kids[1], toolbar.tools);
+    assert.equal(kids.at(-2).classList.contains("plx-draw-bar-close"), true);
+    assert.equal(toolbar.categoryWords.textContent, "Tissue fold");
+    assert.equal(toolbar.category.style["--plx-draw-bar-color"], "#f97316");
+    assert.deepEqual(Object.keys(toolbar.buttons), ["pan", "polygon", "freehand", "rectangle", "magic"]);
+    assert.equal(toolbar.buttons.pan.id, "qc_draw_tool_pan");
+    toolbar.setCategory({ words: "Debris", color: "#22c55e" });
+    assert.equal(toolbar.categoryWords.textContent, "Debris");
+    toolbar.hide();
+});
+
+check("the category asks its owner, × closes, and a tool is picked", () => {
+    const { toolbar, picked, asked, closed } = qcBar();
+    toolbar.show();
+    toolbar.category.click();
+    assert.deepEqual(asked, [toolbar.category]);
+    toolbar.buttons.rectangle.click();
+    assert.deepEqual(picked, ["rectangle"]);
+    toolbar.root.children.at(-2).click();
+    assert.equal(closed(), 1);
+    toolbar.hide();
+});
+
+check("the ROI panel's bar has neither", () => {
+    const { toolbar } = panel();
+    toolbar.show();
+    assert.equal(toolbar.category, undefined);
+    assert.equal(toolbar.root.find((n) => n.classList.contains("plx-draw-bar-close")), null);
     toolbar.hide();
 });
 

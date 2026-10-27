@@ -87,6 +87,11 @@ const ctx = createContext(browserGlobals());
 const problems = [];
 const loaded = [];
 
+// The core services the panel builds on, loaded by the page before any plugin.
+for (const path of ["plexora/client/src/js/services/drawToolbar.js"]) {
+    runInContext(readFileSync(join(REPO, path), "utf8"), ctx, { filename: path });
+}
+
 for (const name of SCRIPTS) {
     try {
         runInContext(readFileSync(join(STATIC, name), "utf8"), ctx, { filename: name });
@@ -105,7 +110,6 @@ if (!problems.length) {
         "globalThis.__names = { RoiApi: typeof RoiApi, RoiGeometry: typeof RoiGeometry,"
         + " RoiStore: typeof RoiStore, RoiRenderer: typeof RoiRenderer,"
         + " RoiInteraction: typeof RoiInteraction, RoiTree: typeof RoiTree,"
-        + " RoiToolbar: typeof RoiToolbar,"
         + " RoiSidebarController: typeof RoiSidebarController };",
         ctx);
     for (const [name, kind] of Object.entries(ctx.__names)) {

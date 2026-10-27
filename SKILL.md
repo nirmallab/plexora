@@ -6235,35 +6235,53 @@ them.
 - Client core: `services/viewSnapshot.js` (`PlexoraViewSnapshot`, what the
   viewer is showing, so a click is segmented from the same pixels the user
   sees), `services/segmentService.js` (`PlexoraSegment`: the setup modal, a
-  token cache, `plan()`, `Session`), `services/magicToolbar.js`
-  (`PlexoraMagicBar`, the floating Add/Remove/Box/x bar, mounted in
-  `#openseadragon_wrapper`). `viewerScene.restoreViewport` now takes
-  `options.immediately`.
+  token cache, `plan()`, `Session`), `services/drawToolbar.js`
+  (`PlexoraDrawBar`, also `window.PlexoraDrawBar`; CSS `.plx-draw-bar*` in
+  `viewer.css`), the one drawing bar at the top centre of
+  `#openseadragon_wrapper` that ROI and QC both draw with; it is core so
+  the two panels share one bar. Each owner makes its own: `{id, buttonId,
+  label, tools, onTool}` with its hand tool first and then
+  `PlexoraDrawBar.TOOLS` (polygon/freehand/rectangle/magic), plus optional
+  `onCategory` (a category chip before the tools, `setCategory({words,
+  color})`) and `onClose` (× after them). Magic select's options
+  (Add/Remove/Box/Scribble, Through planes) are not a second bar: `magicBars()`
+  opens them as a drawer out of the wand, and a second click on the wand folds
+  them. Button names show under the bar on hover (`named`/`showName`), not as
+  `title` tooltips, because the browser's tooltip came late. The bar is
+  anchored on its closed width rather than docked through `canvasLayout`, so
+  it grows rightward and the wand stays under the pointer, and sits below the
+  top-centre dock via `--plx-dock-top-center-h`.
+  `viewerScene.restoreViewport` now takes `options.immediately`.
 - ROI plugin: tool `magic` in `roiTools.js` (key E, `magicMode`);
   `flags.method` in the schema (`FEATURE_METHODS`) survives geometry
   edits; `method` appears in summaries, `create_roi` and `update_roi`.
-  `roiToolbar.js` (`RoiToolbar`, in `PLUGIN.scripts` between `roiTree.js` and
-  `roiSidebarController.js`) holds the drawing tools — Select, Polygon,
-  Freehand, Rectangle, Magic select — as a floating bar at the top centre of
-  `#openseadragon_wrapper`, shown only while the ROI tools are armed
-  (`RoiSidebarController.syncToolbar`); the panel no longer carries them.
-  Magic select's options (Add/Remove/Box/Scribble, Through planes) open out of
-  this bar beside the wand, and a second click on the wand folds them
-  (`RoiInteraction.toggleMagic`). Its `magicBars()` has `PlexoraMagicBar`'s
-  face and is injected as `RoiInteraction.magicBars`, which falls back to
-  core's bar when unset — QC still uses `magicToolbar.js`. The bar is anchored
-  on its tools rather than docked through `canvasLayout`, so it grows
-  rightward, and sits below the top-centre dock via
-  `--plx-dock-top-center-h`. `RoiInteraction` constructs with no tool in hand
-  (`tool` null, state `"idle.select"`), and `press()` does nothing until one
-  is picked.
+  `roiSidebarController.js` builds `new PlexoraDrawBar({id: "roi_toolbar",
+  buttonId: "roi_tool", tools: [Select, ...TOOLS]})`, shown only while the ROI
+  tools are armed (`RoiSidebarController.syncToolbar`); the panel no longer
+  carries the tools. The wand calls `RoiInteraction.toggleMagic`, and the
+  bar's `magicBars()` is injected as `RoiInteraction.magicBars`, which
+  `roiTools.js` uses with no fallback. `RoiInteraction` constructs with no tool
+  in hand (`tool` null, state `"idle.select"`), and `press()` does nothing
+  until one is picked.
+- QC plugin: the header's one `#qc_add_roi` "Add ROIs" button (`.qc-add-roi`)
+  opens the category picker; a category in hand puts `this.drawBar` up (Pan
+  first, the category chip, ×), with QC's own pen and `QcMagic` behind it
+  (`qcDraw.js`). `QcMagic` shows its options through `this.bars`
+  (`drawBar.magicBars()`) and has no `onClose`. The controller's `pickTool`,
+  `useTool`, `toolInHand` and `toolMessage` drive it. As in the ROI panel, a
+  new category starts with no tool in hand (`toolInHand()` null, nothing lit,
+  the pointer pans) until one is clicked; `drawTool` is a one-shot start tool
+  (E sets magic; the pen on a server that cannot run the model), `panLit` is
+  Pan clicked, and `handTool` what the wand toggles back to (null: none).
+  `startDrawing(target)` takes no mode.
 - Tests: `tests/test_vision_*.py` (on `FakeSamBackend`),
   `test_vision_sam_real.py` (opt-in: set `PLEXORA_TEST_SEGMENT_MODEL_DIR`),
   `test_qc_magic_select.py`, `test_qc_segment_tool.py`, JS probes
-  `tests/js/{view_snapshot,segment_service,roi_magic,qc_magic,magic_toolbar}_probe.mjs`,
-  and `test_magic_select_wording.py`; the ROI tools bar has
-  `tests/js/roi_toolbar_probe.mjs` and
-  `plexora/plugins/roi/tests/test_roi_toolbar_js.py`.
+  `tests/js/{view_snapshot,segment_service,roi_magic,qc_magic}_probe.mjs`,
+  and `test_magic_select_wording.py`; the drawing bar has
+  `tests/js/draw_toolbar_probe.mjs` and `tests/test_draw_toolbar_js.py`.
+  `tests/js/roi_boot_probe.mjs` loads `drawToolbar.js` before the ROI scripts,
+  because the ROI controller constructs a `PlexoraDrawBar`.
 
 **3-D view performance** (branch `feature/volumetric-3d`; the write-up,
 what was slow and what each stage measures, is `docs/internal/3d/PERF.md`;

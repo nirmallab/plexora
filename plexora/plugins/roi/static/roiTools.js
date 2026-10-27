@@ -10,7 +10,7 @@
  *
  * `drawing.magic` is magic select (key E): the server's model turns clicks
  * into the outline of what was clicked (services/segmentService.js). A
- * floating bar on the image (services/magicToolbar.js) says what a click
+ * the tools bar on the image (services/drawToolbar.js) says what a click
  * does: Add (include; a drag pans), Remove (exclude; Shift-click in Add does
  * the same), Box (a drag boxes the object) or Scribble (a drag is a line over
  * the object, sent as points along it, or a loop round it, sent as its box;
@@ -84,15 +84,14 @@ class RoiInteraction {
         this.magic = null;
         this.magicBusy = false;
         this.previousTool = null;
-        //: How a click prompts while magic select is on -- the floating bar's
-        //: Add / Remove / Box / Scribble (services/magicToolbar.js). Box
+        //: How a click prompts while magic select is on -- the drawing bar's
+        //: Add / Remove / Box / Scribble (services/drawToolbar.js). Box
         //: first: a drag around the object says "all of this, and nothing
         //: past here" where one click often finds only its nearest part.
         this.magicMode = "box";
         this.magicBar = null;
-        //: Where magic select's options are shown: the panel's own tools bar
-        //: (RoiToolbar.magicBars), set by the controller; core's floating bar
-        //: (services/magicToolbar.js) when nothing set one.
+        //: Where magic select's options are shown: the panel's tools bar
+        //: (PlexoraDrawBar.magicBars), set by the controller.
         this.magicBars = null;
 
         //: What the pointer is over, plus the frame handle throttling the moves
@@ -1411,10 +1410,10 @@ class RoiInteraction {
     /** Magic select's options: Add / Remove / Box / Scribble, opened out of
      *  the tools bar beside the wand (`magicBars`). */
     showMagicBar() {
-        const bars = this.magicBars || window.PlexoraMagicBar;
+        const bars = this.magicBars;
         if (!bars || !this.armed) return;
         // Through planes is Plexora 3D: without it the bar has no such button
-        // (magicToolbar.js draws it only for an owner that can carry).
+        // (drawToolbar.js draws it only for an owner that can carry).
         const carry = window.PlexoraPro?.allows?.("volume:objects")
             ? () => this.carryMagic() : null;
         this.magicBar = bars.show({

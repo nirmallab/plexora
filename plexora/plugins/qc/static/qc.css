@@ -27,73 +27,6 @@
     display: none;
 }
 
-/* -- drawing: the bars on the image ---------------------------------------- */
-
-/* Magic select while an outline is on its way: the header wand breathes (the
-   bar on the image does the same, in core). */
-#qc_magic[aria-busy="true"] span {
-    animation: qc-magic-busy 0.9s var(--ease-standard) infinite alternate;
-}
-
-@keyframes qc-magic-busy {
-    from { opacity: 1; }
-    to { opacity: 0.35; }
-}
-
-@media (prefers-reduced-motion: reduce) {
-    #qc_magic[aria-busy="true"] span {
-        animation: none;
-        opacity: 0.6;
-    }
-}
-
-/* The by-hand bar on the image (qcDraw.js QcShapeBar): core's magic bar
-   (.plx-magic-bar) with the category in hand where the wand mark sits. */
-.qc-shape-bar {
-    padding-left: 4px;
-}
-
-.qc-shape-bar-category {
-    align-items: center;
-    background: transparent;
-    border: 0;
-    border-radius: 999px;
-    color: rgba(255, 255, 255, 0.86);
-    cursor: pointer;
-    display: inline-flex;
-    font: inherit;
-    font-size: 12px;
-    gap: 6px;
-    height: 28px;
-    max-width: 240px;
-    padding: 0 8px;
-}
-
-.qc-shape-bar-category:hover {
-    background: rgba(255, 255, 255, 0.10);
-    color: #ffffff;
-}
-
-.qc-shape-bar-category:focus-visible {
-    box-shadow: inset 0 0 0 1px var(--accent-channel);
-    outline: none;
-}
-
-.qc-shape-bar-dot {
-    background: var(--qc-row-color, var(--text-muted));
-    border-radius: 50%;
-    flex: 0 0 8px;
-    height: 8px;
-    width: 8px;
-}
-
-.qc-shape-bar-label {
-    min-width: 0;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-}
-
 /* -- the head: status, then strictness, a line each -------------------------- */
 
 /* Two lines, not one. Sharing a row, the three presets took 130px of 250 and
@@ -1481,7 +1414,7 @@
     opacity: 0.5;
 }
 
-/* A tool's header action (ROI QC's +), in the accent, always there. */
+/* A tool's header action (ROI QC's refresh), in the accent. */
 .qc-tool-run {
     align-items: center;
     background: none;
@@ -1507,6 +1440,51 @@
 .qc-tool-run[aria-disabled="true"] {
     color: var(--text-muted);
     opacity: 0.55;
+}
+
+/* Add ROIs (ROI QC): named, in a soft accent pill -- a step under Run's
+   filled one, which starts a whole check. Pressed while its category is in
+   hand and the drawing bar is on the image. */
+.qc-add-roi {
+    align-items: center;
+    background: color-mix(in srgb, var(--accent-channel) 14%, transparent);
+    border: 1px solid color-mix(in srgb, var(--accent-channel) 34%, transparent);
+    border-radius: 999px;
+    color: var(--accent-channel);
+    cursor: pointer;
+    display: inline-flex;
+    flex: 0 0 auto;
+    font: inherit;
+    font-size: 11px;
+    font-weight: 600;
+    gap: 5px;
+    height: 22px;
+    margin-left: 2px;
+    padding: 0 9px 0 7px;
+    transition: background 160ms var(--ease-standard), border-color 160ms var(--ease-standard);
+    white-space: nowrap;
+}
+
+.qc-add-roi .fa-plus {
+    font-size: 9px;
+}
+
+.qc-add-roi:hover,
+.qc-add-roi[aria-expanded="true"],
+.qc-add-roi[aria-pressed="true"] {
+    background: color-mix(in srgb, var(--accent-channel) 24%, transparent);
+    border-color: color-mix(in srgb, var(--accent-channel) 60%, transparent);
+}
+
+.qc-add-roi:focus-visible {
+    box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent-channel) 45%, transparent);
+    outline: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .qc-add-roi {
+        transition: none;
+    }
 }
 
 /* Run (Registration and Segmentation QC): the one thing the tool does -- a

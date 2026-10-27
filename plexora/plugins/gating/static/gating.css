@@ -605,7 +605,7 @@
 }
 
 /* THE GLASS. Under the pointer, and while it is carried, the control stands
-   on a pane of the magic bar's liquid glass (viewer.css .plx-magic-bar): the
+   on a pane of the drawing bar's liquid glass (viewer.css .plx-draw-bar): the
    tissue blurred through it, a light edge along its top, and a dark tint, so
    the caption's light text reads over bright stain as well as over black.
    The pane is what says "this can be picked up", and all of it can be but

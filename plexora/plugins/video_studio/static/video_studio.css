@@ -3,7 +3,7 @@
 
    Every class is `vs-` prefixed (tests/test_plugin_css_boundary.py). Colours
    and spacing come from core's tokens (client/src/css/tokens.css); the glass is
-   the magic-select bar's recipe (viewer.css .plx-magic-bar), so the two
+   the drawing bar's recipe (viewer.css .plx-draw-bar), so the two
    floating bars over the image read as one family.
 
    Stacking (comments only in core, see viewer.css): the bar sits in the plugin

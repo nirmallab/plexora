@@ -3088,10 +3088,12 @@
    Text on the image like the caption's, with the caption's shadow, and the
    caption's inversion over a brightfield slide. */
 .plx-canvas-hint {
-    bottom: calc(var(--plx-inset-bottom, 0px) + 2px);
-    /* A step up from the caption's: alone at the bottom edge, with no name
-       beside it, the caption's size read as smaller than it is. */
-    font-size: 11px;
+    bottom: calc(var(--plx-inset-bottom, 0px) + 8px);
+    /* Two steps up from the caption's, and secondary rather than muted: at
+       11px muted, alone at the bottom edge, it went unnoticed. */
+    color: var(--text-secondary);
+    font-size: 13px;
+    gap: 7px;
     left: 50%;
     pointer-events: none;
     position: absolute;
@@ -3102,23 +3104,23 @@
 
 /* A narration rather than a key hint ("Adjusting contrast for CD3", while an
    agent's contrast check plays): read while it happens, so it stands up from
-   the image -- the panel's own ground, primary text, a step larger. */
+   the image -- the panel's own ground and primary text. */
 .plx-canvas-hint.is-narration {
     background: rgba(11, 17, 24, 0.78);
     border: 1px solid var(--border-subtle);
     border-radius: 999px;
     bottom: calc(var(--plx-inset-bottom, 0px) + 12px);
     color: var(--text-primary);
-    font-size: 12px;
+    font-size: 13px;
     padding: 4px 12px;
     text-shadow: none;
 }
 
 .plx-canvas-hint .viewer-overlay-hint-key {
-    font-size: 10px;
-    line-height: 14px;
-    min-width: 14px;
-    padding: 0 4px;
+    font-size: 12px;
+    line-height: 18px;
+    min-width: 18px;
+    padding: 0 6px;
 }
 
 #openseadragon.brightfield-ground ~ .plx-canvas-hint {
@@ -4132,46 +4134,324 @@ body.sidebar-collapsed .viewer-shell,
     }
 }
 
-/* -- magic select's floating bar (services/magicToolbar.js) ------------------------ */
+/* -- the drawing tools' bar on the image (services/drawToolbar.js) ---------------- */
 
-/* Top centre of the image, between the caption (top left) and the dataset
-   arrows (top right), while magic select is on. The chat composer's liquid
-   glass -- the tissue blurred through it, a light edge along the top -- with
-   a dark tint, because these icons sit over bright stained tissue as often
-   as over glass and must read on both. */
-.plx-magic-bar {
+/* The chat composer's liquid glass -- the tissue blurred through it, a light
+   edge along the top -- with a dark tint so the glyphs read over bright stain
+   as well as over black, at a size meant to be seen: 34px buttons with 15px
+   glyphs.
+
+   `left` is the middle of the canvas, clear of a band down either side;
+   `translate` comes from drawToolbar.js, which centres the bar on all but
+   magic select's options so they grow it rightward and the wand stays put.
+   `top` clears whatever the top-centre dock holds (the Back pill): the dock's
+   published height, plus the 12px gap only when there is something there. */
+.plx-draw-bar {
     -webkit-backdrop-filter: blur(18px) saturate(170%) brightness(1.05);
     backdrop-filter: blur(18px) saturate(170%) brightness(1.05);
     align-items: center;
-    animation: plx-magic-bar-in var(--duration-fast) var(--ease-standard);
+    animation: plx-draw-bar-in var(--duration-base) var(--ease-standard);
     background: linear-gradient(180deg, rgba(34, 40, 52, 0.66), rgba(12, 16, 22, 0.62) 70%);
     border: 1px solid rgba(255, 255, 255, 0.16);
     border-radius: 999px;
     box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.16),
                 inset 0 -1px 0 rgba(255, 255, 255, 0.03),
-                0 8px 24px rgba(0, 0, 0, 0.32);
+                0 10px 28px rgba(0, 0, 0, 0.36);
     color: var(--text-primary);
     display: flex;
-    gap: 4px;
-    left: 50%;
-    padding: 4px 4px 4px 10px;
+    left: calc(var(--plx-inset-left, 0px)
+               + (100% - var(--plx-inset-left, 0px) - var(--plx-inset-right, 0px)) / 2);
+    padding: 4px;
     pointer-events: auto;
     position: absolute;
-    top: calc(var(--plx-inset-top, 0px) + 12px);
-    transform: translateX(-50%);
+    top: calc(var(--plx-inset-top, 0px) + 12px + var(--plx-dock-top-center-h, 0px)
+              + min(12px, var(--plx-dock-top-center-h, 0px) * 100));
+    transition: translate var(--duration-base) var(--ease-standard);
+    translate: var(--plx-draw-bar-shift, -50%) 0;
+    /* Its own width, not the half canvas right of `left`: shrink-to-fit
+       would squeeze the category's name before the shift moves it left. */
+    width: max-content;
     z-index: 262;
 }
 
-.plx-magic-bar[hidden] {
+.plx-draw-bar[hidden] {
     display: none;
 }
 
-@keyframes plx-magic-bar-in {
-    from { opacity: 0; transform: translate(-50%, -4px); }
-    to { opacity: 1; transform: translate(-50%, 0); }
+/* `transform`, not `translate`: the anchor above owns that one. */
+@keyframes plx-draw-bar-in {
+    from { opacity: 0; transform: translateY(-6px); }
+    to { opacity: 1; transform: none; }
 }
 
-/* Back (views/backButton.js): the same glass as the magic bar, at the top
+/* A well inside the glass that holds a set of buttons. */
+.plx-draw-bar-group {
+    background: rgba(0, 0, 0, 0.28);
+    border-radius: 999px;
+    display: flex;
+    flex: 0 0 auto;
+    gap: 2px;
+    padding: 3px;
+}
+
+.plx-draw-bar-button {
+    align-items: center;
+    background: transparent;
+    border: 0;
+    border-radius: 999px;
+    color: rgba(255, 255, 255, 0.80);
+    cursor: pointer;
+    display: inline-flex;
+    flex: 0 0 auto;
+    font-size: 15px;
+    height: 34px;
+    justify-content: center;
+    padding: 0;
+    transition: background var(--duration-fast) var(--ease-standard),
+                box-shadow var(--duration-fast) var(--ease-standard),
+                color var(--duration-fast) var(--ease-standard),
+                opacity var(--duration-fast) var(--ease-standard),
+                transform var(--duration-fast) var(--ease-standard);
+    width: 34px;
+}
+
+/* `display` above outranks the UA sheet's `[hidden]` (Through planes). */
+.plx-draw-bar-button[hidden] {
+    display: none;
+}
+
+.plx-draw-bar-button:hover:not(:disabled) {
+    background: rgba(255, 255, 255, 0.10);
+    color: #ffffff;
+}
+
+.plx-draw-bar-button:active:not(:disabled) {
+    transform: scale(0.94);
+}
+
+.plx-draw-bar-button:focus-visible {
+    box-shadow: inset 0 0 0 1px var(--accent-channel), 0 0 0 2px var(--accent-channel-soft);
+    outline: none;
+}
+
+/* The tool in hand, and the mode in force: lit in the accent on a soft disc
+   with a ring, so it is found at a glance over any stain. Remove is red, so a
+   click that takes away never looks like one that adds. */
+.plx-draw-bar-button.is-active,
+.plx-draw-bar-button[aria-checked="true"] {
+    background: color-mix(in srgb, var(--accent-channel) 30%, transparent);
+    box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent-channel) 65%, transparent);
+    color: #ffffff;
+}
+
+.plx-draw-bar-button[data-mode="remove"][aria-checked="true"] {
+    background: color-mix(in srgb, #ef4444 30%, transparent);
+    box-shadow: inset 0 0 0 1px color-mix(in srgb, #ef4444 65%, transparent);
+}
+
+.plx-draw-bar-button:disabled {
+    cursor: default;
+    opacity: 0.35;
+}
+
+/* -- the name of the button under the pointer (drawToolbar.js `named`) ------ */
+
+/* Centred under the bar, on the bar's dark glass so it reads over any stain.
+   In at once, out with a short fade: moving along the bar swaps the text
+   without it blinking. No backdrop-filter -- nested in the bar's, it would
+   blur the bar, not the tissue. */
+.plx-draw-bar-name {
+    background: rgba(12, 16, 22, 0.86);
+    border: 1px solid rgba(255, 255, 255, 0.14);
+    border-radius: 999px;
+    box-shadow: 0 6px 16px rgba(0, 0, 0, 0.32);
+    color: #ffffff;
+    font-size: 12px;
+    font-weight: 500;
+    left: 50%;
+    letter-spacing: 0.01em;
+    line-height: 16px;
+    opacity: 0;
+    padding: 3px 10px;
+    pointer-events: none;
+    position: absolute;
+    top: calc(100% + 8px);
+    transform: translate(-50%, -2px);
+    transition: opacity var(--duration-fast) var(--ease-standard),
+                transform var(--duration-fast) var(--ease-standard);
+    white-space: nowrap;
+}
+
+.plx-draw-bar-name.is-shown {
+    opacity: 1;
+    transform: translate(-50%, 0);
+    transition: none;
+}
+
+/* -- magic select's options, opening out of the wand ----------------------- */
+
+/* A grid track from 0fr to 1fr is a width that animates to "as wide as its
+   content" -- which `width: auto` cannot. The content is clipped while the
+   track is narrower, so the options are uncovered from the wand outward. */
+.plx-draw-bar-drawer {
+    display: grid;
+    grid-template-columns: 0fr;
+    opacity: 0;
+    transition: grid-template-columns calc(var(--duration-base) * 1.4) var(--ease-standard),
+                opacity var(--duration-fast) var(--ease-standard);
+}
+
+.plx-draw-bar.is-magic .plx-draw-bar-drawer {
+    grid-template-columns: 1fr;
+    opacity: 1;
+}
+
+.plx-draw-bar-drawer-inner {
+    align-items: center;
+    display: flex;
+    gap: 4px;
+    min-width: 0;
+    overflow: hidden;
+}
+
+/* Where the tools end and magic select's own choices begin. */
+.plx-draw-bar-rule {
+    align-self: center;
+    background: rgba(255, 255, 255, 0.16);
+    flex: 0 0 1px;
+    height: 22px;
+    margin: 0 4px 0 6px;
+}
+
+/* Secondary to the tools: a step smaller, and each one arriving a beat after
+   the last as the drawer opens. Shutting, they go together. */
+.plx-draw-bar-mode {
+    font-size: 13px;
+    height: 30px;
+    opacity: 0;
+    transform: translateX(-6px);
+    width: 30px;
+}
+
+.plx-draw-bar.is-magic .plx-draw-bar-mode {
+    opacity: 1;
+    transform: none;
+}
+
+.plx-draw-bar.is-magic .plx-draw-bar-mode:nth-child(2) { transition-delay: calc(var(--duration-fast) * 0.25); }
+.plx-draw-bar.is-magic .plx-draw-bar-mode:nth-child(3) { transition-delay: calc(var(--duration-fast) * 0.5); }
+.plx-draw-bar.is-magic .plx-draw-bar-mode:nth-child(4) { transition-delay: calc(var(--duration-fast) * 0.75); }
+
+.plx-draw-bar.is-magic .plx-draw-bar-mode:active:not(:disabled) {
+    transform: scale(0.94);
+}
+
+/* Through planes: an action, not a mode -- after the modes, its own size. */
+.plx-draw-bar-carry {
+    font-size: 13px;
+    height: 30px;
+    margin-right: 2px;
+    width: 30px;
+}
+
+/* The wand breathes while an outline is on its way. `> *`: Font Awesome has
+   swapped the <span> for an <svg> by then. */
+.plx-draw-bar-button[aria-busy="true"] > * {
+    animation: plx-draw-bar-busy 0.9s var(--ease-standard) infinite alternate;
+}
+
+@keyframes plx-draw-bar-busy {
+    from { opacity: 1; }
+    to { opacity: 0.35; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .plx-draw-bar {
+        animation: none;
+    }
+
+    .plx-draw-bar-button[aria-busy="true"] > * {
+        animation: none;
+        opacity: 0.6;
+    }
+}
+
+/* Motion switched off in Plexora's own settings (viewerPrefs.js). */
+.plx-reduced-motion .plx-draw-bar {
+    animation: none;
+    transition: none;
+}
+
+.plx-reduced-motion .plx-draw-bar-drawer,
+.plx-reduced-motion .plx-draw-bar-button {
+    transition: none;
+}
+
+.plx-reduced-motion .plx-draw-bar-button[aria-busy="true"] > * {
+    animation: none;
+    opacity: 0.6;
+}
+
+/* -- what QC is marking, and done (the QC panel's bar) ------------------------------ */
+
+/* The category in hand, before the tools: its colour and name, a click
+   changes it. A step quieter than the tools, which are what is used. */
+.plx-draw-bar-category {
+    align-items: center;
+    background: transparent;
+    border: 0;
+    border-radius: 999px;
+    color: rgba(255, 255, 255, 0.88);
+    cursor: pointer;
+    display: inline-flex;
+    flex: 0 0 auto;
+    font: inherit;
+    font-size: 12px;
+    font-weight: 500;
+    gap: 7px;
+    height: 34px;
+    margin-right: 4px;
+    max-width: 220px;
+    min-width: 0;
+    padding: 0 10px 0 12px;
+    transition: background var(--duration-fast) var(--ease-standard);
+}
+
+.plx-draw-bar-category:hover,
+.plx-draw-bar-category[aria-expanded="true"] {
+    background: rgba(255, 255, 255, 0.10);
+    color: #ffffff;
+}
+
+.plx-draw-bar-category:focus-visible {
+    box-shadow: inset 0 0 0 1px var(--accent-channel), 0 0 0 2px var(--accent-channel-soft);
+    outline: none;
+}
+
+.plx-draw-bar-dot {
+    background: var(--plx-draw-bar-color, var(--text-muted));
+    border-radius: 50%;
+    box-shadow: 0 0 0 2px color-mix(in srgb, var(--plx-draw-bar-color, #ffffff) 28%, transparent);
+    flex: 0 0 9px;
+    height: 9px;
+    width: 9px;
+}
+
+.plx-draw-bar-words {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+/* Done: after everything, set apart, quieter than a tool. */
+.plx-draw-bar-close {
+    color: rgba(255, 255, 255, 0.62);
+    font-size: 14px;
+    margin-left: 4px;
+}
+
+/* Back (views/backButton.js): the same glass as the drawing bar, at the top
    centre of the canvas while a derived view has somewhere to go back to. */
 .plx-view-back {
     -webkit-backdrop-filter: blur(18px) saturate(170%) brightness(1.05);
@@ -4731,103 +5011,6 @@ body.sidebar-collapsed .viewer-shell,
 .plx-reduced-motion #viewer_bookmark_button.is-arrived {
     animation: none;
     color: var(--accent-channel);
-}
-
-/* Which tool this is, without a word: the wand, muted. It breathes while an
-   outline is on its way. */
-.plx-magic-bar-mark {
-    color: var(--accent-channel);
-    font-size: 12px;
-    margin-right: 4px;
-    opacity: 0.85;
-}
-
-.plx-magic-bar[aria-busy="true"] .plx-magic-bar-mark {
-    animation: plx-magic-bar-busy 0.9s var(--ease-standard) infinite alternate;
-}
-
-@keyframes plx-magic-bar-busy {
-    from { opacity: 1; }
-    to { opacity: 0.3; }
-}
-
-.plx-magic-bar-modes {
-    background: rgba(0, 0, 0, 0.28);
-    border-radius: 999px;
-    display: flex;
-    gap: 2px;
-    padding: 2px;
-}
-
-.plx-magic-bar-button {
-    align-items: center;
-    background: transparent;
-    border: 0;
-    border-radius: 999px;
-    color: rgba(255, 255, 255, 0.78);
-    cursor: pointer;
-    display: inline-flex;
-    font-size: 13px;
-    height: 28px;
-    justify-content: center;
-    padding: 0;
-    transition: background var(--duration-fast) var(--ease-standard),
-                color var(--duration-fast) var(--ease-standard);
-    width: 28px;
-}
-
-.plx-magic-bar-button:hover {
-    background: rgba(255, 255, 255, 0.10);
-    color: #ffffff;
-}
-
-.plx-magic-bar-button:focus-visible {
-    box-shadow: inset 0 0 0 1px var(--accent-channel);
-    outline: none;
-}
-
-/* The mode in force: lit in the accent, on a soft disc. Remove is red, so a
-   click that takes away never looks like one that adds. */
-.plx-magic-bar-button[aria-checked="true"] {
-    background: color-mix(in srgb, var(--accent-channel) 26%, transparent);
-    color: #ffffff;
-}
-
-.plx-magic-bar-button[data-mode="remove"][aria-checked="true"] {
-    background: color-mix(in srgb, #ef4444 30%, transparent);
-}
-
-.plx-magic-bar-close {
-    color: rgba(255, 255, 255, 0.62);
-    font-size: 12px;
-    margin-left: 2px;
-}
-
-/* Through planes: an action, not a mode -- set apart from the modes, and dim
-   until there is an outline to carry. `display` above would defeat [hidden]. */
-.plx-magic-bar-carry {
-    margin-left: 4px;
-}
-
-.plx-magic-bar-carry[hidden] {
-    display: none;
-}
-
-.plx-magic-bar-carry:disabled {
-    cursor: default;
-    opacity: 0.35;
-}
-
-.plx-magic-bar-carry:disabled:hover {
-    background: transparent;
-    color: rgba(255, 255, 255, 0.78);
-}
-
-@media (prefers-reduced-motion: reduce) {
-    .plx-magic-bar,
-    .plx-magic-bar[aria-busy="true"] .plx-magic-bar-mark {
-        animation: none;
-    }
 }
 
 /* -- magic select's one-time setup (segmentService.js) ----------------------------- */
@@ -6920,7 +7103,7 @@ html.plx-moving-control * {
 }
 
 .plx-surf-studio[aria-busy="true"] .plx-surf-studio-mark {
-    animation: plx-magic-bar-busy 0.9s var(--ease-standard) infinite alternate;
+    animation: plx-draw-bar-busy 0.9s var(--ease-standard) infinite alternate;
 }
 
 @keyframes plx-surf-in {

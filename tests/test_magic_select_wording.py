@@ -18,11 +18,10 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 
 FILES = (
     "plexora/client/src/js/services/segmentService.js",
-    "plexora/client/src/js/services/magicToolbar.js",
+    "plexora/client/src/js/services/drawToolbar.js",
     "plexora/plugins/roi/static/roiTools.js",
     "plexora/plugins/roi/static/roiSidebarController.js",
     "plexora/plugins/roi/static/roiTree.js",
-    "plexora/plugins/roi/static/roiToolbar.js",
     "plexora/plugins/qc/static/qcDraw.js",
     "plexora/plugins/qc/static/qcSidebarController.js",
     "plexora/plugins/qc/static/qcHover.js",
