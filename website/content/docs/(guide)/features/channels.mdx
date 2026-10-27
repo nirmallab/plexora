@@ -1,0 +1,56 @@
+---
+title: "Channels and contrast"
+description: "Choose which markers are drawn, give each a colour, and set how bright each one is."
+aliases: ["contrast", "brightness", "colour", "color", "lookup table", "markers", "histogram", "display range"]
+---
+
+The sidebar's **Image** card holds one row per channel shown: a marker, its colour and its contrast. Up to 15 rows can be on at once. The contrast bar above the rows sets the window of the selected row.
+
+<Media src="/media/features/channels-panel.webp" alt="The Image card in the sidebar: the contrast bar reading Contrast · CD45 with a range slider, and channel rows each with an eye, a colour swatch and a marker name, one row marked Selected" caption="The Image card. The selected row's contrast is set on the bar above the rows." />
+
+## How to use it
+
+<Steps>
+<Step>
+### Pick a marker for a row
+
+Click a row's name and type to search the image's channels. **+** adds a row; **×** on a row removes it.
+</Step>
+<Step>
+### Turn rows on and off
+
+Click a row's eye. Press on one eye and drag down the column to switch several at once. The eye on the contrast bar shows or hides every row.
+</Step>
+<Step>
+### Choose a colour
+
+Click a row's colour swatch and pick a colour.
+</Step>
+<Step>
+### Set the contrast
+
+Click a row to select it, then drag the two ends of the bar, or type a number at either end. **Histogram** shows the channel's distribution under the same range. **Clear** goes back to the full range; the row's wand (**Auto contrast**) fits a window for you, and pressed again restores the previous one.
+</Step>
+<Step>
+### Step through markers
+
+**K** and **J** replace the selected row's marker with the next or previous channel, so you can look through a panel one marker at a time. **Esc** puts back what was there.
+</Step>
+</Steps>
+
+<Media src="/media/features/channels-histogram.webp" alt="The Histogram popover under the contrast bar, showing a channel's intensity distribution with the contrast window marked" caption="Histogram: the distribution behind the selected channel." />
+
+## Tips
+
+- Drag a row to reorder it.
+- Colours, windows and the rows themselves are saved with the sample, so it opens as you left it.
+- The **•••** menu on the Image card copies channel names or rendering settings to another sample, and turns on **Log brightness**, which shows dim cells and a faint background without losing bright detail.
+- **Upload channel names** reads names from a CSV or a spreadsheet when the file has none.
+
+## Related
+
+<Cards>
+<Card title="Image viewer" href="/docs/features/viewer" description="Pan, zoom, HD and z-stacks." />
+<Card title="Layers" href="/docs/features/layers" description="Another image with channels of its own." />
+<Card title="Thresholding" href="/docs/plugins/thresholding" description="Set a positive/negative cut-off for a marker." />
+</Cards>

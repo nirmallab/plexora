@@ -1,0 +1,42 @@
+---
+title: "Interface overview"
+description: "The parts of the Plexora window, and the words the app uses for them."
+aliases: ["layout", "sidebar", "menu bar", "window", "vocabulary", "concepts"]
+---
+
+The viewer is one image with a sidebar beside it. The sidebar holds everything about how the image is drawn; the menu bar opens tools and pages.
+
+<Media src="/media/getting-started/interface.webp" alt="The Plexora viewer: the menu bar along the top, the sidebar with the Image card, Layers and the Cells row on the left, and a multiplexed tissue image filling the rest of the window" caption="The viewer, with a multiplexed image, its mask and a cell table." eager />
+
+## The parts of the window
+
+1. **Menu bar.** **File** (Import Sample…, Samples…, Export Image, Settings…), **Tools** (the plugins), **View** (Rotate & Flip, Scalebar) and **Help**.
+2. **Sidebar header.** One-click buttons for some tools, and **Saved views**.
+3. **Image card.** The image's channels: which are on, their colours and contrast. See [Channels and contrast](/docs/features/channels).
+4. **Layers.** Anything drawn over the image, one card each. See [Layers](/docs/features/layers).
+5. **Cells row.** How cells are drawn: **None**, **Centroids**, **Outlines** or **Filled**, plus **HD**. See [Segmentation and cell data](/docs/features/cells).
+6. **The image.** Drag to pan, scroll to zoom. Zoom and Home buttons sit on the left edge; the overview map opens from the bottom-left corner.
+7. **Previous / Next sample.** Top right, when the sample is in a dataset (**B** and **N**).
+8. **Depth strip.** Along the bottom, only for a z-stack or a time series. See [Image viewer](/docs/features/viewer).
+
+Tool cards open in the sidebar and stay open side by side. **⌘\\** (Ctrl+\\ on Windows and Linux) collapses the sidebar.
+
+## Words the app uses
+
+| Word | Means |
+|---|---|
+| Sample | One image and everything attached to it. Python and the command line call it a project. |
+| Dataset | A named group of samples, such as a cohort. It holds names, not data. |
+| Channel | One marker in the image, shown in a colour you choose. |
+| Layer | Anything drawn over the image: another image, a mask, points. |
+| Segmentation mask | A label image with one number per cell, made before Plexora. |
+| Cell table | One row per cell. Its columns are **markers** (intensities) or **metadata** (everything else). |
+| Tool | A plugin, opened from the **Tools** menu. |
+
+## Related
+
+<Cards>
+<Card title="Image viewer" href="/docs/features/viewer" description="Pan, zoom, rotate, saved views and z-stacks." />
+<Card title="Keyboard shortcuts" href="/docs/help/keyboard-shortcuts" description="Every key in one place." />
+<Card title="Plugins" href="/docs/plugins" description="The tools in the Tools menu." />
+</Cards>

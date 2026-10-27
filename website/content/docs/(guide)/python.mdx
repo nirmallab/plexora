@@ -1,0 +1,153 @@
+---
+title: "Python"
+description: "Register projects and datasets from a script with import plexora: the same projects the app shows, with no server to start."
+aliases: ["python api", "scripting", "batch", "create_project", "import_sample", "cohort"]
+---
+
+Everything **Import Sample…** and **New dataset…** do in the app is also a Python call. Use it to register a cohort in a loop, answer a project's open questions from a script, or open the viewer from a notebook. Registering a project writes to the same project list the app reads, so there is no server to start first.
+
+```python
+import plexora
+```
+
+Every function on this page is then `plexora.<name>`. Each has a full reference page under [Python API](/docs/reference/python-api).
+
+## Common tasks
+
+Each section below is a separate task; use the ones you need.
+
+### Import a sample
+
+Two calls register a sample. Use whichever matches what you know about your files:
+
+<Tabs items={['Let Plexora work it out', 'Name each file yourself']}>
+<Tab value="Let Plexora work it out">
+
+`import_sample` is **Import Sample…** as a call: give it an image, a mask and a table (or a folder), and it works out which file is which, groups them into one sample and returns its name.
+
+```python runnable
+import plexora
+
+name = plexora.import_sample("slide.ome.tif", "slide_mask.tif", "cells.csv", wait=True)
+print(name)
+print(plexora.project_manifest(name)["summary"])
+```
+
+Pass `wait=True` in a script: without it the call returns while the mask is still being converted in the background.
+
+</Tab>
+<Tab value="Name each file yourself">
+
+`create_project` registers the same kind of project when you already know which file is which. Only the image is required; the table's columns are guessed from their names unless you say what they are.
+
+```python runnable
+import plexora
+
+name = plexora.create_project(
+    "slide.ome.tif",
+    name="tonsil_01",
+    segmentation="slide_mask.tif",
+    data="cells.csv",
+    cell_id="CellID",
+    x="X_centroid",
+    y="Y_centroid",
+)
+print(name)
+```
+
+A name that is already taken raises `ValueError`. With `exist_ok=True`, a project already pointing at the same image is reused instead, so a batch can be re-run after fixing one bad file.
+
+</Tab>
+</Tabs>
+
+### Fill in what is still open
+
+A project registered with only an image is complete, but a tool may later need a table or a column it does not have yet. `configure_project` answers with the same keywords and returns the project's manifest, so you can see what is still open.
+
+```python runnable
+import plexora
+
+name = plexora.create_project("slide.ome.tif")
+manifest = plexora.configure_project(name, data="cells.csv", cell_id="CellID")
+print(manifest["manifest"]["table"]["status"])
+print(manifest["manifest"]["role:cell_id"])
+```
+
+A keyword outside the vocabulary (`plexora.PROJECT_SPEC_KEYS`) is refused by name, not ignored.
+
+### Group samples into a dataset
+
+<Tabs items={['From a list of files', 'From a whole folder']}>
+<Tab value="From a list of files">
+
+A dataset is a named group of projects: a cohort, a TMA series, one imaging run. `images` is the short form, one project per file; `projects` takes a dict per project with the same keys `create_project` takes.
+
+```python runnable
+import plexora
+
+cohort = plexora.create_dataset("Melanoma Cohort", projects=[
+    {"image": "slide.ome.tif", "segmentation": "slide_mask.tif",
+     "data": "cells.csv", "cell_id": "CellID"},
+    {"image": "slide2.ome.tif"},
+])
+print(cohort.name, cohort.projects)
+```
+
+Every path is checked before anything is registered, so a typo in the last entry fails before the first one starts converting.
+
+</Tab>
+<Tab value="From a whole folder">
+
+For a folder whose files are named consistently (a folder per sample, or `registration/`, `segmentation/` and `quantification/` side by side), `create_dataset_from_directory` matches each image to its mask and table, as **New dataset…** does. `plan_dataset` shows the same plan without registering anything.
+
+```python
+import plexora
+
+plan = plexora.plan_dataset("/data/cohort")          # look first
+cohort = plexora.create_dataset_from_directory("Cohort", "/data/cohort")
+```
+
+Files the plan could not place are left out rather than guessed.
+
+</Tab>
+</Tabs>
+
+## Open the viewer
+
+`plexora.view(name)` returns a viewer. In a notebook, make it the last line of a cell and it appears inline; it can also open what is already in memory. See [Notebook](/docs/notebook).
+
+```python
+plexora.view("tonsil_01", tool="gating")
+```
+
+## Tips
+
+- The `Dataset` object is a snapshot. Its methods (`add`, `remove`, `rename`, `describe`, `delete`) return a fresh one, so write `cohort = cohort.add("slide2")`. Removing a project from a dataset, or deleting the dataset, never deletes the project.
+- `plexora.dataset("Melanoma Cohort")` finds a dataset again by name; `plexora.list_datasets()` lists them all.
+- `plexora.add_layers(name, "slide2.ome.tif", wait=True)` adds files to a project that already exists.
+- The same spec dict works in three places: `create_project(**spec)`, an entry in `create_dataset(projects=[...])`, and a JSON file for `plexora project create --from spec.json`.
+
+<Accordions>
+<Accordion title="Files on another machine (data nodes)">
+
+A data node is `plexora node serve` running on the machine that holds the files, such as a cluster. Register it once, then point a project's image, mask or table at a file there instead of copying it:
+
+```python
+import plexora
+
+plexora.register_node("cluster", "http://compute-3:8642", token="...")
+plexora.create_project("/scratch/slide.ome.tif", node="cluster")
+```
+
+`plexora.attach_table`, `attach_image` and `attach_segmentation` point an existing project at a file on a node. See [Data nodes](/docs/remote/data-nodes) and [Data nodes](/docs/reference/python-api/nodes).
+
+</Accordion>
+</Accordions>
+
+## Related
+
+<Cards>
+<Card title="Notebook" href="/docs/notebook" description="Show the viewer in a notebook cell, on files or on objects in memory." />
+<Card title="Python API reference" href="/docs/reference/python-api" description="Every function's full signature and parameters." />
+<Card title="Projects and data" href="/docs/features/projects" description="Where projects live and how the Samples page shows them." />
+</Cards>

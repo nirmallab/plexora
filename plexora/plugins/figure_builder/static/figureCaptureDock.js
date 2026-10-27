@@ -274,7 +274,7 @@ class FigureCaptureDock {
                         <div class="fb-strip-bulk" data-role="bulk">
                             <button class="fb-strip-link fb-strip-filter" type="button"
                                     data-role="onlyBookmarked" aria-pressed="false"
-                                    title="Show only the bookmarked views (K in the viewer bookmarks one)">
+                                    title="Show only the bookmarked views (M in the viewer bookmarks one)">
                                 <span class="fas fa-bookmark" aria-hidden="true"></span>
                                 <span class="fb-visually-hidden">Bookmarked only</span>
                             </button>
@@ -728,7 +728,7 @@ class FigureCaptureDock {
         if (empty) {
             empty.hidden = captures.length > 0;
             empty.textContent = state.onlyBookmarked && all.length
-                ? "No bookmarked views of this image. K in the viewer bookmarks one."
+                ? "No bookmarked views of this image. M in the viewer bookmarks one."
                 : "Nothing captured yet. Everything you take is kept here until you put it in a figure.";
         }
         const filter = this.el("onlyBookmarked");

@@ -13,9 +13,9 @@ export const metadata: Metadata = {
 
 export default function Layout({ children }: { children: ReactNode }) {
   return (
-    <html lang="en" suppressHydrationWarning>
-      <body className="flex min-h-screen flex-col">
-        <RootProvider search={{ SearchDialog }}>{children}</RootProvider>
+    <html lang="en" className="dark" style={{ colorScheme: 'dark' }} suppressHydrationWarning>
+      <body className="flex min-h-screen flex-col bg-fd-background text-fd-foreground">
+        <RootProvider search={{ SearchDialog }} theme={{ forcedTheme: 'dark', defaultTheme: 'dark', enableSystem: false }}>{children}</RootProvider>
       </body>
     </html>
   );

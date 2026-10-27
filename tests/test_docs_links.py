@@ -12,6 +12,9 @@ from plexora import links
 
 ROOT = Path(__file__).resolve().parents[1]
 CONTENT = ROOT / "website" / "content" / "docs"
+#: The guide is the folder group content/docs/(guide): it adds nothing to a
+#: page's URL, so /docs/plugins/roi is (guide)/plugins/roi.mdx.
+GUIDE = CONTENT / "(guide)"
 
 
 def test_docs_url_is_one_address():
@@ -43,12 +46,16 @@ def _help_slugs():
 
 
 def test_every_plugin_help_slug_is_a_page():
+    """The five free tools link their help to the site; a paid tool's help has
+    no docs link, because the site documents the free app only."""
     slugs = list(_help_slugs())
-    assert len(slugs) >= 6, slugs
+    assert {slug for _, slug in slugs} >= {
+        "plugins/thresholding", "plugins/roi", "plugins/qc", "plugins/cell-explorer", "plugins/figure-builder",
+    }, slugs
     for source, slug in slugs:
-        page = CONTENT / f"{slug}.mdx"
-        index = CONTENT / slug / "index.mdx"
-        assert page.exists() or index.exists(), f"{source}: help.docs '{slug}' has no page under website/content/docs"
+        page = GUIDE / f"{slug}.mdx"
+        index = GUIDE / slug / "index.mdx"
+        assert page.exists() or index.exists(), f"{source}: help.docs '{slug}' has no page under website/content/docs/(guide)"
 
 
 def test_updater_uses_the_same_repository():
@@ -57,10 +64,13 @@ def test_updater_uses_the_same_repository():
     assert updates.GITHUB_REPO == links.GITHUB_REPO
 
 
-def test_the_pricing_url_is_a_page_the_site_builds():
+def test_the_pricing_url_is_not_on_the_docs_site():
     """`PRICING_URL` is where Settings, `plexora license status` and a refusal
-    send someone to buy Pro; the site's Buy then names this product."""
-    assert links.PRICING_URL == f"{links.DOCS_URL}pricing/"
-    assert (ROOT / "website" / "app" / "(home)" / "pricing" / "page.tsx").exists()
-    site = (ROOT / "website" / "lib" / "site.ts").read_text(encoding="utf-8")
-    assert "buyUrl = `${accountUrl}/portal/billing?product=plexora`" in site
+    send someone to buy Pro. The docs site covers the free app only, so it is
+    an outside page; the site's old /pricing/ redirects there."""
+    import json
+
+    assert links.PRICING_URL.startswith("https://")
+    assert not links.PRICING_URL.startswith(links.DOCS_URL)
+    redirects = json.loads((ROOT / "website" / "redirects.json").read_text(encoding="utf-8"))
+    assert redirects["pages"]["/pricing/"] == links.PRICING_URL

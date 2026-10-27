@@ -953,7 +953,6 @@ if (typeof window !== "undefined") {
         help: {
             summary: "Choose which genes are shown, the colour and shape of each, and "
                 + "whether transcripts are drawn as individual molecules or as density.",
-            docs: "plugins/transcripts",
         },
         createSidebarController: (ctx) => new TranscriptsSidebarController(ctx),
     });

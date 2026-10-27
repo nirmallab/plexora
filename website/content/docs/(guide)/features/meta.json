@@ -1,0 +1,14 @@
+{
+  "title": "Features",
+  "icon": "LayoutGrid",
+  "defaultOpen": false,
+  "pages": [
+    "opening-data",
+    "viewer",
+    "channels",
+    "layers",
+    "cells",
+    "projects",
+    "export"
+  ]
+}

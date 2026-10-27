@@ -25,7 +25,7 @@ docstrings:
   backlog: []
 
 sections:
-  - dir: python-api
+  - dir: reference/python-api
     title: Python API
     description: Every function and class you can reach as plexora.<name>, generated from the docstrings.
     icon: CodeXml
@@ -82,7 +82,7 @@ sections:
           - plexora.attach_segmentation
           - plexora.detach
 
-  - dir: plugin-api/descriptor
+  - dir: reference/plugin-api/descriptor
     title: Descriptor
     description: What a plugin declares about itself in its PLUGIN object.
     icon: FileCode
@@ -110,7 +110,7 @@ sections:
           - plexora.api.plugin.SPACING_AXES
           - plexora.api.plugin.TIME_MODES
 
-  - dir: plugin-api/runtime
+  - dir: reference/plugin-api/runtime
     title: Server API
     description: What a plugin's Python routes call to read project data and keep state.
     icon: Server
@@ -180,22 +180,22 @@ symbols:
   plexora.view:
     search: [open viewer, notebook, jupyter, display]
     related: [plexora.PlexoraViewer, plexora.register_memory_datasource, plexora.import_sample]
-    guides: [/docs/notebooks, /docs/python/viewer]
+    guides: [/docs/notebook, /docs/python]
   plexora.PlexoraViewer:
     search: [iframe, sidecar server, notebook viewer]
     related: [plexora.view, plexora.ServerStartError]
-    guides: [/docs/notebooks, /docs/notebooks/refreshing]
+    guides: [/docs/notebook]
   plexora.ServerStartError:
     related: [plexora.PlexoraViewer, plexora.view]
-    guides: [/docs/reference/troubleshooting]
+    guides: [/docs/help/troubleshooting]
   plexora.import_sample:
-    search: [sample, import, detect, xenium, visium, run folder]
+    search: [sample, import, detect, run folder]
     related: [plexora.create_project, plexora.add_layers, plexora.configure_project]
-    guides: [/docs/data/importing, /docs/python/importing]
+    guides: [/docs/getting-started/first-image, /docs/python]
   plexora.create_project:
     search: [sample, project, register image, mask, cell table]
     related: [plexora.import_sample, plexora.configure_project, plexora.project_manifest, plexora.PROJECT_SPEC_KEYS]
-    guides: [/docs/data/importing, /docs/python/projects, /docs/data/progressive-configuration]
+    guides: [/docs/getting-started/first-image, /docs/python, /docs/features/cells]
     param_groups:
       Core resources: [image, name, segmentation, data]
       Table interpretation: [table, subset, cell_id, x, y, coordinates, sample, celltype, markers, metadata, layer, log1p, single_image, row_number_ids]
@@ -205,15 +205,15 @@ symbols:
   plexora.add_layers:
     search: [layer, transcripts, add data]
     related: [plexora.import_sample, plexora.project_manifest]
-    guides: [/docs/data/layers]
+    guides: [/docs/features/layers]
   plexora.configure_project:
     search: [answer, columns, markers, set]
     related: [plexora.project_manifest, plexora.create_project]
-    guides: [/docs/data/progressive-configuration, /docs/python/configuring]
+    guides: [/docs/features/cells, /docs/python]
   plexora.project_manifest:
     search: [status, open questions, what is missing]
     related: [plexora.configure_project, plexora.create_project]
-    guides: [/docs/data/progressive-configuration]
+    guides: [/docs/features/cells]
   plexora.project_from_spec:
     search: [spec, json]
     related: [plexora.create_project, plexora.PROJECT_SPEC_KEYS]
@@ -222,15 +222,15 @@ symbols:
   plexora.create_dataset:
     search: [cohort, tma, group projects]
     related: [plexora.Dataset, plexora.list_datasets, plexora.dataset, plexora.create_project]
-    guides: [/docs/data/datasets, /docs/python/datasets]
+    guides: [/docs/features/opening-data, /docs/python]
   plexora.plan_dataset:
     search: [scan, folder, directory, match masks, cohort folder]
     related: [plexora.create_dataset_from_directory, plexora.create_dataset]
-    guides: [/docs/data/datasets]
+    guides: [/docs/features/opening-data]
   plexora.create_dataset_from_directory:
     search: [scan, folder, directory, cohort folder, mcmicro]
     related: [plexora.plan_dataset, plexora.create_dataset]
-    guides: [/docs/data/datasets]
+    guides: [/docs/features/opening-data]
   plexora.list_datasets:
     related: [plexora.dataset, plexora.create_dataset]
   plexora.dataset:
@@ -239,33 +239,33 @@ symbols:
     slug: dataset-class
     search: [cohort]
     related: [plexora.create_dataset, plexora.dataset]
-    guides: [/docs/data/datasets]
+    guides: [/docs/features/opening-data]
   plexora.DatasetCreateError:
     related: [plexora.create_dataset]
   plexora.register_datasource:
     search: [csv, table, register]
     related: [plexora.create_project, plexora.register_anndata_datasource]
-    guides: [/docs/python/data-sources]
+    guides: [/docs/python]
   plexora.register_anndata_datasource:
     search: [anndata, h5ad, scanpy]
     related: [plexora.register_memory_datasource, plexora.view]
-    guides: [/docs/python/data-sources, /docs/notebooks/anndata]
+    guides: [/docs/python, /docs/notebook]
   plexora.register_spatialdata_datasource:
     search: [spatialdata, zarr]
     related: [plexora.register_memory_datasource]
-    guides: [/docs/modalities/spatialdata, /docs/notebooks/spatialdata]
+    guides: [/docs/features/opening-data, /docs/notebook]
   plexora.register_image_datasource:
     search: [image only]
     related: [plexora.create_project]
-    guides: [/docs/python/data-sources]
+    guides: [/docs/python]
   plexora.register_memory_datasource:
     search: [numpy, pandas, polars, in memory, kernel]
     related: [plexora.view, plexora.PlexoraViewer]
-    guides: [/docs/notebooks/in-memory-data]
+    guides: [/docs/notebook]
   plexora.register_node:
     search: [data node, remote, cluster]
     related: [plexora.list_nodes, plexora.node_resources, plexora.attach_table]
-    guides: [/docs/remote/data-nodes, /docs/python/remote-data-nodes]
+    guides: [/docs/remote/data-nodes, /docs/python]
   plexora.forget_node:
     related: [plexora.register_node]
   plexora.list_nodes:
@@ -276,10 +276,10 @@ symbols:
     related: [plexora.attach_table, plexora.node_resources]
   plexora.attach_table:
     related: [plexora.attach_image, plexora.attach_segmentation, plexora.detach]
-    guides: [/docs/remote/split-data]
+    guides: [/docs/remote/data-nodes]
   plexora.attach_image:
     related: [plexora.attach_table, plexora.attach_segmentation]
-    guides: [/docs/remote/split-data]
+    guides: [/docs/remote/data-nodes]
   plexora.attach_segmentation:
     search: [mask]
     related: [plexora.attach_image, plexora.attach_table]
@@ -289,7 +289,7 @@ symbols:
   plexora.api.Plugin:
     search: [PLUGIN, descriptor]
     related: [plexora.api.Requires, plexora.api.NavItem]
-    guides: [/docs/plugin-development/descriptor, /docs/plugin-development/first-plugin]
+    guides: [/docs/plugins/build-a-plugin]
     exclude_members:
       capabilities_factory: Agent integration, not part of the public plugin contract.
       entitlement: Licensing, not part of the public plugin contract.
@@ -305,7 +305,7 @@ symbols:
     related: [plexora.api.Plugin, plexora.api.plugin.NAV_MENUS]
   plexora.api.Requires:
     related: [plexora.api.requirement, plexora.api.layer_requirement]
-    guides: [/docs/plugin-development/requirements]
+    guides: [/docs/plugins/build-a-plugin]
     exclude_members:
       applies_to: Called by the host to decide whether a tool is offered.
       first_layer: Called by the host when it opens a layer-scoped tool.
@@ -322,7 +322,7 @@ symbols:
       role: Read by the host when it matches requirements to project roles.
   plexora.api.project_data:
     related: [plexora.api.ProjectData]
-    guides: [/docs/plugin-development/python-api]
+    guides: [/docs/plugins/build-a-plugin]
   plexora.api.ProjectData:
     slug: project-data-class
     related: [plexora.api.project_data, plexora.api.ImageHandle, plexora.api.TableHandle, plexora.api.SegHandle]
@@ -330,13 +330,13 @@ symbols:
       cached: Internal memo used by the handles; plugins should not depend on it.
   plexora.api.store:
     related: [plexora.api.PluginStore]
-    guides: [/docs/plugin-development/state-and-storage]
+    guides: [/docs/plugins/build-a-plugin]
   plexora.api.PluginStore:
     related: [plexora.api.store]
-    guides: [/docs/plugin-development/state-and-storage]
+    guides: [/docs/plugins/build-a-plugin]
   plexora.api.table_operation:
     related: [plexora.api.table_stream, plexora.api.TableHandle]
-    guides: [/docs/plugin-development/routes]
+    guides: [/docs/plugins/build-a-plugin]
   plexora.api.table_stream:
     related: [plexora.api.table_operation]
   plexora.api.manifest:
@@ -370,7 +370,7 @@ compare:
       |---|---|---|
       | You pass | Files or a run folder | An image, with every other file named by role |
       | Plexora works out | What each file is (image, mask, table, transcripts) | Nothing: you said what each file is |
-      | Best for | Xenium, Visium and Visium HD output folders; a folder of files | Scripts that must not guess; files with unusual names |
+      | Best for | A folder of files, or files whose role is clear from their contents | Scripts that must not guess; files with unusual names |
       | Returns | The project name | The project name |
 
       Both create the same kind of project. Use `import_sample` when the files
@@ -443,30 +443,20 @@ format_notes:
 format_folders:
   - name: OME-Zarr (`.zarr` folder)
     reads: A multiscale image, local or at an `https://`, `s3://`, `gs://` or `az://` address.
-    guide: /docs/modalities/multiplexed-imaging
-    guide_title: Multiplexed imaging
+    guide: /docs/features/opening-data
+    guide_title: Opening images and datasets
   - name: SpatialData (`.zarr` folder with `tables/`)
     reads: Images, labels, points and a cell table from one store.
-    guide: /docs/modalities/spatialdata
-    guide_title: SpatialData
-  - name: Xenium output folder
-    reads: Morphology image, cell and nucleus boundaries, cells, transcripts.
-    guide: /docs/modalities/xenium
-    guide_title: Xenium
-  - name: Visium output folder (`outs/`)
-    reads: Tissue image, spot positions and the spot-by-gene matrix.
-    guide: /docs/modalities/visium
-    guide_title: Visium
-  - name: Visium HD output folder (`outs/`)
-    reads: Tissue image and the 2, 8 and 16 µm bin matrices.
-    guide: /docs/modalities/visium-hd
-    guide_title: Visium HD
+    guide: /docs/features/opening-data
+    guide_title: Opening images and datasets
   - name: DICOM whole-slide folder
     reads: A pyramidal brightfield or multiplex slide stored as DICOM instances, local or in a bucket (`s3://`, `gs://`, `az://`).
-    guide: /docs/modalities/brightfield-wsi
-    guide_title: Brightfield whole-slide images
+    guide: /docs/features/opening-data
+    guide_title: Opening images and datasets
 
-# Formats recognised but not imported (formats.py).
+# Formats recognised but not imported (formats.py). Xenium and Visium runs
+# are the paid spatial-transcriptomics feature, so the free app's docs leave
+# them out of both lists.
 format_unsupported:
   - name: NanoString CosMx output
     status: Not supported. Export a cell table and image and import them as files.
@@ -476,8 +466,6 @@ format_unsupported:
     status: Not supported. Convert to Parquet or CSV.
   - name: GeoJSON shapes
     status: Recorded on import but not drawn.
-  - name: Xenium cell-feature matrix
-    status: Recorded on import but not read; the cell table supplies per-cell values.
 
 # Extra search words for whole topics, so a reader who says "mask" or
 # "gating" finds the page that uses the code's or the UI's word.

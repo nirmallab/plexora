@@ -239,7 +239,10 @@ def prose_section(title: str, text: str, linker) -> str:
 
 def guide_title(url: str) -> str:
     rel = url.removeprefix("/docs/").strip("/")
-    for candidate in (config.CONTENT / f"{rel}.mdx", config.CONTENT / rel / "index.mdx"):
+    # Guide pages live in the folder group content/docs/(guide), which adds
+    # nothing to their URL.
+    roots = (config.CONTENT, config.CONTENT / "(guide)")
+    for candidate in [c for root in roots for c in (root / f"{rel}.mdx", root / rel / "index.mdx")]:
         if candidate.exists():
             match = re.search(r'^title:\s*"?(.*?)"?\s*$', candidate.read_text(encoding="utf-8"), re.M)
             if match:
@@ -467,14 +470,14 @@ def render_section_index(section: dict, manifest: Manifest) -> str:
     items = [(c["title"], f"/docs/{section['dir']}/{c['key']}", c.get("description", ""))
              for c in section.get("categories", [])]
     intro = {
-        "python-api": ("Everything below is reachable as `plexora.<name>` after `import plexora`. "
+        "reference/python-api": ("Everything below is reachable as `plexora.<name>` after `import plexora`. "
                        "Each page is generated from the function's docstring and signature, so it always "
                        "matches the installed version. For task-oriented walkthroughs see the "
-                       "[Python guides](/docs/python)."),
-        "plugin-api/descriptor": ("A plugin package exposes a module-level `PLUGIN = Plugin(...)`. These are the "
+                       "[Python](/docs/python) page."),
+        "reference/plugin-api/descriptor": ("A plugin package exposes a module-level `PLUGIN = Plugin(...)`. These are the "
                                   "names that descriptor is built from, all importable from `plexora.api`. See "
-                                  "[Plugin development](/docs/plugin-development) for a walkthrough."),
-        "plugin-api/runtime": ("What a plugin's Flask routes call on the server: read a project's image, mask and "
+                                  "[Build a custom plugin](/docs/plugins/build-a-plugin) for a walkthrough."),
+        "reference/plugin-api/runtime": ("What a plugin's Flask routes call on the server: read a project's image, mask and "
                                "cell table, keep state, and answer the browser. Everything here is importable from "
                                "`plexora.api`, the only module a plugin should import from Plexora."),
     }.get(section["dir"], "")

@@ -20,8 +20,8 @@ only credentials are a device certificate and a 30-minute AI token. The client
 side is the shared `biocognia` package, a hard dependency; this repository
 keeps only Plexora's gates, its Free semantics and its words.
 
-**Buying** starts on the docs site's pricing page (`links.PRICING_URL`, the
-same path SCIMAP Pro's site has). Plexora Pro is a yearly subscription per
+**Buying** starts on the pricing section of biocognia.com (`links.PRICING_URL`);
+the documentation site covers the free app only. Plexora Pro is a yearly subscription per
 seat at one flat price per use class, academic or commercial, and both are
 bought self-serve: the total is the seat price times the seats, and a
 subscription renews at the price it was bought at. Account type, seats and
@@ -32,10 +32,7 @@ it in pairs (device packs, per product), never as seats. Buy opens Plans & price
 runs. The platform then makes the buyer's seat and emails its licence key,
 which stays under Licences in the portal to show and copy again. Settings ›
 License (on Free and on a trial), `plexora license status` and a Pro
-refusal all point at the page. Its numbers are the platform's: the website
-reads `website/data/pricebook.json`, which `tools/sync_pricing.py --source`
-refreshes from `GET /v1/products/plexora` and `tests/test_pricing_sync.py`
-checks offline. The platform's catalogue id is `plexora.pro`; a trial runs on
+refusal all point at the page. The platform's catalogue id is `plexora.pro`; a trial runs on
 it with `trial: true`.
 
 This page is for people working on Plexora and on plugins. Running the

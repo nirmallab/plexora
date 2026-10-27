@@ -15,29 +15,40 @@ export default async function Page(props: { params: Promise<Params> }) {
 
   const MDX = page.data.body;
   const { generated, source: src } = page.data;
+  // An on-page contents list only where there is something to jump between.
+  const longPage = page.data.toc.length >= 4;
 
   return (
-    <DocsPage toc={page.data.toc} full={page.data.full}>
+    <DocsPage
+      toc={page.data.toc}
+      full={page.data.full}
+      breadcrumb={{ includeRoot: false }}
+      tableOfContent={{ enabled: longPage, style: 'clerk' }}
+      tableOfContentPopover={{ enabled: longPage }}
+    >
       <DocsTitle>{page.data.title}</DocsTitle>
       <DocsDescription className="mb-0">{page.data.description}</DocsDescription>
-      <div className="flex flex-row flex-wrap items-center gap-3 border-b pb-5 text-xs text-fd-muted-foreground">
-        {generated ? (
-          <span className="px-chip">Generated from Plexora {version}</span>
-        ) : null}
-        {src ? (
-          <a className="hover:text-fd-foreground underline-offset-4 hover:underline" href={sourceUrl(src.path, src.start, src.end)}>
-            View source
-          </a>
-        ) : null}
-        {!generated ? (
-          <a className="hover:text-fd-foreground underline-offset-4 hover:underline" href={editUrl(page.path)}>
-            Edit this page
-          </a>
-        ) : null}
-      </div>
+      {generated || src ? (
+        <div className="flex flex-row flex-wrap items-center gap-3 text-xs text-fd-muted-foreground">
+          {generated ? <span className="px-chip">Generated from Plexora {version}</span> : null}
+          {src ? (
+            <a className="underline-offset-4 hover:text-fd-foreground hover:underline" href={sourceUrl(src.path, src.start, src.end)}>
+              View source
+            </a>
+          ) : null}
+        </div>
+      ) : null}
       <DocsBody>
         <MDX components={getMDXComponents({ a: createRelativeLink(source, page) })} />
       </DocsBody>
+      {!generated ? (
+        <a
+          className="mt-4 text-xs text-fd-muted-foreground underline-offset-4 hover:text-fd-foreground hover:underline"
+          href={editUrl(page.path)}
+        >
+          Edit this page on GitHub
+        </a>
+      ) : null}
     </DocsPage>
   );
 }

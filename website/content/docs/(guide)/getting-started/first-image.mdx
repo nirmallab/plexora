@@ -1,0 +1,55 @@
+---
+title: "Your first image"
+description: "Open an image from the home screen, then add a segmentation mask and a cell table to it."
+aliases: ["quick start", "open image", "import", "first project", "getting started"]
+---
+
+Plexora opens on its home screen, **Explore your tissue**. Paste a path or browse to an image and it opens in the viewer. Your original files are read where they are and never changed.
+
+<Media src="/media/getting-started/home-page.webp" alt="Plexora's home screen: the heading Explore your tissue, a path box with the Local chip and a Browse button, example format chips, and a list of recent samples" caption="The home screen. Recent samples appear underneath." eager />
+
+## How to use it
+
+<Steps>
+<Step>
+### Choose the image
+
+Choose **File** or **Folder** above the box, then press **Browse**. Or paste a path or URL into the box and press **Load**. The **Local** chip says which computer the file is on.
+</Step>
+<Step>
+### Look at the channels
+
+The viewer opens with a few channels on. In the sidebar's **Image** card, turn rows on and off and pick each row's colour. See [Channels and contrast](/docs/features/channels).
+</Step>
+<Step>
+### Add a mask and a cell table
+
+To bring an image in with its segmentation mask and cell table, use **Import Sample…** instead: under the box on the home screen, or in the **File** menu (**⌘I**, Ctrl+I on Windows and Linux). Add the files, check what each one was read as (**Image**, **Mask**, **Table**), and press **Import sample**.
+</Step>
+<Step>
+### Keep working while it prepares
+
+The sample opens at once. A mask is converted for viewing in the background, and its cells appear when that finishes.
+</Step>
+<Step>
+### Open it again later
+
+It is listed under **Recent** on the home screen and on the **Samples** page (**File › Samples…**, **⌘O**).
+</Step>
+</Steps>
+
+<Media src="/media/getting-started/import-dialog.webp" alt="The Import sample dialog with one sample card listing an image, a segmentation mask and a cell table, each with its role" caption="Import sample: one row per file, each with what it was read as." />
+
+## Tips
+
+- An image alone is a complete sample. You can add a mask or a table later from the sidebar's **Cells** row or the **+** on **Layers**.
+- A row that was read as the wrong thing has a button to change what the file is.
+- The **?** beside the dialog's title, and **What's supported** on the home screen, list every format Plexora reads.
+
+## Related
+
+<Cards>
+<Card title="Interface overview" href="/docs/getting-started/interface" description="What each part of the viewer does." />
+<Card title="Opening images and datasets" href="/docs/features/opening-data" description="Every way in, including a whole folder of samples." />
+<Card title="Segmentation and cell data" href="/docs/features/cells" description="What a mask and a cell table add." />
+</Cards>

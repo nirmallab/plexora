@@ -1,0 +1,13 @@
+{
+  "title": "Plugins",
+  "icon": "Puzzle",
+  "defaultOpen": false,
+  "pages": [
+    "thresholding",
+    "roi",
+    "qc",
+    "cell-explorer",
+    "figure-builder",
+    "build-a-plugin"
+  ]
+}

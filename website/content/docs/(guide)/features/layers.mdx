@@ -1,0 +1,52 @@
+---
+title: "Layers"
+description: "Show, hide, fade, reorder and add the images and masks drawn over a sample."
+aliases: ["layer stack", "add layer", "overlay", "opacity", "reorder layers"]
+---
+
+**Layers** in the sidebar lists everything the sample draws, one card each: the image itself, and anything added to it, such as a second image or a mask. The top card is drawn on top.
+
+<Media src="/media/features/layers-panel.webp" alt="The Layers section with two layer cards, each with a grip, a chevron, a name, an eye and a padlock" caption="Every card has a grip, a chevron, an eye, a padlock and, except on the image itself, an ×." />
+
+## How to use it
+
+<Steps>
+<Step>
+### Show or hide a layer
+
+Click the card's eye. Hiding a layer keeps its settings.
+</Step>
+<Step>
+### Fade it
+
+Click the opacity value on the card and drag the slider.
+</Step>
+<Step>
+### Reorder
+
+Drag a card by its grip. Close a card's padlock to pin it so a drag cannot move it.
+</Step>
+<Step>
+### Add a layer
+
+Click **+** beside the Layers heading (**Add a layer to this sample**). It opens the import dialog for this sample: add another image, a mask or a table.
+</Step>
+<Step>
+### Remove a layer
+
+Click **×** and confirm. Plexora stops drawing it; the file stays where it is.
+</Step>
+</Steps>
+
+## Tips
+
+- Points a plugin draws stay above images whatever the order: a card can only be dragged among cards of the same kind.
+- An added image's card says how it lines up with the first one: **Registered**, **Aligned by assumption** (no transform was given), or **Cannot be drawn** when its transform is one the viewer cannot show.
+
+## Related
+
+<Cards>
+<Card title="Channels and contrast" href="/docs/features/channels" description="A layer with channels gets the same channel rows." />
+<Card title="Segmentation and cell data" href="/docs/features/cells" description="The mask is drawn from the Cells row, not a card." />
+<Card title="Opening images and datasets" href="/docs/features/opening-data" description="What can be added as a layer." />
+</Cards>

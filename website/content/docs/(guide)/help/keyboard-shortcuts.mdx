@@ -1,0 +1,112 @@
+---
+title: "Keyboard shortcuts"
+description: "Every key Plexora binds, in the viewer and in each tool."
+aliases: ["keys", "hotkeys", "keyboard", "shortcuts"]
+---
+
+On macOS, ⌘ is Command; on Windows and Linux use Ctrl instead. Single letters work whenever you are not typing in a field. **Help › Keyboard Shortcuts** (⌘/) lists the menu shortcuts in the app, and each open tool lists its own keys under the **?** in its header.
+
+## Menus
+
+| Keys | Action |
+| --- | --- |
+| ⌘I | **Import Sample…** |
+| ⌘O | **Samples…** |
+| ⌘, | **Settings…** |
+| ⌘/ | **Keyboard Shortcuts** |
+| ⌘\\ | Collapse or expand the sidebar |
+| ⌘B | Open or close **Thresholding** |
+| ⌘E | Open or close **Cell Explorer** |
+| ⇧⌘X | Open or close **Quality Control** |
+| ⌘K | Open or close **Figure Builder** |
+| ⌘N | New window (desktop app) |
+| ⇧⌘B | Open in Browser (desktop app) |
+| ⌃⌘F (F11 on Windows and Linux) | Full screen (desktop app) |
+| ⌘Q | Quit (desktop app) |
+
+ROI has no menu shortcut: open it from **Tools › ROI**.
+
+## Viewer
+
+| Keys | Action |
+| --- | --- |
+| Arrow keys | Pan the image |
+| + / − | Zoom in / out |
+| 0 | Fit the whole image |
+| K / J | Next / previous channel in the Image card |
+| Esc | Close the channel histogram |
+| T | Hide or show the cells drawn on the image |
+| M | Save the current view |
+| B | Back to the previous view; with none, the previous sample |
+| N | Next sample in the dataset |
+| PageUp / PageDown | Previous / next sample |
+
+## Z-stacks and time series
+
+| Keys | Action |
+| --- | --- |
+| ] / [ | Next / previous plane (⇧ for ten at a time) |
+| ⌥] / ⌥[ | Last / first plane |
+| . / , | Next / previous time point |
+| V | Switch between one plane and the stack in 3-D (not while ROI is open) |
+
+## 3-D view
+
+These work once you have clicked the 3-D view.
+
+| Keys | Action |
+| --- | --- |
+| Arrow keys | Turn the stack (⇧ for smaller steps) |
+| X / Y / Z | Turn only about that axis |
+| + / − | Zoom in / out |
+| 0 | Back to the three-quarter view (or double-click) |
+| Esc | Stop turning, then release the axis |
+
+## Thresholding
+
+| Keys | Action |
+| --- | --- |
+| Z / X | Previous / next marker |
+| P / N / S | Positive / negative / skip, while reviewing uncertain cells |
+| Esc | Stop labelling cells (Single Cell Classifier) |
+
+## ROI
+
+| Keys | Action |
+| --- | --- |
+| V | Select |
+| P | Polygon |
+| F | Freehand |
+| R | Rectangle |
+| E | Magic select (press again for the previous tool) |
+| ⇧-click / ⇧-drag | Magic select: remove an area / scribble out what to leave out |
+| Space (hold) | Pan while a drawing tool is in hand |
+| Enter | Finish a polygon (or double-click) |
+| ⌫ | Remove the polygon's last point; with a region selected, delete it |
+| Esc | Cancel the shape, then deselect |
+| F2 | Rename the selected region |
+| ⌘Z / ⇧⌘Z | Undo / redo |
+| ← / → | Collapse / expand a category |
+
+## Quality Control
+
+| Keys | Action |
+| --- | --- |
+| Z / X | Registration: previous / next comparison |
+| F | Registration: flicker on or off |
+| E | Magic select |
+
+## Figure Builder
+
+| Keys | Action |
+| --- | --- |
+| C | Open or close the capture dock |
+| S | Take a capture, while capturing |
+| ⌘Z / ⇧⌘Z | Undo / redo on the Figure Canvas |
+
+## Related
+
+<Cards>
+<Card title="Interface overview" href="/docs/getting-started/interface" description="What each part of the window is called." />
+<Card title="Image viewer" href="/docs/features/viewer" description="Pan, zoom, planes and the 3-D view." />
+</Cards>

@@ -42,16 +42,13 @@ Plexora decides what a file is from its contents first and its extension second,
 
 | Folder or store | What Plexora reads | Guide |
 |---|---|---|
-| OME-Zarr (`.zarr` folder) | A multiscale image, local or at an `https://`, `s3://`, `gs://` or `az://` address. | [Multiplexed imaging](/docs/modalities/multiplexed-imaging) |
-| SpatialData (`.zarr` folder with `tables/`) | Images, labels, points and a cell table from one store. | [SpatialData](/docs/modalities/spatialdata) |
-| Xenium output folder | Morphology image, cell and nucleus boundaries, cells, transcripts. | [Xenium](/docs/modalities/xenium) |
-| Visium output folder (`outs/`) | Tissue image, spot positions and the spot-by-gene matrix. | [Visium](/docs/modalities/visium) |
-| Visium HD output folder (`outs/`) | Tissue image and the 2, 8 and 16 µm bin matrices. | [Visium HD](/docs/modalities/visium-hd) |
-| DICOM whole-slide folder | A pyramidal brightfield or multiplex slide stored as DICOM instances, local or in a bucket (`s3://`, `gs://`, `az://`). | [Brightfield whole-slide images](/docs/modalities/brightfield-wsi) |
+| OME-Zarr (`.zarr` folder) | A multiscale image, local or at an `https://`, `s3://`, `gs://` or `az://` address. | [Opening images and datasets](/docs/features/opening-data) |
+| SpatialData (`.zarr` folder with `tables/`) | Images, labels, points and a cell table from one store. | [Opening images and datasets](/docs/features/opening-data) |
+| DICOM whole-slide folder | A pyramidal brightfield or multiplex slide stored as DICOM instances, local or in a bucket (`s3://`, `gs://`, `az://`). | [Opening images and datasets](/docs/features/opening-data) |
 
 ## Not supported
 
-These formats are recognised by name but not imported. See [Formats that are not supported yet](/docs/modalities/not-supported) for workarounds.
+These formats are recognised by name but not imported. See [Opening images and datasets](/docs/features/opening-data) for what to do instead.
 
 | Format | Status |
 |---|---|
@@ -59,7 +56,6 @@ These formats are recognised by name but not imported. See [Formats that are not
 | Vizgen MERSCOPE output | Not supported. Export a cell table and image and import them as files. |
 | Feather tables | Not supported. Convert to Parquet or CSV. |
 | GeoJSON shapes | Recorded on import but not drawn. |
-| Xenium cell-feature matrix | Recorded on import but not read; the cell table supplies per-cell values. |
 
 ## Data node resources
 

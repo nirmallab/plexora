@@ -973,7 +973,6 @@
                         ["Home / End", "Start or end"], ["L", "Repeat playback"], ["E", "Export"],
                         ["P", "Camera path editor"], ["T", "Timeline"], ["K", "Add a camera position"],
                         ["Esc", "Pause, then back to your own view"]],
-            docs: "plugins/video-studio",
         },
         createSidebarController: (ctx) => new VideoStudioController(ctx),
         ownsCellLayer: false,

@@ -1,0 +1,84 @@
+---
+title: "Connect from a terminal"
+description: "Run Plexora on a remote machine with one command, and see it in your own browser through an SSH tunnel."
+aliases: ["plexora connect", "ssh", "tunnel", "terminal", "remote command"]
+---
+
+`plexora connect` starts Plexora on another machine, opens an SSH tunnel to it and opens your browser. Everything runs over there, next to the data; your screen is the only thing on your computer. Use it when you want the server's processors, or when your projects live on that server.
+
+To open a server's files from Plexora on your own computer you need no terminal at all: use [Add a server](/docs/remote/add-a-server). This page is the optional command-line route, for running the whole of Plexora on the server.
+
+## How to use it
+
+<Steps>
+<Step>
+### Install Plexora on both machines
+
+On the server, install it with pip ([Install with pip](/docs/getting-started/install-python)). Or let the first connection do it with `--install`, which runs `pip install --upgrade plexora` there.
+</Step>
+<Step>
+### Connect
+
+Run this on your own computer:
+
+```bash
+plexora connect me@workstation.lab.org
+```
+
+Add a project name to open it straight away: `plexora connect me@workstation.lab.org tonsil`. Keep the command running while you work; Ctrl+C disconnects.
+</Step>
+<Step>
+### Tell it how to find Plexora
+
+If the server's `plexora` is in a conda environment that a non-interactive SSH login does not activate, name it:
+
+```bash
+plexora connect me@host --remote-command "/home/me/miniconda3/envs/plexora"
+```
+</Step>
+<Step>
+### Save it
+
+`--save lab` stores the whole command, so next time it is `plexora connect lab`. Saved servers are shared with **Settings › Remote servers**. No password is stored.
+</Step>
+</Steps>
+
+## Useful options
+
+| Option | Does |
+| --- | --- |
+| `--srun "ARGS"` | Run inside a SLURM job. See [SLURM clusters](/docs/remote/slurm). |
+| `-J host` | Reach the target through a jump host. |
+| `--ssh-opt KEY=VALUE` | Pass an extra `ssh -o` option. |
+| `--port`, `--remote-port` | Choose the local and remote ends of the tunnel. |
+| `--data-dir PATH` | The data directory on the server, for an account that has not chosen one. |
+| `--no-browser` | Print the address instead of opening it. |
+
+Keys, ports and usernames are usually better placed in `~/.ssh/config`, which Plexora uses as it is.
+
+<Accordions>
+<Accordion title="Making the tunnel yourself">
+
+If you would rather not let Plexora start SSH for you, run this on the server:
+
+```bash
+plexora --remote
+```
+
+It prints the exact tunnel command, such as `ssh -N -L 8000:127.0.0.1:8000 me@host`. Run that line on your own computer, leave it running, and open the address Plexora printed. Plexora on the server listens only on `127.0.0.1`, so the tunnel is the only way in.
+
+</Accordion>
+</Accordions>
+
+## Tips
+
+- `plexora connect` also starts a small data node on your own computer, so the remote Plexora can open files from your laptop. `--no-local-node` turns it off.
+- `--local-serve table:cells=~/cells.h5ad` hands one local file to the remote viewer. See [Data nodes](/docs/remote/data-nodes).
+
+## Related
+
+<Cards>
+<Card title="plexora connect" href="/docs/reference/cli/connect" description="Every option, generated from the command itself." />
+<Card title="Add a server" href="/docs/remote/add-a-server" description="Use a server's files from Plexora on your computer instead." />
+<Card title="Troubleshooting" href="/docs/help/troubleshooting" description="When a connection fails." />
+</Cards>

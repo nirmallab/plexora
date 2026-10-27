@@ -157,10 +157,12 @@ def test_online_commands_under_offline_say_so(pro_license):
 
 
 def test_trial_points_at_the_portal():
+    from plexora import links
+
     code, out = _run(["trial"])
     assert code == 0
     assert "30-day trial" in out and "start?product=plexora" in out
-    assert "pricing/" in out
+    assert links.PRICING_URL in out
 
 
 def test_status_shows_what_the_licence_unlocks(license_issuer):

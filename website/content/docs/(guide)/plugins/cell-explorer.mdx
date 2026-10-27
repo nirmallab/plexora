@@ -1,0 +1,56 @@
+---
+title: "Cell Explorer"
+description: "Colour every cell by a column of the cell table, such as a phenotype, a cluster or a marker's expression, and see it on the tissue."
+aliases: ["colour by", "color by", "phenotype", "cluster", "cell type", "categorical", "legend"]
+---
+
+Cell Explorer colours every cell by one column of the cell table (a phenotype call, a cluster label, a score, an area) and draws that colour over the tissue, so you can see where each population sits.
+
+<Media src="/media/plugins/cell-explorer.webp" alt="Cells filled with colours by phenotype, and the Cell Explorer legend listing each phenotype with its colour and cell count" caption="Cells coloured by a phenotype column, with the legend." />
+
+**Open it:** **Tools › Cell Explorer**, or press **⌘E** (Ctrl+E on Windows and Linux). It needs a cell table with a cell id, and either a segmentation mask or X/Y coordinates to draw the cells.
+
+## How to use it
+
+<Steps>
+<Step>
+### Choose a column
+
+Click the field at the top of the card and pick a column; its dropdown searches every column on the table.
+</Step>
+<Step>
+### Read a categorical column
+
+A legend lists every category with its colour. Click a row to show or hide it, click its swatch to change its colour. **All** and **None** switch the whole legend; **Filter...** narrows the list without hiding anything on the image.
+</Step>
+<Step>
+### Read a numeric column
+
+A colour bar replaces the legend. Drag its ends to set the range, pick another palette, or press **Auto** to go back to the column's own range.
+</Step>
+<Step>
+### Look inside a region
+
+Press **Open ROIs** to open [ROI](/docs/plugins/roi) beside it, then rest the pointer on a region to see its cells broken down by the column on screen.
+</Step>
+</Steps>
+
+<Media src="/media/plugins/cell-explorer-numeric.webp" alt="Cells coloured along a gradient by a numeric column, with the colour bar in the Cell Explorer card" />
+
+## Tips
+
+- A numeric column with only a few whole values (a cluster number, say) shows **Treat as**: choose **Categories** or **Numbers**.
+- Cells are drawn **Filled** by default here. Lower **Opacity** in the **Cells** row at the bottom of the sidebar to see the tissue through them.
+- To colour by region, run **Map to cells** in [ROI](/docs/plugins/roi) first, then pick its column here.
+
+## What it saves
+
+The column, each category's colour and visibility, and a numeric column's range are saved with the project, so the same view comes back next time. Cell Explorer only reads the cell table; it never writes to it.
+
+## Related
+
+<Cards>
+<Card title="Thresholding" href="/docs/plugins/thresholding" description="Gate a single marker instead of colouring by a column." />
+<Card title="Figure Builder" href="/docs/plugins/figure-builder" description="Capture the coloured view as a figure panel." />
+<Card title="Segmentation and cell data" href="/docs/features/cells" description="What a cell table needs, and how cells are drawn." />
+</Cards>

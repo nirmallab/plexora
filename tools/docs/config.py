@@ -24,9 +24,9 @@ BUILD = TOOLS / ".build"
 
 #: Generated trees, relative to CONTENT. `check` compares exactly these (and
 #: the generated/ JSON files); everything else under content/docs is authored.
-GENERATED_DIRS = ("python-api", "plugin-api/descriptor", "plugin-api/runtime", "cli")
+GENERATED_DIRS = ("reference/python-api", "reference/plugin-api/descriptor", "reference/plugin-api/runtime", "reference/cli")
 GENERATED_FILES = ("reference/supported-formats.mdx", "reference/environment-variables.mdx")
-#: plugin-api/browser is generated too, but by website/scripts/
+#: reference/plugin-api/browser is generated too, but by website/scripts/
 #: generate_browser_api.mjs (it reads JavaScript), so Node owns it.
 
 

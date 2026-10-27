@@ -61,7 +61,7 @@ def render() -> dict[str, str]:
             "command-line flag or a setting with the same effect; where they differ, the order is "
             "flag, then environment variable, then the settings file (`plexora config`), then the "
             "built-in default. The data directory has its own order, described in "
-            "[Where your data lives](/docs/data/data-locations)."),
+            "[Where your data lives](/docs/features/projects)."),
     ]
     for group, entries in groups.items():
         rows = []

@@ -35,7 +35,7 @@ Kept import-light, like every descriptor module.
 
 from plexora.api.plugin import Plugin, Requires
 
-VERSION = "20261023_mcp_export"
+VERSION = "20261026_docs_link"
 
 
 def _blueprint():

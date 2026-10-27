@@ -1,0 +1,43 @@
+---
+title: "Remote servers"
+description: "Open images that live on a lab server, a cluster or a cloud machine, without copying them to your computer."
+aliases: ["remote", "server", "ssh", "hpc", "cluster", "remote data"]
+---
+
+Large images usually live where they were made: a cluster's scratch space, a lab server, a university file server, a cloud bucket. Plexora leaves them there. It reads each file where it is, a piece at a time, and shows it on your computer next to your own projects.
+
+<Media src="/media/features/remote-connect.webp" alt="The Add a server dialog, with a card for each kind of machine" caption="Add a server: start from the kind of machine you use." />
+
+## Ways in
+
+<Cards>
+<Card title="Add a server" href="/docs/remote/add-a-server" description="Save a machine once from the home page or Settings, then pick its files like local ones." />
+<Card title="SLURM clusters" href="/docs/remote/slurm" description="Plexora asks the scheduler for a job and connects to it when it starts." />
+<Card title="Files over SFTP" href="/docs/remote/files-over-sftp" description="Read images from a machine where nothing can be installed." />
+<Card title="Data nodes" href="/docs/remote/data-nodes" description="One project whose image, mask and table come from different machines." />
+<Card title="Connect from a terminal" href="/docs/remote/ssh-connect" description="Run Plexora itself on a server with plexora connect." />
+<Card title="JupyterHub and Open OnDemand" href="/docs/remote/hubs" description="Plexora inside a hub session or a notebook on the cluster." />
+<Card title="Google Cloud" href="/docs/remote/google-cloud" description="Mount a Cloud Storage bucket on a VM Plexora starts for you." />
+</Cards>
+
+## What stays where
+
+| On your computer | On the remote machine |
+| --- | --- |
+| Projects, datasets and their settings | The image, mask and table files |
+| Regions, gates and quality-control results | A data node or Plexora, while you are connected (not for SFTP) |
+| Figures and exports | Nothing that Plexora writes, unless you ask for it |
+
+Plexora connects with your system `ssh`, so your keys, your `~/.ssh/config`, jump hosts and Duo prompts work as they do in a terminal. Nothing is opened to the network: every connection is an SSH tunnel.
+
+## Tips
+
+- Tiled, pyramidal images (pyramidal OME-TIFF, OME-Zarr) read best over a network, because each view fetches only the tiles on screen.
+- A disconnect does not lose anything you made: your projects never left your computer. Reconnect and the layers come back.
+
+## Related
+
+<Cards>
+<Card title="Opening images and datasets" href="/docs/features/opening-data" description="The home page path box and its Local chip." />
+<Card title="Troubleshooting" href="/docs/help/troubleshooting" description="Connections that fail, ports and blank notebook cells." />
+</Cards>

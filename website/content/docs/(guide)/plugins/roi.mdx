@@ -1,0 +1,71 @@
+---
+title: "ROI"
+description: "Draw regions of interest on the image, sort them into categories, and write which region each cell falls in onto the cell table."
+aliases: ["region of interest", "regions", "annotate", "draw regions", "annotations", "GeoJSON"]
+---
+
+ROI draws regions on the image (polygons, freehand shapes, rectangles, or outlines found by magic select) and keeps them with the sample. With a cell table, it can also label every cell with the region it falls in.
+
+<Media src="/media/plugins/roi.webp" alt="The ROI card with three categories of regions listed, and the same regions drawn in their colours on the tissue" caption="Regions in three categories, drawn on the image and listed in the card." />
+
+**Open it:** **Tools › ROI**. It works on any project; a region needs only the image.
+
+## How to use it
+
+<Steps>
+<Step>
+### Pick a category
+
+Every region belongs to a category, such as Tumour or Stroma. A new project starts with one called **Undefined**. Add your own with **New category**, then click a category to draw into it.
+</Step>
+<Step>
+### Choose a tool
+
+Pick one from the row at the top of the card: **Select** (**V**), **Polygon** (**P**), **Freehand** (**F**), **Rectangle** (**R**) or **Magic select** (**E**).
+</Step>
+<Step>
+### Draw
+
+A polygon is a click per point, finished with **Enter** or a double-click. Freehand and rectangle are a press and drag. Hold **Space** to pan while a drawing tool is in hand.
+</Step>
+<Step>
+### Edit
+
+With **Select**, click a region to select it, drag to move it, or drag a handle to reshape it. **F2** renames, **⌫** deletes, **⌘Z** undoes. A region's **⋯** menu renames, locks, hides, moves or deletes it.
+</Step>
+</Steps>
+
+## Magic select
+
+<Media src="/media/plugins/roi-magic-select.webp" alt="Magic select's bar on the image with Add, Remove, Box and Scribble, and a fold in the tissue outlined" />
+
+Click something on the image (a fold, debris, a tumour nest) and Plexora outlines it. The bar on the image sets how you point at it:
+
+- **Add**: click to outline; click again to grow the outline.
+- **Remove**: click an area to take it out (or **Shift**-click in Add).
+- **Box**: drag round a large object.
+- **Scribble**: draw over a long or patchy object, or a loop round it.
+
+**Esc** finishes the outline. The outline follows the channels and contrast on screen. The first use downloads the files magic select needs; after that it works offline.
+
+## Tips
+
+- The eye on a row hides that region or category on the image; hidden regions are still saved and mapped.
+- A locked region cannot be moved or reshaped.
+- Regions belong to the image they were drawn on. Export them first if you want them on another image.
+
+## What it saves
+
+Regions are saved with the sample as you draw, in Plexora's own storage. The buttons at the foot of the card take them elsewhere:
+
+- **Import** reads regions from a GeoJSON file; **Export** downloads them as GeoJSON.
+- **Save** writes them into the project's own AnnData or SpatialData file (shown only for those projects).
+- **Map to cells** (the grid button, shown when there is a cell table) writes two columns onto the cell table: the category and the region name of each cell, `rois_category` and `rois_name` by default. A cell in overlapping regions gets both values joined with `_`; cells outside every region are left blank. It shows what it will write and asks before replacing existing columns.
+
+## Related
+
+<Cards>
+<Card title="Cell Explorer" href="/docs/plugins/cell-explorer" description="Colour cells by the region column ROI wrote." />
+<Card title="Quality Control" href="/docs/plugins/qc" description="Mark damaged tissue so its cells are left out." />
+<Card title="Exporting images and figures" href="/docs/features/export" description="Take regions, images and figures out of Plexora." />
+</Cards>

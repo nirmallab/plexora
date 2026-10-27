@@ -1,0 +1,56 @@
+---
+title: "Image viewer (2-D and 3-D)"
+description: "Pan and zoom a whole slide, rotate and flip it, save views, walk a dataset, and look through a z-stack in 2-D or 3-D."
+aliases: ["pan", "zoom", "3d", "z-stack", "volume", "rotate", "flip", "bookmark", "saved views", "projection"]
+---
+
+The viewer draws the whole image at every zoom level. A z-stack or a time series adds a depth strip along the bottom, where you switch between one plane, a projection and the stack in 3-D.
+
+<Media src="/media/features/viewer-depth-strip.webp" alt="A z-stack in the viewer with the depth strip along the bottom: buttons for One plane, Projection and The stack in 3-D, the Cut and Crop tools, Sections and a plane slider" caption="A z-stack: the depth strip runs along the bottom of the image." />
+
+## How to use it
+
+<Steps>
+<Step>
+### Move around
+
+Drag to pan and scroll to zoom. The buttons on the left edge zoom and return **Home** (the whole image). The round button in the bottom-left corner opens an overview map of the tissue.
+</Step>
+<Step>
+### Turn the view
+
+**View › Rotate & Flip** turns the image by 90° steps or any angle and mirrors it. The orientation is saved with the sample. **View › Scalebar** shows or hides the scale bar.
+</Step>
+<Step>
+### Save a view to come back to
+
+Press **M** to save what is on screen: position, zoom, channels and contrast. **Saved views** in the sidebar header opens the tray; click a view to return to it. Saved views are kept by [Figure Builder](/docs/plugins/figure-builder), so they can also go into a figure.
+</Step>
+<Step>
+### Look through a z-stack
+
+On the depth strip, choose **One plane**, **Projection of a range of planes** or **The stack in 3-D** (**V**). Step planes with **]** and **[** (with Shift, ten at a time), and frames with **.** and **,**. **Sections** adds XZ and YZ views beside the image.
+</Step>
+<Step>
+### Open up the stack in 3-D
+
+Drag to turn the stack. **Cut** takes a side off it and **Crop** keeps a box of it (**O** shows or hides the cut panel). **Area** places a square on a plane and opens just that part in 3-D.
+</Step>
+</Steps>
+
+<Media src="/media/features/viewer-3d.webp" alt="A cropped region of a multiplexed z-stack drawn as a 3-D volume inside a box outline" caption="The stack in 3-D, cropped to a region." />
+
+## Tips
+
+- **HD**, in the sidebar's Cells row, reloads the image at full 16-bit precision for judging faint signal. Leave it off for ordinary browsing.
+- In a dataset, **Previous / Next** at the top right (or **B** / **N**) opens the neighbouring sample and carries over your channels, colours, cell display and open tools. Contrast and gates stay each sample's own.
+- In 3-D, **X**, **Y** or **Z** limits turning to that axis, and **0** returns to the angled default view.
+- A brightfield slide has **Brightness**, **Contrast** and **Gamma** sliders on its Image card instead of channels. They change the display only and are not saved.
+
+## Related
+
+<Cards>
+<Card title="Channels and contrast" href="/docs/features/channels" description="Which channels are drawn, and how bright." />
+<Card title="Keyboard shortcuts" href="/docs/help/keyboard-shortcuts" description="Every key the viewer uses." />
+<Card title="Exporting images and figures" href="/docs/features/export" description="Save the current view as PNG or PDF." />
+</Cards>

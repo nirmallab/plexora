@@ -71,29 +71,7 @@ def render(model: dict) -> tuple[dict[str, str], dict[str, str], list[str]]:
     problems += cli_problems
     content.update(formats.render(m, model.get("formats")))
     content.update(envvars.render())
-    generated = {
-        "aliases.json": aliases_json(m, symbols),
-    }
-    return content, generated, problems
-
-
-def aliases_json(m, symbols) -> str:
-    """Search aliases, for tooling and the site: {word: [page urls]}."""
-    out: dict[str, list[str]] = {}
-    for word, targets in sorted((m.data.get("search_aliases") or {}).items()):
-        urls = []
-        for target in targets:
-            if target.startswith("/"):
-                urls.append(target)
-            elif target in m.pages:
-                urls.append(m.pages[target].url)
-        out[word] = urls
-    for qualname, page in sorted(m.pages.items()):
-        for word in m.extras(qualname).get("search") or []:
-            out.setdefault(word, [])
-            if page.url not in out[word]:
-                out[word].append(page.url)
-    return json.dumps(dict(sorted(out.items())), indent=2, ensure_ascii=False) + "\n"
+    return content, {}, problems
 
 
 def committed(content_root: Path, generated_root: Path) -> tuple[dict[str, str], dict[str, str]]:
@@ -108,12 +86,7 @@ def committed(content_root: Path, generated_root: Path) -> tuple[dict[str, str],
         path = content_root / rel
         if path.exists():
             content[rel] = path.read_text(encoding="utf-8")
-    generated = {}
-    for name in ("aliases.json",):
-        path = generated_root / name
-        if path.exists():
-            generated[name] = path.read_text(encoding="utf-8")
-    return content, generated
+    return content, {}
 
 
 def symbol_of(text: str) -> str:

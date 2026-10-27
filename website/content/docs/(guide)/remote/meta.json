@@ -1,0 +1,6 @@
+{
+  "title": "Remote servers",
+  "icon": "Server",
+  "defaultOpen": false,
+  "pages": ["add-a-server", "slurm", "files-over-sftp", "data-nodes", "ssh-connect", "hubs", "google-cloud"]
+}

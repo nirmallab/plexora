@@ -1,31 +1,13 @@
 import type { ReactNode } from 'react';
-import Link from 'next/link';
 import { DocsLayout } from 'fumadocs-ui/layouts/docs';
 import { baseOptions } from '@/lib/layout.shared';
-import { startUrl, trialUrl } from '@/lib/site';
 import { source } from '@/lib/source';
 
+// The guide and the generated Reference are the two `root: true` folders in
+// content/docs, so each becomes a tab with a sidebar of its own.
 export default function Layout({ children }: { children: ReactNode }) {
   return (
-    <DocsLayout
-      tree={source.getPageTree()}
-      {...baseOptions()}
-      sidebar={{
-        footer: (
-          <div className="flex flex-wrap gap-x-3 gap-y-1 text-sm text-fd-muted-foreground">
-            <Link href="/pricing" className="hover:text-fd-foreground">
-              Pricing
-            </Link>
-            <a href={startUrl} className="hover:text-fd-foreground">
-              Sign in or sign up
-            </a>
-            <a href={trialUrl} className="hover:text-fd-foreground">
-              Start a free trial
-            </a>
-          </div>
-        ),
-      }}
-    >
+    <DocsLayout tree={source.getPageTree()} {...baseOptions({ docs: true })} sidebar={{ defaultOpenLevel: 0 }}>
       {children}
     </DocsLayout>
   );

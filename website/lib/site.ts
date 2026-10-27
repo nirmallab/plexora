@@ -1,10 +1,11 @@
 // The one place that knows where the site lives and where it links out to.
 // Components, the search client and the source links all read from here, so
 // moving to plexoraapp.com is NEXT_PUBLIC_BASE_PATH="" plus public/CNAME.
+import releaseInfo from '@/generated/release.json';
 import versionInfo from '@/generated/version.json';
 
 export const siteName = 'Plexora';
-export const tagline = 'See multiplexed imaging and spatial transcriptomics data at full resolution, from a laptop, a notebook or a cluster.';
+export const tagline = 'A free viewer for multiplexed tissue images: open an image, adjust channels, gate markers, draw regions and make figures, on your laptop, in a notebook or on a cluster.';
 
 /** Next.js basePath ("/plexora" on GitHub Pages, "" on a custom domain). */
 export const basePath = process.env.NEXT_PUBLIC_BASE_PATH ?? '/plexora';
@@ -15,31 +16,6 @@ export const repo = 'nirmallab/plexora';
 export const repoUrl = `https://github.com/${repo}`;
 export const issuesUrl = `${repoUrl}/issues`;
 export const pypiUrl = 'https://pypi.org/project/plexora/';
-
-/** The BioCognia account portal: sign-in, licences, devices, AI credits.
- * Plexora holds no account of its own; this is where a person goes. */
-export const accountUrl = 'https://account.biocognia.com';
-/** Buy, activate or start a trial of Plexora. */
-export const startUrl = `${accountUrl}/start?product=plexora`;
-/** Start a 30-day trial of Plexora Pro (sign-in first, then one button). */
-export const trialUrl = `${accountUrl}/portal/trial?product=plexora`;
-/** Buy Plexora Pro: the portal's Plans & prices, where checkout opens. */
-export const buyUrl = `${accountUrl}/portal/billing?product=plexora`;
-
-export type UseClass = 'academic' | 'commercial';
-
-/** The pricing page's Buy: Plans & prices with the seats and use class chosen
- * there filled in (they survive sign-in). One seat is an individual account;
- * two or more make the account a team. */
-export function buyHref(seats: number, useClass: UseClass): string {
-  const count = Math.max(1, Math.floor(seats));
-  return `${buyUrl}&seats=${count}&use_class=${useClass}`;
-}
-
-/** Where a seat's licence key is shown again, with Copy and Replace. */
-export const licencesUrl = `${accountUrl}/portal/licenses`;
-/** Quotes, purchase orders and invoices, for those who cannot pay by card. */
-export const quoteUrl = `${accountUrl}/portal/quotes`;
 
 /** Where the exported search index is fetched from. Must carry basePath:
  * Fumadocs' default reads import.meta.env.BASE_URL, which only Vite sets. */
@@ -65,3 +41,37 @@ export function editUrl(contentPath: string): string {
 export function asset(path: string): string {
   return `${basePath}${path.startsWith('/') ? path : `/${path}`}`;
 }
+
+/** The latest desktop release (scripts/resolve_release.mjs). The home page
+ * shows this version, not version.json's: main runs ahead of releases. */
+export const release = releaseInfo;
+
+export type Download = {
+  key: keyof typeof releaseInfo.assets;
+  os: 'macOS' | 'Windows' | 'Linux';
+  label: string;
+  requirement: string;
+  name: string;
+  url: string;
+  size: number;
+};
+
+export const downloads: Download[] = [
+  { key: 'macos_arm64', os: 'macOS', label: 'Download .dmg', requirement: 'macOS 12 or later, Apple silicon' },
+  { key: 'windows_x64', os: 'Windows', label: 'Download .exe', requirement: 'Windows 10 or 11, 64-bit; installs for you only' },
+  { key: 'linux_x64_deb', os: 'Linux', label: 'Download .deb', requirement: 'Ubuntu 22.04, Debian 12 or later, 64-bit' },
+].map((d) => ({ ...d, ...releaseInfo.assets[d.key as Download['key']] }) as Download);
+
+/** 487551834 -> "488 MB". */
+export function formatBytes(bytes: number): string {
+  return `${Math.round(bytes / 1e6)} MB`;
+}
+
+/** Plexora's demo clip, hosted with BioCognia's site (content-hashed names;
+ * the docs workflow checks both still answer). */
+export const demoVideo = {
+  src: 'https://biocognia.com/static/plexora-3d-8c88a6219f.mp4',
+  poster: 'https://biocognia.com/static/plexora-3d-6ba4177447.webp',
+  width: 1120,
+  height: 700,
+};

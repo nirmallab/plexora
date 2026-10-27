@@ -3,7 +3,10 @@ name: Docs
 # The documentation site (website/), built from this repository and published
 # to GitHub Pages. Every pull request checks that the generated reference is
 # current and that the site builds with no broken links; every push to main
-# (or a manual run) also deploys it.
+# (or a manual run) also deploys it, and so does every successful Release, so
+# the download buttons name the new installers the moment they exist. That is
+# `workflow_run`, not `release: published`: the release is created with
+# GITHUB_TOKEN, and events raised by GITHUB_TOKEN start no other workflow.
 #
 # One-time setup: repository Settings > Pages > Source: "GitHub Actions".
 # A custom domain later needs only website/public/CNAME and the domain in the
@@ -16,6 +19,9 @@ on:
     branches: [main]
     paths-ignore: ["desktop/**", "backend/**"]
   workflow_dispatch:
+  workflow_run:
+    workflows: [Release]
+    types: [completed]
 
 permissions:
   contents: read
@@ -32,6 +38,7 @@ env:
 jobs:
   check:
     name: Generated reference is current
+    if: github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v7
@@ -47,10 +54,8 @@ jobs:
         run: python tools/docs/sync_docs.py check
       - name: Documentation tests
         run: python -m pytest -q -p no:randomly tests/test_docs_coverage.py tests/test_docs_docstrings.py tests/test_docs_signatures.py tests/test_docs_envvars.py tests/test_docs_examples.py tests/test_docs_links.py tests/test_docs_freshness.py
-      # Offline: the pricing page's copy of the platform's prices is whole and
-      # consistent. `tools/sync_pricing.py --source` refreshes it from the platform.
-      - name: The price list is valid
-        run: python -m pytest -q -p no:randomly tests/test_pricing_sync.py
+      - name: The committed release record is well-formed
+        run: node website/scripts/resolve_release.mjs --check
 
   build:
     name: Build the site
@@ -77,14 +82,35 @@ jobs:
         run: npm ci --prefix website
       - name: Browser API pages match the JavaScript
         run: npm run generate:browser-api --prefix website -- --check
+      - name: Pages compile, components exist, links resolve
+        env:
+          CHECK_MDX_STRICT_LINKS: "1"
+        run: npm run check:mdx --prefix website
+      # The build resolves the latest release into generated/release.json
+      # first (the download buttons), then writes the redirect pages.
       - name: Build
         env:
           NEXT_PUBLIC_BASE_PATH: ${{ steps.pages.outputs.base_path }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: npm run build --prefix website
       - name: No broken links
         env:
           NEXT_PUBLIC_BASE_PATH: ${{ steps.pages.outputs.base_path }}
         run: npm run check:links --prefix website
+      - name: The search index stays small
+        run: npm run check:search-size --prefix website
+      # The installers and the demo video live elsewhere (GitHub releases,
+      # biocognia.com's content-hashed assets); a moved file fails the build
+      # rather than shipping a dead button.
+      - name: Downloads and the demo video answer
+        run: |
+          set -euo pipefail
+          urls=$(node -e "const r=require('./website/generated/release.json');console.log(Object.values(r.assets).map(a=>a.url).join('\n'))")
+          urls="$urls
+          $(node -e "const s=require('fs').readFileSync('website/lib/site.ts','utf8');console.log([...s.matchAll(/'(https:\/\/biocognia\.com\/static\/[^']+)'/g)].map(m=>m[1]).join('\n'))")"
+          for url in $urls; do
+            curl -fsSIL -o /dev/null --retry 3 "$url" && echo "ok $url"
+          done
       - uses: actions/upload-pages-artifact@v5
         with:
           path: website/out
@@ -92,7 +118,7 @@ jobs:
   deploy:
     name: Deploy to GitHub Pages
     needs: build
-    if: github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch'
+    if: github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch' || github.event_name == 'workflow_run'
     runs-on: ubuntu-22.04
     environment:
       name: github-pages

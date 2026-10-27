@@ -1,0 +1,51 @@
+---
+title: "Plugins"
+description: "The tools in Plexora's Tools menu: what each one does, and how to open and arrange them."
+aliases: ["tools", "tools menu", "sidebar tools", "extensions"]
+---
+
+Every tool in Plexora is a plugin: it opens as a card in the sidebar, next to the image, and draws on the image. Five come with Plexora.
+
+<Cards>
+<Card title="Quality Control" href="/docs/plugins/qc" description="Mark folds, blur and misregistered cycles, and flag the cells they affect." />
+<Card title="Thresholding" href="/docs/plugins/thresholding" description="Gate a marker and see which cells pass, drawn over the image." />
+<Card title="ROI" href="/docs/plugins/roi" description="Draw regions, sort them into categories, and label cells by region." />
+<Card title="Cell Explorer" href="/docs/plugins/cell-explorer" description="Colour every cell by a phenotype, cluster or numeric column." />
+<Card title="Figure Builder" href="/docs/plugins/figure-builder" description="Capture views and lay them out as a figure for export." />
+</Cards>
+
+<Media src="/media/plugins/tools-menu.webp" alt="The Tools menu open, listing Quality Control, Thresholding, ROI, Cell Explorer and Figure Builder with their shortcuts" />
+
+## How to use it
+
+<Steps>
+<Step>
+### Open a tool
+
+With a sample open, choose it from the **Tools** menu, or press its shortcut, printed beside it in the menu.
+</Step>
+<Step>
+### Use the card
+
+The tool's card header has a grip, a chevron that folds the card, its name and shortcut, a **?** that explains the tool, an eye and a **×**. The eye hides what the tool draws on the image; **×** removes the tool.
+</Step>
+<Step>
+### Open several
+
+You can load several tools at once. Clicking a card's name opens it and folds the one that was open; each card keeps its own colours and opacity on the image.
+</Step>
+</Steps>
+
+<Media src="/media/plugins/card-anatomy.webp" alt="The header of a tool card: grip, chevron, name and shortcut, help, eye and close" />
+
+## Tips
+
+- Drag a card by its grip to restack the tools: the order of the cards is the order their drawings are stacked on the image.
+- A tool asks for what it needs (a cell table, which column is the cell id) the first time it needs it, and never again for the same project.
+
+## Related
+
+<Cards>
+<Card title="Build a custom plugin" href="/docs/plugins/build-a-plugin" description="Add your own tool with a few Python and JavaScript files." />
+<Card title="Interface overview" href="/docs/getting-started/interface" description="Where the sidebar, the image and the menus are." />
+</Cards>

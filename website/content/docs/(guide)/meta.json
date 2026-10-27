@@ -1,0 +1,16 @@
+{
+  "title": "Docs",
+  "description": "Install, open an image, use every tool",
+  "root": true,
+  "icon": "BookOpen",
+  "pages": [
+    "index",
+    "getting-started",
+    "features",
+    "remote",
+    "plugins",
+    "notebook",
+    "python",
+    "help"
+  ]
+}

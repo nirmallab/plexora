@@ -1,0 +1,81 @@
+---
+title: "Thresholding"
+description: "Set a lower and an upper threshold on a marker and see which cells fall inside the gate, drawn over the image."
+aliases: ["gating", "gate", "threshold", "positive cells", "marker positivity"]
+---
+
+Thresholding gates one marker at a time: you set a lower and an upper threshold on the marker's distribution, and the cells inside the gate are drawn over the image so you can check the call against the tissue.
+
+<Media src="/media/plugins/thresholding.webp" alt="The Thresholding card with a marker selected, the two-handle slider over the marker's distribution, and the cells inside the gate outlined on the image" caption="A gate on one marker: the slider sits over the marker's distribution, and the cells inside it are outlined." />
+
+**Open it:** **Tools › Thresholding**, or press **⌘B** (Ctrl+B on Windows and Linux). It needs a cell table; a segmentation mask is optional (without one, cells are drawn as centroids).
+
+## How to use it
+
+<Steps>
+<Step>
+### Pick a marker
+
+Choose it from **Marker**. If the marker is also an image channel, Plexora puts it in the first channel slot, so the threshold can be checked against the picture.
+</Step>
+<Step>
+### Set the gate
+
+Drag either end of the slider, or click a number and type it. The **‹** and **›** in the corner of the distribution move the lower threshold one step; after a click, the arrow keys keep stepping.
+
+To start from a suggestion instead, press **Auto threshold**: it fits a threshold to the marker's distribution. The button then becomes **Restore previous threshold**, so one more press puts your own gate back.
+</Step>
+<Step>
+### Move through the panel
+
+Press **X** for the next marker and **Z** for the previous one. Gates are saved with the sample as you set them; there is nothing to press.
+</Step>
+</Steps>
+
+## Tips
+
+- How gated cells are drawn (**Centroids**, **Outlines** or **Filled**, point size, opacity) is the **Cells** row at the bottom of the sidebar, shared with every tool that colours cells.
+- Clear one marker's gate with the eraser beside **Marker**; **Clear all gates…** is under **•••**.
+- After Quality Control has run, **Auto threshold** fits on the cells that passed QC and says how many it left out. The gate still applies to every cell.
+
+<Accordions>
+<Accordion title="Single Cell Classifier: label cells instead of setting a number">
+
+The cog in the card's header switches Thresholding to the **Single Cell Classifier**. Use it when one value per cell does not separate the positives, for example a membrane stain lifted by a bright neighbour.
+
+<Media src="/media/plugins/thresholding-classifier.webp" alt="The Single Cell Classifier with positive cells outlined in white and uncertain cells in amber" />
+
+1. Pick a marker. Press the **wand** to pick about 40 positive and 40 negative cells across the image, train, and classify every cell.
+2. Or press **Positive** or **Negative** and click cells on the image to label them, then press **▶** to train (at least 3 of each). **Esc** stops labelling.
+3. Positives are outlined in white, uncertain cells in amber. Rest the pointer on a cell for its score.
+4. **Review uncertain cells** shows a few amber cells one at a time: press **P** (positive), **N** (negative) or **S** (skip), then **▶** to train again.
+5. The **eraser** undoes the run and keeps your examples.
+
+**Download Cells** saves the calls (`classifier_binary.csv`), the scores (`classifier_scores.csv`) or the training examples as JSON; **Load Annotations** reads examples back.
+
+</Accordion>
+</Accordions>
+
+## Keyboard shortcuts
+
+| Key | Action |
+| --- | --- |
+| ⌘B (Ctrl+B) | Open or close Thresholding |
+| X / Z | Next / previous marker |
+| P / N / S | Positive / negative / skip, while reviewing uncertain cells |
+| Esc | Stop labelling or reviewing cells |
+
+## What it saves
+
+Gates are kept with the project in Plexora's own storage, never in your original files, so the sample reopens with the same gates.
+
+- **Download Gates** writes a CSV with one row per marker: its lower and upper bound and whether it was gated. **Load Gates** reads that CSV back.
+- **Save Gates to Source File** writes the gates into the project's own AnnData or SpatialData file, under a table name you choose. It appears only for projects imported from one of those formats.
+
+## Related
+
+<Cards>
+<Card title="Cell Explorer" href="/docs/plugins/cell-explorer" description="Colour cells by a phenotype or cluster column instead of one marker." />
+<Card title="Quality Control" href="/docs/plugins/qc" description="Exclude damaged tissue and badly segmented cells before you gate." />
+<Card title="Segmentation and cell data" href="/docs/features/cells" description="How cells are drawn, and what a cell table needs." />
+</Cards>

@@ -30,10 +30,15 @@ function walk(p, acc = []) {
   return acc;
 }
 
+// The guide lives in the folder group content/docs/(guide), which adds no
+// URL segment, so a /docs/ URL may be a file under either root.
 function pageExists(url) {
   const rel = url.replace(/^\/docs\/?/, '').replace(/[#?].*$/, '').replace(/\/$/, '');
-  if (!rel) return existsSync(join(content, 'index.mdx'));
-  return existsSync(join(content, `${rel}.mdx`)) || existsSync(join(content, rel, 'index.mdx'));
+  return [content, join(content, '(guide)')].some((root) =>
+    rel
+      ? existsSync(join(root, `${rel}.mdx`)) || existsSync(join(root, rel, 'index.mdx'))
+      : existsSync(join(root, 'index.mdx')),
+  );
 }
 
 const targets = process.argv.slice(2).length ? process.argv.slice(2).map((p) => resolve(p)) : [content];
@@ -62,8 +67,8 @@ for (const file of files) {
     const url = m[1] || m[2];
     if (!pageExists(url)) (strictLinks ? problems : warnings).push(`${rel}: link to missing page ${url}`);
   }
-  for (const m of body.matchAll(/<Screenshot[^>]*src=["{]+["']?([^"'}\s]+)/g)) {
-    if (!existsSync(join(site, 'public', m[1]))) warnings.push(`${rel}: screenshot not captured yet ${m[1]}`);
+  for (const m of body.matchAll(/<Media[^>]*\ssrc=["{]+["']?(\/[^"'}\s]+)/g)) {
+    if (!existsSync(join(site, 'public', m[1]))) warnings.push(`${rel}: media file missing ${m[1]}`);
   }
 }
 

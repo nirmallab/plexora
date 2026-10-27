@@ -6,7 +6,8 @@ import { Accordion, Accordions } from 'fumadocs-ui/components/accordion';
 import type { MDXComponents } from 'mdx/types';
 import { Compare, Member, Param, ParamTable, Raise, Raises, Returns } from './mdx/api';
 import { Badge, InternalBadge, ModalityBadge, PluginBadge } from './mdx/badges';
-import { Screenshot } from './mdx/media';
+import { Downloads } from './mdx/downloads';
+import { Media } from './mdx/media';
 import { PlatformTabs, WhereTabs } from './mdx/tabs';
 import { SourceLink } from './mdx/source-link';
 
@@ -34,7 +35,8 @@ export function getMDXComponents(components?: MDXComponents) {
     InternalBadge,
     ModalityBadge,
     PluginBadge,
-    Screenshot,
+    Media,
+    Downloads,
     PlatformTabs,
     WhereTabs,
     SourceLink,

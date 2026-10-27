@@ -1,0 +1,86 @@
+---
+title: "Data nodes"
+description: "Build one project from files on several machines: the image on a cluster, the mask on a file server, the table in a notebook."
+aliases: ["node", "data node", "split data", "register_node", "remote data", "multi-machine"]
+---
+
+A project's image, mask and cell table are attached independently, so each can come from a different machine. The image can stay on the cluster's scratch space, the mask on a university file server, and the cell table in your notebook's memory, while the project itself lives on your computer.
+
+A **data node** is what makes that work: a Plexora with the viewer switched off, running where the files are. It serves them and nothing else. It has no projects, no database, no regions and no figures; those stay with the viewer on your computer, so a node can restart, move or go away without risk to anything you made.
+
+## How to use it
+
+<Steps>
+<Step>
+### Connect each machine
+
+Add each machine once from the **Local** chip on the home page (**Add a server…**). Connecting a server opens a data node on it for you. A file server is read over SFTP instead, with nothing started there. See [Add a server](/docs/remote/add-a-server) and [Files over SFTP](/docs/remote/files-over-sftp).
+</Step>
+<Step>
+### Open Import Sample
+
+Choose **Import Sample…** on the home page. It has a field for the image, one for the mask and one for the cell table.
+</Step>
+<Step>
+### Pick each file from its machine
+
+Each field has its own Local chip. Set the image field to the cluster, the mask field to the file server, and so on, then browse to each file.
+</Step>
+<Step>
+### Check what is connected
+
+**Settings › Data nodes** lists every machine handing this Plexora data right now, with its state. Which file a project reads from which node is shown on that project's own page.
+</Step>
+</Steps>
+
+## From the command line
+
+Everything above can also be done from a terminal; you do not need both. Run this on your own computer to start a node on the cluster, forward it back and register it here:
+
+```bash
+plexora node connect me@hpc --serve image:tonsil=/scratch/me/tonsil.ome.tif --name hpc
+```
+
+Each `--serve` names one file as `kind:id=path`, where `kind` is `image`, `segmentation` or `table`. Keep the `id` stable: projects point at it. A node you start yourself with `plexora node serve` prints an address and a token; add it under **Settings › Data nodes › Add a node by hand**.
+
+Two common splits:
+
+```bash
+# Plexora on the cluster, the cell table still on your laptop:
+plexora connect hpc --local-serve table:cells=~/study/cells.h5ad
+
+# Plexora on your laptop, the image still on the cluster:
+plexora node connect me@hpc --serve image:tonsil=/scratch/me/tonsil.ome.tif --name hpc
+```
+
+<Accordions>
+<Accordion title="From Python">
+
+The same registration the Settings form writes, for a script:
+
+```python
+import plexora
+
+plexora.register_node("hpc", "http://compute-3:8642", token="…")
+plexora.attach_image("tonsil", node="hpc", resource_id="tumor")
+plexora.attach_table("tonsil", node="hpc", resource_id="cells")
+```
+
+`attach_segmentation` does the same for a mask. See [register_node](/docs/reference/python-api/nodes/register-node), [attach_image](/docs/reference/python-api/nodes/attach-image) and [attach_table](/docs/reference/python-api/nodes/attach-table).
+
+</Accordion>
+</Accordions>
+
+## Tips
+
+- A cell table already in a notebook's memory is served from the kernel by `plexora.view(...)`. See [Notebook](/docs/notebook).
+- If a node cannot be reached when a project opens, the project still opens, without that layer, and says which node is missing.
+- A mask straight out of a pipeline is converted for tiled viewing the first time a node serves it, so the first look at it can take a while.
+
+## Related
+
+<Cards>
+<Card title="plexora node" href="/docs/reference/cli/node" description="serve, connect and prepare, with every option." />
+<Card title="plexora connect" href="/docs/reference/cli/connect" description="--also-serve and --local-serve." />
+<Card title="Remote servers" href="/docs/remote" description="Every way to reach another machine." />
+</Cards>

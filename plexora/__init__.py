@@ -124,9 +124,10 @@ def create_app(plugins=None):
     app = Flask(__name__, template_folder=Path("client/templates"), static_folder=None)
     # Every page carries the documentation site's address (base.html puts it
     # on <body>), so the Help menu and each tool's help read one constant.
-    from plexora.links import DOCS_URL
+    from plexora.links import DOCS_URL, PRICING_URL
 
     app.jinja_env.globals["docs_url"] = DOCS_URL
+    app.jinja_env.globals["pricing_url"] = PRICING_URL
     app.config["TEMPLATES_AUTO_RELOAD"] = True
     app.config["CLIENT_PATH"] = app.root_path + "/client/"
     # Read from the environment as well as being settable afterwards. It used

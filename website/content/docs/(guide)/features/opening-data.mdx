@@ -1,0 +1,64 @@
+---
+title: "Opening images and datasets"
+description: "Open an image from this computer or a server, import a sample with its mask and table, or build a dataset from a folder."
+aliases: ["open", "import", "formats", "ome-tiff", "file types", "new dataset", "drag and drop"]
+---
+
+Plexora reads your files where they are: on this computer, a mounted share or a connected server. Nothing is copied or converted on disk except the tiles it needs for viewing. There are three ways in, depending on how much you are bringing.
+
+<Media src="/media/features/opening-local-chip.webp" alt="The home screen's path box with the Local chip's menu open, listing Local (This computer), the connected servers under Remote, and Add a server…" caption="The Local chip chooses which computer the path is on." />
+
+## How to use it
+
+<Steps>
+<Step>
+### One image: the home screen
+
+Paste a path or URL and press **Load**, or press **Browse**. **File** or **Folder** above the box sets what Browse opens. The **Local** chip switches to a connected server, or **Add a server…**.
+</Step>
+<Step>
+### An image with its mask and table: Import Sample…
+
+**File › Import Sample…** (**⌘I**, Ctrl+I on Windows and Linux) takes several files or a folder, shows one row per file with what it was read as, and lets you name the sample and put it in a dataset. You can also drag files onto the dialog.
+</Step>
+<Step>
+### A folder of samples: New Dataset…
+
+On the Samples page, choose **New Dataset…**, pick the folder that holds a cohort and press **Scan folder**. Plexora matches every mask and table to its image by file and folder names and shows the plan as a table. Fix any row, then press **Create** (it says how many samples).
+</Step>
+<Step>
+### Add to a sample you already have
+
+In the viewer, **+** on **Layers** adds an image, mask or table to the open sample. See [Layers](/docs/features/layers).
+</Step>
+</Steps>
+
+<Media src="/media/features/new-dataset.webp" alt="The New Dataset dialog: a table with one row per sample showing its image, segmentation, data and a status such as Matched or Review" caption="New Dataset…: every sample in the folder, with what was matched to it." />
+
+## What Plexora opens
+
+| Kind | Formats |
+|---|---|
+| Multiplexed images | OME-TIFF and TIFF (including z-stacks), QPTIFF, OME-Zarr, Imaris `.ims`, DICOM |
+| Brightfield slides | `.svs`, `.ndpi`, `.scn`, `.bif`, plus `.mrxs` and `.svslide` with `pip install "plexora[wsi]"` |
+| Plain images | PNG, JPEG |
+| Segmentation masks | A label TIFF or OME-TIFF, 2-D or 3-D, the same size as its image |
+| Cell tables | CSV, TSV, Parquet, AnnData `.h5ad` |
+| Stores | SpatialData `.zarr` (images, labels, points and a table) |
+
+Images can also be read from a web address, S3, Google Cloud Storage or Azure. The full list is in [Supported formats](/docs/reference/supported-formats). Xenium and Visium run folders are not covered here.
+
+## Tips
+
+- A mask must have the same width and height as its image.
+- Dropping a file onto the import dialog in a browser uploads it (up to 64 MB). For a large image, choose it with Browse or paste its path, so it is read in place.
+- In the desktop app you can drag a file onto the window, or open `.svs`, `.ndpi`, `.scn`, `.mrxs`, `.qptiff` and `.h5ad` files with Plexora from your file manager.
+- CosMx and MERSCOPE runs have no reader yet. Export the image and the cell table and import them as files.
+
+## Related
+
+<Cards>
+<Card title="Your first image" href="/docs/getting-started/first-image" description="The shortest path from a file to the viewer." />
+<Card title="Projects and data management" href="/docs/features/projects" description="The Samples page, datasets and where data is kept." />
+<Card title="Remote servers" href="/docs/remote" description="Open images on a server, a cluster or a cloud machine." />
+</Cards>

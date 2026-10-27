@@ -1,0 +1,120 @@
+---
+title: "Troubleshooting and FAQ"
+description: "What to do when Plexora will not install, open, start or show your data."
+aliases: ["problems", "errors", "faq", "not working", "help", "version"]
+---
+
+Find what you are seeing below. If none of these match, [open an issue](https://github.com/nirmallab/plexora/issues) with what you did, what you expected, and your Plexora version.
+
+<Accordions>
+<Accordion title="pip install plexora fails">
+
+Plexora needs Python 3.12 or 3.13. With an older or newer interpreter, pip finds no matching build. Create a fresh environment and install there:
+
+```bash
+conda create -n plexora python=3.12
+conda activate plexora
+pip install plexora
+```
+
+On an Intel Mac, one of Plexora's dependencies has no build for that chip, so neither the installer nor `pip install` works there today.
+
+</Accordion>
+
+<Accordion title="The desktop app will not open, or opens to a blank window">
+
+These warnings are expected while the installers are not code-signed; they do not mean the download is broken.
+
+- **Windows:** SmartScreen says the publisher is unrecognised. Choose **More info › Run anyway**.
+- **macOS:** the app "cannot be opened because it is from an unidentified developer". Right-click Plexora in Applications and choose **Open** the first time, or run `xattr -dr com.apple.quarantine /Applications/Plexora.app`.
+- **Linux, blank or black window:** the system's WebKitGTK cannot do WebGL2, which the viewer needs. Choose **File › Open in Browser** to use the same session in your browser, or start the app with `WEBKIT_DISABLE_DMABUF_RENDERER=1` set.
+
+</Accordion>
+
+<Accordion title="plexora starts but no browser opens">
+
+Plexora opens a browser only when it looks like you are at the machine. Over SSH, under a job scheduler, or on Linux with no display, it prints the address instead:
+
+```text
+Browser auto-open skipped: headless environment detected.
+```
+
+Open the printed address yourself, or decide explicitly with `plexora --browser` (always open one) or `plexora --no-browser` (never). To view a remote machine from your laptop, use `plexora connect` instead; see [Connect from a terminal](/docs/remote/ssh-connect).
+
+</Accordion>
+
+<Accordion title="Port already in use">
+
+Without `--port`, Plexora moves to a free port by itself and says so: `Port 8000 is in use; using 51423 instead.` Use the address it prints.
+
+If you asked for a port with `--port` and it is taken, Plexora stops instead, because you probably chose that number for a reason. The usual cause is a Plexora you already started in another terminal; open the address the message suggests first. Otherwise pass a different `--port`, or `--port 0` for any free one.
+
+</Accordion>
+
+<Accordion title="A project I expect is missing">
+
+Plexora shows the projects in one data directory (plus any shared directories you added). The project is almost always in a different directory from the one in use. Ask which directory that is, and why:
+
+```bash
+plexora where
+```
+
+Then point Plexora at the right one with `plexora config set data-dir /path/to/it`, or add a lab's shared directory with `plexora config set shared-dirs /lab/shared/plexora`. If Plexora refuses to start because two directories both hold projects, follow the two choices the message gives. See [Projects and data](/docs/features/projects).
+
+</Accordion>
+
+<Accordion title="Cells do not appear: the mask is still converting">
+
+The first time you add a segmentation mask, Plexora converts it into tiles (a pyramid) so the outlines draw at every zoom level. For a whole-slide mask this can take a few minutes. Meanwhile a chip in the menu bar reads **Pyramidizing segmentation mask…**; click it to see progress, or choose **Continue viewing** and keep working on the image. It happens once per mask, and the outlines appear by themselves when it finishes.
+
+If it never finishes, check that the Plexora that started it is still running (or the `plexora node serve` process, for a mask on a data node).
+
+</Accordion>
+
+<Accordion title="Tiles draw slowly">
+
+The first look at each region of a large image reads it from disk (or, for an `https://` or `s3://` address, downloads it), so the first pass is the slow one; going back over the same area is faster.
+
+For an image on another machine, keep the viewer on your own computer and read the files through a data node rather than running the whole viewer remotely; see [Data nodes](/docs/remote/data-nodes). For web addresses, **Settings › Web data** shows how much of the download cache is used.
+
+</Accordion>
+
+<Accordion title="A notebook cell shows a blank box">
+
+The viewer's address points somewhere your browser cannot reach, usually because the notebook's environment was not recognised. Force the proxied address:
+
+```python
+plexora.view("my_project", proxy=True)
+```
+
+If that works, the lasting fix on JupyterHub is `jupyter-server-proxy` installed in the environment that runs the Jupyter **server** (your administrator's). If you forward the port yourself, use `proxy=False`. See [Notebook](/docs/notebook).
+
+</Accordion>
+
+<Accordion title="ServerStartError in a notebook">
+
+`plexora.view(...)` starts a small server beside your kernel. `plexora.ServerStartError` means that process exited before it was ready, or never answered. The most common cause is that Plexora is installed in a different environment from the one running the kernel: install it into the kernel's environment (`%pip install plexora` in a cell does exactly that) and restart the kernel. If the message says the server did not become ready on a port, check for a slow shared filesystem or a firewall between the kernel and the port.
+
+</Accordion>
+
+<Accordion title="Which version do I have?">
+
+In the app, choose **Help › About Plexora**. In a terminal:
+
+```bash
+plexora --version
+```
+
+In Python, `import plexora; print(plexora.__version__)`. The latest release is on the [home page](/) and on [GitHub](https://github.com/nirmallab/plexora/releases); **Help › Check for Updates…** in the desktop app checks for you.
+
+</Accordion>
+</Accordions>
+
+## Related
+
+<Cards>
+<Card title="Install the app" href="/docs/getting-started/installation" description="Installers and first launch on each system." />
+<Card title="Install with pip" href="/docs/getting-started/install-python" description="Plexora in its own Python environment." />
+<Card title="Remote servers" href="/docs/remote" description="Servers, clusters and data nodes." />
+<Card title="Keyboard shortcuts" href="/docs/help/keyboard-shortcuts" description="Every key Plexora binds." />
+</Cards>

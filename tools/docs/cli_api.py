@@ -142,8 +142,8 @@ def slug_path(path: str) -> str:
 def page_url(path: str, records_by_path: dict) -> str:
     rel = slug_path(path)
     if records_by_path.get(path, {}).get("subcommands"):
-        return f"/docs/cli/{rel}"
-    return f"/docs/cli/{rel}"
+        return f"/docs/reference/cli/{rel}"
+    return f"/docs/reference/cli/{rel}"
 
 
 def render_command(record: dict, records_by_path: dict, examples: dict, internal: dict) -> str:
@@ -226,8 +226,9 @@ def render_command(record: dict, records_by_path: dict, examples: dict, internal
                                                     "description": records_by_path[key]["help"] or
                                                     records_by_path[key]["description"] or None}))
             elif other.startswith("/docs/"):
-                cards.append(mdx.component("Card", {"title": other.rsplit("/", 1)[-1].replace("-", " ").capitalize(),
-                                                    "href": other}))
+                from tools.docs.python_pages import guide_title
+
+                cards.append(mdx.component("Card", {"title": guide_title(other), "href": other}))
         if cards:
             blocks.append(mdx.join("## Related", mdx.component("Cards", {}, "\n".join(cards))))
     return mdx.join(*blocks)
@@ -283,14 +284,14 @@ def render_all(manifest) -> tuple[dict[str, str], list[str]]:
         path = record["path"]
         rel = slug_path(path)
         if record["subcommands"]:
-            out[f"cli/{rel}/index.mdx"] = render_command(record, by_path, examples, internal)
-            out[f"cli/{rel}/meta.json"] = _meta(f"plexora {path}".strip(), [*record["subcommands"]])
+            out[f"reference/cli/{rel}/index.mdx"] = render_command(record, by_path, examples, internal)
+            out[f"reference/cli/{rel}/meta.json"] = _meta(f"plexora {path}".strip(), [*record["subcommands"]])
         else:
-            out[f"cli/{rel}.mdx"] = render_command(record, by_path, examples, internal)
+            out[f"reference/cli/{rel}.mdx"] = render_command(record, by_path, examples, internal)
         if " " not in path:
             top_pages.append(rel)
-    out["cli/index.mdx"] = render_index(records, by_path, examples)
-    out["cli/meta.json"] = _meta("Command line", [*top_pages], icon="Terminal")
+    out["reference/cli/index.mdx"] = render_index(records, by_path, examples)
+    out["reference/cli/meta.json"] = _meta("Command line", [*top_pages], icon="Terminal")
     return out, problems
 
 

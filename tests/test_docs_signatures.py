@@ -14,7 +14,7 @@ from tools.docs.python_api import build_model
 
 
 def generated_pages():
-    for base in ("python-api", "plugin-api/descriptor", "plugin-api/runtime"):
+    for base in ("reference/python-api", "reference/plugin-api/descriptor", "reference/plugin-api/runtime"):
         for path in sorted((config.CONTENT / base).rglob("*.mdx")):
             head = path.read_text(encoding="utf-8").split("---", 2)[1]
             fields = {}

@@ -1,0 +1,218 @@
+---
+title: "Build a custom plugin"
+description: "Add your own tool to Plexora: a Python package with a descriptor, a Flask route, a panel and a browser script."
+aliases: ["plugin development", "extend Plexora", "write a plugin", "custom tool", "plugin API", "hello world plugin"]
+---
+
+A plugin adds a tool to the **Tools** menu with its own card in the sidebar. This page builds a small one, **Cell Count**, that shows the project's name and how many channels its image has, then tests and packages it.
+
+## How plugins work
+
+A plugin is an installable Python package that exposes one `PLUGIN = Plugin(...)` descriptor. Plexora finds it through the `plexora.plugins` entry point and mounts its Flask Blueprint under `/plugins/<name>/`. When you open the tool, Plexora puts the plugin's panel template in a card and loads its scripts. The script registers itself with `window.Plexora.registerPlugin` and fills the panel from the plugin's own routes. Python code imports from `plexora.api` and nowhere else in Plexora; everything else is internal and can change between releases.
+
+## The files
+
+<Files>
+<Folder name="cell_count" defaultOpen>
+<File name="pyproject.toml" />
+<Folder name="cell_count" defaultOpen>
+<File name="__init__.py" />
+<Folder name="server" defaultOpen>
+<File name="__init__.py" />
+<File name="routes.py" />
+</Folder>
+<Folder name="templates/cell_count" defaultOpen>
+<File name="panel.html" />
+</Folder>
+<Folder name="static" defaultOpen>
+<File name="cellCount.js" />
+</Folder>
+</Folder>
+<Folder name="tests">
+<File name="test_cell_count.py" />
+</Folder>
+</Folder>
+</Files>
+
+<Steps>
+<Step>
+### Describe the plugin
+
+```python title="cell_count/__init__.py"
+from plexora.api import Plugin, Requires
+
+VERSION = "1"
+
+
+def _blueprint():
+    # Imported here, so reading the descriptor never loads the routes.
+    from cell_count.server.routes import cell_count_bp
+
+    return cell_count_bp
+
+
+PLUGIN = Plugin(
+    name="cell_count",
+    label="Cell Count",
+    version=VERSION,
+    blueprint_factory=_blueprint,
+    icon="hashtag",
+    panels={"tool_panel_slot": "cell_count/panel.html"},
+    scripts=("cellCount.js",),
+    requires=Requires(),
+)
+```
+
+`name` must match the package name and the entry point. `Requires()` with nothing set means the tool works on any project; `Requires(table=True, roles=("cell_id",))` would make Plexora ask for a cell table and its cell id column first. Every field: [Plugin](/docs/reference/plugin-api/descriptor/plugin/plugin), [Requires](/docs/reference/plugin-api/descriptor/requirements/requires).
+</Step>
+<Step>
+### Add a route
+
+```python title="cell_count/server/routes.py"
+from flask import Blueprint, request
+
+from plexora.api import json_response, project_data
+
+cell_count_bp = Blueprint(
+    "cell_count", __name__,
+    template_folder="../templates",
+    static_folder="../static",
+    static_url_path="/static",
+)
+
+
+@cell_count_bp.route("/summary")
+def summary():
+    data = project_data(request.args["datasource"])
+    return json_response({
+        "project": data.name,
+        "channels": data.image.channel_names,
+    })
+```
+
+`project_data` reads a project's image, mask, cell table and column roles; it raises `KeyError` for an unknown project. `json_response` serialises numpy values that Flask's `jsonify` refuses. See [project_data](/docs/reference/plugin-api/runtime/project-data/project-data).
+</Step>
+<Step>
+### Add the panel
+
+```html title="cell_count/templates/cell_count/panel.html"
+<section class="sidebar-section">
+    <div class="control-row">
+        <span class="control-label">Project</span>
+        <span id="cc_project"></span>
+    </div>
+    <div class="control-row">
+        <span class="control-label">Channels</span>
+        <span id="cc_channels"></span>
+    </div>
+</section>
+```
+
+The template is only the card's body; Plexora draws the header (grip, name, **?**, eye, **×**). Keep templates in a folder named after the plugin, so two plugins can both ship a `panel.html`.
+</Step>
+<Step>
+### Register the script
+
+```javascript title="cell_count/static/cellCount.js"
+window.Plexora.registerPlugin({
+    name: "cell_count",
+    help: {
+        summary: "Shows the project's name and how many channels its image has.",
+        docs: "plugins/build-a-plugin",
+    },
+    createSidebarController(ctx) {
+        const url = (path) =>
+            `${ctx.url(`plugins/cell_count/${path}`)}?datasource=${encodeURIComponent(ctx.datasource)}`;
+        return {
+            async setup() {
+                const data = await (await fetch(url("summary"))).json();
+                document.getElementById("cc_project").textContent = data.project;
+                document.getElementById("cc_channels").textContent = data.channels.length;
+            },
+        };
+    },
+});
+```
+
+`ctx.url()` adds the base path when Plexora runs behind a proxy, so always build request URLs with it. `help` is what the **?** on the card shows (`summary`, optional `notes` and `shortcuts`). Register cleanup with `ctx.onCleanup(fn)`. See [PluginDefinition](/docs/reference/plugin-api/browser/plugin-definition) and [PluginContext](/docs/reference/plugin-api/browser/plugin-context).
+</Step>
+</Steps>
+
+## Run it
+
+```toml title="pyproject.toml"
+[project]
+name = "cell-count"
+version = "0.1.0"
+dependencies = ["plexora"]
+
+[project.entry-points."plexora.plugins"]
+cell_count = "cell_count:PLUGIN"
+
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.package-data]
+cell_count = ["templates/**/*", "static/*"]
+```
+
+Install it into the same environment as Plexora and start Plexora:
+
+```bash
+pip install -e .
+plexora
+```
+
+**Cell Count** is now in the **Tools** menu. Installing a plugin is what turns it on. `plexora --plugins cell_count` (or `PLEXORA_PLUGINS=cell_count`) starts Plexora with only the plugins you list. See [the plexora command](/docs/reference/cli/plexora).
+
+## Keep state
+
+To remember something per project, use the plugin's own store. Its tables are namespaced to your plugin:
+
+```python
+from plexora.api import store
+
+saved = store(request.args["datasource"], "cell_count")
+saved.put_state(b"opened")          # opaque bytes
+saved.put_table("results", frame)   # a polars DataFrame
+```
+
+If a route changes a project behind the open tabs' backs, `notify_viewers(project, "cell_count", kind)` tells them to redraw. See [store](/docs/reference/plugin-api/runtime/state/store) and [notify_viewers](/docs/reference/plugin-api/runtime/state/notify-viewers).
+
+## Test it
+
+A plugin's routes are ordinary Flask routes, so Flask's test client calls them without a browser:
+
+```python title="tests/test_cell_count.py"
+import numpy as np
+import tifffile
+
+import plexora
+
+
+def test_summary(tmp_path, monkeypatch):
+    monkeypatch.setenv("PLEXORA_DATA_PATH", str(tmp_path / "data"))
+    image = tmp_path / "image.tif"
+    tifffile.imwrite(image, np.zeros((3, 64, 64), np.uint16), photometric="minisblack")
+    plexora.import_sample(image, name="demo", wait=True)
+
+    client = plexora.app.test_client()
+    reply = client.get("/plugins/cell_count/summary?datasource=demo")
+
+    assert reply.status_code == 200
+    assert len(reply.get_json()["channels"]) == 3
+```
+
+Setting `PLEXORA_DATA_PATH` to a temporary folder keeps the test away from your real projects. See the [Python API](/docs/reference/python-api) for `import_sample`.
+
+## Package and share it
+
+Build a wheel with `python -m build` and publish it like any Python package; anyone who installs it next to Plexora gets the tool. Plugins built on the documented plugin API are yours: Plexora's licence lets you distribute and license them on your own terms. Bump `VERSION` with every release, since it is what makes browsers fetch your new scripts.
+
+## Related
+
+<Cards>
+<Card title="Plugin API" href="/docs/reference/plugin-api" description="Every descriptor field, server call and browser hook." />
+<Card title="Plugins" href="/docs/plugins" description="The five tools that come with Plexora, built on the same API." />
+</Cards>

@@ -56,7 +56,7 @@ def render(manifest, formats: dict | None = None) -> dict[str, str]:
     if unsupported:
         blocks.append(mdx.join("## Not supported", mdx.escape(
             "These formats are recognised by name but not imported. See "
-            "[Formats that are not supported yet](/docs/modalities/not-supported) for workarounds."),
+            "[Opening images and datasets](/docs/features/opening-data) for what to do instead."),
             "\n".join(unsupported_rows)))
     if kinds:
         blocks.append(mdx.join("## Data node resources", mdx.escape(

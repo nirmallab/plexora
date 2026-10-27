@@ -1,13 +1,14 @@
 {
   "title": "Reference",
-  "icon": "BookOpen",
+  "description": "Python API, plugin API and command line",
+  "root": true,
+  "icon": "Library",
   "pages": [
-    "configuration",
-    "file-locations",
+    "index",
+    "python-api",
+    "plugin-api",
+    "cli",
     "supported-formats",
-    "environment-variables",
-    "compatibility-matrix",
-    "troubleshooting",
-    "version"
+    "environment-variables"
   ]
 }

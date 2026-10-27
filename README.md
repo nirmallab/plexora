@@ -35,7 +35,7 @@ name = plexora.import_sample("slide.ome.tif", "slide_mask.tif", "cells.csv", wai
 plexora.view(name)   # in a notebook, shows the viewer inline
 ```
 
-More in the [quick start](https://nirmallab.github.io/plexora/docs/getting-started/quick-start/).
+More in [Your first image](https://nirmallab.github.io/plexora/docs/getting-started/first-image/).
 
 ## What it reads
 
@@ -51,11 +51,11 @@ The full list is in [Supported formats](https://nirmallab.github.io/plexora/docs
 
 | I want to | Read |
 | --- | --- |
-| Use the viewer and its tools | [Viewer](https://nirmallab.github.io/plexora/docs/viewer/navigation/), [Tools](https://nirmallab.github.io/plexora/docs/plugins/) |
-| Script it from Python or a notebook | [Python](https://nirmallab.github.io/plexora/docs/python/), [Notebooks](https://nirmallab.github.io/plexora/docs/notebooks/) |
-| Look at data on a remote machine or cluster | [Remote and HPC](https://nirmallab.github.io/plexora/docs/remote/) |
-| Write a plugin | [Plugin development](https://nirmallab.github.io/plexora/docs/plugin-development/) |
-| Look up a function or command | [Python API](https://nirmallab.github.io/plexora/docs/python-api/), [Command line](https://nirmallab.github.io/plexora/docs/cli/) |
+| Use the viewer and its tools | [Image viewer](https://nirmallab.github.io/plexora/docs/features/viewer/), [Plugins](https://nirmallab.github.io/plexora/docs/plugins/) |
+| Script it from Python or a notebook | [Python](https://nirmallab.github.io/plexora/docs/python/), [Notebook](https://nirmallab.github.io/plexora/docs/notebook/) |
+| Look at data on a remote machine or cluster | [Remote and HPC](https://nirmallab.github.io/plexora/docs/features/remote/) |
+| Write a plugin | [Build a custom plugin](https://nirmallab.github.io/plexora/docs/plugins/build-a-plugin/) |
+| Look up a function or command | [Python API](https://nirmallab.github.io/plexora/docs/reference/python-api/), [Command line](https://nirmallab.github.io/plexora/docs/reference/cli/) |
 
 ## Developing Plexora
 
@@ -66,8 +66,7 @@ pip install -e ".[dev]"
 python -m pytest -q -p no:randomly
 ```
 
-See [Development setup](https://nirmallab.github.io/plexora/docs/contributing/development-setup/)
-and, for the documentation site in `website/`, [CONTRIBUTING_DOCS.md](./CONTRIBUTING_DOCS.md).
+For the documentation site in `website/`, see [CONTRIBUTING_DOCS.md](./CONTRIBUTING_DOCS.md).
 Engineering notes live in [docs/internal/](./docs/internal/).
 
 ## Usage data
@@ -108,7 +107,7 @@ A 30-day trial is everything in Pro. External MCP access, for an outside coding
 agent, is off by default and not part of Pro; an administrator can turn it on
 for a licence. Pro is a yearly subscription per seat, at an academic or a
 commercial price, and both are bought online from the
-[pricing page](https://nirmallab.github.io/plexora/pricing/): one seat is an
+[pricing page](https://biocognia.com/#pricing): one seat is an
 individual account, two or more make a team. Licences, devices and AI credits
 are managed on the BioCognia platform, which Plexora shares with SCIMAP Pro: you
 sign in at [account.biocognia.com](https://account.biocognia.com), never in
@@ -147,7 +146,7 @@ open source license. In short:
 | Publishing a fork, a patched build, or a renamed version | ❌ Not allowed |
 
 Prices, and Buy for either use class, are on the
-[pricing page](https://nirmallab.github.io/plexora/pricing/); a subscription
+[pricing page](https://biocognia.com/#pricing); a subscription
 renews at the price it was bought at.
 
 **Plugins are a deliberate exception.** Anything you build against the documented

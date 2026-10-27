@@ -1,0 +1,76 @@
+---
+title: "Projects and data management"
+description: "Find, open, edit and delete samples, group them into datasets, and choose where Plexora keeps its data."
+aliases: ["samples", "project", "dataset", "data directory", "data-dir", "shared directory", "plexora where"]
+---
+
+Every sample you import becomes a project. The **Samples** page lists them all, groups them into datasets, and is where you edit or delete one. Everything Plexora makes for a project lives in one data directory, which you can move.
+
+<Media src="/media/features/projects-samples-list.webp" alt="The Samples page in list view, with a search field, sort menu, dataset folders and sample rows" caption="The Samples page in list view." />
+
+## How to use it
+
+<Steps>
+<Step>
+### Open the Samples page
+
+Choose **File › Samples…** (⌘O, Ctrl+O on Windows and Linux). Search across every project, sort by **Recently Opened**, **Date Created** or **Name**, and switch between grid and list view. Click a sample to open it.
+</Step>
+
+<Step>
+### Group samples into datasets
+
+A dataset is a named folder of samples, such as a cohort or a TMA series. Use **New Dataset…** to make one, either empty or from a folder of images, masks and tables (see [Opening images and datasets](/docs/features/opening-data)). Drag samples into it, or select several and choose **Move to…**. In the viewer, **B** and **N** step through the samples of the dataset you opened.
+</Step>
+
+<Step>
+### Edit or delete a sample
+
+Each sample has **Edit** (the pencil) and **Delete**. Edit opens the sample's page, where you add or replace the mask or the cell table, say which columns are markers and which are metadata, and add layers. Select several samples to delete them, move them, or **Remove from dataset** together. Removing a sample from a dataset, or deleting the dataset, never deletes the sample.
+</Step>
+
+<Step>
+### Check where your data lives
+
+Plexora keeps every project, dataset and setting in one data directory. Open **Settings › Data directory** to see where it is. To use another, choose **Move to a different directory**; you can leave existing projects where they are, copy them, or move them.
+</Step>
+</Steps>
+
+<Media src="/media/features/projects-settings-data-dir.webp" alt="The Data directory section of Settings, showing the current location and the Move to a different directory button" caption="Settings › Data directory." />
+
+## Where things are saved
+
+| What | Where |
+| --- | --- |
+| Your image, mask and table files | Where they were. Plexora reads them in place and never changes them. |
+| Projects, datasets, settings | The data directory. |
+| Converted masks, gates, regions | The data directory, in each project's own folder. |
+| Figures and captures | The data directory's figure library, outside any one project. |
+
+The default data directory is `~/Library/Application Support/plexora` on macOS, `%LOCALAPPDATA%\plexora` on Windows and `~/.local/share/plexora` on Linux.
+
+## Tips
+
+- Converted masks and image pyramids can be large. On a cluster with a small home quota, or a laptop with a small system drive, move the data directory to a bigger disk.
+- A project you expected is missing? It is almost always in another data directory. **Settings › Data directory** shows which one is in use.
+- A lab can share read-only projects from a common folder. They appear marked **Shared**, and gates, regions and figures you make on one are saved in your own directory. Settings lists shared folders; adding one is done from a terminal (below).
+
+## From the command line
+
+Everything above is done in Plexora itself; you never need a terminal for it. If you prefer one, these do the same:
+
+| To | Run |
+| --- | --- |
+| See which data directory is in use, and why | `plexora where` |
+| Use another data directory | `plexora config set data-dir /path/to/dir` |
+| Add a lab's shared, read-only folder | `plexora config set shared-dirs /lab/shared/plexora` |
+
+See [`plexora config`](/docs/reference/cli/config) for every setting.
+
+## Related
+
+<Cards>
+<Card title="Opening images and datasets" href="/docs/features/opening-data" description="Import a sample, or a whole folder as a dataset." />
+<Card title="Python" href="/docs/python" description="Create projects and datasets from a script." />
+<Card title="plexora config" href="/docs/reference/cli/config" description="Every setting you can change from a terminal." />
+</Cards>

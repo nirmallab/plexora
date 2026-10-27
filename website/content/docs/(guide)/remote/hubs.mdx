@@ -1,0 +1,61 @@
+---
+title: "JupyterHub and Open OnDemand"
+description: "Use Plexora inside a notebook on JupyterHub, Open OnDemand or Colab, where Plexora works out the right address for you."
+aliases: ["jupyterhub", "open ondemand", "ood", "colab", "hub", "portal"]
+---
+
+Many clusters offer a web portal instead of SSH: JupyterHub, Open OnDemand, or Google Colab in the cloud. Plexora runs inside your session there, next to the data, and appears in your browser through the portal. You do not need to know any ports or proxy paths.
+
+## How to use it
+
+<Steps>
+<Step>
+### Start a notebook session
+
+Open a Jupyter notebook through your hub or your Open OnDemand portal, as you usually would.
+</Step>
+<Step>
+### Install Plexora for that notebook
+
+Plexora must be installed in the environment the notebook's kernel runs in. See [Install with pip](/docs/getting-started/install-python).
+</Step>
+<Step>
+### Open the viewer in a cell
+
+Make this the last line of a cell:
+
+```python
+import plexora
+plexora.view("tonsil")
+```
+
+The viewer appears under the cell. Plexora sees that it is running in JupyterHub, Open OnDemand or Colab and builds the address the portal needs.
+</Step>
+<Step>
+### Work in the viewer
+
+Everything works as it does on your computer. Your projects live in the session's data directory on the cluster. See [Notebook](/docs/notebook) for showing objects already in your kernel.
+</Step>
+</Steps>
+
+## From a terminal in the session
+
+Everything above can also be done from a terminal; you do not need both. Use this when you want Plexora in a whole browser tab rather than in a cell.
+
+| Where | Run | Then |
+| --- | --- | --- |
+| A terminal in JupyterHub | `plexora` | Open the path it prints, after your hub's address, in the same browser tab. Needs `jupyter-server-proxy` in the environment that runs the Jupyter server. |
+| A terminal in an Open OnDemand session | `plexora --ood` | Open the link it prints. The link carries a token; treat it like a password. |
+
+## Tips
+
+- A blank cell or a 404 on JupyterHub usually means `jupyter-server-proxy` is missing from the Jupyter server's environment, which is not always the kernel's.
+- If the address Plexora builds is wrong for your site, pass `proxy=True` (always go through the notebook server) or `base_url="..."` to `plexora.view`.
+
+## Related
+
+<Cards>
+<Card title="Notebook" href="/docs/notebook" description="plexora.view, in-memory data and refreshing." />
+<Card title="SLURM clusters" href="/docs/remote/slurm" description="Connect to a cluster from your own computer instead." />
+<Card title="Troubleshooting" href="/docs/help/troubleshooting" description="Blank notebook cells and other problems." />
+</Cards>

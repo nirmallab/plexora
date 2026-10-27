@@ -47,7 +47,7 @@ commands:
         import plexora
 
         plexora.view("exemplar-001")
-    related: [where, connect, /docs/getting-started/quick-start, /docs/remote/manual-tunnel]
+    related: [where, connect, /docs/getting-started/first-image, /docs/remote]
 
   where:
     search: [data directory, data folder, location]
@@ -56,7 +56,7 @@ commands:
         command: plexora where
       - title: Only the path, for scripts
         command: plexora where --data-dir-only
-    related: [config, /docs/data/data-locations]
+    related: [config, /docs/features/projects]
 
   config:
     search: [settings, data directory]
@@ -65,7 +65,7 @@ commands:
         command: plexora config show
       - title: Keep data on a scratch drive
         command: plexora config set data-dir /scratch/me/plexora
-    related: [where, /docs/reference/configuration]
+    related: [where, /docs/features/projects]
 
   config show:
     examples:
@@ -82,7 +82,7 @@ commands:
         command: plexora config set mask-output project
       - title: Allow 20 GB for the cache of images read from web addresses
         command: plexora config set remote-cache-gb 20
-    related: [config show, where, /docs/reference/configuration]
+    related: [config show, where, /docs/features/projects]
 
   connect:
     search: [ssh, tunnel, remote, cluster, hpc, slurm]
@@ -99,7 +99,7 @@ commands:
         command: |
           plexora connect me@login.hpc.example.edu --srun "-p interactive -t 4:00:00" --save hpc
           plexora connect hpc
-    related: [plexora, node connect, /docs/remote/ssh-connect, /docs/remote/slurm]
+    related: [plexora, node connect, /docs/remote/ssh-connect]
 
   node:
     search: [data node, remote files, serve]
@@ -145,7 +145,7 @@ commands:
         command: plexora node prepare /data/tonsil_mask.tif
       - title: Write the converted mask somewhere else
         command: plexora node prepare /readonly/tonsil_mask.tif /scratch/me/tonsil_mask.pyramid.ome.tif
-    related: [node serve, /docs/data/segmentation]
+    related: [node serve, /docs/features/cells]
 
   dataset:
     search: [cohort, group projects, tma]
@@ -159,7 +159,7 @@ commands:
         import plexora
 
         plexora.create_dataset("Melanoma cohort", images=["slide1.ome.tif", "slide2.ome.tif"])
-    related: [project, /docs/data/datasets]
+    related: [project, /docs/features/opening-data]
 
   dataset create:
     examples:
@@ -182,7 +182,7 @@ commands:
             images=["slide1.ome.tif", "slide2.ome.tif"],
             description="Stage III, 2024",
         )
-    related: [dataset add, project create, /docs/data/datasets]
+    related: [dataset add, project create, /docs/features/opening-data]
 
   dataset list:
     examples:
@@ -239,9 +239,9 @@ commands:
     examples:
       - title: Register an image with its mask and cell table
         command: plexora project create slide.ome.tif --segmentation slide_mask.tif --data cells.csv
-      - title: Import a Xenium output folder
-        command: plexora project create /data/xenium/output-XETG00001
-    related: [dataset, /docs/data/importing]
+      - title: Let Plexora work out what each file is
+        command: plexora project create slide.ome.tif slide_mask.tif cells.csv
+    related: [dataset, /docs/getting-started/first-image]
 
   project create:
     purpose: |
@@ -257,8 +257,8 @@ commands:
         command: plexora project create slide.ome.tif --segmentation slide_mask.tif --data cells.csv --x X_centroid --y Y_centroid --cell-id CellID
       - title: Let Plexora work out what each file is
         command: plexora project create slide.ome.tif slide_mask.tif cells.csv
-      - title: A run folder, into a dataset
-        command: plexora project create /data/visium_hd/outs --dataset "Pancreas"
+      - title: Into a dataset
+        command: plexora project create slide.ome.tif --dataset "Pancreas"
       - title: A table covering several images
         command: plexora project create slide1.ome.tif --data all_cells.csv --subset imageid=slide1
     python:
@@ -277,7 +277,7 @@ commands:
             y="Y_centroid",
             cell_id="CellID",
         )
-    related: [project set, project show, /docs/data/importing]
+    related: [project set, project show, /docs/getting-started/first-image]
 
   project show:
     examples:
@@ -304,4 +304,4 @@ commands:
         import plexora
 
         plexora.configure_project("slide", markers=["CD3", "CD8", "CD20"])
-    related: [project show, /docs/data/progressive-configuration]
+    related: [project show, /docs/features/cells]

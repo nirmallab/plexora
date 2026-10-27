@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Generates the browser plugin API reference (content/docs/plugin-api/browser)
+// Generates the browser plugin API reference (content/docs/reference/plugin-api/browser)
 // from the JSDoc @typedef blocks in the client's JavaScript.
 //
 //   node scripts/generate_browser_api.mjs          write the pages
@@ -14,7 +14,7 @@ import { fileURLToPath } from 'node:url';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repo = resolve(here, '..', '..');
-const outDir = resolve(here, '..', 'content', 'docs', 'plugin-api', 'browser');
+const outDir = resolve(here, '..', 'content', 'docs', 'reference', 'plugin-api', 'browser');
 const SOURCES = ['plexora/client/src/js/pluginRegistry.js', 'plexora/client/src/js/main.js'];
 const ORDER = ['PluginDefinition', 'PluginHelp', 'SidebarController', 'PluginContext', 'PluginLayerApi', 'LayerRecord'];
 
@@ -32,7 +32,7 @@ function escape(text) {
 
 function linkTypes(text, names, self) {
   return text.replace(/`([A-Za-z]+)`/g, (m, name) =>
-    names.has(name) && name !== self ? `[\`${name}\`](/docs/plugin-api/browser/${kebab(name)})` : m,
+    names.has(name) && name !== self ? `[\`${name}\`](/docs/reference/plugin-api/browser/${kebab(name)})` : m,
   );
 }
 
@@ -125,7 +125,7 @@ function renderIndex(blocks) {
   const cards = blocks
     .map((b) => {
       const summary = b.description.split(/\n\s*\n/)[0].replace(/\s+/g, ' ').replace(/`/g, '').trim();
-      return `<Card title=${json(b.name)} href=${json(`/docs/plugin-api/browser/${kebab(b.name)}`)} description=${json(summary)} />`;
+      return `<Card title=${json(b.name)} href=${json(`/docs/reference/plugin-api/browser/${kebab(b.name)}`)} description=${json(summary)} />`;
     })
     .join('\n');
   return `---
@@ -186,5 +186,5 @@ if (process.argv.includes('--check')) {
   if (existsSync(outDir)) rmSync(outDir, { recursive: true });
   mkdirSync(outDir, { recursive: true });
   for (const [name, text] of files) writeFileSync(join(outDir, name), text);
-  console.log(`generate_browser_api: wrote ${files.size} files to content/docs/plugin-api/browser.`);
+  console.log(`generate_browser_api: wrote ${files.size} files to content/docs/reference/plugin-api/browser.`);
 }

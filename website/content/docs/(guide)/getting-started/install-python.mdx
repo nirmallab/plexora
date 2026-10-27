@@ -1,0 +1,88 @@
+---
+title: "Install with pip"
+description: "Install Plexora as a Python package in its own environment, for other Linux systems, servers, clusters and notebooks."
+aliases: ["pip", "conda", "python", "virtual environment", "venv", "server install"]
+---
+
+The Python package is the same app as the [desktop installers](/docs/getting-started/installation), shown in your web browser. Use it on a Linux system other than Debian or Ubuntu, a server or a cluster, or when you want Plexora in a notebook. It needs Python 3.12 or 3.13 on macOS (Apple silicon), Windows or 64-bit Linux; Intel Macs are not supported.
+
+We recommend installing Plexora in an environment of its own, so its dependencies never clash with your other Python tools.
+
+## How to use it
+
+<Steps>
+<Step>
+### Create an environment for Plexora
+
+<Tabs items={['conda', 'venv']}>
+<Tab value="conda">
+
+```bash
+conda create -n plexora python=3.13
+conda activate plexora
+```
+
+</Tab>
+<Tab value="venv">
+
+```bash
+python3.13 -m venv ~/plexora-env
+source ~/plexora-env/bin/activate        # Windows: %USERPROFILE%\plexora-env\Scripts\activate
+```
+
+</Tab>
+</Tabs>
+</Step>
+
+<Step>
+### Install Plexora
+
+```bash
+pip install plexora
+```
+</Step>
+
+<Step>
+### Start it
+
+```bash
+plexora
+```
+
+Plexora starts and opens in your browser. Leave the terminal open while you work; Ctrl+C stops it. Next time, activate the environment and run `plexora` again.
+</Step>
+
+<Step>
+### Open an image
+
+Continue with [Your first image](/docs/getting-started/first-image).
+</Step>
+</Steps>
+
+## Optional extras
+
+Extras add a few formats and places. Install them into the same environment:
+
+| Extra | Adds |
+|---|---|
+| `wsi` | `.mrxs` and `.svslide` whole-slide images |
+| `remote` | Images in Google Cloud Storage or Azure, and DICOM slides at a web address |
+| `jupyter` | The viewer inside a Jupyter notebook |
+
+```bash
+pip install "plexora[wsi,jupyter]"
+```
+
+## Tips
+
+- To use Plexora in a notebook, install it into the environment your notebook kernel runs in. See [Notebook](/docs/notebook).
+- Update with `pip install -U plexora` inside the activated environment. `plexora --version` prints the version you have.
+- On a server or cluster, run Plexora where the data is and view it from your own computer. See [Remote servers](/docs/remote).
+
+## Related
+
+<Cards>
+<Card title="Install the app" href="/docs/getting-started/installation" description="Installers for macOS, Windows and Linux, no Python needed." />
+<Card title="Your first image" href="/docs/getting-started/first-image" description="Open an image and add a mask and a cell table." />
+<Card title="Remote servers" href="/docs/remote" description="Servers, SLURM clusters and data nodes." />
+</Cards>

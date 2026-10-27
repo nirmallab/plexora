@@ -1,0 +1,71 @@
+---
+title: "Quality Control"
+description: "Find folds, blur, misregistered cycles and segmentation errors, mark them as regions, and flag the cells they affect."
+aliases: ["QC", "artifacts", "exclude regions", "folds", "out of focus", "registration", "bad cells"]
+---
+
+Quality Control marks the parts of an image you should not trust (a fold, a blurred field, a cycle that shifted, a mask that merged two nuclei) and flags the cells they affect. Nothing is deleted: each artifact is a region you can see and edit, and each cell gets a call with its reasons.
+
+<Media src="/media/plugins/qc.webp" alt="The Quality Control card with a hand-drawn region around a tissue fold listed under ROI, and the region outlined on the image" caption="A fold marked by hand in ROI QC; the cells inside it are flagged." />
+
+**Open it:** **Tools › Quality Control**, or press **⌘⇧X** (Ctrl+Shift+X on Windows and Linux). It needs only the image; a cell table adds the per-cell calls.
+
+The card holds five checks, each folded under its own header with a **Run** button and an eye: **Registration**, **Blur**, **Artifacts**, **Segmentation** and **ROI**.
+
+## How to use it
+
+<Steps>
+<Step>
+### Mark a region by hand
+
+In **ROI**, press **+** and pick a category, or type your own name under **Custom** and press **Enter**. A bar appears on the image: draw round the artifact with **Freehand**, **Polygon** or **Rectangle**, or use magic select (**E**) and drag a **Box** round it.
+</Step>
+<Step>
+### Run the automatic checks
+
+Press **Run** on **Blur** (out-of-focus tissue), **Artifacts** (folds, tears, debris, saturation), **Registration** or **Segmentation**. Each draws what it found on the image and lists it under its header.
+</Step>
+<Step>
+### Choose how strict
+
+**Lenient** excludes only severe, confident artifacts, **Standard** moderate and severe ones, **Strict** every confirmed artifact. Changing it recomputes every cell's call; regions you drew keep what you chose.
+</Step>
+<Step>
+### Review
+
+Click a region to fit the view to it. A region's **⋯** menu has **Details** (why it was flagged), **Trace outline** and **Delete region…**. Click a row under a category to show the cells it flagged.
+</Step>
+</Steps>
+
+## The checks
+
+<Media src="/media/plugins/qc-registration.webp" alt="Registration QC with a comparison DNA channel against the reference, misaligned areas striped" />
+
+- **Registration** compares each nuclear channel (DAPI, DNA, Hoechst) with the reference cycle. The channel being compared sits in channel 2, the reference in channel 1; stripes crawl over areas displaced past the threshold. **F** turns the stripes on and off, **Z** / **X** step the comparison channel. A heatmap and an arrow field show the shift across the tissue.
+- **Blur** scores the tissue from sharp to blurred against the image's own sharpest tissue, as a heatmap.
+- **Artifacts** finds folds, tears, debris and saturation, one threshold slider per category.
+- **Segmentation** (needs a mask) compares the mask with the DNA stain: **Under** is one label holding two nuclei, **Over** is one nucleus cut across two labels. The density map adds **Large**, **Small** and **Irregular** cells.
+
+<Media src="/media/plugins/qc-segmentation.webp" alt="Segmentation QC with under- and over-segmented cells drawn on the image" />
+
+## Tips
+
+- QC regions are ordinary ROIs. Open the [ROI](/docs/plugins/roi) tool to rename, reshape or recategorise them; QC takes the edits in.
+- A filled dot excludes, a ring only flags. Eyes hide what is drawn, never what is counted.
+- Thresholding's **Auto threshold** leaves out cells QC excluded.
+
+## What it saves
+
+QC results are saved with the project. The download button in the card's header offers:
+
+- **Cells (CSV)**: every cell's status, a column per category, and its reasons. **Cells (AnnData, obs only)**: the same as an `.h5ad` to join onto your own.
+- **Regions (GeoJSON)**, **Provenance (JSON)** and **Findings (CSV)**: every region and reason, with its score and threshold.
+- **Save into file…**: adds QC's columns to the table this project was opened from, after asking, with a backup.
+
+## Related
+
+<Cards>
+<Card title="ROI" href="/docs/plugins/roi" description="Edit QC regions like any other region." />
+<Card title="Thresholding" href="/docs/plugins/thresholding" description="Gate markers on the cells that passed QC." />
+<Card title="Segmentation and cell data" href="/docs/features/cells" description="Add the mask Segmentation QC checks." />
+</Cards>

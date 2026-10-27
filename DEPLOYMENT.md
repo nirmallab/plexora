@@ -1,9 +1,9 @@
 # Running Plexora
 
 > **The maintained user documentation is now at https://nirmallab.github.io/plexora/** —
-> see [Remote and HPC](https://nirmallab.github.io/plexora/docs/remote/),
-> [Notebooks](https://nirmallab.github.io/plexora/docs/notebooks/) and the
-> [desktop app](https://nirmallab.github.io/plexora/docs/getting-started/desktop-app/).
+> see [Remote and HPC](https://nirmallab.github.io/plexora/docs/features/remote/),
+> [Notebook](https://nirmallab.github.io/plexora/docs/notebook/) and the
+> [desktop app](https://nirmallab.github.io/plexora/docs/getting-started/installation/).
 > This file stays for maintainers: code comments cite its verified sessions
 > and the desktop signing details are here.
 

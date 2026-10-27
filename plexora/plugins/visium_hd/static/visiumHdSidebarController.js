@@ -819,7 +819,6 @@ if (typeof window !== "undefined") {
         help: {
             summary: "Choose which genes are shown over the tissue, in what colour, "
                 + "and how coarse the bins are.",
-            docs: "plugins/visium-hd-bins",
         },
         createSidebarController: (ctx) => new VisiumHdSidebarController(ctx),
     });

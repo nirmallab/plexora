@@ -2,9 +2,9 @@
 
 > **This guide has moved to https://nirmallab.github.io/plexora/**, where it is
 > kept up to date: [Getting started](https://nirmallab.github.io/plexora/docs/getting-started/installation/),
-> [Remote and HPC](https://nirmallab.github.io/plexora/docs/remote/),
-> [Notebooks](https://nirmallab.github.io/plexora/docs/notebooks/) and the
-> [compatibility matrix](https://nirmallab.github.io/plexora/docs/reference/compatibility-matrix/).
+> [Remote and HPC](https://nirmallab.github.io/plexora/docs/features/remote/),
+> [Notebook](https://nirmallab.github.io/plexora/docs/notebook/) and the
+> [installation requirements](https://nirmallab.github.io/plexora/docs/getting-started/installation/).
 > This copy is no longer updated.
 
 This guide is written for people who want to look at their images, not for
