@@ -59,7 +59,7 @@ const routes = [
   {
     icon: Terminal,
     title: 'From a terminal',
-    body: 'The same app from Python 3.12 or 3.13, in your browser.',
+    body: 'The same app from Python 3.12 or newer, in your browser.',
     code: 'pip install plexora && plexora',
     href: '/docs/getting-started/install-python',
   },

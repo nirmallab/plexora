@@ -1,5 +1,5 @@
 import { Download } from 'lucide-react';
-import { type Download as DownloadInfo, formatBytes, release } from '@/lib/site';
+import { type Download as DownloadInfo, formatBytes } from '@/lib/site';
 
 function OsIcon({ os }: { os: DownloadInfo['os'] }) {
   // Simple, recognisable outlines; no vendor logos.
@@ -41,7 +41,7 @@ export function DownloadCard({ download }: { download: DownloadInfo }) {
         {download.label}
       </a>
       <p className="text-xs text-fd-muted-foreground">
-        v{release.version} · {formatBytes(download.size)}
+        v{download.version} · {formatBytes(download.size)}
       </p>
     </div>
   );

@@ -54,6 +54,8 @@ export type Download = {
   name: string;
   url: string;
   size: number;
+  /** The release this installer comes from: the newest one that has it. */
+  version: string;
 };
 
 export const downloads: Download[] = [

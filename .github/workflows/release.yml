@@ -193,6 +193,8 @@ jobs:
     timeout-minutes: 10
     permissions:
       contents: write
+      # To start the docs build below.
+      actions: write
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
@@ -214,3 +216,10 @@ jobs:
         with:
           name: Plexora ${{ needs.preflight.outputs.version }}
           files: out/*
+      # The docs site's download buttons read the latest release, so rebuild it
+      # now. A release made with GITHUB_TOKEN starts no other workflow by
+      # itself; a workflow_dispatch is the one event that token can start.
+      - name: Rebuild the documentation site
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run docs.yml --ref main --repo "$GITHUB_REPOSITORY"

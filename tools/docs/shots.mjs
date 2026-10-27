@@ -4,7 +4,7 @@
 //
 // Steps: {click: css} {at: [x, y]} (CSS px in the 1280x800 page) {hover: css}
 // {drag: [[x, y], ...]} (press, move through, release) {move: [x, y]} (hover there)
-// {goto: url} (load another page)
+// {goto: url} (load another page) {if: "js", then: [steps]} (only while true)
 // {key: "m", modifiers: 4} (1 Alt, 2 Ctrl, 4 Meta, 8 Shift) {type: "text"}
 // {eval: "js"} {waitFor: "js expression"} {wait: ms} {settle: quiet ms}.
 // `{data}` in a step is replaced by $PLEXORA_DOCS_DATA, a folder holding the
@@ -145,6 +145,30 @@ const CAPTURES = {
         }
     })()`,
 };
+
+/** A figure on the Figure Canvas with the three captures placed on its
+ * first page: the library's first figure, or a new one. Each step only runs
+ * while its part is missing, so a second run changes nothing. */
+const OBJECTS = "Number(document.body.innerText.match(/(\\d+) objects?/)?.[1] || 0)";
+const TRAY = "document.querySelectorAll('#fb_tray_panel .fb-tray-item').length";
+const button = (text) => ({
+    eval: `[...document.querySelectorAll("button")].find((b) => b.textContent.trim().startsWith(${JSON.stringify(text)}) && b.offsetParent)?.click()`,
+});
+const place = (n, x, y) => ({ if: `${OBJECTS} < ${n} && ${TRAY} > 0`, then: [{ drag: [[170, 300], [400, 290], [600, 280], [x - 10, y], [x, y]] }, { wait: 2000 }] });
+const FIGURE = [
+    { goto: "/plugins/figure_builder/figures" },
+    { eval: `(() => {
+        const a = document.querySelector('#fb_library_results a[href*="/figure/fig_"]');
+        if (a) location.href = a.href; else document.getElementById("fb_library_create").click();
+    })()` },
+    { wait: 3500 },
+    { settle: 900 },
+    { if: `${OBJECTS} < 3 && ${TRAY} === 0`, then: [button("Captures"), { wait: 1500 }, button("Select all"), { wait: 500 }, button("Add to this figure"), { wait: 4000 }] },
+    place(1, 770, 250),
+    place(2, 885, 250),
+    place(3, 770, 370),
+    { at: [1150, 640] },
+];
 
 /** Open the navbar menu whose toggle has this id. */
 const menu = (id) => ({ click: `#${id}` });
@@ -395,8 +419,14 @@ export const SHOTS = [
         steps: [EXEMPLAR, cells("none"), CAPTURES, view(0.3, 0.45, 0.4, 0.33), ...QUIET],
         after: 2000,
     },
-    { name: "plugins/figure-canvas", url: "/plugins/figure_builder/figures", after: 1500 },
-    { name: "plugins/figure-export", url: "/plugins/figure_builder/figures", after: 1500 },
+    { name: "plugins/figure-canvas", url: "/", steps: [...FIGURE, ...QUIET], after: 1500, limit: 8000 },
+    {
+        name: "plugins/figure-export",
+        url: "/",
+        steps: [...FIGURE, { click: "#fb_export_open" }, { wait: 1500 }, ...QUIET],
+        after: 1500,
+        limit: 8000,
+    },
 
     // -- home page ---------------------------------------------------------------------
     {

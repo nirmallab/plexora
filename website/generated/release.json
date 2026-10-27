@@ -7,17 +7,20 @@
     "macos_arm64": {
       "name": "Plexora-0.0.28-macos-arm64.dmg",
       "url": "https://github.com/nirmallab/plexora/releases/download/v0.0.28/Plexora-0.0.28-macos-arm64.dmg",
-      "size": 487551834
+      "size": 487551834,
+      "version": "0.0.28"
     },
     "windows_x64": {
       "name": "Plexora-0.0.28-windows-x64-setup.exe",
       "url": "https://github.com/nirmallab/plexora/releases/download/v0.0.28/Plexora-0.0.28-windows-x64-setup.exe",
-      "size": 327371212
+      "size": 327371212,
+      "version": "0.0.28"
     },
     "linux_x64_deb": {
       "name": "Plexora-0.0.28-linux-x64.deb",
       "url": "https://github.com/nirmallab/plexora/releases/download/v0.0.28/Plexora-0.0.28-linux-x64.deb",
-      "size": 666756918
+      "size": 666756918,
+      "version": "0.0.28"
     }
   }
 }

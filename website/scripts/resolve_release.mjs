@@ -4,6 +4,9 @@
 //
 // The asset names come from scripts/release.py (`Plexora-<ver>-macos-arm64.dmg`
 // and so on); the buttons use the URLs GitHub returns, never a guessed one.
+// Each button takes the newest release that has its installer, so a release
+// whose Windows build is uploaded a day after the others keeps the previous
+// Windows installer on offer meanwhile instead of losing the button.
 // Offline, or rate-limited, the committed file is kept with a warning so a
 // local build still works. `--check` validates the committed file only.
 //
@@ -28,8 +31,8 @@ function validate(release) {
   if (!/^v\d+\.\d+\.\d+/.test(release?.tag ?? '')) problems.push(`tag ${JSON.stringify(release?.tag)} is not vX.Y.Z`);
   for (const [key, suffix] of Object.entries(ASSETS)) {
     const a = release?.assets?.[key];
-    if (!a) problems.push(`no ${key} asset (*${suffix})`);
-    else if (!a.url?.startsWith(`https://github.com/${repo}/releases/download/`) || !a.name?.endsWith(suffix) || !(a.size > 0))
+    if (!a) problems.push(`no ${key} asset (*${suffix}) in any recent release`);
+    else if (!a.url?.startsWith(`https://github.com/${repo}/releases/download/`) || !a.name?.endsWith(suffix) || !(a.size > 0) || !a.version)
       problems.push(`${key} asset is malformed: ${JSON.stringify(a)}`);
   }
   return problems;
@@ -51,11 +54,13 @@ if (process.argv.includes('--check')) {
 const headers = { Accept: 'application/vnd.github+json', 'User-Agent': 'plexora-docs' };
 if (process.env.GITHUB_TOKEN) headers.Authorization = `Bearer ${process.env.GITHUB_TOKEN}`;
 
-let data;
+let releases;
 try {
-  const res = await fetch(`https://api.github.com/repos/${repo}/releases/latest`, { headers });
+  const res = await fetch(`https://api.github.com/repos/${repo}/releases?per_page=30`, { headers });
   if (!res.ok) throw new Error(`GitHub answered ${res.status} ${res.statusText}`);
-  data = await res.json();
+  // Newest first, published releases only (no drafts, no pre-releases).
+  releases = (await res.json()).filter((r) => !r.draft && !r.prerelease);
+  if (!releases.length) throw new Error('no published release');
 } catch (err) {
   // CI must not deploy stale buttons silently; a laptop build may.
   if (process.env.CI) fail([`could not read the latest release: ${err.message}`]);
@@ -64,16 +69,28 @@ try {
   process.exit(0);
 }
 
+const latest = releases[0];
 const release = {
-  tag: data.tag_name,
-  version: String(data.tag_name).replace(/^v/, ''),
-  published_at: data.published_at,
-  url: data.html_url,
+  tag: latest.tag_name,
+  version: String(latest.tag_name).replace(/^v/, ''),
+  published_at: latest.published_at,
+  url: latest.html_url,
   assets: {},
 };
 for (const [key, suffix] of Object.entries(ASSETS)) {
-  const a = (data.assets ?? []).find((x) => x.name.endsWith(suffix));
-  if (a) release.assets[key] = { name: a.name, url: a.browser_download_url, size: a.size };
+  for (const r of releases) {
+    const a = (r.assets ?? []).find((x) => x.name.endsWith(suffix));
+    if (!a) continue;
+    release.assets[key] = {
+      name: a.name,
+      url: a.browser_download_url,
+      size: a.size,
+      version: String(r.tag_name).replace(/^v/, ''),
+    };
+    break;
+  }
+  if (release.assets[key] && release.assets[key].version !== release.version)
+    console.warn(`resolve_release: ${key} is not in ${release.tag} yet; offering ${release.assets[key].version}.`);
 }
 const problems = validate(release);
 if (problems.length) fail(problems);

@@ -236,28 +236,36 @@ function withData(step) {
     return JSON.parse(text.replaceAll("{data}", data.replace(/[\\"]/g, "\\$&")));
 }
 
+async function runStep(page, base, shot, raw) {
+    const step = withData(raw);
+    if (step.wait) await sleep(step.wait);
+    else if (step.goto) {
+        await page.goto(`${base}${step.goto}`);
+        await page.settle(900, shot.limit);
+    }
+    else if (step.if) {
+        // Steps that make state (a figure's panels) run only while it is missing.
+        if (await page.eval(`Boolean(${step.if})`)) {
+            for (const inner of step.then) await runStep(page, base, shot, inner);
+        }
+    }
+    else if (step.waitFor) await page.waitFor(step.waitFor, step.limit);
+    else if (step.click) await page.click(step.click);
+    else if (step.at) await page.mouse(...step.at);
+    else if (step.move) await page.send("Input.dispatchMouseEvent", { type: "mouseMoved", x: step.move[0], y: step.move[1] });
+    else if (step.drag) await page.drag(step.drag);
+    else if (step.hover) await page.hover(step.hover);
+    else if (step.key) await page.key(step.key, step.modifiers || 0);
+    else if (step.type) await page.type(step.type);
+    else if (step.eval) await page.eval(step.eval);
+    else if (step.settle) await page.settle(step.settle, shot.limit);
+    else throw new Error(`unknown step ${JSON.stringify(step)}`);
+}
+
 export async function run(page, base, shot) {
     await page.goto(`${base}${shot.url}`);
     await page.settle(900, shot.limit);
-    for (const raw of shot.steps || []) {
-        const step = withData(raw);
-        if (step.wait) await sleep(step.wait);
-        else if (step.goto) {
-            await page.goto(`${base}${step.goto}`);
-            await page.settle(900, shot.limit);
-        }
-        else if (step.waitFor) await page.waitFor(step.waitFor, step.limit);
-        else if (step.click) await page.click(step.click);
-        else if (step.at) await page.mouse(...step.at);
-        else if (step.move) await page.send("Input.dispatchMouseEvent", { type: "mouseMoved", x: step.move[0], y: step.move[1] });
-        else if (step.drag) await page.drag(step.drag);
-        else if (step.hover) await page.hover(step.hover);
-        else if (step.key) await page.key(step.key, step.modifiers || 0);
-        else if (step.type) await page.type(step.type);
-        else if (step.eval) await page.eval(step.eval);
-        else if (step.settle) await page.settle(step.settle, shot.limit);
-        else throw new Error(`unknown step ${JSON.stringify(step)}`);
-    }
+    for (const step of shot.steps || []) await runStep(page, base, shot, step);
     await page.settle(shot.quiet ?? 1200, shot.limit);
     await sleep(shot.after ?? 400);
     await page.shot(path.join(OUT, `${shot.name}.webp`), shot.clip);
@@ -287,4 +295,4 @@ async function main() {
     process.exit(failed ? 1 : 0);
 }
 
-if (import.meta.url === pathToFileURL(process.argv[1]).href) await main();
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) await main();
