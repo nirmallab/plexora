@@ -260,6 +260,7 @@ def test_the_updater_manifest_names_only_signed_artifacts(tmp_path):
 
 
 def test_updater_artifacts_only_with_a_signing_key(ctx, monkeypatch, tmp_path):
+    ctx.dev = False
     monkeypatch.delenv("TAURI_SIGNING_PRIVATE_KEY", raising=False)
     overlay = json.loads(release.tauri_config_overlay(ctx, sign=False).read_text())
     assert "createUpdaterArtifacts" not in overlay["bundle"]
@@ -268,3 +269,13 @@ def test_updater_artifacts_only_with_a_signing_key(ctx, monkeypatch, tmp_path):
     overlay = json.loads(release.tauri_config_overlay(ctx, sign=False).read_text())
     assert overlay["bundle"]["createUpdaterArtifacts"] is True
     assert overlay["plugins"]["updater"]["pubkey"] == "PUBLIC"
+
+
+def test_a_dev_build_is_never_offered_updates(ctx, monkeypatch):
+    # The committed public key would turn the updater on; a dev build blanks it.
+    monkeypatch.setenv("TAURI_SIGNING_PRIVATE_KEY", "secret")
+    monkeypatch.setenv("PLEXORA_UPDATER_PUBKEY", "PUBLIC")
+    overlay = json.loads(release.tauri_config_overlay(ctx, sign=False).read_text())
+    assert ctx.dev
+    assert overlay["plugins"]["updater"]["pubkey"] == ""
+    assert "createUpdaterArtifacts" not in overlay["bundle"]

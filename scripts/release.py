@@ -548,7 +548,9 @@ def cmd_doctor(ctx, args):
             "are kept outside it (PLEXORA_BUILD_DIR overrides).")
     signing = _signing_state(ctx)
     say(f"  signing       {signing}")
-    if os.environ.get("TAURI_SIGNING_PRIVATE_KEY", "").strip() and updater_pubkey():
+    if ctx.dev:
+        say("  updater       off: a dev build never offers updates (--release turns it on)")
+    elif os.environ.get("TAURI_SIGNING_PRIVATE_KEY", "").strip() and updater_pubkey():
         say("  updater       signed: installed apps can update in place")
     else:
         say("  updater       NOT signed: no updater artifacts, and installed apps offer a "
@@ -1169,7 +1171,11 @@ def tauri_config_overlay(ctx, sign: bool) -> Path:
         if windows:
             bundle["windows"] = windows
     pubkey = updater_pubkey()
-    if os.environ.get("TAURI_SIGNING_PRIVATE_KEY", "").strip():
+    if ctx.dev:
+        # A dev build reports the plain version, so it would be offered every
+        # release; without a public key its updater answers "unsupported".
+        overlay["plugins"] = {"updater": {"pubkey": ""}}
+    elif os.environ.get("TAURI_SIGNING_PRIVATE_KEY", "").strip():
         if not pubkey:
             raise StepError("TAURI_SIGNING_PRIVATE_KEY is set but there is no updater public key.",
                             "Set PLEXORA_UPDATER_PUBKEY to the .pub file's contents, or put it "

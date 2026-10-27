@@ -1716,7 +1716,8 @@ The private key and its password go in the repository secrets
 contents of the `.pub` file go in the repository *variable*
 `PLEXORA_UPDATER_PUBKEY`; it is also committed in `tauri.conf.json` under
 `plugins.updater.pubkey`, so a local build needs only the private key and its
-password. With both set, each build also produces the signed
+password. A `--dev` build blanks the key and is never offered updates; only a
+`--release` build updates in place. With both set, each build also produces the signed
 updater artifacts (`.app.tar.gz` on macOS, a `.sig` beside the Windows
 installer and the `.deb`), and the publish job attaches a `latest.json`
 (`release.py manifest`) that installed apps read from
