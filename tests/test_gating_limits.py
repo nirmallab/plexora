@@ -318,6 +318,9 @@ def test_a_whole_image_check_that_cannot_tell_is_reviewed(tmp_path):
         def close(self, unit, state, reason, **kw):
             closed.update(state=state, reason=reason, **kw)
 
+        def vision_first_on(self):
+            return False
+
     unit = {"project": "p", "marker": "M", "candidate": 1.5, "state": "regression_confirm"}
     engine = Engine()
     engine.record = {"units": {"p::M": unit}}

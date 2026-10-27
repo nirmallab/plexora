@@ -210,7 +210,24 @@ READING_GUIDE = {
                       "dark-grey floor you can tell from black; a good bright cell shows the "
                       "row's pattern with detail inside it (a ring, a speckled nucleus, "
                       "granules), not a flat or red blob. The row's `pattern` says which "
-                      "structure that marker has. Judge each row on its own"),
+                      "structure that marker has. Judge each row on its own. The second "
+                      "picture, when there is one, is the same markers in rows at the c3 "
+                      "brightness: tiles b1.. are bright cells and d1.. dim cells, each "
+                      "picked far from the others across the image, the judged cell's "
+                      "nucleus between four magenta ticks. A bright tile whose light is a "
+                      "speck, debris, a blob off the cells or a smear -- not the marked "
+                      "cell's own ring, fill or granules -- is `bright_artifact`; a dim "
+                      "tile whose marked cell shows its own stain, however faint, is "
+                      "`dim_stained`. Say what the stain looks like (`pattern_seen`) and "
+                      "where it lies (`stain_location`) from both pictures"),
+    "observed": ("`observed` is what the image's contrast check saw of this marker: the "
+                 "pattern and where the stain lay, how many of a few dim cells spread across "
+                 "the image carried their own stain, and how many of the brightest were "
+                 "debris rather than a cell's stain. Judge own stain against it: a bright "
+                 "speck or blob that is not a cell's own ring, fill or granules is an "
+                 "artifact, not a positive, and dim cells with their own stain are positives "
+                 "a gate should not miss. It is evidence, not an answer: the cells in front "
+                 "of you decide"),
     **{f"plot:{relation}": text for relation, text in BIVARIATE_READING.items()},
 }
 
@@ -674,8 +691,11 @@ def _sheet(engine, unit, ds, channel, low, *, references=(), candidates=None,
     within = ({"marker": condition["within"], "gate": condition["partner_gate"]}
               if condition else None)
     pixel = engine.pixel_for(ds.name)
+    observed = _observed_fields(engine, unit, ds, pixel)
     inputs = {"project": ds.name, "marker": unit["marker"], "channel": channel,
               "low": float(low), "high": unit.get("high"), "within": within}
+    if observed:
+        inputs["observed"] = observed
     fps = {"fields": _fingerprint({**inputs, "references": list(references),
                                    "chain": candidate_fields, "seed": _seed(engine),
                                    "field_um": engine.field_um(),
@@ -698,7 +718,7 @@ def _sheet(engine, unit, ds, channel, low, *, references=(), candidates=None,
         high=unit.get("high"), references=references, partner=partner,
         candidates=candidates, candidate_fields=candidate_fields, seed=_seed(engine),
         fmt=_fmt(engine), field_um=engine.field_um(), pixel=pixel,
-        positives_within=within, rows=tuple(drawn),
+        positives_within=within, rows=tuple(drawn), observed=observed,
         title=title or f"{unit['marker']} · gate {_compact(low)} · three scales")
     rendered["row_fps"] = {row: fps[row] for row in drawn}
     rendered["left_out"] = left_out
@@ -706,6 +726,25 @@ def _sheet(engine, unit, ds, channel, low, *, references=(), candidates=None,
     if rendered.get("artifact"):
         unit.setdefault("artifacts", []).append(rendered["artifact"]["id"])
     return rendered
+
+
+def _observed_fields(engine, unit, ds, pixel):
+    """What the contrast check saw, for the sheet's fields (`SessionOptions.
+    observations: use`): {avoid: a field-sized box around each bright cell
+    it saw as debris, around: the dim cells it saw stained, lowest first}.
+    None with observations off or nothing seen."""
+    from plexora.plugins.gating.server.autogate import sheet
+
+    seen = engine.observed_for(unit) if engine.observations_on() else None
+    if not seen or not (seen["artifacts"] or seen["dim_stained"]):
+        return None
+    side = float(sheet.field_side_px(ds.project, engine.field_um(), pixel)["side_px"])
+    half = side / 2
+    avoid = [[float(c["x"]) - half, float(c["y"]) - half, float(c["x"]) + half,
+              float(c["y"]) + half] for c in seen["artifacts"]]
+    around = [[float(c["x"]), float(c["y"])]
+              for c in sorted(seen["dim_stained"], key=lambda c: float(c["value"]))]
+    return {"avoid": avoid, "around": around}
 
 
 def _compact(value):
@@ -1530,28 +1569,54 @@ def display_setup(engine, units):
         engine.settle_display()
         engine.log(event="display_setup_unavailable", project=project, reason=str(exc))
         return None
+    try:
+        spread = display_grid.render_spread_strip(session, ds, record, rows, fmt=_fmt(engine))
+    except Exception as exc:  # the grid alone still settles the brightness
+        spread = None
+        engine.log(event="display_spread_unavailable", project=project, reason=str(exc))
+    # Which cell each tile of the strip is, for the answer (kept off what is sent).
+    tiles = {r["channel"]: r["tiles"] for r in (spread or {}).get("manifest", {}).get("rows", [])}
+    entry.setdefault("spread", {}).update(tiles)
     entry["out"] = [r["channel"] for r in rows]
     levels = entry.setdefault("levels", {})
     for row in rendered["manifest"]["rows"]:
         levels[row["channel"]] = row["levels"]
     markers = [r["marker"] for r in rows]
+    question = (f"How bright should {len(rows)} markers of {project} be drawn? For EVERY "
+                "row give `background_ok` (columns where the background tile is a faint "
+                "dark-grey floor: not black, not stained-looking) and `structure_ok` "
+                "(columns where the bright cells show the row's `pattern` with detail: "
+                "not a flat or red blob, not too dim). Empty lists are fine; code picks "
+                "the column.")
+    allowed = {"rows": markers, "columns": list(calibration.COLUMN_IDS)}
+    shown = {r["marker"]: sorted(tiles.get(r["channel"]) or (), key=_tile_order)
+             for r in rows if tiles.get(r["channel"])}
+    if shown:
+        question += (" From both pictures, for every row also give `pattern_seen` and "
+                     "`stain_location`; from the second, `bright_artifact` (bright tiles "
+                     "whose light is not the marked cell's own stain) and `dim_stained` (dim "
+                     "tiles whose marked cell shows its own stain).")
+        allowed.update(tiles=shown, patterns_seen=list(schemas.OBSERVED_PATTERNS),
+                       stain_locations=list(schemas.STAIN_LOCATIONS))
     packet = {
-        "question": (f"How bright should {len(rows)} markers of {project} be drawn? For EVERY "
-                     "row give `background_ok` (columns where the background tile is a faint "
-                     "dark-grey floor: not black, not stained-looking) and `structure_ok` "
-                     "(columns where the bright cells show the row's `pattern` with detail: "
-                     "not a flat or red blob, not too dim). Empty lists are fine; code picks "
-                     "the column."),
+        "question": question,
         "evidence": {"project": project,
                      "rows": [{"marker": r["marker"], "pattern": r["pattern"]} for r in rows],
                      **_reading(engine, ["display_setup"])},
-        "allowed": {"rows": markers, "columns": list(calibration.COLUMN_IDS)},
+        "allowed": allowed,
         "_image_meta": [],
     }
     # Which channel each row draws, for the answer (kept off what is sent).
     entry.setdefault("rows", {}).update({r["marker"]: r["channel"] for r in rows})
-    return packet, _images(packet, ((rendered, "display_grid",
-                                     "markers in rows, five brightnesses in columns"),))
+    pictures = [(rendered, "display_grid", "markers in rows, five brightnesses in columns")]
+    if spread is not None:
+        pictures.append((spread, "display_spread",
+                         "bright tiles b1.. and dim tiles d1.., spread across the image"))
+    return packet, _images(packet, tuple(pictures))
+
+
+def _tile_order(tile_id):
+    return (tile_id[0] != "b", int(tile_id[1:]))
 
 
 def t1_strip(engine, units):

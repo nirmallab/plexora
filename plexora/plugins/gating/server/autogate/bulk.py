@@ -176,6 +176,13 @@ def decide_first(engine, unit):
         unit["qc_reason"] = hard or [unit["class"]]
         unit["state"] = "qc_confirm"
         return
+    if t1.get("accept") and engine.note_observed(unit):
+        # The contrast check saw what a clean split cannot: dim cells stained
+        # below the gate, debris among the brightest, or the wrong pattern
+        # (`SessionOptions.observations`). The marker gets a look.
+        unit["observed_routed"] = True
+        unit["state"] = "awaiting_t2"
+        return
     if t1.get("accept"):
         unit["path"] = "t1"
         unit["method"] = "gmm"

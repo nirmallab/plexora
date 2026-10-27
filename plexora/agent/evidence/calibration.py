@@ -68,8 +68,10 @@ from plexora.agent.errors import AgentError
 
 #: Bumped when a window's rule changes; a stored record of another version is
 #: stale and recomputed. 6: the nuclear stain is measured on its own cells
-#: (`nuclear_view`).
-VERSION = "6"
+#: (`nuclear_view`). 7: a marker's cells carry spread picks (`cells.spread`)
+#: and the column they were read on, and a choice what the check saw
+#: (`observed`).
+VERSION = "7"
 NAMESPACE = "display"
 
 #: [cal] the display levels (0 black .. 1 white) a marker's curve is solved
@@ -329,6 +331,15 @@ def chosen_on_scale(record, name) -> bool:
     return bool(choice) and choice.get("scale", "log") == SCALE
 
 
+def observed(record, name) -> dict | None:
+    """What the contrast check saw of a marker (`transitions.apply_display`),
+    kept with its choice: {pattern_seen, stain_location, bright: [{id,
+    cell_id, x, y, value, artifact}], dim: [{..., stained}], notes?, flags?}.
+    None when no check said anything about it."""
+    choice = ((record or {}).get("choices") or {}).get(name) or {}
+    return choice.get("observed") or None
+
+
 def needs_choice(record, name) -> bool:
     """True for a marker whose window a vision check should look at: drawn by
     the cell rule, with bright cells to show, and not chosen yet on the scale
@@ -521,7 +532,7 @@ def compute(source, channels, *, nuclear=None, level=None, caps=None,
                 "chosen_by": "rule",
                 "anchors": {k: anchored[k] for k in (
                     "black", "background", "noise_p99", "titre", "band", "reanchored",
-                    "n_negative", "n_bright", "radius_px") if k in anchored},
+                    "n_negative", "n_bright", "radius_px", "column") if k in anchored},
                 "cells": anchored.get("cells") or {}})
             if anchored.get("low_band") and not anchored.get("reanchored"):
                 entry["rule_low"] = rule_from(anchored["low_band"])

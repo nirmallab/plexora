@@ -312,6 +312,21 @@ class SessionOptions(AgentModel):
     panel_looks: int = Field(3, ge=1, le=6, description="With engine v2: the most "
                              "cell panels one marker is shown before it closes for review "
                              "(fewer when the leading candidate resolves first).")
+    observations: Literal[schemas.OBSERVATION_MODES] = Field(
+        "off", description="Experimental. use: what the image's contrast check saw of each "
+                           "marker (its pattern, dim cells seen stained, bright cells seen to "
+                           "be debris) goes into every look as evidence, starts the gate no "
+                           "higher than the dim stained cells, keeps the tissue fields away "
+                           "from the debris, caps confidence on a doubt, and gives a clean "
+                           "split with a finding a look. off: not used.")
+    vision_first: bool = Field(False, description="Experimental. On a marker whose "
+                               "distribution says little (no valley, estimators that "
+                               "disagree), the looks place the gate: the first look starts "
+                               "at the dim cells the contrast check saw stained (else the "
+                               "cell share's 15% rung), the candidates are rungs by share "
+                               "of cells, cells below the gate seen mixed send it down, and "
+                               "the distribution's and spatial whole-image checks no longer "
+                               "fail a gate the looks placed. Pair with observations=use.")
 
     @field_validator("engine", mode="before")
     @classmethod
@@ -1224,7 +1239,8 @@ def _display_brief(display):
     if display.get("projects"):
         out["projects"] = {
             p: {k: v for k, v in (("status", e.get("status")), ("reason", e.get("reason")),
-                                  ("chosen", e.get("chosen"))) if v}
+                                  ("chosen", e.get("chosen")),
+                                  ("observed", e.get("observed"))) if v}
             for p, e in display["projects"].items()}
     return out
 

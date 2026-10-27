@@ -32,13 +32,17 @@ VERSION = "4"
 #: marker's evidence; the scored proposal on all of it; the Auto gate on the
 #: mixture; the background's onset and ceiling and the estimators on the
 #: distribution; steps and edges on nothing but distance.
-PRIORITY = ("ctrl", "within", "bio", "score", "gmm", "ceiling", "onset", "kde", "otsu",
-            "gmm2", "up", "down", "split", "edge")
+PRIORITY = ("ctrl", "within", "bio", "score", "obs", "gmm", "ceiling", "onset", "kde",
+            "otsu", "gmm2", "rung", "up", "down", "split", "edge")
 
 #: Scored candidates that join the lattice (`scoring` families), and are
 #: kept even outside the guard band: the band is drawn around the mixture,
 #: which is exactly what is wrong on the markers these candidates are for.
-SCORED = ("score", "bio", "ceiling", "onset")
+SCORED = ("score", "bio", "ceiling", "onset",
+          # the lowest dim cell a contrast check saw stained (`Engine.observed_start`)
+          "obs",
+          # shares of cells above, with vision first (`rungs`)
+          "rung")
 
 #: [cal] steps from the Auto gate, in sds of the population the gate moves
 #: into (the positives' going up, the background's going down).
@@ -85,13 +89,30 @@ def _rank(point_id):
     return PRIORITY.index(name) if name in PRIORITY else len(PRIORITY)
 
 
+def rungs(col, shares=None) -> list:
+    """[(id, value)]: the values with each share of the column's cells above
+    them (`schemas.VISION_RUNGS`), `rung:<percent>`."""
+    from plexora.plugins.gating.server.autogate import schemas
+
+    s = col.sorted32
+    n = len(s)
+    if not n:
+        return []
+    out = []
+    for share in shares or schemas.VISION_RUNGS:
+        index = min(n - 1, max(0, int(round((1.0 - share) * (n - 1)))))
+        out.append((f"rung:{share * 100:g}", float(s[index])))
+    return out
+
+
 def build(ds, marker, *, gmm, estimators_raw=None, references=(), high=None,
-          seed=0, scoring=None, start=None) -> dict:
+          seed=0, scoring=None, start=None, with_rungs=False) -> dict:
     """{version, points: [{id, low, sources, n_positive, fraction}], beyond,
     guard, fingerprint} for one marker. `references` are the unit's gated
     partners (`Engine.references_ready`); `scoring` the unit's scored
     candidates (`scoring.score`, compact), `start` the gate the session
-    started from (steps are taken from it; the Auto gate when None)."""
+    started from (steps are taken from it; the Auto gate when None);
+    `with_rungs` adds the shares of cells (`rungs`, vision first)."""
     from plexora.plugins.gating.server import model
     from plexora.plugins.gating.server.autogate import bivariate, candidates
     from plexora.plugins.gating.server.autogate import profile as profmod
@@ -120,10 +141,13 @@ def build(ds, marker, *, gmm, estimators_raw=None, references=(), high=None,
                 raw.append((f"within:{ref['marker']}", float(within["low"])))
     scored = []
     for cand in (scoring or {}).get("candidates") or []:
-        if family(cand["id"]) in SCORED and cand.get("low") is not None:
+        if family(cand["id"]) in SCORED and family(cand["id"]) != "rung" \
+                and cand.get("low") is not None:
             if family(cand["id"]) == "bio" and not cand.get("robust", True):
                 continue
             scored.append((cand["id"], float(cand["low"])))
+    if with_rungs:
+        scored.extend(rungs(col))
     raw.extend(scored)
     guard = candidates.guard_band(fit)
     if guard is not None:

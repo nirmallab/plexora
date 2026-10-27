@@ -50,7 +50,7 @@ GAP = 4
 
 #: How each field class is captioned on the sheet.
 CLASS_LABELS = {"borderline": "borderline", "clear_positive": "clearly positive",
-                "clear_negative": "clearly negative"}
+                "clear_negative": "clearly negative", "dim_stained": "dim stained"}
 
 
 def _plot_px():
@@ -183,7 +183,7 @@ def _histogram(ds, marker, low, candidates, size):
 def render_context_sheet(session, ds, *, marker, channel, low, high=None, references=(),
                          partner=None, candidates=None, candidate_fields=None, seed=0,
                          fmt="webp", title=None, store=True, field_um=None, pixel=None,
-                         positives_within=None, rows=ROWS):
+                         positives_within=None, rows=ROWS, observed=None):
     """{png, image, format, manifest, artifact, fields} for one marker's sheet.
 
     `marker` is the table column, `channel` its image channel; `references`
@@ -194,7 +194,10 @@ def render_context_sheet(session, ds, *, marker, channel, low, high=None, refere
     field side in microns and `pixel` the session's pixel size for an image
     that states none; `positives_within` `{marker, gate}` counts the
     whole-image positives among that partner's positives only (a conditional
-    gate); `rows` which of `ROWS` to draw (the sheet is shorter by the rest)."""
+    gate); `rows` which of `ROWS` to draw (the sheet is shorter by the rest);
+    `observed` what the contrast check saw (`SessionOptions.observations`):
+    `avoid` boxes around bright debris no field may cover, and `around` dim
+    stained cells, one of which takes the clearly-positive field's place."""
     from PIL import Image, ImageDraw
 
     from plexora.agent import artifacts, gate_sampling, sections
@@ -244,7 +247,10 @@ def render_context_sheet(session, ds, *, marker, channel, low, high=None, refere
     if "fields" not in rows:
         pass
     elif candidate_fields:
-        shown = []      # boxes already on the sheet: each candidate gets its own field
+        # Boxes already on the sheet (each candidate gets its own field), and
+        # the debris the contrast check saw.
+        avoided = [tuple(b) for b in (observed or {}).get("avoid") or ()]
+        shown = list(avoided)
         for cand in list(candidate_fields)[:MAX_CANDIDATE_FIELDS]:
             lo, hi = sorted((float(cand["prev"]), float(cand["low"])))
             got = gate_sampling.sample_gate_validation_regions(
@@ -255,7 +261,7 @@ def render_context_sheet(session, ds, *, marker, channel, low, high=None, refere
             if found is not None:
                 b = found["bounds"]
                 shown.append((b["x"], b["y"], b["x"] + b["width"], b["y"] + b["height"]))
-                found = {**found, "field_id": f"f{len(shown)}"}
+                found = {**found, "field_id": f"f{len(shown) - len(avoided)}"}
             flips = (int(found.get("borderline_below") or 0)
                      + int(found.get("borderline_above") or 0)) if found else 0
             slots.append((f"no other field with cells flipping at {cand['id']}", found,
@@ -266,9 +272,15 @@ def render_context_sheet(session, ds, *, marker, channel, low, high=None, refere
     else:
         sampled = gate_sampling.sample_gate_validation_regions(
             ds, marker, low, top, field_px=side, image_size=image_size, n_per_class=1,
-            classes=CLASSES, seed=seed)
+            classes=CLASSES, seed=seed, avoid=(observed or {}).get("avoid") or (),
+            around=(observed or {}).get("around") or ())
         by_class = {f["class"]: f for f in sampled["fields"]}
-        for cls in CLASSES:
+        shown_classes = list(CLASSES)
+        if "dim_stained" in by_class:
+            # True dim staining in place of the brightest field, which may be
+            # the debris the contrast check saw.
+            shown_classes[shown_classes.index("clear_positive")] = "dim_stained"
+        for cls in shown_classes:
             found = by_class.get(cls)
             caption = (f"{found['field_id']} · {CLASS_LABELS[cls]} · "
                        f"{found['positives']}/{found['cells']} positive") if found else ""
