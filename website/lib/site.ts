@@ -56,13 +56,31 @@ export type Download = {
   size: number;
   /** The release this installer comes from: the newest one that has it. */
   version: string;
+  /** A step-by-step install page. When set, a download button opens it and
+   * the page starts the download, so the steps are on screen as it lands. */
+  guide?: string;
 };
 
 export const downloads: Download[] = [
   { key: 'macos_arm64', os: 'macOS', label: 'Download .dmg', requirement: 'macOS 12 or later, Apple silicon' },
-  { key: 'windows_x64', os: 'Windows', label: 'Download .exe', requirement: 'Windows 10 or 11, 64-bit; installs for you only' },
+  {
+    key: 'windows_x64',
+    os: 'Windows',
+    label: 'Download .exe',
+    requirement: 'Windows 10 or 11, 64-bit; installs for you only',
+    guide: '/docs/getting-started/install-windows',
+  },
   { key: 'linux_x64_deb', os: 'Linux', label: 'Download .deb', requirement: 'Ubuntu 22.04, Debian 12 or later, 64-bit' },
 ].map((d) => ({ ...d, ...releaseInfo.assets[d.key as Download['key']] }) as Download);
+
+/** The query that tells an install page to start its download on arrival. */
+export const startDownloadParam = 'download';
+
+/** Where a download button goes: its install page (which starts the download)
+ * when it has one, otherwise the installer itself. */
+export function downloadHref(d: Download): string {
+  return d.guide ? `${d.guide}/?${startDownloadParam}=1` : d.url;
+}
 
 /** 487551834 -> "488 MB". */
 export function formatBytes(bytes: number): string {

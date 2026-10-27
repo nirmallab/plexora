@@ -1,5 +1,6 @@
+import Link from 'next/link';
 import { Download } from 'lucide-react';
-import { type Download as DownloadInfo, formatBytes } from '@/lib/site';
+import { type Download as DownloadInfo, downloadHref, formatBytes } from '@/lib/site';
 
 function OsIcon({ os }: { os: DownloadInfo['os'] }) {
   // Simple, recognisable outlines; no vendor logos.
@@ -23,8 +24,15 @@ function OsIcon({ os }: { os: DownloadInfo['os'] }) {
   );
 }
 
-/** One installer from the latest release, with the size GitHub reports. */
+/** One installer from the latest release, with the size GitHub reports. An
+ * installer with an install page opens that page, which starts the download. */
 export function DownloadCard({ download }: { download: DownloadInfo }) {
+  const label = (
+    <>
+      <Download className="size-4" aria-hidden="true" />
+      {download.label}
+    </>
+  );
   return (
     <div className="px-card flex h-full flex-col gap-4 p-5">
       <div className="flex items-center gap-3">
@@ -36,10 +44,15 @@ export function DownloadCard({ download }: { download: DownloadInfo }) {
           <p className="text-sm text-fd-muted-foreground">{download.requirement}</p>
         </div>
       </div>
-      <a className="px-button px-button-primary mt-auto" href={download.url} download>
-        <Download className="size-4" aria-hidden="true" />
-        {download.label}
-      </a>
+      {download.guide ? (
+        <Link className="px-button px-button-primary mt-auto" href={downloadHref(download)}>
+          {label}
+        </Link>
+      ) : (
+        <a className="px-button px-button-primary mt-auto" href={download.url} download>
+          {label}
+        </a>
+      )}
       <p className="text-xs text-fd-muted-foreground">
         v{download.version} · {formatBytes(download.size)}
       </p>

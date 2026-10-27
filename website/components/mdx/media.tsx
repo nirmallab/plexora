@@ -19,6 +19,9 @@ export type MediaProps = {
   height?: number;
   highlights?: Highlight[];
   zoom?: boolean;
+  /** Never wider than its own pixels: for a small dialog, which full column
+   * width would blow up. */
+  native?: boolean;
   autoplay?: boolean;
   /** Load at once instead of when scrolled near (the first thing on a page). */
   eager?: boolean;
@@ -39,6 +42,7 @@ export function Media({
   height = 1250,
   highlights,
   zoom = true,
+  native = false,
   autoplay = true,
   eager = false,
 }: MediaProps) {
@@ -53,7 +57,7 @@ export function Media({
   }
 
   return (
-    <figure className="px-media not-prose">
+    <figure className="px-media not-prose" style={native ? { maxWidth: width } : undefined}>
       <div className="px-media-frame" style={{ aspectRatio: `${width} / ${height}` }}>
         {body}
         {highlights?.map((h, i) => (

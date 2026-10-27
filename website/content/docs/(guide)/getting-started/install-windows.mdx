@@ -1,0 +1,83 @@
+---
+title: "Install on Windows"
+description: "Download the Plexora installer for Windows, get past the SmartScreen warning and run setup."
+aliases: ["windows", "exe", "setup", "smartscreen", "run anyway", "windows protected your pc", "unknown publisher"]
+---
+
+The Windows installer sets Plexora up for your account only, so it needs no administrator rights. It needs Windows 10 or 11, 64-bit.
+
+<InstallerDownload os="Windows" />
+
+## How to use it
+
+<Steps>
+<Step>
+### Open the installer
+
+When the download finishes, open `Plexora-<version>-windows-x64-setup.exe` from your browser's downloads list or your **Downloads** folder.
+</Step>
+<Step>
+### Get past the SmartScreen warning
+
+The installer is not code-signed yet, so Windows may say **Windows protected your PC**. Choose **More info**, then **Run anyway**. Not every PC shows this.
+
+<div className="grid gap-x-4 sm:grid-cols-2">
+<Media src="/media/getting-started/windows-smartscreen-more-info.webp" alt="Windows protected your PC, with the More info link" width={658} height={617} native caption="1. Choose More info" highlights={[{ x: 12, y: 144, w: 96, h: 32, label: 1 }]} />
+<Media src="/media/getting-started/windows-smartscreen-run-anyway.webp" alt="The same warning naming the Plexora installer, with a Run anyway button" width={660} height={607} native caption="2. Then Run anyway" highlights={[{ x: 342, y: 539, w: 145, h: 52, label: 2 }]} />
+</div>
+
+<Callout type="warn" title="Check where the file came from">
+Choose **Run anyway** only for an installer you downloaded from this site or from Plexora's [GitHub releases](https://github.com/nirmallab/plexora/releases). If the file, or where you got it, looks unfamiliar, choose **Don't run**.
+</Callout>
+</Step>
+<Step>
+### Start setup
+
+On **Welcome to Plexora Setup**, choose **Next**.
+
+<Media src="/media/getting-started/windows-setup-welcome.webp" alt="Welcome to Plexora Setup" width={591} height={490} native highlights={[{ x: 378, y: 438, w: 93, h: 32 }]} />
+</Step>
+<Step>
+### Accept the licence
+
+Read the licence agreement and choose **I Agree**.
+
+<Media src="/media/getting-started/windows-setup-license.webp" alt="The Plexora licence agreement, with the I Agree button" width={595} height={491} native highlights={[{ x: 384, y: 439, w: 94, h: 33 }]} />
+</Step>
+<Step>
+### Choose where to install
+
+The suggested folder, `C:\Users\<you>\AppData\Local\Plexora`, is fine; **Browse...** picks another. Choose **Next**.
+
+<Media src="/media/getting-started/windows-setup-location.webp" alt="Choose Install Location, with the destination folder and the Next button" width={593} height={500} native highlights={[{ x: 380, y: 444, w: 94, h: 34 }]} />
+</Step>
+<Step>
+### Wait for setup
+
+Setup copies Plexora's files and fills the progress bar. Leave the window open until it moves on by itself.
+
+<Media src="/media/getting-started/windows-setup-installing.webp" alt="Plexora Setup installing, with a progress bar" width={596} height={486} native />
+</Step>
+<Step>
+### Finish
+
+Leave **Run Plexora** ticked and choose **Finish**. Plexora opens on its home screen; continue with [Your first image](/docs/getting-started/first-image).
+
+<Media src="/media/getting-started/windows-setup-finish.webp" alt="Completing Plexora Setup, with Run Plexora ticked and the Finish button" width={592} height={488} native highlights={[{ x: 212, y: 216, w: 100, h: 28, label: 1 }, { x: 382, y: 439, w: 94, h: 33, label: 2 }]} />
+</Step>
+</Steps>
+
+## Tips
+
+- Later, open Plexora from the **Start** menu, or from the desktop shortcut if you kept **Create desktop shortcut** ticked.
+- Plexora's window uses Microsoft Edge WebView2, which Windows 10 and 11 normally include. If yours does not, setup downloads it, so stay online while setup runs.
+- **Help › Check for Updates…** checks for a newer release.
+- To remove Plexora, use **Settings › Apps › Installed apps**.
+
+## Related
+
+<Cards>
+<Card title="Install the app" href="/docs/getting-started/installation" description="Installers for macOS, Windows and Linux." />
+<Card title="Your first image" href="/docs/getting-started/first-image" description="Open an image and add a mask and a cell table." />
+<Card title="Troubleshooting" href="/docs/help/troubleshooting" description="If the app will not install or open." />
+</Cards>

@@ -4,6 +4,7 @@
   "defaultOpen": true,
   "pages": [
     "installation",
+    "install-windows",
     "install-python",
     "first-image",
     "interface"

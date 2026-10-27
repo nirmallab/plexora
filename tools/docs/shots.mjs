@@ -486,5 +486,15 @@ export const SHOTS = [
     // Taken by tools/docs/notebook_shot.mjs against a running JupyterLab.
     { name: "notebook/cell", manual: true },
     { name: "home/explore-notebook", manual: true },
+    // Windows' own dialogs: SmartScreen and the NSIS installer, captured by
+    // hand on Windows 11 at their native size (no 2000x1250 here; the page
+    // caps each at its own width). The location shot's path names `you`.
+    { name: "getting-started/windows-smartscreen-more-info", manual: true },
+    { name: "getting-started/windows-smartscreen-run-anyway", manual: true },
+    { name: "getting-started/windows-setup-welcome", manual: true },
+    { name: "getting-started/windows-setup-license", manual: true },
+    { name: "getting-started/windows-setup-location", manual: true },
+    { name: "getting-started/windows-setup-installing", manual: true },
+    { name: "getting-started/windows-setup-finish", manual: true },
     { name: "home/explore-python", url: "/open_project", steps: [...QUIET] },
 ];

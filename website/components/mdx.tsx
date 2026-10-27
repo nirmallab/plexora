@@ -7,6 +7,7 @@ import type { MDXComponents } from 'mdx/types';
 import { Compare, Member, Param, ParamTable, Raise, Raises, Returns } from './mdx/api';
 import { Badge, InternalBadge, ModalityBadge, PluginBadge } from './mdx/badges';
 import { Downloads } from './mdx/downloads';
+import { InstallerDownload } from './mdx/installer-download';
 import { Media } from './mdx/media';
 import { PlatformTabs, WhereTabs } from './mdx/tabs';
 import { SourceLink } from './mdx/source-link';
@@ -37,6 +38,7 @@ export function getMDXComponents(components?: MDXComponents) {
     PluginBadge,
     Media,
     Downloads,
+    InstallerDownload,
     PlatformTabs,
     WhereTabs,
     SourceLink,
