@@ -287,12 +287,41 @@ class Campaign:
 
     def node_up(self) -> dict:
         self.node_down()
+        # A node left by an earlier, interrupted run holds the port.
+        self.new_node().stop()
         if not self.site.node:
             self.site.locate()
         self.node = self.new_node()
         return self.node.start()
 
     # -- arms
+    def reset_project(self, arm: str, dataset: str) -> dict:
+        """Forget what earlier viewing saved into the project (the view state
+        and the channel list), so every pass opens on the defaults."""
+        db = self.primary_for(arm).data / dataset / f"{dataset}.db"
+        if not db.exists():
+            return {"db": None}
+        out = subprocess.run(["sqlite3", str(db), "DELETE FROM viewState; DELETE FROM channelList; "
+                              "SELECT changes();"], capture_output=True, text=True)
+        return {"db": db.name, "rc": out.returncode, "err": out.stderr.strip()[:200]}
+
+    def adopt_primary_s(self) -> bool:
+        """A Plexora already serving the SFTP arm's port (a restarted run):
+        keep it and its SFTP session rather than log in again."""
+        ps = self.primary_s
+        pids = subprocess.run(["lsof", "-ti", f"tcp:{ps.port}", "-sTCP:LISTEN"],
+                              capture_output=True, text=True).stdout.split()
+        if not pids:
+            return False
+        try:
+            state = http("GET", f"{ps.base}/settings/remotes/{self.cfg['sftp_remote']}/status").get("state")
+        except Exception:  # noqa: BLE001
+            return False
+        if state != "connected":
+            return False
+        ps.info = {"pid": int(pids[0]), "port": ps.port, "adopted": True}
+        return True
+
     def primary_for(self, arm: str) -> Primary:
         return self.primary_n if arm == "N" else self.primary_s
 
@@ -309,6 +338,8 @@ class Campaign:
             prep["t_register"] = time.time() - t0
         else:
             ps = self.primary_s
+            if not ps.info and self.adopt_primary_s():
+                prep["adopted"] = True
             if not ps.info:
                 ps.stop()
                 cache = ps.data / ".remote_cache"
@@ -355,8 +386,11 @@ class Campaign:
             row["rtt_ms"] = self.rtt(arm)
             marks = [("start", self.counters(arm, dataset))]
 
+            row["reset"] = [self.reset_project(arm, dataset)]
+
             def between(name):
                 marks.append((name, self.counters(arm, dataset)))
+                row["reset"].append(self.reset_project(arm, dataset))
 
             tour_params = {**params, "waypoints": wp}
             out = self.raw / f"{label}-b{block:02d}-{arm}-{int(time.time())}.json"
@@ -516,6 +550,18 @@ class Campaign:
         return out
 
 
+def scaling_plan(counts=(1, 3, 5), reps=2, sets=6, first="N"):
+    """Experiment E's runs: every channel count, `reps` waypoint sets each,
+    arms alternating which goes first per run."""
+    plan = []
+    for r in range(reps):
+        for i, k in enumerate(counts):
+            order = arm_order(r * len(counts) + i, first)
+            for arm in order:
+                plan.append({"arm": arm, "channels": k, "rep": r, "set": (r * len(counts) + i) % sets})
+    return plan
+
+
 def first_arm(seed: int) -> str:
     """The arm that leads block 0: a coin flip, fixed by the campaign's seed."""
     return random.Random(seed).choice(["N", "S"])
@@ -570,6 +616,10 @@ def main(argv=None):
     z.add_argument("--arm", choices=["N", "S"], required=True)
     z.add_argument("--reps", default="1")
     sub.add_parser("probes")
+    e = sub.add_parser("scaling")
+    e.add_argument("--blocks", default="", help="rerun these blocks first, in the same session")
+    e.add_argument("--reps", type=int, default=2)
+    e.add_argument("--z0", type=int, default=128)
     args = parser.parse_args(argv)
     cfg = json.loads(Path(args.config).read_text(encoding="utf-8"))
     camp = Campaign(cfg)
@@ -600,6 +650,27 @@ def main(argv=None):
             camp.node_down()
             camp.primary.stop()
             camp.site.close_tunnel()
+    elif args.cmd == "scaling":
+        try:
+            if args.blocks:
+                lo, _, hi = args.blocks.partition("-")
+                camp.blocks(range(int(lo), int(hi or lo) + 1), cfg["tour"])
+            sets = json.loads(Path(cfg["waypoints"]).read_text(encoding="utf-8"))["sets"]
+            for run in scaling_plan(reps=args.reps, sets=len(sets),
+                                    first=first_arm(cfg.get("seed", 20261026))):
+                print(f"E arm {run['arm']} channels {run['channels']} rep {run['rep']}", flush=True)
+                params = {**cfg["tour"], "passes": ["C1"], "z0": args.z0, "volume": False,
+                          "scaling": {"channels": run["channels"]}}
+                row = camp.run_arm(run["rep"], run["arm"], sets[run["set"]], params,
+                                   label=f"E{run['channels']}")
+                row_out = {**row, "channels": run["channels"]}
+                camp.record(row_out, "scaling.jsonl")
+                print(f"  -> {_brief(row)}", flush=True)
+        finally:
+            camp.node_down()
+            camp.primary_n.stop()
+            camp.primary_s.stop()
+            camp.site.close()
     elif args.cmd == "probes":
         print(json.dumps(camp.probes(), indent=1))
 

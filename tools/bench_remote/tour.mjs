@@ -41,7 +41,7 @@ function parseArgs(argv) {
 }
 
 /** Writes answered here: the project must look the same to every pass. */
-const BLOCKED = [/\/save_channel_list\b/, /\/save_view_state\b/, /\/viewer_prefs\b/];
+const BLOCKED = [/\/save_channel_list\b/, /\/view_state\//, /\/viewer_prefs\b/];
 
 async function blockWrites(browser) {
     await browser.send("Fetch.enable", { patterns: [{ urlPattern: "*", requestStage: "Request" }] });
@@ -82,9 +82,17 @@ class Tour {
             const r = await window.__rb.waitStep(t0, ms, u0);
             return { ...r, t0 };
         }, action.toString(), this.timeout, args);
-        const record = { step: name, wallFrom, wallTo: Date.now(), ...result };
+        // No answer at all (the evaluation failed, not the step): recorded as
+        // a failed step, apart from one that ran out of time.
+        const record = result
+            ? { step: name, wallFrom, wallTo: Date.now(), ...result }
+            : { step: name, wallFrom, wallTo: Date.now(), full: null, failed: true };
         this.steps.push(record);
-        this.browser.log?.(name, result.full);
+        this.browser.log?.(name, record.full);
+        if (!result) {
+            const alive = await this.browser.eval(() => Boolean(window.__rb)).catch(() => false);
+            if (!alive) throw new Error(`the page stopped answering at step ${name}`);
+        }
         return record;
     }
 
@@ -145,6 +153,15 @@ async function runPass(browser, opts, pass) {
     if (p.openOnly) return await finishPass(browser, tour, mark, pass, passFrom, info);
     const W = p.waypoints;
     const z0 = p.z0;
+    if (p.scaling) {
+        // Experiment E: the same three steps at a given channel count.
+        const wanted = info.slots.slice(0, p.scaling.channels);
+        await tour.step("channels", (c) => __bench.k.setChannels(c), wanted);
+        await tour.step("zoom_L2_a", (at) => __rb.place(0.25, at), W.a);
+        await tour.step("jump_L0_b", (at) => __rb.place(1, at), W.b);
+        await tour.step("z_plus8", (z) => __bench.k.vs().set({ z }), z0 + 8);
+        return await finishPass(browser, tour, mark, pass, passFrom, info);
+    }
     const channels = p.channels || info.enabled;
     if (JSON.stringify([...channels].sort()) !== JSON.stringify([...info.enabled].sort())) {
         await tour.step("channels", (wanted) => __bench.k.setChannels(wanted), channels);
