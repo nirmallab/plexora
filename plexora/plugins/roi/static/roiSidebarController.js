@@ -80,6 +80,7 @@ class RoiSidebarController {
         this.bindNewCategory();
         this.bindTransfer();
         this.bindBanners();
+        this.bindFooter();
 
         this._unsubscribe = this.store.onChange(() => this.render());
 
@@ -93,6 +94,15 @@ class RoiSidebarController {
         };
         window.addEventListener("beforeunload", beforeUnload);
         this.ctx.onCleanup?.(() => window.removeEventListener("beforeunload", beforeUnload));
+
+        // Cell Explorer's Overlay ROI: the regions were asked for to LOOK at --
+        // rest the pointer on one and see what its cells are -- not to draw.
+        // A tool still in hand from earlier in the session would turn the next
+        // drag into a shape instead of a pan, so it is put down. A fresh panel
+        // has none in hand already, and this is then a no-op.
+        const onOverlay = () => this.tools.setTool(null);
+        window.addEventListener("plexora:roi-overlay", onOverlay);
+        this.ctx.onCleanup?.(() => window.removeEventListener("plexora:roi-overlay", onOverlay));
         this.ctx.onCleanup?.(() => this.destroy());
     }
 
@@ -249,6 +259,42 @@ class RoiSidebarController {
 
     /** Hide every category, or -- when all are already hidden -- show every
      *  one. One step on the undo stack, not one per category. */
+    /** The footer's Undo and Redo: the chords' own path (RoiInteraction), so
+     *  a click is exactly the keystroke. The caps are printed by core's
+     *  shortcut service -- ⌘Z on a Mac, Ctrl+Z elsewhere. */
+    bindFooter() {
+        const footer = this.el("roi_footer");
+        if (!footer) return;
+        const shortcuts = window.PlexoraShortcuts;
+        for (const cap of footer.querySelectorAll("kbd[data-chord]")) {
+            const printed = shortcuts?.format?.(cap.dataset.chord);
+            if (printed) cap.textContent = printed;
+        }
+        footer.addEventListener("click", (event) => {
+            const button = event.target.closest("[data-history]");
+            if (!button || button.disabled) return;
+            if (button.dataset.history === "undo") this.tools.undo();
+            else this.tools.redo();
+        });
+    }
+
+    /** Each step lit only when there is one to take, and named: "Undo delete
+     *  category (⌘Z)". */
+    renderFooter() {
+        const steps = { undo: this.store.undoStack, redo: this.store.redoStack };
+        for (const [kind, stack] of Object.entries(steps)) {
+            const button = this.el(`roi_${kind}`);
+            if (!button) continue;
+            const entry = stack[stack.length - 1];
+            button.disabled = !entry || !this.store.editable;
+            const word = kind === "undo" ? "Undo" : "Redo";
+            const cap = button.querySelector("kbd");
+            const keys = cap ? ` (${cap.textContent})` : "";
+            const what = entry?.label ? ` ${entry.label.charAt(0).toLowerCase()}${entry.label.slice(1)}` : "";
+            button.title = `${word}${what}${keys}`;
+        }
+    }
+
     toggleAllCategories() {
         const categories = this.store.sortedCategories();
         if (!categories.length) return;
@@ -835,6 +881,7 @@ class RoiSidebarController {
         this.renderStatus();
         this.renderSourceButton();
         this.renderAllEye();
+        this.renderFooter();
         const name = this.el("roi_category_name");
         if (name) name.disabled = !this.store.editable;
         const add = this.el("roi_category_new");

@@ -322,7 +322,7 @@ class CellExplorerState {
     /**
      * Whether every category is showing, none is, or it is a mix.
      *
-     * The All/None control reads this: it reports what the legend is in as well
+     * Show all / Hide all reads this: it reports what the legend is in as well
      * as offering to change it, and "mixed" -- neither lit -- is the ordinary
      * state once anybody has hidden a single row.
      */

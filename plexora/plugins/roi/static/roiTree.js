@@ -234,7 +234,7 @@ class RoiTree {
         lock.innerHTML = '<span class="fas fa-lock"></span>';
 
         const eye = RoiTree.rowAction("roi-row-eye",
-            '<span class="fas fa-eye"></span><span class="fas fa-eye-slash"></span>');
+            '<span class="far fa-eye"></span><span class="far fa-eye-slash"></span>');
         const more = RoiTree.rowAction("roi-row-more", '<span class="fas fa-ellipsis"></span>');
         more.title = "More";
         more.setAttribute("aria-haspopup", "true");
@@ -242,10 +242,12 @@ class RoiTree {
 
         const remove = RoiTree.rowAction("roi-row-delete", '<span class="fas fa-xmark"></span>');
 
-        // The eye leads the name rather than trailing with the row's actions:
-        // on a category it is the control used most, and in front of the
-        // colour and the name it reads as "this one, shown or not".
-        el.append(chevron, eye, colorMount, label, count, lock, more, remove);
+        // The eye ends the row, in the column every tool panel keeps its eyes
+        // in (Cell Explorer's legend, QC's checks, the heading's all-eye
+        // above): one place to look for "shown or not" whichever panel is
+        // open. It led the name once, and the eyes of three panels then stood
+        // in three different places.
+        el.append(chevron, colorMount, label, count, lock, more, remove, eye);
 
         const children = document.createElement("div");
         children.className = "roi-children";
@@ -322,7 +324,7 @@ class RoiTree {
         lock.innerHTML = '<span class="fas fa-lock"></span>';
 
         const eye = RoiTree.rowAction("roi-row-eye",
-            '<span class="fas fa-eye"></span><span class="fas fa-eye-slash"></span>');
+            '<span class="far fa-eye"></span><span class="far fa-eye-slash"></span>');
         const more = RoiTree.rowAction("roi-row-more", '<span class="fas fa-ellipsis"></span>');
         more.title = "More";
         more.setAttribute("aria-haspopup", "true");
@@ -330,7 +332,7 @@ class RoiTree {
 
         const remove = RoiTree.rowAction("roi-row-delete", '<span class="fas fa-xmark"></span>');
 
-        el.append(dot, label, planes, lock, eye, more, remove);
+        el.append(dot, label, planes, lock, more, remove, eye);
         return { el, dot, label, planes, lock, eye, more, remove };
     }
 

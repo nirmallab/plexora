@@ -79,7 +79,8 @@
        characters -- and the panel below it is all one-line controls, so the
        stacked pair read as a different kind of thing. `.control-row` is
        core's label-beside-control shape (viewer.css), the same one the
-       Point size and Opacity rows use.
+       Point size and Opacity rows use. The picker itself is core's panel
+       field (`.plx-panel-field`), the look every tool panel's select has.
 
        Auto Threshold ends THIS line, not the slider's: it answers "gate this
        marker", so it sits beside the marker it gates, and the slider's line is
@@ -88,7 +89,7 @@
        only keeps the row from stretching it (gating.css). #}
     <div class="control-row">
         <label class="control-label gate-row-caption" for="gate_marker_select">Marker</label>
-        <div id="gate_marker_select" class="marker-combobox-mount"></div>
+        <div id="gate_marker_select" class="marker-combobox-mount plx-panel-field"></div>
         <button id="gate_auto_button" class="slider-auto-button gate-marker-auto" type="button"></button>
         {# Clear: this marker back to never gated -- its full range, and its
            provenance gone -- the undo of every way a gate gets set, Auto's
@@ -300,14 +301,15 @@
         </div>
         <div id="save_anndata_status"></div>
     </div>
-    {# The panel's two keys, where the hand on the mouse finds them: the
-       same key caps the canvas's own hint uses (core's `.plx-kbd`). Each is
-       a button as well, for the hand that stayed on the mouse: a click steps
-       the marker exactly as its key does (stepMarker). #}
-    <footer class="gate-panel-footer" id="gate_panel_footer" aria-label="Previous and next marker">
-        <button type="button" class="gate-panel-shortcut" data-marker-step="-1"
+    {# The panel's two keys, as the card's last line: core's footer band
+       (viewer.css .plx-panel-footer), which every tool panel ends with, and
+       the key caps the canvas's own hint uses. Each is a button as well, for
+       the hand that stayed on the mouse: a click steps the marker exactly as
+       its key does (stepMarker). #}
+    <footer class="plx-panel-footer" id="gate_panel_footer" aria-label="Previous and next marker">
+        <button type="button" class="plx-panel-shortcut" data-marker-step="-1"
                 title="Previous marker (Z)"><kbd class="plx-kbd">Z</kbd> Previous marker</button>
-        <button type="button" class="gate-panel-shortcut" data-marker-step="1"
+        <button type="button" class="plx-panel-shortcut" data-marker-step="1"
                 title="Next marker (X)"><kbd class="plx-kbd">X</kbd> Next marker</button>
     </footer>
 </section>

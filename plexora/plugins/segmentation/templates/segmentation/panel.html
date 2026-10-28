@@ -9,10 +9,10 @@
 
     <div class="seg3d-grid" id="seg3d_form" hidden>
         <label class="seg3d-label" for="seg3d_nuclear">Nuclei</label>
-        <select id="seg3d_nuclear" class="sidebar-select"></select>
+        <select id="seg3d_nuclear" class="sidebar-select plx-panel-field"></select>
 
         <label class="seg3d-label" for="seg3d_cytoplasm">Cells</label>
-        <select id="seg3d_cytoplasm" class="sidebar-select">
+        <select id="seg3d_cytoplasm" class="sidebar-select plx-panel-field">
             <option value="">Nuclei only</option>
         </select>
 
@@ -30,13 +30,13 @@
 
         <label class="seg3d-label" for="seg3d_diameter">Diameter</label>
         <div class="seg3d-field">
-            <input id="seg3d_diameter" class="seg3d-number" type="number" min="0" step="0.5"
+            <input id="seg3d_diameter" class="seg3d-number plx-panel-field" type="number" min="0" step="0.5"
                    placeholder="auto" aria-label="Typical cell diameter in µm">
             <span class="seg3d-unit">µm</span>
         </div>
 
         <label class="seg3d-label" for="seg3d_level">Detail</label>
-        <select id="seg3d_level" class="sidebar-select" title="The resolution segmented at; the mask is drawn back up to full resolution">
+        <select id="seg3d_level" class="sidebar-select plx-panel-field" title="The resolution segmented at; the mask is drawn back up to full resolution">
             <option value="auto">Auto (fits in memory)</option>
             <option value="0">Full resolution</option>
             <option value="1">Half</option>

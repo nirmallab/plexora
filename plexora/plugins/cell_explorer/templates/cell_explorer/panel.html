@@ -45,60 +45,84 @@
         </button>
     </div>
 
-    {# One line: what to colour by, and -- when that column is categorical --
-       the two controls that act on the list below it.
+    {# What to colour by, on a line of its own, and -- when that column is
+       categorical -- one quiet line about the list below it.
 
-       No visible captions. The colour-by control is core's SearchableSelect in
-       its button shape, so it reads as the column it is showing, and its
-       dropdown carries the search that finds another one. The other two are a
-       search field and a two-state All/None, which are what they look like.
-       Each carries an aria-label, since there is no `for` to point a <label>
-       at a control that mounts its own generated elements.
+       The colour-by control is core's SearchableSelect in its button shape, so
+       it reads as the column it is showing, and its dropdown carries the search
+       that finds another one. Full width, because the column name is the one
+       thing on this panel people read before anything else, and a long one
+       should get the room before it truncates. One caption over it, in core's
+       label style (ROI's "Categories" is the same): a bare column name such as
+       "qc_status" at the top of a card does not say it is a choice, or what
+       choosing does. The control's accessible name is the caption's words.
 
-       The category pair is hidden rather than moved for a continuous column:
-       it belongs to the legend, and the legend is not there. #}
+       The summary line is hidden rather than emptied for a continuous column:
+       everything on it belongs to the legend, and the legend is not there. #}
     <div id="cell_explorer_toolbar" class="cex-toolbar">
-        <div id="cell_explorer_variable" class="cex-variable"></div>
+        <p class="control-label">Overlay column</p>
+        <div id="cell_explorer_variable" class="cex-variable plx-panel-field"></div>
         <div id="cell_explorer_category_controls" class="cex-category-controls" hidden>
-            {# Filters the legend only. Typing "T" must not hide the macrophages
-               on the image -- that distinction is the whole reason this is not
-               a visibility control. #}
-            <input id="cell_explorer_search" class="cex-search" type="search"
-                   autocomplete="off" spellcheck="false" placeholder="Filter..."
-                   aria-label="Filter categories" title="Filter the list below">
-            {# Show-everything / show-nothing, as a two-state control rather than
-               two commands. Which one is lit says what the legend is currently
-               in -- and "neither" is a real and common answer, which is why
-               these are radios that can both be unchecked rather than a switch. #}
-            <div id="cell_explorer_visibility" class="cex-legend-actions"
-                 role="radiogroup" aria-label="Category visibility">
-                <button id="cell_explorer_show_all" class="cex-toggle" type="button"
-                        role="radio" aria-checked="false" data-visibility="all"
-                        title="Show every category">All</button>
-                <button id="cell_explorer_hide_all" class="cex-toggle" type="button"
-                        role="radio" aria-checked="false" data-visibility="none"
-                        title="Hide every category">None</button>
+            <div class="cex-summary-row">
+                {# One slot, two occupants: the counts, and the filter that takes
+                   their place while it is open. Overlaid rather than swapped, so
+                   the change is a cross-fade in place and nothing else on the
+                   line moves. The search icon is the slot's last child and never
+                   moves either: the field grows leftward out of it, so once open
+                   the icon is the field's own right corner -- and the way to
+                   fold it again. #}
+                <div class="cex-summary-slot">
+                    {# How big the list is, in the column's own numbers. Two spans
+                       so the cell count is what gives way in a narrow sidebar,
+                       never the number of categories. The space between them is
+                       for a screen reader; the flex gap spaces them on screen. #}
+                    <p id="cell_explorer_summary" class="cex-summary">
+                        <span id="cell_explorer_summary_categories" class="cex-summary-categories"></span>
+                        <span id="cell_explorer_summary_cells" class="cex-summary-cells"></span>
+                    </p>
+                    {# Filters the legend only. Typing "T" must not hide the
+                       macrophages on the image -- that distinction is the whole
+                       reason this is not a visibility control. Inert while
+                       folded, so Tab never lands in a field nobody can see; and
+                       folding it clears it, so a list is never left narrowed by
+                       a filter that is not on screen. #}
+                    <div id="cell_explorer_search_row" class="cex-search-row" inert>
+                        <input id="cell_explorer_search" class="cex-search" type="text"
+                               autocomplete="off" spellcheck="false" placeholder="Filter categories…"
+                               aria-label="Filter categories">
+                        <button id="cell_explorer_search_clear" class="cex-search-clear" type="button"
+                                aria-label="Clear filter" title="Clear filter" hidden>
+                            <span class="fas fa-xmark" aria-hidden="true"></span>
+                        </button>
+                    </div>
+                    {# The filter, folded behind its icon until it is wanted. A
+                       field on screen permanently was a box most sessions never
+                       typed in, holding a line of a 300px column. #}
+                    <button id="cell_explorer_search_toggle" class="cex-icon-action cex-search-toggle"
+                            type="button" aria-label="Filter categories" title="Filter categories"
+                            aria-expanded="false" aria-controls="cell_explorer_search_row">
+                        <span class="fas fa-magnifying-glass" aria-hidden="true"></span>
+                    </button>
+                </div>
+                <div class="cex-summary-actions">
+                    <span class="cex-summary-separator" aria-hidden="true"></span>
+                    {# Show-everything / show-nothing, as a two-state control rather
+                       than two commands. Which one is lit says what the legend is
+                       currently in -- and "neither" is a real and common answer,
+                       which is why these are radios that can both be unchecked
+                       rather than a switch. #}
+                    <div id="cell_explorer_visibility" class="cex-legend-actions"
+                         role="radiogroup" aria-label="Category visibility">
+                        <button id="cell_explorer_show_all" class="cex-text-action" type="button"
+                                role="radio" aria-checked="false" data-visibility="all"
+                                title="Show every category">Show all</button>
+                        <button id="cell_explorer_hide_all" class="cex-text-action" type="button"
+                                role="radio" aria-checked="false" data-visibility="none"
+                                title="Hide every category">Hide all</button>
+                    </div>
+                </div>
             </div>
         </div>
-    </div>
-
-    {# Opens the ROI tool ALONGSIDE this one rather than in place of it -- see
-       toolLoader's openToolAlongside. Regions are only worth hovering while the
-       overlay they are summarised against is still drawn, so the usual
-       single-active switch would take away the thing that makes the answer mean
-       anything.
-
-       A named button on a line of its own rather than another icon in the
-       heading. Nothing about a polygon glyph says that hovering a region will
-       break its cells down by the variable on screen, and an unlabelled control
-       for a feature nobody knows exists is a feature nobody finds. The hint is
-       the discoverable part; the button is just how it is reached. #}
-    <div id="cell_explorer_roi_launch" class="cex-roi-launch">
-        <button id="cell_explorer_open_roi" class="sidebar-action-fancy" type="button">
-            <span class="fas fa-draw-polygon" aria-hidden="true"></span>
-            <span>Open ROIs</span>
-        </button>
-        <p class="cex-roi-launch-hint">Hover a region to see what it is made of.</p>
     </div>
 
     {# Shown only for a column whose kind was genuinely a guess -- a numeric one
@@ -116,13 +140,46 @@
 
     <p id="cell_explorer_status" class="cex-status" role="status" hidden></p>
 
-    {# Just the list. Its filter and its All/None live in the toolbar above,
-       sharing that line with the colour-by control. #}
+    {# Just the list. Its filter and its Show all / Hide all live on the
+       summary line above it. #}
     <div id="cell_explorer_legend_section" hidden>
         <div id="cell_explorer_legend" class="cex-legend"></div>
     </div>
 
     <div id="cell_explorer_continuous" class="cex-continuous" hidden></div>
+
+    {# Opens the ROI tool ALONGSIDE this one rather than in place of it -- see
+       toolLoader's openToolAlongside. Regions are only worth hovering while the
+       overlay they are summarised against is still drawn, so the usual
+       single-active switch would take away the thing that makes the answer mean
+       anything. Opened to look, not to draw: the press also tells ROI to put
+       down any tool left in hand, so a drag still pans the image.
+
+       A footer row rather than a button in the body. It is a way out to another
+       tool, said the way a menu row says it -- a name and a chevron -- and the
+       one sentence about what hovering a region does is on its tooltip, where
+       the person reaching for it will find it, rather than on the panel for
+       every session that never does. #}
+    <div id="cell_explorer_roi_launch" class="cex-roi-launch">
+        <button id="cell_explorer_open_roi" class="cex-roi-action" type="button"
+                title="Open ROI beside Cell Explorer. Rest the pointer on a region to see its cells broken down by this column.">
+            <span class="fas fa-shapes cex-roi-action-icon" aria-hidden="true"></span>
+            <span class="cex-roi-action-label">Overlay ROI</span>
+            <span class="fas fa-chevron-right cex-roi-action-chevron" aria-hidden="true"></span>
+        </button>
+    </div>
+
+    {# The panel's two keys, as the card's last line: core's footer band
+       (viewer.css .plx-panel-footer), which every tool panel ends with.
+       Thresholding steps its marker, this steps the overlay column, along the
+       dropdown's own list. Each is a button too, for the hand that stayed on
+       the mouse: a click steps exactly as the key does (stepColumn). #}
+    <footer id="cell_explorer_footer" class="plx-panel-footer" aria-label="Previous and next overlay column" hidden>
+        <button type="button" class="plx-panel-shortcut" data-column-step="-1"
+                title="Previous overlay column (Z)"><kbd class="plx-kbd">Z</kbd> Previous column</button>
+        <button type="button" class="plx-panel-shortcut" data-column-step="1"
+                title="Next overlay column (X)"><kbd class="plx-kbd">X</kbd> Next column</button>
+    </footer>
 
     {# The opacity slider used to be here. It is core's now, in the Cells section
        at the bottom of the sidebar, beside the mode buttons -- see index.html.

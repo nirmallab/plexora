@@ -913,7 +913,7 @@ class QcArtifactsQc {
         const eye = document.createElement("button");
         eye.type = "button";
         eye.className = "qc-line-action qc-eye";
-        eye.innerHTML = '<span class="fas fa-eye"></span><span class="fas fa-eye-slash"></span>';
+        eye.innerHTML = '<span class="far fa-eye"></span><span class="far fa-eye-slash"></span>';
         eye.addEventListener("click", () => this.toggleCategory(entry.key));
         row.append(swatch, name, count, mount, eye);
         entry.nodes = { row, swatch, name, count, mount, eye };
@@ -1068,14 +1068,14 @@ class QcArtifactsQc {
         const eye = document.createElement("button");
         eye.type = "button";
         eye.className = "qc-line-action qc-eye";
-        eye.innerHTML = '<span class="fas fa-eye"></span><span class="fas fa-eye-slash"></span>';
+        eye.innerHTML = '<span class="far fa-eye"></span><span class="far fa-eye-slash"></span>';
         eye.addEventListener("click", () => this.toggleChannel(channel));
         const remove = document.createElement("button");
         remove.type = "button";
         remove.className = "qc-line-action qc-art-remove";
         remove.innerHTML = '<span class="fas fa-xmark"></span>';
         remove.addEventListener("click", () => this.removeChannel(channel));
-        row.append(dot, name, count, eye, remove);
+        row.append(dot, name, count, remove, eye);
         const line = { row, dot, name, count, eye, remove };
         line.select = this.makeSelect(name, channel, (picked) => {
             if (picked && picked !== channel) this.swapChannel(channel, picked);

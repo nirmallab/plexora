@@ -19,7 +19,11 @@
  *      any of the constructors actually run;
  *   6. the two CORE widgets this panel is built out of really do take the
  *      options it passes them, and give their popovers back afterwards;
- *   7. the lookup table builder produces what core reads.
+ *   7. the lookup table builder produces what core reads;
+ *   8. the summary line counts the column on screen, the filter clears itself
+ *      when it is folded away, and a list of thousands is built a page at a
+ *      time rather than all at once.
+ *   9. Z / X step the overlay column along the dropdown's list.
  *
  * (6) loads core's searchableSelect.js and colorSwatchPicker.js into the same
  * context rather than stubbing them. Stubs would agree with whatever this panel
@@ -60,8 +64,13 @@ const CORE_WIDGETS = ["popoverPortal.js", "searchableSelect.js",
 
 /** Panel elements the controller mounts a core widget into. Handed real stand-in
  *  nodes so the mounting actually happens -- returning null for these is how an
- *  earlier version of this probe passed while never constructing either. */
-const MOUNTS = ["cell_explorer_variable", "cell_explorer_legend"];
+ *  earlier version of this probe passed while never constructing either. The
+ *  rest are the summary line and the folded filter, which (8) drives. */
+const MOUNTS = ["cell_explorer_variable", "cell_explorer_legend",
+                "cell_explorer_summary", "cell_explorer_summary_categories",
+                "cell_explorer_summary_cells", "cell_explorer_search_row",
+                "cell_explorer_search", "cell_explorer_search_toggle",
+                "cell_explorer_search_clear"];
 
 const registered = [];
 
@@ -220,8 +229,8 @@ if (!problems.length) {
         problems.push("Colour-by must be core's SearchableSelect, not a select of its own");
     }
     if (ctx.__built && ctx.__built.trigger !== "button") {
-        problems.push("Colour-by shares its line with two other controls, so it has to be "
-            + "the button shape rather than a full-width field");
+        problems.push("Colour-by has to be the button shape, showing the column, with its "
+            + "search inside the menu it opens -- not a field that doubles as the value");
     }
     if (ctx.__built && !ctx.__built.menuSearch) {
         problems.push("the colour-by dropdown must carry its own search field -- a trigger "
@@ -311,7 +320,7 @@ if (!problems.length) {
     }
 
     // Hiding a category is the thing people do most in this list, and the eye
-    // is a 17-pixel target at the far end of the row. The whole row does it --
+    // is a small target at the far end of the row. The whole row does it --
     // except the swatch, which means something else.
     try {
         runInContext(
@@ -356,6 +365,106 @@ if (!problems.length) {
         if (rowClick.onSwatch !== 2) {
             problems.push("clicking the colour swatch must not hide the category");
         }
+    }
+
+    // (8) The summary line, the folded filter, and a list too long to build in
+    // one go. Driven through a controller of its own, built last, so the
+    // handlers read off the shared stand-in nodes are this one's.
+    try {
+        runInContext(
+            "globalThis.__list = (() => {"
+            + " const c = new CellExplorerSidebarController({ url: (p) => p,"
+            + "   datasource: 'd', dataset: { schema: {} }, onCleanup() {},"
+            + "   viewer: { setCellColorLUT() { return true; } } });"
+            + " c.setup();"
+            + " const levels = [['excluded', 13], ['flagged', 5400], ['noted', 6300],"
+            + "   ['pass', 189987]];"
+            + " c.state.descriptors = [{ name: 'qc_status', kind: 'categorical', n: 201700,"
+            + "   n_missing: 0, categories: levels.map(([value, count]) => ({ value, count })) }];"
+            + " c.state.column = 'qc_status';"
+            + " c.renderLegend();"
+            + " const text = (id) => document.getElementById(id).textContent;"
+            + " const summary = text('cell_explorer_summary_categories')"
+            + "   + ' ' + text('cell_explorer_summary_cells');"
+            + " const row = document.getElementById('cell_explorer_search_row');"
+            + " const search = document.getElementById('cell_explorer_search');"
+            + " c.openSearch();"
+            + " const opened = c.isSearchOpen() && row.inert === false;"
+            + " search.value = 'ex';"
+            + " search.handlers.input.at(-1)({ target: search });"
+            + " const filtered = { rows: c.legend.rows.length,"
+            + "   summary: text('cell_explorer_summary_categories') };"
+            + " let consumed = false;"
+            + " search.handlers.keydown.at(-1)({ key: 'Escape', preventDefault() {},"
+            + "   stopPropagation() { consumed = true; } });"
+            + " const closed = { open: c.isSearchOpen(), inert: row.inert, value: search.value,"
+            + "   filter: c.legend.filter, rows: c.legend.rows.length, consumed };"
+            + " const many = { name: 'cell_id', n: 5000, n_missing: 0,"
+            + "   categories: Array.from({ length: 5000 }, (_, i) => ({ value: 'id_' + i, count: 1 })) };"
+            + " const list = document.getElementById('cell_explorer_legend');"
+            + " c.legend.render(many, { colors: {}, hidden: [] });"
+            + " const firstPage = { built: c.legend.built, pickers: c.legend.pickers.length,"
+            + "   children: list.children.length };"
+            + " Object.assign(list, { scrollHeight: 5600, clientHeight: 336, scrollTop: 900 });"
+            + " c.legend.buildMoreIfNear();"
+            + " const farFromEnd = c.legend.built;"
+            + " list.scrollTop = 5600 - 336 - 100;"
+            + " c.legend.buildMoreIfNear();"
+            + " const nearEnd = c.legend.built;"
+            + " c.legend.render(many, { colors: {}, hidden: ['id_3'] });"
+            + " const sameList = { built: c.legend.built, scrollTop: list.scrollTop };"
+            + " c.destroy();"
+            + " return { summary, opened, filtered, closed, firstPage, farFromEnd, nearEnd,"
+            + "   sameList, afterDestroy: c.legend.pickers.length,"
+            + "   formats: [13, 999, 1000, 5412, 189987, 201734, 999949, 999960, 1234567]"
+            + "     .map(CellExplorerLegend.formatCount),"
+            + "   tip: CellExplorerLegend.describeCount(5412, 201734) }; })();",
+            ctx);
+    } catch (error) {
+        problems.push(`the summary line and filter could not be exercised: ${error.message}`);
+    }
+
+    const list = ctx.__list;
+    if (list) {
+        if (list.closed && list.closed.filter !== "") {
+            problems.push("folding the filter away must clear it -- a list left narrowed "
+                + "behind a closed field has rows missing and nothing saying why");
+        }
+        if (list.firstPage && list.firstPage.pickers > 200) {
+            problems.push(`a 5000-category list built ${list.firstPage.pickers} rows at once`);
+        }
+    }
+
+    // (9) Z / X: the previous / next overlay column, along the dropdown's own
+    // list, stopping at either end -- and the keys only while the panel is
+    // armed and nothing is held with them.
+    try {
+        runInContext(
+            "globalThis.__steps = (() => {"
+            + " const c = new CellExplorerSidebarController({ url: (p) => p,"
+            + "   datasource: 'd', dataset: { schema: {} }, onCleanup() {},"
+            + "   viewer: { setCellColorLUT() { return true; } } });"
+            + " c.setup();"
+            + " c.state.descriptors = ['phenotype', 'qc_status', 'Area'].map((name) => ("
+            + "   { name, kind: name === 'Area' ? 'continuous' : 'categorical', n: 10,"
+            + "     n_missing: 0, categories: [] }));"
+            + " const at = () => c.state.column;"
+            + " const trail = [];"
+            + " for (const delta of [-1, 1, 1, 1, 1, -1]) trail.push(c.stepColumn(delta), at());"
+            + " const press = (key, extra) => { let prevented = false;"
+            + "   c.onColumnKey(Object.assign({ key, preventDefault() { prevented = true; } },"
+            + "     extra || {})); return prevented; };"
+            + " const keyed = [press('z'), at()];"
+            + " c.armKeys();"
+            + " keyed.push(press('z'), at(), press('x', { metaKey: true }), at(),"
+            + "   press('X'), at());"
+            + " c.disarmKeys();"
+            + " keyed.push(press('z'), at());"
+            + " c.destroy();"
+            + " return { trail, keyed }; })();",
+            ctx);
+    } catch (error) {
+        problems.push(`stepping through the columns could not be exercised: ${error.message}`);
     }
 
     // The seam with core. cell_color_probe.mjs pins how the renderer reads these
@@ -445,6 +554,8 @@ const report = {
     controller: ctx.__built || null,
     legend: ctx.__legend || null,
     rowClick: ctx.__rowClick || null,
+    list: ctx.__list || null,
+    steps: ctx.__steps || null,
     recolor: ctx.__recolor || null,
     lut: ctx.__lut || null,
     problems,

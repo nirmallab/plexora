@@ -52,7 +52,7 @@
    "Auto Threshold" under the slider; it is now the muted 20px glyph at the end
    of the MARKER's line, which core styles as `.slider-auto-button` -- the same
    control, and the same class, the image channel's contrast window ends with.
-   See gating/panel.html.
+   See gating/panel.html. The picker is core's panel field (`.plx-panel-field`).
 
    The one thing core's row would get wrong: it gives every child `flex: 1`,
    which would stretch a 20px glyph into a third of the line. Two classes, so
@@ -147,7 +147,7 @@
 #gating_save_anndata_panel {
     background: var(--surface-2);
     border: 1px solid var(--border-strong);
-    border-radius: var(--radius-md);
+    border-radius: var(--radius-control);
     box-shadow: var(--shadow-md);
     color: #eef3f8;
     margin-top: 8px;
@@ -180,7 +180,7 @@
 #gating_save_anndata_panel input[type=text] {
     background: var(--surface-1);
     border: 1px solid var(--border-strong);
-    border-radius: 4px;
+    border-radius: var(--radius-control);
     color: #eef3f8;
     font-size: 11px;
     margin-top: 4px;
@@ -480,11 +480,11 @@
     border: 1px solid var(--border-strong);
     background: transparent;
     color: var(--text-secondary);
-    border-radius: var(--radius-sm);
-    padding: 0 6px;
+    border-radius: var(--radius-control);
+    padding: 0 8px;
     font: inherit;
     font-size: 11px;
-    line-height: 18px;
+    line-height: 22px;
     cursor: pointer;
 }
 
@@ -504,7 +504,7 @@
 
 .gating-agent-pill {
     padding: var(--space-1) var(--space-2);
-    border-radius: var(--radius-md);
+    border-radius: var(--radius-control);
     background: var(--accent-channel-tint);
     border: 1px solid var(--accent-channel-soft);
 }
@@ -928,7 +928,7 @@
 .clf-session {
     background: rgba(255, 255, 255, 0.03);
     border: 1px solid var(--border-subtle);
-    border-radius: var(--radius-sm);
+    border-radius: var(--radius-control);
     display: grid;
     gap: 7px;
     padding: 8px;
@@ -1057,7 +1057,7 @@
 /* Edged in Signal Cyan: the one thing on the panel the keys are answering. */
 .clf-review-bar {
     border: 1px solid var(--accent-channel);
-    border-radius: var(--radius-sm);
+    border-radius: var(--radius-control);
     display: grid;
     gap: 6px;
     padding: 6px;
@@ -1128,100 +1128,8 @@
     opacity: 0.35;
 }
 
-/* The panel's footer: its two keys, centred, worn as a band like the card's
-   header (viewer.css, "EVERY CARD IN THIS SIDEBAR WEARS ITS HEADER AS A
-   BAND") -- the same tint, a rule on the side facing the panel, the card's
-   rounded corners -- so it reads as the card's last line, not one more row.
-   The band starts 3px in for the header's reason: the card's hue is an inset
-   shadow down its left edge, painted under a child's background. */
-.gate-panel-footer {
-    align-items: center;
-    background: linear-gradient(to right,
-        transparent 0 3px, rgba(255, 255, 255, 0.035) 3px);
-    border-radius: 0 0 var(--radius-sm) var(--radius-sm);
-    border-top: 1px solid var(--border-subtle);
-    color: var(--text-muted);
-    display: flex;
-    flex-wrap: wrap;
-    /* The canvas's "T  Toggle selected cells" hint, size for size. */
-    font-size: 10px;
-    /* The keys' own 2px 6px is taken back out of the gap and the padding,
-       so at rest the band and the two lines sit where they did before the
-       keys were buttons. */
-    gap: 0 var(--space-1);
-    justify-content: center;
-    letter-spacing: 0.02em;
-    margin-top: var(--space-3);
-    padding: 4px 2px;
-}
-
-/* In a tool card the band runs edge to edge and down to the card's foot,
-   through the body's 8px at the sides and bottom (viewer.css .tool-card-body). */
-.tool-card-body .gate-panel-footer {
-    margin: var(--space-3) -8px -8px;
-}
-
-/* Each key is also a button (stepMarker), and at rest still reads as the
-   quiet line it was: no ground, no edge, the band's own muted text. Under
-   the pointer it takes a faint ground and its cap lights, as the canvas
-   hint's cap does when it is on; pressed, the cap goes down a pixel. */
-.gate-panel-shortcut {
-    align-items: center;
-    background: none;
-    border: 0;
-    border-radius: var(--radius-sm);
-    color: inherit;
-    cursor: pointer;
-    display: inline-flex;
-    font: inherit;
-    gap: 5px;
-    letter-spacing: inherit;
-    padding: 2px 6px;
-    transition: color var(--duration-fast) var(--ease-standard),
-                background-color var(--duration-fast) var(--ease-standard);
-    white-space: nowrap;
-}
-
-.gate-panel-shortcut .plx-kbd {
-    transition: border-color var(--duration-fast) var(--ease-standard),
-                color var(--duration-fast) var(--ease-standard),
-                translate var(--duration-fast) var(--ease-standard);
-}
-
-.gate-panel-shortcut:hover:not(:disabled) {
-    background: rgba(255, 255, 255, 0.06);
-    color: var(--text-primary);
-}
-
-.gate-panel-shortcut:hover:not(:disabled) .plx-kbd {
-    border-color: var(--accent-channel);
-    color: var(--text-primary);
-}
-
-.gate-panel-shortcut:active:not(:disabled) .plx-kbd {
-    translate: 0 1px;
-}
-
-.gate-panel-shortcut:focus-visible {
-    outline: 2px solid var(--accent-channel-soft);
-    outline-offset: 0;
-}
-
-/* At either end of the list: the key does nothing there, nor does this. */
-.gate-panel-shortcut:disabled {
-    cursor: default;
-    opacity: 0.4;
-}
-
-/* The canvas hint's cap (viewer.css .viewer-overlay-hint-key), not the
-   larger default `.plx-kbd`. */
-.gate-panel-footer .plx-kbd {
-    border-radius: calc(var(--radius-sm) - 3px);
-    font-size: 9px;
-    line-height: 13px;
-    min-width: 13px;
-    padding: 0 3px;
-}
+/* The panel's footer -- Z / X for the marker -- is core's band now
+   (viewer.css .plx-panel-footer), the one every tool panel ends with. */
 
 /* The hover card after a run: a small dark card beside the pointer, in the
    manner of QC's (qcHover.js), never taking the pointer itself. */

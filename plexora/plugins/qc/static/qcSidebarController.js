@@ -166,6 +166,13 @@ class QcSidebarController {
             tool.querySelector(".qc-tool-fold")?.addEventListener("click",
                 () => this.toggleFold(tool.dataset.tool));
         }
+        // The footer's E, as the key: Registration binds its own three.
+        this.el("qc_footer")?.addEventListener("click", (event) => {
+            if (!event.target.closest('[data-qc-key="magic"]')) return;
+            // As Add ROIs does: the picker it may open must not see this click.
+            event.stopPropagation();
+            this.toggleMagic();
+        });
         this.renderFolds();
         this.el("qc_roi_eye")?.addEventListener("click", () => this.setRoiMuted(!this.roiMuted));
         this.el("qc_download")?.addEventListener("click", (event) => {
@@ -1000,6 +1007,26 @@ class QcSidebarController {
             tool.dataset.open = open ? "true" : "false";
             tool.querySelector(".qc-tool-fold")?.setAttribute("aria-expanded", open ? "true" : "false");
         }
+        this.renderFooter();
+    }
+
+    /** The card's footer: the keys of the check that is unfolded, and none
+     *  while the rest are -- a check's keys mean nothing under another one.
+     *  The band itself always stays (panel.html). */
+    renderFooter() {
+        const footer = this.el("qc_footer");
+        if (!footer) return;
+        const open = (key) => this.folds[key] === true;
+        for (const button of footer.querySelectorAll("[data-reg-key]")) button.hidden = !open("reg");
+        const magic = footer.querySelector('[data-qc-key="magic"]');
+        if (magic) {
+            magic.hidden = !open("roi");
+            const key = String((window.PlexoraSegment && window.PlexoraSegment.KEY) || "e").toUpperCase();
+            const cap = magic.querySelector("kbd");
+            if (cap && cap.textContent !== key) cap.textContent = key;
+            magic.title = `Magic select: click a region of tissue to outline it (${key})`;
+        }
+        this.registration?.renderFooter?.();
     }
 
     toggleHidden(key) {

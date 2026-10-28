@@ -166,6 +166,72 @@ plexora
 
 **Cell Count** is now in the **Tools** menu. Installing a plugin is what turns it on. `plexora --plugins cell_count` (or `PLEXORA_PLUGINS=cell_count`) starts Plexora with only the plugins you list. See [the plexora command](/docs/reference/cli/plexora).
 
+## Design the sidebar panel
+
+Every tool panel in the sidebar uses the same measures, so several open tools read as one sidebar. Plexora provides them as CSS variables (`tokens.css`) and shared classes. Use those rather than writing the numbers out. Cell Explorer is the reference panel.
+
+**Space**
+
+- Plexora pads the card body, including the colour stripe on its left edge, so the left and right insets match. Don't add horizontal padding to your section.
+- Stack the panel's blocks with `gap: var(--panel-gap)` (8px) on the section, not with margins on each block.
+- Separate the panel's parts with a 1px `var(--panel-rule)` hairline. Leave the same space above and below it, measured from the text on each side to the rule.
+- Don't put groups in boxes. Rules and space do that job.
+
+**Type.** Use four sizes:
+
+| Variable | Size | For |
+| --- | --- | --- |
+| `--panel-font-body` | 13px | Names, values, the select, list rows |
+| `--panel-font-meta` | 12px | Counts, summaries, text buttons, nested rows |
+| `--panel-font-note` | 11px | Captions (`.control-label`), status lines, hints |
+| `--panel-font-footer` | 10px | The footer |
+
+**Sizes**
+
+| Variable | Size | For |
+| --- | --- | --- |
+| `--panel-control-height` | 34px | A select, a text field, a row that opens another tool |
+| `--panel-button-height` | 28px | A line of buttons, or a segmented control, on its own line |
+| `--panel-icon-button` | 24px | Anything inside a row: eye, menu and close buttons, a header's **Run**, a row's **Approve**. 13px glyph for the eye, 11px for the rest |
+| `--panel-row-height` | 32px | A list row. A row nested under it is 28px |
+
+Buttons and segmented controls use 11px text.
+
+**Corners.** Two radii, and nothing else on a control or a card:
+
+- `--radius-control` (8px): every button, field, select, segmented control and icon button, the hover background of a row, and any box inside a card (a plot, a notice, a form).
+- `--radius-card` (12px): the card itself. Plexora draws the cards.
+- Shapes keep their own: dots and colour swatches are round, count badges and progress bars are pills, and key caps keep their small corner. Don't draw a button as a pill.
+
+**Fields and buttons**
+
+- Give selects and text fields the `plx-panel-field` class: on a `SearchableSelect`'s mount, on an `<input>`, or on a `<select>`. It sets the 34px height, a faint background, a 1px border and the control radius. On focus the border turns blue, with no glow.
+- Rows and icon buttons show `--panel-hover-ground` under the pointer.
+- Buttons that act on the whole panel (import, export) are Plexora's `.layer-card-action` buttons in a `.layer-card-actions` line. Choices of one from a few are Plexora's `.cell-mode-options` segmented control.
+
+**Layout**
+
+- Start with the panel's main choice: a `.control-label` caption and its field, either above it or beside it in a `.control-row`.
+- Put a visibility eye (`far fa-eye` / `far fa-eye-slash`) at the far right of every row, so the eyes form one column. A show-all or hide-all eye goes in the same column, on the heading.
+- Right-align counts, at the meta size, in the muted text colour.
+- Put actions that take the user out of the panel (export, another tool) below the list, after a rule.
+
+**Footer.** Every panel ends with a footer that lists its keyboard shortcuts:
+
+```html
+<footer id="cc_footer" class="plx-panel-footer" aria-label="Previous and next channel">
+    <button type="button" class="plx-panel-shortcut" data-step="-1"
+            title="Previous channel (Z)"><kbd class="plx-kbd">Z</kbd> Previous channel</button>
+    <button type="button" class="plx-panel-shortcut" data-step="1"
+            title="Next channel (X)"><kbd class="plx-kbd">X</kbd> Next channel</button>
+</footer>
+```
+
+- Each shortcut is a button, and clicking it does what the key does. Disable it when the key would do nothing, such as at the end of a list.
+- Print a chord such as `Mod+Z` with `PlexoraShortcuts.format("Mod+Z")`, so it reads ⌘Z on a Mac and Ctrl+Z elsewhere.
+- Act on a single-letter key only while your tool is the active one (`PlexoraToolLoader.activeTool()`) and nobody is typing (`PlexoraShortcuts.isTyping()`).
+- List the same keys in `help.shortcuts`, so the card's **?** shows them too.
+
 ## Keep state
 
 To remember something per project, use the plugin's own store. Its tables are namespaced to your plugin:

@@ -37,7 +37,10 @@
        (core's services/drawToolbar.js), where the drawing happens. The panel starts with what
        they draw into. #}
 
-    {# The heading, and the eye that hides every category at once. #}
+    {# The heading, and the eye that hides every category at once -- in the
+       column the rows' own eyes stand in, at the far right, as every tool
+       panel's visibility does (the plugin guide's "Design the sidebar
+       panel"). #}
     <div class="roi-section-head">
         <label class="control-label">Categories</label>
         <div class="roi-section-actions">
@@ -46,7 +49,7 @@
                category to hide. #}
             <button id="roi_category_all_eye" class="roi-all-eye" type="button" hidden
                     title="Hide all categories">
-                <span class="fas fa-eye"></span><span class="fas fa-eye-slash"></span>
+                <span class="far fa-eye" aria-hidden="true"></span><span class="far fa-eye-slash" aria-hidden="true"></span>
             </button>
         </div>
     </div>
@@ -64,7 +67,7 @@
        with it. No form, no default action to suppress. #}
     <div class="roi-category-add">
         <span class="fas fa-plus roi-category-add-icon" aria-hidden="true"></span>
-        <input id="roi_category_name" class="roi-input roi-category-add-input" type="text"
+        <input id="roi_category_name" class="plx-panel-field roi-category-add-input" type="text"
                autocomplete="off" spellcheck="false" maxlength="200"
                placeholder="Add new category" aria-label="New category name" disabled>
         <button id="roi_category_new" class="roi-category-add-submit" type="button" disabled
@@ -91,7 +94,7 @@
                 <span class="fas fa-xmark"></span>
             </button>
         </div>
-        <input id="roi_destination_name" class="roi-input" type="text" maxlength="200"
+        <input id="roi_destination_name" class="plx-panel-field" type="text" maxlength="200"
                autocomplete="off" spellcheck="false">
         <div id="roi_destination_hint" class="roi-hint roi-destination-hint"></div>
     </div>
@@ -105,7 +108,9 @@
        file gets the write, and Export is the download beside it. Import and
        Export always keep their words -- they are what a user goes looking
        for at the end of a session -- and Map to cells is the grid glyph at the
-       end of the row, explained under the ? in the card's header. #}
+       end of the row, explained under the ? in the card's header. A hairline
+       above, as Cell Explorer's way out sits under its list: what the panel
+       holds, then what leaves it. #}
     <div id="roi_actions" class="roi-actions">
         <button id="roi_import_button" class="roi-action roi-action-labelled" type="button"
                 title="Import ROIs from a GeoJSON file">
@@ -147,4 +152,19 @@
        of -- a failed or unreachable autosave -- now speaks through the message
        box below, which is silent until there is something to say. #}
     <div id="roi_message" class="roi-message" hidden></div>
+
+    {# The panel's keys, as the card's last line: core's footer band
+       (viewer.css .plx-panel-footer), which every tool panel ends with.
+       Undo and Redo, because they had no button anywhere -- the drawing keys
+       already show their letters on the bar over the image. Each is a button
+       that does what its chord does (RoiInteraction.undo / redo), disabled
+       when there is nothing to step to. The chord is printed by core's
+       shortcut service, so it reads ⌘Z on a Mac and Ctrl+Z elsewhere
+       (renderFooter). #}
+    <footer id="roi_footer" class="plx-panel-footer" aria-label="Undo and redo">
+        <button id="roi_undo" type="button" class="plx-panel-shortcut" data-history="undo"
+                title="Undo" disabled><kbd class="plx-kbd" data-chord="Mod+Z">⌘Z</kbd> Undo</button>
+        <button id="roi_redo" type="button" class="plx-panel-shortcut" data-history="redo"
+                title="Redo" disabled><kbd class="plx-kbd" data-chord="Mod+Shift+Z">⇧⌘Z</kbd> Redo</button>
+    </footer>
 </section>

@@ -2,8 +2,8 @@
  * Two tools on screen at once, and only the two that asked to be.
  *
  * Single-active is the rule everywhere else in the sidebar: opening a tool
- * folds the previous one and turns its layer off. Cell Explorer's Open ROIs
- * button is the one exception -- an ROI composition card summarises the cells
+ * folds the previous one and turns its layer off. Cell Explorer's Overlay ROI
+ * row is the one exception -- an ROI composition card summarises the cells
  * under an overlay, so folding the overlay away answers a question about a
  * picture the user can no longer see.
  *

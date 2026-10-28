@@ -16,6 +16,7 @@ nothing and reports nothing.
 """
 
 import json
+import re
 import shutil
 import subprocess
 from pathlib import Path
@@ -111,29 +112,112 @@ def test_the_panel_uses_cores_widgets_rather_than_its_own(report):
 
 
 def test_the_colour_by_control_carries_its_own_search(report):
-    """Two things at once, and they point the same way. A button is sized to
-    the column name rather than to a text field, which is what lets it share a
-    line with the legend's filter and its All/None; and the search then lives
-    inside the menu, where somebody looking for a search box will look. A field
-    that doubles as the value display gives no sign at all that it can be typed
-    into -- which is exactly how it read."""
+    """The control shows the column it is colouring by, and the search that
+    finds another one lives inside the menu it opens, where somebody looking
+    for a search box will look. A field that doubles as the value display
+    gives no sign at all that it can be typed into -- which is exactly how it
+    read."""
     _, data = report
     assert data["controller"]["trigger"] == "button"
     assert data["controller"]["menuSearch"] is True
 
 
-def test_the_three_toolbar_controls_share_one_line(report):
-    """The template's half of the same claim. The filter and All/None sit in
-    the colour-by control's row rather than in a header of their own, and they
-    are wrapped together so they can come and go with the legend they act on --
-    two controls left behind on a numeric column have nothing to act on."""
-    panel = (REPO_ROOT / "plexora" / "plugins" / "cell_explorer" / "templates"
-             / "cell_explorer" / "panel.html").read_text(encoding="utf-8")
+PANEL = (REPO_ROOT / "plexora" / "plugins" / "cell_explorer" / "templates"
+         / "cell_explorer" / "panel.html")
+CONTROLLER = (REPO_ROOT / "plexora" / "plugins" / "cell_explorer" / "static"
+              / "cellExplorerSidebarController.js")
+
+
+def test_everything_that_acts_on_the_list_is_one_line_under_colour_by():
+    """The template's half. Colour-by has a line of its own; the list's count,
+    its filter and Show all / Hide all are one line under it, wrapped together
+    so they come and go with the legend -- controls left behind on a numeric
+    column have nothing to act on. The filter field shares the counts' slot on
+    that line, inert until its icon opens it."""
+    panel = PANEL.read_text(encoding="utf-8")
     toolbar = panel.split('class="cex-toolbar"', 1)[1].split('id="cell_explorer_override"', 1)[0]
-    for element in ("cell_explorer_variable", "cell_explorer_category_controls",
-                    "cell_explorer_search", "cell_explorer_visibility"):
-        assert element in toolbar, f"{element} is not in the toolbar row"
+    controls = toolbar.split('id="cell_explorer_category_controls"', 1)
+    assert "cell_explorer_variable" in controls[0], "colour-by heads the toolbar"
+    for element in ("cell_explorer_summary", "cell_explorer_search_toggle",
+                    "cell_explorer_visibility", "cell_explorer_search"):
+        assert element in controls[1], f"{element} is not with the list's controls"
+    slot = controls[1].split('class="cex-summary-slot"', 1)[1].split('class="cex-summary-actions"', 1)[0]
+    for element in ("cell_explorer_summary", "cell_explorer_search_row"):
+        assert element in slot, f"{element} is not in the slot the counts and filter share"
+    search_row = re.search(r'<div id="cell_explorer_search_row"[^>]*>', panel).group(0)
+    assert re.search(r"\sinert\b", search_row), "the folded filter must be out of the Tab order"
     assert "cex-legend-header" not in panel, "the legend's own header row is gone"
+
+
+def test_overlay_roi_is_the_foot_of_the_card_with_no_standing_hint():
+    """A way out to another tool, at the bottom, named for what it does. The
+    sentence about hovering a region moved to its tooltip: on the panel it was
+    a line every session paid for and few read."""
+    panel = PANEL.read_text(encoding="utf-8")
+    launch = panel.index('id="cell_explorer_roi_launch"')
+    for block in ("cell_explorer_toolbar", "cell_explorer_legend_section",
+                  "cell_explorer_continuous"):
+        assert panel.index(f'id="{block}"') < launch, f"Overlay ROI is above {block}"
+    assert ">Overlay ROI<" in panel
+    assert "Hover a region to see what it is made of" not in panel
+
+
+def test_the_mask_wait_knows_every_block_in_document_order():
+    """The wait for a mask hides every block named in PANEL_BLOCKS, and render()
+    puts each one back. A block missing from that list stays on screen behind
+    the wait; one listed out of order is a list nobody can check by eye."""
+    source = CONTROLLER.read_text(encoding="utf-8")
+    listed = re.findall(r'"(cell_explorer_\w+)"',
+                        source.split("static PANEL_BLOCKS = [", 1)[1].split("];", 1)[0])
+    panel = PANEL.read_text(encoding="utf-8")
+    positions = [panel.index(f'id="{block}"') for block in listed]
+    assert positions == sorted(positions), listed
+    top_level = re.findall(r'^    <\w+ id="(cell_explorer_\w+)"', panel, re.MULTILINE)
+    waits = {"cell_explorer_empty", "cell_explorer_nowhere", "cell_explorer_mask_wait"}
+    assert sorted(set(top_level) - waits) == sorted(listed)
+
+
+def test_the_summary_line_counts_the_column_on_screen(report):
+    """From the same descriptor the rows are built from, so the line and the
+    list cannot disagree. It counts the whole column even while a filter
+    narrows the list; the filter's field covers it then."""
+    _, data = report
+    assert data["list"]["summary"] == "4 categories · 201.7K cells"
+    assert data["list"]["filtered"] == {"rows": 1, "summary": "4 categories"}
+
+
+def test_counts_are_compact_with_the_exact_figure_on_hover(report):
+    """At most six characters, so a column of them lines up by its last digit.
+    999,960 is 1M, not 1000K; the exact figure and its share are a hover away."""
+    _, data = report
+    assert data["list"]["formats"] == [
+        "13", "999", "1K", "5.4K", "190K", "201.7K", "999.9K", "1M", "1.2M"]
+    assert data["list"]["tip"] == "5,412 cells (2.7%)"
+
+
+def test_folding_the_filter_away_clears_it(report):
+    """A filter left applied behind a closed field is a list with rows missing
+    and nothing on screen to say why. Escape folds it and is consumed, so the
+    same press does not also close something further out."""
+    _, data = report
+    assert data["list"]["opened"] is True
+    assert data["list"]["closed"] == {
+        "open": False, "inert": True, "value": "", "filter": "", "rows": 4, "consumed": True}
+
+
+def test_a_list_of_thousands_is_built_a_page_at_a_time(report):
+    """Every row carries a colour picker with a popover on <body> and two
+    document listeners. An identifier-like column has a category per cell, and
+    building them all on every keystroke of the filter froze the panel. The
+    next page is built only as the list nears its end, and a row acted on
+    keeps the list where it was."""
+    _, data = report
+    lst = data["list"]
+    assert lst["firstPage"] == {"built": 200, "pickers": 200, "children": 200}
+    assert lst["farFromEnd"] == 200
+    assert lst["nearEnd"] == 400
+    assert lst["sameList"] == {"built": 400, "scrollTop": 5164}
+    assert lst["afterDestroy"] == 0
 
 
 def test_a_run_of_colour_changes_costs_one_rebuild(report):
@@ -265,3 +349,33 @@ def test_the_probe_catches_a_file_dropped_from_the_descriptor(report):
     returncode, data = _run(scripts)
     assert returncode == 1
     assert any("CellExplorerColors" in problem for problem in data["problems"])
+
+
+
+def test_z_and_x_step_the_overlay_column(report):
+    """Thresholding's next marker, for the overlay: the dropdown's own list, one
+    key at a time, as if the column had been picked there. With none chosen, X
+    starts at the top and Z does nothing; at either end the step stops rather
+    than wrapping. Numeric columns are on the list like any other."""
+    _, data = report
+    assert data["steps"]["trail"] == [
+        False, None, True, "phenotype", True, "qc_status", True, "Area",
+        False, "Area", True, "qc_status"]
+
+
+def test_the_keys_answer_only_while_armed_and_bare(report):
+    """Armed while the panel is on screen (onShow to onHide), never with a
+    modifier held -- Cmd+X is cut. Upper or lower case both step."""
+    _, data = report
+    assert data["steps"]["keyed"] == [
+        False, "qc_status", True, "phenotype", False, "phenotype", True, "qc_status",
+        False, "qc_status"]
+
+
+def test_the_footer_steps_are_buttons_in_the_card_foot():
+    """The panel's last block, after Overlay ROI, with one button per key."""
+    panel = PANEL.read_text(encoding="utf-8")
+    footer = panel.split('<footer id="cell_explorer_footer"', 1)[1].split("</footer>", 1)[0]
+    assert panel.index('id="cell_explorer_roi_launch"') < panel.index('id="cell_explorer_footer"')
+    assert 'data-column-step="-1"' in footer and 'data-column-step="1"' in footer
+    assert '<kbd class="plx-kbd">Z</kbd>' in footer and '<kbd class="plx-kbd">X</kbd>' in footer

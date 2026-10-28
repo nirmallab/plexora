@@ -41,8 +41,8 @@
  *
  * The one exception to single-active is a COEXISTING PAIR: two tools opened
  * together through openToolAlongside(), which stay expanded and drawn side by
- * side while the selection moves freely between them. Cell Explorer's Open ROIs
- * button is the only caller, because its ROI composition card summarises the
+ * side while the selection moves freely between them. Cell Explorer's Overlay
+ * ROI row is the only caller, because its ROI composition card summarises the
  * cells under an overlay that has to still be drawn for the answer to mean
  * anything. Opening a third tool, or closing either half, dissolves the pair --
  * the exception never outlives the pairing that justified it.
@@ -1477,7 +1477,7 @@ window.PlexoraToolLoader = (function () {
         /** Open `toolName` WITHOUT standing `anchorToolName` down -- the one
          *  sanctioned exception to single-active. Both cards stay expanded and
          *  both layers stay drawn until a third tool opens or either half is
-         *  closed. Cell Explorer's Open ROIs button is the caller. */
+         *  closed. Cell Explorer's Overlay ROI row is the caller. */
         openToolAlongside,
         /** Whether this tool is sharing the screen with another right now. */
         isCoexisting,

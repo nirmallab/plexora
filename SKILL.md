@@ -4110,7 +4110,17 @@ deliberately left out and what should be built next.
   `qc_visual_artifacts`, the builders keyed by skill name). Static:
   `qcApi.js`, `qcSidebarController.js` (the draw picker now shows Custom
   plus the five categories, each with a `?` help popover), `qcAgentBridge.js`,
-  `qcRegistration.js`, `qcBlur.js` (`QcBlurQc`: its fold sits between
+  `qcRegistration.js` (also wires the panel's `#qc_footer` — Z/X/F key-cap
+  buttons, `data-reg-key`, worded "Previous"/"Next"/"Flicker" so they fit one
+  line at 320px — in `setup`, and its `renderFooter()` mirrors
+  `qc_reg_prev`/`qc_reg_next`'s disabled state onto them). The band itself
+  is always there (core's `min-height: 28px` keeps an empty one the card's
+  foot) and holds only the unfolded check's keys:
+  `QcSidebarController.renderFooter()`, called from `renderFolds`, unhides
+  the Z/X/F buttons under Registration and E (`data-qc-key="magic"`, letter
+  from `PlexoraSegment.KEY`, click → `toggleMagic` with stopPropagation)
+  under ROI, and none for Blur/Artifacts/Segmentation. Core's
+  `.plx-panel-shortcut[hidden]` rule is what lets a key hide., `qcBlur.js` (`QcBlurQc`: its fold sits between
   Registration and Segmentation in the panel; a histogram SVG plotted over
   the threshold slider, its x axis measured off the slider's own rail so the
   distribution's line and the thumb are one position, a preview reading
@@ -4139,8 +4149,14 @@ deliberately left out and what should be built next.
   (`q:<category>`, folded, opening onto `reason` rows; a noted reason a
   faint ring), the Background last, and "Set aside by you"; the Cells,
   Markers and Channel audit sections are gone — channel verdicts are in the
-  report, one marker's flags in the exports and the hover card),
-  `qc.css`; template `qc/panel.html`
+  report, one marker's flags in the exports and the hover card; a row ends
+  `more, eye`, and Blur's and Artifacts' line rows put remove before the eye,
+  so the eye stands in the column every tool panel keeps its eyes in),
+  `qc.css` (tool heads 32px, tree level 1 32px/13px, level 2 and `.qc-line`
+  28px/12px, 24px icon buttons, rules on `--panel-rule`; `.qc-row-count` is
+  plain right-aligned text, not a pill; Run and Add ROIs 24px on
+  `--radius-control`, not 999px pills; `.qc-segmented`/`.qc-seg-tabs` 28px); template `qc/panel.html` (every eye
+  `far`)
   (its "Trace outline" / "Trace all outlines" menu entries call
   `refine_qc_roi`; a locked region is never retraced — the ROI plugin already
   refuses to reshape a locked ROI; the region menu gained a Details entry).
@@ -4691,11 +4707,58 @@ deliberately left out and what should be built next.
   window and the gating threshold still share the same class, and a plugin
   reaches for it freely, since `tests/test_plugin_css_boundary.py` polices
   ids, not classes.
+  **The colour bar's numbers stand under the bar, not under the row**
+  (main.css): `.gradient-range` is a grid, `.gradient-range-row` is
+  `display: contents`, and `.gradient-range-scale` sits in column 1, row 2,
+  so the high end no longer lands under the palette/Auto/eye buttons. Each end
+  box is `flex: 1 1 0` with `--plx-number-width: 100%` (a fixed 56px cut a
+  long value off), and -4px edge margins put the digits on the bar's ends.
+  Cell Explorer's private grid rules for this were deleted. The ends' default
+  decimals are `PlexoraGradientRange.scaleDecimals(step)` (ceil(-log10(step)),
+  0–8), not `PlexoraSlider.decimalsFor(step)`, which took the step's own
+  digits — a Visium heatmap's 0..5.052849 read "5.05284900"; `buildScaleField`
+  passes `numberField`'s `display`, so an end is rounded at rest and whole
+  while edited. Cell Explorer's `CellExplorerContinuous.decimalsFor` is gone
+  with it. `gradientRange.js` is at `?v=20261027_scale_under_bar`.
   The sibling shape is **`.control-row`** (viewer.css, beside `.control-label`
   itself): a caption BESIDE its control rather than above it, which is what
   `.control-label`'s bottom margin has to be taken back for. Three panels had
   written the same six declarations out privately — Point size, Opacity and
   the gate's marker picker — before it.
+  The **tool panel standard** (Cell Explorer is the reference; the rule and
+  its reasons are `build-a-plugin.mdx`'s "Design the sidebar panel") lives in
+  core so four open panels read as one sidebar rather than four authors:
+  `tokens.css`'s `--panel-*` (type 13/12/11/10px for body/meta/note/footer;
+  control 34px, button line 28px (`--panel-button-height`), row 32px, icon
+  button 24px for anything set inside a row; field and hover grounds;
+  `--panel-rule`; `--panel-gap` 8px), and in
+  viewer.css `.plx-panel-field` (on a `SearchableSelect` mount,
+  `input.plx-panel-field` or `select.plx-panel-field`) and
+  `.plx-panel-footer`/`.plx-panel-shortcut`, the
+  key-cap band every tool panel ends on. **Corners are two tokens**, because a
+  button and the field beside it once disagreed (6px against 2px):
+  `--radius-control` (`--radius-md`, 8px) on every control — button, field,
+  select, segmented control, an icon button's or a row's hover ground — and
+  `--radius-card` (`--radius-lg`, 12px) on `.tool-card`/`.layer-card`, whose
+  header top corners, collapsed header and `.plx-panel-footer` bottom corners
+  are `calc(var(--radius-card) - 1px)`. `--panel-field-radius` (2px) and
+  `--panel-hover-radius` (4px) are retired. Dots, swatches, count badges and
+  progress tracks keep their shapes; no button in a sidebar plugin is a 999px
+  pill any more (QC's Run and Add ROIs were). `.layer-card-action` is 28px
+  (was 26) and `.cell-mode-options` `--panel-button-height`. The
+  `.viewer-sidebar .icon-button/.sidebar-select/.sidebar-action/
+  .sidebar-action-fancy` rule rounds those shared classes inside the sidebar
+  only, because Figure Builder, Video Studio and Settings use them too and
+  keep their own look. Thresholding's `.gate-panel-footer`
+  and Cell Explorer's `.cex-panel-footer` were deleted for it; the gate's
+  marker picker keeps its `.control-row` (caption beside it, the user's call)
+  and adds `plx-panel-field`, as do Segmentation's selects and diameter input
+  and Transcripts' gene picker mount. `?v=20261027_sidebar_radius` on
+  `tokens.css` and `main.css` (base.html) and on `viewer.css` (index.html and
+  figure_builder's `workspace.html`); all seven sidebar plugins (cell_explorer,
+  gating, qc, roi, segmentation, transcripts, visium_hd) are at
+  `VERSION = "20261027_sidebar_radius"`. `test_gating_panel.py`'s footer tests
+  read core `viewer.css` now, since the footer's rules live there.
 - `views/imageViewer.js` — still the big one, but four closures that used to
   live inside `ImageViewer`'s constructor were lifted out into their own
   modules (Phase 0 of the spatial-layer work): `views/labelTile.js`
@@ -4828,8 +4891,12 @@ deliberately left out and what should be built next.
   the card has no `onSelect` — a tool card's title still selects the tool. Both
   card headers now carry a tint and a bottom rule (`.layer-card-header`/
   `.tool-card-header`), suppressed and re-rounded when the card is collapsed;
-  the tool card header's gradient starts at 3px so it does not cover the
-  card's inset accent stripe. FontAwesome replaces `<span class="fas
+  the tool card header's gradient starts at `--tool-stripe` (3px, declared on
+  `.tool-card` and used by its inset box-shadow too) so it does not cover the
+  card's inset accent stripe, and `.tool-card-body` pays
+  `padding-left: calc(var(--space-2) + var(--tool-stripe))`, giving the stripe
+  back once in core so a panel's left and right insets match — Cell
+  Explorer's private `padding-left: 3px` is gone. FontAwesome replaces `<span class="fas
   fa-...">` with an inline `<svg>` before any click can reach it, which is why
   a two-state button is built as two glyph spans that CSS toggles, never as a
   class rewritten from JS.
@@ -6262,7 +6329,18 @@ them.
   bar's `magicBars()` is injected as `RoiInteraction.magicBars`, which
   `roiTools.js` uses with no fallback. `RoiInteraction` constructs with no tool
   in hand (`tool` null, state `"idle.select"`), and `press()` does nothing
-  until one is picked.
+  until one is picked. `RoiInteraction.undo()`/`redo()` are what `keyDown`'s
+  chords call and what the panel's `#roi_footer` buttons (`#roi_undo`/
+  `#roi_redo`, `data-history`) call too, so a click does exactly what Mod+Z
+  does; the controller's `bindFooter()` prints each chord through
+  `PlexoraShortcuts.format` (⌘Z on a Mac, Ctrl+Z elsewhere) and
+  `renderFooter()` disables a button with nothing to step to. The panel
+  itself: `#roi_panel_section` is a flex column on `--panel-gap`; category
+  rows 32px/13px, region rows 28px/12px; each row's eye (`far`) ENDS the row
+  (`roiTree.js` append order), under the borderless all-eye in the heading,
+  because the eyes of three panels once stood in three places; the
+  new-category and Save-as inputs are `plx-panel-field`; a hairline sits
+  above `.roi-actions`.
 - QC plugin: the header's one `#qc_add_roi` "Add ROIs" button (`.qc-add-roi`)
   opens the category picker; a category in hand puts `this.drawBar` up (Pan
   first, the category chip, ×), with QC's own pen and `QcMagic` behind it
@@ -9447,8 +9525,9 @@ in **5.6 s**.
   fragment lands, on both open paths (`openTool`'s `innerHTML` write and
   `adopt`), because the card exists before its contents do. Gating's CSV pair
   is the only user left — ROI's Import/Export/Save/Map to cells/? row moved
-  into the panel body as `#roi_actions`, a pill row of ROI-owned
-  `.roi-action` classes copying `.layer-card-action`'s values, because a
+  into the panel body as `#roi_actions`, a row of ROI-owned
+  `.roi-action` classes copying `.layer-card-action`'s values (28px,
+  `--radius-control`), because a
   hierarchy of categories and regions needed its own header space more than
   its four actions needed the card's. `toolLabel()` reads the
   menu row's `.nav-item-label`, not the row, and `toolShortcut()` reads the
@@ -9469,9 +9548,15 @@ in **5.6 s**.
   stay expanded and both layers stay drawn while the selection moves freely
   between them, and `isCoexisting(name)`/`coexistPartner(name)` let a
   controller ask whether it is one half of one. Cell Explorer's
-  `#cell_explorer_open_roi` button is the only caller, because its ROI
+  `#cell_explorer_open_roi` ("Overlay ROI", a footer row at the bottom of its
+  panel) is the only caller, because its ROI
   composition card only means anything while the ROI overlay it summarises is
   still drawn underneath — opening a tool from the Tools menu is unaffected.
+  After the pair opens, the press dispatches `plexora:roi-overlay` on `window`
+  and ROI's `roiSidebarController.setup()` answers with `tools.setTool(null)`,
+  because the regions were asked for to look at, not to draw: a drawing tool
+  still in hand from earlier would turn the next drag into a shape instead of
+  a pan.
   Opening a third tool folds both halves and clears the pair; closing or
   removing either half promotes the survivor to sole active tool;
   `tests/js/tool_coexist_probe.mjs` + `tests/test_tool_coexistence.py` pin all
@@ -9502,6 +9587,20 @@ in **5.6 s**.
   the picture in front of the user, not a layer in the stack; each carries its
   own close button and marks its dock `data-viewer-furniture` so core's canvas
   popups keep off it without naming a plugin's class.
+- **Every tool panel is built to one standard, from core's parts.** A
+  `tool_panel_slot` panel ends on a `plx-panel-footer` of `plx-panel-shortcut`
+  key-cap buttons (each doing what its key does) with nothing after it, its
+  eyes are `far` and end their rows, and it keeps no private footer band or
+  stripe compensation — because four panels open at once used to read as
+  four authors: three eye styles in three places, rows at 24px beside 32px,
+  and a key footer on only two. Its corners are `--radius-control` and
+  `--radius-card` only, because a button and the field beside it were 6px and
+  2px. `tests/test_plugin_panel_standard.py`
+  enforces it; `PENDING = {"segmentation"}` (3-D only, no key worth a footer
+  yet) is the list that may only shrink. It also pins the radius tokens and
+  the shared components' radii, and checks all seven sidebar plugins'
+  stylesheets for the retired `--panel-field-radius`/`--panel-hover-radius`
+  and for 999px on any button/run/play/add-roi/action rule.
 - **Figure Builder's dock takes the outermost right band only while open
   beside one.** `FigureCaptureDock.settle()` puts it in core's top-right
   corner (`PlexoraCanvasLayout.place`) unless it is open, unfolded, and
@@ -9632,7 +9731,7 @@ in **5.6 s**.
   somebody narrows the question being asked of the slide, so the card answers
   the narrowed one, and the total is summed from the shown rows so the fixed
   0–100% bars stay comparable between regions. `recolor()` is the single funnel
-  that keeps an open card truthful (hide, show, All/None, colour change).
+  that keeps an open card truthful (hide, show, Show all / Hide all, colour change).
   Because ROI geometry objects are replaced rather than mutated on edit, the
   bridge revalidates on every `store.onChange` by identity rather than a deep
   compare. `tests/js/roi_hover_probe.mjs` covers the announcing half (what is
@@ -13544,6 +13643,12 @@ Five fixes, four of them in `plugins/roi`, one in core's `toolLoader.js`.
   category rows came out 22px while region rows nested in `.roi-children` kept
   their 24px -- two row heights in one list, appearing only once it was long
   enough to scroll. `max-height: calc(15 * 24px + 14 * 1px)`, was a flat 300px.
+
+  > **Superseded by the tool panel standard (2026-10-27).** Category rows are
+  > 32px/13px and region rows 28px/12px, the eye ends every row rather than
+  > leading the name, and `.roi-tree` caps at `min(400px, 45vh)`, Cell
+  > Explorer's legend's cap. See "Every tool panel is built to one standard"
+  > under Key Invariants.
 - **The resting save indicator is gone** (`#roi_status` and every
   `.roi-status*` rule). It reported "Saved" for the whole of every session.
   `renderStatus()` survives as an EDGE-triggered announcement of the one state

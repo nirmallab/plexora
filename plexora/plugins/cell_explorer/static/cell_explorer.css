@@ -8,10 +8,13 @@
  * tool is closed. See tests/test_plugin_css_boundary.py.
  */
 
+/* The panel's measures are core's --panel-* tokens (tokens.css), and this
+   panel is the reference the plugin guide describes them from. The 3px the
+   card's stripe takes is given back by core (`.tool-card-body`, viewer.css). */
 #cell_explorer_panel_section {
     display: flex;
     flex-direction: column;
-    gap: 8px;
+    gap: var(--panel-gap);
     min-width: 0;
 }
 
@@ -27,66 +30,299 @@
 .cex-empty-state {
     background: rgba(255, 255, 255, 0.04);
     border: 1px dashed var(--border-strong);
-    border-radius: var(--radius-sm);
+    border-radius: var(--radius-control);
     padding: 12px;
 }
 
 .cex-empty-state p {
     color: var(--text-secondary);
-    font-size: 12px;
+    font-size: var(--panel-font-meta);
     margin: 0 0 6px;
 }
 
 .cex-hint {
     color: var(--text-muted);
-    font-size: 11px;
+    font-size: var(--panel-font-note);
     line-height: 1.45;
     margin: 4px 0 0;
 }
 
-/* The one row of controls: colour-by, then the legend's filter and its
-   All/None. Every part sets `min-width: 0` because the default `auto` on a flex
-   item means "at least as wide as my content", which is how one long column
-   name used to push the row past the sidebar and put a scrollbar under it. */
+/* Colour-by on a line of its own, then the summary line about the list.
+   Every part sets `min-width: 0` because the default `auto` on a flex item
+   means "at least as wide as my content", which is how one long column name
+   used to push the row past the sidebar and put a scrollbar under it. */
 .cex-toolbar {
-    align-items: center;
     display: flex;
-    gap: 6px;
+    flex-direction: column;
+    gap: 8px;
     min-width: 0;
 }
 
-/* Both elastic, in the proportion they are worth: the colour-by control shows
-   a name people read, the filter is a box people type three letters into. */
 .cex-variable {
-    flex: 3 1 90px;
     min-width: 0;
 }
 
+/* Core's caption, with its own bottom margin given back: the toolbar's gap
+   already sets the step to the control under it, and a <p> brings a top
+   margin besides. A little air above it, so it does not sit on the header's
+   rule. */
+.cex-toolbar > .control-label {
+    margin: 4px 0 0;
+}
+
+/* The count, the filter and Show all / Hide all -- then a hairline, and the
+   list. The rule is drawn here rather than on the list so that it goes with
+   this block for a numeric column, which has no list to separate.
+
+   THE TWO HAIRLINES ARE SPACED ALIKE. Text centre to rule is 28px on both
+   sides of both rules -- summary line, first row, last row, Overlay ROI.
+   Change one of these four numbers and the other three with it: at 6px a
+   side the rules sat close enough to the rows that the list read as crowded
+   between them, and uneven gaps read as two different kinds of rule. */
 .cex-category-controls {
+    border-bottom: 1px solid var(--panel-rule);
+    min-width: 0;
+    padding-bottom: 13px;
+}
+
+#cell_explorer_legend_section {
+    padding: 4px 0;
+}
+
+.cex-summary-row {
     align-items: center;
     display: flex;
-    flex: 2 1 100px;
     gap: 6px;
     min-width: 0;
 }
 
-.cex-search {
-    background: var(--surface-2);
-    border: 1px solid var(--border-subtle);
-    border-radius: var(--radius-sm);
-    color: var(--text-primary);
-    font-size: 12px;
-    /* Never wider than its share of the row: a long column name must truncate
-       rather than force the whole panel to scroll sideways. */
-    max-width: 100%;
+/* The slot the counts, the filter and its icon share. A fixed height, so the
+   line is the same height whichever is showing and nothing below it moves
+   when the filter opens. */
+.cex-summary-slot {
+    align-items: center;
+    display: flex;
+    flex: 1 1 auto;
+    gap: 4px;
+    height: 28px;
     min-width: 0;
-    padding: 5px 8px;
-    width: 100%;
+    position: relative;
+}
+
+/* "4 categories · 201.7K cells". The cell count is what gives way when the
+   line runs short, and it goes WHOLE: it wraps onto a second line that the
+   fixed height clips away. Truncated, it read "201…", which is a different
+   number. The count of categories is the half that explains the list below
+   it, so it stays, and only it can ellipsize (in a sidebar too narrow for
+   anything else). The full figures are on the line's tooltip. */
+.cex-summary {
+    color: var(--text-muted);
+    column-gap: 4px;
+    display: flex;
+    flex: 1 1 auto;
+    flex-wrap: wrap;
+    font-size: var(--panel-font-meta);
+    font-variant-numeric: tabular-nums;
+    height: 18px;
+    line-height: 18px;
+    margin: 0;
+    min-width: 0;
+    overflow: hidden;
+    transition: opacity var(--duration-base) var(--ease-standard),
+                transform var(--duration-base) var(--ease-standard);
+    white-space: nowrap;
+}
+
+.cex-summary-categories {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+/* The filter, folded. It covers the whole slot, icon included, and is drawn
+   out of the icon: a clip that starts as the icon's own square and opens
+   right to left, so the field grows from the control that asked for it and
+   ends with that control in its right-hand corner. The counts drift a few
+   pixels left and fade under it. Clip and opacity only -- neither moves
+   anything else on the line, and both run off the main thread. The tokens'
+   durations drop to zero under prefers-reduced-motion, and this goes with
+   them.
+
+   The right padding is the icon's corner, which the input and its clear
+   button stop short of. */
+.cex-search-row {
+    align-items: center;
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: var(--radius-control);
+    box-sizing: border-box;
+    clip-path: inset(0 0 0 calc(100% - 28px) round 2px);
+    display: flex;
+    inset: 0;
+    opacity: 0;
+    padding-right: 26px;
+    position: absolute;
+    transition: clip-path calc(var(--duration-base) * 1.4) var(--ease-standard),
+                opacity var(--duration-base) var(--ease-standard);
+}
+
+.cex-category-controls.is-searching .cex-search-row {
+    clip-path: inset(0 round 2px);
+    opacity: 1;
+}
+
+.cex-category-controls.is-searching .cex-summary {
+    opacity: 0;
+    pointer-events: none;
+    transform: translateX(-6px);
+}
+
+/* No focus ring and no accent edge: the field only exists while it is being
+   typed in, so a highlight saying "this is the focused field" says nothing. */
+.cex-search {
+    background: none;
+    border: 0;
+    color: var(--text-primary);
+    flex: 1 1 auto;
+    font-size: var(--panel-font-meta);
+    height: 100%;
+    min-width: 0;
+    outline: none;
+    padding: 0 8px;
+    /* The placeholder too: at the sidebar's narrowest it is cut mid-word. */
+    text-overflow: ellipsis;
+}
+
+.cex-search::placeholder {
+    color: var(--text-muted);
+}
+
+.cex-search-clear {
+    align-items: center;
+    background: none;
+    border: 0;
+    border-radius: var(--radius-control);
+    color: var(--text-muted);
+    cursor: pointer;
+    display: flex;
+    flex: 0 0 auto;
+    font-size: var(--panel-font-note);
+    height: 20px;
+    justify-content: center;
+    margin-right: 2px;
+    padding: 0;
+    width: 20px;
+}
+
+.cex-search-clear:hover {
+    background: rgba(255, 255, 255, 0.06);
+    color: var(--text-primary);
+}
+
+.cex-summary-actions {
+    align-items: center;
+    display: flex;
+    flex: 0 0 auto;
+    gap: 6px;
+}
+
+/* The filter's icon. A 24px square, so it is a real target in a row of 12px
+   text. It stays exactly where it is while the field opens around it, and is
+   brighter then rather than boxed -- a box inside the field's corner read as
+   a second field. */
+.cex-icon-action {
+    align-items: center;
+    background: none;
+    border: 0;
+    border-radius: var(--radius-control);
+    color: var(--text-muted);
+    cursor: pointer;
+    display: flex;
+    font-size: var(--panel-font-meta);
+    height: var(--panel-icon-button);
+    justify-content: center;
+    padding: 0;
+    width: 24px;
+}
+
+.cex-icon-action:hover {
+    background: rgba(255, 255, 255, 0.06);
+    color: var(--text-primary);
+}
+
+.cex-icon-action.is-active {
+    color: var(--text-primary);
+}
+
+/* Over the field, which is positioned and would otherwise paint on top of
+   it; 1px in from the slot's edge, so it sits centred in the field's corner
+   inside the field's border. */
+.cex-search-toggle {
+    margin-right: 2px;
+    position: relative;
+    z-index: 1;
+}
+
+.cex-category-controls.is-searching .cex-search-toggle:hover {
+    background: rgba(255, 255, 255, 0.08);
+}
+
+.cex-summary-separator {
+    align-self: center;
+    background: var(--border-subtle);
+    flex: 0 0 auto;
+    height: 16px;
+    width: 1px;
+}
+
+/* Show all / Hide all: words rather than a segmented box, at the size of the
+   line they sit on. The one that says what the legend is in is lit -- the
+   same report the old segmented pair gave -- and both brighten under the
+   pointer, so the quieter one still reads as something to press. */
+.cex-legend-actions {
+    align-items: center;
+    display: flex;
+    flex: 0 0 auto;
+    gap: 4px;
+    /* The words' 4px padding is their hover box, not part of the line: pulled
+       out by that much so "Hide all" ENDS on the content edge the way the
+       counts at the other end of the line start on it. Measured from the
+       text, the two ends then sit the same distance from the card's edges;
+       measured from the boxes, they did, and it looked lopsided. */
+    margin-right: -4px;
+}
+
+.cex-text-action {
+    background: none;
+    border: 0;
+    border-radius: var(--radius-control);
+    color: var(--text-muted);
+    cursor: pointer;
+    font-size: var(--panel-font-meta);
+    line-height: 20px;
+    padding: 2px 4px;
+    white-space: nowrap;
+}
+
+.cex-text-action:hover {
+    background: rgba(255, 255, 255, 0.06);
+    color: var(--text-primary);
+}
+
+.cex-text-action.is-active {
+    color: var(--text-primary);
+}
+
+.cex-icon-action:focus-visible,
+.cex-text-action:focus-visible,
+.cex-search-clear:focus-visible {
+    outline: 2px solid var(--accent-channel);
+    outline-offset: -2px;
 }
 
 .cex-status {
     color: var(--text-muted);
-    font-size: 11px;
+    font-size: var(--panel-font-note);
     line-height: 1.45;
     margin: 2px 0;
 }
@@ -96,8 +332,9 @@
 .cex-override-options {
     background: var(--surface-2);
     border: 1px solid var(--border-subtle);
-    border-radius: var(--radius-sm);
+    border-radius: var(--radius-control);
     display: flex;
+    height: var(--panel-button-height);
     overflow: hidden;
 }
 
@@ -108,8 +345,8 @@
     color: var(--text-secondary);
     cursor: pointer;
     flex: 1;
-    font-size: 11px;
-    padding: 5px 4px;
+    font-size: var(--panel-font-note);
+    padding: 0 4px;
 }
 
 .cex-override-option:last-child {
@@ -124,115 +361,44 @@
 
 /* -- categorical legend -------------------------------------------------- */
 
-/* One height across the row. Core's controls are each sized for a line of
-   their own, and a 32px combobox beside a 25px text field and a 23px pair of
-   buttons reads as three things that happened to end up together. Scoped under
-   this plugin's own selectors, so it is this row's proportions rather than a
-   change to the widgets -- the same arrangement as the legend swatch below. */
-#cell_explorer_variable .marker-combobox-trigger {
-    font-size: 12px;
-    height: 28px;
-    padding: 0 8px;
-}
+/* The list is the panel. One uninterrupted column of rows with no box of its
+   own: the hairlines above and below are what frame it.
 
-.cex-category-controls .cex-search {
-    box-sizing: border-box;
-    flex: 1 1 40px;
-    height: 28px;
-    min-width: 0;
-    padding: 0 6px;
-}
-
-.cex-toolbar .cex-legend-actions {
-    height: 28px;
-}
-
-.cex-toolbar .cex-toggle {
-    align-items: center;
-    display: flex;
-}
-
-/* All / None. A segmented pair rather than two links, because it reports the
-   legend's state as well as setting it -- and neither being lit is the ordinary
-   answer once one row has been hidden. */
-.cex-legend-actions {
-    background: var(--surface-2);
-    border: 1px solid var(--border-subtle);
-    border-radius: var(--radius-sm);
-    display: flex;
-    flex: 0 0 auto;
-    overflow: hidden;
-}
-
-/* One small two-state button. Used on its own (the Range row's Auto) and in a
-   segmented pair (All / None) -- inside a pair the group draws the box, so the
-   button gives up its own border rather than doubling it. */
-.cex-toggle {
-    background: var(--surface-2);
-    border: 1px solid var(--border-subtle);
-    border-radius: var(--radius-sm);
-    color: var(--text-secondary);
-    cursor: pointer;
-    flex: 0 0 auto;
-    font-size: 11px;
-    padding: 4px 9px;
-}
-
-.cex-legend-actions .cex-toggle {
-    background: transparent;
-    border: 0;
-    border-radius: 0;
-    border-right: 1px solid var(--border-subtle);
-    padding: 3px 9px;
-}
-
-.cex-legend-actions .cex-toggle:last-child {
-    border-right: 0;
-}
-
-.cex-toggle:hover:not(.is-active) {
-    background: rgba(255, 255, 255, 0.06);
-    color: var(--text-primary);
-}
-
-.cex-toggle:focus-visible {
-    /* Inset, or a group's overflow:hidden clips the ring away. */
-    outline: 2px solid var(--accent-channel);
-    outline-offset: -2px;
-}
-
-.cex-toggle.is-active {
-    background: var(--accent-channel);
-    border-color: var(--accent-channel);
-    color: #0b1118;
-    font-weight: 600;
-}
-
+   Past a dozen rows it scrolls inside the panel rather than growing the card
+   -- the colour-by control and the summary line stay where they are, and the
+   Cells control at the foot of the sidebar stays on screen. Twelve and a half
+   rows (12.5 x 32px), not twelve: a scrollbar on macOS is invisible until it
+   is used, and a list cut exactly on a row boundary looks finished. The half
+   row is what says there is more. On a short window the cap gives way to
+   the window. */
 .cex-legend {
     display: flex;
     flex-direction: column;
-    gap: 2px;
+    max-height: min(400px, 45vh);
     min-width: 0;
-}
-
-/* Past a dozen categories the list scrolls inside the panel rather than
-   pushing the opacity control off the bottom of the sidebar. */
-.cex-legend.cex-legend-scroll {
-    max-height: 260px;
     overflow-y: auto;
-    padding-right: 4px;
+    /* A scrolled list must not hand its last flick on to the sidebar, which
+       would scroll the colour-by control out of view mid-search. */
+    overscroll-behavior: contain;
 }
 
-/* The whole row toggles the category, so it is drawn as something clickable
+/* Swatch, name, count, eye. A grid rather than a flex row so that the counts
+   are one column, right-aligned against each other, and the eyes another,
+   whatever length of name sits beside them.
+
+   The whole row toggles the category, so it is drawn as something clickable
    and its text does not select under a run of clicks. */
 .cex-row {
     align-items: center;
-    border-radius: var(--radius-sm);
+    border-radius: var(--radius-control);
+    column-gap: 10px;
     cursor: pointer;
-    display: flex;
-    gap: 8px;
+    display: grid;
+    flex: 0 0 auto;
+    grid-template-columns: 22px minmax(0, 1fr) auto 24px;
+    height: var(--panel-row-height);
     min-width: 0;
-    padding: 2px 4px;
+    padding: 0;
     user-select: none;
 }
 
@@ -241,36 +407,62 @@
     cursor: default;
 }
 
-.cex-row:hover {
-    background: rgba(255, 255, 255, 0.05);
+.cex-row:hover,
+.cex-row:focus-within {
+    background: rgba(255, 255, 255, 0.04);
 }
 
 /* Hidden rows are dimmed AND carry an eye-slash icon, so the state is never
-   conveyed by colour alone. */
+   conveyed by colour alone. The swatch dims with them: a full-strength chip
+   beside a greyed name read as a category that was still on the image. */
+.cex-row-hidden .cex-swatch,
 .cex-row-hidden .cex-label,
 .cex-row-hidden .cex-count {
-    opacity: 0.45;
-    text-decoration: line-through;
+    opacity: 0.4;
 }
 
 /* The mount core's ColorSwatchPicker renders its button into. The button is
-   core's element and keeps core's look; a legend row is denser than a channel
-   row, so the size is brought down here -- scoped under this panel's own id, so
-   it is this list's appearance and not a change to the widget. */
+   core's element; in a list this dense it is drawn as a small chip, and the
+   chip is drawn INSIDE the button rather than as it, so the target stays
+   22px while what the eye sees is 12. Scoped under this panel's own id, so it
+   is this list's appearance and not a change to the widget. */
 .cex-swatch {
-    flex: 0 0 auto;
+    display: flex;
     line-height: 0;
 }
 
 #cell_explorer_legend .channel-color-swatch {
-    height: 17px;
-    width: 17px;
+    background: none;
+    border: 0;
+    border-radius: var(--radius-control);
+    height: 22px;
+    position: relative;
+    width: 22px;
+}
+
+#cell_explorer_legend .channel-color-swatch::before {
+    background: var(--swatch-color, var(--accent-channel));
+    border-radius: 3px;
+    /* A dark category on the dark card still has an edge. */
+    box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.10);
+    content: "";
+    inset: 5px;
+    position: absolute;
+}
+
+#cell_explorer_legend .channel-color-swatch:hover {
+    background: rgba(255, 255, 255, 0.08);
+    transform: none;
+}
+
+#cell_explorer_legend .channel-color-swatch:focus-visible {
+    outline: 2px solid var(--accent-channel);
+    outline-offset: -1px;
 }
 
 .cex-label {
-    color: var(--text-secondary);
-    flex: 1;
-    font-size: 12px;
+    color: var(--text-primary);
+    font-size: var(--panel-font-body);
     min-width: 0;
     /* Long annotations truncate with the full text on hover. Allowing them to
        expand would widen the sidebar for every project. */
@@ -279,11 +471,15 @@
     white-space: nowrap;
 }
 
+/* Right-aligned and in figures of one width, so 13, 5.4K and 190K line up by
+   their last digit -- which is how a column of numbers is read. */
 .cex-count {
-    color: var(--text-muted);
-    flex: 0 0 auto;
-    font-size: 11px;
+    color: var(--text-secondary);
+    font-size: var(--panel-font-meta);
     font-variant-numeric: tabular-nums;
+    padding-left: 6px;
+    text-align: right;
+    white-space: nowrap;
 }
 
 .cex-visibility {
@@ -292,7 +488,7 @@
     color: var(--text-muted);
     cursor: pointer;
     flex: 0 0 auto;
-    font-size: 11px;
+    font-size: var(--panel-font-note);
     padding: 2px 4px;
 }
 
@@ -300,9 +496,37 @@
     color: var(--text-primary);
 }
 
+/* A legend row's eye fills its grid column, so every eye in the list sits on
+   one vertical line at the right edge. */
+.cex-row .cex-visibility {
+    align-items: center;
+    border-radius: var(--radius-control);
+    color: var(--text-secondary);
+    display: flex;
+    font-size: var(--panel-font-body);
+    height: var(--panel-icon-button);
+    justify-content: center;
+    padding: 0;
+    width: 24px;
+}
+
+.cex-row-hidden .cex-visibility {
+    color: var(--text-muted);
+}
+
+.cex-row .cex-visibility:hover {
+    background: rgba(255, 255, 255, 0.06);
+    color: var(--text-primary);
+}
+
+.cex-row .cex-visibility:focus-visible {
+    outline: 2px solid var(--accent-channel);
+    outline-offset: -2px;
+}
+
 .cex-empty {
     color: var(--text-muted);
-    font-size: 11px;
+    font-size: var(--panel-font-meta);
     margin: 6px 2px;
 }
 
@@ -320,10 +544,9 @@
 
 /* Sized to sit in a row of small controls rather than in a legend row. */
 .cex-ramp-visibility {
-    font-size: 12px;
+    font-size: var(--panel-font-meta);
     padding: 2px 2px;
 }
-
 
 /* The opacity row that used to be here has moved to core's Cells section
    (index.html, .cell-layer-opacity). Compositing is the viewer's, so the slider
@@ -340,7 +563,7 @@
 
 .cex-mask-wait-title {
     color: var(--text-secondary);
-    font-size: 12px;
+    font-size: var(--panel-font-meta);
     font-weight: 600;
     margin: 0 0 8px;
 }
@@ -378,29 +601,68 @@
     margin: 8px 0 0;
 }
 
-/* The way into the ROI composition feature.
+/* The way into the ROI composition feature: Overlay ROI, as the card's foot.
  *
- * Full width and named, sitting under the colour-by line where the eye already
- * is, because this is the only announcement the feature gets. The hint carries
- * as much weight as the button: it is the sentence that explains why anyone
- * would press it. */
-/* The button itself is core's .sidebar-action-fancy -- the shape this app
-   already uses for "here is a thing you may not know about", so this feature
-   announces itself the same way the others do rather than in a style of its
-   own. Only the spacing around it belongs here.
+ * A row, not a button. It leads out of this panel to another tool, and a menu
+ * row's shape -- icon, name, chevron -- says that without a filled box
+ * competing with the list above it. The hairline is the same one that closes
+ * the summary line, so the list reads as framed by two rules. What pressing it
+ * does is on its tooltip (panel.html). */
+.cex-roi-launch {
+    border-top: 1px solid var(--panel-rule);
+    padding-top: 10px;
+}
 
-   And that is now the section's own 8px flex gap and nothing else. This block
-   used to trim core's `.sidebar-action-fancy` margin from 14px to 10px and
-   then add 2px under itself, which made the step above the button 18px and
-   the step below it 10px -- the one announcement on the panel, standing
-   further from the control it belongs under than from anything else. Core
-   dropped that margin (viewer.css); this stops paying the rest of it. */
+.cex-roi-action {
+    align-items: center;
+    background: none;
+    border: 0;
+    border-radius: var(--radius-control);
+    color: var(--text-secondary);
+    cursor: pointer;
+    display: flex;
+    font-size: var(--panel-font-body);
+    gap: 10px;
+    height: var(--panel-control-height);
+    padding: 0 5px;
+    text-align: left;
+    width: 100%;
+}
 
-.cex-roi-launch-hint {
+.cex-roi-action:hover {
+    background: rgba(255, 255, 255, 0.04);
+    color: var(--text-primary);
+}
+
+.cex-roi-action:focus-visible {
+    outline: 2px solid var(--accent-channel);
+    outline-offset: -2px;
+}
+
+.cex-roi-action-icon {
     color: var(--text-muted);
-    font-size: 11px;
-    line-height: 1.35;
-    margin: 4px 2px 0;
+    flex: 0 0 auto;
+    font-size: var(--panel-font-body);
+    width: 16px;
+}
+
+.cex-roi-action-label {
+    flex: 1 1 auto;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.cex-roi-action-chevron {
+    color: var(--text-muted);
+    flex: 0 0 auto;
+    font-size: 10px;
+}
+
+.cex-roi-action:hover .cex-roi-action-icon,
+.cex-roi-action:hover .cex-roi-action-chevron {
+    color: var(--text-secondary);
 }
 
 /* The ROI composition card.

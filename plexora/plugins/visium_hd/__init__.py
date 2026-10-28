@@ -32,7 +32,7 @@ which pulls in the reader -- is left to the factory.
 
 from plexora.api.plugin import Plugin, Requires
 
-VERSION = "20261026_docs_link"
+VERSION = "20261027_sidebar_radius"
 
 
 def _blueprint():

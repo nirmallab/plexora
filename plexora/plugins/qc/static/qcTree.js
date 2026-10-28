@@ -160,13 +160,15 @@ class QcTree {
         lock.innerHTML = '<span class="fas fa-lock"></span>';
 
         const eye = QcTree.action("qc-row-eye",
-            '<span class="fas fa-eye"></span><span class="fas fa-eye-slash"></span>');
+            '<span class="far fa-eye"></span><span class="far fa-eye-slash"></span>');
         const more = QcTree.action("qc-row-more", '<span class="fas fa-ellipsis"></span>');
         more.title = "More";
         more.setAttribute("aria-haspopup", "true");
         more.setAttribute("aria-expanded", "false");
 
-        el.append(chevron, swatch, label, tag, count, lock, eye, more);
+        // The eye ends the row, in the column every tool panel keeps its eyes
+        // in (the plugin guide's "Design the sidebar panel").
+        el.append(chevron, swatch, label, tag, count, lock, more, eye);
         return { el, chevron, swatch, label, text, note, tag, count, lock, eye, more };
     }
 

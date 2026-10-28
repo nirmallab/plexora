@@ -1676,25 +1676,35 @@ class RoiInteraction {
         return true;
     }
 
+    /** One step back, or forward again: the keys' and the panel footer's,
+     *  so a click on the footer does exactly what Mod+Z does. */
+    undo() {
+        this.endMagic();
+        this.store.undo();
+        this.renderer.invalidate();
+        this.renderer.schedule();
+    }
+
+    redo() {
+        this.endMagic();
+        this.store.redo();
+        this.renderer.invalidate();
+        this.renderer.schedule();
+    }
+
     keyDown(event) {
         if (!this.acceptsKeys()) return;
 
         const meta = event.ctrlKey || event.metaKey;
         if (meta && event.key.toLowerCase() === "z") {
             event.preventDefault();
-            this.endMagic();
-            if (event.shiftKey) this.store.redo();
-            else this.store.undo();
-            this.renderer.invalidate();
-            this.renderer.schedule();
+            if (event.shiftKey) this.redo();
+            else this.undo();
             return;
         }
         if (meta && event.key.toLowerCase() === "y") {
             event.preventDefault();
-            this.endMagic();
-            this.store.redo();
-            this.renderer.invalidate();
-            this.renderer.schedule();
+            this.redo();
             return;
         }
         if (meta) return;   // leave every other accelerator to the browser

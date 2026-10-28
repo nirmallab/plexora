@@ -166,7 +166,7 @@
         "/client/src/js/views/dataSourceField.js?v=20261014_import_progressive",
         "/client/src/js/views/fileSourceRow.js?v=20261023_connected_default",
         "/client/src/js/views/slider.js?v=20261025_contrast",
-        "/client/src/js/views/gradientRange.js?v=20260927_ui_updates",
+        "/client/src/js/views/gradientRange.js?v=20261027_scale_under_bar",
         "/client/src/js/views/jobProgress.js?v=20261014_import_progressive",
         "/client/src/js/views/tableProgress.js?v=20261014_import_progressive",
         "/client/src/js/views/requirementsModal.js?v=20261015_setup_wait",
@@ -190,8 +190,8 @@
       ],
       "status": 200,
       "styles": [
-        "/client/src/css/tokens.css?v=20261024_dsb",
-        "/client/src/css/main.css?v=20261026_dsb_select",
+        "/client/src/css/tokens.css?v=20261027_sidebar_radius",
+        "/client/src/css/main.css?v=20261027_sidebar_radius",
         "/client/src/css/explorer.css?v=20261021_explorer_waiting",
         "/client/src/css/openProject.css?v=20260928_remote_badge"
       ],
@@ -387,7 +387,7 @@
         "/client/src/js/views/dataSourceField.js?v=20261014_import_progressive",
         "/client/src/js/views/fileSourceRow.js?v=20261023_connected_default",
         "/client/src/js/views/slider.js?v=20261025_contrast",
-        "/client/src/js/views/gradientRange.js?v=20260927_ui_updates",
+        "/client/src/js/views/gradientRange.js?v=20261027_scale_under_bar",
         "/client/src/js/views/jobProgress.js?v=20261014_import_progressive",
         "/client/src/js/views/tableProgress.js?v=20261014_import_progressive",
         "/client/src/js/views/requirementsModal.js?v=20261015_setup_wait",
@@ -467,10 +467,10 @@
       ],
       "status": 200,
       "styles": [
-        "/client/src/css/tokens.css?v=20261024_dsb",
-        "/client/src/css/main.css?v=20261026_dsb_select",
+        "/client/src/css/tokens.css?v=20261027_sidebar_radius",
+        "/client/src/css/main.css?v=20261027_sidebar_radius",
         "/client/src/css/explorer.css?v=20261021_explorer_waiting",
-        "/client/src/css/viewer.css?v=20261027_draw_bar",
+        "/client/src/css/viewer.css?v=20261027_sidebar_radius",
         "/client/src/css/quickView.css?v=20261021_native_drop",
         "/client/src/css/agentPanel.css?v=20261018_agent_panel_margin",
         "/client/src/css/chatPanel.css?v=20261011_fold"
@@ -494,15 +494,15 @@
           "tool_panel_slot": "gating/panel.html"
         },
         "active_tool_scripts": [
-          "/plugins/gating/static/gatingApi.js?v=20261027_gating_ground_class",
-          "/plugins/gating/static/csvGatingList.js?v=20261027_gating_ground_class",
-          "/plugins/gating/static/gatingPlanes.js?v=20261027_gating_ground_class",
-          "/plugins/gating/static/gatingClassifier.js?v=20261027_gating_ground_class",
-          "/plugins/gating/static/gatingSidebarController.js?v=20261027_gating_ground_class",
-          "/plugins/gating/static/gatingAgentBridge.js?v=20261027_gating_ground_class"
+          "/plugins/gating/static/gatingApi.js?v=20261027_sidebar_radius",
+          "/plugins/gating/static/csvGatingList.js?v=20261027_sidebar_radius",
+          "/plugins/gating/static/gatingPlanes.js?v=20261027_sidebar_radius",
+          "/plugins/gating/static/gatingClassifier.js?v=20261027_sidebar_radius",
+          "/plugins/gating/static/gatingSidebarController.js?v=20261027_sidebar_radius",
+          "/plugins/gating/static/gatingAgentBridge.js?v=20261027_sidebar_radius"
         ],
         "active_tool_styles": [
-          "/plugins/gating/static/gating.css?v=20261027_gating_ground_class"
+          "/plugins/gating/static/gating.css?v=20261027_sidebar_radius"
         ],
         "available_tools": [
           {
@@ -753,7 +753,7 @@
         "/client/src/js/views/dataSourceField.js?v=20261014_import_progressive",
         "/client/src/js/views/fileSourceRow.js?v=20261023_connected_default",
         "/client/src/js/views/slider.js?v=20261025_contrast",
-        "/client/src/js/views/gradientRange.js?v=20260927_ui_updates",
+        "/client/src/js/views/gradientRange.js?v=20261027_scale_under_bar",
         "/client/src/js/views/jobProgress.js?v=20261014_import_progressive",
         "/client/src/js/views/tableProgress.js?v=20261014_import_progressive",
         "/client/src/js/views/requirementsModal.js?v=20261015_setup_wait",
@@ -773,12 +773,12 @@
         "/client/src/js/views/toolLoader.js?v=20261025_dataset_answers",
         "/client/src/js/services/pageBoot.js?v=20260825_app_shell",
         "/client/src/js/services/appRouter.js?v=20261002_hash_tab",
-        "/plugins/gating/static/gatingApi.js?v=20261027_gating_ground_class",
-        "/plugins/gating/static/csvGatingList.js?v=20261027_gating_ground_class",
-        "/plugins/gating/static/gatingPlanes.js?v=20261027_gating_ground_class",
-        "/plugins/gating/static/gatingClassifier.js?v=20261027_gating_ground_class",
-        "/plugins/gating/static/gatingSidebarController.js?v=20261027_gating_ground_class",
-        "/plugins/gating/static/gatingAgentBridge.js?v=20261027_gating_ground_class",
+        "/plugins/gating/static/gatingApi.js?v=20261027_sidebar_radius",
+        "/plugins/gating/static/csvGatingList.js?v=20261027_sidebar_radius",
+        "/plugins/gating/static/gatingPlanes.js?v=20261027_sidebar_radius",
+        "/plugins/gating/static/gatingClassifier.js?v=20261027_sidebar_radius",
+        "/plugins/gating/static/gatingSidebarController.js?v=20261027_sidebar_radius",
+        "/plugins/gating/static/gatingAgentBridge.js?v=20261027_sidebar_radius",
         "/client/src/js/services/viewerLoader.js?v=20260915_center_loader",
         "/client/src/js/services/viewSnapshot.js?v=20261004_magic_select",
         "/client/src/js/services/segmentService.js?v=20261011_merge",
@@ -839,14 +839,14 @@
       ],
       "status": 200,
       "styles": [
-        "/client/src/css/tokens.css?v=20261024_dsb",
-        "/client/src/css/main.css?v=20261026_dsb_select",
+        "/client/src/css/tokens.css?v=20261027_sidebar_radius",
+        "/client/src/css/main.css?v=20261027_sidebar_radius",
         "/client/src/css/explorer.css?v=20261021_explorer_waiting",
-        "/client/src/css/viewer.css?v=20261027_draw_bar",
+        "/client/src/css/viewer.css?v=20261027_sidebar_radius",
         "/client/src/css/quickView.css?v=20261021_native_drop",
         "/client/src/css/agentPanel.css?v=20261018_agent_panel_margin",
         "/client/src/css/chatPanel.css?v=20261011_fold",
-        "/plugins/gating/static/gating.css?v=20261027_gating_ground_class"
+        "/plugins/gating/static/gating.css?v=20261027_sidebar_radius"
       ],
       "tool_mounts": [
         [

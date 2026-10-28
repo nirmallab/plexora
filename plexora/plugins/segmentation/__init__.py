@@ -20,7 +20,7 @@ Kept import-light, like every descriptor module.
 
 from plexora.api.plugin import Plugin, Requires
 
-VERSION = "20261012_license_tiers"
+VERSION = "20261027_sidebar_radius"
 
 
 def _blueprint():

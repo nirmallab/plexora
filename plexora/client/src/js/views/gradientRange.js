@@ -156,6 +156,21 @@ class PlexoraGradientRange {
     static STEPS = 1000;
 
     /**
+     * Decimals for the two end boxes when the caller names none: enough to
+     * show one step of a handle (the extent over STEPS), and no more.
+     *
+     * Read off the step's own digits (PlexoraSlider.decimalsFor) they were
+     * whatever the data made them: a Visium heatmap's 0 to 5.052849 gave a
+     * step of 0.005052849 and a box reading "5.05284900" -- eight places,
+     * five of them noise, and wider than the box, so it was cut off. A typed
+     * value keeps what was typed.
+     */
+    static scaleDecimals(step) {
+        if (!(step > 0)) return 2;
+        return Math.min(8, Math.max(0, Math.ceil(-Math.log10(step))));
+    }
+
+    /**
      * @param container the element to draw into; emptied on every render
      * @param handlers  { onRange(low, high), onPalette(name),
      *                    onCustomColor(end, hex) }
@@ -320,17 +335,24 @@ class PlexoraGradientRange {
      * NOT the caller's `format`. That one is for reading -- it gives
      * "1,245,322" for an area and "4.2e-6" for a probability, and an
      * `<input type="number">` will take back neither. The box shows at least
-     * as many decimals as the step has -- more where a typed end has more --
-     * and no separators; the caption beside it, and
+     * as many decimals as the step has, rounded to that at rest and in full
+     * while it is being edited, and no separators; the caption beside it, and
      * every other place these numbers are printed, still use the caller's.
      */
     buildScaleField(which, step) {
         const { min, max, decimals } = this.nodes;
+        const places = Number.isInteger(decimals) ? decimals
+            : PlexoraGradientRange.scaleDecimals(step);
         return PlexoraSlider.numberField({
             value: this.nodes[which],
             min, max,
-            decimals: Number.isInteger(decimals) ? decimals
-                : (step >= 1 ? 0 : PlexoraSlider.decimalsFor(step)),
+            decimals: places,
+            // At rest, the end at the bar's own precision; the whole value the
+            // moment the box is clicked (numberField's `display`). An
+            // automatic end is the data's raw extreme -- a Visium heatmap's
+            // 5.052849... -- and printed in full it ran out of a narrow
+            // sidebar's box.
+            display: (value) => PlexoraSlider.format(value, places),
             ariaLabel: which === "low" ? "Range minimum" : "Range maximum",
             constrain: (value) => {
                 // Clamped and kept a step clear of the other end, and not

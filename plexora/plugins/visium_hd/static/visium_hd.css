@@ -171,13 +171,13 @@
 .vhd-agg-button {
     background: var(--surface-2);
     border: 1px solid var(--border-subtle);
-    border-radius: var(--radius-sm);
+    border-radius: var(--radius-control);
     color: var(--text-secondary);
     cursor: pointer;
     flex: 0 0 auto;
     font-size: 11px;
     line-height: 1;
-    padding: 4px 7px;
+    padding: 0 7px;
 }
 
 .vhd-agg-button[hidden] {
@@ -221,7 +221,7 @@
     align-items: flex-start;
     background: var(--accent-warning-soft);
     border-left: 2px solid var(--accent-warning);
-    border-radius: var(--radius-sm);
+    border-radius: var(--radius-control);
     color: var(--text-secondary);
     display: flex;
     font-size: 11px;

@@ -41,6 +41,16 @@
     --radius-sm: 6px;
     --radius-md: 8px;
     --radius-lg: 12px;
+    /* What the sidebar's corners mean, on the scale above. Every control --
+       button, field, select, segmented control, an icon button's hover ground,
+       a list row's -- takes --radius-control; a card takes --radius-card; a box
+       inside a card (a plot, a notice, the save-as form) is a control's size,
+       so the card's corner stays the outer one. Two values, so a button and the
+       field beside it can never disagree again: they did (6px against 2px).
+       Not for shapes: dots and swatches stay round, count badges and
+       progress tracks stay pills, key caps keep their own small corner. */
+    --radius-control: var(--radius-md);
+    --radius-card: var(--radius-lg);
     /* One height for every control that can share a horizontal row -- a path
        box, its Local/Remote switch, its File/Folder pair, the button beside
        it. Set here rather than per control so a row reads as one group
@@ -50,6 +60,38 @@
 
        See main.css's "Inline control rows". */
     --control-height: 40px;
+    /* A tool panel's measures -- the body of a card in the viewer's sidebar.
+       Every plugin panel is built from these, so four panels open at once
+       read as one sidebar rather than four authors. Cell Explorer is the
+       reference; website/content/docs/(guide)/plugins/build-a-plugin.mdx
+       ("Design the sidebar panel") is the rule, with the reasons.
+
+       Four type sizes and no others: names and values, then counts and
+       summaries, then captions and notes, then the footer band. */
+    --panel-font-body: 13px;
+    --panel-font-meta: 12px;
+    --panel-font-note: 11px;
+    --panel-font-footer: 10px;
+    /* Three heights for single-line controls, by where they stand:
+       - 34px: the select a panel is about, a text field, a link-out row;
+       - 28px: a line of buttons, or a segmented control, on its own line
+         (core's Cells control was already this);
+       - 24px: anything set inside a row -- an icon button (eye, menu, close),
+         a header's Run, a row's Approve.
+       A list row is 32px; one nested under it, 28px. Corners are
+       --radius-control throughout (above). */
+    --panel-control-height: 34px;
+    --panel-button-height: 28px;
+    --panel-row-height: 32px;
+    --panel-icon-button: 24px;
+    --panel-field-ground: rgba(255, 255, 255, 0.03);
+    --panel-hover-ground: rgba(255, 255, 255, 0.05);
+    /* The hairline between a panel's parts. Quieter than --border-subtle,
+       which is for edges of things; this only says "next part". */
+    --panel-rule: rgba(255, 255, 255, 0.07);
+    /* The step between a panel's blocks, and the space each side of a rule
+       is built from (see the guide: equal above and below). */
+    --panel-gap: 8px;
     --shadow-sm: 0 2px 8px rgba(0, 0, 0, 0.25);
     --shadow-md: 0 10px 28px rgba(0, 0, 0, 0.35);
     --shadow-lg: 0 12px 28px rgba(0, 0, 0, 0.4);

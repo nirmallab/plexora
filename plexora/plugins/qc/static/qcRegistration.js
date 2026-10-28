@@ -150,6 +150,15 @@ class QcRegistration {
         });
         this.el("qc_reg_prev")?.addEventListener("click", () => this.stepFromPanel("prev"));
         this.el("qc_reg_next")?.addEventListener("click", () => this.stepFromPanel("next"));
+        // The card's footer: Z / X / F as buttons, doing what this tool's own
+        // chevrons and Flicker do (panel.html's note).
+        this.el("qc_footer")?.addEventListener("click", (event) => {
+            const button = event.target.closest("[data-reg-key]");
+            if (!button || button.disabled) return;
+            const key = button.dataset.regKey;
+            if (key === "f") this.toggleFlicker();
+            else this.stepFromPanel(key === "z" ? "prev" : "next");
+        });
         document.addEventListener("visibilitychange", this._onVisibility);
         window.addEventListener("blur", this._onVisibility);
         window.addEventListener("focus", this._onVisibility);
@@ -1296,6 +1305,25 @@ class QcRegistration {
         this.renderNote();
         this.renderRamp();
         this.renderFlicker();
+        this.renderFooter();
+    }
+
+    /** Registration's keys in the card's footer follow its own controls: Z /
+     *  X disabled as the chevrons are, F until there is a pair. Whether they
+     *  show at all is the fold's (qcSidebarController.renderFooter). */
+    renderFooter() {
+        const footer = this.el("qc_footer");
+        if (!footer) return;
+        for (const button of footer.querySelectorAll("[data-reg-key]")) {
+            const twin = button.dataset.regKey === "z" ? this.el("qc_reg_prev")
+                : button.dataset.regKey === "x" ? this.el("qc_reg_next") : null;
+            button.disabled = twin ? twin.disabled : !this.state;
+        }
+        const flicker = footer.querySelector('[data-reg-key="f"]');
+        if (flicker) {
+            const on = Boolean(this.active && this.state && this.state.flicker);
+            flicker.title = on ? "Stop flickering (F)" : "Flicker the misaligned areas (F)";
+        }
     }
 
     /** px -> "1.2 µm" (or px when the image has no pixel size). */

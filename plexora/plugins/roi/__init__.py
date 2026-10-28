@@ -22,7 +22,7 @@ adapter code) is left to the factory.
 
 from plexora.api.plugin import Plugin, Requires
 
-VERSION = "20261027_shared_draw_bar"
+VERSION = "20261027_sidebar_radius"
 
 
 def _blueprint():

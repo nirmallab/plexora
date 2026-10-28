@@ -24,17 +24,23 @@ class CellExplorerSidebarController {
      *  the tab straight after a change does not lose it. */
     static AUTOSAVE_MS = 800;
 
+    /** Z / X: the previous / next overlay column. The same two keys
+     *  Thresholding steps its markers with, and QC its comparison channel --
+     *  each only while its own card is the selected one (acceptsKeys). */
+    static COLUMN_KEYS = { z: -1, x: 1 };
+
     //: Every block of the panel below the two empty states, in document order.
     //: Listed because the mask wait replaces all of them at once; render() puts
     //: each one back according to what the current column is. A block added to
     //: panel.html and forgotten here stays visible behind the wait.
     static PANEL_BLOCKS = [
         "cell_explorer_toolbar",
-        "cell_explorer_roi_launch",
         "cell_explorer_override",
         "cell_explorer_status",
         "cell_explorer_legend_section",
         "cell_explorer_continuous",
+        "cell_explorer_roi_launch",
+        "cell_explorer_footer",
     ];
 
     constructor(ctx) {
@@ -57,6 +63,12 @@ class CellExplorerSidebarController {
         //: user has chosen not to wait for it. See renderMaskWait().
         this._maskProgress = { progress: null, message: "" };
         this._maskSkipped = false;
+        //: Whether the category filter is unfolded. See paintSearch().
+        this._searchOpen = false;
+        //: Whether Z / X are listening: while the panel is on screen (onShow
+        //: to onHide), never behind another tool or a routed page.
+        this._keysArmed = false;
+        this._onKeyDown = (event) => this.onColumnKey(event);
     }
 
     // -- lifecycle ----------------------------------------------------------
@@ -123,13 +135,29 @@ class CellExplorerSidebarController {
         // has just been folded away answers a question about a picture the user
         // can no longer see -- so this is the one place in the app that asks for
         // two tools at once. See toolLoader's coexisting pair.
-        this.el("cell_explorer_open_roi")?.addEventListener("click", () => {
+        this.el("cell_explorer_open_roi")?.addEventListener("click", async () => {
             // Asking for the ROI tool is the first honest sign that regions are
             // about to be hovered, and the positions behind a summary are a
             // whole-slide fetch. Started here, it is usually finished before the
             // first region even exists.
             this.roiBridge?.warm();
-            window.PlexoraToolLoader?.openToolAlongside("roi", "cell_explorer");
+            await window.PlexoraToolLoader?.openToolAlongside("roi", "cell_explorer");
+            // Opened to look at regions, not to draw them. ROI keeps whatever
+            // tool was last in its hand across being switched away and back, and
+            // a pen still held from earlier would turn the next drag on the image
+            // into a shape instead of a pan. ROI puts it down on hearing this --
+            // an event rather than a call, the same way the hover summaries
+            // travel, so neither plugin names the other's classes.
+            window.dispatchEvent(new CustomEvent("plexora:roi-overlay",
+                { detail: { from: "cell_explorer" } }));
+        });
+
+        // The footer's Z and X are buttons too: a click steps as the key does,
+        // and a step off either end of the list is greyed out
+        // (paintColumnSteps).
+        this.el("cell_explorer_footer")?.addEventListener("click", (event) => {
+            const button = event.target.closest?.("[data-column-step]");
+            if (button && !button.disabled) this.stepColumn(Number(button.dataset.columnStep));
         });
 
         this.el("cell_explorer_requirements")?.addEventListener("click", async () => {
@@ -328,6 +356,7 @@ class CellExplorerSidebarController {
      * rebuild and no request at all.
      */
     onShow() {
+        this.armKeys();
         this.restoreOpacity();
         this.restoreMode();
         this.recolor();
@@ -340,10 +369,12 @@ class CellExplorerSidebarController {
      *  document shortcuts. Core takes the cell layer away by itself. What is
      *  worth doing is writing out anything the debounce has not got to yet. */
     onHide() {
+        this.disarmKeys();
         this.flushSave();
     }
 
     destroy() {
+        this.disarmKeys();
         if (this._saveTimer) clearTimeout(this._saveTimer);
         this._saveTimer = null;
         // A frame scheduled from a change made on the way out would run against
@@ -541,7 +572,7 @@ class CellExplorerSidebarController {
             trigger: "button",
             emptyLabel: "Choose a column",
             searchPlaceholder: "Search metadata...",
-            ariaLabel: "Colour by",
+            ariaLabel: "Overlay column",
             emptyText: "No columns match",
             describeOption: (name) => this.describeColumn(name),
             getIndicator: (name) => this.warnAboutColumn(name),
@@ -594,17 +625,33 @@ class CellExplorerSidebarController {
     }
 
     bindLegendControls() {
-        this.el("cell_explorer_search")?.addEventListener("input", (event) => {
-            // Filters the legend only. Which cells are drawn does not change --
-            // typing "T" must not hide the macrophages.
-            this.legend.setFilter(event.target.value);
-            this.renderLegend();
+        const search = this.el("cell_explorer_search");
+        search?.addEventListener("input", () => this.applyFilter(search.value));
+        search?.addEventListener("keydown", (event) => {
+            if (event.key !== "Escape") return;
+            // Consumed: the same key closes things further out (a swatch
+            // popover, a menu), and one press should not do two of them.
+            event.preventDefault();
+            event.stopPropagation();
+            this.closeSearch({ refocus: true });
+        });
+        this.el("cell_explorer_search_toggle")?.addEventListener("click", () => {
+            if (this.isSearchOpen()) this.closeSearch();
+            else this.openSearch();
+        });
+        this.el("cell_explorer_search_clear")?.addEventListener("click", () => {
+            if (!search) return;
+            search.value = "";
+            this.applyFilter("");
+            search.focus();
         });
 
-        // All / None, as one delegated handler over the pair. Clicking the lit
-        // one is a no-op rather than a toggle: these say which state the legend
-        // is in, and clicking "All" while everything already shows should not
-        // hide everything.
+        // Show all / Hide all, as one delegated handler over the pair. Clicking
+        // the lit one is a no-op rather than a toggle: these say which state the
+        // legend is in, and clicking "Show all" while everything already shows
+        // should not hide everything. Both act on every category, filtered out
+        // of the list or not -- the filter narrows what is listed, never what
+        // a command reaches.
         this.el("cell_explorer_visibility")?.addEventListener("click", (event) => {
             const button = event.target.closest?.("[data-visibility]");
             if (!button || !this.state.column) return;
@@ -614,6 +661,167 @@ class CellExplorerSidebarController {
             this.recolor();
             this.render();
             this.scheduleSave();
+        });
+    }
+
+    // -- the category filter --------------------------------------------------
+
+    isSearchOpen() {
+        return this._searchOpen;
+    }
+
+    openSearch() {
+        this.paintSearch(true);
+        // Straight away, not after the reveal: the field is live the moment it
+        // stops being inert, and the first keystroke should not be lost to an
+        // animation.
+        this.el("cell_explorer_search")?.focus();
+    }
+
+    /**
+     * Fold the filter away, and drop what was typed in it.
+     *
+     * Clearing is not optional. A filter left applied behind a closed field is
+     * a list with rows missing and nothing on screen to say why -- the compact
+     * layout this returns to has no room to admit it is narrowed.
+     */
+    closeSearch({ refocus = false } = {}) {
+        // Focus still in the field is focus in a field that is about to be
+        // inert, and a browser only moves it off at its next repaint -- or, in
+        // a WebKit shell where clicking a button does not take focus, not at
+        // all. Until it goes, every key counts as typing and Z / X are dead.
+        const within = this.el("cell_explorer_search_row")?.contains?.(document.activeElement);
+        if (within) refocus = true;
+        this.paintSearch(false);
+        const search = this.el("cell_explorer_search");
+        if (search?.value) {
+            search.value = "";
+            this.applyFilter("");
+        }
+        // Escape leaves focus where the field was opened from, rather than on
+        // <body> -- a keyboard user would otherwise start again from the top.
+        if (refocus) this.el("cell_explorer_search_toggle")?.focus();
+    }
+
+    /**
+     * The field takes the counts' place on the summary line.
+     *
+     * A class rather than `hidden`, because the swap is animated
+     * (.cex-category-controls.is-searching) and `display: none` cannot be. So
+     * what `hidden` used to do for free is done here by hand: the folded field
+     * is inert, out of the Tab order and the accessibility tree, and the counts
+     * leave the tree while the field covers them.
+     */
+    paintSearch(open) {
+        this._searchOpen = open;
+        this.el("cell_explorer_category_controls")?.classList.toggle("is-searching", open);
+        const row = this.el("cell_explorer_search_row");
+        if (row) row.inert = !open;
+        this.el("cell_explorer_summary")?.setAttribute("aria-hidden", open ? "true" : "false");
+        const toggle = this.el("cell_explorer_search_toggle");
+        if (!toggle) return;
+        toggle.classList.toggle("is-active", open);
+        toggle.setAttribute("aria-expanded", open ? "true" : "false");
+        // Inside the open field it is the way to fold it again.
+        toggle.title = open ? "Close filter" : "Filter categories";
+    }
+
+    applyFilter(text) {
+        // Filters the legend only. Which cells are drawn does not change --
+        // typing "T" must not hide the macrophages.
+        this.legend.setFilter(text);
+        const clear = this.el("cell_explorer_search_clear");
+        if (clear) clear.hidden = !text;
+        this.renderLegend();
+    }
+
+    // -- stepping through the columns (Z / X) -----------------------------------
+
+    armKeys() {
+        if (this._keysArmed) return;
+        this._keysArmed = true;
+        document.addEventListener("keydown", this._onKeyDown);
+    }
+
+    disarmKeys() {
+        if (!this._keysArmed) return;
+        this._keysArmed = false;
+        document.removeEventListener("keydown", this._onKeyDown);
+    }
+
+    /** Whether a bare Z / X is meant for this panel. Thresholding asks the
+     *  same questions of the same two keys (gatingSidebarController.js). */
+    acceptsKeys(event) {
+        if (!this._keysArmed) return false;
+        if (event.metaKey || event.ctrlKey || event.altKey || event.shiftKey) return false;
+        // The category filter is an INPUT: typing "x" into it filters.
+        const typing = window.PlexoraShortcuts?.isTyping
+            ? window.PlexoraShortcuts.isTyping()
+            : (() => {
+                const active = document.activeElement;
+                const tag = active && active.tagName;
+                return tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT"
+                    || Boolean(active && active.isContentEditable);
+            })();
+        if (typing) return false;
+        // <dialog> traps focus but not keystrokes.
+        if (window.PlexoraConfirm?.modalOpen?.()) return false;
+        if (document.querySelector("dialog[open]")) return false;
+        // The SELECTED tool's: open beside ROI is not enough, or both halves
+        // of the pair would answer.
+        const loader = window.PlexoraToolLoader;
+        if (loader && typeof loader.activeTool === "function"
+            && loader.activeTool() !== "cell_explorer") {
+            return false;
+        }
+        return true;
+    }
+
+    onColumnKey(event) {
+        const raw = event.key || "";
+        const delta = CellExplorerSidebarController.COLUMN_KEYS[
+            raw.length === 1 ? raw.toLowerCase() : ""];
+        if (!delta) return;
+        if (!this.acceptsKeys(event)) return;
+        // Only when it did something: at the end of the list the key is free.
+        if (this.stepColumn(delta)) event.preventDefault();
+    }
+
+    /** Every column in the order the dropdown lists them (renderVariablePicker). */
+    columnNames() {
+        return this.state.descriptors.map((descriptor) => descriptor.name);
+    }
+
+    /**
+     * Colour by the column `delta` places along the dropdown's own list, exactly
+     * as picking it there would -- Thresholding's next marker, for the overlay.
+     * With none chosen, X starts at the top and Z does nothing; at either end
+     * the step stops rather than wrapping, as Thresholding's does. True when it
+     * moved.
+     *
+     * A run of presses is safe: each select() supersedes the one before it, and
+     * a column already seen comes out of the cache (see select()).
+     */
+    stepColumn(delta) {
+        const names = this.columnNames();
+        const at = names.indexOf(this.state.column);
+        const next = names[at + delta];
+        if (at + delta < 0 || next === undefined) return false;
+        this.select(next);
+        return true;
+    }
+
+    /** The footer's Previous / Next, each greyed out where stepColumn would
+     *  not move: at the first column, at the last, and Previous with none
+     *  chosen. */
+    paintColumnSteps() {
+        const footer = this.el("cell_explorer_footer");
+        if (!footer) return;
+        const names = this.columnNames();
+        const at = names.indexOf(this.state.column);
+        footer.querySelectorAll("[data-column-step]").forEach((button) => {
+            const to = at + Number(button.dataset.columnStep);
+            button.disabled = to < 0 || to >= names.length;
         });
     }
 
@@ -646,6 +854,12 @@ class CellExplorerSidebarController {
         if (toolbar) toolbar.hidden = false;
         const launch = this.el("cell_explorer_roi_launch");
         if (launch) launch.hidden = false;
+        // Z / X step the column, numeric or not, so the footer is there
+        // whenever there is a column to step to -- and stays put while one
+        // loads, so a run of X presses does not chase a moving target.
+        const footer = this.el("cell_explorer_footer");
+        if (footer) footer.hidden = this.state.descriptors.length === 0;
+        this.paintColumnSteps();
 
         this.renderVariablePicker();
         this.renderStatus();
@@ -660,9 +874,9 @@ class CellExplorerSidebarController {
 
         if (legend) legend.hidden = !categorical;
         if (continuous) continuous.hidden = !(ready && kind === "continuous");
-        // The filter and All/None sit in the toolbar, on the colour-by control's
-        // line, but they belong to the list -- so they come and go with it
-        // rather than staying behind as two controls with nothing to act on.
+        // The summary line -- the count, the filter, Show all / Hide all -- is
+        // all about the list, so it comes and goes with it rather than staying
+        // behind as controls with nothing to act on.
         const categoryControls = this.el("cell_explorer_category_controls");
         if (categoryControls) categoryControls.hidden = !categorical;
 
@@ -746,10 +960,40 @@ class CellExplorerSidebarController {
         const column = this.state.column;
         if (!column) return;
         this.legend.render(this.state.current, this.state.categorical(column));
+        this.renderSummary();
         this.renderVisibilityState();
     }
 
-    /** Which of All / None the legend is currently in, or neither. */
+    /**
+     * "4 categories · 201.7K cells", from the same descriptor the rows are
+     * built from, so the line and the list can never disagree.
+     *
+     * Categories are the column's real values; cells that have none are a row
+     * of the list (Unassigned) but not a category, and are counted among the
+     * cells. Always the whole column: while a filter narrows the list, its
+     * field is what covers this line.
+     */
+    renderSummary() {
+        const descriptor = this.state.current;
+        const categories = this.el("cell_explorer_summary_categories");
+        const cells = this.el("cell_explorer_summary_cells");
+        if (!descriptor || !categories || !cells) return;
+        const levels = descriptor.categories || [];
+        const total = levels.length;
+        const missing = Number(descriptor.n_missing) || 0;
+        const n = Number.isFinite(descriptor.n) ? descriptor.n
+            : levels.reduce((sum, level) => sum + (Number(level.count) || 0), missing);
+        const noun = total === 1 ? "category" : "categories";
+        categories.textContent = `${total.toLocaleString()} ${noun}`;
+        cells.textContent = `· ${CellExplorerLegend.formatCount(n)} cells`;
+        const summary = this.el("cell_explorer_summary");
+        if (summary) {
+            summary.title = `${total.toLocaleString()} ${noun}, ${n.toLocaleString()} cells`
+                + (missing ? ` (${missing.toLocaleString()} with no value)` : "");
+        }
+    }
+
+    /** Which of Show all / Hide all the legend is currently in, or neither. */
     renderVisibilityState() {
         const group = this.el("cell_explorer_visibility");
         if (!group) return;
@@ -796,10 +1040,11 @@ class CellExplorerSidebarController {
             // and this is where the panel keeps saying so.
             status.textContent = "Preparing the segmentation mask...";
         } else if (descriptor?.notice === "high_cardinality") {
-            status.textContent = `${descriptor.n_categories.toLocaleString()} categories `
-                + "-- search or hide categories for a clearer view.";
-        } else if (descriptor?.notice === "many_categories") {
-            status.textContent = `${descriptor.n_categories} categories.`;
+            // The count itself is on the summary line now (and "many_categories"
+            // said nothing else, so it says nothing). What is worth a line of
+            // its own is what to do about more colours than an eye can tell
+            // apart.
+            status.textContent = "Too many to tell apart by colour; filter or hide some.";
         } else if (this.state.readOnly) {
             status.textContent = "These settings were saved by a newer version of "
                 + "Plexora, so changes here are not being saved.";
@@ -889,6 +1134,21 @@ if (window.Plexora) {
             summary: "Colour every cell by a column of the cell table, such as a "
                 + "phenotype, a cluster or a marker's expression, and look at the "
                 + "tissue through that map.",
+            notes: [
+                "Click a row to show or hide that category, or its swatch to change "
+                    + "its colour. Show all and Hide all act on every category.",
+                "Z and X step to the previous or next overlay column, in the order "
+                    + "the dropdown lists them.",
+                "The magnifying glass filters the list without hiding anything on the "
+                    + "image.",
+                "Overlay ROI opens ROI beside this card: rest the pointer on a region to "
+                    + "see its cells broken down by the column on screen.",
+            ],
+            shortcuts: [
+                { keys: "Z", label: "Previous overlay column" },
+                { keys: "X", label: "Next overlay column" },
+                { keys: "Esc", label: "Close the category filter" },
+            ],
             docs: "plugins/cell-explorer",
         },
         ownsCellLayer: true,

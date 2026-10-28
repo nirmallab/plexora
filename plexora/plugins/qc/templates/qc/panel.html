@@ -72,7 +72,7 @@
                 <button id="qc_reg_run" class="qc-tool-run qc-tool-play" type="button"
                         title="Run Registration QC" aria-label="Run Registration QC"><span class="fas fa-play" aria-hidden="true"></span><span class="qc-tool-run-label">Run</span></button>
                 <button id="qc_reg_eye" class="qc-tool-eye qc-eye" type="button" aria-pressed="true"
-                        title="Hide everything Registration QC draws"><span class="fas fa-eye"></span><span class="fas fa-eye-slash"></span></button>
+                        title="Hide everything Registration QC draws"><span class="far fa-eye"></span><span class="far fa-eye-slash"></span></button>
             </span>
         </div>
         <div class="qc-tool-body" id="qc_reg_body">
@@ -181,7 +181,7 @@
                 <button id="qc_blur_run" class="qc-tool-run qc-tool-play" type="button"
                         title="Run Blur QC" aria-label="Run Blur QC"><span class="fas fa-play" aria-hidden="true"></span><span class="qc-tool-run-label">Run</span></button>
                 <button id="qc_blur_eye" class="qc-tool-eye qc-eye" type="button" aria-pressed="true"
-                        title="Hide everything Blur QC draws"><span class="fas fa-eye"></span><span class="fas fa-eye-slash"></span></button>
+                        title="Hide everything Blur QC draws"><span class="far fa-eye"></span><span class="far fa-eye-slash"></span></button>
             </span>
         </div>
         <div class="qc-tool-body" id="qc_blur_body">
@@ -227,7 +227,7 @@
                 <button id="qc_art_run" class="qc-tool-run qc-tool-play" type="button"
                         title="Run the Artifact Detector" aria-label="Run the Artifact Detector"><span class="fas fa-play" aria-hidden="true"></span><span class="qc-tool-run-label">Run</span></button>
                 <button id="qc_art_eye" class="qc-tool-eye qc-eye" type="button" aria-pressed="true"
-                        title="Hide everything the Artifact Detector draws"><span class="fas fa-eye"></span><span class="fas fa-eye-slash"></span></button>
+                        title="Hide everything the Artifact Detector draws"><span class="far fa-eye"></span><span class="far fa-eye-slash"></span></button>
             </span>
         </div>
         <div class="qc-tool-body" id="qc_art_body">
@@ -259,7 +259,7 @@
                     <span class="qc-line-fill"></span>
                     <span class="qc-art-count" id="qc_art_all_count"></span>
                     <button id="qc_art_all_eye" class="qc-line-action qc-eye" type="button" aria-pressed="true"
-                            title="Hide all"><span class="fas fa-eye"></span><span class="fas fa-eye-slash"></span></button>
+                            title="Hide all"><span class="far fa-eye"></span><span class="far fa-eye-slash"></span></button>
                 </div>
             </div>
             <div class="qc-tool-note" id="qc_art_status" hidden></div>
@@ -280,7 +280,7 @@
                 <button id="qc_seg_run" class="qc-tool-run qc-tool-play" type="button" aria-disabled="true"
                         title="Run Segmentation QC" aria-label="Run Segmentation QC"><span class="fas fa-play" aria-hidden="true"></span><span class="qc-tool-run-label">Run</span></button>
                 <button id="qc_seg_eye" class="qc-tool-eye qc-eye" type="button" aria-pressed="true"
-                        title="Hide everything Segmentation QC draws"><span class="fas fa-eye"></span><span class="fas fa-eye-slash"></span></button>
+                        title="Hide everything Segmentation QC draws"><span class="far fa-eye"></span><span class="far fa-eye-slash"></span></button>
             </span>
         </div>
         <div class="qc-tool-body" id="qc_seg_body">
@@ -337,7 +337,7 @@
                     <span class="qc-line-score qc-seg-pct" id="qc_seg_{{ key }}_pct"></span>
                     <div class="qc-seg-slider" id="qc_seg_flag_{{ key }}"></div>
                     <button id="qc_seg_{{ key }}_eye" class="qc-line-action qc-eye" type="button"
-                            aria-pressed="true" title="Hide {{ word | lower }}"><span class="fas fa-eye"></span><span class="fas fa-eye-slash"></span></button>
+                            aria-pressed="true" title="Hide {{ word | lower }}"><span class="far fa-eye"></span><span class="far fa-eye-slash"></span></button>
                 </div>
                 {% endfor %}
             </div>
@@ -378,7 +378,7 @@
                         aria-haspopup="true" aria-expanded="false"
                         title="Pick what you are marking, then draw it with the tools on the image"><span class="fas fa-plus" aria-hidden="true"></span><span>Add ROIs</span></button>
                 <button id="qc_roi_eye" class="qc-tool-eye qc-eye" type="button" aria-pressed="true"
-                        title="Hide everything ROI QC draws"><span class="fas fa-eye"></span><span class="fas fa-eye-slash"></span></button>
+                        title="Hide everything ROI QC draws"><span class="far fa-eye"></span><span class="far fa-eye-slash"></span></button>
             </span>
         </div>
         <div class="qc-tool-body" id="qc_roi_body">
@@ -402,4 +402,34 @@
     </div>
 
     <div id="qc_message" class="qc-message" role="status" hidden></div>
+
+    {# The panel's keys, as the card's last line: core's footer band
+       (viewer.css .plx-panel-footer), which every tool panel ends with.
+       Always there, holding the keys of the check that is unfolded and
+       nothing else -- a check's keys mean nothing under another one, so the
+       band is empty while Blur, Artifacts or Segmentation is open, or none is
+       (qcSidebarController.renderFooter).
+
+       Registration: Z / X step the comparison channel, F flickers the
+       misaligned areas. Each is a button that does what Registration's own
+       controls do (the chevrons and Flicker: qcRegistration.stepFromPanel,
+       toggleFlicker), so a click also turns the check on, where the bare key
+       waits for it to be on; disabled with those controls. The words are
+       short -- "Previous", not "Previous channel" -- because the three share
+       one line of a 320px sidebar, and under the channel pair they name there
+       is nothing else to step; the titles say it.
+
+       ROI: E, magic select -- what the key does anywhere in this panel, and
+       what drawing a QC region starts from (toggleMagic). Its letter is
+       core's (PlexoraSegment.KEY), printed by renderFooter. #}
+    <footer id="qc_footer" class="plx-panel-footer" aria-label="Keys for the open check">
+        <button type="button" class="plx-panel-shortcut" data-reg-key="z" hidden
+                title="Previous comparison channel (Z)"><kbd class="plx-kbd">Z</kbd> Previous</button>
+        <button type="button" class="plx-panel-shortcut" data-reg-key="x" hidden
+                title="Next comparison channel (X)"><kbd class="plx-kbd">X</kbd> Next</button>
+        <button type="button" class="plx-panel-shortcut" data-reg-key="f" hidden
+                title="Flicker the misaligned areas (F)"><kbd class="plx-kbd">F</kbd> Flicker</button>
+        <button type="button" class="plx-panel-shortcut" data-qc-key="magic" hidden
+                title="Magic select: click a region of tissue to outline it (E)"><kbd class="plx-kbd">E</kbd> Magic select</button>
+    </footer>
 </section>

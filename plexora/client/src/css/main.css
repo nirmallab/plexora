@@ -8900,7 +8900,7 @@ dialog .file-source .data-location-place {
 .layer-card-retry {
     background: none;
     border: 1px solid currentColor;
-    border-radius: var(--radius-sm);
+    border-radius: var(--radius-control);
     color: inherit;
     cursor: pointer;
     font-size: 10px;
@@ -9022,7 +9022,7 @@ dialog .file-source .data-location-place {
 .layer-card-channel {
     background: var(--surface-2);
     border: 1px solid var(--border-subtle);
-    border-radius: var(--radius-sm);
+    border-radius: var(--radius-control);
     color: var(--text-primary);
     flex: 1 1 auto;
     font-size: 11px;
@@ -9469,7 +9469,7 @@ dialog .file-source .data-location-place {
     align-items: center;
     background: transparent;
     border: 0;
-    border-radius: var(--radius-sm);
+    border-radius: var(--radius-control);
     color: var(--text-muted);
     cursor: pointer;
     display: inline-flex;
@@ -9529,11 +9529,29 @@ dialog .file-source .data-location-place {
    the two controls are the same object to look at and to use.
    ----------------------------------------------------------------------- */
 
-.gradient-range-row {
+/* The bar's numbers stand under the BAR, not under the whole row: the row's
+   buttons (palette, Auto, an eye) come after the bar, and a scale that ran
+   under them too put the high value under the buttons rather than under the
+   end of the colours it names. A grid with the row flattened into it -- the
+   bar in the first column, each button in a column of its own -- and the
+   scale in the first column of the next line. The low value's first digit
+   then stands under the bar's left edge and the high value's last digit
+   under its right edge (the -4px gives back the boxes' own padding). Cell
+   Explorer did this alone first; the density map and the Visium heatmap had
+   the same misalignment. */
+.gradient-range {
     align-items: center;
-    display: flex;
-    gap: 6px;
-    min-width: 0;
+    column-gap: 6px;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+}
+
+.gradient-range-row {
+    display: contents;
+}
+
+.gradient-range-row > * {
+    grid-row: 1;
 }
 
 /* Dimmed while whatever it colours is switched off, so the control says which
@@ -9605,11 +9623,8 @@ dialog .file-source .data-location-place {
 }
 
 /* The two ends, under the bar and not beside it: put inline they would take a
-   hundred pixels out of the bar they are read against. */
-.gradient-range-scale .plx-number {
-    --plx-number-width: 56px;
-}
-
+   hundred pixels out of the bar they are read against. Each takes half the
+   bar's width rather than a fixed 56px, which cut a long value off. */
 .gradient-range-scale {
     align-items: center;
     color: var(--text-secondary);
@@ -9617,8 +9632,27 @@ dialog .file-source .data-location-place {
     font-size: 11px;
     font-variant-numeric: tabular-nums;
     gap: 6px;
+    grid-column: 1;
+    grid-row: 2;
     justify-content: space-between;
     margin-top: 4px;
+}
+
+.gradient-range-scale .plx-number-group {
+    flex: 1 1 0;
+    min-width: 0;
+}
+
+.gradient-range-scale .plx-number {
+    --plx-number-width: 100%;
+}
+
+.gradient-range-scale .plx-number-group:first-child {
+    margin-left: -4px;
+}
+
+.gradient-range-scale .plx-number-group:last-child {
+    margin-right: -4px;
 }
 
 /* The lower end reads left-to-right off the left of the bar. */

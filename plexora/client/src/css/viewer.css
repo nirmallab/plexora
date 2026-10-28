@@ -327,7 +327,7 @@
 .tool-card {
     background: var(--surface-2);
     border: 1px solid var(--border-subtle);
-    border-radius: var(--radius-sm);
+    border-radius: var(--radius-card);
     min-width: 0;
     /* Overridden per slot below. One hue per card with the three shades derived
        from it, so adding a slot is one number rather than three colours. */
@@ -335,7 +335,11 @@
     --tool-accent: hsl(var(--tool-accent-h) 85% 65%);
     --tool-accent-soft: hsl(var(--tool-accent-h) 85% 65% / 0.36);
     --tool-accent-quiet: hsl(var(--tool-accent-h) 55% 60% / 0.42);
-    box-shadow: inset 3px 0 0 var(--tool-accent-quiet);
+    /* How wide that edge is. A shadow takes no room in the layout, so the body
+       gives this much back on its left (`.tool-card-body` below) -- one number,
+       so the two cannot drift apart. */
+    --tool-stripe: 3px;
+    box-shadow: inset var(--tool-stripe) 0 0 var(--tool-accent-quiet);
 }
 
 /* Eight hues 45 degrees apart, NOT listed in wheel order. toolLoader.js hashes
@@ -360,7 +364,7 @@
    switched off and without taking away the colour that identifies them. */
 .tool-card.is-active {
     border-color: var(--tool-accent-soft);
-    box-shadow: inset 3px 0 0 var(--tool-accent);
+    box-shadow: inset var(--tool-stripe) 0 0 var(--tool-accent);
 }
 
 /* Loaded but drawing nothing. Dimmed, not hidden: the card is how the user gets
@@ -443,7 +447,7 @@
 .tool-card-remove {
     background: none;
     border: 0;
-    border-radius: var(--radius-sm);
+    border-radius: var(--radius-control);
     color: var(--text-muted);
     flex: 0 0 auto;
     font-size: 11px;
@@ -508,7 +512,7 @@
 .layer-card {
     background: var(--surface-2);
     border: 1px solid var(--border-subtle);
-    border-radius: var(--radius-sm);
+    border-radius: var(--radius-card);
     min-width: 0;
 }
 
@@ -524,7 +528,7 @@
 .tool-card-header {
     background: rgba(255, 255, 255, 0.035);
     border-bottom: 1px solid var(--border-subtle);
-    border-radius: var(--radius-sm) var(--radius-sm) 0 0;
+    border-radius: calc(var(--radius-card) - 1px) calc(var(--radius-card) - 1px) 0 0;
 }
 
 /* A tool card carries its identifying hue as an inset shadow down its left
@@ -534,7 +538,7 @@
    the stripe ends. */
 .tool-card-header {
     background: linear-gradient(to right,
-        transparent 0 3px, rgba(255, 255, 255, 0.035) 3px);
+        transparent 0 var(--tool-stripe), rgba(255, 255, 255, 0.035) var(--tool-stripe));
 }
 
 /* The whole row folds the card -- see cardList's buildCard, which lets every
@@ -553,7 +557,7 @@
 .layer-card.is-collapsed > .layer-card-header,
 .tool-card.is-collapsed > .tool-card-header {
     border-bottom-color: transparent;
-    border-radius: var(--radius-sm);
+    border-radius: calc(var(--radius-card) - 1px);
 }
 
 .layer-card-header {
@@ -616,7 +620,7 @@
 .layer-card-remove {
     background: none;
     border: 0;
-    border-radius: var(--radius-sm);
+    border-radius: var(--radius-control);
     color: var(--text-muted);
     flex: 0 0 auto;
     font-size: 11px;
@@ -707,7 +711,7 @@
 .tool-card-extras .icon-button {
     background: none;
     border: 0;
-    border-radius: var(--radius-sm);
+    border-radius: var(--radius-control);
     color: var(--text-muted);
     font-size: 11px;
     height: auto;
@@ -747,7 +751,7 @@
 
 .layer-card-ground:hover {
     background: rgba(255, 255, 255, 0.12);
-    border-radius: var(--radius-sm);
+    border-radius: var(--radius-control);
 }
 
 .layer-card-ground .channel-color-swatch {
@@ -796,14 +800,14 @@
     align-items: center;
     background: rgba(255, 255, 255, 0.06);
     border: 1px solid var(--border-subtle);
-    border-radius: var(--radius-sm);
+    border-radius: var(--radius-control);
     color: var(--text-secondary);
     cursor: pointer;
     display: inline-flex;
     flex: 1 1 auto;
     font-size: 11px;
     gap: 6px;
-    height: 26px;
+    height: var(--panel-button-height);
     justify-content: center;
     min-width: 0;
     padding: 0 8px;
@@ -1066,6 +1070,181 @@
    header twice as far as the rest. */
 .tool-card-body > .tool-panel-mount > .sidebar-section > .layer-card-actions:first-child {
     margin-top: 0;
+}
+
+/* THE STRIPE, GIVEN BACK, so a panel's left and right insets are the same.
+
+   The card's hue is an inset shadow (`--tool-stripe`, `.tool-card` above),
+   which takes no room, so the body's equal 8px left every panel 3px nearer
+   its left edge than its right -- visible wherever a select, a rule or a
+   right-aligned count runs edge to edge, and each plugin that noticed paid
+   the 3px back privately. Here once, for every tool card. */
+.tool-card-body {
+    padding-left: calc(var(--space-2) + var(--tool-stripe));
+}
+
+/* -- A tool panel's shared parts ---------------------------------------------
+
+   The pieces every sidebar panel is built from, in core so that a plugin uses
+   them rather than restating them: a plugin's stylesheet loads only while its
+   tool is open, so a part two plugins share can only live here. The measures
+   are tokens.css's --panel-*; the rule they make up, with its reasons, is the
+   plugin guide's "Design the sidebar panel" (build-a-plugin.mdx).
+
+   THE PANEL'S FIELD: the select the panel is about, or a text box. On a
+   SearchableSelect's mount (either shape) or on an <input> itself. A step
+   quieter than core's own select -- a border that is there rather than
+   drawn, a ground just off the card's -- and barely rounded, because in a
+   panel it sits between hairlines rather than among 6px buttons. */
+.plx-panel-field > .sidebar-select,
+input.plx-panel-field,
+select.plx-panel-field {
+    background: var(--panel-field-ground);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-control);
+    box-sizing: border-box;
+    color: var(--text-primary);
+    font-size: var(--panel-font-body);
+    height: var(--panel-control-height);
+    padding: 0 12px;
+    width: 100%;
+}
+
+.plx-panel-field > .sidebar-select:hover,
+input.plx-panel-field:hover:not(:disabled):not(:focus),
+select.plx-panel-field:hover:not(:disabled):not(:focus) {
+    background: var(--panel-hover-ground);
+    border-color: var(--border-strong);
+}
+
+.plx-panel-field > .sidebar-select:focus,
+input.plx-panel-field:focus,
+select.plx-panel-field:focus {
+    border-color: var(--accent-channel);
+    outline: none;
+}
+
+.plx-panel-field > .sidebar-select::placeholder,
+input.plx-panel-field::placeholder {
+    color: var(--text-muted);
+}
+
+.plx-panel-field .marker-combobox-caret {
+    font-size: 10px;
+}
+
+/* THE SIDEBAR'S CORNERS for core classes other pages share too: an icon
+   button, a select, an action button. Scoped here, so Figure Builder's and
+   Settings' keep theirs; inside the sidebar each is a control like any other
+   (tokens.css --radius-control). */
+.viewer-sidebar .icon-button,
+.viewer-sidebar .sidebar-select,
+.viewer-sidebar .sidebar-action,
+.viewer-sidebar .sidebar-action-fancy {
+    border-radius: var(--radius-control);
+}
+
+/* THE FOOTER BAND: the panel's keys, as the card's last line. Worn like the
+   card's header -- the same tint, a rule on the side facing the panel, the
+   card's rounded corners -- so it reads as the card's foot, not one more row.
+   Starts past the stripe for the reason the header does. In a tool card it
+   runs edge to edge and down to the card's foot, through the body's padding.
+
+   Thresholding's footer first (Z / X for the marker), then Cell Explorer's;
+   each kept a copy, which is how a third panel would have kept a third. */
+.plx-panel-footer {
+    align-items: center;
+    background: linear-gradient(to right,
+        transparent 0 var(--tool-stripe, 0px), rgba(255, 255, 255, 0.035) var(--tool-stripe, 0px));
+    border-radius: 0 0 calc(var(--radius-card) - 1px) calc(var(--radius-card) - 1px);
+    border-top: 1px solid var(--border-subtle);
+    color: var(--text-muted);
+    display: flex;
+    flex-wrap: wrap;
+    /* The canvas's "T  Toggle selected cells" hint, size for size. */
+    font-size: var(--panel-font-footer);
+    gap: 0 var(--space-1);
+    justify-content: center;
+    letter-spacing: 0.02em;
+    /* A key's height (its 13px cap and 2px padding each side, ~19px), the
+       band's padding and its rule: a band with no keys for the state the
+       panel is in -- QC with Blur open -- stays the card's foot at the same
+       height, so the card does not jump as its keys come and go. */
+    min-height: 28px;
+    padding: 4px 2px;
+}
+
+.plx-panel-footer[hidden],
+.plx-panel-shortcut[hidden] {
+    display: none;
+}
+
+.tool-card-body .plx-panel-footer {
+    margin: var(--space-1) calc(-1 * var(--space-2)) calc(-1 * var(--space-2))
+        calc(-1 * (var(--space-2) + var(--tool-stripe)));
+}
+
+/* Each key is also a button that does what the key does, and at rest still
+   reads as the quiet line it is: no ground, no edge, the band's muted text.
+   Under the pointer it takes a faint ground and its cap lights; pressed, the
+   cap goes down a pixel. Disabled where the key would do nothing (the end of
+   a list, a check that is off). */
+.plx-panel-shortcut {
+    align-items: center;
+    background: none;
+    border: 0;
+    border-radius: var(--radius-control);
+    color: inherit;
+    cursor: pointer;
+    display: inline-flex;
+    font: inherit;
+    gap: 5px;
+    letter-spacing: inherit;
+    padding: 2px 6px;
+    transition: color var(--duration-fast) var(--ease-standard),
+                background-color var(--duration-fast) var(--ease-standard);
+    white-space: nowrap;
+}
+
+/* The canvas hint's cap (.viewer-overlay-hint-key), not the larger default. */
+.plx-panel-footer .plx-kbd {
+    border-radius: calc(var(--radius-sm) - 3px);
+    font-size: 9px;
+    line-height: 13px;
+    min-width: 13px;
+    padding: 0 3px;
+    transition: border-color var(--duration-fast) var(--ease-standard),
+                color var(--duration-fast) var(--ease-standard),
+                translate var(--duration-fast) var(--ease-standard);
+}
+
+/* Two caps for one key (Shift and Z): closer than the default pair. */
+.plx-panel-footer .plx-kbd + .plx-kbd {
+    margin-left: 2px;
+}
+
+.plx-panel-shortcut:hover:not(:disabled) {
+    background: rgba(255, 255, 255, 0.06);
+    color: var(--text-primary);
+}
+
+.plx-panel-shortcut:hover:not(:disabled) .plx-kbd {
+    border-color: var(--accent-channel);
+    color: var(--text-primary);
+}
+
+.plx-panel-shortcut:active:not(:disabled) .plx-kbd {
+    translate: 0 1px;
+}
+
+.plx-panel-shortcut:focus-visible {
+    outline: 2px solid var(--accent-channel-soft);
+    outline-offset: 0;
+}
+
+.plx-panel-shortcut:disabled {
+    cursor: default;
+    opacity: 0.4;
 }
 
 /* The base image's channel list, inside the card rather than in a section of
@@ -1493,7 +1672,7 @@
 .distribution-plot {
     background: var(--surface-1);
     border: 1px solid var(--border-subtle);
-    border-radius: var(--radius-sm);
+    border-radius: var(--radius-control);
     height: 132px;
     margin-top: 12px;
     overflow: hidden;
@@ -1552,7 +1731,7 @@
 .channel-slot {
     background: rgba(8, 21, 30, 0.76);
     border: 1px solid rgba(56, 189, 248, 0.18);
-    border-radius: 7px;
+    border-radius: var(--radius-control);
     cursor: pointer;
     padding: 2px 4px 2px 6px;
     position: relative;
@@ -2332,7 +2511,7 @@
     align-items: center;
     background: transparent;
     border: 1px solid transparent;
-    border-radius: var(--radius-sm);
+    border-radius: var(--radius-control);
     color: var(--text-muted);
     cursor: pointer;
     display: inline-flex;
@@ -2473,7 +2652,7 @@
 .cell-mode-cta {
     background: var(--surface-2);
     border: 1px dashed var(--border-subtle);
-    border-radius: 6px;
+    border-radius: var(--radius-control);
     color: var(--text-secondary);
     cursor: pointer;
     /* Sized to its words while the mode buttons are still there -- they are the
@@ -2515,7 +2694,7 @@
     align-items: center;
     background: none;
     border: 1px solid transparent;
-    border-radius: 6px;
+    border-radius: var(--radius-control);
     color: var(--text-muted);
     cursor: pointer;
     display: inline-flex;
@@ -2544,11 +2723,17 @@
     outline-offset: 2px;
 }
 
+/* One height wherever it stands: the line-button height (tokens.css
+   --panel-button-height), which the Cells control at the foot of the sidebar
+   already was. Panels that used their own -- QC's strictness at 24px, its
+   Segmentation tabs at 22px, Thresholding's Positive / Negative at 31px --
+   now match it and each other. */
 .cell-mode-options {
     background: var(--surface-2);
     border: 1px solid var(--border-subtle);
-    border-radius: 6px;
+    border-radius: var(--radius-control);
     display: flex;
+    height: var(--panel-button-height);
     overflow: hidden;
     width: 100%;
 }
@@ -2563,7 +2748,7 @@
     font-size: 11px;
     min-width: 0;
     overflow: hidden;
-    padding: 6px 4px;
+    padding: 0 4px;
     text-overflow: ellipsis;
     transition: background 120ms ease, color 120ms ease;
     white-space: nowrap;
@@ -2611,7 +2796,7 @@
    and keep one width whichever is lit. */
 .view-transform-panel .cell-mode-option {
     font-variant-numeric: tabular-nums;
-    padding: 4px;
+    padding: 0 4px;
 }
 
 /* The quick choices on one line: the four right angles take the width, the

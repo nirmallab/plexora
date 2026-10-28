@@ -12,7 +12,7 @@ scipy/sklearn/anndata/h5py.
 
 from plexora.api.plugin import Plugin, Requires
 
-VERSION = "20261027_gating_ground_class"
+VERSION = "20261027_sidebar_radius"
 
 
 def _blueprint():

@@ -121,7 +121,7 @@ class CellExplorerContinuous {
         const icon = document.createElement("span");
         // The icon carries the state as well as the dimming does, so it is
         // never conveyed by contrast alone.
-        icon.className = entry.hidden ? "fas fa-eye-slash" : "fas fa-eye";
+        icon.className = entry.hidden ? "far fa-eye-slash" : "far fa-eye";
         button.appendChild(icon);
         button.addEventListener("click", () => {
             this.handlers.onHidden?.(!entry.hidden);

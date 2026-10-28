@@ -7,7 +7,8 @@ account for.
 
 - THE MARKER PICKER IS ONE LINE. Its caption stood above it, spending a row of
   a 300px sidebar on six characters, while everything below it was a one-line
-  control. It sits beside the picker now, on core's `.control-row`.
+  control. It sits beside the picker now, on core's `.control-row`, in core's
+  panel field (`.plx-panel-field`).
 - THE THRESHOLD IS ONE LINE. Two typeable numbers had a row of their own above
   the track and "Auto Threshold" a full-width button below it -- three lines for
   one control in a 300px sidebar. It is now `value — slider — value — icon`,
@@ -324,14 +325,18 @@ def test_the_threshold_lines_are_the_same_colour_as_the_handles():
 def test_the_marker_and_its_picker_share_a_line():
     """`.control-row` is core's label-beside-control shape, the one the Point
     size and Opacity rows use. Written out here rather than restyled locally,
-    which is what a fourth private copy of six declarations would have been."""
+    which is what a fourth private copy of six declarations would have been.
+    The picker wears core's panel field (`.plx-panel-field`), as every tool
+    panel's select does."""
     panel = _code(PANEL)
     row = panel[panel.index('class="control-row"'):]
     assert row.index(">Marker<") < row.index('id="gate_marker_select"')
-    assert 'class="control-row"' in panel
-    assert ".control-row {" in (CORE / "css" / "viewer.css").read_text(encoding="utf-8")
-    # No copy of the shape in this plugin's stylesheet.
-    assert "control-row" not in _code(STYLES)
+    assert 'id="gate_marker_select" class="marker-combobox-mount plx-panel-field"' in panel
+    core = (CORE / "css" / "viewer.css").read_text(encoding="utf-8")
+    assert ".control-row {" in core and ".plx-panel-field > .sidebar-select," in core
+    # No copy of either shape in this plugin's stylesheet.
+    styles = _code(STYLES)
+    assert "control-row" not in styles and "#gate_marker_select .sidebar-select" not in styles
 
 
 def test_the_panel_says_where_the_three_inputs_disagree():
@@ -505,18 +510,23 @@ def test_train_ends_the_label_row_and_the_wand_picks_its_own_examples():
 
 
 def test_the_footer_names_the_two_marker_keys_as_key_caps():
+    """Core's footer band (`.plx-panel-footer`), as every tool panel ends:
+    Thresholding's own copy moved into core when a second and third panel
+    needed the same band."""
     panel, styles = _code(PANEL), _code(STYLES)
-    footer = panel[panel.index('<footer class="gate-panel-footer"'):panel.index("</footer>")]
+    core = (CORE / "css" / "viewer.css").read_text(encoding="utf-8")
+    footer = panel[panel.index('<footer class="plx-panel-footer"'):panel.index("</footer>")]
     assert '<kbd class="plx-kbd">Z</kbd> Previous marker' in footer
     assert '<kbd class="plx-kbd">X</kbd> Next marker' in footer
-    rule = styles[styles.index(".gate-panel-footer {"):]
+    rule = core[core.index(".plx-panel-footer {"):]
     rule = rule[:rule.index("}")]
     assert "justify-content: center" in rule and "border-top" in rule
-    # A band like the card's header, and the canvas hint's key cap size.
-    assert "rgba(255, 255, 255, 0.035) 3px" in rule and "font-size: 10px" in rule
-    assert ".tool-card-body .gate-panel-footer {" in styles
-    cap = styles[styles.index(".gate-panel-footer .plx-kbd {"):]
+    assert "font-size: var(--panel-font-footer)" in rule
+    assert ".tool-card-body .plx-panel-footer {" in core
+    cap = core[core.index(".plx-panel-footer .plx-kbd {"):]
     assert "font-size: 9px" in cap[:cap.index("}")]
+    # No private copy left behind.
+    assert "panel-footer" not in styles and "panel-shortcut" not in styles
     # The last thing in the section.
     assert panel.index("</footer>") > panel.index('id="gating_save_anndata_panel"')
 
@@ -526,10 +536,11 @@ def test_the_footer_keys_are_buttons_that_step_the_marker():
     and the one that would step off either end of the list is disabled. At
     rest the keys still read as the quiet line they were: no ground, and
     their padding taken back out of the band's."""
-    panel, styles, controller = _code(PANEL), _code(STYLES), _code(CONTROLLER)
-    footer = panel[panel.index('<footer class="gate-panel-footer"'):panel.index("</footer>")]
+    panel, controller = _code(PANEL), _code(CONTROLLER)
+    core = (CORE / "css" / "viewer.css").read_text(encoding="utf-8")
+    footer = panel[panel.index('<footer class="plx-panel-footer"'):panel.index("</footer>")]
     assert 'id="gate_panel_footer"' in footer
-    assert footer.count('<button type="button" class="gate-panel-shortcut"') == 2
+    assert footer.count('<button type="button" class="plx-panel-shortcut"') == 2
     assert 'data-marker-step="-1"' in footer and 'data-marker-step="1"' in footer
     setup = controller[controller.index("    setup() {"):controller.index("    onShow() {")]
     assert 'document.getElementById("gate_panel_footer")' in setup
@@ -540,15 +551,15 @@ def test_the_footer_keys_are_buttons_that_step_the_marker():
     for owner in ("    setGateMarker(name, options = {}) {", "    populateGateSelect() {"):
         body = controller[controller.index(owner):]
         assert "this.paintMarkerSteps();" in body[:body.index("\n    }\n")]
-    band = styles[styles.index(".gate-panel-footer {"):]
+    band = core[core.index(".plx-panel-footer {"):]
     band = band[:band.index("}")]
     assert "gap: 0 var(--space-1);" in band and "padding: 4px 2px;" in band
-    key = styles[styles.index(".gate-panel-shortcut {"):]
+    key = core[core.index(".plx-panel-shortcut {"):]
     key = key[:key.index("}")]
     assert "background: none;" in key and "border: 0;" in key and "padding: 2px 6px;" in key
-    assert ".gate-panel-shortcut:hover:not(:disabled) {" in styles
-    assert ".gate-panel-shortcut:focus-visible {" in styles
-    assert ".gate-panel-shortcut:disabled {" in styles
+    assert ".plx-panel-shortcut:hover:not(:disabled) {" in core
+    assert ".plx-panel-shortcut:focus-visible {" in core
+    assert ".plx-panel-shortcut:disabled {" in core
 
 
 def test_the_cells_are_drawn_before_a_run_and_none_is_offered():

@@ -17,7 +17,24 @@
    card and that left the toolbar welded to the title. Core holds that 8px for
    every tool panel now (viewer.css, `.tool-card-body > .tool-panel-mount >
    .sidebar-section`), so paying it again here would put this panel 16px down
-   while Cell Explorer and Thresholding sat at 8. */
+   while Cell Explorer and Thresholding sat at 8.
+
+   ONE STEP BETWEEN BLOCKS, core's --panel-gap, declared once on the column
+   instead of as a margin on each block -- the measures every tool panel is
+   built from (tokens.css --panel-*; the plugin guide's "Design the sidebar
+   panel"). */
+#roi_panel_section {
+    display: flex;
+    flex-direction: column;
+    gap: var(--panel-gap);
+    min-width: 0;
+}
+
+/* `hidden` means hidden, including on the blocks below that set a display of
+   their own -- the UA rule is a bare attribute selector and loses to them. */
+#roi_panel_section > [hidden] {
+    display: none;
+}
 
 .roi-hidden-file {
     display: none;
@@ -27,12 +44,11 @@
 
 .roi-banner {
     align-items: flex-start;
-    border-radius: var(--radius-sm);
+    border-radius: var(--radius-control);
     display: flex;
     font-size: 12px;
     gap: var(--space-2);
     line-height: 1.45;
-    margin-bottom: var(--space-3);
     padding: var(--space-3);
 }
 
@@ -93,28 +109,34 @@
 
 /* `.control-label` is written for a label stacked above its field, so it
    carries a bottom margin. Every heading row on this panel puts a label beside
-   something else instead, and has to take that margin back. */
+   something else instead, and has to take that margin back. A little air above
+   it, as Cell Explorer's caption has, so it does not sit on the header's rule. */
+.roi-section-head {
+    margin-top: 4px;
+}
+
 .roi-section-actions {
     align-items: center;
     display: flex;
     gap: var(--space-1);
-    margin-bottom: var(--space-1);
 }
 
-/* At the end of the Categories heading, quiet: it is the second thing. */
+/* At the end of the Categories heading, quiet: it is the second thing. Bare,
+   and the rows' eye exactly -- the same box at the same right edge -- so it
+   stands at the head of the column of eyes it switches. */
 .roi-all-eye {
     align-items: center;
     background: none;
-    border: 1px solid var(--border-subtle);
-    border-radius: var(--radius-sm);
-    color: var(--text-secondary);
+    border: 0;
+    border-radius: var(--radius-control);
+    color: var(--text-muted);
     cursor: pointer;
     display: inline-flex;
-    font-size: 11px;
-    height: 24px;
+    font-size: 13px;
+    height: var(--panel-icon-button);
     justify-content: center;
     padding: 0;
-    width: 26px;
+    width: var(--panel-icon-button);
 }
 
 .roi-all-eye[hidden] {
@@ -122,7 +144,7 @@
 }
 
 .roi-all-eye:hover {
-    background: rgba(255, 255, 255, 0.08);
+    background: var(--panel-hover-ground);
     color: var(--text-primary);
 }
 
@@ -144,16 +166,16 @@
 
 /* The field is the whole control: the plus inside it says what it is for, and
    the Enter cap at its far end appears once there is a name to add. Both are
-   laid over the input, so a click anywhere on it lands in the field. */
+   laid over the input, so a click anywhere on it lands in the field. The
+   field itself is core's panel field (`.plx-panel-field`, viewer.css). */
 .roi-category-add {
-    margin-bottom: var(--space-2);
     position: relative;
 }
 
 .roi-category-add-icon {
     color: var(--text-muted);
     font-size: 11px;
-    left: 11px;
+    left: 12px;
     pointer-events: none;
     position: absolute;
     top: 50%;
@@ -165,26 +187,15 @@
     color: var(--accent-channel);
 }
 
-/* Scoped by its wrapper so it outranks `.roi-input`'s padding, which comes
-   later in this file. */
+/* Scoped by its wrapper so it outranks the panel field's own padding: room
+   for the plus on the left and the Enter cap on the right. */
 .roi-category-add .roi-category-add-input {
-    height: 32px;
-    padding: 0 40px 0 30px;
-    transition: border-color var(--duration-fast) var(--ease-standard),
-                box-shadow var(--duration-fast) var(--ease-standard);
+    padding: 0 40px 0 32px;
+    transition: border-color var(--duration-fast) var(--ease-standard);
 }
 
 .roi-category-add-input::placeholder {
-    color: var(--text-muted);
     opacity: 1;
-}
-
-.roi-category-add-input:hover:not(:disabled):not(:focus) {
-    border-color: var(--border-strong);
-}
-
-.roi-category-add-input:focus {
-    box-shadow: 0 0 0 3px var(--accent-channel-soft);
 }
 
 .roi-category-add-input:disabled {
@@ -210,7 +221,7 @@
     padding: 0;
     pointer-events: none;
     position: absolute;
-    right: 6px;
+    right: 7px;
     top: 50%;
     transition: background var(--duration-fast) var(--ease-standard),
                 color var(--duration-fast) var(--ease-standard),
@@ -237,17 +248,22 @@
     outline: none;
 }
 
-/* FIFTEEN ROWS, then it scrolls -- 24px a row and 1px between them. Past that
+/* A capped height, then it scrolls -- Cell Explorer's legend's cap. Past that
    the list is taller than the rest of the panel put together and pushes Import
    and Save off the bottom of a laptop sidebar, which is where a user who has
-   just drawn fifty regions is heading next. */
+   just drawn fifty regions is heading next. The 4px above and below are the
+   list's share of the even space around the hairline under it. */
 .roi-tree {
     display: flex;
     flex-direction: column;
-    gap: 1px;
-    margin-bottom: var(--space-2);
-    max-height: calc(15 * 24px + 14 * 1px);
+    max-height: min(400px, 45vh);
     overflow-y: auto;
+    overscroll-behavior: contain;
+    padding: 0 0 4px;
+}
+
+.roi-tree:empty {
+    display: none;
 }
 
 /* A project whose regions cannot be edited -- wrong image, or a conflict --
@@ -259,9 +275,13 @@
     pointer-events: none;
 }
 
+/* A category is a panel list row (--panel-row-height, the name at body size);
+   a region under it a step smaller -- 28px and the meta size -- the one
+   nested level a tool panel's list may have. The eye ends every row, in the
+   column the heading's all-eye stands at the head of. */
 .roi-row {
     align-items: center;
-    border-radius: var(--radius-sm);
+    border-radius: var(--radius-control);
     box-sizing: border-box;
     color: var(--text-secondary);
     cursor: pointer;
@@ -272,15 +292,15 @@
        the region rows nested inside `.roi-children` kept their 24px. Two row
        heights in one list, appearing only once it got long enough to scroll. */
     flex: 0 0 auto;
-    font-size: 12px;
-    gap: 6px;
-    height: 24px;
+    font-size: var(--panel-font-body);
+    gap: 8px;
+    height: var(--panel-row-height);
     min-width: 0;
-    padding: 0 4px;
+    padding: 0 0 0 4px;
 }
 
 .roi-row:hover {
-    background: rgba(255, 255, 255, 0.05);
+    background: var(--panel-hover-ground);
 }
 
 .roi-row:focus-visible {
@@ -310,7 +330,7 @@
 
 .roi-rename {
     flex: 1 1 auto;
-    height: 20px;
+    height: 24px;
     padding: 0 6px;
 }
 
@@ -324,7 +344,7 @@
     cursor: pointer;
     display: inline-flex;
     flex: 0 0 auto;
-    font-size: 9px;
+    font-size: 10px;
     height: 16px;
     justify-content: center;
     padding: 0;
@@ -374,16 +394,13 @@
     width: 10px;
 }
 
+/* Right-aligned before the row's actions, as a legend's count is: the name
+   takes the room between. */
 .roi-cat-count {
     color: var(--text-muted);
     flex: 0 0 auto;
-    font-size: 11px;
+    font-size: var(--panel-font-meta);
     font-variant-numeric: tabular-nums;
-}
-
-.roi-cat-count::before {
-    content: "\00b7";
-    margin-right: 4px;
 }
 
 .roi-cat.is-empty .roi-cat-count {
@@ -405,11 +422,11 @@
 .roi-cat.is-active::before {
     background: var(--roi-cat-color, var(--accent-channel));
     border-radius: 1px;
-    bottom: 4px;
+    bottom: 7px;
     content: "";
     left: 0;
     position: absolute;
-    top: 4px;
+    top: 7px;
     width: 2px;
 }
 
@@ -435,14 +452,16 @@
 
 /* -- a region row -------------------------------------------------------- */
 
-/* A STEP IN FROM the category's label, not level with it. This used to line
-   the two up exactly -- 26px puts a region's name within 3px of the name above
-   it -- and a list of regions then read as a flat list with a coloured row
-   every so often. The indent is the only thing saying which category a region
-   belongs to once its parent has scrolled off the top, so it has to be visible
-   without a guide line drawn for it. */
+/* A STEP IN FROM the category's label, not level with it: the region's dot
+   stands under the category's name (4 + 16 chevron + 8 + 10 dot + 8 = 46px),
+   so its own name starts a step further in. Lined up exactly, a list of
+   regions read as a flat list with a coloured row every so often. The indent
+   is the only thing saying which category a region belongs to once its parent
+   has scrolled off the top, so it has to be visible without a guide line. */
 .roi-item {
-    padding-left: 40px;
+    font-size: var(--panel-font-meta);
+    height: 28px;
+    padding-left: 46px;
 }
 
 .roi-item-dot {
@@ -504,25 +523,30 @@
 }
 
 /* On every row, always: an action that only appears under the pointer is one
-   nobody finds on the rows they have not hovered yet. */
+   nobody finds on the rows they have not hovered yet. The panel's icon button
+   (--panel-icon-button); the eye's glyph a size up, as a legend's is. */
 .roi-row-action {
     align-items: center;
     background: none;
     border: none;
-    border-radius: var(--radius-sm);
+    border-radius: var(--radius-control);
     color: var(--text-muted);
     cursor: pointer;
     display: inline-flex;
     flex: 0 0 auto;
-    font-size: 10px;
-    height: 22px;
+    font-size: 11px;
+    height: var(--panel-icon-button);
     justify-content: center;
     padding: 0;
-    width: 22px;
+    width: var(--panel-icon-button);
+}
+
+.roi-row-eye {
+    font-size: 13px;
 }
 
 .roi-row-action:hover {
-    background: rgba(255, 255, 255, 0.1);
+    background: rgba(255, 255, 255, 0.08);
     color: var(--text-primary);
 }
 
@@ -623,14 +647,16 @@
    inline rename, the destination name. They sit within a few rows of each
    other in a 288px column, and three heights there read as three different
    kinds of control. */
+/* The inline rename field in a row. A field standing on its own -- the new
+   category, Save as -- is core's panel field instead. */
 .roi-input {
-    background: var(--surface-2);
+    background: var(--panel-field-ground);
     border: 1px solid var(--border-subtle);
-    border-radius: var(--radius-sm);
+    border-radius: var(--radius-control);
     box-sizing: border-box;
     color: var(--text-primary);
     font-family: inherit;
-    font-size: 12px;
+    font-size: inherit;
     min-width: 0;
     padding: 6px var(--space-2);
     width: 100%;
@@ -649,8 +675,7 @@
 .roi-destination {
     background: rgba(255, 255, 255, 0.05);
     border: 1px solid var(--border-subtle);
-    border-radius: var(--radius-sm);
-    margin-bottom: var(--space-2);
+    border-radius: var(--radius-control);
     padding: var(--space-2);
 }
 
@@ -684,19 +709,24 @@
    Own classes copying those values rather than core's `.layer-card-action`:
    this plugin may not style a core-owned class, and core may not be made
    responsible for the look of a tool it may not have installed. */
+/* Under a hairline, as Cell Explorer's way out sits under its list: what the
+   panel holds, then what leaves it. The space either side of the rule is the
+   same -- the list's 4px and the column's step above, this padding below, to
+   the pills' centre. */
 .roi-actions {
     align-items: center;
+    border-top: 1px solid var(--panel-rule);
     display: flex;
     gap: 6px;
-    margin-top: var(--space-3);
     min-width: 0;
+    padding-top: 15px;
 }
 
 .roi-action {
     align-items: center;
     background: rgba(255, 255, 255, 0.06);
     border: 1px solid var(--border-subtle);
-    border-radius: var(--radius-sm);
+    border-radius: var(--radius-control);
     color: var(--text-secondary);
     cursor: pointer;
     display: inline-flex;
@@ -704,7 +734,7 @@
     font-family: inherit;
     font-size: 11px;
     gap: 6px;
-    height: 26px;
+    height: var(--panel-button-height);
     justify-content: center;
     min-width: 0;
     padding: 0 8px;
@@ -785,7 +815,7 @@
 .roi-map-target {
     background: var(--surface-2);
     border: 1px solid var(--border-subtle);
-    border-radius: var(--radius-sm);
+    border-radius: var(--radius-control);
     column-gap: var(--space-3);
     display: grid;
     font-size: 12px;
@@ -852,11 +882,10 @@
 .roi-message {
     background: var(--surface-2);
     border: 1px solid var(--border-subtle);
-    border-radius: var(--radius-sm);
+    border-radius: var(--radius-control);
     color: var(--text-secondary);
-    font-size: 11px;
+    font-size: var(--panel-font-note);
     line-height: 1.45;
-    margin-top: var(--space-2);
     padding: var(--space-2);
 }
 

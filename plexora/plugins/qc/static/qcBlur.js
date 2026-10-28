@@ -741,14 +741,14 @@ class QcBlurQc {
         const eye = document.createElement("button");
         eye.type = "button";
         eye.className = "qc-line-action qc-eye";
-        eye.innerHTML = '<span class="fas fa-eye"></span><span class="fas fa-eye-slash"></span>';
+        eye.innerHTML = '<span class="far fa-eye"></span><span class="far fa-eye-slash"></span>';
         eye.addEventListener("click", () => this.toggleChannel(entry.channel));
         const remove = document.createElement("button");
         remove.type = "button";
         remove.className = "qc-line-action qc-blur-remove";
         remove.innerHTML = '<span class="fas fa-xmark"></span>';
         remove.addEventListener("click", () => this.removeChannel(entry.channel));
-        row.append(swatch, name, mount, eye, remove);
+        row.append(swatch, name, mount, remove, eye);
         entry.nodes = { row, swatch, name, mount, eye, remove };
         if (entry.channel === "brightfield") {
             name.classList.add("qc-line-name", "is-static");
