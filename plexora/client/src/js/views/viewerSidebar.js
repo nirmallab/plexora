@@ -594,10 +594,7 @@ class ViewerSidebar {
     }
 
     bindActions() {
-        const addButton = this.el("add_channel_button");
-        // Guarded: a scoped instance may mount a subset of the markup, and the
-        // viewer itself renders no channel section at all for an RGB image.
-        if (addButton) addButton.addEventListener("click", () => this.addFirstAvailableChannel());
+        this.ensureAddRow();
         // No resize listener. d3-simple-slider had to be handed a width in
         // pixels and so had to be rebuilt whenever the sidebar changed size;
         // a PlexoraSlider is a flex row that lays itself out.
@@ -2743,18 +2740,88 @@ class ViewerSidebar {
         window.dispatchEvent(new CustomEvent("plexora:hd-needed", { detail: { levels } }));
     }
 
-    addFirstAvailableChannel() {
+    /**
+     * What adding a channel would bring in: the slot it lands in and its
+     * marker -- a hidden slot first, else a new one past the end, and the
+     * first marker no row shows. The add row shows exactly this and a
+     * click on it adds exactly this, so the two cannot disagree. Null when
+     * every slot is in use or every marker already has a row: a second row
+     * for a marker can never be on at the same time as the first
+     * (disableDuplicateChannels), and a row's own search still reaches any.
+     */
+    nextChannelToAdd() {
         const emptySlot = this.channelSlots.find((slot) => !slot.visible);
-        const activeNames = this.channelSlots.filter((slot) => slot.enabled).map((slot) => slot.name);
+        if (!emptySlot && this.channelSlots.length >= this.maxChannelSlots) return null;
+        const shown = this.channelSlots.filter((slot) => slot.visible && slot.name).map((slot) => slot.name);
+        const name = emptySlot?.name && !shown.includes(emptySlot.name)
+            ? emptySlot.name
+            : this.columns.find((column) => !shown.includes(column));
+        if (!name) return null;
+        return { index: emptySlot ? emptySlot.index : this.channelSlots.length, name };
+    }
+
+    /**
+     * Add the channel the add row shows, on and selected: the row it came
+     * from already looked like a slot that was off, so arriving off would
+     * look like nothing had happened.
+     */
+    addFirstAvailableChannel() {
+        const next = this.nextChannelToAdd();
+        if (!next) return null;
         const usedNames = this.channelSlots.filter((slot) => slot.name).map((slot) => slot.name);
-        const slot = emptySlot || this.createAdditionalSlot(usedNames);
-        if (!slot) return;
-        const next = slot.name && !activeNames.includes(slot.name)
-            ? slot.name
-            : this.columns.find((name) => !usedNames.includes(name)) || this.columns.find((name) => !activeNames.includes(name));
-        if (next) {
-            this.setSlotMarker(slot.index, next, { keepColor: true, enable: false, reveal: true });
-        }
+        const slot = this.channelSlots[next.index] || this.createAdditionalSlot(usedNames);
+        if (!slot) return null;
+        this.setSlotMarker(slot.index, next.name, { keepColor: true, enable: true });
+        this.selectSlot(slot.index, { enable: false });
+        return slot;
+    }
+
+    /**
+     * THE ADD ROW: one more slot after the last, drawn as a slot -- the
+     * marker adding one would bring in (nextChannelToAdd) -- but grey, swatch
+     * and all, dashed, and with a plus where the eye is. It replaced a bare plus on the
+     * line over the list, which people did not find.
+     *
+     * After the list rather than in it: the list is Sortable's, and every
+     * child it has is a slot. Built here rather than in the template so every
+     * copy of the channel markup -- the reference image's, each registered
+     * layer's, Quick Edit's -- gets it, as with the contrast bar.
+     */
+    ensureAddRow() {
+        if (this.addRow) return this.addRow;
+        const list = this.el("channel_slot_list");
+        // Guarded: a scoped instance may mount a subset of the markup, and the
+        // viewer itself renders no channel section at all for an RGB image.
+        if (!list || typeof list.after !== "function") return null;
+        const row = document.createElement("button");
+        row.type = "button";
+        row.className = "channel-slot channel-slot-add is-hidden";
+        row.id = `${this.idPrefix}add_channel_button`;
+        row.innerHTML = `
+            <span class="channel-slot-top">
+                <span class="channel-slot-eye" aria-hidden="true"><span class="fas fa-plus"></span></span>
+                <span class="channel-color-swatch" aria-hidden="true"></span>
+                <span class="channel-slot-add-name"></span>
+                <span class="channel-slot-add-hint" aria-hidden="true">Add slot</span>
+            </span>`;
+        row.addEventListener("click", () => this.addFirstAvailableChannel());
+        list.after(row);
+        this.addRow = row;
+        this.syncAddRow();
+        return row;
+    }
+
+    /** The add row, in step with what adding would bring in now. */
+    syncAddRow() {
+        const row = this.addRow;
+        if (!row) return;
+        const next = this.nextChannelToAdd();
+        row.classList.toggle("is-hidden", !next);
+        if (!next) return;
+        const name = row.querySelector(".channel-slot-add-name");
+        if (name) name.textContent = next.name;
+        row.title = `Add a channel: ${next.name}`;
+        row.setAttribute("aria-label", `Add a channel: ${next.name}`);
     }
 
     createAdditionalSlot(usedNames) {
@@ -2857,6 +2924,7 @@ class ViewerSidebar {
         // Last: syncSlotDom writes each slot's (now renamed) marker back into
         // its select, so the option list has to be right before it runs.
         this.channelSlots.forEach((slot) => this.syncSlotDom(slot));
+        this.syncAddRow();
     }
 
     /**
@@ -3422,8 +3490,9 @@ class ViewerSidebar {
         const count = this.channelSlots.filter((slot) => slot.enabled && slot.name).length;
         const countElement = this.el("num-selected-channels");
         if (countElement) countElement.textContent = count;
-        const addButton = this.el("add_channel_button");
-        if (addButton) addButton.disabled = this.channelSlots.filter((slot) => slot.visible).length >= this.maxChannelSlots;
+        // Every change that can alter what adding would bring in -- a slot
+        // shown, hidden, renamed, turned on or off -- ends here.
+        this.syncAddRow();
     }
 
     /** Put the slider back in step with the slot, silently: this is the app

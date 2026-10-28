@@ -4,7 +4,7 @@
 {% block title %}{% if data.datasource %}<title>{{ project_title or data.datasource }}</title>{% endif %}{% endblock %}
 
 {% block style %}
-<link rel="stylesheet" href="{{ data.base_url }}/client/src/css/viewer.css?v=20261027_sidebar_radius">
+<link rel="stylesheet" href="{{ data.base_url }}/client/src/css/viewer.css?v=20261027_add_row_hint">
 <link rel="stylesheet" href="{{ data.base_url }}/client/src/css/quickView.css?v=20261021_native_drop">
 <link rel="stylesheet" href="{{ data.base_url }}/client/src/css/agentPanel.css?v=20261018_agent_panel_margin">
 <link rel="stylesheet" href="{{ data.base_url }}/client/src/css/chatPanel.css?v=20261011_fold">
@@ -148,17 +148,13 @@
                        staged opacity control of the card's own, which is what
                        a brightfield project supplies below.
 
-                       Add a channel ends the line as a bare plus: it was a
-                       full-width "Add Channel" bar under the list, a row of
-                       its own for the one glyph every list in the app already
-                       uses for "one more" (the Layers heading's is the same). #}
+                       Adding a channel is not on this line: it is the grey
+                       slot after the last (viewerSidebar's ensureAddRow). A
+                       bare plus here was missed by the people looking for it. #}
                     <div class="layer-card-actions" data-layer-opacity-slot>
                         <button id="channels_upload_icon" class="layer-card-action" title="Name these channels from a CSV or a spreadsheet" type="button">
                             <span class="fas fa-file-arrow-up"></span>
                             <span class="layer-card-action-text">Upload channel names</span>
-                        </button>
-                        <button id="add_channel_button" class="layer-card-action is-icon" title="Add a channel" aria-label="Add a channel" type="button">
-                            <span class="fas fa-plus" aria-hidden="true"></span>
                         </button>
                     </div>
                     <div id="channel_slot_list" class="channel-slot-list"></div>

@@ -177,17 +177,8 @@
             actions.appendChild(upload);
         }
 
-        // The end of the same line, as a bare plus -- see index.html, where
-        // the reference card stages the same button.
-        const add = document.createElement("button");
-        add.type = "button";
-        add.id = `${prefix}add_channel_button`;
-        add.className = "layer-card-action is-icon";
-        add.title = "Add a channel";
-        add.setAttribute("aria-label", "Add a channel");
-        add.innerHTML = '<span class="fas fa-plus" aria-hidden="true"></span>';
-        actions.appendChild(add);
-
+        // No add button: the sidebar puts its add row after the list
+        // (viewerSidebar's ensureAddRow), as it does in the reference card.
         const list = document.createElement("div");
         list.id = `${prefix}channel_slot_list`;
         list.className = "channel-slot-list";

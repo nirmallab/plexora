@@ -822,7 +822,7 @@
 }
 
 /* A glyph with no word, for the one action on the line whose icon says it
-   all (Add a channel's plus). Square, and never the one that grows. */
+   all (Gating's ellipsis for more). Square, and never the one that grows. */
 .layer-card-action.is-icon {
     flex: 0 0 26px;
     padding: 0;
@@ -1254,13 +1254,20 @@ input.plx-panel-field::placeholder {
     margin: 6px 0;
 }
 
+/* The add row after the list sits at the slots' own 4px: the list's 6px
+   above, less 2 (the two margins collapse to their sum), and the list's 6px
+   below it instead. */
+.layer-card-body .channel-slot-list + .channel-slot-add {
+    margin: -2px 0 6px;
+}
+
 .layer-card-body .adjust-row + .adjust-row,
 .layer-card-body .adjust-note {
     margin-top: 6px;
 }
 
 /* A registered layer's channel controls (views/layerChannelPanel.js): the
-   same action line, the same slots, the same Add Channel button and the same
+   same action line, the same slots, the same add row and the same
    counter the base image's card holds, so everything above already styles
    them. The panel is the first thing in its card's body, as the staged
    markup is in the reference card's, and this is the 8px the reference's
@@ -1774,6 +1781,99 @@ input.plx-panel-field::placeholder {
     display: none;
 }
 
+/* THE ADD ROW (viewerSidebar's ensureAddRow): the slot adding a channel
+   would fill, drawn as one -- a plus where the eye is, a swatch, and the
+   marker it would bring in -- but grey and dashed, so it reads as one
+   more to come rather than a channel that is off. One <button>: the whole
+   row adds, so the browser's own button look is undone first. */
+.channel-slot-add {
+    background: rgba(255, 255, 255, 0.02);
+    border: 1px dashed rgba(148, 163, 184, 0.34);
+    color: var(--text-muted);
+    display: block;
+    font: inherit;
+    margin-top: 4px;
+    text-align: left;
+    width: 100%;
+}
+
+/* No colour stripe: nothing of it is drawn yet. */
+.channel-slot-add::before {
+    display: none;
+}
+
+/* The eye's box, so the plus sits where every eye above it does, but not
+   its hover square: the whole row is the button, not the plus. */
+.channel-slot-add .channel-slot-eye {
+    color: inherit;
+    font-size: 10px;
+}
+
+/* Grey, not the colour the row will get: nothing is chosen until it is
+   added. */
+.channel-slot-add .channel-color-swatch {
+    background: rgba(148, 163, 184, 0.22);
+    border-color: rgba(148, 163, 184, 0.3);
+    cursor: inherit;
+    transform: none;
+}
+
+/* Where a row's marker field puts its text: 1px of border and 4px of
+   padding in, and a pixel down -- the field is a 24px inline-block on a 24px
+   line, so its box is 25px and its text sits a pixel low. Matched, the row
+   is as tall as a slot. */
+.channel-slot-add-name {
+    font-size: 13px;
+    line-height: 24px;
+    overflow: hidden;
+    padding: 1px 5px 0;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.channel-slot-add:hover,
+.channel-slot-add:focus-visible {
+    background: rgba(56, 189, 248, 0.06);
+    border-color: rgba(56, 189, 248, 0.5);
+    color: var(--text-secondary);
+    outline: none;
+}
+
+.channel-slot-add:hover .channel-slot-eye,
+.channel-slot-add:focus-visible .channel-slot-eye {
+    background: transparent;
+    color: var(--accent-channel);
+}
+
+/* Under the pointer, the row says what it does in the space where a slot
+   keeps its Selected pill, Auto and remove: worn as that pill is, so it
+   reads as the row's own word rather than a tooltip. */
+.channel-slot-add-hint {
+    background: rgba(56, 189, 248, 0.16);
+    border-radius: 999px;
+    color: #7dd3fc;
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.02em;
+    line-height: 16px;
+    margin-right: 2px;
+    opacity: 0;
+    padding: 0 7px;
+    transition: opacity var(--duration-fast) var(--ease-standard);
+    white-space: nowrap;
+}
+
+.channel-slot-add:hover .channel-slot-add-hint,
+.channel-slot-add:focus-visible .channel-slot-add-hint {
+    opacity: 1;
+}
+
+.channel-slot-add:hover .channel-color-swatch,
+.channel-slot-add:focus-visible .channel-color-swatch {
+    background: rgba(148, 163, 184, 0.36);
+    border-color: rgba(148, 163, 184, 0.45);
+}
+
 /* The slot an agent's contrast show is adjusting (agentBridge's
    animate_contrast): where the eye should go while its slider moves. */
 .channel-slot.is-agent-adjusting {
@@ -1856,6 +1956,12 @@ input.plx-panel-field::placeholder {
     border-radius: 4px;
     height: 16px;
     width: 16px;
+}
+
+/* The swatch as a box, not a glyph on a line: an inline button on its
+   mount's text baseline sat a pixel above the eye beside it. */
+.channel-slot-top > .color-swatch-mount {
+    display: flex;
 }
 
 /* The marker search, unchanged in what it does, drawn as the row's name:

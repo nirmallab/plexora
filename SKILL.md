@@ -5055,7 +5055,7 @@ deliberately left out and what should be built next.
   SECOND scoped `ViewerSidebar` instance inside a layer's card (see
   `layerManager.js`'s `channelPanelFor`/`hasChannelPanel` above), so a
   registered image layer gets the reference image's own channel slots,
-  colours, log contrast sliders, Auto and Add Channel rather than a second,
+  colours, log contrast sliders, Auto and the add row rather than a second,
   smaller implementation. Exports `mount`, `prefixFor`, `savedRowsFor`,
   `slotsToChannels`, `slotsToDrawn`, `MAX_SLOTS`; everything a slot looks
   like, what Auto does, and how a window is stored stays `ViewerSidebar`'s.
@@ -5087,7 +5087,17 @@ deliberately left out and what should be built next.
   layer-scoped instance, which must never rewrite the reference image's
   rows — plus a `destroy()` that drops its `plexora:hd-mode-changed` window
   listener and destroys its sliders/pickers/selects, called by
-  `dropChannelPanel` when a layer's card goes away.
+  `dropChannelPanel` when a layer's card goes away. **Every instance's list
+  ends in the add row** (2026-10-27; `ensureAddRow`, `syncAddRow`,
+  `nextChannelToAdd`): a `<button class="channel-slot channel-slot-add"
+  id="{prefix}add_channel_button">` built AFTER `channel_slot_list`, never
+  in it (Sortable makes every child of the list draggable). It is grey and
+  dashed, with a plus in the eye column, a grey swatch, the next marker no
+  visible row holds, and an "Add slot" pill on hover. A click adds that
+  marker on and selected. It hides at `maxChannelSlots` or once every
+  marker has a row; `updateSelectedCount` and `renameChannels` resync it.
+  It replaced the bare + on the card's action line (index.html,
+  `buildMarkup`) and Quick Edit's "Add Channel" button.
 - `views/layerSections.js` (`window.PlexoraLayerSections`) — shrank to a
   staging registry once `layerManager.js` took over section chrome. It no
   longer owns collapse, visibility or a switch of its own —
@@ -11785,7 +11795,8 @@ a card's choices statements about the sample rather than about the tab.
 DOM ids GONE: `image_channel_section`/`_body`/`_collapse`,
 `image_adjust_section`/`_body`/`_collapse`, `transcripts_panel_section`,
 `transcripts_collapse`. Ids that SURVIVED, because the markup was moved and
-not rebuilt: `channel_slot_list`, `add_channel_button`, `channels_upload_icon`,
+not rebuilt: `channel_slot_list`, `add_channel_button` (since 2026-10-27 the
+add row, built by `ViewerSidebar.ensureAddRow` rather than the template), `channels_upload_icon`,
 `num-selected-channels`, `max-channels`, `image_adjust_reset`, every
 `adjust_*`, and `transcripts_body` (its class is now
 `layer-card-plugin-body`). Also gone:
