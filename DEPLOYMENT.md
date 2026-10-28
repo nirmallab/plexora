@@ -303,7 +303,7 @@ shows the command to run instead:
 
 | Install | What the dialog offers |
 |---|---|
-| `pip install -e .` from a checkout | `git pull` — pip would replace the checkout with a copy |
+| `pip install -e .` from a checkout | `pip install plexora --upgrade` |
 | an environment this account cannot write | the pip command, to run where you can |
 | a container | rebuild the image — an upgrade inside it is lost on restart |
 | a venv made by uv (no pip) | installs with `uv pip` if `uv` is on your PATH |

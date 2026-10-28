@@ -177,8 +177,8 @@ def test_pip_command_pins_the_version_and_keeps_extras():
         "/uv", "pip", "install", "--python", "/py", "plexora==0.0.25"]
 
 
-def test_manual_command_for_a_checkout_is_git():
-    assert "git pull" in updates.manual_command("1.0.0", {"kind": "editable"})
+def test_manual_command_for_a_checkout_upgrades_from_pypi():
+    assert updates.manual_command("1.0.0", {"kind": "editable"}) == "pip install plexora --upgrade"
 
 
 # -- the job ------------------------------------------------------------------------

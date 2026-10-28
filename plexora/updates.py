@@ -391,13 +391,12 @@ def install_kind(*, desktop=False, dist=..., writable=None, has_pip=None,
     if dist is None:
         return {"kind": "editable", "can_install": False, "uv": None,
                 "reason": "This Plexora runs from a source checkout that was "
-                          "never installed; update it with git."}
+                          "never installed, so it cannot update itself."}
     direct = _direct_url(dist)
     if (direct.get("dir_info") or {}).get("editable"):
         return {"kind": "editable", "can_install": False, "uv": None,
-                "reason": "This is an editable install of a source checkout. "
-                          "Update it with git; pip would replace it with a "
-                          "copy."}
+                "reason": "This is an editable install of a source checkout, "
+                          "so it cannot update itself."}
     if container is None:
         container = _in_container()
     if container:
@@ -433,7 +432,7 @@ def install_kind(*, desktop=False, dist=..., writable=None, has_pip=None,
 def manual_command(version, kind):
     """The line somebody would type, for the dialog's Copy button."""
     if kind.get("kind") == "editable":
-        return "git pull && pip install -e ."
+        return "pip install plexora --upgrade"
     if kind.get("kind") == "container":
         return f"pip install --upgrade-strategy only-if-needed '{requirement_spec(version or '<version>', installed_extras())}'"
     return _quote(pip_command(version or "<version>", uv=kind.get("uv")))
