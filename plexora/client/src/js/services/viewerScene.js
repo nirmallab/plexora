@@ -384,6 +384,13 @@
         });
     }
 
+    /** End a glide where it is (a hand took the view): its promise resolves
+     *  false on the next frame. */
+    function stopGlide(imageViewer) {
+        const viewer = osdOf(imageViewer);
+        if (viewer) viewer.__plexoraGlide = null;
+    }
+
     // -- z-stack view token ------------------------------------------------
     //
     // The `?view=` token a z-stack plane or projection is read at, spelled as
@@ -425,6 +432,7 @@
         fitRegion: fitRegion,
         viewOf: viewOf,
         glideTo: glideTo,
+        stopGlide: stopGlide,
         viewToken: viewToken,
     };
 

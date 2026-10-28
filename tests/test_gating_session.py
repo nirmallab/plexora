@@ -1556,6 +1556,41 @@ def test_auto_contrast_skips_what_is_set_unless_redone(tmp_path):
     assert [[r["marker"] for r in g["evidence"]["rows"]] for g in grids] == [["CD3"]]
 
 
+@pytest.mark.parametrize("mask", [True, False])
+def test_auto_contrast_runs_on_an_image_with_no_cell_table(tmp_path, mask):
+    """The model judges pixels: an image with no table has its cells found in
+    the image (its mask, else its nuclear stain's nuclei), its channels are
+    its markers, and the viewer is offered the result."""
+    from plexora.agent.evidence import calibration, display_contrast
+
+    info = make_gating_project(tmp_path, table=False, mask=mask)
+    session = AgentSession()
+    # Nothing is offered before a run: the viewer never reads fields itself.
+    assert display_contrast.describe("gsynth", session)["state"] == "unavailable"
+    started = _contrast(session, setup="fail")
+    assert sorted(started["order"]) == ["CD20", "CD3", "CD8"]       # DNA is not asked
+    sid = started["session_id"]
+    seen = drive(session, sid, Oracle(info))
+    grids = [p for p in seen if p["kind"] == "display_setup"]
+    assert [sorted(r["marker"] for r in g["evidence"]["rows"]) for g in grids] == \
+        [["CD20", "CD3", "CD8"]]
+    assert {u["state"] for u in units(session, sid).values()} == {"display_set"}
+    record = calibration.load("gsynth")
+    assert record["cells_from"] == f"image:{'mask' if mask else 'nuclei'}"
+    assert set(record["choices"]) == {"CD3", "CD8", "CD20"}
+    offered = display_contrast.describe("gsynth", session)
+    assert offered["state"] == "ready"
+    assert all(offered["channels"][m]["checked"] for m in ("CD3", "CD8", "CD20"))
+    ok(invoke(session, "gating_session_finish", {"session_id": sid, "action": "close"}))
+
+
+def test_gating_still_needs_the_table_an_image_only_project_lacks(tmp_path):
+    make_gating_project(tmp_path, table=False)
+    refused = invoke(AgentSession(), "gating_session_start",
+                     {"scope": "project", "project": "gsynth", "setup": "fail"})
+    assert not refused["ok"] and refused["error"]["code"] == "precondition_missing"
+
+
 def test_gating_can_leave_auto_contrast_out(tmp_path):
     info = make_gating_project(tmp_path)
     session = AgentSession()

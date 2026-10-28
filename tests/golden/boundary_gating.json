@@ -123,7 +123,7 @@
         "/client/src/js/views/labelTile.js?v=20261012_main_merge",
         "/client/src/js/views/labelGpu.js?v=20261012_no_cell_model",
         "/client/src/js/services/viewTransform.js?v=20260925_view_transform",
-        "/client/src/js/services/viewerScene.js?v=20261022_views3d",
+        "/client/src/js/services/viewerScene.js?v=20261028_gating_show",
         "/client/src/js/services/viewRaster.js?v=20261022_bookmarks",
         "/client/src/js/services/canvasLayout.js?v=20261022_bookmarks",
         "/client/src/js/views/imageViewer.js?v=20261026_security",
@@ -344,7 +344,7 @@
         "/client/src/js/views/labelTile.js?v=20261012_main_merge",
         "/client/src/js/views/labelGpu.js?v=20261012_no_cell_model",
         "/client/src/js/services/viewTransform.js?v=20260925_view_transform",
-        "/client/src/js/services/viewerScene.js?v=20261022_views3d",
+        "/client/src/js/services/viewerScene.js?v=20261028_gating_show",
         "/client/src/js/services/viewRaster.js?v=20261022_bookmarks",
         "/client/src/js/services/canvasLayout.js?v=20261022_bookmarks",
         "/client/src/js/views/imageViewer.js?v=20261026_security",
@@ -495,15 +495,16 @@
           "tool_panel_slot": "gating/panel.html"
         },
         "active_tool_scripts": [
-          "/plugins/gating/static/gatingApi.js?v=20261027_sidebar_radius",
-          "/plugins/gating/static/csvGatingList.js?v=20261027_sidebar_radius",
-          "/plugins/gating/static/gatingPlanes.js?v=20261027_sidebar_radius",
-          "/plugins/gating/static/gatingClassifier.js?v=20261027_sidebar_radius",
-          "/plugins/gating/static/gatingSidebarController.js?v=20261027_sidebar_radius",
-          "/plugins/gating/static/gatingAgentBridge.js?v=20261027_sidebar_radius"
+          "/plugins/gating/static/gatingApi.js?v=20261028_gating_show",
+          "/plugins/gating/static/csvGatingList.js?v=20261028_gating_show",
+          "/plugins/gating/static/gatingPlanes.js?v=20261028_gating_show",
+          "/plugins/gating/static/gatingClassifier.js?v=20261028_gating_show",
+          "/plugins/gating/static/gatingSidebarController.js?v=20261028_gating_show",
+          "/plugins/gating/static/gatingAgentShow.js?v=20261028_gating_show",
+          "/plugins/gating/static/gatingAgentBridge.js?v=20261028_gating_show"
         ],
         "active_tool_styles": [
-          "/plugins/gating/static/gating.css?v=20261027_sidebar_radius"
+          "/plugins/gating/static/gating.css?v=20261028_gating_show"
         ],
         "available_tools": [
           {
@@ -710,7 +711,7 @@
         "/client/src/js/views/labelTile.js?v=20261012_main_merge",
         "/client/src/js/views/labelGpu.js?v=20261012_no_cell_model",
         "/client/src/js/services/viewTransform.js?v=20260925_view_transform",
-        "/client/src/js/services/viewerScene.js?v=20261022_views3d",
+        "/client/src/js/services/viewerScene.js?v=20261028_gating_show",
         "/client/src/js/services/viewRaster.js?v=20261022_bookmarks",
         "/client/src/js/services/canvasLayout.js?v=20261022_bookmarks",
         "/client/src/js/views/imageViewer.js?v=20261026_security",
@@ -774,12 +775,13 @@
         "/client/src/js/views/toolLoader.js?v=20261025_dataset_answers",
         "/client/src/js/services/pageBoot.js?v=20260825_app_shell",
         "/client/src/js/services/appRouter.js?v=20261002_hash_tab",
-        "/plugins/gating/static/gatingApi.js?v=20261027_sidebar_radius",
-        "/plugins/gating/static/csvGatingList.js?v=20261027_sidebar_radius",
-        "/plugins/gating/static/gatingPlanes.js?v=20261027_sidebar_radius",
-        "/plugins/gating/static/gatingClassifier.js?v=20261027_sidebar_radius",
-        "/plugins/gating/static/gatingSidebarController.js?v=20261027_sidebar_radius",
-        "/plugins/gating/static/gatingAgentBridge.js?v=20261027_sidebar_radius",
+        "/plugins/gating/static/gatingApi.js?v=20261028_gating_show",
+        "/plugins/gating/static/csvGatingList.js?v=20261028_gating_show",
+        "/plugins/gating/static/gatingPlanes.js?v=20261028_gating_show",
+        "/plugins/gating/static/gatingClassifier.js?v=20261028_gating_show",
+        "/plugins/gating/static/gatingSidebarController.js?v=20261028_gating_show",
+        "/plugins/gating/static/gatingAgentShow.js?v=20261028_gating_show",
+        "/plugins/gating/static/gatingAgentBridge.js?v=20261028_gating_show",
         "/client/src/js/services/viewerLoader.js?v=20260915_center_loader",
         "/client/src/js/services/viewSnapshot.js?v=20261004_magic_select",
         "/client/src/js/services/segmentService.js?v=20261011_merge",
@@ -847,7 +849,7 @@
         "/client/src/css/quickView.css?v=20261021_native_drop",
         "/client/src/css/agentPanel.css?v=20261018_agent_panel_margin",
         "/client/src/css/chatPanel.css?v=20261011_fold",
-        "/plugins/gating/static/gating.css?v=20261027_sidebar_radius"
+        "/plugins/gating/static/gating.css?v=20261028_gating_show"
       ],
       "tool_mounts": [
         [

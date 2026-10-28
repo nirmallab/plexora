@@ -346,9 +346,10 @@ def revision(context) -> str:
 
 def for_project(ds, *, create=True) -> dict:
     """The stored context for a project's panel, or a fresh one (saved when
-    `create`), refreshed if the vocabulary changed since."""
-    markers = list(ds.table.markers)
+    `create`), refreshed if the vocabulary changed since. An image-only
+    project's markers are its image channels (an auto-contrast run's)."""
     channels = [c.get("fullname") or c.get("name") for c in ds.project.image.real_channels]
+    markers = list(ds.table.markers) if getattr(ds.project, "has_table", True) else channels
     hash_ = panel_hash(markers)
     stored = load(hash_)
     if stored is not None and stored.get("vocabulary_version") == vocabulary.version() \

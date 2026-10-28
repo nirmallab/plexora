@@ -44,6 +44,11 @@ one or a Voronoi fill -- the disc means the same thing on all of them.
 QC-aware: cells QC left out of estimation (`cell_exclusions`) are never
 picked. Deterministic: cells are picked by a seeded draw over the sorted
 band, and the seed is recorded with the measurements.
+
+A project with no cell table has no rows to band. Asked to (`from_image`),
+its cells are found in the image instead (`image_cells`: mask labels, or the
+nuclei of the nuclear stain) and banded on their disc means; what is read at
+level 0 from there on is the same.
 """
 
 from __future__ import annotations
@@ -286,48 +291,92 @@ def measure_nuclear(crops, name, bands, *, radius_px, spec=CELL_WINDOW):
             "radius_px": float(radius_px), "level": LEVEL}
 
 
-def cell_windows(session, project, channels, *, nuclear=None, seed=0) -> dict:
-    """{channel: measurements} (`measure`, plus crop_px, seed and column) for
-    the marker channels of `channels` (names -> keys) that have a table
-    column, and the nuclear stain's (`measure_nuclear`) when it has one; a
-    channel that cannot be anchored is simply absent (its overview window
-    stands)."""
+def _table_cells(session, project, channels):
+    """The table's cells for `channels`: {ids, xs, ys, columns: {channel:
+    column}, values: {channel: () -> array}} -- each channel's values read
+    lazily, with the cells QC left out as NaN -- or None when the table
+    cannot place its cells or has no column for any channel."""
     from plexora.agent import cell_exclusions
-    from plexora.agent.evidence import crops as cropmod
     from plexora.ai import vocabulary
     from plexora.server.utils.label_overlay import cell_ids
 
+    ds = session.data(project)
+    schema = ds.schema
+    frame = ds.table.geometry()
+    if frame is None or schema is None or schema.x not in frame.columns \
+            or schema.y not in frame.columns:
+        return None
+    markers = list(ds.table.markers)
+    columns = {}
+    for name in channels:
+        column = vocabulary.match_name(name, markers)
+        if column is not None:
+            columns[name] = column
+    if not columns:
+        return None
+    ids, keep = cell_ids(frame, schema.cell_id)
+    xs = frame[schema.x].to_numpy().astype(np.float64)[keep]
+    ys = frame[schema.y].to_numpy().astype(np.float64)[keep]
+    values = ds.table.columns(sorted(set(columns.values())))
+    exclusions = cell_exclusions.current(ds)
+
+    def read(column):
+        raw = np.asarray(values[column], dtype=np.float64)
+        return np.asarray(cell_exclusions.masked(ds, column, raw, exclusions),
+                          dtype=np.float64)[keep]
+
+    return {"ids": ids, "xs": xs, "ys": ys, "columns": columns,
+            "values": {name: (lambda column=column: read(column))
+                       for name, column in columns.items()}}
+
+
+def _image_cells(session, project, channels, nuclear, seed):
+    """The cells `image_cells.sample` finds in the image, in `_table_cells`'
+    shape (no column: the values are the image's own), or None."""
+    from plexora.agent.evidence import image_cells
+
+    found = image_cells.sample(session, project, channels, nuclear=nuclear, seed=seed)
+    if found is None:
+        return None
+    return {"ids": found["ids"], "xs": found["xs"], "ys": found["ys"],
+            "columns": dict.fromkeys(channels),
+            "values": {name: (lambda v=v: v) for name, v in found["values"].items()},
+            "cells_from": f"image:{found['source']}"}
+
+
+def cell_windows(session, project, channels, *, nuclear=None, seed=0,
+                 from_image=False) -> dict:
+    """{channel: measurements} (`measure`, plus crop_px, seed, column and
+    cells_from) for the marker channels of `channels` (names -> keys) that
+    have a table column, and the nuclear stain's (`measure_nuclear`) when it
+    has one; a channel that cannot be anchored is simply absent (its
+    overview window stands).
+
+    `from_image`: a project with no cell table has its cells found in the
+    image instead (`image_cells`; every channel, column None, cells_from
+    `image:mask` or `image:nuclei`). It reads a few fields of every channel,
+    so it is asked for only by a run that is about to show the model those
+    cells (an auto-contrast check), never by a render."""
+    from plexora.agent.evidence import crops as cropmod
+
     try:
-        ds = session.data(project)
-        schema = ds.schema
-        frame = ds.table.geometry()
-        if frame is None or schema is None or schema.x not in frame.columns \
-                or schema.y not in frame.columns:
-            return {}
-        markers = list(ds.table.markers)
-        columns = {}
-        for name in channels:
-            column = vocabulary.match_name(name, markers)
-            if column is not None:
-                columns[name] = column
-        if not columns:
-            return {}
-        ids, keep = cell_ids(frame, schema.cell_id)
-        xs = frame[schema.x].to_numpy().astype(np.float64)[keep]
-        ys = frame[schema.y].to_numpy().astype(np.float64)[keep]
-        values = ds.table.columns(sorted(set(columns.values())))
         record = session.project(project)
-        exclusions = cell_exclusions.current(ds)
+        if from_image and not record.has_table:
+            cells = _image_cells(session, project, channels, nuclear, seed)
+        else:
+            cells = _table_cells(session, project, channels)
+        if cells is None:
+            return {}
         radius, _how = cropmod.cell_radius_px(record)
     except Exception:  # an anchor is a refinement; a window without one is still a window
         return {}
+    ids, xs, ys = cells["ids"], cells["xs"], cells["ys"]
+    cells_from = cells.get("cells_from", "table")
     side = int(np.ceil(2 * radius + 4))
     out = {}
-    for name, column in columns.items():
+    for name, column in cells["columns"].items():
         try:
-            raw = np.asarray(values[column], dtype=np.float64)
-            column_values = np.asarray(cell_exclusions.masked(ds, column, raw, exclusions),
-                                       dtype=np.float64)[keep]
+            column_values = cells["values"][name]()
             bands, info = select_display_cells(column_values, ids, xs, ys, seed=seed)
             if bands is None:
                 continue
@@ -343,7 +392,8 @@ def cell_windows(session, project, channels, *, nuclear=None, seed=0) -> dict:
             measured = (measure_nuclear if name == nuclear else measure)(
                 crops, name, bands, radius_px=radius)
             if measured is not None:
-                out[name] = {**measured, "crop_px": side, "seed": int(seed), "column": column}
+                out[name] = {**measured, "crop_px": side, "seed": int(seed), "column": column,
+                             "cells_from": cells_from}
         except Exception:
             continue
     return out

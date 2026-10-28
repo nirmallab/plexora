@@ -40,6 +40,13 @@ WAKE_TIMEOUT_S = 10.0
 #: (`calibration.window_at`), as QC's mirror does.
 VIEW_PX = 1200
 
+#: A look played as a person would make it (`preview_gate` with `show`;
+#: gatingAgentShow.js): up to this many of its cells for the view to close in
+#: on, and this many of the candidate gates on each side of the one shown, for
+#: the slider to try on its way there.
+SHOW_CELLS = 6
+SHOW_STOPS = 2
+
 #: Commands that set up the view rather than show this packet: skipped when the
 #: tab reports it is already in that state (and the project is not changing).
 SETUP_IN_EFFECT = {
@@ -82,11 +89,56 @@ def _field_around(cells, pad=120.0):
     return {"x": x0, "y": y0, "width": side, "height": side}
 
 
+def _engine_gate(unit):
+    """The gate a blind look leaves on the tab's slider: v2's leader so far,
+    or the gate it started from before any look -- {low, high, stops} or None,
+    `stops` the candidate gates beside it. A `cell_panel` packet names no
+    gate, so the reader stays blind; the tab is the user's, and its
+    `get_state` reports stored gates, never a preview."""
+    state = (unit or {}).get("hypotheses") or {}
+    low = state.get("leader")
+    if low is None:
+        low = state.get("start")
+    if low is None:
+        return None
+    points = [float(p["low"]) for p in state.get("points") or [] if p.get("low") is not None]
+    return {"low": float(low), "high": unit.get("high"), "stops": _stops(points, float(low))}
+
+
+def _stops(values, target):
+    """The SHOW_STOPS candidate gates nearest `target` on each side, sorted."""
+    below = sorted((v for v in values if v < target), reverse=True)[:SHOW_STOPS]
+    above = sorted(v for v in values if v > target)[:SHOW_STOPS]
+    return sorted(round(v, 6) for v in below + above)
+
+
+def _show(project, marker, cells, field, stops, look):
+    """`preview_gate`'s `show`: what the tab makes a person's look of -- the
+    field and a few of its cells to close in on, the candidate gates to try
+    on the way to the one shown, the look's number for this marker (a first
+    look explores, a later one refines) and a seed that is the marker's own,
+    so two markers are not shown with the same moves."""
+    import zlib
+
+    inside = [{"x": c["x"], "y": c["y"]} for c in cells
+              if c.get("x") is not None and c.get("y") is not None and field
+              and field["x"] <= c["x"] <= field["x"] + field["width"]
+              and field["y"] <= c["y"] <= field["y"] + field["height"]]
+    show = {"seed": zlib.crc32(f"{project}::{marker}".encode("utf-8")),
+            "cells": inside[:SHOW_CELLS], "stops": list(stops)}
+    if field:
+        show["field"] = field
+    if look:
+        show["look"] = int(look)
+    return show
+
+
 def script_for(packet, manifest, calibration_record, *, current_project=None,
-               viewer_state=None, tool="gating"):
+               viewer_state=None, tool="gating", gate=None):
     """[{type, arguments}] for one packet. `viewer_state` (the tab's
     `get_state`) drops set-up commands already in effect; `tool` is the tool
-    an image is opened with (None: a contrast run, which needs none)."""
+    an image is opened with (None: a contrast run, which needs none); `gate`
+    ({low, high}, `_engine_gate`) is shown when the packet carries none."""
     from plexora.agent.evidence import calibration
     from plexora.plugins.gating.server.autogate import packets, schemas
 
@@ -127,20 +179,28 @@ def script_for(packet, manifest, calibration_record, *, current_project=None,
     candidate = (evidence.get("candidate") or {}).get("low") or evidence.get("current") \
         or evidence.get("final") or ((evidence.get("this") or {}).get("aligned_gate"))
     high = (evidence.get("candidate") or {}).get("high")
+    stops = []
+    if candidate is None and gate:
+        candidate, high = gate["low"], gate.get("high")
+        stops = gate.get("stops") or []
+    show = None
     if candidate is not None:
+        if kind == "t4_candidates":
+            stops = _stops([float(c["low"]) for c in evidence.get("candidates") or []],
+                           float(candidate))
+        # The tab flies to the field and tries the gates itself, at a
+        # person's pace, while the session goes on: no `fit_region` cut.
+        show = _show(project, marker, cells, field, stops, evidence.get("look"))
         script.append({"type": "preview_gate", "arguments": {
-            "marker": marker, "low": float(candidate), "high": high, "persist": False}})
-    if field:
+            "marker": marker, "low": float(candidate), "high": high, "persist": False,
+            "show": show}})
+    if field and show is None:
         script.append({"type": "fit_region", "arguments": field})
     if cells:
         script.append({"type": "highlight_cells", "arguments": {
             "cells": [{"id": c["id"], "caption": c["caption"], "x": c["x"], "y": c["y"]}
                       for c in cells if c.get("x") is not None],
             "ttl_ms": 120_000, "clear": True}})
-    if kind == "t4_candidates":
-        for item in sorted(evidence.get("candidates") or [], key=lambda c: c["low"]):
-            script.append({"type": "preview_gate", "arguments": {
-                "marker": marker, "low": float(item["low"]), "high": high, "persist": False}})
     images = packet.get("images") or []
     if images and images[0].get("artifact_id"):
         script.append({"type": "show_evidence", "arguments": {
@@ -297,6 +357,7 @@ def run(call, session_id, packet):
                                                            packet["units"][0]["marker"])) \
             if packet.get("units") else None
         manifest = (unit or {}).get("last_manifest")
+        gate = _engine_gate(unit)
     try:
         view = viewer.resolve_view(control, view_id)
     except AgentError as exc:
@@ -316,7 +377,7 @@ def run(call, session_id, packet):
     stored = calibration.load(project) if project else None
     script = script_for(packet, manifest, stored,
                         current_project=(state or {}).get("project") or view.get("project"),
-                        viewer_state=state, tool=_tool(options))
+                        viewer_state=state, tool=_tool(options), gate=gate)
     if project:
         # What a contrast check settled, eased in channel by channel before
         # this packet's own channels (the tab plays it while the session asks

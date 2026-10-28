@@ -36,12 +36,14 @@ def _context_of(panel, marker):
                                       "caveats", "expected_fraction", "source", "partners")}
 
 
-def calibrate_image(call, project, session_id):
-    """Store the image's display calibration (derived state; audited)."""
+def calibrate_image(call, project, session_id, *, image_cells=False):
+    """Store the image's display calibration (derived state; audited).
+    `image_cells`: an image with no cell table is anchored on cells found in
+    its pixels (an auto-contrast run's; `calibration.calibrate`)."""
     from plexora.agent.evidence import calibration
 
     try:
-        record, changed = calibration.calibrate(call.session, project)
+        record, changed = calibration.calibrate(call.session, project, image_cells=image_cells)
     except AgentError as exc:
         return {"project": project, "error": exc.message}
     call.audit.append({"status": "ok", "operation_id": f"{call.operation_id}.cal",
@@ -360,7 +362,8 @@ def run(call, inp):
         if options["basic_qc"]:
             _basic_qc(call, session_id, project)
         if project not in calibrations:
-            calibrations[project] = calibrate_image(call, project, session_id)
+            calibrations[project] = calibrate_image(
+                call, project, session_id, image_cells=options["purpose"] == "contrast")
             with engine_for(call, session_id) as engine:
                 # Stored now, not after the image's markers: the contrast
                 # check (`display_setup`) goes out as soon as it is there.

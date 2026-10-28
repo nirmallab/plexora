@@ -98,8 +98,10 @@ def test_every_required_field_is_a_property_the_model_can_send(workflow):
             for v in node:
                 walk(v, kind)
 
-    for kind in schema._models(workflow):
-        walk(schema.for_kind(kind, workflow), kind)
+    # Everything that can be sent: each kind's, each form's, each task's.
+    for label, sent in schema.sendable():
+        if label.startswith(f"{workflow}:"):
+            walk(sent, label)
     pattern = schema.for_kind("t2_confirm")["properties"]["pattern"]
     assert "membrane" in pattern["enum"]
 
@@ -227,6 +229,100 @@ def test_the_kinds_of_one_task_are_sent_one_schema():
     # A task with one kind, or no task, keeps the kind's own schema.
     assert schema.for_packet("display_setup", "gating.display") == schema.for_kind("display_setup")
     assert schema.for_packet("t2_confirm", None) == schema.for_kind("t2_confirm")
+
+
+def test_an_answer_with_forms_is_sent_only_the_form_its_packet_asks_for():
+    """QC's artifact_confirm is one candidate's fields, or `verdicts` by label
+    for a batch. Both at once was a schema the provider would not compile
+    (2026-10-28, "Schema is too complex"), and every QC run that reached a
+    confirm stopped there. Each packet is now sent its own form; the answer
+    is validated against the whole model, as it always was."""
+    from plexora.plugins.qc.server.answers import ArtifactConfirmAnswer
+
+    task = "qc.artifact_inspection"
+    one = schema.for_packet("artifact_confirm", task, "qc", {"evidence": {"candidate": {"id": "x"}}})
+    many = schema.for_packet("artifact_confirm", task, "qc", {"evidence": {"candidates": [{}, {}]}})
+    assert "verdicts" not in one["properties"] and one["required"] == ["verdict"]
+    assert "anyOf" not in one["properties"]["verdict"]          # required, so never null
+    assert set(many["properties"]) == {"kind", "verdicts"} and many["required"] == ["verdicts"]
+    # Both forms at once are never sent.
+    assert schema.for_kind("artifact_confirm", "qc") is None
+    assert schema.for_packet("artifact_confirm", task, "qc") is None
+    # Each form's answer is one the model takes, and judges the same cells.
+    source = schema.model_schema("artifact_confirm", "qc")
+    single = schema.decode({"kind": "artifact_confirm", "verdict": "artifact",
+                            "artifact_class": "tissue_fold", "severity": "moderate"}, source)
+    batch = schema.decode({"kind": "artifact_confirm", "verdicts": [
+        {"key": "c9", "value": {"verdict": "not_artifact"}},
+        {"key": "c10", "value": {"verdict": "artifact", "artifact_class": "debris_or_foreign_object"}}]},
+        source)
+    assert ArtifactConfirmAnswer.model_validate(single).judgments(["c1"])["c1"].artifact_class == \
+        "tissue_fold"
+    judged = ArtifactConfirmAnswer.model_validate(batch).judgments(["c9", "c10"])
+    assert judged["c9"].verdict == "not_artifact" and judged["c10"].verdict == "artifact"
+
+
+def test_every_schema_sent_stays_inside_what_the_provider_compiles():
+    """The documented limits (24 optional, 16 unions) are not the provider's
+    only ones: artifact_confirm's 17 and 10 were refused. A schema past
+    `schema.VERIFIED` -- the largest the provider has compiled -- must be
+    shown to compile (tools/ai_schema_check.py) before the envelope is raised."""
+    sent = dict(schema.sendable())
+    assert {"qc:artifact_confirm:one", "qc:artifact_confirm:many", "gating:task:gating.planning"} <= set(sent)
+    for label, s in sent.items():
+        counts = schema.complexity(s)
+        assert counts["optional"] <= schema.VERIFIED["optional"], (label, counts)
+        assert counts["unions"] <= schema.VERIFIED["unions"], (label, counts)
+
+
+def test_a_schema_the_provider_will_not_compile_is_asked_for_in_words(monkeypatch):
+    """The safety net: a schema refused anyway is sent once more in words,
+    and never again as a schema -- the run goes on, and the answer is
+    validated against the same model."""
+    import dataclasses
+
+    from spatialagents import gateway as agent_gateway
+    from spatialagents.wire import ModelRequest, ModelResponse
+
+    monkeypatch.setattr(schema, "_REFUSED", set())
+    seen = []
+
+    def provider(self, request, *, idempotency_key, on_delta=None, on_retry=None):
+        seen.append((request, idempotency_key))
+        if request.output_schema is not None:
+            raise GatewayError('The provider refused this request: {"type":"error","error":{"type":'
+                               '"invalid_request_error","message":"Schema is too complex."}}',
+                               code="provider_rejected", status=400)
+        return ModelResponse(text='{"verdict": "artifact"}', stop_reason="end_turn", usage=Usage())
+
+    monkeypatch.setattr(agent_gateway.GatewayClient, "messages", provider)
+    client = GatewayClient("http://127.0.0.1:9", tokens=TokenSource("BIOCAI1.test"), sleep=lambda s: None)
+    packet = {"evidence": {"candidate": {"id": "x"}}}
+    form = schema.for_packet("artifact_confirm", "qc.artifact_inspection", "qc", packet)
+    request = ModelRequest(capability="vision_judgement", system=[], output_schema=form,
+                           messages=[{"role": "user", "content": [text_block("the packet")]}],
+                           context={"feature": "qc"}, task="qc.artifact_inspection")
+    assert client.messages(request, idempotency_key="air_1.pk_0006.1").text == '{"verdict": "artifact"}'
+    (first, _), (second, key) = seen
+    assert first.output_schema is form and second.output_schema is None
+    assert key == "air_1.pk_0006.1.words"              # a call of its own, not a replay
+    words = second.messages[-1]["content"][-1]["text"]
+    assert words.startswith(schema.IN_WORDS) and json.loads(words[len(schema.IN_WORDS):]) == form
+    assert request.messages[-1]["content"] == [text_block("the packet")]     # the caller's turn is its own
+    # Remembered: the packet asks in words from now on (`_content`), and the
+    # client never sends that schema again.
+    assert schema.for_packet("artifact_confirm", "qc.artifact_inspection", "qc", packet) is None
+    client.messages(request, idempotency_key="air_1.pk_0007.1")
+    assert len(seen) == 3 and seen[-1][0].output_schema is None
+    # Any other refusal is the caller's, as ever.
+    def refuse(self, request, **kwargs):
+        raise GatewayError("The provider refused this request: prompt is too long",
+                           code="provider_rejected", status=400)
+
+    monkeypatch.setattr(agent_gateway.GatewayClient, "messages", refuse)
+    other = dataclasses.replace(request, output_schema=schema.for_kind("score_review", "qc"))
+    with pytest.raises(GatewayError):
+        client.messages(other, idempotency_key="air_1.pk_0008.1")
 
 
 def test_another_kinds_empty_fields_are_dropped_before_validation(tmp_path):

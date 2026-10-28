@@ -12,7 +12,7 @@ candidate label) with the same fields a single unit's answer has.
 
 from __future__ import annotations
 
-from typing import Annotated, Literal, Union, get_args
+from typing import Annotated, ClassVar, Literal, Union, get_args
 
 from pydantic import Field, model_validator
 
@@ -106,6 +106,19 @@ class ArtifactConfirmAnswer(ConfirmVerdict):
         None, description="A packet of several candidates: one judgment per candidate "
                           "label (the sheet's row labels, e.g. c3), each with the fields "
                           "above.")
+
+    #: Its two forms, each a whole answer; the first field of each names it.
+    #: A packet is sent only the form it asks for (`harness/schema.py`
+    #: `for_packet`): both at once carry every field twice, and the provider
+    #: would not compile that schema (Anthropic, 2026-10-28: "Schema is too
+    #: complex"). The answer is still validated against this whole model.
+    FORMS: ClassVar[dict] = {"one": tuple(ConfirmVerdict.model_fields), "many": ("verdicts",)}
+
+    @staticmethod
+    def form_of(packet) -> str:
+        """The form a packet asks for: `many` for a batch of candidates (its
+        evidence lists `candidates`), else `one`."""
+        return "many" if (packet.get("evidence") or {}).get("candidates") else "one"
 
     @model_validator(mode="after")
     def _one_form(self):

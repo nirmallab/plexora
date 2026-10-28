@@ -1522,7 +1522,9 @@ def display_setup(engine, units):
     entry = projects.setdefault(project, {"status": "pending"})
     session = engine.call.session
     try:
-        record, _changed = calibration.calibrate(session, project)
+        # The check shows cells: an image with no table has them found in
+        # its pixels (what the bulk pass of an auto-contrast run stored).
+        record, _changed = calibration.calibrate(session, project, image_cells=True)
     except AgentError as exc:
         entry.update(status="unavailable", reason=exc.message)
         engine.settle_display()

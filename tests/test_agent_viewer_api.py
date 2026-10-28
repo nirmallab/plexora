@@ -183,7 +183,7 @@ def test_a_mirrored_gating_session_shows_the_tab_what_the_agent_sees(served, tmp
         packet = answer["result"]["packet"]
         types = [c["type"] for c in tab.seen]
         for expected in ("set_hd_mode", "set_channels", "set_active_marker", "preview_gate",
-                         "fit_region", "highlight_cells", "show_evidence"):
+                         "highlight_cells", "show_evidence"):
             assert expected in types, types
         channels = next(c for c in tab.seen if c["type"] == "set_channels")["arguments"]
         assert channels["persist"] is False
@@ -192,6 +192,8 @@ def test_a_mirrored_gating_session_shows_the_tab_what_the_agent_sees(served, tmp
         preview = next(c for c in tab.seen if c["type"] == "preview_gate")["arguments"]
         assert preview["low"] == packet["evidence"]["candidate"]["low"]
         assert preview["persist"] is False
+        # The tab flies there itself, a look played at a person's pace.
+        assert preview["show"]["field"]["width"] > 0 and preview["show"]["cells"]
         highlighted = next(c for c in tab.seen if c["type"] == "highlight_cells")["arguments"]
         assert highlighted["cells"] and all("x" in c and "y" in c for c in highlighted["cells"])
         status = invoke(session, "gating_session_status",

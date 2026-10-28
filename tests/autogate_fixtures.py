@@ -199,12 +199,14 @@ def gating_scene(*, grid=16, size=768, radius=None, seed=0, markers=("CD3", "CD8
 
 def make_gating_project(data_root, name="gsynth", *, grid=16, size=768, seed=0,
                         markers=("CD3", "CD8", "CD20"), variant=None, calibrated=True,
-                        mask=True, shift=0.0, log_transformed=False):
+                        mask=True, shift=0.0, log_transformed=False, table=True):
     """Register a multi-marker synthetic project; returns what was made.
 
     `log_transformed` registers the raw CSV with the project's log1p switch on
     (the adapter transforms on read), as exemplar-001 is: the table is then in
-    log1p units while the pixels stay raw."""
+    log1p units while the pixels stay raw. `table=False` registers the image
+    (and mask) alone: an image-only project, its cells known only to the
+    pixels."""
     data_root = Path(data_root)
     folder = data_root / f"_{name}_files"
     folder.mkdir(parents=True, exist_ok=True)
@@ -227,7 +229,7 @@ def make_gating_project(data_root, name="gsynth", *, grid=16, size=768, seed=0,
     dataset = csv_spec(csv_path, markers=("DNA", *markers), metadata=("Area",))
     if log_transformed:
         dataset = dataclasses.replace(dataset, is_transformed=True)
-    record = project(name, dataset=dataset,
+    record = project(name, dataset=dataset if table else None,
                      segmentation=str(mask_path) if mask_path else None,
                      image=image_spec(channels=channels, width=size, height=size,
                                       src=str(image_path)),

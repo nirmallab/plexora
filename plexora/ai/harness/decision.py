@@ -185,10 +185,11 @@ class Workflow:
         """The workflow's `plexora.agent.sessions.events.Events` binding."""
         raise NotImplementedError
 
-    def schema_for(self, kind: str, task: str | None = None) -> dict | None:
-        """The output schema a packet is sent: its task's one schema when the
-        task's kinds fit one (`schema.for_task`), else its kind's own."""
-        return schema.for_packet(kind, task, self.name)
+    def schema_for(self, kind: str, task: str | None = None, packet: dict | None = None) -> dict | None:
+        """The output schema a packet is sent: the form `packet` asks for when
+        its answer has forms, else its task's one schema when the task's kinds
+        fit one (`schema.for_task`), else its kind's own (`schema.for_packet`)."""
+        return schema.for_packet(kind, task, self.name, packet)
 
     def model_schema(self, kind: str) -> dict | None:
         return schema.model_schema(kind, self.name)
@@ -202,6 +203,9 @@ class GatingWorkflow(Workflow):
     feature, agent, workflow, unit_noun = "gating", "gating_worker", "auto_gating", "marker"
     parallel = True
     collects_setup = True
+    #: The session's `purpose` (`capabilities_session.SessionOptions`): what
+    #: its set-up asks for (`capabilities_session.setup_images`).
+    purpose = "gating"
 
     def prefix(self):
         return prefix.gating_prefix()
@@ -279,6 +283,9 @@ class ContrastWorkflow(GatingWorkflow):
     name = "contrast"
     START = "contrast_session_start"
     parallel = False
+    #: An image with no cell table has nothing to set up: its cells are
+    #: found in the image.
+    purpose = "contrast"
 
     def start_arguments(self, options):
         arguments = {"scope": "project", "project": options.project, "reading": "once",
@@ -725,7 +732,8 @@ class DecisionRun:
         while True:
             self._still_wanted()
             try:
-                state = setup.prepare(call, self.o.project, choice, setup=self.o.on_setup)
+                state = setup.prepare(call, self.o.project, choice, setup=self.o.on_setup,
+                                      purpose=self.wf.purpose)
             except Exception as exc:      # noqa: BLE001 -- a refusal the user reads
                 error = getattr(exc, "code", None)
                 if not error:
@@ -754,7 +762,8 @@ class DecisionRun:
         the project has every answer. A stop (the form closed, the job
         cancelled) ends the run before anything started."""
         told = 0.0
-        while setup.setup_needs(self.session, [self.o.project]):
+        while setup.setup_needs(self.session, setup.setup_images(
+                self.session, [self.o.project], self.wf.purpose)):
             # Said again now and then: the launching tab may not have put its
             # card up yet when the run first says it (the job starts at once).
             if time.monotonic() - told >= SETUP_REMIND_S:
@@ -1016,7 +1025,8 @@ class DecisionRun:
             if data:
                 blocks.append(image_block(data, fmt))
         text = canonical(shown)
-        if self.wf.schema_for(packet.get("kind", ""), self.task_of(packet)) is None and packet.get("answer_schema"):
+        if self.wf.schema_for(packet.get("kind", ""), self.task_of(packet), packet) is None \
+                and packet.get("answer_schema"):
             text += "\nANSWER SCHEMA: " + canonical(packet["answer_schema"])
         blocks.append(text_block(text))
         return blocks
@@ -1052,7 +1062,8 @@ class DecisionRun:
             context["run_id"] = self.gateway_run["run_id"]
         request = ModelRequest(capability=self.o.capability, system=self.system,
                                messages=with_breakpoints(messages, final=self._last_in_worker(lane.worker)),
-                               max_tokens=self._max_tokens(packet), output_schema=self.wf.schema_for(kind, task),
+                               max_tokens=self._max_tokens(packet),
+                               output_schema=self.wf.schema_for(kind, task, packet),
                                context=context, model=self.o.model, task=task)
 
         def on_retry(attempt, exc):

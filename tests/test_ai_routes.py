@@ -119,7 +119,7 @@ def test_the_balance_carries_an_estimate_for_the_open_project(client, gateway, s
     assert estimate["unit"] == "channel" and estimate["units"] == len(scene["channels"])
     assert estimate["credits"] == 12 * len(scene["channels"]) and estimate["affordable"]
     both = client.get("/ai/v1/balance?project=qcsynth").get_json()["estimates"]
-    assert set(both) == {"gating", "qc"} and both["gating"]["unit"] == "marker"
+    assert set(both) == {"gating", "contrast", "qc"} and both["gating"]["unit"] == "marker"
     picked = client.get("/ai/v1/balance?project=qcsynth&kind=qc&channels=DAPI,CD3").get_json()
     assert picked["estimates"]["qc"]["units"] == 2
 

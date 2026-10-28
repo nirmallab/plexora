@@ -16,6 +16,8 @@
  *   `plexora:agent-command` for `preview_gate` -- move the slider to a
  *     candidate gate so the user sees what it would call positive, WITHOUT
  *     saving: the stored gate is put back in the list the sidebar autosaves.
+ *     With a `show`, the look is played as a person would make it -- the view
+ *     and the slider moving in turn -- by gatingAgentShow.js.
  *   `gating.session` events -- an automatic-gating session mirrored into this
  *     tab: a pill over the panel saying so, with Take over. Pause, Resume and
  *     Stop live in core's agent panel (views/agentPanel.js), which hears the
@@ -94,6 +96,8 @@
                 `${marker || "(no marker)"} is not a marker Thresholding can gate`)), PLUGIN);
             return;
         }
+        // A look still playing would paint over this one.
+        window.PlexoraGatingShow?.stop?.();
         if (live.gateMarker !== marker) live.setGateMarker(marker);
         const fullName = live.dataLayer.getFullChannelName(marker);
         const range = live.getGateRange(marker);
@@ -105,13 +109,25 @@
             detail.claim(Promise.reject(new Error("preview_gate needs low < high")), PLUGIN);
             return;
         }
-        live.setGateRange([low, high], CSVGatingList.events.GATING_BRUSH_MOVE);
-        if (stored) live.gatingList.gating_channels[fullName] = stored;
-        else delete live.gatingList.gating_channels[fullName];
-        // The cells are drawn from `selections`, which now hold the preview;
-        // persistGatingList saves the stored gate in its place until the user
-        // (or a reload) replaces it.
-        live.agentPreview = { fullName, stored: stored ? [...stored] : null };
+        const from = Number((live.gatingList.selections?.[fullName] || stored || range)[0]);
+        const paint = (value, quiet = true) => {
+            live.setGateRange([value, high], CSVGatingList.events.GATING_BRUSH_MOVE, { quiet });
+            if (stored) live.gatingList.gating_channels[fullName] = stored;
+            else delete live.gatingList.gating_channels[fullName];
+            // The cells are drawn from `selections`, which now hold the
+            // preview; persistGatingList saves the stored gate in its place
+            // until the user (or a reload) replaces it.
+            live.agentPreview = { fullName, stored: stored ? [...stored] : null };
+        };
+        // `show`: the look played as a person would make it, from here, while
+        // the session goes on (gatingAgentShow.js). Acknowledged at once.
+        if (args.show && typeof args.show === "object" && window.PlexoraGatingShow) {
+            const played = window.PlexoraGatingShow.play({
+                live, marker, paint, from, range, target: [low, high], show: args.show });
+            detail.claim({ marker, low, high, saved: false, show: played }, PLUGIN);
+            return;
+        }
+        paint(low, false);
         detail.claim({ marker, low, high, saved: false }, PLUGIN);
     });
 
@@ -184,6 +200,7 @@
     // mirrored into a channel slot: core restores the channels itself.
     window.addEventListener("plexora:agent-restore", (event) => {
         const detail = event.detail || {};
+        window.PlexoraGatingShow?.stop?.();
         const live = controller();
         if (!live) return;
         const work = Promise.resolve().then(() => {

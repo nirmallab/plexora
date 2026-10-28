@@ -47,6 +47,13 @@ table, too few cells), and so are the two rules above: the coarse-level clip
 and the cell cap are what re-saturate level-0 pixels. The record carries the
 QC fingerprint it was anchored under, so a QC change recomputes it.
 
+A project with no cell table is anchored the same way when an auto-contrast
+run asks (`calibrate(image_cells=True)`): its cells are found in the image
+(`image_cells`) and the record says so (`cells_from`: `image:mask`,
+`image:nuclei`, or `image:none` when none were found). What a check saw of
+those cells (`observed`) names cells no table has, so it is dropped once the
+record is anchored on other cells.
+
 The viewer's canvas is offered a little more (`view_spec`): a marker
 VIEW_GAIN brighter than the evidence draws it, and the nuclear stain on its
 own nuclei (`nuclear_view`) rather than the overview window -- dimmer than
@@ -576,10 +583,36 @@ def apply_choices(record) -> dict:
     return {**record, "channels": channels}
 
 
-def _anchors(session, project, keys, nuclear):
+def _anchors(session, project, keys, nuclear, *, from_image=False):
     from plexora.agent.evidence import cell_window
 
-    return cell_window.cell_windows(session, project, keys, nuclear=nuclear)
+    return cell_window.cell_windows(session, project, keys, nuclear=nuclear,
+                                    from_image=from_image)
+
+
+def _image_source(anchors) -> str:
+    """`cells_from` for a record anchored on image cells: the anchors' own
+    (`image:mask`, `image:nuclei`), or `image:none` when none were found."""
+    for measured in (anchors or {}).values():
+        source = measured.get("cells_from")
+        if source and source != "table":
+            return source
+    return "image:none"
+
+
+def _image_anchored_with_table(stored, session, project) -> bool:
+    """A record anchored on cells found in the image, for a project that has
+    a table now: stale, whatever the fingerprints say (an image-only
+    project's and a table's can both be None). The project is read only for
+    such a record: a render's fast path stays one store read."""
+    return bool((stored or {}).get("cells_from")) \
+        and bool(session.project(project).has_table)
+
+
+def _without_observed(choices) -> dict:
+    """Choices with what each check saw of its cells taken off (the gain stays)."""
+    return {name: {k: v for k, v in choice.items() if k != "observed"}
+            for name, choice in (choices or {}).items()}
 
 
 def _table_fingerprint(session, project):
@@ -630,7 +663,8 @@ def load_current(session, project) -> dict | None:
     if record is None:
         return None
     if record.get("table") != _table_fingerprint(session, project) \
-            or record.get("qc") != _qc_fingerprint(session, project):
+            or record.get("qc") != _qc_fingerprint(session, project) \
+            or _image_anchored_with_table(record, session, project):
         return None
     return record
 
@@ -646,11 +680,18 @@ def save(project, record) -> str:
     return hashlib.sha1(blob).hexdigest()[:16]
 
 
-def calibrate(session, project, channels=None, *, force=False, reset_choices=False) -> tuple:
+def calibrate(session, project, channels=None, *, force=False, reset_choices=False,
+              image_cells=False) -> tuple:
     """(record, changed): compute and store the calibration for a project's
     channels (default every real channel), reusing a stored one unless
     `force` or a channel is missing from it. A vision check's choices are
-    kept (re-applied over the fresh rule) unless `reset_choices`."""
+    kept (re-applied over the fresh rule) unless `reset_choices`.
+
+    `image_cells`: a project with no cell table has its markers anchored on
+    cells found in the image (`cell_window.cell_windows(from_image=True)`),
+    and a stored record that was not is computed again. It reads fields of
+    every channel, so only a run about to show the model those cells asks
+    (an auto-contrast check); the viewer's own calibration never does."""
     from plexora.agent.presets import nuclear_channel
     from plexora.agent.render import resolve_channel
     from plexora.server.utils import source_image
@@ -664,13 +705,18 @@ def calibrate(session, project, channels=None, *, force=False, reset_choices=Fal
     stored = load(project)
     table = _table_fingerprint(session, project)
     qc = _qc_fingerprint(session, project)
+    from_image = bool(image_cells) and not record.has_table
+    was = (stored or {}).get("cells_from")
+    other_cells = _image_anchored_with_table(stored, session, project)
     if stored and not force and all(n in (stored.get("channels") or {}) for n in wanted) \
-            and stored.get("table") == table and stored.get("qc") == qc:
+            and stored.get("table") == table and stored.get("qc") == qc and not other_cells \
+            and not (from_image and (not str(was or "").startswith("image:")
+                                     or was == "image:none")):
         return stored, False
     # A vision check's choices outlive a recomputation: they are a gain over
     # whatever the rule now says, not a window.
     choices = {} if reset_choices else dict((stored or {}).get("choices") or {})
-    if stored and (stored.get("table") != table or stored.get("qc") != qc):
+    if stored and (stored.get("table") != table or stored.get("qc") != qc or other_cells):
         stored = None       # windows anchored on another matrix's values, or other cells
     keys = {}
     for name in wanted:
@@ -684,13 +730,16 @@ def calibrate(session, project, channels=None, *, force=False, reset_choices=Fal
     nuclear_name = nuclear if nuclear in keys else None
     # Read before the source is opened here: the anchors read crops through
     # the same reader shelf, which does not nest.
-    anchors = _anchors(session, project, keys, nuclear_name)
+    anchors = _anchors(session, project, keys, nuclear_name, from_image=from_image)
     caps = _cell_caps(session, project, keys)
     with source_image.SHELF.reader(image_data) as source:
         if source.is_brightfield:
             raise AgentError("unsupported_modality",
                              "a brightfield image has no per-channel windows to calibrate")
         fresh = compute(source, keys, nuclear=nuclear_name, caps=caps, cell_windows=anchors)
+    # Which cells the record is anchored on now: the image's (this run's
+    # find), the table's (None), or, with neither asked, what it was.
+    now = _image_source(anchors) if from_image else (None if record.has_table else was)
     with _lock(project):
         # The computation above ran unlocked (it reads crops for seconds); a
         # choice recorded meanwhile (`record_choices`) is newer than the one
@@ -698,9 +747,15 @@ def calibrate(session, project, channels=None, *, force=False, reset_choices=Fal
         latest = load(project)
         if latest and not reset_choices:
             choices = {**choices, **(latest.get("choices") or {})}
+        if was and was != now:
+            choices = _without_observed(choices)       # other cells than these
         merged = dict(stored or {"version": VERSION, "channels": {}})
         merged["table"] = table
         merged["qc"] = qc
+        if now:
+            merged["cells_from"] = now
+        else:
+            merged.pop("cells_from", None)
         merged.update({k: v for k, v in fresh.items() if k != "channels"})
         merged["channels"] = {**(stored or {}).get("channels", {}), **fresh["channels"]}
         merged["project"] = project
@@ -789,7 +844,8 @@ def current(session, project, channels) -> dict:
     table = _table_fingerprint(session, project)
     qc = _qc_fingerprint(session, project)
     if stored and all(n in (stored.get("channels") or {}) for n in channels) \
-            and stored.get("table") == table and stored.get("qc") == qc:
+            and stored.get("table") == table and stored.get("qc") == qc \
+            and not _image_anchored_with_table(stored, session, project):
         return stored
     record = session.project(project)
     identity = (project, str(record.image.src), tuple(sorted(channels)),

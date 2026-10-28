@@ -30,6 +30,12 @@ CHECKS = [
     "the pill offers Take over only; pause and resume live in the agent panel",
     "a restore puts the marker and the stored gate back",
     "a failed or empty marker reads as a gate at the maximum",
+    "a first look tries a gate well off, closes in on a cell, and ends on the agent's",
+    "markers are not shown with the same moves; a marker always with its own",
+    "a later look refines from where the slider is",
+    "a look with a show is acknowledged at once, then played a frame at a time",
+    "a newer look, or a hand on the gate, ends the one playing",
+    "with smooth motion off, the gate is set at once",
 ]
 
 

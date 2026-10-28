@@ -12,7 +12,7 @@ scipy/sklearn/anndata/h5py.
 
 from plexora.api.plugin import Plugin, Requires
 
-VERSION = "20261027_sidebar_radius"
+VERSION = "20261028_gating_show"
 
 
 def _blueprint():
@@ -49,12 +49,13 @@ PLUGIN = Plugin(
     # that assumes where the app is mounted.
     # gatingApi.js first: the other two construct GatingApi at init.
     # gatingAgentBridge.js answers core's viewer control plane (agentBridge.js)
-    # through window events; nothing else references it.
+    # through window events; nothing else references it. gatingAgentShow.js
+    # plays an agent's look for it (window.PlexoraGatingShow).
     # gatingPlanes.js before the controller, which builds its plane control.
     # gatingClassifier.js before the controller too: setup() builds its
     # GateClassifierControl when the class is defined.
     scripts=("gatingApi.js", "csvGatingList.js", "gatingPlanes.js", "gatingClassifier.js",
-             "gatingSidebarController.js", "gatingAgentBridge.js"),
+             "gatingSidebarController.js", "gatingAgentShow.js", "gatingAgentBridge.js"),
     styles=("gating.css",),
     # Gating thresholds feature-table columns, so a project without one has
     # nothing to gate; it needs the marker/metadata split to know WHICH columns

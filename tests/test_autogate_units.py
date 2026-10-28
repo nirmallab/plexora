@@ -828,27 +828,96 @@ def test_the_mirror_script_shows_what_the_packet_shows():
         "DNA": {"window": [10, 200]}, "CD8": {"window": [50, 900]}}}
     script = mirror_script.script_for(packet, manifest, calibration, current_project="q")
     types = [c["type"] for c in script]
+    # No fit_region: the preview's `show` flies the tab to the field itself.
     assert types == ["open_project", "set_hd_mode", "set_channels", "set_cell_render_mode",
-                     "open_tool", "set_active_marker", "preview_gate", "fit_region",
-                     "highlight_cells", "show_evidence"]
+                     "open_tool", "set_active_marker", "preview_gate", "highlight_cells",
+                     "show_evidence"]
     channels = script[2]["arguments"]["channels"]
     assert [c["name"] for c in channels] == ["DNA", "CD8"]
     assert channels[1]["window"] == [50, 900]
     assert script[6]["arguments"]["low"] == 350.0 and not script[6]["arguments"]["persist"]
-    assert script[8]["arguments"]["cells"][0] == {"id": 7, "caption": "#7 400+", "x": 100.0,
+    assert script[7]["arguments"]["cells"][0] == {"id": 7, "caption": "#7 400+", "x": 100.0,
                                                   "y": 200.0}
+    show = script[6]["arguments"]["show"]
+    assert show["field"] == {"x": -20.0, "y": 80.0, "width": 240.0, "height": 240.0}
+    assert show["cells"] == [{"x": 100.0, "y": 200.0}] and show["stops"] == []
     # A tab already showing HD, outlines and the gating tool on this image is
     # sent only what this packet shows.
     shown = {"project": "p", "hd_mode": True, "cell_mode": "outlines",
              "tools_open": ["gating", "roi"]}
     lean = [c["type"] for c in mirror_script.script_for(packet, manifest, calibration,
                                                         viewer_state=shown)]
-    assert lean == ["set_channels", "set_active_marker", "preview_gate", "fit_region",
-                    "highlight_cells", "show_evidence"]
+    assert lean == ["set_channels", "set_active_marker", "preview_gate", "highlight_cells",
+                    "show_evidence"]
     # Switching image: everything, since the new image's state is unknown.
     moved = mirror_script.script_for(packet, manifest, calibration,
                                      viewer_state={**shown, "project": "q"})
     assert [c["type"] for c in moved] == types
+
+
+def test_a_blind_panel_moves_the_tabs_slider_to_the_engines_leader():
+    from plexora.plugins.gating.server.autogate import mirror_script
+
+    # A v2 look names no gate (the reader is blind); the tab is shown the
+    # gate the engine holds: where it started, then the leader after a look.
+    packet = {"kind": "cell_panel", "units": [{"project": "p", "marker": "CD8"}],
+              "evidence": {"marker": "CD8", "project": "p", "cells": 24}}
+    assert "preview_gate" not in [c["type"] for c in
+                                  mirror_script.script_for(packet, None, None,
+                                                           current_project="p")]
+    unit = {"high": 4000.0, "hypotheses": {"start": 300.0, "leader": None}}
+
+    def preview(unit):
+        script = mirror_script.script_for(packet, None, None, current_project="p",
+                                          gate=mirror_script._engine_gate(unit))
+        return [c["arguments"] for c in script if c["type"] == "preview_gate"]
+
+    assert [{k: a[k] for k in ("marker", "low", "high", "persist")} for a in preview(unit)] \
+        == [{"marker": "CD8", "low": 300.0, "high": 4000.0, "persist": False}]
+    unit["hypotheses"]["leader"] = 412.5
+    assert [a["low"] for a in preview(unit)] == [412.5]
+    assert mirror_script._engine_gate({"state": "t2"}) is None
+    # A packet's own candidate still wins.
+    v1 = {**packet, "kind": "t2_confirm", "evidence": {"candidate": {"low": 350.0}}}
+    script = mirror_script.script_for(v1, None, None, current_project="p",
+                                      gate=mirror_script._engine_gate(unit))
+    assert [c["arguments"]["low"] for c in script if c["type"] == "preview_gate"] == [350.0]
+
+
+def test_a_looks_show_carries_the_gates_to_try_and_a_seed_of_its_own():
+    from plexora.plugins.gating.server.autogate import mirror_script
+
+    # The candidate gates nearest the leader, two a side; the look's number;
+    # a seed per marker, the same every time.
+    unit = {"high": None, "hypotheses": {
+        "leader": 5.0, "observations": [{}, {}],
+        "points": [{"low": v} for v in (1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0)]}}
+    gate = mirror_script._engine_gate(unit)
+    assert gate["stops"] == [3.0, 4.0, 6.0, 7.0]
+    manifest = {"rows": [{"cells": [{"cell_id": i, "x": 10.0 * i, "y": 5.0} for i in range(1, 9)]
+                          + [{"cell_id": 99, "x": 9000.0, "y": 9000.0}]}]}
+
+    def show(marker):
+        packet = {"kind": "cell_panel", "units": [{"project": "p", "marker": marker}],
+                  "evidence": {"marker": marker, "project": "p", "look": 3}}
+        script = mirror_script.script_for(packet, manifest, None, current_project="p",
+                                          gate=gate)
+        assert "fit_region" not in [c["type"] for c in script]
+        return next(c for c in script if c["type"] == "preview_gate")["arguments"]["show"]
+
+    cd8 = show("CD8")
+    assert cd8["look"] == 3 and cd8["stops"] == [3.0, 4.0, 6.0, 7.0]
+    # Only cells inside the field it flies to, at most SHOW_CELLS of them.
+    assert len(cd8["cells"]) == mirror_script.SHOW_CELLS
+    assert {"x": 9000.0, "y": 9000.0} not in cd8["cells"]
+    assert show("CD8")["seed"] == cd8["seed"] != show("CD4")["seed"]
+    # A v1 candidates look: its candidates are the stops, in one preview.
+    t4 = {"kind": "t4_candidates", "units": [{"project": "p", "marker": "CD8"}],
+          "evidence": {"candidate": {"low": 4.0},
+                       "candidates": [{"low": 2.0}, {"low": 4.0}, {"low": 9.0}]}}
+    previews = [c for c in mirror_script.script_for(t4, manifest, None, current_project="p")
+                if c["type"] == "preview_gate"]
+    assert len(previews) == 1 and previews[0]["arguments"]["show"]["stops"] == [2.0, 9.0]
 
 
 # -- the report --------------------------------------------------------------------

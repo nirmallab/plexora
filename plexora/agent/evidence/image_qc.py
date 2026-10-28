@@ -59,13 +59,10 @@ def read_overview(source, channel_key, level=None):
     return plane.astype(np.float32, copy=False), level, ceiling
 
 
-def tissue_mask(nuclear):
-    """Pixels on tissue: the nuclear overview above its Otsu threshold, dilated
-    a little so cytoplasm between nuclei counts. None when it cannot be told."""
-    if nuclear is None or nuclear.size < 100:
-        return None
-    logged = np.log1p(np.maximum(nuclear, 0))
-    counts, edges = np.histogram(logged, bins=256)
+def otsu_level(values):
+    """The Otsu threshold of `values` (any shape), or None when they hold no
+    two classes to split."""
+    counts, edges = np.histogram(values, bins=256)
     centres = (edges[:-1] + edges[1:]) / 2
     p = counts / max(1, counts.sum())
     w0 = np.cumsum(p)
@@ -75,7 +72,19 @@ def tissue_mask(nuclear):
     between[~np.isfinite(between)] = -1
     if between.max() <= 0:
         return None
-    mask = logged > centres[int(np.argmax(between))]
+    return float(centres[int(np.argmax(between))])
+
+
+def tissue_mask(nuclear):
+    """Pixels on tissue: the nuclear overview above its Otsu threshold, dilated
+    a little so cytoplasm between nuclei counts. None when it cannot be told."""
+    if nuclear is None or nuclear.size < 100:
+        return None
+    logged = np.log1p(np.maximum(nuclear, 0))
+    level = otsu_level(logged)
+    if level is None:
+        return None
+    mask = logged > level
     from scipy.ndimage import binary_dilation
 
     return binary_dilation(mask, iterations=2)

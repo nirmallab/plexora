@@ -554,6 +554,20 @@ plexora/ai/bench.py, bench_data.py                `plexora ai bench gating`
 - **Context never moves a gate.** The vocabulary outranks agent-supplied
   biology, which can only order markers, choose references and lower a
   confidence.
+- **A mirrored look is played as a person would make it.** The gate shown --
+  the packet's, or for a v2 cell panel (which names none, so the reader stays
+  blind) the engine's leader so far, its start before any look -- goes to the
+  tab as one `preview_gate` with a `show` (`mirror_script._show`: the field,
+  a few of its cells, the candidate gates either side, the look's number, a
+  seed per marker), and no `fit_region` cut. The tab acknowledges it at once
+  and plays it while the session goes on (`gatingAgentShow.js`), one move at
+  a time: fly to the field, close in on a cell, a gate too strict or too loose
+  and back, out a little, settle; then sparse small moves until the next
+  look. The seed picks the marker's temperament and way of moving the view, so
+  a run of markers is not one gesture repeated, and a later look refines from
+  where the slider is. A hand on the gate ends the show, a hand on the canvas
+  leaves the view alone for 12 s, and with smooth motion off the gate and the
+  field are set at once.
 - **A marker is asked about once, anywhere.** What a `panel_context` answer
   (or `set_panel_context`) says about a marker the shipped vocabulary does
   not know is written to the vocabulary's learned layer

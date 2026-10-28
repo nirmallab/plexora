@@ -404,11 +404,12 @@ def _structural(marker) -> bool:
 
 
 def _markers_for(call, images, wanted):
-    from plexora.plugins.gating.server.autogate import context
+    from plexora.plugins.gating.server.autogate import context, views
 
     first = call.session.data(images[0])
     panel = context.for_project(first)
-    available = list(dict.fromkeys(m for p in images for m in call.session.data(p).table.markers))
+    available = list(dict.fromkeys(m for p in images
+                                   for m in views.markers(call.session.data(p))))
     if wanted:
         unknown = [m for m in wanted if m not in available]
         if unknown:
@@ -439,7 +440,7 @@ def channel_match(call, images, markers) -> dict:
     matched, unmatched, channels = {}, {}, {}
     for project in images:
         ds = call.session.data(project)
-        present = set(ds.table.markers)
+        present = set(views.markers(ds))
         names = [] if ds.project.image.is_blank else views.channel_names(ds)
         channels[project] = names[:MAX_LIST]
         hit = [m for m in markers if m in present and names
@@ -480,6 +481,16 @@ def _require_channels(match, force):
 
 
 # -- the set-up a session needs before it plans anything ----------------------
+
+
+def setup_images(session, images, purpose="gating") -> list:
+    """The images whose set-up a session needs: every one, except that an
+    auto-contrast run reads an image with no cell table by its pixels alone
+    (its cells found in the image, `image_cells`), so there is no column for
+    the set-up form to ask about."""
+    if purpose != "contrast":
+        return list(images)
+    return [name for name in images if session.project(name).has_table]
 
 
 def setup_needs(session, images, *, confirmations=True) -> dict | None:
@@ -672,6 +683,7 @@ def _plan_fields(call, inp, images, plan) -> dict:
     """The planned part of a session record (`_plan`, then the pixel size,
     QC, biology and one unit per image and marker), plus `unresolved`."""
     from plexora.plugins.gating.server.autogate import engine as engines
+    from plexora.plugins.gating.server.autogate import views
 
     order, panel, match = plan["order"], plan["panel"], plan["match"]
     pixel = _pixel_check(call, images, inp)
@@ -685,7 +697,7 @@ def _plan_fields(call, inp, images, plan) -> dict:
         order = [m for m in overlaid if m in order] + [m for m in order if m not in overlaid]
     units = {}
     for project in images:
-        markers = call.session.data(project).table.markers
+        markers = views.markers(call.session.data(project))
         seen = set(match["matched"].get(project) or ())
         for marker in order:
             unit = {"project": project, "marker": marker,
@@ -730,7 +742,7 @@ def _fingerprints(session, images) -> dict:
     return out
 
 
-def prepare(call, project, choice=None, *, setup="wait") -> dict:
+def prepare(call, project, choice=None, *, setup="wait", purpose="gating") -> dict:
     """The deterministic half of a start, with no session: what a driver
     collects before it calls any model (`plexora.ai.harness.decision`).
 
@@ -741,9 +753,14 @@ def prepare(call, project, choice=None, *, setup="wait") -> dict:
     "receipts"}: `needs` is what a session started with `setup` would wait
     on or refuse for -- wait: everything the set-up form would ask; fail and
     ask: a column not found, and the matrix when it is unsettled -- or None.
-    `missing`: the columns not found. Nothing else is written."""
-    images = [project]
+    `missing`: the columns not found. Nothing else is written. An
+    auto-contrast run (`purpose`) on an image with no cell table has nothing
+    to set up (`setup_images`)."""
     call.session.project(project)
+    images = setup_images(call.session, [project], purpose)
+    if not images:
+        return {"needs": None, "missing": None, "expression": {"status": "confirmed"},
+                "applied": [], "receipts": []}
     if isinstance(choice, dict):
         choice = ExpressionChoice(**choice)
     gaps = setup_needs(call.session, images, confirmations=False)
@@ -794,7 +811,11 @@ def start(call, inp):
         images = []
         for name in cohort.projects:
             record = call.session.project(name)
-            if requires.applies_to(record) and not requires.missing_from(record):
+            if not requires.applies_to(record):
+                continue
+            if not requires.missing_from(record) or (
+                    not setup_images(call.session, [name], inp.purpose)
+                    and not record.image.is_blank):
                 images.append(name)
         if not images:
             raise AgentError("precondition_missing", f"{cohort.name!r} has no gateable images")
@@ -805,7 +826,9 @@ def start(call, inp):
                                  "image of this dataset", detail={"images": images})
             reference = inp.reference_image
         else:
-            sizes = {name: call.session.data(name).table.geometry().height for name in images}
+            # An image with no table (an auto-contrast run's) counts no cells.
+            sizes = {name: call.session.data(name).table.geometry().height
+                     if call.session.project(name).has_table else 0 for name in images}
             reference = max(images, key=lambda n: (sizes[n], -images.index(n)))
         images = [reference] + [n for n in images if n != reference]
     if len(images) > 1:
@@ -815,7 +838,8 @@ def start(call, inp):
     # A column the set-up form would have to ask for (no cell id, no
     # coordinates): nothing can be planned without it, and only the user can
     # name it -- so only a session that waits for the form starts without it.
-    gaps = setup_needs(call.session, images, confirmations=False)
+    asks = setup_images(call.session, images, inp.purpose)
+    gaps = setup_needs(call.session, asks, confirmations=False)
     if gaps and inp.setup != "wait":
         raise _setup_refusal(gaps, inp.setup)
     # Before anything is written (the expression check can set a matrix): a
@@ -832,7 +856,7 @@ def start(call, inp):
     # Everything the form would still ask -- columns found but never
     # confirmed, and a matrix the values did not settle -- for a session that
     # waits on it. One that cannot wait goes on with what was found.
-    needs = setup_needs(call.session, images) if inp.setup == "wait" else None
+    needs = setup_needs(call.session, asks) if inp.setup == "wait" else None
     fields = _plan_fields(call, inp, images, plan) if plan else _unplanned_fields()
     unresolved = fields.pop("unresolved")
     session_id = new_session_id()
@@ -2409,9 +2433,11 @@ def capabilities():
             tool_name="contrast_session_start",
             purpose="Auto contrast on its own: set how bright every marker of an image or "
                     "dataset is drawn, without gating. The calibration sets each marker's "
-                    "window from its negative and bright cells, then a contrast grid per "
-                    "batch of markers goes to you (gating_next / gating_answer) and code "
-                    "picks the column. A marker an earlier run set is skipped unless "
+                    "window from its negative and bright cells -- with no cell table, cells "
+                    "found in the image (its mask, else its nuclear stain's nuclei) -- then a "
+                    "contrast grid per batch of markers goes to you (gating_next / "
+                    "gating_answer) and code picks the column. A marker an earlier run set "
+                    "is skipped unless "
                     "`redo`. The choice is what every later picture -- and the viewer, for "
                     "channels nobody set -- draws with; gating sessions then skip the step.",
             permission="reversible_write", input_model=ContrastOptions, handler=contrast_start,

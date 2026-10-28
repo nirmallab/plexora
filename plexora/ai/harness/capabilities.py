@@ -422,9 +422,11 @@ def _units(call, kind, project, picked) -> tuple[int, str | None, dict]:
         return (contrast_grids(len(picked)) if kind == "contrast" else len(picked)), None, {}
     try:
         if kind == "contrast":
+            # No cell table is no refusal: the run finds the cells in the
+            # image (`image_cells`), and its markers are the image's channels.
             record = call.session.project(project)
-            if not record.has_table:
-                return 0, "this project has no cell table to set the contrast from", {}
+            if record.image.is_blank:
+                return 0, "this sample has no image to set the contrast of", {}
             from plexora.plugins.gating.capabilities_session import _markers_for, channel_match
 
             order, _skipped, _panel = _markers_for(call, [project], None)

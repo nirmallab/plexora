@@ -26,10 +26,13 @@ limit, provider outage, unreachable gateway) is retried with the SAME
 idempotency key, which the gateway frees in exactly those cases; an expired
 token is refreshed once. Credit, cap and envelope refusals are never retried:
 they are surfaced so the session can pause (`spatialagents.gateway.PAUSE_CODES`).
+One provider refusal is answered here: an output schema it will not compile
+("Schema is too complex") is asked for in words instead (`GatewayClient.messages`).
 """
 
 from __future__ import annotations
 
+import logging
 import time
 
 from biocognia import gateway as _shared
@@ -40,6 +43,8 @@ from spatialagents.gateway import CALL_TIMEOUT, CIRCUIT_ATTEMPTS
 __all__ = ["CALL_TIMEOUT", "CIRCUIT_ATTEMPTS", "ENV_DEV", "ENV_GATEWAY", "ENV_TOKEN", "RETRYABLE",
            "GatewayClient", "GatewayError", "TokenSource", "dev_default", "gateway_url", "iter_sse",
            "token_source"]
+
+log = logging.getLogger(__name__)
 
 
 def TokenSource(token: str | None = None) -> _shared.TokenSource:  # noqa: N802 - a constructor
@@ -71,3 +76,26 @@ class GatewayClient(_agent.GatewayClient):
         from plexora.ai import tasks
 
         return tasks.wire_id(task, module=module)
+
+    def messages(self, request, *, idempotency_key: str, on_delta=None, on_retry=None):
+        """spatialagents' call, and one safety net: a request whose output
+        schema the provider will not compile ("Schema is too complex", a 400
+        that would end the run) is sent once more with the schema asked for in
+        words (`schema.in_words`), and the schema is remembered so no later
+        call sends it. A refused call is not charged; the answer is validated
+        against the same model either way."""
+        from plexora.ai.harness import schema
+
+        if schema.refused(request.output_schema):
+            request = schema.in_words(request)
+        try:
+            return super().messages(request, idempotency_key=idempotency_key, on_delta=on_delta,
+                                    on_retry=on_retry)
+        except GatewayError as exc:
+            if request.output_schema is None or not schema.too_complex(exc):
+                raise
+            schema.refuse(request.output_schema)
+            log.warning("the provider would not compile the answer schema of %s (%s); it is asked "
+                        "for in words from now on", request.task or "a call", str(exc)[:200])
+            return super().messages(schema.in_words(request), idempotency_key=f"{idempotency_key}.words",
+                                    on_delta=on_delta, on_retry=on_retry)

@@ -24,10 +24,38 @@ const REPO = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const STATIC = join(REPO, "plexora", "plugins", "gating", "static");
 
 const windowListeners = {};
+const documentListeners = {};
 const toasts = [];
+// A clock the shows run on (gatingAgentShow.js): `advance` plays a minute of
+// pauses and frames in a moment.
+const clock = { now: 0, timers: [], seq: 0 };
+const settle = async () => {
+    for (let i = 0; i < 25; i += 1) await Promise.resolve();
+};
+async function advance(ms) {
+    const end = clock.now + ms;
+    for (;;) {
+        await settle();
+        clock.timers.sort((a, b) => a.at - b.at || a.id - b.id);
+        const next = clock.timers[0];
+        if (!next || next.at > end) break;
+        clock.timers.shift();
+        clock.now = next.at;
+        next.fn();
+    }
+    clock.now = end;
+    await settle();
+}
 const sandbox = {
     console,
     Promise,
+    performance: { now: () => clock.now },
+    setTimeout: (fn, ms) => {
+        clock.seq += 1;
+        clock.timers.push({ id: clock.seq, at: clock.now + Math.max(0, Number(ms) || 0), fn });
+        return clock.seq;
+    },
+    clearTimeout: (id) => { clock.timers = clock.timers.filter((t) => t.id !== id); },
     CSVGatingList: { events: { GATING_BRUSH_MOVE: "GATING_BRUSH_MOVE",
                                SELECTION_CHANGED: "SELECTION_CHANGED" } },
     PlexoraToast: { show: (options) => toasts.push(options) },
@@ -38,6 +66,8 @@ const sandbox = {
             addEventListener(type, fn) { (this.listeners[type] = this.listeners[type] || []).push(fn); },
             appendChild(child) { this.children.push(child); return child; },
         }),
+        addEventListener: (type, fn) => (documentListeners[type] = documentListeners[type] || [])
+            .push(fn),
     },
     addEventListener: (type, fn) => (windowListeners[type] = windowListeners[type] || []).push(fn),
 };
@@ -46,6 +76,7 @@ createContext(sandbox);
 runInContext(readFileSync(join(STATIC, "gatingSidebarController.js"), "utf8")
     + "\nglobalThis.GatingSidebarController = GatingSidebarController;"
     + "\nglobalThis.describeGateProvenance = describeGateProvenance;", sandbox);
+runInContext(readFileSync(join(STATIC, "gatingAgentShow.js"), "utf8"), sandbox);
 runInContext(readFileSync(join(STATIC, "gatingAgentBridge.js"), "utf8"), sandbox);
 const proto = sandbox.GatingSidebarController.prototype;
 
@@ -241,6 +272,124 @@ await check("a failed or empty marker reads as a gate at the maximum", async () 
     assert.equal(say({ method: "gmm", state: "no_positive_population" }), "Auto · no positives");
     assert.equal(say({ method: "gmm", status: "accepted", confidence: "high", reason: "clear split" }),
                  "Auto · high", "the short form leaves the reason out");
+});
+
+// -- an agent's look, played as a person would make it ------------------------
+
+const show = sandbox.PlexoraGatingShow;
+const CELLS = [{ x: 100, y: 100 }, { x: 160, y: 120 }, { x: 140, y: 190 }, { x: 90, y: 170 }];
+const FIELD = { x: 0, y: 0, width: 300, height: 300 };
+const spec = (seed, extra = {}) => Object.assign({
+    seed, look: 1, target: [900, 4000], from: 300, range: [0, 4000],
+    stops: [600, 750, 1100, 1500], cells: CELLS, field: FIELD }, extra);
+const gates = (beats) => beats.filter((b) => b.kind === "gate").map((b) => b.low);
+
+await check("a first look tries a gate well off, closes in on a cell, and ends on the agent's", async () => {
+    for (let seed = 0; seed < 40; seed += 1) {
+        const { beats, idle } = show.plan(spec(seed));
+        const lows = gates(beats);
+        assert.equal(lows.at(-1), 900, `seed ${seed} ends on the gate`);
+        assert.ok(lows.some((v) => Math.abs(v - 900) > 4000 * 0.03), `seed ${seed} tries one well off`);
+        assert.ok(lows.every((v) => v >= 0 && v < 4000), `seed ${seed} stays on the slider`);
+        assert.ok(beats.some((b) => b.kind === "glide" && b.span <= 250), `seed ${seed} closes in`);
+        assert.ok([...beats, ...idle].every((b) => b.ms > 0), `seed ${seed} takes its time`);
+        const nudges = gates(idle);
+        if (nudges.length) assert.equal(nudges.at(-1), 900, `seed ${seed}: a nudge goes back`);
+    }
+});
+
+await check("markers are not shown with the same moves; a marker always with its own", async () => {
+    const kinds = new Set();
+    const firstWay = new Set();
+    for (let seed = 0; seed < 12; seed += 1) {
+        const choreography = show.plan(spec(seed));
+        kinds.add(`${choreography.temper}/${choreography.camera}`);
+        firstWay.add(gates(choreography.beats)[0] > 900 ? "strict" : "loose");
+    }
+    assert.equal(kinds.size, 12, "every temperament with every way of moving the view");
+    assert.deepEqual([...firstWay].sort(), ["loose", "strict"]);
+    assert.deepEqual(plain(show.plan(spec(5))), plain(show.plan(spec(5))));
+    assert.notDeepEqual(plain(show.plan(spec(5)).beats),
+                        plain(show.plan(spec(5, { look: 2, from: 900 })).beats));
+});
+
+await check("a later look refines from where the slider is", async () => {
+    for (let seed = 0; seed < 20; seed += 1) {
+        const first = show.plan(spec(seed));
+        const later = show.plan(spec(seed, { look: 3, from: 860 }));
+        assert.equal(gates(later.beats).at(-1), 900);
+        assert.ok(later.beats.length < first.beats.length, `seed ${seed}`);
+    }
+});
+
+/** The controller stand-in, recording every gate it is painted. */
+function painting() {
+    const made = controller();
+    const painted = [];
+    const quiet = [];
+    const real = made.self.setGateRange;
+    made.self.setGateRange = function (values, event, options) {
+        painted.push(values[0]);
+        quiet.push(Boolean(options && options.quiet));
+        return real.call(this, values, event);
+    };
+    return Object.assign(made, { painted, quiet });
+}
+
+const SHOW = { seed: 3, look: 1, cells: CELLS, field: FIELD, stops: [1100, 1500] };
+
+await check("a look with a show is acknowledged at once, then played a frame at a time", async () => {
+    const { self, painted, quiet } = painting();
+    const answer = offer("preview_gate", { marker: "CD8", low: 900, show: SHOW });
+    const result = plain(await answer.value);
+    assert.equal(result.show.played, true);
+    assert.equal(result.saved, false);
+    await advance(150000);
+    assert.ok(painted.length > 20, `painted frame by frame (${painted.length})`);
+    assert.ok(Math.min(...painted) < 800 || Math.max(...painted) > 1000, "a try off the gate");
+    assert.equal(painted.at(-1), 900);
+    assert.ok(quiet.every(Boolean), "a frame is not counted as a person's brush");
+    assert.deepEqual(plain(self.gatingList.gating_channels.CD8), [300, 4000], "never saved");
+    assert.ok(self.agentPreview, "still a preview");
+    assert.equal(show.playing(), false, "over once its idle moves are done");
+});
+
+await check("a newer look, or a hand on the gate, ends the one playing", async () => {
+    let { painted } = painting();
+    offer("preview_gate", { marker: "CD8", low: 900, show: SHOW });
+    await advance(3000);
+    offer("preview_gate", { marker: "CD8", low: 1200 });
+    const before = painted.length;
+    await advance(60000);
+    assert.equal(painted.length, before, "nothing painted over the newer look");
+    assert.equal(painted.at(-1), 1200);
+
+    ({ painted } = painting());
+    const slider = { closest: () => null };
+    sandbox.__elements = { gate_marker_section: { contains: (target) => target === slider } };
+    offer("preview_gate", { marker: "CD8", low: 900, show: SHOW });
+    await advance(2500);
+    assert.equal(show.playing(), true);
+    for (const fn of documentListeners.pointerdown || []) fn({ target: slider });
+    assert.equal(show.playing(), false);
+    const held = painted.length;
+    await advance(60000);
+    assert.equal(painted.length, held, "what the hand sets stands");
+    sandbox.__elements = {};
+});
+
+await check("with smooth motion off, the gate is set at once", async () => {
+    const { painted } = painting();
+    sandbox.PlexoraChannelFade = { smooth: () => false };
+    try {
+        const result = plain(await offer("preview_gate",
+                                         { marker: "CD8", low: 900, show: SHOW }).value);
+        assert.equal(result.show.played, false);
+        assert.deepEqual(painted, [900]);
+        assert.equal(show.playing(), false);
+    } finally {
+        delete sandbox.PlexoraChannelFade;
+    }
 });
 
 console.log(`${passed.length} checks passed`);

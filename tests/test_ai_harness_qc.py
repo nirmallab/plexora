@@ -75,9 +75,10 @@ def test_the_qc_prefix_is_byte_stable_and_carries_the_skill_and_guide():
 def test_every_qc_answer_kind_has_a_provider_ready_schema_with_maps_as_entries():
     from plexora.plugins.qc.server import answers
 
-    for kind in answers.BY_KIND:
-        s = schema.for_kind(kind, "qc")
-        assert s is not None, kind
+    # A kind's whole schema, or each of its forms (artifact_confirm's).
+    sent = {label: s for label, s in schema.sendable() if label.startswith("qc:")}
+    assert {label.split(":")[1] for label in sent if ":task:" not in label} == set(answers.BY_KIND)
+    for kind, s in sent.items():
         dumped = json.dumps(s)
         for banned in ('"$ref"', '"maxLength"', '"title"'):
             assert banned not in dumped, (kind, banned)

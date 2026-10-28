@@ -20,9 +20,11 @@ Two calls, both cheap to the caller:
 - `compute(project, channels)`: calibrate those channels in the background,
   one job per project at a time; `describe` says `computing` meanwhile.
 
-A project with no cell table, or no image to calibrate, is `unavailable`:
-there is nothing for the cells to anchor on, and the viewer's own
-auto-levelling stands.
+A project with no image to calibrate is `unavailable`, and so is one with no
+cell table -- there is nothing for the cells to anchor on, and the viewer's
+own auto-levelling stands -- until an auto-contrast run has anchored it on
+cells found in its image (`calibration.calibrate(image_cells=True)`). The
+viewer never starts that read itself: it reads fields of every channel.
 """
 
 from __future__ import annotations
@@ -56,9 +58,21 @@ def _unavailable(session, project):
         return f"no such project: {exc}"
     if record.image.is_blank:
         return "this sample has no image"
-    if not getattr(record, "has_table", False):
+    if not getattr(record, "has_table", False) and not _anchored_on_image(project):
         return "no cell table: the contrast is anchored on the cells"
     return None
+
+
+def _anchored_on_image(project) -> bool:
+    """Whether an auto-contrast run anchored `project`'s record on cells it
+    found in the image."""
+    from plexora.agent.evidence import calibration
+
+    try:
+        source = str((calibration.load(project) or {}).get("cells_from") or "")
+    except Exception:
+        return False
+    return source.startswith("image:") and source != "image:none"
 
 
 def entries(record) -> dict:

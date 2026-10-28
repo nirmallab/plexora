@@ -33,6 +33,15 @@ def channel_names(ds):
     return [c.get("fullname") or c.get("name") for c in ds.project.image.real_channels]
 
 
+def markers(ds):
+    """The markers a session can name: the table's marker columns, or on a
+    project with no cell table the image's own channels (an auto-contrast
+    run, the one session that reads pixels alone)."""
+    if getattr(ds.project, "has_table", True):
+        return list(ds.table.markers)
+    return [] if ds.project.image.is_blank else channel_names(ds)
+
+
 def image_channel(ds, marker):
     """The image channel a marker column is drawn from, or None
     (`vocabulary.match_name`: `CD45` is drawn from `03_CD45_ArgoFluor520`)."""

@@ -3114,7 +3114,11 @@ deliberately left out and what should be built next.
   for the review report's larger tiles is not offered), `density_plot.py` (a
   two-marker density plot from a bivariate grid), `cell_window.py` (what a
   marker's pixels look like in its own cells, at level 0, read in a disc of
-  `crops.CELL_DIAMETER_UM` around each table centroid, never inside a mask,
+  `crops.CELL_DIAMETER_UM` around each table centroid -- or, asked
+  `from_image` on a project with no cell table, around each cell
+  `image_cells.py` found, column None, each measurement's `cells_from`
+  `image:mask`|`image:nuclei` rather than `table`; never from a render --
+  never inside a mask,
   and never from a cell QC left out: `select_display_cells` picks seeded
   bands of the marker's distribution -- `negatives`, `low`, `near`, `bright`
   -- and `measure` returns `black` (each negative's low percentile, so the
@@ -3128,7 +3132,20 @@ deliberately left out and what should be built next.
   cells, banded on its table column with no background band because every
   cell is stained -- `typical` the p30-50 band's disc p99 median, `black`
   their discs' low percentile (the gaps between nuclei), `titre` the bright
-  band's p99; it decides nothing about brightness). `calibration.py`
+  band's p99; it decides nothing about brightness), `image_cells.py` (the
+  cells of a project with no cell table, found in its pixels: `sample`
+  returns `{ids, xs, ys, values, source, level, n_fields}` -- `source`
+  `mask` (each label's centroid, a label cut by a field's edge or under
+  `min_label_share` of a typical cell's disc dropped) or `nuclei` (peaks of
+  the smoothed nuclear stain above the field's `image_qc.otsu_level`, one per
+  plateau, ids synthetic by `ID_STRIDE`) -- or None with neither a mask nor a
+  nuclear stain; `IMAGE_CELLS` reads up to `n_fields` (16) non-overlapping
+  `field_px` (512) tiles, a seeded systematic sample of the tissue tiles
+  (`image_qc.tissue_mask`), at the coarsest level where a typical cell is
+  still `min_diameter_px` (10) across, and ranks each cell per channel by its
+  disc mean; only the bands' order comes from here, because every number a
+  window is set from is still read at level 0 by `cell_window.measure`).
+  `calibration.py`
   turns those into a curve: `rule_from` puts black under the background,
   the noise p99 at `NOISE_LEVEL` and the titre at `TITRE_LEVEL` on an asinh
   curve (`server/utils/display_curve.py`; linear when a linear window meets
@@ -3150,7 +3167,16 @@ deliberately left out and what should be built next.
   markers; evidence pictures keep the entry's own windows; `record_choices` stores the
   choice and `apply_choices` re-applies it, so it survives a recompute;
   `load_current` returns a record only while the table and QC fingerprints
-  still match; `display_spec` gives `{window, curve, source}` at a scale; a
+  still match; `calibrate(image_cells=True)` anchors a project with no cell
+  table on `image_cells` and records `cells_from` (`image:mask`,
+  `image:nuclei`, or `image:none` when none were found), recomputing a stored
+  record that was not image-anchored (or found none), and only an
+  auto-contrast run asks, because it reads fields of every channel; an
+  image-anchored record is stale once the project has a table
+  (`_image_anchored_with_table`, in `calibrate`, `load_current` and
+  `current`), and a choice keeps its gain but loses `observed` when the
+  anchoring cells change (`_without_observed`), because what a check saw
+  names cells the new anchors do not have; `display_spec` gives `{window, curve, source}` at a scale; a
   per-project lock makes `calibrate`'s save and `record_choices` one writer at
   a time, because a session's bulk pass and the viewer's first-open
   calibration may both be at it. Anchoring white on the brightest cells' raw
@@ -3174,7 +3200,10 @@ deliberately left out and what should be built next.
   background job per project with later requests queued on it, behind core's
   `GET /display_contrast` and `POST /display_contrast/compute` in
   `server/routes/data_routes.py`; a project with no cell table is
-  `unavailable` and the viewer's own auto-levelling stands). `crops.self_window_panel` draws a T2 panel windowed on the
+  `unavailable` and the viewer's own auto-levelling stands, until an
+  auto-contrast run has anchored its record on image cells
+  (`_anchored_on_image`) -- the viewer never starts that read itself, because
+  it reads fields of every channel). `crops.self_window_panel` draws a T2 panel windowed on the
   judged cell's own disc and `crops.mark_centre` ticks its centroid, with no
   mask outline, because a mask may be a nucleus, a Voronoi fill or absent;
   `collage.rerender` redraws a collage from its stored manifest, so a
@@ -3507,7 +3536,18 @@ deliberately left out and what should be built next.
   closes the terminal `display_set` through `Engine.close_display_units`
   (from `settle_display` and bulk; `BULK_WORDS`, report `STATE_LABELS`,
   `agentPanel.js` `OUTCOMES`, skipped by provenance), and `next_packet`'s
-  decided reply omits `gating_report`. `redo` first calls
+  decided reply omits `gating_report`. A contrast run also takes an image
+  with no cell table, whose cells are found in its pixels: `views.markers(ds)`
+  is the table's markers or, with no table, the image's channel names (read
+  by `_markers_for`, `channel_match`, `_plan_fields`; `context.for_project`
+  likewise), `setup_images(session, images, purpose)` leaves such an image
+  out of the set-up check for purpose `contrast` (in `start`, `prepare` and
+  `DecisionRun`'s form wait, through `GatingWorkflow.purpose` "gating" /
+  `ContrastWorkflow.purpose` "contrast"), it counts 0 cells for the reference
+  pick, and `bulk.calibrate_image` and `packets.display_setup` calibrate with
+  `image_cells`; `ai.balance`'s contrast estimate refuses only a blank image,
+  so the launcher offers AI Auto Contrast on an image-only project. Gating
+  still needs the table. `redo` first calls
   `calibration.forget_choices(project, channels)`, because a settled choice
   otherwise outlives the session and is not asked again. The harness runs it
   as `decision.ContrastWorkflow` (`plexora ai run contrast`, `RUN_KINDS`,
@@ -10096,6 +10136,22 @@ in **5.6 s**.
   without the current `known_guide`, or any rerender) clears what that reader
   is credited with holding, so a pointer (`{"as_in": packet_id}`) only ever
   names a packet the reader actually holds.
+- **Every answer schema the harness can send stays inside `schema.VERIFIED`**
+  (`ai/harness/schema.py`: 20 optional, 7 unions by spatialagents' count --
+  gating.planning's task schema, answered since 2026-10-15), because the
+  documented limits (24, 16) are not the provider's only ones: QC's
+  `artifact_confirm` with both its forms at once (17, 10) was refused
+  ("Schema is too complex") on 2026-10-28, a 400 that ends a run.
+  `test_every_schema_sent_stays_inside_what_the_provider_compiles` walks
+  `schema.sendable()`; it is a test gate, not a runtime limit. Raising
+  `VERIFIED` needs evidence from `tools/ai_schema_check.py` that the provider
+  compiled the larger schema. An answer with `FORMS` (a ClassVar on its
+  model, plus `form_of(packet)`) is never sent whole -- `for_kind` gives None
+  and `_merge` refuses it -- only the form its packet asks for
+  (`for_form`, via `for_packet(..., packet)`), and is still validated against
+  the whole model. A schema the provider refuses anyway is asked for in
+  words (`GatewayClient.messages`, `schema.in_words`) and remembered for the
+  process, so it is never sent again.
 - **Display calibration lives in the plugin store's `"display"` namespace**
   and is what `render_region`'s `"auto"` windows read; `"percentiles"` keeps
   the pre-autogate rule, so an old caller that asked for percentiles is
@@ -11432,6 +11488,14 @@ skill writes `{{VISUAL.*}}` / `{{SAM.*}}` placeholders instead. The task
 registry: after editing `plexora/ai/tasks.yaml`, run
 `python tools/ai_tasks_sync.py generate` (it regenerates
 `licensing/src/ai/tasks.json`) and then `python tools/ai_tasks_sync.py check`.
+An answer schema (added 2026-10-28): after a change that grows one past
+`schema.VERIFIED`, `python tools/ai_schema_check.py [PATTERN ...] [--dev]`
+(dev only) sends each `schema.sendable()` schema whose label contains a
+PATTERN once through the gateway (32 output tokens, the words fallback
+bypassed so a refusal is reported), prints its optional and union counts
+and accepted or REFUSED, and exits 1 on any refusal; it uses this device's
+licence or `BIOCOGNIA_AI_TOKEN`. A refused schema costs nothing; an
+accepted one a fraction of a credit.
 Targeted tests: `tests/test_qc_visual_tools.py`,
 `test_qc_visual_session.py`, `test_qc_segment_tool.py`, `test_ai_skills.py`,
 `test_mcp_qc.py`, `test_qc_tool_surface.py`, `test_mcp_profiles.py`,
@@ -13280,7 +13344,8 @@ for the asset tag `20261024_drop_router`. New tests: `tests/test_drop_plan.py`
 full-suite count was reported for this change. Failures observed on a clean
 HEAD before it (macOS, 2026-10-24), so not caused by it:
 `test_roi_magic_js::test_probe`,
-`test_ai_routes::test_the_balance_carries_an_estimate_for_the_open_project`,
+`test_ai_routes::test_the_balance_carries_an_estimate_for_the_open_project`
+(its expected kinds lacked `contrast`; corrected 2026-10-28),
 two in `test_gating_delta`,
 `test_mini_map::test_the_probe_catches_a_missing_contrast_clamp`, two in
 `test_slider_css`, `test_plugin_css_boundary[gating]`, and
@@ -14436,6 +14501,76 @@ replaced by `test_every_browse_opens_the_explorer_first` and
 `test_the_cta_opens_the_import_dialog_on_this_sample` and
 `test_what_was_added_is_taken_on_without_losing_the_session`. No full-suite
 count was reported with this change, so the Validation baseline is unchanged.
+
+### AI Auto Contrast runs on an image with no cell table (2026-10-28)
+
+The contrast check anchors a marker's window on its own cells, so a project
+with no table was refused -- yet an image-only multiplex project is exactly
+where the viewer's own levelling is all there is. The cells are now found in
+the image (new `agent/evidence/image_cells.py`: mask label centroids, else
+nuclei of the nuclear stain, in up to 16 sampled tissue fields at a coarse
+level) and banded on their disc means; every number a window is set from is
+still read at level 0 by `cell_window.measure`, so the find only orders the
+bands. Measured on the LSP23362 slide (43551 x 49233, 19 channels, on a
+network share): 8,007 cells from 16 fields at level 1 in about 16 s, and the
+disc-mean ranks against the real table's values at Spearman 0.89-0.98 per
+marker (mask labels are the table's cell ids). `image_qc.otsu_level` is
+factored out of `tissue_mask` for the nucleus find.
+`cell_window.cell_windows(from_image=)`, `calibration.calibrate(image_cells=)`
+and `display_contrast._anchored_on_image` carry it (see the Repository Map's
+`agent/evidence/`); only an auto-contrast run reads it, because it reads
+fields of every channel, and the viewer offers the result once it is stored.
+The gating plugin names an image-only project's channels as its markers
+(`views.markers`) and leaves it out of the contrast set-up
+(`setup_images`); gating itself still needs the table. `calibration.VERSION`
+is unchanged. Tests: new `tests/test_image_cells.py` (10 cases); in
+`tests/test_gating_session.py`,
+`test_auto_contrast_runs_on_an_image_with_no_cell_table` (mask and nuclei)
+and `test_gating_still_needs_the_table_an_image_only_project_lacks`, on
+`make_gating_project(table=False)`; `tests/test_ai_routes.py::
+test_the_balance_carries_an_estimate_for_the_open_project` now expects
+`{"gating", "contrast", "qc"}` (it failed the same way at clean HEAD: contrast
+has been in `RUN_KINDS` since 23235a74). The full suite on the Windows machine
+with this change: 9822 passed, 139 failed, 40 skipped, 14 errors (1 h 28 min),
+none of them in a file the change touched -- the conda env there lacks
+`hdf5plugin` (~78, every Imaris/volume test) and `spatialbridge` (~25 + 8
+errors), the account cannot make symlinks (WinError 1314), and the rest are
+path separators, CRLF and mis-decoded `·`/`×`. The two
+`tests/test_gating_delta.py` failures (`a_brief_goes_once...`,
+`trims_drop_score_components...`) fail identically at clean HEAD. The
+Validation baseline is not restated from that run.
+
+### An answer schema the provider will not compile is sent in its form, or in words (2026-10-28)
+
+An AI Quality Control run on lsp23362 stopped with `provider_rejected` at its
+6th packet (`artifact_confirm`, 4 batched candidates), and a resume failed the
+same way. The gateway relays a provider 4xx as `provider_rejected`, and the
+job record, trace and stdout keep only that code -- the provider's message
+reaches only the run's `paused` event -- so the cause was found by sending the
+schema alone: Anthropic's `invalid_request_error: "Schema is too complex."`
+QC's `ArtifactConfirmAnswer` carried both its forms (one candidate's fields at
+the top level and `verdicts` by label, each entry the same fields): 17
+optional and 10 unions, under the documented 24/16 but past what the provider
+compiles. It had last been answered on this machine on 2026-10-06. Now
+`ArtifactConfirmAnswer.FORMS` (`one` = `ConfirmVerdict`'s fields, `many` =
+`verdicts`; the first field names the form) and `form_of(packet)` (`many`
+when the evidence lists `candidates`) say which form a packet is sent, and
+`schema.for_form` narrows the schema to it (the naming field required and
+non-null); `Workflow.schema_for(kind, task, packet)` passes the packet
+through from `_content` and `_call`. A schema refused anyway is retried once
+in words by `GatewayClient.messages` (idempotency key + `.words`) and never
+sent again in that process; any other refusal is re-raised. Both forms (8
+optional / 4 unions each) were accepted by claude-opus-5-5 on 2026-10-28
+through the new `tools/ai_schema_check.py`. See Key Invariants for the
+`schema.VERIFIED` gate. Tests, in `tests/test_ai_harness.py`:
+`test_an_answer_with_forms_is_sent_only_the_form_its_packet_asks_for`,
+`test_every_schema_sent_stays_inside_what_the_provider_compiles`,
+`test_a_schema_the_provider_will_not_compile_is_asked_for_in_words`, and
+`test_every_required_field_is_a_property_the_model_can_send` now walks
+`sendable()`; `tests/test_ai_harness_qc.py`'s provider-ready test iterates
+`sendable()` and requires every QC kind covered, whole or by its forms. Every
+test file that touches the QC answers or the harness schemas (13 files:
+`test_ai_*`, `test_qc_*`) passed, 234 tests; no full suite was run for it.
 
 ## Agent Operating Notes
 

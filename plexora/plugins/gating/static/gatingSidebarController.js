@@ -765,7 +765,9 @@ class GatingSidebarController {
             "--plx-number-width", `calc(${Math.max(3, widest)}ch + 8px)`);
     }
 
-    setGateRange(values, eventName) {
+    /** `quiet`: not counted as a brush or a commit (an agent's look playing
+     *  a frame at a time, gatingAgentShow.js). */
+    setGateRange(values, eventName, { quiet = false } = {}) {
         this.agentPreview = null;
         const fullName = this.dataLayer.getFullChannelName(this.gateMarker);
         const normalized = this.normalizeGateRange(values, this.getGateRange(this.gateMarker));
@@ -777,7 +779,7 @@ class GatingSidebarController {
         this.eventHandler.trigger(eventName, this.gatingList.selections);
         this.planes?.paintReadout();
         // Counted, never with the marker or the values (optional telemetry).
-        window.PlexoraTelemetry?.feature(
+        if (!quiet) window.PlexoraTelemetry?.feature(
             eventName === CSVGatingList.events.SELECTION_CHANGED ? "gate.commit" : "gate.brush",
             "gating");
         if (eventName === CSVGatingList.events.SELECTION_CHANGED) {
