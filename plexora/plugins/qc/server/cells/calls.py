@@ -73,6 +73,7 @@ import re
 import numpy as np
 import polars as pl
 
+from plexora.agent.expression import values_logged
 from plexora.plugins.qc.server import class_rules, results, schemas
 
 
@@ -132,9 +133,11 @@ def _area_column(ds):
     return next((n for n in names if AREA.match(str(n))), None)
 
 
-def _to_log(values, log_transformed):
+def _to_log(ds, values):
+    """A marker column on a log scale: as it is when the table's values are
+    logged already (`expression.values_logged`), log1p'd otherwise."""
     values = np.asarray(values, dtype=np.float64)
-    return values if log_transformed else np.log1p(np.maximum(values, 0))
+    return values if values_logged(ds) else np.log1p(np.maximum(values, 0))
 
 
 def _cell_diameter(ds):
@@ -467,7 +470,7 @@ def derive(ds, result, table, *, pairs=None, geometries=None, seg=None, dna=None
         for m in needed:
             if m in read:
                 raw = np.asarray(read[m], dtype=np.float64)
-                values_of[m] = _to_log(raw, ds.table.log_transformed)[keep]
+                values_of[m] = _to_log(ds, raw)[keep]
     in_marker_region = {}
     for marker, rois in marker_regions.items():
         mask = np.zeros(n, dtype=bool)
@@ -712,8 +715,7 @@ def _detections_and_rim(ds, keep, markers, values_of, xs, ys, hints, tissue, qua
         read = ds.table.columns(missing)
         for m in missing:
             if m in read:
-                values_of[m] = _to_log(np.asarray(read[m], dtype=np.float64),
-                                       ds.table.log_transformed)[keep]
+                values_of[m] = _to_log(ds, np.asarray(read[m], dtype=np.float64))[keep]
     if xs is None:
         xs, ys = _positions(ds, keep)
     rules = schemas.MARKER_EVIDENCE

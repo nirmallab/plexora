@@ -21,7 +21,8 @@ as it is when its shape says logged, with log1p on when it says raw, and is
 only asked about when the shape is unclear (`ambiguous`: the harness puts the
 numbers to a model before anyone is asked; `plexora.ai.harness.expression`).
 
-Pure: numpy in, dicts out.
+Pure: numpy in, dicts out -- but for `values_logged`, which reads a
+project's table.
 """
 
 from __future__ import annotations
@@ -226,6 +227,36 @@ def reads_logged(stats, source) -> bool:
     if says == "raw":
         return False
     return says == "logged" or _layer(source) is not None
+
+
+def values_logged(ds) -> bool:
+    """Whether the marker values `ds.table` hands back are logged already:
+    the project log1p's them as they are read, or the matrix it reads as it
+    is is log-like (`reads_logged`). The log1p switch alone says "raw" of a
+    `log` layer, because this module's rule reads such a layer with the switch
+    off -- and gating, QC's cell calls and the display caps that took the
+    switch at its word log1p'd it a second time (ImageLSP23362, 2026-10-28).
+    Cached per matrix. A table that names no matrix (no
+    `expression_fingerprint`) is taken at its flag; no table is not logged."""
+    table = getattr(ds, "table", None)
+    if table is None:
+        return False
+    fingerprint = getattr(table, "expression_fingerprint", None)
+    if table.log_transformed or fingerprint is None:
+        return bool(table.log_transformed)
+
+    def compute():
+        markers = list(table.markers)
+        if not markers:
+            return False
+        columns = table.columns(markers)
+        n = len(columns[markers[0]])
+        rows = (np.random.default_rng(0).choice(n, SAMPLE_CELLS, replace=False)
+                if n > SAMPLE_CELLS else slice(None))
+        samples = {m: np.asarray(columns[m], dtype=np.float64)[rows] for m in markers}
+        return reads_logged(classify_markers(samples), ds.project.feature_source)
+
+    return bool(ds.cached(("values_logged", 1, fingerprint), compute))
 
 
 def fallback_choice(options) -> dict:

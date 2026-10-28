@@ -987,12 +987,13 @@ partner's errors. So the run keeps an evidence graph
   gate.
 - **A logged matrix read as it is** (2026-10-28). The log1p switch says
   whether Plexora log1p's the values as it reads them, not whether they are
-  logged, so a `log` layer is read with it off. Gating asks
-  `model.values_logged` instead: the switch, or the matrix as read, classified
-  by `expression.reads_logged` (`recommend`'s rule). Such a layer is then
-  fitted as it stands. Taking the switch at its word log1p'd ImageLSP23362's
-  `log` layer a second time: its candidates thinned from 10-16 to 2-4, and
-  14 of 15 gates landed low.
+  logged, so a `log` layer is read with it off. Gating, QC's cell calls
+  (`calls._to_log`), the display's cell cap (`calibration._cell_caps`) and a
+  collage's gate in pixels ask `expression.values_logged` instead: the switch,
+  or the matrix as read, classified by `expression.reads_logged`
+  (`recommend`'s rule). Such a layer is then taken as it stands. Taking the
+  switch at its word log1p'd ImageLSP23362's `log` layer a second time: its
+  candidates thinned from 10-16 to 2-4, and 14 of 15 gates landed low.
 - **Viewer during setup**: an `expression_setup` packet is mirrored as
   `open_tool {ask: true}` -- the tab shows its own requirements prompt (the
   quiet panel open cannot succeed while `features` is unconfirmed); a quiet

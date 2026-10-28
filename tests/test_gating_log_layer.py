@@ -5,11 +5,14 @@ The import reads a SpatialData `log` layer with the log1p switch off -- right,
 since the values are logged already -- and gating used to take the switch at
 its word: "not transformed" meant "raw", so it fitted log1p(log). On
 ImageLSP23362 (2026-10-28) that compressed every marker's candidates until two
-or three were left, and 14 of 15 gates came out low.
+or three were left, and 14 of 15 gates came out low. QC's cell calls and the
+display's cell cap read the same switch the same way; all of them now ask
+`expression.values_logged`.
 """
 
 import json
 from pathlib import Path
+from types import SimpleNamespace
 
 import anndata as ad
 import numpy as np
@@ -122,3 +125,44 @@ def test_reads_logged_is_recommends_rule(stats, source, logged):
     """`recommend` reads a log-like layer as it is unless its shape says raw,
     and X only when its shape says logged; `reads_logged` agrees."""
     assert expression.reads_logged(stats, source) is logged
+
+
+def test_qc_cell_calls_read_a_log_layer_as_it_is(tmp_path, store):
+    """QC compares cells on a log scale: a log layer is taken as it stands,
+    raw intensities are log1p'd -- the same cells, the same numbers."""
+    from plexora.plugins.qc.server.cells import calls
+
+    layer = _open(tmp_path, "qclayer", store, features={"source": "layer", "layer": "log"})
+    raw = _open(tmp_path, "qcraw", store, features={"source": "X"})
+    from_layer = calls._to_log(layer, layer.table.columns(["CD45"])["CD45"])
+    from_raw = calls._to_log(raw, raw.table.columns(["CD45"])["CD45"])
+    np.testing.assert_allclose(from_layer, from_raw, rtol=1e-5)
+
+
+def test_the_display_cap_is_in_image_units_from_either_matrix(tmp_path, store):
+    """The cell-side cap on a marker's display window is in pixel units
+    whichever matrix the project reads: a log layer comes back with expm1,
+    not used as if its log values were intensities."""
+    from plexora import api
+    from plexora.agent.evidence import calibration
+
+    _open(tmp_path, "caplayer", store, features={"source": "layer", "layer": "log"})
+    _open(tmp_path, "capraw", store, features={"source": "X"})
+    session = SimpleNamespace(data=api.project_data)
+    from_layer = calibration._cell_caps(session, "caplayer", list(MARKERS))
+    from_raw = calibration._cell_caps(session, "capraw", list(MARKERS))
+    assert set(from_layer) == set(MARKERS)
+    for marker in MARKERS:
+        assert from_layer[marker] == pytest.approx(from_raw[marker], rel=1e-3)
+        assert from_layer[marker] > 1000          # intensities, not log units
+
+
+def test_values_logged_without_a_matrix_to_read():
+    """No table is not logged; a table that names no matrix (a stand-in with
+    no expression fingerprint) is taken at its own flag."""
+    assert expression.values_logged(SimpleNamespace()) is False
+    assert expression.values_logged(SimpleNamespace(table=None)) is False
+    flagged = SimpleNamespace(table=SimpleNamespace(log_transformed=True))
+    unflagged = SimpleNamespace(table=SimpleNamespace(log_transformed=False))
+    assert expression.values_logged(flagged) is True
+    assert expression.values_logged(unflagged) is False

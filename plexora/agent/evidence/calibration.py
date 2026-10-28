@@ -71,6 +71,7 @@ import threading
 
 import numpy as np
 
+from plexora.agent import expression
 from plexora.agent.errors import AgentError
 
 #: Bumped when a window's rule changes; a stored record of another version is
@@ -201,16 +202,17 @@ def _cell_caps(session, project, names) -> dict:
         if not columns:
             return {}
         values = ds.table.columns(sorted(set(columns.values())))
-        caps = {name: cell_cap(values[column], ds.table.log_transformed)
+        logged = expression.values_logged(ds)
+        caps = {name: cell_cap(values[column], logged)
                 for name, column in columns.items()}
         return {k: v for k, v in caps.items() if v is not None}
     except Exception:  # a cap is a refinement; a window without one is still a window
         return {}
 
 
-def _log_transformed(session, project):
+def _values_logged(session, project):
     try:
-        return bool(session.data(project).table.log_transformed)
+        return expression.values_logged(session.data(project))
     except Exception:
         return None
 
@@ -850,7 +852,7 @@ def current(session, project, channels) -> dict:
     record = session.project(project)
     identity = (project, str(record.image.src), tuple(sorted(channels)),
                 source_image.ReaderShelf.identity_of(session.image_data(project)),
-                _log_transformed(session, project), table, qc)
+                _values_logged(session, project), table, qc)
     if identity in _CURRENT:
         return _CURRENT[identity]
     channel_records = list(record.image.real_channels)

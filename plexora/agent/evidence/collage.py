@@ -47,6 +47,7 @@ import math
 import numpy as np
 
 from plexora.agent.errors import AgentError
+from plexora.agent.expression import values_logged
 
 MANIFEST_KIND = "plexora.gating_collage"
 
@@ -426,10 +427,11 @@ def render_collage(session, data, *, layout, rows, marker, gate=None, high=None,
     font, small = _font(11), _font(10)
     draw.rectangle((0, 0, width, header_h - 1), fill=HEADER_BG)
     draw.text((4, 1), title or f"{marker} · {layout}", fill=TEXT, font=font)
-    # The gate-relative panel works on pixels; a gate on a log1p'd table is
-    # in log units and must come back to intensities first, or [gate/4,
-    # gate*4] is a window of single digits and every cell is white.
-    table_log = bool(getattr(getattr(data, "table", None), "log_transformed", False))
+    # The gate-relative panel works on pixels; a gate on a logged table
+    # (`expression.values_logged`: log1p'd on read, or a log layer read as it
+    # is) is in log units and must come back to intensities first, or
+    # [gate/4, gate*4] is a window of single digits and every cell is white.
+    table_log = values_logged(data)
 
     def pixel_gate(value):
         if value is None or not table_log:

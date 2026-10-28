@@ -13,6 +13,7 @@ from scipy.stats import norm
 from sklearn.mixture import GaussianMixture
 
 from plexora import api
+from plexora.agent.expression import values_logged  # noqa: F401  (gating's callers)
 from plexora.plugins.gating.server.database import LEGACY_STATE_TABLE
 from plexora.server.utils import safe_pickle
 
@@ -252,37 +253,6 @@ def floor_spike(fit) -> int:
     q01, q25, q75 = _sorted_quantile(body, np.array([0.01, 0.25, 0.75]))
     iqr = max(float(q75 - q25), 1e-9)
     return k if float(q01 - low) > FLOOR_GAP_IQR * iqr else 0
-
-
-def values_logged(ds) -> bool:
-    """Whether the marker values `ds.table` hands back are logged already:
-    the project log1p's them as they are read, or the matrix it reads as it
-    is is log-like (`expression.reads_logged`). The log1p switch alone says
-    "raw" of a `log` layer, because `expression`'s rule reads such a layer
-    with the switch off -- and gating that took the switch at its word
-    log1p'd it a second time (ImageLSP23362, 2026-10-28). Cached per matrix;
-    a table that names no matrix (no `expression_fingerprint`) is taken at its
-    flag."""
-    table = ds.table
-    fingerprint = getattr(table, "expression_fingerprint", None)
-    if table.log_transformed or fingerprint is None:
-        return bool(table.log_transformed)
-
-    def compute():
-        from plexora.agent import expression
-
-        markers = list(table.markers)
-        if not markers:
-            return False
-        columns = table.columns(markers)
-        n = len(columns[markers[0]])
-        rows = (np.random.default_rng(0).choice(n, expression.SAMPLE_CELLS, replace=False)
-                if n > expression.SAMPLE_CELLS else slice(None))
-        samples = {m: np.asarray(columns[m], dtype=np.float64)[rows] for m in markers}
-        return expression.reads_logged(expression.classify_markers(samples),
-                                       ds.project.feature_source)
-
-    return bool(ds.cached(("values_logged", 1, fingerprint), compute))
 
 
 def _fit_space(values, log_transformed):
