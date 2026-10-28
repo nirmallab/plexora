@@ -10,8 +10,9 @@ before any of that behaviour is reachable at all:
   channelList.js        opens it, and takes the new names on when it lands
   dataLayer.js          no longer has a second way to post the same thing
   native_dialog.py      knows the filter its Browse button asks for
-  fileLocation.js       lends it the node relay, so the Remote side of its
-                        switch has bytes to post
+  fileLocation.js       lends it the node relay, so a machine picked on
+                        its chip has bytes to post
+  machineChip.js        draws that chip, the home page's
 
 The server half is tests/test_channel_names_upload.py; what happens to the
 page once a rename lands is tests/test_channel_rename_state.py.
@@ -190,9 +191,9 @@ def test_a_server_on_another_machine_gets_the_upload_back(probe):
     """There the two stop being the same thing: the box means the server's
     paths, and a marker list on this laptop has no way in at all -- which is
     where it usually is, because the panel came from a collaborator by email.
-    It is on the Local side of the switch, one flip away, and it is the only
-    live control there when nothing can read this computer's paths."""
-    assert "this computer is one flip away, and says what it can and cannot do" in probe, probe
+    It is behind Local on the chip, one pick away, and it is the only live
+    control there when nothing can read this computer's paths."""
+    assert "this computer is one pick away, and says what it can and cannot do" in probe, probe
     assert "choosing a file sends it, without a path to name it by" in probe, probe
     assert "...and the names it came back with are applied" in probe, probe
     assert ("a file staged from this computer survives being asked about columns"
@@ -211,12 +212,12 @@ def test_the_two_ways_in_are_never_sent_together():
 # -- which machine the box means ---------------------------------------------
 
 
-def test_the_switch_opens_on_the_side_the_box_has_always_meant(probe):
-    """A control appearing beside a field must not change what the field does
+def test_the_chip_opens_on_the_side_the_box_has_always_meant(probe):
+    """A control appearing in a field must not change what the field does
     for somebody who ignores it. The box has always meant the machine running
     Plexora, so that is the side it opens on -- which is Local on a desktop
     launch and Remote-the-server when Plexora is elsewhere."""
-    assert "...and the switch opens on the side the box has always meant" in probe, probe
+    assert "...and the chip opens on the side the box has always meant" in probe, probe
     assert "with Plexora elsewhere, the box still opens meaning the server" in probe, probe
     assert "...with the hint saying which machine that is" in probe, probe
 
@@ -228,22 +229,32 @@ def test_a_marker_list_on_a_data_node_now_has_a_way_in(probe):
     in both directions: a node path typed into the box named nothing the server
     could open, and Upload could only send what the browser could already see.
     """
-    assert "one connected machine is adopted rather than asked about" in probe, probe
+    assert "picking a machine on the chip puts the box on it" in probe, probe
     assert "...with Browse now asking the node" in probe, probe
     assert "loading it reads the bytes through the node" in probe, probe
     assert ("...and posts them as an upload, since the server has no path for it"
             in probe), probe
 
 
-def test_choosing_the_machine_is_the_same_question_asked_the_same_way(probe):
-    """One reachable machine is adopted rather than asked about, none opens a
-    connection rather than an empty list, and several is the picker -- the
-    shape dataLocation.choosePlace established, because a user meeting this in
-    two dialogs should not meet two behaviours."""
-    assert "more than one machine is a question, asked in the picker" in probe, probe
-    assert "...and the chip asks it again, so adopting one is not a one-way door" in probe, probe
-    assert "with nothing connected, Remote opens a connection rather than a list" in probe, probe
-    assert "cancelling the picker leaves the field on a side that works" in probe, probe
+def test_a_connected_machine_is_chosen_before_anybody_asks(probe):
+    """Connecting a server is how somebody says where their data is, so the
+    dialog opens on it -- as every data field does (dataLocation's
+    `whenConnected`). Not over anything the user already said: a typed path,
+    a hand on Local, or the server a remote session opens on, which is the
+    machine the image itself is on."""
+    assert "a machine already connected is chosen when the dialog opens" in probe, probe
+    assert "...but not over a path typed before the list arrived" in probe, probe
+    assert "...nor over a hand on Local" in probe, probe
+    assert ("...and a Plexora running elsewhere keeps the server, where the image is"
+            in probe), probe
+
+
+def test_the_way_out_is_the_x_at_every_stage(probe):
+    """No Cancel on the first stage and no Close after a mismatch: those sat
+    among the stage's answers, and leaving is not one of them."""
+    assert "the first stage has no Cancel: the X in the corner is the way out" in probe, probe
+    assert "...and it closes the dialog" in probe, probe
+    assert "...and no Close beside it: the X is the way out at every stage" in probe, probe
 
 
 def test_the_chosen_machine_survives_the_stages(probe):
@@ -285,22 +296,21 @@ def test_the_node_read_goes_through_the_one_place_that_knows_the_route():
 def test_the_row_asks_which_machine_so_the_shared_layer_does_not_ask_again():
     """The Upload… chooser is an `input[type=file]`, which fileLocation
     intercepts on click. Without the opt-out, pressing it after answering the
-    switch means answering one question twice in two different shapes."""
+    chip means answering one question twice in two different shapes."""
     dialog = source("src", "js", "views", "channelNamesUpload.js")
     assert 'setAttribute("data-file-location", "local")' in dialog
-    assert 'group.setAttribute("data-tooltip"' in dialog
+    assert "PlexoraMachineChip" in dialog
 
 
-def test_the_switch_is_the_same_control_the_import_fields_use():
-    """Same classes, so it is the same control and not a lookalike: the CSS is
-    in main.css beside dataLocation's own, and a restyle there has to reach
-    both or one dialog quietly stops matching the app."""
+def test_the_chip_is_the_same_control_every_path_field_uses():
+    """The shared chip, so it is the same control and not a lookalike -- the
+    home page's, through machineChip.js -- and the status line keeps
+    dataLocation's class, so a restyle there reaches both."""
     dialog = source("src", "js", "views", "channelNamesUpload.js")
-    for name in ("data-location", "data-location-toggle", "data-location-option",
-                 "data-location-place", "data-location-status"):
-        assert f'"{name}"' in dialog, name
-    css = source("src", "css", "main.css")
-    assert ".data-location-option.is-active" in css
+    assert "window.PlexoraMachineChip" in dialog
+    assert "Chip.wrap(input, chip)" in dialog
+    assert '"data-location-status"' in dialog
+    assert '"data-location-option"' not in dialog
 
 
 # -- a file dropped on the dialog (desktop app) --------------------------------
@@ -326,7 +336,7 @@ def test_a_drop_the_dialog_cannot_take_now_says_why(probe):
 
 
 def test_a_dropped_file_is_read_where_it_is(probe):
-    assert "a file dropped from this computer moves the switch back to Local" in probe, probe
+    assert "a file dropped from this computer moves the chip back to Local" in probe, probe
     assert "in a browser tab a file dropped on the dialog is sent as bytes" in probe, probe
 
 

@@ -7,7 +7,8 @@ that the two surfaces it replaced no longer do the job themselves:
   settingsPage.js   Connect opens the modal (a viewer connection)
   placePicker.js    Connect opens the modal (a data node) and has no prompt
                     box of its own left
-  dataLocation.js   a field flipped to Remote with nothing connected opens it
+  machineChip.js    a data field's chip opens it for a saved server that is
+                    down, and for Add a server…
   base.html         loads it before all three
 
 The server halves are tests/test_remote_connect.py (states, prompts, the log
@@ -231,9 +232,10 @@ def test_the_machine_picker_no_longer_asks_for_passwords():
 
 
 def test_a_field_with_nothing_connected_opens_the_modal():
-    location = source("src", "js", "services", "dataLocation.js")
-    assert "PlexoraConnectionModal" in location
-    assert "onlyPlace" in location
+    chip = source("src", "js", "views", "machineChip.js")
+    assert "window.PlexoraConnectionModal.open(" in chip
+    # Every data field asks through the chip.
+    assert "PlexoraMachineChip" in source("src", "js", "services", "dataLocation.js")
 
 
 def test_the_modal_is_loaded_before_everything_that_opens_it():
@@ -241,6 +243,7 @@ def test_the_modal_is_loaded_before_everything_that_opens_it():
     assert base.index("services/remoteState.js") < base.index("services/connectionModal.js")
     assert base.index("services/connectionModal.js") < base.index("services/placePicker.js")
     assert base.index("services/connectionModal.js") < base.index("services/dataLocation.js")
+    assert base.index("services/connectionModal.js") < base.index("views/machineChip.js")
 
 
 def test_the_modal_styles_ship_where_every_page_loads_them():

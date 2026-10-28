@@ -399,10 +399,11 @@ SSH and forgotten.
 
 ### How to use the data
 
-Every field that asks for a file has a small **L | R** switch beside it —
-**L**ocal or **R**emote. Flip it to **R** and the field asks which machine;
-pick the server you just connected. **Browse…** then lists that machine's
-filesystem, and the file stays where it is.
+Every field that asks for a file has a chip at the front of its path box —
+**Local**, or the name of a server. Click it for the list of machines and pick
+the server you just connected (a server that is connected when the dialog
+opens is already picked). **Browse…** then lists that machine's filesystem,
+and the file stays where it is.
 
 You can mix them in one project: an image on the cluster and a table on your
 laptop is two choices on two fields, not a mode. The globe in the toolbar says
@@ -1082,22 +1083,19 @@ there, register your laptop's node with it, and point your browser at it.
 
 ### How to connect to the data
 
-In the Plexora that opens — the one running on the cluster — import a project. Every data field has a compact
-**L | R** switch in the row, immediately before the path box — **L** for this
-computer, **R** for another machine. (Hover it, or read it with a screen
-reader, and it says so; the chip beside it names the machine **R** currently
-means.)
+In the Plexora that opens — the one running on the cluster — import a project. Every data field has a chip
+at the front of its path box: **Local** for this computer, or the name of the
+machine the field is on. Click it for the list — Local, every saved server
+and whether it is connected, **Add a server…** and **Manage servers**.
 
-- **Image** → **R**, then browse the cluster's filesystem.
-- **Cell table** → **L** (the default), then browse your laptop. Plexora hands
-  the path to the node it just started here.
+- **Image** → the cluster, then browse its filesystem.
+- **Cell table** → **Local**, then browse your laptop. Plexora hands the path
+  to the node it just started here.
 
-With one other machine connected, pressing **R** simply takes it — there is
-nothing to pick from a list of one. With none connected, **R** opens the
-connection dialog instead. The chip always opens the full list, so a machine
-adopted that way can still be changed.
+A field opens on a server that is already connected. Picking one that is not
+connected opens the connection dialog for it first.
 
-Nothing had to be declared first, and the same switch is on the Edit page and
+Nothing had to be declared first, and the same chip is on the Edit page and
 in the "this tool needs a mask" dialog, so a source can be changed later — the
 primary image excepted, which is fixed once the project exists because every
 ROI, figure and coordinate lives in its pixel space.

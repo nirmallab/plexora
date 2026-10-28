@@ -8,10 +8,11 @@
  * segmentation job that wrote it -- three machines, one form, and no reason
  * for any of it to have been declared in advance.
  *
- * So each field gets a **This computer / Remote** switch, and the question is
- * asked where it comes up: at the moment the data is added, per modality, not
- * at launch. Remote opens the place picker (placePicker.js), which lists the
- * saved SSH connections and opens one on the spot if it is not already up.
+ * So each field asks it, where it comes up: at the moment the data is added,
+ * per modality, not at launch. The question is the home page's chip at the
+ * front of the path box (views/machineChip.js) -- "Local", or the server's
+ * name -- whose menu lists the saved SSH connections and opens one on the spot
+ * if it is not already up.
  *
  * **This computer means the machine the browser is on.** Which is reachable
  * two different ways, and the difference is not cosmetic:
@@ -67,7 +68,7 @@ window.PlexoraDataLocation = (function () {
     //: The machine the last field settled on, offered as the starting point
     //: for the next one. An import names an image, a mask and a table, and
     //: they are on one machine far more often than not -- asking three times
-    //: is the same question three times, and the switch is right there for the
+    //: is the same question three times, and the chip is right there for the
     //: case where the answer differs.
     let lastPlace = null;
 
@@ -100,7 +101,7 @@ window.PlexoraDataLocation = (function () {
     }
 
     /**
-     * Whether to render the switch at all.
+     * Whether to ask at all.
      *
      * Always, now. There is a second machine in every arrangement Plexora runs
      * in -- either the server is somewhere else, or a saved connection could
@@ -201,7 +202,7 @@ window.PlexoraDataLocation = (function () {
     }
 
     /**
-     * @function attach - put a location switch on one path field.
+     * @function attach - ask "which machine?" of one path field.
      *
      * @param input the text input the field already had. When the value has to
      *   become a locator its `name` moves to a hidden companion, so what the
@@ -210,19 +211,18 @@ window.PlexoraDataLocation = (function () {
      *   they picked /scratch/study/cells.h5ad.
      * @param options `kind` (image | segmentation | table), `filter`/`mode`
      *   for the browse dialog, and `onChange` called whenever the value the
-     *   form would submit changes. `mount`/`statusMount` override where the
-     *   two rendered pieces land -- see below, where they are used. `bare`
-     *   renders no switch at all, for a caller that draws its own and moves
-     *   this one with `setWhere()`.
+     *   form would submit changes. `statusMount` overrides where the status
+     *   line lands. `bare` draws no chip at all, for a caller that draws its
+     *   own and moves this one with `setWhere()`.
      * @returns {{where, submitValue, blocking, release, element}} or null when
      *   the field is not shaped to render into.
      */
     function attach(input, options = {}) {
         if (!input) return null;
         // Every surface puts the input inside a row inside a field, and the
-        // switch goes above the row. A caller that does not is one this cannot
-        // render into -- better to leave their field exactly as it was than to
-        // throw halfway through building it.
+        // status line goes under the row. A caller that does not is one this
+        // cannot render into -- better to leave their field exactly as it was
+        // than to throw halfway through building it.
         const row = input.parentNode;
         const field = row && row.parentNode;
         if (!field) return null;
@@ -234,54 +234,6 @@ window.PlexoraDataLocation = (function () {
         const onChange = options.onChange || function () {};
         const formName = input.getAttribute("name") || "";
 
-        // One letter each, and the reason is width. This control sits INSIDE
-        // the field's row, immediately before the path box, on forms that
-        // already have four of them -- and "This computer | Remote" spent more
-        // of that row than the box it governs. What the letters mean is
-        // carried by the aria-labels (which is what a screen reader reads
-        // instead of them) and by the tooltip on the group; the place chip
-        // beside it names the actual machine, which is the part that changes.
-        //
-        // The surfaces that give this switch a ROW of its own -- the home page
-        // and the import dialog -- draw the missing word themselves, as a
-        // label before the chip and a caption after it. That is this control's
-        // one shape, spelt out where there is room and abbreviated where there
-        // is not; two renderings of the switch itself would be two things to
-        // learn for one question.
-        const root = el("div", "data-location");
-        const group = el("div", "data-location-toggle");
-        group.setAttribute("role", "radiogroup");
-        group.setAttribute("aria-label", "Where this file is");
-        // The letters spelt out, in the shortest form that still expands them:
-        // a mouse needs to be told what L and R stand for, and does not need a
-        // sentence to be told it.
-        group.setAttribute("data-tooltip", "Data Location — (L)ocal | (R)emote");
-        const buttons = {};
-        [[LOCAL, "L", "Local — this computer"],
-         [REMOTE, "R", "Remote — another machine"]].forEach(
-            ([value, label, described]) => {
-                const button = el("button", "data-location-option", label);
-                button.type = "button";
-                button.dataset.where = value;
-                button.setAttribute("role", "radio");
-                button.setAttribute("aria-label", described);
-                button.addEventListener("click", () => press(value));
-                buttons[value] = button;
-                group.appendChild(button);
-            });
-        root.appendChild(group);
-
-        //: Which machine Remote currently means, and the way to change it
-        //: without going back through the toggle. `force`: this chip is the
-        //: only way to see the list when there is exactly one machine, which
-        //: the toggle adopts silently -- without it that shortcut would be a
-        //: one-way door.
-        const placeChip = el("button", "data-location-place");
-        placeChip.type = "button";
-        placeChip.hidden = true;
-        placeChip.addEventListener("click", () => choosePlace(true));
-        root.appendChild(placeChip);
-
         // Sending the bytes -- the one thing a browser can do that naming a
         // path cannot. Offered alongside the path box when there is a node to
         // read files in place, and instead of it when there is not.
@@ -292,11 +244,10 @@ window.PlexoraDataLocation = (function () {
             chooser.type = "file";
             chooser.accept = UPLOAD_SUFFIXES.join(",");
             chooser.hidden = true;
-            // This field has already asked which machine, in its own switch
-            // two elements to the left. Without the opt-out the shared layer
-            // (services/fileLocation.js) asks again in a modal, so choosing
-            // Remote and then pressing Upload means answering the same
-            // question twice in two different shapes.
+            // This field has already asked which machine, in its own chip.
+            // Without the opt-out the shared layer (services/fileLocation.js)
+            // asks again in a modal, so pressing Upload would mean answering
+            // the same question twice in two different shapes.
             chooser.setAttribute("data-file-location", "local");
             chooser.addEventListener("change", () => {
                 const file = chooser.files && chooser.files[0];
@@ -305,35 +256,23 @@ window.PlexoraDataLocation = (function () {
             uploadButton = el("button", "browse-button", "Upload…");
             uploadButton.type = "button";
             uploadButton.addEventListener("click", () => chooser.click());
-            // The button goes at the END of the row, beside Browse, because
-            // that is what it is an alternative to. Only the invisible file
-            // input lives here.
-            root.appendChild(chooser);
         }
 
-        // The switch goes IN the row, immediately before the box it governs --
+        // The chip goes IN the path box, at its front, as on the home page --
         // "which machine?" and "which file?" are one question asked in two
         // halves, and a control floating above the row reads as a setting for
         // the whole form rather than for this one field. The status line goes
         // under the field, where a sentence has room to be a sentence.
         //
-        // `mount` is for the one surface where that reasoning inverts. The
-        // landing page holds exactly ONE path field, so a switch above the row
-        // governs the whole page precisely BECAUSE the whole page is that one
-        // field -- and it has to sit above, because it also governs the Select
-        // File / Select Folder pair, which is not in the row at all. Sharing
-        // one switch between the two controls is the point: the alternative is
-        // asking which machine twice on a page whose whole job is one image.
-        //
-        // `bare` is the home page again, since it stopped using the toggle at
-        // all: it asks "which machine?" with a chip inside its path field and
-        // a menu of the actual machines, and drives this state with setWhere().
-        // The state stays HERE -- it is still the one thing that knows what to
-        // submit for a path on another machine -- only its two letters go.
+        // `bare` is the home page and the Import dialog, which draw that chip
+        // themselves (they also govern controls outside the box) and drive
+        // this state with setWhere(). The state stays HERE either way -- it is
+        // the one thing that knows what to submit for a path on another
+        // machine. The chip itself is built below, once that state exists.
         const status = el("div", "data-location-status");
-        if (options.mount) options.mount.appendChild(root);
-        else if (!options.bare) row.insertBefore(root, row.children[0]);
-        if (uploadButton) row.appendChild(uploadButton);
+        // The button goes at the END of the row, beside Browse, because that
+        // is what it is an alternative to.
+        if (uploadButton) row.append(uploadButton, chooser);
         (options.statusMount || field).appendChild(status);
 
         //: Carries the locator under the field's own name while the visible
@@ -373,9 +312,17 @@ window.PlexoraDataLocation = (function () {
         let pollTimer = null;
         let shareToken = 0;
         //: Whether this field's machine has been settled -- by a stored value,
-        //: by a hand on the switch, by a caller, or by something typed. Until
+        //: by a hand on the chip, by a caller, or by something typed. Until
         //: it has, a connected machine may still be adopted (`whenConnected`).
         let decided = Boolean(arriving);
+
+        const Chip = window.PlexoraMachineChip;
+        const chip = !options.bare && Chip ? Chip.create({
+            current: () => ({ where: state.where, place: state.place }),
+            onPick: picked,
+            what: { image: "the image", segmentation: "the mask" }[kind] || "the file",
+        }) : null;
+        if (chip) Chip.wrap(input, chip);
 
         function serverPlace() {
             return { id: "server", kind: "server", label: "the server",
@@ -479,14 +426,7 @@ window.PlexoraDataLocation = (function () {
         }
 
         function paint() {
-            Object.entries(buttons).forEach(([where, button]) => {
-                const on = where === state.where;
-                button.classList.toggle("is-active", on);
-                button.setAttribute("aria-checked", on ? "true" : "false");
-            });
-            placeChip.hidden = state.where !== REMOTE;
-            placeChip.textContent = placeLabel();
-            placeChip.classList.toggle("is-unset", !state.place);
+            if (chip) chip.paint();
 
             const detached = !plainPath() && !nodeName() && !filesPlace();
             if (uploadButton) uploadButton.hidden = !(uploadable && detached
@@ -566,109 +506,16 @@ window.PlexoraDataLocation = (function () {
         }
 
         /**
-         * The Remote half is a question rather than a setting: "somewhere
-         * else" is not one place, so choosing it has to name which.
-         *
-         * Pressing it when a machine is already chosen does nothing -- the
-         * chip beside it is how you change machines, and re-asking on every
-         * click of an already-active segment would make the control feel like
-         * it had forgotten.
+         * A machine picked on the chip: Local, or one that is up -- the chip
+         * connects a saved one before it hands it over. Remembered for the
+         * next field either way, because the next field on the page is
+         * usually on the same machine.
          */
-        function press(where) {
+        function picked(where, place) {
             decided = true;
-            if (where === REMOTE && !(state.where === REMOTE && state.place)) {
-                return choosePlace();
-            }
-            if (where === LOCAL) chosenByHand(LOCAL, null);
-            if (where !== state.where) choose(where, null);
-        }
-
-        /**
-         * Which machine "Remote" means, asked in whatever way suits how many
-         * answers there are.
-         *
-         * Three situations, and a list of one is not a choice:
-         *
-         * - **None reachable.** There is nothing to pick from, so picking is
-         *   the wrong question -- open the connection modal instead, which is
-         *   where a machine is added and connected.
-         * - **Exactly one.** Adopt it. Flipping the switch to Remote when
-         *   there is one remote machine has already said everything the picker
-         *   would ask. The place chip stays the way to change it, and it
-         *   always opens the list (`force`) so this shortcut can be undone.
-         * - **More than one.** The picker, as before.
-         */
-        async function choosePlace(force) {
-            decided = true;
-            if (!window.PlexoraPlacePicker) return;
-            if (!force) {
-                const shortcut = await onlyPlace();
-                if (shortcut) {
-                    lastPlace = shortcut;
-                    chosenByHand(REMOTE, shortcut);
-                    choose(REMOTE, shortcut);
-                    return;
-                }
-                if (shortcut === null && window.PlexoraConnectionModal) {
-                    const opened = await window.PlexoraConnectionModal.open({
-                        kind: "node",
-                        intent: "No other machine is connected yet. Open one "
-                                + "and this field can name a file on it.",
-                    });
-                    if (opened && opened.connected) {
-                        const place = { id: opened.name, kind: "remote",
-                                        label: opened.label || opened.name,
-                                        node: opened.node || null,
-                                        files: opened.files || null };
-                        lastPlace = place;
-                        chosenByHand(REMOTE, place);
-                        choose(REMOTE, place);
-                        return;
-                    }
-                    if (state.where === REMOTE && !state.place) {
-                        choose(LOCAL, null);
-                    }
-                    return;
-                }
-            }
-            const picked = await window.PlexoraPlacePicker.pick({
-                current: (state.place && state.place.id) || "",
-            });
-            if (!picked) {
-                // Cancelled with nothing chosen before: stay where we were,
-                // rather than stranding the field on a Remote it cannot use.
-                if (state.where === REMOTE && !state.place) choose(LOCAL, null);
-                return;
-            }
-            lastPlace = picked;
-            chosenByHand(REMOTE, picked);
-            choose(REMOTE, picked);
-        }
-
-        /**
-         * The one machine there is, `null` for none, `undefined` for several.
-         *
-         * "Reachable" means a file could be named on it right now: the server
-         * itself when Plexora is running elsewhere, and any saved connection
-         * with a data node already open. A saved-but-not-connected profile is
-         * not one of these -- offering it here would adopt a machine the field
-         * cannot read, which is the state the switch exists to avoid.
-         */
-        async function onlyPlace() {
-            let list;
-            try {
-                list = await window.PlexoraPlacePicker.places();
-            } catch (e) {
-                return undefined;   // fall through to the picker, which says so
-            }
-            const reachable = list.filter(
-                (place) => place.kind === "server" || Boolean(place.node)
-                           || Boolean(place.files));
-            if (reachable.length > 1) return undefined;
-            if (!reachable.length) return null;
-            const only = reachable[0];
-            return { id: only.id, kind: only.kind, label: only.label,
-                     node: only.node || null, files: only.files || null };
+            if (where === REMOTE && place) lastPlace = place;
+            chosenByHand(where, place);
+            choose(where, place);
         }
 
         function choose(where, place) {
@@ -930,16 +777,19 @@ window.PlexoraDataLocation = (function () {
              */
             browseNode: () => nodeName()
                 || (filesPlace() ? filesPlace().base : null),
-            element: root,
-            //: Separate, because the two no longer live together: the switch
-            //: sits in the field's row and the status line under the field.
+            //: The chip, or null when the caller draws its own (`bare`).
+            element: chip ? chip.element : null,
+            //: Separate, because the two do not live together: the chip sits
+            //: in the path box and the status line under the field.
             statusElement: status,
+            //: The hidden file chooser behind Upload…, when this field offers it.
+            chooser,
         };
         HANDLES.set(input, handle);
 
         // An empty field opens on a machine that is already connected, not on
         // This computer: connecting one is how somebody says where their data
-        // is. Anything typed first, or any hand on the switch, wins.
+        // is. Anything typed first, or any hand on the chip, wins.
         input.addEventListener("input", () => {
             if (input.value.trim()) decided = true;
         });

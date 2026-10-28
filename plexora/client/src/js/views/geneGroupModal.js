@@ -48,9 +48,10 @@
  *   ONE ACTION ROW, AT THE BOTTOM. There used to be two -- a "Create group"
  *   floating at the end of the pane and a "Done" under a rule beneath it --
  *   so the dialog asked twice, in two different weights, which of them
- *   finished the job. The footer now carries both, and the primary is
- *   whatever the open tab means by "do it": its word and its enabled state
- *   come from the pane. `Done` never leaves.
+ *   finished the job. The footer carries the one action, whatever the open
+ *   tab means by "do it": its word and its enabled state come from the pane.
+ *   The way out is the X in the head, as on every Plexora dialog, and only
+ *   there: a footer "Done" beside it was a second way to say the same thing.
  *
  *   NO BOOTSTRAP CLASSES. Bootstrap is in the vendor bundle and its
  *   `.form-control` and `.btn-primary` are a white field and a #0d6efd
@@ -172,10 +173,8 @@ class PlexoraGeneGroupModal {
         text.append(title, el("p", "gene-modal-subtitle",
             "A heading in the selected-genes tree, so a forty-gene view stays "
             + "readable and a whole cell type switches off at once."));
-        // An X as well as the footer's Done, which is not the duplication it
-        // looks like: Done is where somebody who has just made a group is
-        // already looking, and the X is where somebody who opened this by
-        // mistake looks first.
+        // The one way out (and Escape). The dialog stays open after each group
+        // it makes, so this is also how somebody who has made them all leaves.
         const close = PlexoraGeneGroupModal.button(
             "gene-modal-close", "", () => this.close());
         close.appendChild(PlexoraGeneGroupModal.icon("fa-xmark"));
@@ -231,10 +230,7 @@ class PlexoraGeneGroupModal {
         this.primary = PlexoraGeneGroupModal.button(
             "gene-modal-btn is-primary", "Create group",
             () => this.runPrimary());
-        buttons.append(
-            PlexoraGeneGroupModal.button(
-                "gene-modal-btn", "Done", () => this.close()),
-            this.primary);
+        buttons.append(this.primary);
 
         footer.append(said, buttons);
         return footer;
@@ -482,8 +478,7 @@ class PlexoraGeneGroupModal {
             accept: ".csv,.tsv,.txt,.xlsx,.xlsm",
             filter: "channels",
             actionLabel: "Read",
-            intent: "No other machine is connected yet. Open one and this "
-                    + "dialog can read a gene-group file from it.",
+            what: "the gene-group file",
             onChoose: (chosen) => this.readFile(chosen),
         });
         this.filePane.appendChild(this.fileRow.element);

@@ -1,4 +1,4 @@
-"""The Local / Remote switch on every data field, and what it is wired to.
+"""The Local / Remote chip on every data field, and what it is wired to.
 
 The behaviour is in tests/js/data_location_probe.mjs, run in node below,
 because nothing in the Python suite executes client JS. What is left here is
@@ -49,7 +49,7 @@ def probe():
 # -- the control -------------------------------------------------------------
 
 
-def test_each_field_carries_its_own_switch(probe):
+def test_each_field_carries_its_own_chip(probe):
     """The architectural point, and the thing that broke: the choice is per
     data input, not per project and not just for the primary image. A project
     is free to keep its image on a cluster, its mask on another one and its
@@ -59,24 +59,23 @@ def test_each_field_carries_its_own_switch(probe):
     the caller's `onChange` before returning the handle that handler reaches
     for, the resulting TypeError escaped the loop that mounts all three, and
     the import form shipped offering the choice for the image alone."""
-    assert "every data field gets its own switch, independently" in probe, probe
-    assert "...mounted in the row, right beside the path box it governs" in probe, probe
+    assert "every data field gets its own chip, independently" in probe, probe
+    assert "...mounted in the path box, at its front, as on the home page" in probe, probe
 
 
-def test_the_switch_is_one_letter_wide_and_still_says_what_it_means(probe):
-    """It sits INSIDE the field's row, immediately before the path box, on
-    forms that already have four of them -- and "This computer | Remote" spent
-    more of that row than the box it governed.
+def test_the_question_is_the_home_pages_chip_not_a_switch(probe):
+    """The home page asks "which machine?" with a chip at the front of its
+    path box -- "Local", or the server's name -- whose menu lists the actual
+    machines. The form fields asked it with an L | R switch and a second chip
+    beside it, so one question had two shapes and Remote took two steps.
 
-    Shrinking a control is only allowed if nothing is lost with the words. The
-    meaning moves to the two places it is actually wanted: the aria-label,
-    which is what a screen reader reads INSTEAD of the letter, and a tooltip on
-    the group for a mouse. The place chip beside it still names the machine,
-    which is the part that varies.
+    The chip reads the field's state rather than keeping its own, and the
+    surfaces that draw their own chip (`bare`) get none from here.
     """
-    assert "...and it reads L | R" in probe, probe
-    assert "...with what each letter means where a screen reader will read it" in probe, probe
-    assert "...and where a mouse will find it" in probe, probe
+    assert "...reading the field's own state, which opens on This computer" in probe, probe
+    assert "...and telling the connection dialog what the field holds" in probe, probe
+    assert "a caller that draws its own chip gets none" in probe, probe
+    assert "...and the chip is repainted to say so" in probe, probe
 
 
 def test_a_desktop_install_is_asked_the_same_question(probe):
@@ -97,7 +96,7 @@ def test_remote_is_a_question_about_which_machine(probe):
     """The point of the whole change: "Remote" is not a mode decided at launch,
     it is a machine chosen while the form is open -- and the field then talks
     to THAT machine's node rather than to whichever one happened to exist."""
-    assert "choosing Remote asks which machine, and takes the answer" in probe, probe
+    assert "picking a machine on the chip puts the field on it" in probe, probe
     assert "...and clears a path that described a different filesystem" in probe, probe
     assert "...then shares through THAT machine's node" in probe, probe
 
@@ -335,9 +334,8 @@ def test_the_control_is_loaded_before_the_fields_that_mount_it():
     base = source("templates", "base.html")
     assert "services/dataLocation.js" in base
     assert base.index("services/dataLocation.js") < base.index("views/dataSourceField.js")
-    # And the picker before the control, which calls into it the moment
-    # somebody presses Remote.
-    assert base.index("services/placePicker.js") < base.index("services/dataLocation.js")
+    # And the chip before the control, which mounts it on every field.
+    assert base.index("views/machineChip.js") < base.index("services/dataLocation.js")
 
 
 def test_a_browse_button_can_be_sent_to_the_other_machine():
@@ -437,30 +435,6 @@ def test_the_image_is_offered_the_choice_only_where_it_can_still_move():
     edit = source("src", "js", "views", "projectEdit.js")
     assert "kind: \"segmentation\"" in edit
     assert "kind: \"image\"" not in edit
-
-
-def test_how_many_machines_there_are_decides_how_the_question_is_asked(probe):
-    """A list of one is not a choice, and a list of none is not a list.
-
-    Asking the same way in all three cases is what made Remote a dialog to be
-    dismissed before anything could happen: on a laptop with one cluster
-    saved, the picker existed to be clicked through, every time, on every
-    field. The shortcut has to be undoable, though -- the place chip always
-    opens the list, whatever the count.
-    """
-    assert "with one machine reachable, flipping to Remote just takes it" in probe, probe
-    assert "...and the chip says which machine that was" in probe, probe
-    assert "...but the chip still opens the list, so it can be changed" in probe, probe
-
-
-def test_a_field_with_nowhere_to_go_opens_the_connection_dialog(probe):
-    """A machine that is SAVED but not connected is not reachable, and
-    adopting it would put the field on a filesystem it cannot read a path on
-    -- which is the state the switch exists to avoid. What is needed then is
-    not a picker but a connection."""
-    assert "with nothing connected, Remote opens the connection dialog" in probe, probe
-    assert "...and the machine it opened is the one the field adopts" in probe, probe
-    assert "...and backing out of it leaves the field on This computer" in probe, probe
 
 
 def test_a_mask_at_a_web_address_never_creates_a_folder_under_the_working_directory(

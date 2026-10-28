@@ -5,7 +5,7 @@
  * wrong -- the form still submits, the server still answers, and the project
  * that comes out points at the wrong machine or at nothing:
  *
- *   1. **The switch is drawn on every launch, and means different things.**
+ *   1. **The chip is drawn on every launch, and means different things.**
  *      On a desktop install "This computer" IS the server's filesystem, and
  *      the box has to post the path exactly as typed. Get that wrong and an
  *      ordinary local import starts asking a node that is not there.
@@ -167,36 +167,26 @@ const context = {
 };
 context.window = context;
 context.flaskVariables = { client_node: "laptop" };
-//: What the Remote button opens. Stubbed rather than loaded, because what this
-//: file is testing is what the FIELD does with an answer -- the dialog that
-//: produces one is placePicker.js's business. A test sets `nextPlace` to the
-//: machine the user is about to choose.
-context.nextPlace = null;
-//: What `/data_places` would say. Two reachable machines by default, because
-//: that is the case where the field HAS to ask -- the one-machine and
-//: no-machine shortcuts are exercised deliberately, further down.
-context.nextPlaces = [
-    { id: "hpc", kind: "remote", label: "hpc", node: "hpc" },
-    { id: "o2", kind: "remote", label: "o2", node: "o2" },
-];
-context.pickerOpened = 0;
-context.PlexoraPlacePicker = {
-    pick: () => {
-        context.pickerOpened += 1;
-        return Promise.resolve(context.nextPlace);
+//: The machine chip, stubbed rather than loaded: what this file tests is what
+//: the FIELD does with an answer, and the menu that produces one is
+//: machineChip.js's business (machine_chip_probe.mjs). The stub keeps what
+//: the field gave it, so a test can read the chip's `current()` and pick on it
+//: the way the menu would.
+const CHIPS = new Map();
+context.PlexoraMachineChip = {
+    create(options) {
+        const chip = { element: makeElement("button"), options, painted: 0,
+                       paint() { chip.painted += 1; } };
+        CHIPS.set(chip.element, chip);
+        return chip;
     },
-    places: () => Promise.resolve(context.nextPlaces),
-};
-//: What a field opens when there is no machine to pick from yet. Stubbed for
-//: the same reason as the picker: what this file tests is what the FIELD does
-//: with an answer.
-context.modalAnswer = null;
-context.modalOpened = 0;
-context.PlexoraConnectionModal = {
-    open: () => {
-        context.modalOpened += 1;
-        return Promise.resolve(context.modalAnswer
-            || { connected: false, name: null, node: null });
+    wrap(input, chip) {
+        const box = makeElement("div");
+        box.className = "plx-machine-field";
+        input.parentNode.insertBefore(box, input);
+        input.remove();
+        box.append(chip.element, input);
+        return box;
     },
 };
 createContext(context);
@@ -228,13 +218,18 @@ function statusOf(location) {
     return location.statusElement;
 }
 
-function optionOf(location, where) {
-    return location.element.children[0].children.find(
-        (c) => c.dataset.where === where);
+/** The chip a field mounted, as the stub kept it. */
+function chipOf(location) {
+    return CHIPS.get(location.element);
+}
+
+/** Pick on a field's chip, as its menu would: Local, or a connected machine. */
+function pick(location, where, place = null) {
+    chipOf(location).options.onPick(where, place);
 }
 
 function chooserOf(location) {
-    return location.element.children.find((c) => c.type === "file");
+    return location.chooser || undefined;
 }
 
 async function main() {
@@ -254,24 +249,26 @@ async function main() {
         });
         mounted.push({ each, handle });
     });
-    check("every data field gets its own switch, independently",
+    check("every data field gets its own chip, independently",
           mounted.length === 3 && mounted.every((m) => m.handle !== null));
-    check("...mounted in the row, right beside the path box it governs",
-          mounted.every((m) => m.each.row.children[0] === m.handle.element
-                          && m.each.row.children[1] === m.each.input));
-    // One letter each. This control sits INSIDE the field's row, before the
-    // path box, on forms that already have four of them -- and the words spent
-    // more of that row than the box they governed.
-    const group = mounted[0].handle.element.children[0];
-    check("...and it reads L | R",
-          group.children.map((b) => b.textContent).join("|") === "L|R");
-    check("...with what each letter means where a screen reader will read it",
-          group.children.map((b) => b.getAttribute("aria-label")).join("|")
-          === "Local — this computer|Remote — another machine");
-    check("...and where a mouse will find it",
-          group.getAttribute("data-tooltip")
-          === "Data Location — (L)ocal | (R)emote"
-          && group.getAttribute("role") === "radiogroup");
+    check("...mounted in the path box, at its front, as on the home page",
+          mounted.every((m) => {
+              const box = m.each.row.children[0];
+              return box.classList.contains("plx-machine-field")
+                  && box.children[0] === m.handle.element
+                  && box.children[1] === m.each.input;
+          }));
+    check("...reading the field's own state, which opens on This computer",
+          mounted.every((m) => chipOf(m.handle).options.current().where === "local"));
+    check("...and telling the connection dialog what the field holds",
+          chipOf(mounted[0].handle).options.what === "the image"
+          && chipOf(mounted[1].handle).options.what === "the mask");
+
+    // `bare`: the home page and the Import dialog draw their own.
+    const bare = fieldRow();
+    const bareHandle = DataLocation.attach(bare.input, { kind: "image", bare: true });
+    check("a caller that draws its own chip gets none",
+          bareHandle.element === null && bare.row.children[0] === bare.input);
 
     // -- a desktop launch: one machine, and the switch still asks -----------
     const desktop = fieldRow();
@@ -288,17 +285,20 @@ async function main() {
     check("...and nothing is asked of any node", desktopLocation.blocking() === null
           && desktopLocation.submitValue() === "/data/cells.csv");
 
-    // -- Remote is a question, and the answer is a machine ------------------
+    // -- Remote is a machine, picked on the chip ------------------------------
     calls.length = 0;
-    context.nextPlace = { id: "hpc", kind: "remote", label: "hpc",
-                          node: "hpc" };
     reply = { payload: { resource: { id: "slide-11", state: "ready",
                                      locator: "node://hpc/slide-11" } } };
-    optionOf(desktopLocation, "remote").click();
+    const painted = chipOf(desktopLocation).painted;
+    pick(desktopLocation, "remote", { id: "hpc", kind: "remote", label: "hpc",
+                                      node: "hpc" });
     await settle();
-    check("choosing Remote asks which machine, and takes the answer",
+    check("picking a machine on the chip puts the field on it",
           desktopLocation.isLocal() === false
-          && desktopLocation.browseNode() === "hpc");
+          && desktopLocation.browseNode() === "hpc"
+          && chipOf(desktopLocation).options.current().place.id === "hpc");
+    check("...and the chip is repainted to say so",
+          chipOf(desktopLocation).painted > painted);
     check("...and clears a path that described a different filesystem",
           desktop.input.value === "");
     desktop.input.value = "/scratch/slide.ome.tif";
@@ -307,7 +307,6 @@ async function main() {
     check("...then shares through THAT machine's node",
           calls[0]?.url === "/nodes/hpc/resources"
           && desktopLocation.submitValue() === "node://hpc/slide-11");
-    context.nextPlace = null;
 
     // -- with Plexora on the far side, This computer is the laptop node -----
     context.flaskVariables = { client_node: "laptop" };
@@ -410,9 +409,8 @@ async function main() {
 
     // -- switching away releases the share ----------------------------------
     calls.length = 0;
-    context.nextPlace = { id: "server", kind: "server", label: "the server",
-                          node: null };
-    optionOf(location, "remote").click();
+    pick(location, "remote", { id: "server", kind: "server", label: "the server",
+                               node: null });
     await settle();
     check("switching to the server takes the share back",
           calls.some((c) => c.method === "DELETE"
@@ -465,69 +463,6 @@ async function main() {
           /plexora connect/.test(detachedMaskLocation.blocking() || ""));
     check("...and offers no upload it could not honour",
           chooserOf(detachedMaskLocation) === undefined);
-    context.flaskVariables = { client_node: "laptop" };
-
-    // -- how many machines there are decides how the question is asked ------
-    //
-    // A list of one is not a choice, and a list of none is not a list. Asking
-    // the same way in all three cases is what made "Remote" a dialog somebody
-    // had to dismiss before they could do anything.
-    context.flaskVariables = {};
-
-    context.nextPlaces = [{ id: "hpc", kind: "remote", label: "hpc",
-                            node: "hpc-data" }];
-    context.pickerOpened = 0;
-    context.modalOpened = 0;
-    const single = fieldRow();
-    const singleLocation = DataLocation.attach(single.input, { kind: "table" });
-    optionOf(singleLocation, "remote").click();
-    await settle();
-    check("with one machine reachable, flipping to Remote just takes it",
-          context.pickerOpened === 0 && context.modalOpened === 0
-          && singleLocation.browseNode() === "hpc-data");
-    check("...and the chip says which machine that was",
-          singleLocation.place()?.label === "hpc");
-
-    // The shortcut must not be a one-way door.
-    context.nextPlace = null;
-    singleLocation.element.children.find(
-        (c) => c.className === "data-location-place").click();
-    await settle();
-    check("...but the chip still opens the list, so it can be changed",
-          context.pickerOpened === 1);
-
-    // A machine that is SAVED but not connected is not reachable: adopting it
-    // would put the field on a machine it cannot read a path on, which is the
-    // state the switch exists to avoid.
-    context.nextPlaces = [{ id: "hpc", kind: "remote", label: "hpc", node: null }];
-    context.pickerOpened = 0;
-    context.modalOpened = 0;
-    context.modalAnswer = { connected: true, name: "hpc", label: "hpc",
-                            node: "hpc-data" };
-    const none = fieldRow();
-    const noneLocation = DataLocation.attach(none.input, { kind: "table" });
-    optionOf(noneLocation, "remote").click();
-    await settle();
-    check("with nothing connected, Remote opens the connection dialog",
-          context.modalOpened === 1 && context.pickerOpened === 0);
-    check("...and the machine it opened is the one the field adopts",
-          noneLocation.browseNode() === "hpc-data");
-
-    context.pickerOpened = 0;
-    context.modalOpened = 0;
-    context.modalAnswer = { connected: false, name: null, node: null };
-    const backOut = fieldRow();
-    const backOutLocation = DataLocation.attach(backOut.input, { kind: "table" });
-    optionOf(backOutLocation, "remote").click();
-    await settle();
-    check("...and backing out of it leaves the field on This computer",
-          backOutLocation.isLocal() === true);
-
-    context.modalAnswer = null;
-    context.nextPlaces = [
-        { id: "hpc", kind: "remote", label: "hpc", node: "hpc" },
-        { id: "o2", kind: "remote", label: "o2", node: "o2" },
-    ];
     context.flaskVariables = { client_node: "laptop" };
 
     await connectedMachineIsTheDefault();
@@ -600,7 +535,7 @@ async function connectedMachineIsTheDefault() {
 
     page = freshPage([hpc]);
     const pressed = page.attach(fieldRow().input, { kind: "image" });
-    optionOf(pressed, "local").click();
+    pick(pressed, "local");
     const next = page.attach(fieldRow().input, { kind: "image" });
     await settle();
     check("a hand on This computer holds, for that field and the next on the page",

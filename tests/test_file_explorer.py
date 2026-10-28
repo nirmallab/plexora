@@ -476,8 +476,8 @@ def test_the_halves_are_a_control_and_the_drop_target_is_separate():
 
 
 def test_both_surfaces_ask_which_machine_once_for_the_whole_surface():
-    """Everywhere else the Local/Remote switch sits inside the row of the one
-    field it governs. The home page and the import dialog each take one pick,
+    """Everywhere else the Local/Remote chip sits inside the path box of the
+    one field it governs. The home page and the import dialog each take one pick,
     so each asks once, as a chip at the front of its one path box that it
     draws itself (`bare`), with the service's status line under the box. Two
     switches on a surface that takes one pick would be the same question
@@ -492,10 +492,10 @@ def test_both_surfaces_ask_which_machine_once_for_the_whole_surface():
     location = source("src", "js", "services", "dataLocation.js")
     assert "bare: true," in dialog
     assert "statusMount: machine.status," in dialog
-    # The service honours them, and still defaults to the in-row placement
-    # every form field depends on.
-    assert "if (options.mount) options.mount.appendChild(root);" in location
-    assert "else if (!options.bare) row.insertBefore(root, row.children[0]);" in location
+    # The service honours them, and still defaults to the in-box chip every
+    # form field depends on.
+    assert "const chip = !options.bare && Chip ? Chip.create({" in location
+    assert "if (chip) Chip.wrap(input, chip);" in location
     assert "(options.statusMount || field).appendChild(status);" in location
 
 def test_the_panel_halves_stop_taking_clicks_while_an_image_loads():

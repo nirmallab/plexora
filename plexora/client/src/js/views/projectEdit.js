@@ -346,7 +346,9 @@
             // Nothing else on this page wires a Browse button: the upload
             // page's script is what attaches [data-browse-target], and it does
             // not load here -- so both buttons sat there doing nothing.
-            const maskBrowse = maskInput.parentElement
+            // By the row, not the input's parent: the machine chip puts the
+            // input in a box of its own.
+            const maskBrowse = maskInput.closest(".import-field-row")
                 .querySelector(".browse-button");
             if (typeof attachBrowseButton === "function") {
                 attachBrowseButton(maskBrowse, maskInput, {

@@ -460,17 +460,15 @@ window.PlexoraRequirements = (function () {
                 ? needs.intro
                 : `Check what ${needs.label} will use. Plexora filled these in from the data — you will not be asked again.`;
 
-        // On a form where nothing is required, "Cancel" is the wrong word for
-        // the only button that gets you to the tool. It reads as "do not open
-        // this", and taking it literally would leave a plugin that requires
-        // nothing permanently unopenable: the caller re-enters on a true
-        // result, so declining has to be RECORDED, not just obeyed. `data-skip`
-        // routes the button through the same save as Continue, with whatever
+        // On a form where nothing is required, closing is the wrong answer for
+        // somebody who wants the tool without filling anything in: the caller
+        // re-enters only on a true result, so a plugin that requires nothing
+        // would stay unopenable, and declining has to be RECORDED, not just
+        // obeyed. Skip goes through the same save as Continue, with whatever
         // the user did not fill in left blank -- which is what marks the offer
-        // answered and stops it coming back on every open.
-        const cancel = dialog.querySelector('[data-action="cancel"]');
-        cancel.dataset.skip = optionalOnly ? "true" : "false";
-        cancel.textContent = optionalOnly ? "Skip" : "Cancel";
+        // answered and stops it coming back on every open. Anywhere else the
+        // X in the corner is the way out, and there is no Cancel beside it.
+        dialog.querySelector('[data-action="skip"]').hidden = !optionalOnly;
 
         return controls;
     }
@@ -480,12 +478,20 @@ window.PlexoraRequirements = (function () {
         dialog.className = "requirements-modal";
         dialog.innerHTML = `
             <form method="dialog" class="requirements-form">
-                <h2 class="requirements-title">Before this tool can open</h2>
-                <p class="requirements-subtitle"></p>
+                <div class="requirements-head">
+                    <div class="requirements-heading">
+                        <h2 class="requirements-title">Before this tool can open</h2>
+                        <p class="requirements-subtitle"></p>
+                    </div>
+                    <button type="button" class="plx-picker-close requirements-close"
+                            data-action="close" title="Close" aria-label="Close">
+                        <span class="fas fa-xmark" aria-hidden="true"></span>
+                    </button>
+                </div>
                 <div class="requirements-body"></div>
                 <div class="requirements-error" role="alert" hidden></div>
                 <div class="requirements-actions">
-                    <button type="button" class="btn btn-secondary" data-action="cancel">Cancel</button>
+                    <button type="button" class="btn btn-secondary" data-action="skip" hidden>Skip</button>
                     <button type="button" class="btn btn-primary" data-action="save">Continue</button>
                 </div>
             </form>
@@ -531,25 +537,25 @@ window.PlexoraRequirements = (function () {
             }
             asker.close = close;
 
-            const cancel = dialog.querySelector('[data-action="cancel"]');
-            cancel.addEventListener("click", () => {
-                // "Skip" on an all-optional form is an empty Continue: it saves
-                // nothing but the list of keys the form showed, which is what
-                // records the offer as declined. See render().
-                if (cancel.dataset.skip === "true") return submit();
-                close(false);
-            });
-            // Escape stays a plain way out, on every form. It leaves the offer
-            // standing for next time, which is the right reading of a keypress
-            // that might have been aimed at something else -- and it is safe
+            const closer = dialog.querySelector('[data-action="close"]');
+            const skip = dialog.querySelector('[data-action="skip"]');
+            // "Skip" on an all-optional form is an empty Continue: it saves
+            // nothing but the list of keys the form showed, which is what
+            // records the offer as declined. See render().
+            skip.addEventListener("click", () => submit());
+            // The X and Escape are a plain way out, on every form. They leave
+            // the offer standing for next time, which is the right reading of
+            // a close that might not have been a decision -- and it is safe
             // because a false result means the caller does not re-enter.
+            closer.addEventListener("click", () => close(false));
             dialog.addEventListener("cancel", () => close(false));
 
             save.addEventListener("click", () => submit());
 
             async function submit() {
                 save.disabled = true;
-                cancel.disabled = true;
+                skip.disabled = true;
+                closer.disabled = true;
                 error.hidden = true;
                 // A data file the user has not finished describing -- a store
                 // whose table is still unpicked -- is not something to post.
@@ -566,7 +572,8 @@ window.PlexoraRequirements = (function () {
                     error.textContent = waiting;
                     error.hidden = false;
                     save.disabled = false;
-                    cancel.disabled = false;
+                    skip.disabled = false;
+                    closer.disabled = false;
                     return;
                 }
                 const task = window.PlexoraStatus?.begin("Saving");
@@ -660,13 +667,15 @@ window.PlexoraRequirements = (function () {
                         error.hidden = false;
                     }
                     save.disabled = false;
-                    cancel.disabled = false;
+                    skip.disabled = false;
+                    closer.disabled = false;
                 } catch (e) {
                     task?.fail("Save failed");
                     error.textContent = e.message;
                     error.hidden = false;
                     save.disabled = false;
-                    cancel.disabled = false;
+                    skip.disabled = false;
+                    closer.disabled = false;
                 }
             }
         });

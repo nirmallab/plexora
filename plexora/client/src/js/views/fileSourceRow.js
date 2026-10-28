@@ -14,8 +14,9 @@
  * On a cluster the third is often the only one that works and the first is
  * the only one that scales, so a field that offers one of them is a field
  * that half the users cannot use. This row offers all three and settles which
- * applies from the Local/Remote switch plus whether Plexora is running here
- * -- the same derivation services/dataLocation.js makes, in the same words.
+ * applies from the machine chip at the front of its box (machineChip.js) plus
+ * whether Plexora is running here -- the same derivation
+ * services/dataLocation.js makes, in the same words.
  *
  * WHAT IT DOES NOT DO is read the file. It hands its caller either a path the
  * server can open or a `File` of bytes, and what that means is the caller's:
@@ -25,7 +26,7 @@
  *
  * Lifted out of views/channelNamesUpload.js, which is where this was first
  * written and which is still the fullest example of what it is for. The
- * classes are that dialog's, deliberately: `.data-location`, `.import-field-row`
+ * classes are that dialog's, deliberately: `.import-field-row`, `.data-location-status`
  * and the rest are already styled and already the shape every path field in
  * Plexora has.
  *
@@ -34,8 +35,7 @@
 window.PlexoraFileSourceRow = (function () {
     "use strict";
 
-    //: The two sides of the switch, spelled as dataLocation.js spells them --
-    //: they end up in the same aria-labels and the same CSS.
+    //: The two answers, spelled as dataLocation.js spells them.
     const LOCAL = "local";
     const REMOTE = "remote";
 
@@ -75,26 +75,6 @@ window.PlexoraFileSourceRow = (function () {
     }
 
     /**
-     * Every machine this file could be read from right now, or null when the
-     * list could not be got at all.
-     *
-     * Null rather than an empty array, and the difference decides what
-     * happens next: "nothing is connected" is answered by opening a
-     * connection, and "I could not ask" is answered by the picker, which says
-     * so properly.
-     */
-    async function reachablePlaces() {
-        try {
-            const list = await window.PlexoraPlacePicker.places();
-            return list.filter((place) => place.kind === "server"
-                                          || place.node
-                                          || place.registered_node);
-        } catch (error) {
-            return null;
-        }
-    }
-
-    /**
      * Build the row.
      *
      * @param options.accept      - what the browser's file chooser offers
@@ -102,8 +82,8 @@ window.PlexoraFileSourceRow = (function () {
      * @param options.placeholder - example path for the empty box
      * @param options.label       - the field's own label, or "" for none
      * @param options.actionLabel - the button that means "use this one"
-     * @param options.intent      - why a connection would be opened, for the
-     *                              connection modal when nothing is reachable
+     * @param options.what        - what the file is ("the gene-group file"),
+     *                              for the connection modal the chip opens
      * @param options.onChoose    - `({file, path}) => Promise`. Exactly one of
      *                              the two is set: `path` for a file the
      *                              server can open itself, `file` for bytes.
@@ -133,7 +113,7 @@ window.PlexoraFileSourceRow = (function () {
         const browse = el("button", "browse-button", "Browse…");
         browse.type = "button";
         // Which machine's dialog to open, asked at CLICK time rather than
-        // wired once: the switch below can be flipped long after this button
+        // wired once: the chip below can be changed long after this button
         // was built, and then the same button means a different filesystem.
         if (typeof attachBrowseButton === "function") {
             attachBrowseButton(browse, input, {
@@ -146,33 +126,6 @@ window.PlexoraFileSourceRow = (function () {
         const load = button("btn btn-primary file-source-load",
                             options.actionLabel || "Load", () => choose());
         load.disabled = true;
-
-        // "Which machine is this file on?", in the switch every other path
-        // field in Plexora asks it with. One letter a side, for the reason
-        // dataLocation gives: this sits inside a row that already has a box
-        // and three buttons in it.
-        const location = el("div", "data-location");
-        const group = el("div", "data-location-toggle");
-        group.setAttribute("role", "radiogroup");
-        group.setAttribute("aria-label", "Where this file is");
-        group.setAttribute("data-tooltip", "Data Location — (L)ocal | (R)emote");
-        const sides = {};
-        [[LOCAL, "L", "Local — this computer"],
-         [REMOTE, "R", "Remote — another machine"]].forEach(
-            ([value, letter, described]) => {
-                const side = button("data-location-option", letter,
-                                    () => press(value));
-                side.setAttribute("role", "radio");
-                side.setAttribute("aria-label", described);
-                sides[value] = side;
-                group.appendChild(side);
-            });
-        //: Which machine Remote means, and the way to change it without going
-        //: back through the toggle -- which matters because a list of one is
-        //: adopted silently, and without this that shortcut is a one-way door.
-        const chip = button("data-location-place", "", () => choosePlace(true));
-        chip.hidden = true;
-        location.append(group, chip);
 
         //: One line under the row, for the waits and the failures getting
         //: hold of the file. What the CALLER says about the file once it has
@@ -190,10 +143,10 @@ window.PlexoraFileSourceRow = (function () {
             chooser.type = "file";
             chooser.accept = options.accept || "";
             chooser.hidden = true;
-            // This row asks which machine in its own switch, two elements to
-            // the left. Without the opt-out the shared layer
-            // (services/fileLocation.js) asks again in a modal, so pressing
-            // Upload would mean answering one question twice in two shapes.
+            // This row asks which machine in its own chip. Without the
+            // opt-out the shared layer (services/fileLocation.js) asks again
+            // in a modal, so pressing Upload would mean answering one
+            // question twice in two shapes.
             chooser.setAttribute("data-file-location", "local");
             chooser.addEventListener("change", () => {
                 const picked = chooser.files && chooser.files[0];
@@ -202,10 +155,25 @@ window.PlexoraFileSourceRow = (function () {
             upload = button("browse-button", "Upload…", () => chooser.click());
         }
 
-        row.append(location, input, browse);
+        row.append(input, browse);
         if (upload) row.append(upload, chooser);
         row.append(load);
         wrap.append(row, status, hint);
+
+        // "Which machine is this file on?", asked as every other path field
+        // in Plexora asks it: a chip at the front of the box, whose menu
+        // lists the machines.
+        const Chip = window.PlexoraMachineChip;
+        const chip = Chip ? Chip.create({
+            current: () => ({ where: state.where, place: state.place }),
+            onPick: (where, place) => {
+                state.decided = true;
+                settle(where, place);
+                if (!input.disabled) input.focus();
+            },
+            what: options.what,
+        }) : null;
+        if (chip) Chip.wrap(input, chip);
 
         // -- which machine -------------------------------------------------
 
@@ -228,76 +196,6 @@ window.PlexoraFileSourceRow = (function () {
         function plainPath() {
             if (state.where === LOCAL) return !serverIsElsewhere();
             return Boolean(state.place) && state.place.kind === "server";
-        }
-
-        /**
-         * Remote is a question rather than a setting: "somewhere else" is not
-         * one place, so choosing it has to name which. Pressing a side that is
-         * already answered does nothing -- the chip is how the machine gets
-         * changed, and re-asking on every click would make the control feel as
-         * though it had forgotten.
-         */
-        function press(where) {
-            state.decided = true;
-            if (where === REMOTE && !(state.where === REMOTE && state.place)) {
-                return choosePlace(false);
-            }
-            if (where !== state.where) settle(where, null);
-            return undefined;
-        }
-
-        /**
-         * Which machine Remote means, asked in whatever way suits how many
-         * answers there are: none reachable is a connection to open rather
-         * than a list to pick from, exactly one is not a choice, and more than
-         * one is the picker.
-         */
-        async function choosePlace(force) {
-            state.decided = true;
-            if (!window.PlexoraPlacePicker) return;
-            if (!force) {
-                const reachable = await reachablePlaces();
-                if (reachable && reachable.length === 1) {
-                    settle(REMOTE, reachable[0]);
-                    return;
-                }
-                if (reachable && !reachable.length) {
-                    await connectSomewhere();
-                    return;
-                }
-            }
-            const picked = await window.PlexoraPlacePicker.pick({
-                current: (state.place && state.place.id) || "",
-            });
-            if (!picked) {
-                // Cancelled with nothing chosen before: back to the side that
-                // still works, rather than stranded on a Remote that is not
-                // any machine.
-                if (state.where === REMOTE && !state.place) settle(LOCAL, null);
-                return;
-            }
-            settle(REMOTE, picked);
-        }
-
-        /** Nothing to pick from, so picking is the wrong question. */
-        async function connectSomewhere() {
-            if (!window.PlexoraConnectionModal) return;
-            const opened = await window.PlexoraConnectionModal.open({
-                kind: "node",
-                intent: options.intent
-                    || "No other machine is connected yet. Open one and this "
-                       + "file can be read from it.",
-            });
-            if (opened && opened.connected) {
-                settle(REMOTE, {
-                    id: opened.name,
-                    kind: "remote",
-                    label: opened.label || opened.name,
-                    node: opened.node || null,
-                });
-                return;
-            }
-            if (state.where === REMOTE && !state.place) settle(LOCAL, null);
         }
 
         function settle(where, place) {
@@ -339,14 +237,7 @@ window.PlexoraFileSourceRow = (function () {
         }
 
         function paint() {
-            Object.keys(sides).forEach((where) => {
-                const on = where === state.where;
-                sides[where].classList.toggle("is-active", on);
-                sides[where].setAttribute("aria-checked", on ? "true" : "false");
-            });
-            chip.hidden = state.where !== REMOTE;
-            chip.textContent = state.place ? state.place.label : "Choose…";
-            chip.classList.toggle("is-unset", !state.place);
+            if (chip) chip.paint();
 
             // With nothing that can read a path on the chosen machine, the box
             // stops pretending to take one -- and Browse with it, which would

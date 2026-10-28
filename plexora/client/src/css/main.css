@@ -1214,6 +1214,53 @@ html.is-native-dragging.has-drop-target body::after {
     gap: var(--space-4);
 }
 
+/* Title and subtitle on the left, the X on the right: the way out of the
+   form, in the corner every Plexora dialog puts it, rather than a Cancel
+   among the answers. */
+.requirements-head,
+.channel-names-head {
+    align-items: flex-start;
+    display: flex;
+    gap: var(--space-3);
+}
+
+.requirements-heading,
+.channel-names-heading {
+    display: flex;
+    flex: 1 1 auto;
+    flex-direction: column;
+    gap: var(--space-1);
+    min-width: 0;
+}
+
+/* Pulled up and out by its own padding, so the glyph -- not the button's
+   box -- lines up with the title's cap height and the form's right edge. */
+.requirements-close,
+.channel-names-close {
+    border-radius: var(--radius-sm);
+    flex: 0 0 auto;
+    margin: -4px -6px 0 0;
+    padding: 6px 8px;
+    transition: color var(--duration-fast) var(--ease-standard),
+                background-color var(--duration-fast) var(--ease-standard);
+}
+
+.requirements-close:hover:not(:disabled),
+.channel-names-close:hover {
+    background: var(--surface-2);
+}
+
+.requirements-close:focus-visible,
+.channel-names-close:focus-visible {
+    outline: 2px solid var(--accent-channel);
+    outline-offset: 1px;
+}
+
+.requirements-close:disabled {
+    cursor: default;
+    opacity: 0.4;
+}
+
 .requirements-title {
     margin: 0;
     font-size: 1.1rem;
@@ -1452,6 +1499,12 @@ html.is-native-dragging.has-drop-target body::after {
     display: flex;
     justify-content: flex-end;
     gap: var(--space-2);
+}
+
+/* Skip, on a form that is not all optional. `.btn` sets `display`, which
+   defeats the hidden attribute -- there is no global guard in this app. */
+.requirements-actions > [hidden] {
+    display: none;
 }
 
 /* ------------------------------------------------------------------ */
@@ -2181,6 +2234,12 @@ html.is-native-dragging.has-drop-target body::after {
     gap: var(--space-2);
 }
 
+/* The first stage's one action is Load, in its row; the way out is the X.
+   An empty row would still take the form's gap. */
+.channel-names-actions:empty {
+    display: none;
+}
+
 /* -- stage: which file --------------------------------------------- */
 
 /* One field, asked in one row: which machine, then which file on it. The
@@ -2198,15 +2257,6 @@ html.is-native-dragging.has-drop-target body::after {
     font-size: 0.82rem;
     font-weight: 500;
     color: var(--text-secondary);
-}
-
-/* The chip names the chosen machine, and in this dialog it is competing with a
-   cluster path for one 560px row. Capped tighter than the import form's 12rem,
-   where there is a page's width to spend: the hint under the row spells the
-   name out in full, so what gets ellipsized here is never the only place it is
-   said. */
-.channel-names-modal .data-location-place {
-    max-width: 7rem;
 }
 
 .channel-names-path .field-hint {
@@ -2251,12 +2301,6 @@ html.is-native-dragging.has-drop-target body::after {
 .file-source-load {
     flex-shrink: 0;
     white-space: nowrap;
-}
-
-/* Same reason as `.channel-names-modal .data-location-place`: a dialog is
-   560px and the chip is competing with a cluster path for the row. */
-dialog .file-source .data-location-place {
-    max-width: 7rem;
 }
 
 /* -- stage: which column ------------------------------------------- */
@@ -2580,10 +2624,10 @@ dialog .file-source .data-location-place {
 }
 
 .import-field-row > .form-control,
+.import-field-row > :where(.plx-machine-field) > .form-control,
 .import-field-row > .form-select,
 .import-field-row > .browse-button,
 .import-field-row > .browse-kind-split,
-.import-field-row > .data-location-toggle,
 .quick-view-path-row > input[type="text"],
 .quick-view-path-row > .sidebar-action {
     height: var(--control-height);
@@ -2592,8 +2636,13 @@ dialog .file-source .data-location-place {
 }
 
 /* Vertical centring is the height's job, not the padding's -- padding and
-   a fixed height fight each other the moment either one changes. */
+   a fixed height fight each other the moment either one changes.
+
+   `:where()` on the machine chip's box (machineChip.wrap) keeps an input in
+   one at the specificity it had as the row's own child, so a dialog that
+   sizes its fields (`.gene-modal .form-control`, 34px) still wins. */
 .import-field-row > .form-control,
+.import-field-row > :where(.plx-machine-field) > .form-control,
 .import-field-row > .form-select,
 .quick-view-path-row > input[type="text"] {
     padding-top: 0;
@@ -2613,12 +2662,14 @@ dialog .file-source .data-location-place {
    area: the box IS the target. Three classes deep, so it beats Bootstrap's
    `.form-control:focus`, which is injected after this sheet (see the note on
    `.requirements-modal .form-control:focus`). */
-.import-field-row.is-drop-over > .form-control {
+.import-field-row.is-drop-over > .form-control,
+.import-field-row.is-drop-over > .plx-machine-field > .form-control {
     border-color: var(--accent-channel);
     box-shadow: 0 0 0 3px var(--accent-channel-soft);
 }
 
-.import-field-row.is-drop-refused > .form-control {
+.import-field-row.is-drop-refused > .form-control,
+.import-field-row.is-drop-refused > .plx-machine-field > .form-control {
     border-color: var(--accent-danger);
     box-shadow: 0 0 0 3px var(--accent-danger-soft);
 }
@@ -2766,109 +2817,53 @@ dialog .file-source .data-location-place {
 
 /* ------------------------------------------------------------------ */
 /* Local / Remote — which machine a file is on                          */
-/* One switch per data field (see services/dataLocation.js), mounted    */
-/* INSIDE the field's row, immediately before the path box it governs.  */
-/* Every field carries its own, so a project can mix freely: image on   */
-/* a cluster, mask on a cluster, table on this computer.                */
+/* The home page's chip (views/machineChip.js), at the front of each    */
+/* data field's path box. Every field carries its own, so a project can */
+/* mix freely: image on a cluster, mask on a cluster, table here.       */
 /*                                                                      */
-/* A segmented control, and deliberately a quiet one. It appears three  */
-/* times on the import form and would shout if it carried colour; the   */
-/* active side is marked by a raised surface and full-strength text,    */
-/* which is enough. Status and colour live on the line below the field, */
-/* where there is one message rather than three.                        */
+/* The chip and its menu are the Import dialog's own classes            */
+/* (`.plx-import-machine`, `.plx-import-menu-*`, further down); what is */
+/* here is only what it takes to sit inside a form's input. It floats   */
+/* over the input's left padding, so the input keeps whatever its       */
+/* dialog gives a `.form-control` -- height, ground, focus ring, the    */
+/* red of a path that is not there. Status lives on the line below.     */
 /* ------------------------------------------------------------------ */
 
-.data-location {
-    display: inline-flex;
-    align-items: center;
-    gap: var(--space-2);
-    flex: 0 0 auto;
+.plx-machine-field {
+    display: flex;
+    flex: 1 1 auto;
+    min-width: 0;
+    position: relative;
 }
 
-/* The track is a WELL and the active side is RAISED out of it: track darker
-   than the surface it sits on, active chip lighter. Inverted -- a chip darker
-   than its track -- and the active side reads as a hole punched in the
-   control rather than as the selected one. */
-.data-location-toggle {
-    display: inline-flex;
-    align-items: stretch;
-    /* The tooltip (services/tooltip.js) is what carries the meaning of the
-       two letters to a mouse, and it is placed from this box, so the flex
-       context must not squash it. */
-    flex: 0 0 auto;
-    /* The inset is what reads as "one of these two" rather than "a button".
-       `--dl-inset` is shared with the chip's radius below so the two curves
-       stay concentric at any size a caller scales this to. */
-    --dl-inset: 3px;
-    padding: var(--dl-inset);
-    gap: 2px;
-    background: var(--surface-0);
-    border: 1px solid var(--border-subtle);
-    border-radius: var(--radius-sm);
+/* Three classes deep so it beats every dialog's own `.form-control`
+   padding (`.gene-modal .form-control`, `.import-page .form-control`).
+   The width is the chip's, measured as it changes (machineChip.wrap);
+   the fallback is "Local", for the frame before it is. */
+.import-field-row .plx-machine-field > .form-control {
+    flex: 1 1 auto;
+    min-width: 0;
+    padding-left: calc(var(--plx-machine-chip-width, 78px) + 12px);
+    width: 100%;
 }
 
-/* One letter each. Sized as a square rather than by its text, so L and R --
-   which are different widths in every proportional face -- do not make the two
-   halves of the switch different sizes. Tabular figures for the same reason a
-   table uses them: the control must not change shape as it is toggled. */
-.data-location-option {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    min-width: 22px;
-    background: transparent;
-    color: var(--text-muted);
-    border: 0;
-    border-radius: calc(var(--radius-sm) - var(--dl-inset));
-    padding: 4px 6px;
-    font-size: 11px;
-    font-weight: 600;
-    letter-spacing: 0.03em;
-    line-height: 1.3;
-    white-space: nowrap;
-    cursor: pointer;
-    transition: color 120ms ease, background-color 120ms ease;
-}
-
-.data-location-option:hover {
-    color: var(--text-primary);
-}
-
-/* Raised out of the well, and tinted rather than coloured: which machine a
-   file is on is a statement of fact, not a status, so green-for-local /
-   red-for-remote would be reading a judgement into it that is not there. */
-.data-location-option.is-active {
-    background: var(--surface-2);
-    color: var(--text-primary);
-    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.4),
-                inset 0 0 0 1px var(--accent-channel-soft);
-}
-
-.data-location-option:focus-visible {
-    outline: 2px solid var(--accent-channel);
-    outline-offset: 1px;
-}
-
-/* Which machine "Remote" currently means. A button rather than a label,
-   because changing machines must not require toggling back through Local
-   and losing the field's value on the way. */
-.data-location-place {
-    background: transparent;
-    border: 0;
-    border-bottom: 1px dotted var(--border-strong);
-    border-radius: 0;
-    color: var(--text-secondary);
-    padding: 2px 1px;
+.plx-machine-field > .plx-machine-chip {
+    bottom: 5px;
     font-size: 12px;
-    max-width: 12rem;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    cursor: pointer;
+    height: auto;
+    left: 5px;
+    margin: 0;
+    /* A long server name ellipsizes before it crowds the path out. */
+    max-width: min(168px, 48%);
+    padding: 0 6px 0 8px;
+    position: absolute;
+    top: 5px;
+    z-index: 1;
 }
 
-.data-location-place:hover {
-    color: var(--text-primary);
+.plx-machine-field > .plx-machine-chip .plx-import-machine-label {
+    max-width: none;
+    min-width: 0;
 }
 
 .data-location-status {
@@ -6085,7 +6080,9 @@ dialog .file-source .data-location-place {
 
 /* -- The machine menu, fixed under the chip (importSample's `openMenu`). */
 .plx-import-menu {
-    animation: plx-import-menu-in 180ms var(--plx-import-ease-out);
+    /* The fallback is for the same menu opened outside the Import dialog,
+       which is where the variable is set (machineChip.js). */
+    animation: plx-import-menu-in 180ms var(--plx-import-ease-out, cubic-bezier(0.16, 1, 0.3, 1));
     background: rgba(15, 20, 28, 0.98);
     border: 1px solid rgba(255, 255, 255, 0.12);
     border-radius: 10px;
@@ -10766,15 +10763,6 @@ dialog .file-source .data-location-place {
     background: rgba(56, 189, 248, 0.2);
     border-color: var(--accent-channel);
     color: var(--accent-channel);
-}
-
-/* The Local/Remote switch is dataLocation's own control -- a well with the
-   active letter raised out of it -- and keeps every bit of that. All it
-   needs here is the row's height, or a 30px switch beside a 34px box reads
-   as two rows that happen to overlap. The letters stretch to fill it, so
-   this is the only number to set. */
-.gene-modal .data-location-toggle {
-    height: 34px;
 }
 
 /* One line under the row, for the waits and failures getting hold of the

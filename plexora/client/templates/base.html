@@ -8,7 +8,7 @@
     <link rel="apple-touch-icon" href="{{ data.base_url }}/client/src/img/apple-touch-icon.png">
     <!-- Styles -->
     <link rel="stylesheet" href="{{ data.base_url }}/client/src/css/tokens.css?v=20261027_sidebar_radius">
-    <link rel="stylesheet" href="{{ data.base_url }}/client/src/css/main.css?v=20261027_sidebar_radius">
+    <link rel="stylesheet" href="{{ data.base_url }}/client/src/css/main.css?v=20261027_machine_chip">
     {# Here and not in a page block: the explorer opens from every page, and
        appRouter.adoptStyles turns page stylesheets off on navigation. #}
     <link rel="stylesheet" href="{{ data.base_url }}/client/src/css/explorer.css?v=20261021_explorer_waiting">
@@ -104,7 +104,7 @@
        Visium HD layer sections both draw. Core's so that neither plugin reads
        the other's globals; not deferred, because plugin scripts are not. #}
     <script src="{{ data.base_url }}/client/src/js/views/geneList.js?v=20260928_gene_taken"></script>
-    <script src="{{ data.base_url }}/client/src/js/views/geneGroupModal.js?v=20260928_gene_taken"></script>
+    <script src="{{ data.base_url }}/client/src/js/views/geneGroupModal.js?v=20261027_machine_chip"></script>
     <script src="{{ data.base_url }}/client/src/js/views/viewerControls.js?v=20261021_pro"></script>
     <script src="{{ data.base_url }}/client/src/js/views/scaleCalibration.js?v=20260910_scalebar_pencil"></script>
     <script src="{{ data.base_url }}/client/src/js/views/viewerSidebar.js?v=20261027_add_row_hint"></script>
@@ -175,13 +175,18 @@
        upload arrow must not be able to fire before the click delegate is on
        `document`. #}
     <script src="{{ data.base_url }}/client/src/js/services/fileLocation.js?v=20261020_file_explorer" defer></script>
-    <script src="{{ data.base_url }}/client/src/js/services/dataLocation.js?v=20261023_connected_default" defer></script>
+    {# The home page's "which machine?" chip, for every path field that is not
+       the home page or the Import dialog. Before dataLocation.js and
+       fileSourceRow.js, which mount it; after remoteState.js and
+       connectionModal.js, which it reads and opens. #}
+    <script src="{{ data.base_url }}/client/src/js/views/machineChip.js?v=20261027_machine_chip" defer></script>
+    <script src="{{ data.base_url }}/client/src/js/services/dataLocation.js?v=20261027_machine_chip" defer></script>
     <script src="{{ data.base_url }}/client/src/js/views/dataSourceField.js?v=20261014_import_progressive" defer></script>
     {# "Which file, and which machine is it on?" as one row, for the dialogs
        that ask it. After placePicker, connectionModal, fileLocation and
        dataLocation, all of which it calls into, and after browsePicker, whose
        attachBrowseButton it wires to its Browse button. #}
-    <script src="{{ data.base_url }}/client/src/js/views/fileSourceRow.js?v=20261023_connected_default" defer></script>
+    <script src="{{ data.base_url }}/client/src/js/views/fileSourceRow.js?v=20261027_machine_chip" defer></script>
     {# THE slider, and the number box beside it. Every range input in Plexora
        is one of these, so it loads with the rest of the shell rather than
        with any one panel -- and before gradientRange.js and toolLoader.js,
@@ -197,7 +202,7 @@
          modal both draw through it, so it is listed before either. -->
     <script src="{{ data.base_url }}/client/src/js/views/jobProgress.js?v=20261014_import_progressive" defer></script>
     <script src="{{ data.base_url }}/client/src/js/views/tableProgress.js?v=20261014_import_progressive" defer></script>
-    <script src="{{ data.base_url }}/client/src/js/views/requirementsModal.js?v=20261015_setup_wait" defer></script>
+    <script src="{{ data.base_url }}/client/src/js/views/requirementsModal.js?v=20261027_machine_chip" defer></script>
     {# Core's own short-question dialog (ask / tell / choose / prompt). In
        base.html and not on the one page that uses it today, because a modal
        that only existed on one page would be one more thing every other page

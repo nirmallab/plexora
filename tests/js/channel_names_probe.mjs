@@ -163,10 +163,13 @@ function boot(options = {}) {
     const body = makeElement("body");
     const requests = [];
     const browseCalls = [];
-    //: What the place picker was asked, and what the node relay was asked for.
-    //: The two halves of "which machine" that leave this file.
-    const picks = [];
+    //: What the node relay was asked for: the half of "which machine" that
+    //: leaves this file.
     const reads = [];
+    //: Every chip a stage mounted, newest last (the stub below).
+    const chips = [];
+    //: What whenConnected was handed, so a test says when the list arrives.
+    let announce = null;
     let uploadReply = { success: true, names: ["DAPI", "CD3"] };
     let exists = true;
     let readFails = null;
@@ -196,14 +199,28 @@ function boot(options = {}) {
         PlexoraDataLocation: {
             serverIsRemote: () => Boolean(options.serverIsRemote),
             clientNode: () => options.clientNode || "",
+            whenConnected: (apply) => { announce = apply; },
         },
-        PlexoraPlacePicker: {
-            places: () => (options.placesFail
-                ? Promise.reject(new Error("no"))
-                : Promise.resolve(options.places || [])),
-            pick: (asked) => {
-                picks.push(asked);
-                return Promise.resolve(options.picked || null);
+        //: The machine chip, stubbed: its menu is machine_chip_probe.mjs's.
+        //: What this file tests is what the DIALOG does with a pick, so the
+        //: stub keeps what the dialog gave it and a test picks through that.
+        PlexoraMachineChip: {
+            create(chipOptions) {
+                const chip = { element: makeElement("button"), options: chipOptions,
+                               paint() {} };
+                chip.element.className = "plx-machine-chip";
+                chips.push(chip);
+                return chip;
+            },
+            wrap(input, chip) {
+                const box = makeElement("div");
+                box.className = "plx-machine-field";
+                const parent = input.parent;
+                parent.children.splice(parent.children.indexOf(input), 1, box);
+                box.parent = parent;
+                input.parent = null;
+                box.append(chip.element, input);
+                return box;
             },
         },
         //: The node relay, which is the whole reason a file on a cluster can
@@ -306,28 +323,32 @@ function boot(options = {}) {
         },
         /** Which machine Browse would open a dialog on, asked as it is asked. */
         get browseNode() { return api.browseCalls[0].node(); },
-        /** The Local/Remote switch, and the machine chip beside it. */
-        side(letter) {
-            return api.dialog.find("data-location-option")
-                .find((node) => node.textContent === letter) || null;
+        /** The chip the stage on screen mounted. */
+        get chip() { return chips.at(-1); },
+        /** Where the chip says the box is: "local" or "remote". */
+        get where() { return api.chip.options.current().where; },
+        /** The machine the chip names, when it is not this computer. */
+        get machine() {
+            const place = api.chip.options.current().place;
+            return place ? place.label : null;
         },
-        get activeSide() {
-            return (api.dialog.find("data-location-option")
-                .find((node) => node.classList.contains("is-active")) || {})
-                .textContent || null;
-        },
-        get chip() { return api.dialog.first("data-location-place"); },
+        /** The X in the dialog's corner. */
+        get closeButton() { return api.dialog.first("channel-names-close"); },
         get hint() { return api.dialog.first("field-hint").textContent; },
         get locationStatus() {
             return api.dialog.first("data-location-status").textContent;
         },
-        /** Flip the switch, and let whatever it asks for settle. */
-        async press(letter) {
-            api.side(letter).click();
+        /** Pick on the chip, as its menu would, and let it settle. */
+        async pickMachine(where, place = null) {
+            api.chip.options.onPick(where, place);
             await tick();
             await tick();
         },
-        get picks() { return picks; },
+        /** The list of machines arriving, with this one connected. */
+        async connected(place) {
+            if (announce) announce(place);
+            await tick();
+        },
         get reads() { return reads; },
         /** Make the next read through the node fail, the way a dead one does. */
         readFails(message) { readFails = message; },
@@ -415,6 +436,11 @@ function description(extra = {}) {
         && /xlsx/i.test(textOf(app.dialog.first("channel-names-subtitle"))),
         "a spreadsheet is what a panel design is usually written in");
     check("nothing has been sent yet", app.requests.length === 0);
+    check("the first stage has no Cancel: the X in the corner is the way out",
+        app.actionLabels.length === 0 && app.closeButton !== null
+        && app.closeButton.getAttribute("aria-label") === "Close");
+    app.closeButton.click();
+    check("...and it closes the dialog", app.dialog === null);
 }
 
 // -- one way in, not two ------------------------------------------------------
@@ -621,6 +647,9 @@ function description(extra = {}) {
         app.actionLabels.includes("Choose a different file")
         && !app.actionLabels.includes("Use this column"),
         app.actionLabels.join(" / "));
+    check("...and no Close beside it: the X is the way out at every stage",
+        !app.actionLabels.includes("Close") && app.closeButton !== null,
+        app.actionLabels.join(" / "));
     check("...with no way back to a column picker there never was",
         !app.actionLabels.includes("Back to columns"),
         "a one-column file was never asked about, so there is nothing to reconsider");
@@ -677,26 +706,26 @@ function description(extra = {}) {
     check("on a desktop launch there is one way in, not two",
         app.chooser === null,
         "Browse writes a path into the box: the same act, spelled twice");
-    check("...and the switch opens on the side the box has always meant",
-        app.activeSide === "L" && app.chip.hidden === true,
+    check("...and the chip opens on the side the box has always meant",
+        app.where === "local",
         "here that side IS the machine running Plexora, so nothing changes");
 }
 
 {
     const app = boot({ serverIsRemote: true });
     check("with Plexora elsewhere, the box still opens meaning the server",
-        app.activeSide === "R" && app.chip.textContent === "This Plexora server"
+        app.where === "remote" && app.machine === "This Plexora server"
         && app.pathInput.disabled === false,
         "a switch appearing beside it must not change the ordinary route in");
     check("...with the hint saying which machine that is",
         /machine running Plexora/.test(app.hint), app.hint);
     check("...and the bytes are not offered as well, on the side that is a path",
         app.uploadButton !== null && app.uploadButton.hidden === true,
-        "two ways to name one machine is the pair the switch exists to end");
+        "two ways to name one machine is the pair the chip exists to end");
 
-    await app.press("L");
-    check("this computer is one flip away, and says what it can and cannot do",
-        app.activeSide === "L" && app.pathInput.disabled === true
+    await app.pickMachine("local");
+    check("this computer is one pick away, and says what it can and cannot do",
+        app.where === "local" && app.pathInput.disabled === true
         && app.uploadButton.hidden === false
         && /cannot read paths on this computer/.test(app.hint),
         app.hint);
@@ -717,7 +746,7 @@ function description(extra = {}) {
     // A second stage must not lose the file, for the same reason it must not
     // lose a typed path: picking a column is not choosing the file again.
     const app = boot({ serverIsRemote: true });
-    await app.press("L");
+    await app.pickMachine("local");
     app.reply(description({ filename: "panel.csv" }));
     await app.pick({ name: "panel.csv" });
     app.reply({ success: true, names: ["DAPI", "CD3"] });
@@ -732,7 +761,7 @@ function description(extra = {}) {
     // The one arrangement where "this computer" is nameable by path from a
     // Plexora running somewhere else: the node `plexora connect` started here.
     const app = boot({ serverIsRemote: true, clientNode: "laptop" });
-    await app.press("L");
+    await app.pickMachine("local");
     check("a client node makes this computer's paths readable again",
         app.pathInput.disabled === false && app.browseButton.disabled === false
         && app.uploadButton.hidden === true,
@@ -753,15 +782,13 @@ const CLUSTER = [
 ];
 
 {
-    const app = boot({ places: [CLUSTER[1]] });
-    check("on a desktop launch the switch starts on this computer",
-        app.activeSide === "L");
+    const app = boot();
+    check("on a desktop launch the chip starts on this computer",
+        app.where === "local");
 
-    await app.press("R");
-    check("one connected machine is adopted rather than asked about",
-        app.activeSide === "R" && app.chip.textContent === "HMS-O2"
-        && app.picks.length === 0,
-        "a list of one is not a choice");
+    await app.pickMachine("remote", CLUSTER[1]);
+    check("picking a machine on the chip puts the box on it",
+        app.where === "remote" && app.machine === "HMS-O2");
     check("...and the box empties, because that path meant another machine",
         app.pathInput.value === "" && app.loadButton.disabled === true);
     check("...with Browse now asking the node",
@@ -790,45 +817,45 @@ const CLUSTER = [
     check("...applying the names it came back with", app.applied.length === 1);
 }
 
-{
-    const app = boot({ places: CLUSTER, picked: CLUSTER[1] });
-    await app.press("R");
-    check("more than one machine is a question, asked in the picker",
-        app.picks.length === 1 && app.chip.textContent === "HMS-O2",
-        JSON.stringify(app.picks));
+// -- a machine that is already connected ----------------------------------------
+//
+// Connecting a server is how somebody says where their data is. A dialog that
+// still opens on this computer makes them say it again.
 
-    app.chip.click();
-    await tick();
-    check("...and the chip asks it again, so adopting one is not a one-way door",
-        app.picks.length === 2);
+{
+    const app = boot();
+    await app.connected(CLUSTER[1]);
+    check("a machine already connected is chosen when the dialog opens",
+        app.where === "remote" && app.machine === "HMS-O2"
+        && app.browseNode === "HMS-O2", String(app.machine));
 }
 
 {
-    const app = boot({ places: CLUSTER, picked: null });
-    await app.press("R");
-    check("cancelling the picker leaves the field on a side that works",
-        app.activeSide === "L" && app.pathInput.disabled === false,
-        "rather than stranded on a Remote that is not any machine");
+    const app = boot();
+    await app.type("/Users/me/markers.csv");
+    await app.connected(CLUSTER[1]);
+    check("...but not over a path typed before the list arrived",
+        app.where === "local" && app.pathInput.value === "/Users/me/markers.csv");
 }
 
 {
-    const app = boot({ places: [], connects: { connected: true, name: "HMS-O2" } });
-    await app.press("R");
-    check("with nothing connected, Remote opens a connection rather than a list",
-        app.picks.length === 0 && app.chip.textContent === "HMS-O2",
-        "an empty picker is a dead end with nothing in it to choose");
+    const app = boot();
+    await app.pickMachine("local");
+    await app.connected(CLUSTER[1]);
+    check("...nor over a hand on Local",
+        app.where === "local");
 }
 
 {
-    const app = boot({ places: [], connects: null });
-    await app.press("R");
-    check("...and backing out of that leaves this computer selected",
-        app.activeSide === "L" && app.pathInput.disabled === false);
+    const app = boot({ serverIsRemote: true });
+    await app.connected(CLUSTER[1]);
+    check("...and a Plexora running elsewhere keeps the server, where the image is",
+        app.where === "remote" && app.machine === "This Plexora server");
 }
 
 {
-    const app = boot({ places: [CLUSTER[1]] });
-    await app.press("R");
+    const app = boot();
+    await app.pickMachine("remote", CLUSTER[1]);
     app.readFails("HMS-O2 stopped answering.");
     await app.type("/scratch/panel.csv");
     app.loadButton.click();
@@ -845,11 +872,11 @@ const CLUSTER = [
 }
 
 {
-    // The switch survives the stages, for the same reason the path does: being
+    // The machine survives the stages, for the same reason the path does: being
     // sent back to the wrong machine is the modal losing the answer it asked
     // for.
-    const app = boot({ places: [CLUSTER[1]] });
-    await app.press("R");
+    const app = boot();
+    await app.pickMachine("remote", CLUSTER[1]);
     app.reply(description({ filename: "panel.csv" }));
     await app.type("/scratch/panel.csv");
     app.loadButton.click();
@@ -857,7 +884,7 @@ const CLUSTER = [
     await tick();
     app.action("Choose a different file").click();
     check("going back for another file lands on the machine the last one was on",
-        app.activeSide === "R" && app.chip.textContent === "HMS-O2"
+        app.where === "remote" && app.machine === "HMS-O2"
         && app.pathInput.value === "/scratch/panel.csv",
         "the alternative is answering 'which machine' once per attempt");
 }
@@ -915,11 +942,11 @@ const CLUSTER = [
 }
 
 {
-    const app = boot({ places: [CLUSTER[1]] });
-    await app.press("R");
+    const app = boot();
+    await app.pickMachine("remote", CLUSTER[1]);
     app.dropZone.spec.onDrop("/Users/me/markers.csv");
-    check("a file dropped from this computer moves the switch back to Local",
-        app.uploads.length === 1
+    check("a file dropped from this computer moves the chip back to Local",
+        app.where === "local" && app.uploads.length === 1
         && app.lastUpload.options.body.get("path") === "/Users/me/markers.csv"
         && app.reads.length === 0);
 }

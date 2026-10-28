@@ -5357,8 +5357,8 @@ deliberately left out and what should be built next.
   itself, so every field that uses it takes drops with no call-site edit; a
   field whose `dataLocation.js` handle (`handleOf`) is set to Remote is moved
   to Local before filling, because a file from this computer's Explorer or
-  Finder means nothing on another machine, and a field with its own Remote
-  toggle (`fileSourceRow.js`, channel names) has no handle to move, so while
+  Finder means nothing on another machine, and a field with its own machine
+  chip (`fileSourceRow.js`, channel names) has no handle to move, so while
   it points at another machine it refuses with a reason instead.
   The Import dialog's inline mask/data/layer row (`renderInlinePick`)
   registers its wrap as a zone that calls `submitSlot(path, "drop", adding)`,
@@ -5744,7 +5744,8 @@ deliberately left out and what should be built next.
   above) against its own vocabulary. Two ways in, side by side: name one group here, or bring a file
   shaped like Xenium Explorer's own import (a gene column, then one column
   per group it belongs to). A `<dialog>` opened with `showModal()`, same as
-  `requirementsModal.js`; classes are `gene-modal-*`, also moved into
+  `requirementsModal.js`, left by the X in its head (and Escape) only — the
+  footer's Done went, being a second way to say the same thing; classes are `gene-modal-*`, also moved into
   `main.css`. The transcripts plugin's `scripts=` no longer lists
   `transcriptGroupModal.js` at all.
 - `views/pluginHelp.js` — `window.PlexoraPluginHelp.open(...)`, what the `?` in
@@ -5784,33 +5785,27 @@ deliberately left out and what should be built next.
   under it.
 - `services/datasetContext.js` — client mirror of the server dataset contract,
   handed to each plugin as `ctx.dataset`.
-- `services/dataLocation.js` — `window.PlexoraDataLocation`, the compact
-  **L | R** switch every data-selection field gets (one letter each because it
-  sits inside the field's row; the meaning is on the per-button `aria-label`
-  and a `data-tooltip` on the group reading "Data Location — (L)ocal |
-  (R)emote"). **One render, everywhere it renders** — the import dialog, the
-  one surface that gives the switch a row of its own rather than a field to
-  share, spells the missing word out around it instead: a `Label`-step
-  kicker before the chip ("Data location") and a caption
-  after it ("this computer", local only — on Remote the switch's own place
-  button stands there and names the machine, and unlike the caption it is
-  clickable). Two renderings of the switch itself would be two things to learn
-  for one question, and inside a dialog the tooltip is clipped by
-  `.plx-dialog { overflow: auto }` anyway, so the label and caption are what
-  carry the meaning there. The one exception is `options.bare`: `attach()`
-  then renders no switch at all, and the caller draws its own and moves the
-  state with `setWhere()`. Only the home page does this (`bare: true` with a
-  `statusMount`), because it asks "which machine?" with a chip inside its path
-  box and a menu of the actual machines; the state stays here, since this is
-  still the one thing that knows what to submit for a path on another
-  machine — only the two letters go. `attach()`
+- `services/dataLocation.js` — `window.PlexoraDataLocation`, the "which
+  machine?" state every data-selection field gets, asked through
+  `views/machineChip.js`'s chip at the front of the path box ("Local" or the
+  server's name, with a menu of the actual machines). The L | R switch and its
+  place pill that used to sit before the box are gone, because they asked the
+  same question as the home page's chip in a second shape and with a step
+  more (Remote first, then which). **One render, everywhere it renders** — the
+  home page and the Import dialog draw that chip themselves (`options.bare`:
+  `attach()` then draws no chip, and the caller moves the state with
+  `setWhere()`), since their chips also govern controls outside the box; every
+  other field gets `PlexoraMachineChip` from `attach()` itself. The state
+  stays here either way, since this is still the one thing that knows what to
+  submit for a path on another machine. The handle's `element` is the chip, or
+  null when bare; `chooser` is the hidden file input behind `Upload…`. `attach()`
   renders on **every** launch (`available()` is unconditionally true) because
-  there is always somewhere else a file could be. What each half means is
+  there is always somewhere else a file could be. What each answer means is
   derived, not configured — `plainPath()` is the one predicate everything hangs
   off, and it is true only when the machine holding the file is the machine
   running Plexora:
 
-  | switch | server is here | server is elsewhere |
+  | chip | server is here | server is elsewhere |
   |---|---|---|
   | This computer | plain path (today's behaviour) | the `role: "client"` node, or a CSV upload |
   | Remote → the server | (not offered) | plain path |
@@ -5822,17 +5817,13 @@ deliberately left out and what should be built next.
   `setWhere`) is what the node chips call: it picks whichever mode submits the
   box unchanged, which differs by where Plexora runs.
 
-  **Choosing Remote is a 0/1/many flow (`choosePlace()`), not always a list.**
-  No machine reachable opens `PlexoraConnectionModal` directly, with an
-  `intent` sentence explaining why; exactly one reachable machine is adopted
-  silently — nothing to choose from is not a choice; several open
-  `PlexoraPlacePicker` as before. "Reachable" means the server itself when
-  Plexora runs elsewhere, or any saved connection with a data node already
-  open — a saved-but-not-connected profile does not count, since offering it
-  would adopt a machine the field cannot yet read. The place chip (the pill
-  showing which machine is chosen) always calls `choosePlace(force=true)`,
-  which skips the 0/1 shortcut and opens the list regardless — the one-machine
-  case is a shortcut, not a one-way door.
+  **A pick on the chip is one call, `picked(where, place)`**, which replaced
+  `press`/`choosePlace`/`onlyPlace` and the 0/1/many shortcut. The chip lists
+  every saved server with whether it is up, so there is no longer a hidden
+  one-machine adoption to undo: a saved server that is not connected is listed
+  and picking it opens `PlexoraConnectionModal` for it first, so the field
+  never lands on a filesystem nothing can read yet. The pick is remembered
+  (`lastPlace`) as the next field's starting point.
 
   **`attach()` never calls `onChange` at mount.** It used to, and that reached
   the caller's handler before `attach` had returned the handle the handler is
@@ -6098,7 +6089,7 @@ deliberately left out and what should be built next.
 - `services/fileLocation.js` — `window.PlexoraFileLocation`, "which machine?"
   asked of every file button at once, so every plugin's Upload/Download honours
   Local/Remote without its form changing. `dataLocation.js` asks this question
-  per FIELD by building the switch in; this asks it at the one place every
+  per FIELD by building the machine chip in; this asks it at the one place every
   button passes through -- the click -- with one bubble-phase delegate on
   `document` for `input[type="file"]` and `a[download][href]`. Does nothing at
   all when `remoteAvailable()` (synchronous, off a passive `PlexoraRemotes`
@@ -6112,7 +6103,7 @@ deliberately left out and what should be built next.
   network, which matters because one caller is the emergency export offered
   when the server has stopped answering. `data-file-location="local"` on an
   element or an ancestor opts it out, for a core field that already has its
-  own switch (`dataLocation.js`, `views/channelNamesUpload.js`) and must not
+  own machine chip (`dataLocation.js`, `views/channelNamesUpload.js`) and must not
   ask the same question twice in two shapes. Loaded on every page from
   `base.html`, after `connectionModal.js` (whose "Connect another machine…"
   escape hatch it opens) and mounted once at parse time rather than through
@@ -6125,15 +6116,20 @@ deliberately left out and what should be built next.
   now uses `elem.click()` rather than a hand-rolled, non-cancelable
   `initEvent`, because a click this layer cannot intercept is a click that can
   never reach a remote machine.
-- `services/placePicker.js` — `window.PlexoraPlacePicker`, the modal behind
-  Remote when there is more than one machine to choose from. Lists `GET
+- `services/placePicker.js` — `window.PlexoraPlacePicker`. **Dead code**: still
+  loaded, but nothing in the client calls it since the machine chip
+  (`views/machineChip.js`) replaced the L | R switch whose Remote half opened
+  it in `dataLocation.js`, `channelNamesUpload.js` and `fileSourceRow.js`.
+  What it was: the modal behind Remote when there was more than one machine to
+  choose from. Lists `GET
   /data_places`. Its own password-prompt renderer and state chip are gone —
   pressing Connect on an entry that is not up now opens
   `connectionModal.js` on top of the list, which is still there if the modal
   is cancelled; the connection modal and the Settings cards are the only two
   surfaces left that render a prompt inline. Resolves `{id, kind, label,
-  node}`; `node` is the only part a field uses. This is the whole of "choose
-  where the data lives when you add it" — nothing is configured in advance.
+  node}`; `node` is the only part a field used. "Choose where the data lives
+  when you add it" is the machine chip's job now — still nothing configured in
+  advance.
 - `services/explorer/` — **the file explorer every Browse opens**, on this
   machine or a node, in a tab and in the desktop app: a floating window that
   lists one directory at a time (`POST /list_dir`, optionally `{node}`), never
@@ -6231,7 +6227,11 @@ deliberately left out and what should be built next.
   markers.csv dropped beside its field used to fall through to the Import
   dialog and become a sample; `apply()` is the same write with no dialog,
   what the drop router calls for a channel list dropped on the image. See
-  "Naming an image's channels" below. Still keeps its
+  "Naming an image's channels" below. Its path box carries the machine chip
+  (`views/machineChip.js`), and an empty box still on this computer and
+  untouched (`session.decided`) adopts a connected machine through
+  `PlexoraDataLocation.whenConnected`. Closed by the X in its head
+  (`.channel-names-close`), with no Cancel or Close action. Still keeps its
   own private copy of the Local/Remote/Upload row rather than calling
   `views/fileSourceRow.js` below — a known duplication, not yet unwound.
 - `views/fileSourceRow.js` (`window.PlexoraFileSourceRow`) —
@@ -6239,9 +6239,31 @@ deliberately left out and what should be built next.
   Local/Remote/Upload file-source row lifted out of `channelNamesUpload.js`
   (still the fullest example of what it is for). It settles which of the
   three answers applies — a server path, a node relay upload, or the
-  browser's own bytes — from the same Local/Remote derivation
+  browser's own bytes — from the machine chip at the front of its box
+  (`views/machineChip.js`) and the same Local/Remote derivation
   `services/dataLocation.js` makes, and hands its caller a path or a `File`
   without reading it. Loaded from `base.html` after `dataSourceField.js`.
+- `views/machineChip.js` — `window.PlexoraMachineChip`, the home page's "which
+  machine?" chip for every path field that is not the home page or the Import
+  dialog (the requirements form, project edit, the channel-names and
+  gene-group dialogs, through `dataLocation.js` and `fileSourceRow.js`).
+  `create({current, onPick, what}) -> {element, paint, close, isOpen}`: it
+  draws and asks and holds no state, because the field's own code is what
+  knows what a path on another machine submits as. The menu lists Local, every
+  saved server (Connected / Not connected / Connecting…), "Add a server…" and
+  "Manage servers"; a saved server that is down opens `PlexoraConnectionModal`
+  for it before `onPick` hears of it. The menu is fixed-positioned and appended
+  to the chip's enclosing `<dialog>` (the top layer) or `<body>`.
+  `wrap(input, chip)` puts the input in a `.plx-machine-field` box with the
+  chip floating over its left padding (`--plx-machine-chip-width`, kept by a
+  `ResizeObserver`) rather than drawing a box that looks like an input,
+  because each dialog styles its own `.form-control` and the input keeps all
+  of it; `:where(.plx-machine-field)` keeps that dialog's field height
+  winning. Uses the Import dialog's `.plx-import-machine` /
+  `.plx-import-menu-*` classes so the same chip is not two stylesheets that
+  drift. Loaded from `base.html`, deferred, before `dataLocation.js` and
+  `fileSourceRow.js`, which mount it, and after `remoteState.js` and
+  `connectionModal.js`, which it reads and opens.
 - `views/confirmDialog.js` — `window.PlexoraConfirm`, core's way of asking a
   short question: `ask`/`tell`/`choose`/`prompt`, plus `modalOpen()` and
   `escapeHtml()`. Replaces `window.confirm` (browser-drawn, names the page's
@@ -7770,8 +7792,10 @@ Four properties worth not breaking:
   nothing is blocking and detouring to the edit page there would be wrong.
   Since core's generic subtitle ("Plexora filled these in from the data") is
   false on a form with nothing filled in and nothing required, the plugin
-  supplies its own line via `Plugin.intro`, and the modal's secondary button
-  becomes "Skip" rather than "Cancel" — Skip saves through the same path as
+  supplies its own line via `Plugin.intro`, and the modal shows a Skip button
+  (`data-action="skip"`, hidden on every other form, where the X in the head —
+  `data-action="close"`, `.requirements-close` — is the way out and there is
+  no Cancel) — Skip saves through the same path as
   Continue (recording the offer as declined), because the caller re-enters on
   a `true` result and a plugin that requires nothing must not become
   permanently unopenable. `satisfy_requirements()` returns `stillOptional`
