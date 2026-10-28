@@ -28,7 +28,7 @@ subscription renews at the price it was bought at. Account type, seats and
 devices are separate (platform, 2026-10-25): an Individual account may hold
 several seats, the others waiting to be given, and becomes a Team only when its
 owner invites someone or asks; a seat covers two devices and more are added to
-it in pairs (device packs, per product), never as seats. Buy opens Plans & prices in the portal, where Paddle's checkout
+it in pairs (device packs, per product, each the price of one licence), never as seats. Buy opens Plans & prices in the portal, where Paddle's checkout
 runs. The platform then makes the buyer's seat and emails its licence key,
 which stays under Licences in the portal to show and copy again. Settings ›
 License (on Free and on a trial), `plexora license status` and a Pro
