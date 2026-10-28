@@ -1091,6 +1091,11 @@ async function init(config, savedViewTransform = null) {
         // acted on: the caller knows whether the user just asked for this and
         // is expecting something to happen.
         const grew = (entry.imageData || []).length > (config.imageData || []).length;
+        // What says which row is which cell, and where it is: a change re-keys
+        // the browser's cells (below).
+        const cellKeying = (spec) => JSON.stringify([spec?.roles?.cell_id, spec?.roles?.x,
+            spec?.roles?.y, spec?.coordinates, spec?.obsIdField, spec?.rowNumberIds, spec?.subset]);
+        const rekeyed = cellKeying(config.dataset) !== cellKeying(entry.dataset);
         // Only the read spec: attaching a mask also rewrites imageData, and
         // adopting a new channel list mid-session would shift every index the
         // tile path and the channel sliders are keyed on.
@@ -1113,8 +1118,17 @@ async function init(config, savedViewTransform = null) {
             dd[column] = { ...dd[column], ...stats };
         }
         // The table itself may have changed (roles answered, a log transform
-        // applied): columns cached for the browser-side gate are dropped.
-        __plexora.seaDragonViewer?.numericData?.invalidateColumns?.();
+        // applied): columns cached for the browser-side gate are dropped. Rows
+        // keyed or placed differently also take their cells afresh, or every
+        // gate goes on colouring the labels of the ids read at page load.
+        const viewer = __plexora.seaDragonViewer;
+        if (rekeyed && viewer) {
+            viewer.dataLayer?.adoptSchema?.(config);
+            viewer.numericData?.invalidateCells?.(config);
+            viewer.reloadCells?.().catch((error) => console.warn("cells not reloaded", error));
+        } else {
+            viewer?.numericData?.invalidateColumns?.();
+        }
         __plexora.dataset = PlexoraDataset.build(config, imageChannels, dd);
         return { maskAttached: grew };
     };

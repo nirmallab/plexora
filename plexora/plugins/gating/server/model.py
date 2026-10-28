@@ -254,6 +254,37 @@ def floor_spike(fit) -> int:
     return k if float(q01 - low) > FLOOR_GAP_IQR * iqr else 0
 
 
+def values_logged(ds) -> bool:
+    """Whether the marker values `ds.table` hands back are logged already:
+    the project log1p's them as they are read, or the matrix it reads as it
+    is is log-like (`expression.reads_logged`). The log1p switch alone says
+    "raw" of a `log` layer, because `expression`'s rule reads such a layer
+    with the switch off -- and gating that took the switch at its word
+    log1p'd it a second time (ImageLSP23362, 2026-10-28). Cached per matrix;
+    a table that names no matrix (no `expression_fingerprint`) is taken at its
+    flag."""
+    table = ds.table
+    fingerprint = getattr(table, "expression_fingerprint", None)
+    if table.log_transformed or fingerprint is None:
+        return bool(table.log_transformed)
+
+    def compute():
+        from plexora.agent import expression
+
+        markers = list(table.markers)
+        if not markers:
+            return False
+        columns = table.columns(markers)
+        n = len(columns[markers[0]])
+        rows = (np.random.default_rng(0).choice(n, expression.SAMPLE_CELLS, replace=False)
+                if n > expression.SAMPLE_CELLS else slice(None))
+        samples = {m: np.asarray(columns[m], dtype=np.float64)[rows] for m in markers}
+        return expression.reads_logged(expression.classify_markers(samples),
+                                       ds.project.feature_source)
+
+    return bool(ds.cached(("values_logged", 1, fingerprint), compute))
+
+
 def _fit_space(values, log_transformed):
     """(finite values in the fit's space, in their own order, to_log): log1p
     for raw non-negative intensities, as they stand otherwise (see
@@ -297,11 +328,12 @@ def auto_gate(values, log_transformed, at=None):
     which it did not before: turning the log switch on used to move the gate
     from roughly the right place to the middle of the background.
 
-    That is also why the project's own flag decides this rather than a guess at
-    the numbers. Logging twice is its own failure -- it compresses the
-    separation until a marker with 3% positives gates at 28% -- so this cannot
-    be "always log1p", and nothing in the values themselves tells the two
-    apart.
+    That is also why the caller says which (`values_logged`: the project's
+    switch, or a matrix the expression rule reads as already logged) rather
+    than this guessing per column. Logging twice is its own failure -- it
+    compresses the separation until a marker with 3% positives gates at 28% --
+    so this cannot be "always log1p", and one column's values alone do not tell
+    the two apart.
 
     A spike of unmeasured cells at the column's minimum is left out of the fit
     (`floor_spike`): it would otherwise take a component of its own and the
@@ -788,7 +820,7 @@ def fit_for(ds, channel):
         # otherwise pull a component toward themselves (cell_exclusions.py).
         values = cell_exclusions.masked(ds, channel, ds.table.columns([channel])[channel],
                                         record)
-        fitted, to_log, floor_n = _fit_body(values, ds.table.log_transformed)
+        fitted, to_log, floor_n = _fit_body(values, values_logged(ds))
         if fitted is None:
             return None
         gate = _crossover(fitted)

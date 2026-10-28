@@ -13,8 +13,8 @@ panel, unchanged:
   does, it needs the server started with `--allow-source-writes`, and it needs
   `confirm: true` -- the agent equivalent of pressing "Save Gates to AnnData".
 - **A gate is a lower bound on the marker's own scale.** Whatever the table
-  stores (raw or log1p'd, `log_transformed` says which), the gate is in those
-  units.
+  stores (raw or logged, `log_transformed` says which: the log1p switch, or a
+  matrix already log-transformed and read as it is), the gate is in those units.
 """
 
 from __future__ import annotations
@@ -55,7 +55,7 @@ def get_gate(call, inp):
     gate = model.get_gate(call.data, inp.marker)
     out = {"gate": gate, "summary": model.gated_summary(call.data, inp.marker),
            "revision": model.revision(call.data),
-           "log_transformed": call.data.table.log_transformed,
+           "log_transformed": model.values_logged(call.data),
            "source": classifier_calls.active_source(call.data, inp.marker)}
     # A marker the Single Cell Classifier decides: its calls, not the gate's,
     # are the marker's positives (the gate stays stored, unused, until the
@@ -93,7 +93,7 @@ def get_all(call, inp):
             "classifier_runs": classifier_calls.markers_with_runs(call.data),
             "provenance": provenance.summary(call.data.name, gates),
             "provenance_revision": provenance.revision(call.data.name),
-            "log_transformed": call.data.table.log_transformed}
+            "log_transformed": model.values_logged(call.data)}
 
 
 def distribution(call, inp):
@@ -109,7 +109,7 @@ def distribution(call, inp):
         "background_curve": fit.get("gmm_1", []),
         "positive_curve": fit.get("gmm_2", []),
         "current_gate": model.get_gate(ds, inp.marker),
-        "log_transformed": ds.table.log_transformed,
+        "log_transformed": model.values_logged(ds),
         # The curves and the auto gate are fitted on the QC-passed cells; the
         # histogram is the whole column's (the table's own description).
         "qc_exclusion": fit.get("qc_exclusion"),

@@ -3018,12 +3018,23 @@ class ImageViewer {
             return;
         }
         this.dataLayer.tableFrame = next;
+        await this.reloadCells(() => JSON.stringify(this.dataLayer.tableFrame) === JSON.stringify(next));
+    }
+
+    /**
+     * Read the table's cells again and redraw every gate on them: the rows
+     * changed under the page (a time series' frame, a cell-id or coordinate
+     * role answered). The centroid tiles are dropped, and each layer's last
+     * gate is run again on the fresh ids. `stillCurrent` is asked once the
+     * cells arrive; false drops them (a newer reload is under way).
+     */
+    async reloadCells(stillCurrent = () => true) {
         this.numericData?.invalidateColumns?.();
         if (this.numericData) this.numericData.cellsPromise = null;
         this.updateCentroidFilter(this.centroidFilter);
         if (!this.segmentationReady) return;
         const { ids, centers } = await this.numericData.loadCells();
-        if (JSON.stringify(this.dataLayer.tableFrame) !== JSON.stringify(next)) return;
+        if (!stillCurrent()) return;
         this.ids = ids || [];
         this.centers = centers || [];
         this.bindSegmentationBuffers(this.ids, this.centers);

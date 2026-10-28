@@ -59,7 +59,7 @@ function logColumn() {
     };
 }
 
-function build() {
+function build(fresh = { source: "layer", layer: "log1p" }) {
     // One object, handed to everything at boot -- exactly as main.js does.
     const dd = { CD3: xColumn() };
     const config = { dataset: { source: "X" }, imageData: [{ name: "CD3" }] };
@@ -68,7 +68,16 @@ function build() {
         channelList: { databaseDescription: dd },
         viewerSidebar: { databaseDescription: dd },
     };
-    const __plexora = { databaseDescription: dd, dataset: { describe: dd } };
+    const calls = [];
+    const seaDragonViewer = {
+        dataLayer: { adoptSchema: (cfg) => calls.push(["adoptSchema", cfg.dataset]) },
+        numericData: {
+            invalidateColumns: () => calls.push(["invalidateColumns"]),
+            invalidateCells: (cfg) => calls.push(["invalidateCells", cfg.dataset]),
+        },
+        reloadCells: async () => calls.push(["reloadCells"]),
+    };
+    const __plexora = { databaseDescription: dd, dataset: { describe: dd }, seaDragonViewer };
 
     const factory = new Function(
         "__plexora", "plexoraUrl", "datasource", "config", "dataLayer",
@@ -88,7 +97,7 @@ function build() {
         {
             json: async () => ({
                 proj: {
-                    dataset: { source: "layer", layer: "log1p" },
+                    dataset: fresh,
                     // A fresh /config carries the channel list too. Adopting it
                     // mid-session would shift every index the tile path and the
                     // channel sliders are keyed on, so it must be ignored.
@@ -98,10 +107,10 @@ function build() {
         },
     );
 
-    return { refreshDataset, dd, config, holders, __plexora };
+    return { refreshDataset, dd, config, holders, __plexora, calls };
 }
 
-const { refreshDataset, dd, config, holders, __plexora } = build();
+const { refreshDataset, dd, config, holders, __plexora, calls } = build();
 await refreshDataset();
 
 // The actual regression: the panel is drawn from the sidebar's reference, so
@@ -130,3 +139,20 @@ console.log("lazily fetched image statistics survive the refresh");
 assert.deepEqual(config.dataset, { source: "layer", layer: "log1p" }, "the read spec was not updated");
 assert.deepEqual(config.imageData, [{ name: "CD3" }], "the channel list was adopted mid-session");
 console.log("the read spec is adopted and the channel list is left alone");
+
+// A matrix change keys the rows as before: only the cached columns go.
+assert.deepEqual(calls, [["invalidateColumns"]], "an unchanged keying reloaded the cells");
+console.log("a new matrix drops the cached columns and keeps the cells");
+
+// A cell-id role answered mid-session re-keys every row: the page reads its
+// cells again, or every gate goes on colouring the labels of the ids it read
+// at load (ImageLSP23362, 2026-10-28: row numbers against global_cell_id).
+const rekeyed = { source: "X", roles: { cell_id: "global_cell_id", x: "X", y: "Y" },
+                  obsIdField: "global_cell_id" };
+const second = build(rekeyed);
+await second.refreshDataset();
+await Promise.resolve();
+assert.deepEqual(second.calls.map((c) => c[0]), ["adoptSchema", "invalidateCells", "reloadCells"],
+    "a re-keyed table kept the cells it read at load");
+assert.deepEqual(second.calls[1][1], rekeyed, "the cells were not re-read under the new roles");
+console.log("a changed cell id or coordinate source reloads the cells under the new roles");

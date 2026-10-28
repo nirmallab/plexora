@@ -66,6 +66,19 @@ class NumericData {
   }
 
   /**
+   * The rows are keyed or placed differently now (a cell-id or coordinate
+   * role answered mid-session): read the roles again, and fetch the cells
+   * afresh on the next loadCells(). Without this the gate went on colouring
+   * the labels of the ids loaded first -- row numbers after the record said
+   * global_cell_id, or the reverse (ImageLSP23362, 2026-10-28).
+   */
+  invalidateCells(config) {
+      this.schema = PlexoraDataset.resolveSchema(config);
+      this.cellsPromise = null;
+      this.invalidateColumns();
+  }
+
+  /**
    * @function getNotCalled - which cells QC says cannot be called for
    * `marker`: one byte per table row, aligned with loadCells()' ids like a
    * column (1 = not called -- inside a QC region, or the marker flagged

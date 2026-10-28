@@ -678,8 +678,8 @@ def plateau_note(state) -> str:
 
 
 def settle(engine, unit):
-    """The numeric checks on a resolved leader: written whatever they say,
-    a failure capping its confidence (`confidence`), never moving it."""
+    """The numeric checks on a resolved leader: a failure never moves it,
+    and closes it for review rather than accepting it (`engine.finalize`)."""
     result = engine.run_regression(unit)
     if "lineage" in result["failed"]:
         # As on the classic path: the whole image is shown before a

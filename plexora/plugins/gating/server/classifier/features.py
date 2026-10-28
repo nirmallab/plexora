@@ -85,6 +85,7 @@ def _signed_log(values):
 def table_features(ds, marker):
     """(matrix float32 [rows, k], names) from the table alone."""
     from plexora.plugins.gating.server.classifier.geometry import cells
+    from plexora.plugins.gating.server.model import values_logged
 
     def compute():
         geometry = cells(ds)
@@ -94,7 +95,7 @@ def table_features(ds, marker):
         columns, names = [], []
         columns.append(raw)
         names.append("value")
-        if not ds.table.log_transformed:
+        if not values_logged(ds):
             columns.append(_signed_log(raw))
             names.append("log_value")
         rank = np.full(n, np.nan)

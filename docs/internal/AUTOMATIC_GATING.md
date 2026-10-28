@@ -173,9 +173,12 @@ and a test of fixes on the remaining misses
   check's `too_low` / `too_high` no longer sends the gate back to the
   candidates (where a turn counted as oscillation and closed it for review):
   the gate stays where the rows put it, `whole_image_disagreed` on the record,
-  at low confidence (the failed checks are unconfirmed). A review gate is no
-  partner's evidence (`hierarchy.grade`); LSP11321's CD45 sat at 7.76 (user
-  7.8) in review, and 13 markers were gated without it. Before any T4 look a
+  closed for review (the failed checks are unconfirmed; `engine.finalize`).
+  It was accepted at low confidence until 2026-10-28, because a review gate
+  is no partner's evidence (`hierarchy.grade`; LSP11321's CD45 sat at 7.76,
+  user 7.8, in review, and 13 markers were gated without it). That stopped
+  once ImageLSP23362 accepted 11 of 15 markers that way, every one wrong: a
+  gate that fails its own checks is not accepted. Before any T4 look a
   whole-image direction still sends the gate to the candidates.
 - **`whole_image_reopen`** (default on). The exception: after a T4 look, a
   whole-image `too_low` sends the gate up for ONE more look at the candidates
@@ -551,9 +554,6 @@ plexora/ai/bench.py, bench_data.py                `plexora ai bench gating`
   new conversation continues a session with `gating_next(session_id)`.
 - **The collage manifest is the only source of what a mirrored viewer is
   shown**; a preview on the slider is never saved (`agentPreview`).
-- **Context never moves a gate.** The vocabulary outranks agent-supplied
-  biology, which can only order markers, choose references and lower a
-  confidence.
 - **A mirrored look is played as a person would make it.** The gate shown --
   the packet's, or for a v2 cell panel (which names none, so the reader stays
   blind) the engine's leader so far, its start before any look -- goes to the
@@ -568,6 +568,9 @@ plexora/ai/bench.py, bench_data.py                `plexora ai bench gating`
   where the slider is. A hand on the gate ends the show, a hand on the canvas
   leaves the view alone for 12 s, and with smooth motion off the gate and the
   field are set at once.
+- **Context never moves a gate.** The vocabulary outranks agent-supplied
+  biology, which can only order markers, choose references and lower a
+  confidence.
 - **A marker is asked about once, anywhere.** What a `panel_context` answer
   (or `set_panel_context`) says about a marker the shipped vocabulary does
   not know is written to the vocabulary's learned layer
@@ -982,6 +985,14 @@ partner's errors. So the run keeps an evidence graph
   confidence at moderate; inside it, with a start led by a reliable partner,
   a fairly sure look may reach high (`engine.biology_agrees`). Never moves a
   gate.
+- **A logged matrix read as it is** (2026-10-28). The log1p switch says
+  whether Plexora log1p's the values as it reads them, not whether they are
+  logged, so a `log` layer is read with it off. Gating asks
+  `model.values_logged` instead: the switch, or the matrix as read, classified
+  by `expression.reads_logged` (`recommend`'s rule). Such a layer is then
+  fitted as it stands. Taking the switch at its word log1p'd ImageLSP23362's
+  `log` layer a second time: its candidates thinned from 10-16 to 2-4, and
+  14 of 15 gates landed low.
 - **Viewer during setup**: an `expression_setup` packet is mirrored as
   `open_tool {ask: true}` -- the tab shows its own requirements prompt (the
   quiet panel open cannot succeed while `features` is unconfirmed); a quiet

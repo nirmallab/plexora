@@ -467,9 +467,10 @@ def test_an_impure_gate_is_pushed_up_once_by_code():
     assert not Engine.purity_push(fake, other, {"failed": ["edge_ratio"]})
 
 
-def test_purity_failing_again_after_the_push_caps_confidence_instead_of_asking():
-    """After the push, purity failing alone is accepted at low confidence,
-    with no whole-image look; a spatial check failing too still gets one."""
+def test_purity_failing_again_after_the_push_skips_the_look():
+    """After the push, purity failing alone goes on with no whole-image look
+    (and is then closed for review by `finalize`); a spatial check failing
+    too still gets one."""
     from types import SimpleNamespace
 
     from plexora.plugins.gating.server.autogate.engine import Engine, confidence_for
@@ -484,3 +485,37 @@ def test_purity_failing_again_after_the_push_caps_confidence_instead_of_asking()
     assert unit["purity_capped"] and logged[-1]["event"] == "purity_capped"
     unit.update(path="t4", regression={"failed": ["partners"]}, ai_confidence=0.9)
     assert confidence_for(unit) == "low"
+
+
+def test_a_gate_that_failed_its_checks_is_closed_for_review_not_accepted():
+    """A failed whole-image check no look confirmed sends the gate to review,
+    written at the candidate and tagged, instead of accepting it at low
+    confidence (ImageLSP23362, 2026-10-28). A failure a look confirmed is
+    accepted as before."""
+    from types import SimpleNamespace
+
+    from plexora.plugins.gating.server.autogate.engine import Engine
+
+    class Wrote(Exception):
+        pass
+
+    closed = []
+
+    def write(*args, **kwargs):
+        raise Wrote
+
+    fake = SimpleNamespace(close=lambda unit, state, reason, **kw: closed.append(
+        (state, reason, kw)), write=write, log=lambda **event: None)
+    unit = {"project": "p", "marker": "CD45", "candidate": 5.95, "path": "panel",
+            "state": "awaiting_regression",
+            "regression": {"ok": False, "failed": ["delta_from_gmm", "flip_share"]}}
+    Engine.finalize(fake, unit, method="ai_panel")
+    assert [c[0] for c in closed] == ["manual_review_recommended"]
+    assert "delta_from_gmm, flip_share" in closed[0][1]
+    assert closed[0][2]["proposed"] == 5.95
+
+    closed.clear()
+    unit["regression_confirmed"] = True
+    with pytest.raises(Wrote):
+        Engine.finalize(fake, unit, method="ai_panel")
+    assert closed == []

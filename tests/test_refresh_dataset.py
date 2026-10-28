@@ -42,5 +42,7 @@ def test_answering_the_modal_redraws_from_the_matrix_that_is_now_read():
         "every holder is still the one shared description object",
         "lazily fetched image statistics survive the refresh",
         "the read spec is adopted and the channel list is left alone",
+        "a new matrix drops the cached columns and keeps the cells",
+        "a changed cell id or coordinate source reloads the cells under the new roles",
     ):
         assert line in proc.stdout, proc.stdout

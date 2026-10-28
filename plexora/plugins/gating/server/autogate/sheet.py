@@ -161,6 +161,7 @@ def _density(result, candidates):
 def _histogram(ds, marker, low, candidates, size):
     from plexora.agent import plots
     from plexora.plugins.gating.server.autogate import bivariate
+    from plexora.plugins.gating.server import model
     from plexora.plugins.gating.server.autogate import profile as profmod
 
     from plexora.agent import cell_exclusions
@@ -171,7 +172,7 @@ def _histogram(ds, marker, low, candidates, size):
     col = profmod.column(ds, marker)
     lo, hi = (float(col.from_fit(v)) for v in bivariate._axis_range(col))
     values = values[(values >= lo) & (values <= hi)]
-    log_table = bool(ds.table.log_transformed)
+    log_table = model.values_logged(ds)
     who = "every cell" if cell_exclusions.row_mask(ds, marker) is None else "QC-passed cells"
     return plots.draw_histogram(
         values, gate=low, width=size[0], height=size[1], title=f"{marker}: {who}",

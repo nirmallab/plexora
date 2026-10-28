@@ -182,7 +182,7 @@ def column(ds, marker) -> Column:
     from plexora.plugins.gating.server.autogate import cells as cellmod
 
     def compute():
-        return Column(marker, cellmod.values(ds, marker), ds.table.log_transformed)
+        return Column(marker, cellmod.values(ds, marker), model.values_logged(ds))
 
     qc = cell_exclusions.fingerprint(cell_exclusions.current(ds))
     return ds.cached(("autogate.column", marker, fingerprint(ds), qc), compute)

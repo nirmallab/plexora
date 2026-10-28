@@ -67,7 +67,7 @@ def _histogram_png(call, unit):
     if gate is None:
         return None
     fit = model.gmm_for(ds, unit["marker"])
-    log_table = bool(ds.table.log_transformed)
+    log_table = model.values_logged(ds)
     # The body only, as the bivariate plot draws it (`bivariate._axis_range`):
     # a spike of unmeasured cells at the minimum, and the stragglers above it,
     # would squeeze every real cell into a strip at the right.

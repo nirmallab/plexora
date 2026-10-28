@@ -145,7 +145,7 @@ def gmm(dataset, payload):
     """
     import numpy as np
 
-    from plexora.plugins.gating.server.model import _curve, auto_gate
+    from plexora.plugins.gating.server.model import _curve, auto_gate, values_logged
 
     channel_name = payload.get("channel")
     selection_ids = payload.get("selection_ids") or []
@@ -184,7 +184,7 @@ def gmm(dataset, payload):
     # the fit, the gate was a summary of it that ignored their widths -- so the
     # auto button landed somewhere the picture did not explain.
     gate, background, positive = auto_gate(
-        column_data_filtered, dataset.table.log_transformed, at=midpoints)
+        column_data_filtered, values_logged(dataset), at=midpoints)
     if gate is not None:
         packet_gmm['gate'] = gate
     packet_gmm['gmm_1'] = _curve(midpoints, background)

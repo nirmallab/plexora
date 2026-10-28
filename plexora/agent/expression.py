@@ -215,6 +215,19 @@ def recommend(options, current, confirmed) -> dict:
                    "unreadable)"}
 
 
+def reads_logged(stats, source) -> bool:
+    """Whether a matrix read as it is (log1p off) already holds logged values,
+    from its `classify_markers` stats and its source (`X` or `layer:<name>`):
+    `recommend`'s rule turned round. A log-like layer is logged unless its
+    shape says raw; `X` only when its shape says logged."""
+    if stats.get("kind") != "log_like":
+        return False
+    says = (stats.get("shape") or {}).get("says")
+    if says == "raw":
+        return False
+    return says == "logged" or _layer(source) is not None
+
+
 def fallback_choice(options) -> dict:
     """What a non-interactive run takes when it must choose: the first
     log-like matrix as it is, else X with log1p on."""

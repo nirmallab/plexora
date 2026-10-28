@@ -26,10 +26,15 @@ class DataLayer {
         // Null for an image-only project, and also for one whose coordinate
         // columns nobody has identified yet; nothing needing real coordinates
         // should be reachable in either case (callers check `schema` first).
-        this.schema = PlexoraDataset.resolveSchema(this.config);
+        this.adoptSchema(this.config);
+        this.phenotypes = [];
+    }
+
+    /** Read the roles again (a cell-id or coordinate role answered mid-session). */
+    adoptSchema(config) {
+        this.schema = PlexoraDataset.resolveSchema(config);
         this.x = this.schema?.x;
         this.y = this.schema?.y;
-        this.phenotypes = [];
     }
 
     async init() {

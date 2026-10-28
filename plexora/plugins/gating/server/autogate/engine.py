@@ -1103,14 +1103,24 @@ class Engine(BaseEngine):
     def finalize(self, unit, *, method):
         """Accept the unit's current final threshold with the rule-table confidence.
 
-        Never against a direction on record (`transitions` module docstring):
-        such a unit is closed for review instead, its gate written and tagged."""
+        Never against a direction on record (`transitions` module docstring),
+        nor with a failed check no look confirmed (`run_regression`): such a
+        unit is closed for review instead, its gate written and tagged."""
         direction = unit.get("direction")
         if direction:
             self.close(unit, "insufficient_information",
                        f"the last look said the gate is too "
                        f"{'low' if direction == 'up' else 'high'} and no candidate was chosen; "
                        "written there for manual review", proposed=unit.get("candidate"))
+            return
+        failed = (unit.get("regression") or {}).get("failed") or []
+        if failed and not unit.get("regression_confirmed"):
+            # A gate its own whole-image checks failed is not accepted at low
+            # confidence: written there for review (ImageLSP23362, 2026-10-28:
+            # 11 of 15 markers accepted that way, every one wrong).
+            self.close(unit, "manual_review_recommended",
+                       f"failed its own checks ({', '.join(failed)}); written for manual "
+                       "review", proposed=unit.get("candidate"))
             return
         from plexora.plugins.gating.server.autogate import cellcalls
 
@@ -1374,8 +1384,8 @@ class Engine(BaseEngine):
 
     def purity_capped(self, unit, result) -> bool:
         """After the one purity push, purity failing again and nothing else
-        caps the gate's confidence at low (`confidence_for`: a failed check
-        not confirmed by eye) instead of asking for a whole-image look: on
+        closes the gate for review (`finalize`: a failed check not confirmed
+        by eye) instead of asking for a whole-image look: on
         lsp11385_2 32 of 44 such looks said "holds", on the PCA benchmark 42
         of 62, and none of the PCA's other answers improved a gate (its
         "too low" moved Ecad away; its "artifact" closed a real CD8a). A
@@ -1393,7 +1403,7 @@ class Engine(BaseEngine):
         sent up the lattice once, by code, to the candidates a look then
         judges row by row. Only when nothing but purity (and the spatial
         checks a purity miss drags along) failed; a second failure of purity
-        alone caps confidence (`purity_capped`), any other goes to the
+        alone closes it for review (`purity_capped`), any other goes to the
         whole-image look. Not a look's direction, so the
         oscillation guard (`transitions._to_t4`) never counts it."""
         failed = set(result.get("failed") or [])

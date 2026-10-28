@@ -144,6 +144,7 @@ class _Pixels:
 
     def __init__(self, ds, geometry, values, matrix, names):
         from plexora.plugins.gating.server.classifier.features import _neighbour_values
+        from plexora.plugins.gating.server.model import values_logged
 
         self.source = None
         self.mean = self.contrast = self.peak = None
@@ -154,7 +155,7 @@ class _Pixels:
             self.mean = np.expm1(np.asarray(matrix[:, names.index("px_mean")], np.float64))
             if "px_contrast" in names:
                 self.contrast = np.asarray(matrix[:, names.index("px_contrast")], np.float64)
-        elif not ds.table.log_transformed:
+        elif not values_logged(ds):
             self.source = "table"
             self.mean = values
         if self.mean is not None:
