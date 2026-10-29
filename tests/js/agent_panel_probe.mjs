@@ -970,6 +970,19 @@ const cornerChipOf = (page) => find(page.dom.body, (n) => n.classList && n.class
     check("Plexora AI: a gateway error shows the same card with Resume and Not now, which dismisses it",
         gwShown && /could not continue: bad_request/.test(gwText) && gwCard.hidden === true,
         { gwShown, gwText, hidden: gwCard.hidden });
+
+    const cut = makePage({ paid: true });
+    cut.send("started", { phase: "planning" }, "gs_cut");
+    cut.send("ai_paused", { run_id: "air_2", reason: "interrupted", credit: false,
+                            message: "The gateway went silent mid-answer: nothing arrived for 300 s.",
+                            resume: { kind: "gating", project: "demo", resume_session: "gs_cut" } }, "gs_cut");
+    const cutCard = byClass(cut.root(), "plx-agent-credit");
+    const cutText = byClass(cutCard, "plx-agent-limit-text").textContent;
+    check("Plexora AI: a stream cut mid-answer says the connection dropped, not a Python error, and offers Resume",
+        cutCard.hidden === false && cutText.startsWith("The connection to the AI gateway dropped mid-answer.")
+        && /resume when you are ready/.test(cutText) && !/TimeoutError|could not continue/.test(cutText)
+        && byAction(cutCard, "ai-resume")?.disabled === false,
+        { cutText, hidden: cutCard.hidden });
 }
 
 // -- the viewer apart from the agent: background, watch, take over ---------------------

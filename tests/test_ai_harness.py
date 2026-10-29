@@ -737,6 +737,44 @@ def test_running_out_of_credit_pauses_the_session_and_it_resumes(hard, tmp_path)
     assert all(final[m]["state"] in ("accepted", "accepted_low_confidence") for m in HARD)
 
 
+@pytest.mark.pro
+def test_an_answer_cut_off_mid_stream_stops_the_run_resumably(hard, tmp_path, monkeypatch):
+    """The gateway accepts a call and then goes silent: the run stops on
+    `interrupted` with the reason for the viewer, not on a bare TimeoutError,
+    and a resume finishes the session."""
+    from spatialagents import gateway as agent_gateway
+
+    monkeypatch.setattr(agent_gateway, "CALL_TIMEOUT", 2)
+    with FakeGateway(oracle_brain(hard)) as gateway:
+        trace = TraceStore(tmp_path / "trace.sqlite")
+        original = gateway._messages
+        cut = threading.Event()
+
+        def silent_after_two(handler, body):
+            if len(gateway.calls) >= 2 and not cut.is_set():
+                cut.set()
+                handler.send_response(200)
+                handler.send_header("Content-Type", "text/event-stream")
+                handler.end_headers()
+                handler.wfile.write(b"event: biocognia.accepted\ndata: {}\n\n")
+                handler.wfile.flush()
+                time.sleep(3)                         # past the call's read timeout
+                return None
+            return original(handler, body)
+        gateway._messages = silent_after_two
+        events = []
+        first = GatingRun(GatingOptions(project="gsynth"), gateway=client(gateway), trace=trace,
+                          on_event=events.append).run()
+        assert first["reason"] == "interrupted", first
+        said = [e for e in events if e["event"] == "paused"]
+        assert said and said[-1]["reason"] == "interrupted" and "went silent" in said[-1]["message"]
+
+        second = GatingRun(GatingOptions(project="gsynth", resume_session=first["session_id"]),
+                           gateway=client(gateway), trace=trace).run()
+    assert second["status"] == "done", second
+    assert set(_final_units(first["session_id"])) == set(HARD)
+
+
 def _pausing_brain(info, act, *, on_call=1):
     """The Oracle, with the session paused by `act(store, session_id)` while
     the `on_call`th model call is out. The first by default: on the easy

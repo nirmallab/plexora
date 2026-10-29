@@ -156,6 +156,7 @@ window.PlexoraAgentPanel = (function () {
         run_envelope_exceeded: "This run used everything it was quoted for",
         payment_required: "This needs a purchase; an owner can buy it at account.biocognia.com",
         run_closed: "The gateway closed this run",
+        interrupted: "The connection to the AI gateway dropped mid-answer",
         ai_disabled: "AI is switched off for your organisation",
         ai_not_entitled: "This licence does not include Plexora AI",
         no_license: "Plexora AI needs this device connected to a Pro licence",

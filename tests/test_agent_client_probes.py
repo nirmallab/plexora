@@ -75,6 +75,7 @@ PANEL_CHECKS = [
     "pause shows the two-button card (Resume, Add credits opens the top-up page); Resume posts the "
     "session to resume and the card closes",
     "Plexora AI: a gateway error shows the same card with Resume and Not now, which dismisses it",
+    "Plexora AI: a stream cut mid-answer says the connection dropped, not a Python error, and offers Resume",
     'Plexora AI: after a reload, a run still going on this project has its card put back at once '
     '(phase, "3 of 9 markers", paused) from GET /ai/v1/runs, not from the next event',
     'Plexora AI: Start gating puts the card up at once ("AI agent starting", "Reading your note", '
