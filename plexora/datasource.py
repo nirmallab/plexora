@@ -7,6 +7,8 @@ from pathlib import Path
 
 import polars as pl
 
+from spatialbridge.grouping.names import dedupe_name as _dedupe_dataset_name  # noqa: F401
+
 from plexora.server.models.adapters.classify import classify_columns
 from plexora.server.models.project import (
     ColumnGroups,
@@ -313,18 +315,6 @@ def _derive_dataset_name_from_path(path):
         stem,
         flags=re.IGNORECASE,
     )
-
-
-def _dedupe_dataset_name(base_name, existing_names):
-    """Suffix base_name with _2, _3, ... until it doesn't collide with any of
-    existing_names -- callers pass get_config_names() in."""
-    existing = set(existing_names)
-    if base_name not in existing:
-        return base_name
-    i = 2
-    while f"{base_name}_{i}" in existing:
-        i += 1
-    return f"{base_name}_{i}"
 
 
 def _find_existing_datasource_for_image(image_path, config):

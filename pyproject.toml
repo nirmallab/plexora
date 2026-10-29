@@ -141,6 +141,12 @@ dependencies = [
     # licence, like the biocognia client above. Stdlib-only at import; it adds
     # pydantic and pyyaml, both already here.
     "spatialagents>=0.1,<0.2",
+    # Which images, masks and tables under a folder belong together
+    # (server/models/dataset_plan.py, import_proposal's name rules): the
+    # grouping rules, shared with SCIMAP Pro so both pair a folder the same
+    # way. Core because the dataset builder is. Stdlib-only at import without
+    # its `mcp` extra; the bridge extra below adds that.
+    "spatialbridge>=0.2,<0.3",
     # Called at import of the package itself (plexora/__init__.py), to cap the
     # BLAS thread pool before sklearn deadlocks in a threaded server.
     "threadpoolctl>=3.6.0",
@@ -244,12 +250,13 @@ ai = [
     "pyyaml>=6",
 ]
 # The shared protocol SCIMAP Pro and other spatial tools speak to Plexora
-# (spatialbridge): the bridge_* capabilities, the HTTP capability endpoints'
-# descriptors and the shared workspace. Optional because Plexora works alone;
-# without it the bridge capabilities answer `capability_unavailable` with this
-# install line. Imported lazily -- never at `import plexora`.
+# (spatialbridge, already core for its grouping rules) with the MCP SDK it
+# reaches a peer with: the bridge_* capabilities, the HTTP capability
+# endpoints' descriptors and the shared workspace. Optional because Plexora
+# works alone; without it the bridge capabilities answer
+# `capability_unavailable` with this install line.
 bridge = [
-    "spatialbridge>=0.1,<0.2",
+    "spatialbridge[mcp]>=0.2,<0.3",
 ]
 # Magic select through a z-stack with SAM 2.1 (plexora/vision/sam_video.py).
 # Optional and heavy (PyTorch): without it outlines are carried with MobileSAM

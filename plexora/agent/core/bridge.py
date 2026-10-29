@@ -12,9 +12,11 @@ calls the protocol's `BridgeTools` over Plexora's own adapter
 capability route and an outside agent reach them the same way, with the same
 receipts, audit lines and policy.
 
-Present whether or not the optional package is installed, so skills can name
+Present whether or not the `bridge` extra is installed, so skills can name
 them and `validate_scope` can route through them: without it each answers
-`capability_unavailable` with the install line. The one exception is
+`capability_unavailable` with the install line. spatialbridge itself is a
+core dependency (Plexora's dataset planner uses its grouping rules); what the
+extra adds is the MCP SDK the bridge reaches its peer with. The one exception is
 `bridge_dataset_changed`, which needs nothing from the package -- a peer that
 cannot reach the HTTP event route can still say "the table changed" over MCP.
 
@@ -42,11 +44,13 @@ TAGS = ("bridge", "handoff", "peer", "workspace", "spatialbridge")
 
 
 def available() -> bool:
-    """Whether the protocol package can be imported here."""
+    """Whether the bridge extra is here: the protocol package and the MCP SDK
+    it reaches a peer with. The package alone is a core dependency."""
     import importlib.util
 
     try:
-        return importlib.util.find_spec("spatialbridge") is not None
+        return all(importlib.util.find_spec(name) is not None
+                   for name in ("spatialbridge", "mcp"))
     except (ImportError, ValueError):
         return False
 
@@ -72,8 +76,8 @@ def describe() -> dict:
 def _unavailable():
     return AgentError(
         "capability_unavailable",
-        "the bridge to other spatial tools (SCIMAP Pro) needs the spatialbridge package, "
-        "which is not installed",
+        "the bridge to other spatial tools (SCIMAP Pro) needs the bridge extra "
+        "(spatialbridge with the MCP SDK), which is not installed",
         detail={"hint": INSTALL_HINT})
 
 
