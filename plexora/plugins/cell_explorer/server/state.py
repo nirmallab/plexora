@@ -98,6 +98,9 @@ def default_state() -> dict:
         # Which column is showing. None means "decide for me" -- the panel then
         # picks the best candidate rather than opening on nothing.
         "selected": None,
+        # Every column somebody has picked, in the order first picked: the
+        # dropdown dots them.
+        "visited": [],
         "display": {"mode": None, "opacity": DEFAULT_OPACITY},
         # column -> "categorical" | "continuous", where the user disagreed with
         # the inference. Per column, because the answer is about that column.
@@ -181,6 +184,7 @@ def normalize(raw) -> dict:
     state["schema_version"] = SCHEMA_VERSION
     state["revision"] = _int(raw.get("revision"), 0)
     state["selected"] = _text_or_none(raw.get("selected"))
+    state["visited"] = _names(raw.get("visited"))
     state["display"] = _display(raw.get("display"))
     state["overrides"] = {
         str(column): kind
@@ -257,6 +261,13 @@ def _int(value, fallback) -> int:
 
 def _text_or_none(value):
     return value if isinstance(value, str) and value else None
+
+
+def _names(value) -> list[str]:
+    """Distinct non-empty strings, first occurrence kept, order kept."""
+    if not isinstance(value, list):
+        return []
+    return list(dict.fromkeys(name for name in value if isinstance(name, str) and name))
 
 
 def _number_or_none(value):

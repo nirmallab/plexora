@@ -431,6 +431,9 @@ class CellExplorerSidebarController {
         this.render();
 
         if (persist) {
+            // Only here, where a person chose it: a restored, carried-over or
+            // notebook-requested column was not visited by anybody.
+            this.state.markVisited(column);
             this.state.dirty = true;
             this.scheduleSave();
         }
@@ -559,9 +562,9 @@ class CellExplorerSidebarController {
      * no sign at all that it can be typed into.
      *
      * Every metadata column is in the list -- the server stopped deciding which
-     * ones were worth offering (see variables.eligible_columns). What used to
-     * be a refusal is a hint here: the dot and the hover text say a column
-     * behaves like an identifier, and picking it anyway works.
+     * ones were worth offering (see variables.eligible_columns). The dot marks
+     * the columns somebody has picked in this project before, so a wide table
+     * shows at a glance which of its columns have already been looked at.
      */
     bindVariablePicker() {
         const mount = this.el("cell_explorer_variable");
@@ -575,7 +578,7 @@ class CellExplorerSidebarController {
             ariaLabel: "Overlay column",
             emptyText: "No columns match",
             describeOption: (name) => this.describeColumn(name),
-            getIndicator: (name) => this.warnAboutColumn(name),
+            getIndicator: (name) => (this.state.hasVisited(name) ? "Coloured by before" : ""),
             onChange: (name) => this.select(name || null),
         });
     }
@@ -610,18 +613,6 @@ class CellExplorerSidebarController {
             this.api.forget?.(column);
             await this.select(column, { persist: false });
         }
-    }
-
-    /**
-     * A dot, and why, for a column that will not draw well -- or "" for the
-     * ordinary case, which is SearchableSelect's way of saying "no dot".
-     */
-    warnAboutColumn(name) {
-        const descriptor = this.state.descriptor(name);
-        if (!descriptor?.identifier_like) return "";
-        return `${(descriptor.n_unique || 0).toLocaleString()} distinct values -- `
-            + "this behaves like an identifier, and will draw about as many colours "
-            + "as there are cells.";
     }
 
     bindLegendControls() {

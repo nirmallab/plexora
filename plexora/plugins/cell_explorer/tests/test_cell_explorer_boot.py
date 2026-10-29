@@ -363,6 +363,22 @@ def test_z_and_x_step_the_overlay_column(report):
         False, "Area", True, "qc_status"]
 
 
+def test_the_dropdown_dots_the_columns_picked_here_before(report):
+    """The dot means "somebody has coloured by this here before" and nothing
+    else -- not "this looks like an identifier", which is what it used to mean
+    and which flagged every numeric measurement in a table. A column a page view
+    restored or carried over was not picked, so it gets none."""
+    _, data = report
+    visited = data["visited"]
+    dot = "Coloured by before"
+    assert visited["before"] == ["", "", ""]
+    assert visited["restored"] == ["", "", ""]
+    assert visited["picked"] == [dot, "", dot]
+    assert visited["saved"] == ["phenotype", "Area"]
+    assert visited["adopted"] == ["", "", dot]
+    assert visited["kept"] == ["Area", "gone"]
+
+
 def test_the_keys_answer_only_while_armed_and_bare(report):
     """Armed while the panel is on screen (onShow to onHide), never with a
     modifier held -- Cmd+X is cut. Upper or lower case both step."""

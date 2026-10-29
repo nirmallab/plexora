@@ -467,6 +467,37 @@ if (!problems.length) {
         problems.push(`stepping through the columns could not be exercised: ${error.message}`);
     }
 
+    // (10) The dropdown's dot: on a column somebody picked here before, and on
+    // nothing else -- not on one a page view restored or carried over -- and the
+    // list survives the store round trip.
+    try {
+        runInContext(
+            "globalThis.__visited = (() => {"
+            + " const c = new CellExplorerSidebarController({ url: (p) => p,"
+            + "   datasource: 'd', dataset: { schema: {} }, onCleanup() {},"
+            + "   viewer: { setCellColorLUT() { return true; } } });"
+            + " c.setup();"
+            + " c.state.descriptors = ['phenotype', 'qc_status', 'Area'].map((name) => ("
+            + "   { name, kind: name === 'Area' ? 'continuous' : 'categorical', n: 10,"
+            + "     n_missing: 0, identifier_like: name === 'Area', categories: [] }));"
+            + " const dots = () => ['phenotype', 'qc_status', 'Area'].map("
+            + "   (name) => c.variableSelect.getIndicator(name));"
+            + " const before = dots();"
+            + " c.select('qc_status', { persist: false });"
+            + " const restored = dots();"
+            + " c.select('phenotype'); c.select('Area'); c.select('phenotype');"
+            + " const picked = dots();"
+            + " const saved = c.state.toSettings().visited;"
+            + " c.state.adopt({ visited: ['Area', '', 7, 'gone'] });"
+            + " const adopted = dots();"
+            + " const kept = c.state.toSettings().visited;"
+            + " c.destroy();"
+            + " return { before, restored, picked, saved, adopted, kept }; })();",
+            ctx);
+    } catch (error) {
+        problems.push(`the visited dots could not be exercised: ${error.message}`);
+    }
+
     // The seam with core. cell_color_probe.mjs pins how the renderer reads these
     // shapes; this is the end that emits them, and a mismatch is a viewer that
     // draws nothing with nothing to say about why.
@@ -556,6 +587,7 @@ const report = {
     rowClick: ctx.__rowClick || null,
     list: ctx.__list || null,
     steps: ctx.__steps || null,
+    visited: ctx.__visited || null,
     recolor: ctx.__recolor || null,
     lut: ctx.__lut || null,
     problems,

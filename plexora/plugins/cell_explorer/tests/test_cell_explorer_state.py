@@ -37,6 +37,7 @@ def normalized(**fields):
 def test_a_fresh_project_starts_with_nothing_chosen():
     fresh = state.default_state()
     assert fresh["selected"] is None
+    assert fresh["visited"] == []
     assert fresh["revision"] == 0
     assert fresh["categorical"] == {} and fresh["continuous"] == {}
 
@@ -65,6 +66,19 @@ def test_a_hex_colour_survives():
 def test_anything_that_is_not_a_hex_triple_is_dropped(color):
     result = normalized(categorical={"p": {"colors": {"Tumor": color}}})
     assert result["categorical"]["p"]["colors"] == {}
+
+
+def test_visited_columns_keep_the_order_they_were_first_picked_in():
+    """The dropdown's dots. Duplicates and anything that is not a column name
+    go; a column the table does not have right now stays, like every other
+    per-column preference here."""
+    result = normalized(visited=["phenotype", "Area", "phenotype", "", None, 3, "gone"])
+    assert result["visited"] == ["phenotype", "Area", "gone"]
+
+
+def test_a_document_from_before_visited_columns_reads_as_none_visited():
+    result = state.normalize({"selected": "phenotype"})
+    assert result["visited"] == []
 
 
 def test_hidden_categories_survive_as_a_stable_list():

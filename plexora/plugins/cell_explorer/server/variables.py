@@ -21,8 +21,8 @@ that were never in doubt.
 **Identifier-like.** A column with a distinct value for nearly every cell is not
 a variable, it is a name. Colouring by it produces a picture with as many
 colours as cells, which is indistinguishable from noise and takes a while to
-draw. Those are flagged `identifier_like` and marked in the dropdown, but they
-are still offered and still selectable -- "nearly every" is a heuristic, and
+draw. Those are flagged `identifier_like`, but they are still offered and
+still selectable -- "nearly every" is a heuristic, and
 somebody's 40-sample cohort in a million-cell table is a real thing to want.
 The flag's one hard effect is that such a column is never chosen automatically.
 
@@ -82,8 +82,9 @@ def eligible_columns(dataset) -> list[str]:
     nothing on screen to say why.
 
     What replaced it is a flag, not a filter: `identifier_like` marks the
-    columns that will draw as many colours as cells, the dropdown says so, and
-    the choice stays the user's. See `_looks_like_an_identifier`.
+    columns that will draw as many colours as cells, the panel never opens on
+    one by itself, and the choice stays the user's. See
+    `_looks_like_an_identifier`.
 
     Source order rather than sorted: a table's column order usually means
     something to whoever produced it, and re-sorting makes a familiar file

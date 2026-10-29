@@ -42,6 +42,8 @@ class CellExplorerState {
     static defaults() {
         return {
             selected: null,
+            //: Every column somebody has picked here, in the order first picked.
+            visited: [],
             display: { mode: null, opacity: 0.7 },
             overrides: {},
             categorical: {},
@@ -107,6 +109,31 @@ class CellExplorerState {
         const descriptor = this.descriptor(column);
         const kind = this.kindFor(column);
         return descriptor && kind !== descriptor.kind ? kind : null;
+    }
+
+    // -- visited columns ----------------------------------------------------
+
+    /**
+     * Whether somebody has picked this column in this project before.
+     *
+     * Indexed for the same reason `descriptor` is: the dropdown asks once per
+     * option per keystroke of its filter. The list is replaced rather than
+     * pushed to, so a changed reference is all the index has to watch.
+     */
+    hasVisited(column) {
+        if (this._visitedIndex?.source !== this.settings.visited) {
+            this._visitedIndex = {
+                source: this.settings.visited,
+                names: new Set(this.settings.visited),
+            };
+        }
+        return this._visitedIndex.names.has(column);
+    }
+
+    markVisited(column) {
+        if (!column || this.hasVisited(column)) return;
+        this.settings.visited = [...this.settings.visited, column];
+        this.dirty = true;
     }
 
     setOverride(column, kind) {
@@ -291,6 +318,7 @@ class CellExplorerState {
     toSettings() {
         return {
             selected: this.column,
+            visited: [...this.settings.visited],
             display: { ...this.settings.display },
             overrides: { ...this.settings.overrides },
             categorical: this.settings.categorical,
@@ -311,6 +339,9 @@ class CellExplorerState {
         this.readOnly = Boolean(stored?.unreadable);
         this.settings = {
             selected: stored?.selected ?? defaults.selected,
+            visited: Array.isArray(stored?.visited)
+                ? stored.visited.filter((name) => typeof name === "string" && name)
+                : defaults.visited,
             display: { ...defaults.display, ...(stored?.display || {}) },
             overrides: { ...(stored?.overrides || {}) },
             categorical: { ...(stored?.categorical || {}) },
