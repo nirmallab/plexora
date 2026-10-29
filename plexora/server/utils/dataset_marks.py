@@ -28,6 +28,8 @@ import fnmatch
 import os
 from pathlib import Path
 
+from spatialbridge.grouping.names import BUNDLE_LABELS
+
 from plexora.server.utils import dicom_wsi, ome_zarr, spatial_scene
 
 #: Directory suffixes that are one store, not a tree: a search never descends
@@ -36,15 +38,9 @@ from plexora.server.utils import dicom_wsi, ome_zarr, spatial_scene
 STORE_DIR_SUFFIXES = (".zarr", ".n5")
 
 #: What each dataset type is called in a sentence ("This folder is a Xenium
-#: run."). The keys are the `type` the client matches on.
-TYPE_LABELS = {
-    "zarr": "Zarr store",
-    "spatialdata": "SpatialData store",
-    "xenium": "Xenium run",
-    "visium": "Visium run",
-    "visium_hd": "Visium HD run",
-    "dicom": "DICOM slide",
-}
+#: run."). The keys are the `type` the client matches on. Shared with the
+#: grouping rules, which name a run by it.
+TYPE_LABELS = BUNDLE_LABELS
 
 #: The licence entitlement a type needs to be imported. A type with none is
 #: free; one listed here reads `licensed: False` when the licence lacks it, so

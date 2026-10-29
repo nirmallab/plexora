@@ -47,6 +47,20 @@ from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any, Mapping
 
+from spatialbridge.grouping.match import (  # noqa: F401 -- shared with SCIMAP Pro
+    SUBSET_MATCH_FLOOR,
+    ExactName as _ExactName,
+    subset_match,
+)
+from spatialbridge.grouping.names import (  # noqa: F401
+    CONTAINER_SUFFIXES as _CONTAINER_SUFFIXES,
+    REFERENCE_PREFERENCE,
+    clean_name as _clean_name,
+    file_stem as _file_stem,
+    id_tokens as _id_tokens,
+    mask_rank,
+)
+
 from plexora.server.providers.base import is_remote_locator
 from plexora.server.utils import boundary_mask, ngff_transform, spatial_scene
 
@@ -101,13 +115,6 @@ MASK_SEARCH_LIMIT = 1000
 #: than `MASK_HINTS`, which judges a file somebody picked: this only ever
 #: judges a file that already has an image's exact shape.
 DEEP_MASK_HINTS = MASK_HINTS + ("cell", "nucle", "segment")
-
-#: Which raster image a sample prefers as its reference, most preferred first.
-#: A Xenium run's own morphology beats an H&E somebody added beside it: every
-#: transcript in the run is already expressed in the morphology image's frame,
-#: and making the H&E the reference would mean registering the entire run
-#: against it to draw anything.
-REFERENCE_PREFERENCE = ("xenium_morphology", "multiplex", "he", "picture")
 
 #: Plugin-contributed detectors, in registration order. Called after core's
 #: ladder and before a path is reported as unrecognised.
@@ -1808,20 +1815,8 @@ def _named_owner(relative, images):
 
 
 def _mask_rank(candidate):
-    """Which of one image's masks is proposed: a whole-cell one, then anything
-    that is not nuclei, then nuclei; nearest, then by name, within each."""
-    relative = candidate["relative"]
-    name = relative.rsplit("/", 1)[-1].lower().split(".", 1)[0]
-    words = set(re.split(r"[^a-z0-9]+", name))
-    if words & {"cell", "cells", "wholecell"}:
-        tier = 0
-    elif "nucle" in name or "nuc" in words:
-        tier = 3
-    elif "cell" in name:
-        tier = 1
-    else:
-        tier = 2
-    return (tier, relative.count("/"), relative.lower())
+    """Which of one image's masks is proposed (`spatialbridge.grouping.mask_rank`)."""
+    return mask_rank(candidate["relative"])
 
 
 def _not_offered():
@@ -2789,89 +2784,6 @@ def _image_column(path):
     return None
 
 
-def _id_tokens(text):
-    """A name as the words and numbers it is made of: `LSP10003_tumor` ->
-    ("lsp", 10003, "tumor"). Numbers compare as numbers, so `LSP0003` is
-    `LSP3` -- and never as text, so `LSP1` is not a prefix of `LSP10003`."""
-    return tuple(int(part) if part.isdigit() else part
-                 for part in re.findall(r"[a-z]+|[0-9]+", str(text).lower()))
-
-
-def _contains(longer, shorter) -> bool:
-    size = len(shorter)
-    return any(longer[at:at + size] == shorter
-               for at in range(len(longer) - size + 1))
-
-
-#: How sure a name has to be before it is used as the answer: a whole run of
-#: one name's words found in the other's, not merely a word in common.
-SUBSET_MATCH_FLOOR = 0.5
-
-
-class _ExactName(str):
-    """A name that says which image this is only when a value IS it: a
-    folder's, which names whatever else is in it too (`2024_run3/` holds
-    image 1 as much as image 3)."""
-
-
-def _run_score(shorter, longer) -> float:
-    """How well `shorter` names `longer` by being a run of its words; 0 when
-    it is not one, or says too little to be told from chance.
-
-    A bare number is the image's only when it is the only number in the other
-    name: `slide_3` is image 3, but `run3_2024` and `scan_2024_10_14` are
-    dates and run numbers that happen to contain one.
-    """
-    if not _contains(longer, shorter):
-        return 0.0
-    if all(isinstance(token, int) for token in shorter) and [
-            token for token in longer if isinstance(token, int)] != list(shorter):
-        return 0.0
-    return 0.5 + 0.4 * len(shorter) / len(longer)
-
-
-def subset_match(values, names):
-    """Which of an image-id column's `values` names this image, or None.
-
-    `names` are what the image is called -- its file name, the name its own
-    metadata gives it, the sample's. A value matches a name exactly, or as a
-    contiguous run of its words (`LSP10003` in `LSP10003_tumor_region.ome.tif`,
-    or the other way round), scored by how much of the longer one it covers;
-    a folder's name (`_ExactName`) only exactly. Only a value that wins
-    outright is returned: two equally good candidates is a question for the
-    user, not a coin toss. The answer is APPLIED (`_choose_subsets`), so a
-    match that could be chance is no match.
-    """
-    scored = []
-    wanted = [(tokens, isinstance(name, _ExactName))
-              for tokens, name in ((_id_tokens(name), name) for name in names)
-              if tokens]
-    for value in values:
-        tokens = _id_tokens(value)
-        if not tokens:
-            continue
-        best = 0.0
-        for name, exact in wanted:
-            if tokens == name:
-                score = 1.0
-            elif exact:
-                score = 0.0
-            else:
-                score = _run_score(*sorted((tokens, name), key=len))
-            best = max(best, score)
-        if best:
-            scored.append((best, str(value)))
-    if not scored:
-        return None
-    scored.sort(reverse=True)
-    top = scored[0]
-    if top[0] < SUBSET_MATCH_FLOOR:
-        return None
-    if len(scored) > 1 and scored[1][0] >= top[0] - 1e-9:
-        return None
-    return top[1]
-
-
 def _ome_image_name(path):
     """The name an OME-TIFF gives its image in its own metadata, or None.
     A header read, never pixels; anything unreadable says nothing."""
@@ -2908,16 +2820,6 @@ def _image_names(image_src, *extra):
     elif image_src:
         names.append(_file_stem(_name_of(image_src)))
     return [name for name in names if name]
-
-
-def _file_stem(path) -> str:
-    """A file's name without its extension -- both of `.ome.tif`'s parts."""
-    name = Path(str(path)).name
-    lowered = name.lower()
-    for suffix in (".ome.tiff", ".ome.tif", ".ome.zarr", ".ome.btf"):
-        if lowered.endswith(suffix):
-            return name[: -len(suffix)]
-    return Path(name).stem
 
 
 def _choose_subsets(samples, answers, scoped_image=None):
@@ -3130,22 +3032,6 @@ def _name_inside_a_store(path):
         return ome_zarr.suggest_name(path) or None
     except Exception:
         return None
-
-
-#: Directory extensions that are a FORMAT rather than part of the name. A
-#: SpatialData store called `sample.zarr` is the sample called "sample", and a
-#: project named `sample.zarr` puts the extension in its URL and on its card.
-_CONTAINER_SUFFIXES = (".zarr", ".ome.zarr", ".n5")
-
-
-def _clean_name(value) -> str:
-    value = str(value or "").strip()
-    for suffix in sorted(_CONTAINER_SUFFIXES, key=len, reverse=True):
-        if value.lower().endswith(suffix):
-            value = value[: -len(suffix)]
-            break
-    value = re.sub(r"[^\w\-. ]+", "_", value)
-    return value or "sample"
 
 
 def _align(layer, reference, reference_pixel_size, run_pixel_size,

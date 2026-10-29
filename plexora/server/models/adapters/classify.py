@@ -19,7 +19,8 @@ every plugin, while a marker wrongly filed as metadata is one drag away.
 
 Stdlib only, on purpose. `anndata_adapter` imports the name heuristics from
 here rather than the other way round, so nothing that merely wants to classify
-column names pays for numpy/polars/anndata.
+column names pays for numpy/polars/anndata. The image-identifier rule is
+`spatialbridge.grouping.match`'s (also stdlib only), shared with SCIMAP Pro.
 """
 
 from __future__ import annotations
@@ -27,20 +28,13 @@ from __future__ import annotations
 import re
 from typing import Any, Iterable, Mapping
 
-# Conventional names for the column identifying which image/sample/region an
-# observation belongs to. Also used by AnnDataAdapter to decide whether a file
-# might span several images and therefore needs an explicit subset choice --
-# deliberately not "any categorical column", since cell_type/cluster/condition
-# are common in ordinary single-image data and must not trigger that.
-_LIKELY_IMAGE_IDENTIFIER_NAMES = {
-    "imageid", "image", "sample", "sampleid", "region", "regionid",
-    "roi", "fov", "well", "slide", "core",
-    # Vendor vocabulary for the same thing: Zeiss writes "scene", Akoya
-    # "acquisition", and a tissue microarray names its cores off the "tma".
-    # Read as words (see is_likely_image_identifier_name), so "tma_core" and
-    # "acquisition_id" now resolve where they used to fall through.
-    "scene", "acquisition", "tma", "specimen",
-}
+from spatialbridge.grouping.match import (  # noqa: F401
+    _IDENTIFIER_SUFFIXES,
+    IMAGE_ID_COLUMN_WORDS as _LIKELY_IMAGE_IDENTIFIER_NAMES,
+    _name_tokens,
+    is_likely_image_identifier_name,
+    normalize_column_name,
+)
 
 # Non-marker columns a quantification table conventionally carries. Matched
 # against the normalized name, so "X_centroid", "x centroid" and "XCentroid"
@@ -104,65 +98,6 @@ _ROLE_PATTERNS = {
 }
 
 _NUMERIC_DTYPE = re.compile(r"int|float|double|number", re.IGNORECASE)
-
-
-def normalize_column_name(name: Any) -> str:
-    """Strip separators and case so the name vocabularies above stay short."""
-    return re.sub(r"[\s_\-.]+", "", str(name)).lower()
-
-
-#: Qualifiers a column name adds to the thing it identifies. Stripped before
-#: the vocabulary lookup so "coreid" and "fovname" resolve to "core" and "fov"
-#: rather than to nothing at all.
-_IDENTIFIER_SUFFIXES = ("id", "name", "number", "num", "index", "idx", "key", "label")
-
-
-def _name_tokens(name: Any) -> list[str]:
-    """A column name split into its words, lowercased.
-
-    Deliberately NOT `normalize_column_name`, which strips separators: the
-    separators are the only word boundary a column name has, and losing them is
-    what forces a substring test -- under which "score" ends with "core" and a
-    marker column becomes an image identifier.
-    """
-    return [token for token in re.split(r"[\s_\-.]+", str(name).lower()) if token]
-
-
-def is_likely_image_identifier_name(column_name: Any) -> bool:
-    """Whether a column name looks like it identifies an image/sample/region.
-
-    This decides whether the user is ASKED which image a multi-image table
-    should be read as, so the two failure modes are wildly asymmetric: a name
-    this does not recognise means sixty images' cells drawn over one image with
-    nothing said (see AnnDataAdapter.load_table's guard), while a name it
-    recognises wrongly means one extra dropdown on a form. Bias towards asking.
-
-    Matching the whole separator-stripped name against the vocabulary was the
-    entire test, and it let through every conventional name carrying a
-    qualifier: `sample_id` normalizes to "sampleid" which happens to be listed,
-    but `core_id`, `ROI_ID`, `slide_id`, `FOV_name` and `tma_core` all
-    normalized to something absent from it. So the name is now read as words,
-    and any one of them naming an image is enough.
-    """
-    # A column Plexora itself wrote into the file (QC's `plexora_qc_roi_ids`,
-    # a gate's calls) annotates cells; it never says which image they are in.
-    if str(column_name).startswith("plexora_"):
-        return False
-    normalized = normalize_column_name(column_name)
-    if not normalized:
-        return False
-    if normalized in _LIKELY_IMAGE_IDENTIFIER_NAMES:
-        return True
-    for token in _name_tokens(column_name):
-        if token in _LIKELY_IMAGE_IDENTIFIER_NAMES:
-            return True
-        # "coreid" written without a separator. The stem must be non-empty, or
-        # a column literally called "id" would strip to nothing and match.
-        for suffix in _IDENTIFIER_SUFFIXES:
-            stem = token[: -len(suffix)] if token.endswith(suffix) else ""
-            if stem and stem in _LIKELY_IMAGE_IDENTIFIER_NAMES:
-                return True
-    return False
 
 
 def is_numeric_dtype(dtype: Any) -> bool:

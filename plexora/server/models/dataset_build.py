@@ -228,7 +228,7 @@ def name_channels_after(name, project) -> str | None:
     """Apply a channel list the plan could not check before registration.
 
     On a data node the plan may not know an image's channel count
-    (`dataset_plan._channels_slot`), so the names wait until the sample is
+    (`spatialbridge.grouping`'s channel slot), so the names wait until the sample is
     registered and the count is in its record. Applied when the lengths
     match, the way the viewer's own channel-names upload applies a list.
 
