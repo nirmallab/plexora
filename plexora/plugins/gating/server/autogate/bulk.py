@@ -13,14 +13,18 @@ background, never skipped as "not binary". Its starting gate, like every
 looked-at marker's, is chosen just before the first look (`Engine.propose`),
 when its partners have been gated.
 
-Heavy work happens outside the session lock; each result is merged in under
-it (`engine_for`), so the agent can already be answering packets for the
+Heavy work happens outside the session lock, the markers of an image profiled
+a few at a time (`_Ahead`); each result is merged in under it, in gating
+order (`engine_for`), so the agent can already be answering packets for the
 first markers while the pass works through the rest -- and for a dataset,
-through the next images.
+through the next images. A marker is first asked about once every marker
+whose gate it reads has been profiled (`Engine.unprofiled_partner`), so what
+it stands on does not depend on how far the pass has got.
 """
 
 from __future__ import annotations
 
+import contextvars
 import time
 
 from plexora.agent.errors import AgentError
@@ -340,8 +344,6 @@ def _basic_qc(call, session_id, project):
 
 def run(call, inp):
     """The bulk job's handler."""
-    from plexora.plugins.gating.server.autogate import biology, context
-
     session_id = inp.session_id
     with engine_for(call, session_id) as engine:
         engine.record["state"] = "bulk_running"
@@ -362,9 +364,12 @@ def run(call, inp):
         if options["basic_qc"]:
             _basic_qc(call, session_id, project)
         if project not in calibrations:
+            started = time.perf_counter()
             calibrations[project] = calibrate_image(
                 call, project, session_id, image_cells=options["purpose"] == "contrast")
             with engine_for(call, session_id) as engine:
+                engine.log(event="calibrated", project=project,
+                           ms={"calibrate": round((time.perf_counter() - started) * 1e3, 1)})
                 # Stored now, not after the image's markers: the contrast
                 # check (`display_setup`) goes out as soon as it is there.
                 engine.record.setdefault("calibration", {})[project] = calibrations[project]
@@ -387,42 +392,17 @@ def run(call, inp):
             call.progress(done=done, total=total, message=f"{project}: calibrated")
             continue
         ds = call.session.data(project)
-        for marker in order:
-            call.check_cancelled()
-            _check_stopped(session_id)
-            _check_matrix(call, session_id)
-            key = unit_key(project, marker)
-            with engine_for(call, session_id) as engine:
-                unit = engine.record["units"].get(key)
-                pending = unit is not None and unit["state"] == "pending"
-            settled = None
-            if pending:
-                # Read for every marker, not once for the pass: the panel's
-                # context packet is answered while this pass runs, and a
-                # snapshot taken before it would overwrite the answer on every
-                # marker settled after it (one file read; `context.for_project`
-                # caches nothing).
-                panel = biology.overlay(context.for_project(ds), sample_biology)
-                try:
-                    prepared = prepare_unit(call, session_id, project, marker, panel, options)
-                except AgentError as exc:
-                    prepared = {"close": ("manual_review_recommended",
-                                          f"could not be profiled: {exc.message}")}
-                with engine_for(call, session_id) as engine:
-                    unit = engine.record["units"][key]
-                    if unit["state"] == "pending":
-                        settle_unit(engine, unit, prepared)
-                    settled = unit["state"]
-                    words = BULK_WORDS.get(settled, settled.replace("_", " "))
-                    engine.record["bulk_progress"] = {
-                        "stage": "profiling", "message": f"{marker}: {words}",
-                        "done": done + 1, "total": total}
-                    progress = engine.progress()
-                    images_now = list(engine.record["images"])
-            done += 1
-            call.progress(done=done, total=total, message=f"{project}: {marker}")
-            if settled is not None:
-                announce(images_now, progress, last=done == total)
+        with engine_for(call, session_id, save=False) as engine:
+            waiting = [m for m in order
+                       if (engine.record["units"].get(unit_key(project, m)) or {}).get("state")
+                       == "pending"]
+        ahead = _Ahead(call, session_id, project, ds, sample_biology, options, waiting)
+        try:
+            for marker in order:
+                done = _settle_next(call, session_id, project, marker, ahead, done, total,
+                                    announce)
+        finally:
+            ahead.close()
         with engine_for(call, session_id) as engine:
             engine.record.setdefault("calibration", {})[project] = calibrations[project]
             profiled = engine.record.setdefault("images_profiled", [])
@@ -437,3 +417,93 @@ def run(call, inp):
         engine.record.pop("bulk_progress", None)
         progress = engine.progress()
     return {"session_id": session_id, "progress": progress, "calibration": calibrations}
+
+
+#: Markers of one image profiled at once. A profile's mixture fits are numpy
+#: over whole columns, mostly outside the GIL. Each marker is still settled in
+#: gating order, exactly as one at a time, and no profile reads another
+#: marker's gate.
+PROFILE_WORKERS = 4
+
+
+class _Ahead:
+    """The profiles (`prepare_unit`) of an image's pending markers, computed
+    on a few threads ahead of the marker being settled."""
+
+    def __init__(self, call, session_id, project, ds, sample_biology, options, markers):
+        from concurrent.futures import ThreadPoolExecutor
+
+        self.call, self.session_id, self.project = call, session_id, project
+        self.ds, self.sample_biology, self.options = ds, sample_biology, options
+        self.markers = list(markers)
+        self.futures = {}
+        self.pool = ThreadPoolExecutor(max_workers=PROFILE_WORKERS,
+                                       thread_name_prefix="gating-profile") \
+            if len(self.markers) > 1 else None
+
+    def _profile(self, marker):
+        from plexora.plugins.gating.server.autogate import biology, context
+
+        # Read for every marker, not once for the pass: the panel's context
+        # packet is answered while this pass runs, and a snapshot taken before
+        # it would overwrite the answer on every marker settled after it (one
+        # file read; `context.for_project` caches nothing).
+        panel = biology.overlay(context.for_project(self.ds), self.sample_biology)
+        started = time.perf_counter()
+        try:
+            prepared = prepare_unit(self.call, self.session_id, self.project, marker, panel,
+                                    self.options)
+        except AgentError as exc:
+            prepared = {"close": ("manual_review_recommended",
+                                  f"could not be profiled: {exc.message}")}
+        return prepared, round((time.perf_counter() - started) * 1e3, 1)
+
+    def get(self, marker):
+        """(prepared, milliseconds) for `marker`; the ones after it are started."""
+        if self.pool is None or marker not in self.markers:
+            return self._profile(marker)
+        at = self.markers.index(marker)
+        for name in self.markers[at:at + PROFILE_WORKERS + 1]:
+            if name not in self.futures:
+                # The job's context goes with it: the session's QC mode
+                # (`cell_exclusions.mode`) decides which cells are profiled.
+                self.futures[name] = self.pool.submit(contextvars.copy_context().run,
+                                                      self._profile, name)
+        return self.futures.pop(marker).result()
+
+    def close(self):
+        if self.pool is not None:
+            self.pool.shutdown(wait=False, cancel_futures=True)
+
+
+def _settle_next(call, session_id, project, marker, ahead, done, total, announce):
+    """Settle one marker from its profile (`_Ahead`); returns `done` moved on."""
+    call.check_cancelled()
+    _check_stopped(session_id)
+    _check_matrix(call, session_id)
+    key = unit_key(project, marker)
+    with engine_for(call, session_id) as engine:
+        unit = engine.record["units"].get(key)
+        pending = unit is not None and unit["state"] == "pending"
+    settled = None
+    if pending:
+        prepared, spent = ahead.get(marker)
+        with engine_for(call, session_id) as engine:
+            unit = engine.record["units"][key]
+            if unit["state"] == "pending":
+                with engine.timed("settle"):
+                    settle_unit(engine, unit, prepared)
+            settled = unit["state"]
+            engine.log(event="profiled", unit=key, state=settled,
+                       ms={"profile": spent, **engine.take_ms()})
+            words = BULK_WORDS.get(settled, settled.replace("_", " "))
+            engine.record["bulk_progress"] = {
+                "stage": "profiling", "message": f"{marker}: {words}",
+                "done": done + 1, "total": total}
+            progress = engine.progress()
+            images_now = list(engine.record["images"])
+    done += 1
+    call.progress(done=done, total=total, message=f"{project}: {marker}")
+    if settled is not None:
+        announce(images_now, progress, last=done == total)
+    return done

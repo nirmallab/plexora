@@ -1720,10 +1720,11 @@ def _build_ai_parser():
                           "4 QC units).")
     run.add_argument("--parallel", type=int, default=4,
                      help="With several projects: how many sessions at once (default 4).")
-    run.add_argument("--parallel-markers", dest="parallel_markers", type=int, default=1,
+    run.add_argument("--parallel-markers", dest="parallel_markers", type=int, default=None,
                      metavar="N",
                      help="Markers of one image answered at once, by N workers on the one "
-                          "session (default 1; markers still wait for their partners).")
+                          "session (default: the session's lanes, chosen from the panel; "
+                          "markers still wait for every partner whose gate they read).")
     run.add_argument("--resume", dest="resume_session", default=None, metavar="SESSION",
                      help="Continue a paused session instead of starting one.")
     run.add_argument("--no-quote", dest="declare_run", action="store_false",

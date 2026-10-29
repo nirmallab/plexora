@@ -357,6 +357,12 @@ class SessionOptions(AgentModel):
     delegate: bool = Field(True, description="Return the `delegate` block: how to hand the "
                            "packet loop to fresh worker conversations on a cheaper or the "
                            "same model (plexora/ai/delegation.py).")
+    lanes: int | None = Field(None, ge=1, le=8, description="Readers answering the session at "
+                              "once, each its own `reader` passing `parallel` (the start's "
+                              "`lanes`, and its `delegate` block's). A marker never goes out "
+                              "beside one whose gate it reads, so the gates are the one-at-a-"
+                              "time run's. Default: as many as the panel's dependencies keep "
+                              "busy (1 for a few markers, or markers that all read each other).")
 
 
 def session_qc(handler):
@@ -882,6 +888,10 @@ def start(call, inp):
     st = engines.store()
     st.create(record)
     st.sweep()
+    if record["units"]:
+        # As many readers as the panel's dependencies keep busy (`lanes_for`).
+        with engines.engine_for(call, session_id, st=st) as engine:
+            record["useful_lanes"] = engine.record["useful_lanes"] = engine.useful_lanes()
     receipt = make_receipt(call, changed=False, before=None,
                            after={"session_id": session_id, "images": images,
                                   "markers": order},
@@ -933,7 +943,8 @@ def start(call, inp):
                   viewer_attached=_mirroring(record["mirror"]))
     out = {"session_id": session_id, "job_id": job["job_id"], "scope": inp.scope,
             "images": images, "reference_image": reference, "order": order,
-            "n_units": len(record["units"]), "skipped_markers": record["skipped_markers"],
+            "n_units": len(record["units"]), "lanes": engines.lanes_for(record),
+            "skipped_markers": record["skipped_markers"],
             "unresolved_markers": unresolved, "mode": inp.mode,
             "mirror": {k: record["mirror"].get(k) for k in ("status", "view_id", "last_error",
                                                             "hint") if record["mirror"].get(k)},
@@ -1231,7 +1242,10 @@ def _delegate_block(record, session_id, options, packet=None):
         # v2's looks are all cell panels: their worker starts, not the one
         # for v1's first looks (`delegation.ROLES` `first_task`).
         first = tasks.task_for("gating", "cell_panel")
+    from plexora.plugins.gating.server.autogate import engine as engines
+
     return {"delegate": delegation.block("gating_worker", first_task=first, session_id=session_id,
+                                         lanes=engines.lanes_for(record),
                                          biology=", ".join(contexts) or None)}
 
 
@@ -1375,6 +1389,7 @@ def _settle_setup(call, session_id, st):
             record["state"] = "created"
             record["bulk_job_id"] = None
             record["expression_fingerprints"] = _fingerprints(call.session, waiting)
+            record["useful_lanes"] = engine.useful_lanes()
             progress = engine.progress()
     if failure is not None:
         _stop(call, st, session_id, "setup_failed",
@@ -1547,7 +1562,7 @@ class NextInput(AgentModel):
 
 def _slim_mirror(mirror):
     """What an agent needs of the viewer's mirror: whether it worked."""
-    if mirror.get("status") == "ok" and not mirror.get("last_error"):
+    if mirror.get("status") in ("ok", "queued") and not mirror.get("last_error"):
         return {k: mirror[k] for k in ("status", "sent", "resent") if k in mirror}
     return mirror
 
@@ -1843,8 +1858,11 @@ def _mirror_brief(mirror):
 
 
 def _mirror(call, session_id, packet, *, replay=False):
-    """Show the packet in the session's viewer; returns what the agent is
-    told about it (`packet["mirror"]`), and records it on the session.
+    """Show the packet in the session's viewer, off the driver's path: it is
+    offered to the session's presenter (`session_mirror.Presenter`), which
+    sends it when the tab is free -- the newest look first -- and records how
+    it went (`_mirrored`). Returns what the agent is told now: the mirror
+    `queued` (or, for a replay that is not needed, what is on record).
 
     `replay` is the tab asking to watch again (`attach_viewer`): it skips a
     packet the harness has just shown, and a viewer detached meanwhile."""
@@ -1853,50 +1871,79 @@ def _mirror(call, session_id, packet, *, replay=False):
     from plexora.plugins.gating.server.autogate import mirror_script
 
     packet_id = packet.get("packet_id")
-    with session_mirror.send_lock(session_id):
-        if replay:
-            st = engines.store()
-            current = st.load(session_id).get("mirror") or {}
-            if st.control(session_id).get("viewer_detached") or (
-                    current.get("status") == "ok" and current.get("packet_id") == packet_id
-                    and time.time() - float(current.get("sent_at") or 0) < 30):
-                return _mirror_brief(current)
+    st = engines.store()
+    if replay:
+        current = st.load(session_id).get("mirror") or {}
+        if st.control(session_id).get("viewer_detached") or (
+                current.get("status") == "ok" and current.get("packet_id") == packet_id
+                and time.time() - float(current.get("sent_at") or 0) < 30):
+            return _mirror_brief(current)
+    refs = packet.get("units") or []
+
+    def show():
+        started = time.perf_counter()
         try:
             result = mirror_script.run(call, session_id, packet)
         except Exception as exc:  # mirroring never breaks a session
             result = {"status": "degraded", "sent": 0, "errors": [{"message": str(exc)}]}
-        with engines.engine_for(call, session_id) as engine:
-            mirror = engine.record.setdefault("mirror", {})
+        return _mirrored(call, session_id, result, started, packet_id=packet_id,
+                         show=bool(refs))
+
+    queued = session_mirror.presenter(session_id).offer(
+        show, subject=engines.unit_key(refs[0]["project"], refs[0]["marker"])
+        if len(refs) == 1 else None,
+        # A set-up packet is a question the tab puts to the user too, and a
+        # replay was asked for: neither waits out the look being played.
+        wait=bool(refs) and not replay, key=None if replay else packet_id)
+    return {"status": queued, "packet_id": packet_id}
+
+
+def _mirrored(call, session_id, result, started, *, packet_id=None, show=False):
+    """Record what the presenter sent on the session (`mirror`) and in its log
+    (`mirrored`); returns how long the tab should keep the show before a newer
+    look replaces it (`MIN_SHOW_S` for a look of a paced session)."""
+    from plexora.agent.sessions import mirror as session_mirror
+    from plexora.plugins.gating.server.autogate import engine as engines
+
+    spent = round((time.perf_counter() - started) * 1e3, 1)
+    with engines.engine_for(call, session_id) as engine:
+        mirror = engine.record.setdefault("mirror", {})
+        if packet_id is not None or result.get("sent") or result.get("status") != "ok":
             mirror["status"] = result.get("status")
             mirror["last_error"] = (result.get("errors") or [None])[0]
             mirror["view_id"] = result.get("view_id") or mirror.get("view_id")
+        if packet_id is not None:
             mirror["sent"] = int(result.get("sent") or 0)
             mirror["packet_id"] = packet_id
             mirror["sent_at"] = time.time()
-            return _mirror_brief(mirror)
+        engine.log(event="mirrored", packet_id=packet_id, status=result.get("status"),
+                   sent=int(result.get("sent") or 0), ms={"mirror": spent},
+                   dropped=session_mirror.presenter(session_id).take_dropped(),
+                   **({"aborted": True} if result.get("aborted") else {}))
+        paced = bool(engine.options["mirror_delay_ms"])
+    return session_mirror.MIN_SHOW_S if show and paced else 0.0
 
 
 def _mirror_display(call, session_id, project):
     """Show the mirrored tab the brightness a contrast check just settled,
     right after the answer (`mirror_script.run_display`): the tab plays it
     while the session moves on -- and a contrast run, which has no next
-    packet to carry it, still plays it. Best effort, like every mirror."""
+    packet to carry it, still plays it. Best effort, like every mirror; kept
+    in order by the presenter, never replaced by a look."""
     from plexora.agent.sessions import mirror as session_mirror
-    from plexora.plugins.gating.server.autogate import engine as engines
     from plexora.plugins.gating.server.autogate import mirror_script
 
-    with session_mirror.send_lock(session_id):
+    def show():
+        started = time.perf_counter()
         try:
             result = mirror_script.run_display(call, session_id, project)
         except Exception as exc:  # mirroring never breaks a session
             result = {"status": "degraded", "sent": 0, "errors": [{"message": str(exc)}]}
-        if not result.get("sent") and result.get("status") == "ok":
-            return
-        with engines.engine_for(call, session_id) as engine:
-            mirror = engine.record.setdefault("mirror", {})
-            mirror["status"] = result.get("status")
-            mirror["last_error"] = (result.get("errors") or [None])[0]
-            mirror["view_id"] = result.get("view_id") or mirror.get("view_id")
+        if result.get("sent") or result.get("status") != "ok":
+            _mirrored(call, session_id, result, started)
+        return 0.0
+
+    session_mirror.presenter(session_id).offer(show, keep=True)
 
 
 class AnswerInput(AgentModel):
@@ -2282,14 +2329,24 @@ def finish(call, inp):
     _LAST_PHASE.pop(inp.session_id, None)
     _announce(call, snapshot, inp.session_id, "finished", reason=reason, state=state,
               summary=summary, phase="summarizing")
+    from plexora.agent.sessions import mirror as session_mirror
+
     if _mirroring(mirror) and not detached:
-        # A detached viewer is the user's own: nothing is put back in it.
+        # A detached viewer is the user's own: nothing is put back in it. Sent
+        # by the presenter, after the command under way and nothing else.
         from plexora.plugins.gating.server.autogate import mirror_script
 
-        try:
-            out["teardown"] = mirror_script.run_teardown(call, inp.session_id, reason)
-        except Exception as exc:  # the view is restored best effort
-            out["teardown"] = {"status": "degraded", "errors": [{"message": str(exc)}]}
+        def teardown():
+            try:
+                mirror_script.run_teardown(call, inp.session_id, reason)
+            except Exception:  # the view is restored best effort
+                pass
+            return 0.0
+
+        session_mirror.presenter(inp.session_id).close(teardown)
+        out["teardown"] = {"status": "queued"}
+    else:
+        session_mirror.presenter(inp.session_id).close()
     receipt = make_receipt(call, changed=inp.action in ("commit", "rollback"),
                            before=None, after={k: out.get(k) for k in ("action", "written",
                                                                           "undone")},

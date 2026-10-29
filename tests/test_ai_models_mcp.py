@@ -136,6 +136,29 @@ def test_the_block_is_unchanged_without_the_file_and_lists_workers_with_it(
     assert "`on_demand`" in block["how"]
 
 
+def test_a_session_with_lanes_hands_out_one_worker_per_lane_launched_together(
+        models_file, tmp_path, monkeypatch):
+    """Lanes (`SessionOptions.lanes`): one worker per lane, each a reader of
+    its own passing `parallel`, all launched in one message -- and counting its
+    own packets, since the session's markers done move with every lane."""
+    from plexora import paths
+
+    monkeypatch.setattr(paths, "settings_path", lambda: tmp_path / "settings.json")
+    monkeypatch.delenv("PLEXORA_MODEL_JUDGEMENT", raising=False)
+    assert delegation.block("gating_worker", session_id="gs_x", lanes=1) == \
+        delegation.block("gating_worker", session_id="gs_x")
+    block = delegation.block("gating_worker", session_id="gs_x", lanes=3)
+    assert "brief" not in block and "workers" not in block
+    assert [lane["reader"] for lane in block["lanes"]] == ["lane1", "lane2", "lane3"]
+    assert {lane["launch"] for lane in block["lanes"]} == {"now"}
+    for lane in block["lanes"]:
+        assert f"reader: {lane['reader']}, parallel: 3" in lane["brief"]
+        assert "packets, then stop" in lane["brief"] and "gs_x" in lane["brief"]
+    assert "ONE message" in block["how"]
+    # QC takes no lanes: its workers stay one at a time.
+    assert "lanes" not in delegation.block("qc_worker", session_id="qs_x", lanes=3)
+
+
 # -- gating: scoped readers -------------------------------------------------------------------
 
 

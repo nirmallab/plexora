@@ -96,9 +96,9 @@ class RunInput(AgentModel):
     units_per_worker: int | None = Field(None, ge=1, le=16, description="Units one rolling "
                                          "worker covers (default: 1 marker, 4 QC units).")
     parallel_markers: int | None = Field(None, ge=1, le=8, description="gating: markers answered "
-                                         "side by side, each lane with its own workers (default 1). "
-                                         "The gates are the serial run's; more lanes finish "
-                                         "sooner.")
+                                         "side by side, each lane with its own workers (default: "
+                                         "the session's `lanes`, chosen from the panel). The "
+                                         "gates are the serial run's; more lanes finish sooner.")
     start_options: dict | None = Field(None, description="Extra options for the session's start "
                                        "(the workflow's own, e.g. QC's map_cell_um).")
     context: str | None = Field(None, max_length=1000, description="gating: the user's note about "
@@ -199,7 +199,7 @@ def run_session(call, inp):
               "resume_session": inp.resume_session, "start_options": dict(inp.start_options or {}),
               "context": inp.context if inp.kind == "gating" else None}
     if inp.kind == "gating":
-        options = GatingOptions(markers=inp.markers, parallel_markers=inp.parallel_markers or 1, **common)
+        options = GatingOptions(markers=inp.markers, parallel_markers=inp.parallel_markers, **common)
     elif inp.kind == "contrast":
         options = GatingOptions(markers=inp.markers, **common)
     else:

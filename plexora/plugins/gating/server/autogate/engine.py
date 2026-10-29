@@ -145,6 +145,37 @@ def unit_key(project, marker):
     return f"{project}::{marker}"
 
 
+#: [cal] The most readers that answer a session at once unless it says
+#: (`SessionOptions.lanes`); below it, as many as the panel's dependencies
+#: keep busy (`Engine.useful_lanes`). Measured on the zero-model bench with
+#: each answer held back a model call's seconds (tools/bench_gates/perf_bench.py)
+#: and live through MCP on lsp11385 (2 lanes: -35 % time, gates as close to the
+#: user's; docs/internal/bench/AUTOGATE_PERF_2026-10-29.md). A panel of fewer
+#: than `LANES_MIN_UNITS` markers is answered one packet at a time.
+LANES = 4
+LANES_MIN_UNITS = 4
+
+
+def lanes_for(record) -> int:
+    """The lanes a session runs: what it was started with, else as many as
+    its panel keeps busy (`useful_lanes`, stored when it is planned), at most
+    `LANES`, for a panel of `LANES_MIN_UNITS` markers or more."""
+    chosen = (record.get("options") or {}).get("lanes")
+    if chosen:
+        return int(chosen)
+    if len(record.get("units") or {}) < LANES_MIN_UNITS:
+        return 1
+    return max(1, min(LANES, int(record.get("useful_lanes") or LANES)))
+
+
+def passed_by(unit) -> bool:
+    """Whether the serial order goes on past `unit` to the markers after it:
+    terminal, held on a limit question, accepted at T1 and waiting for its
+    audit strip, or a parent set aside for its children (`deferred`)."""
+    return unit["state"] in TERMINAL or bool(unit.get("limit_request")) \
+        or unit["state"] == "accepted_t1" or unit.get("deferred") == "waiting"
+
+
 # -- small helpers ---------------------------------------------------------------
 
 
@@ -889,6 +920,11 @@ class Engine(BaseEngine):
 
         `empty=True` writes the empty gate of a failed or all-negative marker:
         low == high at the column's maximum (exact, not snapped), `low` ignored."""
+        with self.timed("write"):
+            return self._write(unit, low, method=method, confidence=confidence, state=state,
+                               tier=tier, empty=empty)
+
+    def _write(self, unit, low, *, method, confidence, state, tier, empty):
         from plexora.agent.receipts import make_receipt
         from plexora.plugins.gating.capabilities import gate_undo_hint
         from plexora.plugins.gating.server.autogate import provenance
@@ -1159,14 +1195,16 @@ class Engine(BaseEngine):
                     for r in unit.get("reference_gates") or []]
         prior = (unit.get("context") or {}).get("expected_fraction")
         anchor = start_low(unit)
-        result = tableops.local_or_node(ds, "gating.autogate.regression", {
-            "marker": unit["marker"], "final": unit["candidate"], "gmm": anchor,
-            "prior": prior, "partners": partners,
-            # The band the looks walk, so a gate the lattice offered is never
-            # failed for leaving the mixture's narrower one.
-            "guard": (self.lattice_for(unit).get("guard")
-                      if (unit.get("start") or {}).get("source") == "scoring" else None)})
-        result = self._with_lineage(unit, result, {p["partner"] for p in partners})
+        with self.timed("regression"):
+            result = tableops.local_or_node(ds, "gating.autogate.regression", {
+                "marker": unit["marker"], "final": unit["candidate"], "gmm": anchor,
+                "prior": prior, "partners": partners,
+                # The band the looks walk, so a gate the lattice offered is never
+                # failed for leaving the mixture's narrower one.
+                "guard": (self.lattice_for(unit).get("guard")
+                          if (unit.get("start") or {}).get("source") == "scoring" else None)})
+        with self.timed("lineage"):
+            result = self._with_lineage(unit, result, {p["partner"] for p in partners})
         if self.vision_first_on() and unit.get("own_seen"):
             # The looks placed it: the distribution's and spatial checks inform,
             # they do not fail it (`schemas.VISION_IGNORED_CHECKS`).
@@ -1733,9 +1771,16 @@ class Engine(BaseEngine):
     # -- readiness: several packets out at once --
 
     def _links(self, project):
-        """{marker: markers it could be judged beside, or that could be judged
-        beside it}: every partner `context.references_for` might pick, either
-        way round, among this session's markers of `project`."""
+        """{marker: markers whose gate it could read, or that could read
+        its}: every relation the panel's tree gives it, stated or derived,
+        either way round, among this session's markers of `project` -- what
+        its scored start reads (`scoring.evidence_partners`, low-confidence
+        exclusions included), the references a look plots
+        (`context.references_for`), the lineage check (`lineage_purity`,
+        every exclusion) and a parent's children. A marker waits for each of
+        them that comes earlier in gating order, as the serial order has
+        them decided when it reaches the marker, so a look out beside others
+        stands on the same gates it would one at a time."""
         from plexora.plugins.gating.server.autogate import context
 
         from plexora.plugins.gating.server.autogate import hierarchy
@@ -1745,6 +1790,11 @@ class Engine(BaseEngine):
         markers = {u["marker"] for u in self.units_of(project)}
         links = {m: set() for m in markers}
         for marker in markers:
+            for rel in hierarchy.relations(panel, marker):
+                ref = rel["marker"]
+                if ref in markers and ref != marker:
+                    links[marker].add(ref)
+                    links[ref].add(marker)
             for partner in (entries.get(marker) or {}).get("partners") or []:
                 ref = partner.get("marker")
                 if ref not in markers or ref == marker:
@@ -1785,11 +1835,48 @@ class Engine(BaseEngine):
         return [self.record["units"][unit_key(project, m)] for m in sorted(wanted)
                 if unit_key(project, m) in self.record["units"]]
 
+    def useful_lanes(self) -> int:
+        """How many readers the panel keeps busy: its markers per step of
+        its longest chain of markers each waiting for the one before
+        (`depends_on`), rounded up, on the reference image. Past that a
+        reader mostly waits on another's answer: lsp11385's 16-marker bench
+        panel as that image plans it (a chain of 7) gives 3, where 2, 3 and
+        4 lanes measured -37, -42 and -43 %; a panel whose every marker
+        reads the one before gives 1."""
+        project = self.record.get("reference_image") or self.record["images"][0]
+        links = self._links(project)
+        depth = {}
+        for marker in self.record["order"]:
+            unit = self.record["units"].get(unit_key(project, marker))
+            if unit is not None:
+                depth[marker] = 1 + max((depth.get(other["marker"], 0)
+                                         for other in self.depends_on(unit, links)), default=0)
+        if not depth:
+            return 1
+        return -(-len(depth) // max(depth.values()))
+
     def _settled(self, unit, links):
-        """Whether every unit `unit` depends on is terminal (or held on a
-        limit question, as the serial order passes it by too)."""
-        return all(other["state"] in TERMINAL or other.get("limit_request")
-                   for other in self.depends_on(unit, links))
+        """Whether every unit `unit` depends on is where the serial order
+        has it when it reaches `unit`: terminal, or one it passes by --
+        held on a limit question, accepted at T1 and waiting for its audit
+        strip (its gate is written, and is what a later marker leans on), or
+        a parent set aside for its children (`defer_for_children`)."""
+        return all(passed_by(other) for other in self.depends_on(unit, links))
+
+    def unprofiled_partner(self, unit, links=None) -> bool:
+        """Whether a marker whose gate `unit` could read (`_links`, either side
+        of it in gating order) still waits for the bulk pass. Until each is
+        profiled -- and accepted at T1 there, or not -- what `unit`'s start and
+        references stand on would be however far the pass had got when it was
+        asked, not the data: a marker is not decided before then, one at a
+        time or beside others."""
+        if self.record.get("state") != "bulk_running":
+            return False
+        project = unit["project"]
+        links = self._links(project) if links is None else links
+        units = self.record["units"]
+        return any((units.get(unit_key(project, m)) or {}).get("state") == "pending"
+                   for m in links.get(unit["marker"], ()))
 
     def ready_units(self):
         """(decisions, why): the decisions that may go out now beside the
@@ -1848,7 +1935,9 @@ class Engine(BaseEngine):
                                "the deterministic pass did not reach this marker",
                                unlooked="not_profiled")
                     continue
-                if unit["state"] != "accepted_t1" and not self._settled(unit, links):
+                if unit["state"] != "accepted_t1" and (
+                        not self._settled(unit, links)
+                        or self.unprofiled_partner(unit, links)):
                     continue
                 kind = self._decision(unit)
                 if kind:
@@ -2065,6 +2154,13 @@ class Engine(BaseEngine):
                                "the deterministic pass did not reach this marker",
                                unlooked="not_profiled")
                     continue
+                if bulk_running and unit["state"] != "accepted_t1" \
+                        and self.unprofiled_partner(unit):
+                    # Its partners' T1 gates are not all known yet: it waits,
+                    # and nothing past it goes, as for a unit not reached.
+                    if strip:
+                        return "t1_strip", strip
+                    return "wait", []
                 kind = self._decision(unit)
                 if kind:
                     return kind, [unit]

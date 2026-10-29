@@ -303,6 +303,7 @@ class SourceImage:
             raise RenderError(f"{self.datasource}'s image has a single plane")
         token = (f"t{int(t)}" if self.volume.frames > 1 else "") + f"z{int(z)}"
         twin = copy.copy(self)
+        twin.__dict__.pop("_level_arrays", None)      # the parent plane's arrays
         twin.spec = ViewSpec.parse(token, self.volume)
         twin._volume_source = None
         twin._pyramid = None
@@ -332,6 +333,7 @@ class SourceImage:
                               volume=self.volume, produced_by="region")
 
     def close(self):
+        self.__dict__.pop("_level_arrays", None)
         source = getattr(self, "_volume_source", None)
         if source is not None:
             # The view's levels read through the source's handles; it owns them.
@@ -385,7 +387,13 @@ class SourceImage:
                 "cannot be handed over whole. Read a region instead.")
         if self._is_array:
             return self._zarr
-        return self._zarr[str(index)]
+        # A zarr group lookup per read costs as much as decoding a small
+        # rectangle: each level's array is looked up once per reader.
+        levels = self.__dict__.setdefault("_level_arrays", {})
+        found = levels.get(index)
+        if found is None:
+            found = levels[index] = self._zarr[str(index)]
+        return found
 
     def level_shape(self, index):
         """(height, width) of one level, without reading it."""
@@ -661,6 +669,10 @@ def channel_stats(source, channel_key):
 
 #: How many source files the shared shelf keeps open.
 READER_LIMIT = 4
+#: How many readers one of them may have open at once: one file handle each,
+#: read by one thread at a time, so that rectangles read together (a panel's
+#: cells, two markers' panels) are decoded side by side, not one after another.
+READERS_PER_IMAGE = 4
 
 
 class _Held:
@@ -679,12 +691,15 @@ class ReaderShelf:
     the node and resource) on every use, so a project repointed at another file
     is never read through a reader for the old one. Each reader has its own
     lock -- tifffile is not safe to read through one handle from two threads --
-    and the map lock is never held across a read.
+    and the map lock is never held across a read. A key holds up to
+    `per_image` readers of the same file: a second thread asking while the
+    first reads gets one of its own rather than waiting.
     """
 
-    def __init__(self, limit=READER_LIMIT):
+    def __init__(self, limit=READER_LIMIT, per_image=READERS_PER_IMAGE):
         self.limit = limit
-        self._held: "OrderedDict[str, _Held]" = OrderedDict()
+        self.per_image = max(1, int(per_image))
+        self._held: "OrderedDict[str, list[_Held]]" = OrderedDict()
         self._lock = threading.Lock()
 
     @staticmethod
@@ -696,9 +711,13 @@ class ReaderShelf:
         source = image.source
         return str(source.path) if source is not None and source.path else None
 
+    @staticmethod
+    def _open(dataset, view):
+        return SourceImage(dataset, view=view) if view else SourceImage(dataset)
+
     @contextlib.contextmanager
     def reader(self, dataset, view=None):
-        """The open reader for a handle set, exclusive for the block.
+        """An open reader for a handle set, exclusive for the block.
 
         `view` is a plane or projection of a z-stack (volume/viewspec.py);
         each view a caller reads is its own reader, so a flat image and the
@@ -706,29 +725,42 @@ class ReaderShelf:
         """
         identity = self.identity_of(dataset)
         key = dataset.name if not view else f"{dataset.name}\x00{view}"
+        closing = []
         with self._lock:
-            held = self._held.pop(key, None)
-            if held is not None and held.identity != identity:
-                with held.lock:
-                    held.source.close()
-                held = None
-            if held is None:
-                held = _Held(SourceImage(dataset, view=view) if view else SourceImage(dataset),
-                             identity)
-            self._held[key] = held
+            helds = self._held.pop(key, None)
+            if helds and helds[0].identity != identity:
+                closing.extend(helds)
+                helds = None
+            if not helds:
+                helds = [_Held(self._open(dataset, view), identity)]
+            self._held[key] = helds
             while len(self._held) > self.limit:
                 _, evicted = self._held.popitem(last=False)
-                with evicted.lock:
-                    evicted.source.close()
-        with held.lock:
+                closing.extend(evicted)
+            held = next((h for h in helds if h.lock.acquire(blocking=False)), None)
+            if held is None and len(helds) < self.per_image:
+                held = _Held(self._open(dataset, view), identity)
+                held.lock.acquire()
+                helds.append(held)
+        for gone in closing:
+            with gone.lock:
+                gone.source.close()
+        if held is None:
+            # Every reader of this image is busy: wait for the first.
+            held = helds[0]
+            held.lock.acquire()
+        try:
             yield held.source
+        finally:
+            held.lock.release()
 
     def close(self):
         with self._lock:
-            while self._held:
-                _, held = self._held.popitem()
-                with held.lock:
-                    held.source.close()
+            helds = [h for group in self._held.values() for h in group]
+            self._held.clear()
+        for held in helds:
+            with held.lock:
+                held.source.close()
 
 
 #: The process's shared shelf, for readers outside Figure Builder.

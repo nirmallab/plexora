@@ -21,7 +21,8 @@ A session `gating_session_status` finds.
 1. `gating_session_status` (no `known_guide`) sends the `reading_guide` once:
    judge every packet by it. Stop once `progress.units_done` rose by your
    brief's number (default {{ENGINE.markers_per_worker}}); a brief with
-   `tasks` and `reader`: pass both on every call, count packets.
+   `reader` (plus `tasks` or `parallel`): pass them on every call, count
+   packets.
 2. `gating_next`; per packet `gating_answer` with `model` (your model). Every
    row, interval or numbered cell gets a word (`cell_panel`: no gate, value or
    direction is shown or asked). Each answer field's description is part

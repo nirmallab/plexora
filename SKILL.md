@@ -3151,13 +3151,20 @@ deliberately left out and what should be built next.
   channel), `calibration.py` (the display calibration a session stores, in
   the plugin-store namespace `"display"`, and that `render_region`'s
   `"auto"` windows read — `"percentiles"` keeps the old rule), `crops.py`
-  (batched per-tile cell crops), `collage.py` (pixel-budgeted collages and
+  (batched per-tile cell crops; `_read_plane_crops` reads a panel's
+  rectangles on a shared pool of `PARALLEL_READS` (4), each through a reader
+  of its own from `source_image.SHELF`, and lays them out in order, so the
+  crops are the ones a serial read gives, because decoding the tile under a
+  crop is most of its cost; the mask's reads stay on the calling thread, as a
+  mask provider is read by one thread at a time), `collage.py` (pixel-budgeted collages and
   whole-image overviews — PNG stored, WebP sent; `LAYOUTS` carries an
   `offered` flag, and `LAYOUT_NAMES` is the tuple of layouts the collage tool
   itself draws, in listed order, plus the `overview`; a `report`-only layout
   for the review report's larger tiles is not offered), `density_plot.py` (a
   two-marker density plot from a bivariate grid), `cell_window.py` (what a
-  marker's pixels look like in its own cells, at level 0, read in a disc of
+  marker's pixels look like in its own cells -- `cell_windows` measures the
+  channels on `CHANNEL_WORKERS` (4) threads, each its own seeded cells and
+  crops, kept in order -- at level 0, read in a disc of
   `crops.CELL_DIAMETER_UM` around each table centroid -- or, asked
   `from_image` on a project with no cell table, around each cell
   `image_cells.py` found, column None, each measurement's `cells_from`
@@ -3265,13 +3272,34 @@ deliberately left out and what should be built next.
   may set it within), `mirror.py` (a best-effort script sent to a mirrored
   viewer tab, now with `open_view`/`send_script` helpers both engines share;
   never the only record of what was shown — see the collage-manifest
-  invariant below), `memo.py` (a kind-keyed memo of what a session already
+  invariant below; sent off the session's path by a `Presenter`, one per
+  session from `presenter(session_id)`, on a thread of its own: `offer`
+  returns at once, looks wait in one latest-wins slot (a marker not yet shown
+  is kept over a second look at one that was), `keep=True` items (a contrast
+  show, the teardown) go in order before any look and are never replaced, a
+  paced session's look is held `MIN_SHOW_S` (8 s) before a newer replaces it,
+  and `close(teardown)` drops what waits and sends the teardown last, because
+  how far a session has got must never wait on its tab, nor the tab play a
+  backlog after the session has decided;
+  `attached()` stops a script once `closing(session_id)`, `wait_idle` waits
+  for everything offered (tests), and an atexit drain gives teardowns
+  `EXIT_DRAIN_S`; `send_lock` is gone), `memo.py` (a kind-keyed memo of what a session already
   told an agent, so a repeated look does not re-spend budget), `events.py`
   (the generic session event shape), `control.py` (the pause/resume/stop/
   take-over route handler both gating's and QC's `agent_session/<id>/control`
   routes call into, so core's agent panel still never names the plugin
   serving it), `tools.py` (`SessionTools`: the generic `next`/`answer`/
-  `status`/`finish` verbs a plugin's own `capabilities_session.py` wraps).
+  `status`/`finish` verbs a plugin's own `capabilities_session.py` wraps;
+  `SessionTools.mirror` and gating's `capabilities_session._mirror` offer a
+  packet's script to the presenter and tell the agent `queued`, `finish`
+  closes the presenter with the teardown and reports `teardown`
+  `{"status": "queued"}`, and each script sent is logged as a `mirrored`
+  event with its `ms` and the looks `dropped`).
+  `BaseEngine.timed(stage)` adds a block's milliseconds to the `ms` the next
+  `issued` or `answered` event carries (`take_ms()`; choose/build/store,
+  apply, and gating's sample/plan/render/regression/lineage/write) — a
+  record, never an input to a decision — read back by
+  `tools/bench_gates/stage_report.py`.
   `BaseEngine._strike` counts every answer a packet cannot take — one that
   does not validate, the wrong kind, or a well-formed one a transition
   refuses with `invalid_input` (a label, option or square the packet does
@@ -3382,7 +3410,20 @@ deliberately left out and what should be built next.
   `engine.py` (the session state machine, writes, confidence — a gate is
   never accepted against the agent's own recorded direction, `unit["direction"]`;
   `finalize`/`close_on_budget` close it for review instead, and only the kinds in
-  `BUDGETED_KINDS` (T2/T3/T4) count against a unit's budget),
+  `BUDGETED_KINDS` (T2/T3/T4) count against a unit's budget; several readers
+  may answer one session at once (`SessionOptions.lanes`, 1-8; `lanes_for(record)`
+  is what it was started with, else, for a panel of `LANES_MIN_UNITS` (4)
+  markers or more, `record["useful_lanes"]` capped at `LANES` (4), else 1;
+  `Engine.useful_lanes` is the panel's markers per step of its longest
+  `depends_on` chain, rounded up, stored at the start and at `_settle_setup`;
+  `docs/internal/bench/AUTOGATE_PERF_2026-10-29.md`), and the
+  start result returns `lanes`; `_links` holds every `hierarchy.relations`
+  relation either way round beside the references, `_settled` waits on each
+  earlier linked marker until `passed_by(unit)` (terminal, held on a limit
+  question, `accepted_t1`, or a parent `deferred` for its children), and
+  `unprofiled_partner` keeps a marker from being decided, serially or in
+  lanes, while a linked marker is still `pending` in the bulk pass, so a look
+  out beside others stands on the gates the one-at-a-time run would),
   `packets.py`/`transitions.py`/`answers.py` (one builder per packet kind, one
   handler per answer kind, the typed pydantic answers; a stored packet stays
   self-contained — memo keys, replays, the report never change — but what is
@@ -3399,7 +3440,12 @@ deliberately left out and what should be built next.
   will not be shown — a clean T1 split is written for the audit sheet, all
   else waits for a look — because there is no numbers-only path any more;
   `prepare_unit` closes a marker whose channel vanished since the start
-  `skipped_no_channel`, unprofiled and unwritten; the panel context is
+  `skipped_no_channel`, unprofiled and unwritten; `_Ahead` profiles an
+  image's pending markers on `PROFILE_WORKERS` (4) threads (each job's
+  contextvars copied, because the session's QC mode decides which cells are
+  profiled) and `_settle_next` settles them in gating order, exactly as one
+  at a time; the pass logs `calibrated` and `profiled` events with their
+  `ms`; the panel context is
   re-read per marker, because a snapshot taken before the loop overwrote the
   `panel_context` answer on every later unit; `_progress_announcer` sends a
   `phase` event per settled marker, throttled to 1 s with the last always
@@ -3470,7 +3516,8 @@ deliberately left out and what should be built next.
   so it runs on data nodes), `evidence.py` (each candidate scored by the
   cells it would get wrong; a leader beats a rival on a Wilson interval
   weighed by cells per interval and post-stratified by the classifier's
-  call), `controller.py` (survey, refine, extend, and `tail` for a rare
+  call; `_beta_draws` remembers Beta share draws in a bounded cache, a draw
+  being a pure function of its key, so results are bit-identical), `controller.py` (survey, refine, extend, and `tail` for a rare
   marker, whose leader must have its own cells read stained or the unit ends
   `positives_not_confirmed`; stop by rule), `classifier_check.py` (reads
   `classifier_trust.json` beside it, written by
@@ -3597,8 +3644,9 @@ deliberately left out and what should be built next.
   as `decision.ContrastWorkflow` (`plexora ai run contrast`, `RUN_KINDS`,
   agent panel kind "AI Auto Contrast"), priced as gating per grid:
   `contrast_grids(n)` = ceil(n / `display_batch`), unit "contrast grid".
-  `capabilities_session._mirror_display` sends `mirror_script.run_display`
-  right after a `display_setup` answer, so a contrast run, which has no next
+  `capabilities_session._mirror_display` offers `mirror_script.run_display`
+  to the session's presenter as a `keep=True` item right after a
+  `display_setup` answer, so a contrast run, which has no next
   packet to carry it, still plays; `display_packet_script`/`script_for` take
   `tool` (None for a contrast run: no tool opens). `display_script` items carry
   `window`, `curve` and `linear_window` from `calibration.view_spec`, and a
@@ -4401,6 +4449,19 @@ deliberately left out and what should be built next.
   writes the classifier trust table from `tools/bench_classifier_wand`
   results. Tests: `tests/test_gating_panel_replay.py`,
   `tests/test_bench_run_arms.py`.
+  `tools/bench_gates/stage_report.py` (dev only) says where a gating
+  session's time went, from its `decisions.jsonl` (the bulk pass, reader and
+  server time per packet kind, the engine's `ms` stages, the mirror) and,
+  when the harness drove it, the trace's model and tool calls; it writes
+  nothing to the session. `tools/bench_gates/perf_bench.py` (dev only)
+  `run` drives a zero-model propose-mode session to the end on a fresh
+  scratch copy of a real project (`--scratch`; a live data directory is
+  refused), `bench.TruthAgent` reading each marker's Auto gate as the truth,
+  with `--lanes`, and `--latency`/`--scale` holding each answer back a model
+  call's seconds; `compare` says whether two records decided the same (every
+  marker's state and gate, every packet's JSON and image bytes, floats to 9
+  significant digits because threaded BLAS moves a fit's last bits) and how
+  long each took. Results: `docs/internal/bench/AUTOGATE_PERF_2026-10-29.md`.
   `tools/bench_gates/score_gap.py` (dev only) scores stored sessions against
   a person's gates (`--truth`, one `NAME=GLOB` arm each, `--oracle` for how
   close each unit's lattice came); it refuses a truth file whose `kind` is
@@ -4497,7 +4558,16 @@ deliberately left out and what should be built next.
   `on_demand`): only the one whose tasks hold what is ready first
   (`block(first_task=...)`, else the role's own `first_task`) is `now`, the
   rest are launched when a worker returns `other_tasks` naming theirs, because
-  a worker launched before its packets exist only polls and stops. Every `how`
+  a worker launched before its packets exist only polls and stops. A role
+  marked `lanes` (`gating_worker`) given `block(..., lanes=N)` with N > 1 and
+  no mapping returns `lanes` instead of one `brief` (`_with_lanes`): one
+  worker per lane, reader `lane1..laneN`, each brief passing its `reader` and
+  `parallel` on every call and counting its own packets
+  (`brief(..., parallel=)`), launched together as `LANES_HOW` says;
+  gating's start and status pass `lanes_for(record)`. The harness's
+  `parallel_markers` (`DecisionOptions`, `RunInput`, `plexora ai run
+  --parallel-markers`) defaults to None, meaning the session's own `lanes`
+  from its start. Every `how`
   carries `WAIT` — wait for the worker's lines, never wake, message or poll it —
   because each of those is a coordinator turn re-reading its whole context.
   A QC session carries a delegate block only when some
@@ -4612,6 +4682,12 @@ deliberately left out and what should be built next.
   (`SourceImage`, `choose_level`, `composite`, `channel_stats`,
   `ReaderShelf`/`SHELF` — moved out of `figure_builder/server/render.py`,
   which re-exports every name so its own code and tests read unchanged;
+  a shelf key holds up to `per_image` (`READERS_PER_IMAGE`, 4) readers of
+  the same file, so a second thread asking while the first reads opens its
+  own rather than waiting, each still read under its own lock because
+  tifffile is not safe through one handle from two threads; `SourceImage.level()`
+  looks each level's array up once per reader, as a zarr group lookup costs
+  as much as decoding a small rectangle;
   `SourceImage` opens every local format the viewer does, dispatched in
   `LocalImageProvider.open`'s order -- Xenium focus, OME-Zarr, DICOM, colour,
   TIFF -- and `read` indexes `[channel, rows, cols]` in one subscript so lazy

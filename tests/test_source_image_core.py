@@ -71,6 +71,35 @@ def test_the_shelf_reopens_when_the_image_moves(ds, tmp_path):
         assert reopened is not first
 
 
+def test_two_threads_reading_one_image_each_get_a_reader(ds):
+    """A reader is one file handle, read by one thread at a time: a second
+    reader of the same image is opened rather than waited for, up to
+    `per_image`, and the next asker waits for one -- what lets a panel's
+    crops (`crops._read_plane_crops`) be decoded side by side."""
+    import threading
+
+    shelf = source_image.ReaderShelf(per_image=2)
+    with shelf.reader(ds) as first, shelf.reader(ds) as second:
+        assert first is not second
+        np.testing.assert_array_equal(first.read(0, 0, (0, 0, 32, 32))[0],
+                                      second.read(0, 0, (0, 0, 32, 32))[0])
+        waited = threading.Event()
+
+        def third():
+            with shelf.reader(ds) as got:
+                assert got in (first, second)
+                waited.set()
+
+        thread = threading.Thread(target=third)
+        thread.start()
+        assert not waited.wait(0.3)        # both readers are in use
+    thread.join(5)
+    assert waited.is_set()
+    with shelf.reader(ds) as again:
+        assert again in (first, second)    # kept open, not reopened
+    shelf.close()
+
+
 def test_reading_never_loads_a_datasource(ds, monkeypatch):
     monkeypatch.setattr(data_model, "load_datasource",
                         lambda *a, **k: pytest.fail("loaded a datasource"))

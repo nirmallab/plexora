@@ -35,7 +35,7 @@ A cell table with cell-id/x/y roles; image channels and a mask for the looks.
    `expression_setup` goes to the user, never guessed.
 3. Hand packets out as the start's `delegate` says (`how`). Its `brief` is a
    worker's whole prompt: add no skill or guide text; keep only the lines it
-   returns. `waiting_for_user`: ask the user, pass their word as
+   returns. `lanes`: launch them all in one message. `waiting_for_user`: ask the user, pass their word as
    `gating_session_status` `limits`; never answer for them. Pass the start's
    `guide_version` as `known_guide` on every `gating_session_status`, or the
    guide is sent again. Without workers, answer packets yourself

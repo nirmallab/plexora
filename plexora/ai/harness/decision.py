@@ -226,6 +226,8 @@ class GatingWorkflow(Workflow):
                      "setup": options.on_setup}
         if self.selected(options):
             arguments["markers"] = list(self.selected(options))
+        if options.parallel_markers:
+            arguments["lanes"] = int(options.parallel_markers)
         return arguments
 
     def units_started(self, started, options):
@@ -389,7 +391,9 @@ class DecisionOptions:
     #: The user's free-text note about the sample (`plexora.ai.context`):
     #: interpreted by the cheap text model before the session starts.
     context: str | None = None
-    parallel_markers: int = 1                # lanes answering the one session at once (gating)
+    #: Lanes answering the one session at once (gating); None: the session's
+    #: own (`lanes` of its start, chosen from the panel).
+    parallel_markers: int | None = None
     #: A set-up the project has not finished (a column never confirmed, a
     #: matrix its values leave open): `wait` for the user's answer in the
     #: viewer (a run started there), `fail` saying what is missing (a command
@@ -671,6 +675,8 @@ class DecisionRun:
         else:
             first = None
         self.units = self.wf.units_started(started, self.o)
+        if self.wf.parallel and not self.o.parallel_markers and started.get("lanes"):
+            self.parallel = max(1, int(started["lanes"]))
         self._emit("started", units=self.units, unit_noun=self.wf.unit_noun)
         if self.context_reading:
             self._emit("context", **self.context_reading)

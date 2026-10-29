@@ -13,6 +13,7 @@ import pytest
 import plexora
 from plexora.agent import AgentSession, invoke, registry
 from plexora.agent.attach import ServerLink
+from plexora.agent.sessions import mirror as session_mirror
 from plexora.server.models import viewer_sessions as vs
 from tests.agent_fixtures import make_synthetic_project
 
@@ -181,6 +182,10 @@ def test_a_mirrored_gating_session_shows_the_tab_what_the_agent_sees(served, tmp
                         link=served)
         assert answer["ok"], answer
         packet = answer["result"]["packet"]
+        # Off the session's path: the packet comes back at once, the tab is
+        # shown it by the session's presenter.
+        assert packet["mirror"]["status"] == "queued", packet["mirror"]
+        assert session_mirror.wait_idle(started["result"]["session_id"])
         types = [c["type"] for c in tab.seen]
         for expected in ("set_hd_mode", "set_channels", "set_active_marker", "preview_gate",
                          "highlight_cells", "show_evidence"):
@@ -199,12 +204,13 @@ def test_a_mirrored_gating_session_shows_the_tab_what_the_agent_sees(served, tmp
         status = invoke(session, "gating_session_status",
                         {"session_id": started["result"]["session_id"]})["result"]
         assert status["mirror"]["status"] == "ok", status["mirror"]
-        # The agent is told too, and a packet fetched again is not re-sent.
-        assert packet["mirror"]["status"] == "ok" and packet["mirror"]["sent"] >= 6
+        # The session records what was sent, and a packet fetched again is not re-sent.
+        assert status["mirror"]["sent"] >= 6
         assert types.index("get_state") < types.index("set_hd_mode")
         before = len(tab.seen)
         again = invoke(session, "gating_next", {"session_id": started["result"]["session_id"]},
                        link=served)["result"]["packet"]
+        assert session_mirror.wait_idle(started["result"]["session_id"])
         assert again["mirror"]["resent"] is False and len(tab.seen) == before
 
 
@@ -267,12 +273,14 @@ def test_the_mirror_does_not_repeat_what_the_tab_already_shows(served, tmp_path)
             "scope": "project", "project": "gsynth", "markers": ["CD4"], "mirror": True,
             "mirror_delay_ms": 0, "display_check": "rule"}, link=served)["result"]
         jobs.drain(60)
-        packet = invoke(session, "gating_next", {"session_id": started["session_id"]},
-                        link=served)["result"]["packet"]
+        invoke(session, "gating_next", {"session_id": started["session_id"]}, link=served)
+        assert session_mirror.wait_idle(started["session_id"])
         types = [c["type"] for c in tab.seen]
         assert "set_hd_mode" not in types and "open_tool" not in types
         assert "set_cell_render_mode" not in types and "open_project" not in types
-        assert packet["mirror"]["status"] == "ok"
+        status = invoke(session, "gating_session_status",
+                        {"session_id": started["session_id"]})["result"]
+        assert status["mirror"]["status"] == "ok"
 
 
 def test_a_slow_hd_swap_is_waited_for(served, tmp_path, monkeypatch):
@@ -294,9 +302,11 @@ def test_a_slow_hd_swap_is_waited_for(served, tmp_path, monkeypatch):
                 "scope": "project", "project": "gsynth", "markers": ["CD4"], "mirror": True,
                 "mirror_delay_ms": 0, "display_check": "rule"}, link=served)["result"]
             jobs.drain(60)
-            packet = invoke(session, "gating_next", {"session_id": started["session_id"]},
-                            link=served)["result"]["packet"]
-            assert packet["mirror"]["status"] == expected, (slow, packet["mirror"])
+            invoke(session, "gating_next", {"session_id": started["session_id"]}, link=served)
+            assert session_mirror.wait_idle(started["session_id"], 30)
+            mirror = invoke(session, "gating_session_status",
+                            {"session_id": started["session_id"]})["result"]["mirror"]
+            assert mirror["status"] == expected, (slow, mirror)
             invoke(session, "gating_session_finish", {"session_id": started["session_id"],
                                                       "action": "cancel"})
         vs._reset_for_tests()
@@ -366,6 +376,7 @@ def test_a_contrast_check_is_shown_settling_marker_by_marker(served, tmp_path):
             "answer": {"kind": "display_setup", "background_ok": {m: ["c3"] for m in rows},
                        "structure_ok": {m: ["c3"] for m in rows}}}, link=served)
         assert following["ok"], following
+        assert session_mirror.wait_idle(sid)
         types = [c["type"] for c in tab.seen[before:]]
         assert "animate_contrast" in types, types
         animate = next(c for c in tab.seen[before:] if c["type"] == "animate_contrast")

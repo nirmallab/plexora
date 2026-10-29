@@ -162,7 +162,7 @@ def held(monkeypatch):
         if isinstance(self, engines.Engine):
             for key in kw["units"]:
                 unit = self.record["units"][key]
-                deps[key] = {d["marker"]: (d["state"], bool(d.get("limit_request")))
+                deps[key] = {d["marker"]: (d["state"], engines.passed_by(d))
                              for d in self.depends_on(unit)}
         rows.append({"packet_id": packet_id, "kind": kw["kind"], "units": list(kw["units"]),
                      "others": others, "deps": deps, "strict": kw.get("strict")})
@@ -184,9 +184,9 @@ def _check_rules(rows):
         assert not busy & set(row["units"]), ("a unit had two packets out", row)
         if row["kind"] != "t1_strip":
             for key, deps in row["deps"].items():
-                for marker, (state, limited) in deps.items():
-                    assert state in schemas.TERMINAL_STATES or limited, \
-                        (f"{key} went out before {marker} was settled ({state})", row)
+                for marker, (state, passed) in deps.items():
+                    assert passed, (f"{key} went out before the serial order would have "
+                                    f"passed {marker} ({state})", row)
 
 
 # -- end to end through the capabilities -------------------------------------------------
@@ -263,11 +263,35 @@ def test_a_marker_waits_for_its_earlier_partners_and_the_one_it_is_gated_within(
         assert {d["marker"] for d in engine.depends_on(unit["CD8"])} == {"CD3", "CD4"}
         assert engine.depends_on(unit["KIA"]) == []
 
-        # CD3 still waits on its strip: CD4 may not go out yet; the
-        # independent markers may, all three at once.
-        assert _markers_of(engine.ready_units()[0]) == ["KIA", "KIB", "KIC"]
+        # CD3, accepted at T1 and waiting for its strip, is passed by as the
+        # serial order passes it: CD4 goes out on its written gate, beside
+        # the independent markers. A CD3 still being looked at holds CD4.
+        assert _markers_of(engine.ready_units()[0]) == ["CD4", "KIA", "KIB", "KIC"]
+        unit["CD3"]["state"] = "awaiting_t2"
+        assert "CD4" not in _markers_of(engine.ready_units()[0])
+        assert {"KIA", "KIB", "KIC"} <= set(_markers_of(engine.ready_units()[0]))
+        # Held on a limit question, or set aside for its children: passed by.
+        unit["CD3"]["limit_request"] = {"why": "budget"}
+        assert "CD4" in _markers_of(engine.ready_units()[0])
+        unit["CD3"].pop("limit_request")
+        assert engines.passed_by({"state": "awaiting_t2", "deferred": "waiting"})
+        assert not engines.passed_by({"state": "awaiting_t2", "deferred": "resumed"})
         unit["CD3"]["state"] = "accepted"
         assert _markers_of(engine.ready_units()[0]) == ["CD4", "KIA", "KIB", "KIC"]
+
+        # While the bulk pass runs, a marker waits for every partner it reads
+        # to be profiled -- later ones too (CD8 for CD4): what it stands on
+        # is then the data, not how far the pass had got -- one at a time
+        # (`next_unit`) as beside others.
+        engine.record["state"] = "bulk_running"
+        unit["CD8"]["state"] = "pending"
+        assert engine.unprofiled_partner(unit["CD4"])
+        assert "CD4" not in _markers_of(engine.ready_units()[0])
+        assert engine.next_unit()[0] in ("wait", "t1_strip")
+        unit["CD8"]["state"] = "accepted_t1"
+        assert not engine.unprofiled_partner(unit["CD4"])
+        assert "CD4" in _markers_of(engine.ready_units()[0])
+        engine.record["state"] = "deciding"
 
         # A marker gated within a partner waits for that partner, wherever
         # it sits in the gating order.
@@ -276,6 +300,91 @@ def test_a_marker_waits_for_its_earlier_partners_and_the_one_it_is_gated_within(
         assert "KIA" not in _markers_of(engine.ready_units()[0])
         unit["CD4"]["state"] = "accepted"
         assert "KIA" in _markers_of(engine.ready_units()[0])
+
+
+#: Panels as they are gated: a CyCIF immune and tumour panel (lsp11385's
+#: markers), a melanoma one, and the shared scene's.
+LINK_PANELS = (
+    ("CD45", "Ki67", "CD3e", "CD20L", "CD11c", "CD163", "CD8a", "Ecad", "PDL1", "PD1", "CD4",
+     "FOXP3", "CD68", "CD31", "SMA", "SOX10", "MART1", "SOX9", "PCNAL", "NGFR", "HLAABCL",
+     "HLADRL", "TBX21", "TIM3", "CD16", "TCF1", "CD103", "CTLA4", "LAG3", "TIGIT", "CD138",
+     "CXCL10", "GZMB", "b2m"),
+    ("CD45", "CD3", "CD4", "CD8", "FOXP3", "CD20", "PanCK", "Ki67", "PD1", "PDL1", "SOX10",
+     "CD68", "CD163", "CD11c", "aSMA", "CD31"),
+    PANEL,
+)
+
+
+class _PanelOnly:
+    """What `Engine._links` reads of an engine: the panel and the units."""
+
+    def __init__(self, panel, markers):
+        self.panel, self.markers = panel, markers
+
+    def panel_for(self, project):
+        return self.panel
+
+    def units_of(self, project):
+        return [{"project": project, "marker": m} for m in self.markers]
+
+
+@pytest.mark.parametrize("markers", LINK_PANELS)
+def test_every_gate_a_marker_can_read_is_one_it_waits_for(markers):
+    """Lanes reach the serial gates only if a marker never reads the gate of
+    one still open beside it: whatever its scored start, its references, its
+    lineage check or its children's consensus may lean on is linked to it
+    (`_links`), so of two related markers the later waits for the earlier."""
+    from plexora.plugins.gating.server.autogate import context, hierarchy
+
+    panel = context.build(list(markers))
+    links = engines.Engine._links(_PanelOnly(panel, list(markers)), "p")
+    for marker in markers:
+        read = {r["marker"] for r in hierarchy.relations(panel, marker)} & set(markers)
+        refs = {r["marker"] for r in context.references_for(
+            panel, marker, {m: "high" for m in markers})}
+        missing = (read | refs) - links[marker] - {marker}
+        assert not missing, (marker, sorted(missing))
+
+
+class _Planned(_PanelOnly):
+    """An engine as far as `Engine.useful_lanes` reads one, its markers in
+    the panel's gating order (`_markers_for`)."""
+
+    _links = engines.Engine._links
+    depends_on = engines.Engine.depends_on
+    useful_lanes = engines.Engine.useful_lanes
+
+    def __init__(self, panel, markers):
+        super().__init__(panel, markers)
+        order = [m for m in panel["order"] if m in markers]
+        self.record = {"images": ["p"], "order": order + [m for m in markers if m not in order],
+                       "units": {engines.unit_key("p", m): {"project": "p", "marker": m}
+                                 for m in markers}}
+
+
+def test_a_panel_runs_on_as_many_lanes_as_its_dependencies_keep_busy(monkeypatch):
+    """Lanes follow the panel: its markers per step of its longest chain of
+    markers each waiting for the one before. A chain gets one lane, however
+    long; a session that names its lanes gets them; `LANES` caps the rest."""
+    from plexora.plugins.gating.server.autogate import context
+
+    def useful(markers):
+        return _Planned(context.build(list(markers)), list(markers)).useful_lanes()
+
+    bench = ("CD45", "Ki67", "CD3e", "CD20L", "CD11c", "CD163", "CD8a", "Ecad", "PDL1", "PD1",
+             "CD4", "FOXP3", "CD68", "CD31", "SMA", "SOX10")
+    assert useful(bench) == 2          # 16 markers, CD45 ... CD8a, CD163, FOXP3: a chain of 8
+    assert useful(("CD45", "CD3e", "CD4", "CD8a")) == 1
+    assert useful(LINK_PANELS[0]) >= useful(bench)
+
+    monkeypatch.setattr(engines, "LANES", 4)
+    units = {f"p::m{i}": {} for i in range(16)}
+    assert engines.lanes_for({"units": units, "useful_lanes": 3}) == 3
+    assert engines.lanes_for({"units": units, "useful_lanes": 6}) == 4
+    assert engines.lanes_for({"units": units}) == 4    # not planned yet
+    assert engines.lanes_for({"units": dict(list(units.items())[:3]), "useful_lanes": 3}) == 1
+    assert engines.lanes_for({"units": units, "useful_lanes": 1,
+                              "options": {"lanes": 5}}) == 5
 
 
 def test_setup_packets_and_strips_go_out_alone(tmp_path, scene):
@@ -295,16 +404,18 @@ def test_setup_packets_and_strips_go_out_alone(tmp_path, scene):
         engine.record["outstanding"].clear()
         engine.record["panel_pending"] = False
 
-        # Looks out: the strip CD3 and CD8 are waiting for does not join them.
+        # Looks out: the strip CD3 and CD8 are waiting for does not join them
+        # (CD4 goes out on CD3's written T1 gate, as one at a time).
         hold(engine, "pk_9001", "t2_confirm", ["KIA"])
-        assert _markers_of(engine.ready_units()[0]) == ["KIB", "KIC"]
+        assert _markers_of(engine.ready_units()[0]) == ["CD4", "KIB", "KIC"]
+        hold(engine, "pk_9000", "t2_confirm", ["CD4"])
         hold(engine, "pk_9002", "t2_confirm", ["KIB"])
         hold(engine, "pk_9003", "t2_confirm", ["KIC"])
         assert engine.ready_units() == ([], "busy")
         # Once they are answered (and settled) the strip goes, and nothing
         # beside it.
         engine.record["outstanding"].clear()
-        for marker in ("KIA", "KIB", "KIC"):
+        for marker in ("CD4", "KIA", "KIB", "KIC"):
             engine.unit(engines.unit_key("gpar", marker))["state"] = "accepted"
         picks, _why = engine.ready_units()
         assert [(k, [u["marker"] for u in us]) for k, us in picks] == [
@@ -460,7 +571,9 @@ def test_the_harness_gates_with_parallel_markers_and_writes_the_prefix_once(tmp_
     infos = {name: scene(tmp_path, name) for name in ("gser", "gpar")}
     summaries = {}
     with FakeGateway(oracle_brain(infos["gser"])) as gateway:
-        summaries["gser"] = GatingRun(GatingOptions(project="gser", start_options=V1),
+        # One lane asked for: unset, the run takes the lanes the panel keeps busy.
+        summaries["gser"] = GatingRun(GatingOptions(project="gser", parallel_markers=1,
+                                                    start_options=V1),
                                       gateway=client(gateway),
                                       trace=TraceStore(tmp_path / "s.sqlite")).run()
     with FakeGateway(oracle_brain(infos["gpar"])) as gateway:

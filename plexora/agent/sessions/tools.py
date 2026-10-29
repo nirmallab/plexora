@@ -318,20 +318,25 @@ class SessionTools:
             return job["job_id"]
 
     def mirror(self, call, session_id, packet, *, replay=False):
-        """Show the packet in the session's viewer, one script at a time.
+        """Show the packet in the session's viewer, off the driver's path: it
+        is offered to the session's presenter (`mirror.Presenter`; the newest
+        packet wins), which sends it when the tab is free and records how it
+        went. Returns what the agent is told now: the mirror `queued`.
         `replay` is the tab asking to watch again (`attach_viewer`): it skips
         a packet just shown, and a viewer detached meanwhile."""
         from plexora.agent.sessions import mirror as session_mirror
 
         packet_id = packet.get("packet_id")
-        with session_mirror.send_lock(session_id):
-            if replay:
-                st = self.store()
-                current = st.load(session_id).get("mirror") or {}
-                if st.control(session_id).get("viewer_detached") or (
-                        current.get("status") == "ok" and current.get("packet_id") == packet_id
-                        and time.time() - float(current.get("sent_at") or 0) < 30):
-                    return mirror_brief(current)
+        if replay:
+            st = self.store()
+            current = st.load(session_id).get("mirror") or {}
+            if st.control(session_id).get("viewer_detached") or (
+                    current.get("status") == "ok" and current.get("packet_id") == packet_id
+                    and time.time() - float(current.get("sent_at") or 0) < 30):
+                return mirror_brief(current)
+
+        def show():
+            started = time.perf_counter()
             try:
                 result = self.mirror_run(call, session_id, packet)
             except Exception as exc:  # mirroring never breaks a session
@@ -344,7 +349,15 @@ class SessionTools:
                 mirror["sent"] = int(result.get("sent") or 0)
                 mirror["packet_id"] = packet_id
                 mirror["sent_at"] = time.time()
-                return mirror_brief(mirror)
+                engine.log(event="mirrored", packet_id=packet_id, status=result.get("status"),
+                           sent=int(result.get("sent") or 0),
+                           ms={"mirror": round((time.perf_counter() - started) * 1e3, 1)},
+                           dropped=session_mirror.presenter(session_id).take_dropped())
+            return 0.0
+
+        queued = session_mirror.presenter(session_id).offer(
+            show, wait=False, key=None if replay else packet_id)
+        return {"status": queued, "packet_id": packet_id}
 
     def packet_result(self, packet, images):
         return {"state": "decision", "packet": packet,
@@ -662,12 +675,22 @@ class SessionTools:
         self._last_phase.pop(inp.session_id, None)
         self.announce(call, snapshot, inp.session_id, "finished", reason=reason, state=state,
                       summary=summary, phase="summarizing")
+        from plexora.agent.sessions import mirror as session_mirror
+
         if mirroring(mirror) and not detached:
             # A detached viewer is the user's own: nothing is put back in it.
-            try:
-                out["teardown"] = self.mirror_teardown(call, inp.session_id, reason)
-            except Exception as exc:  # the view is restored best effort
-                out["teardown"] = {"status": "degraded", "errors": [{"message": str(exc)}]}
+            # Sent by the presenter, after the command under way and nothing else.
+            def teardown():
+                try:
+                    self.mirror_teardown(call, inp.session_id, reason)
+                except Exception:  # the view is restored best effort
+                    pass
+                return 0.0
+
+            session_mirror.presenter(inp.session_id).close(teardown)
+            out["teardown"] = {"status": "queued"}
+        else:
+            session_mirror.presenter(inp.session_id).close()
         receipt = make_receipt(call, changed=inp.action in ("commit", "rollback"),
                                before=None, after={k: out.get(k) for k in ("action", "written",
                                                                               "undone")},

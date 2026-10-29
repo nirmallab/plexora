@@ -371,8 +371,8 @@ def test_the_reader_lock_is_not_held_while_the_model_runs(tmp_path, monkeypatch)
     ds = session.image_data(info["name"])
 
     def embed(rgb):
-        held = source_image.SHELF._held.get(ds.name)
-        seen["locked"] = bool(held and held.lock.locked())
+        held = source_image.SHELF._held.get(ds.name) or []
+        seen["locked"] = any(h.lock.locked() for h in held)
 
     monkeypatch.setattr(sam, "embed", embed)
     with sam.use_backend(sam_backend.FakeSamBackend()):

@@ -153,22 +153,30 @@ data root, version, logger and task names (`cache_plan.py`, `trace.py`,
   - Tasks share state through a `Blackboard` of facts, artifact ids and a
     mailbox.
   - `run_many` uses it to gate several projects in parallel.
-- **Parallel markers** (`GatingOptions.parallel_markers`, `--parallel-markers N`).
+- **Parallel markers** (`GatingOptions.parallel_markers`, `--parallel-markers N`;
+  unset, the session's own `lanes`, `autogate.engine.lanes_for`: as many as
+  the panel's dependencies keep busy, at most 4).
   N lanes answer one session at once. Each lane is a reader of its own
   (`gating_next(reader=..., parallel=N)`; lane 0 is the session's default
   reader) with its own rolling workers. The lanes run under the `Scheduler`
   with `stagger_first`, so lane 0's first call writes the cached prefix
   before the others start. The engine decides what may be out side by side:
-  - a marker waits for the partners it is judged beside that come earlier in
-    gating order, and for the partner it is gated `within`;
+  - a marker waits for every marker earlier in gating order whose gate it
+    could read -- any relation the panel's tree gives it, either way round
+    (`Engine._links`: its scored start, references, lineage check and
+    children's consensus) -- and for the partner it is gated `within`; one the
+    serial order passes by (held on a limit question, accepted at T1 and
+    waiting for its strip, a parent set aside for its children: `passed_by`)
+    holds nobody;
   - set-up packets and T1 strips go out alone;
   - an answer whose partner gates changed while it was out is refused
     (`reissue`) and the decision is served again.
 
-  So the gates are the serial run's. A lane told `busy` asks again. The
-  summary adds `parallel_markers`, `peak_outstanding` and `reissued`. How
-  much this gains depends on the panel: in a T-cell panel every marker is a
-  partner of the others, so only independent markers overlap.
+  So the gates are the serial run's (`perf_bench.py compare` on lsp11385:
+  docs/internal/bench/AUTOGATE_PERF_2026-10-29.md). A lane told `busy` asks
+  again. The summary adds `parallel_markers`, `peak_outstanding` and
+  `reissued`. How much this gains depends on the panel: in an immune panel
+  most markers read each other's gates, so only the independent ones overlap.
 - **Pausing for credit.** When the gateway returns `insufficient_credits`,
   `run_envelope_exceeded` or a similar refusal, the session is **paused**,
   not abandoned, and its gateway run is left open. `--resume <session>`
@@ -344,9 +352,9 @@ Depth is bounded by `max_depth` (default 1). `wait: false` with `await_agents(id
 - **Chat:** external MCP servers as tools (`ExternalServers`); `run_analysis`
   (Code Mode); `plexora ai trace --graph`; task checkpoints for sub-agents.
   A sub-agent cut off by a restart starts again from its brief.
-- **Engine and caching:** the model-call cache. Parallel markers still need
-  two things: the mirror script and the agent panel show one subject (the
-  newest packet) rather than several, and QC sessions keep one packet at a
-  time (`BaseEngine.next_ready`'s default).
+- **Engine and caching:** the model-call cache. QC sessions keep one packet
+  at a time (`BaseEngine.next_ready`'s default), and QC's mirror is still sent
+  inside the driver's call (gating's goes through the session's presenter,
+  `agent/sessions/mirror.py`).
 - **Real provider:** no end-to-end run against the real provider has been
   done from this branch. Every test uses a fake provider.

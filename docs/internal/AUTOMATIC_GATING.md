@@ -484,7 +484,7 @@ plexora/agent/evidence/                  generic pixel evidence
 plexora/agent/sessions/                  generic decision sessions
     store.py         on-disk session, packets, decisions.jsonl, control.json, lock
     budget.py        characters and pixels per unit and session
-    mirror.py        best-effort viewer script runner
+    mirror.py        best-effort viewer script runner; the session's presenter
 plexora/plugins/gating/server/autogate/  the intensity-marker implementation
     profile.py       Column, estimators, split-aware pools, class, T1 score
     qc_cells.py      tile statistics, Moran's I, illumination, size, nuclear, edge
@@ -807,8 +807,20 @@ plexora/ai/bench.py, bench_data.py                `plexora ai bench gating`
   its scale (`calibration.display_spec`, the cofactor scaled with it). The
   record carries `calibration.VERSION`, the table and the QC fingerprints; an
   older or stale one is recomputed (`load_current`).
-- **Mirroring reports itself.** Each packet's `mirror` says what the open tab
-  was sent and whether it acknowledged; a `get_state` first wakes a background
+- **Mirroring never holds the session up.** A packet is offered to the
+  session's presenter (`agent/sessions/mirror.Presenter`) and comes back to the
+  driver at once, its `mirror` saying `queued`; a thread of the session's own
+  sends the script when the tab is free. Looks faster than the tab are not
+  queued behind each other: the newest waits, the ones it replaces are dropped
+  (a marker never shown is kept over a second look at one that was), and a
+  look being played keeps the tab `MIN_SHOW_S` before the next replaces it
+  (paced sessions). A contrast show and the teardown go in order, never
+  replaced; `finish` hands the teardown over and returns, nothing after it is
+  sent, and nothing is left to play once the session has decided. Progress is
+  the engine's (`issued`/`answered`), never the tab's.
+- **Mirroring reports itself.** What the presenter sent is on the session
+  (`mirror`: status, commands sent, acknowledged) and in its log (`mirrored`,
+  with the looks it dropped); a `get_state` first wakes a background
   tab and skips set-up already in effect, and the HD swap has its own timeout
   (`mirror_script.COMMAND_TIMEOUT_S`). A viewer that predates `/agent/v1`
   answers `capability_unavailable` with "restart it".
@@ -824,10 +836,24 @@ plexora/ai/bench.py, bench_data.py                `plexora ai bench gating`
   `gating_next(reader=..., parallel=N)` lets up to N out across readers; the
   default (no reader, `parallel=1`) is the single-packet loop, unchanged.
   `Engine.ready_units` decides what may go out beside the rest: a marker
-  waits until every partner it could be judged beside that comes earlier in
-  gating order (`Engine.depends_on`, either direction of a vocabulary
-  partner at moderate or better), and the partner it is gated `within`, is
-  terminal; `panel_context`, `expression_setup`, `pixel_setup` and the T1
+  waits until every marker earlier in gating order whose gate it could read
+  (`Engine.depends_on` over `Engine._links`: every relation the panel's tree
+  gives it, stated or derived, either way round, low-confidence exclusions
+  included -- what its scored start, references, lineage check and children's
+  consensus read), and the partner it is gated `within`, is where the serial
+  order would have it: terminal, or passed by (`passed_by`: held on a limit
+  question, accepted at T1 and waiting for its strip, a parent set aside for
+  its children). While the bulk pass runs, a marker is not asked about --
+  one at a time or beside others -- until every marker it is linked to, later
+  ones too, has been profiled (`unprofiled_partner`): a later partner's T1
+  gate is a reference, and whether it was written yet would otherwise be
+  timing. So a look out beside others stands on the gates it would one
+  at a time (`perf_bench.py compare`), and the session's `lanes`
+  (`SessionOptions.lanes`, `lanes_for`) are how many readers the harness and
+  the `delegate` block run -- unless a session names them, as many as its
+  panel keeps busy: its markers per step of the longest chain of markers
+  each waiting for the one before (`Engine.useful_lanes`), rounded up, at
+  most `LANES` (4), so a panel that mostly reads itself runs on fewer; `panel_context`, `expression_setup`, `pixel_setup` and the T1
   strips are exclusive (`Engine.EXCLUSIVE_KINDS`), and a strip that is due
   waits for what is out to be answered. A reader keeps to the marker it
   answered last (`readers[reader].last_unit`). A packet issued beside others
@@ -1146,7 +1172,13 @@ against 0.915 for the Auto gate, at ~20k vision tokens and 40 packets for 7
 images. Real slides have far more cells, so more markers settle at T1.
 Performance budgets: a marker's profile ~1-3 s (dominated by the Auto fit
 itself); neighbour counts for 1M cells ~1 s once per project; a T2 collage
-~0.2 s from a local pyramid. A look is two images, the T2 collage
+~0.2 s from a local pyramid. On a real image (lsp11385, 202k cells, a local
+67 GB OME-TIFF, 2026-10-29; docs/internal/bench/AUTOGATE_PERF_2026-10-29.md):
+a v2 cell panel ~0.3 s to draw (its crops read on four readers at once), the
+server's work between an answer and the next packet ~1.1 s, calibration
+~10 s, and 16 markers profiled in ~41 s (four at a time; ~6.5 s each). Each
+`issued`/`answered`/`profiled` event carries its stage timings (`ms`), and
+`tools/bench_gates/stage_report.py` reads a session's time off its log. A look is two images, the T2 collage
 (`collage.layout_pixels("t2")`) and the context sheet (`sheet.max_pixels()`,
 1160 x 732: 384 px fields, a 288 px slide-scale row), about 1.4M pixels; `budget.UNIT_DEFAULT`
 allows six looks (9.3M pixels; `tests/test_autogate_units.py` pins it), and

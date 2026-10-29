@@ -46,6 +46,8 @@ never crosses one half, so it never changes which side a share is on.
 from __future__ import annotations
 
 import math
+import threading
+from collections import OrderedDict
 
 import numpy as np
 
@@ -244,6 +246,32 @@ def _beta(uniforms, own, not_own):
     return beta.ppf(uniforms, own + 0.5, not_own + 0.5)
 
 
+#: Share draws already made, by (seed, interval, stratum, draws, own, not
+#: own): a draw is a pure function of them, and a look's worth asks for the
+#: same ones again and again (`look_gains` per count, `look_gain` per
+#: simulation) -- each a few hundred quantiles of a Beta. Read only; bounded.
+_DRAWN: OrderedDict = OrderedDict()
+_DRAWN_LIMIT = 4096
+_DRAWN_LOCK = threading.Lock()
+
+
+def _beta_draws(seed, k, part, draws, own, not_own):
+    """`_beta(_uniforms(seed, k, part, draws), own, not_own)`, remembered."""
+    key = (int(seed) & 0xFFFFFFFF, int(k), int(part), int(draws), float(own), float(not_own))
+    with _DRAWN_LOCK:
+        found = _DRAWN.get(key)
+        if found is not None:
+            _DRAWN.move_to_end(key)
+            return found
+    found = _beta(_uniforms(seed, k, part, draws), float(own), float(not_own))
+    found.flags.writeable = False
+    with _DRAWN_LOCK:
+        _DRAWN[key] = found
+        while len(_DRAWN) > _DRAWN_LIMIT:
+            _DRAWN.popitem(last=False)
+    return found
+
+
 def isotonic(shares, weights):
     """The weighted non-decreasing fit of every row of `shares` (draws x k,
     every weight above zero), all rows at once: f_i is the largest, over
@@ -303,14 +331,14 @@ def _draws(table, n_cells, strata, missing, seed, draws):
         weights[i] = n_eff
         sizes = _strata(entry, None if strata is None else strata[i], missing)
         if not sizes:
-            shares[:, i] = _beta(_uniforms(seed, i, 0, draws), entry["own"], entry["not"])
+            shares[:, i] = _beta_draws(seed, i, 0, draws, entry["own"], entry["not"])
             continue
         total = float(sum(sizes.values()))
         mix = np.zeros(draws)
         for j, (stratum, size) in enumerate(sorted(sizes.items(), key=lambda kv: str(kv[0]))):
             part = entry["by"].get(str(stratum)) or {}
-            mix += size / total * _beta(_uniforms(seed, i, j + 1, draws),
-                                        part.get("own", 0), part.get("not", 0))
+            mix += size / total * _beta_draws(seed, i, j + 1, draws,
+                                              part.get("own", 0), part.get("not", 0))
         shares[:, i] = mix
     return shares, weights
 
@@ -552,10 +580,9 @@ def look_gains(table, n_cells, available, *, eligible, same, seed=0, draws=DRAWS
         own, not_own = float(table[k]["own"]), float(table[k]["not"])
         pmf = betabinom.pmf(np.arange(m + 1), m, own + 0.5, not_own + 0.5)
         keep_share, keep_weight = shares[:, k].copy(), weights[k]
-        u = _uniforms(seed, k, 0, draws)
         expected = 0.0
         for x in range(m + 1):
-            shares[:, k] = _beta(u, own + x, not_own + m - x)
+            shares[:, k] = _beta_draws(seed, k, 0, draws, own + x, not_own + m - x)
             weights[k] = own + not_own + m
             q, _ = _choose(shares, weights, n_cells, eligible)
             expected += float(pmf[x]) * float((same @ q).max())
@@ -584,7 +611,7 @@ def look_gain(table, n_cells, picks, *, eligible, same, seed=0, draws=DRAWS,
         for k, m in chosen:
             own, not_own = float(table[k]["own"]), float(table[k]["not"])
             x = int(rng.binomial(m, rng.beta(own + 0.5, not_own + 0.5)))
-            shares[:, k] = _beta(_uniforms(seed, k, 0, draws), own + x, not_own + m - x)
+            shares[:, k] = _beta_draws(seed, k, 0, draws, own + x, not_own + m - x)
             weights[k] = own + not_own + m
         q, _ = _choose(shares, weights, n_cells, eligible)
         total += float((same @ q).max())

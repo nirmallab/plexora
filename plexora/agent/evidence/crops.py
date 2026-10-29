@@ -16,6 +16,7 @@ the same box at the same level draws.
 from __future__ import annotations
 
 import math
+import threading
 
 import numpy as np
 
@@ -164,6 +165,25 @@ def read_cell_crops(session, record, cells, *, channels, crop_px, tile_px, mask=
     return crops, info
 
 
+#: Rectangles one panel reads at once, each through a reader of its own
+#: (`source_image.ReaderShelf`): decoding the tile under a crop is most of
+#: what a crop costs, and the tiles of a panel's cells are independent.
+PARALLEL_READS = 4
+_POOL = None
+_POOL_LOCK = threading.Lock()
+
+
+def _pool():
+    global _POOL
+    with _POOL_LOCK:
+        if _POOL is None:
+            from concurrent.futures import ThreadPoolExecutor
+
+            _POOL = ThreadPoolExecutor(max_workers=PARALLEL_READS,
+                                       thread_name_prefix="crop-read")
+        return _POOL
+
+
 def _read_plane_crops(session, record, cells, *, channels, crop_px, tile_px, mask, level, z):
     """`read_cell_crops` for cells on one plane of a z-stack (`z` None: the
     default plane)."""
@@ -174,7 +194,6 @@ def _read_plane_crops(session, record, cells, *, channels, crop_px, tile_px, mas
     tile_w = int(record.image.tile_width or 1024)
     tile_h = int(record.image.tile_height or 1024)
     crops = {}
-    reads = 0
     view = f"z{z}" if z is not None else None
     with source_image.SHELF.reader(image_data, view=view) as source:
         if source.is_brightfield:
@@ -183,67 +202,84 @@ def _read_plane_crops(session, record, cells, *, channels, crop_px, tile_px, mas
         if level is None:
             level = source_image.choose_level(source, crop_px, tile_px)
         level = max(0, min(int(level), source.levels - 1))
-        div = 2 ** level
-        side = max(4, int(math.ceil(crop_px / div)))
         indices = {name: source.channel_index(key) for name, key in channels.items()}
-        missing = [name for name, index in indices.items() if index is None]
-        if missing:
-            raise AgentError("invalid_input", f"not channels of this image: {missing}")
-        groups = {}
-        for cell in cells:
-            cx, cy = float(cell["x"]) / div, float(cell["y"]) / div
-            x0 = int(math.floor(cx - side / 2))
-            y0 = int(math.floor(cy - side / 2))
-            box = (x0, y0, x0 + side, y0 + side)
-            crop = Crop(int(cell["cell_id"]), float(cell["x"]), float(cell["y"]), box, level,
-                        z=z)
-            crops[crop.cell_id] = crop
-            key = (int(cx // tile_w), int(cy // tile_h))
-            groups.setdefault(key, []).append(crop)
-        for members in groups.values():
-            gx0 = min(c.box[0] for c in members)
-            gy0 = min(c.box[1] for c in members)
-            gx1 = max(c.box[2] for c in members)
-            gy1 = max(c.box[3] for c in members)
-            if gx1 - gx0 > MAX_GROUP_SIDE or gy1 - gy0 > MAX_GROUP_SIDE:
-                blocks = [(c.box, [c]) for c in members]
-            else:
-                blocks = [((gx0, gy0, gx1, gy1), members)]
-            for block, owners in blocks:
-                bw, bh = block[2] - block[0], block[3] - block[1]
-                for name, index in indices.items():
-                    plane, clipped = source.read(index, level, block)
-                    reads += 1
-                    canvas = np.zeros((bh, bw), dtype=np.float32)
-                    top, left = clipped[1] - block[1], clipped[0] - block[0]
-                    plane = np.asarray(plane, dtype=np.float32)
-                    h = min(plane.shape[0], bh - top)
-                    w = min(plane.shape[1], bw - left)
-                    if h > 0 and w > 0 and plane.size > 1:
-                        canvas[top:top + h, left:left + w] = plane[:h, :w]
-                    for crop in owners:
-                        oy, ox = crop.box[1] - block[1], crop.box[0] - block[0]
-                        crop.planes[name] = canvas[oy:oy + side, ox:ox + side]
-        mask_status = "none"
-        if mask:
-            provider, mask_status, _reason, _locator = render._mask_for(record)
-            if provider is not None:
-                mask_level = level + record.segmentation.extra_levels
-                for members in groups.values():
-                    gx0 = min(c.box[0] for c in members)
-                    gy0 = min(c.box[1] for c in members)
-                    gx1 = max(c.box[2] for c in members)
-                    gy1 = max(c.box[3] for c in members)
-                    box = (gx0, gy0, gx1, gy1)
-                    # A 3-D mask is cut at the cells' plane, like the pixels.
-                    labels = (provider.read_region(mask_level, box) if z is None else
-                              render._read_mask(provider, mask_level, box, max_pixels=0, z=z))
-                    reads += 1
-                    for crop in members:
-                        oy, ox = crop.box[1] - gy0, crop.box[0] - gx0
-                        crop.labels = np.asarray(labels[oy:oy + side, ox:ox + side])
-                _mask_statistics(crops.values(), side)
-    return crops, {"reads": reads, "groups": len(groups), "level": int(level),
+    div = 2 ** level
+    side = max(4, int(math.ceil(crop_px / div)))
+    missing = [name for name, index in indices.items() if index is None]
+    if missing:
+        raise AgentError("invalid_input", f"not channels of this image: {missing}")
+    groups = {}
+    for cell in cells:
+        cx, cy = float(cell["x"]) / div, float(cell["y"]) / div
+        x0 = int(math.floor(cx - side / 2))
+        y0 = int(math.floor(cy - side / 2))
+        box = (x0, y0, x0 + side, y0 + side)
+        crop = Crop(int(cell["cell_id"]), float(cell["x"]), float(cell["y"]), box, level,
+                    z=z)
+        crops[crop.cell_id] = crop
+        key = (int(cx // tile_w), int(cy // tile_h))
+        groups.setdefault(key, []).append(crop)
+    reads = []
+    for members in groups.values():
+        gx0 = min(c.box[0] for c in members)
+        gy0 = min(c.box[1] for c in members)
+        gx1 = max(c.box[2] for c in members)
+        gy1 = max(c.box[3] for c in members)
+        if gx1 - gx0 > MAX_GROUP_SIDE or gy1 - gy0 > MAX_GROUP_SIDE:
+            blocks = [(c.box, [c]) for c in members]
+        else:
+            blocks = [((gx0, gy0, gx1, gy1), members)]
+        for block, owners in blocks:
+            for name, index in indices.items():
+                reads.append((block, owners, name, index))
+
+    def read(job):
+        block, _owners, _name, index = job
+        with source_image.SHELF.reader(image_data, view=view) as reader:
+            return reader.read(index, level, block)
+
+    # Read side by side, laid out in order: the same crops as one at a time.
+    planes = _pool().map(read, reads) if len(reads) > 1 else map(read, reads)
+    mask_status, labels_by_group = "none", None
+    if mask:
+        # The mask's reads, meanwhile, on this thread (a mask provider is
+        # read by one thread at a time).
+        provider, mask_status, _reason, _locator = render._mask_for(record)
+        if provider is not None:
+            mask_level = level + record.segmentation.extra_levels
+            labels_by_group = []
+            for members in groups.values():
+                gx0 = min(c.box[0] for c in members)
+                gy0 = min(c.box[1] for c in members)
+                gx1 = max(c.box[2] for c in members)
+                gy1 = max(c.box[3] for c in members)
+                box = (gx0, gy0, gx1, gy1)
+                # A 3-D mask is cut at the cells' plane, like the pixels.
+                labels_by_group.append(
+                    (members, gx0, gy0,
+                     provider.read_region(mask_level, box) if z is None else
+                     render._read_mask(provider, mask_level, box, max_pixels=0, z=z)))
+    for (block, owners, name, _index), (plane, clipped) in zip(reads, planes):
+        bw, bh = block[2] - block[0], block[3] - block[1]
+        canvas = np.zeros((bh, bw), dtype=np.float32)
+        top, left = clipped[1] - block[1], clipped[0] - block[0]
+        plane = np.asarray(plane, dtype=np.float32)
+        h = min(plane.shape[0], bh - top)
+        w = min(plane.shape[1], bw - left)
+        if h > 0 and w > 0 and plane.size > 1:
+            canvas[top:top + h, left:left + w] = plane[:h, :w]
+        for crop in owners:
+            oy, ox = crop.box[1] - block[1], crop.box[0] - block[0]
+            crop.planes[name] = canvas[oy:oy + side, ox:ox + side]
+    n_reads = len(reads)
+    if labels_by_group is not None:
+        for members, gx0, gy0, labels in labels_by_group:
+            n_reads += 1
+            for crop in members:
+                oy, ox = crop.box[1] - gy0, crop.box[0] - gx0
+                crop.labels = np.asarray(labels[oy:oy + side, ox:ox + side])
+        _mask_statistics(crops.values(), side)
+    return crops, {"reads": n_reads, "groups": len(groups), "level": int(level),
                    "side_level_px": side, "crop_px": float(crop_px), "mask": mask_status}
 
 

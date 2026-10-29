@@ -211,6 +211,7 @@ def _cache_path(ds, marker, key):
 
 def _accumulate_local(ds, plan, progress, cancelled):
     from plexora.agent import render
+    from plexora.agent.sessions.engine import yield_to_foreground
     from plexora.server.utils import cell_features, source_image
 
     provider, _status, reason, _locator = render._mask_for(ds.project)
@@ -219,6 +220,8 @@ def _accumulate_local(ds, plan, progress, cancelled):
 
     def reader(index):
         def read(box):
+            # Nobody waits on this pass: a packet being drawn goes first.
+            yield_to_foreground()
             with source_image.SHELF.reader(ds) as source:
                 plane, clipped = source.read(index, plan.level, box)
             return cell_features.pad_to_box(plane, clipped, box)

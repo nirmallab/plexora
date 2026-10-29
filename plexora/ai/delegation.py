@@ -65,6 +65,8 @@ ROLES = {
         "answer": "gating.answer",
         # Whose packets come first once the markers are profiled (the T1/T2 looks).
         "first_task": "gating.image_inspection",
+        # Several workers answer the one session at once (`block(lanes=...)`).
+        "lanes": True,
     },
     "qc_worker": {
         "tier": "judgement",
@@ -181,16 +183,19 @@ def tools(role: str) -> list:
     return [_tool(name) for name in ROLES[role]["tools"]]
 
 
-def brief(role: str, *, tasks=None, reader=None, **context) -> str:
+def brief(role: str, *, tasks=None, reader=None, parallel=None, **context) -> str:
     """The worker's whole prompt: who it is, the skill to read, the context it
     cannot get from its tools, and what to return. Short on purpose -- the
     coordinator writes it once per worker. A worker scoped to `tasks` passes
-    them, and its `reader`, on every call that takes them."""
+    them, and its `reader`, on every call that takes them; a lane of several
+    (`parallel`) passes its `reader` and `parallel`."""
     spec = ROLES[role]
     n = units_per_worker(role)
     lines = [f"You are a Plexora worker ({role}). Read the skill `{spec['skill']}` with "
              f"{_tool('read_skill')} and follow it exactly."]
-    if tasks and spec["units"] != "packets":
+    # A scoped worker or a lane counts its own packets: the session's markers
+    # done move with every other worker's answers too.
+    if (tasks or (reader and parallel)) and spec["units"] != "packets":
         lines.append(f"Answer at most {n * PACKETS_PER_UNIT} packets, then stop and return only "
                      "the lines the skill asks for.")
     else:
@@ -201,13 +206,17 @@ def brief(role: str, *, tasks=None, reader=None, **context) -> str:
                      f"{_tool(spec['next'])} and {_tool(spec['answer'])}; on `other_tasks`, stop "
                      "and return the line the skill gives for it")
         lines.append(f"reader: {reader}")
+    elif reader and parallel:
+        lines.append(f"reader: {reader}, parallel: {parallel} -- pass both on every "
+                     f"{_tool(spec['next'])} and {_tool(spec['answer'])}; other lanes answer "
+                     "the same session beside you")
     for key, value in context.items():
         if value not in (None, "", [], {}):
             lines.append(f"{key}: {value}")
     return "\n".join(lines)
 
 
-def block(role: str, *, first_task: str | None = None, **context) -> dict:
+def block(role: str, *, first_task: str | None = None, lanes: int = 1, **context) -> dict:
     """What a tool result carries so any client can hand the work out. When
     the user's file maps the role's module, `workers` lists one worker per
     model, each with its tasks and its own brief.
@@ -234,6 +243,8 @@ def block(role: str, *, first_task: str | None = None, **context) -> dict:
                    f"{WAIT} Keep only the lines it returns and launch the next until the work "
                    "is done. Without workers, follow the skill yourself")}
     if not models_config.mapped(spec["module"]):
+        if lanes > 1 and spec.get("lanes"):
+            return _with_lanes(out, role, int(lanes), context)
         return out
     workers = []
     groups = models_config.groups(spec["module"])
@@ -259,6 +270,28 @@ def block(role: str, *, first_task: str | None = None, **context) -> dict:
                   "it (an `on_demand` one is launched only then). Two may run at once when each "
                   "has work. Relaunch until the work is done. A client that cannot choose a "
                   "worker's model answers itself and says which tasks ran on another model")
+    return out
+
+
+#: What a coordinator does with a block's `lanes`.
+LANES_HOW = ("launch one worker per lane in ONE message -- each a fresh conversation with its "
+             "lane's `brief` as the whole prompt, on `model` (or the model `pick` describes), "
+             "given only `tools` -- all in the foreground: {wait} The session gives a lane only "
+             "markers that stand on nothing another lane holds, so the gates are what one "
+             "worker at a time reaches, sooner. When a lane's worker returns, launch a fresh one "
+             "with that lane's brief while the session is not decided. Without workers, follow "
+             "the skill yourself")
+
+
+def _with_lanes(out, role, lanes, context) -> dict:
+    """`out` with `lanes`: one worker per lane, each its own reader of the
+    session (`gating_next(reader=..., parallel=...)`), launched together."""
+    out = dict(out)
+    out.pop("brief", None)
+    out["lanes"] = [{"reader": f"lane{n}", "launch": LAUNCH[0],
+                     "brief": brief(role, reader=f"lane{n}", parallel=lanes, **context)}
+                    for n in range(1, lanes + 1)]
+    out["how"] = LANES_HOW.format(wait=WAIT)
     return out
 
 

@@ -131,7 +131,7 @@ def run_command(args) -> int:
         # Nobody can answer a set-up form here: a column not set, or a matrix
         # neither the values nor --matrix/--log1p settle, fails the run saying so.
         options = GatingOptions(markers=_names(args.markers), **common, start_options=start, on_setup="fail",
-                                parallel_markers=max(1, int(getattr(args, "parallel_markers", 1) or 1)))
+                                parallel_markers=getattr(args, "parallel_markers", None))
     try:
         gateway = _client(args)
         if len(args.projects) > 1:

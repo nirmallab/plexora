@@ -66,6 +66,8 @@ CELL_WINDOW = {"negative_pct": (30, 50), "n_each": 24, "noise_pct": 99, "black_p
                "min_cells": 200}
 #: The pyramid level the crops are read at (the collage's own).
 LEVEL = 0
+#: Channels anchored at once: each reads a few dozen cells' crops of its own.
+CHANNEL_WORKERS = 4
 #: The prefix a window from here carries in `window_source` (a calibration).
 SOURCE = "calib:cells"
 #: A disc must hold at least this many pixels to be read.
@@ -373,13 +375,13 @@ def cell_windows(session, project, channels, *, nuclear=None, seed=0,
     ids, xs, ys = cells["ids"], cells["xs"], cells["ys"]
     cells_from = cells.get("cells_from", "table")
     side = int(np.ceil(2 * radius + 4))
-    out = {}
-    for name, column in cells["columns"].items():
+
+    def one(name, column):
         try:
             column_values = cells["values"][name]()
             bands, info = select_display_cells(column_values, ids, xs, ys, seed=seed)
             if bands is None:
-                continue
+                return None
             if name == nuclear:
                 # Its typical and bright nuclei only: there is no background band.
                 bands = {"negatives": bands["negatives"], "bright": bands["bright"]}
@@ -391,9 +393,24 @@ def cell_windows(session, project, channels, *, nuclear=None, seed=0,
                 crop_px=side, tile_px=side, mask=False, level=LEVEL)
             measured = (measure_nuclear if name == nuclear else measure)(
                 crops, name, bands, radius_px=radius)
-            if measured is not None:
-                out[name] = {**measured, "crop_px": side, "seed": int(seed), "column": column,
-                             "cells_from": cells_from}
         except Exception:
-            continue
-    return out
+            return None
+        if measured is None:
+            return None
+        return {**measured, "crop_px": side, "seed": int(seed), "column": column,
+                "cells_from": cells_from}
+
+    # Channels side by side (each its own seeded cells and crops), kept in order.
+    items = list(cells["columns"].items())
+    if len(items) > 1:
+        import contextvars
+        from concurrent.futures import ThreadPoolExecutor
+
+        with ThreadPoolExecutor(max_workers=CHANNEL_WORKERS,
+                                thread_name_prefix="cell-window") as pool:
+            found = list(pool.map(lambda item: contextvars.copy_context().run(one, *item),
+                                  items))
+    else:
+        found = [one(name, column) for name, column in items]
+    return {name: measured for (name, _column), measured in zip(items, found)
+            if measured is not None}

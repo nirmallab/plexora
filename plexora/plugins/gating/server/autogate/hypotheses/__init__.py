@@ -283,8 +283,9 @@ def packet(engine, units):
     unit = units[0]
     state = start(engine, unit)
     ds, col = _column(engine, unit)
-    plan = state.pop("pending", None) or controller.next_action(state, col.to_fit,
-                                                                state["params"])
+    with engine.timed("plan"):
+        plan = state.pop("pending", None) or controller.next_action(state, col.to_fit,
+                                                                    state["params"])
     # A change to the range comes first (each records itself, so none
     # repeats), then the look at the cells it adds.
     for _ in range(4):
@@ -305,16 +306,17 @@ def packet(engine, units):
     # Every look records which cells a brighter neighbour crowds (a record,
     # and what the bench's reader reads by); `strata` says whether the
     # reads are weighed by it (`controller.crowding`).
-    sampled = tableops.local_or_node(ds, "gating.autogate.panel_cells", {
-        "marker": unit["marker"],
-        "intervals": [{"from": iv["from"], "to": iv["to"], "n": iv["n"]}
-                      for iv in plan["intervals"]],
-        "exclude": _shown_ids(state), "n_sentinels": int(params["sentinels"]) - positive,
-        "sentinel_below": bounds[0], "seed": _seed(engine, state),
-        "ids": plan.get("ids") or [],
-        "n_positive_sentinels": positive, "sentinel_above": above_top if positive else None,
-        "strata_bounds": [float(b) for b in bounds],
-        "crowding_margin": float(params["tolerance"])})
+    with engine.timed("sample"):
+        sampled = tableops.local_or_node(ds, "gating.autogate.panel_cells", {
+            "marker": unit["marker"],
+            "intervals": [{"from": iv["from"], "to": iv["to"], "n": iv["n"]}
+                          for iv in plan["intervals"]],
+            "exclude": _shown_ids(state), "n_sentinels": int(params["sentinels"]) - positive,
+            "sentinel_below": bounds[0], "seed": _seed(engine, state),
+            "ids": plan.get("ids") or [],
+            "n_positive_sentinels": positive, "sentinel_above": above_top if positive else None,
+            "strata_bounds": [float(b) for b in bounds],
+            "crowding_margin": float(params["tolerance"])})
     if sampled.get("crowding") is not None:
         state["crowding"] = {"bounds": [float(b) for b in bounds], "sizes": sampled["crowding"]}
     for cell in sampled["cells"]:
@@ -334,12 +336,13 @@ def packet(engine, units):
     # was picked (a sentinel's "clear negative"); `_panel` keeps those.
     rows = panelmod.rows_of([{k: c[k] for k in ("cell_id", "x", "y", "caption", "number")}
                              for c in arranged], per_row)
-    main = collage.render_collage(
-        engine.call.session, ds, layout=layout, rows=rows, marker=channel, gate=None,
-        high=unit.get("high"), fmt=packets._fmt(engine),
-        pixel=engine.pixel_for(ds.name), partners=partners or None,
-        title=f"{unit['marker']} · numbered cells in random order (each cell: "
-              f"{packets._panel_words(layout, partners) or 'morphology | context'})")
+    with engine.timed("render"):
+        main = collage.render_collage(
+            engine.call.session, ds, layout=layout, rows=rows, marker=channel, gate=None,
+            high=unit.get("high"), fmt=packets._fmt(engine),
+            pixel=engine.pixel_for(ds.name), partners=partners or None,
+            title=f"{unit['marker']} · numbered cells in random order (each cell: "
+                  f"{packets._panel_words(layout, partners) or 'morphology | context'})")
     unit.setdefault("artifacts", []).extend(a["id"] for a in (main.get("artifact"),) if a)
     compartment = (unit.get("context") or {}).get("compartment")
     # Which cells carry the marker, so a dim population of its own is read as

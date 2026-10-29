@@ -14,6 +14,7 @@ import pytest
 import plexora
 from plexora.agent import AgentSession, invoke, jobs, registry
 from plexora.agent.attach import ServerLink
+from plexora.agent.sessions import mirror as session_mirror
 from plexora.server.models import viewer_sessions as vs
 from tests.qc_fixtures import make_qc_project
 from tests.test_agent_viewer_api import FakeTab
@@ -71,16 +72,19 @@ def test_a_mirrored_session_decides_what_a_headless_one_does(served, tmp_path):
     invoke(session, "qc_session_finish", {"session_id": _sid, "action": "rollback"})
     with FakeTab(project="qcsynth") as tab:
         sid, mirrored, on, finished = _run(session, info, link=served, mirror=True)
+        # Off the session's path: the packets come back `queued`; the tab is
+        # shown them (the newest first) and the view is given back after.
+        assert session_mirror.wait_idle(sid, 30)
     assert mirrored == headless and headless
     assert results.cells("qcsynth")["pass"].to_list() == cells_headless
     assert all(m is None for m in off)
-    assert any(m and m.get("status") == "ok" for m in on), on
+    assert any(m and m.get("status") == "queued" for m in on), on
     types = [c["type"] for c in tab.seen]
     assert "show_shapes" in types and "fit_region" in types and "show_evidence" in types
     shapes = next(c for c in tab.seen if c["type"] == "show_shapes")["arguments"]["shapes"]
     assert shapes and shapes[0].get("geometry", {}).get("type") in ("Polygon", "MultiPolygon")
     assert types[-1] == "restore_viewer", types[-5:]
-    assert finished["teardown"]["status"] == "ok"
+    assert finished["teardown"]["status"] == "queued"
 
 
 def test_mirroring_with_no_tab_degrades_and_the_session_completes(served, tmp_path):
@@ -105,12 +109,13 @@ def test_an_open_tab_is_mirrored_by_default_and_false_opts_out(served, tmp_path)
                                               "action": "cancel"}, link=served)
         jobs.drain(180)
         seen = len(tab.seen)
-        _sid, _regions, on, _finished = _run(session, info, link=served, mirror=None)
+        sid, _regions, on, _finished = _run(session, info, link=served, mirror=None)
+        assert session_mirror.wait_idle(sid, 30)
         auto_types = [c["type"] for c in tab.seen[seen:]]
         seen = len(tab.seen)
         _sid, _regions, off, _finished = _run(session, info, link=served, mirror=False)
         opted_out = [c["type"] for c in tab.seen[seen:]]
-    assert any(m and m.get("status") == "ok" for m in on), on
+    assert any(m and m.get("status") == "queued" for m in on), on
     assert "show_evidence" in auto_types and "fit_region" in auto_types
     assert all(m is None for m in off)
     assert not {"show_evidence", "fit_region", "show_shapes"} & set(opted_out), opted_out

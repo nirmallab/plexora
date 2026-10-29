@@ -32,6 +32,9 @@ from __future__ import annotations
 import dataclasses
 import hashlib
 import json
+import threading
+import time
+from contextlib import contextmanager
 
 from plexora.agent.errors import AgentError
 from plexora.agent.sessions import budget as budgets
@@ -40,6 +43,45 @@ from plexora.agent.sessions import budget as budgets
 #: before sessions had readers. A reader is one conversation answering
 #: packets; several answer one session in parallel (`issue(parallel=...)`).
 DEFAULT_READER = "main"
+
+#: Drawing a packet and applying an answer are what a reader waits on; work
+#: nobody waits on (a classifier's whole-image pass) steps aside for them,
+#: between its reads (`yield_to_foreground`), at most this long at a time.
+YIELD_MAX_S = 2.0
+_FOREGROUND = threading.Condition()
+_foreground = [0]
+_in_foreground = threading.local()
+
+
+@contextmanager
+def foreground():
+    """Mark the block as work a reader is waiting on (`yield_to_foreground`)."""
+    with _FOREGROUND:
+        _foreground[0] += 1
+    _in_foreground.depth = getattr(_in_foreground, "depth", 0) + 1
+    try:
+        yield
+    finally:
+        _in_foreground.depth -= 1
+        with _FOREGROUND:
+            _foreground[0] -= 1
+            _FOREGROUND.notify_all()
+
+
+def yield_to_foreground(timeout=YIELD_MAX_S) -> None:
+    """Wait (at most `timeout`) while a packet is being drawn or an answer
+    applied. For background passes, between two reads: the CPU and the
+    image's readers go to what a reader waits on first. Never on a thread
+    that is itself drawing or applying (it would wait on itself)."""
+    if getattr(_in_foreground, "depth", 0):
+        return
+    deadline = time.monotonic() + timeout
+    with _FOREGROUND:
+        while _foreground[0] > 0:
+            left = deadline - time.monotonic()
+            if left <= 0:
+                return
+            _FOREGROUND.wait(left)
 
 
 class EngineContext:
@@ -120,6 +162,7 @@ class BaseEngine:
         self.call = call
         self.store = st
         self.id = session_id
+        self._ms = {}
         self.record = self.store.load(session_id)
         # A session stored by an older build lacks newer options: completed
         # with their defaults, so nothing downstream needs a fallback.
@@ -276,6 +319,22 @@ class BaseEngine:
 
     def log(self, **entry):
         self.store.log(self.id, entry)
+
+    @contextmanager
+    def timed(self, stage):
+        """The block's milliseconds, added to `stage` in what the next
+        `issued` or `answered` event carries (`ms`): where a packet's server
+        time goes (`tools/bench_gates/stage_report.py`). A record, never an
+        input to a decision."""
+        started = time.perf_counter()
+        try:
+            yield
+        finally:
+            self._ms[stage] = self._ms.get(stage, 0.0) + (time.perf_counter() - started) * 1e3
+
+    def take_ms(self) -> dict:
+        spent, self._ms = self._ms, {}
+        return {stage: round(ms, 1) for stage, ms in spent.items()}
 
     @property
     def options(self):
@@ -511,9 +570,11 @@ class BaseEngine:
                 if len(held) >= limit:
                     return None, [], "busy"
                 self._needs = None
-                kind, units = self.next_ready(reader)
+                with self.timed("choose"):
+                    kind, units = self.next_ready(reader)
             else:
-                kind, units = self.next_unit()
+                with self.timed("choose"):
+                    kind, units = self.next_unit()
             if not self.accepts(kind, units):
                 return None, [], "other_tasks"
             if kind is None:
@@ -528,7 +589,8 @@ class BaseEngine:
                 return None, units, "wait_user"
             builder = self.builders()[kind]
             try:
-                built = builder(self, units)
+                with self.timed("build"), foreground():
+                    built = builder(self, units)
             except AgentError as exc:
                 if kind in self.SETUP_KINDS or not units:
                     raise
@@ -581,9 +643,11 @@ class BaseEngine:
                 # Which conversation the packet went to, in which of its epochs
                 # (`briefed`); a single reader's packets stay as they were.
                 packet["briefed"] = {"reader": reader, "epoch": int(brief.get("epoch", 0))}
-            self.store.write_packet(self.id, packet, [(d, f) for d, f, _s in images])
+            with self.timed("store"):
+                self.store.write_packet(self.id, packet, [(d, f) for d, f, _s in images])
             self.log(event="issued", packet_id=packet_id, kind=kind, units=packet["units"],
-                     cost=cost, **({"reader": reader} if reader != DEFAULT_READER else {}))
+                     cost=cost, ms=self.take_ms(),
+                     **({"reader": reader} if reader != DEFAULT_READER else {}))
             if self._replay(packet, memo_key):
                 continue      # answered as before; on to the next decision
             return packet, [(d, f) for d, f, _s in images], "packet"
@@ -729,7 +793,8 @@ class BaseEngine:
         packet, _images = self.store.read_packet(self.id, packet_id)
         memo_key = entry.get("memo_key")
         try:
-            outcome = self.transitions()[kind](self, packet, answer)
+            with self.timed("apply"), foreground():
+                outcome = self.transitions()[kind](self, packet, answer)
         except AgentError as exc:
             # A well-formed answer naming what the packet does not hold (a
             # label, an option, a square) is a strike like an unreadable one:
@@ -750,7 +815,8 @@ class BaseEngine:
             outcome = {**outcome, "replayed": True}
         applied[packet_id] = outcome
         self.log(event="replayed" if replayed else "answered", packet_id=packet_id, kind=kind,
-                 answer=json.loads(answer.model_dump_json()), outcome=outcome)
+                 answer=json.loads(answer.model_dump_json()), outcome=outcome,
+                 ms=self.take_ms())
         return outcome
 
     def _strike(self, packet_id, entry, message, detail):
