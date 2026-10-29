@@ -107,6 +107,9 @@ window.PlexoraDatasetNav = (function () {
             return {
                 datasetId: dataset.id,
                 datasetName: dataset.name,
+                // The cell table a bucket's sample was paired with and that
+                // was left where it is (`dataset_build`): `{path, name}`.
+                pendingTable: ((dataset.meta && dataset.meta.tables) || {})[here] || null,
                 members,
                 titles,
                 index,
@@ -320,6 +323,9 @@ window.PlexoraDatasetNav = (function () {
          *  this sample is in none, or before the lookup has landed. */
         datasetId: () => (place ? place.datasetId : null),
         datasetName: () => (place ? place.datasetName : null),
+        /** This sample's cell table in the bucket it came from, not copied
+         *  yet -- what "Add Data" offers. Null when there is none. */
+        pendingTable: () => (place ? place.pendingTable : null),
         /** The neighbours, for a probe and for anything that wants to offer
          *  the same move from somewhere else. */
         place: () => place,

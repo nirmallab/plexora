@@ -86,6 +86,14 @@ window.PlexoraDatasetBuilder = (function () {
 
     const ATTENTION = new Set(["review", "missing_mask", "missing_data", "unavailable"]);
 
+    //: What an image beside a sample's own is, on its badge: `+ H&E`.
+    const MODALITY_WORD = {he: "H&E", multiplex: "multiplex", picture: "picture"};
+
+    //: Folder names that say what is in a folder, not whose it is. A bucket's
+    //: `data/` gives its dataset the bucket's name instead (`defaultName`).
+    const GENERIC_FOLDERS = new Set(["data", "images", "image", "imaging", "raw", "files",
+        "public", "dataset", "datasets", "output", "outputs", "results", "processed"]);
+
     const FILTERS = [
         ["all", "All"],
         ["matched", "Matched"],
@@ -114,6 +122,22 @@ window.PlexoraDatasetBuilder = (function () {
     function basename(path) {
         const parts = String(path || "").replace(/[\\/]+$/, "").split(/[\\/]/);
         return parts[parts.length - 1] || "";
+    }
+
+    /**
+     * The name a dataset is offered for a folder: its own, or at a web address
+     * the nearest part of it that names something -- the dataset in
+     * `s3://lin-2023-orion-crc/data` is lin-2023-orion-crc.
+     */
+    function defaultName(address) {
+        const text = String(address || "").trim();
+        const web = /^([a-z][a-z0-9+.-]*):\/\/([^/?#]+)([^?#]*)/i.exec(text);
+        if (!web || /^sftp$/i.test(web[1])) return basename(text);
+        const parts = [web[2], ...web[3].split("/").filter(Boolean)];
+        for (let index = parts.length - 1; index >= 0; index--) {
+            if (!GENERIC_FOLDERS.has(parts[index].toLowerCase())) return parts[index];
+        }
+        return web[2];
     }
 
     function dirname(rel) {
@@ -465,7 +489,7 @@ window.PlexoraDatasetBuilder = (function () {
     function matchesFilter(project, filter) {
         const text = (filter.text || "").trim().toLowerCase();
         if (text) {
-            const hay = [project.name, project.image?.rel, project.mask?.rel,
+            const hay = [project.name, project.group, project.image?.rel, project.mask?.rel,
                          project.table?.rel].filter(Boolean).join(" ").toLowerCase();
             if (!hay.includes(text)) return false;
         }
@@ -495,7 +519,7 @@ window.PlexoraDatasetBuilder = (function () {
         return parts.slice(-2).join("/");
     }
 
-    function cellHtml(project, slotName, shared) {
+    function cellHtml(project, slotName, shared, view) {
         const slot = project[slotName];
         const kind = slotName === "table" ? "table" : slotName;
         if (!slot) {
@@ -518,6 +542,15 @@ window.PlexoraDatasetBuilder = (function () {
         if (slot.shared) {
             badges.push(`<span class="plx-dsb-badge" title="One file for several samples">shared</span>`);
         }
+        const layers = slotName === "image" ? (project.layers || []) : [];
+        if (layers.length) {
+            badges.push(`<span class="plx-dsb-badge" title="${esc(`Added as ${
+                layers.length === 1 ? "a layer" : "layers"}: ${layers.map((l) => l.name).join(", ")}`)}">+${
+                esc(layers.map((l) => MODALITY_WORD[l.modality] || "layer").join(", +"))}</span>`);
+        }
+        if (slotName === "table" && view?.later) {
+            badges.push(`<span class="plx-dsb-badge" title="${esc(LATER_NOTE)}">later</span>`);
+        }
         const alternatives = (slot.alternatives || []).length;
         if (alternatives) {
             badges.push(`<span class="plx-dsb-badge" title="${esc(`${alternatives} other ${
@@ -534,6 +567,10 @@ window.PlexoraDatasetBuilder = (function () {
                     badges.join("")}</div>`;
     }
 
+    //: Why a bucket's table is paired and not copied (`dataset_build`).
+    const LATER_NOTE = "Not copied now: a table in a bucket is copied whole, so it is "
+        + "attached from its sample when you want it.";
+
     function confidenceHtml(slot) {
         if (!slot || slot.bundled) return "";
         if (slot.confidence === "user") return `<span class="plx-dsb-conf is-user">chosen by you</span>`;
@@ -545,7 +582,7 @@ window.PlexoraDatasetBuilder = (function () {
         return "";
     }
 
-    function detailLine(project, slotName, slot, phase) {
+    function detailLine(project, slotName, slot, phase, later = false) {
         const kind = slotName === "channels" ? "channels" : slotName;
         const editable = phase === "plan";
         const head = `<span class="plx-dsb-line-kind"><span class="fas ${KIND_ICON[kind]}"
@@ -569,6 +606,8 @@ window.PlexoraDatasetBuilder = (function () {
         const subset = slot.subset
             ? `<p class="plx-dsb-subset">One file; this sample reads the rows where
                 <code>${esc(slot.subset.column)} == ${esc(slot.subset.value)}</code>.</p>` : "";
+        const left = later && slotName === "table"
+            ? `<p class="plx-dsb-subset">${esc(LATER_NOTE)}</p>` : "";
         const listed = slot.names || slot.names_after;
         const names = slotName === "channels" && listed
             ? `<p class="plx-dsb-subset">${esc(listed.length)} names: ${
@@ -598,18 +637,19 @@ window.PlexoraDatasetBuilder = (function () {
                     esc(slot.rel || slot.path)}</code>
                     ${confidenceHtml(slot)}</div>
                 ${reasons ? `<ul class="plx-dsb-reasons">${reasons}</ul>` : ""}
-                ${subset}${names}
+                ${subset}${names}${left}
                 ${alternatives ? `<div class="plx-dsb-alts"><span class="plx-dsb-alts-head">Also possible</span>${alternatives}</div>` : ""}
             </div>
             <div class="plx-dsb-line-actions">${actions}</div></div>`;
     }
 
-    function detailHtml(project, phase, status) {
+    function detailHtml(project, phase, status, later = false) {
         const slots = ["image", "mask", "table"];
         if (project.channels || project.kind !== "bundle") slots.push("channels");
         const lines = slots.map((slot) => {
             if (slot === "channels" && !project.channels) return "";
-            return detailLine(project, slot, slot === "image" ? project.image : project[slot], phase);
+            return detailLine(project, slot, slot === "image" ? project.image : project[slot], phase, later)
+                + (slot === "image" ? layersLine(project) : "");
         }).join("");
         const imageAlts = (project.image.alternatives || []).length
             ? `<div class="plx-dsb-alts"><span class="plx-dsb-alts-head">Other images with this name</span>${
@@ -633,6 +673,21 @@ window.PlexoraDatasetBuilder = (function () {
         return `<div class="plx-dsb-detail" data-detail="${esc(project.id)}">
             ${identity}${lines}${imageAlts}
             ${said ? `<ul class="plx-dsb-warn-list">${said}</ul>` : ""}</div>`;
+    }
+
+    /** The sample's other images -- an Orion slide's H&E -- added as its layers. */
+    function layersLine(project) {
+        const layers = project.layers || [];
+        if (!layers.length) return "";
+        const rows = layers.map((layer) => `<div class="plx-dsb-line-path"><code class="plx-dsb-path"
+            title="${esc(layer.path)}">${esc(layer.rel || layer.path)}</code>
+            <span class="plx-dsb-conf">${esc(MODALITY_WORD[layer.modality] || layer.modality || "image")}</span></div>`)
+            .join("");
+        return `<div class="plx-dsb-line"><span class="plx-dsb-line-kind"><span class="fas ${
+            KIND_ICON.image}" aria-hidden="true"></span>${layers.length === 1 ? "Layer" : "Layers"}</span>
+            <div class="plx-dsb-line-main">${rows}<ul class="plx-dsb-reasons"><li>in the same folder,
+            of another kind: added beside the image as ${layers.length === 1 ? "a layer" : "layers"}</li></ul>
+            </div><div class="plx-dsb-line-actions"></div></div>`;
     }
 
     /** Whether a sample can be ticked: there is something to create. */
@@ -678,17 +733,18 @@ window.PlexoraDatasetBuilder = (function () {
                 <div class="plx-dsb-cell plx-dsb-name" role="cell">${name}${
                     warn ? `<span class="fas fa-triangle-exclamation plx-dsb-warn" title="${
                         esc((project.warnings || [])[0] || status.error || "")}" aria-hidden="true"></span>` : ""}</div>
-                ${cellHtml(project, "image", view.shared)}
-                ${cellHtml(project, "mask", view.shared)}
-                ${cellHtml(project, "table", view.shared)}
+                ${cellHtml(project, "image", view.shared, view)}
+                ${cellHtml(project, "mask", view.shared, view)}
+                ${cellHtml(project, "table", view.shared, view)}
                 <div class="plx-dsb-cell" role="cell"><span class="plx-dsb-chip ${status.words[1]}"
                     title="${esc(status.error || "")}">${esc(status.words[0])}</span></div>
-            </div>${expanded ? detailHtml(project, view.phase, status) : ""}`;
+            </div>${expanded ? detailHtml(project, view.phase, status, view.later) : ""}`;
     }
 
     function tableHtml(plan, view) {
         const projects = (plan?.projects || []).filter((p) => matchesFilter(p, view.filter));
         view.shared = sharedNames(plan?.projects || []);
+        view.later = plan?.place?.kind === "web";
         // The header box speaks for the rows on screen: with a filter on, it
         // ticks or unticks what the filter shows and leaves the rest alone.
         const open = projects.filter(choosable);
@@ -709,7 +765,22 @@ window.PlexoraDatasetBuilder = (function () {
             return `${head}<p class="plx-dsb-empty">${esc(empty)}</p>`;
         }
         if (!projects.length) return `${head}<p class="plx-dsb-empty">No sample matches the filter.</p>`;
-        return head + projects.map((project) => rowHtml(project, view)).join("");
+        // The plan lists a grouped tree group by group (`spatialbridge.grouping`).
+        const grouped = (plan.groups || []).length > 0;
+        let group;
+        return head + projects.map((project) => {
+            const header = grouped && project.group !== group ? groupHtml(project.group, plan) : "";
+            group = project.group;
+            return header + rowHtml(project, view);
+        }).join("");
+    }
+
+    /** A folder the tree sorted its samples into: `CRC`, `Melanoma`. */
+    function groupHtml(name, plan) {
+        const count = (plan.projects || []).filter((p) => (p.group || null) === (name || null)).length;
+        return `<div class="plx-dsb-group" role="row"><span class="fas fa-folder" aria-hidden="true"></span>
+            <span role="cell">${esc(name || "Not in a group")}</span>
+            <span class="plx-dsb-group-count">${esc(samples(count))}</span></div>`;
     }
 
     function unassignedHtml(plan, view) {
@@ -789,7 +860,11 @@ window.PlexoraDatasetBuilder = (function () {
         }
         const parts = [samples(counts.projects || 0)];
         if (counts.with_mask) parts.push(`${counts.with_mask} with a mask`);
-        if (counts.with_table) parts.push(`${counts.with_table} with data`);
+        if (counts.with_table) {
+            parts.push(scan?.place?.kind === "web" ? `${counts.with_table} with data to attach later`
+                : `${counts.with_table} with data`);
+        }
+        if ((scan?.groups || []).length) parts.push(plural(scan.groups.length, ["group", "groups"]));
         if (counts.attention) parts.push(`<strong class="is-attention">${counts.attention} to check</strong>`);
         if (counts.existing) parts.push(`${counts.existing} already imported`);
         if (counts.unassigned) parts.push(`${plural(counts.unassigned, ["file", "files"])} unassigned`);
@@ -1005,7 +1080,7 @@ window.PlexoraDatasetBuilder = (function () {
         path.addEventListener("input", () => {
             pick.dataset.face = path.value.trim() ? "add" : "browse";
             if (!ui.nameTouched) {
-                ui.name = basename(path.value.trim());
+                ui.name = defaultName(path.value.trim());
                 name.value = ui.name;
             }
             paintFoot();
@@ -1058,7 +1133,7 @@ window.PlexoraDatasetBuilder = (function () {
         const address = addressOf(path);
         ui.root = address;
         if (!ui.nameTouched || !ui.name.trim()) {
-            ui.name = basename(address);
+            ui.name = defaultName(address);
             const name = part("name");
             if (name) name.value = ui.name;
         }
@@ -2364,6 +2439,7 @@ window.PlexoraDatasetBuilder = (function () {
         isOpen: () => Boolean(dialog),
         createController,
         edits,
+        defaultName,
         html: {table: tableHtml, unassigned: unassignedHtml, counts: countsLine},
     };
 })();

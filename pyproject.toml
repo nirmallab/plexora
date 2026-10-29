@@ -146,7 +146,7 @@ dependencies = [
     # grouping rules, shared with SCIMAP Pro so both pair a folder the same
     # way. Core because the dataset builder is. Stdlib-only at import without
     # its `mcp` extra; the bridge extra below adds that.
-    "spatialbridge>=0.2,<0.3",
+    "spatialbridge>=0.2.1,<0.3",
     # Called at import of the package itself (plexora/__init__.py), to cap the
     # BLAS thread pool before sklearn deadlocks in a threaded server.
     "threadpoolctl>=3.6.0",
@@ -256,7 +256,7 @@ ai = [
 # works alone; without it the bridge capabilities answer
 # `capability_unavailable` with this install line.
 bridge = [
-    "spatialbridge[mcp]>=0.2,<0.3",
+    "spatialbridge[mcp]>=0.2.1,<0.3",
 ]
 # Magic select through a z-stack with SAM 2.1 (plexora/vision/sam_video.py).
 # Optional and heavy (PyTorch): without it outlines are carried with MobileSAM

@@ -28,6 +28,8 @@ CHECKS = (
     "the edits keep one placement per file",
     "each sample has a tick, and the header box says all, some or none",
     "names and paths are escaped in the table",
+    "a bucket's dataset is named for the bucket, not for its data folder",
+    "a grouped plan draws a header per group, and a bucket's tables say later",
 )
 
 
@@ -77,7 +79,11 @@ def test_new_dataset_and_a_cohort_folder_open_it():
     assert "PlexoraDatasetBuilder.open(" in page
     assert re.search(r"open: \(id\) =>", page), "the page lets a finished build land in its folder"
     landing = (CLIENT / "src" / "js" / "views" / "quickViewLanding.js").read_text(encoding="utf-8")
+    # A bucket's folder of samples opens the table too: nothing is registered,
+    # or downloaded, before the person picks the samples and presses Create.
     assert "PlexoraDatasetBuilder.open({root: path})" in landing
+    assert "auto" not in landing[landing.index("function cohortFolder("):
+                                 landing.index("PlexoraDatasetBuilder.open({root: path})")]
 
 
 def test_a_folder_on_a_server_goes_to_new_dataset_too():

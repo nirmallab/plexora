@@ -524,8 +524,13 @@ def plan_dataset(*roots, overrides=None, limits=None, node=None) -> dict:
     `medium` when it is likely but worth a look, and anything less is left in
     `unassigned` with its best suggestions rather than guessed.
 
-    The folders can be on this computer, on a data node (`node=`), or on a
-    files-only server this Plexora is connected to (an `sftp://` address).
+    The folders can be on this computer, on a data node (`node=`), on a
+    files-only server this Plexora is connected to (an `sftp://` address), or
+    in a bucket (`s3://lin-2023-orion-crc/data`, `gs://...`, `az://...`, or a
+    web host that lists its folders). A folder holding one sample's images of
+    different kinds (a multiplex slide and its H&E) is one project, the others
+    its `layers`; a tree that sorts its samples into folders (`CRC/`,
+    `Melanoma/`) gives each project its `group`, and the plan its `groups`.
 
     When to use:
         Use this to see what `create_dataset_from_directory` would make, or to
@@ -575,7 +580,11 @@ def create_dataset_from_directory(name, *roots, overrides=None, description="",
     image becomes a project, with the mask, table and channel names matched
     to it. Files are registered where they are, not copied. Files the plan
     could not place (`unassigned`) are left out; pass `overrides` to place
-    them, or use `plan_dataset` first to see them. On a files-only server
+    them, or use `plan_dataset` first to see them. In a bucket (`s3://`,
+    `gs://`, `az://`) images and masks stream from where they are, and each
+    cell table is left there and named in the dataset's `meta["tables"]`, to
+    be added from its sample when it is wanted; the folder each sample was
+    filed under is `meta["groups"]`. On a files-only server
     (`sftp://`) images and masks stream from where they are and each cell
     table is copied to this computer, since a CSV cannot be streamed.
 
@@ -623,7 +632,10 @@ def create_dataset_from_directory(name, *roots, overrides=None, description="",
     for project_id, spec in pairs:
         if spec.get("name") in dataset.projects:
             dataset_build.name_channels_after(spec["name"], by_id[project_id])
-    return dataset
+    dataset_build.remember_plan(dataset.id, plan, dataset.projects)
+    from plexora.server.models import datasets as registry
+
+    return Dataset._from_record(registry.get(dataset.id))
 
 
 def project_from_spec(spec, node=None) -> str:
@@ -1460,7 +1472,9 @@ def _validate_batch(specs) -> dict:
     """
     from plexora import get_config
 
-    checked = {}
+    from plexora.server.providers.base import is_remote_locator
+
+    checked, listed = {}, {}
     taken = set(get_config())
     for spec in specs:
         default_node = spec.get("node")
@@ -1469,6 +1483,8 @@ def _validate_batch(specs) -> dict:
                 for path in spec["paths"]:
                     if str(path).lower().startswith("sftp://"):
                         _existing_sftp(path)
+                    elif is_remote_locator(path):
+                        _existing_web(path, listed)
                     else:
                         _existing_path(path, "file")
         else:
@@ -1493,6 +1509,27 @@ def _existing_sftp(url):
         sftp.require_client(sftp.target_of(url)).stat(sftp.path_of(url))
     except FileNotFoundError:
         raise ValueError(f"no such file: {url}") from None
+
+
+def _existing_web(url, listed):
+    """A file in a bucket or on a web host that is really there: its folder's
+    listing names it. One listing per folder (`listed`), however many of a
+    cohort's files are in it. A host that will not list is asked nothing more
+    here; reading the file is what says it is missing."""
+    from plexora.server.utils import remote_store
+
+    url = remote_store.canonical_url(url)
+    folder = remote_store.parent_url(url)
+    if folder not in listed:
+        try:
+            store, prefix = remote_store.open_store(folder)
+            found = store.list_entries(prefix)
+        except Exception:  # noqa: BLE001 -- unlisted is not missing
+            found = None
+        listed[folder] = None if found is None else {row["name"] for row in found}
+    names = listed[folder]
+    if names is not None and remote_store.url_name(url) not in names:
+        raise ValueError(f"no such file: {url}")
 
 
 def _existing_path(value, what) -> Path:

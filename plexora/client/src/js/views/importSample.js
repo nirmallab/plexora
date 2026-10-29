@@ -1331,6 +1331,7 @@ window.PlexoraImportSample = (function () {
             if (token !== inspectToken || !state) return;
             if (!response.ok) throw new Error(proposal.error);
             if (bouncePendingPick(proposal, sent)) return;
+            if (handOverCohort(proposal, sent)) return;
             state.proposal = proposal;
             state.picked = sent;
             setStatus(null);
@@ -1542,6 +1543,7 @@ window.PlexoraImportSample = (function () {
             text.appendChild(el("span", "plx-import-row-name", basename(entry.path)));
             text.appendChild(el("span", "plx-import-row-detail", entry.reason));
             row.appendChild(text);
+            if (entry.dataset && window.PlexoraDatasetBuilder) row.appendChild(datasetButton(entry.path));
             row.appendChild(removeButton(pickOf(entry)));
             body.appendChild(row);
         });
@@ -2523,6 +2525,44 @@ window.PlexoraImportSample = (function () {
         return state.picked[row.pick] ?? null;
     }
 
+    /** A web address other than a files-only server's: a bucket, a web host. */
+    function isWebFolder(path) {
+        return /^[a-z][a-z0-9+.-]*:\/\//i.test(path) && !/^sftp:/i.test(path);
+    }
+
+    /**
+     * A folder of samples (`unrecognised[].dataset`) is New Dataset's, not
+     * this dialog's: it scans the folder and shows every sample ticked, and
+     * nothing is registered until Create.
+     */
+    function openCohort(path) {
+        close();
+        window.PlexoraDatasetBuilder.open({root: path});
+    }
+
+    function datasetButton(path) {
+        const button = el("button", "plx-import-choice", "New dataset from it");
+        button.type = "button";
+        button.title = "Scan this folder for its samples and make them a dataset";
+        button.addEventListener("click", () => openCohort(path));
+        return button;
+    }
+
+    /**
+     * When the one thing picked is a bucket's folder of samples, go straight
+     * to New Dataset with it, the way the home page does: a person who pasted
+     * `s3://lin-2023-orion-crc/data` asked for its samples. True when it went.
+     */
+    function handOverCohort(proposal, sent) {
+        if (scoped() || !window.PlexoraDatasetBuilder) return false;
+        const picks = sent.filter((path) => String(path || "").trim());
+        const [only] = proposal.unrecognised || [];
+        if (picks.length !== 1 || (proposal.samples || []).length || !only?.dataset
+            || !isWebFolder(only.path)) return false;
+        openCohort(only.path);
+        return true;
+    }
+
     function removeButton(pick, layer = null) {
         const button = el("button", "plx-import-remove");
         button.type = "button";
@@ -3061,17 +3101,25 @@ window.PlexoraImportSample = (function () {
     async function submitScoped() {
         render("importing");
         setStatus("Adding…");
+        // Named, as a fresh import's POST is, so the rail can show what it is
+        // doing: a cell table in a bucket is copied here first, and that is
+        // minutes of download.
+        const token = `add-${Date.now().toString(36)}-`
+            + Math.random().toString(36).slice(2, 10);
+        const stop = watchRegistration(token, 0);
         try {
             const response = await fetch(plexoraUrl("import/layers"), {
                 method: "POST",
                 headers: {"Content-Type": "application/json"},
                 body: JSON.stringify({sample: state.sample, paths: state.picks,
-                                      answers: state.answers}),
+                                      answers: state.answers, token}),
             });
             const result = await readJson(response);
+            stop();
             if (!response.ok) throw new Error(result.error || "Import failed.");
             return finishScoped(result);
         } catch (error) {
+            stop();
             render("proposal");
             setStatus(error.message || "Import failed.", true);
         }

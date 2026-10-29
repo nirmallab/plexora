@@ -251,6 +251,55 @@ def remove_source(store_id: str) -> None:
     clear(store_id)
 
 
+def _store_roots(project) -> set:
+    """The cache stores `project` reads: its image, layers, mask and table at
+    web addresses, each by the folder (or `.zarr` store) it sits in."""
+    from plexora.server.utils import remote_store
+
+    locators = [project.image.src, project.segmentation.source,
+                project.segmentation.derived,
+                getattr(project.dataset, "path", None)]
+    locators += [layer.src for layer in project.spatial_layers]
+    roots = set()
+    for locator in locators:
+        if locator and is_remote_locator(str(locator)):
+            try:
+                roots.add(remote_store.split_locator_url(str(locator))[0])
+            except ValueError:
+                continue
+    return roots
+
+
+def release(project, others) -> list:
+    """Evict what the cache holds for a project that has just been deleted.
+
+    A sample's tiles from a bucket are cached by store, apart from the
+    project's own directory, so deleting the sample left them behind until
+    the budget pushed them out -- gigabytes, for a dataset of forty. A store
+    another project still reads is kept, and so is one made available offline
+    (Settings > Web data), which is removed there.
+
+    @param others - the projects that remain.
+    @returns the store roots evicted.
+    """
+    from plexora.server.utils import remote_store
+
+    mine = _store_roots(project)
+    if not mine:
+        return []
+    for other in others:
+        mine -= _store_roots(other)
+    index = remote_store.cache_index()
+    released = []
+    for root in sorted(mine):
+        store_id = remote_store.store_id_of(root)
+        if index.is_pinned(store_id):
+            continue
+        clear(store_id)
+        released.append(root)
+    return released
+
+
 # -- chunk enumeration -----------------------------------------------------
 
 

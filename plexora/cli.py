@@ -2286,6 +2286,7 @@ def _create_from_scan(api, args):
     dataset = api.create_dataset(args.name, projects=specs,
                                  description=args.description,
                                  exist_ok=args.exist_ok)
+    dataset_build.remember_plan(dataset.id, plan, dataset.projects)
     if args.json:
         _print_json({**_dataset_wire(dataset),
                      "unassigned": [u["path"] for u in plan["unassigned"]]})

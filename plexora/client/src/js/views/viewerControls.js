@@ -408,8 +408,13 @@ class ViewerControls {
             const wantsMask = !this.hasMask();
             const wantsTable = !this.hasTable();
             if (!wantsMask && !wantsTable) return;
+            // A sample from a bucket was paired with its table and the table
+            // left there (a cohort's CSVs are too big to copy unasked): it is
+            // the pick, read and ready, so one press copies it in.
+            const pending = wantsTable && window.PlexoraDatasetNav?.pendingTable?.();
             importer.open({
                 sample: datasource,
+                paths: pending?.path ? [pending.path] : undefined,
                 // Both missing: no intent. What the file is decides, and the
                 // card then offers whichever of the two is still missing.
                 intent: wantsMask && !wantsTable ? "mask"

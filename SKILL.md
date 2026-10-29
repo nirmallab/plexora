@@ -328,7 +328,11 @@ Entry points:
   `first_file` (bounded BFS) and `prefetch_heads` (head blocks of many files
   in one concurrent sweep, one round per block so no host sees a flood of
   416s) round it out; `HEAD_BYTES` is how much of each file warming a DICOM
-  folder fetches.
+  folder fetches. Two reads skip the chunk cache, because a table is copied
+  rather than streamed: `head_copy(url)` (the first `TABLE_HEAD_BYTES`, 1 MB,
+  cut at a line break, kept under `head_cache` kind `"web-heads"`) and
+  `download(url, dest, progress=)` (the whole file), both through the folder
+  store's own fsspec filesystem (`_whole_file`, `_on_host`).
 - `server/utils/sftp.py` — **SFTP as a fourth remote transport, with nothing
   running on the far side** (first case: HMS O2's transfer node). `SFTPClient`
   speaks SFTP v3 over the stdin/stdout of a system `ssh -s <target> sftp`, so
@@ -413,7 +417,10 @@ Entry points:
   `brightfield.open_rgb`), and `TiffPyramid`/`open_image` — a virtual dyadic
   pyramid chained with `dicom_wsi._MonoLevel`, extension appended
   (`needs_extension`) — plus `geometry`, `overview_plane`, `focal_planes` and
-  `thumbnail`.
+  `thumbnail`. `open_tiff` on a web address first fetches every main page's
+  SubIFD blocks in one `pread_many` (`_warm_subifds`), because tifffile
+  otherwise reads them one round trip at a time (an Orion slide from S3, 19
+  channels by 7 levels, was 133 round trips in a row: 24 s -> 6.6 s).
 - `server/models/remote_sources.py` — remote data as the data root sees it.
   The address book (`<data root>/remote_sources.json`) keeps options — an S3
   endpoint, "use my AWS profile", a region, an account name, a label
@@ -438,6 +445,20 @@ Entry points:
   pinning a DICOM folder's root finds the file images projects actually read.
   `_fetch` splits a job's items into zarr keys (`fetch_keys`) and `(key,
   (start, end))` ranges (`fetch_ranges`) since a mixed plan can hold both.
+  `release(project, others)` evicts (`clear`) the stores a just-deleted
+  project read -- `_store_roots`: its image, layers, mask source and derived
+  and table at web addresses, each by `remote_store.split_locator_url` root
+  (the file's folder or the `.zarr` store) -- except one another remaining
+  project reads and a pinned one, because a sample's tiles are cached apart
+  from its project directory and used to outlive it until the budget pushed
+  them out. `project_routes.delete_project` calls it after the rmtree of
+  `paths.project_state_dir(name)` and answers `{success, released}`. Not
+  cleared, by design: `head_cache` `"web-heads"` copies (1 MB at most, in the
+  system temp) and header bytes a scan cached for samples never created (the
+  budget or Settings > Web data clears those). `CacheIndex.clear` renames a
+  store to `.trash-*` and deletes it on a daemon thread, so a short script
+  that clears and exits leaves `.trash-*` dirs behind; `CacheIndex.reconcile`
+  (the first `cache_index()` in a process) sweeps them.
 - `server/utils/ngff_transform.py` — reads NGFF `coordinateTransformations`
   (without importing `spatialdata`, so a core build does not grow that
   dependency — the coordinate systems of a SpatialData store are plain JSON in
@@ -1076,7 +1097,10 @@ Entry points:
   `project.read_config`/`write_config` under `project._CONFIG_LOCK` — the
   same lock and the same temp-file-plus-rename discipline as config.json,
   because two files that can each half-write are two ways to corrupt state
-  instead of one.
+  instead of one. A dataset's `meta` (merged by `describe`) also keeps what a
+  New Dataset plan knew and its projects do not (`dataset_build.remember_plan`):
+  `groups` {project: group folder}, `tables` {project: {path, name}} for a
+  bucket's tables left where they are, and `source` {roots, place}.
 - `models/dataset_scan.py`, `models/dataset_plan.py`, `models/dataset_build.py`
   — **New Dataset from a folder**. `dataset_scan` walks a tree and inspects
   headers in the background (a `layer_jobs` task, owner `"dataset-scan"`),
@@ -1095,25 +1119,45 @@ Entry points:
   for every recognised layout in `tests/dataset_fixtures.py`.
   **One scan is one place**: `place_of(paths, node)` is `None` (this
   computer), `("sftp", target)` (a files-only server, from `sftp://`
-  addresses) or `("node", name)`; folders from two places, or any other web
-  address (a bucket has no folders to walk -- that is Import Sample's job), are
-  refused, and `extend_scan` refuses a folder from another place.
+  addresses), `("node", name)` or `("web", "<scheme>://<host>")` (any other
+  web address -- a bucket on `s3://`/`gs://`/`az://`, or an `https://` host
+  that lists its folders); folders from two places are refused, and
+  `extend_scan` refuses a folder from another place. Whether a web address can
+  be walked is the host's to say: `_web_root` checks the root lists, refuses a
+  file URL, and says "could not be listed" (not there, needs Settings > Web
+  data, or an `https://` gateway in front of a bucket, which never lists).
   `check_roots` returns `(roots, place)`; `_listing` lists a folder wherever
-  it is (`sftp` listdir or `nodes.list_dir_on_node`), and `_inspect_remote`
+  it is (`sftp` listdir, `nodes.list_dir_on_node`, or `_web_listing` through
+  `remote_store.open_store(dir).list_entries`, the etag's crc32 standing in
+  for `mtime_ns`), and `_inspect_remote`
   reads a remote file the way Import Sample reads one -- `_detect_remote` over
-  SFTP, `detect_on_node` on a node, a table from a local copy of its first
-  rows (`sftp.head_copy`). Remotely the plan never calls two files copies by
+  SFTP or from a bucket, `detect_on_node` on a node, a table from a local copy
+  of its first rows (`sftp.head_copy`/`remote_store.head_copy`). A bucket's
+  files are read `WEB_INSPECT_WORKERS` (8) at a time (`_inspect_together`,
+  `layer-scan` threads) under their own `WEB_INSPECT_BUDGET_S` (600), because
+  a header there is mostly waiting. `dataset_plan._PANEL_CACHE` is keyed by
+  `(entry.key, entry.proxy, count)`, because the dialog plans mid-scan and a
+  remote channel list planned before its local copy existed would otherwise
+  cache `None` for good. Remotely the plan never calls two files copies by
   name+size+date, because SFTP dates are whole seconds and mcmicro names every
   mask `cell.ome.tif`. A node's `/detect` carries `geometry` so masks match by
   size there too; an older node without it gets a channels warning instead of
   names. The plan result carries `place`, and `verify()` returns a remote plan
   unchanged (a stat per file on every correction is too slow; creation checks
   every path first). `dataset_build.spec_for(project, place)` writes a node
-  project with `node`, and an sftp project as a `paths` spec whose mask and
-  table roles are stated as `added-as:<path>` answers, because that is the
+  project with `node`, and an sftp or web project -- or any project whose plan
+  carries `layers` (a sample folder's other images), unless its table is a
+  shared one with a subset -- as a `paths` spec (`_paths_spec`) whose mask and
+  table roles are stated as `added-as:<path>` answers and whose layers go in
+  under `answers["images-grouping"] = "layers"`, because that is the
   route that streams an image and mask from such a server and copies its CSV
-  across. `tests/test_dataset_remote.py` runs both against a real
-  `sftp-server` and a real second process.
+  across, and `create_project` takes one image. In a web place the table is
+  left out of the spec: `remember_plan(dataset_id, plan, names)` keeps it in
+  the dataset's `meta` instead (see `models/datasets.py`), called by `build()`,
+  `plexora.create_dataset_from_directory` and `dataset create --scan`.
+  `tests/test_dataset_remote.py` runs sftp and node against a real
+  `sftp-server` and a real second process; `tests/test_dataset_web.py` runs a
+  bucket against a real HTTP listing server from `tests/remote_fixtures`.
 - `models/manifest.py` — **the one reader of "what does this project have"**.
   Nothing else may reimplement that question. `PRESENT`/`GUESSED`/`MISSING`/
   `NOT_APPLICABLE` are the four states a field can be in; `KEYS` is every
@@ -5594,7 +5638,9 @@ deliberately left out and what should be built next.
   the whole chip, and a pick there calls this same `go()`. `onKeyDown`
   returns on an event already `defaultPrevented`, because B is also Back
   while there is a view to go back to (`views/backButton.js`, which listens
-  first, in the capture phase).
+  first, in the capture phase). `pendingTable()` is the open sample's entry
+  in its dataset's `meta.tables` -- a bucket table left where it is -- which
+  `viewerControls.bindCta` passes as `paths` to the scoped Import Sample.
 - `views/datasetStrip.js` — `window.PlexoraDatasetStrip`, every sample's
   thumbnail (`GET project_thumbnail/<name>`) in a grid under the "2 / 12"
   counter, for reaching the fortieth sample rather than the next one. Exactly
@@ -6334,7 +6380,9 @@ deliberately left out and what should be built next.
   it returns a teardown that removes the `document` keydown listener it adds
   for Escape (`<dialog>` traps focus but not keydown). Exports
   `window.PlexoraOpenProject.open(id)`; "New Dataset…" with nothing selected
-  opens the dataset builder.
+  opens the dataset builder. A dataset whose `meta.groups` names a group draws
+  its projects in sections under `.project-group-head` headers (`sections()`,
+  `openProject.css`), ungrouped samples last.
 - `views/datasetBuilder.js` — `window.PlexoraDatasetBuilder`, New Dataset from
   a folder: `createController` is the state machine (scan, plan, overrides,
   create) with no DOM, so `tests/js/dataset_builder_probe.mjs` drives it
@@ -6342,7 +6390,16 @@ deliberately left out and what should be built next.
   `importSample.js`; styles are the `.plx-dsb-*` block in `main.css` (plus the
   `--accent-success-soft` token). `quickViewLanding.js` routes a picked
   cohort folder (0 or 3+ samples) here rather than to the import dialog, and
-  also an `sftp://` cohort folder and a folder on a node. The dialog has a
+  also an `sftp://` cohort folder, a folder on a node, and a web folder whose
+  inspection marks `unrecognised[].dataset` (`cohortFolder`). Import Sample hands one too: its row gets a New Dataset
+  button (`datasetButton`/`openCohort`), and a sole bucket pick that is a
+  cohort goes straight here (`handOverCohort`). Every route calls
+  `open({root})` and lands on the review table with every sample ticked;
+  nothing is registered until Create is pressed, because a bucket's forty
+  samples are not something to create unseen. `defaultName(address)` names a bucket's generic last folder (`data`)
+  after the bucket; a grouped plan draws `.plx-dsb-group` header rows, a sample
+  with layers a `+H&E` badge and a Layers line, and a web plan's tables a
+  `later` badge. The dialog has a
   machine chip (Local, a connected server, or Connect for one that is down);
   Browse and typed paths are on the chosen machine, `start(paths, node)` posts
   `node` with the scan, and a dropped folder is always on this computer.
@@ -7669,11 +7726,13 @@ answers in it. `replace_project_data` — the one route the edit page, the
 requirements modal and now `import_sample.py` all attach or swap a table
 through, since the deleted `import_routes._register_anndata` folded into it —
 routes through `deferred_spec` too, so an image beside a six-table `.h5ad`
-behaves the same way a `.zarr` store does. An `sftp://` CSV/TSV/TXT
-(`import_proposal.SFTP_TABLE_SUFFIXES`) is downloaded into `uploads/` first
-(`_fetch_sftp_table`, with registration progress) and is an ordinary local
-table from there, because nothing streams a CSV; until then
-`import_proposal._sftp_table` proposes it from `sftp.head_copy`. Not `.h5ad`
+behaves the same way a `.zarr` store does. A CSV/TSV/TXT at any web address
+(`import_proposal.SFTP_TABLE_SUFFIXES`; `sftp://` or a bucket) is downloaded
+into `uploads/` first (`_is_copied_table`/`_fetch_copied_table`, with
+registration progress; `sftp.download` or `remote_store.download`) and is an
+ordinary local table from there, because nothing streams a CSV; until then
+`import_proposal._copied_table` proposes it from `sftp.head_copy` or
+`remote_store.head_copy`. Not `.h5ad`
 (read where it lies) and not `.parquet` (its schema is at the end of the file).
 
 Once a source is unresolved, the same requirements machinery that asks for a
@@ -7912,7 +7971,9 @@ hidden. A mode whose resource is
 "Add Seg Mask", "Add Data" or "Add Seg Mask / Data"; with JavaScript, `bindCta`
 opens the Import Sample dialog scoped to this sample instead (intent "mask",
 "table", or "cells" when both are missing, and nothing required), because that
-dialog is the one place a file is read for what it is. While the project has a
+dialog is the one place a file is read for what it is; for a bucket sample
+whose table was left behind it is handed that table as `paths`
+(`PlexoraDatasetNav.pendingTable()`). While the project has a
 mask, `#cell_mask_menu` (a `⋮`, `.cell-mask-menu` in `viewer.css`) offers
 "Replace segmentation mask…" (the same scoped dialog, intent "mask") and "Use
 as an image layer" (`POST /import/reclassify`, then a reload, because the
@@ -8972,7 +9033,8 @@ in **5.6 s**.
   context, confuses no one.
 - **Forgetting a project's dataset membership is a route concern, not a
   `Project.delete()` concern.** `project_routes.delete_project` calls
-  `datasets.forget_project(name)` itself, after `Project.delete()` returns,
+  `datasets.forget_project(name)` itself (and `remote_sources.release` for
+  its cached web data), after `Project.delete()` returns,
   rather than `delete()` doing it internally — `Project.delete()` is also what
   import rollback calls to undo a half-finished registration, which is not a
   human deleting a project and must not touch `datasets.json` at all.
@@ -9289,8 +9351,8 @@ in **5.6 s**.
   no decode (`png_header`, which `plane_size`, `label_pyramid_gaps` and
   `import_proposal._geometry_of` use). `can_serve_in_place(path)` is true only
   for a local TIFF or zarr — a PNG is always converted, even one that looks
-  like outlines — and both `data_model._servable_as_is` and `node/app.py` ask it
-  before serving a mask unconverted; a local zarr label group is served as-is
+  like outlines — and both `data_model._servable_as_is` (for a local path) and
+  `node/app.py` ask it before serving a mask unconverted; a local zarr label group is served as-is
   only when its levels are 2-D arrays named 0, 1, 2…, else converted
   (`_zarr_level_gaps`). `_zarr_level_zero` is the one reader of a zarr's level 0
   for local and remote (bare array, NGFF multiscale by first dataset path,
@@ -9371,7 +9433,30 @@ in **5.6 s**.
   `remote_fixtures`), `tests/test_mask_formats.py`, `tests/test_node_label_volume.py` and
   `tests/test_node_new_formats.py` pin it;
   `tests/test_nan_tables.py` pins the NaN-position rules above.
-- **A remote mask is never served directly — always converted into the
+- **A remote mask is never fetched at registration.** One that is already a
+  tiled label pyramid is read where it is, tile by tile through the chunk
+  cache, like the image beside it: `data_model._servable_as_is` has a remote
+  branch (filled mode and `is_servable_label_pyramid`, whose
+  `label_pyramid_gaps` reads only the remote header through
+  `_remote_label_pyramid_gaps`, sharing `_tiff_level_gaps`/`_zarr_group_gaps`
+  with the local case), the project's `segmentation` is the URL itself, and
+  `LocalSegmentationProvider.open`/`.fingerprint` branch on `is_remote_locator`.
+  `open_remote_labels(url)` returns a remote zarr group, or for a TIFF
+  `_TiffLabelLevels` -- per-level `_TiffPlane`s keyed "0", "1", ... as
+  `label_overlay.label_region` reads them, because tifffile's zarr view cannot
+  read a streamed file. `_segmentation_mapping_is_current` takes a remote
+  derived equal to its source as current while the source key matches. Any
+  other remote mask is recorded `segmentation: None, segmentation_status:
+  pending` with no job (`datasource._segmentation_config_fields` returns early
+  for a remote path), and its conversion starts the first time the sample is
+  opened (`data_model.load_config`, via `_waits_for_open`) or something waits
+  on its status (`get_segmentation_job_status` -- the viewer's `/import/status`
+  poll, Import Sample's watch, `datasets._wait_for_layers` for `wait=True`).
+  Because creating the 41-sample ORION dataset used to start 41 concurrent
+  whole-mask downloads (0.28 GB each) and conversions, with no limit, and
+  registration crawled from about 1 s to over a minute per sample.
+  `tests/test_dataset_web.py` pins both cases.
+- **A remote mask that is not a pyramid is converted into the
   project.** `resolve_derived_mask` for a web address (`is_remote_locator`)
   skips beside-the-source entirely: there is no folder beside a URL to write
   into, and `Path()` of one would create a pyramid under the working
@@ -14405,6 +14490,14 @@ A table added to the OPEN sample (`register_layers`) reloads it
 place will not read) -- the record alone left the viewer serving no cells
 until a restart -- and the dialog's `finishScoped` hands it to
 `PlexoraLoadProgress.track`, which follows a table read behind the viewer.
+Add Data shows its steps as a fresh import does: `submitScoped()` sends a
+`token` with `POST /import/layers` and runs `watchRegistration(token, 0)`
+while it waits, `add_layers(..., token=)` wraps `register_layers` in
+`layer_jobs.registering`, and `register_layers` says each step as `_register`
+does (a mask "Queued" then ready; a table "Reading the table" then ready),
+because the Cells row otherwise sat on "waiting" through the whole copy of a
+bucket CSV (909 MB for ORION CRC04), which `_fetch_copied_table` reports as
+"Copying NAME to this computer, X of Y MB".
 When one `register_layers` call attaches a mask and a table and the table
 is refused, the mask goes back to what was there (`_restore_mask`), so a
 sample is never left with a new mask over its old cells.
@@ -14571,6 +14664,75 @@ through the new `tools/ai_schema_check.py`. See Key Invariants for the
 `sendable()` and requires every QC kind covered, whole or by its forms. Every
 test file that touches the QC answers or the harness schemas (13 files:
 `test_ai_*`, `test_qc_*`) passed, 234 tests; no full suite was run for it.
+
+### A bucket is a folder of samples, and New Dataset reads it (2026-10-29)
+
+The case: `s3://lin-2023-orion-crc/data`, 41 Orion CRC sample folders, each
+holding the slide, its H&E, a mask, a channel list and a cell table. A bucket
+used to be refused by New Dataset ("a store at a web address is added with
+Import Sample"); it is now a fourth place, `("web", "<scheme>://<host>")`,
+because a bucket always lists, and only an `https://` gateway in front of one
+cannot be walked (see the `models/dataset_scan.py` row).
+
+**One folder, one sample.** A folder holding two or more images of distinct
+modalities and at most one mask is one project named by the folder, its other
+images going in as layers (`project["layers"]`, `images-grouping: layers`).
+The rule lives in `spatialbridge.grouping` 0.2.1, together with
+`project["group"]`/plan `groups` and `/` paths matched on Windows (`_within`).
+Import Sample reads a single bucket folder the same way
+(`import_proposal._remote_folder`): `FOLDER_SAMPLE_IMAGES` (3) or more
+non-mask images, or only subfolders, is a cohort -- a `FolderOfSamples`
+reason, marked `unrecognised[].dataset` -- and is handed to New Dataset rather
+than reported as an error; otherwise the sample takes the folder's name
+(`LayerProposal.folder`), because its files are named for a scanner.
+
+**One dataset, tagged by group, not one dataset per group.** A group is the
+deepest non-role folder holding two or more projects, and only when it divides
+them. It is kept as a label (`meta.groups`) and drawn as sections, in the
+builder (`.plx-dsb-group`) and on Open Project (`.project-group-head`).
+
+**Tables are paired but left in the bucket.** A cohort's CSVs are tens of
+gigabytes nobody asked to copy, so a web plan's spec carries no table; the
+pairing is kept in `meta.tables` (`remember_plan`) and the sample's Add Data
+offers that table as its pick (`pendingTable()`), copied whole then by
+`remote_store.download`, its megabytes shown as it goes (the Add Data
+progress under "The sidebar's Cells CTA opens that scoped dialog").
+
+**Deleting a sample clears its cached web data** (`remote_sources.release`),
+unless another sample reads that store or it is pinned. "Delete dataset only"
+deletes no sample; "Delete dataset and N samples" (`openProjectPage.js`
+`deleteDataset`) posts each sample's delete, so it clears their caches too.
+
+**Nothing is created without a press.** A bucket's folder of samples, pasted
+on the home page or handed over from Import Sample, opens the review table
+with every sample ticked (`open({root: path})`); Create registers them.
+
+**Masks are not fetched at registration** (see the Key Invariants entry "A
+remote mask is never fetched at registration"). A mask that is a tiled label
+pyramid is read in place; any other waits, pending with no job, until its
+sample is opened or its status is asked for, because creating the ORION
+dataset started 41 concurrent whole-mask downloads (0.28 GB each) and
+conversions, and registration crawled from about 1 s to over a minute per
+sample.
+
+**Measured on ORION**: 205 files, about two minutes cold at
+`WEB_INSPECT_WORKERS = 8` (sixteen measured no faster); a slide's first read
+24 s -> 6.6 s from `tiff_region._warm_subifds`. Its masks are int32
+OME-TIFFs, 1024-px tiles, 8 levels as SubIFDs, built by nearest neighbour
+(level 1 == level 0[::2, ::2]), so they are read in place: a 1024² region
+costs 0.02-0.4 s cold, about 0.01 s cached.
+
+**Not released yet.** spatialbridge 0.2.1 is unreleased, and `pyproject.toml`
+still pins `spatialbridge>=0.2,<0.3`; the floor must become `>=0.2.1` when it
+ships, because the "one folder, one sample" rule and the groups are in 0.2.1
+only. Tests: `tests/test_dataset_web.py` (a real HTTP listing server from
+`tests/remote_fixtures` stands in for the bucket; for the masks,
+`test_a_mask_that_is_a_pyramid_is_read_where_it_is` and
+`test_a_flat_mask_waits_until_its_sample_is_asked_for`;
+`test_copying_a_buckets_table_shows_how_far_it_has_got`;
+`test_deleting_a_sample_deletes_what_was_kept_of_it_here`) and two new checks in
+`tests/js/dataset_builder_probe.mjs` (`defaultName`; group headers and the
+`later` badge).
 
 ## Agent Operating Notes
 

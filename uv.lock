@@ -3281,8 +3281,8 @@ requires-dist = [
     { name = "scipy" },
     { name = "shapely", specifier = ">=2.1.2" },
     { name = "spatialagents", specifier = ">=0.1,<0.2" },
-    { name = "spatialbridge", specifier = ">=0.2,<0.3" },
-    { name = "spatialbridge", extras = ["mcp"], marker = "extra == 'bridge'", specifier = ">=0.2,<0.3" },
+    { name = "spatialbridge", specifier = ">=0.2.1,<0.3" },
+    { name = "spatialbridge", extras = ["mcp"], marker = "extra == 'bridge'", specifier = ">=0.2.1,<0.3" },
     { name = "spatialdata", specifier = ">=0.8.0" },
     { name = "threadpoolctl", specifier = ">=3.6.0" },
     { name = "tifffile", specifier = ">=2026.7.31" },
@@ -4632,16 +4632,16 @@ wheels = [
 
 [[package]]
 name = "spatialbridge"
-version = "0.2.0"
+version = "0.2.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "anndata" },
     { name = "platformdirs" },
     { name = "pydantic" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/77/fc/b992009f2f0fd9ccfea0562e67eed0b72e11a4b40cf0d7daf5f7f6bc9f33/spatialbridge-0.2.0.tar.gz", hash = "sha256:59e9bafe1c9971c89271db00ada8eb91319a4cbb46c30df3f5426e28bc4b2007", size = 172256, upload-time = "2026-10-29T02:14:25.226Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/dc/ff/16f9431d370709b23982a579065a297d02869a582e94146ff7f96af2af69/spatialbridge-0.2.1.tar.gz", hash = "sha256:a4328acf8b7edeaa9df1aa9d7f538835d6aa633a333b3d0f1de85dfa3d838846", size = 176884, upload-time = "2026-10-29T17:16:12.489Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/30/2f/87677b5a440313aed30cab21d38779b99d49d39485af582bb69d61d79d88/spatialbridge-0.2.0-py3-none-any.whl", hash = "sha256:7877fa3b520ce3dce7f90d2ddcac3a6590bb8d910c7b1ad62477378e5da7c609", size = 76541, upload-time = "2026-10-29T02:14:24.073Z" },
+    { url = "https://files.pythonhosted.org/packages/b2/6d/d949e4c7529190afd2e98a4fc14a7eadf7c8c2871580a7d2401289748f01/spatialbridge-0.2.1-py3-none-any.whl", hash = "sha256:a0d7b795bd1fd16f5544fcfe65567be493105f9dfe0ecc42c0f2c77eda61c356", size = 79282, upload-time = "2026-10-29T17:16:11.34Z" },
 ]
 
 [package.optional-dependencies]

@@ -24,6 +24,7 @@ from plexora.server.providers.base import (
     LOCAL,
     Fingerprint,
     ResourceLocator,
+    is_remote_locator,
 )
 from plexora.server.providers.operations import run_table_operation
 
@@ -204,7 +205,9 @@ class LocalSegmentationProvider:
     `derived` is what gets opened, never `source`: the pyramid Plexora built
     (or adopted) is the only thing the tile route can serve at every zoom
     level, and `refresh_segmentation_mapping` has already decided which file
-    that is by the time this is constructed.
+    that is by the time this is constructed. That can be a web address: a
+    mask already tiled and pyramidal there is read in place, a tile at a time
+    through the chunk cache, like the image beside it.
     """
 
     is_local = True
@@ -260,9 +263,11 @@ class LocalSegmentationProvider:
         import tifffile as tf
         import zarr
 
-        from plexora.server.utils import ome_zarr
+        from plexora.server.utils import ome_zarr, segmentation_pyramid
         from plexora.server.volume import labels as volume_labels
 
+        if is_remote_locator(self._path):
+            return segmentation_pyramid.open_remote_labels(self._path)
         # A 3-D label volume: one id per cell across every plane it spans,
         # served a plane at a time (LabelVolume.plane). Its default answer is
         # the middle plane, what a caller that knows nothing of volumes reads.
@@ -285,6 +290,8 @@ class LocalSegmentationProvider:
     def fingerprint(self) -> Fingerprint | None:
         if not self._path:
             return None
+        if is_remote_locator(self._path):
+            return Fingerprint.of_remote(self._path)
         return Fingerprint.of_path(self._path)
 
 

@@ -20,13 +20,15 @@ Choose **File › Samples…** (⌘O, Ctrl+O on Windows and Linux). Search acros
 <Step>
 ### Group samples into datasets
 
-A dataset is a named folder of samples, such as a cohort or a TMA series. Use **New Dataset…** to make one, either empty or from a folder of images, masks and tables (see [Opening images and datasets](/docs/features/opening-data)). Drag samples into it, or select several and choose **Move to…**. In the viewer, **B** and **N** step through the samples of the dataset you opened.
+A dataset is a named folder of samples, such as a cohort or a TMA series. Use **New Dataset…** to make one, either empty or from a folder of images, masks and tables (see [Opening images and datasets](/docs/features/opening-data)). Drag samples into it, or select several and choose **Move to…**. In the viewer, **B** and **N** step through the samples of the dataset you opened. A dataset made from folders that sort samples into groups, such as one folder per disease, shows a section for each group.
 </Step>
 
 <Step>
 ### Edit or delete a sample
 
-Each sample has **Edit** (the pencil) and **Delete**. Edit opens the sample's page, where you add or replace the mask or the cell table, say which columns are markers and which are metadata, and add layers. Select several samples to delete them, move them, or **Remove from dataset** together. Removing a sample from a dataset, or deleting the dataset, never deletes the sample.
+Each sample has **Edit** (the pencil) and **Delete**. Edit opens the sample's page, where you add or replace the mask or the cell table, say which columns are markers and which are metadata, and add layers. Select several samples to delete them, move them, or **Remove from dataset** together. Removing a sample from a dataset never deletes the sample. Deleting a dataset asks which you mean: **Delete dataset only** moves its samples back to the top level, and **Delete dataset and its samples** deletes them too.
+
+Deleting a sample deletes what Plexora keeps for it: its folder in the data directory, with any cell table copied from a bucket, and the parts of its images and masks downloaded from a bucket. Your own files, and the files in the bucket, are never deleted. Image parts that another sample also uses stay until that sample is deleted too.
 </Step>
 
 <Step>

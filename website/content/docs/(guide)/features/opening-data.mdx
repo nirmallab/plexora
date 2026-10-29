@@ -27,6 +27,17 @@ Paste a path or URL and press **Load**, or press **Browse**. **File** or **Folde
 On the Samples page, choose **New Dataset…**, pick the folder that holds a cohort and press **Scan folder**. Plexora matches every mask and table to its image by file and folder names and shows the plan as a table. Fix any row, then press **Create** (it says how many samples).
 </Step>
 <Step>
+### A cohort in a bucket
+
+Paste the bucket's address on the home page, in Import Sample or in New Dataset, for example `s3://lin-2023-orion-crc/data`. Plexora lists it, reads each image's header, and shows the samples it found in New Dataset's table, every one ticked, under a name taken from the bucket. Untick the samples you do not want, then press **Create**. Only the headers are read before then.
+
+- A folder holding one sample's images of different kinds, such as a multiplex slide and its H&E, becomes one sample named after the folder, with the H&E as a layer.
+- Samples sorted into folders, for example by disease (`CRC/`, `Melanoma/`), are shown in a section per folder on the Samples page.
+- Images and masks are read from the bucket as they are viewed, and only the parts on screen are downloaded. A mask that is not already a tiled pyramid is converted the first time its sample is opened.
+- Cell tables are not copied when the dataset is made. In the viewer, **Add Data** offers each sample's table and copies it when you press it.
+- A folder with one sample in it opens as that sample.
+</Step>
+<Step>
 ### Add to a sample you already have
 
 In the viewer, **+** on **Layers** adds an image, mask or table to the open sample. See [Layers](/docs/features/layers).
@@ -46,11 +57,12 @@ In the viewer, **+** on **Layers** adds an image, mask or table to the open samp
 | Cell tables | CSV, TSV, Parquet, AnnData `.h5ad` |
 | Stores | SpatialData `.zarr` (images, labels, points and a table) |
 
-Images can also be read from a web address, S3, Google Cloud Storage or Azure. The full list is in [Supported formats](/docs/reference/supported-formats). Xenium and Visium run folders are not covered here.
+Images can also be read from a web address, S3, Google Cloud Storage or Azure, one at a time or a whole bucket folder at once. The full list is in [Supported formats](/docs/reference/supported-formats). Xenium and Visium run folders are not covered here.
 
 ## Tips
 
 - A mask must have the same width and height as its image.
+- A private bucket needs its access set up first in **Settings › Web data**. An `https://` address in front of a bucket cannot be listed, so paste the bucket's own `s3://` or `gs://` address to open a folder of samples.
 - Dropping a file onto the import dialog in a browser uploads it (up to 64 MB). For a large image, choose it with Browse or paste its path, so it is read in place.
 - In the desktop app you can drag a file onto the window, or open `.svs`, `.ndpi`, `.scn`, `.mrxs`, `.qptiff` and `.h5ad` files with Plexora from your file manager.
 - CosMx and MERSCOPE runs have no reader yet. Export the image and the cell table and import them as files.

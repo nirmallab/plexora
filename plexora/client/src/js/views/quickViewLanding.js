@@ -385,12 +385,14 @@ PlexoraPage.register(function () {
      * read at its top level (`Sample01/ ... Sample40/`, or `registration/ +
      * segmentation/`), or three or more samples side by side. Those are a
      * dataset to build (views/datasetBuilder.js), not one sample to open.
-     * Folders on this machine only: the builder scans a local folder.
+     * A folder in a bucket says so itself (`unrecognised[].dataset`), since
+     * nothing here can tell a bucket's folder from a store by its name.
      */
     function cohortFolder(path, proposal) {
         if (!window.PlexoraDatasetBuilder || !proposal) return false;
-        // A web address is a store, never a folder to walk -- except on a
-        // files-only server, whose folders New Dataset reads over SFTP.
+        if ((proposal.unrecognised || []).some((entry) => entry.dataset)) return true;
+        // Any other web address is a store, never a folder to walk -- except
+        // on a files-only server, whose folders New Dataset reads over SFTP.
         if (/^[a-z][a-z0-9+.-]*:\/\//i.test(path) && !/^sftp:\/\//i.test(path)) return false;
         const samples = proposal.samples || [];
         const folder = kind === "directory" || kindOf(path) === "directory"
@@ -432,6 +434,9 @@ PlexoraPage.register(function () {
             if (cohortFolder(path, proposal)) {
                 phase = "idle";
                 paint();
+                // A folder of samples (`s3://lin-2023-orion-crc/data`) is
+                // scanned into New Dataset's table, every sample ticked, and
+                // made into a dataset when the person presses Create.
                 window.PlexoraDatasetBuilder.open({root: path});
                 return;
             }

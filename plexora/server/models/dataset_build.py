@@ -17,7 +17,18 @@ Where the files are decides the rest. On a data node a spec names the node
 arranges. On a files-only server (`sftp://`) every project is a `paths` spec
 with each file's role stated in `answers` (`added-as:`), because that is the
 route that streams an image and a mask from such a server and copies its CSV
-table across (`replace_project_data`).
+table across (`replace_project_data`). In a bucket (`s3://`, `gs://`, a web
+host that lists) it is the same `paths` spec WITHOUT the table: images and
+masks stream, but a cohort's CSVs are tens of gigabytes nobody asked to copy,
+so each stays paired in the dataset's `meta["tables"]` and is attached from
+the sample when it is wanted. A sample whose folder holds more than one image
+(an Orion slide and its H&E) is a `paths` spec anywhere, its other images
+going in as layers (`images-grouping: layers`), since `create_project` takes
+one image.
+
+What the plan knew that the projects do not -- the folder each sample was
+filed under, the tables left behind, where it was scanned -- is kept in the
+dataset's `meta` (`remember_plan`).
 
 Creation is a background task (`layer_jobs`, pseudo-sample `dataset-build`):
 every path is checked first, then each project is registered in turn, and one
@@ -61,10 +72,13 @@ def spec_for(project, place=None) -> dict | None:
         if project.get("existing"):
             spec["exist_ok"] = True
         return spec
-    if kind == "sftp":
-        return _sftp_spec(project)
-    spec = {"image": image["path"], "name": project["name"]}
     mask, table = extras
+    shared = bool(table and (table.get("subset") or {}).get("value") is not None)
+    if kind in ("sftp", "web") or (project.get("layers") and not shared):
+        # A table one row filter away from this sample is `create_project`'s
+        # alone to read, so such a sample keeps its one image.
+        return _paths_spec(project, place)
+    spec = {"image": image["path"], "name": project["name"]}
     if mask and mask.get("path"):
         spec["segmentation"] = mask["path"]
     if table and table.get("path"):
@@ -82,29 +96,77 @@ def spec_for(project, place=None) -> dict | None:
     return spec
 
 
-def _sftp_spec(project) -> dict:
-    """A project on a files-only server, as the files Import Sample is given.
+def _paths_spec(project, place=None) -> dict:
+    """A project as the files Import Sample is given.
 
     Each file's role is said (`added-as:`), so a whole-cell mask is never read
-    as a second image and a table never has to be guessed at. The channel
-    list goes in as a file: Import Sample names the image's channels from it.
+    as a second image and a table never has to be guessed at. The sample's
+    other images are its layers. The channel list goes in as a file: Import
+    Sample names the image's channels from it. In a bucket the table is left
+    out (see the module's docstring).
     """
+    kind = (place or {}).get("kind")
     paths = [project["image"]["path"]]
     answers = {}
-    for slot, role in (("mask", "mask"), ("table", "table")):
+    layers = [layer["path"] for layer in project.get("layers") or () if layer.get("path")]
+    if layers:
+        paths += layers
+        answers["images-grouping"] = "layers"
+    for slot in ("mask",) if kind == "web" else ("mask", "table"):
         found = project.get(slot)
         if found and found.get("path"):
             paths.append(found["path"])
-            answers[f"added-as:{found['path']}"] = role
+            answers[f"added-as:{found['path']}"] = slot
     channels = project.get("channels") or {}
     if channels.get("names") and channels.get("path"):
         paths.append(channels["path"])
     spec = {"paths": paths, "name": project["name"]}
     if answers:
         spec["answers"] = answers
+    if kind == "node":
+        spec["node"] = place["name"]
     if project.get("existing"):
         spec["exist_ok"] = True
     return spec
+
+
+def remember_plan(dataset_id, plan, names) -> None:
+    """Keep in the dataset's `meta` what its plan knew and its projects do not.
+
+    - `groups`: `{project: group}`, the folder each sample was filed under
+      when the tree sorted its samples into folders (`CRC/`, `Melanoma/`).
+    - `tables`: `{project: {path, name}}`, the cell table a bucket's sample
+      was paired with and that was not copied (see the module's docstring).
+    - `source`: the folders scanned and where they are.
+
+    Merged into what the dataset already keeps, so adding samples to it later
+    adds to these rather than replacing them.
+
+    @param names - the projects that were made (or adopted) from the plan.
+    """
+    from plexora.server.models import datasets as registry
+
+    found = registry.find(dataset_id)
+    if found is None:
+        return
+    made = set(names)
+    web = (plan.get("place") or {}).get("kind") == "web"
+    groups = dict(found.meta.get("groups") or {})
+    tables = dict(found.meta.get("tables") or {})
+    for project in plan["projects"]:
+        name = project["name"]
+        if name not in made:
+            continue
+        if project.get("group"):
+            groups[name] = project["group"]
+        table = project.get("table") or {}
+        if web and table.get("path"):
+            tables[name] = {"path": table["path"], "name": table.get("name") or ""}
+    registry.describe(dataset_id, meta={
+        "groups": groups or None,
+        "tables": tables or None,
+        "source": {"roots": list(plan.get("roots") or ()), "place": plan.get("place")},
+    })
 
 
 def specs_for(plan, only=None) -> list:
@@ -211,6 +273,9 @@ def build(plan, *, name, description="", exist_ok=False, only=None,
         found = registry.find_by_name(name)
         if found is not None:
             dataset = api.Dataset._from_record(found)
+    if dataset is not None:
+        remember_plan(dataset.id, plan, [r["name"] for r in results.values()
+                                         if r["status"] in ("created", "adopted")])
     if on_progress is not None:
         on_progress(total, total, None)
     return {"dataset": dataset, "projects": list(results.values())}

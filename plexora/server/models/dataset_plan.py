@@ -98,7 +98,10 @@ _PANEL_CACHE: dict = {}
 def _panel_names(entry, count):
     from plexora.server.models.import_proposal import _panel_names as names
 
-    key = (entry.key, count)
+    # By what is read, not only by which file: a remote list is planned before
+    # its local copy (`proxy`) exists, while the scan is still reading, and the
+    # None that first read gave must not outlive the copy's arrival.
+    key = (entry.key, entry.proxy, count)
     if key not in _PANEL_CACHE:
         try:
             _PANEL_CACHE[key] = names(entry.proxy or entry.path, count)

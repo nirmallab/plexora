@@ -8,7 +8,7 @@
     <link rel="apple-touch-icon" href="{{ data.base_url }}/client/src/img/apple-touch-icon.png">
     <!-- Styles -->
     <link rel="stylesheet" href="{{ data.base_url }}/client/src/css/tokens.css?v=20261027_sidebar_radius">
-    <link rel="stylesheet" href="{{ data.base_url }}/client/src/css/main.css?v=20261027_machine_chip">
+    <link rel="stylesheet" href="{{ data.base_url }}/client/src/css/main.css?v=20261029_bucket_datasets">
     {# Here and not in a page block: the explorer opens from every page, and
        appRouter.adoptStyles turns page stylesheets off on navigation. #}
     <link rel="stylesheet" href="{{ data.base_url }}/client/src/css/explorer.css?v=20261021_explorer_waiting">
@@ -105,7 +105,7 @@
        the other's globals; not deferred, because plugin scripts are not. #}
     <script src="{{ data.base_url }}/client/src/js/views/geneList.js?v=20260928_gene_taken"></script>
     <script src="{{ data.base_url }}/client/src/js/views/geneGroupModal.js?v=20261027_machine_chip"></script>
-    <script src="{{ data.base_url }}/client/src/js/views/viewerControls.js?v=20261021_pro"></script>
+    <script src="{{ data.base_url }}/client/src/js/views/viewerControls.js?v=20261029_bucket_datasets"></script>
     <script src="{{ data.base_url }}/client/src/js/views/scaleCalibration.js?v=20260910_scalebar_pencil"></script>
     <script src="{{ data.base_url }}/client/src/js/views/viewerSidebar.js?v=20261027_add_row_hint"></script>
     {# After viewerSidebar (whose class it instantiates) and before
@@ -256,10 +256,10 @@
        primary button, the viewer's "+ Add Layer" and the requirements modal's
        layer row all open it, and none of those three shares a stylesheet.
        After datasetPicker.js, whose picker is this dialog's Dataset row. #}
-    <script src="{{ data.base_url }}/client/src/js/views/importSample.js?v=20261027_drop_router" defer></script>
+    <script src="{{ data.base_url }}/client/src/js/views/importSample.js?v=20261029_bucket_progress" defer></script>
     <!-- New Dataset: a dataset from a folder (scan, match, create). After
        importSample.js, whose dialog styles it reuses. -->
-    <script src="{{ data.base_url }}/client/src/js/views/datasetBuilder.js?v=20261025_dataset_answers" defer></script>
+    <script src="{{ data.base_url }}/client/src/js/views/datasetBuilder.js?v=20261029_bucket_datasets" defer></script>
     <script src="{{ data.base_url }}/client/src/js/views/toolLoader.js?v=20261025_dataset_answers" defer></script>
     {# Not deferred: every page controller below calls PlexoraPage.register at
        the top level of its own file, so the registry has to exist before any of

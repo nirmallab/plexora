@@ -408,6 +408,33 @@
             </div>`;
         }
 
+        /**
+         * A dataset's samples, section by section, when its tree sorted them
+         * into folders (`meta.groups`, written by `dataset_build.remember_plan`:
+         * `CRC`, `Melanoma`). The sort the page is set to holds inside each
+         * section; samples with no group come last. Null when there is nothing
+         * to divide, so the grid draws as it always has.
+         */
+        function sections(folder, projects) {
+            const groups = (folder && folder.meta && folder.meta.groups) || {};
+            if (!projects.some((p) => groups[p.name])) return null;
+            const named = Array.from(new Set(projects.map((p) => groups[p.name]).filter(Boolean)))
+                .sort((a, b) => a.localeCompare(b, undefined, {numeric: true}));
+            const order = [...named, null];
+            return order.map((group) => ({
+                group,
+                projects: projects.filter((p) => (groups[p.name] || null) === group),
+            })).filter((section) => section.projects.length);
+        }
+
+        function sectionHeadMarkup(group, count) {
+            return `<div class="project-group-head" role="heading" aria-level="3">
+                <span class="fas fa-folder-tree" aria-hidden="true"></span>
+                <span class="project-group-name">${escapeHtml(group || "Not in a group")}</span>
+                <span class="project-group-count">${escapeHtml(countPhrase(count, "sample"))}</span>
+            </div>`;
+        }
+
         function crumbsMarkup() {
             const folder = currentFolder();
             const root = `<button type="button" class="open-project-crumb${folder ? "" : " is-current"}"
@@ -430,7 +457,9 @@
                 : countPhrase(total, "sample");
             crumbsEl.innerHTML = crumbsMarkup();
 
-            const { folders, projects, flattened } = visible();
+            const { folders, projects: shown, flattened } = visible();
+            const grouped = !flattened ? sections(folder, shown) : null;
+            const projects = grouped ? grouped.flatMap((section) => section.projects) : shown;
             state.order = projects.map((p) => p.name);
             // A selection cannot survive leaving the view it was made in: the
             // bar would offer to move projects that are no longer on screen.
@@ -443,7 +472,10 @@
                 + (row ? "project-list" : "project-grid");
             resultsEl.innerHTML =
                 folders.map((d) => folderMarkup(d, row)).join("")
-                + projects.map((p) => projectMarkup(p, flattened, row)).join("");
+                + (grouped
+                    ? grouped.map((section) => sectionHeadMarkup(section.group, section.projects.length)
+                        + section.projects.map((p) => projectMarkup(p, flattened, row)).join("")).join("")
+                    : projects.map((p) => projectMarkup(p, flattened, row)).join(""));
 
             const nothingAtAll = total === 0 && !state.datasets.length;
             const nothingHere = !folders.length && !projects.length;

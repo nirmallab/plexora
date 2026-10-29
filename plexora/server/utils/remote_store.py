@@ -2323,6 +2323,112 @@ def first_file(url, suffixes, *, depth: int = 4, listings: int = 12,
     return None
 
 
+# -- whole files, outside the cache -----------------------------------------
+#
+# A delimited table is not streamed by anything: it is read from its first
+# rows to say what it is, and copied across whole when it is imported. Neither
+# goes through the chunk cache, where an 800 MB CSV would only push image tiles
+# out. Both go through the folder's own store, so they get the options,
+# credentials and host checks every other read gets.
+
+#: How much of a table is copied to say what it is (as `sftp.HEAD_BYTES`).
+TABLE_HEAD_BYTES = 1024 ** 2
+
+#: A table copied across is fetched this much at a time.
+DOWNLOAD_CHUNK = 8 * 1024 ** 2
+
+
+def _whole_file(url) -> tuple[ChunkCacheStore, str, str]:
+    """(the folder's store, the file's key, its path on the filesystem)."""
+    store, _prefix = open_store(parent_url(url))
+    key = url_name(url)
+    return store, key, store._fs_path(key)
+
+
+def _on_host(store: ChunkCacheStore, key: str, request):
+    """`request(fs)` on the store's filesystem, failures as a reader expects."""
+    from zarr.core.sync import sync
+
+    async def run():
+        if not store._store._is_open:
+            await store._store._open()
+        return await request(store._store.fs)
+
+    try:
+        return sync(run())
+    except Exception as exc:  # noqa: BLE001 -- raised again in its own words
+        store._raise_for(key, exc)
+        raise
+
+
+def head_copy(url, limit: int = TABLE_HEAD_BYTES):
+    """`(local path, whole)`: the start of the file at `url`, on this machine.
+
+    `sftp.head_copy` for any other web address: the copy keeps the file's own
+    name (detection reads names), is kept by address, size and version so
+    asking twice reads once, and ends at a line break when it stops short.
+    `whole` says it is the entire file, which a channel list always is.
+    """
+    from plexora.server.utils import head_cache
+
+    url = canonical_url(url)
+    store, key, path = _whole_file(url)
+    info = _on_host(store, key, lambda fs: fs._info(path))
+    size = int(info.get("size") or 0)
+    etag, modified = _info_identity(info)
+    stamp = hashlib.sha1(f"{url}\0{size}\0{etag}\0{modified}".encode()).hexdigest()[:16]
+    local = head_cache.place("web-heads", stamp, key)
+    whole = size <= limit
+    if not local.exists():
+        end = min(size, limit)
+        data = _on_host(store, key, lambda fs: fs._cat_file(path, start=0, end=end)) \
+            if end else b""
+        if not whole:
+            cut = data.rfind(b"\n")
+            data = data[:cut + 1] if cut > 0 else data
+        head_cache.write(local, data)
+    return local, whole
+
+
+def download(url, destination, *, progress: Optional[Callable] = None,
+             chunk: int = DOWNLOAD_CHUNK) -> Path:
+    """Copy the file at `url` to `destination`; the destination.
+
+    As `sftp.download`: written to a `.partial` beside it and renamed at the
+    end, so a copy cut off half way is never mistaken for the file.
+
+    @param progress - `progress(done, total)` in bytes, after each chunk.
+    """
+    url = canonical_url(url)
+    store, key, path = _whole_file(url)
+    size = _on_host(store, key, lambda fs: fs._info(path)).get("size")
+    if size is None:
+        raise OSError(f"{host_of(url)} does not say how long {key} is")
+    size = int(size)
+    destination = Path(destination)
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    partial = destination.with_name(destination.name + ".partial")
+    done = 0
+    try:
+        with open(partial, "wb") as out:
+            while done < size:
+                start, end = done, min(size, done + chunk)
+                data = _on_host(store, key,
+                                lambda fs: fs._cat_file(path, start=start, end=end))
+                if not data:
+                    raise OSError(f"{key} ended {size - done} bytes early")
+                out.write(data)
+                done += len(data)
+                _count_fetched(len(data))
+                if progress:
+                    progress(done, size)
+        os.replace(partial, destination)
+    except BaseException:
+        partial.unlink(missing_ok=True)
+        raise
+    return destination
+
+
 #: Bytes that came over the network, across every store this process opened.
 #: Only ever added to, so a caller measures a stretch of work as the
 #: difference between two readings (data_model's load progress does).

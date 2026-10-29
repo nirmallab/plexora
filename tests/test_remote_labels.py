@@ -1,11 +1,11 @@
 """Label images at a web address, as a sample's segmentation.
 
 IDR ships segmentations the NGFF way: `labels/` inside the image's own store.
-One pick of the store proposes both, and the mask is converted into the
-project once, read through the chunk cache. Never served from the web tile by
-tile, and never written "beside the source" -- a web address has no folder
-beside it, and `Path` of one would create `https:/...` under the working
-directory.
+One pick of the store proposes both. A mask of one level is converted into the
+project once, read through the chunk cache, when something first asks for it
+(a tiled pyramid is read in place instead: tests/test_dataset_web.py), and
+never written "beside the source" -- a web address has no folder beside it,
+and `Path` of one would create `https:/...` under the working directory.
 """
 
 import os
@@ -134,7 +134,7 @@ def test_an_offline_load_keeps_the_converted_mask(tmp_path, http_store):
     assert pending is None
 
 
-def test_a_remote_mask_is_never_served_as_is(tmp_path, http_store):
+def test_a_remote_mask_of_one_level_is_not_served_as_is(tmp_path, http_store):
     _labelled_store(tmp_path / "served" / "img.zarr")
     server = http_store()
     src = remote_store.url_join(server.url("img.zarr"), "labels", "cells")

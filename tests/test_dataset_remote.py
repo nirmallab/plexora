@@ -124,8 +124,11 @@ def test_one_scan_is_in_one_place(root, host):
     fx.mcmicro(root / "run")
     with pytest.raises(ValueError, match="one place"):
         dataset_scan.place_of([host.url("run"), str(root / "run")])
-    with pytest.raises(ValueError, match="web address"):
-        dataset_scan.place_of(["https://example.org/data/"])
+    # A bucket, or a web host that lists its folders, is a place of its own
+    # (tests/test_dataset_web.py) -- and two of them are two places.
+    assert dataset_scan.place_of(["https://example.org/data/"]) == ("web", "https://example.org")
+    with pytest.raises(ValueError, match="one place"):
+        dataset_scan.place_of(["https://example.org/data/", "s3://bucket/data"])
 
 
 def test_import_sample_takes_a_csv_from_a_files_only_server(root, host):

@@ -6,7 +6,7 @@ symbol: "plexora.plan_dataset"
 signature: "plan_dataset(*roots, overrides=None, limits=None, node=None) -> dict"
 aliases: ["scan", "folder", "directory", "match masks", "cohort folder"]
 source:
-  end: 567
+  end: 572
   path: "plexora/datasets.py"
   start: 513
 ---
@@ -31,8 +31,13 @@ A match is `high` when it is strong and well clear of any other candidate,
 `medium` when it is likely but worth a look, and anything less is left in
 `unassigned` with its best suggestions rather than guessed.
 
-The folders can be on this computer, on a data node (`node=`), or on a
-files-only server this Plexora is connected to (an `sftp://` address).
+The folders can be on this computer, on a data node (`node=`), on a
+files-only server this Plexora is connected to (an `sftp://` address), or
+in a bucket (`s3://lin-2023-orion-crc/data`, `gs://...`, `az://...`, or a
+web host that lists its folders). A folder holding one sample's images of
+different kinds (a multiplex slide and its H&E) is one project, the others
+its `layers`; a tree that sorts its samples into folders (`CRC/`,
+`Melanoma/`) gives each project its `group`, and the plan its `groups`.
 
 ## When to use
 

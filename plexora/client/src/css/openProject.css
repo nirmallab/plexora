@@ -227,6 +227,35 @@
     gap: var(--space-2);
 }
 
+/* A section of a dataset whose samples were filed under folders (meta.groups):
+   a full-width line in the grid, the cards of that group after it. */
+.project-group-head {
+    align-items: baseline;
+    border-bottom: 1px solid var(--border-subtle);
+    color: var(--text-primary);
+    display: flex;
+    font-size: 13px;
+    font-weight: 700;
+    gap: var(--space-2);
+    grid-column: 1 / -1;
+    padding: var(--space-2) 0 var(--space-1);
+}
+
+.project-group-head:not(:first-child) {
+    margin-top: var(--space-2);
+}
+
+.project-group-head .fas {
+    color: var(--text-muted);
+    font-size: 12px;
+}
+
+.project-group-count {
+    color: var(--text-muted);
+    font-size: 12px;
+    font-weight: 400;
+}
+
 .project-row {
     align-items: center;
     background: var(--surface-1);

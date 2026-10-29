@@ -295,6 +295,10 @@ class LayerProposal:
     #: it. Registration reads only that image's cells, so the table opens
     #: with the sample instead of waiting for somebody to say which.
     subset: Mapping[str, Any] | None = None
+    #: The bucket folder this was read out of with the rest of one sample's
+    #: files (`_remote_folder`); such a sample takes the folder's name.
+    #: Internal.
+    folder: str | None = None
 
     def to_dict(self) -> dict:
         return {
@@ -1911,8 +1915,8 @@ def _detect_remote(url, answers, declared=None):
     from plexora.server.utils import ome_zarr, remote_image, remote_store
 
     name = remote_store.url_name(url)
-    if url.lower().startswith("sftp://") and name.lower().endswith(SFTP_TABLE_SUFFIXES):
-        return _sftp_table(url)
+    if name.lower().endswith(SFTP_TABLE_SUFFIXES) and not remote_store._has_zarr_segment(url):
+        return _copied_table(url)
     # A file names its own kind: a DICOM instance, a TIFF, an Imaris file or
     # a picture is streamed and proposed as the image it is, with no zarr
     # probing.
@@ -1959,6 +1963,10 @@ def _detect_remote(url, answers, declared=None):
 
             if dicom_wsi.is_dicom_path(url):
                 return _dicom_slides(url, answers)
+            # Nor DICOM: a folder in a bucket, read as a local folder is.
+            folder = _remote_folder(url, answers)
+            if folder is not None:
+                return folder
         if result.status == "missing":
             return [], [], None, [
                 f"Nothing at {url} answers as a zarr store (no zarr.json, "
@@ -1971,28 +1979,114 @@ def _detect_remote(url, answers, declared=None):
             image_warnings + warnings)
 
 
-#: Tables on a files-only server that are copied to this machine on import.
-#: Not `.h5ad` (an AnnData is read where it lies, and a whole one is not a
-#: copy to make behind somebody's back) and not `.parquet` (its schema is at
-#: the END of the file, so its first megabyte says nothing).
+class FolderOfSamples(str):
+    """The reason a folder is not one sample but several, each in a folder of
+    its own or one image to a file: what New Dataset is for. `inspect_paths`
+    marks its `unrecognised` row `dataset`, and the screens offer New Dataset
+    there rather than an error."""
+
+
+#: Images, by name, at which a folder in a bucket is a cohort rather than one
+#: sample's files: an Orion sample folder holds two (the slide and its H&E).
+FOLDER_SAMPLE_IMAGES = 3
+
+
+def _remote_folder(url, answers):
+    """A folder in a bucket or on a listing host, read as a local folder is:
+    one level of files. None when it does not list, or lists nothing.
+
+    One sample's folder -- an Orion run's `CRC01/`: the slide, its H&E, its
+    mask, its channel list -- is that sample, the images of other kinds than
+    the one it leads with being its layers, as New Dataset reads such a folder
+    (`spatialbridge.grouping`). A folder of sample folders, or of more images
+    than one sample holds (`FOLDER_SAMPLE_IMAGES`), is a cohort, said with a
+    `FolderOfSamples` reason and nothing read. A cell table is named and not
+    added: in a bucket it is copied whole, and that waits until somebody asks
+    for it from the sample.
+    """
+    from plexora.server.models import dataset_scan
+    from plexora.server.utils import remote_store
+
+    try:
+        store, prefix = remote_store.open_store(url)
+        found = store.list_entries(prefix)
+    except Exception:  # noqa: BLE001 -- unlisted: the caller says what it is not
+        return None
+    if not found:
+        return None
+    name = remote_store.url_name(url)
+    folders = [row for row in found if row["dir"]]
+    files = {row["name"]: dataset_scan._kind_of_file(row["name"], int(row.get("size") or 0), name)
+             for row in found if not row["dir"]}
+    images = [file for file, kind in files.items()
+              if kind == "raster" and not dataset_scan._named_like_a_mask(file)]
+    if len(images) >= FOLDER_SAMPLE_IMAGES:
+        return [], [], None, [FolderOfSamples(
+            f"{name} holds {len(images)} images, more than one sample's. Make a "
+            "dataset of them with New Dataset.")]
+    layers, questions, warnings = [], [], []
+    for file, kind in sorted(files.items()):
+        child = remote_store.url_join(url, file)
+        if kind == "table" and file.lower().endswith(SFTP_TABLE_SUFFIXES):
+            if file.lower() in MARKER_SHEET_FILES:
+                found_layers, found_questions, _bundle, found_warnings = _copied_table(child)
+                layers += [layer for layer in found_layers if layer.role == "channels"]
+                continue
+            warnings.append(f"{file} was not added: a cell table in a bucket is copied "
+                            f"whole, so add it from the sample when you want it ({child}).")
+            continue
+        if kind != "raster":
+            continue
+        found_layers, found_questions, _bundle, found_warnings = _detect_remote(child, answers)
+        layers += found_layers
+        questions += found_questions
+        warnings += found_warnings
+    images = [layer for layer in layers if layer.kind == "image" and layer.role == "image"]
+    kinds = [layer.modality for layer in images]
+    if len(images) > 1 and all(kinds) and len(set(kinds)) == len(kinds):
+        reference = _pick_reference(images)
+        for layer in images:
+            if layer is not reference:
+                layer.role, layer.reference = "layer", False
+    for layer in layers:
+        layer.folder = name
+    if not layers and folders:
+        return [], [], None, [FolderOfSamples(
+            f"{name} holds {len(folders)} folder{'s' if len(folders) != 1 else ''} "
+            "and no image of its own. Make a dataset of them with New Dataset.")]
+    return layers, questions, None, warnings
+
+
+#: Tables at a web address -- a files-only server, a bucket -- that are
+#: copied to this machine on import. Not `.h5ad` (an AnnData is read where it
+#: lies, and a whole one is not a copy to make behind somebody's back) and not
+#: `.parquet` (its schema is at the END of the file, so its first megabyte
+#: says nothing).
 SFTP_TABLE_SUFFIXES = (".csv", ".tsv", ".txt")
 
 
-def _sftp_table(url):
-    """A delimited file on a files-only server, read from its first rows.
+def _copied_table(url):
+    """A delimited file at a web address, read from its first rows.
 
     Nothing streams a CSV, so the table is copied to this machine when the
     sample is registered (`replace_project_data`); until then its header and
-    first rows (`sftp.head_copy`) are what say what it is. A channel list is
-    small enough to be read whole, and its names are taken from that copy.
+    first rows (`sftp.head_copy` on a files-only server, `remote_store.
+    head_copy` anywhere else) are what say what it is. A channel list is small
+    enough to be read whole, and its names are taken from that copy.
     """
+    from plexora.server.providers.base import RemoteUnreachable
     from plexora.server.utils import remote_store, sftp
 
     name = remote_store.url_name(url)
     try:
-        local, whole = sftp.head_copy(url)
-    except sftp.SFTPNotConnected as error:
+        if url.lower().startswith(f"{sftp.SCHEME}://"):
+            local, whole = sftp.head_copy(url)
+        else:
+            local, whole = remote_store.head_copy(url)
+    except (sftp.SFTPNotConnected, RemoteUnreachable) as error:
         return [], [], None, [str(error)]
+    except remote_store.RemoteSupportMissing as error:
+        return [], [], None, [f"{name}: {error}"]
     except OSError as error:
         return [], [], None, [f"{name}: {error}"]
     layers, questions, bundle, warnings = _detect_table(local)
@@ -3333,11 +3427,14 @@ def inspect_paths(paths, *, node=None, answers=None, sample=None) -> Proposal:
             question.pick = index
             question.id = _per_pick(question.id, raw)
         if not layers:
+            reason = (path_warnings[0] if path_warnings else
+                      "Nothing Plexora can read here.")
             proposal.unrecognised.append({
                 "pick": index,
                 "path": str(raw),
-                "reason": (path_warnings[0] if path_warnings else
-                           "Nothing Plexora can read here."),
+                "reason": reason,
+                # A folder of samples: New Dataset's, not an error.
+                "dataset": isinstance(reason, FolderOfSamples),
             })
             continue
         attach = _attached(raw, answers)
@@ -3380,6 +3477,11 @@ def inspect_paths(paths, *, node=None, answers=None, sample=None) -> Proposal:
         return proposal
 
     for group in _split_samples(found, bundles, questions, answers, proposal):
+        # Read whole out of one folder in a bucket: the folder's name, which
+        # is the sample's (`CRC01/`), where its files are named for a scanner.
+        folders = {layer.folder for layer in group.layers}
+        if len(folders) == 1 and None not in folders:
+            group.name = _clean_name(folders.pop())
         proposal.samples.append(group)
     _name_channels(proposal.samples, panels, proposal.warnings)
     _choose_subsets(proposal.samples, answers)

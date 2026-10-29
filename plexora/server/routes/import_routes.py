@@ -229,7 +229,8 @@ def import_layers_route():
     try:
         return jsonify(importer.add_layers(
             sample, _picked(payload), answers=payload.get('answers') or {},
-            node=(payload.get('node') or '').strip() or None))
+            node=(payload.get('node') or '').strip() or None,
+            token=(payload.get('token') or '').strip() or None))
     except (importer.ImportError_, ValueError) as exc:
         return jsonify(error=str(exc)), 400
 
@@ -636,10 +637,13 @@ def attach_segmentation(name, mask_path, mode=None, transform=None):
         )
 
     updated = Project.mutate(name, _apply)
-    if not mask_path:
+    if not pending:
         # A finished job's record is what `/get_segmentation_status` answers
-        # from first; left behind, it would hand the viewer the mask that was
-        # just taken off. A running one finds itself stale and stops writing.
+        # from first; left behind, it would hand the viewer a mask this project
+        # no longer has: the one just taken off, or -- for a mask at a web
+        # address, read in place or converted once the sample is opened, so no
+        # job starts here to replace the record -- an earlier project's of the
+        # same name. A running one finds itself stale and stops writing.
         record = data_model._segmentation_jobs.get(name)
         if record is not None and record.get("status") != "pending":
             data_model._segmentation_jobs.pop(name, None)
@@ -702,12 +706,12 @@ def replace_project_data(name, data_path_str, payload=None, spatial=None):
             subset_value=(payload.get("subset_value") or "").strip() or None,
             reinspect=True)
 
-    if _is_sftp_table(data_path_str):
-        # A CSV on a files-only server: nothing streams one, so it is brought
-        # across once, staged as an upload is, and from there it is an
-        # ordinary local table -- copied into the project, the staged copy
-        # dropped (`_copy_into_project`).
-        data_path_str = str(_fetch_sftp_table(data_path_str))
+    if _is_copied_table(data_path_str):
+        # A CSV on a files-only server or in a bucket: nothing streams one, so
+        # it is brought across once, staged as an upload is, and from there it
+        # is an ordinary local table -- copied into the project, the staged
+        # copy dropped (`_copy_into_project`).
+        data_path_str = str(_fetch_copied_table(data_path_str))
 
     if is_remote_locator(data_path_str):
         # A table at a web address: read where it is, through the chunk cache.
@@ -899,31 +903,43 @@ def _tenx_context(name, source, spatial):
             "obs_id_field": "cell_id" if layout.kind == "cells" else None}
 
 
-def _is_sftp_table(value) -> bool:
+def _is_copied_table(value) -> bool:
+    """A delimited table at a web address, which is copied here to be read."""
     from plexora.server.models.import_proposal import SFTP_TABLE_SUFFIXES
 
-    text = str(value or "").strip().lower()
-    return text.startswith("sftp://") and text.endswith(SFTP_TABLE_SUFFIXES)
+    text = str(value or "").strip().strip("'\"").strip()
+    if not is_remote_locator(text):
+        return False
+    url = remote_store.canonical_url(text)
+    return (remote_store.url_name(url).lower().endswith(SFTP_TABLE_SUFFIXES)
+            and not remote_store._has_zarr_segment(url))
 
 
-def _fetch_sftp_table(url):
-    """The table at an `sftp://` address, downloaded into the uploads area."""
+def _fetch_copied_table(url):
+    """The table at a web address, downloaded into the uploads area."""
     from plexora.server.models import layer_jobs
-    from plexora.server.utils import remote_store, sftp
+    from plexora.server.utils import sftp
 
     _sweep_uploads()
+    url = remote_store.canonical_url(url)
     name = remote_store.url_name(url)
     staged = _uploads_root() / uuid.uuid4().hex
-    label = f"Copying {name} to this computer"
 
     def progress(done, total):
-        layer_jobs.registration_progress(done, total, label)
+        # A bucket's cell table can be a gigabyte: the megabytes say the copy
+        # is moving between one percent and the next.
+        layer_jobs.registration_progress(
+            done, total, f"Copying {name} to this computer, "
+                         f"{done / 1e6:,.0f} of {total / 1e6:,.0f} MB")
 
+    fetch = sftp.download if url.startswith(f"{sftp.SCHEME}://") else remote_store.download
     try:
-        return sftp.download(url, staged / name, progress=progress)
+        copied = fetch(url, staged / name, progress=progress)
     except BaseException:
         shutil.rmtree(staged, ignore_errors=True)
         raise
+    layer_jobs.registration_progress(0, 0, "Reading the table")
+    return copied
 
 
 def _copy_into_project(name, table_path):

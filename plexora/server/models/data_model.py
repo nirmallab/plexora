@@ -259,11 +259,17 @@ def _servable_as_is(segmentation_path, mode):
     level -- which is the "user brought their own pyramidised mask" case, the
     one situation where importing costs no conversion at all.
     """
+    if providers.is_remote_locator(segmentation_path):
+        # A label pyramid at a web address is read where it is, like the image
+        # beside it: a tile at a time through the chunk cache, which keeps each
+        # tile after its first fetch -- so a bucket of samples is never copied
+        # down to be looked at. Anything else there (one level, untiled, a PNG,
+        # outlines) is converted into the project, once its sample is opened.
+        return (mode == segmentation_pyramid.MODE_FILLED
+                and segmentation_pyramid.is_servable_label_pyramid(segmentation_path))
     if not segmentation_pyramid.can_serve_in_place(segmentation_path):
-        # Never served from the web tile by tile: the tile route reads a mask
-        # far more often than an image, and a label pyramid converted once into
-        # the project is what keeps that off the network. Nor a PNG, which
-        # the tile route cannot open at all -- however outline-like it looks.
+        # A PNG, which the tile route cannot open at all -- however
+        # outline-like it looks.
         return False
     if mode == segmentation_pyramid.MODE_FILLED:
         return segmentation_pyramid.is_servable_label_pyramid(segmentation_path)
@@ -390,7 +396,12 @@ def _segmentation_mapping_is_current(entry):
     recorded_key = entry.get('segmentationSourceKey')
     if not derived or not source or not recorded_key:
         return False
-    if not Path(derived).exists():
+    if providers.is_remote_locator(derived):
+        # Read in place at its web address (`_servable_as_is`): current for as
+        # long as the source it is has not changed, which the key says below.
+        if derived != source:
+            return False
+    elif not Path(derived).exists():
         return False
     # A datasource switched between outline and filled mode still has the other
     # kind's file recorded here; that has to be re-derived rather than served.
@@ -466,7 +477,11 @@ def refresh_segmentation_mapping(entry, datasource_name):
     )
 
     mode = segmentation_mode(entry)
-    if mode == segmentation_pyramid.MODE_FILLED and _served_directly_as_outlines(source):
+    # Not asked of a web address: the sniff reads the mask's pixels, over the
+    # network, on a load a page is waiting on.
+    if (mode == segmentation_pyramid.MODE_FILLED
+            and not providers.is_remote_locator(source)
+            and _served_directly_as_outlines(source)):
         # Asked for shader outlining, but handed a mask that already *is*
         # outlines -- the shader would then trace the boundary of each outline
         # stroke, hollowing it out. Nothing to derive from this input in either
@@ -1459,6 +1474,19 @@ def _stat_image(src):
     return None
 
 
+def _waits_for_open(entry, datasource_name):
+    """Whether `entry`'s mask is one at a web address left unconverted until
+    its sample was opened -- which is now (`datasource._segmentation_config_fields`).
+
+    Not while a conversion for it is already running: its record is the job's
+    to write.
+    """
+    return (not entry.get('segmentation')
+            and entry.get('segmentation_status') == 'pending'
+            and providers.is_remote_locator(entry.get('segmentationSource'))
+            and not _segmentation_job_lock_for(datasource_name).locked())
+
+
 def load_config(datasource_name):
     global config
 
@@ -1506,6 +1534,7 @@ def load_config(datasource_name):
         if migrated_path != segmentation_path:
             entry['segmentation'] = migrated_path
             updated = True
+    if segmentation_path or _waits_for_open(entry, datasource_name):
         mapping_changed, pending_segmentation_source = refresh_segmentation_mapping(
             entry, datasource_name
         )
@@ -5828,9 +5857,18 @@ def start_segmentation_job(datasource_name, label_file, data_directory,
 def get_segmentation_job_status(datasource_name):
     if datasource_name in _segmentation_jobs:
         return _segmentation_jobs[datasource_name]
+    entry = get_config().get(datasource_name, {})
+    if _waits_for_open(entry, datasource_name):
+        # A mask at a web address left unconverted at registration, and now
+        # somebody is waiting on it: the viewer it was added to, the import
+        # dialog that registered it, a script's `wait=True`. Its conversion
+        # starts here as it would on opening the sample (`load_config`).
+        load_config(datasource_name)
+        if datasource_name in _segmentation_jobs:
+            return _segmentation_jobs[datasource_name]
+        entry = get_config().get(datasource_name, {})
     # Fall back to config.json's persisted status (server restarted mid-job,
     # or this process never ran the job -- e.g. multi-worker deployment).
-    entry = get_config().get(datasource_name, {})
     status = entry.get("segmentation_status", "ready")
     return {
         "status": status,

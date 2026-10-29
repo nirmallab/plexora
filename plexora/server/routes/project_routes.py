@@ -3,10 +3,10 @@
 from plexora import app, get_config, paths
 from plexora.datasource import reregister_image
 from plexora.server import plugins as plugin_registry
-from plexora.server.models import data_model, datasets, manifest
+from plexora.server.models import data_model, datasets, manifest, remote_sources
 from plexora.server.models.adapters import is_flat_table
 from plexora.server.models.adapters.inspection import source_layers, source_obsm
-from plexora.server.models.project import ROLE_LABELS, ROLE_NAMES, Project
+from plexora.server.models.project import ROLE_LABELS, ROLE_NAMES, Project, all_projects
 from plexora.server.routes import tool_routes
 from plexora.server.routes.import_routes import _json_errors
 from plexora.server.routes.page_routes import template_data
@@ -1063,4 +1063,8 @@ def delete_project(name):
     directory = paths.project_state_dir(name)
     if directory.is_dir():
         shutil.rmtree(directory, ignore_errors=True)
-    return jsonify(success=True)
+    # And what was cached of its files at web addresses -- a bucket sample's
+    # image and mask tiles -- unless another project reads them too. The
+    # files themselves are never touched.
+    released = remote_sources.release(project, all_projects())
+    return jsonify(success=True, released=released)

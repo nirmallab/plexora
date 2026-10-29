@@ -70,7 +70,35 @@ def open_tiff(path):
     # Page parsing seeks and reads; tiles below are read position-free.
     tiff.filehandle.set_lock(True)
     tiff._plexora_stream = handle
+    _warm_subifds(tiff, handle)
     return tiff
+
+
+def _warm_subifds(tiff, handle) -> None:
+    """Fetch every page's sub-resolution IFDs in one concurrent batch.
+
+    An OME-TIFF pyramid keeps each channel's lower levels as SubIFDs of that
+    channel's page, and tifffile reads them one at a time as it builds the
+    series: 19 channels by 7 levels was 133 round trips in a row, 24 s of an
+    Orion slide's first read from S3. Their offsets are all known once the
+    main pages are read, so they are fetched together, and the series then
+    builds from the cache (6.6 s in all). Only for a file whose first page
+    has SubIFDs; best effort, since the read that needs them fetches them
+    anyway.
+    """
+    try:
+        pages = tiff.pages
+        if 330 not in pages[0].tags:
+            return
+        offsets = []
+        for index in range(len(pages)):  # len() walks the chain of main pages
+            subifds = pages[index].tags.get(330)
+            if subifds is not None:
+                offsets.extend(int(offset) for offset in subifds.value)
+        if offsets:
+            handle.pread_many([(offset, 4096) for offset in offsets])
+    except Exception:  # noqa: BLE001 -- warming only; the parse says what is wrong
+        return
 
 
 def close_tiff(tiff) -> None:

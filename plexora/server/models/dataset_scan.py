@@ -24,11 +24,15 @@ can say which belong together. This module finds them.
 
 **Where the files are.** A folder on this computer is walked with `os.scandir`;
 one on a files-only server (`sftp://...`) through that server's SFTP
-connection; one on a data node through the node's own listing (`list_dir`).
-One scan is in one place. A remote file is read the way Import Sample reads
-one: over SFTP an image's header and a few windows, a table's first rows
-(`sftp.head_copy`); on a node, the node's own reading (`detect_on_node`),
-which says image or mask but not the size.
+connection; one on a data node through the node's own listing (`list_dir`);
+one at any other web address -- a bucket (`s3://`, `gs://`, `az://`), or a
+web host that lists its folders -- through the chunk cache's own listing
+(`remote_store`). One scan is in one place. A remote file is read the way
+Import Sample reads one: over SFTP or from a bucket an image's header and a
+few windows, a table's first rows (`head_copy`); on a node, the node's own
+reading (`detect_on_node`), which says image or mask but not the size. A
+bucket's headers are read several at a time (`WEB_INSPECT_WORKERS`): each
+is a few round trips of waiting, and a cohort is forty of them.
 
 What is skipped and why is recorded, not dropped: hidden files and folders,
 temporary files, Plexora's own pyramid copies, linked folders (never followed:
@@ -63,6 +67,14 @@ SCAN_MAX_ENTRIES = 200_000
 
 #: Seconds of header reading before the rest are classified from their names.
 SCAN_INSPECT_BUDGET_S = 120
+
+#: Files read at once in a bucket, where reading a header is mostly waiting.
+#: Sixteen were measured no faster than eight on a 41-sample Orion bucket.
+WEB_INSPECT_WORKERS = 8
+
+#: `SCAN_INSPECT_BUDGET_S` in a bucket. That 41-sample bucket is 205 files and
+#: two minutes of reading; a sample's three rasters are most of it.
+WEB_INSPECT_BUDGET_S = 600
 
 #: Inspected files remembered across scans, by `(realpath, size, mtime_ns)`.
 INSPECT_CACHE_SIZE = 4096
@@ -204,7 +216,8 @@ class Inventory:
         "dirs": 0, "files": 0, "candidates": 0, "inspected": 0})
     budget_hit: dict | None = None
     #: Where the roots are: None for this computer, `("sftp", target)` for a
-    #: files-only server, `("node", name)` for a data node. See `place_of`.
+    #: files-only server, `("node", name)` for a data node, `("web", host)`
+    #: for a bucket or web host. See `place_of`.
     place: tuple | None = None
     #: Bumped on every change, so a plan can be cached against it.
     version: int = 0
@@ -236,14 +249,16 @@ class Inventory:
 
 def place_of(paths, node=None):
     """Where `paths` are: None for this computer, `("sftp", target)` for a
-    files-only server, `("node", name)` for a data node.
+    files-only server, `("node", name)` for a data node, `("web", host)` for
+    a bucket or a web host -- `s3://lin-2023-orion-crc`, the address up to
+    its path.
 
-    One place per scan. A web address other than `sftp://` is refused: a
-    bucket has no folders to walk, only a store to read, which is Import
-    Sample's job.
+    One place per scan. Whether a web address is a folder that can be walked
+    is the host's to say: a bucket always lists, an HTTPS gateway in front of
+    one never does (`_remote_root` says so).
     """
     from plexora.server.providers.base import is_remote_locator
-    from plexora.server.utils import sftp
+    from plexora.server.utils import remote_store, sftp
 
     if node:
         return ("node", str(node))
@@ -253,10 +268,8 @@ def place_of(paths, node=None):
         if text.lower().startswith(f"{sftp.SCHEME}://"):
             places.add(("sftp", sftp.target_of(text)))
         elif is_remote_locator(text):
-            raise ValueError(
-                f"{text} is a web address. A folder can be scanned on this "
-                "computer, on a data node or on a files-only server; a store "
-                "at a web address is added with Import Sample.")
+            url = remote_store.canonical_url(text)
+            places.add(("web", f"{remote_store._scheme(url)}://{remote_store.host_of(url)}"))
         else:
             places.add(None)
     if len(places) > 1:
@@ -296,6 +309,8 @@ def _listing(directory, place):
                            entry=entry)
                     for entry in sorted(found, key=lambda e: e.name)]
     kind, name = place
+    if kind == "web":
+        return _web_listing(directory)
     if kind == "sftp":
         from plexora.server.utils import sftp
 
@@ -316,6 +331,27 @@ def _listing(directory, place):
                    bool(row.get("is_dir")), row.get("kind") == "broken",
                    stat=(int(row.get("size") or 0), int(row.get("mtime") or 0) * 10 ** 9))
             for row in sorted(answer.get("entries") or (), key=lambda r: r["name"])]
+
+
+def _web_listing(directory):
+    """`[_Child]` in a folder of a bucket or a web host, by name.
+
+    A version tag stands in for the date (`mtime_ns`): it is what tells a
+    replaced file from the one inspected before.
+    """
+    import zlib
+
+    from plexora.server.utils import remote_store
+
+    store, prefix = remote_store.open_store(directory)
+    found = store.list_entries(prefix)
+    if found is None:
+        raise OSError(f"{remote_store.host_of(directory)} did not list "
+                      f"{remote_store.url_name(directory)}.")
+    return [_Child(row["name"], remote_store.url_join(directory, row["name"]), row["dir"],
+                   stat=(int(row.get("size") or 0),
+                         zlib.crc32(str(row.get("etag") or "").encode())))
+            for row in sorted(found, key=lambda r: r["name"])]
 
 
 def _basename(path) -> str:
@@ -741,17 +777,16 @@ def inspect(inventory, *, cancel=None, progress=None, budget_s=None):
 
     @param progress - `progress(done, total, message)`, called per file.
     """
-    budget = SCAN_INSPECT_BUDGET_S if budget_s is None else budget_s
+    web = (inventory.place or ("",))[0] == "web"
+    budget = budget_s if budget_s is not None else (
+        WEB_INSPECT_BUDGET_S if web else SCAN_INSPECT_BUDGET_S)
     started = time.monotonic()
     _settle_channel_folders(inventory)
     pending = [entry for entry in inventory.ordered() if not entry.inspected]
     pending.sort(key=lambda e: _INSPECT_ORDER.get(e.kind, 9))
     total = len(pending)
-    for index, entry in enumerate(pending):
-        if cancel is not None and cancel.is_set():
-            return inventory
-        if progress:
-            progress(index, total, f"Reading {entry.name} ({index + 1} of {total})")
+
+    def one(entry):
         record = _cached(entry)
         if record is not None:
             with inventory.lock:
@@ -773,9 +808,46 @@ def inspect(inventory, *, cancel=None, progress=None, budget_s=None):
             inventory.counts["inspected"] = sum(
                 1 for e in inventory.entries.values() if e.inspected)
         inventory.changed()
+
+    if web and total > 1:
+        _inspect_together(pending, one, cancel, progress)
+        return inventory
+    for index, entry in enumerate(pending):
+        if cancel is not None and cancel.is_set():
+            return inventory
+        if progress:
+            progress(index, total, f"Reading {entry.name} ({index + 1} of {total})")
+        one(entry)
     if progress:
         progress(total, total, "Done")
     return inventory
+
+
+def _inspect_together(pending, one, cancel, progress):
+    """`one(entry)` for every entry, `WEB_INSPECT_WORKERS` at a time, taken in
+    order (rasters first). Takes no new one once cancelled."""
+    from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
+
+    total, done = len(pending), 0
+    queue = deque(pending)
+    # `layer-` threads, as every background job's: the suite joins them.
+    with ThreadPoolExecutor(max_workers=WEB_INSPECT_WORKERS,
+                            thread_name_prefix="layer-scan") as pool:
+        running = set()
+        while queue or running:
+            while queue and len(running) < WEB_INSPECT_WORKERS and not (
+                    cancel is not None and cancel.is_set()):
+                running.add(pool.submit(one, queue.popleft()))
+            if not running:
+                break
+            finished, running = wait(running, return_when=FIRST_COMPLETED)
+            for future in finished:
+                future.result()
+                done += 1
+                if progress:
+                    progress(done, total, f"Read {done} of {total} files")
+    if progress and not (cancel is not None and cancel.is_set()):
+        progress(total, total, "Done")
 
 
 def _classify_by_name(entry, place=None):
@@ -892,7 +964,7 @@ def _inspect_remote(entry, place):
     kind, name = place
     if entry.kind == "bundle":
         return _inspect_bundle(entry, node=name if kind == "node" else None)
-    if entry.kind == "raster" and kind == "sftp":
+    if entry.kind == "raster" and kind in ("sftp", "web"):
         declared = "mask" if _guess_role(entry) == "mask" else None
         layers, _questions, _bundle, warnings = engine._detect_remote(
             entry.path, {}, declared)
@@ -904,7 +976,7 @@ def _inspect_remote(entry, place):
     if kind == "node" and entry.kind == "parquet":
         return {"inspected": True, "role": "table", "modality": "cells",
                 "label": entry.name, "detail": "parquet"}
-    where = "a data node" if kind == "node" else name
+    where = {"node": "a data node", "web": "a web address"}.get(kind, name)
     return {"inspected": True, "role": None,
             "reason": f"{entry.name} is not read from {where}; Plexora reads "
                       "images, masks and CSV tables there."}
@@ -946,10 +1018,11 @@ def _remote_table(entry, place):
 
     kind, name = place
     lowered = entry.name.lower()
-    if kind == "sftp" and not lowered.endswith(engine.SFTP_TABLE_SUFFIXES):
+    if kind in ("sftp", "web") and not lowered.endswith(engine.SFTP_TABLE_SUFFIXES):
+        where = "a files-only server" if kind == "sftp" else "a web address"
         return {"inspected": True, "role": None,
-                "reason": f"{entry.name} is not read from {name}; a table on a "
-                          "files-only server is copied over as CSV or TSV."}
+                "reason": f"{entry.name} is not read from {name}; a table at "
+                          f"{where} is copied over as CSV or TSV."}
     if kind == "node" and lowered.endswith(".h5ad"):
         return {"inspected": True, "role": "table", "modality": "cells",
                 "label": entry.name, "detail": "anndata"}
@@ -958,6 +1031,10 @@ def _remote_table(entry, place):
             from plexora.server.utils import sftp
 
             local, whole = sftp.head_copy(entry.path)
+        elif kind == "web":
+            from plexora.server.utils import remote_store
+
+            local, whole = remote_store.head_copy(entry.path)
         else:
             local, whole = _node_head_copy(name, entry)
     except Exception as error:  # noqa: BLE001
@@ -1144,6 +1221,8 @@ def check_roots(paths, *, node=None):
 def _remote_root(text, place):
     """A remote folder, checked to be one, in the spelling the walk uses."""
     kind, name = place
+    if kind == "web":
+        return _web_root(text)
     if kind == "sftp":
         from plexora.server.utils import sftp
 
@@ -1181,6 +1260,35 @@ def _remote_root(text, place):
     if not entry.get("is_dir"):
         raise ValueError(f"{leaf} is a file. Choose the folder that holds the samples.")
     return paths.join(found.get("path") or folder, leaf)
+
+
+def _web_root(text):
+    """A folder in a bucket or on a web host, checked to list something.
+
+    One listing. A host that will not list it is told apart from a folder
+    that is not there only by what the host lets on, so the sentence names
+    the three things it can be.
+    """
+    from plexora.server.utils import remote_store
+
+    url = remote_store.canonical_url(text)
+    if remote_store.is_file_url(url):
+        raise ValueError(f"{remote_store.url_name(url)} is a file. Choose the "
+                         "folder that holds the samples.")
+    try:
+        store, prefix = remote_store.open_store(url)
+    except remote_store.RemoteSupportMissing as error:
+        raise ValueError(str(error)) from None
+    found = store.list_entries(prefix)
+    if found is None:
+        raise ValueError(
+            f"{url} could not be listed: it is not there, it needs its access "
+            "set up in Settings > Web data, or its host does not list folders "
+            "(an https:// gateway in front of a bucket never does -- use the "
+            "bucket's own s3:// or gs:// address).")
+    if not found:
+        raise ValueError(f"There is nothing in {url}.")
+    return url
 
 
 def _node_root_by_detection(name, text):

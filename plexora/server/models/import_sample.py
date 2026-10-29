@@ -764,12 +764,18 @@ def register_layers(project_name, proposal, *, answers=None):
     mask = _preferred_mask(proposal.layers)
     table = next((l for l in proposal.layers if l.role == "table"), None)
     registered = [l for l in proposal.layers if l.role == "layer"]
+    # Each step said as it starts and ends, as a fresh import says them
+    # (`_register`): a cell table in a bucket is copied here first, minutes
+    # of download whose progress the dialog shows (`add_layers`' token).
+    step = layer_jobs.registration_step
 
     before = Project.find(project_name)
     if mask is not None:
         attach_segmentation(project_name, mask.src)
+        step(mask.id, "Queued", status="ready")
     if table is not None:
         previous = Project.find(project_name)
+        step(table.id, "Reading the table")
         try:
             replace_project_data(project_name, table.src, {
                 "table": table.table, **_subset_of(table, answers),
@@ -782,6 +788,7 @@ def register_layers(project_name, proposal, *, answers=None):
                 _restore_mask(project_name, before.segmentation)
             raise
         _reload_if_open(project_name, previous)
+        step(table.id, status="ready")
 
     def _apply(project):
         for bundle in proposal.bundles:
@@ -960,12 +967,20 @@ def _restore_mask(project_name, segmentation):
                                    if segmentation.transform else None))
 
 
-def add_layers(project_name, paths, *, answers=None, node=None):
-    """Inspect these paths and add them to an existing sample."""
+def add_layers(project_name, paths, *, answers=None, node=None, token=None):
+    """Inspect these paths and add them to an existing sample.
+
+    @param token - names this request for `/import/status?token=`, as
+        `import_sample`'s does, so the dialog can draw each step's progress
+        while the POST runs.
+    """
     proposal = import_proposal.inspect_paths(
         paths, node=node, answers=answers, sample=project_name)
     if not proposal.samples:
         reasons = [entry["reason"] for entry in proposal.unrecognised]
         raise ImportError_(
             reasons[0] if reasons else "Nothing Plexora can read here.")
-    return register_layers(project_name, proposal.samples[0], answers=answers)
+    sample = proposal.samples[0]
+    with layer_jobs.registering(
+            token, [l.id for l in sample.layers if l.role != "note"]):
+        return register_layers(project_name, sample, answers=answers)

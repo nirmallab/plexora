@@ -288,4 +288,39 @@ await check("names and paths are escaped in the table", () => {
     assert.ok(!html.includes('"q".tif'));
 });
 
+await check("a bucket's dataset is named for the bucket, not for its data folder", () => {
+    assert.equal(builder.defaultName("s3://lin-2023-orion-crc/data"), "lin-2023-orion-crc");
+    assert.equal(builder.defaultName("s3://lin-2023-orion-crc/data/"), "lin-2023-orion-crc");
+    assert.equal(builder.defaultName("gs://idc-open-data/CRC_cohort/images"), "CRC_cohort");
+    assert.equal(builder.defaultName("s3://bucket"), "bucket");
+    // Anything that is not a web address is named for its own folder, as before.
+    assert.equal(builder.defaultName("/n/scratch/cohort/data"), "data");
+    assert.equal(builder.defaultName("sftp://o2.hms.edu/n/scratch/run"), "run");
+});
+
+await check("a grouped plan draws a header per group, and a bucket's tables say later", () => {
+    const row = (id, group) => ({ id, name: id, status: "matched", group,
+        image: { path: `s3://b/d/${id}/a.tif`, rel: `${id}/a.tif`, name: "a.tif" },
+        layers: [{ path: `s3://b/d/${id}/he.tif`, rel: `${id}/he.tif`, name: "he.tif", modality: "he" }],
+        mask: null, warnings: [],
+        table: { path: `s3://b/d/${id}/c.csv`, rel: `${id}/c.csv`, name: "c.csv", confidence: "high" } });
+    const view = { phase: "plan", build: null, expanded: new Set(["CRC1"]), selected: new Set(),
+        busy: new Set(), filter: { text: "", status: "all" }, renaming: null, shared: new Set(),
+        leftOut: new Set() };
+    const plan = { place: { kind: "web", name: "s3://b" },
+        groups: [{ name: "CRC", projects: 2 }, { name: "Lung", projects: 1 }],
+        projects: [row("CRC1", "CRC"), row("CRC2", "CRC"), row("L1", "Lung")] };
+    const html = builder.html.table(plan, view);
+    assert.equal((html.match(/class="plx-dsb-group"/g) || []).length, 2);
+    assert.ok(html.indexOf(">CRC<") < html.indexOf('data-project="CRC1"'));
+    assert.ok(html.indexOf(">Lung<") > html.indexOf('data-project="CRC2"'));
+    assert.ok(html.includes("+H&amp;E"), "an H&E beside the image is on its badge");
+    assert.equal((html.match(/>later</g) || []).length, 3);
+    assert.ok(html.includes("attached from its sample"), "the open row says why");
+    // Ungrouped: no header rows at all.
+    const flat = builder.html.table({ projects: [row("A", null)] }, view);
+    assert.ok(!flat.includes("plx-dsb-group"));
+    assert.ok(!flat.includes(">later<"), "a table on this computer is not left for later");
+});
+
 console.log(`\n${results.length} checks passed`);

@@ -7871,6 +7871,30 @@ html.is-native-dragging.has-drop-target body::after {
     background: rgba(255, 255, 255, 0.025);
 }
 
+/* A folder the tree sorted its samples into (the plan's `groups`). */
+.plx-dsb-group {
+    align-items: center;
+    background: rgba(255, 255, 255, 0.02);
+    border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+    color: var(--text-primary);
+    display: flex;
+    font-size: 11.5px;
+    font-weight: 700;
+    gap: var(--space-2);
+    min-height: 28px;
+    padding: 0 var(--space-3);
+}
+
+.plx-dsb-group .fas {
+    color: var(--text-muted);
+    font-size: 11px;
+}
+
+.plx-dsb-group-count {
+    color: var(--text-muted);
+    font-weight: 400;
+}
+
 .plx-dsb-row.is-expanded {
     background: rgba(255, 255, 255, 0.035);
     border-bottom-color: transparent;

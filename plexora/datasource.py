@@ -259,6 +259,7 @@ def _segmentation_config_fields(segmentation_path, dataset_dir, segmentation_asy
     project instead.
     """
     from plexora.server.models import data_model
+    from plexora.server.providers.base import is_remote_locator
     from plexora.server.utils import segmentation_pyramid
 
     if not segmentation_path:
@@ -274,6 +275,16 @@ def _segmentation_config_fields(segmentation_path, dataset_dir, segmentation_asy
         "segmentationSourceKey": segmentation_pyramid.source_fingerprint(segmentation_path),
         "segmentationMode": mode,
     }
+    if is_remote_locator(segmentation_path):
+        # A mask at a web address is never fetched while it is registered: a
+        # label pyramid there is read in place, a tile at a time, and anything
+        # else is converted when its sample is first opened
+        # (`data_model.load_config`). A dataset made from a bucket's forty
+        # samples used to start forty whole-mask downloads at once.
+        servable = data_model._servable_as_is(str(segmentation_path), mode)
+        fields["segmentation"] = str(segmentation_path) if servable else None
+        fields["segmentation_status"] = "ready" if servable else "pending"
+        return fields, None
     if segmentation_async:
         # Converting a large mask takes tens of seconds, far too long to hold a
         # form submission open -- the import page waits on the job's reported

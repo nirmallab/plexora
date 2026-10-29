@@ -406,7 +406,8 @@ def can_serve_in_place(path) -> bool:
     Only a TIFF or a zarr store on this machine. The tile route opens masks
     with tifffile or zarr, so a PNG or an Imaris file is always converted --
     even one that already looks like outlines, which would otherwise be handed
-    to the viewer as it is. A web address is never served tile by tile (see
+    to the viewer as it is. A web address is not opened by path: a label
+    pyramid there is read through `open_remote_labels` (see
     data_model._servable_as_is).
     """
     return not _is_remote(path) and not is_png(path) and not is_ims(path)
@@ -487,7 +488,8 @@ def _zarr_level_zero(node):
 
 
 class _TiffPlane:
-    """A TIFF's full-resolution label plane at a web address, read by tiles.
+    """A TIFF's label plane at a web address, read by tiles: the full-resolution
+    one, or the pyramid's `level`.
 
     Never through tifffile's zarr view: that reads inside zarr's IO loop, and a
     streamed read waits on the same loop for its bytes (see tiff_region). Each
@@ -496,11 +498,11 @@ class _TiffPlane:
     by the conversion's "one 2-D label plane" check like a local one.
     """
 
-    def __init__(self, tiff):
+    def __init__(self, tiff, level=0):
         from plexora.server.utils import tiff_region
 
         series = tiff.series[0]
-        level = series.levels[0] if getattr(series, "levels", None) else series
+        level = series.levels[level] if getattr(series, "levels", None) else series
         self._page = level.pages[0]
         self._fetch = tiff_region._fetcher(tiff)
         self._read_region = tiff_region.read_region
@@ -574,6 +576,56 @@ def _remote_level_zero(url):
             tiff_region.close_tiff(tiff)
             raise
     return _zarr_level_zero(ome_zarr._open_group(url)), lambda: None
+
+
+class _TiffLabelLevels:
+    """A tiled label pyramid in a TIFF at a web address, as the tile route
+    reads one: levels keyed "0", "1", ..., what `zarr.open(series.aszarr())`
+    gives for the same file on disk (`label_overlay.label_region`). That view
+    cannot read a streamed file, so each level is a `_TiffPlane`, fetching only
+    the tiles a request touches, through the chunk cache.
+    """
+
+    def __init__(self, tiff):
+        self._tiff = tiff
+        count = len(getattr(tiff.series[0], "levels", None) or [tiff.series[0]])
+        self._levels = {str(index): _TiffPlane(tiff, index) for index in range(count)}
+
+    def __contains__(self, key) -> bool:
+        return str(key) in self._levels
+
+    def __getitem__(self, key):
+        return self._levels[str(key)]
+
+    def __len__(self) -> int:
+        return len(self._levels)
+
+    def array_keys(self):
+        return iter(self._levels)
+
+    def close(self) -> None:
+        from plexora.server.utils import tiff_region
+
+        tiff_region.close_tiff(self._tiff)
+
+
+def open_remote_labels(url):
+    """A label pyramid at a web address, for the tile route to read in place.
+
+    Only for a mask `label_pyramid_gaps` passes: tiled and pyramidal. A TIFF
+    as `_TiffLabelLevels`; OME-Zarr labels as their zarr group, read through
+    the chunk cache.
+    """
+    from plexora.server.utils import remote_image, tiff_region
+
+    if remote_image.kind_or_none(url, probe=False) == remote_image.TIFF:
+        tiff = tiff_region.open_tiff(url)
+        try:
+            return _TiffLabelLevels(tiff)
+        except Exception:
+            tiff_region.close_tiff(tiff)
+            raise
+    return ome_zarr._open_group(url)
 
 
 def resolve_derived_mask(segmentation_path, data_directory=None, *,
@@ -865,26 +917,55 @@ def label_pyramid_gaps(path) -> Optional[list]:
     if is_ims(path):
         # Tiled and pyramidal, but HDF5, which the tile route does not read.
         return ["it is an Imaris file"]
+    if _is_remote(path):
+        return _remote_label_pyramid_gaps(path)
     candidate = Path(path)
     try:
         if ome_zarr.is_zarr_image_path(path):
-            group = zarr.open(str(path), mode="r")
-            if isinstance(group, zarr.Array) or len(group) <= 1:
-                return ["it has only one resolution level (no pyramid)"]
-            return _zarr_level_gaps(group)
+            return _zarr_group_gaps(zarr.open(str(path), mode="r"))
         if not candidate.is_file():
             return None
         with tf.TiffFile(str(candidate), is_ome=False) as reader:
-            series = reader.series[0]
-            page = series.levels[0].pages[0]
-            gaps = []
-            if len(series.levels) <= 1:
-                gaps.append("it has only one resolution level (no pyramid)")
-            if not page.is_tiled:
-                gaps.append("it is not tiled")
-            return gaps
+            return _tiff_level_gaps(reader)
     except Exception:
         return None
+
+
+def _remote_label_pyramid_gaps(url) -> Optional[list]:
+    """`label_pyramid_gaps` for a web address: the header only, nothing else
+    fetched. None when it cannot be read, or is neither a TIFF nor zarr."""
+    from plexora.server.utils import remote_image, tiff_region
+
+    try:
+        kind = remote_image.kind_or_none(url, probe=False)
+        if kind == remote_image.TIFF:
+            tiff = tiff_region.open_tiff(url)
+            try:
+                return _tiff_level_gaps(tiff)
+            finally:
+                tiff_region.close_tiff(tiff)
+        if kind == remote_image.ZARR:
+            return _zarr_group_gaps(ome_zarr._open_group(url))
+    except Exception:
+        return None
+    return None
+
+
+def _tiff_level_gaps(reader) -> list:
+    series = reader.series[0]
+    page = series.levels[0].pages[0]
+    gaps = []
+    if len(series.levels) <= 1:
+        gaps.append("it has only one resolution level (no pyramid)")
+    if not page.is_tiled:
+        gaps.append("it is not tiled")
+    return gaps
+
+
+def _zarr_group_gaps(group) -> list:
+    if isinstance(group, zarr.Array) or len(group) <= 1:
+        return ["it has only one resolution level (no pyramid)"]
+    return _zarr_level_gaps(group)
 
 
 def _zarr_level_gaps(group) -> list:
@@ -1459,6 +1540,7 @@ __all__ = [
     "is_servable_label_pyramid",
     "label_pyramid_gaps",
     "looks_like_outline_mask",
+    "open_remote_labels",
     "outline_output_path",
     "pyramid_factors",
     "pyramidize_segmentation_mask",
