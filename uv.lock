@@ -3174,6 +3174,7 @@ dependencies = [
     { name = "scipy" },
     { name = "shapely" },
     { name = "spatialagents" },
+    { name = "spatialbridge" },
     { name = "spatialdata" },
     { name = "threadpoolctl" },
     { name = "tifffile" },
@@ -3189,7 +3190,7 @@ ai = [
     { name = "pyyaml" },
 ]
 bridge = [
-    { name = "spatialbridge" },
+    { name = "spatialbridge", extra = ["mcp"] },
 ]
 dev = [
     { name = "pytest" },
@@ -3280,7 +3281,8 @@ requires-dist = [
     { name = "scipy" },
     { name = "shapely", specifier = ">=2.1.2" },
     { name = "spatialagents", specifier = ">=0.1,<0.2" },
-    { name = "spatialbridge", marker = "extra == 'bridge'", specifier = ">=0.1,<0.2" },
+    { name = "spatialbridge", specifier = ">=0.2,<0.3" },
+    { name = "spatialbridge", extras = ["mcp"], marker = "extra == 'bridge'", specifier = ">=0.2,<0.3" },
     { name = "spatialdata", specifier = ">=0.8.0" },
     { name = "threadpoolctl", specifier = ">=3.6.0" },
     { name = "tifffile", specifier = ">=2026.7.31" },
@@ -4630,17 +4632,21 @@ wheels = [
 
 [[package]]
 name = "spatialbridge"
-version = "0.1.0"
+version = "0.2.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "anndata" },
-    { name = "mcp" },
     { name = "platformdirs" },
     { name = "pydantic" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/7f/bb/9ea311cea9098bf535e68a8895fec7649dadddb2e65ee2e3a705152641ab/spatialbridge-0.1.0.tar.gz", hash = "sha256:ee5ccd74b826e18fe9fcceb910a491c9a86ec5ef1cc089d293f7b9d2c7124121", size = 144457, upload-time = "2026-10-07T13:39:49.716Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/77/fc/b992009f2f0fd9ccfea0562e67eed0b72e11a4b40cf0d7daf5f7f6bc9f33/spatialbridge-0.2.0.tar.gz", hash = "sha256:59e9bafe1c9971c89271db00ada8eb91319a4cbb46c30df3f5426e28bc4b2007", size = 172256, upload-time = "2026-10-29T02:14:25.226Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/44/2f/1ea43be720f6e8f3dbccb4c5fdeba057b92a1d2ad017d837ddf974e65090/spatialbridge-0.1.0-py3-none-any.whl", hash = "sha256:ecf88bab0452d883abd412ac032d2b17e98d5a0b89ee16ad7ed73987a9a6ad44", size = 53231, upload-time = "2026-10-07T13:39:48.48Z" },
+    { url = "https://files.pythonhosted.org/packages/30/2f/87677b5a440313aed30cab21d38779b99d49d39485af582bb69d61d79d88/spatialbridge-0.2.0-py3-none-any.whl", hash = "sha256:7877fa3b520ce3dce7f90d2ddcac3a6590bb8d910c7b1ad62477378e5da7c609", size = 76541, upload-time = "2026-10-29T02:14:24.073Z" },
+]
+
+[package.optional-dependencies]
+mcp = [
+    { name = "mcp" },
 ]
 
 [[package]]
