@@ -20,14 +20,19 @@ modal ask, and the few things they can change.
 - `POST /settings/license/refresh` -- check with the platform now.
 - `POST /settings/license/deactivate` -- release this device, then remove.
 - `POST /settings/license/remove` -- remove the local licence (no network).
+- `GET  /settings/license/account` -- who this device is signed in as (email,
+  name, organisation), asked of the platform each time for the Account page.
 
 Sign-in, seats and payment happen only at account.biocognia.com; Plexora
-holds no account and never sees a password or an email address here.
+holds no account and never sees a password. The person's own email is shown
+on the Account page and kept nowhere: not on disk, not in a log, not in
+telemetry, and not in any capability an agent or a model can call (the
+platform's invariant 1).
 
-Every mutation answers this machine only, unless the server has an auth
-token, exactly like the agent control plane: a neighbour on the network must
-not be able to install, swap or release somebody's licence because the tiles
-happen to be reachable.
+Every mutation, and the account, answers this machine only unless the server
+has an auth token, exactly like the agent control plane: a neighbour on the
+network must not be able to install, swap or release somebody's licence, or
+read whose it is, because the tiles happen to be reachable.
 
 Nothing here is needed for anything Free, and nothing Free calls it.
 """
@@ -63,7 +68,7 @@ def _local_or_token():
 
 @license_bp.before_request
 def _guard():
-    if request.method != "GET":
+    if request.method != "GET" or request.endpoint == "license.license_account":
         return _local_or_token()
     return None
 
@@ -236,3 +241,33 @@ def license_remove():
 
     LICENSING.remove()
     return jsonify(success=True, license=status_payload())
+
+
+@license_bp.route("/settings/license/account", methods=["GET"])
+def license_account():
+    """Who this device is signed in as: `{email, name, org: {name, kind}}`,
+    asked of the platform now and answered `no-store`. Only these four fields
+    pass, and nothing here writes them anywhere."""
+    from plexora.licensing import LICENSING, LicenseError
+
+    # `Licensing.account` arrived in biocognia 0.1.2; an older client has no
+    # way to ask, which the page says rather than failing.
+    ask = getattr(LICENSING, "account", None)
+    if ask is None:
+        reply = jsonify(success=False, code="client_too_old",
+                        error="Showing your account needs a newer BioCognia client.")
+        reply.status_code = 501
+    else:
+        try:
+            answer = ask()
+        except LicenseError as exc:
+            code = getattr(exc, "code", None) or "license_error"
+            reply = jsonify(success=False, error=str(exc), code=code)
+            reply.status_code = 409 if code == "not_activated" else 502
+        else:
+            org = answer.get("org") if isinstance(answer.get("org"), dict) else {}
+            reply = jsonify(success=True, account={
+                "email": str(answer.get("email") or ""), "name": str(answer.get("name") or ""),
+                "org": {"name": str(org.get("name") or ""), "kind": str(org.get("kind") or "")}})
+    reply.headers["Cache-Control"] = "no-store"
+    return reply

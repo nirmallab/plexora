@@ -1233,6 +1233,166 @@
     display: none;
 }
 
+/* -- the account --
+ *
+ * Who you are, above the plan: initials in a circle, the name at the
+ * headline step, the email and the organisation under it, and Manage account
+ * at the end. No card of its own -- it heads the page, and the plan card
+ * under it carries the weight. Until there is someone to show, the circle
+ * holds a person glyph and the line under it says why. */
+
+.account-profile {
+    align-items: center;
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-4);
+    margin-bottom: var(--space-5);
+}
+
+.account-avatar {
+    align-items: center;
+    background: var(--surface-2);
+    border: 1px solid var(--border-subtle);
+    border-radius: 50%;
+    color: var(--text-muted);
+    display: inline-flex;
+    flex: none;
+    font-size: 15px;
+    font-weight: 600;
+    height: 48px;
+    justify-content: center;
+    letter-spacing: 0.02em;
+    width: 48px;
+}
+
+.account-profile[data-state="shown"] .account-avatar {
+    background: color-mix(in srgb, var(--accent-channel) 14%, var(--surface-1));
+    border-color: color-mix(in srgb, var(--accent-channel) 40%, transparent);
+    color: var(--accent-channel);
+}
+
+.account-avatar-icon[hidden],
+.account-initials[hidden],
+.account-email[hidden],
+.account-note[hidden] {
+    display: none;
+}
+
+.account-who {
+    display: flex;
+    flex: 1 1 220px;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 0;
+}
+
+.account-name {
+    color: var(--text-primary);
+    font-size: 20px;
+    font-weight: 700;
+    line-height: 1.1;
+    overflow-wrap: anywhere;
+}
+
+.account-profile:not([data-state="shown"]) .account-name {
+    color: var(--text-secondary);
+}
+
+.account-email {
+    color: var(--text-secondary);
+    font-size: 13px;
+    overflow-wrap: anywhere;
+}
+
+.account-note {
+    color: var(--text-muted);
+    font-size: 12px;
+    line-height: 1.45;
+}
+
+.license-quiet-button.account-manage {
+    margin-left: auto;
+    text-decoration: none;
+}
+
+/* The organisation's Plexora AI credits: a count, not a form. The coin
+   wears the launcher's tool-icon colours (agentPanel.css .plx-ai-tool-icon),
+   so AI looks the same wherever it is spent; those literals are its. */
+.account-credits {
+    align-items: center;
+    background: var(--surface-1);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-lg);
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-4);
+    margin-bottom: var(--space-5);
+    padding: var(--space-4) var(--space-5);
+}
+
+.account-credits[hidden],
+.account-credits-note[hidden],
+.account-topup[hidden] {
+    display: none;
+}
+
+.account-credits-icon {
+    align-items: center;
+    background: linear-gradient(135deg, rgba(79, 140, 255, 0.16), rgba(255, 92, 168, 0.12));
+    border: 1px solid rgba(155, 92, 255, 0.35);
+    border-radius: var(--radius-md);
+    color: #c9b6ff;
+    display: inline-flex;
+    flex: none;
+    font-size: 18px;
+    height: 44px;
+    justify-content: center;
+    width: 44px;
+}
+
+.account-credits-body {
+    display: flex;
+    flex: 1 1 200px;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 0;
+}
+
+.account-credits-caption {
+    color: var(--text-muted);
+    font-size: 11px;
+    font-weight: 700;
+    text-transform: uppercase;
+}
+
+.account-credits-count {
+    align-items: baseline;
+    color: var(--text-primary);
+    display: flex;
+    flex-wrap: wrap;
+    font-size: 20px;
+    font-variant-numeric: tabular-nums;
+    font-weight: 700;
+    gap: var(--space-2);
+    line-height: 1.1;
+}
+
+.account-credits-unit {
+    color: var(--text-secondary);
+    font-size: 12px;
+    font-weight: 400;
+}
+
+.account-credits-note {
+    color: var(--text-secondary);
+    font-size: 12px;
+    font-variant-numeric: tabular-nums;
+}
+
+.account-topup {
+    margin-left: auto;
+}
+
 /* -- adding a licence -- */
 
 .license-add {

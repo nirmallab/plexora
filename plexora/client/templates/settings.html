@@ -1,6 +1,6 @@
 {% extends layout|default('base.html', true) %}
 {% block style %}
-    <link rel="stylesheet" href="{{ data.base_url }}/client/src/css/settings.css?v=20261024_drop_router">
+    <link rel="stylesheet" href="{{ data.base_url }}/client/src/css/settings.css?v=20261030_account">
 {% endblock %}
 {% block content %}
 <title>Plexora - Settings</title>
@@ -613,24 +613,47 @@
                 </div>
             </section>
 
-            {# License: the plan (plexora/licensing) from /license/status, and
-               the three ways to add Pro -- connect this device (a code the
-               person approves at account.biocognia.com), the licence key
-               shown under Licences in the portal (or an activation code or
-               token), or an offline licence file -- behind
-               one switch, so the page shows one form at a time. Nothing here
-               is needed for Free, the page never asks the BioCognia platform
-               anything until a button does, and Plexora never sees a
-               password: signing in happens in the browser. #}
+            {# Account (the section id stays `license`, which links name):
+               who this device is signed in as, the plan (plexora/licensing)
+               from /license/status, the organisation's AI credits, and the
+               three ways to add Pro -- connect this device (a code the person
+               approves at account.biocognia.com), the licence key shown under
+               Licences in the portal (or an activation code or token), or an
+               offline licence file -- behind one switch, so the page shows
+               one form at a time. On Free nothing here asks the BioCognia
+               platform anything until a button does. On a connected device
+               the account and the credits are asked for when the page opens,
+               and held in the page only: the email is never stored. Plexora
+               never sees a password: signing in happens in the browser. #}
             <section class="settings-panel" id="settings_panel_license"
-                     data-section="license" aria-label="License">
+                     data-section="license" aria-label="Account">
 
-                <h2 class="settings-panel-title">License</h2>
+                <h2 class="settings-panel-title">Account</h2>
                 <p class="settings-panel-lead">
                     Plexora AI is currently invite only. If you would like to be
                     considered, email
                     <a href="mailto:support@biocognia.com">support@biocognia.com</a>.
                 </p>
+
+                {# Who you are: GET /settings/license/account, drawn by
+                   settingsPage.js AccountView. `data-state` is none, loading,
+                   shown or unavailable; the note says why when there is no
+                   one to show. #}
+                <div class="account-profile" id="settings_account" data-state="none">
+                    <span class="account-avatar" aria-hidden="true">
+                        <span class="account-avatar-icon" id="settings_account_icon"><span class="fas fa-user"></span></span>
+                        <span class="account-initials" id="settings_account_initials" hidden></span>
+                    </span>
+                    <div class="account-who">
+                        <span class="account-name" id="settings_account_name">Not signed in</span>
+                        <span class="account-email" id="settings_account_email" hidden></span>
+                        <span class="account-note" id="settings_account_note">Connect this device below to see your account here.</span>
+                    </div>
+                    <a class="license-quiet-button account-manage" id="settings_account_manage"
+                       href="https://account.biocognia.com" target="_blank" rel="noopener" hidden>
+                        Manage account<span class="fas fa-arrow-up-right-from-square" aria-hidden="true"></span>
+                    </a>
+                </div>
 
                 {# The plan. `data-tone` (settingsPage.js LicenseSection.draw)
                    colours the seal and the status: pro, warn, lapsed or free. #}
@@ -673,6 +696,25 @@
                             <a id="settings_license_trial" href="#" target="_blank"
                                rel="noopener">start a 30-day trial</a>.</span>
                     </p>
+                </div>
+
+                {# The organisation's Plexora AI credits, on a licence with AI:
+                   GET /ai/v1/balance, asked again when the window comes back
+                   (credits bought in the browser meanwhile). #}
+                <div class="account-credits" id="settings_account_credits" hidden>
+                    <span class="account-credits-icon" aria-hidden="true">
+                        <span class="fas fa-coins"></span>
+                    </span>
+                    <div class="account-credits-body">
+                        <span class="account-credits-caption">Plexora AI credits</span>
+                        <span class="account-credits-count">
+                            <span id="settings_account_credits_count">&mdash;</span>
+                            <span class="account-credits-unit">available</span>
+                        </span>
+                        <span class="account-credits-note" id="settings_account_credits_note" hidden></span>
+                    </div>
+                    <button type="button" class="btn btn-outline-light account-topup"
+                            id="settings_account_topup" hidden>Add credits</button>
                 </div>
 
                 <div class="license-add">
@@ -790,7 +832,8 @@
                     <span>
                         Your data never leaves this machine: a licence check sends the
                         certificate and a hash that identifies this device, nothing
-                        else.
+                        else. Your email and name are read from account.biocognia.com
+                        each time this page opens, and are never saved on this computer.
                     </span>
                 </p>
             </section>
@@ -800,5 +843,5 @@
 {# remoteState.js is loaded by base.html, above and deferred, so it is parsed
    before this file runs -- the Remote servers section is one of its
    subscribers rather than a poller of its own. #}
-<script src="{{ data.base_url }}/client/src/js/views/settingsPage.js?v=20261027_telemetry" defer></script>
+<script src="{{ data.base_url }}/client/src/js/views/settingsPage.js?v=20261030_account" defer></script>
 {% endblock %}

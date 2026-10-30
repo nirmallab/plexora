@@ -46,6 +46,11 @@ CONNECT_CHECKS = (
     "Connect this device shows the code and the link, opens the portal, and polls",
     "a declined code says so and stops polling",
     "Cancel stops polling and puts the button back",
+    "Account shows who is signed in: initials, name, email, organisation and Manage account",
+    "on Free the account says how to connect, and neither the account nor the balance is asked",
+    "an account that cannot be read says why",
+    "AI credits show the balance and the member's limit; Add credits opens the portal; "
+    "coming back to the window asks again, and a failed ask keeps the number",
 )
 
 

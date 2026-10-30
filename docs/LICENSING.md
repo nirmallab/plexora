@@ -15,8 +15,11 @@ Plexora is licensed by BioCognia (the Licensor in `LICENSE`).
 Licences, seats, devices and AI credits live on the BioCognia platform, which
 every BioCognia product (Plexora, SCIMAP Pro) shares. People sign in and buy
 at [account.biocognia.com](https://account.biocognia.com); Plexora holds no
-account, never sees a password, an email address or payment details, and its
-only credentials are a device certificate and a 30-minute AI token. The client
+account, never sees a password or payment details, never stores an email
+address, and its only credentials are a device certificate and a 30-minute AI
+token. Settings > Account shows the person at the machine their own email,
+name and organisation, asked of the platform (`POST /v1/account`, with the
+device certificate) each time the page opens and kept in the page only. The client
 side is the shared `biocognia` package, a hard dependency; this repository
 keeps only Plexora's gates, its Free semantics and its words.
 
@@ -312,7 +315,7 @@ needs acting on: an unrenewed certificate within 14 days of its end (the
 machine has been offline), grace, or an offline licence file that runs out
 before the licence does.
 
-**Connecting a device.** Settings › License › **Connect this device** (or
+**Connecting a device.** Settings › Account › **Connect this device** (or
 `plexora license activate` with no argument) asks the platform for a short
 code, shows it with the link to `account.biocognia.com/activate`, and polls.
 The person signs in there, approves, and the platform answers with one
@@ -325,7 +328,7 @@ is under Licences at account.biocognia.com, can be shown there again at any
 time, works on each of the seat's devices up to its allowance (two, plus any
 devices added to the seat), and keeps
 working through renewals. Replacing it there stops the old key; devices already
-connected stay connected. Paste it in Settings › License › Licence key or pass
+connected stay connected. Paste it in Settings › Account › Licence key or pass
 it to `plexora license activate`. A one-time activation code (`BIOC-XXXX-XXXX`)
 or a `BIOCT1_` token goes in the same places.
 
@@ -336,7 +339,7 @@ Resolution is lazy and fails open to Free. It runs in this order:
 2. `BIOCOGNIA_TOKEN`: a `BIOCT1_` token, exchanged once per product and cached
 3. `PLEXORA_LICENSE_FILE`: a `.bioc` offline licence file
 4. `<config>/biocognia/plexora/license.json` (`user_config_dir("biocognia")`),
-   written by `plexora license activate|install` or by Settings > License
+   written by `plexora license activate|install` or by Settings > Account
 
 The states are `free`, `trial`, `pro_active` (the library's `active`),
 `offline_valid`, `grace`, `expired`, `revoked` and `invalid`. Pro runs in the

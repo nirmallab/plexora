@@ -40,7 +40,7 @@ Plexora yet.
 
 1. Point a test machine at staging: `BIOCOGNIA_SERVER=<core staging>` and
    `BIOCOGNIA_AI_GATEWAY=<ai staging>`.
-2. Settings › License › **Connect this device**, approve the code in the
+2. Settings › Account › **Connect this device**, approve the code in the
    staging portal; the status card shows Pro.
 3. `plexora ai credits` shows the organisation's balance and the member and
    product lines; an AI gating session on the synthetic project moves the

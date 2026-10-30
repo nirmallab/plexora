@@ -171,6 +171,73 @@ def test_changes_are_refused_from_another_machine(client, pro_license):
     assert client.get("/license/status", environ_base=remote).status_code == 200
 
 
+ADA = {"email": "ada@lab.example.org", "name": "Ada Lovelace",
+       "org": {"name": "Example Lab", "kind": "institution", "id": "org_1"},
+       "usr": "usr_1", "server_time": 1}
+
+
+def _account(monkeypatch, answer=None, error=None):
+    """`Licensing.account` as the platform would answer it (biocognia 0.1.2)."""
+    def ask():
+        if error is not None:
+            raise error
+        return answer
+
+    monkeypatch.setattr(LICENSING, "account", ask, raising=False)
+
+
+def test_the_account_passes_four_fields_and_is_never_cached(client, monkeypatch):
+    _account(monkeypatch, ADA)
+    reply = client.get("/settings/license/account")
+    assert reply.status_code == 200
+    assert reply.headers["Cache-Control"] == "no-store"
+    assert reply.get_json()["account"] == {"email": "ada@lab.example.org", "name": "Ada Lovelace",
+                                           "org": {"name": "Example Lab", "kind": "institution"}}
+    assert "ada@" not in client.get("/license/status").get_data(as_text=True)
+
+
+def test_the_account_answers_this_machine_only(client, monkeypatch):
+    """A neighbour who can reach the tiles cannot read whose licence it is."""
+    _account(monkeypatch, ADA)
+    reply = client.get("/settings/license/account", environ_base={"REMOTE_ADDR": "10.0.0.8"})
+    assert reply.status_code == 403
+    assert "ada@" not in reply.get_data(as_text=True)
+
+
+def test_an_account_that_cannot_be_asked_says_why(client, monkeypatch):
+    from biocognia.errors import LicenseError, ServerError
+
+    _account(monkeypatch, error=LicenseError("Plexora is not connected on this device.", code="not_activated"))
+    reply = client.get("/settings/license/account")
+    assert reply.status_code == 409 and reply.get_json()["code"] == "not_activated"
+    _account(monkeypatch, error=ServerError("Could not reach the BioCognia platform.", code="unreachable"))
+    reply = client.get("/settings/license/account")
+    assert reply.status_code == 502 and "Could not reach" in reply.get_json()["error"]
+    # A BioCognia client older than 0.1.2 has no way to ask.
+    monkeypatch.setattr(LICENSING, "account", None, raising=False)
+    reply = client.get("/settings/license/account")
+    assert reply.status_code == 501 and reply.get_json()["code"] == "client_too_old"
+    assert reply.headers["Cache-Control"] == "no-store"
+
+
+def test_the_account_through_the_biocognia_client(client, license_service, pro_license):
+    if not hasattr(LICENSING, "account"):
+        pytest.skip("Licensing.account arrives in biocognia 0.1.2")
+    reply = client.get("/settings/license/account")
+    assert reply.status_code == 200, reply.get_json()
+    assert reply.get_json()["account"]["email"] == "ada@lab.example.org"
+    sent = license_service.of("/v1/account")[0]["body"]
+    assert sent["product"] == "plexora" and sent["certificate"].startswith("BIOC1.")
+
+
+def test_settings_calls_it_account_and_says_the_email_is_never_saved(client):
+    page = client.get("/settings").get_data(as_text=True)
+    assert '<h2 class="settings-panel-title">Account</h2>' in page
+    assert 'data-section="license"' in page, "links to Settings > License still land here"
+    assert 'id="settings_account"' in page and 'id="settings_account_credits"' in page
+    assert "never saved on this computer" in page
+
+
 def test_about_names_the_plan_and_nothing_else(client, pro_license):
     info = client.get("/desktop/info").get_json()
     assert info["plan"] == "Pro"

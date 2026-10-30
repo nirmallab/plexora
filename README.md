@@ -111,7 +111,7 @@ commercial price, and both are bought online from the
 individual account, two or more make a team. Licences, devices and AI credits
 are managed on the BioCognia platform, which Plexora shares with SCIMAP Pro: you
 sign in at [account.biocognia.com](https://account.biocognia.com), never in
-Plexora. In Settings > License, **Connect this device** shows a short code and
+Plexora. In Settings > Account, **Connect this device** shows a short code and
 opens the page to approve it; or, from a terminal:
 
 ```bash

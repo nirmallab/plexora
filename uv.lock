@@ -400,15 +400,15 @@ wheels = [
 
 [[package]]
 name = "biocognia"
-version = "0.1.1"
+version = "0.1.2"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "cryptography" },
     { name = "platformdirs" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/36/89/91e116120f0977d1bfcbdaba5abda4088d505eec70b48b6ab0fbc7da78e8/biocognia-0.1.1.tar.gz", hash = "sha256:373d9d17fc4528bb467378ded2dc40aec2bc80f7c41edbed1fe68149b9e3ce16", size = 58997, upload-time = "2026-10-07T15:01:04.819Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/60/40/feacd82a598641431bf375208f890118b49749bfdb0179aa2200c229705f/biocognia-0.1.2.tar.gz", hash = "sha256:464e28a59d0b6e43405d42bd24486ef85216913111d0702a8efd5d93c3ed9c82", size = 64341, upload-time = "2026-10-30T14:42:45.6Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/8a/7c/9990309051555d44c73c272b0d372b5560f781b9c65cdf37aa512ea3e064/biocognia-0.1.1-py3-none-any.whl", hash = "sha256:74827cd49d00f1839caf14616593f5a66ee80f1f373056bc2ec52ad8f52d23b2", size = 58820, upload-time = "2026-10-07T15:01:03.848Z" },
+    { url = "https://files.pythonhosted.org/packages/b8/48/9f3d75e6d7527894953a8373bdc36af15ae47fe787b99014edd2ce59c9a8/biocognia-0.1.2-py3-none-any.whl", hash = "sha256:82be3d89d6e129662420efc1e50e17e4f2c4d176b0bf2745ba517707cf7d6a84", size = 61400, upload-time = "2026-10-30T14:42:44.604Z" },
 ]
 
 [[package]]
@@ -3236,7 +3236,7 @@ requires-dist = [
     { name = "adlfs", marker = "extra == 'remote'", specifier = ">=2024.12" },
     { name = "aiohttp", specifier = ">=3.14.4" },
     { name = "anndata", specifier = ">=0.10" },
-    { name = "biocognia", specifier = ">=0.1.1,<0.2" },
+    { name = "biocognia", specifier = ">=0.1.2,<0.2" },
     { name = "cellpose", marker = "extra == 'segment3d'", specifier = ">=4" },
     { name = "flask", specifier = ">=3.1" },
     { name = "fsspec", specifier = ">=2024.12" },

@@ -214,7 +214,7 @@ def test_a_pro_capability_is_refused_on_free_with_a_structured_error(session, tm
     assert detail["plan_required"] == "pro"
     assert detail["state"] == "free" and detail["plan"] == "free"
     assert detail["off_by_default"] is False
-    assert "Settings > License" in detail["hint"]
+    assert "Settings > Account" in detail["hint"]
     assert "is part of Plexora Pro" in detail["hint"] and "start a trial" in detail["hint"]
     assert _audit(tmp_path)[-1]["status"] == "refused"
 

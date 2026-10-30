@@ -11,7 +11,7 @@
  *       The modal a locked feature opens: what it is, that it is part of
  *       Pro, and two ways forward -- start a trial (the trial page at
  *       account.biocognia.com, in the browser) or connect this device
- *       (Settings > License). A feature that is off by default
+ *       (Settings > Account). A feature that is off by default
  *       (`off_by_default` in the server's refusal) is never called Pro and
  *       offers no trial and no price, none of which would unlock it: external
  *       MCP access is turned on for a licence by an administrator, and a
@@ -104,7 +104,7 @@ window.PlexoraPro = (function () {
                 ? "BIOCOGNIA_OFFLINE is set, so Plexora makes no licensing network call. "
                   + "Ask whoever manages your licence for an offline licence file instead."
                 : "This Plexora build has no BioCognia platform configured. "
-                  + "If you have a licence file, install it in Settings > License.",
+                  + "If you have a licence file, install it in Settings > Account.",
         });
         return false;
     }

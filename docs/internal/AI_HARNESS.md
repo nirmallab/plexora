@@ -36,7 +36,7 @@ plexora ai chat [--resume ID] [--dev]                    # a conversation in the
 ```
 
 To use it, the device needs to be connected to a Pro licence
-(Settings › License › Connect this device, or `plexora license activate`) that
+(Settings › Account › Connect this device, or `plexora license activate`) that
 includes the `ai` entitlement (or `ai:gating` / `ai:qc` for the CLI; the in-app routes and
 `ai.*` capabilities need `ai`; chat needs `ai:chat`, which `ai` covers).
 

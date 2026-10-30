@@ -2155,6 +2155,12 @@
     // password: signing in happens in the browser, at the portal.
     function LicenseSection() {
         this.connecting = null;
+        //: The licence last drawn, and the ask for the account that is out
+        //: (a later draw makes an earlier answer stale).
+        this.info = null;
+        this.asking = 0;
+        this.crediting = false;
+        this.onReturn = null;
     }
 
     //: Each state as [plan, status chip, tone]. The tone is the plan card's
@@ -2190,13 +2196,25 @@
         el("settings_license_install")?.addEventListener("click", () => this.install());
         // A target=_blank link opens no window in the desktop app: the shell
         // sends these to the browser instead.
-        ["settings_license_pricing", "settings_license_trial"].forEach((id) => {
+        ["settings_license_pricing", "settings_license_trial", "settings_account_manage"].forEach((id) => {
             el(id)?.addEventListener("click", (event) => {
                 if (!window.PlexoraDesktop) return;
                 event.preventDefault();
                 window.PlexoraDesktop.openUrl(event.currentTarget.href).catch(() => {});
             });
         });
+        el("settings_account_topup")?.addEventListener("click", (event) => {
+            openExternal(event.currentTarget.dataset.href || "");
+        });
+        // Credits bought in the browser are in the balance at once: coming
+        // back to this window asks again.
+        this.onReturn = () => {
+            if (document.visibilityState !== "hidden" && this.info) this.credits(this.info);
+        };
+        if (typeof window.addEventListener === "function") window.addEventListener("focus", this.onReturn);
+        if (typeof document.addEventListener === "function") {
+            document.addEventListener("visibilitychange", this.onReturn);
+        }
         const readLicenceFile = async (file) => {
             if (!file) return;
             // The certificate is one line of the file; the rest is comments.
@@ -2249,6 +2267,14 @@
             if (go) this.act("settings/license/remove");
         });
         this.load();
+    };
+
+    LicenseSection.prototype.stop = function () {
+        if (!this.onReturn) return;
+        if (typeof window.removeEventListener === "function") window.removeEventListener("focus", this.onReturn);
+        if (typeof document.removeEventListener === "function") {
+            document.removeEventListener("visibilitychange", this.onReturn);
+        }
     };
 
     LicenseSection.prototype.load = async function () {
@@ -2484,6 +2510,137 @@
         show(el("settings_license_deactivate"), info.source === "cache" && info.service_configured
              && info.state !== "invalid");
         show(el("settings_license_remove"), info.source === "cache");
+
+        this.info = info;
+        this.account(info);
+        this.credits(info);
+    };
+
+    // -- the account ---------------------------------------------------------
+
+    /** Why this device cannot say who it is signed in as, or "" when it can:
+     *  only a device connected to the platform has someone to ask about. */
+    function accountUnavailable(info) {
+        if (!["cache", "token"].includes(info.source) || info.state === "invalid") {
+            return info.source === "file"
+                ? "This licence came from an offline file. Your account shows here on a device "
+                  + "connected to account.biocognia.com."
+                : "Connect this device below to see your account here.";
+        }
+        if (["job", "ci"].includes(info.environment?.type)) return "A job's licence has no account of its own.";
+        if (!info.service_configured || info.offline_only) {
+            return "Your account shows here when Plexora can reach account.biocognia.com.";
+        }
+        return "";
+    }
+
+    /** "AL" for Ada Lovelace; the email's first letter without a name. */
+    function initials(name, email) {
+        const words = String(name || "").trim().split(/\s+/).filter(Boolean);
+        if (words.length) return (words[0][0] + (words.length > 1 ? words[words.length - 1][0] : "")).toUpperCase();
+        return String(email || "?").charAt(0).toUpperCase();
+    }
+
+    /** Who this device is signed in as, from GET /settings/license/account:
+     *  asked each time the licence is drawn, and held in the page only. */
+    LicenseSection.prototype.account = async function (info) {
+        const card = el("settings_account");
+        const name = el("settings_account_name");
+        const email = el("settings_account_email");
+        const note = el("settings_account_note");
+        const letters = el("settings_account_initials");
+        const manage = el("settings_account_manage");
+        if (manage && info.portal_url) manage.href = info.portal_url;
+        const ask = ++this.asking;
+        const paint = (state, title, line, mail, initial) => {
+            if (card) card.dataset.state = state;
+            text(name, title);
+            text(email, mail || "");
+            show(email, Boolean(mail));
+            text(note, line);
+            show(note, Boolean(line));
+            show(manage, state === "shown");
+            text(letters, initial || "");
+            show(letters, Boolean(initial));
+            show(el("settings_account_icon"), !initial);
+        };
+        const why = accountUnavailable(info);
+        if (why) {
+            paint("none", "Not signed in", why);
+            return;
+        }
+        paint("loading", "Loading your account…", "");
+        const answer = await getJson("settings/license/account");
+        if (ask !== this.asking) return;
+        if (!answer.ok || !answer.account || !answer.account.email) {
+            paint("unavailable", "Signed in", answer.error
+                || "Your account shows here when this computer can reach account.biocognia.com.");
+            return;
+        }
+        const who = answer.account;
+        const org = who.org || {};
+        const where = org.kind === "personal" ? "Personal account" : (org.name || "");
+        paint("shown", who.name || who.email, where, who.name ? who.email : "", initials(who.name, who.email));
+    };
+
+    /** "2,000": whole credits from 100 up, one decimal under it. */
+    function creditCount(value) {
+        const n = Number(value) || 0;
+        const rounded = n >= 100 ? Math.round(n) : Math.round(n * 10) / 10;
+        return rounded.toLocaleString("en-US");
+    }
+
+    function openExternal(target) {
+        if (!/^https:\/\//.test(target)) return;
+        if (window.PlexoraDesktop && typeof window.PlexoraDesktop.openUrl === "function") {
+            Promise.resolve(window.PlexoraDesktop.openUrl(target)).catch(() => {});
+            return;
+        }
+        window.open(target, "_blank", "noopener");
+    }
+
+    /** The organisation's Plexora AI credits, from GET /ai/v1/balance, on a
+     *  connected licence with AI; hidden otherwise. A failed ask after a good
+     *  one keeps the number that was shown. */
+    LicenseSection.prototype.credits = async function (info) {
+        const card = el("settings_account_credits");
+        const count = el("settings_account_credits_count");
+        const note = el("settings_account_credits_note");
+        const topUp = el("settings_account_topup");
+        const allowed = Boolean(window.PlexoraPro?.allows?.("ai")) && !accountUnavailable(info);
+        show(card, allowed);
+        if (!allowed || this.crediting) return;
+        this.crediting = true;
+        let answer;
+        try {
+            answer = await getJson("ai/v1/balance");
+        } finally {
+            this.crediting = false;
+        }
+        if (!answer.ok || answer.available_credits === undefined) {
+            if (card && card.dataset.known) return;
+            text(count, "—");
+            text(note, answer.error || "The balance could not be read.");
+            show(note, true);
+            show(topUp, false);
+            return;
+        }
+        if (card) card.dataset.known = "1";
+        text(count, creditCount(answer.available_credits));
+        // The member's own monthly limit, when the organisation set one.
+        const member = answer.member || {};
+        const limit = member.limit_credits;
+        const line = limit === null || limit === undefined ? ""
+            : `Your monthly limit: ${creditCount(member.used_credits)} of ${creditCount(limit)} used.`;
+        text(note, line);
+        show(note, Boolean(line));
+        const page = answer.action_url || answer.top_up_url;
+        const safe = typeof page === "string" && /^https:\/\//.test(page) ? page : "";
+        if (topUp) {
+            topUp.dataset.href = safe;
+            topUp.title = safe && answer.action_label ? String(answer.action_label) : "";
+        }
+        show(topUp, Boolean(safe));
     };
 
     PlexoraPage.register(() => {
@@ -2502,7 +2659,11 @@
         }
         if (el("settings_panel_updates")) new UpdatesSection().start();
         if (el("settings_panel_telemetry")) new TelemetrySection().start();
-        if (el("settings_panel_license")) new LicenseSection().start();
+        let license = null;
+        if (el("settings_panel_license")) {
+            license = new LicenseSection();
+            license.start();
+        }
         const section = new DataSection();
         section.start();
         // The migration poll is the one thing here that outlives the markup: it
@@ -2525,6 +2686,7 @@
             window.clearTimeout(section.polling);
             if (remotes) remotes.stop();
             if (webdata) webdata.stop();
+            if (license) license.stop();
             if (unwireRail) unwireRail();
         };
     });

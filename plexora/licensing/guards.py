@@ -101,7 +101,7 @@ def _hint(state: str, label: str, entitlement: str | None = None) -> str:
                     "expired. Free tools still answer over MCP; renewing brings the rest back.")
         if state in ("revoked", "invalid"):
             return ("This Pro tool needs a licence with external MCP access, and the one on this "
-                    "machine is not active. The user can check Settings > License. Free tools "
+                    "machine is not active. The user can check Settings > Account. Free tools "
                     "still answer over MCP.")
         return ("This Pro tool needs a licence with external MCP access turned on, and this one "
                 "does not have it. External MCP access is off by default and is not part of "
@@ -117,7 +117,7 @@ def _hint(state: str, label: str, entitlement: str | None = None) -> str:
                 f"{label} back. Manual tools keep working on Free.")
     if state in ("revoked", "invalid"):
         return (f"{label} needs {needs}, and the one on this machine is not active. "
-                f"The user can check Settings > License. Manual tools keep working on Free.")
+                f"The user can check Settings > Account. Manual tools keep working on Free.")
     # Off by default: never "part of Pro", never "start a trial", never a
     # price -- none of them unlocks it.
     if off and manifest.third_party(entitlement):
@@ -133,7 +133,7 @@ def _hint(state: str, label: str, entitlement: str | None = None) -> str:
 
     return (f"{label} is part of Plexora Pro. Tell the user it is a Pro feature and that "
             f"they can buy it at {PRICING_URL}, start a trial, or connect this device in "
-            f"Settings > License. The manual tools (gating, ROIs, the viewer) keep working on Free.")
+            f"Settings > Account. The manual tools (gating, ROIs, the viewer) keep working on Free.")
 
 
 def _needs(detail: dict) -> str:

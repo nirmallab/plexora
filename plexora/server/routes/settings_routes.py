@@ -43,8 +43,8 @@ SECTIONS = (
      "blurb": "Which version this is, and whether to look for newer ones."},
     {"id": "telemetry", "label": "Usage data", "icon": "fa-chart-simple",
      "blurb": "What anonymous usage counts are sent, and turning them off."},
-    {"id": "license", "label": "License", "icon": "fa-key",
-     "blurb": "Your plan: Free, or Pro with a licence."},
+    {"id": "license", "label": "Account", "icon": "fa-circle-user",
+     "blurb": "Who you are signed in as, your plan and your AI credits."},
 )
 
 
