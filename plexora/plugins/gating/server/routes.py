@@ -121,6 +121,54 @@ def download_gating_csv():
                      "attachment; filename=" + filename + ".csv"})
 
 
+@gating_bp.route('/download_gate_versions_csv', methods=['POST'])
+def download_gate_versions_csv():
+    """The gates file's companion when more than one version is kept
+    (`model.versions_table`): markers as rows, a column per version named by
+    who and when, each its lower gate. 404 with fewer than two."""
+    datasource = request.form['datasource']
+    filename = request.form['filename']
+    table = gating_model.versions_table(api.project_data(datasource))
+    if table is None:
+        abort(404)
+    return Response(
+        table.write_csv(),
+        mimetype="text/csv",
+        headers={"Content-disposition": "attachment; filename=" + filename + ".csv"})
+
+
+@gating_bp.route('/gate_versions', methods=['GET'])
+def gate_versions():
+    """The versions kept for this image, oldest first: {version, created,
+    by, label, n_gates}."""
+    datasource = request.args.get('datasource')
+    out, labels = [], []
+    for version in gating_model.gate_versions(datasource):
+        label = gating_model.version_label(version, labels)
+        labels.append(label)
+        out.append({"version": version["version"], "created": version["created"],
+                    "by": version["by"], "label": label, "n_gates": len(version["gates"])})
+    return api.json_response({"versions": out})
+
+
+@gating_bp.route('/save_version', methods=['POST'])
+def save_version():
+    """The panel's Save version: the gates as they stand, kept (nothing new
+    when the latest version holds them already)."""
+    post_data = json.loads(request.data or b"{}")
+    datasource = post_data.get('datasource')
+    if not datasource:
+        abort(400)
+    before = len(gating_model.gate_versions(datasource))
+    version = gating_model.save_version(api.project_data(datasource))
+    if version is None:
+        return api.json_response({"saved": False, "reason": "no gate to keep"})
+    count = len(gating_model.gate_versions(datasource))
+    return api.json_response({"saved": True, "new": count > before,
+                              "version": version["version"], "by": version["by"],
+                              "created": version["created"], "n_versions": count})
+
+
 @gating_bp.route('/save_gating_list', methods=['POST'])
 def save_gating_list():
     post_data = json.loads(request.data)
@@ -134,12 +182,18 @@ def save_gating_list():
     # below). Writing to the source file on every debounced slider edit was
     # tried and reverted: the user wants edits to stay local/undo-able in the
     # DB until they deliberately commit them to the file.
-    gating_model.save_gating_list(datasource, filter, channels)
+    # `base`: the revision this page last read or wrote. A page holding a list
+    # older than the stored one (an agent wrote gates since) has only its own
+    # changes taken (`model.save_gating_list`).
+    gating_model.save_gating_list(
+        datasource, filter, channels, base=post_data.get('base'),
+        defaults=lambda: gating_model.default_ranges(api.project_data(datasource)))
     # A locked gate is the user's word even against their own slider: the
     # list is saved whole, so a locked marker's row is put back after it.
     reverted = _restore_locked(datasource)
+    revision = gating_model.saved_gating_list_at(datasource)[1]
 
-    resp = jsonify(success=True, reverted=reverted)
+    resp = jsonify(success=True, reverted=reverted, revision=revision)
     return resp
 
 
@@ -289,8 +343,11 @@ def _tell_tabs(session_id, event, /, record=None, **payload):
 @gating_bp.route('/get_saved_gating_list', methods=['GET'])
 def get_saved_gating_list():
     datasource = request.args.get('datasource')
-    resp = gating_model.get_saved_gating_list(datasource)
-    return api.json_response(resp)
+    rows, revision = gating_model.saved_gating_list_at(datasource)
+    resp = api.json_response(rows)
+    # What the page now holds, for its next save's `base`.
+    resp.headers['X-Gating-Revision'] = revision
+    return resp
 
 
 @gating_bp.route('/save_gates_to_anndata', methods=['POST'])
@@ -344,6 +401,9 @@ def save_gates_to_anndata():
         "gates": active_gates,
         "table_name": table_name,
         "imageid_column": imageid_column,
+        # Beside the latest gates: where each came from, and every version
+        # kept (`<table>_provenance`, `<table>_versions`).
+        **gating_model.source_extras(dataset),
     }
     # Markers the Single Cell Classifier decides, and those with a gating
     # session's layer, travel with the gates: their calls and scores as

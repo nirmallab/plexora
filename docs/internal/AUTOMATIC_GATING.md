@@ -330,7 +330,12 @@ and current call in its caption).
 - **A look is a blind panel.** `cell_panel`: 20 cells from the disputed
   intervals plus 4 negative sentinels from below every candidate, shuffled
   and numbered; the 2 x 2 multi-view block when the marker has a partner.
-  No value, call, gate, candidate or ranking anywhere in it. One label a
+  No value, call, gate, candidate or ranking anywhere in it. Beside it, a
+  second picture (`sheet.render_panel_plots`, guide `panel_plots`): the
+  marker's distribution, the range the cells come from shaded and the
+  candidates dashed, and the marker against one gated partner as a density
+  -- context, with no numbered cell placed on either, so a read still stands
+  on the cell's pixels (~300 image tokens a look). One label a
   cell: `own_stain`, `not_own_stain`, `uncertain`, `artifact`. No
   confidence word: code's confidence is not the reader's. The reading
   follows the user's conventions: a faint stain is own stain when the
@@ -543,7 +548,17 @@ plexora/ai/bench.py, bench_data.py                `plexora ai bench gating`
   table is.
 - **The gate's value stays in the sidebar's row list**; everything else about a
   gate (method, status, confidence, the decisions behind it) is in the
-  provenance sidecar, because the browser saves the row list whole.
+  provenance sidecar, because the browser saves the row list whole. A save
+  names the revision the page last read (`base`); from an older one only
+  what the page changed is taken (`model.merge_unchanged`), so a stale tab
+  never writes a run's gates back over.
+- **No gate set is lost** (`model.save_version`, the `versions` table): a
+  version is kept when a run that wrote finishes (Plexora AI), before a run
+  writes over gates no version holds (the user's), and on the panel's Save
+  gate version. The list is the latest; Download Gates adds a second file
+  and Save Gates to Source File `uns['gates_versions']`, a marker per row
+  and a column per version (who and when). `uns['gates']` stays the latest,
+  `uns['gates_provenance']` beside it.
 - **Locked and approved gates are never written by an agent** (`model.set_gate`
   raises `GateLocked`); the sidebar's own save restores a locked marker
   (`/save_gating_list`). A gate the user changes during a session wins; the
@@ -813,8 +828,14 @@ plexora/ai/bench.py, bench_data.py                `plexora ai bench gating`
   sends the script when the tab is free. Looks faster than the tab are not
   queued behind each other: the newest waits, the ones it replaces are dropped
   (a marker never shown is kept over a second look at one that was), and a
-  look being played keeps the tab `MIN_SHOW_S` before the next replaces it
-  (paced sessions). A contrast show and the teardown go in order, never
+  look being played keeps the tab as long as its moves take -- the tab's
+  `preview_gate` answer says (`show.ms`), within `MIN_SHOW_S`..`MAX_SHOW_S`
+  (paced sessions); held 8 s flat, a look was cut half way. A look is played
+  over the marker's medium cells (`mirror_script._medium_focus`: the
+  `field_um` square holding the most cells between its candidate gates, the
+  same for every look at the marker), a later look at a marker goes on from
+  where its last one left the slider, and only the view moves while a look
+  waits. A contrast show and the teardown go in order, never
   replaced; `finish` hands the teardown over and returns, nothing after it is
   sent, and nothing is left to play once the session has decided. Progress is
   the engine's (`issued`/`answered`), never the tab's.

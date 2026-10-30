@@ -46,6 +46,13 @@ VIEW_PX = 1200
 #: the slider to try on its way there.
 SHOW_CELLS = 6
 SHOW_STOPS = 2
+#: A look is played over the marker's medium cells (`_medium_focus`): the
+#: field holding the most cells whose value lies between its candidate gates
+#: -- the cells that turn positive or negative as the gate moves. At least
+#: this many of them, or the look keeps the field around the cells read.
+FOCUS_MIN_CELLS = 12
+#: The cells a focus keeps to close in on, of those in its field.
+FOCUS_POOL = 200
 
 #: Commands that set up the view rather than show this packet: skipped when the
 #: tab reports it is already in that state (and the project is not changing).
@@ -87,6 +94,68 @@ def _field_around(cells, pad=120.0):
     y1 = max(p[1] for p in near) + pad
     side = max(x1 - x0, y1 - y0)
     return {"x": x0, "y": y0, "width": side, "height": side}
+
+
+def _medium_focus(ds, marker, lows, side_px):
+    """{field, cells: [{x, y, value}]}: the square of side `side_px` (image
+    pixels) holding the most cells whose `marker` value lies between the
+    lowest and highest of `lows` (the candidate gates), and up to FOCUS_POOL
+    of those cells in it. None with no such field (fewer than
+    FOCUS_MIN_CELLS, no positions, or one candidate)."""
+    import numpy as np
+
+    from plexora.plugins.gating.server.autogate import cells as cellmod
+
+    lows = [float(v) for v in lows if v is not None and np.isfinite(v)]
+    if len(lows) < 2 or not side_px or side_px <= 0:
+        return None
+    lo, hi = min(lows), max(lows)
+    c = cellmod.cells(ds)
+    v = cellmod.values(ds, marker)
+    band = c.valid & np.isfinite(v) & (v > lo) & (v <= hi)
+    if int(band.sum()) < FOCUS_MIN_CELLS:
+        return None
+    # Half-field bins, then every 2x2 window of them: a field-sized square
+    # wherever the band cells crowd, not only on a fixed grid.
+    half = float(side_px) / 2.0
+    x0 = float(np.min(c.xs[c.valid]))
+    y0 = float(np.min(c.ys[c.valid]))
+    gx = ((c.xs[band] - x0) // half).astype(np.int64)
+    gy = ((c.ys[band] - y0) // half).astype(np.int64)
+    counts = np.zeros((int(gy.max()) + 2, int(gx.max()) + 2))
+    np.add.at(counts, (gy, gx), 1.0)
+    windows = counts[:-1, :-1] + counts[1:, :-1] + counts[:-1, 1:] + counts[1:, 1:]
+    j, i = np.unravel_index(int(np.argmax(windows)), windows.shape)
+    if windows[j, i] < FOCUS_MIN_CELLS:
+        return None
+    fx, fy = x0 + i * half, y0 + j * half
+    side = 2.0 * half
+    inside = np.flatnonzero(band & (c.xs >= fx) & (c.xs < fx + side)
+                            & (c.ys >= fy) & (c.ys < fy + side))
+    if inside.size > FOCUS_POOL:
+        inside = inside[np.linspace(0, inside.size - 1, FOCUS_POOL).astype(np.int64)]
+    return {"field": {"x": round(fx, 1), "y": round(fy, 1), "width": round(side, 1),
+                      "height": round(side, 1)},
+            "cells": [{"x": round(float(c.xs[k]), 1), "y": round(float(c.ys[k]), 1),
+                       "value": float(v[k])} for k in inside]}
+
+
+def _focus_cells(focus, target, limit=SHOW_CELLS):
+    """Up to `limit` of a focus's cells to close in on, those whose value is
+    nearest the gate shown first -- they change as it moves -- kept apart, so
+    two close-ups are not of one spot."""
+    import math
+
+    pool = sorted(focus.get("cells") or [],
+                  key=lambda c: abs(float(c["value"]) - float(target)))
+    apart = float(focus["field"]["width"]) / 8.0
+    chosen = []
+    for cell in pool:
+        if all(math.hypot(cell["x"] - o["x"], cell["y"] - o["y"]) >= apart for o in chosen):
+            chosen.append(cell)
+        if len(chosen) >= limit:
+            break
+    return [{"x": c["x"], "y": c["y"]} for c in chosen]
 
 
 def _engine_gate(unit):
@@ -134,11 +203,13 @@ def _show(project, marker, cells, field, stops, look):
 
 
 def script_for(packet, manifest, calibration_record, *, current_project=None,
-               viewer_state=None, tool="gating", gate=None):
+               viewer_state=None, tool="gating", gate=None, focus=None):
     """[{type, arguments}] for one packet. `viewer_state` (the tab's
     `get_state`) drops set-up commands already in effect; `tool` is the tool
     an image is opened with (None: a contrast run, which needs none); `gate`
-    ({low, high}, `_engine_gate`) is shown when the packet carries none."""
+    ({low, high}, `_engine_gate`) is shown when the packet carries none;
+    `focus` (`_medium_focus`) is where the look is played, in place of the
+    field around the cells read."""
     from plexora.agent.evidence import calibration
     from plexora.plugins.gating.server.autogate import packets, schemas
 
@@ -164,7 +235,7 @@ def script_for(packet, manifest, calibration_record, *, current_project=None,
     references = [r["marker"] if isinstance(r, dict) else r
                   for r in evidence.get("references") or []]
     cells = _cells(manifest)
-    field = _field_around(cells)
+    field = focus["field"] if focus else _field_around(cells)
     channels = calibration.as_viewer_channels(
         calibration_record, marker, references,
         px_per_px=(field["width"] / VIEW_PX) if field else None)
@@ -190,7 +261,8 @@ def script_for(packet, manifest, calibration_record, *, current_project=None,
                            float(candidate))
         # The tab flies to the field and tries the gates itself, at a
         # person's pace, while the session goes on: no `fit_region` cut.
-        show = _show(project, marker, cells, field, stops, evidence.get("look"))
+        show = _show(project, marker, _focus_cells(focus, candidate) if focus else cells,
+                     field, stops, evidence.get("look"))
         script.append({"type": "preview_gate", "arguments": {
             "marker": marker, "low": float(candidate), "high": high, "persist": False,
             "show": show}})
@@ -336,15 +408,68 @@ def _packet_project(packet):
     return evidence.get("project") or (evidence.get("projects") or [None])[0]
 
 
+#: (session, project, marker) -> its `_medium_focus` (or None): worked out at
+#: a marker's first look and kept, so every later look at it returns to the
+#: same cells. The newest `_FOCUS_MAX` kept.
+_FOCUS: dict = {}
+_FOCUS_MAX = 256
+
+
+def _focus_job(engine, session_id, unit):
+    """What working out the unit's focus needs, read under the session's
+    lock: a callable that does it (`_medium_focus`, from the candidate gates
+    its looks choose among -- the surveyed window of v2's lattice, else the
+    scored candidates -- and kept in `_FOCUS`), or the focus already kept.
+    Best effort throughout: None when there is nothing to centre on."""
+    if not unit:
+        return None
+    key = (str(session_id), unit["project"], unit["marker"])
+    if key in _FOCUS:
+        return _FOCUS[key]
+    state = unit.get("hypotheses") or {}
+    points = [p.get("low") for p in state.get("points") or []]
+    window = state.get("window")
+    if points and window:
+        points = points[int(window[0]):int(window[1]) + 1]
+    if len(points) < 2:
+        points = [c.get("low") for c in (unit.get("scoring") or {}).get("candidates") or []]
+    try:
+        from plexora.plugins.gating.server.autogate import sheet
+
+        ds = engine.call.session.data(unit["project"])
+        side = float(sheet.field_side_px(ds.project, engine.field_um(),
+                                         engine.pixel_for(unit["project"]))["side_px"])
+    except Exception:  # where to look is a nicety; the look is shown regardless
+        return None
+    marker = unit["marker"]
+
+    def work():
+        try:
+            found = _medium_focus(ds, marker, points, side)
+        except Exception:
+            found = None
+        _FOCUS[key] = found
+        while len(_FOCUS) > _FOCUS_MAX:
+            _FOCUS.pop(next(iter(_FOCUS)))
+        return found
+
+    return work
+
+
 def run(call, session_id, packet):
     """Send the packet's script to the session's viewer; returns
-    {status (`ok`, `degraded`, `off`), sent, errors, view_id}."""
+    {status (`ok`, `degraded`, `off`), sent, errors, view_id}, and `show_s`,
+    the seconds from the start until the tab's look has made its moves, when
+    it played one."""
+    import time
+
     from plexora.agent import viewer
     from plexora.agent.errors import AgentError
     from plexora.agent.evidence import calibration
     from plexora.agent.sessions import mirror
     from plexora.plugins.gating.server.autogate import engine as engines
 
+    begun = time.monotonic()
     try:
         control = viewer.require(call.link)
     except AgentError as exc:
@@ -358,6 +483,9 @@ def run(call, session_id, packet):
             if packet.get("units") else None
         manifest = (unit or {}).get("last_manifest")
         gate = _engine_gate(unit)
+        focus = _focus_job(engine, session_id, unit)
+    # Off the session's lock: the first look at a marker reads its column.
+    focus = focus() if callable(focus) else focus
     try:
         view = viewer.resolve_view(control, view_id)
     except AgentError as exc:
@@ -377,7 +505,7 @@ def run(call, session_id, packet):
     stored = calibration.load(project) if project else None
     script = script_for(packet, manifest, stored,
                         current_project=(state or {}).get("project") or view.get("project"),
-                        viewer_state=state, tool=_tool(options), gate=gate)
+                        viewer_state=state, tool=_tool(options), gate=gate, focus=focus)
     if project:
         # What a contrast check settled, eased in channel by channel before
         # this packet's own channels (the tab plays it while the session asks
@@ -393,13 +521,22 @@ def run(call, session_id, packet):
                 animate = [{"type": "set_hd_mode", "arguments": {"enabled": True}}, *animate]
             script = script[:at] + animate + script[at:]
 
+    played = {}
+
     def send(type, arguments):
-        return control.send(view["view_id"], type, arguments,
-                            timeout=COMMAND_TIMEOUT_S.get(type, DEFAULT_TIMEOUT_S))
+        answer = control.send(view["view_id"], type, arguments,
+                              timeout=COMMAND_TIMEOUT_S.get(type, DEFAULT_TIMEOUT_S))
+        if type == "preview_gate":
+            # The tab says how long the look's moves take (gatingAgentShow.js).
+            show = ((answer or {}).get("result") or {}).get("show") or {}
+            if show.get("played") and show.get("ms"):
+                played["show_s"] = time.monotonic() - begun + float(show["ms"]) / 1000.0
+        return answer
 
     result = mirror.run_script(send, script, delay_ms=options["mirror_delay_ms"],
                                keep_going=mirror.attached(engines.store(), session_id))
     result["view_id"] = view["view_id"]
+    result.update(played)
     return result
 
 

@@ -920,6 +920,65 @@ def test_a_looks_show_carries_the_gates_to_try_and_a_seed_of_its_own():
     assert len(previews) == 1 and previews[0]["arguments"]["show"]["stops"] == [2.0, 9.0]
 
 
+def test_a_look_is_played_where_the_cells_the_candidate_gates_disagree_on_are(monkeypatch):
+    import numpy as np
+
+    from plexora.plugins.gating.server.autogate import cells as cellmod
+    from plexora.plugins.gating.server.autogate import mirror_script
+
+    # Three patches of tissue: dim cells (below every candidate), bright ones
+    # (above every candidate), and medium ones -- between the candidates,
+    # the cells that change as the gate moves. The look goes to the medium.
+    rng = np.random.default_rng(0)
+    patches = [((300.0, 300.0), 2.0), ((3000.0, 400.0), 9.0), ((1800.0, 2600.0), 5.0)]
+    xs, ys, vs = [], [], []
+    for (cx, cy), level in patches:
+        xs.append(cx + rng.uniform(-150, 150, 400))
+        ys.append(cy + rng.uniform(-150, 150, 400))
+        vs.append(level + rng.uniform(-0.8, 0.8, 400))
+    xs, ys = np.concatenate(xs), np.concatenate(ys)
+    values = np.concatenate(vs).astype(np.float32)
+    geometry = cellmod.Cells(np.arange(xs.size), xs, ys, np.ones(xs.size, bool), None, None, 0.5)
+    monkeypatch.setattr(cellmod, "cells", lambda ds: geometry)
+    monkeypatch.setattr(cellmod, "values", lambda ds, marker: values)
+
+    focus = mirror_script._medium_focus(object(), "CD8", [4.0, 4.6, 5.2, 6.0], 600.0)
+    field = focus["field"]
+    assert field["width"] == field["height"] == 600.0
+    assert field["x"] <= 1800.0 <= field["x"] + 600.0
+    assert field["y"] <= 2600.0 <= field["y"] + 600.0
+    assert len(focus["cells"]) == mirror_script.FOCUS_POOL
+    assert all(4.0 < c["value"] <= 6.0 for c in focus["cells"])
+    # One candidate, or none between them: no focus, the old field stands.
+    assert mirror_script._medium_focus(object(), "CD8", [5.0], 600.0) is None
+    assert mirror_script._medium_focus(object(), "CD8", [6.5, 7.0], 600.0) is None
+
+    # The close-ups: the cells nearest the gate shown, a few apart.
+    picked = mirror_script._focus_cells(focus, 5.0)
+    assert len(picked) == mirror_script.SHOW_CELLS
+    for a in picked:
+        for b in picked:
+            if a is not b:
+                assert np.hypot(a["x"] - b["x"], a["y"] - b["y"]) >= 600.0 / 8
+    near = sorted(abs(c["value"] - 5.0) for c in focus["cells"])
+    by_xy = {(c["x"], c["y"]): c["value"] for c in focus["cells"]}
+    assert abs(by_xy[(picked[0]["x"], picked[0]["y"])] - 5.0) == near[0]
+
+    # The script flies there and closes in on those cells, whatever cells the
+    # look itself read (here, far off in the dim patch).
+    unit = {"high": None, "hypotheses": {"leader": 5.0, "observations": [{}],
+                                         "points": [{"low": v} for v in (4.0, 4.6, 5.2, 6.0)]}}
+    manifest = {"rows": [{"cells": [{"cell_id": i, "x": 300.0 + i, "y": 300.0}
+                                    for i in range(8)]}]}
+    packet = {"kind": "cell_panel", "units": [{"project": "p", "marker": "CD8"}],
+              "evidence": {"marker": "CD8", "project": "p", "look": 1}}
+    script = mirror_script.script_for(packet, manifest, None, current_project="p",
+                                      gate=mirror_script._engine_gate(unit), focus=focus)
+    show = next(c for c in script if c["type"] == "preview_gate")["arguments"]["show"]
+    assert show["field"] == field
+    assert show["cells"] == picked
+
+
 # -- the report --------------------------------------------------------------------
 
 

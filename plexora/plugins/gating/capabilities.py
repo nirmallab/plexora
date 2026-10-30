@@ -499,6 +499,8 @@ def write_source(call, inp):
             {**row, "call_mode": cell_exclusions.current_call_mode(), "qc_fingerprint": qc_fp,
              "n_not_called": len(not_called.get(row.get("marker"), ()))}
             for row in report.provenance_long(call, [ds.name])]
+    # Every version kept, beside the latest (`uns[<table>_versions]`).
+    payload["versions"] = model.versions_payload(ds.name)
     from plexora.plugins.gating.server.classifier import source_write
 
     result = source_write.save_all(ds, payload)

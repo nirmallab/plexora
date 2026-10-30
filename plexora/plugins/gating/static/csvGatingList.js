@@ -499,7 +499,8 @@ class CSVGatingList {
     /**
      * @function addDownloadEvents - the download button hands over the gates
      *
-     * One button, one file, no submenu. The icon used to open a panel offering
+     * One button, no submenu: the gates file, and with more than one version
+     * kept, the versions beside it (a second file). The icon used to open a panel offering
      * a second download as well -- the whole cell table with every gated
      * marker rewritten to 1/0 or to a kept-or-zeroed intensity -- and with it
      * a filename box and a binary/intensity picker. That export is gone, so
@@ -509,9 +510,13 @@ class CSVGatingList {
 
         const gating_download_icon = document.querySelector('#gating_download_icon');
 
-        gating_download_icon.addEventListener('click', () => {
+        gating_download_icon.addEventListener('click', async () => {
             window.PlexoraTelemetry?.feature("gates.export", "gating");
-            this.api.downloadGatingCSV(this.gating_channels, this.selections);
+            await this.api.downloadGatingCSV(this.gating_channels, this.selections);
+            // With more than one version kept, a second file: a marker per
+            // row, a column per version (who and when).
+            const versions = await this.api.getGateVersions();
+            if (versions.length > 1) await this.api.downloadGateVersionsCSV();
         });
 
     }

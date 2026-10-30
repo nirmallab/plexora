@@ -379,6 +379,8 @@ def test_the_user_editing_a_gate_mid_session_wins(tmp_path, marker):
 
 
 def test_propose_mode_writes_nothing_until_commit(tmp_path):
+    from plexora.plugins.gating.server import model
+
     info = make_gating_project(tmp_path, grid=24, size=1024)
     session = AgentSession()
     started = start(session, mode="propose")
@@ -390,9 +392,35 @@ def test_propose_mode_writes_nothing_until_commit(tmp_path):
     assert len(committed["written"]) == 3, committed
     gates = ok(invoke(session, "get_all_gates", {"project": "gsynth"}))
     assert set(gates["thresholded"]) == {"CD3", "CD8", "CD20"}
+    # What the run wrote is kept as a version of its own.
+    kept = model.gate_versions("gsynth")
+    assert [(v["by"], v["session_id"]) for v in kept] == [("Plexora AI", started["session_id"])]
+    assert set(kept[0]["gates"]) == {"CD3", "CD8", "CD20"}
+
+
+def test_a_run_keeps_the_hand_gates_it_is_about_to_write_over(tmp_path):
+    from plexora.plugins.gating.server import model
+
+    make_gating_project(tmp_path, grid=8, size=384)
+    session = AgentSession()
+    ds = session.data("gsynth")
+    high = model.get_gate(ds, "CD3")["default_high"]
+    model.set_gate(ds, "CD3", 123.0, high)
+    started = start(session)
+    kept = model.gate_versions("gsynth")
+    assert [(v["version"], v["by"]) for v in kept] == [(1, "User")]
+    assert kept[0]["gates"]["CD3"][0] == 123.0
+    # A second run on the gates the first left keeps nothing new before it
+    # writes (the first run's own version, if it wrote any, holds them).
+    ok(invoke(session, "gating_session_finish", {"session_id": started["session_id"]}))
+    after_first = len(model.gate_versions("gsynth"))
+    start(session)
+    assert len(model.gate_versions("gsynth")) == after_first
 
 
 def test_rollback_undoes_every_write(tmp_path):
+    from plexora.plugins.gating.server import model
+
     info = make_gating_project(tmp_path, grid=24, size=1024)
     session = AgentSession()
     started = start(session)
@@ -403,6 +431,8 @@ def test_rollback_undoes_every_write(tmp_path):
     gates = ok(invoke(session, "get_all_gates", {"project": "gsynth"}))
     assert not gates["thresholded"]
     assert gates["provenance"]["CD8"]["method"] == "rolled_back"
+    # A run undone is no version.
+    assert model.gate_versions("gsynth") == []
 
 
 def test_a_session_resumes_in_a_new_process(tmp_path):

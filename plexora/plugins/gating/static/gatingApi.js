@@ -24,6 +24,11 @@ class GatingApi {
     constructor(ctx) {
         this.url = ctx.url;
         this.datasource = ctx.datasource;
+        //: The revision of the saved list this page last read or wrote. A
+        //: save names it (`base`), so the server takes only what this page
+        //: changed since -- never a gate somebody else wrote meanwhile, which
+        //: the page's whole list would otherwise put back as it was.
+        this.revision = null;
     }
 
     async getUploadedGatingCsvValues() {
@@ -44,6 +49,7 @@ class GatingApi {
                 datasource: this.datasource
             }))
             let response_data = await response.json();
+            this.revision = response.headers?.get?.('X-Gating-Revision') || null;
             return response_data;
         } catch (e) {
             console.log("Error Getting Saved Gating List", e);
@@ -155,10 +161,70 @@ class GatingApi {
         }
     }
 
+    /** The versions kept for this image, oldest first ({version, created, by,
+     *  label, n_gates}); [] when there are none or the request fails. */
+    async getGateVersions() {
+        try {
+            const response = await fetch(this.url('plugins/gating/gate_versions') + '?'
+                + new URLSearchParams({ datasource: this.datasource }));
+            if (!response.ok) return [];
+            return (await response.json()).versions || [];
+        } catch (e) {
+            console.log("Error Getting Gate Versions", e);
+            return [];
+        }
+    }
+
+    /** Keep the gates as they stand as a version: {saved, version, by, ...}. */
+    async saveVersion() {
+        const response = await fetch(this.url('plugins/gating/save_version'), {
+            method: 'POST',
+            headers: { 'Accept': 'application/json', 'Content-Type': 'application/json' },
+            body: JSON.stringify({ datasource: this.datasource }),
+        });
+        if (!response.ok) throw new Error(`could not keep a version (${response.status})`);
+        return response.json();
+    }
+
+    /**
+     * The gates file's companion, when more than one version is kept: a
+     * marker per row, a column per version. A second file, so it goes to a
+     * hidden frame of its own -- a second form posted from the page could
+     * cut the first download short.
+     */
+    async downloadGateVersionsCSV() {
+        const filename = `${this.datasource}_gate_versions`;
+        const fields = { filename, datasource: this.datasource };
+        if (window.PlexoraFileLocation && window.PlexoraFileLocation.remoteAvailable()) {
+            try {
+                const body = new FormData();
+                Object.entries(fields).forEach(([name, value]) => body.append(name, value));
+                const response = await fetch(this.url("plugins/gating/download_gate_versions_csv"),
+                                             { method: 'POST', body: body });
+                if (!response.ok) return;
+                await window.PlexoraFileLocation.deliver(await response.blob(), `${filename}.csv`);
+            } catch (e) {
+                console.log("Error Downloading Gate Versions", e);
+            }
+            return;
+        }
+        let frame = document.getElementById("gating_versions_download_frame");
+        if (!frame) {
+            frame = document.createElement("iframe");
+            frame.id = "gating_versions_download_frame";
+            frame.name = "gating_versions_download_frame";
+            frame.hidden = true;
+            document.body.appendChild(frame);
+        }
+        this._downloadGatingCSVViaForm(fields, "plugins/gating/download_gate_versions_csv",
+                                       frame.name);
+    }
+
     /** The plain download: a hidden form, posted and gone. */
-    _downloadGatingCSVViaForm(fields) {
+    _downloadGatingCSVViaForm(fields, route = "plugins/gating/download_gating_csv", target = null) {
         let form = document.createElement("form");
-        form.action = this.url("plugins/gating/download_gating_csv");
+        form.action = this.url(route);
+        if (target) form.target = target;
 
         form.method = "post";
 
@@ -186,11 +252,13 @@ class GatingApi {
                     {
                         datasource: this.datasource,
                         filter: selections,
-                        channels: channels
+                        channels: channels,
+                        base: this.revision
                     }
                 )
             });
             let response_data = await response.json();
+            if (response_data && response_data.revision) this.revision = response_data.revision;
             return response_data;
         } catch (e) {
             console.log("Error Saving Gating List", e);

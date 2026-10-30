@@ -1,6 +1,11 @@
-"""The gates download: one file, and a column saying what was thresholded.
+"""The gates download: one file, a column saying what was thresholded, and one
+saying who set it.
 
-Two changes meet here. The last column used to be `gate_active`, which was true
+`thresholded` reads TRUE for a gated marker and is empty otherwise (a column
+of FALSEs reads as data in a spreadsheet); `gated_by` says Plexora AI or User
+for each gated marker.
+
+The column used to be `gate_active`, which was true
 for at most one marker -- the panel resets `selections` on every marker switch,
 so a user who gated twenty markers and then clicked to a twenty-first
 downloaded a file claiming one gate. What the file has to answer is "was this
@@ -78,10 +83,9 @@ def _by_channel(frame):
     return {row["channel"]: row for row in frame.iter_rows(named=True)}
 
 
-def test_the_last_column_is_thresholded(project):
+def test_the_columns_are_thresholded_then_who_gated(project):
     frame = gating_model.download_gates(project, {}, {"MarkerA": [0.0, 7.0]})
-    assert frame.columns == ["channel", "gate_start", "gate_end", "thresholded"]
-    assert frame.schema["thresholded"] == pl.Boolean
+    assert frame.columns == ["channel", "gate_start", "gate_end", "thresholded", "gated_by"]
 
 
 def test_every_narrowed_marker_reads_as_thresholded(project):
@@ -95,10 +99,12 @@ def test_every_narrowed_marker_reads_as_thresholded(project):
     }
     rows = _by_channel(gating_model.download_gates(project, {"MarkerC": [1.0, 7.0]}, channels))
 
-    assert rows["MarkerA"]["thresholded"] is True
-    assert rows["MarkerC"]["thresholded"] is True
-    # Still at its own full data range -- browsed to, never narrowed.
-    assert rows["MarkerB"]["thresholded"] is False
+    assert rows["MarkerA"]["thresholded"] == "TRUE"
+    assert rows["MarkerC"]["thresholded"] == "TRUE"
+    # Still at its own full data range -- browsed to, never narrowed: nothing
+    # in either column, not FALSE.
+    assert rows["MarkerB"]["thresholded"] is None
+    assert rows["MarkerB"]["gated_by"] is None
 
 
 def test_the_live_selection_still_wins_over_the_stored_range(project):
@@ -107,13 +113,34 @@ def test_the_live_selection_still_wins_over_the_stored_range(project):
 
     assert rows["MarkerA"]["gate_start"] == pytest.approx(3.0)
     assert rows["MarkerA"]["gate_end"] == pytest.approx(4.0)
-    assert rows["MarkerA"]["thresholded"] is True
+    assert rows["MarkerA"]["thresholded"] == "TRUE"
 
 
 def test_a_marker_the_description_does_not_know_reads_as_thresholded(project):
     rows = _by_channel(gating_model.download_gates(project, {}, {"Ghost": [1.0, 2.0]}))
 
-    assert rows["Ghost"]["thresholded"] is True
+    assert rows["Ghost"]["thresholded"] == "TRUE"
+
+
+def test_who_gated_is_plexora_ai_until_somebody_moves_the_gate(project):
+    from plexora.plugins.gating.server import provenance
+
+    # An agent's session wrote A and B; C was set by hand; A was moved since.
+    provenance.record(project, "MarkerA", status="accepted", method="ai_panel",
+                      written_low=2.0, written_high=7.0, session_id="gs_1")
+    provenance.record(project, "MarkerB", status="accepted", method="gmm",
+                      written_low=3.0, written_high=7.0, session_id="gs_1")
+    provenance.record(project, "MarkerC", status="accepted", method="manual",
+                      written_low=1.0, written_high=7.0)
+    channels = {"MarkerA": [2.5, 7.0], "MarkerB": [3.0, 7.0], "MarkerC": [1.0, 7.0]}
+    rows = _by_channel(gating_model.download_gates(project, {}, channels))
+
+    assert rows["MarkerB"]["gated_by"] == "Plexora AI"
+    assert rows["MarkerA"]["gated_by"] == "User"
+    assert rows["MarkerC"]["gated_by"] == "User"
+    # No record at all: a gate set on the slider.
+    rows = _by_channel(gating_model.download_gates(project, {}, {"Ghost": [1.0, 2.0]}))
+    assert rows["Ghost"]["gated_by"] == "User"
 
 
 @pytest.fixture
@@ -144,7 +171,24 @@ def test_the_route_serves_the_file_from_the_four_fields_the_client_sends(client)
         f"attachment; filename={name}_gated_channel_ranges.csv")
 
     rows = list(csv_module.DictReader(io.StringIO(response.get_data(as_text=True))))
-    assert list(rows[0]) == ["channel", "gate_start", "gate_end", "thresholded"]
+    assert list(rows[0]) == ["channel", "gate_start", "gate_end", "thresholded", "gated_by"]
     assert [row["channel"] for row in rows] == ["MarkerA", "MarkerB"]
-    assert rows[0]["thresholded"] == "true"
-    assert rows[1]["thresholded"] == "false"
+    assert (rows[0]["thresholded"], rows[0]["gated_by"]) == ("TRUE", "User")
+    assert (rows[1]["thresholded"], rows[1]["gated_by"]) == ("", "")
+
+
+def test_a_downloaded_file_reads_back_as_the_panel_reads_an_upload(client):
+    # The panel's upload reads the file with the same route the test reads it
+    # through: TRUE is a gate, an empty cell is a marker left ungated.
+    name, app_client = client
+    response = app_client.post("/plugins/gating/download_gating_csv", data={
+        "datasource": name, "filename": "g", "filter": json.dumps({}),
+        "channels": json.dumps({"MarkerA": [2.0, 5.0], "MarkerB": [0.0, 7.0]})})
+    upload = app_client.post("/plugins/gating/upload_gates", data={
+        "datasource": name, "file": (io.BytesIO(response.get_data()), "g.csv")},
+        content_type="multipart/form-data")
+    assert upload.status_code == 200
+    rows = {row["channel"]: row for row in app_client.get(
+        f"/plugins/gating/get_uploaded_gating_csv_values?datasource={name}").get_json()}
+    assert rows["MarkerA"]["thresholded"] is True
+    assert not rows["MarkerB"]["thresholded"]

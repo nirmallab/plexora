@@ -500,11 +500,17 @@ def write_report(call, session_id, *, fmt="both") -> dict:
 
 
 def _gate_rows(call, project):
+    return gate_rows_of(call.session.data(project), project)
+
+
+def gate_rows_of(ds, project=None):
+    """Every marker's gate of `ds` with where it came from (`_gate_rows`),
+    from a data handle -- the panel's own save has no capability call."""
     from plexora.plugins.gating.server.autogate import provenance
 
     from plexora.agent import cell_exclusions
 
-    ds = call.session.data(project)
+    project = project or ds.name
     rows = provenance.read(ds.name)
     try:
         qc_fp = cell_exclusions.fingerprint(cell_exclusions.call_record(ds))
@@ -618,14 +624,22 @@ def provenance_long(call, projects) -> list:
     """Rows for `uns['gates_provenance']`: marker, image_id, value, method, ..."""
     rows = []
     for project in projects:
-        for row in _gate_rows(call, project):
-            if row["thresholded"]:
-                rows.append({"marker": row["channel"], "image_id": project,
-                             "value": row["gate_start"], "method": row["method"] or "manual",
-                             "status": row["status"] or "", "confidence":
-                                 row["confidence"] or "", "session_id": row["session_id"] or "",
-                             "timestamp": row["timestamp"] or "",
-                             "operation_id": row["operation_id"] or "",
-                             **{k: row.get(k, "") for k in CLASSIFIER_COLUMNS}})
+        rows.extend(provenance_long_of(call.session.data(project), project))
+    return rows
+
+
+def provenance_long_of(ds, project=None) -> list:
+    """`provenance_long` for one data handle."""
+    rows = []
+    project = project or ds.name
+    for row in gate_rows_of(ds, project):
+        if row["thresholded"]:
+            rows.append({"marker": row["channel"], "image_id": project,
+                         "value": row["gate_start"], "method": row["method"] or "manual",
+                         "status": row["status"] or "", "confidence":
+                             row["confidence"] or "", "session_id": row["session_id"] or "",
+                         "timestamp": row["timestamp"] or "",
+                         "operation_id": row["operation_id"] or "",
+                         **{k: row.get(k, "") for k in CLASSIFIER_COLUMNS}})
     return rows
 

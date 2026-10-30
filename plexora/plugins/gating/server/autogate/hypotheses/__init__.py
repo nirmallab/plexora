@@ -358,6 +358,16 @@ def packet(engine, units):
                .get(unit["marker"]) or {}).get("morphology") == "fibrous"
     if fibrous:
         guide.append("panel_fibrous")
+    # The distribution and a partner beside the cells: context for the reads,
+    # never a cell's place on them (the panel stays blind).
+    plots = _panel_plots(engine, unit, ds, state, bounds, partners, seed)
+    if plots is not None:
+        guide.append("panel_plots")
+        density = plots["manifest"]["plots"].get("density") or {}
+        if density:
+            multiview["plots"] = {"partner": density["partner"],
+                                  "relation": density["relation"]}
+            guide.append(f"plot:{density['relation']}")
     pkt = {
         "question": (f"{unit['marker']} ({ds.name}): for EVERY numbered cell, does it carry "
                      f"its OWN {stain} stain, around the nucleus the ticks mark? One word per "
@@ -377,9 +387,42 @@ def packet(engine, units):
              **({"crowded": int(c["crowded"])} if c.get("crowded") is not None else {})}
             for c in arranged]},
     }
-    images = packets._images(pkt, ((main, "panel_collage", "numbered cells, random order"),))
+    shown = [(main, "panel_collage", "numbered cells, random order")]
+    if plots is not None:
+        shown.append((plots, "panel_plots", "the distribution and a partner"))
+        unit.setdefault("artifacts", []).extend(
+            a["id"] for a in (plots.get("artifact"),) if a)
+    images = packets._images(pkt, tuple(shown))
     unit["last_manifest"] = main["manifest"]
     return pkt, images
+
+
+def _panel_plots(engine, unit, ds, state, bounds, partners, seed):
+    """The panel's second picture (`sheet.render_panel_plots`), or None when
+    it cannot be drawn: the distribution with the range the cells come from,
+    and the marker against one gated partner -- the not-expected one the
+    collage shows, else the expected one, else the first gated reference."""
+    from plexora.plugins.gating.server.autogate import packets, sheet
+
+    refs = engine._references(unit)
+    by_marker = {r["marker"]: r for r in refs if r.get("gate") is not None}
+    shown = (partners or {}).get("markers") or {}
+    partner = next((by_marker[m] for m in (shown.get("anti"), shown.get("co"))
+                    if m in by_marker), None)
+    if partner is None and by_marker:
+        partner = packets.plot_partner(unit, list(by_marker.values()))
+    start = state.get("leader") if state.get("leader") is not None else state.get("start")
+    if start is None or not bounds:
+        return None
+    try:
+        with engine.timed("plots"):
+            return sheet.render_panel_plots(
+                ds, marker=unit["marker"], low=float(start),
+                band=(float(bounds[0]), float(bounds[-1])),
+                candidates=[float(b) for b in bounds], partner=partner, seed=seed,
+                fmt=packets._fmt(engine))
+    except Exception:  # the cells are read without it
+        return None
 
 
 def _grow(engine, unit, ds, col, state, plan) -> dict | None:

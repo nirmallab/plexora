@@ -70,7 +70,35 @@ def _thresholded(channel, gate_start, gate_end, description):
     return gate_start != desc.get('min') or gate_end != desc.get('max')
 
 
+#: The download's `gated_by`: who set the gate the row carries.
+GATED_BY_AI = "Plexora AI"
+GATED_BY_USER = "User"
+#: Provenance methods a person sets (`provenance.METHODS`); a written gate by
+#: any other method was an agent's.
+_USER_METHODS = ("manual", "rolled_back", "imported")
+
+
+def _gated_by(row, low, high):
+    """`GATED_BY_AI` when an agent wrote this very gate (its provenance row
+    holds the value written, and the gate still equals it), else
+    `GATED_BY_USER`: set by hand, or an agent's gate moved since."""
+    from plexora.plugins.gating.server import provenance
+
+    if not row or row.get("written_low") is None or row.get("method") in _USER_METHODS:
+        return GATED_BY_USER
+    if provenance.edited_since(row, {"low": low, "high": high}):
+        return GATED_BY_USER
+    return GATED_BY_AI
+
+
 def download_gates(datasource_name, gates, channels):
+    """The gates file: one row per marker -- `channel`, `gate_start`,
+    `gate_end`; `thresholded` TRUE for a marker narrowed from its full range
+    and empty otherwise; `gated_by` (`GATED_BY_AI` or `GATED_BY_USER`) for a
+    thresholded one, empty otherwise. Read back by the panel's upload, where
+    an empty `thresholded` is a marker left ungated."""
+    from plexora.plugins.gating.server import provenance
+
     rows = []
     for key, value in channels.items():
         rows.append([key, value[0], value[1]])
@@ -89,13 +117,28 @@ def download_gates(datasource_name, gates, channels):
     # Per-column min/max, cached per datasource -- this is a handful of markers
     # against a summary that the panel already asked for, not a table read.
     description = api.project_data(datasource_name).table.describe()
-    return csv.with_columns(pl.Series('thresholded', [
-        _thresholded(row['channel'], row['gate_start'], row['gate_end'], description)
-        for row in csv.iter_rows(named=True)
-    ], dtype=pl.Boolean))
+    origins = provenance.read(datasource_name)
+    thresholded, gated_by = [], []
+    for row in csv.iter_rows(named=True):
+        gated = _thresholded(row['channel'], row['gate_start'], row['gate_end'], description)
+        # TRUE or nothing: a spreadsheet reads a column of FALSEs as data.
+        thresholded.append("TRUE" if gated else None)
+        gated_by.append(_gated_by(origins.get(row['channel']), row['gate_start'],
+                                  row['gate_end']) if gated else None)
+    return csv.with_columns(pl.Series('thresholded', thresholded, dtype=pl.Utf8),
+                            pl.Series('gated_by', gated_by, dtype=pl.Utf8))
 
 
-def save_gating_list(datasource_name, gates, channels):
+def save_gating_list(datasource_name, gates, channels, *, base=None, defaults=None):
+    """The sidebar's save: its whole list, as it holds it. Returns the new
+    revision.
+
+    `base` is the revision the page last read or wrote (`GatingApi.revision`).
+    When the stored list has moved on since -- an agent's session wrote gates
+    while the page held the old list -- only what the page changed since
+    `base` is taken (`merge_unchanged`); the rest stays as stored. `defaults`
+    ({channel: (low, high)}, or a callable giving it) is each column's full
+    range: a row the page only seeded counts as unchanged."""
     rows = []
     for key, value in channels.items():
         rows.append([key, value[0], value[1]])
@@ -114,8 +157,100 @@ def save_gating_list(datasource_name, gates, channels):
         ])
 
     temp = csv.to_dicts()
-    f = pickle.dumps(temp, protocol=4)
-    _store(datasource_name).put_state(f)
+    with _lock_for(datasource_name):
+        current = _store(datasource_name).get_state()
+        if base is not None and current and _blob_revision(current) != str(base):
+            seen = rows_at(datasource_name, base)
+            if seen is not None:
+                if callable(defaults):
+                    defaults = defaults()
+                temp = merge_unchanged(seen, temp, safe_pickle.loads(current) or [],
+                                       defaults or {})
+        f = pickle.dumps(temp, protocol=4)
+        _store(datasource_name).put_state(f)
+        return remember(datasource_name, f)
+
+
+#: Gate lists a page was handed or saved, by revision, so a later save can say
+#: which it started from (`save_gating_list`'s `base`). Process memory, the
+#: last `_SEEN_MAX` across projects: a page that outlives the server saves as
+#: it always did.
+_SEEN: dict = {}
+_SEEN_MAX = 64
+
+
+def _blob_revision(blob) -> str:
+    return hashlib.sha1(blob).hexdigest()[:16] if blob else "0"
+
+
+def remember(datasource_name, blob) -> str:
+    """Keep the list in `blob` by its revision (`revision`); returns it."""
+    rev = _blob_revision(blob)
+    if blob:
+        key = (str(datasource_name), rev)
+        _SEEN.pop(key, None)
+        _SEEN[key] = blob
+        while len(_SEEN) > _SEEN_MAX:
+            _SEEN.pop(next(iter(_SEEN)))
+    return rev
+
+
+def saved_gating_list_at(datasource_name) -> tuple:
+    """(rows or None, revision) of the stored list, read once and kept
+    (`remember`) for a later save to name as its base."""
+    blob = _store(datasource_name).get_state()
+    rev = remember(datasource_name, blob)
+    return (None if blob is None else safe_pickle.loads(blob)), rev
+
+
+def rows_at(datasource_name, rev):
+    """The rows of a list `remember` kept, or None."""
+    blob = _SEEN.get((str(datasource_name), str(rev)))
+    if blob is None:
+        return None
+    return [dict(row) for row in safe_pickle.loads(blob) or [] if isinstance(row, dict)]
+
+
+def merge_unchanged(base_rows, saved_rows, current_rows, defaults) -> list:
+    """`saved_rows` with every gate the page did not change since `base_rows`
+    taken from `current_rows` instead.
+
+    A row is the page's change when its range differs from the base's (or,
+    for a channel the base did not have, from `defaults`, its full range --
+    the sidebar seeds a marker it is shown). Anything else the page sent is
+    the list it was handed, and the stored one, which may have moved on since,
+    stands. Which marker is active is always the page's. A channel stored but
+    not sent is kept."""
+    base = {row.get("channel"): row for row in base_rows}
+    current = {row.get("channel"): row for row in current_rows if isinstance(row, dict)}
+    out, sent = [], set()
+    for row in saved_rows:
+        channel = row.get("channel")
+        sent.add(channel)
+        was = base.get(channel)
+        if was is None and channel in defaults:
+            low, high = defaults[channel]
+            was = {"gate_start": low, "gate_end": high}
+        now = current.get(channel)
+        if was is not None and now is not None and _same_range(row, was):
+            row = {**row, "gate_start": now.get("gate_start"), "gate_end": now.get("gate_end")}
+        out.append(row)
+    out.extend(dict(row) for channel, row in current.items() if channel not in sent)
+    return out
+
+
+def _same_range(a, b):
+    def same(x, y):
+        if x is None or y is None:
+            return x is y
+        return abs(float(x) - float(y)) <= 1e-9 * max(1.0, abs(float(x)), abs(float(y)))
+    return same(a.get("gate_start"), b.get("gate_start")) \
+        and same(a.get("gate_end"), b.get("gate_end"))
+
+
+def default_ranges(ds) -> dict:
+    """{channel: (min, max)}: each marker's full range (`default_rows`)."""
+    return {row["channel"]: (row["gate_start"], row["gate_end"]) for row in default_rows(ds)}
 
 
 def get_saved_gating_list(datasource_name):
@@ -546,6 +681,149 @@ def active_gates(ds) -> dict:
             continue
         active[channel] = (low, high)
     return active
+
+
+# -- versions: no gate set is lost ------------------------------------------------
+#
+# The gate list holds one gate per marker, and every run and every slider move
+# writes over it. A version keeps a set as it stood: when an automatic run
+# finishes, just before one starts writing over gates no version holds yet
+# (the user's hand edits), and when the user saves one. The panel shows the
+# latest -- the stored list -- and the gates file and the source file carry
+# them all (`versions_table`, `anndata_gates.save_gate_versions`).
+
+#: The plugin store table of versions: a row per (version, gated marker).
+VERSIONS_TABLE = "versions"
+VERSION_COLUMNS = {"version": pl.Int64, "created": pl.Utf8, "by": pl.Utf8,
+                   "session_id": pl.Utf8, "marker": pl.Utf8, "low": pl.Float64,
+                   "high": pl.Float64}
+
+
+def gate_versions(datasource_name) -> list:
+    """[{version, created (UTC, ISO), by, session_id, gates: {marker: (low,
+    high)}}], oldest first; [] when none was kept."""
+    frame = _store(datasource_name).get_table(VERSIONS_TABLE)
+    if frame is None or frame.height == 0:
+        return []
+    out = {}
+    for row in frame.sort("version", maintain_order=True).iter_rows(named=True):
+        version = out.setdefault(int(row["version"]), {
+            "version": int(row["version"]), "created": row["created"], "by": row["by"],
+            "session_id": row["session_id"] or None, "gates": {}})
+        if row["marker"] is not None:
+            version["gates"][row["marker"]] = (row["low"], row["high"])
+    return [out[k] for k in sorted(out)]
+
+
+def save_version(ds, by=None, *, session_id=None):
+    """Keep the gates as they stand as a new version and return it -- or the
+    latest version when it holds exactly these gates already, or None when
+    nothing is gated. `by` (`GATED_BY_AI` or `GATED_BY_USER`) defaults to who
+    set them: Plexora AI only when an agent set every one (`_gated_by`)."""
+    from datetime import datetime, timezone
+
+    from plexora.plugins.gating.server import provenance
+
+    gates = active_gates(ds)
+    if not gates:
+        return None
+    if by is None:
+        origins = provenance.read(ds.name)
+        by = GATED_BY_AI if all(_gated_by(origins.get(m), low, high) == GATED_BY_AI
+                                for m, (low, high) in gates.items()) else GATED_BY_USER
+    with _lock_for(ds.name):
+        kept = gate_versions(ds.name)
+        if kept and _same_gates(kept[-1]["gates"], gates):
+            return kept[-1]
+        number = kept[-1]["version"] + 1 if kept else 1
+        created = datetime.now(timezone.utc).isoformat(timespec="seconds")
+        rows = [{"version": number, "created": created, "by": by,
+                 "session_id": session_id, "marker": marker, "low": float(low),
+                 "high": float(high)} for marker, (low, high) in gates.items()]
+        frame = _store(ds.name).get_table(VERSIONS_TABLE)
+        added = pl.DataFrame(rows, schema=VERSION_COLUMNS, orient="row")
+        frame = added if frame is None or frame.height == 0 else pl.concat(
+            [frame.select(list(VERSION_COLUMNS)).cast(VERSION_COLUMNS), added])
+        _store(ds.name).put_table(VERSIONS_TABLE, frame)
+    return {"version": number, "created": created, "by": by, "session_id": session_id,
+            "gates": dict(gates)}
+
+
+def _same_gates(a, b):
+    return set(a) == set(b) and all(
+        _same_range({"gate_start": a[m][0], "gate_end": a[m][1]},
+                    {"gate_start": b[m][0], "gate_end": b[m][1]}) for m in a)
+
+
+def version_label(version, taken=()) -> str:
+    """A version's column name: who and when, local time ("Plexora AI
+    2026-10-30 11:28"), with a number added when `taken` has it already."""
+    from datetime import datetime
+
+    try:
+        when = datetime.fromisoformat(str(version["created"])).astimezone()
+        stamp = when.strftime("%Y-%m-%d %H:%M")
+    except ValueError:
+        stamp = str(version["created"])
+    label = f"{version['by']} {stamp}"
+    n = 2
+    while label in taken:
+        label = f"{version['by']} {stamp} ({n})"
+        n += 1
+    return label
+
+
+def versions_table(ds) -> pl.DataFrame | None:
+    """Markers as rows (every one any version gated, in the table's order),
+    a column per version, oldest first (`version_label`), each holding the
+    lower gate it kept; empty where a version had none. None with fewer than
+    two versions -- one is the gates file itself."""
+    kept = gate_versions(ds.name)
+    if len(kept) < 2:
+        return None
+    gated = {m for v in kept for m in v["gates"]}
+    order = [m for m in ds.table.markers if m in gated]
+    order += sorted(gated - set(order))
+    columns, labels = {"marker": order}, []
+    for version in kept:
+        label = version_label(version, labels)
+        labels.append(label)
+        columns[label] = [version["gates"][m][0] if m in version["gates"] else None
+                          for m in order]
+    return pl.DataFrame(columns, schema={"marker": pl.Utf8,
+                                         **{label: pl.Float64 for label in labels}})
+
+
+def versions_payload(datasource_name) -> list:
+    """[{label, gates: {marker: low}}], oldest first, for the source file's
+    `uns[<table>_versions]` (`anndata_gates.save_gate_versions`); [] with
+    fewer than two versions, as `versions_table`."""
+    kept = gate_versions(datasource_name)
+    if len(kept) < 2:
+        return []
+    out, labels = [], []
+    for version in kept:
+        label = version_label(version, labels)
+        labels.append(label)
+        out.append({"label": label,
+                    "gates": {m: float(low) for m, (low, _high) in version["gates"].items()}})
+    return out
+
+
+def source_extras(ds) -> dict:
+    """What a save to the source file writes beside the latest gates:
+    `provenance` -- a row per gated marker, who set it, how and when
+    (`uns[<table>_provenance]`) -- and `versions` (`versions_payload`)."""
+    from plexora.agent import cell_exclusions
+    from plexora.plugins.gating.server.autogate import report
+
+    try:
+        qc_fp = cell_exclusions.fingerprint(cell_exclusions.call_record(ds))
+    except Exception:  # no QC to read: the provenance goes without it
+        qc_fp = ""
+    rows = [{**row, "call_mode": cell_exclusions.current_call_mode(), "qc_fingerprint": qc_fp}
+            for row in report.provenance_long_of(ds)]
+    return {"provenance": rows, "versions": versions_payload(ds.name)}
 
 
 def set_gate(ds, marker, low, high, *, expected_revision=None, allow_protected=False,

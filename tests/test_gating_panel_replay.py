@@ -98,6 +98,12 @@ def test_one_scene_and_one_seed_issue_the_same_first_panel(tmp_path):
         [(_sha(d), f) for d, f in b_images]
     # The stored picture, keyed by its bytes and its manifest: one picture.
     assert a["images"][0]["artifact_id"] == b["images"][0]["artifact_id"]
+    # Beside the cells, the distribution and a partner, named in the guide;
+    # no cell is placed on them, so nothing of a cell's value is in it.
+    assert [i["role"] for i in a["images"]] == ["panel_collage", "panel_plots"]
+    assert "panel_plots" in a["evidence"]["guide"]
+    plots = artifacts.get(a["images"][1]["artifact_id"])[1]["manifest"]
+    assert plots["band"][0] < plots["band"][1] and "rows" not in plots
 
 
 def test_a_stored_panel_draws_again_byte_for_byte_from_its_manifest(tmp_path):
@@ -113,7 +119,13 @@ def test_a_stored_panel_draws_again_byte_for_byte_from_its_manifest(tmp_path):
         assert panels
         # The same truthful reader labels every cell as it did.
         assert all(r["agreement"] == 1.0 for r in panels), panels
-        drawn = [i for r in panels for i in r["images"]]
+        # Each panel's second picture is its plots (`sheet.render_panel_plots`),
+        # drawn from the table, not from a collage manifest.
+        from plexora.plugins.gating.server.autogate import sheet
+
+        plots = [i for r in panels for i in r["images"] if i.get("why") == sheet.PANEL_PLOTS_KIND]
+        assert len(plots) == len(panels)
+        drawn = [i for r in panels for i in r["images"] if i not in plots]
         assert drawn and all(i["rerendered"] and i["identical"] and i["numbers_match"]
                              for i in drawn), drawn
         png, sidecar = artifacts.get(drawn[0]["artifact_id"])

@@ -146,6 +146,11 @@ class GatingSidebarController {
         more?.addEventListener("click", (event) => {
             event.stopPropagation();
             window.PlexoraMenu?.open(more, [{
+                label: "Save gate version",
+                title: "Keep the gates as they stand. Download Gates and Save Gates to Source "
+                    + "File carry every version kept, the latest first in use",
+                onSelect: () => this.onSaveVersionClick(),
+            }, {
                 label: "Clear all gates…",
                 title: "Every marker back to never gated: its full range, and no record of who set it",
                 onSelect: () => this.onClearAllClick(),
@@ -596,7 +601,9 @@ class GatingSidebarController {
         // After the mirror above, which may just have put this marker on
         // screen: the viewer's contrast slider is always the gated marker's.
         this.contrast?.sync();
-        this.scheduleSaveGating();
+        // `persist: false`: an agent moving the panel (gatingAgentBridge.js),
+        // which is not the user choosing a marker to save.
+        if (options.persist !== false) this.scheduleSaveGating();
     }
 
     ensureGateSelection(name) {
@@ -845,6 +852,32 @@ class GatingSidebarController {
     async onClearClick() {
         if (!this.gateMarker) return;
         await this.clearGates([this.gateMarker]);
+    }
+
+    /**
+     * Save gate version (the action line's overflow): the gates as they stand,
+     * kept. A save still waiting on its debounce goes first, so the version is
+     * what the panel shows.
+     */
+    async onSaveVersionClick() {
+        window.clearTimeout(this._saveGatingTimer);
+        let answer;
+        try {
+            await (this._gatingSaveChain || Promise.resolve());
+            await this.persistGatingList();
+            answer = await this.api.saveVersion();
+        } catch (error) {
+            window.PlexoraToast?.show?.({ title: "Could not save a gate version",
+                                         note: String(error.message || error), lines: [] });
+            return;
+        }
+        const kept = `${answer.n_versions} ${answer.n_versions === 1 ? "version" : "versions"} `
+            + "kept. Download Gates and Save Gates to Source File include every one.";
+        window.PlexoraToast?.show?.(!answer.saved
+            ? { title: "No gate to keep", note: "Gate a marker first.", lines: [] }
+            : answer.new
+            ? { title: `Gate version ${answer.version} saved`, note: kept, lines: [] }
+            : { title: `Already kept as version ${answer.version}`, note: kept, lines: [] });
     }
 
     /** Clear all gates (the action line's overflow), asked first. */
@@ -1464,7 +1497,9 @@ class GatingSidebarController {
             .attr("x2", (value) => xScale(value));
     }
 
-    applySavedGating(rows) {
+    /** `keep`: the marker to stay on (a re-read while one is on screen), in
+     *  place of the one the saved list last had active. */
+    applySavedGating(rows, { keep = null } = {}) {
         let activeRow = null;
         rows.forEach((row) => {
             if (!row || !row.channel || row.channel === "Lasso") return;
@@ -1473,7 +1508,8 @@ class GatingSidebarController {
                 activeRow = row;
             }
         });
-        const marker = activeRow
+        const marker = keep && this.getGateMarkerNames().includes(keep) ? keep
+            : activeRow
             ? this.dataLayer.getShortChannelName(activeRow.channel)
             : (this.getGateMarkerNames()[1] || this.getGateMarkerNames()[0]);
         // syncSlot:false - applySavedChannels already placed every active channel (including
@@ -1587,6 +1623,11 @@ class GatingSidebarController {
      * Skipped while the sidebar is still restoring: that restore is reading
      * the same list, and applying it twice would race the two.
      *
+     * The marker on screen stays on screen. Re-selecting the one the list
+     * last had active moved the panel off the marker an agent's look was
+     * playing on every gate the session wrote -- the look ended, and another
+     * marker's gate came up as if it were being gated again.
+     *
      * @returns whether anything was applied.
      */
     async reloadFromServer() {
@@ -1600,7 +1641,7 @@ class GatingSidebarController {
         this._applyingRemote = true;
         try {
             if (rows.length) {
-                this.applySavedGating(rows);
+                this.applySavedGating(rows, { keep: this.gateMarker });
             } else if (this.gateMarker) {
                 this.setGateMarker(this.gateMarker, { force: true, syncSlot: false });
             }
@@ -1671,8 +1712,18 @@ class GatingSidebarController {
         // dot is drawn hollow (gating.css matches these words), and the gate
         // follows them.
         const layer = this.classifier?.describeSessionLayer?.(name) || null;
-        if (!this.hasCustomGate(name)) return layer;
         const fullName = this.dataLayer.getFullChannelName(name);
+        if (!this.hasCustomGate(name)) {
+            // A marker an automatic run gated that has no gate now (put back
+            // to its full range since): still marked, saying what it was.
+            // Clear removes the record, and with it the dot.
+            const was = this.provenance[fullName] || this.provenance[name];
+            if (layer || !was || was.written_low === null || was.written_low === undefined) {
+                return layer;
+            }
+            return `No gate now · gated before at ${this.sidebar.formatValue(was.written_low)}`
+                + ` · ${describeGateProvenance(was, { long: true })}`;
+        }
         const range = this.gatingList.gating_channels[fullName];
         const row = this.provenance[fullName] || this.provenance[name];
         const how = row ? ` · ${describeGateProvenance(row, { long: true })}` : "";

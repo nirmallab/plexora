@@ -158,7 +158,7 @@ def _density(result, candidates):
                                                     for c in candidates or ()])
 
 
-def _histogram(ds, marker, low, candidates, size):
+def _histogram(ds, marker, low, candidates, size, band=None):
     from plexora.agent import plots
     from plexora.plugins.gating.server.autogate import bivariate
     from plexora.plugins.gating.server import model
@@ -175,10 +175,80 @@ def _histogram(ds, marker, low, candidates, size):
     log_table = model.values_logged(ds)
     who = "every cell" if cell_exclusions.row_mask(ds, marker) is None else "QC-passed cells"
     return plots.draw_histogram(
-        values, gate=low, width=size[0], height=size[1], title=f"{marker}: {who}",
+        values, gate=low, band=band, width=size[0], height=size[1], title=f"{marker}: {who}",
         log_axis=False if log_table else None,
         axis_note="table units (log1p)" if log_table else None,
         extra_gates=[(c["low"], c["id"]) for c in candidates or ()])
+
+
+#: A cell panel's second picture (`render_panel_plots`): one plot this size,
+#: or two side by side.
+PANEL_PLOT_PX = (360, 270)
+PANEL_PLOTS_KIND = "plexora.gating_panel_plots"
+
+
+def render_panel_plots(ds, *, marker, low, band, candidates=(), partner=None, seed=0,
+                       fmt="webp", store=True):
+    """{png, image, format, manifest, artifact}: the marker's distribution
+    (QC-passed cells, `band` -- the range the panel's cells come from --
+    shaded, `candidates` dashed, `low` the gate the reads start from) and,
+    with a gated `partner` `{marker, gate, relation}`, the marker against it.
+
+    Context for a blind panel: the plots never place a numbered cell, so a
+    read still stands on the cell's own pixels (`hypotheses.packet`)."""
+    from PIL import Image, ImageDraw
+
+    from plexora.agent import artifacts
+    from plexora.agent.evidence import collage
+    from plexora.plugins.gating.server.autogate import tableops
+    from plexora.server.utils import fast_png
+
+    w, h = PANEL_PLOT_PX
+    lines = [{"id": "", "low": float(v)} for v in candidates if v is not None]
+    panels = [(_histogram(ds, marker, low, lines, (w, h), band=band),
+               f"{marker}: its distribution, the cells' range shaded")]
+    plot_manifest = {"histogram": {"band": [float(band[0]), float(band[1])]}}
+    if partner is not None:
+        try:
+            result = tableops.local_or_node(ds, "gating.autogate.bivariate", {
+                "a": marker, "gate_a": float(low), "b": partner["marker"],
+                "gate_b": float(partner["gate"]), "relation": partner["relation"],
+                "with_grid": True, "seed": int(seed)})
+            density = _fit(_density(result, lines), w, h, collage.BG)
+            panels.append((density, f"{marker} against {partner['marker']} "
+                                    f"({partner['relation']})"))
+            plot_manifest["density"] = {"partner": partner["marker"],
+                                        "relation": partner["relation"],
+                                        "partner_gate": float(partner["gate"]),
+                                        "quadrants": result.get("quadrants")}
+        except Exception:  # a partner that cannot be read leaves the distribution alone
+            pass
+    width = len(panels) * w + (len(panels) - 1) * GAP
+    height = TITLE_H + h + CAPTION_H
+    canvas = Image.new("RGB", (width, height), collage.BG)
+    draw = ImageDraw.Draw(canvas)
+    font, small = collage._font(11), collage._font(10)
+    draw.rectangle((0, 0, width, TITLE_H - 1), fill=collage.HEADER_BG)
+    draw.text((4, 1), _ascii(f"{marker} · the distribution"
+                             + (" and a partner" if len(panels) > 1 else "")
+                             + " (context: no numbered cell is placed on them)"),
+              fill=collage.TEXT, font=font)
+    for index, (image, caption) in enumerate(panels):
+        x = index * (w + GAP)
+        canvas.paste(_fit(image.convert("RGB"), w, h, collage.BG), (x, TITLE_H))
+        draw.text((x + 2, TITLE_H + h + 1), _ascii(caption), fill=collage.DIM, font=small)
+    png = fast_png.encode_rgb8_png(np.asarray(canvas))
+    transported, transport_fmt = collage.encode(canvas, fmt)
+    manifest = {"kind": PANEL_PLOTS_KIND, "project": ds.project.name, "marker": marker,
+                "gate": float(low), "band": [float(band[0]), float(band[1])],
+                "candidates": [line["low"] for line in lines], "plots": plot_manifest,
+                "size": [width, height],
+                "estimated_vision_tokens": collage.estimated_tokens(width, height),
+                "renderer": "plexora.gating.panel_plots/1", "egress": "rendered_pixels"}
+    artifact = artifacts.put(ds.project.name, png, manifest, kind="gating_panel_plots") \
+        if store else None
+    return {"png": png, "image": transported, "format": transport_fmt, "manifest": manifest,
+            "artifact": artifact}
 
 
 def render_context_sheet(session, ds, *, marker, channel, low, high=None, references=(),

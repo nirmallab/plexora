@@ -291,10 +291,29 @@ await check("a first look tries a gate well off, closes in on a cell, and ends o
         assert.equal(lows.at(-1), 900, `seed ${seed} ends on the gate`);
         assert.ok(lows.some((v) => Math.abs(v - 900) > 4000 * 0.03), `seed ${seed} tries one well off`);
         assert.ok(lows.every((v) => v >= 0 && v < 4000), `seed ${seed} stays on the slider`);
-        assert.ok(beats.some((b) => b.kind === "glide" && b.span <= 250), `seed ${seed} closes in`);
+        // Close enough to see a few cells and their neighbours change.
+        assert.ok(beats.some((b) => b.kind === "glide" && b.span <= 420), `seed ${seed} closes in`);
         assert.ok([...beats, ...idle].every((b) => b.ms > 0), `seed ${seed} takes its time`);
-        const nudges = gates(idle);
-        if (nudges.length) assert.equal(nudges.at(-1), 900, `seed ${seed}: a nudge goes back`);
+    }
+});
+
+await check("while it waits, a look moves the view and never the gate", async () => {
+    // A nudge of the gate and back read as the marker being gated again.
+    for (let seed = 0; seed < 40; seed += 1) {
+        for (const look of [1, 2, 3]) {
+            const { idle } = show.plan(spec(seed, { look, from: look > 1 ? 860 : 300 }));
+            assert.equal(gates(idle).length, 0, `seed ${seed}, look ${look}`);
+        }
+    }
+});
+
+await check("a gate is moved slowly enough to watch the cells change", async () => {
+    for (let seed = 0; seed < 40; seed += 1) {
+        const { beats, ms } = show.plan(spec(seed));
+        for (const beat of beats.filter((b) => b.kind === "gate")) {
+            assert.ok(beat.ms >= 900, `seed ${seed}: a drag of ${beat.ms} ms`);
+        }
+        assert.ok(ms >= 12000, `seed ${seed}: a first look of ${ms} ms`);
     }
 });
 
@@ -376,6 +395,132 @@ await check("a newer look, or a hand on the gate, ends the one playing", async (
     await advance(60000);
     assert.equal(painted.length, held, "what the hand sets stands");
     sandbox.__elements = {};
+});
+
+await check("a gate the session writes while a look plays is the gate the page saves", async () => {
+    // ImageLSP23362, 2026-10-30: a look still playing on Ki-67 put back the
+    // gate it found when it began (none) over the one the session had just
+    // written, and the page's next save wrote that.
+    const { self, saved } = painting();
+    offer("preview_gate", { marker: "CD8", low: 900, show: SHOW });
+    await advance(4000);
+    assert.equal(show.playing(), true);
+    // What reloadFromServer leaves: the stored list re-read, the preview over.
+    self.gatingList.gating_channels.CD8 = [1234, 4000];
+    self.agentPreview = null;
+    await advance(150000);
+    assert.deepEqual(plain(self.gatingList.gating_channels.CD8), [1234, 4000]);
+    await self.persistGatingList();
+    assert.deepEqual(saved.at(-1).channels.CD8, [1234, 4000]);
+    assert.deepEqual(saved.at(-1).selections.CD8, [1234, 4000]);
+});
+
+await check("a look playing is put back on the slider once the gates are re-read", async () => {
+    const { self, painted } = painting();
+    const result = plain(await offer("preview_gate", { marker: "CD8", low: 900, show: SHOW }).value);
+    await advance(result.show.ms + 1500);
+    assert.equal(show.playing(), true, "still in its idle moves");
+    const before = painted.length;
+    for (const fn of windowListeners["plexora:agent-state-changed"] || []) {
+        fn({ detail: { plugin: "gating", kind: "gates_saved" } });
+    }
+    await advance(10);
+    assert.equal(self.reloaded, 1);
+    assert.equal(painted.length, before + 1);
+    assert.equal(painted.at(-1), 900);
+    show.stop();
+});
+
+await check("a look says how long its moves take, and has made them by then", async () => {
+    const { painted } = painting();
+    const result = plain(await offer("preview_gate", { marker: "CD8", low: 900, show: SHOW }).value);
+    assert.ok(result.show.ms >= 12000, `${result.show.ms} ms`);
+    await advance(result.show.ms);
+    assert.equal(painted.at(-1), 900, "on the agent's gate by the time it said");
+    show.stop();
+});
+
+await check("a later look at a marker goes on from where its last one ended", async () => {
+    for (const fn of windowListeners["plexora:agent-state-changed"] || []) {
+        fn({ detail: { plugin: "gating", kind: "gating.session",
+                       payload: { session_id: "gs_2", event: "started" } } });
+    }
+    const { self, painted } = painting();
+    offer("preview_gate", { marker: "CD8", low: 900, show: SHOW });
+    await advance(150000);
+    // Another marker in between: CD8 is no longer on the slider.
+    offer("preview_gate", { marker: "CD3", low: 700, show: { ...SHOW, seed: 8 } });
+    await advance(5000);
+    assert.equal(self.gateMarker, "CD3");
+    const before = painted.length;
+    offer("preview_gate", { marker: "CD8", low: 950, show: { ...SHOW, look: 2 } });
+    await advance(150000);
+    const again = painted.slice(before);
+    assert.ok(again.length > 5);
+    assert.ok(again.every((v) => v > 600), `from where CD8 was (${Math.min(...again)}), `
+        + "not from its stored gate (300)");
+    assert.equal(again.at(-1), 950);
+});
+
+await check("an agent moving the panel to a marker saves nothing", async () => {
+    const { self } = controller();
+    const calls = [];
+    self.setGateMarker = function (name, options = {}) {
+        calls.push([name, plain(options)]);
+        this.gateMarker = name;
+    };
+    offer("set_active_marker", { marker: "CD3" });
+    offer("preview_gate", { marker: "CD8", low: 900 });
+    assert.deepEqual(calls, [["CD3", { persist: false }], ["CD8", { persist: false }]]);
+});
+
+await check("re-reading the saved gates keeps the marker on screen", async () => {
+    // Every gate a session wrote re-read the list, and the panel jumped to
+    // the marker the list last had active -- ending the look on screen.
+    const { self } = controller();
+    const picked = [];
+    Object.assign(self, {
+        sidebar: { isRestoring: () => false },
+        loadProvenance() {},
+        populateGateSelect() {},
+        dataLayer: { getFullChannelName: (n) => n, getShortChannelName: (n) => n },
+        setGateMarker(name) { picked.push(name); this.gateMarker = name; },
+        applySavedGating: proto.applySavedGating,
+        reloadFromServer: proto.reloadFromServer,
+    });
+    self.api.getSavedGatingList = async () => [
+        { channel: "CD3", gate_start: 250, gate_end: 3000, gate_active: true },
+        { channel: "CD8", gate_start: 640, gate_end: 4000, gate_active: false },
+    ];
+    self.gateMarker = "CD8";
+    assert.equal(await self.reloadFromServer(), true);
+    assert.deepEqual(picked, ["CD8"]);
+    assert.deepEqual(plain(self.gatingList.gating_channels.CD8), [640, 4000]);
+    // With nothing on screen, the list's active marker, as at page load.
+    picked.length = 0;
+    self.gateMarker = null;
+    await self.reloadFromServer();
+    assert.deepEqual(picked, ["CD3"]);
+});
+
+await check("a marker an automatic run gated keeps its dot when its gate is gone", async () => {
+    const { self } = controller();
+    Object.assign(self, {
+        sidebar: { formatValue: (v) => String(v) },
+        classifier: null,
+        hasCustomGate: (name) => name === "CD3",
+        describeGateIndicator: proto.describeGateIndicator,
+        provenance: { CD8: { method: "ai_panel", status: "accepted", confidence: "moderate",
+                             written_low: 7.04, written_high: 9.0 } },
+    });
+    self.gatingList.gating_channels.CD3 = [250, 3000];
+    // Gated by a run, then put back to its full range: still a dot, saying so.
+    assert.match(self.describeGateIndicator("CD8"), /^No gate now · gated before at 7\.04/);
+    // Gated now: the gate, as before.
+    assert.match(self.describeGateIndicator("CD3"), /^Gated 250–3000/);
+    // Never gated, or cleared (no record): no dot.
+    self.provenance = {};
+    assert.equal(self.describeGateIndicator("CD8"), null);
 });
 
 await check("with smooth motion off, the gate is set at once", async () => {

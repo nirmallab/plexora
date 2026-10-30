@@ -51,12 +51,14 @@
                 window.dispatchEvent(new CustomEvent("plexora:display-contrast-changed",
                                                      { detail: { reason: "session" } }));
             }
+            if (payload.event === "started") shownAt.clear();
             showPill(payload);
             return;
         }
         const live = controller();
         if (!live?.reloadFromServer) return;
-        live.reloadFromServer().catch((error) => {
+        // A look still playing goes on showing its gate over the stored one.
+        live.reloadFromServer().then(() => window.PlexoraGatingShow?.repaint?.()).catch((error) => {
             console.error("gating: could not take on the agent's gates", error);
         });
     });
@@ -76,9 +78,18 @@
                 `${marker || "(no marker)"} is not a marker Thresholding can gate`)), PLUGIN);
             return;
         }
-        live.setGateMarker(marker);
+        // Not saved: the agent moving the panel is not the user choosing a
+        // marker, and a save here wrote the page's whole list over gates the
+        // session had just written (ImageLSP23362, 2026-10-30).
+        live.setGateMarker(marker, { persist: false });
         detail.claim({ active_marker: live.gateMarker }, PLUGIN);
     });
+
+    //: marker -> the gate its last look ended on, this session: a later look
+    //: at a marker refines from there, not from its stored gate -- with
+    //: another marker shown in between, that sent the slider back to the
+    //: bottom and played the marker's gating over again from scratch.
+    const shownAt = new Map();
 
     // A candidate gate on the slider, not in the saved list. setGateRange with
     // a BRUSH MOVE repaints the cells and does not save; the list entry it
@@ -98,7 +109,7 @@
         }
         // A look still playing would paint over this one.
         window.PlexoraGatingShow?.stop?.();
-        if (live.gateMarker !== marker) live.setGateMarker(marker);
+        if (live.gateMarker !== marker) live.setGateMarker(marker, { persist: false });
         const fullName = live.dataLayer.getFullChannelName(marker);
         const range = live.getGateRange(marker);
         const stored = live.gatingList.gating_channels[fullName];
@@ -109,18 +120,35 @@
             detail.claim(Promise.reject(new Error("preview_gate needs low < high")), PLUGIN);
             return;
         }
-        const from = Number((live.gatingList.selections?.[fullName] || stored || range)[0]);
+        const showing = live.agentPreview?.fullName === fullName
+            && live.gatingList.selections?.[fullName];
+        const from = Number((showing || (shownAt.has(marker) && [shownAt.get(marker)])
+            || live.gatingList.selections?.[fullName] || stored || range)[0]);
         const paint = (value, quiet = true) => {
+            // The gate to keep is the one stored NOW, read before this frame
+            // writes over it -- not the one there when the look began. A gate
+            // the session writes while the look plays reaches the page
+            // (reloadFromServer, which ends `agentPreview`) and is the one
+            // kept; a copy taken at the start went back over it, and the next
+            // save wrote that (ImageLSP23362, 2026-10-30: Ki-67, Pan-CK and
+            // CD8a written by the session, then saved back to no gate).
+            const held = live.agentPreview;
+            const now = live.gatingList.gating_channels[fullName];
+            const kept = held && held.fullName === fullName ? held.stored
+                : (now ? [...now] : null);
             live.setGateRange([value, high], CSVGatingList.events.GATING_BRUSH_MOVE, { quiet });
-            if (stored) live.gatingList.gating_channels[fullName] = stored;
+            if (kept) live.gatingList.gating_channels[fullName] = [...kept];
             else delete live.gatingList.gating_channels[fullName];
             // The cells are drawn from `selections`, which now hold the
             // preview; persistGatingList saves the stored gate in its place
             // until the user (or a reload) replaces it.
-            live.agentPreview = { fullName, stored: stored ? [...stored] : null };
+            live.agentPreview = { fullName, stored: kept ? [...kept] : null };
         };
+        shownAt.set(marker, low);
         // `show`: the look played as a person would make it, from here, while
-        // the session goes on (gatingAgentShow.js). Acknowledged at once.
+        // the session goes on (gatingAgentShow.js). Acknowledged at once, with
+        // how long its moves take (`ms`), so the session's next look waits
+        // for them rather than cutting in half way.
         if (args.show && typeof args.show === "object" && window.PlexoraGatingShow) {
             const played = window.PlexoraGatingShow.play({
                 live, marker, paint, from, range, target: [low, high], show: args.show });
@@ -201,6 +229,7 @@
     window.addEventListener("plexora:agent-restore", (event) => {
         const detail = event.detail || {};
         window.PlexoraGatingShow?.stop?.();
+        shownAt.clear();
         const live = controller();
         if (!live) return;
         const work = Promise.resolve().then(() => {

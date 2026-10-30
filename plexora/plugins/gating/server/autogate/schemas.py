@@ -167,6 +167,7 @@ EVIDENCE_LABELS = {
     "t3_collage": "{marker} beside {references}",
     "flips_collage": "Cells between candidate {marker} thresholds",
     "panel_collage": "{marker} cells, numbered, in random order",
+    "panel_plots": "{marker}: its distribution, and against a partner",
     "context_sheet": "{marker} across the tissue",
     "absence_regions": "{marker} in six regions, nothing marked",
     "strip": "Markers at their thresholds",

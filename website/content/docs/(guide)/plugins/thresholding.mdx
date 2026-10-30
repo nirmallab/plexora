@@ -69,8 +69,9 @@ The cog in the card's header switches Thresholding to the **Single Cell Classifi
 
 Gates are kept with the project in Plexora's own storage, never in your original files, so the sample reopens with the same gates.
 
-- **Download Gates** writes a CSV with one row per marker: its lower and upper bound and whether it was gated. **Load Gates** reads that CSV back.
-- **Save Gates to Source File** writes the gates into the project's own AnnData or SpatialData file, under a table name you choose. It appears only for projects imported from one of those formats.
+- **Download Gates** writes a CSV with one row per marker: its lower and upper bound, TRUE if it is gated (empty if not), and who gated it, Plexora AI or User. **Load Gates** reads that CSV back. When more than one version of the gates is kept, a second CSV comes with it: one row per marker and one column per version, named by who made it and when.
+- **Save gate version**, in the panel's more-actions menu, keeps the gates as they stand. A version is also kept when an automatic gating run finishes, and before a run changes gates you set by hand. The panel always shows the latest gates.
+- **Save Gates to Source File** writes the latest gates into the project's own AnnData or SpatialData file, under a table name you choose (`gates` by default). Beside them it writes where each gate came from (`gates_provenance`) and, when more than one version is kept, every version (`gates_versions`, one column per version). It appears only for projects imported from one of those formats.
 
 ## Related
 

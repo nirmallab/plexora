@@ -884,6 +884,11 @@ def start(call, inp):
         record["state"] = "needs_setup"
     else:
         record["expression_fingerprints"] = _fingerprints(call.session, images)
+    if inp.mode == "apply":
+        # The gates as they stand, kept before the run writes over them: the
+        # user's hand edits since the last version (`model.save_version`
+        # keeps nothing new when the latest version holds them already).
+        _save_versions(call, images, session_id=None)
     order = record["order"]
     st = engines.store()
     st.create(record)
@@ -1921,7 +1926,12 @@ def _mirrored(call, session_id, result, started, *, packet_id=None, show=False):
                    dropped=session_mirror.presenter(session_id).take_dropped(),
                    **({"aborted": True} if result.get("aborted") else {}))
         paced = bool(engine.options["mirror_delay_ms"])
-    return session_mirror.MIN_SHOW_S if show and paced else 0.0
+    if not (show and paced):
+        return 0.0
+    # As long as the tab says the look's moves take (`show_s`), so the next
+    # look does not cut in half way through them.
+    return min(session_mirror.MAX_SHOW_S,
+               max(session_mirror.MIN_SHOW_S, float(result.get("show_s") or 0.0)))
 
 
 def _mirror_display(call, session_id, project):
@@ -2230,6 +2240,18 @@ class FinishInput(AgentModel):
                              "write the session made, newest first.")
 
 
+def _save_versions(call, images, *, session_id=None, by=None):
+    """`model.save_version` for each image, best effort: keeping a version
+    never stops a session."""
+    from plexora.plugins.gating.server import model as gating_model
+
+    for name in images:
+        try:
+            gating_model.save_version(call.session.data(name), by, session_id=session_id)
+        except Exception:
+            continue
+
+
 def finish(call, inp):
     from plexora.agent import jobs, registry
     from plexora.plugins.gating.server.autogate import engine as engines
@@ -2306,6 +2328,13 @@ def finish(call, inp):
                                  "wait for it", retryable=True)
             record["state"] = "done"
         record["finished_at"] = _now()
+        if action != "rollback" and any(u.get("receipts") for u in record["units"].values()):
+            # What the run wrote, kept as a version: the next run or a slider
+            # writes over the list, never over this.
+            from plexora.plugins.gating.server import model as gating_model
+
+            _save_versions(call, record["images"], session_id=inp.session_id,
+                           by=gating_model.GATED_BY_AI)
         if action != "cancel":
             from plexora.plugins.gating.server import experience
             from plexora.plugins.gating.server.autogate import memo

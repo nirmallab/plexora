@@ -8,9 +8,16 @@
  * way a hand gets it there -- too strict or too loose first, then back -- while
  * the view flies to the cells being read, closes in on one, pulls out a little
  * and moves on. One thing at a time, with pauses between: one person, one
- * mouse. Then, until the next look arrives, an occasional small move (a drift
- * to another cell, a breath in or out, a nudge of the gate and back), further
- * apart as time goes on.
+ * mouse. Then, until the next look arrives, an occasional small move of the
+ * view (a drift to another cell, a breath in or out), further apart as time
+ * goes on -- never of the gate: a nudge of it and back read as the marker
+ * being gated again.
+ *
+ * Slow enough to watch the cells change: the server flies the view to where
+ * the marker's medium cells are (mirror_script._medium_focus), the cells the
+ * candidate gates disagree on, and a drag takes seconds, not a flick. `play`
+ * says how long the look's own moves take (`ms`), and the session holds its
+ * next look until they are done.
  *
  * Varied, so a run of markers does not look like one gesture repeated: the
  * marker's seed picks its temperament (which way it errs first) and how it
@@ -30,11 +37,12 @@
     //: JITTER either way: flying to the field, closing in on a cell, pulling
     //: out a little, hopping to another cell, a slow drift while waiting, a
     //: breath in or out, a pause to look, a hold after a gate move.
-    const TIMING = { field: 1900, close: 2100, out: 1500, hop: 2300, drift: 3000,
-                     breathe: 2200, think: 650, hold: 950 };
-    const JITTER = 0.25;
-    //: How close is close: the width of image the view shows, image pixels.
-    const CLOSE_SPAN = [130, 250];
+    const TIMING = { field: 2900, close: 3100, out: 2400, hop: 3300, drift: 4200,
+                     breathe: 3200, think: 1100, hold: 1700 };
+    const JITTER = 0.2;
+    //: How close is close: the width of image the view shows, image pixels --
+    //: a few cells and their neighbours, so a group is seen to change.
+    const CLOSE_SPAN = [260, 420];
     //: The whole field is seen at least this wide, so a survey shows the
     //: neighbourhood (the server's field hugs a few cells).
     const FIELD_SPAN = 700;
@@ -44,11 +52,11 @@
     const MAX_SCALE = 8;
     //: A drag of the gate: `base` plus `per` times the square root of the share
     //: of the slider it crosses, within [min, max] ms.
-    const DRAG_MS = { base: 420, per: 2300, min: 360, max: 1900 };
+    const DRAG_MS = { base: 900, per: 3800, min: 900, max: 3400 };
     //: The small moves while the agent reads: how many, and the pause before
     //: each (it grows by IDLE_GROWTH a beat).
-    const IDLE_BEATS = 5;
-    const IDLE_PAUSE = [2600, 6000];
+    const IDLE_BEATS = 4;
+    const IDLE_PAUSE = [3500, 7000];
     const IDLE_GROWTH = 0.35;
     //: After a hand on the canvas, the view is left alone this long.
     const QUIET_MS = 12000;
@@ -75,8 +83,8 @@
     const EASES = {
         inOut: (f) => (f < 0.5 ? 4 * f * f * f : 1 - ((-2 * f + 2) ** 3) / 2),
         out: (f) => 1 - (1 - f) ** 3,
-        // A little past the mark and back, as a hand lands.
-        land: (f) => 1 + 2.2 * (f - 1) ** 3 + 1.2 * (f - 1) ** 2,
+        // A touch past the mark and back, as a hand lands.
+        land: (f) => 1 + 1.6 * (f - 1) ** 3 + 0.6 * (f - 1) ** 2,
     };
 
     /**
@@ -89,7 +97,7 @@
      * from `spec` = {seed, look, target: [low, high], from (the slider's low
      * now), range: [min, max], stops: [candidate gates], cells: [{x, y}],
      * field: {x, y, width, height} | null}. The beats always leave the gate at
-     * the target; the idle ones put it back there after a nudge.
+     * the target; the idle ones never move it.
      */
     function plan(spec) {
         const look = Math.max(1, Math.floor(Number(spec.look) || 1));
@@ -225,21 +233,15 @@
         for (let i = 0; i < IDLE_BEATS; i += 1) {
             idle.push({ kind: "pause",
                         ms: jitter(between(...IDLE_PAUSE) * (1 + i * IDLE_GROWTH)) });
+            // The view only: the gate stays where the look left it.
             const choice = random();
-            if (choice < 0.35 && cells.length > 1) {
+            if (choice < 0.45 && cells.length > 1) {
                 const where = cellAt(look + 2 + i);
                 idle.push({ kind: "glide", x: Number(where.x), y: Number(where.y),
-                            keep: between(0.85, 1.2), ms: jitter(TIMING.drift) });
-            } else if (choice < 0.6) {
-                idle.push({ kind: "zoom", factor: [0.7, 0.8, 1.25, 1.4][Math.floor(random() * 4)],
+                            keep: between(0.9, 1.15), ms: jitter(TIMING.drift) });
+            } else if (choice < 0.75) {
+                idle.push({ kind: "zoom", factor: [0.8, 0.9, 1.12, 1.25][Math.floor(random() * 4)],
                             ms: jitter(TIMING.breathe) });
-            } else if (choice < 0.85) {
-                const sign = random() < 0.5 ? -1 : 1;
-                const nudge = fit(target + sign * width * between(0.01, 0.035));
-                const ms = jitter(DRAG_MS.base + 200);
-                idle.push({ kind: "gate", low: nudge, ms, ease: "inOut" },
-                          { kind: "pause", ms: jitter(TIMING.hold) },
-                          { kind: "gate", low: target, ms: jitter(ms), ease: "land" });
             }
         }
         if (field) {
@@ -247,7 +249,14 @@
             idle.push({ kind: "glide", x: middle.x, y: middle.y, span: fieldSpan,
                         ms: jitter(TIMING.field) });
         }
-        return { beats, idle, temper, camera };
+        return { beats, idle, temper, camera, ms: lasts(beats) };
+    }
+
+    /** How long `beats` take to play, ms: a glide to somewhere off screen
+     *  goes out and back in first (`move`), so it is counted at its longest. */
+    function lasts(beats) {
+        return Math.round(beats.reduce(
+            (sum, beat) => sum + beat.ms * (beat.kind === "glide" ? 1.55 : 1), 0));
     }
 
     // -- the player -----------------------------------------------------------
@@ -402,7 +411,8 @@
      * Play a look for `marker` on `live` (the gating controller): `paint(low)`
      * previews the gate's low end, `from` is where it is now, `range` the
      * slider's ends, `target` [low, high] the agent's gate, `show` the
-     * server's. Returns at once; the show runs on its own.
+     * server's. Returns at once, with how long the look's moves take (`ms`,
+     * before the idle ones); the show runs on its own.
      */
     function play({ live, marker, paint, from, range, target, show }) {
         stop();
@@ -435,7 +445,8 @@
                 if (current === run) current = null;
             }
         })();
-        return { played: true, temper: choreography.temper, camera: choreography.camera };
+        return { played: true, temper: choreography.temper, camera: choreography.camera,
+                 ms: choreography.ms };
     }
 
     /** End the show where it is (a newer look, a hand on the gate, the
@@ -448,5 +459,13 @@
         if (run.wake) run.wake();
     }
 
-    window.PlexoraGatingShow = { play, stop, plan, playing: () => Boolean(current) };
+    /** Put the look's gate back on the slider where it had got to: re-reading
+     *  the saved gates put the stored one in its place, and between two moves
+     *  nothing else would paint it again. Nothing when no look is playing. */
+    function repaint() {
+        const run = current;
+        if (run && alive(run)) run.paint(run.at);
+    }
+
+    window.PlexoraGatingShow = { play, stop, plan, repaint, playing: () => Boolean(current) };
 })();

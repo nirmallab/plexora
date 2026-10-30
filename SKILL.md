@@ -3277,7 +3277,9 @@ deliberately left out and what should be built next.
   returns at once, looks wait in one latest-wins slot (a marker not yet shown
   is kept over a second look at one that was), `keep=True` items (a contrast
   show, the teardown) go in order before any look and are never replaced, a
-  paced session's look is held `MIN_SHOW_S` (8 s) before a newer replaces it,
+  paced session's look is held as long as the tab says its moves take
+  (gating's `preview_gate` answer, `show.ms`, as `show_s`), within
+  `MIN_SHOW_S`..`MAX_SHOW_S` (8-30 s), before a newer replaces it,
   and `close(teardown)` drops what waits and sends the teardown last, because
   how far a session has got must never wait on its tab, nor the tab play a
   backlog after the session has decided;

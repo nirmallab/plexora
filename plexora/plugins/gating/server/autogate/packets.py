@@ -148,6 +148,15 @@ READING_GUIDE = {
               "macrophages): a faint stain that is the cell's own is `own_stain`, judged "
               "against the unstained cells, not the brightest. Say `uncertain` rather than "
               "guess. Plexora chooses the gate from the words"),
+    "panel_plots": ("the second picture, beside the cells, is context for them. Left, the "
+                    "marker's distribution over the cells the gate is estimated on: the range "
+                    "the numbered cells were drawn from shaded, the candidate gates dashed. "
+                    "Right, when a partner is gated (`plots`): the marker against it as a "
+                    "density, the partner's gate the horizontal line, read by "
+                    "`plots.relation`. No numbered cell is placed on either plot: they say "
+                    "how the stain is spread across the image -- one population or two, how "
+                    "crowded the shaded range is, where a partner's cells fall -- and every "
+                    "cell is still judged by its own pixels"),
     "panel_fibrous": ("a fibrous stain (smooth muscle, vessel walls, fibroblasts, "
                       "pericytes): shape does not decide -- a spindle cell inside a band and "
                       "a round or oval cell beside a vessel are both `own_stain` when the "
@@ -248,7 +257,8 @@ ENGINE_ONLY = {
                             "collage_flips_m", "collage_flips", "sheet_candidates",
                             "within_partner", "requests"),
                 "kinds": ("t2_confirm", "t3_biological", "t4_candidates")},
-    "v2": {"entries": ("panel", "panel_fibrous", "collage_panel", "collage_panel_m"),
+    "v2": {"entries": ("panel", "panel_plots", "panel_fibrous", "collage_panel",
+                       "collage_panel_m"),
                    "kinds": ("cell_panel",)},
 }
 

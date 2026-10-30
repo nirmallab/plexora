@@ -6,6 +6,8 @@ a locked gate survives the sidebar's own save, provenance is readable, and a
 mirrored session can be paused or taken over from the tab.
 """
 
+import csv
+import io
 import json
 import shutil
 import subprocess
@@ -31,10 +33,19 @@ CHECKS = [
     "a restore puts the marker and the stored gate back",
     "a failed or empty marker reads as a gate at the maximum",
     "a first look tries a gate well off, closes in on a cell, and ends on the agent's",
+    "while it waits, a look moves the view and never the gate",
+    "a gate is moved slowly enough to watch the cells change",
     "markers are not shown with the same moves; a marker always with its own",
     "a later look refines from where the slider is",
     "a look with a show is acknowledged at once, then played a frame at a time",
     "a newer look, or a hand on the gate, ends the one playing",
+    "a gate the session writes while a look plays is the gate the page saves",
+    "a look playing is put back on the slider once the gates are re-read",
+    "a look says how long its moves take, and has made them by then",
+    "a later look at a marker goes on from where its last one ended",
+    "an agent moving the panel to a marker saves nothing",
+    "re-reading the saved gates keeps the marker on screen",
+    "a marker an automatic run gated keeps its dot when its gate is gone",
     "with smooth motion off, the gate is set at once",
 ]
 
@@ -72,10 +83,10 @@ def client(tmp_path):
     return plexora.app.test_client()
 
 
-def _save(client, gates):
+def _save(client, gates, **extra):
     return client.post("/plugins/gating/save_gating_list", data=json.dumps({
         "datasource": "gsynth", "filter": {},
-        "channels": {name: list(value) for name, value in gates.items()}}))
+        "channels": {name: list(value) for name, value in gates.items()}, **extra}))
 
 
 def _saved(name="gsynth"):
@@ -98,6 +109,92 @@ def test_a_locked_gate_survives_the_sidebars_save(client):
         "datasource": "gsynth", "marker": "CD8", "status": "unlocked"}))
     assert unlocked.get_json()["status"] != "locked"
     assert _save(client, {"CD8": (40.0, 5000.0)}).get_json()["reverted"] == []
+
+
+def test_a_page_holding_an_older_list_saves_only_what_it_changed(client):
+    # ImageLSP23362, 2026-10-30: a session wrote Ki-67's gate, and a page
+    # still holding the list from before saved its whole list back over it.
+    from plexora import api
+    from plexora.plugins.gating.server import model
+
+    assert _save(client, {"CD8": (120.0, 5000.0), "CD3": (80.0, 5000.0)}).status_code == 200
+    page = client.get("/plugins/gating/get_saved_gating_list?datasource=gsynth")
+    base = page.headers["X-Gating-Revision"]
+    assert {row["channel"]: row["gate_start"] for row in page.get_json()} \
+        == {"CD8": 120.0, "CD3": 80.0}
+    # The session writes CD8 and CD20 (a marker the page has no row for).
+    ds = api.project_data("gsynth")
+    model.set_gate(ds, "CD8", 333.0, 5000.0)
+    full = model.default_ranges(ds)["CD20"]
+    model.set_gate(ds, "CD20", 444.0, full[1])
+    # The page moves CD3 and saves its whole list: CD8 as it was handed, and
+    # CD20 seeded at its full range by browsing to it.
+    answer = _save(client, {"CD8": (120.0, 5000.0), "CD3": (95.0, 5000.0), "CD20": full},
+                   base=base).get_json()
+    saved = _saved()
+    assert (saved["CD8"], saved["CD3"], saved["CD20"]) == (333.0, 95.0, 444.0)
+    assert answer["revision"] == model.revision(ds)
+    # Saving from that revision, the page's own change of CD8 is taken.
+    _save(client, {"CD8": (150.0, 5000.0), "CD3": (95.0, 5000.0), "CD20": (444.0, full[1])},
+          base=answer["revision"])
+    assert _saved()["CD8"] == 150.0
+
+
+def test_a_save_from_a_list_the_server_never_handed_out_is_taken_whole(client):
+    # A page older than the server (restarted since): saved as it always was.
+    from plexora import api
+    from plexora.plugins.gating.server import model
+
+    _save(client, {"CD8": (120.0, 5000.0)})
+    model.set_gate(api.project_data("gsynth"), "CD8", 333.0, 5000.0)
+    _save(client, {"CD8": (120.0, 5000.0)}, base="0123456789abcdef")
+    assert _saved()["CD8"] == 120.0
+    _save(client, {"CD8": (130.0, 5000.0)})
+    assert _saved()["CD8"] == 130.0
+
+
+def test_gate_versions_are_kept_and_downloaded_a_column_each(client):
+    from plexora import api
+    from plexora.plugins.gating.server import model, provenance
+
+    def save():
+        return client.post("/plugins/gating/save_version",
+                           data=json.dumps({"datasource": "gsynth"})).get_json()
+
+    assert save() == {"saved": False, "reason": "no gate to keep"}
+    _save(client, {"CD8": (120.0, 5000.0), "CD3": (80.0, 5000.0)})
+    first = save()
+    assert (first["saved"], first["new"], first["version"], first["by"]) == (True, True, 1, "User")
+    # The same gates again: nothing new, and one version is no second file.
+    assert save()["new"] is False
+    form = {"datasource": "gsynth", "filename": "g"}
+    assert client.post("/plugins/gating/download_gate_versions_csv", data=form).status_code == 404
+    # An agent writes CD20 and moves CD8: a second version, the agent's
+    # only when it set every gate (CD3 is still the user's).
+    ds = api.project_data("gsynth")
+    for marker, low in (("CD20", 300.0), ("CD8", 140.0)):
+        model.set_gate(ds, marker, low, 5000.0)
+        provenance.record("gsynth", marker, status="accepted", method="ai_panel",
+                          written_low=low, written_high=5000.0, session_id="gs_9")
+    second = save()
+    assert (second["new"], second["version"], second["by"]) == (True, 2, "User")
+    listed = client.get("/plugins/gating/gate_versions?datasource=gsynth").get_json()["versions"]
+    assert [v["version"] for v in listed] == [1, 2]
+    assert [v["n_gates"] for v in listed] == [2, 3]
+    assert listed[0]["label"].startswith("User 20")
+    response = client.post("/plugins/gating/download_gate_versions_csv", data=form)
+    assert response.status_code == 200
+    rows = list(csv.DictReader(io.StringIO(response.get_data(as_text=True))))
+    assert list(rows[0]) == ["marker", listed[0]["label"], listed[1]["label"]]
+    by_marker = {row["marker"]: row for row in rows}
+    assert [m for m in by_marker] == [m for m in ds.table.markers if m in by_marker]
+    assert by_marker["CD8"][listed[0]["label"]] == "120.0"
+    assert by_marker["CD8"][listed[1]["label"]] == "140.0"
+    assert by_marker["CD20"][listed[0]["label"]] == ""
+    # A run's own version is labelled the agent's.
+    model.set_gate(ds, "CD3", 90.0, 5000.0)
+    assert model.save_version(ds, model.GATED_BY_AI, session_id="gs_9")["by"] == "Plexora AI"
+    assert model.gate_versions("gsynth")[-1]["session_id"] == "gs_9"
 
 
 def test_a_status_the_panel_does_not_offer_is_refused(client):

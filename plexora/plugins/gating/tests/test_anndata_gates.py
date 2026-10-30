@@ -542,3 +542,32 @@ def test_gate_provenance_is_written_per_image_beside_the_gates(tmp_path):
     assert b["method"] == "manual" and b["confidence"] == ""
     assert table[table["image_id"] == "A"].iloc[0]["method"] == "ai_refined"
     np.testing.assert_array_equal(reopened.X, x_before)
+
+
+def test_every_gate_version_is_written_beside_the_gates_a_column_each(tmp_path):
+    # `uns['gates']` keeps the latest; `uns['gates_versions']` has the var
+    # names as rows and a column per (image, version), its lower gate.
+    path = tmp_path / "multi.h5ad"
+    adata = _make_multi_image_adata()
+    adata.write_h5ad(path)
+    x_before = adata.X.copy()
+    versions = [{"label": "User 2026-10-29 09:00", "gates": {"marker_0": 1.0}},
+                {"label": "Plexora AI 2026-10-30 11:28",
+                 "gates": {"marker_0": 1.5, "marker_1": 2.5}}]
+    for image in ("A", "B"):
+        anndata_gates.save_gate_versions(_feature_config(path, image), f"ds_{image}", versions)
+    # B saved again with one more version: only B's columns change.
+    anndata_gates.save_gate_versions(
+        _feature_config(path, "B"), "ds_B",
+        versions + [{"label": "User 2026-10-30 12:00", "gates": {"marker_1": 3.0}}])
+    reopened = ad.read_h5ad(path)
+    table = reopened.uns["gates_versions"]
+    assert list(table.columns) == [
+        "A | User 2026-10-29 09:00", "A | Plexora AI 2026-10-30 11:28",
+        "B | User 2026-10-29 09:00", "B | Plexora AI 2026-10-30 11:28",
+        "B | User 2026-10-30 12:00"]
+    assert list(table.index) == list(reopened.var_names)
+    assert table.loc["marker_0", "A | Plexora AI 2026-10-30 11:28"] == pytest.approx(1.5)
+    assert np.isnan(table.loc["marker_1", "A | User 2026-10-29 09:00"])
+    assert table.loc["marker_1", "B | User 2026-10-30 12:00"] == pytest.approx(3.0)
+    np.testing.assert_array_equal(reopened.X, x_before)

@@ -495,16 +495,16 @@
           "tool_panel_slot": "gating/panel.html"
         },
         "active_tool_scripts": [
-          "/plugins/gating/static/gatingApi.js?v=20261030_gating_show",
-          "/plugins/gating/static/csvGatingList.js?v=20261030_gating_show",
-          "/plugins/gating/static/gatingPlanes.js?v=20261030_gating_show",
-          "/plugins/gating/static/gatingClassifier.js?v=20261030_gating_show",
-          "/plugins/gating/static/gatingSidebarController.js?v=20261030_gating_show",
-          "/plugins/gating/static/gatingAgentShow.js?v=20261030_gating_show",
-          "/plugins/gating/static/gatingAgentBridge.js?v=20261030_gating_show"
+          "/plugins/gating/static/gatingApi.js?v=20261030_gating_versions",
+          "/plugins/gating/static/csvGatingList.js?v=20261030_gating_versions",
+          "/plugins/gating/static/gatingPlanes.js?v=20261030_gating_versions",
+          "/plugins/gating/static/gatingClassifier.js?v=20261030_gating_versions",
+          "/plugins/gating/static/gatingSidebarController.js?v=20261030_gating_versions",
+          "/plugins/gating/static/gatingAgentShow.js?v=20261030_gating_versions",
+          "/plugins/gating/static/gatingAgentBridge.js?v=20261030_gating_versions"
         ],
         "active_tool_styles": [
-          "/plugins/gating/static/gating.css?v=20261030_gating_show"
+          "/plugins/gating/static/gating.css?v=20261030_gating_versions"
         ],
         "available_tools": [
           {
@@ -775,13 +775,13 @@
         "/client/src/js/views/toolLoader.js?v=20261025_dataset_answers",
         "/client/src/js/services/pageBoot.js?v=20260825_app_shell",
         "/client/src/js/services/appRouter.js?v=20261002_hash_tab",
-        "/plugins/gating/static/gatingApi.js?v=20261030_gating_show",
-        "/plugins/gating/static/csvGatingList.js?v=20261030_gating_show",
-        "/plugins/gating/static/gatingPlanes.js?v=20261030_gating_show",
-        "/plugins/gating/static/gatingClassifier.js?v=20261030_gating_show",
-        "/plugins/gating/static/gatingSidebarController.js?v=20261030_gating_show",
-        "/plugins/gating/static/gatingAgentShow.js?v=20261030_gating_show",
-        "/plugins/gating/static/gatingAgentBridge.js?v=20261030_gating_show",
+        "/plugins/gating/static/gatingApi.js?v=20261030_gating_versions",
+        "/plugins/gating/static/csvGatingList.js?v=20261030_gating_versions",
+        "/plugins/gating/static/gatingPlanes.js?v=20261030_gating_versions",
+        "/plugins/gating/static/gatingClassifier.js?v=20261030_gating_versions",
+        "/plugins/gating/static/gatingSidebarController.js?v=20261030_gating_versions",
+        "/plugins/gating/static/gatingAgentShow.js?v=20261030_gating_versions",
+        "/plugins/gating/static/gatingAgentBridge.js?v=20261030_gating_versions",
         "/client/src/js/services/viewerLoader.js?v=20260915_center_loader",
         "/client/src/js/services/viewSnapshot.js?v=20261004_magic_select",
         "/client/src/js/services/segmentService.js?v=20261011_merge",
@@ -849,7 +849,7 @@
         "/client/src/css/quickView.css?v=20261021_native_drop",
         "/client/src/css/agentPanel.css?v=20261030_ai_top_up",
         "/client/src/css/chatPanel.css?v=20261011_fold",
-        "/plugins/gating/static/gating.css?v=20261030_gating_show"
+        "/plugins/gating/static/gating.css?v=20261030_gating_versions"
       ],
       "tool_mounts": [
         [
@@ -940,6 +940,7 @@
     "GET /plugins/gating/classifier/review",
     "GET /plugins/gating/classifier/scores",
     "GET /plugins/gating/classifier/state",
+    "GET /plugins/gating/gate_versions",
     "GET /plugins/gating/get_gate_provenance",
     "GET /plugins/gating/get_gated_cell_ids",
     "GET /plugins/gating/get_gates_from_anndata",
@@ -1063,11 +1064,13 @@
     "POST /plugins/gating/classifier/revert",
     "POST /plugins/gating/classifier/run",
     "POST /plugins/gating/clear_gates",
+    "POST /plugins/gating/download_gate_versions_csv",
     "POST /plugins/gating/download_gating_csv",
     "POST /plugins/gating/get_gating_gmm",
     "POST /plugins/gating/jobs/<job_id>/cancel",
     "POST /plugins/gating/save_gates_to_anndata",
     "POST /plugins/gating/save_gating_list",
+    "POST /plugins/gating/save_version",
     "POST /plugins/gating/set_gate_status",
     "POST /plugins/gating/upload_gates",
     "POST /project/<string:name>",

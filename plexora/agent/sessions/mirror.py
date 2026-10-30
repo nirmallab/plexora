@@ -137,10 +137,14 @@ def attached(store, session_id):
 
 # -- the presenter: mirroring off the session's path -------------------------
 
-#: Seconds a look the tab is playing is kept before a newer one replaces it
-#: (gatingAgentShow.js plays a look's beats over 10-16 s). Paced sessions only:
-#: one with `mirror_delay_ms: 0` waits for nothing.
+#: Seconds a look the tab is playing is kept before a newer one replaces it,
+#: at least; a tab that says how long its look's moves take (gating's
+#: `preview_gate` answer, `show.ms`) keeps it that long, up to MAX_SHOW_S.
+#: Held for 8 s flat, a look of 10-25 s was cut half way and the next marker's
+#: began -- the abrupt mirror of 2026-10-30. Paced sessions only: one with
+#: `mirror_delay_ms: 0` waits for nothing.
 MIN_SHOW_S = 8.0
+MAX_SHOW_S = 30.0
 #: A presenter with nothing to send ends its thread after this many seconds;
 #: the next offer starts another.
 IDLE_S = 30.0

@@ -252,6 +252,42 @@ def test_a_save_writes_decided_markers_and_session_layers_with_their_provenance(
     assert provenance.loc["synth:CD8", "classifier_run"] == classified["layer"]["run_id"]
 
 
+def test_the_panels_save_writes_the_latest_gates_their_provenance_and_every_version(
+        tmp_path, monkeypatch, classified):
+    # What /save_gates_to_anndata sends now: the latest gates, and beside them
+    # `model.source_extras` -- provenance, and the versions kept.
+    from plexora.plugins.gating.server import model
+
+    ds = classified["ds"]
+    n = int(ds.table.geometry().height)
+    path = _cohort_h5ad(tmp_path / "cohort.h5ad", n)
+    _point_at(monkeypatch, ds, _feature_config(path, "synth"))
+    first = model.save_version(ds)
+    full = model.get_gate(ds, "DNA")
+    dna = (full["default_low"] + full["default_high"]) / 2
+    model.set_gate(ds, "DNA", dna, full["default_high"])
+    second = model.save_version(ds)
+    assert (first["version"], second["version"]) == (1, 2)
+    extras = model.source_extras(ds)
+    assert sorted(p["marker"] for p in extras["provenance"]) == ["CD8", "DNA"]
+    assert [len(v["gates"]) for v in extras["versions"]] == [1, 2]
+    gates = {m: low for m, (low, _high) in model.active_gates(ds).items()}
+    result = sw.save_all(ds, {"image_id": "synth", "gates": gates, "table_name": "gates",
+                              "imageid_column": "imageid", **extras})
+    assert result["ok"], result
+    back = ad.read_h5ad(path)
+    assert back.uns["gates"].loc["DNA", "synth"] == pytest.approx(dna)
+    assert set(back.uns["gates_provenance"].index) == {"synth:CD8", "synth:DNA"}
+    versions = back.uns["gates_versions"]
+    labels = [f"synth | {v['label']}" for v in extras["versions"]]
+    assert list(versions.columns) == labels
+    assert np.isnan(versions.loc["DNA", labels[0]])
+    assert versions.loc["DNA", labels[1]] == pytest.approx(dna)
+    assert versions.loc["CD8", labels[0]] == pytest.approx(classified["low"])
+    # A marker no version gated: a row of the table, empty.
+    assert np.isnan(versions.loc["CD3"]).all()
+
+
 def test_markers_travel_in_batches_and_a_failed_one_leaves_a_readable_file(
         tmp_path, monkeypatch, classified):
     ds = classified["ds"]

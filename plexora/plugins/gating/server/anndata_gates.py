@@ -375,6 +375,58 @@ def save_gate_provenance(source, datasource_name, rows, table_name="gates_proven
     return {"provenance_table": table_name, "n_provenance_rows": len(fresh)}
 
 
+#: Between an image id and a version's label in `uns['gates_versions']`.
+VERSION_SEP = " | "
+
+
+def save_gate_versions(source, datasource_name, versions, table_name="gates_versions",
+                       imageid_column="imageid") -> dict:
+    """Write every version kept of this image's gates beside `uns['gates']`.
+
+    The same shape as `uns['gates']`: rows are the var_names, and a column per
+    (image, version), named "<image id> | <who> <when>" and holding the lower
+    gate that version kept (NaN where it had none). `versions` is
+    `model.versions_payload`, oldest first. Only this image's columns are
+    replaced; other images' stay, realigned to the current var_names. The same
+    element codec and in-place group write as `save_gates_to_anndata`.
+    """
+    path = _resolve_path(source)
+    var_names = _read_var_names(path)
+    current_image_id = resolve_current_image_id(path, source, datasource_name, imageid_column)
+    prefix = f"{current_image_id}{VERSION_SEP}"
+    var_index = {name: i for i, name in enumerate(api.deduplicate_names(var_names))}
+    with _open_group(path, writable=True) as f:
+        uns = f.require_group('uns')
+        table = pl.DataFrame({INDEX_COLUMN: var_names})
+        if table_name in uns:
+            existing = read_elem(uns[table_name])
+            if not isinstance(existing, pd.DataFrame):
+                raise ValueError(f"adata.uns[{table_name!r}] already exists and is not a table")
+            existing_table = _pandas_to_polars(existing, INDEX_COLUMN)
+            old_index = {}
+            for i, name in enumerate(existing_table[INDEX_COLUMN].to_list()):
+                old_index.setdefault(name, i)
+            for col in existing_table.columns:
+                if col == INDEX_COLUMN or col.startswith(prefix):
+                    continue
+                old = existing_table[col].to_list()
+                table = table.with_columns(pl.Series(
+                    col, [old[old_index[n]] if n in old_index else None for n in var_names],
+                    dtype=pl.Float64))
+        for version in versions:
+            values = np.full(len(var_names), np.nan, dtype="float64")
+            for channel, low in (version.get("gates") or {}).items():
+                idx = var_index.get(channel)
+                if idx is not None and low is not None:
+                    values[idx] = float(low)
+            table = table.with_columns(pl.Series(f"{prefix}{version['label']}", values,
+                                                 dtype=pl.Float64))
+        if table_name in uns:
+            del uns[table_name]
+        write_elem(uns, table_name, _polars_to_pandas(table, INDEX_COLUMN))
+    return {"versions_table": table_name, "n_versions": len(versions)}
+
+
 def save_not_called(source, datasource_name, not_called, n_rows, table_name="gates",
                     imageid_column="imageid") -> dict:
     """Write which cells QC says cannot be called, beside the gates.
