@@ -71,6 +71,12 @@ PANEL_CHECKS = [
     "H&E-only project shows no tool, says so, and asks the gateway for no estimate",
     "Plexora AI: a run the balance cannot pay for is disabled and says what there is; a tool the "
     'project\'s data cannot run is left out; the balance reads "2,000 credits available"',
+    "Plexora AI: coming back to the window asks for the balance again, so credits bought meanwhile "
+    "enable the run; a hidden tab does not ask, a failed ask keeps the last answer, and a closed "
+    "launcher stops asking",
+    "Plexora AI: when a run here costs more than there is, the balance line offers Add credits, "
+    "which opens the account's page; once the balance can pay it goes, and a page that is not "
+    "https is never offered",
     'Plexora AI: ai_usage draws "Plexora AI · 12 packets · 3.4 credits · 87% from cache"; a credit '
     "pause shows the two-button card (Resume, Add credits opens the top-up page); Resume posts the "
     "session to resume and the card closes",

@@ -846,6 +846,11 @@
     width: 14px;
 }
 
+/* Add credits, when a run here costs more than there is: the line's end. */
+.plx-agent-button.plx-ai-topup {
+    margin-left: auto;
+}
+
 /* An active AI surface: the agent panel's beam ring, in the sparkle's hues,
    always turning slowly at low opacity. Only the 1 px ring moves; the
    background and text stand still. */

@@ -6,7 +6,7 @@
 {% block style %}
 <link rel="stylesheet" href="{{ data.base_url }}/client/src/css/viewer.css?v=20261027_add_row_hint">
 <link rel="stylesheet" href="{{ data.base_url }}/client/src/css/quickView.css?v=20261021_native_drop">
-<link rel="stylesheet" href="{{ data.base_url }}/client/src/css/agentPanel.css?v=20261018_agent_panel_margin">
+<link rel="stylesheet" href="{{ data.base_url }}/client/src/css/agentPanel.css?v=20261030_ai_top_up">
 <link rel="stylesheet" href="{{ data.base_url }}/client/src/css/chatPanel.css?v=20261011_fold">
 {% endblock %}
 
@@ -630,7 +630,7 @@
    and controls. Its orb driver is base.html's, which the import dialog draws
    with too. Before agentBridge.js, which routes show_evidence to the panel
    when one is up. #}
-<script src="{{ data.base_url }}/client/src/js/views/agentPanel.js?v=20261029_ai_reason" defer></script>
+<script src="{{ data.base_url }}/client/src/js/views/agentPanel.js?v=20261030_ai_top_up" defer></script>
 {# Plexora AI chat (/ai/v1/conversations): a launcher chip and a non-modal
    panel in the viewer's lower-left corner. #}
 <script src="{{ data.base_url }}/client/src/js/views/chatPanel.js?v=20261012_merge_main" defer></script>

@@ -222,6 +222,7 @@ function makePage({ wrapper = true, dock = true, reduced = false, requirements =
     if (layers) g.__plexora = { layers: { layers: () => layers } };
     g.window = g;
     g.addEventListener = (type, fn) => { (listeners[type] = listeners[type] || []).push(fn); };
+    g.removeEventListener = (type, fn) => { listeners[type] = (listeners[type] || []).filter((f) => f !== fn); };
     g.dispatchEvent = (event) => { (listeners[event.type] || []).forEach((fn) => fn(event)); return true; };
     const ctx = createContext(g);
     runInContext(readFileSync(ORB, "utf8"), ctx, { filename: ORB });
@@ -923,6 +924,67 @@ const cornerChipOf = (page) => find(page.dom.body, (n) => n.classList && n.class
         p2.buttons.gating.disabled && p2.buttons.gating.note === "~125 credits · 5 markers · you have 2,000"
         && !("qc" in p2.buttons) && p2.balance === "2,000 credits available" && !p2.empty,
         p2);
+
+    {
+        // Credits bought in the browser while the launcher is up: coming
+        // back to the window asks again and the run can start.
+        const page = makePage({ paid: true });
+        const PORTAL = "https://account.biocognia.com/portal/ai";
+        const POOR = Object.assign({}, BALANCE, { available_micro: 0, available_credits: 0,
+            action_url: PORTAL, action_label: "Add credits or ask an owner",
+            estimates: { gating: { units: 5, unit: "marker", credits: 125, affordable: false } } });
+        let answer = POOR;
+        page.onFetch = (input) => {
+            if (!input.includes("ai/v1/balance")) return null;
+            return answer ? json(200, answer) : json(502, { success: false, error: "gateway unreachable" });
+        };
+        const asked = () => page.fetches.filter((f) => f.url.includes("ai/v1/balance")).length;
+        await page.panel.openLauncher();
+        const before = page.panel.launcher();
+        byAction(page.dom.body, "ai-top-up").click();
+        const openedPortal = JSON.stringify(page.opened) === JSON.stringify([PORTAL]);
+        answer = Object.assign({}, BALANCE, { action_url: PORTAL, action_label: "Add credits or ask an owner" });
+        page.g.dispatchEvent({ type: "focus" });
+        await tick(5);
+        const after = page.panel.launcher();
+        page.dom.document.visibilityState = "hidden";
+        (page.dom.documentListeners.visibilitychange || []).forEach((fn) => fn({ type: "visibilitychange" }));
+        await tick(5);
+        const hiddenAsks = asked();
+        page.dom.document.visibilityState = "visible";
+        answer = null;
+        (page.dom.documentListeners.visibilitychange || []).forEach((fn) => fn({ type: "visibilitychange" }));
+        await tick(5);
+        const kept = page.panel.launcher();
+        const failedAsks = asked();
+        page.panel.closeLauncher();
+        page.g.dispatchEvent({ type: "focus" });
+        await tick(5);
+        const gone = asked() === failedAsks && (page.dom.documentListeners.visibilitychange || []).length === 0;
+        check("Plexora AI: coming back to the window asks for the balance again, so credits bought meanwhile "
+            + "enable the run; a hidden tab does not ask, a failed ask keeps the last answer, and a closed "
+            + "launcher stops asking",
+            before.buttons.gating.disabled && before.balance === "0 credits available"
+            && !after.buttons.gating.disabled && after.balance === "500 credits available"
+            && after.buttons.gating.note === "~125 credits · 5 markers"
+            && hiddenAsks === 2 && failedAsks === 3 && kept.balance === "500 credits available"
+            && !kept.buttons.gating.disabled && gone,
+            { before, after, hiddenAsks, failedAsks, kept, gone });
+
+        // A page that is not https is never offered.
+        const plain = makePage({ paid: true });
+        plain.onFetch = (input) => (input.includes("ai/v1/balance")
+            ? json(200, Object.assign({}, POOR, { action_url: "http://account.biocognia.com/portal/ai" })) : null);
+        await plain.panel.openLauncher();
+        const unsafe = plain.panel.launcher().topUp;
+        check("Plexora AI: when a run here costs more than there is, the balance line offers Add credits, "
+            + "which opens the account's page; once the balance can pay it goes, and a page that is not "
+            + "https is never offered",
+            before.topUp && before.topUp.label === "Add credits"
+            && before.topUp.title === "Add credits or ask an owner" && openedPortal
+            && after.topUp === null && unsafe === null,
+            { before: before.topUp, opened: page.opened, after: after.topUp, unsafe });
+    }
 }
 
 {

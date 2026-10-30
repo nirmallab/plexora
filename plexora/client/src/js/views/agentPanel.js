@@ -66,7 +66,8 @@
  *
  * The launcher: "Gate with Plexora AI" and "QC with Plexora AI" for the open
  * project, each with the estimate the gateway's price list gives ("~125
- * credits · 5 markers", GET /ai/v1/balance) before anything starts. The
+ * credits · 5 markers", GET /ai/v1/balance) before anything starts, asked
+ * again when the window comes back (credits bought meanwhile). The
  * sparkle in the sidebar header (#plexora_ai_button, index.html) opens and
  * closes it when the page's licence hint carries `ai` and a project is open
  * -- hidden on Free (no nags); `openLauncher()` still opens it, and then
@@ -835,7 +836,9 @@ window.PlexoraAgentPanel = (function () {
         launcher.backdrop?.remove();
         if (typeof document.removeEventListener === "function") {
             document.removeEventListener("keydown", launcher.onKey);
+            document.removeEventListener("visibilitychange", launcher.onReturn);
         }
+        if (typeof window.removeEventListener === "function") window.removeEventListener("focus", launcher.onReturn);
         launcher = null;
         syncLaunchChip();
         document.getElementById("plexora_ai_button")?.focus?.();
@@ -902,6 +905,18 @@ window.PlexoraAgentPanel = (function () {
         const known = Boolean(answer && !answer.error && answer.available_credits !== undefined);
         launcher.balance.hidden = !known;
         launcher.balanceText.textContent = known ? `${creditCount(answer.available_credits)} credits available` : "";
+        const short = known && Object.entries(launcher.rows).some(([kind, row]) => !row.card.hidden
+            && ((answer.estimates || {})[kind] || {}).affordable === false);
+        const page = short ? topUpOf(answer) : "";
+        launcher.topUp.hidden = !page;
+        launcher.topUp.title = page && answer.action_label ? String(answer.action_label) : "";
+    }
+
+    /** Where the balance answer says credits are added (`action_url`, or
+     *  the older `top_up_url`): an https page, or "". */
+    function topUpOf(answer) {
+        const page = answer && (answer.action_url || answer.top_up_url);
+        return typeof page === "string" && /^https:\/\//.test(page) ? page : "";
     }
 
     async function launch(kind, note = null) {
@@ -1184,7 +1199,13 @@ window.PlexoraAgentPanel = (function () {
         const coin = el("span", "plx-ai-coin");
         coin.setAttribute("aria-hidden", "true");
         const balanceText = el("span", "plx-ai-balance-text");
-        balance.append(coin, balanceText);
+        // The account's page for adding credits, when a run here costs more
+        // than there is; coming back to the window asks for the balance again.
+        const topUp = button("plx-button plx-agent-button plx-ai-go plx-ai-topup", "Add credits");
+        topUp.dataset.action = "ai-top-up";
+        topUp.hidden = true;
+        topUp.addEventListener("click", () => openExternal(topUpOf(launcher && launcher.answer)));
+        balance.append(coin, balanceText, topUp);
         balance.hidden = true;
         const chat = button("plx-button plx-agent-button", "Chat with Plexora AI");
         chat.dataset.action = "ai-chat";
@@ -1201,27 +1222,52 @@ window.PlexoraAgentPanel = (function () {
         const onKey = (event) => {
             if (event.key === "Escape") closeLauncher();
         };
-        if (typeof document.addEventListener === "function") document.addEventListener("keydown", onKey);
+        // Credits bought in the browser are in the gateway's balance at once;
+        // coming back to this window asks again, so the launcher shows them.
+        const onReturn = () => {
+            if (document.visibilityState !== "hidden") askBalance(launcher);
+        };
+        if (typeof document.addEventListener === "function") {
+            document.addEventListener("keydown", onKey);
+            document.addEventListener("visibilitychange", onReturn);
+        }
+        if (typeof window.addEventListener === "function") window.addEventListener("focus", onReturn);
         document.body.append(backdrop, root);
-        launcher = { root, backdrop, onKey, rows, sections, groups, none, balance, balanceText,
-                     title, toolsView, step: null, answer: null, starting: false };
+        launcher = { root, backdrop, onKey, onReturn, rows, sections, groups, none, balance, balanceText, topUp,
+                     title, toolsView, step: null, answer: null, asking: null, starting: false };
         syncLaunchChip();
         paintLauncher();
         const first = Object.values(rows).map((row) => row.button).find((b) => !b.disabled) || hide;
         first.focus?.();
-        if (!aiAllowed() || !datasource() || !Object.keys(rows).length) return Promise.resolve(launcher);
         const mine = launcher;
-        return aiFetch(`ai/v1/balance?project=${encodeURIComponent(datasource())}`)
+        return askBalance(mine).then(() => {
+            if (mine === launcher) {
+                // A tool that can start; else, when none can pay, Add credits.
+                const ready = Object.values(mine.rows).find((row) => !row.card.hidden && !row.button.disabled);
+                (ready ? ready.button : mine.topUp.hidden ? null : mine.topUp)?.focus?.();
+            }
+            return mine;
+        });
+    }
+
+    /** GET /ai/v1/balance for the open project, painted into the launcher.
+     *  One ask at a time; while it is out the launcher keeps what it shows,
+     *  and an ask that fails after a good answer keeps that answer. */
+    function askBalance(mine) {
+        if (!mine || mine.starting) return Promise.resolve(mine);
+        if (mine.asking) return mine.asking;
+        if (!aiAllowed() || !datasource() || !Object.keys(mine.rows).length) return Promise.resolve(mine);
+        mine.asking = aiFetch(`ai/v1/balance?project=${encodeURIComponent(datasource())}`)
             .then((answer) => { mine.answer = answer; })
-            .catch((error) => { mine.answer = { error: error.message || String(error) }; })
+            .catch((error) => {
+                if (!mine.answer || mine.answer.error) mine.answer = { error: error.message || String(error) };
+            })
             .then(() => {
-                paintLauncher();
-                if (mine === launcher) {
-                    const ready = Object.values(mine.rows).find((row) => !row.card.hidden && !row.button.disabled);
-                    ready?.button.focus?.();
-                }
+                mine.asking = null;
+                if (mine === launcher) paintLauncher();
                 return mine;
             });
+        return mine.asking;
     }
 
     /** Minimize to the bar. Only the card's size: the agent and the
@@ -1953,7 +1999,8 @@ window.PlexoraAgentPanel = (function () {
             buttons: Object.fromEntries(Object.entries(launcher.rows).filter(([, r]) => !r.card.hidden)
                 .map(([k, r]) => [k, { disabled: r.button.disabled, note: r.note.textContent,
                                        label: r.button.textContent }])),
-            balance: launcher.balance.hidden ? "" : launcher.balance.textContent,
+            balance: launcher.balance.hidden ? "" : launcher.balanceText.textContent,
+            topUp: launcher.topUp.hidden ? null : { label: launcher.topUp.textContent, title: launcher.topUp.title },
             modalities: launcher.sections.filter(({ section }) => !section.hidden).map(({ section }) => section.dataset.modality),
             empty: !launcher.none.hidden,
             modal: launcher.root.parentNode === document.body && launcher.backdrop.parentNode === document.body,
