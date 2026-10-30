@@ -233,8 +233,9 @@ check("eviction also forgets the fill weight", unloaded._fillWeight === undefine
 
 // -- the browser-side gate, and its fallback ---------------------------------
 
-/** `notCalled`: what numericData.getNotCalled answers (bytes, or null for a
- *  fetch that failed); undefined for a numericData without it, as before. */
+/** `notCalled`: what numericData.getNotCalled would answer if the viewer
+ *  asked (bytes, or null for a fetch that failed); undefined for a
+ *  numericData without it. */
 async function gateRun({ localRangeGate = true, column = null, getColumnFails = false,
                          notCalled = undefined } = {}) {
     const g = viewer();
@@ -288,7 +289,7 @@ run = await gateRun({ localRangeGate: false });
 check("a provider that does not declare a range gate is always asked",
     run.asked.length === 1 && run.fetched.length === 0);
 
-// -- QC's not-called cells ----------------------------------------------------
+// -- QC's not-called cells are not the gate's ----------------------------------
 
 const gateEvents = [];
 globalThis.dispatchEvent = (event) => { gateEvents.push(event); return true; };
@@ -297,45 +298,14 @@ globalThis.CustomEvent ??= class CustomEvent {
 };
 // Cell 2 passes the gate and cell 3 does not; QC calls neither.
 run = await gateRun({ notCalled: new Uint8Array([0, 1, 1]) });
-check("QC's not-called cells are fetched beside the columns, per gated marker",
-    run.skipsAsked.join() === "CD45" && run.asked.length === 0);
-check("and are 2 in the layer's mask, a pass included",
-    Array.from(run.layer.gateMask).join("") === "0022", Array.from(run.layer.gateMask || []).join(""));
-check("counted on the layer apart from the positives",
-    run.layer.gateCount === 0 && run.layer.gateNotCalled === 2,
-    `count ${run.layer.gateCount} not called ${run.layer.gateNotCalled}`);
+check("QC's not-called cells are not asked for: the gate on screen is the threshold alone",
+    run.skipsAsked.length === 0 && Array.from(run.layer.gateMask).join("") === "0010"
+    && run.layer.gateCount === 1 && run.asked.length === 0,
+    `asked ${run.skipsAsked.length}, mask ${Array.from(run.layer.gateMask || []).join("")}`);
+check("and the layer keeps no not-called count", !("gateNotCalled" in run.layer));
 check("and the viewer says the layer's gate moved",
     gateEvents.some((e) => e.type === "plexora:cell-gate-changed" && e.detail.layer === "gating"));
-run = await gateRun({ notCalled: new Uint8Array([1, 1]) });
-check("not-called bytes that do not line up with the ids leave every cell called",
-    Array.from(run.layer.gateMask).join("") === "0010" && run.layer.gateNotCalled === 0);
-run = await gateRun({ notCalled: null });
-check("a not-called fetch that failed leaves the gate drawing in the browser",
-    Array.from(run.layer.gateMask).join("") === "0010" && run.asked.length === 0);
-run = await gateRun();
-check("a numericData without not-called bytes gates as before",
-    Array.from(run.layer.gateMask).join("") === "0010" && run.layer.gateNotCalled === 0);
-
-let qcBytes = new Uint8Array([0, 0, 0]);
-run = await gateRun({ notCalled: () => qcBytes });
-qcBytes = new Uint8Array([0, 1, 0]);
-run.g.onQcChanged({});
-check("a QC change drops the cached not-called bytes at once", run.g.invalidated === 1);
-run.g.onQcChanged({});
-await new Promise((r) => setTimeout(r, 300));
-check("and gates the layer again, once for a burst, with the new bytes",
-    run.skipsAsked.length === 2 && Array.from(run.layer.gateMask).join("") === "0020"
-    && run.layer.gateNotCalled === 1, `asked ${run.skipsAsked.length}, mask ${Array.from(run.layer.gateMask).join("")}`);
-globalThis.flaskVariables = { datasource: "this_one" };
-run.g.onQcChanged({ datasource: "another" });
-await new Promise((r) => setTimeout(r, 300));
-check("a QC change on another project is not this tab's",
-    run.g.invalidated === 2 && run.skipsAsked.length === 2);
-delete globalThis.flaskVariables;
-run.layer.gateMask = null;
-run.g.onQcChanged({});
-await new Promise((r) => setTimeout(r, 300));
-check("a layer with no gate drawn is not gated again", run.skipsAsked.length === 2);
+check("a QC change does not gate the layer again", typeof run.g.onQcChanged === "undefined");
 delete globalThis.dispatchEvent;
 
 // ---------------------------------------------------------------------------

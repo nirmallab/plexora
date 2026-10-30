@@ -98,12 +98,6 @@ class GatingSidebarController {
         //: tool loader shows the restored panel BEFORE setup() has built that
         //: control -- and a show nobody remembered left it hidden for good.
         this._shown = false;
-        //: Repaints the QC note when the viewer has evaluated this layer's
-        //: gate again: the not-called count lives on the layer. Listening
-        //: from setup(); see paintQcNote.
-        this._onCellGate = (event) => {
-            if ((event.detail || {}).layer === this.layerName()) this.paintQcNote();
-        };
         //: Set while a routed page (Settings, Figures) covers the viewer: the
         //: onShow that follows is the viewer coming back, not the panel being
         //: opened, and leaves the view as the user had it.
@@ -116,7 +110,6 @@ class GatingSidebarController {
         this.ctx.onCleanup?.(() => {
             window.removeEventListener("plexora:viewer-hidden", this._onViewerHidden);
             window.removeEventListener("plexora:viewer-shown", this._onViewerShown);
-            window.removeEventListener("plexora:cell-gate-changed", this._onCellGate);
             this.disarmKeys();
             this._plotResize?.disconnect?.();
             window.cancelAnimationFrame?.(this._plotRedrawFrame);
@@ -211,9 +204,6 @@ class GatingSidebarController {
             if (button && !button.disabled) this.stepMarker(Number(button.dataset.markerStep));
         });
 
-        // The note under the gate says how many cells QC left uncalled, which
-        // the viewer knows once it has evaluated the gate (paintQcNote).
-        window.addEventListener("plexora:cell-gate-changed", this._onCellGate);
         // Whether the next onShow is the panel opening (see _viewerCovered).
         window.addEventListener("plexora:viewer-hidden", this._onViewerHidden);
         window.addEventListener("plexora:viewer-shown", this._onViewerShown);
@@ -982,47 +972,30 @@ class GatingSidebarController {
      * QC failed are left out of it (the gate still applies to every cell).
      * Shown once a fit for this marker has been fetched; hidden otherwise.
      *
-     * And how many cells the gate on screen does not call: QC says they
-     * cannot be called for a gated marker, and the viewer draws them grey,
-     * neither positive nor negative. Read off the layer, where the viewer's
-     * own evaluation of the gate put it (ImageViewer.evaluateGateLocally);
-     * said only when there are some, and then even without a fit.
+     * Not how many cells QC does not call for the marker: the gate on screen
+     * is the threshold alone (ImageViewer.evaluateGateLocally), so there is
+     * no such count to give.
      */
     paintQcNote() {
         const node = document.getElementById("gate_qc_note");
         if (!node) return;
         const packet = this.gateMarker ? this.gatingList.hasGatingGMM[this.gateMarker] : null;
         const qc = packet && packet.qc_exclusion;
-        const fitted = Boolean(qc && qc.applied);
-        const notCalled = Number(this.ctx.viewer?.getCellLayer?.(this.layerName())?.gateNotCalled) || 0;
-        if (!fitted && !notCalled) {
+        if (!qc || !qc.applied) {
             node.hidden = true;
             node.textContent = "";
             return;
         }
         const fmt = (n) => Number(n || 0).toLocaleString();
-        const words = [];
-        const tips = [];
-        if (fitted) {
-            const kept = Math.max(0, (qc.n_cells || 0) - (qc.n_left_out || 0));
-            // Short enough for the sidebar's one line; the whole sentence is
-            // the tooltip.
-            words.push(`QC-passed cells only \u00b7 ${fmt(qc.n_left_out)} left out by QC`);
-            tips.push(`Auto fitted on ${fmt(kept)} QC-passed cells; ${fmt(qc.n_left_out)} `
-                + `cells QC called ${qc.mode === "exclude" ? "exclude" : "exclude or warn"} (or `
-                + "flagged unreliable for this marker) were left out of the fit. The threshold "
-                + "still applies to every cell.");
-        }
-        if (notCalled > 0) {
-            words.push(`${fmt(notCalled)} not called`);
-            tips.push(`${fmt(notCalled)} cell${notCalled === 1 ? " is" : "s are"} not called by `
-                + "this gate: QC says they cannot be called for a gated marker (inside a QC "
-                + "region, or the marker flagged unreliable there). They are drawn grey, "
-                + "neither positive nor negative.");
-        }
-        node.textContent = words.join(", ");
-        node.title = tips.join(" ");
-        node.dataset.heavy = fitted && qc.warning ? "true" : "false";
+        const kept = Math.max(0, (qc.n_cells || 0) - (qc.n_left_out || 0));
+        // Short enough for the sidebar's one line; the whole sentence is
+        // the tooltip.
+        node.textContent = `QC-passed cells only \u00b7 ${fmt(qc.n_left_out)} left out by QC`;
+        node.title = `Auto fitted on ${fmt(kept)} QC-passed cells; ${fmt(qc.n_left_out)} `
+            + `cells QC called ${qc.mode === "exclude" ? "exclude" : "exclude or warn"} (or `
+            + "flagged unreliable for this marker) were left out of the fit. The threshold "
+            + "still applies to every cell.";
+        node.dataset.heavy = qc.warning ? "true" : "false";
         node.hidden = false;
     }
 

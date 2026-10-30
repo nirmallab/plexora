@@ -1,11 +1,14 @@
 /**
  * QC's "not called" in the browser: a cell QC says cannot be called for a gated
- * marker is neither positive nor negative, and the gate draws it grey.
+ * marker is neither positive nor negative. The viewer's gate does not draw it
+ * (ImageViewer.evaluateGateLocally draws the threshold alone); the pieces
+ * below still answer for whoever asks.
  *
  * Every way this goes wrong is quiet. A mask that still says 1 for a
- * not-called cell draws it positive; a cache that outlives a QC change keeps
- * yesterday's grey; a write nobody announces leaves the gate stale until the
- * next drag; a note that miscounts reads as a QC result. None of that throws.
+ * not-called cell calls it positive; a cache that outlives a QC change keeps
+ * yesterday's calls; a write nobody announces leaves a reader stale; a note
+ * that counts cells the screen does not show reads as a QC result. None of
+ * that throws.
  *
  *   A. labelGpu.js evaluateGateMask with its `notCalled` argument: absent (the
  *      gate as it was), a key the gates do not name, a multi-key gate.
@@ -13,7 +16,7 @@
  *   C. `plexora:qc-changed`: raised by QC's writes (qcApi.js) and by an ROI
  *      save that touched a QC region (roiState.js) once it lands -- not by a
  *      read, a refused write, or an ordinary ROI.
- *   D. the gating panel's note: ", N not called" only when there are some.
+ *   D. the gating panel's note: QC's fit, never a not-called count.
  *
  * Run directly:  node tests/js/gate_not_called_probe.mjs
  * Exit 0 = every check held. Exit 1 = at least one did not.
@@ -286,27 +289,22 @@ function panel({ fitted = false, notCalled = null } = {}) {
     return self;
 }
 
-panel({ fitted: true, notCalled: 0 }).paintQcNote();
-check("with a fit and none not called the note is QC's words, unchanged",
-    [note.hidden, note.textContent], [false, "QC-passed cells only · 5 left out by QC"]);
+panel({ fitted: true }).paintQcNote();
+check("with a fit the note is QC's words",
+    [note.hidden, note.textContent, note.title.startsWith("Auto fitted on 95 QC-passed cells")],
+    [false, "QC-passed cells only · 5 left out by QC", true]);
 panel({ fitted: true, notCalled: 12 }).paintQcNote();
-check("with cells not called it ends \", N not called\"",
-    note.textContent, "QC-passed cells only · 5 left out by QC, 12 not called");
-check("...and the tooltip says why they are grey",
-    [note.title.startsWith("Auto fitted on 95 QC-passed cells"), note.title.includes("drawn grey")], [true, true]);
+check("cells QC does not call are not counted in it",
+    [note.textContent, note.title.includes("not called"), note.title.includes("grey")],
+    ["QC-passed cells only · 5 left out by QC", false, false]);
 panel({ notCalled: 12 }).paintQcNote();
-check("without a fit, the not-called count alone", [note.hidden, note.textContent], [false, "12 not called"]);
-panel({ notCalled: null }).paintQcNote();
-check("with neither, the note is hidden, as it was", [note.hidden, note.textContent], [true, ""]);
+check("...and without a fit the note is hidden, however many there are",
+    [note.hidden, note.textContent], [true, ""]);
 
-const painted = [];
 const controller = new Controller({ sidebar: null, moduleInstance: { pluginName: "gating" }, dataLayer: {},
                                     eventHandler: {}, config: {} });
-controller.paintQcNote = () => painted.push("gating");
-controller._onCellGate({ detail: { layer: "gating" } });
-controller._onCellGate({ detail: { layer: "cell_explorer" } });
-check("the viewer's word that this layer's gate moved repaints it; another layer's does not",
-    painted, ["gating"]);
+check("the panel does not listen for the viewer's gate to repaint the note",
+    controller._onCellGate, undefined);
 
 for (const name of checks) {
     if (!failures.some((f) => f.check === name)) console.log(`ok  ${name}`);

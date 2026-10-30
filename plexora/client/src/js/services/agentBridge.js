@@ -583,8 +583,8 @@ window.PlexoraAgentBridge = (function () {
         window.dispatchEvent(new CustomEvent("plexora:agent-state-changed", { detail: event }));
         // QC's calls are core's to serve (/get_not_called): whatever QC or the
         // ROI document changed -- a session's region, an approval, a check's
-        // regions written -- the cells a gate draws grey as not called are
-        // read again, whichever tools this tab has open.
+        // regions written -- whatever reads them reads them again, whichever
+        // tools this tab has open.
         if (QC_WRITERS.has(event.plugin)) window.PlexoraQcChanged?.announce(datasource());
         if (event.plugin === "core" && CORE_EVENTS[event.kind]) {
             try {

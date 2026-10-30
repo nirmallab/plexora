@@ -34,8 +34,8 @@ class QcApi {
     /** A write that can change which cells QC calls -- a region drawn,
      *  reshaped, traced, approved or deleted, a finding set aside, the
      *  strictness -- as `_post`, and once it lands the page is told
-     *  (`plexora:qc-changed`), so a gate drawing the cells QC does not call
-     *  in grey reads them again (core's numericData.js). */
+     *  (`plexora:qc-changed`, core's numericData.js), so whatever reads
+     *  QC's calls reads them again. */
     async _change(path, body) {
         const answer = await this._post(path, body);
         if (answer.ok) window.PlexoraQcChanged?.announce(this.datasource);

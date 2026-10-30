@@ -90,8 +90,9 @@ class NumericData {
    * null -- nothing known to be not called -- so the gate still draws, and
    * it is not cached, so the next tick asks again.
    *
-   * Stale whenever QC's calls move: invalidateNotCalled() is called on
-   * `plexora:qc-changed` (ImageViewer.onQcChanged).
+   * Stale whenever QC's calls move: a caller drops them with
+   * invalidateNotCalled() on `plexora:qc-changed`. The viewer's gate does
+   * not read them: it draws the threshold alone (ImageViewer.evaluateGateLocally).
    *
    * @returns {Promise<Uint8Array|null>}
    */
@@ -246,8 +247,7 @@ class NumericData {
  * `plexora:qc-changed`, raised on window whenever QC's calls may have moved: a
  * QC region drawn, traced, approved or deleted (in QC's panel or as an ROI), a
  * finding set aside, the strictness changed, or an agent doing any of that.
- * The not-called bytes above are stale from then on, and ImageViewer drops
- * them and evaluates its gates again. One helper, so every writer -- QC's
+ * The not-called bytes above are stale from then on. One helper, so every writer -- QC's
  * client (qcApi.js), the ROI store's saves, the agent bridge -- raises the
  * same event with the same detail, `{datasource}`.
  */

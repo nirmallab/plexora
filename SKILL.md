@@ -3745,12 +3745,16 @@ deliberately left out and what should be built next.
   `capabilities_autogate.stale_qc` (and `gating_qc`'s `stale_qc`) compares
   against to name gates whose QC calls have since changed. Heavy exclusion
   (`HEAVY_EXCLUSION_FRACTION`) caps a unit's confidence at moderate.
-  Not-called cells reach every consumer of a gate: `GET /get_not_called`
-  (`server/routes/data_routes.py`, one byte per table row) feeds
-  `numericData.getNotCalled`, `labelGpu.evaluateGateMask` writes them as 2
-  in the gate mask, and `label.frag.glsl` and `labelTile.js`'s CPU path both
-  draw a 2 grey (`NOT_CALLED_RGB`, the grey `agent/render.py` draws QC's
-  left-out cells in), whatever the colour table says; `tableops.py` writes
+  The gate drawn on screen is the threshold alone: `ImageViewer.evaluateGateLocally`
+  does not pass QC's not-called bytes, `centroid_tiles._load_filter_table`
+  does not blank those rows, and the gating panel's note shows only the Auto
+  fit's QC exclusion, never a not-called count. The pieces stay for other
+  readers: `GET /get_not_called` (`server/routes/data_routes.py`, one byte
+  per table row) feeds `numericData.getNotCalled`,
+  `labelGpu.evaluateGateMask` writes them as 2 when given them, and
+  `label.frag.glsl` and `labelTile.js`'s CPU path both draw a 2 grey
+  (`NOT_CALLED_RGB`, the grey `agent/render.py` draws QC's left-out cells
+  in), whatever the colour table says. Saved gates keep QC's calls: `tableops.py` writes
   `obsm["<table>_not_called"]` beside the `uns` gates
   (`anndata_gates.save_not_called`, from the `gating.save_gates` payload
   `capabilities.py` builds), and the provenance rows written with it carry

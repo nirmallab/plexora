@@ -20,7 +20,7 @@ Kept import-light, like every descriptor module.
 
 from plexora.api.plugin import Plugin, Requires
 
-VERSION = "20261027_sidebar_radius"
+VERSION = "20261030_gating_show"
 
 
 def _blueprint():

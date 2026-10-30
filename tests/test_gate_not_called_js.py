@@ -1,15 +1,16 @@
 """QC's "not called" state in the browser, run in node against the shipped scripts.
 
 A cell QC says cannot be called for a gated marker -- inside a QC region, or
-the marker flagged unreliable there -- is neither positive nor negative: the
-gate's mask holds 2 for it and the cell layer draws it grey. The checks live in
-tests/js/gate_not_called_probe.mjs (evaluateGateMask's `notCalled` argument,
-numericData's not-called cache, the `plexora:qc-changed` announcements from
-QC's writes and the ROI store, and the gating panel's note); this pins their
-lines, so a check that is deleted or renamed fails here rather than silently
-reducing what is covered.
+the marker flagged unreliable there -- is neither positive nor negative: a gate
+mask built with QC's bytes holds 2 for it. The viewer's gate is not built that
+way: it draws the threshold alone, and the gating panel's note does not count
+those cells. The checks live in tests/js/gate_not_called_probe.mjs
+(evaluateGateMask's `notCalled` argument, numericData's not-called cache, the
+`plexora:qc-changed` announcements from QC's writes and the ROI store, and the
+gating panel's note); this pins their lines, so a check that is deleted or
+renamed fails here rather than silently reducing what is covered.
 
-Drawing the grey identically on the GPU and the CPU is
+Drawing a 2 grey identically on the GPU and the CPU is
 tests/test_label_gpu_parity.py's; the viewer's side of the gate is
 tests/test_label_gpu.py's.
 """
@@ -57,12 +58,10 @@ CHECKS = (
     "an edit to an ordinary ROI does not",
     "moving an ordinary ROI into a QC category does",
     "a save that did not land announces nothing",
-    "with a fit and none not called the note is QC's words, unchanged",
-    "with cells not called it ends \", N not called\"",
-    "...and the tooltip says why they are grey",
-    "without a fit, the not-called count alone",
-    "with neither, the note is hidden, as it was",
-    "the viewer's word that this layer's gate moved repaints it; another layer's does not",
+    "with a fit the note is QC's words",
+    "cells QC does not call are not counted in it",
+    "...and without a fit the note is hidden, however many there are",
+    "the panel does not listen for the viewer's gate to repaint the note",
 )
 
 node = shutil.which("node")
