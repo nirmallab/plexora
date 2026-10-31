@@ -861,7 +861,17 @@ class RemoteSession:
             if self.remote.gcloud:
                 self._prepare_compute()
             env = self._ssh_environment()
-            self.session = self._build(env)
+            built = self._build(env)
+            # A Disconnect while the machine was being readied or the session
+            # built found nothing to stop (stop() reads `self.session`), so it
+            # is honoured here: nothing is spawned for a session already ended.
+            with self._lock:
+                stopped = self._stopping
+                if not stopped:
+                    self.session = built
+            if stopped:
+                self._cleanup_helper()
+                return
             self.session.establish()
         except BaseException as exc:  # noqa: BLE001 - reported, never raised
             self._fail(exc)
@@ -883,7 +893,9 @@ class RemoteSession:
 
         self._report_connect("connected", started)
         with self._lock:
-            if self.state != STATE_FAILED:
+            # Not after a Disconnect that came during establishment: stop()
+            # has already said EXITED, and a session it ended stays ended.
+            if self.state != STATE_FAILED and not self._stopping:
                 self.state = STATE_CONNECTED
                 # For a job that was allocated instantly and never announced a
                 # queue wait. No-op for one that did -- see the method.

@@ -3585,8 +3585,8 @@
     min-width: 7.5em;
 }
 
-.fb-quickedit-z input[type="range"] {
-    accent-color: var(--accent-channel);
+/* The app's slider (PlexoraSlider), wrapped around the template's input. */
+.fb-quickedit-z > .plx-slider {
     flex: 1 1 auto;
     min-width: 0;
 }

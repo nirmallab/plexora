@@ -453,8 +453,11 @@ def cmd_bump(ctx, args):
         return version
     _set_pyproject_version(version)
     propagate(ctx=ctx)
+    # The docs site names the version it documents; a bump that left it behind
+    # fails tests/test_docs_freshness.py (it did for 0.0.32).
+    run([sys.executable, ROOT / "tools" / "docs" / "sync_docs.py", "version"])
     run(["uv", "lock"], env=uv_env())
-    expected = {"pyproject.toml", "uv.lock",
+    expected = {"pyproject.toml", "uv.lock", "website/generated/version.json",
                 str(TAURI_CONF.relative_to(ROOT)).replace("\\", "/"),
                 str(CARGO_TOML.relative_to(ROOT)).replace("\\", "/"),
                 str((TAURI_DIR / "Cargo.lock").relative_to(ROOT)).replace("\\", "/"),
