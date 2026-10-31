@@ -2,7 +2,8 @@
 read without importing Plexora, the tools it offers as a guest are the
 shipped manifest -- each with its permission written out, none a source-file
 write or a delete, each Pro tool with its entitlement -- and those tools run
-over the bridge."""
+over the bridge. Plexora pays for a workspace's conversation only where its AI
+is licensed, and labels the images it opens without offering to open them."""
 
 from __future__ import annotations
 
@@ -16,11 +17,14 @@ from tools import intelligence_manifest
 
 
 def test_the_registration_is_read_without_importing_plexora():
+    # Nor does labelling a file, or saying what Plexora pays for: the gateway is built only when asked for.
     probe = ("import sys, json\nimport plexora_intelligence as p\n"
              "print(json.dumps([p.PRODUCT.id, p.PRODUCT.name, list(p.PRODUCT.roles), "
-             "sorted(m for m in sys.modules if m.split('.')[0] in ('plexora', 'flask', 'pydantic'))]))")
+             "p.PRODUCT.classify('tonsil.ome.tif')['format'], list(p.PRODUCT.pay()['modules']), "
+             "sorted(m for m in sys.modules\n"
+             "       if m.split('.')[0] in ('plexora', 'flask', 'pydantic', 'spatialagents'))]))")
     done = subprocess.run([sys.executable, "-c", probe], capture_output=True, text=True, check=True)
-    assert json.loads(done.stdout) == ["plexora", "Plexora", ["guest"], []]
+    assert json.loads(done.stdout) == ["plexora", "Plexora", ["guest"], "ome-tiff", ["chat"], []]
 
 
 def test_plexora_registers_itself_under_the_apps_entry_point():
@@ -99,6 +103,88 @@ def test_grants_are_the_licences_entitlements_and_nothing_on_free(monkeypatch):
 
     monkeypatch.setattr(licensing, "peek", unreadable)
     assert guest.grants() == ()
+
+
+def test_plexora_pays_for_the_conversation_only_where_its_ai_is_licensed(monkeypatch):
+    from spatialagents.gateway import GatewayError, RefusingGateway
+
+    from plexora import licensing
+    from plexora.ai.harness.gateway import GatewayClient
+    from plexora_intelligence import PRODUCT
+
+    allowed = {"ai:chat": False}
+    monkeypatch.setattr(licensing, "allows", lambda entitlement: allowed.get(entitlement, False))
+    paid = PRODUCT.pay()
+    # The conversation only: the app refuses a plan's call before it is sent.
+    assert paid["modules"] == ("chat",)
+    factory = paid["gateway_factory"]
+
+    refusing = factory()
+    assert isinstance(refusing, RefusingGateway) and refusing.dev is False
+    with pytest.raises(GatewayError) as refused:
+        refusing.messages(object(), idempotency_key="k", on_delta=None)
+    # The sentence the app shows is the one `ai()` gives.
+    assert refused.value.code == "no_license" and str(refused.value) == PRODUCT.ai()["reason"]
+
+    # The device is activated while the app runs: the same factory pays from its next call.
+    allowed["ai:chat"] = True
+    client = factory()
+    assert isinstance(client, GatewayClient) and isinstance(client.dev, bool)
+    allowed["ai:chat"] = False
+    assert isinstance(factory(), RefusingGateway)
+
+
+def test_a_conversations_task_plexora_does_not_name_goes_out_as_plexoras(monkeypatch):
+    from spatialagents.gateway import GatewayError
+    from spatialagents.wire import ModelRequest
+
+    from plexora import licensing
+    from plexora.ai import tasks
+    from plexora_intelligence import PRODUCT
+
+    monkeypatch.setattr(licensing, "allows", lambda entitlement: True)
+    client = PRODUCT.pay()["gateway_factory"]()
+    assert "chat.researcher" not in tasks.tasks()
+    assert client.wire_task("chat.researcher", module="chat") == "plexora.chat.researcher"
+    assert client.wire_task("chat.turn", module="chat") == "plexora.chat.turn"
+
+    # Through `messages`, as the app calls it: the body names Plexora's task, nothing raises before the send.
+    sent = []
+
+    def gateway(method, path, body=None, headers=None, timeout=60):
+        sent.append(body)
+        raise GatewayError("stop here", code="no_license", status=403)
+
+    monkeypatch.setattr(client, "open", gateway)
+    request = ModelRequest(capability="text_reasoning", system=[], messages=[{"role": "user", "content": "hi"}],
+                           context={"feature": "chat"}, task="chat.researcher")
+    with pytest.raises(GatewayError):
+        client.messages(request, idempotency_key="k", on_delta=lambda text: None)
+    assert [body["task"] for body in sent] == ["plexora.chat.researcher"]
+
+
+@pytest.mark.parametrize("name, kind", [
+    ("tonsil.ome.tif", "ome-tiff"), ("tonsil.ome.tiff", "ome-tiff"), ("tonsil.tif", "tiff"),
+    ("TONSIL.TIFF", "tiff"), ("scan.qptiff", "qptiff"), ("tonsil.ome.zarr", "ome-zarr"),
+    ("tonsil.ome.zarr/", "ome-zarr"), (r"C:\data\tonsil.ome.tif", "ome-tiff"),
+])
+def test_an_image_plexora_opens_is_labelled_plexoras_and_never_opened_from_here(tmp_path, name, kind):
+    from plexora_intelligence import PRODUCT
+
+    for path in (name, tmp_path / name.rstrip("/").split("\\")[-1]):
+        # By name: the path need not exist, and no file is read.
+        assert PRODUCT.classify(path) == {"format": kind, "label": "Image · open it in Plexora", "action": None,
+                                          "product": "plexora"}
+
+
+# A plain `.zarr` included: by its name it may be an AnnData or SpatialData store.
+@pytest.mark.parametrize("name", ["cells.csv", "tonsil_cell.csv", "tonsil.h5ad", "cells.zarr", "cells.zarr/",
+                                  "notes.txt", "figure.png", "tonsil.tif.csv", "tonsil"])
+def test_anything_else_is_not_plexoras_to_label(tmp_path, name):
+    from plexora_intelligence import PRODUCT
+
+    assert PRODUCT.classify(name) is None
+    assert PRODUCT.classify(tmp_path / name) is None
 
 
 def test_the_registration_says_what_plexora_is_here():

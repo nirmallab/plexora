@@ -6,7 +6,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "plexora"
-version = "0.0.33"
+version = "0.0.34"
 description = "OpenSeadragon-based cellular image viewing and analysis tool."
 readme = "README.md"
 authors = [{ name = "BioCognia", email = "support@biocognia.com" }]
@@ -54,8 +54,10 @@ dependencies = [
     # in a SCIMAP Pro workspace, its tools -- its Pro AI gating and QC on a Pro
     # licence -- join the conversation over the bridge. Stdlib-only at import;
     # it adds the MCP SDK through spatialbridge[mcp], which the ai extra
-    # already brings.
-    "biocognia-intelligence>=0.2.1,<0.3",
+    # already brings. 0.3 may also have Plexora's licence pay for a
+    # workspace's conversation (`pay()`) and label its images (`classify`);
+    # 0.2 ignores both.
+    "biocognia-intelligence>=0.2.1,<0.4",
     "Flask>=3.1",
     "fsspec>=2024.12",
     # Declared rather than leaned on transitively: gating reads and writes

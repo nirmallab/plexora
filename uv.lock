@@ -3156,7 +3156,7 @@ wheels = [
 
 [[package]]
 name = "plexora"
-version = "0.0.33"
+version = "0.0.34"
 source = { editable = "." }
 dependencies = [
     { name = "aiohttp" },
@@ -3252,7 +3252,7 @@ requires-dist = [
     { name = "aiohttp", specifier = ">=3.14.4" },
     { name = "anndata", specifier = ">=0.10" },
     { name = "biocognia", specifier = ">=0.1.2,<0.2" },
-    { name = "biocognia-intelligence", specifier = ">=0.2.1,<0.3" },
+    { name = "biocognia-intelligence", specifier = ">=0.2.1,<0.4" },
     { name = "cellpose", marker = "extra == 'segment3d'", specifier = ">=4" },
     { name = "flask", specifier = ">=3.1" },
     { name = "fsspec", specifier = ">=2024.12" },

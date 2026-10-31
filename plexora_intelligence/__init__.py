@@ -3,24 +3,41 @@
 `biocognia_intelligence/registry.py`).
 
 Standard library only, so `biocognia list` names Plexora without importing
-it; each method imports what it needs. Plexora joins as a guest: no workspace
-belongs to it yet, and in a workspace another product holds (SCIMAP Pro's),
-the conversation may call the tools listed in `GUEST_TOOLS` as
-`plexora.<tool>`. Each call reaches Plexora over spatialbridge -- the copy
-already running, else one started for it (`plexora mcp serve --origin
-bridge`) -- and Plexora checks it as it checks any bridge call: its licence,
-its policy, and never a source-file write or a delete.
+it; each method imports what it needs. Plexora holds no workspace of its own
+(`home()` is None and its one role is guest), and takes part in the app's
+workspaces three ways.
+
+- Its tools. In a workspace's conversation the app may call the tools listed
+  in `GUEST_TOOLS` as `plexora.<tool>`. Each call reaches Plexora over
+  spatialbridge -- the copy already running, else one started for it
+  (`plexora mcp serve --origin bridge`) -- and Plexora checks it as it checks
+  any bridge call: its licence, its policy, and never a source-file write or
+  a delete.
+- Its licence pays (`pay()`). A workspace's conversation may be paid for by
+  Plexora: each model call goes through Plexora's own gateway client, on this
+  device's Plexora licence, as Plexora's task (`plexora.chat.turn`). Plexora
+  pays for the conversation only -- its `chat` module -- so the app refuses a
+  plan's call before sending it rather than letting the gateway answer 403.
+  Without Plexora's AI on this device every call is refused with the
+  sentence `ai()` gives, and the licence is asked again at the next call.
+- Its images (`classify(path)`). The images Plexora opens are labelled as
+  Plexora's, by name alone. The label says to open the image in Plexora;
+  there is no action yet, because the app cannot hand an image to Plexora
+  from a conversation.
 
 What a conversation is offered is `guest.json`, written from the capability
 registry by `tools/intelligence_manifest.py`, so the catalogue never depends
 on whether Plexora is running. Its Pro tools (AI gating and QC) carry their
 entitlement, and the app offers them only where `grants()` -- this device's
-Plexora licence, read without a network call -- covers it. Plexora's own AI
--- its chat panel, `plexora ai`, its MCP server -- is untouched by any of this.
+Plexora licence, read without a network call -- covers it. Plexora's own chat
+panel, `plexora ai` and its MCP server work as they did; paying for the app's
+conversation is a second use of the same licence and gateway.
 """
 
 from __future__ import annotations
 
+import os
+import re
 import sys
 
 #: The Plexora tools a conversation in another product's workspace may call:
@@ -83,6 +100,23 @@ CODES = {
     "ambiguous_view": "invalid_input",
 }
 
+#: Why Plexora's AI is off on this device: `ai()`'s reason, and what a call
+#: Plexora would pay for is refused with.
+NO_AI = "Plexora's AI needs Plexora Pro; `plexora license status` says what this device has"
+
+#: What Plexora's licence pays for in a workspace: the conversation (its chat
+#: module), never SCIMAP Pro's plans.
+PAID_MODULES = ("chat",)
+
+#: The images Plexora opens, by the end of their name, longest first so
+#: `.ome.tif` is not read as `.tif`: the format each is. Not a plain `.zarr`:
+#: by its name it may as well be an AnnData or SpatialData store (SCIMAP Pro's).
+IMAGES = ((".ome.tiff", "ome-tiff"), (".ome.tif", "ome-tiff"), (".ome.zarr", "ome-zarr"),
+          (".qptiff", "qptiff"), (".tiff", "tiff"), (".tif", "tiff"))
+
+#: What the app shows beside an image Plexora opens.
+IMAGE_LABEL = "Image · open it in Plexora"
+
 
 class _Guest:
     """Plexora's tools, as a guest in another product's workspace."""
@@ -132,8 +166,41 @@ class _Plexora:
 
         if licensing.allows("ai:chat"):
             return {"ok": True, "reason": None}
-        return {"ok": False, "reason": "Plexora's AI needs Plexora Pro; `plexora license status` says what this "
-                                       "device has"}
+        return {"ok": False, "reason": NO_AI}
+
+    def pay(self) -> dict:
+        """What the app needs for Plexora to pay for a workspace's
+        conversation: a factory for the gateway client each model call goes
+        through, and the modules it serves (the chat only)."""
+        return {"gateway_factory": self._gateway, "modules": PAID_MODULES}
+
+    def _gateway(self):
+        """Plexora's gateway client when this device's licence allows its AI,
+        else one that refuses every call with `ai()`'s reason. Decided at each
+        call, so a device activated while the app runs pays from the next one.
+
+        The app hands it requests carrying SCIMAP Pro's task names too
+        (`chat.researcher`); `tasks.wire_id` sends a task Plexora's registry
+        does not name as `plexora.<module>.<task>`, which the gateway serves
+        at Plexora's default."""
+        state = self.ai()
+        if not state["ok"]:
+            from spatialagents.gateway import RefusingGateway
+
+            return RefusingGateway(state["reason"])
+        from plexora.ai.harness.gateway import GatewayClient
+
+        return GatewayClient()
+
+    def classify(self, path) -> dict | None:
+        """An image Plexora opens, by its name alone (no file is read):
+        `{format, label, action, product}`, with no action in this release;
+        None for anything else, a cell table included."""
+        name = re.split(r"[\\/]", os.fspath(path).rstrip("\\/"))[-1].lower()
+        for suffix, kind in IMAGES:
+            if name.endswith(suffix):
+                return {"format": kind, "label": IMAGE_LABEL, "action": None, "product": self.id}
+        return None
 
     def licensing(self):
         from plexora.licensing import LICENSING
