@@ -5125,7 +5125,7 @@
      "properties": {
       "action": {
        "default": "close",
-       "description": "close: end the session (writes stay; a session the user stopped in the viewer is cancelled); commit: write a propose-mode session's accepted gates and empty gates; cancel: stop the bulk pass (writes stay); rollback: undo every write the session made, newest first.",
+       "description": "close: end the session (writes stay; a marker not yet settled is written at the best gate it reached, for review; a session the user stopped in the viewer is cancelled); commit: write a propose-mode session's accepted gates and empty gates; cancel: stop the bulk pass (writes stay); rollback: undo every write the session made, newest first.",
        "enum": [
         "close",
         "commit",
