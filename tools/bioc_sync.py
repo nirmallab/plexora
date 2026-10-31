@@ -44,11 +44,16 @@ if str(ROOT) not in sys.path:
 PRODUCT = "plexora"
 #: Both Workers serve their admin API under admin.biocognia.com (/admin/api and
 #: /admin/api/ai); staging is two workers.dev hosts, given by the variables.
-# Not admin.biocognia.com: Cloudflare Access guards that host for people, and a
-# tool holding the break-glass token reaches the same routes on these.
-DEFAULT_CORE = "https://api.biocognia.com"
+# Since 2026-10-26 bioc-core answers /admin on its admin host only (a 404 on
+# api.), and Cloudflare Access stands in front of that host: a tool passes with
+# a service token (CF_ACCESS_CLIENT_ID / CF_ACCESS_CLIENT_SECRET, let through by
+# a Service Auth policy), then the break-glass token as before. The gateway is
+# not behind Access, so the service token is never sent to it.
+DEFAULT_CORE = "https://admin.biocognia.com"
 DEFAULT_AI = "https://ai.biocognia.com"
 TOKEN_ENV = "BIOC_ADMIN_TOKEN"
+ACCESS_ID = "CF_ACCESS_CLIENT_ID"
+ACCESS_SECRET = "CF_ACCESS_CLIENT_SECRET"
 
 
 def manifest() -> dict:
@@ -79,15 +84,40 @@ def fragment_hash(data: dict) -> str:
     return "sha256:" + hashlib.sha256(canonical({"modules": data["modules"]}).encode()).hexdigest()
 
 
-def _request(method: str, url: str, token: str, body=None) -> dict:
+def access_headers() -> dict:
+    """The Cloudflare Access service token, when both halves are set."""
+    client_id = (os.environ.get(ACCESS_ID) or "").strip()
+    secret = (os.environ.get(ACCESS_SECRET) or "").strip()
+    if not (client_id and secret):
+        return {}
+    return {"CF-Access-Client-Id": client_id, "CF-Access-Client-Secret": secret}
+
+
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    """A redirect is an answer, not a place to go: Access's is its login page."""
+
+    def redirect_request(self, *args, **kwargs):
+        return None
+
+
+_OPENER = urllib.request.build_opener(_NoRedirect)
+
+
+def _request(method: str, url: str, token: str, body=None, *, access: bool = False) -> dict:
     data = None if body is None else json.dumps(body).encode("utf-8")
     request = urllib.request.Request(url, data=data, method=method, headers={
         "Content-Type": "application/json", "Accept": "application/json",
-        "Authorization": f"Bearer {token}", "User-Agent": "plexora-bioc-sync"})
+        "Authorization": f"Bearer {token}", "User-Agent": "plexora-bioc-sync",
+        **(access_headers() if access else {})})
     try:
-        with urllib.request.urlopen(request, timeout=30) as response:
+        with _OPENER.open(request, timeout=30) as response:
             return json.loads(response.read().decode("utf-8") or "{}")
     except urllib.error.HTTPError as exc:
+        if 300 <= exc.code < 400 and "cloudflareaccess.com" in (exc.headers.get("Location") or ""):
+            missing = "" if access_headers() else f" ({ACCESS_ID} and {ACCESS_SECRET} are not set)"
+            raise SystemExit(f"{method} {url}: Cloudflare Access answered with its login page{missing}. "
+                             f"Set {ACCESS_ID} and {ACCESS_SECRET} to a service token that the BioCognia "
+                             "admin application lets through (a Service Auth policy).") from None
         detail = exc.read(4096).decode("utf-8", "replace")
         raise SystemExit(f"{method} {url}: HTTP {exc.code} {detail}") from None
     except (urllib.error.URLError, OSError) as exc:
@@ -133,9 +163,9 @@ def plan_problems(plans) -> list[str]:
 
 def check(core: str, ai: str, token: str, ai_token: str | None = None) -> int:
     problems: list[str] = []
-    product = _request("GET", f"{core}/admin/api/products/{PRODUCT}", token)
+    product = _request("GET", f"{core}/admin/api/products/{PRODUCT}", token, access=True)
     problems += _diff("The manifest", manifest(), product.get("manifest"))
-    public = _request("GET", f"{core}/v1/products/{PRODUCT}", token)
+    public = _request("GET", f"{core}/v1/products/{PRODUCT}", token, access=True)
     problems += plan_problems(public.get("plans"))
     registry = _request("GET", f"{ai}/admin/api/ai/registry/{PRODUCT}", ai_token or token)
     ours = fragment()
@@ -157,7 +187,7 @@ def check(core: str, ai: str, token: str, ai_token: str | None = None) -> int:
 
 
 def upload(core: str, ai: str, token: str, ai_token: str | None = None) -> int:
-    answer = _request("PUT", f"{core}/admin/api/products/{PRODUCT}/manifest", token, manifest())
+    answer = _request("PUT", f"{core}/admin/api/products/{PRODUCT}/manifest", token, manifest(), access=True)
     print(f"manifest: {'uploaded' if answer.get('changed') else 'unchanged'} ({answer.get('hash')})")
     answer = _request("PUT", f"{ai}/admin/api/ai/registry/{PRODUCT}", ai_token or token, fragment())
     print(f"tasks: {'uploaded' if answer.get('changed') else 'unchanged'} ({answer.get('hash')})")

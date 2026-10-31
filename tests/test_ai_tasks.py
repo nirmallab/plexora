@@ -109,3 +109,55 @@ def test_the_registry_names_no_model_and_no_vendor():
     for vendor in ("claude", "anthropic", "sonnet", "opus", "haiku", "gpt", "openai", "gemini", "openrouter",
                    "orcarouter", "saygm"):
         assert vendor not in blob, vendor
+
+
+def test_the_sync_tool_passes_cloudflare_access_on_core_calls_only(monkeypatch):
+    """bioc-core's admin host is behind Cloudflare Access: a core call carries
+    the service token, a gateway call never does, and Access's login page is
+    named, not followed."""
+    import importlib.util
+    import threading
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+    import pytest
+
+    spec = importlib.util.spec_from_file_location("bioc_sync", ROOT / "tools" / "bioc_sync.py")
+    sync = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(sync)
+    seen = []
+
+    class Handler(BaseHTTPRequestHandler):
+        def do_GET(self):  # noqa: N802
+            seen.append(self.headers.get("CF-Access-Client-Id"))
+            if self.headers.get("CF-Access-Client-Id") != "id.access":
+                self.send_response(302)
+                self.send_header("Location", "https://team.cloudflareaccess.com/cdn-cgi/access/login/admin")
+                self.send_header("Content-Length", "0")
+                self.end_headers()
+                return
+            data = b'{"ok": true}'
+            self.send_response(200)
+            self.send_header("Content-Length", str(len(data)))
+            self.end_headers()
+            self.wfile.write(data)
+
+        def log_message(self, *args):
+            pass
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    url = f"http://127.0.0.1:{server.server_address[1]}/admin/api/products/plexora"
+    try:
+        monkeypatch.delenv(sync.ACCESS_ID, raising=False)
+        monkeypatch.delenv(sync.ACCESS_SECRET, raising=False)
+        with pytest.raises(SystemExit, match="login page .*CF_ACCESS_CLIENT_ID and CF_ACCESS_CLIENT_SECRET are not set"):
+            sync._request("GET", url, "token", access=True)
+        monkeypatch.setenv(sync.ACCESS_ID, "id.access")
+        monkeypatch.setenv(sync.ACCESS_SECRET, "cfast_secret")
+        assert sync._request("GET", url, "token", access=True) == {"ok": True}
+        with pytest.raises(SystemExit, match="login page. Set"):
+            sync._request("GET", url, "token")  # a gateway call carries no service token
+        assert seen == [None, "id.access", None]
+    finally:
+        server.shutdown()
+        server.server_close()
