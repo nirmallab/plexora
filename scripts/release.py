@@ -94,7 +94,7 @@ RUNTIME_IMPORTS = (
     "plexora", "plexora.cli", "numpy", "scipy", "polars", "cv2", "sklearn",
     "shapely", "spatialdata", "zarr", "tifffile", "imagecodecs", "openslide",
     "pydicom", "wsidicom", "pyarrow", "gcsfs", "adlfs", "waitress", "flask",
-    "mcp", "plexora.ai.harness", "spatialagents", "imageio_ffmpeg",
+    "mcp", "plexora.ai.harness", "spatialagents", "imageio_ffmpeg", "biocognia_intelligence",
 )
 
 #: Friendly platform word per target triple, used in artifact names.

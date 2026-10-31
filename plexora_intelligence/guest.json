@@ -2498,6 +2498,1092 @@
    }
   },
   {
+   "description": "Render a region of a project's image as the viewer draws it -- chosen channels and windows, the cell mask as outlines or fill, cells a gate calls positive highlighted, cell ids, a scale bar -- deterministically, from the source pyramid, without touching the viewer. Regions by pixel box, by centre and size in µm, or by ROI. Read-only. Returns an image plus a JSON manifest of exactly what was drawn.",
+   "descriptor": {
+    "entitlement": null,
+    "execution": "immediate",
+    "id": "plexora:image.render_region",
+    "input_schema": {
+     "$defs": {
+      "Bounds": {
+       "additionalProperties": false,
+       "description": "A rectangle in full-resolution image pixels, top-left origin.",
+       "properties": {
+        "height": {
+         "exclusiveMinimum": 0,
+         "title": "Height",
+         "type": "number"
+        },
+        "width": {
+         "exclusiveMinimum": 0,
+         "title": "Width",
+         "type": "number"
+        },
+        "x": {
+         "description": "Left edge, full-resolution pixels.",
+         "title": "X",
+         "type": "number"
+        },
+        "y": {
+         "description": "Top edge, full-resolution pixels.",
+         "title": "Y",
+         "type": "number"
+        }
+       },
+       "required": [
+        "x",
+        "y",
+        "width",
+        "height"
+       ],
+       "title": "Bounds",
+       "type": "object"
+      },
+      "CellsSpec": {
+       "additionalProperties": false,
+       "properties": {
+        "highlight": {
+         "anyOf": [
+          {
+           "discriminator": {
+            "mapping": {
+             "ids": "#/$defs/IdHighlight",
+             "marker": "#/$defs/MarkerHighlight"
+            },
+            "propertyName": "kind"
+           },
+           "oneOf": [
+            {
+             "$ref": "#/$defs/MarkerHighlight"
+            },
+            {
+             "$ref": "#/$defs/IdHighlight"
+            }
+           ]
+          },
+          {
+           "type": "null"
+          }
+         ],
+         "default": null,
+         "title": "Highlight"
+        },
+        "label_ids": {
+         "default": false,
+         "description": "Write cell ids next to cells in the field (bounded by max_labels, nearest the centre first).",
+         "title": "Label Ids",
+         "type": "boolean"
+        },
+        "max_labels": {
+         "default": 40,
+         "maximum": 200,
+         "minimum": 0,
+         "title": "Max Labels",
+         "type": "integer"
+        },
+        "negative_color": {
+         "default": "#4f86c6",
+         "title": "Negative Color",
+         "type": "string"
+        },
+        "outline_color": {
+         "default": "#e6e6e6",
+         "title": "Outline Color",
+         "type": "string"
+        },
+        "positive_color": {
+         "default": "#ff3df2",
+         "title": "Positive Color",
+         "type": "string"
+        },
+        "qc_color": {
+         "default": "#7a7a7a",
+         "title": "Qc Color",
+         "type": "string"
+        },
+        "qc_failures": {
+         "default": "muted",
+         "description": "With a marker highlight: muted draws the cells QC left out of estimation for that marker in qc_color and never as positive (the manifest counts them); as_others draws them like every other cell.",
+         "enum": [
+          "muted",
+          "as_others"
+         ],
+         "title": "Qc Failures",
+         "type": "string"
+        },
+        "show_negative": {
+         "default": true,
+         "title": "Show Negative",
+         "type": "boolean"
+        }
+       },
+       "title": "CellsSpec",
+       "type": "object"
+      },
+      "CenterBounds": {
+       "additionalProperties": false,
+       "description": "A square (or rectangle) around a point: in microns when the image is\ncalibrated, else in pixels.",
+       "properties": {
+        "aspect": {
+         "default": 1.0,
+         "description": "width / height.",
+         "exclusiveMinimum": 0,
+         "maximum": 10,
+         "title": "Aspect",
+         "type": "number"
+        },
+        "center_x": {
+         "title": "Center X",
+         "type": "number"
+        },
+        "center_y": {
+         "title": "Center Y",
+         "type": "number"
+        },
+        "size_px": {
+         "anyOf": [
+          {
+           "exclusiveMinimum": 0,
+           "type": "number"
+          },
+          {
+           "type": "null"
+          }
+         ],
+         "default": null,
+         "description": "Side in full-resolution pixels.",
+         "title": "Size Px"
+        },
+        "size_um": {
+         "anyOf": [
+          {
+           "exclusiveMinimum": 0,
+           "type": "number"
+          },
+          {
+           "type": "null"
+          }
+         ],
+         "default": null,
+         "description": "Side in microns (needs a calibrated image).",
+         "title": "Size Um"
+        }
+       },
+       "required": [
+        "center_x",
+        "center_y"
+       ],
+       "title": "CenterBounds",
+       "type": "object"
+      },
+      "ChannelCurve": {
+       "additionalProperties": false,
+       "properties": {
+        "cofactor": {
+         "anyOf": [
+          {
+           "exclusiveMinimum": 0,
+           "type": "number"
+          },
+          {
+           "type": "null"
+          }
+         ],
+         "default": null,
+         "description": "asinh only: raw units above black where the curve turns from linear to logarithmic. Default the window's span / 20.",
+         "title": "Cofactor"
+        },
+        "kind": {
+         "default": "asinh",
+         "description": "'linear', or 'asinh': log-like above the cofactor, so dim cells show above background while bright ones keep their structure.",
+         "enum": [
+          "linear",
+          "asinh"
+         ],
+         "title": "Kind",
+         "type": "string"
+        }
+       },
+       "title": "ChannelCurve",
+       "type": "object"
+      },
+      "ChannelSpec": {
+       "additionalProperties": false,
+       "properties": {
+        "color": {
+         "default": "#ffffff",
+         "description": "#rrggbb.",
+         "title": "Color",
+         "type": "string"
+        },
+        "curve": {
+         "anyOf": [
+          {
+           "$ref": "#/$defs/ChannelCurve"
+          },
+          {
+           "type": "null"
+          }
+         ],
+         "default": null,
+         "description": "How brightness follows intensity. Default: the calibration's curve for an 'auto' window, else linear."
+        },
+        "name": {
+         "description": "Channel name (or key), as `list_channels` gives it.",
+         "title": "Name",
+         "type": "string"
+        },
+        "window": {
+         "anyOf": [
+          {
+           "items": {
+            "type": "number"
+           },
+           "type": "array"
+          },
+          {
+           "enum": [
+            "auto",
+            "percentiles"
+           ],
+           "type": "string"
+          }
+         ],
+         "default": "auto",
+         "description": "[low, high] in raw intensity units; 'auto' (the project's display calibration when one is stored, else the channel's 1st-99.9th percentile); or 'percentiles' (always the 1st-99.9th percentile).",
+         "title": "Window"
+        }
+       },
+       "required": [
+        "name"
+       ],
+       "title": "ChannelSpec",
+       "type": "object"
+      },
+      "IdHighlight": {
+       "additionalProperties": false,
+       "properties": {
+        "cell_ids": {
+         "items": {
+          "type": "integer"
+         },
+         "maxItems": 1000,
+         "title": "Cell Ids",
+         "type": "array"
+        },
+        "kind": {
+         "const": "ids",
+         "default": "ids",
+         "title": "Kind",
+         "type": "string"
+        }
+       },
+       "required": [
+        "cell_ids"
+       ],
+       "title": "IdHighlight",
+       "type": "object"
+      },
+      "MarkerHighlight": {
+       "additionalProperties": false,
+       "description": "Colour cells by a marker gate: positive cells in one colour, the rest in\nanother (or undrawn).",
+       "properties": {
+        "high": {
+         "anyOf": [
+          {
+           "type": "number"
+          },
+          {
+           "type": "null"
+          }
+         ],
+         "default": null,
+         "title": "High"
+        },
+        "kind": {
+         "const": "marker",
+         "default": "marker",
+         "title": "Kind",
+         "type": "string"
+        },
+        "low": {
+         "anyOf": [
+          {
+           "type": "number"
+          },
+          {
+           "type": "null"
+          }
+         ],
+         "default": null,
+         "description": "Gate; default the stored one.",
+         "title": "Low"
+        },
+        "marker": {
+         "title": "Marker",
+         "type": "string"
+        }
+       },
+       "required": [
+        "marker"
+       ],
+       "title": "MarkerHighlight",
+       "type": "object"
+      },
+      "OutputSpec": {
+       "additionalProperties": false,
+       "properties": {
+        "height": {
+         "anyOf": [
+          {
+           "maximum": 2048,
+           "minimum": 16,
+           "type": "integer"
+          },
+          {
+           "type": "null"
+          }
+         ],
+         "default": null,
+         "title": "Height"
+        },
+        "width": {
+         "anyOf": [
+          {
+           "maximum": 2048,
+           "minimum": 16,
+           "type": "integer"
+          },
+          {
+           "type": "null"
+          }
+         ],
+         "default": null,
+         "title": "Width"
+        }
+       },
+       "title": "OutputSpec",
+       "type": "object"
+      },
+      "RoiBounds": {
+       "additionalProperties": false,
+       "properties": {
+        "padding": {
+         "default": 0.1,
+         "description": "Margin, as a fraction of the box's larger side.",
+         "maximum": 2,
+         "minimum": 0,
+         "title": "Padding",
+         "type": "number"
+        },
+        "roi_id": {
+         "description": "A region's id from `list_rois`; the render frames its bounding box.",
+         "title": "Roi Id",
+         "type": "string"
+        }
+       },
+       "required": [
+        "roi_id"
+       ],
+       "title": "RoiBounds",
+       "type": "object"
+      },
+      "ShapeSpec": {
+       "additionalProperties": false,
+       "description": "A region to draw over the picture: a GeoJSON Polygon/MultiPolygon or a\nbox, in full-resolution image pixels (a QC candidate's outline, a grid\nsquare).",
+       "properties": {
+        "bounds": {
+         "anyOf": [
+          {
+           "$ref": "#/$defs/Bounds"
+          },
+          {
+           "type": "null"
+          }
+         ],
+         "default": null
+        },
+        "color": {
+         "default": "#ff3df2",
+         "title": "Color",
+         "type": "string"
+        },
+        "dash": {
+         "default": false,
+         "title": "Dash",
+         "type": "boolean"
+        },
+        "fill_alpha": {
+         "default": 0.0,
+         "maximum": 0.6,
+         "minimum": 0.0,
+         "title": "Fill Alpha",
+         "type": "number"
+        },
+        "geometry": {
+         "anyOf": [
+          {
+           "additionalProperties": true,
+           "type": "object"
+          },
+          {
+           "type": "null"
+          }
+         ],
+         "default": null,
+         "description": "GeoJSON Polygon or MultiPolygon, full-resolution pixels.",
+         "title": "Geometry"
+        },
+        "id": {
+         "default": "shape",
+         "maxLength": 32,
+         "title": "Id",
+         "type": "string"
+        },
+        "label": {
+         "default": "",
+         "maxLength": 24,
+         "title": "Label",
+         "type": "string"
+        },
+        "width": {
+         "default": 2,
+         "maximum": 6,
+         "minimum": 1,
+         "title": "Width",
+         "type": "integer"
+        }
+       },
+       "title": "ShapeSpec",
+       "type": "object"
+      }
+     },
+     "additionalProperties": false,
+     "description": "Everything `render_region` accepts.",
+     "properties": {
+      "bounds": {
+       "anyOf": [
+        {
+         "$ref": "#/$defs/Bounds"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "default": null,
+       "description": "The region, in full-resolution pixels. Give one of bounds, center or roi; none means the whole image."
+      },
+      "cells": {
+       "anyOf": [
+        {
+         "$ref": "#/$defs/CellsSpec"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "default": null
+      },
+      "center": {
+       "anyOf": [
+        {
+         "$ref": "#/$defs/CenterBounds"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "default": null
+      },
+      "channels": {
+       "anyOf": [
+        {
+         "items": {
+          "$ref": "#/$defs/ChannelSpec"
+         },
+         "maxItems": 6,
+         "type": "array"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "default": null,
+       "description": "Channels to composite (default from the preset, else the first three).",
+       "title": "Channels"
+      },
+      "layers": {
+       "anyOf": [
+        {
+         "enum": [
+          "visible",
+          "none"
+         ],
+         "type": "string"
+        },
+        {
+         "items": {
+          "type": "string"
+         },
+         "type": "array"
+        }
+       ],
+       "default": "visible",
+       "description": "The scene's other layers to draw over the image: 'visible' (as the viewer shows them), 'none', or a list of layer ids. Ones that cannot be drawn are listed in the manifest's not_rendered, with the reason.",
+       "title": "Layers"
+      },
+      "level": {
+       "anyOf": [
+        {
+         "const": "auto",
+         "type": "string"
+        },
+        {
+         "type": "integer"
+        }
+       ],
+       "default": "auto",
+       "description": "Pyramid level, or 'auto' for the cheapest one with enough detail.",
+       "title": "Level"
+      },
+      "marker": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "default": null,
+       "description": "Shortcut: show this marker's channel and highlight cells its stored gate calls positive.",
+       "title": "Marker"
+      },
+      "output": {
+       "anyOf": [
+        {
+         "$ref": "#/$defs/OutputSpec"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "default": null
+      },
+      "preset": {
+       "anyOf": [
+        {
+         "enum": [
+          "marker_validation",
+          "segmentation_qc",
+          "roi_context",
+          "cell_identity",
+          "spatial_context"
+         ],
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "default": null,
+       "title": "Preset"
+      },
+      "project": {
+       "description": "Project name, as `list_projects` returns it.",
+       "title": "Project",
+       "type": "string"
+      },
+      "roi": {
+       "anyOf": [
+        {
+         "$ref": "#/$defs/RoiBounds"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "default": null
+      },
+      "scale_bar": {
+       "default": true,
+       "description": "Draw a scale bar (only when calibrated).",
+       "title": "Scale Bar",
+       "type": "boolean"
+      },
+      "segmentation": {
+       "anyOf": [
+        {
+         "enum": [
+          "none",
+          "outlines",
+          "filled"
+         ],
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "default": null,
+       "description": "How to draw the cell mask (default: outlines when there is one).",
+       "title": "Segmentation"
+      },
+      "shapes": {
+       "anyOf": [
+        {
+         "items": {
+          "$ref": "#/$defs/ShapeSpec"
+         },
+         "maxItems": 16,
+         "type": "array"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "default": null,
+       "description": "Regions to outline over the picture (GeoJSON or boxes, full-resolution pixels).",
+       "title": "Shapes"
+      },
+      "view": {
+       "anyOf": [
+        {
+         "maxLength": 48,
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "default": null,
+       "description": "For a z-stack (inspect_volume): which plane or projection to draw -- 'z12' (plane 12), 'z4-19max' (maximum projection of planes 4-19, inclusive), 'zmean', 'z2-8p95'; 't3z12' for a frame. Default: the plane the image opens on. The manifest's `view` says which was drawn; a projection's overlap is not colocalization.",
+       "title": "View"
+      }
+     },
+     "required": [
+      "project"
+     ],
+     "title": "RenderInput",
+     "type": "object"
+    },
+    "needs": [
+     "image"
+    ],
+    "permission": "read",
+    "produces": [
+     "figure"
+    ],
+    "provider": "plexora",
+    "purpose": "Render a region of a project's image as the viewer draws it -- chosen channels and windows, the cell mask as outlines or fill, cells a gate calls positive highlighted, cell ids, a scale bar -- deterministically, from the source pyramid, without touching the viewer. Regions by pixel box, by centre and size in µm, or by ROI.",
+    "roles": [
+     "image.inspect",
+     "image.capture"
+    ],
+    "tags": [
+     "render",
+     "look",
+     "see",
+     "show",
+     "image",
+     "picture",
+     "view",
+     "visual",
+     "inspect",
+     "region",
+     "field",
+     "overlay",
+     "segmentation"
+    ],
+    "tool_name": "render_region",
+    "version": "1",
+    "viewer_required": false
+   }
+  },
+  {
+   "description": "A grid of single-cell crops -- each cell centred and outlined, its id and marker value under it -- for given cells, or the positive, negative, borderline (nearest the gate), brightest or dimmest cells of a marker. The borderline gallery is the most useful gating view. Read-only. Returns an image plus a JSON manifest of exactly what was drawn.",
+   "descriptor": {
+    "entitlement": null,
+    "execution": "immediate",
+    "id": "plexora:cell.gallery",
+    "input_schema": {
+     "additionalProperties": false,
+     "properties": {
+      "cell_ids": {
+       "anyOf": [
+        {
+         "items": {
+          "type": "integer"
+         },
+         "maxItems": 1000,
+         "type": "array"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "default": null,
+       "description": "These cells (the first n). Or give marker + select.",
+       "title": "Cell Ids"
+      },
+      "channels": {
+       "anyOf": [
+        {
+         "items": {
+          "type": "string"
+         },
+         "maxItems": 3,
+         "type": "array"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "default": null,
+       "description": "Channels to draw (default the nuclear channel and the marker).",
+       "title": "Channels"
+      },
+      "crop_px": {
+       "anyOf": [
+        {
+         "exclusiveMinimum": 0,
+         "maximum": 2000,
+         "type": "number"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "default": null,
+       "description": "Crop side in full-resolution pixels (default 160 when uncalibrated).",
+       "title": "Crop Px"
+      },
+      "crop_um": {
+       "anyOf": [
+        {
+         "exclusiveMinimum": 0,
+         "maximum": 500,
+         "type": "number"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "default": null,
+       "description": "Crop side in µm (default 40; needs a calibrated image).",
+       "title": "Crop Um"
+      },
+      "high": {
+       "anyOf": [
+        {
+         "type": "number"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "default": null,
+       "title": "High"
+      },
+      "low": {
+       "anyOf": [
+        {
+         "type": "number"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "default": null,
+       "description": "Gate; default the stored one.",
+       "title": "Low"
+      },
+      "marker": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "default": null,
+       "description": "The marker whose value is under each cell, and that select picks by.",
+       "title": "Marker"
+      },
+      "n": {
+       "default": 24,
+       "maximum": 48,
+       "minimum": 1,
+       "title": "N",
+       "type": "integer"
+      },
+      "project": {
+       "description": "Project name, as `list_projects` returns it.",
+       "title": "Project",
+       "type": "string"
+      },
+      "qc": {
+       "anyOf": [
+        {
+         "enum": [
+          "strict",
+          "exclude",
+          "off"
+         ],
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "default": null,
+       "description": "Which QC failures to leave out of this estimate, sample or picture (the gate itself always applies to every cell). strict (the default): cells QC called exclude or warn, and for this marker the cells QC flagged it unreliable in; exclude: warn calls kept; off: QC ignored -- only when the user asks, or QC is suspected wrong. Inside a gating session the session's own setting applies. No effect where QC was never run.",
+       "title": "Qc"
+      },
+      "select": {
+       "anyOf": [
+        {
+         "enum": [
+          "positive",
+          "negative",
+          "borderline",
+          "brightest",
+          "dimmest"
+         ],
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "default": null,
+       "description": "positive / negative (by the gate, brightest first), borderline (nearest the gate), brightest, dimmest.",
+       "title": "Select"
+      },
+      "sort_by": {
+       "anyOf": [
+        {
+         "enum": [
+          "value_desc",
+          "value_asc",
+          "id",
+          "given"
+         ],
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "default": null,
+       "description": "For cell_ids: the order (default by marker value, brightest first).",
+       "title": "Sort By"
+      },
+      "tile_px": {
+       "default": 160,
+       "description": "Each tile's side in the picture.",
+       "maximum": 320,
+       "minimum": 64,
+       "title": "Tile Px",
+       "type": "integer"
+      }
+     },
+     "required": [
+      "project"
+     ],
+     "title": "GalleryInput",
+     "type": "object"
+    },
+    "needs": [
+     "image",
+     "table"
+    ],
+    "permission": "read",
+    "produces": [
+     "figure"
+    ],
+    "provider": "plexora",
+    "purpose": "A grid of single-cell crops -- each cell centred and outlined, its id and marker value under it -- for given cells, or the positive, negative, borderline (nearest the gate), brightest or dimmest cells of a marker. The borderline gallery is the most useful gating view.",
+    "roles": [
+     "image.inspect"
+    ],
+    "tags": [
+     "cell",
+     "cells",
+     "single",
+     "gallery",
+     "crop",
+     "evidence",
+     "visual",
+     "look",
+     "inspect",
+     "phenotype",
+     "borderline",
+     "gate",
+     "sorted",
+     "expression"
+    ],
+    "tool_name": "render_cell_gallery",
+    "version": "1",
+    "viewer_required": false
+   }
+  },
+  {
+   "description": "One cell explained: every marker's value and percentile, its strongest markers, the regions it lies in, its nearest neighbours with distances, a crop with it outlined, and what QC says of it (left out or not, the markers it is not called for, and why). Read-only. Returns an image plus a JSON manifest of exactly what was drawn.",
+   "descriptor": {
+    "entitlement": null,
+    "execution": "immediate",
+    "id": "plexora:cell.explain",
+    "input_schema": {
+     "additionalProperties": false,
+     "properties": {
+      "cell_id": {
+       "description": "The cell's id, as the table's id column has it.",
+       "title": "Cell Id",
+       "type": "integer"
+      },
+      "crop_px": {
+       "anyOf": [
+        {
+         "exclusiveMinimum": 0,
+         "maximum": 2000,
+         "type": "number"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "default": null,
+       "title": "Crop Px"
+      },
+      "crop_um": {
+       "anyOf": [
+        {
+         "exclusiveMinimum": 0,
+         "maximum": 500,
+         "type": "number"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "default": null,
+       "title": "Crop Um"
+      },
+      "include_crop": {
+       "default": true,
+       "title": "Include Crop",
+       "type": "boolean"
+      },
+      "include_metadata": {
+       "default": false,
+       "description": "Every metadata column's value too (one read per column; slow on a remote table).",
+       "title": "Include Metadata",
+       "type": "boolean"
+      },
+      "k": {
+       "default": 8,
+       "description": "Nearest neighbours to report.",
+       "maximum": 32,
+       "minimum": 0,
+       "title": "K",
+       "type": "integer"
+      },
+      "marker": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "default": null,
+       "description": "A marker to focus on: drawn in the crop and reported for each neighbour.",
+       "title": "Marker"
+      },
+      "project": {
+       "description": "Project name, as `list_projects` returns it.",
+       "title": "Project",
+       "type": "string"
+      },
+      "qc": {
+       "anyOf": [
+        {
+         "enum": [
+          "strict",
+          "exclude",
+          "off"
+         ],
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "default": null,
+       "description": "Which QC failures to leave out of this estimate, sample or picture (the gate itself always applies to every cell). strict (the default): cells QC called exclude or warn, and for this marker the cells QC flagged it unreliable in; exclude: warn calls kept; off: QC ignored -- only when the user asks, or QC is suspected wrong. Inside a gating session the session's own setting applies. No effect where QC was never run.",
+       "title": "Qc"
+      },
+      "within_um": {
+       "anyOf": [
+        {
+         "exclusiveMinimum": 0,
+         "type": "number"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "default": null,
+       "description": "Only neighbours this close (needs a calibrated image).",
+       "title": "Within Um"
+      }
+     },
+     "required": [
+      "project",
+      "cell_id"
+     ],
+     "title": "ExplainInput",
+     "type": "object"
+    },
+    "needs": [
+     "image",
+     "table"
+    ],
+    "permission": "read",
+    "produces": [
+     "figure"
+    ],
+    "provider": "plexora",
+    "purpose": "One cell explained: every marker's value and percentile, its strongest markers, the regions it lies in, its nearest neighbours with distances, a crop with it outlined, and what QC says of it (left out or not, the markers it is not called for, and why).",
+    "roles": [
+     "image.inspect"
+    ],
+    "tags": [
+     "cell",
+     "cells",
+     "single",
+     "gallery",
+     "crop",
+     "evidence",
+     "visual",
+     "look",
+     "inspect",
+     "phenotype",
+     "explain",
+     "neighbours",
+     "neighbors",
+     "percentile",
+     "identity"
+    ],
+    "tool_name": "explain_cell",
+    "version": "1",
+    "viewer_required": false
+   }
+  },
+  {
    "description": "One job's status, progress and, once done, result. Read-only.",
    "descriptor": {
     "entitlement": null,
@@ -2534,6 +3620,55 @@
      "cancel"
     ],
     "tool_name": "job_get",
+    "version": "1",
+    "viewer_required": false
+   }
+  },
+  {
+   "description": "Wait for a job to finish (up to timeout_s), reporting its progress as it goes; returns the job, finished or not. Read-only.",
+   "descriptor": {
+    "entitlement": null,
+    "execution": "immediate",
+    "id": "plexora:job.wait",
+    "input_schema": {
+     "additionalProperties": false,
+     "properties": {
+      "job_id": {
+       "description": "The job_id a job-running capability returned.",
+       "title": "Job Id",
+       "type": "string"
+      },
+      "timeout_s": {
+       "default": 30,
+       "description": "How long to wait at most; call again if it is still running.",
+       "maximum": 60,
+       "minimum": 1,
+       "title": "Timeout S",
+       "type": "number"
+      }
+     },
+     "required": [
+      "job_id"
+     ],
+     "title": "WaitInput",
+     "type": "object"
+    },
+    "needs": [],
+    "permission": "read",
+    "produces": [],
+    "provider": "plexora",
+    "purpose": "Wait for a job to finish (up to timeout_s), reporting its progress as it goes; returns the job, finished or not.",
+    "roles": [],
+    "tags": [
+     "job",
+     "jobs",
+     "progress",
+     "status",
+     "long",
+     "background",
+     "cancel"
+    ],
+    "tool_name": "job_wait",
     "version": "1",
     "viewer_required": false
    }
@@ -2586,6 +3721,2683 @@
      "history"
     ],
     "tool_name": "undo_operation",
+    "version": "1",
+    "viewer_required": false
+   }
+  },
+  {
+   "description": "Gate the project's markers or quality-control its image with Plexora AI, inside Plexora: the session runs on a job and every decision is a model call billed in Plexora AI credits (quoted per marker or channel before anything is spent). An open viewer's agent panel shows it. Resume a session paused for credit with resume_session. Changes Plexora's own state (reversible); returns a receipt. Part of Plexora Pro; on Free it answers license_required.",
+   "descriptor": {
+    "entitlement": "ai",
+    "execution": "job",
+    "id": "plexora:ai.run_session",
+    "input_schema": {
+     "additionalProperties": false,
+     "properties": {
+      "channels": {
+       "anyOf": [
+        {
+         "items": {
+          "type": "string"
+         },
+         "maxItems": 200,
+         "type": "array"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "default": null,
+       "description": "qc: the channels (default: every channel of the image).",
+       "title": "Channels"
+      },
+      "context": {
+       "anyOf": [
+        {
+         "maxLength": 1000,
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "default": null,
+       "description": "gating: the user's note about the sample, as typed (\"melanoma from skin\", \"only gate CD3 and CD8\"). A cheap text model normalises it (plexora.ai.context) into the session's biology; it narrows the markers only when it says so explicitly. Empty: no call, every marker.",
+       "title": "Context"
+      },
+      "dev": {
+       "default": false,
+       "description": "The gateway's dev route (internal testing accounts only; billed at provider cost).",
+       "title": "Dev",
+       "type": "boolean"
+      },
+      "kind": {
+       "description": "gating: Auto Gating of the project's markers; contrast: auto contrast -- how bright each marker is drawn, no gating; qc: AutoQC of its image.",
+       "enum": [
+        "gating",
+        "contrast",
+        "qc"
+       ],
+       "title": "Kind",
+       "type": "string"
+      },
+      "markers": {
+       "anyOf": [
+        {
+         "items": {
+          "type": "string"
+         },
+         "maxItems": 200,
+         "type": "array"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "default": null,
+       "description": "gating, contrast: the markers (default: every marker of the table).",
+       "title": "Markers"
+      },
+      "mode": {
+       "default": "apply",
+       "description": "apply: gates / regions are written as they are decided; propose: nothing is written until the session is committed.",
+       "enum": [
+        "apply",
+        "propose"
+       ],
+       "title": "Mode",
+       "type": "string"
+      },
+      "model": {
+       "anyOf": [
+        {
+         "maxLength": 80,
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "default": null,
+       "description": "With dev only: the model to use.",
+       "title": "Model"
+      },
+      "parallel_markers": {
+       "anyOf": [
+        {
+         "maximum": 8,
+         "minimum": 1,
+         "type": "integer"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "default": null,
+       "description": "gating: markers answered side by side, each lane with its own workers (default: the session's `lanes`, chosen from the panel). The gates are the serial run's; more lanes finish sooner.",
+       "title": "Parallel Markers"
+      },
+      "project": {
+       "title": "Project",
+       "type": "string"
+      },
+      "resume_session": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "default": null,
+       "description": "Continue this paused session (after a credit pause, say) instead of starting one.",
+       "title": "Resume Session"
+      },
+      "start_options": {
+       "anyOf": [
+        {
+         "additionalProperties": true,
+         "type": "object"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "default": null,
+       "description": "Extra options for the session's start (the workflow's own, e.g. QC's map_cell_um).",
+       "title": "Start Options"
+      },
+      "units_per_worker": {
+       "anyOf": [
+        {
+         "maximum": 16,
+         "minimum": 1,
+         "type": "integer"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "default": null,
+       "description": "Units one rolling worker covers (default: 1 marker, 4 QC units).",
+       "title": "Units Per Worker"
+      }
+     },
+     "required": [
+      "kind",
+      "project"
+     ],
+     "title": "RunInput",
+     "type": "object"
+    },
+    "needs": [
+     "image"
+    ],
+    "permission": "reversible_write",
+    "produces": [],
+    "provider": "plexora",
+    "purpose": "Gate the project's markers or quality-control its image with Plexora AI, inside Plexora: the session runs on a job and every decision is a model call billed in Plexora AI credits (quoted per marker or channel before anything is spent). An open viewer's agent panel shows it. Resume a session paused for credit with resume_session.",
+    "roles": [],
+    "tags": [
+     "ai",
+     "plexora_ai",
+     "harness",
+     "gating",
+     "qc",
+     "session",
+     "credits"
+    ],
+    "tool_name": "ai_run_session",
+    "version": "1",
+    "viewer_required": false
+   }
+  },
+  {
+   "description": "A Plexora AI run: its state, the session it drives, packets, credits charged and the cache-read share; or the recent runs. Read-only. Part of Plexora Pro; on Free it answers license_required.",
+   "descriptor": {
+    "entitlement": "ai",
+    "execution": "immediate",
+    "id": "plexora:ai.run_status",
+    "input_schema": {
+     "additionalProperties": false,
+     "properties": {
+      "limit": {
+       "default": 20,
+       "maximum": 100,
+       "minimum": 1,
+       "title": "Limit",
+       "type": "integer"
+      },
+      "run_id": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "default": null,
+       "description": "A run id (air_...) or the job id that runs it (job_...). Omit to list the recent runs.",
+       "title": "Run Id"
+      }
+     },
+     "title": "StatusInput",
+     "type": "object"
+    },
+    "needs": [],
+    "permission": "read",
+    "produces": [],
+    "provider": "plexora",
+    "purpose": "A Plexora AI run: its state, the session it drives, packets, credits charged and the cache-read share; or the recent runs.",
+    "roles": [],
+    "tags": [
+     "ai",
+     "plexora_ai",
+     "harness",
+     "gating",
+     "qc",
+     "session",
+     "credits"
+    ],
+    "tool_name": "ai_run_status",
+    "version": "1",
+    "viewer_required": false
+   }
+  },
+  {
+   "description": "Pause, resume or stop a running Plexora AI run's session (what it wrote stays). Changes Plexora's own state (reversible); returns a receipt. Part of Plexora Pro; on Free it answers license_required.",
+   "descriptor": {
+    "entitlement": "ai",
+    "execution": "immediate",
+    "id": "plexora:ai.run_control",
+    "input_schema": {
+     "additionalProperties": false,
+     "properties": {
+      "action": {
+       "description": "pause the session at its next packet (the run waits) / resume it; stop it (what it wrote so far stays, undoable). A run paused for credit is resumed with ai.run_session(resume_session=...) instead.",
+       "enum": [
+        "pause",
+        "resume",
+        "stop"
+       ],
+       "title": "Action",
+       "type": "string"
+      },
+      "run_id": {
+       "description": "A run id (air_...) or its job id (job_...).",
+       "title": "Run Id",
+       "type": "string"
+      }
+     },
+     "required": [
+      "run_id",
+      "action"
+     ],
+     "title": "ControlInput",
+     "type": "object"
+    },
+    "needs": [],
+    "permission": "reversible_write",
+    "produces": [],
+    "provider": "plexora",
+    "purpose": "Pause, resume or stop a running Plexora AI run's session (what it wrote stays).",
+    "roles": [],
+    "tags": [
+     "ai",
+     "plexora_ai",
+     "harness",
+     "gating",
+     "qc",
+     "session",
+     "credits"
+    ],
+    "tool_name": "ai_run_control",
+    "version": "1",
+    "viewer_required": false
+   }
+  },
+  {
+   "description": "The account's Plexora AI credit, the price per marker / channel, and what a run of a project would be quoted. Read-only. Part of Plexora Pro; on Free it answers license_required.",
+   "descriptor": {
+    "entitlement": "ai",
+    "execution": "immediate",
+    "id": "plexora:ai.balance",
+    "input_schema": {
+     "additionalProperties": false,
+     "properties": {
+      "channels": {
+       "anyOf": [
+        {
+         "items": {
+          "type": "string"
+         },
+         "maxItems": 200,
+         "type": "array"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "default": null,
+       "title": "Channels"
+      },
+      "dev": {
+       "default": false,
+       "title": "Dev",
+       "type": "boolean"
+      },
+      "kind": {
+       "default": "both",
+       "description": "The run to estimate; both: every kind.",
+       "enum": [
+        "gating",
+        "contrast",
+        "qc",
+        "both"
+       ],
+       "title": "Kind",
+       "type": "string"
+      },
+      "markers": {
+       "anyOf": [
+        {
+         "items": {
+          "type": "string"
+         },
+         "maxItems": 200,
+         "type": "array"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "default": null,
+       "title": "Markers"
+      },
+      "project": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "default": null,
+       "description": "Estimate a run of this project too.",
+       "title": "Project"
+      }
+     },
+     "title": "BalanceInput",
+     "type": "object"
+    },
+    "needs": [
+     "image"
+    ],
+    "permission": "read",
+    "produces": [],
+    "provider": "plexora",
+    "purpose": "The account's Plexora AI credit, the price per marker / channel, and what a run of a project would be quoted.",
+    "roles": [],
+    "tags": [
+     "ai",
+     "plexora_ai",
+     "harness",
+     "gating",
+     "qc",
+     "session",
+     "credits"
+    ],
+    "tool_name": "ai_balance",
+    "version": "1",
+    "viewer_required": false
+   }
+  },
+  {
+   "description": "Gate a whole image or dataset automatically. Starts a gating session: every marker is profiled and settled deterministically where the numbers suffice (a job), and the rest become decision packets for you, one at a time, through gating_next / gating_answer. Changes Plexora's own state (reversible); returns a receipt. Part of Plexora Pro; on Free it answers license_required.",
+   "descriptor": {
+    "entitlement": "ai:gating:session",
+    "execution": "immediate",
+    "id": "plexora:gating.session_start",
+    "input_schema": {
+     "$defs": {
+      "Biology": {
+       "additionalProperties": false,
+       "description": "The sample's biology as the user stated it (`autogate/biology.py`).",
+       "properties": {
+        "disease": {
+         "anyOf": [
+          {
+           "maxLength": 120,
+           "type": "string"
+          },
+          {
+           "type": "null"
+          }
+         ],
+         "default": null,
+         "description": "The disease or sample type, in the user's words: 'melanoma', 'adenocarcinoma'.",
+         "title": "Disease"
+        },
+        "interpretation": {
+         "anyOf": [
+          {
+           "additionalProperties": true,
+           "type": "object"
+          },
+          {
+           "type": "null"
+          }
+         ],
+         "default": null,
+         "description": "The Context Interpreter's settled reading of `original` (populations of interest, corrected terms, ambiguities, scope).",
+         "title": "Interpretation"
+        },
+        "notes": {
+         "anyOf": [
+          {
+           "maxLength": 400,
+           "type": "string"
+          },
+          {
+           "type": "null"
+          }
+         ],
+         "default": null,
+         "description": "Anything else the user said about the sample's biology.",
+         "title": "Notes"
+        },
+        "original": {
+         "anyOf": [
+          {
+           "maxLength": 1000,
+           "type": "string"
+          },
+          {
+           "type": "null"
+          }
+         ],
+         "default": null,
+         "description": "The user's note exactly as written, when tissue/disease/notes were interpreted from it (`plexora.ai.context`); kept beside the interpretation.",
+         "title": "Original"
+        },
+        "tissue": {
+         "anyOf": [
+          {
+           "maxLength": 120,
+           "type": "string"
+          },
+          {
+           "type": "null"
+          }
+         ],
+         "default": null,
+         "description": "The tissue or organ, in the user's words: 'skin', 'lymph node', 'colon'.",
+         "title": "Tissue"
+        }
+       },
+       "title": "Biology",
+       "type": "object"
+      },
+      "Budget": {
+       "additionalProperties": false,
+       "properties": {
+        "chars": {
+         "anyOf": [
+          {
+           "minimum": 1000,
+           "type": "integer"
+          },
+          {
+           "type": "null"
+          }
+         ],
+         "default": 48000,
+         "description": "Packet JSON characters per marker, over its looks.",
+         "title": "Chars"
+        },
+        "images": {
+         "anyOf": [
+          {
+           "maximum": 40,
+           "minimum": 0,
+           "type": "integer"
+          },
+          {
+           "type": "null"
+          }
+         ],
+         "default": 12,
+         "description": "Images per marker, over its looks.",
+         "title": "Images"
+        },
+        "packets": {
+         "anyOf": [
+          {
+           "maximum": 20,
+           "minimum": 1,
+           "type": "integer"
+          },
+          {
+           "type": "null"
+          }
+         ],
+         "default": 6,
+         "description": "Looks per marker (first look, beside a reference, candidates); confirmations are free.",
+         "title": "Packets"
+        },
+        "pixels": {
+         "anyOf": [
+          {
+           "minimum": 0,
+           "type": "integer"
+          },
+          {
+           "type": "null"
+          }
+         ],
+         "default": 9300000,
+         "description": "Image pixels per marker, over its looks.",
+         "title": "Pixels"
+        }
+       },
+       "title": "Budget",
+       "type": "object"
+      },
+      "ExpressionChoice": {
+       "additionalProperties": false,
+       "description": "Which matrix to gate on, settled before the start (`SessionOptions.expression`).",
+       "properties": {
+        "basis": {
+         "default": "user",
+         "description": "user: the user named it (`plexora ai run --matrix/--log1p`); it is applied even over an earlier confirmed choice. inferred: a model read it from the values (`plexora.ai.harness.expression`); applied only where nothing is confirmed.",
+         "enum": [
+          "user",
+          "inferred"
+         ],
+         "title": "Basis",
+         "type": "string"
+        },
+        "features_layer": {
+         "description": "`X` or `layer:<name>`, as inspect_expression_sources lists them.",
+         "title": "Features Layer",
+         "type": "string"
+        },
+        "features_log": {
+         "description": "Apply log1p as the values are read. Never for a matrix that is already log-transformed.",
+         "title": "Features Log",
+         "type": "boolean"
+        },
+        "why": {
+         "anyOf": [
+          {
+           "maxLength": 400,
+           "type": "string"
+          },
+          {
+           "type": "null"
+          }
+         ],
+         "default": null,
+         "description": "Why, in a sentence.",
+         "title": "Why"
+        }
+       },
+       "required": [
+        "features_layer",
+        "features_log"
+       ],
+       "title": "ExpressionChoice",
+       "type": "object"
+      }
+     },
+     "additionalProperties": false,
+     "properties": {
+      "absence_check": {
+       "default": false,
+       "description": "Before a marker's first look, show six regions of the tissue with nothing marked and ask whether any cell is clearly positive by its own stain: none in any region closes the marker with no positives (gate at the maximum), and a technical check's failed-stain verdict stands only when the regions agree. Off by default: on 12 held-out images 9 of its 17 closes were real populations of 0.5-8 % (bench GATING_GENERALISE). False: the first look comes straight away.",
+       "title": "Absence Check",
+       "type": "boolean"
+      },
+      "absence_confirm": {
+       "default": true,
+       "description": "When exactly one region of an absence picture shows clear positives and the others none or few, that region is shown again close up and in its surroundings before it keeps the marker open: an edge band or a fold reads as one there, a cluster of real cells still as cells.",
+       "title": "Absence Confirm",
+       "type": "boolean"
+      },
+      "agent": {
+       "default": "agent",
+       "description": "Who answers (the model, say). Earlier answers to identical packets are reused only from the same agent.",
+       "maxLength": 80,
+       "title": "Agent",
+       "type": "string"
+      },
+      "audit_sheet": {
+       "default": true,
+       "description": "Show automatically accepted markers on a batched audit sheet (~70 tokens a marker).",
+       "title": "Audit Sheet",
+       "type": "boolean"
+      },
+      "basic_qc": {
+       "default": true,
+       "description": "On an image with no QC result, run QC's model-free checks before gating it (`run_basic_qc`: folds -- also ones that come or go between imaging cycles -- tears, debris, saturation, lost nuclei; no model calls) and leave out what they find, marked automatic and unreviewed. Left out: on with engine v2, off with v1. Needs the QC plugin.",
+       "title": "Basic Qc",
+       "type": "boolean"
+      },
+      "biology": {
+       "anyOf": [
+        {
+         "$ref": "#/$defs/Biology"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "default": null,
+       "description": "The tissue and disease the user named for this sample (\"a melanoma from the skin\": tissue skin, disease melanoma). A prior for references, co-expression, spatial reading and confidence -- never a rule. Left out, it is taken from the project's metadata or inferred from the panel, and marked so."
+      },
+      "budget": {
+       "$ref": "#/$defs/Budget",
+       "description": "What each marker may spend."
+      },
+      "check_reading": {
+       "default": "auto",
+       "description": "How a classifier check's look is read. auto: word for a marker whose stain is fibrous (smooth muscle, vessel walls: the panel's morphology), mixed for the rest. word: one word per row; the cells the classifier flags must read as their own stain. mixed: the same words, and flagged cells read as mixed count as stained. count: the reader counts the cells in each row that carry their own stain (unmeasured).",
+       "enum": [
+        "auto",
+        "word",
+        "mixed",
+        "count"
+       ],
+       "title": "Check Reading",
+       "type": "string"
+      },
+      "classifier": {
+       "default": "layer",
+       "description": "The Single Cell Classifier beside each gate. layer: after a gate is written, the classifier is trained at it and calls every cell -- the gate's call unless it is confident the other way, taking positives away more readily than adding them, and only taking them away where the marker's signal is poor; kept beside the threshold (which still decides the marker) until the user adopts it in the Thresholding panel. check: that, and where the classifier trained at a gate disagrees with it beside it, the cells it flags are shown in a look at the candidates on that side, beside cells it agrees on; the gate moves past each row the look confirms (unmeasured). off: neither.",
+       "enum": [
+        "off",
+        "layer",
+        "check"
+       ],
+       "title": "Classifier",
+       "type": "string"
+      },
+      "dataset": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "default": null,
+       "description": "With scope=dataset: name or id.",
+       "title": "Dataset"
+      },
+      "defer_parents": {
+       "default": true,
+       "description": "A marker whose own distribution is weak (no robust partner curve, a poorly separated mixture) waits for its children in the panel's hierarchy -- markers whose positives are a subset of its own -- and is then scored with where their positives sit (once, never after a look).",
+       "title": "Defer Parents",
+       "type": "boolean"
+      },
+      "delegate": {
+       "default": true,
+       "description": "Return the `delegate` block: how to hand the packet loop to fresh worker conversations on a cheaper or the same model (plexora/ai/delegation.py).",
+       "title": "Delegate",
+       "type": "boolean"
+      },
+      "display_check": {
+       "default": "off",
+       "description": "Auto contrast -- how bright each marker is drawn in every look: `vision` puts a contrast grid to the model after the panel context (markers in rows, five brightnesses in columns; code picks the column) for the markers no earlier check settled -- once per image, a choice outlives the session, so an image an auto-contrast run already did is not asked again; `rule` keeps the calibration's own window (black under the background, the bright cells' structure near the top) and shows it; `off` leaves the step out. Left out: `off` with engine v2 (the setting it was measured with), `vision` with v1.",
+       "enum": [
+        "vision",
+        "rule",
+        "off"
+       ],
+       "title": "Display Check",
+       "type": "string"
+      },
+      "engine": {
+       "default": "v2",
+       "description": "How a marker that needs a look is decided. v2 (the default): the lattice's candidate gates are competing hypotheses; blind panels of single cells, numbered and shuffled with no value or gate shown, are labelled one cell at a time, and code picks the candidate the labels support, looks again only where the leader has not beaten a rival, and closes for review with a reason when it cannot. v1: rows below, at and above the gate, then candidates beyond it, judged a row at a time. The first names, classic (v1) and candidates (v2), are accepted.",
+       "enum": [
+        "v1",
+        "v2"
+       ],
+       "title": "Engine",
+       "type": "string"
+      },
+      "evidence": {
+       "default": "delta",
+       "description": "delta: an evidence value this conversation was already sent comes as {as_in: packet_id} (reading_guide.as_in), and briefs carry no repeated text; full: every packet whole.",
+       "enum": [
+        "delta",
+        "full"
+       ],
+       "title": "Evidence",
+       "type": "string"
+      },
+      "expression": {
+       "anyOf": [
+        {
+         "$ref": "#/$defs/ExpressionChoice"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "default": null,
+       "description": "The matrix to gate on, when the user named it or a model read it from the values before the start; checked against the matrices the project has, and never log1p on values already logged."
+      },
+      "field_um": {
+       "default": 400.0,
+       "description": "The context sheet's tissue fields, microns a side: sized from each image's own pixel size (or the session's estimate of it).",
+       "maximum": 500.0,
+       "minimum": 300.0,
+       "title": "Field Um",
+       "type": "number"
+      },
+      "force": {
+       "default": false,
+       "description": "Start even when only some markers match an image channel: only those are gated, and the rest are skipped (skipped_no_channel) without a gate. Without it a partial match refuses to start; when no marker matches, nothing starts either way.",
+       "title": "Force",
+       "type": "boolean"
+      },
+      "image_format": {
+       "default": "webp",
+       "enum": [
+        "webp",
+        "png"
+       ],
+       "title": "Image Format",
+       "type": "string"
+      },
+      "known_guide": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "default": null,
+       "description": "The `guide_version` of a reading guide you already hold (from an earlier session of this build): it is then not sent again.",
+       "title": "Known Guide"
+      },
+      "lanes": {
+       "anyOf": [
+        {
+         "maximum": 8,
+         "minimum": 1,
+         "type": "integer"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "default": null,
+       "description": "Readers answering the session at once, each its own `reader` passing `parallel` (the start's `lanes`, and its `delegate` block's). A marker never goes out beside one whose gate it reads, so the gates are the one-at-a-time run's. Default: as many as the panel's dependencies keep busy (1 for a few markers, or markers that all read each other).",
+       "title": "Lanes"
+      },
+      "markers": {
+       "anyOf": [
+        {
+         "items": {
+          "type": "string"
+         },
+         "type": "array"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "default": null,
+       "description": "Default: every marker except structural channels (DNA and the like).",
+       "title": "Markers"
+      },
+      "max_extensions": {
+       "description": "How many extra allowances one marker may get before it is flagged for review. Default from PLEXORA_GATING_MAX_EXTENSIONS.",
+       "maximum": 10,
+       "minimum": 0,
+       "title": "Max Extensions",
+       "type": "integer"
+      },
+      "max_tier": {
+       "default": 4,
+       "description": "2: one look per marker; 3: + reference channels; 4: + candidate refinement; 5: + questions for the user. There is no numbers-only tier: every gate is judged on the image's pixels.",
+       "maximum": 5,
+       "minimum": 2,
+       "title": "Max Tier",
+       "type": "integer"
+      },
+      "mirror": {
+       "default": false,
+       "description": "Show each decision in an open viewer too.",
+       "title": "Mirror",
+       "type": "boolean"
+      },
+      "mirror_delay_ms": {
+       "default": 600,
+       "maximum": 5000,
+       "minimum": 0,
+       "title": "Mirror Delay Ms",
+       "type": "integer"
+      },
+      "mode": {
+       "default": "apply",
+       "description": "apply: accepted gates -- and the empty gate of a failed or all-negative marker -- are written as they are decided (each receipted and undoable); propose: nothing is written until gating_session_finish(action=commit).",
+       "enum": [
+        "apply",
+        "propose"
+       ],
+       "title": "Mode",
+       "type": "string"
+      },
+      "observations": {
+       "default": "off",
+       "description": "Experimental. use: what the image's contrast check saw of each marker (its pattern, dim cells seen stained, bright cells seen to be debris) goes into every look as evidence, starts the gate no higher than the dim stained cells, keeps the tissue fields away from the debris, caps confidence on a doubt, and gives a clean split with a finding a look. off: not used.",
+       "enum": [
+        "off",
+        "use"
+       ],
+       "title": "Observations",
+       "type": "string"
+      },
+      "on_limit": {
+       "description": "When a marker reaches its allowance of looks or candidate rounds while the evidence still says to go on: ask (the user is asked in the viewer and you are told; the marker waits, the rest goes on), extend (another allowance without asking: automated runs), stop (flag it for review). A marker is never accepted because it ran out. Default from PLEXORA_GATING_ON_LIMIT (set by `plexora mcp serve --gating-on-limit`).",
+       "enum": [
+        "ask",
+        "extend",
+        "stop"
+       ],
+       "title": "On Limit",
+       "type": "string"
+      },
+      "overwrite_manual": {
+       "default": false,
+       "description": "Also re-gate markers the user set by hand (never locked or approved ones).",
+       "title": "Overwrite Manual",
+       "type": "boolean"
+      },
+      "panel_looks": {
+       "default": 3,
+       "description": "With engine v2: the most cell panels one marker is shown before it closes for review (fewer when the leading candidate resolves first).",
+       "maximum": 6,
+       "minimum": 1,
+       "title": "Panel Looks",
+       "type": "integer"
+      },
+      "project": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "default": null,
+       "description": "With scope=project.",
+       "title": "Project"
+      },
+      "purpose": {
+       "default": "gating",
+       "description": "gating: decide the markers' gates. contrast: auto contrast on its own (contrast_session_start) -- the set-up, the calibration and the contrast check; no marker is profiled or gated, and each closes `display_set` once its image's brightness is settled.",
+       "enum": [
+        "gating",
+        "contrast"
+       ],
+       "title": "Purpose",
+       "type": "string"
+      },
+      "qc": {
+       "default": "strict",
+       "description": "Which QC failures the session leaves out of every fit, sample, collage and field (the gates still apply to every cell). strict: cells QC called exclude or warn, and per marker the cells QC flagged that marker unreliable in; exclude: warn calls kept; off: QC ignored (only when the user asks, or QC is wrong). No effect on an image QC has not been run on.",
+       "enum": [
+        "strict",
+        "exclude",
+        "off"
+       ],
+       "title": "Qc",
+       "type": "string"
+      },
+      "reading": {
+       "default": "once",
+       "description": "once: the reading guide comes with the session's start and status, and packets name the entries they use; every_packet: each packet repeats the texts it needs.",
+       "enum": [
+        "once",
+        "every_packet"
+       ],
+       "title": "Reading",
+       "type": "string"
+      },
+      "reference_image": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "default": null,
+       "description": "Dataset scope: the image gated first (default: the one with the most cells).",
+       "title": "Reference Image"
+      },
+      "replan": {
+       "default": true,
+       "description": "Re-plan when markers fail: the markers left are reordered and rescored without the failed gates, accepted gates that only a failed one placed go to review, and what only biology can settle (a population that may be absent, an image whose looks keep naming the same artifact) is put to the planning task in a `replan` packet. False keeps the plan made at the start.",
+       "title": "Replan",
+       "type": "boolean"
+      },
+      "reuse_answers": {
+       "default": true,
+       "description": "Answer a packet identical to one this agent answered before (same data, partners, code and seed) with that answer, without asking: a rerun then reaches the same gates. False asks everything afresh.",
+       "title": "Reuse Answers",
+       "type": "boolean"
+      },
+      "scope": {
+       "default": "project",
+       "description": "project: one image; dataset: every image of a dataset, the reference image first and gates carried to the rest.",
+       "enum": [
+        "project",
+        "dataset"
+       ],
+       "title": "Scope",
+       "type": "string"
+      },
+      "seed": {
+       "default": 0,
+       "title": "Seed",
+       "type": "integer"
+      },
+      "setup": {
+       "default": "ask",
+       "description": "What the start does when the project's gating set-up is not finished: a required column (cell id, coordinates, image id) not found or never confirmed, or an expression matrix its values cannot settle. ask: a column not found refuses the start, and the matrix comes to you as an expression_setup packet (put it to the user; never guess); fail: nothing starts, and the error says what is missing and how to supply it (a run with nobody to ask: `plexora ai run`); wait: the session waits in needs_setup, nothing profiled, until the user finishes the viewer's set-up form -- every column and the matrix (Plexora AI started from the viewer).",
+       "enum": [
+        "ask",
+        "wait",
+        "fail"
+       ],
+       "title": "Setup",
+       "type": "string"
+      },
+      "sheets": {
+       "default": "trim",
+       "description": "trim: a context-sheet row this conversation was already shown with the same gate and fields is left out, and a whole-image check shows only the slide scale; full: every sheet whole.",
+       "enum": [
+        "trim",
+        "full"
+       ],
+       "title": "Sheets",
+       "type": "string"
+      },
+      "split_mixed": {
+       "default": true,
+       "description": "A look at candidates that stops at a row judged mixed and wider than two background sds gets that row split into finer candidates and looked at again, instead of the gate stopping at its edge.",
+       "title": "Split Mixed",
+       "type": "boolean"
+      },
+      "split_views": {
+       "default": "off",
+       "description": "bright_rechecks: a look at candidates (a recheck of a gate) draws each cell as three panels side by side -- the DNA alone, the marker alone from the display's black to the gate at mid-grey, and the two combined (reading guide `collage_split`) -- for a marker that is not dim; a dim marker's looks stay morphology | context. off: never (unmeasured; `tiles` wins where both apply).",
+       "enum": [
+        "off",
+        "bright_rechecks"
+       ],
+       "title": "Split Views",
+       "type": "string"
+      },
+      "tiles": {
+       "default": false,
+       "description": "Draw every look's cells as a 2 x 2 block: morphology, the context with the judged cell outlined, and one expected and one not-expected partner channel from the panel context (reading guide `collage_t2m`). Off, the looks are the two-panel cells.",
+       "title": "Tiles",
+       "type": "boolean"
+      },
+      "view_id": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "default": null,
+       "title": "View Id"
+      },
+      "vision_first": {
+       "default": false,
+       "description": "Experimental. On a marker whose distribution says little (no valley, estimators that disagree), the looks place the gate: the first look starts at the dim cells the contrast check saw stained (else the cell share's 15% rung), the candidates are rungs by share of cells, cells below the gate seen mixed send it down, and the distribution's and spatial whole-image checks no longer fail a gate the looks placed. Pair with observations=use.",
+       "title": "Vision First",
+       "type": "boolean"
+      },
+      "whole_image_moves": {
+       "default": false,
+       "description": "After a look at candidates, a whole-image check that calls the gate too low or too high sends it back to the candidates (opposite ways end in review). False: the gate stays where the rows put it, at low confidence, the disagreement noted -- the rows judged those very cells.",
+       "title": "Whole Image Moves",
+       "type": "boolean"
+      },
+      "whole_image_reopen": {
+       "default": true,
+       "description": "After a look at candidates, a whole-image check that calls the gate too low sends it up for one more look at the candidates above, where the first row passes even when judged mixed (two views agree); the rows still place the gate. False: it stays where the rows put it, at low confidence.",
+       "title": "Whole Image Reopen",
+       "type": "boolean"
+      }
+     },
+     "title": "SessionOptions",
+     "type": "object"
+    },
+    "needs": [
+     "image"
+    ],
+    "permission": "reversible_write",
+    "produces": [
+     "gates"
+    ],
+    "provider": "plexora",
+    "purpose": "Gate a whole image or dataset automatically. Starts a gating session: every marker is profiled and settled deterministically where the numbers suffice (a job), and the rest become decision packets for you, one at a time, through gating_next / gating_answer.",
+    "roles": [
+     "gate.auto"
+    ],
+    "tags": [
+     "gate",
+     "gating",
+     "threshold",
+     "auto",
+     "automatic",
+     "session",
+     "workflow",
+     "phenotype",
+     "marker"
+    ],
+    "tool_name": "gating_session_start",
+    "version": "1",
+    "viewer_required": false
+   }
+  },
+  {
+   "description": "The session's next decision packet: one question, compact numbers, at most two small images, and the answer schema. The same packet again if it is still unanswered. Changes Plexora's own state (reversible); returns a receipt. Returns an image plus a JSON manifest of exactly what was drawn. Part of Plexora Pro; on Free it answers license_required.",
+   "descriptor": {
+    "entitlement": "ai:gating:session",
+    "execution": "immediate",
+    "id": "plexora:gating.next",
+    "input_schema": {
+     "additionalProperties": false,
+     "properties": {
+      "parallel": {
+       "default": 1,
+       "description": "The most packets of this session out at once, across every reader. Above 1, markers that do not depend on each other are handed out side by side; a marker still waits for the partners it is judged beside.",
+       "maximum": 8,
+       "minimum": 1,
+       "title": "Parallel",
+       "type": "integer"
+      },
+      "reader": {
+       "anyOf": [
+        {
+         "maxLength": 40,
+         "pattern": "^[A-Za-z0-9_.:-]+$",
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "default": null,
+       "description": "Who is answering, when several conversations answer one session at once (one id per conversation). Omit when you are the only one.",
+       "title": "Reader"
+      },
+      "rerender": {
+       "default": false,
+       "description": "Draw the outstanding packet's images again (same packet, same charge), in full: after a renderer change, or when you no longer hold a packet an `as_in` names.",
+       "title": "Rerender",
+       "type": "boolean"
+      },
+      "session_id": {
+       "title": "Session Id",
+       "type": "string"
+      },
+      "tasks": {
+       "anyOf": [
+        {
+         "items": {
+          "type": "string"
+         },
+         "maxItems": 8,
+         "type": "array"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "default": null,
+       "description": "The tasks this reader answers (`module.task`, from its brief): it is given only their packets, and `other_tasks` when what is ready is another task's. Omit to answer every packet.",
+       "title": "Tasks"
+      },
+      "wait_s": {
+       "default": 10.0,
+       "description": "How long to wait for the bulk pass when nothing is ready yet.",
+       "maximum": 30,
+       "minimum": 0,
+       "title": "Wait S",
+       "type": "number"
+      }
+     },
+     "required": [
+      "session_id"
+     ],
+     "title": "NextInput",
+     "type": "object"
+    },
+    "needs": [],
+    "permission": "reversible_write",
+    "produces": [
+     "figure"
+    ],
+    "provider": "plexora",
+    "purpose": "The session's next decision packet: one question, compact numbers, at most two small images, and the answer schema. The same packet again if it is still unanswered.",
+    "roles": [],
+    "tags": [
+     "gate",
+     "gating",
+     "threshold",
+     "auto",
+     "automatic",
+     "session",
+     "workflow",
+     "phenotype",
+     "marker"
+    ],
+    "tool_name": "gating_next",
+    "version": "1",
+    "viewer_required": false
+   }
+  },
+  {
+   "description": "Answer the outstanding packet with a typed judgement; the server moves the marker on (and writes its gate when it is decided) and returns the next packet. Changes Plexora's own state (reversible); returns a receipt. Returns an image plus a JSON manifest of exactly what was drawn. Part of Plexora Pro; on Free it answers license_required.",
+   "descriptor": {
+    "entitlement": "ai:gating:session",
+    "execution": "immediate",
+    "id": "plexora:gating.answer",
+    "input_schema": {
+     "additionalProperties": false,
+     "properties": {
+      "answer": {
+       "additionalProperties": true,
+       "description": "The typed answer: `kind` plus the fields the packet's answer_schema lists.",
+       "title": "Answer",
+       "type": "object"
+      },
+      "include_next": {
+       "default": true,
+       "description": "Return the next packet with the outcome, saving a gating_next call.",
+       "title": "Include Next",
+       "type": "boolean"
+      },
+      "model": {
+       "anyOf": [
+        {
+         "maxLength": 80,
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "default": null,
+       "description": "The model you are running on, as your client names it: recorded with the answer, so the session can show which model answered each task.",
+       "title": "Model"
+      },
+      "packet_id": {
+       "description": "The packet being answered (pk_nnnn).",
+       "title": "Packet Id",
+       "type": "string"
+      },
+      "parallel": {
+       "default": 1,
+       "description": "The most packets of this session out at once, across every reader. Above 1, markers that do not depend on each other are handed out side by side; a marker still waits for the partners it is judged beside.",
+       "maximum": 8,
+       "minimum": 1,
+       "title": "Parallel",
+       "type": "integer"
+      },
+      "reader": {
+       "anyOf": [
+        {
+         "maxLength": 40,
+         "pattern": "^[A-Za-z0-9_.:-]+$",
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "default": null,
+       "description": "Who is answering, when several conversations answer one session at once (one id per conversation). Omit when you are the only one.",
+       "title": "Reader"
+      },
+      "session_id": {
+       "title": "Session Id",
+       "type": "string"
+      },
+      "tasks": {
+       "anyOf": [
+        {
+         "items": {
+          "type": "string"
+         },
+         "maxItems": 8,
+         "type": "array"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "default": null,
+       "description": "The tasks this reader answers (`module.task`, from its brief): it is given only their packets, and `other_tasks` when what is ready is another task's. Omit to answer every packet.",
+       "title": "Tasks"
+      }
+     },
+     "required": [
+      "session_id",
+      "packet_id",
+      "answer"
+     ],
+     "title": "AnswerInput",
+     "type": "object"
+    },
+    "needs": [],
+    "permission": "reversible_write",
+    "produces": [
+     "figure"
+    ],
+    "provider": "plexora",
+    "purpose": "Answer the outstanding packet with a typed judgement; the server moves the marker on (and writes its gate when it is decided) and returns the next packet.",
+    "roles": [],
+    "tags": [
+     "gate",
+     "gating",
+     "threshold",
+     "auto",
+     "automatic",
+     "session",
+     "workflow",
+     "phenotype",
+     "marker"
+    ],
+    "tool_name": "gating_answer",
+    "version": "1",
+    "viewer_required": false
+   }
+  },
+  {
+   "description": "A gating session's units (state, confidence, gate), what it has spent, its open questions, mirroring; or the recent sessions. Can pause or resume it. Read-only. Part of Plexora Pro; on Free it answers license_required.",
+   "descriptor": {
+    "entitlement": "ai:gating:session",
+    "execution": "immediate",
+    "id": "plexora:gating.session_status",
+    "input_schema": {
+     "additionalProperties": false,
+     "properties": {
+      "known_guide": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "default": null,
+       "description": "The `guide_version` you hold: the reading guide is then not sent again.",
+       "title": "Known Guide"
+      },
+      "limits": {
+       "anyOf": [
+        {
+         "additionalProperties": {
+          "enum": [
+           "continue",
+           "stop"
+          ],
+          "type": "string"
+         },
+         "type": "object"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "default": null,
+       "description": "Answers to the session's limit questions (`requests` of a `waiting_for_user` result), by marker: `continue` grants another allowance, `stop` flags the marker for manual review. Pass the user's answer, not your own guess.",
+       "title": "Limits"
+      },
+      "pause": {
+       "anyOf": [
+        {
+         "type": "boolean"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "default": null,
+       "description": "Pause (true) or resume (false) the session.",
+       "title": "Pause"
+      },
+      "reattach_viewer": {
+       "default": false,
+       "title": "Reattach Viewer",
+       "type": "boolean"
+      },
+      "replay_mirror": {
+       "default": false,
+       "description": "With reattach_viewer: show the packet out in the viewer now, not at the next packet.",
+       "title": "Replay Mirror",
+       "type": "boolean"
+      },
+      "session_id": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "default": null,
+       "description": "Omit to list recent sessions.",
+       "title": "Session Id"
+      },
+      "view_id": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "default": null,
+       "description": "With reattach_viewer: the tab to mirror into (defaults to the one mirrored before).",
+       "title": "View Id"
+      }
+     },
+     "title": "StatusInput",
+     "type": "object"
+    },
+    "needs": [],
+    "permission": "read",
+    "produces": [],
+    "provider": "plexora",
+    "purpose": "A gating session's units (state, confidence, gate), what it has spent, its open questions, mirroring; or the recent sessions. Can pause or resume it.",
+    "roles": [],
+    "tags": [
+     "gate",
+     "gating",
+     "threshold",
+     "auto",
+     "automatic",
+     "session",
+     "workflow",
+     "phenotype",
+     "marker"
+    ],
+    "tool_name": "gating_session_status",
+    "version": "1",
+    "viewer_required": false
+   }
+  },
+  {
+   "description": "Finish a gating session: close it, commit a propose-mode session's gates, cancel its bulk pass, or roll back every gate it wrote. Changes Plexora's own state (reversible); returns a receipt. Part of Plexora Pro; on Free it answers license_required.",
+   "descriptor": {
+    "entitlement": "ai:gating:session",
+    "execution": "immediate",
+    "id": "plexora:gating.session_finish",
+    "input_schema": {
+     "additionalProperties": false,
+     "properties": {
+      "action": {
+       "default": "close",
+       "description": "close: end the session (writes stay; a session the user stopped in the viewer is cancelled); commit: write a propose-mode session's accepted gates and empty gates; cancel: stop the bulk pass (writes stay); rollback: undo every write the session made, newest first.",
+       "enum": [
+        "close",
+        "commit",
+        "cancel",
+        "rollback"
+       ],
+       "title": "Action",
+       "type": "string"
+      },
+      "session_id": {
+       "title": "Session Id",
+       "type": "string"
+      }
+     },
+     "required": [
+      "session_id"
+     ],
+     "title": "FinishInput",
+     "type": "object"
+    },
+    "needs": [],
+    "permission": "reversible_write",
+    "produces": [],
+    "provider": "plexora",
+    "purpose": "Finish a gating session: close it, commit a propose-mode session's gates, cancel its bulk pass, or roll back every gate it wrote.",
+    "roles": [],
+    "tags": [
+     "gate",
+     "gating",
+     "threshold",
+     "auto",
+     "automatic",
+     "session",
+     "workflow",
+     "phenotype",
+     "marker"
+    ],
+    "tool_name": "gating_session_finish",
+    "version": "1",
+    "viewer_required": false
+   }
+  },
+  {
+   "description": "The review report of a gating session, HTML and/or PDF: per marker the final gate, the GMM proposal, confidence, flags, the distribution and the near-gate cells; for a dataset the spread across images. Read-only. Part of Plexora Pro; on Free it answers license_required.",
+   "descriptor": {
+    "entitlement": "ai:gating:session",
+    "execution": "immediate",
+    "id": "plexora:gating.report",
+    "input_schema": {
+     "additionalProperties": false,
+     "properties": {
+      "format": {
+       "default": "both",
+       "enum": [
+        "html",
+        "pdf",
+        "both"
+       ],
+       "title": "Format",
+       "type": "string"
+      },
+      "session_id": {
+       "title": "Session Id",
+       "type": "string"
+      }
+     },
+     "required": [
+      "session_id"
+     ],
+     "title": "ReportInput",
+     "type": "object"
+    },
+    "needs": [],
+    "permission": "read",
+    "produces": [],
+    "provider": "plexora",
+    "purpose": "The review report of a gating session, HTML and/or PDF: per marker the final gate, the GMM proposal, confidence, flags, the distribution and the near-gate cells; for a dataset the spread across images.",
+    "roles": [],
+    "tags": [
+     "gate",
+     "gating",
+     "threshold",
+     "auto",
+     "automatic",
+     "session",
+     "workflow",
+     "phenotype",
+     "marker",
+     "report",
+     "pdf",
+     "html",
+     "review",
+     "provenance"
+    ],
+    "tool_name": "gating_report",
+    "version": "1",
+    "viewer_required": false
+   }
+  },
+  {
+   "description": "Render a gate check per field: A the raw marker, B the marker over nuclear grey with outlines and the gate's positive cells in magenta, C where the field's cells fall on the whole distribution -- with counts and the borderline cells by id. For judging a gate by eye. Read-only. Returns an image plus a JSON manifest of exactly what was drawn. Part of Plexora Pro; on Free it answers license_required.",
+   "descriptor": {
+    "entitlement": "ai:gating:session",
+    "execution": "immediate",
+    "id": "plexora:gating.render_validation",
+    "input_schema": {
+     "additionalProperties": false,
+     "properties": {
+      "classes": {
+       "description": "Which kinds of field to pick.",
+       "items": {
+        "enum": [
+         "clear_negative",
+         "clear_positive",
+         "borderline",
+         "high_density",
+         "low_density",
+         "bright_isolated",
+         "edge",
+         "weak",
+         "bright",
+         "sparse"
+        ],
+        "type": "string"
+       },
+       "title": "Classes",
+       "type": "array"
+      },
+      "context_marker": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "default": null,
+       "description": "A second channel drawn in cyan in panel B, e.g. a lineage marker.",
+       "title": "Context Marker"
+      },
+      "field_size_px": {
+       "anyOf": [
+        {
+         "exclusiveMinimum": 0,
+         "type": "number"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "default": null,
+       "description": "Field side in pixels (default: the preset's pixel fallback, when it is not).",
+       "title": "Field Size Px"
+      },
+      "field_size_um": {
+       "anyOf": [
+        {
+         "exclusiveMinimum": 0,
+         "type": "number"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "default": null,
+       "description": "Field side in microns (default: the marker-validation preset's, when the image is calibrated).",
+       "title": "Field Size Um"
+      },
+      "fields": {
+       "anyOf": [
+        {
+         "items": {
+          "additionalProperties": true,
+          "type": "object"
+         },
+         "type": "array"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "default": null,
+       "description": "Fields from `sample_gate_validation_regions` (each with `bounds`); sampled here when omitted.",
+       "title": "Fields"
+      },
+      "high": {
+       "anyOf": [
+        {
+         "type": "number"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "default": null,
+       "title": "High"
+      },
+      "low": {
+       "anyOf": [
+        {
+         "type": "number"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "default": null,
+       "description": "Gate to check (default: the stored one).",
+       "title": "Low"
+      },
+      "marker": {
+       "description": "A marker column, as `list_markers` names it.",
+       "title": "Marker",
+       "type": "string"
+      },
+      "max_fields": {
+       "default": 6,
+       "maximum": 12,
+       "minimum": 1,
+       "title": "Max Fields",
+       "type": "integer"
+      },
+      "n_per_class": {
+       "default": 2,
+       "maximum": 4,
+       "minimum": 1,
+       "title": "N Per Class",
+       "type": "integer"
+      },
+      "nuclear_channel": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "default": null,
+       "title": "Nuclear Channel"
+      },
+      "panel_px": {
+       "default": 480,
+       "maximum": 528,
+       "minimum": 160,
+       "title": "Panel Px",
+       "type": "integer"
+      },
+      "project": {
+       "description": "Project name, as `list_projects` returns it.",
+       "title": "Project",
+       "type": "string"
+      },
+      "qc": {
+       "anyOf": [
+        {
+         "enum": [
+          "strict",
+          "exclude",
+          "off"
+         ],
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "default": null,
+       "description": "Which QC failures to leave out of this estimate, sample or picture (the gate itself always applies to every cell). strict (the default): cells QC called exclude or warn, and for this marker the cells QC flagged it unreliable in; exclude: warn calls kept; off: QC ignored -- only when the user asks, or QC is suspected wrong. Inside a gating session the session's own setting applies. No effect where QC was never run.",
+       "title": "Qc"
+      },
+      "seed": {
+       "default": 0,
+       "title": "Seed",
+       "type": "integer"
+      }
+     },
+     "required": [
+      "project",
+      "marker"
+     ],
+     "title": "ValidationInput",
+     "type": "object"
+    },
+    "needs": [
+     "image",
+     "table",
+     "human"
+    ],
+    "permission": "read",
+    "produces": [
+     "figure"
+    ],
+    "provider": "plexora",
+    "purpose": "Render a gate check per field: A the raw marker, B the marker over nuclear grey with outlines and the gate's positive cells in magenta, C where the field's cells fall on the whole distribution -- with counts and the borderline cells by id. For judging a gate by eye.",
+    "roles": [
+     "gate.manual"
+    ],
+    "tags": [
+     "gate",
+     "gating",
+     "threshold",
+     "positive",
+     "negative",
+     "marker",
+     "cutoff",
+     "render",
+     "visual",
+     "look",
+     "check",
+     "validate",
+     "verify",
+     "inspect",
+     "image"
+    ],
+    "tool_name": "render_gate_validation",
+    "version": "1",
+    "viewer_required": false
+   }
+  },
+  {
+   "description": "Quality-control an image automatically. Starts a QC session: every channel is scanned and candidate artifacts found deterministically (a job); you then audit every channel at a glance and judge the candidates, one packet at a time, through qc_next / qc_answer. Confirmed artifacts become ROIs, traced to the artifact's own pixels inside the outline you judged; cells get pass/fail. Changes Plexora's own state (reversible); returns a receipt. Part of Plexora Pro; on Free it answers license_required.",
+   "descriptor": {
+    "entitlement": "ai:qc:session",
+    "execution": "immediate",
+    "id": "plexora:qc.session_start",
+    "input_schema": {
+     "$defs": {
+      "QCBudget": {
+       "additionalProperties": false,
+       "properties": {
+        "chars": {
+         "anyOf": [
+          {
+           "minimum": 1000,
+           "type": "integer"
+          },
+          {
+           "type": "null"
+          }
+         ],
+         "default": 40000,
+         "description": "Packet JSON characters per candidate.",
+         "title": "Chars"
+        },
+        "images": {
+         "anyOf": [
+          {
+           "maximum": 40,
+           "minimum": 0,
+           "type": "integer"
+          },
+          {
+           "type": "null"
+          }
+         ],
+         "default": 10,
+         "description": "Images per candidate, over its looks.",
+         "title": "Images"
+        },
+        "packets": {
+         "anyOf": [
+          {
+           "maximum": 20,
+           "minimum": 1,
+           "type": "integer"
+          },
+          {
+           "type": "null"
+          }
+         ],
+         "default": 5,
+         "description": "Looks per candidate (confirm, localise, grid); the audit and scope are free.",
+         "title": "Packets"
+        },
+        "pixels": {
+         "anyOf": [
+          {
+           "minimum": 0,
+           "type": "integer"
+          },
+          {
+           "type": "null"
+          }
+         ],
+         "default": 8000000,
+         "description": "Image pixels per candidate, over its looks.",
+         "title": "Pixels"
+        }
+       },
+       "title": "QCBudget",
+       "type": "object"
+      },
+      "QCChecks": {
+       "additionalProperties": false,
+       "description": "The image checks a session runs first. Each scores the tissue on its\nown grid; the session shows you places sampled across each score's\ndistribution (`score_review`) and turns what you confirm into snug\nregions and cell calls. A check that cannot run here is skipped and\nsays why.",
+       "properties": {
+        "artifacts": {
+         "description": "The Artifact Detector: folds, tears, debris and saturation across every channel, one review per category (supersedes the scan's saturation detector).",
+         "title": "Artifacts",
+         "type": "boolean"
+        },
+        "blur": {
+         "description": "Blur QC on the nuclear channels, or on every channel when none is recognisable by name (supersedes the scan's focus detector).",
+         "title": "Blur",
+         "type": "boolean"
+        },
+        "blur_channels": {
+         "anyOf": [
+          {
+           "items": {
+            "type": "string"
+           },
+           "type": "array"
+          },
+          {
+           "type": "null"
+          }
+         ],
+         "default": null,
+         "description": "The channels Blur QC scores (default: the session's nuclear channels, else every channel).",
+         "title": "Blur Channels"
+        },
+        "max_pixels": {
+         "anyOf": [
+          {
+           "minimum": 1000000,
+           "type": "integer"
+          },
+          {
+           "type": "null"
+          }
+         ],
+         "default": null,
+         "description": "Skip Segmentation QC on an image of more full-resolution pixels than this.",
+         "title": "Max Pixels"
+        },
+        "registration": {
+         "description": "Registration Check of every nuclear channel against the reference (supersedes the scan's registration detector). Not run, and said so in the report, when fewer than two DNA channels are recognisable by name.",
+         "title": "Registration",
+         "type": "boolean"
+        },
+        "segmentation": {
+         "description": "Segmentation QC, when the project has a mask: where too large, too small and irregular cells cluster (under/over-segmentation is reported, not outlined).",
+         "title": "Segmentation",
+         "type": "boolean"
+        },
+        "visual": {
+         "description": "The visual pass: after the checks are reviewed, one look at the whole tissue in four views (the brightest DNA across cycles, first against last cycle, the mean of the channels, where channels agree) on which you outline the large, obvious artifacts the detectors missed with segment_qc_roi (session_id). Needs magic select; skipped and said so otherwise.",
+         "title": "Visual",
+         "type": "boolean"
+        }
+       },
+       "title": "QCChecks",
+       "type": "object"
+      }
+     },
+     "additionalProperties": false,
+     "properties": {
+      "agent": {
+       "default": "agent",
+       "description": "Who answers (the model, say). Earlier answers to identical packets are reused only from the same agent.",
+       "maxLength": 80,
+       "title": "Agent",
+       "type": "string"
+      },
+      "background_roi": {
+       "default": true,
+       "description": "Write the glass outside the feathered tissue as one \"QC: Background\" ROI (apply mode). Its cells are noted `background`, never excluded unless the user renames or approves it so.",
+       "title": "Background Roi",
+       "type": "boolean"
+      },
+      "budget": {
+       "$ref": "#/$defs/QCBudget",
+       "description": "What each candidate may spend."
+      },
+      "channels": {
+       "anyOf": [
+        {
+         "items": {
+          "type": "string"
+         },
+         "type": "array"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "default": null,
+       "description": "Default: every channel of the image.",
+       "title": "Channels"
+      },
+      "checks": {
+       "$ref": "#/$defs/QCChecks",
+       "description": "The image checks run first (blur, registration, segmentation): their scores find the problems, you judge sampled places. Default from PLEXORA_QC_CHECKS (all)."
+      },
+      "custom_thresholds": {
+       "anyOf": [
+        {
+         "additionalProperties": {
+          "type": "number"
+         },
+         "type": "object"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "default": null,
+       "description": "With strictness=custom: keys of the strictness table, each within the lenient..strict band.",
+       "title": "Custom Thresholds"
+      },
+      "detectors": {
+       "anyOf": [
+        {
+         "items": {
+          "type": "string"
+         },
+         "type": "array"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "default": null,
+       "description": "Default: every detector.",
+       "title": "Detectors"
+      },
+      "image_format": {
+       "default": "webp",
+       "enum": [
+        "webp",
+        "png"
+       ],
+       "title": "Image Format",
+       "type": "string"
+      },
+      "known_guide": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "default": null,
+       "description": "The `guide_version` of a reading guide you already hold: it is then not sent again.",
+       "title": "Known Guide"
+      },
+      "map_cell_um": {
+       "anyOf": [
+        {
+         "maximum": 500.0,
+         "minimum": 5.0,
+         "type": "number"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "default": null,
+       "description": "The scan's map cell, microns a side (default 50).",
+       "title": "Map Cell Um"
+      },
+      "max_extensions": {
+       "maximum": 10,
+       "minimum": 0,
+       "title": "Max Extensions",
+       "type": "integer"
+      },
+      "mirror": {
+       "anyOf": [
+        {
+         "type": "boolean"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "default": null,
+       "description": "Show each decision in an open viewer too. Default (null): on when one Plexora tab is open to drive (the one showing this image, else the only one), off otherwise -- the start result's `mirror.reason` says why. true: ask for it (and say why it cannot be); false: never.",
+       "title": "Mirror"
+      },
+      "mirror_delay_ms": {
+       "default": 600,
+       "maximum": 5000,
+       "minimum": 0,
+       "title": "Mirror Delay Ms",
+       "type": "integer"
+      },
+      "mode": {
+       "default": "apply",
+       "description": "apply: confirmed regions are written as ROIs as they are decided (each receipted and undoable); propose: nothing is written until qc_session_finish(action=commit).",
+       "enum": [
+        "apply",
+        "propose"
+       ],
+       "title": "Mode",
+       "type": "string"
+      },
+      "on_limit": {
+       "description": "When a candidate reaches its allowance while the evidence still says to go on: ask the user, extend, or stop (manual review). Default from PLEXORA_QC_ON_LIMIT.",
+       "enum": [
+        "ask",
+        "extend",
+        "stop"
+       ],
+       "title": "On Limit",
+       "type": "string"
+      },
+      "project": {
+       "title": "Project",
+       "type": "string"
+      },
+      "reading": {
+       "default": "once",
+       "description": "once: the reading guide comes with the start and status; every_packet: each packet repeats the texts it needs.",
+       "enum": [
+        "once",
+        "every_packet"
+       ],
+       "title": "Reading",
+       "type": "string"
+      },
+      "refine": {
+       "description": "Trace each confirmed artifact's own pixels inside the outline you judged, and write that (the outline is where to look; normal tissue inside it is kept). false: write the outline itself. Default from PLEXORA_QC_REFINE (on).",
+       "title": "Refine",
+       "type": "boolean"
+      },
+      "refine_margin_um": {
+       "anyOf": [
+        {
+         "maximum": 50.0,
+         "minimum": 0.0,
+         "type": "number"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "default": null,
+       "description": "The margin grown round a traced artifact, microns (default: the class's own, 3-10).",
+       "title": "Refine Margin Um"
+      },
+      "reuse_answers": {
+       "default": true,
+       "description": "Answer a packet identical to one this agent answered before with that answer, without asking.",
+       "title": "Reuse Answers",
+       "type": "boolean"
+      },
+      "scope": {
+       "const": "project",
+       "default": "project",
+       "description": "One image (a dataset scope comes later).",
+       "title": "Scope",
+       "type": "string"
+      },
+      "seed": {
+       "default": 0,
+       "title": "Seed",
+       "type": "integer"
+      },
+      "strictness": {
+       "default": "standard",
+       "description": "How readily a confirmed artifact excludes cells. Changing it later re-derives every call without asking again.",
+       "enum": [
+        "lenient",
+        "standard",
+        "strict",
+        "custom"
+       ],
+       "title": "Strictness",
+       "type": "string"
+      },
+      "view_id": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "default": null,
+       "title": "View Id"
+      }
+     },
+     "required": [
+      "project"
+     ],
+     "title": "QCSessionOptions",
+     "type": "object"
+    },
+    "needs": [
+     "image"
+    ],
+    "permission": "reversible_write",
+    "produces": [
+     "qc",
+     "regions"
+    ],
+    "provider": "plexora",
+    "purpose": "Quality-control an image automatically. Starts a QC session: every channel is scanned and candidate artifacts found deterministically (a job); you then audit every channel at a glance and judge the candidates, one packet at a time, through qc_next / qc_answer. Confirmed artifacts become ROIs, traced to the artifact's own pixels inside the outline you judged; cells get pass/fail.",
+    "roles": [
+     "qc.auto"
+    ],
+    "tags": [
+     "qc",
+     "quality",
+     "artifact",
+     "fold",
+     "focus",
+     "session",
+     "workflow",
+     "exclude",
+     "control"
+    ],
+    "tool_name": "qc_session_start",
+    "version": "1",
+    "viewer_required": false
+   }
+  },
+  {
+   "description": "The QC session's next decision packet: one question, compact numbers, at most two images, and the answer schema. The same packet again if it is still unanswered. Changes Plexora's own state (reversible); returns a receipt. Returns an image plus a JSON manifest of exactly what was drawn. Part of Plexora Pro; on Free it answers license_required.",
+   "descriptor": {
+    "entitlement": "ai:qc:session",
+    "execution": "immediate",
+    "id": "plexora:qc.next",
+    "input_schema": {
+     "additionalProperties": false,
+     "properties": {
+      "reader": {
+       "anyOf": [
+        {
+         "maxLength": 40,
+         "pattern": "^[A-Za-z0-9_.:-]+$",
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "default": null,
+       "description": "Who is answering, when several conversations answer one session (one id per conversation, from a worker's brief). Omit when you are the only one.",
+       "title": "Reader"
+      },
+      "rerender": {
+       "default": false,
+       "description": "Draw the outstanding packet's images again (same packet, same charge).",
+       "title": "Rerender",
+       "type": "boolean"
+      },
+      "session_id": {
+       "title": "Session Id",
+       "type": "string"
+      },
+      "tasks": {
+       "anyOf": [
+        {
+         "items": {
+          "type": "string"
+         },
+         "maxItems": 8,
+         "type": "array"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "default": null,
+       "description": "The tasks this reader answers (`module.task`, from its brief): it is given only their packets, and `other_tasks` when what is ready is another task's. Omit to answer every packet.",
+       "title": "Tasks"
+      },
+      "wait_s": {
+       "default": 10.0,
+       "description": "How long to wait for the bulk pass when nothing is ready yet (at most 30; call again for longer).",
+       "maximum": 30,
+       "minimum": 0,
+       "title": "Wait S",
+       "type": "number"
+      }
+     },
+     "required": [
+      "session_id"
+     ],
+     "title": "NextInput",
+     "type": "object"
+    },
+    "needs": [],
+    "permission": "reversible_write",
+    "produces": [
+     "figure"
+    ],
+    "provider": "plexora",
+    "purpose": "The QC session's next decision packet: one question, compact numbers, at most two images, and the answer schema. The same packet again if it is still unanswered.",
+    "roles": [],
+    "tags": [
+     "qc",
+     "quality",
+     "artifact",
+     "fold",
+     "focus",
+     "session",
+     "workflow",
+     "exclude",
+     "control"
+    ],
+    "tool_name": "qc_next",
+    "version": "1",
+    "viewer_required": false
+   }
+  },
+  {
+   "description": "Answer the outstanding QC packet with a typed judgement; the server moves the channel or region on (writing its ROI when it is decided) and returns the next packet. Changes Plexora's own state (reversible); returns a receipt. Returns an image plus a JSON manifest of exactly what was drawn. Part of Plexora Pro; on Free it answers license_required.",
+   "descriptor": {
+    "entitlement": "ai:qc:session",
+    "execution": "immediate",
+    "id": "plexora:qc.answer",
+    "input_schema": {
+     "additionalProperties": false,
+     "properties": {
+      "answer": {
+       "additionalProperties": true,
+       "description": "The typed answer: `kind` plus the fields the packet's answer_schema lists.",
+       "title": "Answer",
+       "type": "object"
+      },
+      "include_next": {
+       "default": true,
+       "description": "Return the next packet with the outcome, saving a next call.",
+       "title": "Include Next",
+       "type": "boolean"
+      },
+      "model": {
+       "anyOf": [
+        {
+         "maxLength": 80,
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "default": null,
+       "description": "The model you are running on, as your client names it: recorded with the answer, so the session can show which model answered each task.",
+       "title": "Model"
+      },
+      "packet_id": {
+       "description": "The packet being answered (pk_nnnn).",
+       "title": "Packet Id",
+       "type": "string"
+      },
+      "reader": {
+       "anyOf": [
+        {
+         "maxLength": 40,
+         "pattern": "^[A-Za-z0-9_.:-]+$",
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "default": null,
+       "description": "Who is answering, when several conversations answer one session (one id per conversation, from a worker's brief). Omit when you are the only one.",
+       "title": "Reader"
+      },
+      "session_id": {
+       "title": "Session Id",
+       "type": "string"
+      },
+      "tasks": {
+       "anyOf": [
+        {
+         "items": {
+          "type": "string"
+         },
+         "maxItems": 8,
+         "type": "array"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "default": null,
+       "description": "The tasks this reader answers (`module.task`, from its brief): it is given only their packets, and `other_tasks` when what is ready is another task's. Omit to answer every packet.",
+       "title": "Tasks"
+      }
+     },
+     "required": [
+      "session_id",
+      "packet_id",
+      "answer"
+     ],
+     "title": "AnswerInput",
+     "type": "object"
+    },
+    "needs": [],
+    "permission": "reversible_write",
+    "produces": [
+     "figure"
+    ],
+    "provider": "plexora",
+    "purpose": "Answer the outstanding QC packet with a typed judgement; the server moves the channel or region on (writing its ROI when it is decided) and returns the next packet.",
+    "roles": [],
+    "tags": [
+     "qc",
+     "quality",
+     "artifact",
+     "fold",
+     "focus",
+     "session",
+     "workflow",
+     "exclude",
+     "control"
+    ],
+    "tool_name": "qc_answer",
+    "version": "1",
+    "viewer_required": false
+   }
+  },
+  {
+   "description": "A QC session's units (channels, candidate regions, checks), what it has spent, its limit questions, mirroring; or the recent sessions. Can pause or resume it. Read-only. Part of Plexora Pro; on Free it answers license_required.",
+   "descriptor": {
+    "entitlement": "ai:qc:session",
+    "execution": "immediate",
+    "id": "plexora:qc.session_status",
+    "input_schema": {
+     "additionalProperties": false,
+     "properties": {
+      "detail": {
+       "default": "brief",
+       "description": "brief: the units list capped (with a count of the rest), the residual as its top rows plus totals, no strictness table or vocabulary; full: all of it.",
+       "enum": [
+        "brief",
+        "full"
+       ],
+       "title": "Detail",
+       "type": "string"
+      },
+      "known_guide": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "default": null,
+       "description": "The `guide_version` you hold: the reading guide is then not sent again.",
+       "title": "Known Guide"
+      },
+      "limits": {
+       "anyOf": [
+        {
+         "additionalProperties": {
+          "enum": [
+           "continue",
+           "stop"
+          ],
+          "type": "string"
+         },
+         "type": "object"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "default": null,
+       "description": "Answers to the session's limit questions (`requests` of a `waiting_for_user` result), by unit: `continue` grants another allowance, `stop` flags it for manual review. Pass the user's answer, not your own guess.",
+       "title": "Limits"
+      },
+      "pause": {
+       "anyOf": [
+        {
+         "type": "boolean"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "default": null,
+       "description": "Pause (true) or resume (false) the session.",
+       "title": "Pause"
+      },
+      "reattach_viewer": {
+       "default": false,
+       "title": "Reattach Viewer",
+       "type": "boolean"
+      },
+      "replay_mirror": {
+       "default": false,
+       "description": "With reattach_viewer: show the packet out in the viewer now, not at the next packet.",
+       "title": "Replay Mirror",
+       "type": "boolean"
+      },
+      "session_id": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "default": null,
+       "description": "Omit to list recent sessions.",
+       "title": "Session Id"
+      },
+      "units": {
+       "default": "open",
+       "description": "open: list only the units still to settle and those left for a person (the counts cover the rest); all: every unit.",
+       "enum": [
+        "open",
+        "all"
+       ],
+       "title": "Units",
+       "type": "string"
+      },
+      "view_id": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "default": null,
+       "description": "With reattach_viewer: the tab to mirror into (defaults to the one mirrored before).",
+       "title": "View Id"
+      }
+     },
+     "title": "StatusInput",
+     "type": "object"
+    },
+    "needs": [],
+    "permission": "read",
+    "produces": [],
+    "provider": "plexora",
+    "purpose": "A QC session's units (channels, candidate regions, checks), what it has spent, its limit questions, mirroring; or the recent sessions. Can pause or resume it.",
+    "roles": [],
+    "tags": [
+     "qc",
+     "quality",
+     "artifact",
+     "fold",
+     "focus",
+     "session",
+     "workflow",
+     "exclude",
+     "control"
+    ],
+    "tool_name": "qc_session_status",
+    "version": "1",
+    "viewer_required": false
+   }
+  },
+  {
+   "description": "Finish a QC session: close it (its result becomes the project's active QC), commit a propose-mode session's regions, cancel its scan, or roll back every region it wrote. Changes Plexora's own state (reversible); returns a receipt. Part of Plexora Pro; on Free it answers license_required.",
+   "descriptor": {
+    "entitlement": "ai:qc:session",
+    "execution": "immediate",
+    "id": "plexora:qc.session_finish",
+    "input_schema": {
+     "additionalProperties": false,
+     "properties": {
+      "action": {
+       "default": "close",
+       "description": "close: end the session (writes stay; a session the user stopped in the viewer is cancelled); commit: write a propose-mode session's results; cancel: stop the bulk pass (writes stay); rollback: undo every write the session made, newest first.",
+       "enum": [
+        "close",
+        "commit",
+        "cancel",
+        "rollback"
+       ],
+       "title": "Action",
+       "type": "string"
+      },
+      "session_id": {
+       "title": "Session Id",
+       "type": "string"
+      },
+      "units": {
+       "default": "open",
+       "description": "open: list only the units still to settle and those left for a person (the counts cover the rest); all: every unit.",
+       "enum": [
+        "open",
+        "all"
+       ],
+       "title": "Units",
+       "type": "string"
+      }
+     },
+     "required": [
+      "session_id"
+     ],
+     "title": "FinishInput",
+     "type": "object"
+    },
+    "needs": [],
+    "permission": "reversible_write",
+    "produces": [],
+    "provider": "plexora",
+    "purpose": "Finish a QC session: close it (its result becomes the project's active QC), commit a propose-mode session's regions, cancel its scan, or roll back every region it wrote.",
+    "roles": [],
+    "tags": [
+     "qc",
+     "quality",
+     "artifact",
+     "fold",
+     "focus",
+     "session",
+     "workflow",
+     "exclude",
+     "control"
+    ],
+    "tool_name": "qc_session_finish",
+    "version": "1",
+    "viewer_required": false
+   }
+  },
+  {
+   "description": "The QC report, HTML and/or PDF: every channel, every region with its class and action, the excluded tissue and cells with their denominators, the provenance. Read-only. Part of Plexora Pro; on Free it answers license_required.",
+   "descriptor": {
+    "entitlement": "ai:qc:session",
+    "execution": "immediate",
+    "id": "plexora:qc.report",
+    "input_schema": {
+     "additionalProperties": false,
+     "properties": {
+      "format": {
+       "default": "both",
+       "enum": [
+        "html",
+        "pdf",
+        "both"
+       ],
+       "title": "Format",
+       "type": "string"
+      },
+      "project": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "default": null,
+       "title": "Project"
+      },
+      "session_id": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "default": null,
+       "description": "A session; or give `project` for its active result.",
+       "title": "Session Id"
+      }
+     },
+     "title": "ReportInput",
+     "type": "object"
+    },
+    "needs": [
+     "image"
+    ],
+    "permission": "read",
+    "produces": [],
+    "provider": "plexora",
+    "purpose": "The QC report, HTML and/or PDF: every channel, every region with its class and action, the excluded tissue and cells with their denominators, the provenance.",
+    "roles": [],
+    "tags": [
+     "qc",
+     "quality",
+     "artifact",
+     "fold",
+     "focus",
+     "session",
+     "workflow",
+     "exclude",
+     "control",
+     "report",
+     "pdf",
+     "html",
+     "review",
+     "provenance"
+    ],
+    "tool_name": "qc_report",
+    "version": "1",
+    "viewer_required": false
+   }
+  },
+  {
+   "description": "A channel audit sheet: up to eight channels, whole tissue, at the project's calibrated windows, beside the nuclear stain. Read-only. Returns an image plus a JSON manifest of exactly what was drawn. Part of Plexora Pro; on Free it answers license_required.",
+   "descriptor": {
+    "entitlement": "ai:qc:analytics",
+    "execution": "immediate",
+    "id": "plexora:qc.render_overview",
+    "input_schema": {
+     "additionalProperties": false,
+     "properties": {
+      "channels": {
+       "anyOf": [
+        {
+         "items": {
+          "type": "string"
+         },
+         "maxItems": 8,
+         "type": "array"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "default": null,
+       "description": "Up to eight channels (default: the first eight).",
+       "title": "Channels"
+      },
+      "format": {
+       "default": "png",
+       "enum": [
+        "webp",
+        "png"
+       ],
+       "title": "Format",
+       "type": "string"
+      },
+      "project": {
+       "description": "Project name, as `list_projects` returns it.",
+       "title": "Project",
+       "type": "string"
+      }
+     },
+     "required": [
+      "project"
+     ],
+     "title": "OverviewInput",
+     "type": "object"
+    },
+    "needs": [
+     "image",
+     "human"
+    ],
+    "permission": "read",
+    "produces": [
+     "figure"
+    ],
+    "provider": "plexora",
+    "purpose": "A channel audit sheet: up to eight channels, whole tissue, at the project's calibrated windows, beside the nuclear stain.",
+    "roles": [
+     "qc.review"
+    ],
+    "tags": [
+     "qc",
+     "quality",
+     "artifact",
+     "exclude",
+     "regions",
+     "cells",
+     "control"
+    ],
+    "tool_name": "render_qc_overview",
     "version": "1",
     "viewer_required": false
    }

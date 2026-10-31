@@ -245,3 +245,21 @@ def test_the_client_finds_the_server_through_servers_json(live):
     peer = client.connect("plexora", spawn=False)
     assert peer.rung == "http"
     assert peer.invoke("bridge_info", {})["provider"] == "plexora"
+
+
+def test_a_rendered_image_crosses_as_base64_and_arrives_as_bytes(client):
+    from spatialbridge import images
+
+    png = b"\x89PNG\r\n\x1a\n" + bytes(range(16))
+    webp = b"RIFF\x00\x00\x00\x00WEBP" + bytes(range(8))
+    registry.register(Capability(name="test.render", owner="test", purpose="A picture.", permission="read",
+                                 input_model=_Empty, visual_output=True,
+                                 handler=lambda call, inp: {"drawn": 2,
+                                                            "_images": [png, {"data": webp, "format": "webp"}]}))
+    answer = client.post("/agent/v1/capabilities/test_render", json={"arguments": {}})
+    assert answer.status_code == 200, answer.get_data(as_text=True)
+    result = answer.get_json()["result"]
+    assert [(entry["encoding"], entry["format"]) for entry in result["_images"]] == [("base64", "png"),
+                                                                                     ("base64", "webp")]
+    assert images.decode(result) == {"drawn": 2, "_images": [{"data": png, "format": "png"},
+                                                             {"data": webp, "format": "webp"}]}

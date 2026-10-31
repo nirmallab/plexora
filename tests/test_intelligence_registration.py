@@ -1,7 +1,8 @@
 """Plexora in Biocognia Intelligence (the `biocognia` app): its registration is
 read without importing Plexora, the tools it offers as a guest are the
-shipped manifest -- each with its permission written out, none a call the
-bridge could not run for everyone -- and those tools run over the bridge."""
+shipped manifest -- each with its permission written out, none a source-file
+write or a delete, each Pro tool with its entitlement -- and those tools run
+over the bridge."""
 
 from __future__ import annotations
 
@@ -33,7 +34,7 @@ def test_the_shipped_manifest_is_what_the_registry_says():
     assert intelligence_manifest.main(["--check"]) == 0, "run python tools/intelligence_manifest.py"
 
 
-def test_every_guest_tool_names_its_permission_and_is_one_the_bridge_runs_for_everyone():
+def test_every_guest_tool_names_its_permission_and_is_one_the_bridge_runs_without_an_approval():
     from plexora.agent import registry
 
     from plexora_intelligence import GUEST_TOOLS, PRODUCT
@@ -43,9 +44,27 @@ def test_every_guest_tool_names_its_permission_and_is_one_the_bridge_runs_for_ev
     registry.discover()
     for tool in manifest["tools"]:
         descriptor = tool["descriptor"]
+        capability = registry.get(descriptor["tool_name"])
         assert descriptor["permission"] in ("read", "reversible_write"), descriptor["tool_name"]
-        assert intelligence_manifest.refusals(registry.get(descriptor["tool_name"])) == []
-        assert tool["description"].startswith(registry.get(descriptor["tool_name"]).purpose)
+        assert intelligence_manifest.refusals(capability) == []
+        assert tool["description"].startswith(capability.purpose)
+        # A bridge call is exempt from the external-MCP switch, so the guest's
+        # description never says it needs it.
+        assert "MCP" not in tool["description"], descriptor["tool_name"]
+
+
+def test_the_pro_tools_carry_their_entitlement_and_say_they_are_pro():
+    from plexora_intelligence import PRODUCT
+
+    tools = {tool["descriptor"]["tool_name"]: tool for tool in PRODUCT.guest().manifest()["tools"]}
+    entitled = {name: tool["descriptor"]["entitlement"] for name, tool in tools.items()
+                if tool["descriptor"]["entitlement"] not in (None, "free")}
+    assert entitled["ai_run_session"] == "ai" and entitled["gating_next"] == "ai:gating:session"
+    assert entitled["qc_answer"] == "ai:qc:session" and entitled["render_qc_overview"] == "ai:qc:analytics"
+    assert "list_projects" not in entitled and "render_region" not in entitled
+    for name in entitled:
+        assert "Part of Plexora Pro; on Free it answers license_required." in tools[name]["description"]
+    assert "Returns an image" in tools["gating_next"]["description"]
 
 
 def test_a_tool_the_bridge_could_not_run_is_refused_by_the_writer(monkeypatch):
@@ -57,9 +76,29 @@ def test_a_tool_the_bridge_could_not_run_is_refused_by_the_writer(monkeypatch):
         intelligence_manifest.manifest()
     said = str(refused.value)
     assert "write_gates_to_source: it is a source file write" in said
-    assert "render_region: it returns an image" in said
-    assert "gating_session_start: it needs the ai:gating:session entitlement" in said
     assert "no_such_tool: no such capability" in said
+    # An image and a Pro entitlement are no reason to refuse a tool any more.
+    assert "render_region" not in said and "gating_session_start" not in said
+
+
+def test_grants_are_the_licences_entitlements_and_nothing_on_free(monkeypatch):
+    from biocognia import LicenseState
+
+    from plexora import licensing
+    from plexora_intelligence import PRODUCT
+
+    guest = PRODUCT.guest()
+    pro = LicenseState(state="active", entitlements=("ai", "volume"))
+    monkeypatch.setattr(licensing, "peek", lambda: pro)
+    assert guest.grants() == ("ai", "volume")
+    monkeypatch.setattr(licensing, "peek", lambda: LicenseState(state="free"))
+    assert guest.grants() == ()
+
+    def unreadable():
+        raise OSError("the licence file is locked")
+
+    monkeypatch.setattr(licensing, "peek", unreadable)
+    assert guest.grants() == ()
 
 
 def test_the_registration_says_what_plexora_is_here():

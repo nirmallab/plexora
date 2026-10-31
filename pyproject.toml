@@ -49,6 +49,13 @@ dependencies = [
     # (imported only when a Pro feature or the licence status is asked for)
     # and locates its files with platformdirs.
     "biocognia>=0.1.2,<0.2",
+    # Biocognia Intelligence (the `biocognia` app), installed with every
+    # BioCognia product: Plexora registers in it (plexora_intelligence/) and,
+    # in a SCIMAP Pro workspace, its tools -- its Pro AI gating and QC on a Pro
+    # licence -- join the conversation over the bridge. Stdlib-only at import;
+    # it adds the MCP SDK through spatialbridge[mcp], which the ai extra
+    # already brings.
+    "biocognia-intelligence>=0.2.1,<0.3",
     "Flask>=3.1",
     "fsspec>=2024.12",
     # Declared rather than leaned on transitively: gating reads and writes

@@ -182,3 +182,22 @@ def job_state(record: dict) -> dict:
                                         "message": f"the job was {record.get('status')}"}
         out["error"] = problem(error)
     return out
+
+
+def encode_images(result):
+    """`result` with its `_images` -- PNG bytes, or `{data: bytes, format}` -- as
+    `{"data": "<base64>", "encoding": "base64", "format"}` each, so JSON can
+    carry them (the protocol's wire form, `spatialbridge.images`). Anything
+    else unchanged."""
+    import base64
+
+    if not isinstance(result, dict) or not result.get("_images"):
+        return result
+    encoded = []
+    for image in result["_images"]:
+        data, fmt = (image, "png") if isinstance(image, (bytes, bytearray)) else (
+            (image.get("data"), image.get("format") or "png") if isinstance(image, dict) else (None, None))
+        if isinstance(data, (bytes, bytearray)):
+            encoded.append({"data": base64.b64encode(bytes(data)).decode("ascii"), "encoding": "base64",
+                            "format": str(fmt)})
+    return {**result, "_images": encoded}

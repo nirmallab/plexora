@@ -9,13 +9,14 @@ Each tool `plexora_intelligence.GUEST_TOOLS` names is described from the
 capability registry as a bridge peer sees it (`bridge_roles.describe`), its
 permission always written out -- the app counts a tool without one as a
 source-file write and never offers it -- with what the model is told when it
-loads the tool (`plexora.mcp.tools.description_for`, Plexora's own words for
-it). The version is not written: the registration reads Plexora's own.
+loads the tool (`description`). The version is not written: the registration
+reads Plexora's own.
 
-A tool the list names is refused when a call through the bridge could not run
-it for everyone: a source-file write or a delete (the bridge carries no
-approval), an image in the result (an image does not cross the bridge yet),
-or an entitlement beyond Free.
+A tool the list names is refused when it writes a source file or deletes:
+the bridge carries no approval. A Pro tool is listed with its entitlement,
+and the app offers it only on a device whose licence unlocks it; Plexora
+still checks every call. A tool that returns an image says so: the bridge
+carries images (spatialbridge 0.2.3).
 """
 
 from __future__ import annotations
@@ -30,26 +31,46 @@ TARGET = ROOT / "plexora_intelligence" / "guest.json"
 
 def refusals(capability) -> list[str]:
     """Why `capability` cannot be a guest tool; empty when it can."""
-    problems = []
     if capability.permission in ("source_file_write", "destructive"):
-        problems.append(f"it is a {capability.permission.replace('_', ' ')}, which needs an approval the "
-                        "bridge cannot carry")
+        return [(f"it is a {capability.permission.replace('_', ' ')}, which needs an approval the "
+                 "bridge cannot carry")]
+    return []
+
+
+def description(capability) -> str:
+    """What the model is told when it loads `capability` as a guest tool: Plexora's
+    own words for it (`plexora.mcp.tools.description_for`) less the sentence
+    about external MCP access, which a bridge call does not need."""
+    from plexora.licensing import manifest
+    from plexora.mcp.tools import PERMISSION_NOTES
+
+    parts = [capability.purpose, PERMISSION_NOTES[capability.permission]]
+    if capability.viewer_required:
+        parts.append("Needs an open Plexora viewer.")
     if capability.visual_output:
-        problems.append("it returns an image, which does not cross the bridge yet")
-    if capability.entitlement not in (None, "free"):
-        problems.append(f"it needs the {capability.entitlement} entitlement, beyond Free")
-    return problems
+        parts.append("Returns an image plus a JSON manifest of exactly what was drawn.")
+    entitlement = capability.entitlement
+    if entitlement not in (None, "free"):
+        if manifest.third_party(entitlement):
+            parts.append("From a plugin's maker, not part of Plexora Pro; without a licence that includes "
+                         "it, it answers license_required.")
+        elif manifest.off_by_default(entitlement):
+            parts.append("Off by default, not part of Plexora Pro; until an administrator turns it on for "
+                         "the licence, it answers license_required.")
+        else:
+            parts.append("Part of Plexora Pro; on Free it answers license_required.")
+    return " ".join(parts)
 
 
 def manifest() -> dict:
-    """The manifest, from the registry as it is now."""
-    from plexora.agent import bridge_roles, registry
-    from plexora.mcp.tools import description_for
+    """The manifest, from the registry as it is now (the app's `manifest.build`)."""
+    from biocognia_intelligence.manifest import build
 
+    from plexora.agent import bridge_roles, registry
     from plexora_intelligence import GUEST_TOOLS
 
     registry.discover()
-    tools, problems = [], []
+    descriptors, descriptions, problems = [], {}, []
     for name in GUEST_TOOLS:
         try:
             capability = registry.get(name)
@@ -59,10 +80,11 @@ def manifest() -> dict:
         problems += [f"{name}: {problem}" for problem in refusals(capability)]
         descriptor = bridge_roles.describe(capability)
         descriptor["permission"] = capability.permission
-        tools.append({"descriptor": descriptor, "description": description_for(capability)})
+        descriptors.append(descriptor)
+        descriptions[name] = description(capability)
     if problems:
         raise ValueError("GUEST_TOOLS names tools a guest cannot offer:\n  " + "\n  ".join(problems))
-    return {"contract": 1, "provider": "plexora", "name": "Plexora", "tools": tools}
+    return build("plexora", "Plexora", descriptors, descriptions=descriptions)
 
 
 def rendered() -> str:
