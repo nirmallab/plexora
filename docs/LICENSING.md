@@ -430,7 +430,9 @@ aliases. The remaining couplings are pinned in
    `Plugin.capabilities_factory` the AI package supplies.
 2. `gating/server/routes.py` agent-session control and event routes. These
    move with the engine; the control route stays reachable for sessions
-   already on disk.
+   already on disk. Save Gates to Source File also takes its provenance
+   rows from `autogate/report.py` (`source_extras`); those rows read
+   autogate's provenance, so they move with it.
 3. `gating/server/tableops.py` registers autogate's node operations. The AI
    package registers its own on import.
 4. `mcp/resources_gating.py`. This needs a `Plugin.mcp_factory` hook so

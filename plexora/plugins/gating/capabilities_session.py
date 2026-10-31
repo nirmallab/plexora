@@ -2233,9 +2233,11 @@ def status(call, inp):
 class FinishInput(AgentModel):
     session_id: str
     action: Literal["close", "commit", "cancel", "rollback"] = Field(
-        "close", description="close: end the session (writes stay; a session the user "
-                             "stopped in the viewer is cancelled); commit: write a "
-                             "propose-mode session's accepted gates and empty gates; "
+        "close", description="close: end the session (writes stay; a marker not yet "
+                             "settled is written at the best gate it reached, for review; "
+                             "a session the user stopped in the viewer is cancelled); "
+                             "commit: write a propose-mode session's accepted gates and "
+                             "empty gates; "
                              "cancel: stop the bulk pass (writes stay); rollback: undo every "
                              "write the session made, newest first.")
 
@@ -2250,6 +2252,22 @@ def _save_versions(call, images, *, session_id=None, by=None):
             gating_model.save_version(call.session.data(name), by, session_id=session_id)
         except Exception:
             continue
+
+
+def _close_unsettled(engine):
+    """No marker is left ungated by a close or a commit: one still waiting on
+    a look, a check or the user is written (or, in propose mode, proposed) at
+    the best gate it reached, for review (`Engine.close`). A Stop is a cancel
+    and writes nothing: it may be for values that moved (`_matrix_moved`).
+    An auto-contrast session never gates, so it is left as it is."""
+    if engine.options["purpose"] == "contrast":
+        return
+    for unit in list(engine.record["units"].values()):
+        if unit["state"] not in schemas.TERMINAL_STATES:
+            engine.close(unit, "manual_review_recommended",
+                         "the session was closed before this marker was settled; written "
+                         "at the best gate it reached, for manual review",
+                         unlooked="session_closed")
 
 
 def finish(call, inp):
@@ -2275,6 +2293,7 @@ def finish(call, inp):
         elif action == "commit":
             if record["options"]["mode"] != "propose":
                 raise AgentError("invalid_input", "commit is for a propose-mode session")
+            _close_unsettled(engine)              # proposed, then written below
             record["options"]["mode"] = "apply"
             written = []
             for unit in record["units"].values():
@@ -2326,6 +2345,7 @@ def finish(call, inp):
             if record["state"] == "bulk_running":
                 raise AgentError("conflict", "the bulk pass is still running; cancel it or "
                                  "wait for it", retryable=True)
+            _close_unsettled(engine)
             record["state"] = "done"
         record["finished_at"] = _now()
         if action != "rollback" and any(u.get("receipts") for u in record["units"].values()):

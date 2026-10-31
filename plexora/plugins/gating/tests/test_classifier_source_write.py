@@ -255,8 +255,9 @@ def test_a_save_writes_decided_markers_and_session_layers_with_their_provenance(
 def test_the_panels_save_writes_the_latest_gates_their_provenance_and_every_version(
         tmp_path, monkeypatch, classified):
     # What /save_gates_to_anndata sends now: the latest gates, and beside them
-    # `model.source_extras` -- provenance, and the versions kept.
+    # `report.source_extras` -- provenance, and the versions kept.
     from plexora.plugins.gating.server import model
+    from plexora.plugins.gating.server.autogate import report
 
     ds = classified["ds"]
     n = int(ds.table.geometry().height)
@@ -268,7 +269,7 @@ def test_the_panels_save_writes_the_latest_gates_their_provenance_and_every_vers
     model.set_gate(ds, "DNA", dna, full["default_high"])
     second = model.save_version(ds)
     assert (first["version"], second["version"]) == (1, 2)
-    extras = model.source_extras(ds)
+    extras = report.source_extras(ds)
     assert sorted(p["marker"] for p in extras["provenance"]) == ["CD8", "DNA"]
     assert [len(v["gates"]) for v in extras["versions"]] == [1, 2]
     gates = {m: low for m, (low, _high) in model.active_gates(ds).items()}

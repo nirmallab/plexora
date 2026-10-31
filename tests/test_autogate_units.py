@@ -2034,7 +2034,8 @@ def test_a_whole_image_too_low_after_the_walk_looks_up_once_more():
     out = transitions.apply_regression(engine, packet, ConfirmAnswer(verdict="too_low"))
     assert out["reopened"] and unit["state"] == "awaiting_t4" and unit["direction"] == "up"
     assert unit["whole_image_reopened"] == {"at": 4.94} and not engine.finalized
-    # Once only: the second "too low" keeps the gate, at low confidence.
+    # Once only: the second "too low" keeps the gate where the rows put it
+    # (`finalize` marks it for review: its failed checks are unconfirmed).
     unit["state"] = "regression_confirm"
     out = transitions.apply_regression(engine, packet, ConfirmAnswer(verdict="too_low"))
     assert out["kept"] and unit["whole_image_disagreed"] == "too_low" and engine.finalized

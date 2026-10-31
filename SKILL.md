@@ -3431,9 +3431,9 @@ deliberately left out and what should be built next.
   self-contained — memo keys, replays, the report never change — but what is
   SENT can be shorter, `packets.as_sent`: with `SessionOptions.evidence =
   "delta"` (the default), an evidence value this reader already holds goes as
-  `{"as_in": packet_id}` instead of repeating it, the question drops its
-  biology prefix, candidates drop their score `components`, passing checks
-  drop out; a reader is a conversation, and `new_reader` — called whenever
+  `{"as_in": packet_id}` instead of repeating it, and passing checks drop out
+  (no question carries a biology prefix and no candidate its score
+  `components` since 2026-10-08, so neither is trimmed); a reader is a conversation, and `new_reader` — called whenever
   `gating_session_status` arrives without the current `known_guide`, or any
   rerender — starts a fresh one, so a pointer only ever names a packet that
   reader holds; `resolve_as_in` is a scripted reader's own resolution, for the
@@ -10228,7 +10228,10 @@ in **5.6 s**.
   gate (`Engine._review_gate`) -- with method `needs_review` and confidence
   `manual_review`, because a marker left at its full range reads as a
   decision nobody made. Only a gate the user changed mid-session is not
-  overwritten; theirs stands.
+  overwritten; theirs stands. `gating_session_finish` close (and a
+  propose-mode commit) closes every marker still unsettled the same way
+  (`capabilities_session._close_unsettled`); a Stop (cancel) and an
+  auto-contrast session write nothing.
 - **No gate without pixels.** Automatic gating judges every gate on the
   image: `SessionOptions.max_tier` has no numbers-only tier (`ge=2`, pinned
   by `tests/test_autogate_units.py`), `capabilities_session.start` refuses a

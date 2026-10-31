@@ -396,6 +396,8 @@ def save_gates_to_anndata():
     active_gates = {channel: low for channel, (low, _high)
                     in gating_model.active_gates(dataset).items()}
 
+    from plexora.plugins.gating.server.autogate import report
+
     payload = {
         "image_id": datasource,
         "gates": active_gates,
@@ -403,7 +405,7 @@ def save_gates_to_anndata():
         "imageid_column": imageid_column,
         # Beside the latest gates: where each came from, and every version
         # kept (`<table>_provenance`, `<table>_versions`).
-        **gating_model.source_extras(dataset),
+        **report.source_extras(dataset),
     }
     # Markers the Single Cell Classifier decides, and those with a gating
     # session's layer, travel with the gates: their calls and scores as

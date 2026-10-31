@@ -25,7 +25,7 @@ def _gating():
 
 def _packet(pid, **evidence):
     return {"packet_id": pid, "kind": "t2_confirm", "session_id": "gs_x",
-            "question": "[skin (tissue); user] CD45 (p): is the gate right?",
+            "question": "CD45 (p): is the gate right?",
             "narration": "the viewer's sentence", "budget": {"this_packet": {"packets": 1}},
             "_sheet_rows": {"fields": "f" * 12},
             "evidence": {"biology": {"contexts": ["skin (tissue)"], "said": {
@@ -53,7 +53,7 @@ def test_a_brief_goes_once_then_as_a_pointer_and_again_to_a_new_reader():
     sent = send(first, record)
     assert first == stored                                   # storage untouched
     assert sent["evidence"]["hierarchy"]["children"] == HIERARCHY["children"]
-    assert sent["question"].startswith("CD45")               # the prefix is in biology
+    assert sent["question"] == stored["question"]
     assert "budget" not in sent and "narration" not in sent and "_sheet_rows" not in sent
     later = send(_packet("pk_0002", hierarchy={**HIERARCHY, "not_gated_yet": []}), record)
     assert later["evidence"]["hierarchy"]["children"] == {"as_in": "pk_0001"}
@@ -80,24 +80,20 @@ def test_full_sends_the_stored_packet_and_short_values_are_never_pointers():
     send(one, record)
     again = send(_packet("pk_0002", hierarchy=dict(HIERARCHY)), record)
     assert again["evidence"]["hierarchy"] == HIERARCHY
-    assert again["question"].startswith("[skin")
     delta = _record()
     for pid in ("pk_0001", "pk_0002"):
         out = send(_packet(pid, marker="CD45", round=1), delta)
     assert out["evidence"]["marker"] == "CD45" and out["evidence"]["round"] == 1
 
 
-def test_trims_drop_score_components_and_passing_checks():
+def test_trims_drop_passing_checks():
     record = _record()
-    packet = _packet("pk_0001", candidates=[{"id": "c1", "low": 7.2, "score": 0.7,
-                                             "components": {"distribution": 1.0}}],
-                     checks=[{"name": "a", "ok": True}, {"name": "b", "ok": False},
-                             {"name": "prior_fraction", "value": 0.1}])
+    packet = _packet("pk_0001", checks=[{"name": "a", "ok": True}, {"name": "b", "ok": False},
+                                        {"name": "prior_fraction", "value": 0.1}])
     sent = send(packet, record, full=True)
-    assert sent["evidence"]["candidates"] == [{"id": "c1", "low": 7.2, "score": 0.7}]
     assert [c["name"] for c in sent["evidence"]["checks"]] == ["b", "prior_fraction"]
     assert sent["evidence"]["checks_passed"] == 1
-    assert packet["evidence"]["candidates"][0]["components"]      # stored kept
+    assert len(packet["evidence"]["checks"]) == 3                 # stored kept
 
 
 def test_a_sent_sheet_row_is_registered_for_its_reader():

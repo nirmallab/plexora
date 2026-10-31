@@ -643,3 +643,20 @@ def provenance_long_of(ds, project=None) -> list:
                          **{k: row.get(k, "") for k in CLASSIFIER_COLUMNS}})
     return rows
 
+
+def source_extras(ds) -> dict:
+    """What a save to the source file writes beside the latest gates:
+    `provenance` -- a row per gated marker, who set it, how and when
+    (`uns[<table>_provenance]`) -- and `versions` (`model.versions_payload`).
+    Here, beside the rows it is made of, so gating's model imports nothing
+    from autogate (`tests/test_licensing_hardening.py::KNOWN_COUPLINGS`)."""
+    from plexora.agent import cell_exclusions
+
+    try:
+        qc_fp = cell_exclusions.fingerprint(cell_exclusions.call_record(ds))
+    except Exception:  # no QC to read: the provenance goes without it
+        qc_fp = ""
+    rows = [{**row, "call_mode": cell_exclusions.current_call_mode(), "qc_fingerprint": qc_fp}
+            for row in provenance_long_of(ds)]
+    return {"provenance": rows, "versions": model.versions_payload(ds.name)}
+
