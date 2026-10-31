@@ -315,6 +315,36 @@ def test_optional_requirements_never_block_but_are_still_offered():
     assert requires.optional_missing_from(FULL) == []
 
 
+def test_an_optional_x_and_y_are_the_coordinate_question_on_anndata():
+    """Cell Explorer's and QC's X and Y are optional, and an optional pair was
+    left as two column selects -- which list `obs`, so a file whose positions
+    are an `obsm` array (`spatial`, the usual place) could not answer them.
+    They are the one coordinate question a required pair already becomes."""
+    requires = Requires(table=True, roles=("cell_id",),
+                        optional=("segmentation", "role:x", "role:y"))
+
+    unplaced = project(dataset=anndata_spec("/data/cells.h5ad", markers=["CD3"],
+                                            obsm=[{"name": "spatial", "shape": [10, 2]}]))
+    assert requires.satisfied_by(unplaced)
+    assert [r.key for r in requires.optional_missing_from(unplaced)] == [
+        "segmentation", "coordinates"]
+    # The panel's own button names the roles, as the plugin does.
+    asked = requires.requested_from(unplaced, ["segmentation", "role:x", "role:y"])
+    assert [(r.key, r.kind) for r in asked] == [
+        ("segmentation", "segmentation"), ("coordinates", "coordinates")]
+
+    placed = project(dataset=anndata_spec(
+        "/data/cells.h5ad", markers=["CD3"],
+        coordinates={"source": "obsm", "obsm_key": "spatial"}))
+    assert "coordinates" not in [r.key for r in requires.optional_missing_from(placed)]
+    assert requires.requested_from(placed, ["role:x", "role:y"]) == []
+
+    # A CSV's X and Y are still two of its own columns.
+    flat = project(dataset=csv_spec("/data/cells.csv", x=None, y=None))
+    assert [r.key for r in requires.requested_from(flat, ["role:x", "role:y"])] == [
+        "role:x", "role:y"]
+
+
 def test_a_requirement_naming_an_unknown_role_is_rejected_at_declaration():
     """A typo in a plugin's Requires would otherwise become a requirement no
     answer can ever satisfy, and the tool would never open."""

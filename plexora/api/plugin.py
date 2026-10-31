@@ -116,6 +116,27 @@ def _depth_keys(project, wanted) -> list[str]:
     return ["role:z"] if int(getattr(project.image, "depth", 1) or 1) > 1 else []
 
 
+def _asked_as(project, keys) -> list[str]:
+    """`keys` with any `role:x`/`role:y` in it put the way this project can
+    answer them -- `_coordinate_keys`, at the place the first one stood.
+
+    For keys a plugin names outside `roles`: its optional inputs, and the ones
+    its panel asks for mid-session. Left literal, those were two column selects
+    over `obs` on an AnnData project, which cannot point at an `obsm` array --
+    the X and Y a user could not give were the ones their file already had.
+    """
+    wanted = [role for role in _COORDINATE_ROLES if f"role:{role}" in keys]
+    asked = []
+    for key in keys:
+        if key in (f"role:{role}" for role in _COORDINATE_ROLES):
+            fresh = _coordinate_keys(project, wanted)
+            wanted = []
+        else:
+            fresh = [key]
+        asked.extend(one for one in fresh if one not in asked)
+    return asked
+
+
 def _layer_matches(layer, wanted: str) -> bool:
     """Whether one layer answers a `Requires.layers` entry.
 
@@ -401,12 +422,13 @@ class Requires:
                        if key not in keys]
 
     def _optional_keys(self, project) -> tuple[str, ...]:
-        """`optional`, with Z beside an optional X and Y on a z-stack -- the
-        same question `_coordinate_keys` adds beside a required pair."""
-        wanted = [role for role in _COORDINATE_ROLES if f"role:{role}" in self.optional]
-        extra = tuple(key for key in _depth_keys(project, wanted)
-                      if key not in self.optional and key.split(":", 1)[1] not in self.roles)
-        return tuple(self.optional) + extra
+        """`optional`, with an optional X and Y asked the way a required pair
+        is (`_asked_as`): one `coordinates` question on AnnData and
+        SpatialData, Z beside them on a z-stack's table. What that adds is
+        dropped where the plugin already requires it."""
+        required = self._column_keys(project)
+        return tuple(key for key in _asked_as(project, self.optional)
+                     if key in self.optional or key not in required)
 
     def declared_keys(self, project) -> list[str]:
         """Every input this plugin names, required and optional, in ask order.
@@ -499,7 +521,7 @@ class Requires:
         declared = set(self.declared_keys(project))
         optional = self._optional_keys(project)
         return [requirement(key, optional=key in optional)
-                for key in keys
+                for key in _asked_as(project, list(keys))
                 if key in declared and not _answered(project, key)]
 
     def satisfied_by(self, project) -> bool:

@@ -84,12 +84,13 @@ PLUGIN = Plugin(
     # y)", so all three are offered and the panel checks for itself that at
     # least one arrived (see `intro`, and the empty state in panel.html).
     #
-    # `role:x`/`role:y` rather than `coordinates`: the coordinate question is a
-    # CSV one. On AnnData and SpatialData x/y are answered at import, when the
-    # adapter is told where to read them from, and asking again would put an
-    # obsm picker in front of a user whose coordinates are already resolved.
-    # Core translates between the two forms per format -- see plugin.py's
-    # _coordinate_keys.
+    # `role:x`/`role:y` rather than `coordinates`: a plugin names the roles it
+    # reads, and core decides which question answers them. On a CSV that is
+    # two column selects; on AnnData and SpatialData it is the one coordinate
+    # question, which can name an obsm array as well as two obs columns, and
+    # which coordinates already resolved at import count as answering. See
+    # plugin.py's _asked_as -- the panel's own "add what's missing" button
+    # names the same two roles and goes through it too.
     requires=Requires(
         table=True,
         roles=("cell_id",),
