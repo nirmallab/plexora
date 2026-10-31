@@ -47,11 +47,24 @@ def client():
 
 
 @pytest.fixture(autouse=True)
-def _no_sessions_left_running():
-    """The registry is module state, and a leaked session outlives its test."""
+def _no_sessions_left_running(monkeypatch):
+    """The registry is module state, and a leaked session outlives its test.
+
+    Each session is stopped and its thread waited for while this test's fakes
+    are still in place -- hence `monkeypatch`, whose undo runs after this. A
+    thread left running would otherwise reach the next test's fakes (an ssh
+    it never asked for in that test's record, a line in its log) or, once
+    they are undone, the real ssh and gcloud. A stop that lands mid-way
+    through establishment can miss processes spawned after it, so a thread
+    still running is stopped again until it ends."""
     yield
-    for name in list(remote_sessions.all_sessions()):
+    for name, session in list(remote_sessions.all_sessions().items()):
         remote_sessions.forget(name)
+        thread = getattr(session, "_thread", None)
+        deadline = time.time() + 10
+        while thread is not None and thread.is_alive() and time.time() < deadline:
+            thread.join(timeout=0.2)
+            session.stop()
 
 
 def a_remote(name="hpc", **kwargs):
@@ -983,7 +996,13 @@ def test_ssh_is_spawned_with_the_relay_wired_in_and_no_terminal(ssh):
 
 
 def test_a_prompt_travels_to_the_page_and_the_answer_back_to_ssh(ssh):
-    session = remote_sessions.start(a_remote(), askpass_url="http://x/_askpass")
+    # Held in the queue for a job that never starts: a connection that went on
+    # to connect meanwhile would close the prompt under the test (connecting
+    # forgets every secret), in whatever order its thread and this one ran.
+    session = remote_sessions.start(a_remote(srun="-p interactive"),
+                                    askpass_url="http://x/_askpass")
+    assert wait_for(
+        lambda: session.state == remote_sessions.STATE_WAITING_FOR_JOB)
     prompt = session.open_prompt("Password:")
 
     assert session.state == remote_sessions.STATE_AUTHENTICATING
@@ -1632,16 +1651,20 @@ def test_the_status_route_serves_a_short_tail_by_default_and_more_on_request(
     remote_store.save(a_remote())
     client.post("/settings/remotes/hpc/connect")
     session = remote_sessions.get("hpc")
+    # Connected first: until then the connection writes its own lines (the
+    # ssh command it ran), and they would land among these.
+    assert wait_for(lambda: session.state == remote_sessions.STATE_CONNECTED)
+    before = len(session.status(remote_sessions.LOG_LINES)["log"])
     for number in range(60):
         session._echo(f"line {number}")
 
     short = client.get("/settings/remotes/hpc/status").get_json()
-    assert len(short["log"]) == 25
+    assert short["log"] == [f"line {number}" for number in range(35, 60)]
 
     deep = client.get("/settings/remotes/hpc/status",
                       query_string={"log": 200}).get_json()
-    assert len(deep["log"]) == 60
-    assert deep["log"][0] == "line 0"
+    assert len(deep["log"]) == before + 60
+    assert deep["log"][before:] == [f"line {number}" for number in range(60)]
 
 
 def test_the_log_length_is_clamped_and_a_nonsense_value_is_ignored(
@@ -1649,6 +1672,7 @@ def test_the_log_length_is_clamped_and_a_nonsense_value_is_ignored(
     remote_store.save(a_remote())
     client.post("/settings/remotes/hpc/connect")
     session = remote_sessions.get("hpc")
+    assert wait_for(lambda: session.state == remote_sessions.STATE_CONNECTED)
     for number in range(400):
         session._echo(f"line {number}")
 
@@ -1750,6 +1774,34 @@ def test_the_vm_is_prepared_before_anything_is_ssh_ed_to(ssh, compute,
     assert any("Reusing the VM plexora-gcp" in line
                for line in session.status(200)["log"])
     session.stop()
+
+
+def test_a_disconnect_while_the_vm_is_readied_is_honoured(ssh, compute, plexora_data_root,
+                                                         monkeypatch):
+    """Disconnect pressed while the machine was still being readied found no
+    connection to stop -- there was none yet -- and the attempt went on to
+    ssh and to Connected regardless. It now ends where it was told to."""
+    from plexora import gcloud
+
+    preparing, ready = threading.Event(), threading.Event()
+
+    def ensure(cfg, echo=print):
+        preparing.set()
+        ready.wait(5)
+        compute.prepared.append(dict(cfg))
+        return "reused"
+
+    monkeypatch.setattr(gcloud, "ensure_instance", ensure)
+    remote_store.save(a_cloud_remote())
+    session = remote_sessions.start(remote_store.get("gcp"), askpass_url=None)
+    assert preparing.wait(5)
+    session.stop()
+    ready.set()
+    session._thread.join(5)
+
+    assert not session._thread.is_alive()
+    assert ssh.spawned == []
+    assert session.state == remote_sessions.STATE_EXITED
 
 
 def test_preparing_the_machine_is_an_opening_state_with_a_sentence():
@@ -2102,8 +2154,10 @@ def test_an_attempt_that_hung_does_not_keep_a_vm_set_to_delete(
     ssh.queue.append(FakeProcess(["Verifying data access…"], block=True))
     stuck = remote_sessions.start(remote_store.get("gcp"), askpass_url=None,
                                   kind=remote_sessions.KIND_NODE)
+    # Until the hung attempt has taken its ssh, the next one queued could be
+    # handed to it instead, and the session below would be the one that hangs.
     assert wait_for(lambda: stuck.state in remote_sessions.OPENING_STATES
-                    and stuck.session is not None)
+                    and stuck.session is not None and not ssh.queue)
     ssh.queue.append(FakeProcess(["PLEXORA_MOUNT_DONE"], block=True))
     session = remote_sessions.start(remote_store.get("gcp"), askpass_url=None)
     assert wait_for(lambda: session.state == remote_sessions.STATE_CONNECTED)

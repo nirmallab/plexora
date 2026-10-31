@@ -350,11 +350,14 @@ def test_a_threshold_moves_in_steps_never_typed(tmp_path):
     """`adjust` moves a channel's bar one step from its automatic one: stored
     as steps (user_relative), undone back to auto, bounded, never with a
     typed threshold."""
-    from plexora.agent import AgentSession, invoke
+    from plexora.agent import AgentSession, invoke, registry
     from plexora.plugins.qc.server import schemas
 
     _project(tmp_path)
     session = AgentSession()
+    # Its own discovery, as its neighbours do: in a random order it may run
+    # before any of them, or after a test that left only gating registered.
+    registry.discover(["roi", "qc"])
     summary, _ = _run(channel="DNA_2")
     auto = summary["auto_threshold"]
     tighter = _ok(invoke(session, "set_blur_check", {"project": "qcsynth", "channel": "DNA_2",

@@ -148,11 +148,12 @@ def test_the_probe_catches_a_brightness_that_drifts_from_the_shader(tmp_path):
 
 def test_the_probe_catches_a_missing_contrast_clamp(tmp_path):
     """Without the clamp, values below the window go negative and values above
-    it keep climbing -- the window stops being a window."""
+    it keep climbing -- the window stops being a window. (The linear branch:
+    a channel with no asinh curve.)"""
     mutated = _mutate(
         tmp_path,
-        "const clamped = Math.min(Math.max((value / 255 - low) / span, 0), 1);",
-        "const clamped = (value / 255 - low) / span;",
+        ": Math.min(Math.max((value / 255 - low) / span, 0), 1);",
+        ": (value / 255 - low) / span;",
     )
     returncode, result = _run(mutated)
     assert returncode != 0
