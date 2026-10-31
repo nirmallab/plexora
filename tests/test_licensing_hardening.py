@@ -364,7 +364,8 @@ def test_the_classifier_and_the_experience_record_import_nothing_from_autogate()
 #: a step in docs/LICENSING.md's "splitting out plexora-ai".
 KNOWN_COUPLINGS = {
     "plexora/plugins/gating/capabilities.py",      # capabilities() aggregates the AI capabilities
-    "plexora/plugins/gating/server/routes.py",     # agent-session control and events routes
+    "plexora/plugins/gating/server/routes.py",     # agent-session control and events routes,
+                                                   # and the save's provenance
     "plexora/plugins/gating/server/tableops.py",   # registers autogate's node operations
     "plexora/mcp/resources_gating.py",             # gating session resources
     "plexora/ai/skills.py",                        # skills read autogate's schemas

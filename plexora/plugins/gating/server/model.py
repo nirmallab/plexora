@@ -810,22 +810,6 @@ def versions_payload(datasource_name) -> list:
     return out
 
 
-def source_extras(ds) -> dict:
-    """What a save to the source file writes beside the latest gates:
-    `provenance` -- a row per gated marker, who set it, how and when
-    (`uns[<table>_provenance]`) -- and `versions` (`versions_payload`)."""
-    from plexora.agent import cell_exclusions
-    from plexora.plugins.gating.server.autogate import report
-
-    try:
-        qc_fp = cell_exclusions.fingerprint(cell_exclusions.call_record(ds))
-    except Exception:  # no QC to read: the provenance goes without it
-        qc_fp = ""
-    rows = [{**row, "call_mode": cell_exclusions.current_call_mode(), "qc_fingerprint": qc_fp}
-            for row in report.provenance_long_of(ds)]
-    return {"provenance": rows, "versions": versions_payload(ds.name)}
-
-
 def set_gate(ds, marker, low, high, *, expected_revision=None, allow_protected=False,
              empty=False):
     """Store one marker's range; returns (before, after, new_revision).

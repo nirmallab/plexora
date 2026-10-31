@@ -710,6 +710,10 @@ plexora/ai/bench.py, bench_data.py                `plexora ai bench gating`
   (`Engine._review_gate`) -- with method `needs_review` and confidence
   `manual_review`. Only a gate the user changed in the viewer mid-session is
   not overwritten. Failed and all-negative markers keep their empty gate.
+  Closing a session (or committing a propose-mode one) does the same for every
+  marker not yet settled (`capabilities_session._close_unsettled`); a Stop,
+  which may be for values that moved, and an auto-contrast session write
+  nothing.
 - **No marker is closed without a look.** Empty, failed or review
   (`engine.JUDGED_STATES`) needs a packet that showed the marker; numbers
   only raise a suspicion a look settles. The lineage screen before the first

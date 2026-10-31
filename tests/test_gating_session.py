@@ -947,10 +947,38 @@ def test_stop_from_the_viewer_halts_the_session(tmp_path):
     again = ok(invoke(session, "gating_answer", {"session_id": sid, "packet_id": "pk_0001",
                                                  "answer": {"kind": "t2_confirm"}}))
     assert again["state"] == "stopped"
+
+    def gates():
+        return {m: (u["state"], u.get("final")) for m, u in units(session, sid).items()}
+    left = gates()
     finished = ok(invoke(session, "gating_session_finish", {"session_id": sid}))
     assert finished["action"] == "cancel"
     assert finished["summary"]["units_total"] == 2
     ok(invoke(session, "gating_session_finish", {"session_id": sid}))
+    # A Stop closes and writes nothing for the markers it left open.
+    assert gates() == left
+
+
+def test_closing_a_session_gates_every_marker_it_had_not_settled(tmp_path):
+    """No marker is left ungated by a close: one still waiting on a look is
+    written at the best gate it reached, marked for review."""
+    from plexora.plugins.gating.server import model
+
+    make_gating_project(tmp_path, grid=32, size=1280, markers=HARD)
+    session = AgentSession()
+    sid = start(session, markers=["CD3", "CD4"])["session_id"]
+    waiting = [m for m, u in units(session, sid).items()
+               if u["state"] not in schemas.TERMINAL_STATES]
+    assert waiting
+    ok(invoke(session, "gating_session_finish", {"session_id": sid, "action": "close"}))
+    after = units(session, sid)
+    ds = session.data("gsynth")
+    for marker in waiting:
+        unit = after[marker]
+        assert unit["state"] == "manual_review_recommended", unit
+        assert unit["confidence"] == "manual_review" and "closed before" in unit["reason"]
+        assert model.get_gate(ds, marker)["low"] == pytest.approx(unit["final"])
+    assert not unlooked_closes(sid)
 
 
 def _unconfirm_features(name="gsynth"):
@@ -1568,6 +1596,17 @@ def test_auto_contrast_runs_on_its_own_and_gates_nothing(tmp_path):
     assert "display_setup" not in [p["kind"] for p in seen]
     status = ok(invoke(session, "gating_session_status", {"session_id": gating}))
     assert status["display"]["status"] == "applied"
+
+
+def test_closing_an_auto_contrast_session_early_gates_nothing(tmp_path):
+    from plexora.plugins.gating.server import model
+
+    make_gating_project(tmp_path)
+    session = AgentSession()
+    sid = _contrast(session, markers=["CD3", "CD8"])["session_id"]
+    ok(invoke(session, "gating_session_finish", {"session_id": sid, "action": "close"}))
+    ds = session.data("gsynth")
+    assert not [r for r in model.gate_rows(ds) if r.get("channel") in ("CD3", "CD8")]
 
 
 def test_auto_contrast_skips_what_is_set_unless_redone(tmp_path):

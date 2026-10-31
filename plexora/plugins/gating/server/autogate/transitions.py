@@ -748,9 +748,9 @@ def apply_regression(engine, packet, answer):
             and not engine.options["whole_image_moves"]:
         # The rows of a look at candidates judged the very cells a move would
         # flip; one glance at the whole image does not overrule them. The
-        # gate stays, the failed checks unconfirmed (low confidence), and
-        # the disagreement is on the record -- not a review: a review gate is
-        # no partner's evidence, and the rows had settled it.
+        # gate stays where the rows put it and the disagreement is on the
+        # record; its failed checks unconfirmed, `finalize` writes it there
+        # marked for review (a failed check never accepts).
         unit["whole_image_disagreed"] = answer.verdict
         unit["look_flags"] = sorted(set(unit.get("look_flags") or [])
                                     | {"whole_image_disagreed"})

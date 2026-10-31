@@ -638,6 +638,25 @@ def hard(tmp_path):
     return make_gating_project(tmp_path, grid=32, size=1280, markers=HARD)
 
 
+def _assert_every_marker_gated(final):
+    """No marker ends without a gate: accepted, or written at the best gate its
+    looks reached and marked for review. CD4 is hard on purpose (its
+    populations overlap): the panel's looks move its gate far from the scored
+    start (219 to 130, against a best split near 101), its own `flip_share`
+    check fails on that move, and a gate failing its own checks goes to review
+    (`Engine.finalize`), written all the same."""
+    from plexora.plugins.gating.server import model
+
+    ds = AgentSession().data("gsynth")
+    for marker, unit in final.items():
+        assert unit.get("final") is not None, unit
+        assert model.get_gate(ds, marker)["low"] == pytest.approx(unit["final"]), unit
+        if unit["state"] == "manual_review_recommended":
+            assert marker == "CD4" and unit["confidence"] == "manual_review", unit
+        else:
+            assert unit["state"] in ("accepted", "accepted_low_confidence"), unit
+
+
 @pytest.mark.pro
 def test_the_harness_gates_a_project_with_no_external_agent(hard, tmp_path):
     with FakeGateway(oracle_brain(hard)) as gateway:
@@ -648,8 +667,7 @@ def test_the_harness_gates_a_project_with_no_external_agent(hard, tmp_path):
     assert summary["status"] == "done", summary
     final = _final_units(summary["session_id"])
     assert set(final) == set(HARD)
-    for marker in HARD:
-        assert final[marker]["state"] in ("accepted", "accepted_low_confidence"), final[marker]
+    _assert_every_marker_gated(final)
     kinds = {json.loads(c["body"]["request"]["messages"][-1]["content"][-1]["text"])["kind"]
              for c in gateway.calls}
     assert "t1_strip" in kinds and len(kinds) >= 2, kinds
@@ -734,7 +752,8 @@ def test_running_out_of_credit_pauses_the_session_and_it_resumes(hard, tmp_path)
                            gateway=client(gateway), trace=trace).run()
     assert second["status"] == "done", second
     final = _final_units(first["session_id"])
-    assert all(final[m]["state"] in ("accepted", "accepted_low_confidence") for m in HARD)
+    assert set(final) == set(HARD)
+    _assert_every_marker_gated(final)
 
 
 @pytest.mark.pro
