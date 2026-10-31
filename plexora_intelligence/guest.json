@@ -1,0 +1,2594 @@
+{
+ "contract": 1,
+ "name": "Plexora",
+ "provider": "plexora",
+ "tools": [
+  {
+   "description": "List the projects (samples) Plexora knows, with what each has: image kind, channel count, segmentation and cell-table status. Read-only.",
+   "descriptor": {
+    "entitlement": null,
+    "execution": "immediate",
+    "id": "plexora:project.list",
+    "input_schema": {
+     "additionalProperties": false,
+     "properties": {
+      "dataset": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "default": null,
+       "description": "Only projects in this dataset (name or id).",
+       "title": "Dataset"
+      },
+      "limit": {
+       "default": 50,
+       "description": "At most this many.",
+       "maximum": 200,
+       "minimum": 1,
+       "title": "Limit",
+       "type": "integer"
+      },
+      "query": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "default": null,
+       "description": "Only projects whose name or display title contains this text.",
+       "title": "Query"
+      }
+     },
+     "title": "ListProjectsInput",
+     "type": "object"
+    },
+    "needs": [],
+    "permission": "read",
+    "produces": [],
+    "provider": "plexora",
+    "purpose": "List the projects (samples) Plexora knows, with what each has: image kind, channel count, segmentation and cell-table status.",
+    "roles": [],
+    "tags": [
+     "project",
+     "projects",
+     "sample",
+     "samples",
+     "dataset",
+     "list",
+     "what",
+     "have",
+     "data"
+    ],
+    "tool_name": "list_projects",
+    "version": "1",
+    "viewer_required": false
+   }
+  },
+  {
+   "description": "Everything about one project an analysis needs first: image size, channels, pixel size, segmentation, cell table (roles, markers, cell count), layers, and which tools apply or what they still need. Read-only.",
+   "descriptor": {
+    "entitlement": null,
+    "execution": "immediate",
+    "id": "plexora:project.inspect",
+    "input_schema": {
+     "additionalProperties": false,
+     "properties": {
+      "include_table": {
+       "default": true,
+       "description": "Read the cell table for row counts and column facts (loads it into this session).",
+       "title": "Include Table",
+       "type": "boolean"
+      },
+      "project": {
+       "description": "Project name, as `list_projects` returns it.",
+       "title": "Project",
+       "type": "string"
+      }
+     },
+     "required": [
+      "project"
+     ],
+     "title": "InspectInput",
+     "type": "object"
+    },
+    "needs": [
+     "image"
+    ],
+    "permission": "read",
+    "produces": [],
+    "provider": "plexora",
+    "purpose": "Everything about one project an analysis needs first: image size, channels, pixel size, segmentation, cell table (roles, markers, cell count), layers, and which tools apply or what they still need.",
+    "roles": [],
+    "tags": [
+     "project",
+     "inspect",
+     "describe",
+     "triage",
+     "channels",
+     "markers",
+     "summary",
+     "what"
+    ],
+    "tool_name": "inspect_project",
+    "version": "1",
+    "viewer_required": false
+   }
+  },
+  {
+   "description": "The image channels of a project (names, stable keys, order), optionally with each channel's intensity range and auto window. Read-only.",
+   "descriptor": {
+    "entitlement": null,
+    "execution": "immediate",
+    "id": "plexora:image.channels",
+    "input_schema": {
+     "additionalProperties": false,
+     "properties": {
+      "project": {
+       "description": "Project name, as `list_projects` returns it.",
+       "title": "Project",
+       "type": "string"
+      },
+      "with_stats": {
+       "default": false,
+       "description": "Also read each channel's intensity range and auto window (p1/p99.9) from the coarsest level.",
+       "title": "With Stats",
+       "type": "boolean"
+      }
+     },
+     "required": [
+      "project"
+     ],
+     "title": "ChannelsInput",
+     "type": "object"
+    },
+    "needs": [
+     "image"
+    ],
+    "permission": "read",
+    "produces": [],
+    "provider": "plexora",
+    "purpose": "The image channels of a project (names, stable keys, order), optionally with each channel's intensity range and auto window.",
+    "roles": [],
+    "tags": [
+     "channel",
+     "channels",
+     "image",
+     "stain",
+     "marker",
+     "intensity"
+    ],
+    "tool_name": "list_channels",
+    "version": "1",
+    "viewer_required": false
+   }
+  },
+  {
+   "description": "Which cell-table columns are markers (gateable intensities), which are metadata, which columns fill the cell-id/x/y roles, and which markers have no image channel to look at. Read-only.",
+   "descriptor": {
+    "entitlement": null,
+    "execution": "immediate",
+    "id": "plexora:table.markers",
+    "input_schema": {
+     "additionalProperties": false,
+     "properties": {
+      "project": {
+       "description": "Project name, as `list_projects` returns it.",
+       "title": "Project",
+       "type": "string"
+      }
+     },
+     "required": [
+      "project"
+     ],
+     "title": "ProjectInput",
+     "type": "object"
+    },
+    "needs": [
+     "image",
+     "table"
+    ],
+    "permission": "read",
+    "produces": [],
+    "provider": "plexora",
+    "purpose": "Which cell-table columns are markers (gateable intensities), which are metadata, which columns fill the cell-id/x/y roles, and which markers have no image channel to look at.",
+    "roles": [],
+    "tags": [
+     "marker",
+     "markers",
+     "columns",
+     "table",
+     "features",
+     "phenotype"
+    ],
+    "tool_name": "list_markers",
+    "version": "1",
+    "viewer_required": false
+   }
+  },
+  {
+   "description": "One marker's distribution across the cells -- the QC-passed ones where QC was run (qc: off for every cell): count, mean, sd, quartiles, min/max and a density histogram. Read-only.",
+   "descriptor": {
+    "entitlement": null,
+    "execution": "immediate",
+    "id": "plexora:feature.summarize",
+    "input_schema": {
+     "additionalProperties": false,
+     "properties": {
+      "bins": {
+       "default": 50,
+       "description": "Histogram bins (merged from 50).",
+       "maximum": 50,
+       "minimum": 5,
+       "title": "Bins",
+       "type": "integer"
+      },
+      "marker": {
+       "description": "A marker column, as `list_markers` names it.",
+       "title": "Marker",
+       "type": "string"
+      },
+      "project": {
+       "description": "Project name, as `list_projects` returns it.",
+       "title": "Project",
+       "type": "string"
+      },
+      "qc": {
+       "anyOf": [
+        {
+         "enum": [
+          "strict",
+          "exclude",
+          "off"
+         ],
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "default": null,
+       "description": "Which QC failures to leave out of this estimate, sample or picture (the gate itself always applies to every cell). strict (the default): cells QC called exclude or warn, and for this marker the cells QC flagged it unreliable in; exclude: warn calls kept; off: QC ignored -- only when the user asks, or QC is suspected wrong. Inside a gating session the session's own setting applies. No effect where QC was never run.",
+       "title": "Qc"
+      }
+     },
+     "required": [
+      "project",
+      "marker"
+     ],
+     "title": "DistributionInput",
+     "type": "object"
+    },
+    "needs": [
+     "image",
+     "table"
+    ],
+    "permission": "read",
+    "produces": [],
+    "provider": "plexora",
+    "purpose": "One marker's distribution across the cells -- the QC-passed ones where QC was run (qc: off for every cell): count, mean, sd, quartiles, min/max and a density histogram.",
+    "roles": [],
+    "tags": [
+     "distribution",
+     "histogram",
+     "marker",
+     "intensity",
+     "summary",
+     "qc"
+    ],
+    "tool_name": "get_marker_distribution",
+    "version": "1",
+    "viewer_required": false
+   }
+  },
+  {
+   "description": "The image's nuclear (DNA) channels in channel order -- DAPI, DNA, Hoechst, nuclear stains, with any cycle number, prefix or suffix -- under the Registration Check's rule, or a rule to preview. Read-only.",
+   "descriptor": {
+    "entitlement": null,
+    "execution": "immediate",
+    "id": "plexora:qc.registration_channels",
+    "input_schema": {
+     "$defs": {
+      "Rule": {
+       "additionalProperties": false,
+       "properties": {
+        "channels": {
+         "anyOf": [
+          {
+           "items": {
+            "type": "string"
+           },
+           "maxItems": 200,
+           "type": "array"
+          },
+          {
+           "type": "null"
+          }
+         ],
+         "default": null,
+         "description": "manual: exactly these channels are the nuclear candidates.",
+         "title": "Channels"
+        },
+        "mode": {
+         "default": "auto",
+         "enum": [
+          "auto",
+          "manual"
+         ],
+         "title": "Mode",
+         "type": "string"
+        },
+        "pattern": {
+         "anyOf": [
+          {
+           "maxLength": 200,
+           "type": "string"
+          },
+          {
+           "type": "null"
+          }
+         ],
+         "default": null,
+         "description": "manual: channels whose name matches this (case-insensitive) regular expression.",
+         "title": "Pattern"
+        }
+       },
+       "title": "Rule",
+       "type": "object"
+      }
+     },
+     "additionalProperties": false,
+     "properties": {
+      "project": {
+       "description": "Project name, as `list_projects` returns it.",
+       "title": "Project",
+       "type": "string"
+      },
+      "rule": {
+       "anyOf": [
+        {
+         "$ref": "#/$defs/Rule"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "default": null,
+       "description": "Preview a rule without storing it."
+      }
+     },
+     "required": [
+      "project"
+     ],
+     "title": "DetectInput",
+     "type": "object"
+    },
+    "needs": [
+     "image"
+    ],
+    "permission": "read",
+    "produces": [],
+    "provider": "plexora",
+    "purpose": "The image's nuclear (DNA) channels in channel order -- DAPI, DNA, Hoechst, nuclear stains, with any cycle number, prefix or suffix -- under the Registration Check's rule, or a rule to preview.",
+    "roles": [],
+    "tags": [
+     "qc",
+     "registration",
+     "alignment",
+     "cycles",
+     "dna",
+     "nuclear",
+     "flicker"
+    ],
+    "tool_name": "detect_nuclear_channels",
+    "version": "1",
+    "viewer_required": false
+   }
+  },
+  {
+   "description": "How many cells (by centroid) fall inside a region, and which -- counted only; nothing is written onto the cells. Read-only.",
+   "descriptor": {
+    "entitlement": null,
+    "execution": "immediate",
+    "id": "plexora:roi.cells",
+    "input_schema": {
+     "additionalProperties": false,
+     "properties": {
+      "max_ids": {
+       "default": 200,
+       "maximum": 1000,
+       "minimum": 0,
+       "title": "Max Ids",
+       "type": "integer"
+      },
+      "project": {
+       "description": "Project name, as `list_projects` returns it.",
+       "title": "Project",
+       "type": "string"
+      },
+      "qc": {
+       "anyOf": [
+        {
+         "enum": [
+          "strict",
+          "exclude",
+          "off"
+         ],
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "default": null,
+       "description": "Which QC failures to leave out of this estimate, sample or picture (the gate itself always applies to every cell). strict (the default): cells QC called exclude or warn, and for this marker the cells QC flagged it unreliable in; exclude: warn calls kept; off: QC ignored -- only when the user asks, or QC is suspected wrong. Inside a gating session the session's own setting applies. No effect where QC was never run.",
+       "title": "Qc"
+      },
+      "roi_id": {
+       "description": "The region's id, from `list_rois`.",
+       "title": "Roi Id",
+       "type": "string"
+      }
+     },
+     "required": [
+      "project",
+      "roi_id"
+     ],
+     "title": "CellsInput",
+     "type": "object"
+    },
+    "needs": [
+     "image",
+     "table"
+    ],
+    "permission": "read",
+    "produces": [],
+    "provider": "plexora",
+    "purpose": "How many cells (by centroid) fall inside a region, and which -- counted only; nothing is written onto the cells.",
+    "roles": [
+     "spatial.region"
+    ],
+    "tags": [
+     "roi",
+     "region",
+     "regions",
+     "annotation",
+     "annotate",
+     "polygon",
+     "area"
+    ],
+    "tool_name": "count_cells_in_roi",
+    "version": "1",
+    "viewer_required": false
+   }
+  },
+  {
+   "description": "One marker's stored gate (lower/upper bound, whether it was ever narrowed from the full range) and how many cells it calls positive. Read-only.",
+   "descriptor": {
+    "entitlement": null,
+    "execution": "immediate",
+    "id": "plexora:gating.get",
+    "input_schema": {
+     "additionalProperties": false,
+     "properties": {
+      "marker": {
+       "description": "A marker column, as `list_markers` names it.",
+       "title": "Marker",
+       "type": "string"
+      },
+      "project": {
+       "description": "Project name, as `list_projects` returns it.",
+       "title": "Project",
+       "type": "string"
+      },
+      "qc": {
+       "anyOf": [
+        {
+         "enum": [
+          "strict",
+          "exclude",
+          "off"
+         ],
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "default": null,
+       "description": "Which QC failures to leave out of this estimate, sample or picture (the gate itself always applies to every cell). strict (the default): cells QC called exclude or warn, and for this marker the cells QC flagged it unreliable in; exclude: warn calls kept; off: QC ignored -- only when the user asks, or QC is suspected wrong. Inside a gating session the session's own setting applies. No effect where QC was never run.",
+       "title": "Qc"
+      }
+     },
+     "required": [
+      "project",
+      "marker"
+     ],
+     "title": "MarkerInput",
+     "type": "object"
+    },
+    "needs": [
+     "image",
+     "table",
+     "human"
+    ],
+    "permission": "read",
+    "produces": [],
+    "provider": "plexora",
+    "purpose": "One marker's stored gate (lower/upper bound, whether it was ever narrowed from the full range) and how many cells it calls positive.",
+    "roles": [
+     "gate.manual"
+    ],
+    "tags": [
+     "gate",
+     "gating",
+     "threshold",
+     "positive",
+     "negative",
+     "marker",
+     "cutoff"
+    ],
+    "tool_name": "get_gate",
+    "version": "1",
+    "viewer_required": false
+   }
+  },
+  {
+   "description": "Compute (but do not store) the automatic gate for a marker from a 3-component mixture fit, with the positive count it would give. Read-only.",
+   "descriptor": {
+    "entitlement": null,
+    "execution": "immediate",
+    "id": "plexora:gating.auto",
+    "input_schema": {
+     "additionalProperties": false,
+     "properties": {
+      "marker": {
+       "description": "A marker column, as `list_markers` names it.",
+       "title": "Marker",
+       "type": "string"
+      },
+      "project": {
+       "description": "Project name, as `list_projects` returns it.",
+       "title": "Project",
+       "type": "string"
+      },
+      "qc": {
+       "anyOf": [
+        {
+         "enum": [
+          "strict",
+          "exclude",
+          "off"
+         ],
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "default": null,
+       "description": "Which QC failures to leave out of this estimate, sample or picture (the gate itself always applies to every cell). strict (the default): cells QC called exclude or warn, and for this marker the cells QC flagged it unreliable in; exclude: warn calls kept; off: QC ignored -- only when the user asks, or QC is suspected wrong. Inside a gating session the session's own setting applies. No effect where QC was never run.",
+       "title": "Qc"
+      }
+     },
+     "required": [
+      "project",
+      "marker"
+     ],
+     "title": "MarkerInput",
+     "type": "object"
+    },
+    "needs": [
+     "image",
+     "table"
+    ],
+    "permission": "read",
+    "produces": [
+     "gates"
+    ],
+    "provider": "plexora",
+    "purpose": "Compute (but do not store) the automatic gate for a marker from a 3-component mixture fit, with the positive count it would give.",
+    "roles": [
+     "gate.auto"
+    ],
+    "tags": [
+     "gate",
+     "gating",
+     "threshold",
+     "positive",
+     "negative",
+     "marker",
+     "cutoff",
+     "auto",
+     "automatic",
+     "suggest"
+    ],
+    "tool_name": "suggest_auto_gate",
+    "version": "1",
+    "viewer_required": false
+   }
+  },
+  {
+   "description": "A marker's histogram with the fitted background and positive population curves and the gate the fit implies. Read-only.",
+   "descriptor": {
+    "entitlement": null,
+    "execution": "immediate",
+    "id": "plexora:gating.distribution",
+    "input_schema": {
+     "additionalProperties": false,
+     "properties": {
+      "marker": {
+       "description": "A marker column, as `list_markers` names it.",
+       "title": "Marker",
+       "type": "string"
+      },
+      "project": {
+       "description": "Project name, as `list_projects` returns it.",
+       "title": "Project",
+       "type": "string"
+      },
+      "qc": {
+       "anyOf": [
+        {
+         "enum": [
+          "strict",
+          "exclude",
+          "off"
+         ],
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "default": null,
+       "description": "Which QC failures to leave out of this estimate, sample or picture (the gate itself always applies to every cell). strict (the default): cells QC called exclude or warn, and for this marker the cells QC flagged it unreliable in; exclude: warn calls kept; off: QC ignored -- only when the user asks, or QC is suspected wrong. Inside a gating session the session's own setting applies. No effect where QC was never run.",
+       "title": "Qc"
+      }
+     },
+     "required": [
+      "project",
+      "marker"
+     ],
+     "title": "MarkerInput",
+     "type": "object"
+    },
+    "needs": [
+     "image",
+     "table"
+    ],
+    "permission": "read",
+    "produces": [],
+    "provider": "plexora",
+    "purpose": "A marker's histogram with the fitted background and positive population curves and the gate the fit implies.",
+    "roles": [],
+    "tags": [
+     "gate",
+     "gating",
+     "threshold",
+     "positive",
+     "negative",
+     "marker",
+     "cutoff",
+     "distribution",
+     "histogram",
+     "gmm"
+    ],
+    "tool_name": "get_gate_distribution",
+    "version": "1",
+    "viewer_required": false
+   }
+  },
+  {
+   "description": "How many cells a range calls positive -- the stored gate, or a candidate one -- without storing anything. Read-only.",
+   "descriptor": {
+    "entitlement": null,
+    "execution": "immediate",
+    "id": "plexora:gating.summary",
+    "input_schema": {
+     "additionalProperties": false,
+     "properties": {
+      "high": {
+       "anyOf": [
+        {
+         "type": "number"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "default": null,
+       "description": "Upper bound (default: the stored one).",
+       "title": "High"
+      },
+      "low": {
+       "anyOf": [
+        {
+         "type": "number"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "default": null,
+       "description": "Lower bound to count with (default: the stored gate).",
+       "title": "Low"
+      },
+      "marker": {
+       "description": "A marker column, as `list_markers` names it.",
+       "title": "Marker",
+       "type": "string"
+      },
+      "project": {
+       "description": "Project name, as `list_projects` returns it.",
+       "title": "Project",
+       "type": "string"
+      },
+      "qc": {
+       "anyOf": [
+        {
+         "enum": [
+          "strict",
+          "exclude",
+          "off"
+         ],
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "default": null,
+       "description": "Which QC failures to leave out of this estimate, sample or picture (the gate itself always applies to every cell). strict (the default): cells QC called exclude or warn, and for this marker the cells QC flagged it unreliable in; exclude: warn calls kept; off: QC ignored -- only when the user asks, or QC is suspected wrong. Inside a gating session the session's own setting applies. No effect where QC was never run.",
+       "title": "Qc"
+      }
+     },
+     "required": [
+      "project",
+      "marker"
+     ],
+     "title": "SummaryInput",
+     "type": "object"
+    },
+    "needs": [
+     "image",
+     "table"
+    ],
+    "permission": "read",
+    "produces": [],
+    "provider": "plexora",
+    "purpose": "How many cells a range calls positive -- the stored gate, or a candidate one -- without storing anything.",
+    "roles": [],
+    "tags": [
+     "gate",
+     "gating",
+     "threshold",
+     "positive",
+     "negative",
+     "marker",
+     "cutoff",
+     "count",
+     "fraction"
+    ],
+    "tool_name": "get_gated_summary",
+    "version": "1",
+    "viewer_required": false
+   }
+  },
+  {
+   "description": "Where every gate came from: method (GMM, AI-refined, transferred, manual), status, confidence, the run and decisions behind it. Read-only.",
+   "descriptor": {
+    "entitlement": null,
+    "execution": "immediate",
+    "id": "plexora:gating.provenance",
+    "input_schema": {
+     "additionalProperties": false,
+     "properties": {
+      "project": {
+       "description": "Project name, as `list_projects` returns it.",
+       "title": "Project",
+       "type": "string"
+      }
+     },
+     "required": [
+      "project"
+     ],
+     "title": "ProjectInput",
+     "type": "object"
+    },
+    "needs": [
+     "image",
+     "table"
+    ],
+    "permission": "read",
+    "produces": [],
+    "provider": "plexora",
+    "purpose": "Where every gate came from: method (GMM, AI-refined, transferred, manual), status, confidence, the run and decisions behind it.",
+    "roles": [],
+    "tags": [
+     "gate",
+     "gating",
+     "threshold",
+     "positive",
+     "negative",
+     "marker",
+     "cutoff",
+     "auto",
+     "automatic",
+     "provenance",
+     "history",
+     "methods"
+    ],
+    "tool_name": "get_gate_provenance",
+    "version": "1",
+    "viewer_required": false
+   }
+  },
+  {
+   "description": "Store a marker's gate in Plexora (the sidebar's own state). Reversible; returns a receipt with the previous gate. Never touches the source file. Changes Plexora's own state (reversible); returns a receipt.",
+   "descriptor": {
+    "entitlement": null,
+    "execution": "immediate",
+    "id": "plexora:gating.set",
+    "input_schema": {
+     "additionalProperties": false,
+     "properties": {
+      "empty": {
+       "default": false,
+       "description": "Allow low == high: a gate no cell passes (how a failed or all-negative marker is recorded).",
+       "title": "Empty",
+       "type": "boolean"
+      },
+      "expected_revision": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "default": null,
+       "description": "The `revision` last read; the write is refused if the gates changed since.",
+       "title": "Expected Revision"
+      },
+      "high": {
+       "anyOf": [
+        {
+         "type": "number"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "default": null,
+       "description": "Upper bound; default keeps the stored one.",
+       "title": "High"
+      },
+      "low": {
+       "description": "The gate: cells above this are positive, in the table's own units.",
+       "title": "Low",
+       "type": "number"
+      },
+      "marker": {
+       "description": "A marker column, as `list_markers` names it.",
+       "title": "Marker",
+       "type": "string"
+      },
+      "project": {
+       "description": "Project name, as `list_projects` returns it.",
+       "title": "Project",
+       "type": "string"
+      },
+      "qc": {
+       "anyOf": [
+        {
+         "enum": [
+          "strict",
+          "exclude",
+          "off"
+         ],
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "default": null,
+       "description": "Which QC failures to leave out of this estimate, sample or picture (the gate itself always applies to every cell). strict (the default): cells QC called exclude or warn, and for this marker the cells QC flagged it unreliable in; exclude: warn calls kept; off: QC ignored -- only when the user asks, or QC is suspected wrong. Inside a gating session the session's own setting applies. No effect where QC was never run.",
+       "title": "Qc"
+      }
+     },
+     "required": [
+      "project",
+      "marker",
+      "low"
+     ],
+     "title": "SetGateInput",
+     "type": "object"
+    },
+    "needs": [
+     "image",
+     "table",
+     "human"
+    ],
+    "permission": "reversible_write",
+    "produces": [
+     "gates"
+    ],
+    "provider": "plexora",
+    "purpose": "Store a marker's gate in Plexora (the sidebar's own state). Reversible; returns a receipt with the previous gate. Never touches the source file.",
+    "roles": [
+     "gate.manual"
+    ],
+    "tags": [
+     "gate",
+     "gating",
+     "threshold",
+     "positive",
+     "negative",
+     "marker",
+     "cutoff",
+     "set"
+    ],
+    "tool_name": "set_gate",
+    "version": "1",
+    "viewer_required": false
+   }
+  },
+  {
+   "description": "Move a marker's gate one qualitative step (small/medium/large, up or down) by a fixed, reproducible rule, and store it. For acting on a visual judgement without choosing a number. Changes Plexora's own state (reversible); returns a receipt.",
+   "descriptor": {
+    "entitlement": null,
+    "execution": "immediate",
+    "id": "plexora:gating.adjust",
+    "input_schema": {
+     "additionalProperties": false,
+     "properties": {
+      "direction": {
+       "description": "`up` when too many cells are called positive (gate too low), `down` when real positives are being missed (gate too high).",
+       "enum": [
+        "up",
+        "down"
+       ],
+       "title": "Direction",
+       "type": "string"
+      },
+      "expected_revision": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "default": null,
+       "title": "Expected Revision"
+      },
+      "magnitude": {
+       "description": "How far: 10%, 25% or 50% of the way to the neighbouring population's centre.",
+       "enum": [
+        "small",
+        "medium",
+        "large"
+       ],
+       "title": "Magnitude",
+       "type": "string"
+      },
+      "marker": {
+       "description": "A marker column, as `list_markers` names it.",
+       "title": "Marker",
+       "type": "string"
+      },
+      "project": {
+       "description": "Project name, as `list_projects` returns it.",
+       "title": "Project",
+       "type": "string"
+      },
+      "qc": {
+       "anyOf": [
+        {
+         "enum": [
+          "strict",
+          "exclude",
+          "off"
+         ],
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "default": null,
+       "description": "Which QC failures to leave out of this estimate, sample or picture (the gate itself always applies to every cell). strict (the default): cells QC called exclude or warn, and for this marker the cells QC flagged it unreliable in; exclude: warn calls kept; off: QC ignored -- only when the user asks, or QC is suspected wrong. Inside a gating session the session's own setting applies. No effect where QC was never run.",
+       "title": "Qc"
+      }
+     },
+     "required": [
+      "project",
+      "marker",
+      "direction",
+      "magnitude"
+     ],
+     "title": "AdjustInput",
+     "type": "object"
+    },
+    "needs": [
+     "image",
+     "table",
+     "human"
+    ],
+    "permission": "reversible_write",
+    "produces": [
+     "gates"
+    ],
+    "provider": "plexora",
+    "purpose": "Move a marker's gate one qualitative step (small/medium/large, up or down) by a fixed, reproducible rule, and store it. For acting on a visual judgement without choosing a number.",
+    "roles": [
+     "gate.manual"
+    ],
+    "tags": [
+     "gate",
+     "gating",
+     "threshold",
+     "positive",
+     "negative",
+     "marker",
+     "cutoff",
+     "adjust",
+     "raise",
+     "lower",
+     "move"
+    ],
+    "tool_name": "adjust_gate",
+    "version": "1",
+    "viewer_required": false
+   }
+  },
+  {
+   "description": "Put every gate of a project (or the named markers) back at its full range and forget how they were made -- before re-running automatic gating from scratch. Locked gates are never touched, approved ones only on request. Open viewers reload the reset gates. Reversible (restore_gates, through undo_operation). Changes Plexora's own state (reversible); returns a receipt.",
+   "descriptor": {
+    "entitlement": null,
+    "execution": "immediate",
+    "id": "plexora:gating.reset",
+    "input_schema": {
+     "additionalProperties": false,
+     "properties": {
+      "clear_provenance": {
+       "default": true,
+       "description": "Also forget how the reset gates were made (the agent's reasons, flags and confidence).",
+       "title": "Clear Provenance",
+       "type": "boolean"
+      },
+      "expected_revision": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "default": null,
+       "description": "The `revision` last read; the reset is refused if the gates changed since.",
+       "title": "Expected Revision"
+      },
+      "include_approved": {
+       "default": false,
+       "description": "Also reset gates the user approved (never locked ones).",
+       "title": "Include Approved",
+       "type": "boolean"
+      },
+      "markers": {
+       "anyOf": [
+        {
+         "items": {
+          "type": "string"
+         },
+         "maxItems": 200,
+         "type": "array"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "default": null,
+       "description": "Default: every marker of the project.",
+       "title": "Markers"
+      },
+      "project": {
+       "description": "Project name, as `list_projects` returns it.",
+       "title": "Project",
+       "type": "string"
+      }
+     },
+     "required": [
+      "project"
+     ],
+     "title": "ResetInput",
+     "type": "object"
+    },
+    "needs": [
+     "image",
+     "table"
+    ],
+    "permission": "reversible_write",
+    "produces": [],
+    "provider": "plexora",
+    "purpose": "Put every gate of a project (or the named markers) back at its full range and forget how they were made -- before re-running automatic gating from scratch. Locked gates are never touched, approved ones only on request. Open viewers reload the reset gates. Reversible (restore_gates, through undo_operation).",
+    "roles": [],
+    "tags": [
+     "gate",
+     "gating",
+     "threshold",
+     "positive",
+     "negative",
+     "marker",
+     "cutoff",
+     "reset",
+     "clear",
+     "remove",
+     "start over"
+    ],
+    "tool_name": "reset_gates",
+    "version": "1",
+    "viewer_required": false
+   }
+  },
+  {
+   "description": "Basic QC on an image nobody has QC'd, without a model: the Artifact Detector (tissue folds -- also ones that come or go between imaging cycles -- tears, debris, saturated pixels) written at its default thresholds as automatic, unreviewed regions, and DNA retention where the image has a DNA channel per cycle and a mask; the cells inside are excluded. A job (job_wait). An image with a QC result already is left alone; the full QC (qc_session_start, or the QC panel) reviews these regions. Changes Plexora's own state (reversible); returns a receipt.",
+   "descriptor": {
+    "entitlement": null,
+    "execution": "job",
+    "id": "plexora:qc.basic_run",
+    "input_schema": {
+     "additionalProperties": false,
+     "properties": {
+      "force": {
+       "default": false,
+       "description": "Run the checks again even when their results for this image are stored.",
+       "title": "Force",
+       "type": "boolean"
+      },
+      "project": {
+       "description": "Project name, as `list_projects` returns it.",
+       "title": "Project",
+       "type": "string"
+      }
+     },
+     "required": [
+      "project"
+     ],
+     "title": "BasicQCInput",
+     "type": "object"
+    },
+    "needs": [
+     "image"
+    ],
+    "permission": "reversible_write",
+    "produces": [],
+    "provider": "plexora",
+    "purpose": "Basic QC on an image nobody has QC'd, without a model: the Artifact Detector (tissue folds -- also ones that come or go between imaging cycles -- tears, debris, saturated pixels) written at its default thresholds as automatic, unreviewed regions, and DNA retention where the image has a DNA channel per cycle and a mask; the cells inside are excluded. A job (job_wait). An image with a QC result already is left alone; the full QC (qc_session_start, or the QC panel) reviews these regions.",
+    "roles": [],
+    "tags": [
+     "qc",
+     "artifacts",
+     "fold",
+     "tear",
+     "debris",
+     "saturation",
+     "foreign-object",
+     "fiber",
+     "clipping"
+    ],
+    "tool_name": "run_basic_qc",
+    "version": "1",
+    "viewer_required": false
+   }
+  },
+  {
+   "description": "Find out-of-focus regions without a model: multi-scale gradient energy (Tenengrad) per tile of the tissue at a fixed analysis resolution, against the image's own sharpest tiles, as a 0-1 Blur Score with an automatic threshold and a whole-image blur warning, for each listed DNA channel (default the first three nuclear ones) or the ones given. A job (job_wait); a channel whose image and parameters are unchanged is reused. Nothing is written to the ROIs. Read-only.",
+   "descriptor": {
+    "entitlement": null,
+    "execution": "job",
+    "id": "plexora:qc.blur_run",
+    "input_schema": {
+     "$defs": {
+      "BlurParams": {
+       "additionalProperties": false,
+       "properties": {
+        "analysis_um_px": {
+         "anyOf": [
+          {
+           "maximum": 4.0,
+           "minimum": 0.2,
+           "type": "number"
+          },
+          {
+           "type": "null"
+          }
+         ],
+         "default": null,
+         "description": "The resolution the image is read at, µm per pixel (default 0.5).",
+         "title": "Analysis Um Px"
+        },
+        "cell_um": {
+         "anyOf": [
+          {
+           "maximum": 200,
+           "minimum": 20,
+           "type": "number"
+          },
+          {
+           "type": "null"
+          }
+         ],
+         "default": null,
+         "description": "A grid cell's side in microns (default 40; each score covers 3 x 3 cells).",
+         "title": "Cell Um"
+        },
+        "reference_fraction": {
+         "anyOf": [
+          {
+           "maximum": 0.5,
+           "minimum": 0.05,
+           "type": "number"
+          },
+          {
+           "type": "null"
+          }
+         ],
+         "default": null,
+         "description": "The share of the sharpest cells that make the in-image sharp reference (default 0.15).",
+         "title": "Reference Fraction"
+        }
+       },
+       "title": "BlurParams",
+       "type": "object"
+      }
+     },
+     "additionalProperties": false,
+     "properties": {
+      "channel": {
+       "anyOf": [
+        {
+         "maxLength": 200,
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "default": null,
+       "description": "A channel of the image (the one to act on). Default: every listed channel for a run, status or write; the first listed for a set. Ignored on brightfield (the darkness plane).",
+       "title": "Channel"
+      },
+      "channels": {
+       "anyOf": [
+        {
+         "items": {
+          "maxLength": 200,
+          "type": "string"
+         },
+         "maxItems": 12,
+         "type": "array"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "default": null,
+       "description": "Run these (and list them). Default: the listed channels -- the ones picked, else the first three nuclear ones.",
+       "title": "Channels"
+      },
+      "force": {
+       "default": false,
+       "description": "Run again even if a result for these inputs is stored.",
+       "title": "Force",
+       "type": "boolean"
+      },
+      "params": {
+       "anyOf": [
+        {
+         "$ref": "#/$defs/BlurParams"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "default": null
+      },
+      "project": {
+       "description": "Project name, as `list_projects` returns it.",
+       "title": "Project",
+       "type": "string"
+      }
+     },
+     "required": [
+      "project"
+     ],
+     "title": "BlurRunInput",
+     "type": "object"
+    },
+    "needs": [
+     "image"
+    ],
+    "permission": "read",
+    "produces": [
+     "qc"
+    ],
+    "provider": "plexora",
+    "purpose": "Find out-of-focus regions without a model: multi-scale gradient energy (Tenengrad) per tile of the tissue at a fixed analysis resolution, against the image's own sharpest tiles, as a 0-1 Blur Score with an automatic threshold and a whole-image blur warning, for each listed DNA channel (default the first three nuclear ones) or the ones given. A job (job_wait); a channel whose image and parameters are unchanged is reused. Nothing is written to the ROIs.",
+    "roles": [
+     "qc.auto"
+    ],
+    "tags": [
+     "qc",
+     "blur",
+     "focus",
+     "out-of-focus",
+     "sharpness",
+     "tenengrad"
+    ],
+    "tool_name": "run_blur_check",
+    "version": "1",
+    "viewer_required": false
+   }
+  },
+  {
+   "description": "Find physical artifacts without a model, across every channel: tissue folds, tears and detached tissue, debris and fibers on the glass round the section, and saturated (clipped) pixels per channel -- coarse to fine, each a snug outline with a 0-1 score, the channels it shows in and the one it shows most. A job (job_wait); reused when the image and parameters are unchanged. Needs a pixel size. Nothing is written to the ROIs. Read-only.",
+   "descriptor": {
+    "entitlement": null,
+    "execution": "job",
+    "id": "plexora:qc.artifacts_run",
+    "input_schema": {
+     "$defs": {
+      "ArtifactParams": {
+       "additionalProperties": false,
+       "properties": {
+        "categories": {
+         "anyOf": [
+          {
+           "items": {
+            "enum": [
+             "fold",
+             "tear",
+             "debris",
+             "saturation"
+            ],
+            "type": "string"
+           },
+           "maxItems": 4,
+           "type": "array"
+          },
+          {
+           "type": "null"
+          }
+         ],
+         "default": null,
+         "description": "The categories to look for (default all four).",
+         "title": "Categories"
+        },
+        "debris_z": {
+         "anyOf": [
+          {
+           "maximum": 50,
+           "minimum": 1,
+           "type": "number"
+          },
+          {
+           "type": "null"
+          }
+         ],
+         "default": null,
+         "description": "Compact debris' least brightness over the glass, robust SDs (default 3).",
+         "title": "Debris Z"
+        },
+        "feather_um": {
+         "anyOf": [
+          {
+           "maximum": 1000,
+           "minimum": 0,
+           "type": "number"
+          },
+          {
+           "type": "null"
+          }
+         ],
+         "default": null,
+         "description": "How far past the tissue edge the search reaches (default 100).",
+         "title": "Feather Um"
+        },
+        "fold_z": {
+         "anyOf": [
+          {
+           "maximum": 20,
+           "minimum": 1,
+           "type": "number"
+          },
+          {
+           "type": "null"
+          }
+         ],
+         "default": null,
+         "description": "A fold seed's least brightness over the tissue, robust SDs (default 2.5).",
+         "title": "Fold Z"
+        },
+        "grow_um": {
+         "anyOf": [
+          {
+           "maximum": 1000,
+           "minimum": 10,
+           "type": "number"
+          },
+          {
+           "type": "null"
+          }
+         ],
+         "default": null,
+         "description": "How far the fine pass may grow an object past its coarse seed (default 150).",
+         "title": "Grow Um"
+        },
+        "pan_channels": {
+         "anyOf": [
+          {
+           "maximum": 12,
+           "minimum": 2,
+           "type": "integer"
+          },
+          {
+           "type": "null"
+          }
+         ],
+         "default": null,
+         "description": "Channels averaged into the pan image the objects are traced on (default 8: one nuclear per cycle, then markers evenly spaced).",
+         "title": "Pan Channels"
+        },
+        "pixel_um": {
+         "anyOf": [
+          {
+           "maximum": 100,
+           "minimum": 0.01,
+           "type": "number"
+          },
+          {
+           "type": "null"
+          }
+         ],
+         "default": null,
+         "description": "Microns per pixel at full resolution, when the image does not say (every size the detector uses is in microns).",
+         "title": "Pixel Um"
+        },
+        "tear_level": {
+         "anyOf": [
+          {
+           "maximum": 1,
+           "minimum": 0,
+           "type": "number"
+          },
+          {
+           "type": "null"
+          }
+         ],
+         "default": null,
+         "description": "A tear holds at most this share of the tissue's signal over the glass (default 0.35), or is darker in most channels.",
+         "title": "Tear Level"
+        },
+        "tissue_min_width_um": {
+         "anyOf": [
+          {
+           "maximum": 2000,
+           "minimum": 0,
+           "type": "number"
+          },
+          {
+           "type": "null"
+          }
+         ],
+         "default": null,
+         "description": "Tissue narrower than this (a peeled ribbon) is left out of the analysis region (default 200).",
+         "title": "Tissue Min Width Um"
+        }
+       },
+       "title": "ArtifactParams",
+       "type": "object"
+      }
+     },
+     "additionalProperties": false,
+     "properties": {
+      "force": {
+       "default": false,
+       "description": "Run again even if a result for these inputs is stored.",
+       "title": "Force",
+       "type": "boolean"
+      },
+      "params": {
+       "anyOf": [
+        {
+         "$ref": "#/$defs/ArtifactParams"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "default": null,
+       "description": "Detection parameters (default: the detector's own; each is in microns or robust SDs)."
+      },
+      "project": {
+       "description": "Project name, as `list_projects` returns it.",
+       "title": "Project",
+       "type": "string"
+      }
+     },
+     "required": [
+      "project"
+     ],
+     "title": "ArtifactRunInput",
+     "type": "object"
+    },
+    "needs": [
+     "image"
+    ],
+    "permission": "read",
+    "produces": [
+     "qc"
+    ],
+    "provider": "plexora",
+    "purpose": "Find physical artifacts without a model, across every channel: tissue folds, tears and detached tissue, debris and fibers on the glass round the section, and saturated (clipped) pixels per channel -- coarse to fine, each a snug outline with a 0-1 score, the channels it shows in and the one it shows most. A job (job_wait); reused when the image and parameters are unchanged. Needs a pixel size. Nothing is written to the ROIs.",
+    "roles": [
+     "qc.auto"
+    ],
+    "tags": [
+     "qc",
+     "artifacts",
+     "fold",
+     "tear",
+     "debris",
+     "saturation",
+     "foreign-object",
+     "fiber",
+     "clipping"
+    ],
+    "tool_name": "run_artifact_check",
+    "version": "1",
+    "viewer_required": false
+   }
+  },
+  {
+   "description": "Check the segmentation mask against the DNA stain: every cell is scored for under-segmentation (one label, several nuclei) and over-segmentation (one nucleus split across labels), judged against its own neighbourhood so dense tissue is not over-called. A job (job_wait); reused when the image, mask, DNA channel and parameters are unchanged. The mask is never modified. Read-only.",
+   "descriptor": {
+    "entitlement": null,
+    "execution": "job",
+    "id": "plexora:qc.segmentation_run",
+    "input_schema": {
+     "$defs": {
+      "SegParams": {
+       "additionalProperties": false,
+       "properties": {
+        "flag": {
+         "anyOf": [
+          {
+           "maximum": 0.95,
+           "minimum": 0.3,
+           "type": "number"
+          },
+          {
+           "type": "null"
+          }
+         ],
+         "default": null,
+         "description": "A score at or above this flags a cell (default 0.6).",
+         "title": "Flag"
+        },
+        "unsure": {
+         "anyOf": [
+          {
+           "maximum": 0.9,
+           "minimum": 0.1,
+           "type": "number"
+          },
+          {
+           "type": "null"
+          }
+         ],
+         "default": null,
+         "description": "Between this and `flag` a cell is ambiguous (default 0.4).",
+         "title": "Unsure"
+        }
+       },
+       "title": "SegParams",
+       "type": "object"
+      }
+     },
+     "additionalProperties": false,
+     "properties": {
+      "dna_channel": {
+       "anyOf": [
+        {
+         "maxLength": 200,
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "default": null,
+       "description": "Default: the one chosen before, else the first nuclear channel.",
+       "title": "Dna Channel"
+      },
+      "force": {
+       "default": false,
+       "description": "Run again even if a result for these inputs is stored.",
+       "title": "Force",
+       "type": "boolean"
+      },
+      "params": {
+       "anyOf": [
+        {
+         "$ref": "#/$defs/SegParams"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "default": null
+      },
+      "project": {
+       "description": "Project name, as `list_projects` returns it.",
+       "title": "Project",
+       "type": "string"
+      }
+     },
+     "required": [
+      "project"
+     ],
+     "title": "SegRunInput",
+     "type": "object"
+    },
+    "needs": [
+     "image"
+    ],
+    "permission": "read",
+    "produces": [
+     "qc"
+    ],
+    "provider": "plexora",
+    "purpose": "Check the segmentation mask against the DNA stain: every cell is scored for under-segmentation (one label, several nuclei) and over-segmentation (one nucleus split across labels), judged against its own neighbourhood so dense tissue is not over-called. A job (job_wait); reused when the image, mask, DNA channel and parameters are unchanged. The mask is never modified.",
+    "roles": [
+     "qc.auto"
+    ],
+    "tags": [
+     "qc",
+     "segmentation",
+     "mask",
+     "under-segmentation",
+     "over-segmentation",
+     "dna",
+     "nuclei",
+     "cells"
+    ],
+    "tool_name": "run_segmentation_qc",
+    "version": "1",
+    "viewer_required": false
+   }
+  },
+  {
+   "description": "A project's QC: every channel's status, every QC region (category, subtype, action, score and threshold with its source, the agent's judgment, who made it, the user's edits), a summary per category, the cells' pass/fail counts by reason with where each came from, the strictness, the provenance. Read this first. Read-only.",
+   "descriptor": {
+    "entitlement": null,
+    "execution": "immediate",
+    "id": "plexora:qc.get_results",
+    "input_schema": {
+     "additionalProperties": false,
+     "properties": {
+      "detail": {
+       "default": "brief",
+       "description": "brief: counts, categories, regions, cell reasons and each check's bar; full: also every histogram and quantile, each region's cell propagation and each call's raw evidence.",
+       "enum": [
+        "brief",
+        "full"
+       ],
+       "title": "Detail",
+       "type": "string"
+      },
+      "include_cells": {
+       "default": false,
+       "description": "Also list failing cell ids, and the cells with an unreliable marker (bounded).",
+       "title": "Include Cells",
+       "type": "boolean"
+      },
+      "include_regions": {
+       "default": true,
+       "description": "Every QC region with its category, subtype (class), action, score, threshold and threshold_source, and the agent's judgment.",
+       "title": "Include Regions",
+       "type": "boolean"
+      },
+      "max_ids": {
+       "default": 200,
+       "description": "With include_cells: at most this many cell ids per list.",
+       "maximum": 1000,
+       "minimum": 0,
+       "title": "Max Ids",
+       "type": "integer"
+      },
+      "project": {
+       "description": "Project name, as `list_projects` returns it.",
+       "title": "Project",
+       "type": "string"
+      },
+      "result_id": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "default": null,
+       "description": "Default: the active result.",
+       "title": "Result Id"
+      }
+     },
+     "required": [
+      "project"
+     ],
+     "title": "ResultsInput",
+     "type": "object"
+    },
+    "needs": [
+     "image",
+     "human"
+    ],
+    "permission": "read",
+    "produces": [],
+    "provider": "plexora",
+    "purpose": "A project's QC: every channel's status, every QC region (category, subtype, action, score and threshold with its source, the agent's judgment, who made it, the user's edits), a summary per category, the cells' pass/fail counts by reason with where each came from, the strictness, the provenance. Read this first.",
+    "roles": [
+     "qc.review"
+    ],
+    "tags": [
+     "qc",
+     "quality",
+     "artifact",
+     "exclude",
+     "regions",
+     "cells",
+     "control"
+    ],
+    "tool_name": "get_qc_results",
+    "version": "1",
+    "viewer_required": false
+   }
+  },
+  {
+   "description": "Segmentation QC's summary: cells and area under- / over-segmented (percentages kept apart), the DNA channel, whether the result is stale, and a running job's progress. Read-only.",
+   "descriptor": {
+    "entitlement": null,
+    "execution": "immediate",
+    "id": "plexora:qc.segmentation_status",
+    "input_schema": {
+     "additionalProperties": false,
+     "properties": {
+      "include_regions": {
+       "default": false,
+       "description": "Also where the flagged cells cluster (GeoJSON, full-resolution pixels), at the cluster map's automatic bar.",
+       "title": "Include Regions",
+       "type": "boolean"
+      },
+      "project": {
+       "description": "Project name, as `list_projects` returns it.",
+       "title": "Project",
+       "type": "string"
+      }
+     },
+     "required": [
+      "project"
+     ],
+     "title": "SegStatusInput",
+     "type": "object"
+    },
+    "needs": [
+     "image"
+    ],
+    "permission": "read",
+    "produces": [],
+    "provider": "plexora",
+    "purpose": "Segmentation QC's summary: cells and area under- / over-segmented (percentages kept apart), the DNA channel, whether the result is stale, and a running job's progress.",
+    "roles": [],
+    "tags": [
+     "qc",
+     "segmentation",
+     "mask",
+     "under-segmentation",
+     "over-segmentation",
+     "dna",
+     "nuclei",
+     "cells"
+    ],
+    "tool_name": "get_segmentation_qc",
+    "version": "1",
+    "viewer_required": false
+   }
+  },
+  {
+   "description": "Draw a region (polygon in image pixels) in a category. Reversible; the panel sees it on its next load. Changes Plexora's own state (reversible); returns a receipt.",
+   "descriptor": {
+    "entitlement": null,
+    "execution": "immediate",
+    "id": "plexora:roi.create",
+    "input_schema": {
+     "$defs": {
+      "ExtentInput": {
+       "additionalProperties": false,
+       "description": "Which planes of a z-stack a region covers. Plane indices, inclusive.",
+       "properties": {
+        "kind": {
+         "default": "all",
+         "description": "all: every plane (a flat image's only meaning); plane: one plane `z`; slab: planes `z0` to `z1`.",
+         "enum": [
+          "all",
+          "plane",
+          "slab"
+         ],
+         "title": "Kind",
+         "type": "string"
+        },
+        "t": {
+         "default": 0,
+         "description": "Frame of a time series.",
+         "minimum": 0,
+         "title": "T",
+         "type": "integer"
+        },
+        "z": {
+         "anyOf": [
+          {
+           "minimum": 0,
+           "type": "integer"
+          },
+          {
+           "type": "null"
+          }
+         ],
+         "default": null,
+         "title": "Z"
+        },
+        "z0": {
+         "anyOf": [
+          {
+           "minimum": 0,
+           "type": "integer"
+          },
+          {
+           "type": "null"
+          }
+         ],
+         "default": null,
+         "title": "Z0"
+        },
+        "z1": {
+         "anyOf": [
+          {
+           "minimum": 0,
+           "type": "integer"
+          },
+          {
+           "type": "null"
+          }
+         ],
+         "default": null,
+         "title": "Z1"
+        }
+       },
+       "title": "ExtentInput",
+       "type": "object"
+      },
+      "SolidInput": {
+       "additionalProperties": false,
+       "description": "A region's shape through a z-stack (its geometry stays its footprint).",
+       "properties": {
+        "kind": {
+         "description": "ellipsoid: the geometry is the outline on its middle plane `z` and it tapers to nothing `rz` planes above and below; contours: one outline per plane in `planes` (consecutive planes, no gaps) -- usually made by carry_roi_through_planes rather than by hand.",
+         "enum": [
+          "ellipsoid",
+          "contours",
+          "labels"
+         ],
+         "title": "Kind",
+         "type": "string"
+        },
+        "planes": {
+         "anyOf": [
+          {
+           "additionalProperties": {
+            "additionalProperties": true,
+            "type": "object"
+           },
+           "type": "object"
+          },
+          {
+           "type": "null"
+          }
+         ],
+         "default": null,
+         "description": "contours: {plane index: GeoJSON Polygon in image pixels}.",
+         "title": "Planes"
+        },
+        "rz": {
+         "anyOf": [
+          {
+           "exclusiveMinimum": 0,
+           "type": "number"
+          },
+          {
+           "type": "null"
+          }
+         ],
+         "default": null,
+         "description": "ellipsoid: half its depth, in planes.",
+         "title": "Rz"
+        },
+        "t": {
+         "default": 0,
+         "description": "Frame of a time series.",
+         "minimum": 0,
+         "title": "T",
+         "type": "integer"
+        },
+        "z": {
+         "anyOf": [
+          {
+           "minimum": 0,
+           "type": "number"
+          },
+          {
+           "type": "null"
+          }
+         ],
+         "default": null,
+         "description": "ellipsoid: its middle plane.",
+         "title": "Z"
+        }
+       },
+       "required": [
+        "kind"
+       ],
+       "title": "SolidInput",
+       "type": "object"
+      }
+     },
+     "additionalProperties": false,
+     "properties": {
+      "base_revision": {
+       "anyOf": [
+        {
+         "type": "integer"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "default": null,
+       "description": "The revision last read; refused if the regions changed since.",
+       "title": "Base Revision"
+      },
+      "category": {
+       "description": "Category label; created if the project has none by that name (matched case-insensitively).",
+       "title": "Category",
+       "type": "string"
+      },
+      "cells": {
+       "anyOf": [
+        {
+         "items": {
+          "type": "integer"
+         },
+         "type": "array"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "default": null,
+       "description": "On a z-stack with a 3-D mask: make the region exactly these cells (label ids, which are the table's cell ids), outlined plane by plane from the mask -- instead of geometry or points.",
+       "title": "Cells"
+      },
+      "color": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "default": null,
+       "description": "#rrggbb, for a new category.",
+       "title": "Color"
+      },
+      "extent": {
+       "anyOf": [
+        {
+         "$ref": "#/$defs/ExtentInput"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "default": null,
+       "description": "On a z-stack: the planes the region covers (default: all)."
+      },
+      "geometry": {
+       "anyOf": [
+        {
+         "additionalProperties": true,
+         "type": "object"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "default": null,
+       "description": "GeoJSON Polygon or MultiPolygon, in image pixels, instead of points.",
+       "title": "Geometry"
+      },
+      "method": {
+       "anyOf": [
+        {
+         "enum": [
+          "freehand",
+          "polygon",
+          "rectangle",
+          "ellipse",
+          "sam"
+         ],
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "default": null,
+       "description": "Which tool drew the shape, recorded as provenance.",
+       "title": "Method"
+      },
+      "name": {
+       "default": "",
+       "title": "Name",
+       "type": "string"
+      },
+      "notes": {
+       "default": "",
+       "title": "Notes",
+       "type": "string"
+      },
+      "points": {
+       "anyOf": [
+        {
+         "items": {
+          "items": {
+           "type": "number"
+          },
+          "type": "array"
+         },
+         "type": "array"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "default": null,
+       "description": "One ring of [x, y] vertices in full-resolution image pixels.",
+       "title": "Points"
+      },
+      "project": {
+       "description": "Project name, as `list_projects` returns it.",
+       "title": "Project",
+       "type": "string"
+      },
+      "solid": {
+       "anyOf": [
+        {
+         "$ref": "#/$defs/SolidInput"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "default": null,
+       "description": "On a z-stack: its shape through the planes (sets the planes it covers too)."
+      },
+      "t": {
+       "default": 0,
+       "description": "With `cells`: the frame of a time series.",
+       "minimum": 0,
+       "title": "T",
+       "type": "integer"
+      }
+     },
+     "required": [
+      "project",
+      "category"
+     ],
+     "title": "CreateInput",
+     "type": "object"
+    },
+    "needs": [
+     "image",
+     "human"
+    ],
+    "permission": "reversible_write",
+    "produces": [
+     "regions"
+    ],
+    "provider": "plexora",
+    "purpose": "Draw a region (polygon in image pixels) in a category. Reversible; the panel sees it on its next load.",
+    "roles": [
+     "roi.edit",
+     "spatial.region"
+    ],
+    "tags": [
+     "roi",
+     "region",
+     "regions",
+     "annotation",
+     "annotate",
+     "polygon",
+     "area"
+    ],
+    "tool_name": "create_roi",
+    "version": "1",
+    "viewer_required": false
+   }
+  },
+  {
+   "description": "Rename, recategorize, reshape, hide or lock a region. Changes Plexora's own state (reversible); returns a receipt.",
+   "descriptor": {
+    "entitlement": null,
+    "execution": "immediate",
+    "id": "plexora:roi.update",
+    "input_schema": {
+     "$defs": {
+      "ExtentInput": {
+       "additionalProperties": false,
+       "description": "Which planes of a z-stack a region covers. Plane indices, inclusive.",
+       "properties": {
+        "kind": {
+         "default": "all",
+         "description": "all: every plane (a flat image's only meaning); plane: one plane `z`; slab: planes `z0` to `z1`.",
+         "enum": [
+          "all",
+          "plane",
+          "slab"
+         ],
+         "title": "Kind",
+         "type": "string"
+        },
+        "t": {
+         "default": 0,
+         "description": "Frame of a time series.",
+         "minimum": 0,
+         "title": "T",
+         "type": "integer"
+        },
+        "z": {
+         "anyOf": [
+          {
+           "minimum": 0,
+           "type": "integer"
+          },
+          {
+           "type": "null"
+          }
+         ],
+         "default": null,
+         "title": "Z"
+        },
+        "z0": {
+         "anyOf": [
+          {
+           "minimum": 0,
+           "type": "integer"
+          },
+          {
+           "type": "null"
+          }
+         ],
+         "default": null,
+         "title": "Z0"
+        },
+        "z1": {
+         "anyOf": [
+          {
+           "minimum": 0,
+           "type": "integer"
+          },
+          {
+           "type": "null"
+          }
+         ],
+         "default": null,
+         "title": "Z1"
+        }
+       },
+       "title": "ExtentInput",
+       "type": "object"
+      },
+      "SolidInput": {
+       "additionalProperties": false,
+       "description": "A region's shape through a z-stack (its geometry stays its footprint).",
+       "properties": {
+        "kind": {
+         "description": "ellipsoid: the geometry is the outline on its middle plane `z` and it tapers to nothing `rz` planes above and below; contours: one outline per plane in `planes` (consecutive planes, no gaps) -- usually made by carry_roi_through_planes rather than by hand.",
+         "enum": [
+          "ellipsoid",
+          "contours",
+          "labels"
+         ],
+         "title": "Kind",
+         "type": "string"
+        },
+        "planes": {
+         "anyOf": [
+          {
+           "additionalProperties": {
+            "additionalProperties": true,
+            "type": "object"
+           },
+           "type": "object"
+          },
+          {
+           "type": "null"
+          }
+         ],
+         "default": null,
+         "description": "contours: {plane index: GeoJSON Polygon in image pixels}.",
+         "title": "Planes"
+        },
+        "rz": {
+         "anyOf": [
+          {
+           "exclusiveMinimum": 0,
+           "type": "number"
+          },
+          {
+           "type": "null"
+          }
+         ],
+         "default": null,
+         "description": "ellipsoid: half its depth, in planes.",
+         "title": "Rz"
+        },
+        "t": {
+         "default": 0,
+         "description": "Frame of a time series.",
+         "minimum": 0,
+         "title": "T",
+         "type": "integer"
+        },
+        "z": {
+         "anyOf": [
+          {
+           "minimum": 0,
+           "type": "number"
+          },
+          {
+           "type": "null"
+          }
+         ],
+         "default": null,
+         "description": "ellipsoid: its middle plane.",
+         "title": "Z"
+        }
+       },
+       "required": [
+        "kind"
+       ],
+       "title": "SolidInput",
+       "type": "object"
+      }
+     },
+     "additionalProperties": false,
+     "properties": {
+      "base_revision": {
+       "anyOf": [
+        {
+         "type": "integer"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "default": null,
+       "title": "Base Revision"
+      },
+      "category": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "default": null,
+       "title": "Category"
+      },
+      "extent": {
+       "anyOf": [
+        {
+         "$ref": "#/$defs/ExtentInput"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "default": null,
+       "description": "On a z-stack: the planes the region covers; kind 'all' for every plane."
+      },
+      "flatten": {
+       "default": false,
+       "description": "Drop its shape through the planes (keep its footprint, on the planes in `extent`).",
+       "title": "Flatten",
+       "type": "boolean"
+      },
+      "geometry": {
+       "anyOf": [
+        {
+         "additionalProperties": true,
+         "type": "object"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "default": null,
+       "title": "Geometry"
+      },
+      "locked": {
+       "anyOf": [
+        {
+         "type": "boolean"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "default": null,
+       "title": "Locked"
+      },
+      "method": {
+       "anyOf": [
+        {
+         "enum": [
+          "freehand",
+          "polygon",
+          "rectangle",
+          "ellipse",
+          "sam"
+         ],
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "default": null,
+       "description": "With a new outline: which tool drew it.",
+       "title": "Method"
+      },
+      "name": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "default": null,
+       "title": "Name"
+      },
+      "notes": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "default": null,
+       "title": "Notes"
+      },
+      "points": {
+       "anyOf": [
+        {
+         "items": {
+          "items": {
+           "type": "number"
+          },
+          "type": "array"
+         },
+         "type": "array"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "default": null,
+       "title": "Points"
+      },
+      "project": {
+       "description": "Project name, as `list_projects` returns it.",
+       "title": "Project",
+       "type": "string"
+      },
+      "roi_id": {
+       "description": "The region's id, from `list_rois`.",
+       "title": "Roi Id",
+       "type": "string"
+      },
+      "solid": {
+       "anyOf": [
+        {
+         "$ref": "#/$defs/SolidInput"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "default": null,
+       "description": "On a z-stack: its shape through the planes."
+      },
+      "visible": {
+       "anyOf": [
+        {
+         "type": "boolean"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "default": null,
+       "title": "Visible"
+      }
+     },
+     "required": [
+      "project",
+      "roi_id"
+     ],
+     "title": "UpdateInput",
+     "type": "object"
+    },
+    "needs": [
+     "image",
+     "human"
+    ],
+    "permission": "reversible_write",
+    "produces": [
+     "regions"
+    ],
+    "provider": "plexora",
+    "purpose": "Rename, recategorize, reshape, hide or lock a region.",
+    "roles": [
+     "roi.edit"
+    ],
+    "tags": [
+     "roi",
+     "region",
+     "regions",
+     "annotation",
+     "annotate",
+     "polygon",
+     "area"
+    ],
+    "tool_name": "update_roi",
+    "version": "1",
+    "viewer_required": false
+   }
+  },
+  {
+   "description": "One job's status, progress and, once done, result. Read-only.",
+   "descriptor": {
+    "entitlement": null,
+    "execution": "immediate",
+    "id": "plexora:job.get",
+    "input_schema": {
+     "additionalProperties": false,
+     "properties": {
+      "job_id": {
+       "description": "The job_id a job-running capability returned.",
+       "title": "Job Id",
+       "type": "string"
+      }
+     },
+     "required": [
+      "job_id"
+     ],
+     "title": "JobInput",
+     "type": "object"
+    },
+    "needs": [],
+    "permission": "read",
+    "produces": [],
+    "provider": "plexora",
+    "purpose": "One job's status, progress and, once done, result.",
+    "roles": [],
+    "tags": [
+     "job",
+     "jobs",
+     "progress",
+     "status",
+     "long",
+     "background",
+     "cancel"
+    ],
+    "tool_name": "job_get",
+    "version": "1",
+    "viewer_required": false
+   }
+  },
+  {
+   "description": "Undo one earlier write by its operation_id: replays the receipt's undo hint, receipted like any write. Refused when the state has changed since, when it was already undone, or when the operation was not reversible. Changes Plexora's own state (reversible); returns a receipt.",
+   "descriptor": {
+    "entitlement": null,
+    "execution": "immediate",
+    "id": "plexora:operation.undo",
+    "input_schema": {
+     "additionalProperties": false,
+     "properties": {
+      "expected_current_revision": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "default": null,
+       "description": "Undo even though the store changed since this operation, provided its revision is exactly this now -- for undoing a run of writes newest first, where each undo moves the revision the next one was receipted against.",
+       "title": "Expected Current Revision"
+      },
+      "operation_id": {
+       "description": "The receipt's operation_id, as a write returned it or the audit log records it.",
+       "title": "Operation Id",
+       "type": "string"
+      }
+     },
+     "required": [
+      "operation_id"
+     ],
+     "title": "UndoInput",
+     "type": "object"
+    },
+    "needs": [],
+    "permission": "reversible_write",
+    "produces": [],
+    "provider": "plexora",
+    "purpose": "Undo one earlier write by its operation_id: replays the receipt's undo hint, receipted like any write. Refused when the state has changed since, when it was already undone, or when the operation was not reversible.",
+    "roles": [],
+    "tags": [
+     "undo",
+     "revert",
+     "operation",
+     "audit",
+     "history"
+    ],
+    "tool_name": "undo_operation",
+    "version": "1",
+    "viewer_required": false
+   }
+  }
+ ]
+}

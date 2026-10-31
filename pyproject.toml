@@ -6,7 +6,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "plexora"
-version = "0.0.31"
+version = "0.0.32"
 description = "OpenSeadragon-based cellular image viewing and analysis tool."
 readme = "README.md"
 authors = [{ name = "BioCognia", email = "support@biocognia.com" }]
@@ -305,6 +305,11 @@ video_studio = "plexora.plugins.video_studio:PLUGIN"
 [project.entry-points.jupyter_serverproxy_servers]
 plexora = "plexora.proxy:setup_plexora"
 
+# Biocognia Intelligence (the `biocognia` app) reads this without importing
+# Plexora: its tools join a conversation in another product's workspace.
+[project.entry-points."biocognia.products"]
+plexora = "plexora_intelligence:PRODUCT"
+
 [tool.setuptools.packages.find]
 include = ["plexora*"]
 # Namespace discovery is ON (the default) and must stay on: plexora/server and
@@ -339,6 +344,9 @@ plexora = [
     # The shipped marker vocabulary automatic gating grounds its biology in.
     "ai/knowledge/*.yaml",
 ]
+# The tools Plexora offers as a guest in Biocognia Intelligence
+# (tools/intelligence_manifest.py writes it).
+plexora_intelligence = ["guest.json"]
 
 [tool.pytest.ini_options]
 # Bundled plugins keep their tests beside their code, so a plugin is one
