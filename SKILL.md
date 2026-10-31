@@ -10609,7 +10609,7 @@ Python environment is the conda env `plexora`. The path differs per machine --
 `/Users/aj/miniconda3/envs/plexora/bin/python` on macOS. Plain `python` is the
 miniforge base env and has no Flask, so it is not a fallback. Core imports
 `spatialagents` (`plexora/agent/errors.py`, `plexora/ai/`; pinned
-`spatialagents>=0.1,<0.2` in `pyproject.toml`), so an env that does not have
+`spatialagents>=0.2,<0.3` in `pyproject.toml`), so an env that does not have
 it installed needs the sibling repo's `spatialagents/src` on `PYTHONPATH` for
 the suite to collect.
 

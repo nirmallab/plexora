@@ -140,7 +140,7 @@ dependencies = [
     # extra, because Auto Gating and Auto QC are core features gated by the
     # licence, like the biocognia client above. Stdlib-only at import; it adds
     # pydantic and pyyaml, both already here.
-    "spatialagents>=0.1.1,<0.2",
+    "spatialagents>=0.2,<0.3",
     # Which images, masks and tables under a folder belong together
     # (server/models/dataset_plan.py, import_proposal's name rules): the
     # grouping rules, shared with SCIMAP Pro so both pair a folder the same
