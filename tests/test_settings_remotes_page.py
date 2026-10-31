@@ -9,6 +9,7 @@ The connection dialog those cards open is tests/test_connection_modal.py; the
 poll they subscribe to is tests/test_remote_state.py.
 """
 
+import re
 import shutil
 import subprocess
 from pathlib import Path
@@ -335,10 +336,11 @@ def test_only_one_place_quotes_the_three_numbers(client):
     assert served == recipe_store.defaults()
 
     # The page renders none of them any more -- it offers presets, and a
-    # preset's numbers arrive with the preset.
+    # preset's numbers arrive with the preset. A number on its own, that is:
+    # "16" inside a script's cache-busting date (`?v=20261016_...`) is not one.
     page = client.get("/settings").get_data(as_text=True)
     for number in numbers:
-        assert number not in page, number
+        assert not re.search(r"(?<![\w:.])%s(?![\w:.])" % re.escape(number), page), number
 
     # The page writes none of them: it has no box to put one in any more.
     settings = source("src", "js", "views", "settingsPage.js")

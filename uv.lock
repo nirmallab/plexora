@@ -412,6 +412,20 @@ wheels = [
 ]
 
 [[package]]
+name = "biocognia-intelligence"
+version = "0.2.1"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "biocognia" },
+    { name = "spatialagents" },
+    { name = "spatialbridge", extra = ["mcp"] },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/87/ca/61355416b0df912ac291629ba758f010fc5c25aceed5d9a50106cf16ee7e/biocognia_intelligence-0.2.1.tar.gz", hash = "sha256:67e8bfd330818cccfbfe01e8d9ef546901682707a9080a035f5ae51c6722facb", size = 119885, upload-time = "2026-10-31T14:47:19.522Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/7c/f3/69395fc09208342d5dead08c159ce059206b51ec09dac477340a987e2444/biocognia_intelligence-0.2.1-py3-none-any.whl", hash = "sha256:6245155cc8dbdf1428de7befde6b3ed8fb376da919edf06f280282fbebcf8838", size = 34810, upload-time = "2026-10-31T14:47:18.609Z" },
+]
+
+[[package]]
 name = "bleach"
 version = "6.4.0"
 source = { registry = "https://pypi.org/simple" }
@@ -3142,12 +3156,13 @@ wheels = [
 
 [[package]]
 name = "plexora"
-version = "0.0.32"
+version = "0.0.33"
 source = { editable = "." }
 dependencies = [
     { name = "aiohttp" },
     { name = "anndata" },
     { name = "biocognia" },
+    { name = "biocognia-intelligence" },
     { name = "flask" },
     { name = "fsspec" },
     { name = "h5py" },
@@ -3237,6 +3252,7 @@ requires-dist = [
     { name = "aiohttp", specifier = ">=3.14.4" },
     { name = "anndata", specifier = ">=0.10" },
     { name = "biocognia", specifier = ">=0.1.2,<0.2" },
+    { name = "biocognia-intelligence", specifier = ">=0.2.1,<0.3" },
     { name = "cellpose", marker = "extra == 'segment3d'", specifier = ">=4" },
     { name = "flask", specifier = ">=3.1" },
     { name = "fsspec", specifier = ">=2024.12" },
@@ -4632,16 +4648,16 @@ wheels = [
 
 [[package]]
 name = "spatialbridge"
-version = "0.2.2"
+version = "0.2.3"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "anndata" },
     { name = "platformdirs" },
     { name = "pydantic" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/61/f1/797962487e0c4cf4210e556e485573cef54dec6aa78defd5417e4a391822/spatialbridge-0.2.2.tar.gz", hash = "sha256:5ca0d39e0a3db543fdd51160e5934c450064be6affbd78bf77323b338d189efb", size = 178916, upload-time = "2026-10-31T01:41:59.241Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/fb/c9/c2a45f2078c365deeaf8351a0fc91c2280a60aa4b1b67bb1757a0e6a198a/spatialbridge-0.2.3.tar.gz", hash = "sha256:e61d1e64c8b0296de5f08fbe87c0475fec268d743407266d0c308271ce36834b", size = 180903, upload-time = "2026-10-31T14:45:45.196Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/a1/e7/eba8ff7dcd352213e0689285d06c47bb2cadd0c7ff3e5e64d0ef416452d6/spatialbridge-0.2.2-py3-none-any.whl", hash = "sha256:cf65162d45db66dd43457f644c9b89468c55ac4d3e9ae08452d48c2067d16cdf", size = 80705, upload-time = "2026-10-31T01:41:57.917Z" },
+    { url = "https://files.pythonhosted.org/packages/d2/4f/e3eddae320751da53d695aa628b5150d0aa3ad68f98bb4ad237ffee5a4ce/spatialbridge-0.2.3-py3-none-any.whl", hash = "sha256:cb8eaa0369e522998907ce8ccdb6e9d67f8e5634b1a3fee9ebeb5d98ebf288c3", size = 81985, upload-time = "2026-10-31T14:45:43.981Z" },
 ]
 
 [package.optional-dependencies]

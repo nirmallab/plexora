@@ -204,7 +204,16 @@ class FigureQuickEdit {
             ?.addEventListener("click", () => this.close());
         document.getElementById("fb_quickedit_main")
             ?.addEventListener("click", () => this.openInViewer());
-        this.zRange?.addEventListener("input", () => this.onPlaneInput());
+        // The app's slider (slider.js), wrapped around the template's input;
+        // a page without it keeps the bare input.
+        if (this.zRange && typeof PlexoraSlider !== "undefined") {
+            this.zSlider = new PlexoraSlider(this.zRange, {
+                integer: true, fieldId: "fb_quickedit_z_value",
+                onInput: (value) => this.onPlaneInput(value),
+            });
+        } else {
+            this.zRange?.addEventListener("input", () => this.onPlaneInput());
+        }
         this.bindView();
 
         // The card is a flex child of the body and the body is the window's:
@@ -229,6 +238,9 @@ class FigureQuickEdit {
 
     destroy() {
         this.resizeObserver?.disconnect();
+        // Gives the template's input back, for the next setup() to wrap.
+        this.zSlider?.destroy();
+        this.zSlider = null;
         this.close();
     }
 
@@ -680,20 +692,29 @@ class FigureQuickEdit {
         if (volume.mode === "slab") {
             // The range slides; its thickness is the panel's.
             const thickness = Math.max(0, volume.slab.z1 - volume.slab.z0);
-            this.zRange.max = String(Math.max(0, depth - 1 - thickness));
-            this.zRange.value = String(volume.slab.z0);
+            this.placePlane(Math.max(0, depth - 1 - thickness), volume.slab.z0);
         } else {
-            this.zRange.max = String(depth - 1);
-            this.zRange.value = String(Number(volume.z) || 0);
+            this.placePlane(depth - 1, Number(volume.z) || 0);
         }
         this.zLabel.textContent = this.planeLabel();
     }
 
-    onPlaneInput() {
+    /** The plane control's extent and position, without an event. */
+    placePlane(max, value) {
+        if (this.zSlider) {
+            this.zSlider.setBounds({ min: 0, max });
+            this.zSlider.set(value, { silent: true });
+        } else {
+            this.zRange.max = String(max);
+            this.zRange.value = String(value);
+        }
+    }
+
+    onPlaneInput(value) {
         const session = this.session;
         const volume = session?.volume;
         if (!volume || session.three) return;
-        const at = Math.round(Number(this.zRange.value) || 0);
+        const at = Math.round(Number(value ?? this.zRange.value) || 0);
         if (volume.mode === "slab" && volume.slab) {
             const thickness = volume.slab.z1 - volume.slab.z0;
             volume.slab = { ...volume.slab, z0: at, z1: at + thickness };

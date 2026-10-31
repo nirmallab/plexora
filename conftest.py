@@ -137,6 +137,25 @@ def _forget_the_loaded_datasource():
 
 
 @pytest.fixture(autouse=True)
+def _plexora_environment_put_back():
+    """Put back every PLEXORA_* variable a test's code wrote into this process.
+
+    The entry points write their own settings into the environment they run
+    in -- `plexora --ood` its token as PLEXORA_AUTH_TOKEN, the desktop sidecar
+    PLEXORA_DESKTOP -- because a child they spawn reads them there. A test that
+    runs `cli.main` writes them into the test process, and without this the
+    next test in that worker inherits them: a Jupyter sidecar that must stay
+    tokenless found a token it never asked for.
+    """
+    before = {key: value for key, value in os.environ.items() if key.startswith("PLEXORA_")}
+    yield
+    for key in [key for key in os.environ if key.startswith("PLEXORA_")]:
+        if key not in before:
+            del os.environ[key]
+    os.environ.update(before)
+
+
+@pytest.fixture(autouse=True)
 def _forget_disconnected_nodes():
     """Drop the "this address was disconnected" set between tests.
 

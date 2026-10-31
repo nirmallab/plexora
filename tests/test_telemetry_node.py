@@ -4,10 +4,23 @@ import json
 import threading
 
 import numpy as np
+import pytest
 import tifffile
 
 from plexora.server.providers.http import TOKEN_HEADER
 from plexora.telemetry import node_hooks
+
+
+@pytest.fixture(autouse=True)
+def _empty_tile_cache():
+    """The node's tile cache is module state, and these tests serve the same
+    tile of an image each calls `img`: one that ran first would turn the next
+    one's only miss into a hit (as in tests/test_node_warm_and_cache.py)."""
+    from plexora.server.node import api as node_api
+
+    node_api._tile_cache.clear()
+    yield
+    node_api._tile_cache.clear()
 
 
 def _image(path):

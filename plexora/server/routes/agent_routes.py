@@ -338,7 +338,7 @@ def call_capability(tool):
     tools included."""
     from plexora import api
     from plexora.agent import registry
-    from plexora.agent.bridge_wire import http_status, problem
+    from plexora.agent.bridge_wire import encode_images, http_status, problem
 
     try:
         policy, origin = _caller()
@@ -364,7 +364,8 @@ def call_capability(tool):
     if not answer["ok"]:
         return jsonify(success=False, error=problem(answer["error"]),
                        operation_id=answer.get("operation_id")), http_status(answer["error"])
-    return jsonify(success=True, result=answer["result"],
+    # A rendered image crosses as base64 (JSON cannot carry bytes).
+    return jsonify(success=True, result=encode_images(answer["result"]),
                    operation_id=answer.get("operation_id"))
 
 

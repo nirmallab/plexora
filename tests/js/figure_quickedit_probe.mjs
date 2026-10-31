@@ -649,6 +649,49 @@ check("Done writes the slab back, not a plane",
     { slab: slab.commit.slab, z: slab.commit.z },
     { slab: { z0: 10, z1: 25, op: "pct", q: 90 }, z: 7 });
 
+// In the app the plane is the app's slider (views/slider.js) wrapped around
+// that input. Stood in for here, as figure_line_panel_probe.mjs does: the real
+// one has a probe that runs its own file.
+const slid = await (async () => {
+    const made = [];
+    ctx.PlexoraSlider = class PlexoraSlider {
+        constructor(mount, options = {}) {
+            this.mount = mount;
+            this.options = options;
+            this.calls = [];
+            made.push(this);
+        }
+        setBounds(bounds) { this.calls.push(["bounds", bounds]); }
+        set(value, options) { this.calls.push(["set", value, options]); }
+        /** One pixel of a drag: the value, through onInput. */
+        drag(value) { this.options.onInput?.(value); }
+        destroy() { this.calls.push(["destroy"]); }
+    };
+    try {
+        const quickEdit = build();
+        await quickEdit.open("plane");
+        await settled();
+        const slider = made[made.length - 1];
+        views.length = 0;
+        slider.drag(20);
+        const label = elements.fb_quickedit_z_label.textContent;
+        await pause(SETTLE);
+        const moved = [...views];
+        quickEdit.destroy();
+        return { wrapped: slider.mount === elements.fb_quickedit_z_range, integer: slider.options.integer,
+                 calls: slider.calls, label, moved };
+    } finally {
+        delete ctx.PlexoraSlider;
+    }
+})();
+check("in the app the plane slider is the app's, placed without an event",
+    { wrapped: slid.wrapped, integer: slid.integer, placed: slid.calls.slice(0, 2) },
+    { wrapped: true, integer: true, placed: [["bounds", { min: 0, max: 39 }], ["set", 12, { silent: true }]] });
+check("and a drag on it moves the panel's plane",
+    { label: slid.label, moved: slid.moved.length > 0 && slid.moved.every((view) => view === "z20") },
+    { label: "z 20 / 40", moved: true });
+check("and destroying Quick Edit gives the input back", slid.calls[slid.calls.length - 1], ["destroy"]);
+
 const framed = await (async () => {
     const quickEdit = build();
     await quickEdit.open("framed");

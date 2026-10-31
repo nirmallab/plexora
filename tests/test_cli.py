@@ -91,6 +91,10 @@ def _claim_the_auth_token(monkeypatch):
     monkeypatch.setenv("PLEXORA_AUTH_TOKEN", "")
 
 
+#: The port the serving tests ask for by name.
+FIXED_PORT = 8765
+
+
 def _fake_serve(monkeypatch, served):
     fake_waitress = types.SimpleNamespace(
         serve=lambda app, **kwargs: served.update({"app": app, **kwargs})
@@ -115,6 +119,13 @@ def _fake_serve(monkeypatch, served):
     monkeypatch.setitem(sys.modules, "waitress", fake_waitress)
     monkeypatch.setitem(sys.modules, "plexora", fake_plexora)
     monkeypatch.setattr(cli, "should_open_browser", lambda **kwargs: False)
+    # Nothing binds here (waitress is faked), so the port these tests name is
+    # free whatever else this machine runs on it -- another app on 8765 made
+    # every one of them a "port in use" exit. A port a test holds itself
+    # (`taken_port`) is still probed for real.
+    probe = cli._probe_bind
+    monkeypatch.setattr(cli, "_probe_bind",
+                        lambda host, port: port if port == FIXED_PORT else probe(host, port))
 
 
 def test_main_leaves_the_data_path_for_the_resolver_and_serves(monkeypatch):

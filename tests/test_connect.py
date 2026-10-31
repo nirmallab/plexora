@@ -104,6 +104,10 @@ def rig(monkeypatch):
     monkeypatch.setattr(connect_mod, "_urlopen", urlopen)
     monkeypatch.setattr(connect_mod, "_open_browser", calls.opened.append)
     monkeypatch.setattr(connect_mod, "_sleep", lambda seconds: None)
+    # The processes a connection is tearing down: this test's only. A test
+    # that leaves its connection up would otherwise leave it in the list the
+    # next test asserts is empty, in whatever order pytest-randomly picks.
+    monkeypatch.setattr(connect_mod, "_ACTIVE", [])
     # Same numbers on both ends, so an assertion can name one port.
     monkeypatch.setattr(connect_mod, "pick_ports",
                         lambda local=None, remote=None, **kw: (local or 9999,
