@@ -124,7 +124,7 @@ dependencies = [
     # and was already present transitively.
     "platformdirs>=4",
     "polars>=1.43",
-    "pydantic>=2.13,<2.14",
+    "pydantic>=2.13,<2.15",
     # Vector PDF export from Figure Builder. Core rather than an extra: a
     # publication figure tool whose publication format is a separate install is
     # a tool that fails at the last step. export.py still imports it lazily and
