@@ -4618,30 +4618,30 @@ wheels = [
 
 [[package]]
 name = "spatialagents"
-version = "0.2.0"
+version = "0.2.2"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "biocognia" },
     { name = "pydantic" },
     { name = "pyyaml" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/70/7e/f2b903dec1d7b559fe7152086299514da9dfbfdfd19377b4ad03d865ab8a/spatialagents-0.2.0.tar.gz", hash = "sha256:864d4a1c414319e430fabc384bc1fa80d48e72e42d4f00eceb4eab6aa366be63", size = 1405760, upload-time = "2026-10-31T00:07:43.216Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/be/85/0cb6a14dbd0c4a8ab1b7e2d72a47f4a8bf4770f2077cae6373ee7ecf9ae7/spatialagents-0.2.2.tar.gz", hash = "sha256:4e9b63b2f1ce70214659af77d985164a4f57e4e9b32bf32002a0863f56635a72", size = 1437525, upload-time = "2026-10-31T03:12:22.905Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/7d/9e/39a97d2da7574140d8850fa0fceeefe40f0a8c59bd6c711d77ef67aa5eeb/spatialagents-0.2.0-py3-none-any.whl", hash = "sha256:fe0c7b2512362028f5446e6906be92328fadb48f482e8d6588fe424866539f88", size = 716919, upload-time = "2026-10-31T00:07:41.612Z" },
+    { url = "https://files.pythonhosted.org/packages/b0/a1/b856a0bff57824c168b4761860aa1374ae3889626c79f60012e0a7e693b5/spatialagents-0.2.2-py3-none-any.whl", hash = "sha256:428ae80e1c98e0305d9a7c0c15207110fe922a20443ead17336220ff9e684220", size = 733277, upload-time = "2026-10-31T03:12:21.242Z" },
 ]
 
 [[package]]
 name = "spatialbridge"
-version = "0.2.1"
+version = "0.2.2"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "anndata" },
     { name = "platformdirs" },
     { name = "pydantic" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/dc/ff/16f9431d370709b23982a579065a297d02869a582e94146ff7f96af2af69/spatialbridge-0.2.1.tar.gz", hash = "sha256:a4328acf8b7edeaa9df1aa9d7f538835d6aa633a333b3d0f1de85dfa3d838846", size = 176884, upload-time = "2026-10-29T17:16:12.489Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/61/f1/797962487e0c4cf4210e556e485573cef54dec6aa78defd5417e4a391822/spatialbridge-0.2.2.tar.gz", hash = "sha256:5ca0d39e0a3db543fdd51160e5934c450064be6affbd78bf77323b338d189efb", size = 178916, upload-time = "2026-10-31T01:41:59.241Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/b2/6d/d949e4c7529190afd2e98a4fc14a7eadf7c8c2871580a7d2401289748f01/spatialbridge-0.2.1-py3-none-any.whl", hash = "sha256:a0d7b795bd1fd16f5544fcfe65567be493105f9dfe0ecc42c0f2c77eda61c356", size = 79282, upload-time = "2026-10-29T17:16:11.34Z" },
+    { url = "https://files.pythonhosted.org/packages/a1/e7/eba8ff7dcd352213e0689285d06c47bb2cadd0c7ff3e5e64d0ef416452d6/spatialbridge-0.2.2-py3-none-any.whl", hash = "sha256:cf65162d45db66dd43457f644c9b89468c55ac4d3e9ae08452d48c2067d16cdf", size = 80705, upload-time = "2026-10-31T01:41:57.917Z" },
 ]
 
 [package.optional-dependencies]
