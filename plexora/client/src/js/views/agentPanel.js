@@ -865,7 +865,7 @@ window.PlexoraAgentPanel = (function () {
         // with no marker matching an image channel): said, not hidden.
         if (estimate.blocked) return { disabled: true, detail: String(estimate.blocked) };
         if (estimate.unavailable || units <= 0) return { omit: true };
-        const cost = `~${creditCount(estimate.credits)} credits`;
+        const cost = `up to ${creditCount(estimate.credits)} credits`;
         const skipped = (estimate.channels?.unmatched || []).length;
         const detail = ` · ${plural(units, estimate.unit || kind.noun)}`
             + (estimate.confirm && skipped ? ` · ${skipped} without an image channel` : "");

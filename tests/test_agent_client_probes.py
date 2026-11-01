@@ -57,7 +57,7 @@ PANEL_CHECKS = [
     "reason, nothing is asked of the gateway, and there is no About Plexora AI",
     "Plexora AI: the launcher's Chat with Plexora AI closes it and opens the chat panel",
     "Plexora AI: the header sparkle opens the launcher and shuts it again; each button carries the "
-    'estimate before a start ("~125 credits · 5 markers"); Gate posts /ai/v1/runs for the open '
+    'estimate before a start ("up to 125 credits · 5 markers"); Gate posts /ai/v1/runs for the open '
     "project, mirrored into this tab; the sparkle stays while the session runs, and there is no corner chip",
     "Plexora AI: Gate opens an optional context step in the launcher (label, field with an example, "
     "a muted scope line, Back, Start gating with the estimate); Back returns to the tools; Enter "

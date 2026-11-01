@@ -719,11 +719,11 @@ const cornerChipOf = (page) => find(page.dom.body, (n) => n.classList && n.class
     check("Plexora AI: the launcher's Chat with Plexora AI closes it and opens the chat panel",
         ai.chats.length === 1 && ai.panel.launcher() === null, { chats: ai.chats.length });
     check("Plexora AI: the header sparkle opens the launcher and shuts it again; each button carries the "
-        + "estimate before a start (\"~125 credits · 5 markers\"); Gate posts /ai/v1/runs for the open "
+        + "estimate before a start (\"up to 125 credits · 5 markers\"); Gate posts /ai/v1/runs for the open "
         + "project, mirrored into this tab; the sparkle stays while the session runs, and there is no corner chip",
         chipShown && shown && !shown.buttons.gating.disabled && !shown.buttons.qc.disabled
-        && shown.buttons.gating.note === "~125 credits · 5 markers"
-        && shown.buttons.qc.note === "~480 credits · 40 channels"
+        && shown.buttons.gating.note === "up to 125 credits · 5 markers"
+        && shown.buttons.qc.note === "up to 480 credits · 40 channels"
         && shown.buttons.gating.label === "Gate with Plexora AI" && shown.buttons.qc.label === "QC with Plexora AI"
         && shown.balance === "500 credits available"
         && Boolean(balance) && /project=demo/.test(balance.url)
@@ -813,7 +813,7 @@ const cornerChipOf = (page) => find(page.dom.body, (n) => n.classList && n.class
         const step = page.panel.launcher().context;
         const input = byClass(page.dom.body, "plx-ai-context-input");
         const shape = Boolean(step) && step.toolsHidden && step.start === "Start gating" && !step.disabled
-            && step.note === "~125 credits · 5 markers" && /melanoma skin sample/.test(step.placeholder)
+            && step.note === "up to 125 credits · 5 markers" && /melanoma skin sample/.test(step.placeholder)
             && /only gate CD3 and CD8/.test(step.help) && page.panel.launcher().title === "AI Gating"
             && Boolean(byClass(page.dom.body, "plx-ai-context-label"))
             && /optional/.test(byClass(page.dom.body, "plx-ai-context-label").textContent);
@@ -921,7 +921,7 @@ const cornerChipOf = (page) => find(page.dom.body, (n) => n.classList && n.class
     const p2 = poor.panel.launcher();
     check("Plexora AI: a run the balance cannot pay for is disabled and says what there is; a tool the "
         + "project's data cannot run is left out; the balance reads \"2,000 credits available\"",
-        p2.buttons.gating.disabled && p2.buttons.gating.note === "~125 credits · 5 markers · you have 2,000"
+        p2.buttons.gating.disabled && p2.buttons.gating.note === "up to 125 credits · 5 markers · you have 2,000"
         && !("qc" in p2.buttons) && p2.balance === "2,000 credits available" && !p2.empty,
         p2);
 
@@ -966,7 +966,7 @@ const cornerChipOf = (page) => find(page.dom.body, (n) => n.classList && n.class
             + "launcher stops asking",
             before.buttons.gating.disabled && before.balance === "0 credits available"
             && !after.buttons.gating.disabled && after.balance === "500 credits available"
-            && after.buttons.gating.note === "~125 credits · 5 markers"
+            && after.buttons.gating.note === "up to 125 credits · 5 markers"
             && hiddenAsks === 2 && failedAsks === 3 && kept.balance === "500 credits available"
             && !kept.buttons.gating.disabled && gone,
             { before, after, hiddenAsks, failedAsks, kept, gone });
