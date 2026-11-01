@@ -212,6 +212,13 @@ class _Plexora:
                 return {"format": kind, "label": IMAGE_LABEL, "action": None, "product": self.id}
         return None
 
+    @property
+    def page(self) -> dict:
+        """What the app's home screen lists among what it opens: the images
+        Plexora takes (`imports`), files and the OME-Zarr folder."""
+        return {"formats": {"files": [suffix for suffix, _ in IMAGES if not suffix.endswith(".zarr")],
+                            "folders": [suffix for suffix, _ in IMAGES if suffix.endswith(".zarr")]}}
+
     def imports(self, path) -> dict | None:
         """How the app hands an image Plexora opens to Plexora: `{format,
         label, tool, arguments}`, the guest tool (`import_image`) and what to

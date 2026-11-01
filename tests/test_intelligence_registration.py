@@ -234,6 +234,8 @@ def test_the_registration_says_what_plexora_is_here():
     from plexora_intelligence import PRODUCT
 
     assert PRODUCT.home() is None and PRODUCT.app() == [sys.executable, "-m", "plexora"]
+    assert PRODUCT.page == {"formats": {"files": [".ome.tiff", ".ome.tif", ".qptiff", ".tiff", ".tif"],
+                                        "folders": [".ome.zarr"]}}
     assert set(PRODUCT.ai()) == {"ok", "reason"}
     guest = PRODUCT.guest()
     assert guest.provider == "plexora" and guest.manifest()["version"] == version("plexora")
