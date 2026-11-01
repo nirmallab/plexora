@@ -151,6 +151,8 @@ def describe(capability) -> dict:
     The descriptor id is `plexora:<capability name>`; the tool name is what a
     peer calls (`POST /agent/v1/capabilities/<tool_name>`, or the MCP tool).
     """
+    from plexora.agent.schemas import compact_schema
+
     entitlement = capability.entitlement if capability.entitlement not in (None, "free") \
         else None
     return {
@@ -165,7 +167,9 @@ def describe(capability) -> dict:
         "execution": capability.execution,
         "viewer_required": bool(capability.viewer_required),
         "entitlement": entitlement,
-        "input_schema": capability.input_model.model_json_schema()
+        # What a peer shows a model: pydantic's schema less what says
+        # nothing to it (`schemas.compact_schema`); Plexora validates the call.
+        "input_schema": compact_schema(capability.input_model.model_json_schema())
         if capability.input_model else None,
         "version": capability.version,
         "tags": [str(tag) for tag in capability.tags],

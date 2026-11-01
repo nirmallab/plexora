@@ -316,6 +316,83 @@ def test_an_image_the_app_hands_over_becomes_a_project_over_the_bridge(tmp_path)
     assert "no image at" in missing["error"]["message"]
 
 
+# -- what loading a tool costs a conversation ------------------------------------------------
+
+#: The input schemas a conversation is shown, as compact JSON (what the app's
+#: `load_tool` sends, less its indentation). Before 2026-11-01:
+#: gating_session_start 18,595 (19,985 with pydantic's titles), render_region
+#: 9,014, qc_session_start 7,086, ai_run_session 2,579; all 48 tools 84,509.
+SCHEMA_CEILINGS = {"gating_session_start": 11_500, "render_region": 8_000,
+                   "qc_session_start": 6_500, "ai_run_session": 2_100}
+ALL_SCHEMAS_CEILING = 72_000
+
+
+def _schemas():
+    from plexora_intelligence import PRODUCT
+
+    return {tool["descriptor"]["tool_name"]: tool["descriptor"]["input_schema"]
+            for tool in PRODUCT.guest().manifest()["tools"]}
+
+
+def test_a_guest_tools_schema_is_small_enough_to_load():
+    sizes = {name: len(json.dumps(schema, ensure_ascii=False)) for name, schema in _schemas().items()}
+    for name, ceiling in SCHEMA_CEILINGS.items():
+        assert sizes[name] <= ceiling, (name, sizes[name])
+    assert sum(sizes.values()) <= ALL_SCHEMAS_CEILING, sum(sizes.values())
+
+
+def test_a_compact_schema_keeps_every_option_a_call_can_use():
+    """Smaller, never fewer: every field of every guest tool's input model is
+    in its schema, required where the model requires it, with its enum and
+    default."""
+    from plexora.agent import registry
+
+    registry.discover()
+    for name, schema in _schemas().items():
+        model = registry.get(name).input_model
+        assert "title" not in schema, name
+        assert set(schema.get("properties") or {}) == set(model.model_fields), name
+        assert sorted(schema.get("required") or ()) == sorted(
+            field for field, info in model.model_fields.items() if info.is_required()), name
+    start = _schemas()["gating_session_start"]["properties"]
+    assert start["engine"]["enum"] == ["v1", "v2"] and start["engine"]["default"] == "v2"
+    assert start["setup"]["enum"] == ["ask", "wait", "fail"]
+    assert "expression_setup" in start["setup"]["description"]
+
+
+def test_compact_schema_drops_only_what_says_nothing():
+    from typing import Annotated, Literal
+
+    from pydantic import BaseModel, Field
+
+    from plexora.agent.schemas import compact_schema
+
+    class Cat(BaseModel):
+        kind: Literal["cat"] = "cat"
+
+    class Dog(BaseModel):
+        kind: Literal["dog"] = "dog"
+
+    class Model(BaseModel):
+        title: str | None = None                       # a property named title stays
+        size: int | None = Field(None, ge=1, description="Optional, null by default.")
+        cap: int | None = 6                            # null is not the default: kept
+        must: int | None                               # required and nullable: kept
+        pet: Annotated[Cat | Dog, Field(discriminator="kind")] = Cat()
+        meta: dict = {"title": "kept as data"}
+
+    schema = compact_schema(Model.model_json_schema())
+    props = schema["properties"]
+    assert "title" not in schema and set(props) == {"title", "size", "cap", "must", "pet", "meta"}
+    assert props["title"] == {"type": "string"}
+    assert props["size"] == {"minimum": 1, "type": "integer", "description": "Optional, null by default."}
+    assert {"type": "null"} in props["cap"]["anyOf"] and props["cap"]["default"] == 6
+    assert {"type": "null"} in props["must"]["anyOf"] and schema["required"] == ["must"]
+    assert "discriminator" not in props["pet"] and len(props["pet"]["oneOf"]) == 2
+    assert props["meta"]["default"] == {"title": "kept as data"}
+    assert all("title" not in node for node in schema["$defs"].values())
+
+
 def test_the_rules_say_one_wallet_and_a_run_quoted_as_a_ceiling():
     """A Plexora AI run and this conversation draw on the organisation's one
     AI wallet, and a run's quote is what it may cost at most: the 2026-11-01

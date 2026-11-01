@@ -13,41 +13,21 @@
      "additionalProperties": false,
      "properties": {
       "dataset": {
-       "anyOf": [
-        {
-         "type": "string"
-        },
-        {
-         "type": "null"
-        }
-       ],
-       "default": null,
        "description": "Only projects in this dataset (name or id).",
-       "title": "Dataset"
+       "type": "string"
       },
       "limit": {
        "default": 50,
        "description": "At most this many.",
        "maximum": 200,
        "minimum": 1,
-       "title": "Limit",
        "type": "integer"
       },
       "query": {
-       "anyOf": [
-        {
-         "type": "string"
-        },
-        {
-         "type": "null"
-        }
-       ],
-       "default": null,
        "description": "Only projects whose name or display title contains this text.",
-       "title": "Query"
+       "type": "string"
       }
      },
-     "title": "ListProjectsInput",
      "type": "object"
     },
     "needs": [],
@@ -84,19 +64,16 @@
       "include_table": {
        "default": true,
        "description": "Read the cell table for row counts and column facts (loads it into this session).",
-       "title": "Include Table",
        "type": "boolean"
       },
       "project": {
        "description": "Project name, as `list_projects` returns it.",
-       "title": "Project",
        "type": "string"
       }
      },
      "required": [
       "project"
      ],
-     "title": "InspectInput",
      "type": "object"
     },
     "needs": [
@@ -133,20 +110,17 @@
      "properties": {
       "project": {
        "description": "Project name, as `list_projects` returns it.",
-       "title": "Project",
        "type": "string"
       },
       "with_stats": {
        "default": false,
        "description": "Also read each channel's intensity range and auto window (p1/p99.9) from the coarsest level.",
-       "title": "With Stats",
        "type": "boolean"
       }
      },
      "required": [
       "project"
      ],
-     "title": "ChannelsInput",
      "type": "object"
     },
     "needs": [
@@ -181,14 +155,12 @@
      "properties": {
       "project": {
        "description": "Project name, as `list_projects` returns it.",
-       "title": "Project",
        "type": "string"
       }
      },
      "required": [
       "project"
      ],
-     "title": "ProjectInput",
      "type": "object"
     },
     "needs": [
@@ -227,43 +199,30 @@
        "description": "Histogram bins (merged from 50).",
        "maximum": 50,
        "minimum": 5,
-       "title": "Bins",
        "type": "integer"
       },
       "marker": {
        "description": "A marker column, as `list_markers` names it.",
-       "title": "Marker",
        "type": "string"
       },
       "project": {
        "description": "Project name, as `list_projects` returns it.",
-       "title": "Project",
        "type": "string"
       },
       "qc": {
-       "anyOf": [
-        {
-         "enum": [
-          "strict",
-          "exclude",
-          "off"
-         ],
-         "type": "string"
-        },
-        {
-         "type": "null"
-        }
+       "description": "QC failures left out of this estimate, sample or picture (the gate still applies to every cell). strict (default): cells QC called exclude or warn, and the cells QC flagged this marker unreliable in; exclude: warn calls kept; off: QC ignored (only when the user asks).",
+       "enum": [
+        "strict",
+        "exclude",
+        "off"
        ],
-       "default": null,
-       "description": "Which QC failures to leave out of this estimate, sample or picture (the gate itself always applies to every cell). strict (the default): cells QC called exclude or warn, and for this marker the cells QC flagged it unreliable in; exclude: warn calls kept; off: QC ignored -- only when the user asks, or QC is suspected wrong. Inside a gating session the session's own setting applies. No effect where QC was never run.",
-       "title": "Qc"
+       "type": "string"
       }
      },
      "required": [
       "project",
       "marker"
      ],
-     "title": "DistributionInput",
      "type": "object"
     },
     "needs": [
@@ -300,21 +259,12 @@
        "additionalProperties": false,
        "properties": {
         "channels": {
-         "anyOf": [
-          {
-           "items": {
-            "type": "string"
-           },
-           "maxItems": 200,
-           "type": "array"
-          },
-          {
-           "type": "null"
-          }
-         ],
-         "default": null,
          "description": "manual: exactly these channels are the nuclear candidates.",
-         "title": "Channels"
+         "items": {
+          "type": "string"
+         },
+         "maxItems": 200,
+         "type": "array"
         },
         "mode": {
          "default": "auto",
@@ -322,25 +272,14 @@
           "auto",
           "manual"
          ],
-         "title": "Mode",
          "type": "string"
         },
         "pattern": {
-         "anyOf": [
-          {
-           "maxLength": 200,
-           "type": "string"
-          },
-          {
-           "type": "null"
-          }
-         ],
-         "default": null,
          "description": "manual: channels whose name matches this (case-insensitive) regular expression.",
-         "title": "Pattern"
+         "maxLength": 200,
+         "type": "string"
         }
        },
-       "title": "Rule",
        "type": "object"
       }
      },
@@ -348,26 +287,16 @@
      "properties": {
       "project": {
        "description": "Project name, as `list_projects` returns it.",
-       "title": "Project",
        "type": "string"
       },
       "rule": {
-       "anyOf": [
-        {
-         "$ref": "#/$defs/Rule"
-        },
-        {
-         "type": "null"
-        }
-       ],
-       "default": null,
+       "$ref": "#/$defs/Rule",
        "description": "Preview a rule without storing it."
       }
      },
      "required": [
       "project"
      ],
-     "title": "DetectInput",
      "type": "object"
     },
     "needs": [
@@ -405,35 +334,23 @@
        "default": 200,
        "maximum": 1000,
        "minimum": 0,
-       "title": "Max Ids",
        "type": "integer"
       },
       "project": {
        "description": "Project name, as `list_projects` returns it.",
-       "title": "Project",
        "type": "string"
       },
       "qc": {
-       "anyOf": [
-        {
-         "enum": [
-          "strict",
-          "exclude",
-          "off"
-         ],
-         "type": "string"
-        },
-        {
-         "type": "null"
-        }
+       "description": "QC failures left out of this estimate, sample or picture (the gate still applies to every cell). strict (default): cells QC called exclude or warn, and the cells QC flagged this marker unreliable in; exclude: warn calls kept; off: QC ignored (only when the user asks).",
+       "enum": [
+        "strict",
+        "exclude",
+        "off"
        ],
-       "default": null,
-       "description": "Which QC failures to leave out of this estimate, sample or picture (the gate itself always applies to every cell). strict (the default): cells QC called exclude or warn, and for this marker the cells QC flagged it unreliable in; exclude: warn calls kept; off: QC ignored -- only when the user asks, or QC is suspected wrong. Inside a gating session the session's own setting applies. No effect where QC was never run.",
-       "title": "Qc"
+       "type": "string"
       },
       "roi_id": {
        "description": "The region's id, from `list_rois`.",
-       "title": "Roi Id",
        "type": "string"
       }
      },
@@ -441,7 +358,6 @@
       "project",
       "roi_id"
      ],
-     "title": "CellsInput",
      "type": "object"
     },
     "needs": [
@@ -479,67 +395,29 @@
      "additionalProperties": false,
      "properties": {
       "dataset": {
-       "anyOf": [
-        {
-         "type": "string"
-        },
-        {
-         "type": "null"
-        }
-       ],
-       "default": null,
        "description": "Put the new project in this dataset.",
-       "title": "Dataset"
+       "type": "string"
       },
       "image": {
        "description": "Path to the image on this machine (OME-TIFF, TIFF, OME-Zarr, a whole-slide file).",
-       "title": "Image",
        "type": "string"
       },
       "mask": {
-       "anyOf": [
-        {
-         "type": "string"
-        },
-        {
-         "type": "null"
-        }
-       ],
-       "default": null,
        "description": "Its segmentation mask (a label image), for a new project.",
-       "title": "Mask"
+       "type": "string"
       },
       "name": {
-       "anyOf": [
-        {
-         "type": "string"
-        },
-        {
-         "type": "null"
-        }
-       ],
-       "default": null,
        "description": "The new project's name; default from the image's filename.",
-       "title": "Name"
+       "type": "string"
       },
       "table": {
-       "anyOf": [
-        {
-         "type": "string"
-        },
-        {
-         "type": "null"
-        }
-       ],
-       "default": null,
        "description": "Its cell table (CSV, Parquet, .h5ad, a SpatialData store), for a new project.",
-       "title": "Table"
+       "type": "string"
       }
      },
      "required": [
       "image"
      ],
-     "title": "ImportInput",
      "type": "object"
     },
     "needs": [],
@@ -571,38 +449,26 @@
      "properties": {
       "marker": {
        "description": "A marker column, as `list_markers` names it.",
-       "title": "Marker",
        "type": "string"
       },
       "project": {
        "description": "Project name, as `list_projects` returns it.",
-       "title": "Project",
        "type": "string"
       },
       "qc": {
-       "anyOf": [
-        {
-         "enum": [
-          "strict",
-          "exclude",
-          "off"
-         ],
-         "type": "string"
-        },
-        {
-         "type": "null"
-        }
+       "description": "QC failures left out of this estimate, sample or picture (the gate still applies to every cell). strict (default): cells QC called exclude or warn, and the cells QC flagged this marker unreliable in; exclude: warn calls kept; off: QC ignored (only when the user asks).",
+       "enum": [
+        "strict",
+        "exclude",
+        "off"
        ],
-       "default": null,
-       "description": "Which QC failures to leave out of this estimate, sample or picture (the gate itself always applies to every cell). strict (the default): cells QC called exclude or warn, and for this marker the cells QC flagged it unreliable in; exclude: warn calls kept; off: QC ignored -- only when the user asks, or QC is suspected wrong. Inside a gating session the session's own setting applies. No effect where QC was never run.",
-       "title": "Qc"
+       "type": "string"
       }
      },
      "required": [
       "project",
       "marker"
      ],
-     "title": "MarkerInput",
      "type": "object"
     },
     "needs": [
@@ -642,38 +508,26 @@
      "properties": {
       "marker": {
        "description": "A marker column, as `list_markers` names it.",
-       "title": "Marker",
        "type": "string"
       },
       "project": {
        "description": "Project name, as `list_projects` returns it.",
-       "title": "Project",
        "type": "string"
       },
       "qc": {
-       "anyOf": [
-        {
-         "enum": [
-          "strict",
-          "exclude",
-          "off"
-         ],
-         "type": "string"
-        },
-        {
-         "type": "null"
-        }
+       "description": "QC failures left out of this estimate, sample or picture (the gate still applies to every cell). strict (default): cells QC called exclude or warn, and the cells QC flagged this marker unreliable in; exclude: warn calls kept; off: QC ignored (only when the user asks).",
+       "enum": [
+        "strict",
+        "exclude",
+        "off"
        ],
-       "default": null,
-       "description": "Which QC failures to leave out of this estimate, sample or picture (the gate itself always applies to every cell). strict (the default): cells QC called exclude or warn, and for this marker the cells QC flagged it unreliable in; exclude: warn calls kept; off: QC ignored -- only when the user asks, or QC is suspected wrong. Inside a gating session the session's own setting applies. No effect where QC was never run.",
-       "title": "Qc"
+       "type": "string"
       }
      },
      "required": [
       "project",
       "marker"
      ],
-     "title": "MarkerInput",
      "type": "object"
     },
     "needs": [
@@ -717,38 +571,26 @@
      "properties": {
       "marker": {
        "description": "A marker column, as `list_markers` names it.",
-       "title": "Marker",
        "type": "string"
       },
       "project": {
        "description": "Project name, as `list_projects` returns it.",
-       "title": "Project",
        "type": "string"
       },
       "qc": {
-       "anyOf": [
-        {
-         "enum": [
-          "strict",
-          "exclude",
-          "off"
-         ],
-         "type": "string"
-        },
-        {
-         "type": "null"
-        }
+       "description": "QC failures left out of this estimate, sample or picture (the gate still applies to every cell). strict (default): cells QC called exclude or warn, and the cells QC flagged this marker unreliable in; exclude: warn calls kept; off: QC ignored (only when the user asks).",
+       "enum": [
+        "strict",
+        "exclude",
+        "off"
        ],
-       "default": null,
-       "description": "Which QC failures to leave out of this estimate, sample or picture (the gate itself always applies to every cell). strict (the default): cells QC called exclude or warn, and for this marker the cells QC flagged it unreliable in; exclude: warn calls kept; off: QC ignored -- only when the user asks, or QC is suspected wrong. Inside a gating session the session's own setting applies. No effect where QC was never run.",
-       "title": "Qc"
+       "type": "string"
       }
      },
      "required": [
       "project",
       "marker"
      ],
-     "title": "MarkerInput",
      "type": "object"
     },
     "needs": [
@@ -787,65 +629,35 @@
      "additionalProperties": false,
      "properties": {
       "high": {
-       "anyOf": [
-        {
-         "type": "number"
-        },
-        {
-         "type": "null"
-        }
-       ],
-       "default": null,
        "description": "Upper bound (default: the stored one).",
-       "title": "High"
+       "type": "number"
       },
       "low": {
-       "anyOf": [
-        {
-         "type": "number"
-        },
-        {
-         "type": "null"
-        }
-       ],
-       "default": null,
        "description": "Lower bound to count with (default: the stored gate).",
-       "title": "Low"
+       "type": "number"
       },
       "marker": {
        "description": "A marker column, as `list_markers` names it.",
-       "title": "Marker",
        "type": "string"
       },
       "project": {
        "description": "Project name, as `list_projects` returns it.",
-       "title": "Project",
        "type": "string"
       },
       "qc": {
-       "anyOf": [
-        {
-         "enum": [
-          "strict",
-          "exclude",
-          "off"
-         ],
-         "type": "string"
-        },
-        {
-         "type": "null"
-        }
+       "description": "QC failures left out of this estimate, sample or picture (the gate still applies to every cell). strict (default): cells QC called exclude or warn, and the cells QC flagged this marker unreliable in; exclude: warn calls kept; off: QC ignored (only when the user asks).",
+       "enum": [
+        "strict",
+        "exclude",
+        "off"
        ],
-       "default": null,
-       "description": "Which QC failures to leave out of this estimate, sample or picture (the gate itself always applies to every cell). strict (the default): cells QC called exclude or warn, and for this marker the cells QC flagged it unreliable in; exclude: warn calls kept; off: QC ignored -- only when the user asks, or QC is suspected wrong. Inside a gating session the session's own setting applies. No effect where QC was never run.",
-       "title": "Qc"
+       "type": "string"
       }
      },
      "required": [
       "project",
       "marker"
      ],
-     "title": "SummaryInput",
      "type": "object"
     },
     "needs": [
@@ -884,14 +696,12 @@
      "properties": {
       "project": {
        "description": "Project name, as `list_projects` returns it.",
-       "title": "Project",
        "type": "string"
       }
      },
      "required": [
       "project"
      ],
-     "title": "ProjectInput",
      "type": "object"
     },
     "needs": [
@@ -934,67 +744,36 @@
       "empty": {
        "default": false,
        "description": "Allow low == high: a gate no cell passes (how a failed or all-negative marker is recorded).",
-       "title": "Empty",
        "type": "boolean"
       },
       "expected_revision": {
-       "anyOf": [
-        {
-         "type": "string"
-        },
-        {
-         "type": "null"
-        }
-       ],
-       "default": null,
        "description": "The `revision` last read; the write is refused if the gates changed since.",
-       "title": "Expected Revision"
+       "type": "string"
       },
       "high": {
-       "anyOf": [
-        {
-         "type": "number"
-        },
-        {
-         "type": "null"
-        }
-       ],
-       "default": null,
        "description": "Upper bound; default keeps the stored one.",
-       "title": "High"
+       "type": "number"
       },
       "low": {
        "description": "The gate: cells above this are positive, in the table's own units.",
-       "title": "Low",
        "type": "number"
       },
       "marker": {
        "description": "A marker column, as `list_markers` names it.",
-       "title": "Marker",
        "type": "string"
       },
       "project": {
        "description": "Project name, as `list_projects` returns it.",
-       "title": "Project",
        "type": "string"
       },
       "qc": {
-       "anyOf": [
-        {
-         "enum": [
-          "strict",
-          "exclude",
-          "off"
-         ],
-         "type": "string"
-        },
-        {
-         "type": "null"
-        }
+       "description": "QC failures left out of this estimate, sample or picture (the gate still applies to every cell). strict (default): cells QC called exclude or warn, and the cells QC flagged this marker unreliable in; exclude: warn calls kept; off: QC ignored (only when the user asks).",
+       "enum": [
+        "strict",
+        "exclude",
+        "off"
        ],
-       "default": null,
-       "description": "Which QC failures to leave out of this estimate, sample or picture (the gate itself always applies to every cell). strict (the default): cells QC called exclude or warn, and for this marker the cells QC flagged it unreliable in; exclude: warn calls kept; off: QC ignored -- only when the user asks, or QC is suspected wrong. Inside a gating session the session's own setting applies. No effect where QC was never run.",
-       "title": "Qc"
+       "type": "string"
       }
      },
      "required": [
@@ -1002,7 +781,6 @@
       "marker",
       "low"
      ],
-     "title": "SetGateInput",
      "type": "object"
     },
     "needs": [
@@ -1049,20 +827,10 @@
         "up",
         "down"
        ],
-       "title": "Direction",
        "type": "string"
       },
       "expected_revision": {
-       "anyOf": [
-        {
-         "type": "string"
-        },
-        {
-         "type": "null"
-        }
-       ],
-       "default": null,
-       "title": "Expected Revision"
+       "type": "string"
       },
       "magnitude": {
        "description": "How far: 10%, 25% or 50% of the way to the neighbouring population's centre.",
@@ -1071,36 +839,24 @@
         "medium",
         "large"
        ],
-       "title": "Magnitude",
        "type": "string"
       },
       "marker": {
        "description": "A marker column, as `list_markers` names it.",
-       "title": "Marker",
        "type": "string"
       },
       "project": {
        "description": "Project name, as `list_projects` returns it.",
-       "title": "Project",
        "type": "string"
       },
       "qc": {
-       "anyOf": [
-        {
-         "enum": [
-          "strict",
-          "exclude",
-          "off"
-         ],
-         "type": "string"
-        },
-        {
-         "type": "null"
-        }
+       "description": "QC failures left out of this estimate, sample or picture (the gate still applies to every cell). strict (default): cells QC called exclude or warn, and the cells QC flagged this marker unreliable in; exclude: warn calls kept; off: QC ignored (only when the user asks).",
+       "enum": [
+        "strict",
+        "exclude",
+        "off"
        ],
-       "default": null,
-       "description": "Which QC failures to leave out of this estimate, sample or picture (the gate itself always applies to every cell). strict (the default): cells QC called exclude or warn, and for this marker the cells QC flagged it unreliable in; exclude: warn calls kept; off: QC ignored -- only when the user asks, or QC is suspected wrong. Inside a gating session the session's own setting applies. No effect where QC was never run.",
-       "title": "Qc"
+       "type": "string"
       }
      },
      "required": [
@@ -1109,7 +865,6 @@
       "direction",
       "magnitude"
      ],
-     "title": "AdjustInput",
      "type": "object"
     },
     "needs": [
@@ -1156,55 +911,33 @@
       "clear_provenance": {
        "default": true,
        "description": "Also forget how the reset gates were made (the agent's reasons, flags and confidence).",
-       "title": "Clear Provenance",
        "type": "boolean"
       },
       "expected_revision": {
-       "anyOf": [
-        {
-         "type": "string"
-        },
-        {
-         "type": "null"
-        }
-       ],
-       "default": null,
        "description": "The `revision` last read; the reset is refused if the gates changed since.",
-       "title": "Expected Revision"
+       "type": "string"
       },
       "include_approved": {
        "default": false,
        "description": "Also reset gates the user approved (never locked ones).",
-       "title": "Include Approved",
        "type": "boolean"
       },
       "markers": {
-       "anyOf": [
-        {
-         "items": {
-          "type": "string"
-         },
-         "maxItems": 200,
-         "type": "array"
-        },
-        {
-         "type": "null"
-        }
-       ],
-       "default": null,
        "description": "Default: every marker of the project.",
-       "title": "Markers"
+       "items": {
+        "type": "string"
+       },
+       "maxItems": 200,
+       "type": "array"
       },
       "project": {
        "description": "Project name, as `list_projects` returns it.",
-       "title": "Project",
        "type": "string"
       }
      },
      "required": [
       "project"
      ],
-     "title": "ResetInput",
      "type": "object"
     },
     "needs": [
@@ -1246,19 +979,16 @@
       "force": {
        "default": false,
        "description": "Run the checks again even when their results for this image are stored.",
-       "title": "Force",
        "type": "boolean"
       },
       "project": {
        "description": "Project name, as `list_projects` returns it.",
-       "title": "Project",
        "type": "string"
       }
      },
      "required": [
       "project"
      ],
-     "title": "BasicQCInput",
      "type": "object"
     },
     "needs": [
@@ -1297,116 +1027,59 @@
        "additionalProperties": false,
        "properties": {
         "analysis_um_px": {
-         "anyOf": [
-          {
-           "maximum": 4.0,
-           "minimum": 0.2,
-           "type": "number"
-          },
-          {
-           "type": "null"
-          }
-         ],
-         "default": null,
          "description": "The resolution the image is read at, µm per pixel (default 0.5).",
-         "title": "Analysis Um Px"
+         "maximum": 4.0,
+         "minimum": 0.2,
+         "type": "number"
         },
         "cell_um": {
-         "anyOf": [
-          {
-           "maximum": 200,
-           "minimum": 20,
-           "type": "number"
-          },
-          {
-           "type": "null"
-          }
-         ],
-         "default": null,
          "description": "A grid cell's side in microns (default 40; each score covers 3 x 3 cells).",
-         "title": "Cell Um"
+         "maximum": 200,
+         "minimum": 20,
+         "type": "number"
         },
         "reference_fraction": {
-         "anyOf": [
-          {
-           "maximum": 0.5,
-           "minimum": 0.05,
-           "type": "number"
-          },
-          {
-           "type": "null"
-          }
-         ],
-         "default": null,
          "description": "The share of the sharpest cells that make the in-image sharp reference (default 0.15).",
-         "title": "Reference Fraction"
+         "maximum": 0.5,
+         "minimum": 0.05,
+         "type": "number"
         }
        },
-       "title": "BlurParams",
        "type": "object"
       }
      },
      "additionalProperties": false,
      "properties": {
       "channel": {
-       "anyOf": [
-        {
-         "maxLength": 200,
-         "type": "string"
-        },
-        {
-         "type": "null"
-        }
-       ],
-       "default": null,
        "description": "A channel of the image (the one to act on). Default: every listed channel for a run, status or write; the first listed for a set. Ignored on brightfield (the darkness plane).",
-       "title": "Channel"
+       "maxLength": 200,
+       "type": "string"
       },
       "channels": {
-       "anyOf": [
-        {
-         "items": {
-          "maxLength": 200,
-          "type": "string"
-         },
-         "maxItems": 12,
-         "type": "array"
-        },
-        {
-         "type": "null"
-        }
-       ],
-       "default": null,
        "description": "Run these (and list them). Default: the listed channels -- the ones picked, else the first three nuclear ones.",
-       "title": "Channels"
+       "items": {
+        "maxLength": 200,
+        "type": "string"
+       },
+       "maxItems": 12,
+       "type": "array"
       },
       "force": {
        "default": false,
        "description": "Run again even if a result for these inputs is stored.",
-       "title": "Force",
        "type": "boolean"
       },
       "params": {
-       "anyOf": [
-        {
-         "$ref": "#/$defs/BlurParams"
-        },
-        {
-         "type": "null"
-        }
-       ],
-       "default": null
+       "$ref": "#/$defs/BlurParams"
       },
       "project": {
        "description": "Project name, as `list_projects` returns it.",
-       "title": "Project",
        "type": "string"
       }
      },
      "required": [
       "project"
      ],
-     "title": "BlurRunInput",
      "type": "object"
     },
     "needs": [
@@ -1446,150 +1119,68 @@
        "additionalProperties": false,
        "properties": {
         "categories": {
-         "anyOf": [
-          {
-           "items": {
-            "enum": [
-             "fold",
-             "tear",
-             "debris",
-             "saturation"
-            ],
-            "type": "string"
-           },
-           "maxItems": 4,
-           "type": "array"
-          },
-          {
-           "type": "null"
-          }
-         ],
-         "default": null,
          "description": "The categories to look for (default all four).",
-         "title": "Categories"
+         "items": {
+          "enum": [
+           "fold",
+           "tear",
+           "debris",
+           "saturation"
+          ],
+          "type": "string"
+         },
+         "maxItems": 4,
+         "type": "array"
         },
         "debris_z": {
-         "anyOf": [
-          {
-           "maximum": 50,
-           "minimum": 1,
-           "type": "number"
-          },
-          {
-           "type": "null"
-          }
-         ],
-         "default": null,
          "description": "Compact debris' least brightness over the glass, robust SDs (default 3).",
-         "title": "Debris Z"
+         "maximum": 50,
+         "minimum": 1,
+         "type": "number"
         },
         "feather_um": {
-         "anyOf": [
-          {
-           "maximum": 1000,
-           "minimum": 0,
-           "type": "number"
-          },
-          {
-           "type": "null"
-          }
-         ],
-         "default": null,
          "description": "How far past the tissue edge the search reaches (default 100).",
-         "title": "Feather Um"
+         "maximum": 1000,
+         "minimum": 0,
+         "type": "number"
         },
         "fold_z": {
-         "anyOf": [
-          {
-           "maximum": 20,
-           "minimum": 1,
-           "type": "number"
-          },
-          {
-           "type": "null"
-          }
-         ],
-         "default": null,
          "description": "A fold seed's least brightness over the tissue, robust SDs (default 2.5).",
-         "title": "Fold Z"
+         "maximum": 20,
+         "minimum": 1,
+         "type": "number"
         },
         "grow_um": {
-         "anyOf": [
-          {
-           "maximum": 1000,
-           "minimum": 10,
-           "type": "number"
-          },
-          {
-           "type": "null"
-          }
-         ],
-         "default": null,
          "description": "How far the fine pass may grow an object past its coarse seed (default 150).",
-         "title": "Grow Um"
+         "maximum": 1000,
+         "minimum": 10,
+         "type": "number"
         },
         "pan_channels": {
-         "anyOf": [
-          {
-           "maximum": 12,
-           "minimum": 2,
-           "type": "integer"
-          },
-          {
-           "type": "null"
-          }
-         ],
-         "default": null,
          "description": "Channels averaged into the pan image the objects are traced on (default 8: one nuclear per cycle, then markers evenly spaced).",
-         "title": "Pan Channels"
+         "maximum": 12,
+         "minimum": 2,
+         "type": "integer"
         },
         "pixel_um": {
-         "anyOf": [
-          {
-           "maximum": 100,
-           "minimum": 0.01,
-           "type": "number"
-          },
-          {
-           "type": "null"
-          }
-         ],
-         "default": null,
          "description": "Microns per pixel at full resolution, when the image does not say (every size the detector uses is in microns).",
-         "title": "Pixel Um"
+         "maximum": 100,
+         "minimum": 0.01,
+         "type": "number"
         },
         "tear_level": {
-         "anyOf": [
-          {
-           "maximum": 1,
-           "minimum": 0,
-           "type": "number"
-          },
-          {
-           "type": "null"
-          }
-         ],
-         "default": null,
          "description": "A tear holds at most this share of the tissue's signal over the glass (default 0.35), or is darker in most channels.",
-         "title": "Tear Level"
+         "maximum": 1,
+         "minimum": 0,
+         "type": "number"
         },
         "tissue_min_width_um": {
-         "anyOf": [
-          {
-           "maximum": 2000,
-           "minimum": 0,
-           "type": "number"
-          },
-          {
-           "type": "null"
-          }
-         ],
-         "default": null,
          "description": "Tissue narrower than this (a peeled ribbon) is left out of the analysis region (default 200).",
-         "title": "Tissue Min Width Um"
+         "maximum": 2000,
+         "minimum": 0,
+         "type": "number"
         }
        },
-       "title": "ArtifactParams",
        "type": "object"
       }
      },
@@ -1598,31 +1189,20 @@
       "force": {
        "default": false,
        "description": "Run again even if a result for these inputs is stored.",
-       "title": "Force",
        "type": "boolean"
       },
       "params": {
-       "anyOf": [
-        {
-         "$ref": "#/$defs/ArtifactParams"
-        },
-        {
-         "type": "null"
-        }
-       ],
-       "default": null,
+       "$ref": "#/$defs/ArtifactParams",
        "description": "Detection parameters (default: the detector's own; each is in microns or robust SDs)."
       },
       "project": {
        "description": "Project name, as `list_projects` returns it.",
-       "title": "Project",
        "type": "string"
       }
      },
      "required": [
       "project"
      ],
-     "title": "ArtifactRunInput",
      "type": "object"
     },
     "needs": [
@@ -1665,83 +1245,44 @@
        "additionalProperties": false,
        "properties": {
         "flag": {
-         "anyOf": [
-          {
-           "maximum": 0.95,
-           "minimum": 0.3,
-           "type": "number"
-          },
-          {
-           "type": "null"
-          }
-         ],
-         "default": null,
          "description": "A score at or above this flags a cell (default 0.6).",
-         "title": "Flag"
+         "maximum": 0.95,
+         "minimum": 0.3,
+         "type": "number"
         },
         "unsure": {
-         "anyOf": [
-          {
-           "maximum": 0.9,
-           "minimum": 0.1,
-           "type": "number"
-          },
-          {
-           "type": "null"
-          }
-         ],
-         "default": null,
          "description": "Between this and `flag` a cell is ambiguous (default 0.4).",
-         "title": "Unsure"
+         "maximum": 0.9,
+         "minimum": 0.1,
+         "type": "number"
         }
        },
-       "title": "SegParams",
        "type": "object"
       }
      },
      "additionalProperties": false,
      "properties": {
       "dna_channel": {
-       "anyOf": [
-        {
-         "maxLength": 200,
-         "type": "string"
-        },
-        {
-         "type": "null"
-        }
-       ],
-       "default": null,
        "description": "Default: the one chosen before, else the first nuclear channel.",
-       "title": "Dna Channel"
+       "maxLength": 200,
+       "type": "string"
       },
       "force": {
        "default": false,
        "description": "Run again even if a result for these inputs is stored.",
-       "title": "Force",
        "type": "boolean"
       },
       "params": {
-       "anyOf": [
-        {
-         "$ref": "#/$defs/SegParams"
-        },
-        {
-         "type": "null"
-        }
-       ],
-       "default": null
+       "$ref": "#/$defs/SegParams"
       },
       "project": {
        "description": "Project name, as `list_projects` returns it.",
-       "title": "Project",
        "type": "string"
       }
      },
      "required": [
       "project"
      ],
-     "title": "SegRunInput",
      "type": "object"
     },
     "needs": [
@@ -1787,19 +1328,16 @@
         "brief",
         "full"
        ],
-       "title": "Detail",
        "type": "string"
       },
       "include_cells": {
        "default": false,
        "description": "Also list failing cell ids, and the cells with an unreliable marker (bounded).",
-       "title": "Include Cells",
        "type": "boolean"
       },
       "include_regions": {
        "default": true,
        "description": "Every QC region with its category, subtype (class), action, score, threshold and threshold_source, and the agent's judgment.",
-       "title": "Include Regions",
        "type": "boolean"
       },
       "max_ids": {
@@ -1807,32 +1345,20 @@
        "description": "With include_cells: at most this many cell ids per list.",
        "maximum": 1000,
        "minimum": 0,
-       "title": "Max Ids",
        "type": "integer"
       },
       "project": {
        "description": "Project name, as `list_projects` returns it.",
-       "title": "Project",
        "type": "string"
       },
       "result_id": {
-       "anyOf": [
-        {
-         "type": "string"
-        },
-        {
-         "type": "null"
-        }
-       ],
-       "default": null,
        "description": "Default: the active result.",
-       "title": "Result Id"
+       "type": "string"
       }
      },
      "required": [
       "project"
      ],
-     "title": "ResultsInput",
      "type": "object"
     },
     "needs": [
@@ -1872,19 +1398,16 @@
       "include_regions": {
        "default": false,
        "description": "Also where the flagged cells cluster (GeoJSON, full-resolution pixels), at the cluster map's automatic bar.",
-       "title": "Include Regions",
        "type": "boolean"
       },
       "project": {
        "description": "Project name, as `list_projects` returns it.",
-       "title": "Project",
        "type": "string"
       }
      },
      "required": [
       "project"
      ],
-     "title": "SegStatusInput",
      "type": "object"
     },
     "needs": [
@@ -1930,57 +1453,27 @@
           "plane",
           "slab"
          ],
-         "title": "Kind",
          "type": "string"
         },
         "t": {
          "default": 0,
          "description": "Frame of a time series.",
          "minimum": 0,
-         "title": "T",
          "type": "integer"
         },
         "z": {
-         "anyOf": [
-          {
-           "minimum": 0,
-           "type": "integer"
-          },
-          {
-           "type": "null"
-          }
-         ],
-         "default": null,
-         "title": "Z"
+         "minimum": 0,
+         "type": "integer"
         },
         "z0": {
-         "anyOf": [
-          {
-           "minimum": 0,
-           "type": "integer"
-          },
-          {
-           "type": "null"
-          }
-         ],
-         "default": null,
-         "title": "Z0"
+         "minimum": 0,
+         "type": "integer"
         },
         "z1": {
-         "anyOf": [
-          {
-           "minimum": 0,
-           "type": "integer"
-          },
-          {
-           "type": "null"
-          }
-         ],
-         "default": null,
-         "title": "Z1"
+         "minimum": 0,
+         "type": "integer"
         }
        },
-       "title": "ExtentInput",
        "type": "object"
       },
       "SolidInput": {
@@ -1994,215 +1487,110 @@
           "contours",
           "labels"
          ],
-         "title": "Kind",
          "type": "string"
         },
         "planes": {
-         "anyOf": [
-          {
-           "additionalProperties": {
-            "additionalProperties": true,
-            "type": "object"
-           },
-           "type": "object"
-          },
-          {
-           "type": "null"
-          }
-         ],
-         "default": null,
+         "additionalProperties": {
+          "additionalProperties": true,
+          "type": "object"
+         },
          "description": "contours: {plane index: GeoJSON Polygon in image pixels}.",
-         "title": "Planes"
+         "type": "object"
         },
         "rz": {
-         "anyOf": [
-          {
-           "exclusiveMinimum": 0,
-           "type": "number"
-          },
-          {
-           "type": "null"
-          }
-         ],
-         "default": null,
          "description": "ellipsoid: half its depth, in planes.",
-         "title": "Rz"
+         "exclusiveMinimum": 0,
+         "type": "number"
         },
         "t": {
          "default": 0,
          "description": "Frame of a time series.",
          "minimum": 0,
-         "title": "T",
          "type": "integer"
         },
         "z": {
-         "anyOf": [
-          {
-           "minimum": 0,
-           "type": "number"
-          },
-          {
-           "type": "null"
-          }
-         ],
-         "default": null,
          "description": "ellipsoid: its middle plane.",
-         "title": "Z"
+         "minimum": 0,
+         "type": "number"
         }
        },
        "required": [
         "kind"
        ],
-       "title": "SolidInput",
        "type": "object"
       }
      },
      "additionalProperties": false,
      "properties": {
       "base_revision": {
-       "anyOf": [
-        {
-         "type": "integer"
-        },
-        {
-         "type": "null"
-        }
-       ],
-       "default": null,
        "description": "The revision last read; refused if the regions changed since.",
-       "title": "Base Revision"
+       "type": "integer"
       },
       "category": {
        "description": "Category label; created if the project has none by that name (matched case-insensitively).",
-       "title": "Category",
        "type": "string"
       },
       "cells": {
-       "anyOf": [
-        {
-         "items": {
-          "type": "integer"
-         },
-         "type": "array"
-        },
-        {
-         "type": "null"
-        }
-       ],
-       "default": null,
        "description": "On a z-stack with a 3-D mask: make the region exactly these cells (label ids, which are the table's cell ids), outlined plane by plane from the mask -- instead of geometry or points.",
-       "title": "Cells"
+       "items": {
+        "type": "integer"
+       },
+       "type": "array"
       },
       "color": {
-       "anyOf": [
-        {
-         "type": "string"
-        },
-        {
-         "type": "null"
-        }
-       ],
-       "default": null,
        "description": "#rrggbb, for a new category.",
-       "title": "Color"
+       "type": "string"
       },
       "extent": {
-       "anyOf": [
-        {
-         "$ref": "#/$defs/ExtentInput"
-        },
-        {
-         "type": "null"
-        }
-       ],
-       "default": null,
+       "$ref": "#/$defs/ExtentInput",
        "description": "On a z-stack: the planes the region covers (default: all)."
       },
       "geometry": {
-       "anyOf": [
-        {
-         "additionalProperties": true,
-         "type": "object"
-        },
-        {
-         "type": "null"
-        }
-       ],
-       "default": null,
+       "additionalProperties": true,
        "description": "GeoJSON Polygon or MultiPolygon, in image pixels, instead of points.",
-       "title": "Geometry"
+       "type": "object"
       },
       "method": {
-       "anyOf": [
-        {
-         "enum": [
-          "freehand",
-          "polygon",
-          "rectangle",
-          "ellipse",
-          "sam"
-         ],
-         "type": "string"
-        },
-        {
-         "type": "null"
-        }
-       ],
-       "default": null,
        "description": "Which tool drew the shape, recorded as provenance.",
-       "title": "Method"
+       "enum": [
+        "freehand",
+        "polygon",
+        "rectangle",
+        "ellipse",
+        "sam"
+       ],
+       "type": "string"
       },
       "name": {
        "default": "",
-       "title": "Name",
        "type": "string"
       },
       "notes": {
        "default": "",
-       "title": "Notes",
        "type": "string"
       },
       "points": {
-       "anyOf": [
-        {
-         "items": {
-          "items": {
-           "type": "number"
-          },
-          "type": "array"
-         },
-         "type": "array"
-        },
-        {
-         "type": "null"
-        }
-       ],
-       "default": null,
        "description": "One ring of [x, y] vertices in full-resolution image pixels.",
-       "title": "Points"
+       "items": {
+        "items": {
+         "type": "number"
+        },
+        "type": "array"
+       },
+       "type": "array"
       },
       "project": {
        "description": "Project name, as `list_projects` returns it.",
-       "title": "Project",
        "type": "string"
       },
       "solid": {
-       "anyOf": [
-        {
-         "$ref": "#/$defs/SolidInput"
-        },
-        {
-         "type": "null"
-        }
-       ],
-       "default": null,
+       "$ref": "#/$defs/SolidInput",
        "description": "On a z-stack: its shape through the planes (sets the planes it covers too)."
       },
       "t": {
        "default": 0,
        "description": "With `cells`: the frame of a time series.",
        "minimum": 0,
-       "title": "T",
        "type": "integer"
       }
      },
@@ -2210,7 +1598,6 @@
       "project",
       "category"
      ],
-     "title": "CreateInput",
      "type": "object"
     },
     "needs": [
@@ -2261,57 +1648,27 @@
           "plane",
           "slab"
          ],
-         "title": "Kind",
          "type": "string"
         },
         "t": {
          "default": 0,
          "description": "Frame of a time series.",
          "minimum": 0,
-         "title": "T",
          "type": "integer"
         },
         "z": {
-         "anyOf": [
-          {
-           "minimum": 0,
-           "type": "integer"
-          },
-          {
-           "type": "null"
-          }
-         ],
-         "default": null,
-         "title": "Z"
+         "minimum": 0,
+         "type": "integer"
         },
         "z0": {
-         "anyOf": [
-          {
-           "minimum": 0,
-           "type": "integer"
-          },
-          {
-           "type": "null"
-          }
-         ],
-         "default": null,
-         "title": "Z0"
+         "minimum": 0,
+         "type": "integer"
         },
         "z1": {
-         "anyOf": [
-          {
-           "minimum": 0,
-           "type": "integer"
-          },
-          {
-           "type": "null"
-          }
-         ],
-         "default": null,
-         "title": "Z1"
+         "minimum": 0,
+         "type": "integer"
         }
        },
-       "title": "ExtentInput",
        "type": "object"
       },
       "SolidInput": {
@@ -2325,240 +1682,109 @@
           "contours",
           "labels"
          ],
-         "title": "Kind",
          "type": "string"
         },
         "planes": {
-         "anyOf": [
-          {
-           "additionalProperties": {
-            "additionalProperties": true,
-            "type": "object"
-           },
-           "type": "object"
-          },
-          {
-           "type": "null"
-          }
-         ],
-         "default": null,
+         "additionalProperties": {
+          "additionalProperties": true,
+          "type": "object"
+         },
          "description": "contours: {plane index: GeoJSON Polygon in image pixels}.",
-         "title": "Planes"
+         "type": "object"
         },
         "rz": {
-         "anyOf": [
-          {
-           "exclusiveMinimum": 0,
-           "type": "number"
-          },
-          {
-           "type": "null"
-          }
-         ],
-         "default": null,
          "description": "ellipsoid: half its depth, in planes.",
-         "title": "Rz"
+         "exclusiveMinimum": 0,
+         "type": "number"
         },
         "t": {
          "default": 0,
          "description": "Frame of a time series.",
          "minimum": 0,
-         "title": "T",
          "type": "integer"
         },
         "z": {
-         "anyOf": [
-          {
-           "minimum": 0,
-           "type": "number"
-          },
-          {
-           "type": "null"
-          }
-         ],
-         "default": null,
          "description": "ellipsoid: its middle plane.",
-         "title": "Z"
+         "minimum": 0,
+         "type": "number"
         }
        },
        "required": [
         "kind"
        ],
-       "title": "SolidInput",
        "type": "object"
       }
      },
      "additionalProperties": false,
      "properties": {
       "base_revision": {
-       "anyOf": [
-        {
-         "type": "integer"
-        },
-        {
-         "type": "null"
-        }
-       ],
-       "default": null,
-       "title": "Base Revision"
+       "type": "integer"
       },
       "category": {
-       "anyOf": [
-        {
-         "type": "string"
-        },
-        {
-         "type": "null"
-        }
-       ],
-       "default": null,
-       "title": "Category"
+       "type": "string"
       },
       "extent": {
-       "anyOf": [
-        {
-         "$ref": "#/$defs/ExtentInput"
-        },
-        {
-         "type": "null"
-        }
-       ],
-       "default": null,
+       "$ref": "#/$defs/ExtentInput",
        "description": "On a z-stack: the planes the region covers; kind 'all' for every plane."
       },
       "flatten": {
        "default": false,
        "description": "Drop its shape through the planes (keep its footprint, on the planes in `extent`).",
-       "title": "Flatten",
        "type": "boolean"
       },
       "geometry": {
-       "anyOf": [
-        {
-         "additionalProperties": true,
-         "type": "object"
-        },
-        {
-         "type": "null"
-        }
-       ],
-       "default": null,
-       "title": "Geometry"
+       "additionalProperties": true,
+       "type": "object"
       },
       "locked": {
-       "anyOf": [
-        {
-         "type": "boolean"
-        },
-        {
-         "type": "null"
-        }
-       ],
-       "default": null,
-       "title": "Locked"
+       "type": "boolean"
       },
       "method": {
-       "anyOf": [
-        {
-         "enum": [
-          "freehand",
-          "polygon",
-          "rectangle",
-          "ellipse",
-          "sam"
-         ],
-         "type": "string"
-        },
-        {
-         "type": "null"
-        }
-       ],
-       "default": null,
        "description": "With a new outline: which tool drew it.",
-       "title": "Method"
+       "enum": [
+        "freehand",
+        "polygon",
+        "rectangle",
+        "ellipse",
+        "sam"
+       ],
+       "type": "string"
       },
       "name": {
-       "anyOf": [
-        {
-         "type": "string"
-        },
-        {
-         "type": "null"
-        }
-       ],
-       "default": null,
-       "title": "Name"
+       "type": "string"
       },
       "notes": {
-       "anyOf": [
-        {
-         "type": "string"
-        },
-        {
-         "type": "null"
-        }
-       ],
-       "default": null,
-       "title": "Notes"
+       "type": "string"
       },
       "points": {
-       "anyOf": [
-        {
-         "items": {
-          "items": {
-           "type": "number"
-          },
-          "type": "array"
-         },
-         "type": "array"
+       "items": {
+        "items": {
+         "type": "number"
         },
-        {
-         "type": "null"
-        }
-       ],
-       "default": null,
-       "title": "Points"
+        "type": "array"
+       },
+       "type": "array"
       },
       "project": {
        "description": "Project name, as `list_projects` returns it.",
-       "title": "Project",
        "type": "string"
       },
       "roi_id": {
        "description": "The region's id, from `list_rois`.",
-       "title": "Roi Id",
        "type": "string"
       },
       "solid": {
-       "anyOf": [
-        {
-         "$ref": "#/$defs/SolidInput"
-        },
-        {
-         "type": "null"
-        }
-       ],
-       "default": null,
+       "$ref": "#/$defs/SolidInput",
        "description": "On a z-stack: its shape through the planes."
       },
       "visible": {
-       "anyOf": [
-        {
-         "type": "boolean"
-        },
-        {
-         "type": "null"
-        }
-       ],
-       "default": null,
-       "title": "Visible"
+       "type": "boolean"
       }
      },
      "required": [
       "project",
       "roi_id"
      ],
-     "title": "UpdateInput",
      "type": "object"
     },
     "needs": [
@@ -2602,22 +1828,18 @@
        "properties": {
         "height": {
          "exclusiveMinimum": 0,
-         "title": "Height",
          "type": "number"
         },
         "width": {
          "exclusiveMinimum": 0,
-         "title": "Width",
          "type": "number"
         },
         "x": {
          "description": "Left edge, full-resolution pixels.",
-         "title": "X",
          "type": "number"
         },
         "y": {
          "description": "Top edge, full-resolution pixels.",
-         "title": "Y",
          "type": "number"
         }
        },
@@ -2627,69 +1849,46 @@
         "width",
         "height"
        ],
-       "title": "Bounds",
        "type": "object"
       },
       "CellsSpec": {
        "additionalProperties": false,
        "properties": {
         "highlight": {
-         "anyOf": [
+         "oneOf": [
           {
-           "discriminator": {
-            "mapping": {
-             "ids": "#/$defs/IdHighlight",
-             "marker": "#/$defs/MarkerHighlight"
-            },
-            "propertyName": "kind"
-           },
-           "oneOf": [
-            {
-             "$ref": "#/$defs/MarkerHighlight"
-            },
-            {
-             "$ref": "#/$defs/IdHighlight"
-            }
-           ]
+           "$ref": "#/$defs/MarkerHighlight"
           },
           {
-           "type": "null"
+           "$ref": "#/$defs/IdHighlight"
           }
-         ],
-         "default": null,
-         "title": "Highlight"
+         ]
         },
         "label_ids": {
          "default": false,
          "description": "Write cell ids next to cells in the field (bounded by max_labels, nearest the centre first).",
-         "title": "Label Ids",
          "type": "boolean"
         },
         "max_labels": {
          "default": 40,
          "maximum": 200,
          "minimum": 0,
-         "title": "Max Labels",
          "type": "integer"
         },
         "negative_color": {
          "default": "#4f86c6",
-         "title": "Negative Color",
          "type": "string"
         },
         "outline_color": {
          "default": "#e6e6e6",
-         "title": "Outline Color",
          "type": "string"
         },
         "positive_color": {
          "default": "#ff3df2",
-         "title": "Positive Color",
          "type": "string"
         },
         "qc_color": {
          "default": "#7a7a7a",
-         "title": "Qc Color",
          "type": "string"
         },
         "qc_failures": {
@@ -2699,16 +1898,13 @@
           "muted",
           "as_others"
          ],
-         "title": "Qc Failures",
          "type": "string"
         },
         "show_negative": {
          "default": true,
-         "title": "Show Negative",
          "type": "boolean"
         }
        },
-       "title": "CellsSpec",
        "type": "object"
       },
       "CenterBounds": {
@@ -2720,69 +1916,38 @@
          "description": "width / height.",
          "exclusiveMinimum": 0,
          "maximum": 10,
-         "title": "Aspect",
          "type": "number"
         },
         "center_x": {
-         "title": "Center X",
          "type": "number"
         },
         "center_y": {
-         "title": "Center Y",
          "type": "number"
         },
         "size_px": {
-         "anyOf": [
-          {
-           "exclusiveMinimum": 0,
-           "type": "number"
-          },
-          {
-           "type": "null"
-          }
-         ],
-         "default": null,
          "description": "Side in full-resolution pixels.",
-         "title": "Size Px"
+         "exclusiveMinimum": 0,
+         "type": "number"
         },
         "size_um": {
-         "anyOf": [
-          {
-           "exclusiveMinimum": 0,
-           "type": "number"
-          },
-          {
-           "type": "null"
-          }
-         ],
-         "default": null,
          "description": "Side in microns (needs a calibrated image).",
-         "title": "Size Um"
+         "exclusiveMinimum": 0,
+         "type": "number"
         }
        },
        "required": [
         "center_x",
         "center_y"
        ],
-       "title": "CenterBounds",
        "type": "object"
       },
       "ChannelCurve": {
        "additionalProperties": false,
        "properties": {
         "cofactor": {
-         "anyOf": [
-          {
-           "exclusiveMinimum": 0,
-           "type": "number"
-          },
-          {
-           "type": "null"
-          }
-         ],
-         "default": null,
          "description": "asinh only: raw units above black where the curve turns from linear to logarithmic. Default the window's span / 20.",
-         "title": "Cofactor"
+         "exclusiveMinimum": 0,
+         "type": "number"
         },
         "kind": {
          "default": "asinh",
@@ -2791,11 +1956,9 @@
           "linear",
           "asinh"
          ],
-         "title": "Kind",
          "type": "string"
         }
        },
-       "title": "ChannelCurve",
        "type": "object"
       },
       "ChannelSpec": {
@@ -2804,24 +1967,14 @@
         "color": {
          "default": "#ffffff",
          "description": "#rrggbb.",
-         "title": "Color",
          "type": "string"
         },
         "curve": {
-         "anyOf": [
-          {
-           "$ref": "#/$defs/ChannelCurve"
-          },
-          {
-           "type": "null"
-          }
-         ],
-         "default": null,
+         "$ref": "#/$defs/ChannelCurve",
          "description": "How brightness follows intensity. Default: the calibration's curve for an 'auto' window, else linear."
         },
         "name": {
          "description": "Channel name (or key), as `list_channels` gives it.",
-         "title": "Name",
          "type": "string"
         },
         "window": {
@@ -2841,14 +1994,12 @@
           }
          ],
          "default": "auto",
-         "description": "[low, high] in raw intensity units; 'auto' (the project's display calibration when one is stored, else the channel's 1st-99.9th percentile); or 'percentiles' (always the 1st-99.9th percentile).",
-         "title": "Window"
+         "description": "[low, high] in raw intensity units; 'auto' (the project's display calibration when one is stored, else the channel's 1st-99.9th percentile); or 'percentiles' (always the 1st-99.9th percentile)."
         }
        },
        "required": [
         "name"
        ],
-       "title": "ChannelSpec",
        "type": "object"
       },
       "IdHighlight": {
@@ -2859,20 +2010,17 @@
           "type": "integer"
          },
          "maxItems": 1000,
-         "title": "Cell Ids",
          "type": "array"
         },
         "kind": {
          "const": "ids",
          "default": "ids",
-         "title": "Kind",
          "type": "string"
         }
        },
        "required": [
         "cell_ids"
        ],
-       "title": "IdHighlight",
        "type": "object"
       },
       "MarkerHighlight": {
@@ -2880,80 +2028,40 @@
        "description": "Colour cells by a marker gate: positive cells in one colour, the rest in\nanother (or undrawn).",
        "properties": {
         "high": {
-         "anyOf": [
-          {
-           "type": "number"
-          },
-          {
-           "type": "null"
-          }
-         ],
-         "default": null,
-         "title": "High"
+         "type": "number"
         },
         "kind": {
          "const": "marker",
          "default": "marker",
-         "title": "Kind",
          "type": "string"
         },
         "low": {
-         "anyOf": [
-          {
-           "type": "number"
-          },
-          {
-           "type": "null"
-          }
-         ],
-         "default": null,
          "description": "Gate; default the stored one.",
-         "title": "Low"
+         "type": "number"
         },
         "marker": {
-         "title": "Marker",
          "type": "string"
         }
        },
        "required": [
         "marker"
        ],
-       "title": "MarkerHighlight",
        "type": "object"
       },
       "OutputSpec": {
        "additionalProperties": false,
        "properties": {
         "height": {
-         "anyOf": [
-          {
-           "maximum": 2048,
-           "minimum": 16,
-           "type": "integer"
-          },
-          {
-           "type": "null"
-          }
-         ],
-         "default": null,
-         "title": "Height"
+         "maximum": 2048,
+         "minimum": 16,
+         "type": "integer"
         },
         "width": {
-         "anyOf": [
-          {
-           "maximum": 2048,
-           "minimum": 16,
-           "type": "integer"
-          },
-          {
-           "type": "null"
-          }
-         ],
-         "default": null,
-         "title": "Width"
+         "maximum": 2048,
+         "minimum": 16,
+         "type": "integer"
         }
        },
-       "title": "OutputSpec",
        "type": "object"
       },
       "RoiBounds": {
@@ -2964,19 +2072,16 @@
          "description": "Margin, as a fraction of the box's larger side.",
          "maximum": 2,
          "minimum": 0,
-         "title": "Padding",
          "type": "number"
         },
         "roi_id": {
          "description": "A region's id from `list_rois`; the render frames its bounding box.",
-         "title": "Roi Id",
          "type": "string"
         }
        },
        "required": [
         "roi_id"
        ],
-       "title": "RoiBounds",
        "type": "object"
       },
       "ShapeSpec": {
@@ -2984,68 +2089,44 @@
        "description": "A region to draw over the picture: a GeoJSON Polygon/MultiPolygon or a\nbox, in full-resolution image pixels (a QC candidate's outline, a grid\nsquare).",
        "properties": {
         "bounds": {
-         "anyOf": [
-          {
-           "$ref": "#/$defs/Bounds"
-          },
-          {
-           "type": "null"
-          }
-         ],
-         "default": null
+         "$ref": "#/$defs/Bounds"
         },
         "color": {
          "default": "#ff3df2",
-         "title": "Color",
          "type": "string"
         },
         "dash": {
          "default": false,
-         "title": "Dash",
          "type": "boolean"
         },
         "fill_alpha": {
          "default": 0.0,
          "maximum": 0.6,
          "minimum": 0.0,
-         "title": "Fill Alpha",
          "type": "number"
         },
         "geometry": {
-         "anyOf": [
-          {
-           "additionalProperties": true,
-           "type": "object"
-          },
-          {
-           "type": "null"
-          }
-         ],
-         "default": null,
+         "additionalProperties": true,
          "description": "GeoJSON Polygon or MultiPolygon, full-resolution pixels.",
-         "title": "Geometry"
+         "type": "object"
         },
         "id": {
          "default": "shape",
          "maxLength": 32,
-         "title": "Id",
          "type": "string"
         },
         "label": {
          "default": "",
          "maxLength": 24,
-         "title": "Label",
          "type": "string"
         },
         "width": {
          "default": 2,
          "maximum": 6,
          "minimum": 1,
-         "title": "Width",
          "type": "integer"
         }
        },
-       "title": "ShapeSpec",
        "type": "object"
       }
      },
@@ -3053,55 +2134,22 @@
      "description": "Everything `render_region` accepts.",
      "properties": {
       "bounds": {
-       "anyOf": [
-        {
-         "$ref": "#/$defs/Bounds"
-        },
-        {
-         "type": "null"
-        }
-       ],
-       "default": null,
+       "$ref": "#/$defs/Bounds",
        "description": "The region, in full-resolution pixels. Give one of bounds, center or roi; none means the whole image."
       },
       "cells": {
-       "anyOf": [
-        {
-         "$ref": "#/$defs/CellsSpec"
-        },
-        {
-         "type": "null"
-        }
-       ],
-       "default": null
+       "$ref": "#/$defs/CellsSpec"
       },
       "center": {
-       "anyOf": [
-        {
-         "$ref": "#/$defs/CenterBounds"
-        },
-        {
-         "type": "null"
-        }
-       ],
-       "default": null
+       "$ref": "#/$defs/CenterBounds"
       },
       "channels": {
-       "anyOf": [
-        {
-         "items": {
-          "$ref": "#/$defs/ChannelSpec"
-         },
-         "maxItems": 6,
-         "type": "array"
-        },
-        {
-         "type": "null"
-        }
-       ],
-       "default": null,
        "description": "Channels to composite (default from the preset, else the first three).",
-       "title": "Channels"
+       "items": {
+        "$ref": "#/$defs/ChannelSpec"
+       },
+       "maxItems": 6,
+       "type": "array"
       },
       "layers": {
        "anyOf": [
@@ -3120,8 +2168,7 @@
         }
        ],
        "default": "visible",
-       "description": "The scene's other layers to draw over the image: 'visible' (as the viewer shows them), 'none', or a list of layer ids. Ones that cannot be drawn are listed in the manifest's not_rendered, with the reason.",
-       "title": "Layers"
+       "description": "The scene's other layers to draw over the image: 'visible' (as the viewer shows them), 'none', or a list of layer ids."
       },
       "level": {
        "anyOf": [
@@ -3134,128 +2181,63 @@
         }
        ],
        "default": "auto",
-       "description": "Pyramid level, or 'auto' for the cheapest one with enough detail.",
-       "title": "Level"
+       "description": "Pyramid level, or 'auto' for the cheapest one with enough detail."
       },
       "marker": {
-       "anyOf": [
-        {
-         "type": "string"
-        },
-        {
-         "type": "null"
-        }
-       ],
-       "default": null,
        "description": "Shortcut: show this marker's channel and highlight cells its stored gate calls positive.",
-       "title": "Marker"
+       "type": "string"
       },
       "output": {
-       "anyOf": [
-        {
-         "$ref": "#/$defs/OutputSpec"
-        },
-        {
-         "type": "null"
-        }
-       ],
-       "default": null
+       "$ref": "#/$defs/OutputSpec"
       },
       "preset": {
-       "anyOf": [
-        {
-         "enum": [
-          "marker_validation",
-          "segmentation_qc",
-          "roi_context",
-          "cell_identity",
-          "spatial_context"
-         ],
-         "type": "string"
-        },
-        {
-         "type": "null"
-        }
+       "enum": [
+        "marker_validation",
+        "segmentation_qc",
+        "roi_context",
+        "cell_identity",
+        "spatial_context"
        ],
-       "default": null,
-       "title": "Preset"
+       "type": "string"
       },
       "project": {
        "description": "Project name, as `list_projects` returns it.",
-       "title": "Project",
        "type": "string"
       },
       "roi": {
-       "anyOf": [
-        {
-         "$ref": "#/$defs/RoiBounds"
-        },
-        {
-         "type": "null"
-        }
-       ],
-       "default": null
+       "$ref": "#/$defs/RoiBounds"
       },
       "scale_bar": {
        "default": true,
        "description": "Draw a scale bar (only when calibrated).",
-       "title": "Scale Bar",
        "type": "boolean"
       },
       "segmentation": {
-       "anyOf": [
-        {
-         "enum": [
-          "none",
-          "outlines",
-          "filled"
-         ],
-         "type": "string"
-        },
-        {
-         "type": "null"
-        }
-       ],
-       "default": null,
        "description": "How to draw the cell mask (default: outlines when there is one).",
-       "title": "Segmentation"
+       "enum": [
+        "none",
+        "outlines",
+        "filled"
+       ],
+       "type": "string"
       },
       "shapes": {
-       "anyOf": [
-        {
-         "items": {
-          "$ref": "#/$defs/ShapeSpec"
-         },
-         "maxItems": 16,
-         "type": "array"
-        },
-        {
-         "type": "null"
-        }
-       ],
-       "default": null,
        "description": "Regions to outline over the picture (GeoJSON or boxes, full-resolution pixels).",
-       "title": "Shapes"
+       "items": {
+        "$ref": "#/$defs/ShapeSpec"
+       },
+       "maxItems": 16,
+       "type": "array"
       },
       "view": {
-       "anyOf": [
-        {
-         "maxLength": 48,
-         "type": "string"
-        },
-        {
-         "type": "null"
-        }
-       ],
-       "default": null,
        "description": "For a z-stack (inspect_volume): which plane or projection to draw -- 'z12' (plane 12), 'z4-19max' (maximum projection of planes 4-19, inclusive), 'zmean', 'z2-8p95'; 't3z12' for a frame. Default: the plane the image opens on. The manifest's `view` says which was drawn; a projection's overlap is not colocalization.",
-       "title": "View"
+       "maxLength": 48,
+       "type": "string"
       }
      },
      "required": [
       "project"
      ],
-     "title": "RenderInput",
      "type": "object"
     },
     "needs": [
@@ -3301,189 +2283,95 @@
      "additionalProperties": false,
      "properties": {
       "cell_ids": {
-       "anyOf": [
-        {
-         "items": {
-          "type": "integer"
-         },
-         "maxItems": 1000,
-         "type": "array"
-        },
-        {
-         "type": "null"
-        }
-       ],
-       "default": null,
        "description": "These cells (the first n). Or give marker + select.",
-       "title": "Cell Ids"
+       "items": {
+        "type": "integer"
+       },
+       "maxItems": 1000,
+       "type": "array"
       },
       "channels": {
-       "anyOf": [
-        {
-         "items": {
-          "type": "string"
-         },
-         "maxItems": 3,
-         "type": "array"
-        },
-        {
-         "type": "null"
-        }
-       ],
-       "default": null,
        "description": "Channels to draw (default the nuclear channel and the marker).",
-       "title": "Channels"
+       "items": {
+        "type": "string"
+       },
+       "maxItems": 3,
+       "type": "array"
       },
       "crop_px": {
-       "anyOf": [
-        {
-         "exclusiveMinimum": 0,
-         "maximum": 2000,
-         "type": "number"
-        },
-        {
-         "type": "null"
-        }
-       ],
-       "default": null,
        "description": "Crop side in full-resolution pixels (default 160 when uncalibrated).",
-       "title": "Crop Px"
+       "exclusiveMinimum": 0,
+       "maximum": 2000,
+       "type": "number"
       },
       "crop_um": {
-       "anyOf": [
-        {
-         "exclusiveMinimum": 0,
-         "maximum": 500,
-         "type": "number"
-        },
-        {
-         "type": "null"
-        }
-       ],
-       "default": null,
        "description": "Crop side in µm (default 40; needs a calibrated image).",
-       "title": "Crop Um"
+       "exclusiveMinimum": 0,
+       "maximum": 500,
+       "type": "number"
       },
       "high": {
-       "anyOf": [
-        {
-         "type": "number"
-        },
-        {
-         "type": "null"
-        }
-       ],
-       "default": null,
-       "title": "High"
+       "type": "number"
       },
       "low": {
-       "anyOf": [
-        {
-         "type": "number"
-        },
-        {
-         "type": "null"
-        }
-       ],
-       "default": null,
        "description": "Gate; default the stored one.",
-       "title": "Low"
+       "type": "number"
       },
       "marker": {
-       "anyOf": [
-        {
-         "type": "string"
-        },
-        {
-         "type": "null"
-        }
-       ],
-       "default": null,
        "description": "The marker whose value is under each cell, and that select picks by.",
-       "title": "Marker"
+       "type": "string"
       },
       "n": {
        "default": 24,
        "maximum": 48,
        "minimum": 1,
-       "title": "N",
        "type": "integer"
       },
       "project": {
        "description": "Project name, as `list_projects` returns it.",
-       "title": "Project",
        "type": "string"
       },
       "qc": {
-       "anyOf": [
-        {
-         "enum": [
-          "strict",
-          "exclude",
-          "off"
-         ],
-         "type": "string"
-        },
-        {
-         "type": "null"
-        }
+       "description": "QC failures left out of this estimate, sample or picture (the gate still applies to every cell). strict (default): cells QC called exclude or warn, and the cells QC flagged this marker unreliable in; exclude: warn calls kept; off: QC ignored (only when the user asks).",
+       "enum": [
+        "strict",
+        "exclude",
+        "off"
        ],
-       "default": null,
-       "description": "Which QC failures to leave out of this estimate, sample or picture (the gate itself always applies to every cell). strict (the default): cells QC called exclude or warn, and for this marker the cells QC flagged it unreliable in; exclude: warn calls kept; off: QC ignored -- only when the user asks, or QC is suspected wrong. Inside a gating session the session's own setting applies. No effect where QC was never run.",
-       "title": "Qc"
+       "type": "string"
       },
       "select": {
-       "anyOf": [
-        {
-         "enum": [
-          "positive",
-          "negative",
-          "borderline",
-          "brightest",
-          "dimmest"
-         ],
-         "type": "string"
-        },
-        {
-         "type": "null"
-        }
-       ],
-       "default": null,
        "description": "positive / negative (by the gate, brightest first), borderline (nearest the gate), brightest, dimmest.",
-       "title": "Select"
+       "enum": [
+        "positive",
+        "negative",
+        "borderline",
+        "brightest",
+        "dimmest"
+       ],
+       "type": "string"
       },
       "sort_by": {
-       "anyOf": [
-        {
-         "enum": [
-          "value_desc",
-          "value_asc",
-          "id",
-          "given"
-         ],
-         "type": "string"
-        },
-        {
-         "type": "null"
-        }
-       ],
-       "default": null,
        "description": "For cell_ids: the order (default by marker value, brightest first).",
-       "title": "Sort By"
+       "enum": [
+        "value_desc",
+        "value_asc",
+        "id",
+        "given"
+       ],
+       "type": "string"
       },
       "tile_px": {
        "default": 160,
        "description": "Each tile's side in the picture.",
        "maximum": 320,
        "minimum": 64,
-       "title": "Tile Px",
        "type": "integer"
       }
      },
      "required": [
       "project"
      ],
-     "title": "GalleryInput",
      "type": "object"
     },
     "needs": [
@@ -3531,46 +2419,25 @@
      "properties": {
       "cell_id": {
        "description": "The cell's id, as the table's id column has it.",
-       "title": "Cell Id",
        "type": "integer"
       },
       "crop_px": {
-       "anyOf": [
-        {
-         "exclusiveMinimum": 0,
-         "maximum": 2000,
-         "type": "number"
-        },
-        {
-         "type": "null"
-        }
-       ],
-       "default": null,
-       "title": "Crop Px"
+       "exclusiveMinimum": 0,
+       "maximum": 2000,
+       "type": "number"
       },
       "crop_um": {
-       "anyOf": [
-        {
-         "exclusiveMinimum": 0,
-         "maximum": 500,
-         "type": "number"
-        },
-        {
-         "type": "null"
-        }
-       ],
-       "default": null,
-       "title": "Crop Um"
+       "exclusiveMinimum": 0,
+       "maximum": 500,
+       "type": "number"
       },
       "include_crop": {
        "default": true,
-       "title": "Include Crop",
        "type": "boolean"
       },
       "include_metadata": {
        "default": false,
        "description": "Every metadata column's value too (one read per column; slow on a remote table).",
-       "title": "Include Metadata",
        "type": "boolean"
       },
       "k": {
@@ -3578,65 +2445,35 @@
        "description": "Nearest neighbours to report.",
        "maximum": 32,
        "minimum": 0,
-       "title": "K",
        "type": "integer"
       },
       "marker": {
-       "anyOf": [
-        {
-         "type": "string"
-        },
-        {
-         "type": "null"
-        }
-       ],
-       "default": null,
        "description": "A marker to focus on: drawn in the crop and reported for each neighbour.",
-       "title": "Marker"
+       "type": "string"
       },
       "project": {
        "description": "Project name, as `list_projects` returns it.",
-       "title": "Project",
        "type": "string"
       },
       "qc": {
-       "anyOf": [
-        {
-         "enum": [
-          "strict",
-          "exclude",
-          "off"
-         ],
-         "type": "string"
-        },
-        {
-         "type": "null"
-        }
+       "description": "QC failures left out of this estimate, sample or picture (the gate still applies to every cell). strict (default): cells QC called exclude or warn, and the cells QC flagged this marker unreliable in; exclude: warn calls kept; off: QC ignored (only when the user asks).",
+       "enum": [
+        "strict",
+        "exclude",
+        "off"
        ],
-       "default": null,
-       "description": "Which QC failures to leave out of this estimate, sample or picture (the gate itself always applies to every cell). strict (the default): cells QC called exclude or warn, and for this marker the cells QC flagged it unreliable in; exclude: warn calls kept; off: QC ignored -- only when the user asks, or QC is suspected wrong. Inside a gating session the session's own setting applies. No effect where QC was never run.",
-       "title": "Qc"
+       "type": "string"
       },
       "within_um": {
-       "anyOf": [
-        {
-         "exclusiveMinimum": 0,
-         "type": "number"
-        },
-        {
-         "type": "null"
-        }
-       ],
-       "default": null,
        "description": "Only neighbours this close (needs a calibrated image).",
-       "title": "Within Um"
+       "exclusiveMinimum": 0,
+       "type": "number"
       }
      },
      "required": [
       "project",
       "cell_id"
      ],
-     "title": "ExplainInput",
      "type": "object"
     },
     "needs": [
@@ -3685,14 +2522,12 @@
      "properties": {
       "job_id": {
        "description": "The job_id a job-running capability returned.",
-       "title": "Job Id",
        "type": "string"
       }
      },
      "required": [
       "job_id"
      ],
-     "title": "JobInput",
      "type": "object"
     },
     "needs": [],
@@ -3726,7 +2561,6 @@
      "properties": {
       "job_id": {
        "description": "The job_id a job-running capability returned.",
-       "title": "Job Id",
        "type": "string"
       },
       "timeout_s": {
@@ -3734,14 +2568,12 @@
        "description": "How long to wait at most; call again if it is still running.",
        "maximum": 60,
        "minimum": 1,
-       "title": "Timeout S",
        "type": "number"
       }
      },
      "required": [
       "job_id"
      ],
-     "title": "WaitInput",
      "type": "object"
     },
     "needs": [],
@@ -3774,28 +2606,17 @@
      "additionalProperties": false,
      "properties": {
       "expected_current_revision": {
-       "anyOf": [
-        {
-         "type": "string"
-        },
-        {
-         "type": "null"
-        }
-       ],
-       "default": null,
        "description": "Undo even though the store changed since this operation, provided its revision is exactly this now -- for undoing a run of writes newest first, where each undo moves the revision the next one was receipted against.",
-       "title": "Expected Current Revision"
+       "type": "string"
       },
       "operation_id": {
        "description": "The receipt's operation_id, as a write returned it or the audit log records it.",
-       "title": "Operation Id",
        "type": "string"
       }
      },
      "required": [
       "operation_id"
      ],
-     "title": "UndoInput",
      "type": "object"
     },
     "needs": [],
@@ -3826,68 +2647,39 @@
      "additionalProperties": false,
      "properties": {
       "channels": {
-       "anyOf": [
-        {
-         "items": {
-          "type": "string"
-         },
-         "maxItems": 200,
-         "type": "array"
-        },
-        {
-         "type": "null"
-        }
-       ],
-       "default": null,
        "description": "qc: the channels (default: every channel of the image).",
-       "title": "Channels"
+       "items": {
+        "type": "string"
+       },
+       "maxItems": 200,
+       "type": "array"
       },
       "context": {
-       "anyOf": [
-        {
-         "maxLength": 1000,
-         "type": "string"
-        },
-        {
-         "type": "null"
-        }
-       ],
-       "default": null,
-       "description": "gating: the user's note about the sample, as typed (\"melanoma from skin\", \"only gate CD3 and CD8\"). A cheap text model normalises it (plexora.ai.context) into the session's biology; it narrows the markers only when it says so explicitly. Empty: no call, every marker.",
-       "title": "Context"
+       "description": "gating: the user's note about the sample, as typed (\"melanoma from skin\", \"only gate CD3 and CD8\"): read into the session's biology, narrowing the markers only when it says so.",
+       "maxLength": 1000,
+       "type": "string"
       },
       "dev": {
        "default": false,
-       "description": "The gateway's dev route (internal testing accounts only; billed at provider cost).",
-       "title": "Dev",
+       "description": "The gateway's dev route (internal testing accounts only).",
        "type": "boolean"
       },
       "kind": {
-       "description": "gating: Auto Gating of the project's markers; contrast: auto contrast -- how bright each marker is drawn, no gating; qc: AutoQC of its image.",
+       "description": "gating: Auto Gating of the markers; contrast: how bright each marker is drawn, no gating; qc: AutoQC of the image.",
        "enum": [
         "gating",
         "contrast",
         "qc"
        ],
-       "title": "Kind",
        "type": "string"
       },
       "markers": {
-       "anyOf": [
-        {
-         "items": {
-          "type": "string"
-         },
-         "maxItems": 200,
-         "type": "array"
-        },
-        {
-         "type": "null"
-        }
-       ],
-       "default": null,
        "description": "gating, contrast: the markers (default: every marker of the table).",
-       "title": "Markers"
+       "items": {
+        "type": "string"
+       },
+       "maxItems": 200,
+       "type": "array"
       },
       "mode": {
        "default": "apply",
@@ -3896,90 +2688,42 @@
         "apply",
         "propose"
        ],
-       "title": "Mode",
        "type": "string"
       },
       "model": {
-       "anyOf": [
-        {
-         "maxLength": 80,
-         "type": "string"
-        },
-        {
-         "type": "null"
-        }
-       ],
-       "default": null,
        "description": "With dev only: the model to use.",
-       "title": "Model"
+       "maxLength": 80,
+       "type": "string"
       },
       "parallel_markers": {
-       "anyOf": [
-        {
-         "maximum": 8,
-         "minimum": 1,
-         "type": "integer"
-        },
-        {
-         "type": "null"
-        }
-       ],
-       "default": null,
-       "description": "gating: markers answered side by side, each lane with its own workers (default: the session's `lanes`, chosen from the panel). The gates are the serial run's; more lanes finish sooner.",
-       "title": "Parallel Markers"
+       "description": "gating: markers answered side by side, each lane its own workers; the gates are the serial run's.",
+       "maximum": 8,
+       "minimum": 1,
+       "type": "integer"
       },
       "project": {
-       "title": "Project",
        "type": "string"
       },
       "resume_session": {
-       "anyOf": [
-        {
-         "type": "string"
-        },
-        {
-         "type": "null"
-        }
-       ],
-       "default": null,
        "description": "Continue this paused session (after a credit pause, say) instead of starting one.",
-       "title": "Resume Session"
+       "type": "string"
       },
       "start_options": {
-       "anyOf": [
-        {
-         "additionalProperties": true,
-         "type": "object"
-        },
-        {
-         "type": "null"
-        }
-       ],
-       "default": null,
+       "additionalProperties": true,
        "description": "Extra options for the session's start (the workflow's own, e.g. QC's map_cell_um).",
-       "title": "Start Options"
+       "type": "object"
       },
       "units_per_worker": {
-       "anyOf": [
-        {
-         "maximum": 16,
-         "minimum": 1,
-         "type": "integer"
-        },
-        {
-         "type": "null"
-        }
-       ],
-       "default": null,
        "description": "Units one rolling worker covers (default: 1 marker, 4 QC units).",
-       "title": "Units Per Worker"
+       "maximum": 16,
+       "minimum": 1,
+       "type": "integer"
       }
      },
      "required": [
       "kind",
       "project"
      ],
-     "title": "RunInput",
      "type": "object"
     },
     "needs": [
@@ -4017,24 +2761,13 @@
        "default": 20,
        "maximum": 100,
        "minimum": 1,
-       "title": "Limit",
        "type": "integer"
       },
       "run_id": {
-       "anyOf": [
-        {
-         "type": "string"
-        },
-        {
-         "type": "null"
-        }
-       ],
-       "default": null,
        "description": "A run id (air_...) or the job id that runs it (job_...). Omit to list the recent runs.",
-       "title": "Run Id"
+       "type": "string"
       }
      },
-     "title": "StatusInput",
      "type": "object"
     },
     "needs": [],
@@ -4073,12 +2806,10 @@
         "resume",
         "stop"
        ],
-       "title": "Action",
        "type": "string"
       },
       "run_id": {
        "description": "A run id (air_...) or its job id (job_...).",
-       "title": "Run Id",
        "type": "string"
       }
      },
@@ -4086,7 +2817,6 @@
       "run_id",
       "action"
      ],
-     "title": "ControlInput",
      "type": "object"
     },
     "needs": [],
@@ -4119,24 +2849,14 @@
      "additionalProperties": false,
      "properties": {
       "channels": {
-       "anyOf": [
-        {
-         "items": {
-          "type": "string"
-         },
-         "maxItems": 200,
-         "type": "array"
-        },
-        {
-         "type": "null"
-        }
-       ],
-       "default": null,
-       "title": "Channels"
+       "items": {
+        "type": "string"
+       },
+       "maxItems": 200,
+       "type": "array"
       },
       "dev": {
        "default": false,
-       "title": "Dev",
        "type": "boolean"
       },
       "kind": {
@@ -4148,40 +2868,20 @@
         "qc",
         "both"
        ],
-       "title": "Kind",
        "type": "string"
       },
       "markers": {
-       "anyOf": [
-        {
-         "items": {
-          "type": "string"
-         },
-         "maxItems": 200,
-         "type": "array"
-        },
-        {
-         "type": "null"
-        }
-       ],
-       "default": null,
-       "title": "Markers"
+       "items": {
+        "type": "string"
+       },
+       "maxItems": 200,
+       "type": "array"
       },
       "project": {
-       "anyOf": [
-        {
-         "type": "string"
-        },
-        {
-         "type": "null"
-        }
-       ],
-       "default": null,
        "description": "Estimate a run of this project too.",
-       "title": "Project"
+       "type": "string"
       }
      },
-     "title": "BalanceInput",
      "type": "object"
     },
     "needs": [
@@ -4219,77 +2919,31 @@
        "description": "The sample's biology as the user stated it (`autogate/biology.py`).",
        "properties": {
         "disease": {
-         "anyOf": [
-          {
-           "maxLength": 120,
-           "type": "string"
-          },
-          {
-           "type": "null"
-          }
-         ],
-         "default": null,
-         "description": "The disease or sample type, in the user's words: 'melanoma', 'adenocarcinoma'.",
-         "title": "Disease"
+         "description": "The disease or sample type, in the user's words ('melanoma').",
+         "maxLength": 120,
+         "type": "string"
         },
         "interpretation": {
-         "anyOf": [
-          {
-           "additionalProperties": true,
-           "type": "object"
-          },
-          {
-           "type": "null"
-          }
-         ],
-         "default": null,
-         "description": "The Context Interpreter's settled reading of `original` (populations of interest, corrected terms, ambiguities, scope).",
-         "title": "Interpretation"
+         "additionalProperties": true,
+         "description": "The Context Interpreter's reading of `original`.",
+         "type": "object"
         },
         "notes": {
-         "anyOf": [
-          {
-           "maxLength": 400,
-           "type": "string"
-          },
-          {
-           "type": "null"
-          }
-         ],
-         "default": null,
-         "description": "Anything else the user said about the sample's biology.",
-         "title": "Notes"
+         "description": "Anything else the user said about the sample.",
+         "maxLength": 400,
+         "type": "string"
         },
         "original": {
-         "anyOf": [
-          {
-           "maxLength": 1000,
-           "type": "string"
-          },
-          {
-           "type": "null"
-          }
-         ],
-         "default": null,
-         "description": "The user's note exactly as written, when tissue/disease/notes were interpreted from it (`plexora.ai.context`); kept beside the interpretation.",
-         "title": "Original"
+         "description": "The user's note as written, when the fields above were read from it.",
+         "maxLength": 1000,
+         "type": "string"
         },
         "tissue": {
-         "anyOf": [
-          {
-           "maxLength": 120,
-           "type": "string"
-          },
-          {
-           "type": "null"
-          }
-         ],
-         "default": null,
-         "description": "The tissue or organ, in the user's words: 'skin', 'lymph node', 'colon'.",
-         "title": "Tissue"
+         "description": "The tissue or organ, in the user's words ('skin', 'lymph node').",
+         "maxLength": 120,
+         "type": "string"
         }
        },
-       "title": "Biology",
        "type": "object"
       },
       "Budget": {
@@ -4306,8 +2960,7 @@
           }
          ],
          "default": 48000,
-         "description": "Packet JSON characters per marker, over its looks.",
-         "title": "Chars"
+         "description": "Packet JSON characters per marker, over its looks."
         },
         "images": {
          "anyOf": [
@@ -4321,8 +2974,7 @@
           }
          ],
          "default": 12,
-         "description": "Images per marker, over its looks.",
-         "title": "Images"
+         "description": "Images per marker, over its looks."
         },
         "packets": {
          "anyOf": [
@@ -4336,8 +2988,7 @@
           }
          ],
          "default": 6,
-         "description": "Looks per marker (first look, beside a reference, candidates); confirmations are free.",
-         "title": "Packets"
+         "description": "Looks per marker (first look, beside a reference, candidates); confirmations are free."
         },
         "pixels": {
          "anyOf": [
@@ -4350,57 +3001,42 @@
           }
          ],
          "default": 9300000,
-         "description": "Image pixels per marker, over its looks.",
-         "title": "Pixels"
+         "description": "Image pixels per marker, over its looks."
         }
        },
-       "title": "Budget",
        "type": "object"
       },
       "ExpressionChoice": {
        "additionalProperties": false,
-       "description": "Which matrix to gate on, settled before the start (`SessionOptions.expression`).",
+       "description": "Which matrix to gate on, settled before the start.",
        "properties": {
         "basis": {
          "default": "user",
-         "description": "user: the user named it (`plexora ai run --matrix/--log1p`); it is applied even over an earlier confirmed choice. inferred: a model read it from the values (`plexora.ai.harness.expression`); applied only where nothing is confirmed.",
+         "description": "user: the user named it (applied over an earlier confirmed choice); inferred: a model read it from the values (applied only where nothing is confirmed).",
          "enum": [
           "user",
           "inferred"
          ],
-         "title": "Basis",
          "type": "string"
         },
         "features_layer": {
          "description": "`X` or `layer:<name>`, as inspect_expression_sources lists them.",
-         "title": "Features Layer",
          "type": "string"
         },
         "features_log": {
-         "description": "Apply log1p as the values are read. Never for a matrix that is already log-transformed.",
-         "title": "Features Log",
+         "description": "Apply log1p as the values are read; never to values already logged.",
          "type": "boolean"
         },
         "why": {
-         "anyOf": [
-          {
-           "maxLength": 400,
-           "type": "string"
-          },
-          {
-           "type": "null"
-          }
-         ],
-         "default": null,
          "description": "Why, in a sentence.",
-         "title": "Why"
+         "maxLength": 400,
+         "type": "string"
         }
        },
        "required": [
         "features_layer",
         "features_log"
        ],
-       "title": "ExpressionChoice",
        "type": "object"
       }
      },
@@ -4408,46 +3044,33 @@
      "properties": {
       "absence_check": {
        "default": false,
-       "description": "Before a marker's first look, show six regions of the tissue with nothing marked and ask whether any cell is clearly positive by its own stain: none in any region closes the marker with no positives (gate at the maximum), and a technical check's failed-stain verdict stands only when the regions agree. Off by default: on 12 held-out images 9 of its 17 closes were real populations of 0.5-8 % (bench GATING_GENERALISE). False: the first look comes straight away.",
-       "title": "Absence Check",
+       "description": "Before a marker's first look, ask whether six unmarked regions show any positive cell.",
        "type": "boolean"
       },
       "absence_confirm": {
        "default": true,
-       "description": "When exactly one region of an absence picture shows clear positives and the others none or few, that region is shown again close up and in its surroundings before it keeps the marker open: an edge band or a fold reads as one there, a cluster of real cells still as cells.",
-       "title": "Absence Confirm",
+       "description": "A lone positive region of an absence picture is shown again close up before it counts.",
        "type": "boolean"
       },
       "agent": {
        "default": "agent",
-       "description": "Who answers (the model, say). Earlier answers to identical packets are reused only from the same agent.",
+       "description": "Who answers (your model's name); earlier answers are reused only from the same agent.",
        "maxLength": 80,
-       "title": "Agent",
        "type": "string"
       },
       "audit_sheet": {
        "default": true,
        "description": "Show automatically accepted markers on a batched audit sheet (~70 tokens a marker).",
-       "title": "Audit Sheet",
        "type": "boolean"
       },
       "basic_qc": {
        "default": true,
-       "description": "On an image with no QC result, run QC's model-free checks before gating it (`run_basic_qc`: folds -- also ones that come or go between imaging cycles -- tears, debris, saturation, lost nuclei; no model calls) and leave out what they find, marked automatic and unreviewed. Left out: on with engine v2, off with v1. Needs the QC plugin.",
-       "title": "Basic Qc",
+       "description": "On an image with no QC result, run QC's model-free checks first (run_basic_qc) and leave out what they find. Default: on with v2, off with v1.",
        "type": "boolean"
       },
       "biology": {
-       "anyOf": [
-        {
-         "$ref": "#/$defs/Biology"
-        },
-        {
-         "type": "null"
-        }
-       ],
-       "default": null,
-       "description": "The tissue and disease the user named for this sample (\"a melanoma from the skin\": tissue skin, disease melanoma). A prior for references, co-expression, spatial reading and confidence -- never a rule. Left out, it is taken from the project's metadata or inferred from the panel, and marked so."
+       "$ref": "#/$defs/Biology",
+       "description": "The tissue and disease the user named: a prior, never a rule. Left out: from the project's metadata or inferred from the panel, marked so."
       },
       "budget": {
        "$ref": "#/$defs/Budget",
@@ -4455,107 +3078,81 @@
       },
       "check_reading": {
        "default": "auto",
-       "description": "How a classifier check's look is read. auto: word for a marker whose stain is fibrous (smooth muscle, vessel walls: the panel's morphology), mixed for the rest. word: one word per row; the cells the classifier flags must read as their own stain. mixed: the same words, and flagged cells read as mixed count as stained. count: the reader counts the cells in each row that carry their own stain (unmeasured).",
+       "description": "How a classifier check's look is read (count: unmeasured).",
        "enum": [
         "auto",
         "word",
         "mixed",
         "count"
        ],
-       "title": "Check Reading",
        "type": "string"
       },
       "classifier": {
        "default": "layer",
-       "description": "The Single Cell Classifier beside each gate. layer: after a gate is written, the classifier is trained at it and calls every cell -- the gate's call unless it is confident the other way, taking positives away more readily than adding them, and only taking them away where the marker's signal is poor; kept beside the threshold (which still decides the marker) until the user adopts it in the Thresholding panel. check: that, and where the classifier trained at a gate disagrees with it beside it, the cells it flags are shown in a look at the candidates on that side, beside cells it agrees on; the gate moves past each row the look confirms (unmeasured). off: neither.",
+       "description": "The Single Cell Classifier beside each gate. layer: trained at each written gate, kept beside the threshold (which decides) until the user adopts it; check: also show the cells it disagrees on in a look; off.",
        "enum": [
         "off",
         "layer",
         "check"
        ],
-       "title": "Classifier",
        "type": "string"
       },
       "dataset": {
-       "anyOf": [
-        {
-         "type": "string"
-        },
-        {
-         "type": "null"
-        }
-       ],
-       "default": null,
        "description": "With scope=dataset: name or id.",
-       "title": "Dataset"
+       "type": "string"
       },
       "defer_parents": {
        "default": true,
-       "description": "A marker whose own distribution is weak (no robust partner curve, a poorly separated mixture) waits for its children in the panel's hierarchy -- markers whose positives are a subset of its own -- and is then scored with where their positives sit (once, never after a look).",
-       "title": "Defer Parents",
+       "description": "A weakly separated marker waits for its children in the panel's hierarchy.",
        "type": "boolean"
       },
       "delegate": {
        "default": true,
-       "description": "Return the `delegate` block: how to hand the packet loop to fresh worker conversations on a cheaper or the same model (plexora/ai/delegation.py).",
-       "title": "Delegate",
+       "description": "Return the `delegate` block: how to hand the packet loop to worker conversations.",
        "type": "boolean"
       },
       "display_check": {
        "default": "off",
-       "description": "Auto contrast -- how bright each marker is drawn in every look: `vision` puts a contrast grid to the model after the panel context (markers in rows, five brightnesses in columns; code picks the column) for the markers no earlier check settled -- once per image, a choice outlives the session, so an image an auto-contrast run already did is not asked again; `rule` keeps the calibration's own window (black under the background, the bright cells' structure near the top) and shows it; `off` leaves the step out. Left out: `off` with engine v2 (the setting it was measured with), `vision` with v1.",
+       "description": "Auto contrast for every look: vision (a contrast grid to the model, once per image), rule (the calibration's window), off. Default: off with engine v2, vision with v1.",
        "enum": [
         "vision",
         "rule",
         "off"
        ],
-       "title": "Display Check",
        "type": "string"
       },
       "engine": {
        "default": "v2",
-       "description": "How a marker that needs a look is decided. v2 (the default): the lattice's candidate gates are competing hypotheses; blind panels of single cells, numbered and shuffled with no value or gate shown, are labelled one cell at a time, and code picks the candidate the labels support, looks again only where the leader has not beaten a rival, and closes for review with a reason when it cannot. v1: rows below, at and above the gate, then candidates beyond it, judged a row at a time. The first names, classic (v1) and candidates (v2), are accepted.",
+       "description": "v2: blind panels of single cells labelled one at a time, code picks the candidate gate the labels support; v1: rows below, at and above the gate. classic (v1) and candidates (v2) are accepted.",
        "enum": [
         "v1",
         "v2"
        ],
-       "title": "Engine",
        "type": "string"
       },
       "evidence": {
        "default": "delta",
-       "description": "delta: an evidence value this conversation was already sent comes as {as_in: packet_id} (reading_guide.as_in), and briefs carry no repeated text; full: every packet whole.",
+       "description": "delta: evidence this conversation was already sent comes as {as_in: packet_id}; full: every packet whole.",
        "enum": [
         "delta",
         "full"
        ],
-       "title": "Evidence",
        "type": "string"
       },
       "expression": {
-       "anyOf": [
-        {
-         "$ref": "#/$defs/ExpressionChoice"
-        },
-        {
-         "type": "null"
-        }
-       ],
-       "default": null,
-       "description": "The matrix to gate on, when the user named it or a model read it from the values before the start; checked against the matrices the project has, and never log1p on values already logged."
+       "$ref": "#/$defs/ExpressionChoice",
+       "description": "The matrix to gate on, when the user named it or a model read it from the values; checked against the project's matrices."
       },
       "field_um": {
        "default": 400.0,
-       "description": "The context sheet's tissue fields, microns a side: sized from each image's own pixel size (or the session's estimate of it).",
+       "description": "The context sheet's tissue fields, microns a side.",
        "maximum": 500.0,
        "minimum": 300.0,
-       "title": "Field Um",
        "type": "number"
       },
       "force": {
        "default": false,
-       "description": "Start even when only some markers match an image channel: only those are gated, and the rest are skipped (skipped_no_channel) without a gate. Without it a partial match refuses to start; when no marker matches, nothing starts either way.",
-       "title": "Force",
+       "description": "Start when only some markers match an image channel: the rest are skipped (skipped_no_channel).",
        "type": "boolean"
       },
       "image_format": {
@@ -4564,192 +3161,132 @@
         "webp",
         "png"
        ],
-       "title": "Image Format",
        "type": "string"
       },
       "known_guide": {
-       "anyOf": [
-        {
-         "type": "string"
-        },
-        {
-         "type": "null"
-        }
-       ],
-       "default": null,
-       "description": "The `guide_version` of a reading guide you already hold (from an earlier session of this build): it is then not sent again.",
-       "title": "Known Guide"
+       "description": "The `guide_version` of a reading guide you hold: it is not sent again.",
+       "type": "string"
       },
       "lanes": {
-       "anyOf": [
-        {
-         "maximum": 8,
-         "minimum": 1,
-         "type": "integer"
-        },
-        {
-         "type": "null"
-        }
-       ],
-       "default": null,
-       "description": "Readers answering the session at once, each its own `reader` passing `parallel` (the start's `lanes`, and its `delegate` block's). A marker never goes out beside one whose gate it reads, so the gates are the one-at-a-time run's. Default: as many as the panel's dependencies keep busy (1 for a few markers, or markers that all read each other).",
-       "title": "Lanes"
+       "description": "Readers answering at once, each its own `reader` passing `parallel`.",
+       "maximum": 8,
+       "minimum": 1,
+       "type": "integer"
       },
       "markers": {
-       "anyOf": [
-        {
-         "items": {
-          "type": "string"
-         },
-         "type": "array"
-        },
-        {
-         "type": "null"
-        }
-       ],
-       "default": null,
        "description": "Default: every marker except structural channels (DNA and the like).",
-       "title": "Markers"
+       "items": {
+        "type": "string"
+       },
+       "type": "array"
       },
       "max_extensions": {
-       "description": "How many extra allowances one marker may get before it is flagged for review. Default from PLEXORA_GATING_MAX_EXTENSIONS.",
+       "description": "Extra allowances one marker may get before review.",
        "maximum": 10,
        "minimum": 0,
-       "title": "Max Extensions",
        "type": "integer"
       },
       "max_tier": {
        "default": 4,
-       "description": "2: one look per marker; 3: + reference channels; 4: + candidate refinement; 5: + questions for the user. There is no numbers-only tier: every gate is judged on the image's pixels.",
+       "description": "2: one look per marker; 3: + reference channels; 4: + candidate refinement; 5: + questions for the user.",
        "maximum": 5,
        "minimum": 2,
-       "title": "Max Tier",
        "type": "integer"
       },
       "mirror": {
        "default": false,
        "description": "Show each decision in an open viewer too.",
-       "title": "Mirror",
        "type": "boolean"
       },
       "mirror_delay_ms": {
        "default": 600,
        "maximum": 5000,
        "minimum": 0,
-       "title": "Mirror Delay Ms",
        "type": "integer"
       },
       "mode": {
        "default": "apply",
-       "description": "apply: accepted gates -- and the empty gate of a failed or all-negative marker -- are written as they are decided (each receipted and undoable); propose: nothing is written until gating_session_finish(action=commit).",
+       "description": "apply: gates are written as they are decided; propose: nothing is written until gating_session_finish(action=commit).",
        "enum": [
         "apply",
         "propose"
        ],
-       "title": "Mode",
        "type": "string"
       },
       "observations": {
        "default": "off",
-       "description": "Experimental. use: what the image's contrast check saw of each marker (its pattern, dim cells seen stained, bright cells seen to be debris) goes into every look as evidence, starts the gate no higher than the dim stained cells, keeps the tissue fields away from the debris, caps confidence on a doubt, and gives a clean split with a finding a look. off: not used.",
+       "description": "Experimental. use: the contrast check's observations are evidence in every look.",
        "enum": [
         "off",
         "use"
        ],
-       "title": "Observations",
        "type": "string"
       },
       "on_limit": {
-       "description": "When a marker reaches its allowance of looks or candidate rounds while the evidence still says to go on: ask (the user is asked in the viewer and you are told; the marker waits, the rest goes on), extend (another allowance without asking: automated runs), stop (flag it for review). A marker is never accepted because it ran out. Default from PLEXORA_GATING_ON_LIMIT (set by `plexora mcp serve --gating-on-limit`).",
+       "description": "A marker out of looks while the evidence says go on: ask (the user; the marker waits), extend (another allowance), stop (review).",
        "enum": [
         "ask",
         "extend",
         "stop"
        ],
-       "title": "On Limit",
        "type": "string"
       },
       "overwrite_manual": {
        "default": false,
        "description": "Also re-gate markers the user set by hand (never locked or approved ones).",
-       "title": "Overwrite Manual",
        "type": "boolean"
       },
       "panel_looks": {
        "default": 3,
-       "description": "With engine v2: the most cell panels one marker is shown before it closes for review (fewer when the leading candidate resolves first).",
+       "description": "Engine v2: the most cell panels a marker is shown before review.",
        "maximum": 6,
        "minimum": 1,
-       "title": "Panel Looks",
        "type": "integer"
       },
       "project": {
-       "anyOf": [
-        {
-         "type": "string"
-        },
-        {
-         "type": "null"
-        }
-       ],
-       "default": null,
        "description": "With scope=project.",
-       "title": "Project"
+       "type": "string"
       },
       "purpose": {
        "default": "gating",
-       "description": "gating: decide the markers' gates. contrast: auto contrast on its own (contrast_session_start) -- the set-up, the calibration and the contrast check; no marker is profiled or gated, and each closes `display_set` once its image's brightness is settled.",
+       "description": "gating: decide the gates; contrast: auto contrast only (contrast_session_start).",
        "enum": [
         "gating",
         "contrast"
        ],
-       "title": "Purpose",
        "type": "string"
       },
       "qc": {
        "default": "strict",
-       "description": "Which QC failures the session leaves out of every fit, sample, collage and field (the gates still apply to every cell). strict: cells QC called exclude or warn, and per marker the cells QC flagged that marker unreliable in; exclude: warn calls kept; off: QC ignored (only when the user asks, or QC is wrong). No effect on an image QC has not been run on.",
+       "description": "QC failures left out of every fit and picture. strict: cells QC called exclude or warn, and per marker the cells QC flagged unreliable; exclude: warn calls kept; off: QC ignored (only when the user asks).",
        "enum": [
         "strict",
         "exclude",
         "off"
        ],
-       "title": "Qc",
        "type": "string"
       },
       "reading": {
        "default": "once",
-       "description": "once: the reading guide comes with the session's start and status, and packets name the entries they use; every_packet: each packet repeats the texts it needs.",
+       "description": "once: the reading guide comes with the start (and the status, asked) and packets name its entries; every_packet: each packet repeats the texts it needs.",
        "enum": [
         "once",
         "every_packet"
        ],
-       "title": "Reading",
        "type": "string"
       },
       "reference_image": {
-       "anyOf": [
-        {
-         "type": "string"
-        },
-        {
-         "type": "null"
-        }
-       ],
-       "default": null,
        "description": "Dataset scope: the image gated first (default: the one with the most cells).",
-       "title": "Reference Image"
+       "type": "string"
       },
       "replan": {
        "default": true,
-       "description": "Re-plan when markers fail: the markers left are reordered and rescored without the failed gates, accepted gates that only a failed one placed go to review, and what only biology can settle (a population that may be absent, an image whose looks keep naming the same artifact) is put to the planning task in a `replan` packet. False keeps the plan made at the start.",
-       "title": "Replan",
+       "description": "Re-plan when markers fail. False keeps the start's plan.",
        "type": "boolean"
       },
       "reuse_answers": {
        "default": true,
-       "description": "Answer a packet identical to one this agent answered before (same data, partners, code and seed) with that answer, without asking: a rerun then reaches the same gates. False asks everything afresh.",
-       "title": "Reuse Answers",
+       "description": "Answer a packet identical to one this agent answered before with that answer. False asks afresh.",
        "type": "boolean"
       },
       "scope": {
@@ -4759,89 +3296,69 @@
         "project",
         "dataset"
        ],
-       "title": "Scope",
        "type": "string"
       },
       "seed": {
        "default": 0,
-       "title": "Seed",
        "type": "integer"
       },
       "setup": {
        "default": "ask",
-       "description": "What the start does when the project's gating set-up is not finished: a required column (cell id, coordinates, image id) not found or never confirmed, or an expression matrix its values cannot settle. ask: a column not found refuses the start, and the matrix comes to you as an expression_setup packet (put it to the user; never guess); fail: nothing starts, and the error says what is missing and how to supply it (a run with nobody to ask: `plexora ai run`); wait: the session waits in needs_setup, nothing profiled, until the user finishes the viewer's set-up form -- every column and the matrix (Plexora AI started from the viewer).",
+       "description": "When the gating set-up is unfinished (a column, the matrix). ask: a missing column refuses; the matrix comes as an expression_setup packet to put to the user, never guessed. fail: nothing starts; the error says what to supply. wait: the session waits in needs_setup until the user finishes the viewer's set-up form.",
        "enum": [
         "ask",
         "wait",
         "fail"
        ],
-       "title": "Setup",
        "type": "string"
       },
       "sheets": {
        "default": "trim",
-       "description": "trim: a context-sheet row this conversation was already shown with the same gate and fields is left out, and a whole-image check shows only the slide scale; full: every sheet whole.",
+       "description": "trim: context-sheet rows this conversation was already shown are left out; full: every sheet whole.",
        "enum": [
         "trim",
         "full"
        ],
-       "title": "Sheets",
        "type": "string"
       },
       "split_mixed": {
        "default": true,
-       "description": "A look at candidates that stops at a row judged mixed and wider than two background sds gets that row split into finer candidates and looked at again, instead of the gate stopping at its edge.",
-       "title": "Split Mixed",
+       "description": "Split a candidate row judged mixed into finer ones and look again.",
        "type": "boolean"
       },
       "split_views": {
        "default": "off",
-       "description": "bright_rechecks: a look at candidates (a recheck of a gate) draws each cell as three panels side by side -- the DNA alone, the marker alone from the display's black to the gate at mid-grey, and the two combined (reading guide `collage_split`) -- for a marker that is not dim; a dim marker's looks stay morphology | context. off: never (unmeasured; `tiles` wins where both apply).",
+       "description": "bright_rechecks: a recheck of a bright marker's gate draws each cell as DNA | marker | both (unmeasured).",
        "enum": [
         "off",
         "bright_rechecks"
        ],
-       "title": "Split Views",
        "type": "string"
       },
       "tiles": {
        "default": false,
-       "description": "Draw every look's cells as a 2 x 2 block: morphology, the context with the judged cell outlined, and one expected and one not-expected partner channel from the panel context (reading guide `collage_t2m`). Off, the looks are the two-panel cells.",
-       "title": "Tiles",
+       "description": "Draw each look's cells as 2 x 2 blocks with two partner channels.",
        "type": "boolean"
       },
       "view_id": {
-       "anyOf": [
-        {
-         "type": "string"
-        },
-        {
-         "type": "null"
-        }
-       ],
-       "default": null,
-       "title": "View Id"
+       "type": "string"
       },
       "vision_first": {
        "default": false,
-       "description": "Experimental. On a marker whose distribution says little (no valley, estimators that disagree), the looks place the gate: the first look starts at the dim cells the contrast check saw stained (else the cell share's 15% rung), the candidates are rungs by share of cells, cells below the gate seen mixed send it down, and the distribution's and spatial whole-image checks no longer fail a gate the looks placed. Pair with observations=use.",
-       "title": "Vision First",
+       "description": "Experimental: the looks place a weak marker's gate. Pair with observations=use.",
        "type": "boolean"
       },
       "whole_image_moves": {
        "default": false,
-       "description": "After a look at candidates, a whole-image check that calls the gate too low or too high sends it back to the candidates (opposite ways end in review). False: the gate stays where the rows put it, at low confidence, the disagreement noted -- the rows judged those very cells.",
-       "title": "Whole Image Moves",
+       "description": "A whole-image check calling the gate too low or too high sends it back to the candidates.",
        "type": "boolean"
       },
       "whole_image_reopen": {
        "default": true,
-       "description": "After a look at candidates, a whole-image check that calls the gate too low sends it up for one more look at the candidates above, where the first row passes even when judged mixed (two views agree); the rows still place the gate. False: it stays where the rows put it, at low confidence.",
-       "title": "Whole Image Reopen",
+       "description": "A whole-image check calling the gate too low gives one more look at the candidates above.",
        "type": "boolean"
       }
      },
-     "title": "SessionOptions",
      "type": "object"
     },
     "needs": [
@@ -4886,64 +3403,41 @@
        "description": "The most packets of this session out at once, across every reader. Above 1, markers that do not depend on each other are handed out side by side; a marker still waits for the partners it is judged beside.",
        "maximum": 8,
        "minimum": 1,
-       "title": "Parallel",
        "type": "integer"
       },
       "reader": {
-       "anyOf": [
-        {
-         "maxLength": 40,
-         "pattern": "^[A-Za-z0-9_.:-]+$",
-         "type": "string"
-        },
-        {
-         "type": "null"
-        }
-       ],
-       "default": null,
        "description": "Who is answering, when several conversations answer one session at once (one id per conversation). Omit when you are the only one.",
-       "title": "Reader"
+       "maxLength": 40,
+       "pattern": "^[A-Za-z0-9_.:-]+$",
+       "type": "string"
       },
       "rerender": {
        "default": false,
        "description": "Draw the outstanding packet's images again (same packet, same charge), in full: after a renderer change, or when you no longer hold a packet an `as_in` names.",
-       "title": "Rerender",
        "type": "boolean"
       },
       "session_id": {
-       "title": "Session Id",
        "type": "string"
       },
       "tasks": {
-       "anyOf": [
-        {
-         "items": {
-          "type": "string"
-         },
-         "maxItems": 8,
-         "type": "array"
-        },
-        {
-         "type": "null"
-        }
-       ],
-       "default": null,
        "description": "The tasks this reader answers (`module.task`, from its brief): it is given only their packets, and `other_tasks` when what is ready is another task's. Omit to answer every packet.",
-       "title": "Tasks"
+       "items": {
+        "type": "string"
+       },
+       "maxItems": 8,
+       "type": "array"
       },
       "wait_s": {
        "default": 10.0,
        "description": "How long to wait for the bulk pass when nothing is ready yet.",
        "maximum": 30,
        "minimum": 0,
-       "title": "Wait S",
        "type": "number"
       }
      },
      "required": [
       "session_id"
      ],
-     "title": "NextInput",
      "type": "object"
     },
     "needs": [],
@@ -4982,32 +3476,20 @@
       "answer": {
        "additionalProperties": true,
        "description": "The typed answer: `kind` plus the fields the packet's answer_schema lists.",
-       "title": "Answer",
        "type": "object"
       },
       "include_next": {
        "default": true,
        "description": "Return the next packet with the outcome, saving a gating_next call.",
-       "title": "Include Next",
        "type": "boolean"
       },
       "model": {
-       "anyOf": [
-        {
-         "maxLength": 80,
-         "type": "string"
-        },
-        {
-         "type": "null"
-        }
-       ],
-       "default": null,
        "description": "The model you are running on, as your client names it: recorded with the answer, so the session can show which model answered each task.",
-       "title": "Model"
+       "maxLength": 80,
+       "type": "string"
       },
       "packet_id": {
        "description": "The packet being answered (pk_nnnn).",
-       "title": "Packet Id",
        "type": "string"
       },
       "parallel": {
@@ -5015,44 +3497,24 @@
        "description": "The most packets of this session out at once, across every reader. Above 1, markers that do not depend on each other are handed out side by side; a marker still waits for the partners it is judged beside.",
        "maximum": 8,
        "minimum": 1,
-       "title": "Parallel",
        "type": "integer"
       },
       "reader": {
-       "anyOf": [
-        {
-         "maxLength": 40,
-         "pattern": "^[A-Za-z0-9_.:-]+$",
-         "type": "string"
-        },
-        {
-         "type": "null"
-        }
-       ],
-       "default": null,
        "description": "Who is answering, when several conversations answer one session at once (one id per conversation). Omit when you are the only one.",
-       "title": "Reader"
+       "maxLength": 40,
+       "pattern": "^[A-Za-z0-9_.:-]+$",
+       "type": "string"
       },
       "session_id": {
-       "title": "Session Id",
        "type": "string"
       },
       "tasks": {
-       "anyOf": [
-        {
-         "items": {
-          "type": "string"
-         },
-         "maxItems": 8,
-         "type": "array"
-        },
-        {
-         "type": "null"
-        }
-       ],
-       "default": null,
        "description": "The tasks this reader answers (`module.task`, from its brief): it is given only their packets, and `other_tasks` when what is ready is another task's. Omit to answer every packet.",
-       "title": "Tasks"
+       "items": {
+        "type": "string"
+       },
+       "maxItems": 8,
+       "type": "array"
       }
      },
      "required": [
@@ -5060,7 +3522,6 @@
       "packet_id",
       "answer"
      ],
-     "title": "AnswerInput",
      "type": "object"
     },
     "needs": [],
@@ -5103,100 +3564,50 @@
         "brief",
         "full"
        ],
-       "title": "Detail",
        "type": "string"
       },
       "guide": {
        "default": false,
        "description": "Send the reading guide packets point into (`evidence.guide`, `answer_schema.see`): once, before you answer packets yourself.",
-       "title": "Guide",
        "type": "boolean"
       },
       "known_guide": {
-       "anyOf": [
-        {
-         "type": "string"
-        },
-        {
-         "type": "null"
-        }
-       ],
-       "default": null,
        "description": "The `guide_version` you hold: the reading guide is then not sent again.",
-       "title": "Known Guide"
+       "type": "string"
       },
       "limits": {
-       "anyOf": [
-        {
-         "additionalProperties": {
-          "enum": [
-           "continue",
-           "stop"
-          ],
-          "type": "string"
-         },
-         "type": "object"
-        },
-        {
-         "type": "null"
-        }
-       ],
-       "default": null,
+       "additionalProperties": {
+        "enum": [
+         "continue",
+         "stop"
+        ],
+        "type": "string"
+       },
        "description": "Answers to the session's limit questions (`requests` of a `waiting_for_user` result), by marker: `continue` grants another allowance, `stop` flags the marker for manual review. Pass the user's answer, not your own guess.",
-       "title": "Limits"
+       "type": "object"
       },
       "pause": {
-       "anyOf": [
-        {
-         "type": "boolean"
-        },
-        {
-         "type": "null"
-        }
-       ],
-       "default": null,
        "description": "Pause (true) or resume (false) the session.",
-       "title": "Pause"
+       "type": "boolean"
       },
       "reattach_viewer": {
        "default": false,
-       "title": "Reattach Viewer",
        "type": "boolean"
       },
       "replay_mirror": {
        "default": false,
        "description": "With reattach_viewer: show the packet out in the viewer now, not at the next packet.",
-       "title": "Replay Mirror",
        "type": "boolean"
       },
       "session_id": {
-       "anyOf": [
-        {
-         "type": "string"
-        },
-        {
-         "type": "null"
-        }
-       ],
-       "default": null,
        "description": "Omit to list recent sessions.",
-       "title": "Session Id"
+       "type": "string"
       },
       "view_id": {
-       "anyOf": [
-        {
-         "type": "string"
-        },
-        {
-         "type": "null"
-        }
-       ],
-       "default": null,
        "description": "With reattach_viewer: the tab to mirror into (defaults to the one mirrored before).",
-       "title": "View Id"
+       "type": "string"
       }
      },
-     "title": "StatusInput",
      "type": "object"
     },
     "needs": [],
@@ -5239,18 +3650,15 @@
         "cancel",
         "rollback"
        ],
-       "title": "Action",
        "type": "string"
       },
       "session_id": {
-       "title": "Session Id",
        "type": "string"
       }
      },
      "required": [
       "session_id"
      ],
-     "title": "FinishInput",
      "type": "object"
     },
     "needs": [],
@@ -5291,18 +3699,15 @@
         "pdf",
         "both"
        ],
-       "title": "Format",
        "type": "string"
       },
       "session_id": {
-       "title": "Session Id",
        "type": "string"
       }
      },
      "required": [
       "session_id"
      ],
-     "title": "ReportInput",
      "type": "object"
     },
     "needs": [],
@@ -5358,156 +3763,77 @@
         ],
         "type": "string"
        },
-       "title": "Classes",
        "type": "array"
       },
       "context_marker": {
-       "anyOf": [
-        {
-         "type": "string"
-        },
-        {
-         "type": "null"
-        }
-       ],
-       "default": null,
        "description": "A second channel drawn in cyan in panel B, e.g. a lineage marker.",
-       "title": "Context Marker"
+       "type": "string"
       },
       "field_size_px": {
-       "anyOf": [
-        {
-         "exclusiveMinimum": 0,
-         "type": "number"
-        },
-        {
-         "type": "null"
-        }
-       ],
-       "default": null,
        "description": "Field side in pixels (default: the preset's pixel fallback, when it is not).",
-       "title": "Field Size Px"
+       "exclusiveMinimum": 0,
+       "type": "number"
       },
       "field_size_um": {
-       "anyOf": [
-        {
-         "exclusiveMinimum": 0,
-         "type": "number"
-        },
-        {
-         "type": "null"
-        }
-       ],
-       "default": null,
        "description": "Field side in microns (default: the marker-validation preset's, when the image is calibrated).",
-       "title": "Field Size Um"
+       "exclusiveMinimum": 0,
+       "type": "number"
       },
       "fields": {
-       "anyOf": [
-        {
-         "items": {
-          "additionalProperties": true,
-          "type": "object"
-         },
-         "type": "array"
-        },
-        {
-         "type": "null"
-        }
-       ],
-       "default": null,
        "description": "Fields from `sample_gate_validation_regions` (each with `bounds`); sampled here when omitted.",
-       "title": "Fields"
+       "items": {
+        "additionalProperties": true,
+        "type": "object"
+       },
+       "type": "array"
       },
       "high": {
-       "anyOf": [
-        {
-         "type": "number"
-        },
-        {
-         "type": "null"
-        }
-       ],
-       "default": null,
-       "title": "High"
+       "type": "number"
       },
       "low": {
-       "anyOf": [
-        {
-         "type": "number"
-        },
-        {
-         "type": "null"
-        }
-       ],
-       "default": null,
        "description": "Gate to check (default: the stored one).",
-       "title": "Low"
+       "type": "number"
       },
       "marker": {
        "description": "A marker column, as `list_markers` names it.",
-       "title": "Marker",
        "type": "string"
       },
       "max_fields": {
        "default": 6,
        "maximum": 12,
        "minimum": 1,
-       "title": "Max Fields",
        "type": "integer"
       },
       "n_per_class": {
        "default": 2,
        "maximum": 4,
        "minimum": 1,
-       "title": "N Per Class",
        "type": "integer"
       },
       "nuclear_channel": {
-       "anyOf": [
-        {
-         "type": "string"
-        },
-        {
-         "type": "null"
-        }
-       ],
-       "default": null,
-       "title": "Nuclear Channel"
+       "type": "string"
       },
       "panel_px": {
        "default": 480,
        "maximum": 528,
        "minimum": 160,
-       "title": "Panel Px",
        "type": "integer"
       },
       "project": {
        "description": "Project name, as `list_projects` returns it.",
-       "title": "Project",
        "type": "string"
       },
       "qc": {
-       "anyOf": [
-        {
-         "enum": [
-          "strict",
-          "exclude",
-          "off"
-         ],
-         "type": "string"
-        },
-        {
-         "type": "null"
-        }
+       "description": "QC failures left out of this estimate, sample or picture (the gate still applies to every cell). strict (default): cells QC called exclude or warn, and the cells QC flagged this marker unreliable in; exclude: warn calls kept; off: QC ignored (only when the user asks).",
+       "enum": [
+        "strict",
+        "exclude",
+        "off"
        ],
-       "default": null,
-       "description": "Which QC failures to leave out of this estimate, sample or picture (the gate itself always applies to every cell). strict (the default): cells QC called exclude or warn, and for this marker the cells QC flagged it unreliable in; exclude: warn calls kept; off: QC ignored -- only when the user asks, or QC is suspected wrong. Inside a gating session the session's own setting applies. No effect where QC was never run.",
-       "title": "Qc"
+       "type": "string"
       },
       "seed": {
        "default": 0,
-       "title": "Seed",
        "type": "integer"
       }
      },
@@ -5515,7 +3841,6 @@
       "project",
       "marker"
      ],
-     "title": "ValidationInput",
      "type": "object"
     },
     "needs": [
@@ -5576,8 +3901,7 @@
           }
          ],
          "default": 40000,
-         "description": "Packet JSON characters per candidate.",
-         "title": "Chars"
+         "description": "Packet JSON characters per candidate."
         },
         "images": {
          "anyOf": [
@@ -5591,8 +3915,7 @@
           }
          ],
          "default": 10,
-         "description": "Images per candidate, over its looks.",
-         "title": "Images"
+         "description": "Images per candidate, over its looks."
         },
         "packets": {
          "anyOf": [
@@ -5606,8 +3929,7 @@
           }
          ],
          "default": 5,
-         "description": "Looks per candidate (confirm, localise, grid); the audit and scope are free.",
-         "title": "Packets"
+         "description": "Looks per candidate (confirm, localise, grid); the audit and scope are free."
         },
         "pixels": {
          "anyOf": [
@@ -5620,74 +3942,48 @@
           }
          ],
          "default": 8000000,
-         "description": "Image pixels per candidate, over its looks.",
-         "title": "Pixels"
+         "description": "Image pixels per candidate, over its looks."
         }
        },
-       "title": "QCBudget",
        "type": "object"
       },
       "QCChecks": {
        "additionalProperties": false,
-       "description": "The image checks a session runs first. Each scores the tissue on its\nown grid; the session shows you places sampled across each score's\ndistribution (`score_review`) and turns what you confirm into snug\nregions and cell calls. A check that cannot run here is skipped and\nsays why.",
+       "description": "The image checks a session runs first: each scores the tissue, you\njudge places sampled across the score (`score_review`). One that cannot\nrun here is skipped and says why.",
        "properties": {
         "artifacts": {
-         "description": "The Artifact Detector: folds, tears, debris and saturation across every channel, one review per category (supersedes the scan's saturation detector).",
-         "title": "Artifacts",
+         "description": "The Artifact Detector: folds, tears, debris and saturation, one review per category.",
          "type": "boolean"
         },
         "blur": {
-         "description": "Blur QC on the nuclear channels, or on every channel when none is recognisable by name (supersedes the scan's focus detector).",
-         "title": "Blur",
+         "description": "Blur QC on the nuclear channels.",
          "type": "boolean"
         },
         "blur_channels": {
-         "anyOf": [
-          {
-           "items": {
-            "type": "string"
-           },
-           "type": "array"
-          },
-          {
-           "type": "null"
-          }
-         ],
-         "default": null,
          "description": "The channels Blur QC scores (default: the session's nuclear channels, else every channel).",
-         "title": "Blur Channels"
+         "items": {
+          "type": "string"
+         },
+         "type": "array"
         },
         "max_pixels": {
-         "anyOf": [
-          {
-           "minimum": 1000000,
-           "type": "integer"
-          },
-          {
-           "type": "null"
-          }
-         ],
-         "default": null,
          "description": "Skip Segmentation QC on an image of more full-resolution pixels than this.",
-         "title": "Max Pixels"
+         "minimum": 1000000,
+         "type": "integer"
         },
         "registration": {
-         "description": "Registration Check of every nuclear channel against the reference (supersedes the scan's registration detector). Not run, and said so in the report, when fewer than two DNA channels are recognisable by name.",
-         "title": "Registration",
+         "description": "Registration Check of every nuclear channel against the reference.",
          "type": "boolean"
         },
         "segmentation": {
-         "description": "Segmentation QC, when the project has a mask: where too large, too small and irregular cells cluster (under/over-segmentation is reported, not outlined).",
-         "title": "Segmentation",
+         "description": "Segmentation QC, when the project has a mask: where too large, too small and irregular cells cluster.",
          "type": "boolean"
         },
         "visual": {
-         "description": "The visual pass: after the checks are reviewed, one look at the whole tissue in four views (the brightest DNA across cycles, first against last cycle, the mean of the channels, where channels agree) on which you outline the large, obvious artifacts the detectors missed with segment_qc_roi (session_id). Needs magic select; skipped and said so otherwise.",
-         "title": "Visual",
+         "description": "After the checks, one look at the whole tissue on which you outline large artifacts the detectors missed (segment_qc_roi).",
          "type": "boolean"
         }
        },
-       "title": "QCChecks",
        "type": "object"
       }
      },
@@ -5695,15 +3991,13 @@
      "properties": {
       "agent": {
        "default": "agent",
-       "description": "Who answers (the model, say). Earlier answers to identical packets are reused only from the same agent.",
+       "description": "Who answers (your model's name); earlier answers are reused only from the same agent.",
        "maxLength": 80,
-       "title": "Agent",
        "type": "string"
       },
       "background_roi": {
        "default": true,
        "description": "Write the glass outside the feathered tissue as one \"QC: Background\" ROI (apply mode). Its cells are noted `background`, never excluded unless the user renames or approves it so.",
-       "title": "Background Roi",
        "type": "boolean"
       },
       "budget": {
@@ -5711,56 +4005,29 @@
        "description": "What each candidate may spend."
       },
       "channels": {
-       "anyOf": [
-        {
-         "items": {
-          "type": "string"
-         },
-         "type": "array"
-        },
-        {
-         "type": "null"
-        }
-       ],
-       "default": null,
        "description": "Default: every channel of the image.",
-       "title": "Channels"
+       "items": {
+        "type": "string"
+       },
+       "type": "array"
       },
       "checks": {
        "$ref": "#/$defs/QCChecks",
-       "description": "The image checks run first (blur, registration, segmentation): their scores find the problems, you judge sampled places. Default from PLEXORA_QC_CHECKS (all)."
+       "description": "The image checks run first; you judge places sampled across their scores."
       },
       "custom_thresholds": {
-       "anyOf": [
-        {
-         "additionalProperties": {
-          "type": "number"
-         },
-         "type": "object"
-        },
-        {
-         "type": "null"
-        }
-       ],
-       "default": null,
+       "additionalProperties": {
+        "type": "number"
+       },
        "description": "With strictness=custom: keys of the strictness table, each within the lenient..strict band.",
-       "title": "Custom Thresholds"
+       "type": "object"
       },
       "detectors": {
-       "anyOf": [
-        {
-         "items": {
-          "type": "string"
-         },
-         "type": "array"
-        },
-        {
-         "type": "null"
-        }
-       ],
-       "default": null,
        "description": "Default: every detector.",
-       "title": "Detectors"
+       "items": {
+        "type": "string"
+       },
+       "type": "array"
       },
       "image_format": {
        "default": "webp",
@@ -5768,61 +4035,31 @@
         "webp",
         "png"
        ],
-       "title": "Image Format",
        "type": "string"
       },
       "known_guide": {
-       "anyOf": [
-        {
-         "type": "string"
-        },
-        {
-         "type": "null"
-        }
-       ],
-       "default": null,
-       "description": "The `guide_version` of a reading guide you already hold: it is then not sent again.",
-       "title": "Known Guide"
+       "description": "The `guide_version` of a reading guide you hold: it is not sent again.",
+       "type": "string"
       },
       "map_cell_um": {
-       "anyOf": [
-        {
-         "maximum": 500.0,
-         "minimum": 5.0,
-         "type": "number"
-        },
-        {
-         "type": "null"
-        }
-       ],
-       "default": null,
        "description": "The scan's map cell, microns a side (default 50).",
-       "title": "Map Cell Um"
+       "maximum": 500.0,
+       "minimum": 5.0,
+       "type": "number"
       },
       "max_extensions": {
        "maximum": 10,
        "minimum": 0,
-       "title": "Max Extensions",
        "type": "integer"
       },
       "mirror": {
-       "anyOf": [
-        {
-         "type": "boolean"
-        },
-        {
-         "type": "null"
-        }
-       ],
-       "default": null,
-       "description": "Show each decision in an open viewer too. Default (null): on when one Plexora tab is open to drive (the one showing this image, else the only one), off otherwise -- the start result's `mirror.reason` says why. true: ask for it (and say why it cannot be); false: never.",
-       "title": "Mirror"
+       "description": "Show each decision in an open viewer too. null: on when one Plexora tab can be driven; true: ask for it; false: never.",
+       "type": "boolean"
       },
       "mirror_delay_ms": {
        "default": 600,
        "maximum": 5000,
        "minimum": 0,
-       "title": "Mirror Delay Ms",
        "type": "integer"
       },
       "mode": {
@@ -5832,69 +4069,52 @@
         "apply",
         "propose"
        ],
-       "title": "Mode",
        "type": "string"
       },
       "on_limit": {
-       "description": "When a candidate reaches its allowance while the evidence still says to go on: ask the user, extend, or stop (manual review). Default from PLEXORA_QC_ON_LIMIT.",
+       "description": "A candidate out of looks while the evidence says go on: ask (the user), extend, or stop (manual review).",
        "enum": [
         "ask",
         "extend",
         "stop"
        ],
-       "title": "On Limit",
        "type": "string"
       },
       "project": {
-       "title": "Project",
        "type": "string"
       },
       "reading": {
        "default": "once",
-       "description": "once: the reading guide comes with the start and status; every_packet: each packet repeats the texts it needs.",
+       "description": "once: the reading guide comes with the start (and the status, asked); every_packet: each packet repeats the texts it needs.",
        "enum": [
         "once",
         "every_packet"
        ],
-       "title": "Reading",
        "type": "string"
       },
       "refine": {
-       "description": "Trace each confirmed artifact's own pixels inside the outline you judged, and write that (the outline is where to look; normal tissue inside it is kept). false: write the outline itself. Default from PLEXORA_QC_REFINE (on).",
-       "title": "Refine",
+       "description": "Write each confirmed artifact's own pixels traced inside the outline you judged. false: the outline itself.",
        "type": "boolean"
       },
       "refine_margin_um": {
-       "anyOf": [
-        {
-         "maximum": 50.0,
-         "minimum": 0.0,
-         "type": "number"
-        },
-        {
-         "type": "null"
-        }
-       ],
-       "default": null,
        "description": "The margin grown round a traced artifact, microns (default: the class's own, 3-10).",
-       "title": "Refine Margin Um"
+       "maximum": 50.0,
+       "minimum": 0.0,
+       "type": "number"
       },
       "reuse_answers": {
        "default": true,
        "description": "Answer a packet identical to one this agent answered before with that answer, without asking.",
-       "title": "Reuse Answers",
        "type": "boolean"
       },
       "scope": {
        "const": "project",
        "default": "project",
        "description": "One image (a dataset scope comes later).",
-       "title": "Scope",
        "type": "string"
       },
       "seed": {
        "default": 0,
-       "title": "Seed",
        "type": "integer"
       },
       "strictness": {
@@ -5906,26 +4126,15 @@
         "strict",
         "custom"
        ],
-       "title": "Strictness",
        "type": "string"
       },
       "view_id": {
-       "anyOf": [
-        {
-         "type": "string"
-        },
-        {
-         "type": "null"
-        }
-       ],
-       "default": null,
-       "title": "View Id"
+       "type": "string"
       }
      },
      "required": [
       "project"
      ],
-     "title": "QCSessionOptions",
      "type": "object"
     },
     "needs": [
@@ -5967,60 +4176,38 @@
      "additionalProperties": false,
      "properties": {
       "reader": {
-       "anyOf": [
-        {
-         "maxLength": 40,
-         "pattern": "^[A-Za-z0-9_.:-]+$",
-         "type": "string"
-        },
-        {
-         "type": "null"
-        }
-       ],
-       "default": null,
        "description": "Who is answering, when several conversations answer one session (one id per conversation, from a worker's brief). Omit when you are the only one.",
-       "title": "Reader"
+       "maxLength": 40,
+       "pattern": "^[A-Za-z0-9_.:-]+$",
+       "type": "string"
       },
       "rerender": {
        "default": false,
        "description": "Draw the outstanding packet's images again (same packet, same charge).",
-       "title": "Rerender",
        "type": "boolean"
       },
       "session_id": {
-       "title": "Session Id",
        "type": "string"
       },
       "tasks": {
-       "anyOf": [
-        {
-         "items": {
-          "type": "string"
-         },
-         "maxItems": 8,
-         "type": "array"
-        },
-        {
-         "type": "null"
-        }
-       ],
-       "default": null,
        "description": "The tasks this reader answers (`module.task`, from its brief): it is given only their packets, and `other_tasks` when what is ready is another task's. Omit to answer every packet.",
-       "title": "Tasks"
+       "items": {
+        "type": "string"
+       },
+       "maxItems": 8,
+       "type": "array"
       },
       "wait_s": {
        "default": 10.0,
        "description": "How long to wait for the bulk pass when nothing is ready yet (at most 30; call again for longer).",
        "maximum": 30,
        "minimum": 0,
-       "title": "Wait S",
        "type": "number"
       }
      },
      "required": [
       "session_id"
      ],
-     "title": "NextInput",
      "type": "object"
     },
     "needs": [],
@@ -6059,69 +4246,38 @@
       "answer": {
        "additionalProperties": true,
        "description": "The typed answer: `kind` plus the fields the packet's answer_schema lists.",
-       "title": "Answer",
        "type": "object"
       },
       "include_next": {
        "default": true,
        "description": "Return the next packet with the outcome, saving a next call.",
-       "title": "Include Next",
        "type": "boolean"
       },
       "model": {
-       "anyOf": [
-        {
-         "maxLength": 80,
-         "type": "string"
-        },
-        {
-         "type": "null"
-        }
-       ],
-       "default": null,
        "description": "The model you are running on, as your client names it: recorded with the answer, so the session can show which model answered each task.",
-       "title": "Model"
+       "maxLength": 80,
+       "type": "string"
       },
       "packet_id": {
        "description": "The packet being answered (pk_nnnn).",
-       "title": "Packet Id",
        "type": "string"
       },
       "reader": {
-       "anyOf": [
-        {
-         "maxLength": 40,
-         "pattern": "^[A-Za-z0-9_.:-]+$",
-         "type": "string"
-        },
-        {
-         "type": "null"
-        }
-       ],
-       "default": null,
        "description": "Who is answering, when several conversations answer one session (one id per conversation, from a worker's brief). Omit when you are the only one.",
-       "title": "Reader"
+       "maxLength": 40,
+       "pattern": "^[A-Za-z0-9_.:-]+$",
+       "type": "string"
       },
       "session_id": {
-       "title": "Session Id",
        "type": "string"
       },
       "tasks": {
-       "anyOf": [
-        {
-         "items": {
-          "type": "string"
-         },
-         "maxItems": 8,
-         "type": "array"
-        },
-        {
-         "type": "null"
-        }
-       ],
-       "default": null,
        "description": "The tasks this reader answers (`module.task`, from its brief): it is given only their packets, and `other_tasks` when what is ready is another task's. Omit to answer every packet.",
-       "title": "Tasks"
+       "items": {
+        "type": "string"
+       },
+       "maxItems": 8,
+       "type": "array"
       }
      },
      "required": [
@@ -6129,7 +4285,6 @@
       "packet_id",
       "answer"
      ],
-     "title": "AnswerInput",
      "type": "object"
     },
     "needs": [],
@@ -6172,84 +4327,44 @@
         "brief",
         "full"
        ],
-       "title": "Detail",
        "type": "string"
       },
       "guide": {
        "default": false,
        "description": "Send the reading guide packets point into (`evidence.guide`, `answer_schema.see`): once, before you answer packets yourself.",
-       "title": "Guide",
        "type": "boolean"
       },
       "known_guide": {
-       "anyOf": [
-        {
-         "type": "string"
-        },
-        {
-         "type": "null"
-        }
-       ],
-       "default": null,
        "description": "The `guide_version` you hold: the reading guide is then not sent again.",
-       "title": "Known Guide"
+       "type": "string"
       },
       "limits": {
-       "anyOf": [
-        {
-         "additionalProperties": {
-          "enum": [
-           "continue",
-           "stop"
-          ],
-          "type": "string"
-         },
-         "type": "object"
-        },
-        {
-         "type": "null"
-        }
-       ],
-       "default": null,
+       "additionalProperties": {
+        "enum": [
+         "continue",
+         "stop"
+        ],
+        "type": "string"
+       },
        "description": "Answers to the session's limit questions (`requests` of a `waiting_for_user` result), by unit: `continue` grants another allowance, `stop` flags it for manual review. Pass the user's answer, not your own guess.",
-       "title": "Limits"
+       "type": "object"
       },
       "pause": {
-       "anyOf": [
-        {
-         "type": "boolean"
-        },
-        {
-         "type": "null"
-        }
-       ],
-       "default": null,
        "description": "Pause (true) or resume (false) the session.",
-       "title": "Pause"
+       "type": "boolean"
       },
       "reattach_viewer": {
        "default": false,
-       "title": "Reattach Viewer",
        "type": "boolean"
       },
       "replay_mirror": {
        "default": false,
        "description": "With reattach_viewer: show the packet out in the viewer now, not at the next packet.",
-       "title": "Replay Mirror",
        "type": "boolean"
       },
       "session_id": {
-       "anyOf": [
-        {
-         "type": "string"
-        },
-        {
-         "type": "null"
-        }
-       ],
-       "default": null,
        "description": "Omit to list recent sessions.",
-       "title": "Session Id"
+       "type": "string"
       },
       "units": {
        "default": "open",
@@ -6258,24 +4373,13 @@
         "open",
         "all"
        ],
-       "title": "Units",
        "type": "string"
       },
       "view_id": {
-       "anyOf": [
-        {
-         "type": "string"
-        },
-        {
-         "type": "null"
-        }
-       ],
-       "default": null,
        "description": "With reattach_viewer: the tab to mirror into (defaults to the one mirrored before).",
-       "title": "View Id"
+       "type": "string"
       }
      },
-     "title": "StatusInput",
      "type": "object"
     },
     "needs": [],
@@ -6318,11 +4422,9 @@
         "cancel",
         "rollback"
        ],
-       "title": "Action",
        "type": "string"
       },
       "session_id": {
-       "title": "Session Id",
        "type": "string"
       },
       "units": {
@@ -6332,14 +4434,12 @@
         "open",
         "all"
        ],
-       "title": "Units",
        "type": "string"
       }
      },
      "required": [
       "session_id"
      ],
-     "title": "FinishInput",
      "type": "object"
     },
     "needs": [],
@@ -6380,36 +4480,16 @@
         "pdf",
         "both"
        ],
-       "title": "Format",
        "type": "string"
       },
       "project": {
-       "anyOf": [
-        {
-         "type": "string"
-        },
-        {
-         "type": "null"
-        }
-       ],
-       "default": null,
-       "title": "Project"
+       "type": "string"
       },
       "session_id": {
-       "anyOf": [
-        {
-         "type": "string"
-        },
-        {
-         "type": "null"
-        }
-       ],
-       "default": null,
        "description": "A session; or give `project` for its active result.",
-       "title": "Session Id"
+       "type": "string"
       }
      },
-     "title": "ReportInput",
      "type": "object"
     },
     "needs": [
@@ -6451,21 +4531,12 @@
      "additionalProperties": false,
      "properties": {
       "channels": {
-       "anyOf": [
-        {
-         "items": {
-          "type": "string"
-         },
-         "maxItems": 8,
-         "type": "array"
-        },
-        {
-         "type": "null"
-        }
-       ],
-       "default": null,
        "description": "Up to eight channels (default: the first eight).",
-       "title": "Channels"
+       "items": {
+        "type": "string"
+       },
+       "maxItems": 8,
+       "type": "array"
       },
       "format": {
        "default": "png",
@@ -6473,19 +4544,16 @@
         "webp",
         "png"
        ],
-       "title": "Format",
        "type": "string"
       },
       "project": {
        "description": "Project name, as `list_projects` returns it.",
-       "title": "Project",
        "type": "string"
       }
      },
      "required": [
       "project"
      ],
-     "title": "OverviewInput",
      "type": "object"
     },
     "needs": [

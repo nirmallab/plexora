@@ -214,11 +214,12 @@ class RenderInput(ProjectInput):
                                            description="Regions to outline over the picture "
                                                        "(GeoJSON or boxes, full-resolution "
                                                        "pixels).")
+    #: Ones that cannot be drawn are listed in the manifest's not_rendered,
+    #: with the reason.
     layers: Literal["visible", "none"] | list[str] = Field(
         "visible", description="The scene's other layers to draw over the image: "
                                "'visible' (as the viewer shows them), 'none', or a list "
-                               "of layer ids. Ones that cannot be drawn are listed in "
-                               "the manifest's not_rendered, with the reason.")
+                               "of layer ids.")
     view: str | None = Field(
         None, max_length=48,
         description="For a z-stack (inspect_volume): which plane or projection to draw -- "

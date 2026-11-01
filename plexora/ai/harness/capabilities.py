@@ -87,8 +87,8 @@ def _workflow(kind):
 
 class RunInput(AgentModel):
     kind: Literal["gating", "contrast", "qc"] = Field(
-        description="gating: Auto Gating of the project's markers; contrast: auto contrast -- "
-                    "how bright each marker is drawn, no gating; qc: AutoQC of its image.")
+        description="gating: Auto Gating of the markers; contrast: how bright each marker is "
+                    "drawn, no gating; qc: AutoQC of the image.")
     project: str
     markers: list[str] | None = Field(None, max_length=200, description="gating, contrast: the "
                                       "markers (default: every marker of the table).")
@@ -100,21 +100,22 @@ class RunInput(AgentModel):
     resume_session: str | None = Field(None, description="Continue this paused session (after "
                                        "a credit pause, say) instead of starting one.")
     dev: bool = Field(False, description="The gateway's dev route (internal testing accounts "
-                                         "only; billed at provider cost).")
+                                         "only).")
     model: str | None = Field(None, max_length=80, description="With dev only: the model to use.")
     units_per_worker: int | None = Field(None, ge=1, le=16, description="Units one rolling "
                                          "worker covers (default: 1 marker, 4 QC units).")
+    #: Default: the session's `lanes`, chosen from the panel; more lanes
+    #: finish sooner.
     parallel_markers: int | None = Field(None, ge=1, le=8, description="gating: markers answered "
-                                         "side by side, each lane with its own workers (default: "
-                                         "the session's `lanes`, chosen from the panel). The "
-                                         "gates are the serial run's; more lanes finish sooner.")
+                                         "side by side, each lane its own workers; the gates are "
+                                         "the serial run's.")
     start_options: dict | None = Field(None, description="Extra options for the session's start "
                                        "(the workflow's own, e.g. QC's map_cell_um).")
+    #: A cheap text model normalises it (plexora.ai.context); empty: no call.
     context: str | None = Field(None, max_length=1000, description="gating: the user's note about "
                                 "the sample, as typed (\"melanoma from skin\", \"only gate CD3 and "
-                                "CD8\"). A cheap text model normalises it (plexora.ai.context) into the "
-                                "session's biology; it narrows the markers only when it says so "
-                                "explicitly. Empty: no call, every marker.")
+                                "CD8\"): read into the session's biology, narrowing the markers only "
+                                "when it says so.")
 
 
 class _Relay:

@@ -80,40 +80,36 @@ def _check_default(name, default=True):
 
 
 class QCChecks(AgentModel):
-    """The image checks a session runs first. Each scores the tissue on its
-    own grid; the session shows you places sampled across each score's
-    distribution (`score_review`) and turns what you confirm into snug
-    regions and cell calls. A check that cannot run here is skipped and
-    says why."""
+    """The image checks a session runs first: each scores the tissue, you
+    judge places sampled across the score (`score_review`). One that cannot
+    run here is skipped and says why."""
 
+    # What you confirm becomes snug regions and cell calls. Each check
+    # supersedes a scan detector: blur the focus one, registration the
+    # registration one, artifacts the saturation one.
+    #: The nuclear channels, or every channel when none is recognisable by name.
     blur: bool = Field(default_factory=lambda: _check_default("blur"),
-                       description="Blur QC on the nuclear channels, or on every channel "
-                                   "when none is recognisable by name (supersedes the "
-                                   "scan's focus detector).")
+                       description="Blur QC on the nuclear channels.")
+    #: Not run, and said so in the report, when fewer than two DNA channels
+    #: are recognisable by name.
     registration: bool = Field(default_factory=lambda: _check_default("registration"),
                                description="Registration Check of every nuclear channel "
-                                           "against the reference (supersedes the scan's "
-                                           "registration detector). Not run, and said so "
-                                           "in the report, when fewer than two DNA "
-                                           "channels are recognisable by name.")
+                                           "against the reference.")
+    #: Under/over-segmentation is reported, not outlined.
     segmentation: bool = Field(default_factory=lambda: _check_default("segmentation"),
                                description="Segmentation QC, when the project has a mask: "
-                                           "where too large, too small and irregular "
-                                           "cells cluster (under/over-segmentation is "
-                                           "reported, not outlined).")
+                                           "where too large, too small and irregular cells "
+                                           "cluster.")
     artifacts: bool = Field(default_factory=lambda: _check_default("artifacts"),
                             description="The Artifact Detector: folds, tears, debris and "
-                                        "saturation across every channel, one review per "
-                                        "category (supersedes the scan's saturation "
-                                        "detector).")
+                                        "saturation, one review per category.")
+    #: Four views: the brightest DNA across cycles, first against last
+    #: cycle, the mean of the channels, where channels agree. Needs magic
+    #: select; skipped and said so otherwise.
     visual: bool = Field(default_factory=lambda: _check_default("visual"),
-                         description="The visual pass: after the checks are reviewed, one look "
-                                     "at the whole tissue in four views (the brightest DNA "
-                                     "across cycles, first against last cycle, the mean of "
-                                     "the channels, where channels agree) on which you outline "
-                                     "the large, obvious artifacts the detectors missed with "
-                                     "segment_qc_roi (session_id). Needs magic select; "
-                                     "skipped and said so otherwise.")
+                         description="After the checks, one look at the whole tissue on which "
+                                     "you outline large artifacts the detectors missed "
+                                     "(segment_qc_roi).")
     blur_channels: list[str] | None = Field(
         None, description="The channels Blur QC scores (default: the session's nuclear "
                           "channels, else every channel).")
@@ -141,46 +137,44 @@ class QCSessionOptions(AgentModel):
     map_cell_um: float | None = Field(None, ge=5.0, le=500.0,
                                       description="The scan's map cell, microns a side "
                                                   "(default 50).")
+    #: null: the tab showing this image, else the only one; the start
+    #: result's `mirror.reason` says why it is on or off.
     mirror: bool | None = Field(
-        None, description="Show each decision in an open viewer too. Default (null): on when "
-                          "one Plexora tab is open to drive (the one showing this image, else "
-                          "the only one), off otherwise -- the start result's `mirror.reason` "
-                          "says why. true: ask for it (and say why it cannot be); false: never.")
+        None, description="Show each decision in an open viewer too. null: on when one "
+                          "Plexora tab can be driven; true: ask for it; false: never.")
     view_id: str | None = None
     mirror_delay_ms: int = Field(mirroring.DEFAULT_DELAY_MS, ge=0, le=5000)
     image_format: Literal["webp", "png"] = "webp"
     reading: Literal["once", "every_packet"] = Field(
-        "once", description="once: the reading guide comes with the start and status; "
-                            "every_packet: each packet repeats the texts it needs.")
+        "once", description="once: the reading guide comes with the start (and the status, "
+                            "asked); every_packet: each packet repeats the texts it needs.")
     known_guide: str | None = Field(None, description="The `guide_version` of a reading guide "
-                                    "you already hold: it is then not sent again.")
+                                    "you hold: it is not sent again.")
     budget: QCBudget = Field(default_factory=QCBudget, description="What each candidate may "
                                                                    "spend.")
-    agent: str = Field("agent", max_length=80, description="Who answers (the model, say). "
-                       "Earlier answers to identical packets are reused only from the same "
-                       "agent.")
+    agent: str = Field("agent", max_length=80, description="Who answers (your model's name); "
+                       "earlier answers are reused only from the same agent.")
     reuse_answers: bool = Field(True, description="Answer a packet identical to one this agent "
                                 "answered before with that answer, without asking.")
+    #: Default from PLEXORA_QC_ON_LIMIT.
     on_limit: Literal[schemas.LIMIT_POLICIES] = Field(
         default_factory=lambda: _limit_default("on_limit"),
-        description="When a candidate reaches its allowance while the evidence still says "
-                    "to go on: ask the user, extend, or stop (manual review). Default from "
-                    "PLEXORA_QC_ON_LIMIT.")
+        description="A candidate out of looks while the evidence says go on: ask (the "
+                    "user), extend, or stop (manual review).")
     max_extensions: int = Field(default_factory=lambda: _limit_default("max_extensions"),
                                 ge=0, le=10)
+    #: The outline is where to look; normal tissue inside it is kept. Default
+    #: from PLEXORA_QC_REFINE (on).
     refine: bool = Field(
         default_factory=_refine_default,
-        description="Trace each confirmed artifact's own pixels inside the outline you "
-                    "judged, and write that (the outline is where to look; normal tissue "
-                    "inside it is kept). false: write the outline itself. Default from "
-                    "PLEXORA_QC_REFINE (on).")
+        description="Write each confirmed artifact's own pixels traced inside the outline "
+                    "you judged. false: the outline itself.")
     refine_margin_um: float | None = Field(
         None, ge=0.0, le=50.0, description="The margin grown round a traced artifact, "
                                            "microns (default: the class's own, 3-10).")
+    #: Default from PLEXORA_QC_CHECKS (all).
     checks: QCChecks = Field(default_factory=QCChecks, description="The image checks run "
-                             "first (blur, registration, segmentation): their scores find "
-                             "the problems, you judge sampled places. Default from "
-                             "PLEXORA_QC_CHECKS (all).")
+                             "first; you judge places sampled across their scores.")
     background_roi: bool = Field(
         True, description="Write the glass outside the feathered tissue as one \"QC: "
                           "Background\" ROI (apply mode). Its cells are noted `background`, "

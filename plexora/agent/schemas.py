@@ -23,6 +23,62 @@ class AgentModel(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
+def compact_schema(schema: Any) -> Any:
+    """An input model's JSON schema as a model is shown it, with what pydantic
+    adds that says nothing to the model taken out -- and nothing a call could
+    use: validation is the model's own, never this schema's.
+
+    - `title` on every property and model (the property's name already says it);
+    - an optional field's `anyOf: [X, {"type": "null"}]` with `default: null`
+      is X: leaving the field out is the null (a field whose default is not
+      null, or one that is required, keeps its null branch, which then means
+      something);
+    - a tagged union's `discriminator` mapping beside its `oneOf`: each branch
+      carries its tag as a `const`.
+
+    On render_region, whose options are nested models, about a fifth."""
+    if isinstance(schema, list):
+        return [compact_schema(item) for item in schema]
+    if not isinstance(schema, dict):
+        return schema
+    out = {}
+    for key, value in schema.items():
+        if key == "title" and isinstance(value, str):
+            continue
+        if key == "discriminator" and "oneOf" in schema:
+            continue
+        if key in _VALUES:
+            out[key] = value          # data, not schema: kept byte for byte
+        elif key in ("properties", "$defs", "definitions") and isinstance(value, dict):
+            required = set(schema.get("required") or ()) if key == "properties" else None
+            out[key] = {name: (_without_null(compact_schema(node))
+                               if required is not None and name not in required
+                               else compact_schema(node))
+                        for name, node in value.items()}
+        else:
+            out[key] = compact_schema(value)
+    return out
+
+
+#: Schema keywords whose value is data (a default, an example), never walked.
+_VALUES = ("default", "const", "enum", "examples", "required")
+
+
+def _without_null(node: Any) -> Any:
+    """An optional property's schema without its null branch, when null is
+    only its default (`compact_schema`)."""
+    if not isinstance(node, dict) or node.get("default", None) is not None:
+        return node
+    branches = node.get("anyOf")
+    if not isinstance(branches, list) or len(branches) != 2 or {"type": "null"} not in branches:
+        return node
+    other = next(b for b in branches if b != {"type": "null"})
+    rest = {k: v for k, v in node.items() if k not in ("anyOf", "default")}
+    if not isinstance(other, dict) or set(other) & set(rest):
+        return node
+    return {**other, **rest}
+
+
 def _trim(text: str, limit: int) -> str:
     """`text` cut to `limit` characters: at the last sentence end in the
     second half of the limit, else the last word, then an ellipsis."""
@@ -56,13 +112,14 @@ class NoInput(AgentModel):
 
 
 #: What a `qc` field says, wherever an estimate or a sample takes one
-#: (plexora/agent/cell_exclusions.py).
+#: (plexora/agent/cell_exclusions.py). Inside a gating session the session's
+#: own setting applies; no effect where QC was never run; `off` also when QC
+#: is suspected wrong.
 QC_FIELD_DESCRIPTION = (
-    "Which QC failures to leave out of this estimate, sample or picture (the gate itself "
-    "always applies to every cell). strict (the default): cells QC called exclude or warn, "
-    "and for this marker the cells QC flagged it unreliable in; exclude: warn calls kept; "
-    "off: QC ignored -- only when the user asks, or QC is suspected wrong. Inside a gating "
-    "session the session's own setting applies. No effect where QC was never run.")
+    "QC failures left out of this estimate, sample or picture (the gate still applies to "
+    "every cell). strict (default): cells QC called exclude or warn, and the cells QC "
+    "flagged this marker unreliable in; exclude: warn calls kept; off: QC ignored (only "
+    "when the user asks).")
 
 
 class QcInput(AgentModel):

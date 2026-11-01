@@ -84,33 +84,40 @@ def _limit_default(name):
 class Biology(AgentModel):
     """The sample's biology as the user stated it (`autogate/biology.py`)."""
     tissue: str | None = Field(None, max_length=120, description="The tissue or organ, in "
-                               "the user's words: 'skin', 'lymph node', 'colon'.")
+                               "the user's words ('skin', 'lymph node').")
     disease: str | None = Field(None, max_length=120, description="The disease or sample "
-                                "type, in the user's words: 'melanoma', 'adenocarcinoma'.")
+                                "type, in the user's words ('melanoma').")
     notes: str | None = Field(None, max_length=400, description="Anything else the user "
-                              "said about the sample's biology.")
-    original: str | None = Field(None, max_length=1000, description="The user's note exactly "
-                                 "as written, when tissue/disease/notes were interpreted from "
-                                 "it (`plexora.ai.context`); kept beside the interpretation.")
-    interpretation: dict | None = Field(None, description="The Context Interpreter's settled "
-                                        "reading of `original` (populations of interest, "
-                                        "corrected terms, ambiguities, scope).")
+                              "said about the sample.")
+    #: Kept beside the interpretation when tissue/disease/notes were read from
+    #: a note (`plexora.ai.context`).
+    original: str | None = Field(None, max_length=1000, description="The user's note as "
+                                 "written, when the fields above were read from it.")
+    #: Populations of interest, corrected terms, ambiguities, scope.
+    interpretation: dict | None = Field(None, description="The Context Interpreter's reading "
+                                        "of `original`.")
 
 
 class ExpressionChoice(AgentModel):
-    """Which matrix to gate on, settled before the start (`SessionOptions.expression`)."""
+    """Which matrix to gate on, settled before the start."""
     features_layer: str = Field(description="`X` or `layer:<name>`, as "
                                             "inspect_expression_sources lists them.")
-    features_log: bool = Field(description="Apply log1p as the values are read. Never for a "
-                                           "matrix that is already log-transformed.")
+    features_log: bool = Field(description="Apply log1p as the values are read; never to "
+                                           "values already logged.")
+    #: user: `plexora ai run --matrix/--log1p`; inferred:
+    #: `plexora.ai.harness.expression`.
     basis: Literal["user", "inferred"] = Field(
-        "user", description="user: the user named it (`plexora ai run --matrix/--log1p`); "
-                            "it is applied even over an earlier confirmed choice. inferred: "
-                            "a model read it from the values (`plexora.ai.harness.expression`); "
-                            "applied only where nothing is confirmed.")
+        "user", description="user: the user named it (applied over an earlier confirmed "
+                            "choice); inferred: a model read it from the values (applied only "
+                            "where nothing is confirmed).")
     why: str | None = Field(None, max_length=400, description="Why, in a sentence.")
 
 
+# What the model reads when it loads `gating_session_start` is these
+# descriptions (every door: MCP, the bridge, Biocognia Intelligence's guest
+# catalogue): a sentence each that says what a value does. Why a default is
+# what it is -- the benchmark behind it, the run that changed it -- is in the
+# comment above the field, which no model pays for.
 class SessionOptions(AgentModel):
     scope: Literal["project", "dataset"] = Field(
         "project", description="project: one image; dataset: every image of a dataset, the "
@@ -119,37 +126,34 @@ class SessionOptions(AgentModel):
     dataset: str | None = Field(None, description="With scope=dataset: name or id.")
     markers: list[str] | None = Field(None, description="Default: every marker except "
                                       "structural channels (DNA and the like).")
+    #: apply: each write receipted and undoable; the empty gate of a failed or
+    #: all-negative marker is written too.
     mode: Literal["apply", "propose"] = Field(
-        "apply", description="apply: accepted gates -- and the empty gate of a failed or "
-                             "all-negative marker -- are written as they are decided (each "
-                             "receipted and undoable); propose: nothing is written until "
-                             "gating_session_finish(action=commit).")
+        "apply", description="apply: gates are written as they are decided; propose: nothing "
+                             "is written until gating_session_finish(action=commit).")
     overwrite_manual: bool = Field(False, description="Also re-gate markers the user set by "
                                    "hand (never locked or approved ones).")
+    #: There is no numbers-only tier: every gate is judged on the image's pixels.
     max_tier: int = Field(schemas.ENGINE["max_tier_default"], ge=2, le=len(schemas.TIERS),
                           description="2: one look per marker; 3: + reference channels; 4: + "
-                                      "candidate refinement; 5: + questions for the user. "
-                                      "There is no numbers-only tier: every gate is judged "
-                                      "on the image's pixels.")
-    force: bool = Field(False, description="Start even when only some markers match an image "
-                        "channel: only those are gated, and the rest are skipped "
-                        "(skipped_no_channel) without a gate. Without it a partial match "
-                        "refuses to start; when no marker matches, nothing starts either way.")
+                                      "candidate refinement; 5: + questions for the user.")
+    #: Without it a partial match refuses to start; when no marker matches,
+    #: nothing starts either way.
+    force: bool = Field(False, description="Start when only some markers match an image "
+                        "channel: the rest are skipped (skipped_no_channel).")
+    #: The set-up: a required column (cell id, coordinates, image id) not
+    #: found or never confirmed, or an expression matrix its values cannot
+    #: settle. fail is for a run with nobody to ask (`plexora ai run`); wait
+    #: for Plexora AI started from the viewer (every column and the matrix).
     setup: Literal["ask", "wait", "fail"] = Field(
-        "ask", description="What the start does when the project's gating set-up is not "
-                           "finished: a required column (cell id, coordinates, image id) not "
-                           "found or never confirmed, or an expression matrix its values "
-                           "cannot settle. ask: a column not found refuses the start, and the "
-                           "matrix comes to you as an expression_setup packet (put it to the "
-                           "user; never guess); fail: nothing starts, and the error says what "
-                           "is missing and how to supply it (a run with nobody to ask: "
-                           "`plexora ai run`); wait: the session waits in needs_setup, nothing "
-                           "profiled, until the user finishes the viewer's set-up form -- every "
-                           "column and the matrix (Plexora AI started from the viewer).")
+        "ask", description="When the gating set-up is unfinished (a column, the matrix). ask: "
+                           "a missing column refuses; the matrix comes as an expression_setup "
+                           "packet to put to the user, never guessed. fail: nothing starts; "
+                           "the error says what to supply. wait: the session waits in "
+                           "needs_setup until the user finishes the viewer's set-up form.")
     expression: ExpressionChoice | None = Field(
         None, description="The matrix to gate on, when the user named it or a model read it "
-                          "from the values before the start; checked against the matrices the "
-                          "project has, and never log1p on values already logged.")
+                          "from the values; checked against the project's matrices.")
     audit_sheet: bool = Field(True, description="Show automatically accepted markers on a "
                                                 "batched audit sheet (~70 tokens a marker).")
     reference_image: str | None = Field(None, description="Dataset scope: the image gated "
@@ -158,176 +162,153 @@ class SessionOptions(AgentModel):
     view_id: str | None = None
     mirror_delay_ms: int = Field(mirroring.DEFAULT_DELAY_MS, ge=0, le=5000)
     image_format: Literal["webp", "png"] = "webp"
+    #: Sized from each image's own pixel size (or the session's estimate of it).
     field_um: float = Field(_FIELD_UM, ge=_FIELD_UM_BOUNDS[0], le=_FIELD_UM_BOUNDS[1],
-                            description="The context sheet's tissue fields, microns a side: "
-                                        "sized from each image's own pixel size (or the "
-                                        "session's estimate of it).")
+                            description="The context sheet's tissue fields, microns a side.")
     reading: Literal["once", "every_packet"] = Field(
-        "once", description="once: the reading guide comes with the session's start and "
-                            "status, and packets name the entries they use; every_packet: "
-                            "each packet repeats the texts it needs.")
+        "once", description="once: the reading guide comes with the start (and the status, "
+                            "asked) and packets name its entries; every_packet: each packet "
+                            "repeats the texts it needs.")
+    #: delta: `reading_guide.as_in`, and briefs carry no repeated text.
     evidence: Literal["delta", "full"] = Field(
-        "delta", description="delta: an evidence value this conversation was already sent "
-                             "comes as {as_in: packet_id} (reading_guide.as_in), and briefs "
-                             "carry no repeated text; full: every packet whole.")
+        "delta", description="delta: evidence this conversation was already sent comes as "
+                             "{as_in: packet_id}; full: every packet whole.")
+    #: trim: also a whole-image check shows only the slide scale.
     sheets: Literal["trim", "full"] = Field(
-        "trim", description="trim: a context-sheet row this conversation was already shown "
-                            "with the same gate and fields is left out, and a whole-image "
-                            "check shows only the slide scale; full: every sheet whole.")
+        "trim", description="trim: context-sheet rows this conversation was already shown "
+                            "are left out; full: every sheet whole.")
     budget: Budget = Field(default_factory=Budget, description="What each marker may spend.")
-    agent: str = Field("agent", max_length=80, description="Who answers (the model, say). "
-                       "Earlier answers to identical packets are reused only from the same "
-                       "agent.")
+    agent: str = Field("agent", max_length=80, description="Who answers (your model's name); "
+                       "earlier answers are reused only from the same agent.")
+    #: Same data, partners, code and seed: a rerun then reaches the same gates.
     reuse_answers: bool = Field(True, description="Answer a packet identical to one this agent "
-                                "answered before (same data, partners, code and seed) with that "
-                                "answer, without asking: a rerun then reaches the same gates. "
-                                "False asks everything afresh.")
+                                "answered before with that answer. False asks afresh.")
+    #: ask: the user is asked in the viewer and you are told; extend is for
+    #: automated runs. A marker is never accepted because it ran out. Default
+    #: from PLEXORA_GATING_ON_LIMIT (`plexora mcp serve --gating-on-limit`).
     on_limit: Literal[schemas.LIMIT_POLICIES] = Field(
         default_factory=lambda: _limit_default("on_limit"),
-        description="When a marker reaches its allowance of looks or candidate rounds while "
-                    "the evidence still says to go on: ask (the user is asked in the viewer "
-                    "and you are told; the marker waits, the rest goes on), extend (another "
-                    "allowance without asking: automated runs), stop (flag it for review). "
-                    "A marker is never accepted because it ran out. Default from "
-                    "PLEXORA_GATING_ON_LIMIT (set by `plexora mcp serve --gating-on-limit`).")
+        description="A marker out of looks while the evidence says go on: ask (the user; "
+                    "the marker waits), extend (another allowance), stop (review).")
+    #: Default from PLEXORA_GATING_MAX_EXTENSIONS.
     max_extensions: int = Field(
         default_factory=lambda: _limit_default("max_extensions"), ge=0, le=10,
-        description="How many extra allowances one marker may get before it is flagged for "
-                    "review. Default from PLEXORA_GATING_MAX_EXTENSIONS.")
+        description="Extra allowances one marker may get before review.")
+    #: The gates still apply to every cell; no effect on an image QC has not
+    #: been run on.
     qc: Literal["strict", "exclude", "off"] = Field(
-        "strict", description="Which QC failures the session leaves out of every fit, sample, "
-                              "collage and field (the gates still apply to every cell). strict: "
-                              "cells QC called exclude or warn, and per marker the cells QC "
-                              "flagged that marker unreliable in; exclude: warn calls kept; "
-                              "off: QC ignored (only when the user asks, or QC is wrong). No "
-                              "effect on an image QC has not been run on.")
+        "strict", description="QC failures left out of every fit and picture. strict: cells "
+                              "QC called exclude or warn, and per marker the cells QC flagged "
+                              "unreliable; exclude: warn calls kept; off: QC ignored (only "
+                              "when the user asks).")
+    #: A prior for references, co-expression, spatial reading and confidence.
     biology: Biology | None = Field(None, description="The tissue and disease the user "
-                                    "named for this sample (\"a melanoma from the skin\": "
-                                    "tissue skin, disease melanoma). A prior for references, "
-                                    "co-expression, spatial reading and confidence -- never "
-                                    "a rule. Left out, it is taken from the project's "
-                                    "metadata or inferred from the panel, and marked so.")
-    defer_parents: bool = Field(True, description="A marker whose own distribution is weak "
-                                "(no robust partner curve, a poorly separated mixture) waits "
-                                "for its children in the panel's hierarchy -- markers whose "
-                                "positives are a subset of its own -- and is then scored with "
-                                "where their positives sit (once, never after a look).")
+                                    "named: a prior, never a rule. Left out: from the "
+                                    "project's metadata or inferred from the panel, marked so.")
+    #: Weak: no robust partner curve, a poorly separated mixture. Children:
+    #: markers whose positives are a subset of its own; it is then scored with
+    #: where their positives sit, once, never after a look.
+    defer_parents: bool = Field(True, description="A weakly separated marker waits for its "
+                                "children in the panel's hierarchy.")
     known_guide: str | None = Field(None, description="The `guide_version` of a reading guide "
-                                    "you already hold (from an earlier session of this "
-                                    "build): it is then not sent again.")
+                                    "you hold: it is not sent again.")
+    #: vision: markers in rows, five brightnesses in columns, code picks the
+    #: column, for the markers no earlier check settled; a choice outlives the
+    #: session. rule: black under the background, the bright cells' structure
+    #: near the top. off with v2 is the setting v2 was measured with.
     display_check: Literal[schemas.DISPLAY_CHECKS] = Field(
         schemas.DISPLAY_CHECK_DEFAULT[schemas.DEFAULT_ENGINE],
-        description="Auto contrast -- how bright each marker is drawn in every look: "
-                    "`vision` puts a contrast grid to the model after the panel context "
-                    "(markers in rows, five brightnesses in columns; code picks the column) "
-                    "for the markers no earlier check settled -- once per image, a choice "
-                    "outlives the session, so an image an auto-contrast run already did is not "
-                    "asked again; `rule` keeps the calibration's own window (black under the "
-                    "background, the bright cells' structure near the top) and shows it; `off` "
-                    "leaves the step out. Left out: `off` with engine v2 (the setting it was "
-                    "measured with), `vision` with v1.")
+        description="Auto contrast for every look: vision (a contrast grid to the model, "
+                    "once per image), rule (the calibration's window), off. Default: off "
+                    "with engine v2, vision with v1.")
+    #: contrast: the set-up, the calibration and the contrast check; each
+    #: marker closes `display_set` once its image's brightness is settled.
     purpose: Literal[schemas.PURPOSES] = Field(
-        "gating", description="gating: decide the markers' gates. contrast: auto contrast on its "
-                              "own (contrast_session_start) -- the set-up, the calibration and "
-                              "the contrast check; no marker is profiled or gated, and each "
-                              "closes `display_set` once its image's brightness is settled.")
-    tiles: bool = Field(False, description="Draw every look's cells as a 2 x 2 block: "
-                        "morphology, the context with the judged cell outlined, and one "
-                        "expected and one not-expected partner channel from the panel "
-                        "context (reading guide `collage_t2m`). Off, the looks are the "
-                        "two-panel cells.")
+        "gating", description="gating: decide the gates; contrast: auto contrast only "
+                              "(contrast_session_start).")
+    #: The 2 x 2 block: morphology, the context with the judged cell outlined,
+    #: one expected and one not-expected partner (reading guide `collage_t2m`).
+    #: Off, the looks are the two-panel cells.
+    tiles: bool = Field(False, description="Draw each look's cells as 2 x 2 blocks with two "
+                        "partner channels.")
+    #: Three panels: the DNA alone, the marker alone from the display's black
+    #: to the gate at mid-grey, the two combined (`collage_split`); a dim
+    #: marker's looks stay morphology | context; `tiles` wins where both apply.
     split_views: Literal["off", "bright_rechecks"] = Field(
-        "off", description="bright_rechecks: a look at candidates (a recheck of a gate) "
-        "draws each cell as three panels side by side -- the DNA alone, the marker alone "
-        "from the display's black to the gate at mid-grey, and the two combined (reading "
-        "guide `collage_split`) -- for a marker that is not dim; a dim marker's looks stay "
-        "morphology | context. off: never (unmeasured; `tiles` wins where both apply).")
-    absence_check: bool = Field(False, description="Before a marker's first look, show six "
-                                "regions of the tissue with nothing marked and ask whether "
-                                "any cell is clearly positive by its own stain: none in any "
-                                "region closes the marker with no positives (gate at the "
-                                "maximum), and a technical check's failed-stain verdict "
-                                "stands only when the regions agree. Off by default: on 12 "
-                                "held-out images 9 of its 17 closes were real populations of "
-                                "0.5-8 % (bench GATING_GENERALISE). False: the first look "
-                                "comes straight away.")
-    split_mixed: bool = Field(True, description="A look at candidates that stops at a row "
-                              "judged mixed and wider than two background sds gets that row "
-                              "split into finer candidates and looked at again, instead of "
-                              "the gate stopping at its edge.")
-    whole_image_moves: bool = Field(False, description="After a look at candidates, a "
-                                    "whole-image check that calls the gate too low or too "
-                                    "high sends it back to the candidates (opposite ways end "
-                                    "in review). False: the gate stays where the rows put it, "
-                                    "at low confidence, the disagreement noted -- the rows "
-                                    "judged those very cells.")
-    whole_image_reopen: bool = Field(True, description="After a look at candidates, a "
-                                     "whole-image check that calls the gate too low sends it "
-                                     "up for one more look at the candidates above, where the "
-                                     "first row passes even when judged mixed (two views "
-                                     "agree); the rows still place the gate. False: it stays "
-                                     "where the rows put it, at low confidence.")
-    absence_confirm: bool = Field(True, description="When exactly one region of an absence "
-                                  "picture shows clear positives and the others none or few, "
-                                  "that region is shown again close up and in its "
-                                  "surroundings before it keeps the marker open: an edge band "
-                                  "or a fold reads as one there, a cluster of real cells "
-                                  "still as cells.")
+        "off", description="bright_rechecks: a recheck of a bright marker's gate draws each "
+                           "cell as DNA | marker | both (unmeasured).")
+    #: None in any region closes the marker with no positives (gate at the
+    #: maximum); a technical check's failed-stain verdict stands only when the
+    #: regions agree. Off by default: on 12 held-out images 9 of its 17
+    #: closes were real populations of 0.5-8 % (bench GATING_GENERALISE).
+    absence_check: bool = Field(False, description="Before a marker's first look, ask whether "
+                                "six unmarked regions show any positive cell.")
+    #: Rows wider than two background sds.
+    split_mixed: bool = Field(True, description="Split a candidate row judged mixed into finer "
+                              "ones and look again.")
+    #: Opposite ways end in review. False: the gate stays where the rows put
+    #: it, at low confidence, the disagreement noted -- the rows judged those
+    #: very cells.
+    whole_image_moves: bool = Field(False, description="A whole-image check calling the gate "
+                                    "too low or too high sends it back to the candidates.")
+    #: The first row passes even when judged mixed (two views agree); the
+    #: rows still place the gate. False: it stays where the rows put it, at
+    #: low confidence.
+    whole_image_reopen: bool = Field(True, description="A whole-image check calling the gate "
+                                     "too low gives one more look at the candidates above.")
+    #: An edge band or a fold reads as one close up; a cluster of real cells
+    #: still as cells.
+    absence_confirm: bool = Field(True, description="A lone positive region of an absence "
+                                  "picture is shown again close up before it counts.")
+    #: layer: the gate's call unless the classifier is confident the other
+    #: way, taking positives away more readily than adding them, and only where
+    #: the marker's signal is poor. check: the flagged cells are shown beside
+    #: cells it agrees on; the gate moves past each row the look confirms
+    #: (unmeasured).
     classifier: Literal[schemas.CLASSIFIER_MODES] = Field(
-        "layer", description="The Single Cell Classifier beside each gate. layer: after a "
-                             "gate is written, the classifier is trained at it and calls "
-                             "every cell -- the gate's call unless it is confident the other "
-                             "way, taking positives away more readily than adding them, and "
-                             "only taking them away where the marker's signal is poor; kept "
-                             "beside the threshold (which still decides the marker) until "
-                             "the user adopts it in the Thresholding panel. check: that, and "
-                             "where the classifier trained at a gate disagrees with it beside "
-                             "it, the cells it flags are shown in a look at the candidates on "
-                             "that side, beside cells it agrees on; the gate moves past each "
-                             "row the look confirms (unmeasured). off: neither.")
+        "layer", description="The Single Cell Classifier beside each gate. layer: trained at "
+                             "each written gate, kept beside the threshold (which decides) "
+                             "until the user adopts it; check: also show the cells it "
+                             "disagrees on in a look; off.")
+    #: auto: fibrous stains (smooth muscle, vessel walls: the panel's
+    #: morphology) word, the rest mixed. word: one word a row, flagged cells
+    #: must read as their own stain; mixed: flagged cells read as mixed count
+    #: as stained; count: the cells in each row with their own stain.
     check_reading: Literal[schemas.CHECK_READINGS] = Field(
-        "auto", description="How a classifier check's look is read. auto: word for a marker "
-                            "whose stain is fibrous (smooth muscle, vessel walls: the panel's "
-                            "morphology), mixed for the rest. word: one word per row; "
-                            "the cells the classifier flags must read as their own stain. "
-                            "mixed: the same words, and flagged cells read as mixed count "
-                            "as stained. count: the reader counts the cells in each row "
-                            "that carry their own stain (unmeasured).")
+        "auto", description="How a classifier check's look is read (count: unmeasured).")
+    #: v2: the lattice's candidate gates are competing hypotheses; blind
+    #: panels, numbered and shuffled with no value or gate shown; looks again
+    #: only where the leader has not beaten a rival; closes for review with a
+    #: reason when it cannot. v1: then candidates beyond the gate.
     engine: Literal[schemas.ENGINES] = Field(
         schemas.DEFAULT_ENGINE,
-        description="How a marker that needs a look is decided. v2 (the default): the "
-                    "lattice's candidate gates are competing hypotheses; blind panels of "
-                    "single cells, numbered and shuffled with no value or gate shown, are "
-                    "labelled one cell at a time, and code picks the candidate the labels "
-                    "support, looks again only where the leader has not beaten a rival, and "
-                    "closes for review with a reason when it cannot. v1: rows below, at and "
-                    "above the gate, then candidates beyond it, judged a row at a time. The "
-                    "first names, classic (v1) and candidates (v2), are accepted.")
+        description="v2: blind panels of single cells labelled one at a time, code picks the "
+                    "candidate gate the labels support; v1: rows below, at and above the gate. "
+                    "classic (v1) and candidates (v2) are accepted.")
+    #: Folds (also ones that come or go between imaging cycles), tears,
+    #: debris, saturation, lost nuclei; no model calls; marked automatic and
+    #: unreviewed. Needs the QC plugin.
     basic_qc: bool = Field(
         schemas.BASIC_QC_DEFAULT[schemas.DEFAULT_ENGINE],
-        description="On an image with no QC result, run QC's model-free checks before "
-                    "gating it (`run_basic_qc`: folds -- also ones that come or go between "
-                    "imaging cycles -- tears, debris, saturation, lost nuclei; no model "
-                    "calls) and leave out what they find, marked automatic and unreviewed. "
-                    "Left out: on with engine v2, off with v1. Needs the QC plugin.")
-    panel_looks: int = Field(3, ge=1, le=6, description="With engine v2: the most "
-                             "cell panels one marker is shown before it closes for review "
-                             "(fewer when the leading candidate resolves first).")
+        description="On an image with no QC result, run QC's model-free checks first "
+                    "(run_basic_qc) and leave out what they find. Default: on with v2, off "
+                    "with v1.")
+    panel_looks: int = Field(3, ge=1, le=6, description="Engine v2: the most cell panels a "
+                             "marker is shown before review.")
+    #: The pattern, dim cells seen stained, bright cells seen to be debris:
+    #: starts the gate no higher than the dim stained cells, keeps the fields
+    #: from the debris, caps confidence on a doubt, gives a clean split with a
+    #: finding a look.
     observations: Literal[schemas.OBSERVATION_MODES] = Field(
-        "off", description="Experimental. use: what the image's contrast check saw of each "
-                           "marker (its pattern, dim cells seen stained, bright cells seen to "
-                           "be debris) goes into every look as evidence, starts the gate no "
-                           "higher than the dim stained cells, keeps the tissue fields away "
-                           "from the debris, caps confidence on a doubt, and gives a clean "
-                           "split with a finding a look. off: not used.")
-    vision_first: bool = Field(False, description="Experimental. On a marker whose "
-                               "distribution says little (no valley, estimators that "
-                               "disagree), the looks place the gate: the first look starts "
-                               "at the dim cells the contrast check saw stained (else the "
-                               "cell share's 15% rung), the candidates are rungs by share "
-                               "of cells, cells below the gate seen mixed send it down, and "
-                               "the distribution's and spatial whole-image checks no longer "
-                               "fail a gate the looks placed. Pair with observations=use.")
+        "off", description="Experimental. use: the contrast check's observations are evidence "
+                           "in every look.")
+    #: Weak: no valley, estimators that disagree. The first look starts at the
+    #: dim cells the contrast check saw stained (else the 15% rung), the
+    #: candidates are rungs by share of cells, cells below the gate seen mixed
+    #: send it down, and the distribution's and spatial whole-image checks no
+    #: longer fail a gate the looks placed.
+    vision_first: bool = Field(False, description="Experimental: the looks place a weak "
+                               "marker's gate. Pair with observations=use.")
 
     @field_validator("engine", mode="before")
     @classmethod
@@ -348,22 +329,22 @@ class SessionOptions(AgentModel):
                 data = {**data, key: table[engine]}
         return data
 
-    replan: bool = Field(True, description="Re-plan when markers fail: the markers left are "
-                         "reordered and rescored without the failed gates, accepted gates that "
-                         "only a failed one placed go to review, and what only biology can "
-                         "settle (a population that may be absent, an image whose looks keep "
-                         "naming the same artifact) is put to the planning task in a `replan` "
-                         "packet. False keeps the plan made at the start.")
+    #: The markers left are reordered and rescored without the failed gates;
+    #: accepted gates only a failed one placed go to review; what only biology
+    #: can settle (a population that may be absent, an image whose looks keep
+    #: naming the same artifact) goes to the planning task in a `replan` packet.
+    replan: bool = Field(True, description="Re-plan when markers fail. False keeps the start's "
+                         "plan.")
     seed: int = 0
+    #: plexora/ai/delegation.py; workers on a cheaper or the same model.
     delegate: bool = Field(True, description="Return the `delegate` block: how to hand the "
-                           "packet loop to fresh worker conversations on a cheaper or the "
-                           "same model (plexora/ai/delegation.py).")
-    lanes: int | None = Field(None, ge=1, le=8, description="Readers answering the session at "
-                              "once, each its own `reader` passing `parallel` (the start's "
-                              "`lanes`, and its `delegate` block's). A marker never goes out "
-                              "beside one whose gate it reads, so the gates are the one-at-a-"
-                              "time run's. Default: as many as the panel's dependencies keep "
-                              "busy (1 for a few markers, or markers that all read each other).")
+                           "packet loop to worker conversations.")
+    #: A marker never goes out beside one whose gate it reads, so the gates
+    #: are the one-at-a-time run's. Default: as many as the panel's
+    #: dependencies keep busy (1 for a few markers, or markers that all read
+    #: each other).
+    lanes: int | None = Field(None, ge=1, le=8, description="Readers answering at once, each "
+                              "its own `reader` passing `parallel`.")
 
 
 def session_qc(handler):
