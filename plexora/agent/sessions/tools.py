@@ -118,15 +118,20 @@ def status_input(limit_decisions):
                                     "mirror into (defaults to the one mirrored before).")
         pause: bool | None = Field(None, description="Pause (true) or resume (false) the "
                                                      "session.")
+        detail: Literal["brief", "full"] = Field(
+            "brief", description="brief: state, progress, counts, and the units still open "
+                                 "or left for a person, by state and why; full: every "
+                                 "unit's fields, the checks and scan, the residual, the "
+                                 "budget spent, mirroring, the delegate block, the "
+                                 "vocabulary and the reading guide.")
+        guide: bool = Field(False, description="Send the reading guide packets point into "
+                            "(`evidence.guide`, `answer_schema.see`): once, before you "
+                            "answer packets yourself.")
         known_guide: str | None = Field(None, description="The `guide_version` you hold: the "
                                         "reading guide is then not sent again.")
         units: Literal["open", "all"] = Field(
             "open", description="open: list only the units still to settle and those left "
                                 "for a person (the counts cover the rest); all: every unit.")
-        detail: Literal["brief", "full"] = Field(
-            "brief", description="brief: the units list capped (with a count of the rest), "
-                                 "the residual as its top rows plus totals, no strictness "
-                                 "table or vocabulary; full: all of it.")
         limits: dict[str, Literal[limit_decisions]] | None = Field(
             None, description="Answers to the session's limit questions (`requests` of a "
                               "`waiting_for_user` result), by unit: `continue` grants another "
@@ -249,6 +254,15 @@ class SessionTools:
         return {}
 
     def status_extra(self, engine, detail="brief") -> dict:
+        """More fields for the full status (`detail: full`)."""
+        return {}
+
+    def brief_unit(self, unit):
+        """What a brief status shows of one listed unit, under its id."""
+        return None
+
+    def brief_extra(self, engine) -> dict:
+        """More fields for the brief status (a workflow's checks, say)."""
         return {}
 
     def status_input_model(self):
@@ -567,6 +581,10 @@ class SessionTools:
                           paused=bool(inp.pause), paused_by="agent" if inp.pause else None)
             return {"session_id": inp.session_id, "paused": bool(inp.pause), "state": state,
                     "progress": progress}
+        # The reading guide (~20k characters) goes to a caller that asks for
+        # it -- one about to answer packets (`guide`), or the whole status --
+        # never to one asking how the session stands.
+        send_guide = inp.guide or inp.detail == "full"
         with self.engine_for(call, inp.session_id, st=st) as engine:
             record = engine.record
             if inp.reattach_viewer:
@@ -575,28 +593,34 @@ class SessionTools:
                                view_id=inp.view_id or mirror_.get("view_id"))
             replay = record.get("outstanding_packet") \
                 if inp.reattach_viewer and inp.replay_mirror else None
-            units = [self.unit_row(u) for u in self.listed_units(record, inp.units)]
-            shown, omitted = _capped(units, inp.units)
-            out = {"session_id": inp.session_id, "state": record["state"],
-                   "mode": record["options"]["mode"], "images": record["images"],
-                   "progress": engine.progress(), "units": shown,
-                   "units_omitted": omitted, "truncated": omitted > 0,
-                   "used": record.get("used"),
-                   "estimated_vision_tokens": budgets.vision_tokens(
-                       (record.get("used") or {}).get("pixels", 0)),
-                   "summary": self.summary_of(record),
-                   **self.guide(record["options"].get("reading"), inp.known_guide),
-                   "mirror": record.get("mirror"), "control": st.control(inp.session_id),
-                   "outstanding_packet": record.get("outstanding_packet"),
-                   "receipts": len(record.get("receipts") or []),
-                   "replayed": len(record.get("replayed") or []),
-                   "limit_requests": [self.limit_brief(u["limit_request"])
-                                      for u in engine.waiting_for_user()],
-                   **self.status_extra(engine, inp.detail),
-                   **self.delegate_block(record, inp.session_id)}
-            models = engine.models_used()
-            if models:
-                out["models"] = models
+            guide = self.guide(record["options"].get("reading"), inp.known_guide) \
+                if send_guide else {}
+            if inp.detail == "brief":
+                out = {**self.brief(engine, st, inp), **guide}
+                if guide:
+                    out.pop("guide", None)
+            else:
+                units = [self.unit_row(u) for u in self.listed_units(record, inp.units)]
+                shown, omitted = _capped(units, inp.units)
+                out = {"session_id": inp.session_id, "state": record["state"],
+                       "mode": record["options"]["mode"], "images": record["images"],
+                       "progress": engine.progress(), "units": shown,
+                       "units_omitted": omitted, "truncated": omitted > 0,
+                       "used": record.get("used"),
+                       "estimated_vision_tokens": budgets.vision_tokens(
+                           (record.get("used") or {}).get("pixels", 0)),
+                       "summary": self.summary_of(record), **guide,
+                       "mirror": record.get("mirror"), "control": st.control(inp.session_id),
+                       "outstanding_packet": record.get("outstanding_packet"),
+                       "receipts": len(record.get("receipts") or []),
+                       "replayed": len(record.get("replayed") or []),
+                       "limit_requests": [self.limit_brief(u["limit_request"])
+                                          for u in engine.waiting_for_user()],
+                       **self.status_extra(engine, inp.detail),
+                       **self.delegate_block(record, inp.session_id)}
+                models = engine.models_used()
+                if models:
+                    out["models"] = models
         if replay and not st.control(inp.session_id).get("viewer_detached"):
             try:
                 packet, _ = st.read_packet(inp.session_id, replay)
@@ -604,6 +628,65 @@ class SessionTools:
                 packet = None     # answered meanwhile: the next packet is mirrored
             if packet is not None:
                 out["mirror"] = self.mirror(call, inp.session_id, packet, replay=True)
+        return out
+
+    def brief(self, engine, st, inp) -> dict:
+        """The status by default: what a person asks of a session -- its state,
+        progress and counts, and the units still open or left for a person,
+        grouped by type and state and under `why` by the reason each closed
+        with (`brief_unit` says what is shown of one). Whatever waits on
+        someone (a limit question, a pause) is added when there is one;
+        `detail: full` has the rest."""
+        record = engine.record
+        progress = engine.progress()
+        summary = self.summary_of(record)
+        listed = self.listed_units(record, inp.units)
+        limit = MAX_LIST if inp.units == "all" else MAX_STATUS_UNITS
+        groups: dict = {}
+        for unit in listed[:limit]:
+            key = (unit.get("type"), unit.get("state"))
+            name = str(unit.get("id") or unit.get("channel") or unit.get("marker"))
+            groups.setdefault(key, {}).setdefault(unit.get("reason"), {})[name] = \
+                self.brief_unit(unit)
+        rows = []
+        for (kind, state), by_why in groups.items():
+            group = {**({"type": kind} if kind else {}), "state": state}
+            plain = by_why.pop(None, None)
+            if plain:
+                group["units"] = plain
+            if by_why:
+                group["why"] = dict(sorted(by_why.items(),
+                                           key=lambda item: (-len(item[1]), item[0])))
+            rows.append(group)
+        out = {"session_id": inp.session_id, "state": record["state"],
+               "mode": record["options"]["mode"], "images": record["images"],
+               "progress": {k: v for k, v in progress.items()
+                            if k in ("units_done", "units_total") or (
+                                v and k in ("by_type", "waiting_for_user", "not_profiled",
+                                            "not_scanned"))},
+               "summary": {k: v for k, v in summary.items()
+                           if k not in ("by_state", "units_done", "units_total")
+                           and v not in (None, [], {}, "")},
+               "units": rows,
+               **({"units_omitted": len(listed) - limit} if len(listed) > limit else {}),
+               **self.brief_extra(engine)}
+        requests = [self.limit_brief(u["limit_request"]) for u in engine.waiting_for_user()]
+        if requests:
+            out["limit_requests"] = requests
+        control = st.control(inp.session_id)
+        held = {k: control.get(k) for k in ("paused", "paused_by", "stopped", "stopped_by")
+                if control.get(k)}
+        if held:
+            out["control"] = held
+        if record.get("outstanding_packet"):
+            out["outstanding_packet"] = record["outstanding_packet"]
+        if inp.reattach_viewer:
+            out["mirror"] = record.get("mirror")
+        if record["state"] not in self.FINISHED_STATES \
+                and record["options"].get("reading") == "once":
+            out["guide"] = "not sent: guide=true sends the reading guide packets point into"
+        out["more"] = ("detail='full' adds every unit's fields, the checks and scan, the "
+                       "residual, the budget spent and mirroring")
         return out
 
     def finish(self, call, inp):

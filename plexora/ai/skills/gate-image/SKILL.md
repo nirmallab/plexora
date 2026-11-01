@@ -36,10 +36,8 @@ A cell table with cell-id/x/y roles; image channels and a mask for the looks.
 3. Hand packets out as the start's `delegate` says (`how`). Its `brief` is a
    worker's whole prompt: add no skill or guide text; keep only the lines it
    returns. `lanes`: launch them all in one message. `waiting_for_user`: ask the user, pass their word as
-   `gating_session_status` `limits`; never answer for them. Pass the start's
-   `guide_version` as `known_guide` on every `gating_session_status`, or the
-   guide is sent again. Without workers, answer packets yourself
-   (gate-packets) and start a new conversation
+   `gating_session_status` `limits`; never answer for them. Without workers,
+   answer packets yourself (gate-packets) and start a new conversation
    every {{ENGINE.markers_per_worker}} markers or so: each call re-reads all
    earlier packets.
 4. Ask the user (`ask_user`) only what neither numbers nor panel settle:

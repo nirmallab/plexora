@@ -670,7 +670,8 @@ class DecisionRun:
             first = self._await_setup(self.lanes[0], started)
             if first.get("state") in ("stopped", "paused", "cancelled", "failed"):
                 return first
-            planned = _ok(self._invoke(self.wf.STATUS, {"session_id": self.session_id}))
+            planned = _ok(self._invoke(self.wf.STATUS, {"session_id": self.session_id,
+                                                        "detail": "full"}))
             started = {**started, "n_units": planned.get("n_units"), "channels": planned.get("channels")}
         else:
             first = None
@@ -1262,7 +1263,8 @@ class DecisionRun:
         finished = None
         if self.session_id and self.parallel > 1:
             try:
-                state = _ok(self._invoke(self.wf.STATUS, {"session_id": self.session_id}))
+                state = _ok(self._invoke(self.wf.STATUS, {"session_id": self.session_id,
+                                                          "detail": "full"}))
                 self.peak_outstanding = int(state.get("outstanding_peak") or 0)
             except Exception:             # noqa: BLE001 -- a count for the summary only
                 pass

@@ -182,12 +182,13 @@ def test_tiles_off_is_todays_session(tmp_path):
             first = _start(session, "gsynth", mode="propose", agent="same")
             drive(session, first["session_id"], Oracle(info))
         gates = units(session, first["session_id"])
-        plain = ok(invoke(session, "gating_session_status", {"session_id": first["session_id"]}))
+        plain = ok(invoke(session, "gating_session_status",
+                          {"detail": "full", "session_id": first["session_id"]}))
         # The option said out loud: the same packets, so every answer replayed.
         again = _start(session, "gsynth", mode="propose", agent="same", tiles=False)
         replayed = drive(session, again["session_id"], Oracle(info))
         status = ok(invoke(session, "gating_session_status",
-                           {"session_id": again["session_id"]}))
+                           {"detail": "full", "session_id": again["session_id"]}))
         assert replayed == []
         assert status["summary"]["replayed"] == plain["summary"]["replayed"] > 0
         assert {m: (u["state"], u.get("proposed")) for m, u in gates.items()} == \

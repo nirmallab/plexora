@@ -139,7 +139,7 @@ def test_the_visual_pass_writes_into_the_session_and_its_regions_are_kept(tmp_pa
     mine = next(c for c in result["candidates"].values() if c.get("origin") == "agent")
     assert mine["ai_decision"]["reasoning"].startswith("A bright")
     assert mine["method"] == "sam_agent" and mine["detector"] == "sam"
-    status = ok(invoke(session, "qc_session_status", {"session_id": sid}))
+    status = ok(invoke(session, "qc_session_status", {"detail": "full", "session_id": sid}))
     assert status["checks"]["visual:scan"]["state"] == "decided"
     html = Path(ok(invoke(session, "qc_report", {"session_id": sid, "format": "html"}))
                 ["html"]).read_text(encoding="utf-8")

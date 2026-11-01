@@ -264,7 +264,7 @@ def test_an_unscoped_run_stamps_the_task_and_leaves_the_model_to_the_agent(
         packet, _images = store.read_packet(sid, packet_id)
         assert packet["task"] == entry["task"] and "model" not in packet
         assert entry["asked"] is None
-    status = ok(invoke(session, "gating_session_status", {"session_id": sid}))
+    status = ok(invoke(session, "gating_session_status", {"detail": "full", "session_id": sid}))
     assert all(set(row["answered_by"]) <= {"unstated"} for row in status["models"].values())
 
 
@@ -310,7 +310,7 @@ def test_qc_workers_scoped_by_task_take_turns_to_the_end(tmp_path, models_file):
         raise AssertionError("the QC session did not finish")
     assert all(got.values()), got
     assert "artifact_confirm" in got[workers[1]["reader"]]
-    status = ok(invoke(session, "qc_session_status", {"session_id": sid}))
+    status = ok(invoke(session, "qc_session_status", {"detail": "full", "session_id": sid}))
     assert "delegate" in status
     assert set(status["models"]["qc.artifact_inspection"]["answered_by"]) == {"judge-model"}
     ok(invoke(session, "qc_session_finish", {"session_id": sid}))

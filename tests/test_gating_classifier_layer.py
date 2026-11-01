@@ -241,7 +241,7 @@ def test_get_gate_status_qc_and_the_report_show_the_layer(tmp_path):
     assert layer["stale"] is None and layer["compare"]["gate_used"][0] == gate["gate"]["low"]
     every = ok(invoke(session, "get_all_gates", {"project": "gsynth"}))
     assert every["classifier_runs"]["CD8"]["session_id"] == sid
-    status = ok(invoke(session, "gating_session_status", {"session_id": sid}))
+    status = ok(invoke(session, "gating_session_status", {"detail": "full", "session_id": sid}))
     assert status["classifier"]["mode"] == "layer"
     assert status["classifier"]["layers"].get("ready", 0) >= 3
     row = next(u for u in status["units"] if u["marker"] == "CD8")

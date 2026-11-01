@@ -8,7 +8,8 @@
                              is missing (a column not found; `setup: fail`, the matrix too)
     gating_next           -> one decision packet (+ <= 2 images), or a status
     gating_answer         -> the outcome, and the next packet inline
-    gating_session_status -> every unit's state, the budget, the questions
+    gating_session_status -> each marker's gate, state and why; `detail: full` every
+                             unit's fields, the budget, QC; `guide` the reading guide
     gating_session_finish -> close | commit (propose mode) | cancel | rollback
 
 The loop an agent runs is `gating_next`, then `gating_answer` until the answer
@@ -976,8 +977,8 @@ def start(call, inp):
         # A coordinator that hands the packets to workers never reads the
         # guide (~20k characters); each worker fetches its own.
         out["reading_guide"] = ("not sent: the workers of `delegate` fetch it with "
-                                f"{tool_name_of('gating.session_status')}(session_id); call "
-                                "that yourself, without known_guide, if you answer packets")
+                                f"{tool_name_of('gating.session_status')}(session_id, "
+                                "guide=true); call that yourself if you answer packets")
         out.pop("reading_note", None)
     if packet is not None:
         if _mirroring(record["mirror"]):
@@ -2056,6 +2057,15 @@ class StatusInput(AgentModel):
                                 "into (defaults to the one mirrored before).")
     pause: bool | None = Field(None, description="Pause (true) or resume (false) the "
                                                  "session.")
+    detail: Literal["brief", "full"] = Field(
+        "brief", description="brief: state, progress, counts, and each marker's gate, state, "
+                             "confidence and why it needs review; full: every unit's fields "
+                             "(the candidate gates the reads leave, the classifier layer), "
+                             "the budget spent, QC, biology, mirroring, the delegate block, "
+                             "the vocabulary and the reading guide.")
+    guide: bool = Field(False, description="Send the reading guide packets point into "
+                        "(`evidence.guide`, `answer_schema.see`): once, before you answer "
+                        "packets yourself.")
     known_guide: str | None = Field(None, description="The `guide_version` you hold: the "
                                     "reading guide is then not sent again.")
     limits: dict[str, Literal[schemas.LIMIT_DECISIONS]] | None = Field(
@@ -2140,6 +2150,121 @@ def _bulk_status(record):
     return out
 
 
+def _why(unit):
+    """Why a marker closed where it did, for a brief status: its note up to
+    the candidates the reads leave (`hypotheses.PLATEAU_LEAD`, which the full
+    status keeps). None for an accepted marker or one still open."""
+    from plexora.plugins.gating.server.autogate.hypotheses import PLATEAU_LEAD
+
+    reason = unit.get("reason")
+    if not reason or unit.get("state") == "accepted" \
+            or unit.get("state") not in schemas.TERMINAL_STATES:
+        return None
+    return str(reason).split(PLATEAU_LEAD, 1)[0]
+
+
+#: The counts a brief status always gives; the rest only when not zero.
+BRIEF_COUNTS = ("accepted", "review", "written")
+
+
+def _gate_groups(record):
+    """A brief status's markers, grouped by state and confidence, each group
+    `{marker: gate}` -- under `why` by the reason it closed with, when it has
+    one: the gate written or proposed, else the best one the evidence reached
+    (`proposed`), None for none; a dataset's markers as `image::marker`.
+    Accepted markers first, then those left for review, the commonest reason
+    first. At most MAX_LIST; returns (groups, how many were left out)."""
+    from plexora.plugins.gating.server.autogate.engine import unit_key
+
+    many = len(record.get("images") or []) > 1
+    states = dict.fromkeys(schemas.ACCEPTED_STATES + schemas.REVIEW_STATES
+                           + schemas.TERMINAL_STATES)
+    rank = {state: i for i, state in enumerate(states)}
+    sure = {level: i for i, level in enumerate(schemas.CONFIDENCE)}
+    units = list((record.get("units") or {}).values())
+    groups: dict = {}
+    for unit in units[:MAX_LIST]:
+        name = unit_key(unit["project"], unit["marker"]) if many else unit["marker"]
+        gate = unit.get("final") if unit.get("final") is not None else unit.get("proposed")
+        key = (unit.get("state"), unit.get("confidence"))
+        groups.setdefault(key, {}).setdefault(_why(unit), {})[name] = gate
+    out = []
+    for (state, confidence), by_why in sorted(
+            groups.items(), key=lambda item: (rank.get(item[0][0], len(rank)),
+                                              sure.get(item[0][1], len(sure)))):
+        group = {"state": state, **({"confidence": confidence} if confidence else {})}
+        plain = by_why.pop(None, None)
+        if plain:
+            group["markers"] = plain
+        if by_why:
+            group["why"] = dict(sorted(by_why.items(), key=lambda item: (-len(item[1]), item[0])))
+        out.append(group)
+    return out, max(0, len(units) - MAX_LIST)
+
+
+def _brief(engine, st, session_id, inp):
+    """`gating_session_status` by default: what a person asks of a session --
+    its state, progress and counts, and each marker's gate, state, confidence
+    and why it needs review -- in a few thousand characters for a whole
+    panel. Whatever waits on someone (the set-up form, a limit question, an
+    open question, a pause, a commit) is added when there is one; `detail:
+    full` has the rest."""
+    from plexora.plugins.gating.server.autogate import engine as engines
+    from plexora.plugins.gating.server.autogate import transfer
+
+    record = engine.record
+    progress = engine.progress()
+    summary = engines.summary_of(record)
+    groups, omitted = _gate_groups(record)
+    out = {"session_id": session_id, "state": record["state"],
+           "mode": record["options"]["mode"], "scope": record.get("scope"),
+           "images": record["images"],
+           "progress": {"units_done": progress["units_done"],
+                        "units_total": progress["units_total"],
+                        **{k: progress[k] for k in ("not_profiled", "waiting_for_user")
+                           if progress.get(k)}},
+           "counts": {k: v for k, v in summary.items()
+                      if k in BRIEF_COUNTS or (v and k not in ("by_state", "units_done",
+                                                               "units_total"))},
+           "gates": groups, **({"omitted": omitted} if omitted else {})}
+    if out["mode"] == "propose" and not summary.get("written") \
+            and record["state"] != "rolled_back":
+        out["commit"] = (f"nothing is written until {tool_name_of('gating.session_finish')}"
+                         "(session_id, action='commit')")
+    if record.get("setup_wait"):
+        out["setup"] = record["setup_wait"]
+    bulk = _bulk_status(record)
+    if bulk.get("note"):
+        out["bulk"] = bulk
+    requests = [_limit_brief(u["limit_request"]) for u in engine.waiting_for_user()]
+    if requests:
+        out["limit_requests"] = requests
+    if record.get("questions"):
+        out["questions"] = record["questions"]
+    control = st.control(session_id)
+    held = {k: control.get(k) for k in ("paused", "paused_by", "stopped", "stopped_by")
+            if control.get(k)}
+    if held:
+        out["control"] = held
+    if record.get("outstanding_packet"):
+        out["outstanding_packet"] = record["outstanding_packet"]
+    if len(record.get("outstanding") or {}) > 1:
+        out["outstanding_packets"] = list(record["outstanding"])
+    if record.get("scope") == "dataset":
+        dataset = transfer.dataset_summary(engine)
+        out["reference_image"] = dataset["reference_image"]
+        out["strategy"] = {marker: row.get("strategy")
+                           for marker, row in dataset["markers"].items()}
+    if inp.reattach_viewer:
+        out["mirror"] = record.get("mirror")
+    if record["state"] not in schemas.FINISHED_STATES \
+            and record["options"].get("reading") == "once":
+        out["guide"] = "not sent: guide=true sends the reading guide packets point into"
+    out["more"] = ("detail='full' adds every unit's fields (the candidate gates the reads "
+                   "leave), QC, biology, the classifier, the budget spent and mirroring")
+    return out
+
+
 def status(call, inp):
     from plexora.plugins.gating.server.autogate import engine as engines
     from plexora.plugins.gating.server.autogate import packets
@@ -2160,12 +2285,16 @@ def status(call, inp):
         _announce(call, st.load(inp.session_id), inp.session_id, "limit_answered",
                   answers={k.split("::", 1)[-1]: v for k, v in answered.items()},
                   by="agent")
+    # The reading guide (~20k characters) goes to a caller that asks for it --
+    # one about to answer packets (`guide`), or the whole status -- never to
+    # one asking how the session stands.
+    send_guide = inp.guide or inp.detail == "full"
     with engines.engine_for(call, inp.session_id, st=st) as engine:
         record = engine.record
         reader = None
-        if engine.options["reading"] == "once" \
+        if send_guide and engine.options["reading"] == "once" \
                 and inp.known_guide != packets.guide_version(engine.options["engine"]):
-            # A caller without the guide is a new conversation: nothing sent
+            # A caller sent the guide is a new conversation: nothing sent
             # before may be pointed at (`packets.as_in`).
             reader = packets.new_reader(record)
         if inp.reattach_viewer:
@@ -2174,52 +2303,19 @@ def status(call, inp):
                            view_id=inp.view_id or mirror_.get("view_id"))
         replay = record.get("outstanding_packet") \
             if inp.reattach_viewer and inp.replay_mirror else None
-        units = [_unit_row(u) for u in record["units"].values()]
-        out = {"session_id": inp.session_id, "state": record["state"],
-               "scope": record.get("scope"), "mode": record["options"]["mode"],
-               "images": record["images"], "reference_image": record.get("reference_image"),
-               "progress": engine.progress(), "bulk": _bulk_status(record),
-               "n_units": len(units), "channels": _channels_brief(record.get("channel_match")),
-               "units": units[:MAX_LIST],
-               "truncated": len(units) > MAX_LIST, "used": record.get("used"),
-               "estimated_vision_tokens": budgets.vision_tokens(
-                   (record.get("used") or {}).get("pixels", 0)),
-               "vocabulary": {"terminal_states": list(schemas.TERMINAL_STATES),
-                              "accepted_states": list(schemas.ACCEPTED_STATES),
-                              "written_states": list(schemas.WRITTEN_STATES),
-                              "confidence": list(schemas.CONFIDENCE)},
-               "expression": record.get("expression"),
-               **({"setup": record["setup_wait"]} if record.get("setup_wait") else {}),
-               "pixel": _pixel_brief(record.get("pixel")),
-               "display": _display_brief(record.get("display")),
-               **({"basic_qc": record["basic_qc"]} if record.get("basic_qc") else {}),
-               "summary": engines.summary_of(record),
-               **_guide(record["options"]["reading"], inp.known_guide,
-                        engine.options["engine"]),
-               "questions": record.get("questions") or [], "mirror": record.get("mirror"),
-               "control": st.control(inp.session_id),
-               "outstanding_packet": record.get("outstanding_packet"),
-               "outstanding_packets": list(record.get("outstanding") or {}),
-               "outstanding_peak": int(record.get("outstanding_peak") or 0),
-               "reissued": int(record.get("reissued") or 0),
-               "receipts": len(record.get("receipts") or []),
-               "replayed": len(record.get("replayed") or []),
-               "limit_requests": [_limit_brief(u["limit_request"])
-                                  for u in engine.waiting_for_user()],
-               "biology": _biology_brief(record.get("biology")),
-               "classifier": _classifier_brief(record),
-               **({"reader": reader} if reader is not None else {}),
-               **_delegate_block(record, inp.session_id, engine.options)}
-        if record.get("scope") == "dataset":
-            out["dataset"] = transfer.dataset_summary(engine)
-        models = engine.models_used()
-        if models:
-            out["models"] = models
-        if record.get("unconfirmed_context"):
-            # What a reader answered about the panel: used by this session,
-            # learned for later panels only once a person confirms it
-            # (`set_panel_context` with source user).
-            out["unconfirmed_context"] = list(record["unconfirmed_context"])
+        guide = _guide(record["options"]["reading"], inp.known_guide,
+                       engine.options["engine"]) if send_guide else {}
+        if inp.detail == "brief":
+            out = _brief(engine, st, inp.session_id, inp)
+            if guide:
+                out.pop("guide", None)
+                out.update(guide)
+            if reader is not None:
+                out["reader"] = reader
+        else:
+            out = _full_status(engine, st, inp, guide, reader)
+            if record.get("scope") == "dataset":
+                out["dataset"] = transfer.dataset_summary(engine)
     if replay and not st.control(inp.session_id).get("viewer_detached"):
         try:
             packet, _ = st.read_packet(inp.session_id, replay)
@@ -2227,6 +2323,58 @@ def status(call, inp):
             packet = None     # answered meanwhile: the next packet is mirrored
         if packet is not None:
             out["mirror"] = _mirror(call, inp.session_id, packet, replay=True)
+    return out
+
+
+def _full_status(engine, st, inp, guide, reader):
+    """`gating_session_status(detail: full)`: every unit's row and everything
+    the session holds -- what the status was before it had a brief."""
+    from plexora.plugins.gating.server.autogate import engine as engines
+
+    record = engine.record
+    units = [_unit_row(u) for u in record["units"].values()]
+    out = {"session_id": inp.session_id, "state": record["state"],
+           "scope": record.get("scope"), "mode": record["options"]["mode"],
+           "images": record["images"], "reference_image": record.get("reference_image"),
+           "progress": engine.progress(), "bulk": _bulk_status(record),
+           "n_units": len(units), "channels": _channels_brief(record.get("channel_match")),
+           "units": units[:MAX_LIST],
+           "truncated": len(units) > MAX_LIST, "used": record.get("used"),
+           "estimated_vision_tokens": budgets.vision_tokens(
+               (record.get("used") or {}).get("pixels", 0)),
+           "vocabulary": {"terminal_states": list(schemas.TERMINAL_STATES),
+                          "accepted_states": list(schemas.ACCEPTED_STATES),
+                          "written_states": list(schemas.WRITTEN_STATES),
+                          "confidence": list(schemas.CONFIDENCE)},
+           "expression": record.get("expression"),
+           **({"setup": record["setup_wait"]} if record.get("setup_wait") else {}),
+           "pixel": _pixel_brief(record.get("pixel")),
+           "display": _display_brief(record.get("display")),
+           **({"basic_qc": record["basic_qc"]} if record.get("basic_qc") else {}),
+           "summary": engines.summary_of(record),
+           **guide,
+           "questions": record.get("questions") or [], "mirror": record.get("mirror"),
+           "control": st.control(inp.session_id),
+           "outstanding_packet": record.get("outstanding_packet"),
+           "outstanding_packets": list(record.get("outstanding") or {}),
+           "outstanding_peak": int(record.get("outstanding_peak") or 0),
+           "reissued": int(record.get("reissued") or 0),
+           "receipts": len(record.get("receipts") or []),
+           "replayed": len(record.get("replayed") or []),
+           "limit_requests": [_limit_brief(u["limit_request"])
+                              for u in engine.waiting_for_user()],
+           "biology": _biology_brief(record.get("biology")),
+           "classifier": _classifier_brief(record),
+           **({"reader": reader} if reader is not None else {}),
+           **_delegate_block(record, inp.session_id, engine.options)}
+    models = engine.models_used()
+    if models:
+        out["models"] = models
+    if record.get("unconfirmed_context"):
+        # What a reader answered about the panel: used by this session,
+        # learned for later panels only once a person confirms it
+        # (`set_panel_context` with source user).
+        out["unconfirmed_context"] = list(record["unconfirmed_context"])
     return out
 
 
@@ -2579,9 +2727,10 @@ def capabilities():
             writes=("gates",), persistent=True, visual_output=True,
             egress="rendered_pixels", reads=("table", "gates", "image", "mask")),
         cap(name="gating.session_status", entitlement="ai:gating:session", tool_name="gating_session_status",
-            purpose="A gating session's units (state, confidence, gate), what it has spent, "
-                    "its open questions, mirroring; or the recent sessions. Can pause or "
-                    "resume it.",
+            purpose="A gating session: each marker's gate, state, confidence and why it "
+                    "needs review, its progress and what waits on the user (detail=full: "
+                    "everything else it holds); or the recent sessions. Can pause or resume "
+                    "it.",
             permission="read", input_model=StatusInput, handler=session_qc(status), egress="aggregates"),
         cap(name="gating.session_finish", entitlement="ai:gating:session", tool_name="gating_session_finish",
             purpose="Finish a gating session: close it, commit a propose-mode session's "

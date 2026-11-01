@@ -5088,7 +5088,7 @@
    }
   },
   {
-   "description": "A gating session's units (state, confidence, gate), what it has spent, its open questions, mirroring; or the recent sessions. Can pause or resume it. Read-only. Part of Plexora Pro; on Free it answers license_required.",
+   "description": "A gating session: each marker's gate, state, confidence and why it needs review, its progress and what waits on the user (detail=full: everything else it holds); or the recent sessions. Can pause or resume it. Read-only. Part of Plexora Pro; on Free it answers license_required.",
    "descriptor": {
     "entitlement": "ai:gating:session",
     "execution": "immediate",
@@ -5096,6 +5096,22 @@
     "input_schema": {
      "additionalProperties": false,
      "properties": {
+      "detail": {
+       "default": "brief",
+       "description": "brief: state, progress, counts, and each marker's gate, state, confidence and why it needs review; full: every unit's fields (the candidate gates the reads leave, the classifier layer), the budget spent, QC, biology, mirroring, the delegate block, the vocabulary and the reading guide.",
+       "enum": [
+        "brief",
+        "full"
+       ],
+       "title": "Detail",
+       "type": "string"
+      },
+      "guide": {
+       "default": false,
+       "description": "Send the reading guide packets point into (`evidence.guide`, `answer_schema.see`): once, before you answer packets yourself.",
+       "title": "Guide",
+       "type": "boolean"
+      },
       "known_guide": {
        "anyOf": [
         {
@@ -5187,7 +5203,7 @@
     "permission": "read",
     "produces": [],
     "provider": "plexora",
-    "purpose": "A gating session's units (state, confidence, gate), what it has spent, its open questions, mirroring; or the recent sessions. Can pause or resume it.",
+    "purpose": "A gating session: each marker's gate, state, confidence and why it needs review, its progress and what waits on the user (detail=full: everything else it holds); or the recent sessions. Can pause or resume it.",
     "roles": [],
     "tags": [
      "gate",
@@ -6141,7 +6157,7 @@
    }
   },
   {
-   "description": "A QC session's units (channels, candidate regions, checks), what it has spent, its limit questions, mirroring; or the recent sessions. Can pause or resume it. Read-only. Part of Plexora Pro; on Free it answers license_required.",
+   "description": "A QC session: its progress, the channels, regions and checks still open or left for a person and why, each check's state and its limit questions (detail=full: everything else it holds); or the recent sessions. Can pause or resume it. Read-only. Part of Plexora Pro; on Free it answers license_required.",
    "descriptor": {
     "entitlement": "ai:qc:session",
     "execution": "immediate",
@@ -6151,13 +6167,19 @@
      "properties": {
       "detail": {
        "default": "brief",
-       "description": "brief: the units list capped (with a count of the rest), the residual as its top rows plus totals, no strictness table or vocabulary; full: all of it.",
+       "description": "brief: state, progress, counts, and the units still open or left for a person, by state and why; full: every unit's fields, the checks and scan, the residual, the budget spent, mirroring, the delegate block, the vocabulary and the reading guide.",
        "enum": [
         "brief",
         "full"
        ],
        "title": "Detail",
        "type": "string"
+      },
+      "guide": {
+       "default": false,
+       "description": "Send the reading guide packets point into (`evidence.guide`, `answer_schema.see`): once, before you answer packets yourself.",
+       "title": "Guide",
+       "type": "boolean"
       },
       "known_guide": {
        "anyOf": [
@@ -6260,7 +6282,7 @@
     "permission": "read",
     "produces": [],
     "provider": "plexora",
-    "purpose": "A QC session's units (channels, candidate regions, checks), what it has spent, its limit questions, mirroring; or the recent sessions. Can pause or resume it.",
+    "purpose": "A QC session: its progress, the channels, regions and checks still open or left for a person and why, each check's state and its limit questions (detail=full: everything else it holds); or the recent sessions. Can pause or resume it.",
     "roles": [],
     "tags": [
      "qc",

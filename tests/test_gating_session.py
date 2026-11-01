@@ -192,7 +192,8 @@ def start(session, **options):
 
 
 def units(session, session_id):
-    status = ok(invoke(session, "gating_session_status", {"session_id": session_id}))
+    status = ok(invoke(session, "gating_session_status", {"session_id": session_id,
+                                                          "detail": "full"}))
     return {u["marker"]: u for u in status["units"]}
 
 
@@ -219,7 +220,8 @@ def test_the_oracle_gates_every_marker_and_every_write_is_receipted(tmp_path):
         assert len(json.dumps(packet)) < 48_000
         assert len(packet["images"]) <= 2
     # Receipts: one child per write, under the session's operation.
-    status = ok(invoke(session, "gating_session_status", {"session_id": started["session_id"]}))
+    status = ok(invoke(session, "gating_session_status",
+                       {"detail": "full", "session_id": started["session_id"]}))
     audit = [json.loads(line) for line in
              (tmp_path / ".agent" / "audit.jsonl").read_text().splitlines()]
     children = [line for line in audit if line.get("gating_session") == started["session_id"]
@@ -306,7 +308,7 @@ def test_packets_are_idempotent_and_stale_answers_are_refused(tmp_path):
     again = ok(invoke(session, "gating_next", {"session_id": sid}))
     assert first["packet"]["packet_id"] == again["packet"]["packet_id"]
     used = units(session, sid)  # budget charged once, at issue
-    status = ok(invoke(session, "gating_session_status", {"session_id": sid}))
+    status = ok(invoke(session, "gating_session_status", {"detail": "full", "session_id": sid}))
     assert status["used"]["packets"] == 1
     stale = invoke(session, "gating_answer", {"session_id": sid, "packet_id": "pk_9999",
                                               "answer": {"kind": "t2_confirm"}})
@@ -482,7 +484,8 @@ def test_a_dataset_is_gated_from_its_reference_image(tmp_path):
     reference = started["reference_image"]
     assert started["images"][0] == reference
     packets = drive(session, started["session_id"], ByImage(), limit=80)
-    status = ok(invoke(session, "gating_session_status", {"session_id": started["session_id"]}))
+    status = ok(invoke(session, "gating_session_status",
+                       {"detail": "full", "session_id": started["session_id"]}))
     by_unit = {(u["project"], u["marker"]): u for u in status["units"]}
     for (project, marker), unit in by_unit.items():
         assert unit["state"] in ("accepted", "accepted_low_confidence"), unit
@@ -496,6 +499,15 @@ def test_a_dataset_is_gated_from_its_reference_image(tmp_path):
         classes = {row["project"]: row["class"] for row in info["images"]}
         assert classes[reference] == "reference"
         assert classes[shifted] != "stable", (marker, classes)
+    # The brief names each image's markers `image::marker`, and each marker's
+    # strategy across the images.
+    brief = ok(invoke(session, "gating_session_status", {"session_id": started["session_id"]}))
+    named = {name for group in brief["gates"] for name in group.get("markers") or {}}
+    named |= {name for group in brief["gates"] for markers in (group.get("why") or {}).values()
+              for name in markers}
+    assert named == {f"{project}::{marker}" for project, marker in by_unit}
+    assert brief["strategy"] == {m: info["strategy"] for m, info in summary.items()}
+    assert brief["reference_image"] == reference
     gates = {p: ok(invoke(session, "get_all_gates", {"project": p})) for p in made}
     methods = {gates[p]["provenance"][m]["method"] for p in made if p != reference
                for m in ("CD8", "CD20")}
@@ -522,7 +534,7 @@ def test_a_bulk_pass_cut_off_by_a_restart_is_picked_up_again(tmp_path):
     jobs._reset_for_tests()
     fresh = AgentSession()
     # Status says what happened rather than looking busy.
-    before = ok(invoke(fresh, "gating_session_status", {"session_id": sid}))
+    before = ok(invoke(fresh, "gating_session_status", {"detail": "full", "session_id": sid}))
     assert before["progress"]["not_profiled"] == 1
     assert before["bulk"]["status"] is None and "not running" in before["bulk"]["note"]
     first = ok(invoke(fresh, "gating_next", {"session_id": sid, "wait_s": 30}))
@@ -534,7 +546,7 @@ def test_a_bulk_pass_cut_off_by_a_restart_is_picked_up_again(tmp_path):
     assert first["state"] in ("decision", "bulk_running")
     record = st.load(sid)
     assert record["images_profiled"] == ["gsynth"]
-    after = ok(invoke(fresh, "gating_session_status", {"session_id": sid}))
+    after = ok(invoke(fresh, "gating_session_status", {"detail": "full", "session_id": sid}))
     assert after["progress"]["not_profiled"] == 0 and "note" not in after["bulk"]
 
 
@@ -1050,7 +1062,7 @@ def test_an_unclear_matrix_is_asked_before_the_bulk_pass(tmp_path):
     assert answered["outcome"]["applied"] == ["gsynth"]
     jobs.drain(120)
     assert "features" in session.project("gsynth").confirmed
-    status = ok(invoke(session, "gating_session_status", {"session_id": sid}))
+    status = ok(invoke(session, "gating_session_status", {"detail": "full", "session_id": sid}))
     assert status["state"] in ("bulk_running", "deciding", "created")
     assert status["bulk"]["job_id"]
 
@@ -1095,14 +1107,14 @@ def test_a_run_from_the_viewer_waits_for_the_set_up_form(tmp_path):
     waiting = ok(invoke(session, "gating_next", {"session_id": sid, "wait_s": 0}))
     assert waiting["state"] == "needs_setup" and "packet" not in waiting
     assert "Cell ID column" in waiting["note"]
-    status = ok(invoke(session, "gating_session_status", {"session_id": sid}))
+    status = ok(invoke(session, "gating_session_status", {"detail": "full", "session_id": sid}))
     assert status["setup"]["keys"] == started["setup"]["keys"]
     # What the form's Continue does (tool_routes.satisfy_requirements).
     Project.mutate("gsynth", lambda p: p.with_confirmed(ROLES))
     going = ok(invoke(session, "gating_next", {"session_id": sid, "wait_s": 0}))
     assert going["state"] != "needs_setup"
     jobs.drain(120)
-    status = ok(invoke(session, "gating_session_status", {"session_id": sid}))
+    status = ok(invoke(session, "gating_session_status", {"detail": "full", "session_id": sid}))
     assert status["n_units"] == 1 and "setup" not in status
     assert status["state"] in ("bulk_running", "deciding", "created")
 
@@ -1189,7 +1201,8 @@ def test_a_rollback_undoes_every_write_newest_first(tmp_path):
     session = AgentSession()
     started = start(session)
     drive(session, started["session_id"], Oracle(info))
-    status = ok(invoke(session, "gating_session_status", {"session_id": started["session_id"]}))
+    status = ok(invoke(session, "gating_session_status",
+                       {"detail": "full", "session_id": started["session_id"]}))
     assert status["receipts"] >= 2
     finished = ok(invoke(session, "gating_session_finish",
                          {"session_id": started["session_id"], "action": "rollback"}))
@@ -1228,12 +1241,143 @@ def test_the_reading_guide_comes_once_and_packets_stay_lean(tmp_path):
     assert packet["answer_schema"] == {"see": "reading_guide.answer_schemas.t2_confirm"}
     assert "t2_confirm" in guide["answer_schemas"]
     assert len(_json.dumps(packet, default=str, separators=(",", ":"))) <= 4500
+    # The status sends the guide only when asked: `guide` (a conversation
+    # about to answer packets) or the whole status.
     status = ok(invoke(session, "gating_session_status", {"session_id": sid}))
-    assert status["reading_guide"] == guide
+    assert "reading_guide" not in status and "guide=true" in status["guide"]
+    asked = ok(invoke(session, "gating_session_status", {"session_id": sid, "guide": True}))
+    assert asked["reading_guide"] == guide and "guide" not in asked
+    assert ok(invoke(session, "gating_session_status",
+                     {"session_id": sid, "detail": "full"}))["reading_guide"] == guide
     held = ok(invoke(session, "gating_session_status", {
-        "session_id": sid, "known_guide": started["guide_version"]}))
+        "session_id": sid, "guide": True, "known_guide": started["guide_version"]}))
     assert held["guide_version"] == started["guide_version"]
     assert not isinstance(held["reading_guide"], dict)
+
+
+#: The live LSP11385 panel as its session closed it (2026-11-01): marker,
+#: state, confidence, gate, its note (a key of `LIVE_NOTES`, or the checks it
+#: failed) and the candidates the reads left. Asked "can I see the gates?",
+#: its status was 43,572 characters -- 20,502 of them the reading guide.
+LIVE_PANEL = (
+    ("CD45", "R", "manual_review", 7.08, "spent", "6.81 (P 0.30), 7.25 (P 0.27), 7.08 (P 0.20) and 6.6 (P 0.14)"),
+    ("SOX10", "R", "manual_review", 6.26, "spent", "5.99 (P 0.69) and 6.26 (P 0.28)"),
+    ("CD31", "R", "manual_review", 5.74, "checks:delta_from_gmm, flip_share", None),
+    ("Ecad", "A", "moderate", 6.22, "T2", None),
+    ("SMA", "R", "manual_review", 5.68, "checks:spatial_tiles, edge_ratio", None),
+    ("SOX9", "R", "manual_review", 7.06, "spent", "6.53 (P 0.52), 6.66 (P 0.18), 6.78 (P 0.13) and 7.06 (P 0.13)"),
+    ("TubbIII", "R", "manual_review", 5.61, "spent", None),
+    ("CD3e", "R", "manual_review", 6.37, "unsure", "6.2 (P 0.55), 6.1 (P 0.30) and 6.37 (P 0.16)"),
+    ("CD138", "R", "manual_review", 5.92, "checks:flip_share", None),
+    ("CD20L", "R", "manual_review", 6.24, "checks:flip_share", None),
+    ("CD11c", "R", "manual_review", 5.83, "checks:delta_from_gmm, flip_share", None),
+    ("CD16", "R", "manual_review", 5.86, "unsure", "5.55 (P 0.62), 5.73 (P 0.21) and 5.86 (P 0.16)"),
+    ("CD68", "R", "manual_review", 5.58, "checks:delta_from_gmm, flip_share", None),
+    ("MART1", "R", "manual_review", 5.27, "spent", None),
+    ("NGFR", "R", "manual_review", 6.01, "spent", None),
+    ("CD4", "R", "manual_review", 6.49, "spent", "6.33 (P 0.46), 6.08 (P 0.41) and 6.49 (P 0.14)"),
+    ("CD8a", "A", "high", 5.75, "T2", None),
+    ("CD163", "A", "moderate", 6.39, "T2", None),
+    ("CD103", "R", "manual_review", 6.22, "checks:spatial_tiles", None),
+    ("CTLA4", "R", "manual_review", 7.06, "checks:delta_from_gmm, flip_share, spatial_tiles, edge_ratio", None),
+    ("FOXP3", "A", "moderate", 5.78, "T2", None),
+    ("GZMB", "R", "manual_review", 5.96, "checks:spatial_tiles", None),
+    ("HLAABCL", "A", "moderate", 6.74, "T2", None),
+    ("HLADRL", "R", "manual_review", 5.88, "checks:flip_share", None),
+    ("Ki67", "R", "manual_review", 6.37, "spent", "6.37 (P 0.51) and 6.16 (P 0.48)"),
+    ("LAG3", "R", "manual_review", 5.81, "checks:delta_from_gmm, flip_share, spatial_tiles", None),
+    ("PCNAL", "N", "manual_review", 5.93, "rises", "5.5 (P 0.52) and 5.93 (P 0.47)"),
+    ("PD1", "R", "manual_review", 7.14, "unread", "6.36 (P 0.22), 6.7 (P 0.22), 7.14 (P 0.20), 6.91 (P 0.19) and 6.47 (P 0.10)"),
+    ("PDL1", "N", "manual_review", 6.32, "rises", "6.11 (P 0.57) and 6.32 (P 0.43)"),
+    ("TBX21", "R", "manual_review", 5.84, "checks:flip_share", None),
+    ("TCF1", "R", "manual_review", 6.75, "spent", None),
+    ("TIGIT", "R", "manual_review", 6.12, "spent", "6.12 (P 0.48) and 5.91 (P 0.44)"),
+    ("TIM3", "R", "manual_review", 6.36, "spent", "6.36 (P 0.73) and 6.11 (P 0.20)"),
+    ("b2m", "N", "manual_review", 6.71, "rises", "6.48 (P 0.72) and 6.71 (P 0.22)"),
+    ("CXCL10", "R", "manual_review", 6.17, "unread", "6.17 (P 0.57), 5.92 (P 0.26) and 6.29 (P 0.16)"),
+)
+LIVE_STATES = {"A": "accepted", "R": "manual_review_recommended", "N": "not_binary"}
+LIVE_NOTES = {
+    "spent": "cell panels: the looks allowed were spent before the leading gate beat every rival",
+    "unsure": ("cell panels: another look could not make any candidate gate clearly surer: the "
+               "reads so far leave several gates about as likely"),
+    "unread": "cell panels: most cells could not be read (uncertain or artifact)",
+    "rises": ("cell panels: the stain rises with the value without a boundary the looks could "
+              "find (a continuous marker: an operational cutoff)"),
+    "T2": "accepted at T2",
+}
+
+
+def _live_note(code, reads):
+    from plexora.plugins.gating.server.autogate.hypotheses import PLATEAU_LEAD
+
+    head = (f"failed its own checks ({code[7:]}); written for manual review"
+            if code.startswith("checks:") else LIVE_NOTES[code])
+    return head, head + (PLATEAU_LEAD + reads if reads else "")
+
+
+def test_the_status_answers_a_whole_panel_in_a_few_thousand_characters(tmp_path):
+    """`gating_session_status` by default: each marker's gate, state,
+    confidence and why it needs review, for the live run's 35-marker panel,
+    in under 3,000 characters; the reading guide, the units' internals and
+    the candidates the reads left are `guide` / `detail: full`'s."""
+    import copy
+
+    from plexora.plugins.gating.server.autogate import engine as engines
+    from plexora.plugins.gating.server.autogate.engine import unit_key
+
+    make_gating_project(tmp_path)
+    session = AgentSession()
+    sid = start(session, mode="propose")["session_id"]
+    st = engines.store()
+    record = st.load(sid)
+    template = next(iter(record["units"].values()))
+    record["units"] = {}
+    for marker, state, confidence, gate, code, reads in LIVE_PANEL:
+        unit = copy.deepcopy(template)
+        unit.update(marker=marker, state=LIVE_STATES[state], confidence=confidence,
+                    final=gate, proposed=gate, reason=_live_note(code, reads)[1])
+        record["units"][unit_key("gsynth", marker)] = unit
+    record.update(state="done", outstanding={}, outstanding_packet=None,
+                  order=[m for m, *_ in LIVE_PANEL])
+    st.save(record)
+    epoch = (record.get("briefed") or {}).get("epoch", 0)
+
+    brief = ok(invoke(session, "gating_session_status", {"session_id": sid}))
+    size = len(json.dumps(brief, ensure_ascii=False))
+    assert size < 3000, size
+    for left_out in ("reading_guide", "units", "vocabulary", "basic_qc", "classifier", "used"):
+        assert left_out not in brief
+    assert brief["progress"] == {"units_done": 35, "units_total": 35}
+    assert brief["counts"]["accepted"] == 5 and brief["counts"]["written"] == 0
+    assert "action='commit'" in brief["commit"]
+    shown = {}
+    for group in brief["gates"]:
+        for why, markers in [(None, group.get("markers") or {}), *(group.get("why") or {}).items()]:
+            for marker, gate in markers.items():
+                shown[marker] = (group["state"], group.get("confidence"), gate, why)
+    assert len(shown) == 35
+    for marker, state, confidence, gate, code, reads in LIVE_PANEL:
+        why = None if state == "A" else _live_note(code, reads)[0]
+        assert shown[marker] == (LIVE_STATES[state], confidence, gate, why), marker
+    # Accepted first, then review, the commonest reason first.
+    assert [g["state"] for g in brief["gates"]][:2] == ["accepted", "accepted"]
+    review = next(g for g in brief["gates"] if g["state"] == "manual_review_recommended")
+    assert next(iter(review["why"])) == LIVE_NOTES["spent"]
+    # Asking how a session stands is no new reader: nothing sent before is
+    # forgotten (`packets.new_reader`).
+    assert (st.load(sid).get("briefed") or {}).get("epoch", 0) == epoch
+
+    full = ok(invoke(session, "gating_session_status", {"session_id": sid, "detail": "full"}))
+    assert len(full["units"]) == 35 and isinstance(full["reading_guide"], dict)
+    assert full["vocabulary"]["confidence"] and "summary" in full
+    assert {u["marker"]: u["reason"] for u in full["units"]}["CD45"] == \
+        _live_note("spent", LIVE_PANEL[0][5])[1]
+    assert st.load(sid)["briefed"]["epoch"] == epoch + 1
+
+    guided = ok(invoke(session, "gating_session_status", {"session_id": sid, "guide": True}))
+    assert isinstance(guided["reading_guide"], dict) and guided["gates"] == brief["gates"]
+    assert "guide" not in guided
 
 
 def test_every_packet_can_carry_its_own_reading(tmp_path):
@@ -1269,7 +1413,7 @@ def test_an_image_without_a_pixel_size_is_estimated_first(tmp_path):
     assert estimate["how"] == "mask"
     # The session's value sizes the pictures; the project stays uncalibrated.
     assert pixel_scale.pixel_size(session.project("gsynth")) is None
-    status = ok(invoke(session, "gating_session_status", {"session_id": sid}))
+    status = ok(invoke(session, "gating_session_status", {"detail": "full", "session_id": sid}))
     assert status["pixel"]["projects"]["gsynth"] == {"status": "applied", "value": 0.5,
                                                      "basis": "adjusted"}
     agent = Oracle(info)
@@ -1371,7 +1515,7 @@ def test_the_contrast_check_comes_before_the_first_look(tmp_path):
         calibration.gain_white(unchosen, None, cd3["choice"]["gain"]))
     following, _ = next_packet(session, sid)
     assert following is None or following["kind"] != "display_setup"
-    status = ok(invoke(session, "gating_session_status", {"session_id": sid}))
+    status = ok(invoke(session, "gating_session_status", {"detail": "full", "session_id": sid}))
     assert status["display"]["status"] == "applied"
     assert status["display"]["projects"]["gsynth"]["chosen"]["CD3"] == "vision"
 
@@ -1410,7 +1554,7 @@ def test_a_rule_session_asks_no_contrast_question(tmp_path):
     seen = drive(session, started["session_id"], Oracle(info))
     assert "display_setup" not in [p["kind"] for p in seen]
     status = ok(invoke(session, "gating_session_status",
-                       {"session_id": started["session_id"]}))
+                       {"detail": "full", "session_id": started["session_id"]}))
     assert status["display"]["status"] == "rule"
 
 
@@ -1429,7 +1573,7 @@ def test_two_unusable_contrast_answers_keep_the_rule(tmp_path):
         assert not refused["ok"] and refused["error"]["code"] == "invalid_input"
     following, _ = next_packet(session, sid)
     assert following is None or following["kind"] != "display_setup"
-    status = ok(invoke(session, "gating_session_status", {"session_id": sid}))
+    status = ok(invoke(session, "gating_session_status", {"detail": "full", "session_id": sid}))
     assert set(status["display"]["projects"]["gsynth"]["chosen"].values()) == {"rule:no_answer"}
     assert not (calibration.load("gsynth") or {}).get("choices")
 
@@ -1594,7 +1738,7 @@ def test_auto_contrast_runs_on_its_own_and_gates_nothing(tmp_path):
     gating = start(session, markers=["CD3", "CD8", "CD20"])["session_id"]
     seen = drive(session, gating, Oracle(info))
     assert "display_setup" not in [p["kind"] for p in seen]
-    status = ok(invoke(session, "gating_session_status", {"session_id": gating}))
+    status = ok(invoke(session, "gating_session_status", {"detail": "full", "session_id": gating}))
     assert status["display"]["status"] == "applied"
 
 
@@ -1667,7 +1811,7 @@ def test_gating_can_leave_auto_contrast_out(tmp_path):
     seen = drive(session, started["session_id"], Oracle(info))
     assert "display_setup" not in [p["kind"] for p in seen]
     status = ok(invoke(session, "gating_session_status",
-                       {"session_id": started["session_id"]}))
+                       {"detail": "full", "session_id": started["session_id"]}))
     assert status["display"]["status"] == "off"
 
 
@@ -1696,7 +1840,7 @@ def test_a_panel_answer_is_not_learned_until_confirmed(tmp_path, monkeypatch):
     assert outcome["outcome"]["unconfirmed"] == ["Mystery1"]
     assert vocabulary.origin("Mystery1") != "learned"
     status = ok(invoke(session, "gating_session_status",
-                       {"session_id": started["session_id"]}))
+                       {"detail": "full", "session_id": started["session_id"]}))
     assert status["unconfirmed_context"] == ["Mystery1"]
     ok(invoke(session, "gating_session_finish",
               {"session_id": started["session_id"], "action": "close"}))
@@ -1849,7 +1993,7 @@ def test_a_rerun_replays_the_same_answers_to_the_same_gates(tmp_path):
     second = start(session, mode="propose", display_check="rule")["session_id"]
     again = drive(session, second, Oracle(info))
     assert again == []                              # nothing was asked a second time
-    status = ok(invoke(session, "gating_session_status", {"session_id": second}))
+    status = ok(invoke(session, "gating_session_status", {"detail": "full", "session_id": second}))
     assert status["replayed"] == len(asked)
     assert {m: u.get("proposed", u.get("final"))
             for m, u in units(session, second).items()} == gates

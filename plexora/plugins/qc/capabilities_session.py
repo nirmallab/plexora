@@ -3,7 +3,8 @@
     qc_session_start  -> {session_id, job_id}   (the scan and detectors run as a job)
     qc_next           -> one decision packet (+ <= 2 images), or a status
     qc_answer         -> the outcome, and the next packet inline
-    qc_session_status -> every unit's state, the budget, the limit questions
+    qc_session_status -> the open units by state and why, the checks; `detail: full`
+                         every unit's fields, the budget; `guide` the reading guide
     qc_session_finish -> close | commit (propose mode) | cancel | rollback
     qc_report         -> the HTML / PDF report of a session's result
 
@@ -546,6 +547,34 @@ class QCTools(session_tools.SessionTools):
                                  "artifact_classes": list(schemas.AGENT_CLASSES)}
         return out
 
+    def brief_unit(self, unit):
+        """A candidate as the agent card names one ("Nucleus2 · cross-cycle
+        registration error · warn", with its ROI once written); a check by
+        its channel; nothing for a channel (its state says it)."""
+        if unit.get("type") == "candidate":
+            klass = unit.get("class") or unit.get("class_hint")
+            parts = (unit.get("channel"), schemas.CLASS_WORDS.get(klass, klass),
+                     schemas.ACTION_WORDS.get(unit.get("action"), unit.get("action")),
+                     unit.get("roi_id"))
+            return " · ".join(str(p) for p in parts if p) or None
+        if unit.get("type") == "check":
+            return unit.get("channel")
+        return None
+
+    def brief_extra(self, engine):
+        """The result the session writes, each check's state, and how much
+        the scan found that nobody pursued (its rows are `detail: full`'s)."""
+        record = engine.record
+        residual = record.get("residual") or []
+        out = {"result_id": record.get("result_id"),
+               "checks": {u["id"]: u["state"] for u in record["units"].values()
+                          if u.get("type") == "check"}}
+        if residual:
+            out["residual_totals"] = {"rows": len(residual),
+                                      "candidates": sum(int(r.get("n") or 0) for r in residual),
+                                      "cells": sum(int(r.get("cells") or 0) for r in residual)}
+        return out
+
     def status_input_model(self):
         return StatusInput
 
@@ -776,9 +805,10 @@ def capabilities():
             handler=answer, writes=("rois", "qc"), persistent=True, visual_output=True,
             egress="rendered_pixels", reads=("image", "table", "mask", "rois")),
         cap(name="qc.session_status", tool_name="qc_session_status",
-            purpose="A QC session's units (channels, candidate regions, checks), what "
-                    "it has spent, its limit questions, mirroring; or the recent sessions. "
-                    "Can pause or resume it.",
+            purpose="A QC session: its progress, the channels, regions and checks still "
+                    "open or left for a person and why, each check's state and its limit "
+                    "questions (detail=full: everything else it holds); or the recent "
+                    "sessions. Can pause or resume it.",
             permission="read", input_model=StatusInput, handler=status, egress="aggregates"),
         cap(name="qc.session_finish", tool_name="qc_session_finish",
             purpose="Finish a QC session: close it (its result becomes the project's active "

@@ -158,13 +158,78 @@ def test_default_status_is_brief_and_full_asks_for_the_rest(tmp_path):
     started = start(session)
     sid = started["session_id"]
     brief = ok(invoke(session, "qc_session_status", {"session_id": sid}))
-    assert "strictness" not in brief and "vocabulary" not in brief
-    assert "residual_totals" in brief
-    assert len(brief["residual"]) <= 20
-    assert "units_omitted" in brief
+    for left_out in ("strictness", "vocabulary", "residual", "scan", "reading_guide", "used",
+                     "estimated_vision_tokens", "delegate"):
+        assert left_out not in brief, left_out
+    assert {"progress", "summary", "units", "checks", "result_id"} <= set(brief)
+    assert "guide=true" in brief["guide"]
     full = ok(invoke(session, "qc_session_status", {"session_id": sid, "detail": "full"}))
     assert full["strictness"] and full["vocabulary"]["terminal_states"]
+    assert "residual" in full and "scan" in full and isinstance(full["reading_guide"], dict)
+    guided = ok(invoke(session, "qc_session_status", {"session_id": sid, "guide": True}))
+    assert guided["reading_guide"] == full["reading_guide"] and "guide" not in guided
     ok(invoke(session, "qc_session_finish", {"session_id": sid, "action": "rollback"}))
+
+
+def test_the_status_of_a_whole_qc_run_is_a_few_thousand_characters():
+    """The live LSP11385 QC run (2026-10-08): 40 channels, 58 candidate
+    regions, 9 checks and 85 residual rows -- a 31,899-character status, 20,519
+    of it the reading guide. By default: the counts, each check's state, and
+    the 11 units left for a person by why, under 3,000."""
+    from plexora.plugins.qc import capabilities_session as cs
+
+    review = "the review of this check's places could not tell artifact from normal tissue"
+    units = {}
+
+    def add(kind, uid, state, **fields):
+        units[uid] = {"type": kind, "id": uid, "state": state, "project": "p", **fields}
+
+    for i in range(40):
+        add("channel", f"M{i:02d}", "flagged" if i in (20, 21) else "clean", reason="audited clean")
+    states = (["dismissed"] * 21 + ["confirmed_warn"] * 18 + ["confirmed_exclude"] * 7
+              + ["merged"] * 3 + ["manual_review_recommended"] * 9)
+    for i, state in enumerate(states):
+        add("candidate", f"cand_{i:010x}", state, channel="M20", action="warn",
+            class_hint="cross_cycle_registration_error", score=0.65,
+            reason=review if state == "manual_review_recommended" else "confirmed")
+    for i, check in enumerate(("blur:M00", "blur:M20", "registration:M20", "segmentation:calls",
+                               "artifacts:fold", "artifacts:tear", "artifacts:debris",
+                               "artifacts:saturation", "visual:scan")):
+        add("check", check, "manual_review_recommended" if i in (0, 5) else "decided",
+            check=check.split(":")[0], reason="the places sampled could not be told apart "
+                                              "from normal tissue" if i in (0, 5) else "decided")
+    add("final", "final", "reviewed")
+    record = {"session_id": "qs_live", "state": "done", "units": units, "images": ["p"],
+              "options": {"mode": "apply", "reading": "once"}, "result_id": "qr_live",
+              "residual": [{"n": 40, "cells": 200}] * 85}
+
+    class Engine:
+        def __init__(self):
+            self.record = record
+
+        def progress(self):
+            return {"units_done": len(units), "units_total": len(units), "waiting_for_user": [],
+                    "by_type": {"channel": {"done": 40, "total": 40}}}
+
+        def waiting_for_user(self):
+            return []
+
+    class Store:
+        def control(self, session_id):
+            return {"paused": False, "paused_by": None, "locked_markers": []}
+
+    inp = cs.StatusInput(session_id="qs_live")
+    brief = cs.TOOLS.brief(Engine(), Store(), inp)
+    size = len(json.dumps(brief, ensure_ascii=False))
+    assert size < 3000, size
+    listed = {uid: group["state"] for group in brief["units"]
+              for markers in (group.get("why") or {}).values() for uid in markers}
+    assert len(listed) == 11 and set(listed.values()) == {"manual_review_recommended"}
+    candidates = next(g for g in brief["units"] if g["type"] == "candidate")
+    assert set(candidates["why"][review].values()) == {"M20 · cross-cycle misregistration · warn"}
+    assert brief["checks"]["blur:M00"] == "manual_review_recommended"
+    assert brief["residual_totals"] == {"rows": 85, "candidates": 3400, "cells": 17000}
+    assert "control" not in brief and "guide" not in brief
 
 
 def test_many_open_units_are_capped_with_a_count_of_the_rest():

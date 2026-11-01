@@ -399,7 +399,7 @@ def test_the_candidates_engine_decides_markers_by_blind_panels(tmp_path):
         result = answered["next"]
     assert result["state"] in ("decided", "done"), result
     assert panels, "no marker was decided by a panel"
-    status = ok(invoke(session, "gating_session_status", {"session_id": sid}))
+    status = ok(invoke(session, "gating_session_status", {"detail": "full", "session_id": sid}))
     record = engines.store().load(sid)
     for unit in record["units"].values():
         assert unit["state"] in ("accepted", "accepted_low_confidence",

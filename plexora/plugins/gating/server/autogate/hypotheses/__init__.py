@@ -176,6 +176,10 @@ CLOSE_STATE = {status: "manual_review_recommended" for status in controller.STAT
                if status != "resolved"}
 CLOSE_STATE["no_identifiable_boundary"] = "not_binary"
 
+#: Where a review note's candidates begin (`plateau_note`): a brief status
+#: shows the note up to here, the full one all of it.
+PLATEAU_LEAD = "; the reads leave "
+
 #: [cal] Steps (fit units) either side of a lattice that holds one point
 #: after thinning: past the tolerance, so each is a distinct hypothesis.
 SINGLE_STEPS = (0.25, 0.5)
@@ -720,7 +724,7 @@ def plateau_note(state) -> str:
     parts = [f"{m['low']:.0f} (P {m['p']:.2f})" if abs(m["low"]) >= 100 else
              f"{m['low']:.3g} (P {m['p']:.2f})"
              for m in sorted(plateau, key=lambda m: -m["p"])]
-    return "; the reads leave " + ", ".join(parts[:-1]) + " and " + parts[-1]
+    return PLATEAU_LEAD + ", ".join(parts[:-1]) + " and " + parts[-1]
 
 
 def settle(engine, unit):

@@ -23,8 +23,8 @@ def register(server, runtime):
         return _answer(runtime, "gating.session_status", {})
 
     @resource("plexora://gating/session/{session_id}", "gating-session",
-              "One gating session: every unit's state, confidence and gate; what it spent; "
-              "its open questions.")
+              "One gating session: each marker's gate, state, confidence and why it needs "
+              "review; its progress and open questions.")
     def session(session_id: str) -> str:
         return _answer(runtime, "gating.session_status", {"session_id": session_id})
 

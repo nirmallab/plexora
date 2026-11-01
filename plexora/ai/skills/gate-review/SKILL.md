@@ -141,7 +141,8 @@ numbers and flags; each picture's artifact id and what it shows.
   (gating/qc-cells says how to tell an artifact QC caught from the marker's
   own problem).
 - Confidence words (`high`, `moderate`, `low`, ...) come from the session's
-  rule table (`gating_session_status` `vocabulary` lists them); report them as
+  rule table (`gating_session_status` `detail: "full"` lists them under
+  `vocabulary`); report them as
   given.
 
 ## Mutation policy

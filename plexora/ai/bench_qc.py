@@ -652,7 +652,8 @@ def run_scene(session, made, arm, agent_style, *, seed=0, cell_um=25.0):
         finish_answer = invoke(session, "qc_session_finish", {"session_id": sid})
         agent_text.see(finish_answer["result"])
         status_answer = invoke(session, "qc_session_status", {"session_id": sid,
-                                                              "units": "all"})
+                                                              "units": "all",
+                                                              "detail": "full"})
         agent_text.see(status_answer["result"])
         status = status_answer["result"]
         document = results.load(project)

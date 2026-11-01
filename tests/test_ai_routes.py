@@ -267,6 +267,7 @@ def test_a_gating_run_over_http_gates_every_marker(client, tmp_path, monkeypatch
     assert run["status"] == "done", run
     assert fake.runs["run_1"]["feature"] == "gating", fake.runs
     assert fake.runs["run_1"]["units"] == units, (units, fake.runs)
-    status = invoke(AgentSession(), "gating_session_status", {"session_id": run["session_id"]})
+    status = invoke(AgentSession(), "gating_session_status",
+                    {"detail": "full", "session_id": run["session_id"]})
     states = {u["marker"]: u["state"] for u in status["result"]["units"]}
     assert all(s in ("accepted", "accepted_low_confidence") for s in states.values()), states

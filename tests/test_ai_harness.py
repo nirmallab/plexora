@@ -627,7 +627,8 @@ def gating(tmp_path):
 
 
 def _final_units(session_id):
-    status = invoke(AgentSession(), "gating_session_status", {"session_id": session_id})
+    status = invoke(AgentSession(), "gating_session_status",
+                    {"detail": "full", "session_id": session_id})
     assert status["ok"], status
     return {u["marker"]: u for u in status["result"]["units"]}
 
@@ -931,7 +932,8 @@ def test_an_unclear_matrix_alone_is_read_by_a_model_before_the_session(gating, t
     assert summary["status"] == "done", summary
     assert gateway.calls[0]["body"]["context"]["agent"] == "expression_reader"
     assert gateway.calls[0]["body"]["task"] == "plexora.gating.planning"
-    record = invoke(AgentSession(), "gating_session_status", {"session_id": summary["session_id"]})
+    record = invoke(AgentSession(), "gating_session_status",
+                    {"detail": "full", "session_id": summary["session_id"]})
     applied = record["result"]["expression"]["applied"]
     assert applied[0]["basis"] == "inferred" and applied[0]["choice"]["features_log"] is True
     assert "long upper tails" in applied[0]["why"]

@@ -91,7 +91,8 @@ def test_the_bulk_pass_stages_stay_within_a_generous_budget(tmp_path, monkeypatc
     total = time.monotonic() - started
 
     status = invoke(session, "qc_session_status",
-                    {"session_id": answer["result"]["session_id"], "units": "all"})
+                    {"detail": "full", "session_id": answer["result"]["session_id"],
+                     "units": "all"})
     session.close()
     assert status["ok"], status.get("error")
     assert status["result"]["state"] not in ("bulk_running", "failed"), status["result"]

@@ -468,7 +468,7 @@ def run_session(session, project, markers, agent, *, mode="apply", limit=400, op
         result = _ok(invoke(session, "gating_answer", {
             "session_id": sid, "packet_id": packet["packet_id"],
             "answer": agent.answer(packet)}))["next"]
-    status = _ok(invoke(session, "gating_session_status", {"session_id": sid,
+    status = _ok(invoke(session, "gating_session_status", {"session_id": sid, "detail": "full",
                                                            "known_guide": started.get(
                                                                "guide_version")}))
     status["sent_to_agent"] = sent

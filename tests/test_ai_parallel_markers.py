@@ -93,7 +93,7 @@ V1 = {"engine": "v1"}
 
 def finals(session, session_id):
     status = ok(invoke(session, "gating_session_status",
-                       {"session_id": session_id}))
+                       {"detail": "full", "session_id": session_id}))
     return {u["marker"]: (u["state"], u.get("final"), u.get("confidence"))
             for u in status["units"]}, status
 
@@ -517,7 +517,7 @@ def test_a_record_with_one_outstanding_packet_in_scalars_still_loads(tmp_path, s
                                                 "answer": {"kind": packet["kind"],
                                                            "nonsense": True}})
     assert not refused["ok"] and "twice" in refused["error"]["message"]
-    status = ok(invoke(session, "gating_session_status", {"session_id": sid}))
+    status = ok(invoke(session, "gating_session_status", {"detail": "full", "session_id": sid}))
     states = {u["marker"]: u["state"] for u in status["units"]}
     assert states[packet["units"][0]["marker"]] == "manual_review_recommended"
     assert status["outstanding_packet"] is None and status["outstanding_packets"] == []

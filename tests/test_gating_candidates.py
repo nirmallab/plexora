@@ -312,7 +312,8 @@ def test_a_marker_sent_to_review_is_written_and_tagged_not_left_ungated(tmp_path
                                                 "packet_id": packet["packet_id"],
                                                 "answer": {"kind": "t2_confirm", "x": 1}})
         assert not bad["ok"]
-    status = invoke(session, "gating_session_status", {"session_id": sid})["result"]
+    status = invoke(session, "gating_session_status",
+                    {"detail": "full", "session_id": sid})["result"]
     unit = {u["marker"]: u for u in status["units"]}["CD4"]
     assert unit["state"] == "manual_review_recommended"
     gate = model.get_gate(session.data("gsynth"), "CD4")

@@ -112,7 +112,7 @@ def test_what_the_check_saw_is_kept_with_the_choice(tmp_path):
     assert [d["id"] for d in seen["dim"] if d["stained"]] == ["d1", "d3"]
     assert all({"cell_id", "x", "y", "value"} <= set(d) for d in seen["dim"])
     assert seen["notes"] == "specks on CD8"
-    status = ok(invoke(session, "gating_session_status", {"session_id": sid}))
+    status = ok(invoke(session, "gating_session_status", {"detail": "full", "session_id": sid}))
     line = status["display"]["projects"]["gsynth"]["observed"]["CD8"]
     assert line.startswith("membrane, on cells; 2 of 4 dim cells stained; 2 of ")
     assert calibration.observed(record, "CD3") is None

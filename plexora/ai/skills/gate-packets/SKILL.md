@@ -18,7 +18,7 @@ A session `gating_session_status` finds.
 
 ## Decision logic
 
-1. `gating_session_status` (no `known_guide`) sends the `reading_guide` once:
+1. `gating_session_status` with `guide: true` sends the `reading_guide` once:
    judge every packet by it. Stop once `progress.units_done` rose by your
    brief's number (default {{ENGINE.markers_per_worker}}); a brief with
    `reader` (plus `tasks` or `parallel`): pass them on every call, count

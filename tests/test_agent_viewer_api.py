@@ -202,7 +202,7 @@ def test_a_mirrored_gating_session_shows_the_tab_what_the_agent_sees(served, tmp
         highlighted = next(c for c in tab.seen if c["type"] == "highlight_cells")["arguments"]
         assert highlighted["cells"] and all("x" in c and "y" in c for c in highlighted["cells"])
         status = invoke(session, "gating_session_status",
-                        {"session_id": started["result"]["session_id"]})["result"]
+                        {"detail": "full", "session_id": started["result"]["session_id"]})["result"]
         assert status["mirror"]["status"] == "ok", status["mirror"]
         # The session records what was sent, and a packet fetched again is not re-sent.
         assert status["mirror"]["sent"] >= 6
@@ -253,7 +253,8 @@ def test_a_detached_session_leaves_the_tab_be_and_attach_replays_the_packet(serv
         deadline = time.time() + 5
         status = {}
         while time.time() < deadline:
-            status = invoke(session, "gating_session_status", {"session_id": sid})["result"]
+            status = invoke(session, "gating_session_status",
+                            {"detail": "full", "session_id": sid})["result"]
             if (status.get("mirror") or {}).get("status") == "ok":
                 break
             time.sleep(0.05)
@@ -279,7 +280,7 @@ def test_the_mirror_does_not_repeat_what_the_tab_already_shows(served, tmp_path)
         assert "set_hd_mode" not in types and "open_tool" not in types
         assert "set_cell_render_mode" not in types and "open_project" not in types
         status = invoke(session, "gating_session_status",
-                        {"session_id": started["session_id"]})["result"]
+                        {"detail": "full", "session_id": started["session_id"]})["result"]
         assert status["mirror"]["status"] == "ok"
 
 
@@ -305,7 +306,8 @@ def test_a_slow_hd_swap_is_waited_for(served, tmp_path, monkeypatch):
             invoke(session, "gating_next", {"session_id": started["session_id"]}, link=served)
             assert session_mirror.wait_idle(started["session_id"], 30)
             mirror = invoke(session, "gating_session_status",
-                            {"session_id": started["session_id"]})["result"]["mirror"]
+                            {"detail": "full",
+                             "session_id": started["session_id"]})["result"]["mirror"]
             assert mirror["status"] == expected, (slow, mirror)
             invoke(session, "gating_session_finish", {"session_id": started["session_id"],
                                                       "action": "cancel"})
@@ -403,7 +405,8 @@ def test_a_mirror_with_no_viewer_turns_itself_off_and_the_session_goes_on(served
     sid = started["result"]["session_id"]
     answer = invoke(session, "gating_next", {"session_id": sid}, link=served)
     assert answer["ok"] and answer["result"]["state"] == "decision"
-    status = invoke(session, "gating_session_status", {"session_id": sid})["result"]
+    status = invoke(session, "gating_session_status",
+                    {"detail": "full", "session_id": sid})["result"]
     assert status["mirror"]["status"] == "off"
     assert started["result"]["mirror"]["last_error"]["code"] == "viewer_not_available"
     assert answer["result"]["packet"]["mirror"]["status"] == "off"

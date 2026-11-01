@@ -153,9 +153,9 @@ def test_status_without_the_guide_is_a_new_reader_and_carries_the_delegate(tmp_p
     assert isinstance(started["reading_guide"], str) and started["guide_version"]
     assert delegate["tier"] == "judgement" and delegate["skill"] == "gate-packets"
     assert sid in delegate["brief"] and "gating_answer" in delegate["tools"]
-    fresh = ok(invoke(session, "gating_session_status", {"session_id": sid}))
+    fresh = ok(invoke(session, "gating_session_status", {"detail": "full", "session_id": sid}))
     assert fresh["reader"] >= 1 and "delegate" in fresh
-    held = ok(invoke(session, "gating_session_status", {
+    held = ok(invoke(session, "gating_session_status", {"detail": "full", 
         "session_id": sid, "known_guide": started["guide_version"]}))
     assert "reader" not in held
     off = start(session, markers=["CD3"], delegate=False)

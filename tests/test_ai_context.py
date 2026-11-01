@@ -210,7 +210,8 @@ def brain_with(interpretation, info):
 
 
 def _session(session_id):
-    status = invoke(AgentSession(), "gating_session_status", {"session_id": session_id})
+    status = invoke(AgentSession(), "gating_session_status",
+                    {"detail": "full", "session_id": session_id})
     assert status["ok"], status
     return status["result"]
 

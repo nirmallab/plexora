@@ -77,9 +77,10 @@ the packet.
   (gate-review).
 - `gating_report` lists per marker the final gate, the Auto proposal, the
   tier, the confidence, the flags and the decisions; `get_all_gates` shows
-  each gate's method; `export_gates` writes CSV files. Status `models` shows
-  which model answered each task when the user's models file splits the work.
+  each gate's method; `export_gates` writes CSV files. Status `models`
+  (`detail: "full"`) shows which model answered each task when the user's
+  models file splits the work.
 - A bulk pass a restart stopped resumes at the next `gating_next`
-  (`gating_session_status` `bulk` says whether it runs).
+  (`gating_session_status` `bulk` says when it is not running).
 - A packet's `mirror` says whether the open viewer shows the same thing;
   `viewer_not_available` while mirroring: the session goes on headless.

@@ -3404,7 +3404,7 @@ deliberately left out and what should be built next.
   learned), called from `set_panel_context` (result `learned`);
   `transitions.apply_panel` learns nothing -- it lists the reader's markers in
   the record's `unconfirmed_context` (outcome `unconfirmed`, surfaced by
-  `gating_session_status`) until a person confirms them; it never raises,
+  `gating_session_status` with `detail: full`) until a person confirms them; it never raises,
   because a panel answer applies whether or not the file could be written; `panel_hash` uses
   the shipped layer only, because a marker learned later must not move a
   panel's stored context to a new file and leave the user's entries behind),
@@ -3434,7 +3434,7 @@ deliberately left out and what should be built next.
   `{"as_in": packet_id}` instead of repeating it, and passing checks drop out
   (no question carries a biology prefix and no candidate its score
   `components` since 2026-10-08, so neither is trimmed); a reader is a conversation, and `new_reader` — called whenever
-  `gating_session_status` arrives without the current `known_guide`, or any
+  `gating_session_status` sends the guide (`guide` or `detail: full`) without the current `known_guide`, or any
   rerender — starts a fresh one, so a pointer only ever names a packet that
   reader holds; `resolve_as_in` is a scripted reader's own resolution, for the
   bench and the tests), `bulk.py` (the
@@ -4553,8 +4553,8 @@ deliberately left out and what should be built next.
   `_tool`), a quota (`ENGINE.markers_per_worker` for `gating_worker`, skill
   `gate-packets`; `QC_ENGINE.packets_per_worker` for `qc_worker`, skill
   `qc-packets`) and the `module` and `next` tool it belongs to. `block()` is what a tool result carries so any client
-  can hand the work out (`gating_session_start`/`gating_session_status`'s
-  `delegate`): tier, model or `pick`, tools, units per worker, a generated
+  can hand the work out (`delegate` in `gating_session_start`'s answer, and in
+  `gating_session_status`'s with `detail: full`): tier, model or `pick`, tools, units per worker, a generated
   `agent` name and a short `brief` the coordinator passes as a fresh worker's
   whole prompt (the worker reads its own skill with `read_skill`, so the
   coordinator never copies skill or guide text). When the user's

@@ -144,7 +144,8 @@ def test_the_harness_runs_qc_on_an_image_with_no_external_agent(scene, tmp_path)
     assert summary["result"]["active"]
     results = invoke(session, "get_qc_results", {"project": "qcsynth"})
     assert results["ok"] and results["result"]["regions"]
-    status = invoke(session, "qc_session_status", {"session_id": summary["session_id"]})
+    status = invoke(session, "qc_session_status",
+                    {"detail": "full", "session_id": summary["session_id"]})
     assert status["result"]["state"] == "done"
 
     kinds = [_packets(c)[-1]["kind"] for c in gateway.calls]

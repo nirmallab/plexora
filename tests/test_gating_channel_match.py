@@ -45,7 +45,7 @@ def _start(session, **options):
 
 
 def _units(session, session_id):
-    result = invoke(session, "gating_session_status", {"session_id": session_id})
+    result = invoke(session, "gating_session_status", {"detail": "full", "session_id": session_id})
     assert result["ok"], result.get("error")
     return {u["marker"]: u for u in result["result"]["units"]}
 

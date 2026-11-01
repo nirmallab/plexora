@@ -97,16 +97,16 @@ def test_asking_holds_the_marker_until_the_user_answers(tmp_path):
     assert following is None and result["state"] == "waiting_for_user", result
     [request] = result["requests"]
     assert request["marker"] == "CD4" and request["why"] == "budget"
-    status = ok(invoke(session, "gating_session_status", {"session_id": sid}))
+    status = ok(invoke(session, "gating_session_status", {"detail": "full", "session_id": sid}))
     assert [r["marker"] for r in status["limit_requests"]] == ["CD4"]
     assert status["progress"]["waiting_for_user"] == ["CD4"]
     # Asked again, it still waits; nothing was written meanwhile.
     again, result = next_packet(session, sid)
     assert again is None and result["state"] == "waiting_for_user"
-    bad = invoke(session, "gating_session_status", {"session_id": sid,
+    bad = invoke(session, "gating_session_status", {"detail": "full", "session_id": sid,
                                                     "limits": {"NOPE": "continue"}})
     assert not bad["ok"] and bad["error"]["code"] == "invalid_input"
-    ok(invoke(session, "gating_session_status", {"session_id": sid,
+    ok(invoke(session, "gating_session_status", {"detail": "full", "session_id": sid,
                                                  "limits": {"CD4": "continue"}}))
     t4, result = next_packet(session, sid)
     assert t4 is not None and t4["kind"] == "t4_candidates", result
@@ -122,7 +122,7 @@ def test_a_no_from_the_user_flags_the_marker(tmp_path):
     packet = first_packet_for(session, sid, "CD4", info)
     answer(session, sid, packet, look("too_low"))
     next_packet(session, sid)
-    ok(invoke(session, "gating_session_status", {"session_id": sid,
+    ok(invoke(session, "gating_session_status", {"detail": "full", "session_id": sid,
                                                  "limits": {"CD4": "stop"}}))
     following, result = next_packet(session, sid)
     assert following is None and result["state"] == "decided", result

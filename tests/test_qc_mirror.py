@@ -92,7 +92,7 @@ def test_mirroring_with_no_tab_degrades_and_the_session_completes(served, tmp_pa
     session = AgentSession()
     sid, regions, mirrors, _finished = _run(session, info, link=served, mirror=True)
     assert regions
-    status = invoke(session, "qc_session_status", {"session_id": sid})["result"]
+    status = invoke(session, "qc_session_status", {"detail": "full", "session_id": sid})["result"]
     assert status["mirror"]["status"] == "off"
 
 

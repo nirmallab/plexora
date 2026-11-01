@@ -56,7 +56,8 @@ looks.
      look on this image.
 4. Without workers, start a fresh conversation per image when the panel is
    large; continue with `gating_next` and the `session_id`.
-5. `gating_session_status` shows each marker's `strategy` under `dataset`
+5. `gating_session_status` shows each marker's `strategy` (per image under
+   `dataset` with `detail: "full"`)
    (the classes `compare_gates_across_images` gives: one aligned gate
    `global_aligned`, a gate `per_batch`, `globally_informed_per_image`, or each
    image `per_image`). Report it per marker, with the image as the unit.

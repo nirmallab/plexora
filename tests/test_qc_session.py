@@ -263,7 +263,8 @@ def test_the_oracle_confirms_every_artifact_as_a_region_of_its_class(tmp_path):
              if ((r.get("ai_decision") or {}).get("notes") or "").startswith("The oracle saw")]
     assert noted
     assert any("\nagent: The oracle saw" in (r.get("notes") or "") for r in rois)
-    status = ok(invoke(session, "qc_session_status", {"session_id": started["session_id"],
+    status = ok(invoke(session, "qc_session_status",
+                       {"detail": "full", "session_id": started["session_id"],
                                                        "units": "all"}))
     channels = {u["id"]: u for u in status["units"] if u["type"] == "channel"}
     assert channels["CD8"]["state"] in ("clean", "flagged")
@@ -325,7 +326,8 @@ def test_a_rerun_replays_every_answer_from_the_memo(tmp_path):
     second = start(session)
     again = drive(session, second["session_id"], QCOracle(info))
     assert len(again) < len(asked)
-    status = ok(invoke(session, "qc_session_status", {"session_id": second["session_id"]}))
+    status = ok(invoke(session, "qc_session_status",
+                       {"detail": "full", "session_id": second["session_id"]}))
     assert status["replayed"] >= 1
     assert rois_of(session)
 
