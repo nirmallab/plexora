@@ -470,6 +470,97 @@
    }
   },
   {
+   "description": "The project that shows an image file on this machine, made from it (with its mask and cell table, when given) when there is none yet: the image is read where it lies, and a project already showing it is answered as it is. Changes Plexora's own state (reversible); returns a receipt.",
+   "descriptor": {
+    "entitlement": null,
+    "execution": "immediate",
+    "id": "plexora:project.import",
+    "input_schema": {
+     "additionalProperties": false,
+     "properties": {
+      "dataset": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "default": null,
+       "description": "Put the new project in this dataset.",
+       "title": "Dataset"
+      },
+      "image": {
+       "description": "Path to the image on this machine (OME-TIFF, TIFF, OME-Zarr, a whole-slide file).",
+       "title": "Image",
+       "type": "string"
+      },
+      "mask": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "default": null,
+       "description": "Its segmentation mask (a label image), for a new project.",
+       "title": "Mask"
+      },
+      "name": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "default": null,
+       "description": "The new project's name; default from the image's filename.",
+       "title": "Name"
+      },
+      "table": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "default": null,
+       "description": "Its cell table (CSV, Parquet, .h5ad, a SpatialData store), for a new project.",
+       "title": "Table"
+      }
+     },
+     "required": [
+      "image"
+     ],
+     "title": "ImportInput",
+     "type": "object"
+    },
+    "needs": [],
+    "permission": "reversible_write",
+    "produces": [],
+    "provider": "plexora",
+    "purpose": "The project that shows an image file on this machine, made from it (with its mask and cell table, when given) when there is none yet: the image is read where it lies, and a project already showing it is answered as it is.",
+    "roles": [],
+    "tags": [
+     "project",
+     "import",
+     "image",
+     "bridge",
+     "handoff"
+    ],
+    "tool_name": "import_image",
+    "version": "1",
+    "viewer_required": false
+   }
+  },
+  {
    "description": "One marker's stored gate (lower/upper bound, whether it was ever narrowed from the full range) and how many cells it calls positive. Read-only.",
    "descriptor": {
     "entitlement": null,

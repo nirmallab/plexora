@@ -1,8 +1,10 @@
-"""Which project shows a table, and making one when none does.
+"""Which project shows a table or an image, and making one when none does.
 
 The bridge's first step whenever SCIMAP Pro wants its table shown: Plexora
 answers with the project that READS that file (and that image of it), or
 registers one from the image -- the table read where it lies, never copied.
+And when a person adds an image to a workspace in Biocognia Intelligence:
+the project that shows that image file, or a new one made from it.
 """
 
 from __future__ import annotations
@@ -11,6 +13,7 @@ import pytest
 
 from plexora.agent import AgentSession, registry
 from plexora.server.models.project import Project
+from tests.agent_fixtures import blob_scene, write_image_pyramid, write_mask_pyramid, write_table
 from tests.scimappro_fixtures import make_anndata_project
 
 
@@ -126,3 +129,99 @@ def test_the_bridge_binds_through_the_same_capabilities(tmp_path):
     with pytest.raises(BridgeError) as refused:
         tools.call("bridge_bind", {"table": other["table"], "image_id": "slide_A"})
     assert refused.value.code == "precondition_missing"
+
+
+# -- a project from an image file (import_image) ----------------------------------
+
+
+def _image_files(tmp_path, name="tonsil"):
+    folder = tmp_path / "_files"
+    folder.mkdir(exist_ok=True)
+    image, labels, cells = blob_scene(size=256, grid=4, radius=12)
+    return {"image": str(write_image_pyramid(folder / f"{name}.ome.tif", image)),
+            "mask": str(write_mask_pyramid(folder / f"{name}_mask.tif", labels)),
+            "table": str(write_table(folder / f"{name}_cells.csv", cells))}
+
+
+def test_an_image_alone_makes_a_project_reading_it_where_it_lies(tmp_path):
+    files = _image_files(tmp_path)
+    answer = _invoke("import_image", {"image": files["image"]})
+    assert answer["ok"], answer
+    result = answer["result"]
+    assert result["project"] == "tonsil" and result["created"] is True
+    assert result["image"] == files["image"]
+    assert result["receipt"]["persistent_state"] == "config"
+    assert result["receipt"]["reversible"] is False
+    record = Project.load("tonsil")
+    assert str(record.image.src) == files["image"]       # not copied
+    assert record.dataset is None and record.segmentation.source is None
+
+
+def test_a_new_project_takes_the_mask_and_table_it_is_given(tmp_path):
+    files = _image_files(tmp_path)
+    answer = _invoke("import_image", {**files, "name": "with_cells", "dataset": "cohort"})
+    assert answer["ok"], answer
+    assert answer["result"]["project"] == "with_cells" and answer["result"]["created"] is True
+    assert str(Project.load("with_cells").dataset.src) == files["table"]
+    listed = _invoke("list_projects", {"dataset": "cohort"})["result"]["projects"]
+    assert [(p["name"], p["segmentation"], p["table"]) for p in listed] == [
+        ("with_cells", "present", "present")]
+
+
+def test_an_image_a_project_already_shows_is_answered_as_it_is(tmp_path, monkeypatch):
+    made = make_anndata_project(tmp_path)
+    monkeypatch.chdir(tmp_path)
+    # However the path is spelled, and whatever else comes with it.
+    relative = str(made["image_path"]).replace(str(tmp_path) + "/", "./")
+    answer = _invoke("import_image", {"image": relative, "mask": made["mask_path"],
+                                      "name": "another"})
+    assert answer["ok"], answer
+    assert answer["result"] == {"project": made["name"], "created": False,
+                                "image": made["image_path"]}
+    assert Project.find("another") is None
+    # One made here is the same project the next time too.
+    files = _image_files(tmp_path, name="lymph")
+    first = _invoke("import_image", {"image": files["image"]})["result"]
+    again = _invoke("import_image", {"image": files["image"]})["result"]
+    assert first["created"] is True and again == {"project": first["project"], "created": False,
+                                                  "image": files["image"]}
+
+
+def test_a_missing_or_unreadable_image_is_refused_and_nothing_is_made(tmp_path):
+    import os
+
+    answer = _invoke("import_image", {"image": str(tmp_path / "nowhere.ome.tif")})
+    assert not answer["ok"]
+    assert answer["error"]["code"] == "invalid_input" and "no image at" in answer["error"]["message"]
+    junk = tmp_path / "junk.tif"
+    junk.write_text("not an image")
+    answer = _invoke("import_image", {"image": str(junk)})
+    assert answer["error"]["code"] == "invalid_input"
+    files = _image_files(tmp_path)
+    answer = _invoke("import_image", {"image": files["image"], "mask": str(tmp_path / "no_mask.tif")})
+    assert answer["error"]["code"] == "invalid_input" and "no_mask.tif" in answer["error"]["message"]
+    os.chmod(files["image"], 0)
+    try:
+        if not os.access(files["image"], os.R_OK):      # not as root, nor on Windows
+            answer = _invoke("import_image", {"image": files["image"]})
+            assert answer["error"]["code"] == "invalid_input"
+            assert "cannot be read" in answer["error"]["message"]
+    finally:
+        os.chmod(files["image"], 0o644)
+    assert _invoke("list_projects", {})["result"]["projects"] == []
+
+
+def test_the_bridge_imports_an_image_through_the_same_capability(tmp_path):
+    from spatialbridge.errors import BridgeError
+
+    from plexora.agent.bridge_provider import PlexoraProvider
+
+    files = _image_files(tmp_path)
+    provider = PlexoraProvider()
+    made = provider.invoke("import_image", {"image": files["image"]})
+    assert made["project"] == "tonsil" and made["created"] is True and made["operation_id"]
+    again = provider.invoke("import_image", {"image": files["image"]})
+    assert again["project"] == "tonsil" and again["created"] is False
+    with pytest.raises(BridgeError) as refused:
+        provider.invoke("import_image", {"image": str(tmp_path / "nowhere.ome.tif")})
+    assert refused.value.code == "invalid_input"

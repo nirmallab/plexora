@@ -88,6 +88,22 @@ def test_errors_come_back_in_the_protocols_shape(peer):
     assert invalid.value.code == "invalid_input"
 
 
+def test_an_image_is_imported_over_mcp_as_biocognia_intelligence_hands_it(peer, tmp_path):
+    from spatialbridge.errors import BridgeError
+
+    from tests.agent_fixtures import blob_scene, write_image_pyramid
+
+    image = str(write_image_pyramid(tmp_path / "tonsil.ome.tif", blob_scene(size=256, grid=4, radius=12)[0]))
+    made = peer.invoke("import_image", {"image": image}, wait=False)
+    assert (made["project"], made["created"], made["image"]) == ("tonsil", True, image)
+    assert made["receipt"]["capability"] == "project.import"
+    again = peer.invoke("import_image", {"image": image}, wait=False)
+    assert (again["project"], again["created"]) == ("tonsil", False)
+    with pytest.raises(BridgeError) as missing:
+        peer.invoke("import_image", {"image": str(tmp_path / "gone.ome.tif")}, wait=False)
+    assert missing.value.code == "invalid_input" and "no image at" in str(missing.value)
+
+
 def test_a_bridge_origin_needs_no_mcp_grant(license_issuer):
     license_issuer.install()                       # Pro default: ["ai"], no mcp
     registry._reset_for_tests()

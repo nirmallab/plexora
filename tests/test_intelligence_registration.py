@@ -3,7 +3,8 @@ read without importing Plexora, the tools it offers as a guest are the
 shipped manifest -- each with its permission written out, none a source-file
 write or a delete, each Pro tool with its entitlement -- and those tools run
 over the bridge. Plexora pays for a workspace's conversation only where its AI
-is licensed, and labels the images it opens without offering to open them."""
+is licensed, labels the images it opens for an app that cannot hand them over,
+and names the guest tool that imports one (`import_image`) for an app that can."""
 
 from __future__ import annotations
 
@@ -17,14 +18,16 @@ from tools import intelligence_manifest
 
 
 def test_the_registration_is_read_without_importing_plexora():
-    # Nor does labelling a file, or saying what Plexora pays for: the gateway is built only when asked for.
+    # Nor does labelling a file, naming the tool that imports it, or saying what Plexora pays for: the
+    # gateway is built only when asked for.
     probe = ("import sys, json\nimport plexora_intelligence as p\n"
              "print(json.dumps([p.PRODUCT.id, p.PRODUCT.name, list(p.PRODUCT.roles), "
-             "p.PRODUCT.classify('tonsil.ome.tif')['format'], list(p.PRODUCT.pay()['modules']), "
+             "p.PRODUCT.classify('tonsil.ome.tif')['format'], p.PRODUCT.imports('tonsil.ome.tif')['tool'], "
+             "list(p.PRODUCT.pay()['modules']), "
              "sorted(m for m in sys.modules\n"
              "       if m.split('.')[0] in ('plexora', 'flask', 'pydantic', 'spatialagents'))]))")
     done = subprocess.run([sys.executable, "-c", probe], capture_output=True, text=True, check=True)
-    assert json.loads(done.stdout) == ["plexora", "Plexora", ["guest"], "ome-tiff", ["chat"], []]
+    assert json.loads(done.stdout) == ["plexora", "Plexora", ["guest"], "ome-tiff", "import_image", ["chat"], []]
 
 
 def test_plexora_registers_itself_under_the_apps_entry_point():
@@ -69,6 +72,18 @@ def test_the_pro_tools_carry_their_entitlement_and_say_they_are_pro():
     for name in entitled:
         assert "Part of Plexora Pro; on Free it answers license_required." in tools[name]["description"]
     assert "Returns an image" in tools["gating_next"]["description"]
+
+
+def test_an_image_is_imported_through_a_free_guest_tool_the_app_offers():
+    from plexora_intelligence import PRODUCT, RULES
+
+    tools = {tool["descriptor"]["tool_name"]: tool for tool in PRODUCT.guest().manifest()["tools"]}
+    imported = tools["import_image"]["descriptor"]
+    # What the app (0.3.1 on) offers: a read or a write of Plexora's own state, on any licence.
+    assert imported["permission"] == "reversible_write" and imported["entitlement"] is None
+    assert imported["input_schema"]["required"] == ["image"]
+    assert "Changes Plexora's own state" in tools["import_image"]["description"]
+    assert "plexora.import_image" in RULES
 
 
 def test_a_tool_the_bridge_could_not_run_is_refused_by_the_writer(monkeypatch):
@@ -187,6 +202,31 @@ def test_anything_else_is_not_plexoras_to_label(tmp_path, name):
     assert PRODUCT.classify(tmp_path / name) is None
 
 
+@pytest.mark.parametrize("name, kind", [
+    ("tonsil.ome.tif", "ome-tiff"), ("tonsil.ome.tiff", "ome-tiff"), ("tonsil.tif", "tiff"),
+    ("TONSIL.TIFF", "tiff"), ("scan.qptiff", "qptiff"), ("tonsil.ome.zarr", "ome-zarr"),
+    ("tonsil.ome.zarr/", "ome-zarr"), (r"C:\data\tonsil.ome.tif", "ome-tiff"),
+])
+def test_an_image_plexora_opens_is_handed_to_import_image_as_it_is_named(tmp_path, name, kind):
+    from plexora_intelligence import PRODUCT
+
+    for path in (name, tmp_path / name.rstrip("/").split("\\")[-1]):
+        # By name, as `classify`: the path need not exist, and the tool is what reads it.
+        assert PRODUCT.imports(path) == {"format": kind, "label": "Image · Plexora", "tool": "import_image",
+                                         "arguments": {"image": str(path)}}
+        # `classify` still says what an app that cannot import it shows.
+        assert PRODUCT.classify(path)["action"] is None
+
+
+@pytest.mark.parametrize("name", ["cells.csv", "tonsil_cell.csv", "tonsil.h5ad", "cells.zarr", "cells.zarr/",
+                                  "notes.txt", "figure.png", "tonsil.tif.csv", "tonsil"])
+def test_anything_else_is_not_plexoras_to_import(tmp_path, name):
+    from plexora_intelligence import PRODUCT
+
+    assert PRODUCT.imports(name) is None
+    assert PRODUCT.imports(tmp_path / name) is None
+
+
 def test_the_registration_says_what_plexora_is_here():
     from importlib.metadata import version
 
@@ -240,3 +280,35 @@ def test_a_guest_tool_runs_in_plexora_as_a_bridge_call(tmp_path):
     error = unknown["error"]
     assert (error["code"], error["detail"]["plexora_code"]) == ("invalid_input", "unknown_project")
     assert error["detail"]["hint"] == "plexora.list_projects names the projects Plexora knows"
+
+
+def test_an_image_the_app_hands_over_becomes_a_project_over_the_bridge(tmp_path):
+    pytest.importorskip("biocognia_intelligence.guests")
+    from biocognia_intelligence.guests import GuestTools
+    from spatialagents.policy import Policy
+    from spatialbridge import client
+
+    from plexora.agent import registry
+    from plexora.agent.bridge_provider import PlexoraProvider
+    from plexora_intelligence import PRODUCT
+    from tests.agent_fixtures import blob_scene, write_image_pyramid
+
+    registry.discover()
+    image = write_image_pyramid(tmp_path / "tonsil.ome.tif", blob_scene(size=256, grid=4, radius=12)[0])
+    takes = PRODUCT.imports(image)
+    guest = PRODUCT.guest()
+    tools = GuestTools(PRODUCT, guest, guest.manifest())
+    client.register_inprocess("plexora", PlexoraProvider)
+    try:
+        made = tools.invoke(f"plexora.{takes['tool']}", takes["arguments"], policy=Policy())
+        again = tools.invoke(f"plexora.{takes['tool']}", takes["arguments"], policy=Policy())
+        missing = tools.invoke("plexora.import_image", {"image": str(tmp_path / "gone.ome.tif")}, policy=Policy())
+    finally:
+        client.unregister_inprocess("plexora")
+        client.close_all()
+    assert made["ok"] is True, made
+    assert (made["result"]["project"], made["result"]["created"]) == ("tonsil", True)
+    assert made["result"]["image"] == str(image) and made["operation_id"]
+    assert (again["result"]["project"], again["result"]["created"]) == ("tonsil", False)
+    assert missing["ok"] is False and missing["error"]["code"] == "invalid_input"
+    assert "no image at" in missing["error"]["message"]

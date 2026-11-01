@@ -6,7 +6,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "plexora"
-version = "0.0.34"
+version = "0.0.35"
 description = "OpenSeadragon-based cellular image viewing and analysis tool."
 readme = "README.md"
 authors = [{ name = "BioCognia", email = "support@biocognia.com" }]
@@ -56,7 +56,9 @@ dependencies = [
     # it adds the MCP SDK through spatialbridge[mcp], which the ai extra
     # already brings. 0.3 may also have Plexora's licence pay for a
     # workspace's conversation (`pay()`) and label its images (`classify`);
-    # 0.2 ignores both.
+    # 0.2 ignores both. 0.3.1 hands Plexora an image a person adds to a
+    # workspace (`imports()`, the `import_image` guest tool); 0.3.0 only
+    # labels it.
     "biocognia-intelligence>=0.2.1,<0.4",
     "Flask>=3.1",
     "fsspec>=2024.12",

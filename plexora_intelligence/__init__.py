@@ -20,10 +20,12 @@ workspaces three ways.
   plan's call before sending it rather than letting the gateway answer 403.
   Without Plexora's AI on this device every call is refused with the
   sentence `ai()` gives, and the licence is asked again at the next call.
-- Its images (`classify(path)`). The images Plexora opens are labelled as
-  Plexora's, by name alone. The label says to open the image in Plexora;
-  there is no action yet, because the app cannot hand an image to Plexora
-  from a conversation.
+- Its images. An app that can hand a file to a product (0.3.1 on) asks
+  `imports(path)`: for an image Plexora opens, by name alone, it names the
+  guest tool that takes it -- `import_image`, which answers with the project
+  that shows that file, made from it where there is none, the image read
+  where it lies -- and its arguments. `classify(path)` still labels the image
+  as Plexora's, with no action, for an app that cannot.
 
 What a conversation is offered is `guest.json`, written from the capability
 registry by `tools/intelligence_manifest.py`, so the catalogue never depends
@@ -48,9 +50,9 @@ import sys
 #: the home's own hand-offs drive (the viewer, gates and regions coming back)
 #: is the home's. `tools/intelligence_manifest.py` checks all of it.
 GUEST_TOOLS = (
-    # What a project is.
+    # What a project is, and the one an image file the person names becomes.
     "list_projects", "inspect_project", "list_channels", "list_markers", "get_marker_distribution",
-    "detect_nuclear_channels", "count_cells_in_roi",
+    "detect_nuclear_channels", "count_cells_in_roi", "import_image",
     # Gates, judged against the marker's distribution.
     "get_gate", "suggest_auto_gate", "get_gate_distribution", "get_gated_summary", "get_gate_provenance",
     "set_gate", "adjust_gate", "reset_gates",
@@ -75,7 +77,9 @@ GUEST_TOOLS = (
 #: What the conversation is told about Plexora (the prefix, beside the catalogue).
 RULES = ("Plexora is the image viewer and its analyses of the pixels. Its tools take a `project` (an image "
          "with its mask and cell table): plexora.list_projects names those it knows, and a dataset it does "
-         "not know yet is handed to it by this workspace's own hand-off first. Gating: "
+         "not know yet is handed to it by this workspace's own hand-off first. An image file the person "
+         "names becomes one through plexora.import_image, which answers with the project that already "
+         "shows that file when there is one. Gating: "
          "plexora.suggest_auto_gate proposes a gate from the marker's distribution, plexora.set_gate stores "
          "it, plexora.get_gated_summary counts what a gate calls positive. Quality control: "
          "plexora.run_basic_qc on an image nobody has checked, then plexora.get_qc_results. "
@@ -116,6 +120,12 @@ IMAGES = ((".ome.tiff", "ome-tiff"), (".ome.tif", "ome-tiff"), (".ome.zarr", "om
 
 #: What the app shows beside an image Plexora opens.
 IMAGE_LABEL = "Image · open it in Plexora"
+
+#: What the app shows beside an image it may hand to Plexora (`imports`).
+IMPORT_LABEL = "Image · Plexora"
+
+#: The guest tool an image is handed to Plexora through.
+IMPORT_TOOL = "import_image"
 
 
 class _Guest:
@@ -201,6 +211,17 @@ class _Plexora:
             if name.endswith(suffix):
                 return {"format": kind, "label": IMAGE_LABEL, "action": None, "product": self.id}
         return None
+
+    def imports(self, path) -> dict | None:
+        """How the app hands an image Plexora opens to Plexora: `{format,
+        label, tool, arguments}`, the guest tool (`import_image`) and what to
+        call it with; None for anything `classify` does not name an image.
+        By name alone, as `classify`: the tool is what reads the file."""
+        found = self.classify(path)
+        if found is None:
+            return None
+        return {"format": found["format"], "label": IMPORT_LABEL, "tool": IMPORT_TOOL,
+                "arguments": {"image": os.fspath(path)}}
 
     def licensing(self):
         from plexora.licensing import LICENSING

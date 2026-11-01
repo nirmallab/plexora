@@ -679,6 +679,67 @@ def _record_depth_roles(name, roles):
     record.patch(dataset=spec).with_confirmed(tuple(f"role:{key}" for key in named)).save()
 
 
+# -- which project shows this image (another application's import) ---------------
+
+
+class ImportInput(AgentModel):
+    image: str = Field(description="Path to the image on this machine (OME-TIFF, TIFF, "
+                                   "OME-Zarr, a whole-slide file).")
+    mask: str | None = Field(None, description="Its segmentation mask (a label image), for "
+                             "a new project.")
+    table: str | None = Field(None, description="Its cell table (CSV, Parquet, .h5ad, a "
+                              "SpatialData store), for a new project.")
+    name: str | None = Field(None, description="The new project's name; default from the "
+                             "image's filename.")
+    dataset: str | None = Field(None, description="Put the new project in this dataset.")
+
+
+def import_image(call, inp):
+    """The project that shows this image, made from it when there is none.
+
+    What another application calls when a person adds an image to its
+    workspace (Biocognia Intelligence, through `plexora_intelligence`). A
+    project already showing this file -- matched on the file, however its path
+    is spelled, as quick view matches it -- is answered as it is, its mask and
+    table left alone. Otherwise one is made from the image, with the mask and
+    table when they are given (`datasets.create_project`). The image is read
+    where it lies, never copied; what is written is Plexora's project
+    registry, and for a large TIFF with no reduced-resolution levels the
+    one-time pyramidized copy every import makes of it.
+    """
+    import os
+    from pathlib import Path
+
+    from plexora import datasets, get_config
+    from plexora.agent.receipts import make_receipt
+    from plexora.datasource import _find_existing_datasource_for_image
+
+    # Absolute, so the project never depends on this process's working folder.
+    image = Path(os.path.abspath(Path(inp.image).expanduser()))
+    if not image.exists():
+        raise AgentError("invalid_input", f"no image at {inp.image}",
+                         detail={"image": str(image)})
+    if not os.access(image, os.R_OK):
+        raise AgentError("invalid_input", f"{inp.image} cannot be read by Plexora",
+                         detail={"image": str(image)})
+    found = _find_existing_datasource_for_image(image, get_config())
+    if found:
+        call.project_name = found
+        return {"project": found, "created": False, "image": str(image)}
+    try:
+        name = datasets.create_project(str(image), name=inp.name, segmentation=inp.mask,
+                                       data=inp.table, exist_ok=False, dataset=inp.dataset)
+    except ValueError as exc:
+        raise AgentError("invalid_input", str(exc), detail={"image": str(image)}) from None
+    call.project_name = name
+    receipt = make_receipt(
+        call, changed=True, before=None,
+        after={"project": name, "image": str(image), "mask": inp.mask, "table": inp.table},
+        persistent_state="config", reversible=False)
+    return {"project": name, "created": True, "image": str(image),
+            "receipt": receipt.model_dump(mode="json")}
+
+
 def capabilities():
     return [
         Capability(
@@ -759,6 +820,14 @@ def capabilities():
             permission="reversible_write", input_model=BindInput, handler=bind_project,
             writes=("project",), persistent=True, reversible=False,
             tags=("project", "bind", "bridge", "handoff")),
+        Capability(
+            name="project.import", tool_name="import_image", owner="core",
+            purpose="The project that shows an image file on this machine, made from it (with "
+                    "its mask and cell table, when given) when there is none yet: the image is "
+                    "read where it lies, and a project already showing it is answered as it is.",
+            permission="reversible_write", input_model=ImportInput, handler=import_image,
+            writes=("project",), persistent=True, reversible=False,
+            tags=("project", "import", "image", "bridge", "handoff")),
         Capability(
             name="resource.status", tool_name="get_resource_status", owner="core",
             purpose="Where a project's image, mask and table are (this machine or a data "
