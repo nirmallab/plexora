@@ -65,7 +65,7 @@ GUEST_TOOLS = (
     "render_region", "render_cell_gallery", "explain_cell",
     # A long check runs as a job; a write is taken back by its operation_id.
     "job_get", "job_wait", "undo_operation",
-    # Pro: Plexora's own AI does a whole gating or QC run, on Plexora's credits.
+    # Pro: Plexora's own AI does a whole gating or QC run, quoted up front.
     "ai_run_session", "ai_run_status", "ai_run_control", "ai_balance",
     # Pro: gating and QC step by step, the conversation deciding from each packet's images.
     "gating_session_start", "gating_next", "gating_answer", "gating_session_status", "gating_session_finish",
@@ -83,13 +83,19 @@ RULES = ("Plexora is the image viewer and its analyses of the pixels. Its tools 
          "plexora.suggest_auto_gate proposes a gate from the marker's distribution, plexora.set_gate stores "
          "it, plexora.get_gated_summary counts what a gate calls positive. Quality control: "
          "plexora.run_basic_qc on an image nobody has checked, then plexora.get_qc_results. "
-         "On Plexora Pro there are two ways to gate or check quality with AI. plexora.ai_run_session hands "
-         "the whole run to Plexora's own AI, which spends Plexora's AI credits, not this workspace's: say "
-         "so before starting one (plexora.ai_balance tells what is left), follow it with "
-         "plexora.ai_run_status, and a run waiting_for_user is a question to put to the person. The "
-         "session tools go step by step instead: plexora.gating_session_start, then plexora.gating_next "
-         "returns a packet with images to look at, and plexora.gating_answer records your decision on it "
-         "(plexora.qc_* the same for quality control); these spend this conversation's credits.")
+         "On Plexora Pro there are two ways to gate or check quality with AI, and both are paid from the "
+         "organisation's one AI credit wallet, the one this conversation draws on too (plexora.ai_balance "
+         "says what is left); what differs is which product's run it is and whether it is quoted up "
+         "front. "
+         "plexora.ai_run_session hands the whole run to Plexora's own AI, a Plexora run quoted before it "
+         "starts: the credits plexora.ai_balance estimates for it are that quote, a ceiling, so say \"up to "
+         "N credits\" -- each model call is metered and the run is charged what its calls cost, never more "
+         "than the quote. Say so before starting one, follow it with plexora.ai_run_status, and a run "
+         "waiting_for_user is a question to put to the person. The session tools go step by step instead: "
+         "plexora.gating_session_start, then plexora.gating_next returns a packet with images to look at, "
+         "and plexora.gating_answer records your decision on it (plexora.qc_* the same for quality "
+         "control); each look is this conversation's own model call, metered as it is made, with no "
+         "quote.")
 
 #: How a person makes Plexora reachable.
 HINT = "start Plexora (`biocognia open plexora`, or `plexora` in its environment), then try again"

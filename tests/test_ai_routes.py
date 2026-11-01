@@ -118,6 +118,10 @@ def test_the_balance_carries_an_estimate_for_the_open_project(client, gateway, s
     estimate = body["estimates"]["qc"]
     assert estimate["unit"] == "channel" and estimate["units"] == len(scene["channels"])
     assert estimate["credits"] == 12 * len(scene["channels"]) and estimate["affordable"]
+    # The estimate is the run's quote, a ceiling, from the organisation's one
+    # wallet: what a conversation repeats to the person.
+    assert "up to that many credits" in body["charging"]
+    assert "never more than the quote" in body["charging"]
     both = client.get("/ai/v1/balance?project=qcsynth").get_json()["estimates"]
     assert set(both) == {"gating", "contrast", "qc"} and both["gating"]["unit"] == "marker"
     picked = client.get("/ai/v1/balance?project=qcsynth&kind=qc&channels=DAPI,CD3").get_json()

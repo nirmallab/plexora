@@ -121,7 +121,8 @@ def capabilities():
     return [
         cap(name="ai.chat_start", tool_name="ai_chat_start",
             purpose="Start a Plexora AI conversation: an assistant inside Plexora that answers questions "
-                    "about the user's projects by calling Plexora's tools, billed in Plexora AI credits.",
+                    "about the user's projects by calling Plexora's tools, billed to the organisation's AI "
+                    "credits.",
             permission="reversible_write", input_model=StartInput, handler=chat_start,
             writes=("conversation",)),
         cap(name="ai.chat_send", tool_name="ai_chat_send",

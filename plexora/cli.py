@@ -1686,10 +1686,10 @@ def _build_ai_parser():
                        help="With experience: print the summary as JSON.")
     _gating_limit_arguments(bench, "--on-limit", "--max-extensions")
 
-    # Plexora's own harness: AI features with no external agent, billed in
-    # Plexora AI credits through the gateway (plexora/ai/harness).
+    # Plexora's own harness: AI features with no external agent, billed to the
+    # organisation's AI credits through the gateway (plexora/ai/harness).
     run = subs.add_parser("run", help="Run an AI feature inside Plexora (no external agent), "
-                                      "billed in Plexora AI credits.")
+                                      "billed to your organisation's AI credits.")
     run.add_argument("run_target", choices=("gating", "contrast", "qc"),
                      help="gating: Auto Gating of the markers; contrast: auto contrast -- how "
                           "bright each marker is drawn, no gating; qc: AutoQC of the image.")
@@ -1744,12 +1744,12 @@ def _build_ai_parser():
     trace.add_argument("--cache", action="store_true", help="The run's prompt-cache report.")
     trace.add_argument("--json", dest="trace_json", action="store_true")
     chat = subs.add_parser("chat", help="Talk to Plexora AI in the terminal: it answers by calling "
-                                        "Plexora's tools, billed in Plexora AI credits.")
+                                        "Plexora's tools, billed to your organisation's AI credits.")
     chat.add_argument("--resume", default=None, metavar="ID", help="Continue a conversation.")
     chat.add_argument("--dev", action="store_true", help="Use the gateway's dev route (internal testing).")
     chat.add_argument("--model", default=None, help="With --dev: the model to use.")
     chat.add_argument("--gateway", default=None, help="Gateway URL (default: the BioCognia AI gateway).")
-    credits = subs.add_parser("credits", help="Plexora AI credit balance and recent usage.")
+    credits = subs.add_parser("credits", help="Your organisation's AI credit balance and Plexora's recent usage.")
     credits.add_argument("--days", type=int, default=30)
     credits.add_argument("--dev", action="store_true")
     credits.add_argument("--gateway", default=None)

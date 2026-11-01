@@ -314,3 +314,30 @@ def test_an_image_the_app_hands_over_becomes_a_project_over_the_bridge(tmp_path)
     assert (again["result"]["project"], again["result"]["created"]) == ("tonsil", False)
     assert missing["ok"] is False and missing["error"]["code"] == "invalid_input"
     assert "no image at" in missing["error"]["message"]
+
+
+def test_the_rules_say_one_wallet_and_a_run_quoted_as_a_ceiling():
+    """A Plexora AI run and this conversation draw on the organisation's one
+    AI wallet, and a run's quote is what it may cost at most: the 2026-11-01
+    conversation told the person a run cost "about 875 Plexora AI credits"
+    and a step-by-step session "this conversation's credits, not Plexora's";
+    the run cost 478 of its 875."""
+    from plexora.ai.harness import capabilities as ai_caps
+
+    from plexora_intelligence import RULES
+
+    assert "one AI credit wallet" in RULES and '"up to N credits"' in RULES
+    assert "not this workspace's" not in RULES and "Plexora's AI credits" not in RULES
+    assert "never more than the quote" in RULES and "metered" in RULES
+    tools = {tool["descriptor"]["tool_name"]: tool for tool in _manifest_tools()}
+    assert "a ceiling" in tools["ai_run_session"]["description"]
+    assert "up to" in tools["ai_balance"]["description"]
+    assert "never more than the quote" in ai_caps.CHARGING and "one AI wallet" in ai_caps.CHARGING
+    for tool in tools.values():
+        assert "Plexora AI credits" not in tool["description"], tool["descriptor"]["tool_name"]
+
+
+def _manifest_tools():
+    from plexora_intelligence import PRODUCT
+
+    return PRODUCT.guest().manifest()["tools"]

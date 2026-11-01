@@ -3817,7 +3817,7 @@
    }
   },
   {
-   "description": "Gate the project's markers or quality-control its image with Plexora AI, inside Plexora: the session runs on a job and every decision is a model call billed in Plexora AI credits (quoted per marker or channel before anything is spent). An open viewer's agent panel shows it. Resume a session paused for credit with resume_session. Changes Plexora's own state (reversible); returns a receipt. Part of Plexora Pro; on Free it answers license_required.",
+   "description": "Gate the project's markers or quality-control its image with Plexora AI, inside Plexora: the session runs on a job and every decision is a model call, paid from the organisation's AI credit wallet. The run is quoted before anything is spent (ai_balance's estimate: the price per marker or channel times their number) and the quote is a ceiling -- up to that many credits: each call is metered and the run is charged what its calls cost, never more. An open viewer's agent panel shows it. Resume a session paused for credit with resume_session. Changes Plexora's own state (reversible); returns a receipt. Part of Plexora Pro; on Free it answers license_required.",
    "descriptor": {
     "entitlement": "ai",
     "execution": "job",
@@ -3988,7 +3988,7 @@
     "permission": "reversible_write",
     "produces": [],
     "provider": "plexora",
-    "purpose": "Gate the project's markers or quality-control its image with Plexora AI, inside Plexora: the session runs on a job and every decision is a model call billed in Plexora AI credits (quoted per marker or channel before anything is spent). An open viewer's agent panel shows it. Resume a session paused for credit with resume_session.",
+    "purpose": "Gate the project's markers or quality-control its image with Plexora AI, inside Plexora: the session runs on a job and every decision is a model call, paid from the organisation's AI credit wallet. The run is quoted before anything is spent (ai_balance's estimate: the price per marker or channel times their number) and the quote is a ceiling -- up to that many credits: each call is metered and the run is charged what its calls cost, never more. An open viewer's agent panel shows it. Resume a session paused for credit with resume_session.",
     "roles": [],
     "tags": [
      "ai",
@@ -4110,7 +4110,7 @@
    }
   },
   {
-   "description": "The account's Plexora AI credit, the price per marker / channel, and what a run of a project would be quoted. Read-only. Part of Plexora Pro; on Free it answers license_required.",
+   "description": "The organisation's AI credit wallet (every product's AI draws on it), the price per marker / channel, and what a Plexora AI run of a project would be quoted: up to that many credits, charged as metered. Read-only. Part of Plexora Pro; on Free it answers license_required.",
    "descriptor": {
     "entitlement": "ai",
     "execution": "immediate",
@@ -4190,7 +4190,7 @@
     "permission": "read",
     "produces": [],
     "provider": "plexora",
-    "purpose": "The account's Plexora AI credit, the price per marker / channel, and what a run of a project would be quoted.",
+    "purpose": "The organisation's AI credit wallet (every product's AI draws on it), the price per marker / channel, and what a Plexora AI run of a project would be quoted: up to that many credits, charged as metered.",
     "roles": [],
     "tags": [
      "ai",

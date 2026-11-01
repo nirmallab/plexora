@@ -5,8 +5,8 @@
                            its calls billed through the gateway
     ai.run_status          one run (by run id or job id), or the recent ones
     ai.run_control         pause / resume / stop the run's session
-    ai.balance             the account's credit, the price list, and what a
-                           run of this project would be quoted
+    ai.balance             the organisation's credit, the price list, and what
+                           a run of this project would be quoted (its ceiling)
 
 `/ai/v1` (server/routes/ai_routes.py) and MCP reach these through
 `registry.invoke`, so receipts and audit lines are the same whoever asks.
@@ -41,6 +41,15 @@ STATE = "ai_runs"
 AI_EVENTS = ("ai_run", "ai_context", "ai_usage", "ai_paused", "ai_finished")
 #: Credits are 10,000 micro-dollars (the gateway's `credit_micro`).
 CREDIT_MICRO = 10_000
+
+#: How a run is charged, beside its estimate (`ai_balance`): the gateway's
+#: ledger charges a declared run min(metered calls, quote) and holds the
+#: quote from the one organisation wallet while it runs.
+CHARGING = ("each estimate is the quote a run is declared with: up to that many credits. Every "
+            "model call is metered and the run is charged what its calls cost, never more than "
+            "the quote, which is held from the wallet while the run lasts. The wallet is the "
+            "organisation's one AI wallet, which every product's AI -- a Plexora run, a "
+            "conversation -- draws on.")
 
 
 def run_id_for(job_id: str) -> str:
@@ -535,6 +544,7 @@ def balance(call, inp):
                                "affordable": credits * credit <= out["available_micro"],
                                **({"unavailable": why} if why else {}), **words}
         out["estimates"] = estimates
+        out["charging"] = CHARGING
         out["project"] = inp.project
     return out
 
@@ -551,10 +561,12 @@ def capabilities():
     return [
         cap(name="ai.run_session", tool_name="ai_run_session",
             purpose="Gate the project's markers or quality-control its image with Plexora AI, inside "
-                    "Plexora: the session runs on a job and every decision is a model call billed in "
-                    "Plexora AI credits (quoted per marker or channel before anything is spent). An "
-                    "open viewer's agent panel shows it. Resume a session paused for credit with "
-                    "resume_session.",
+                    "Plexora: the session runs on a job and every decision is a model call, paid from "
+                    "the organisation's AI credit wallet. The run is quoted before anything is spent "
+                    "(ai_balance's estimate: the price per marker or channel times their number) and "
+                    "the quote is a ceiling -- up to that many credits: each call is metered and the "
+                    "run is charged what its calls cost, never more. An open viewer's agent panel "
+                    "shows it. Resume a session paused for credit with resume_session.",
             permission="reversible_write", input_model=RunInput, handler=run_session, execution="job",
             writes=("gates", "rois", "qc"), persistent=True, egress="rendered_pixels",
             reads=("image", "table", "mask", "rois")),
@@ -567,7 +579,8 @@ def capabilities():
             permission="reversible_write", input_model=ControlInput, handler=run_control,
             persistent=True, egress="metadata"),
         cap(name="ai.balance", tool_name="ai_balance",
-            purpose="The account's Plexora AI credit, the price per marker / channel, and what a run "
-                    "of a project would be quoted.",
+            purpose="The organisation's AI credit wallet (every product's AI draws on it), the price "
+                    "per marker / channel, and what a Plexora AI run of a project would be quoted: up "
+                    "to that many credits, charged as metered.",
             permission="read", input_model=BalanceInput, handler=balance, egress="metadata"),
     ]
