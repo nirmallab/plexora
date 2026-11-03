@@ -255,7 +255,7 @@ def test_a_marker_waits_for_its_earlier_partners_and_the_one_it_is_gated_within(
     session = AgentSession()
     sid = _bulked(session, scene, tmp_path)
     with engines.engine_for(_call(session), sid, save=False) as engine:
-        engine.record["panel_pending"] = False
+        engine.record["panel_pending"] = engine.record["review_pending"] = False
         unit = {u["marker"]: u for u in engine.units_of("gpar")}
         assert unit["CD3"]["state"] == unit["CD8"]["state"] == "accepted_t1"
         # Gating order is CD3, CD4, CD8: each waits for the partners before it.
@@ -403,6 +403,9 @@ def test_setup_packets_and_strips_go_out_alone(tmp_path, scene):
         assert engine.ready_units() == ([], "busy")
         engine.record["outstanding"].clear()
         engine.record["panel_pending"] = False
+        # Then the partner review, alone too.
+        assert engine.ready_units() == ([("partner_review", [])], None)
+        engine.record["review_pending"] = False
 
         # Looks out: the strip CD3 and CD8 are waiting for does not join them
         # (CD4 goes out on CD3's written T1 gate, as one at a time).
@@ -488,6 +491,11 @@ def test_a_record_with_one_outstanding_packet_in_scalars_still_loads(tmp_path, s
                                          "answer": Oracle(info).answer(first),
                                          "include_next": False}))
     packet = ok(invoke(session, "gating_next", {"session_id": sid, "wait_s": 20}))["packet"]
+    while not packet["units"]:                   # the rest of the set-up: the partner review
+        ok(invoke(session, "gating_answer", {"session_id": sid, "packet_id": packet["packet_id"],
+                                             "answer": Oracle(info).answer(packet),
+                                             "include_next": False}))
+        packet = ok(invoke(session, "gating_next", {"session_id": sid, "wait_s": 20}))["packet"]
     unit_key = engines.unit_key("gpar", packet["units"][0]["marker"])
     # The session's classifier job (it reads features ahead) saves the record
     # too: done before the record is rewritten by hand here.

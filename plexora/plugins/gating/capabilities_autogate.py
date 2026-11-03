@@ -419,11 +419,13 @@ def _relation(ds, marker, partner):
     from plexora.plugins.gating.server.autogate import context
 
     panel = context.for_project(ds)
+    # A `subset_any` group says nothing about one pair: either member may
+    # carry none of the marker's positives.
     for entry in (panel["entries"].get(marker) or {}).get("partners", []):
-        if entry["marker"] == partner:
+        if entry["marker"] == partner and entry["relation"] in bivariate.RELATIONS:
             return entry["relation"]
     for entry in (panel["entries"].get(partner) or {}).get("partners", []):
-        if entry["marker"] == marker:
+        if entry["marker"] == marker and entry["relation"] in bivariate.RELATIONS:
             return {"subset": "coexpressed"}.get(entry["relation"], entry["relation"])
     return "independent"
 

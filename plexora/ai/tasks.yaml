@@ -43,6 +43,17 @@ modules:
         max_tokens: 16000
         effort: low
         kinds: [panel_context, pixel_setup, expression_setup, replan]
+      partner_review:
+        label: Partner review
+        blurb: Fills each marker's empty partner slots and checks its stated partners against the sample's tissue and disease.
+        # Its own task, not planning's: planning's kinds share one answer
+        # schema already at the size the provider is known to compile
+        # (`harness.schema.VERIFIED`), and a review's answer is its own shape.
+        requires: {vision: false, reasoning: true}
+        capability: text_reasoning
+        max_tokens: 16000
+        effort: medium
+        kinds: [partner_review]
       display:
         label: Contrast check
         blurb: Looks at each marker at five brightnesses and says where background and structure both show.

@@ -22,7 +22,7 @@ from plexora.plugins.gating.server.autogate import lattice as latmod
 
 #: Lattice families that estimate a gate (the rest are steps and edges).
 ESTIMATORS = ("gmm", "kde", "otsu", "gmm2", "onset", "ceiling", "score", "bio", "ctrl",
-              "within")
+              "within", "carrier")
 
 
 def _families(point) -> set:

@@ -32,8 +32,8 @@ VERSION = "4"
 #: marker's evidence; the scored proposal on all of it; the Auto gate on the
 #: mixture; the background's onset and ceiling and the estimators on the
 #: distribution; steps and edges on nothing but distance.
-PRIORITY = ("ctrl", "within", "bio", "score", "obs", "gmm", "ceiling", "onset", "kde",
-            "otsu", "gmm2", "rung", "up", "down", "split", "edge")
+PRIORITY = ("ctrl", "within", "carrier", "bio", "score", "obs", "gmm", "ceiling", "onset",
+            "kde", "otsu", "gmm2", "rung", "up", "down", "split", "edge")
 
 #: Scored candidates that join the lattice (`scoring` families), and are
 #: kept even outside the guard band: the band is drawn around the mixture,
@@ -41,6 +41,8 @@ PRIORITY = ("ctrl", "within", "bio", "score", "obs", "gmm", "ceiling", "onset", 
 SCORED = ("score", "bio", "ceiling", "onset",
           # the lowest dim cell a contrast check saw stained (`Engine.observed_start`)
           "obs",
+          # a state marker's split inside a carrier lineage (`Engine.carrier_start`)
+          "carrier",
           # shares of cells above, with vision first (`rungs`)
           "rung")
 

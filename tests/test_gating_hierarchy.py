@@ -3,7 +3,8 @@
 - the panel becomes a tree from its own relations (broad -> lineage ->
   subtype -> state), and gating follows it;
 - a reference is chosen for relevance x reliability: a failed gate is never
-  leaned on, a low-reliability one only when nothing better exists;
+  leaned on, a low-reliability one only when nothing better exists; a gate
+  closed for review is a low-reliability partner of a scored start;
 - the tree implies relations the vocabulary does not state (a subset of a
   subset; a subset's inherited exclusions);
 - children's positives place a parent whose own distribution is weak;
@@ -138,6 +139,42 @@ def test_the_scoring_never_receives_a_failed_partner():
     assert names == {"CD3e"} and partners[0]["gate_confidence"] == "high"
 
 
+class _Run:
+    """Just what `Engine.evidence_gates` reads: the image's ledger."""
+
+    def __init__(self, entries):
+        from plexora.plugins.gating.server.autogate.engine import Engine
+
+        self.entries = entries
+        self._scoring_grade = Engine._scoring_grade
+
+    def ledger(self, project, *, without=None):
+        return {m: e for m, e in self.entries.items() if m != (without or {}).get("marker")}
+
+
+def test_a_gate_closed_for_review_is_a_low_partner_of_a_scored_start():
+    from plexora.plugins.gating.server.autogate import scoring
+    from plexora.plugins.gating.server.autogate.engine import Engine
+
+    review = {"grade": "failed", "state": "manual_review_recommended", "gate": 5.85}
+    # LSP23406: CD45 closed for review, and CD11c has no other positive partner.
+    gates = Engine.evidence_gates(_Run({"CD45": review}), {"project": "p", "marker": "CD11c"})
+    assert gates == {"CD45": (5.85, "low")}
+    lead = [p for p in scoring.evidence_partners(_panel(), "CD11c", gates) if p["marker"] == "CD45"]
+    assert lead and lead[0]["gate_confidence"] == "low" and lead[0]["down_weighted"]
+    # A reliable partner of the same kind is read instead: CD8a leans on CD3e.
+    run = _Run({"CD45": review, "CD3e": {"grade": "high", "state": "accepted", "gate": 5.82}})
+    gates = Engine.evidence_gates(run, {"project": "p", "marker": "CD8a"})
+    names = {p["marker"] for p in scoring.evidence_partners(_panel(), "CD8a", gates)}
+    assert "CD3e" in names and "CD45" not in names
+    # A gate that failed QC, or found no positives, is never leaned on.
+    for state in ("technically_failed", "no_positive_population"):
+        run = _Run({"CD45": {"grade": "failed", "state": state, "gate": 8.4}})
+        gates = Engine.evidence_gates(run, {"project": "p", "marker": "CD11c"})
+        assert gates == {"CD45": (8.4, "failed")}
+        assert not scoring.evidence_partners(_panel(), "CD11c", gates)
+
+
 # -- children place a weak parent ------------------------------------------------------------
 
 
@@ -190,11 +227,15 @@ def test_reliable_children_place_a_parent_whose_own_distribution_is_weak():
 class _Stub:
     """The parts of `Engine` the evidence-graph methods use."""
 
-    def __init__(self, units, options=None):
+    def __init__(self, units, options=None, entries=None):
         self.units = units
         self.options = {"defer_parents": True, **(options or {})}
+        self.entries = entries or {}
         self.events = []
         self.rescored = []
+
+    def panel_for(self, project):
+        return {"entries": self.entries}
 
     def units_of(self, project):
         return [u for u in self.units if u["project"] == project]
@@ -227,6 +268,19 @@ def test_a_weak_parent_waits_for_its_children_once_then_is_rescored():
     assert Engine.defer_for_children(stub, parent) is False
     assert parent["deferred"] == "resumed" and stub.rescored == [("CD45", True)]
     assert Engine.defer_for_children(stub, parent) is False       # never twice
+
+
+def test_a_weak_parent_never_waits_for_a_state_marker():
+    # PD-1 waits for its carriers, CD3e among them: CD3e waiting for PD-1 would
+    # let PD-1 run with CD3e pending.
+    from plexora.plugins.gating.server.autogate.engine import Engine
+
+    parent = _u("CD3e", "awaiting_t2", metrics={"d": 1.0}, scoring={"basis": "gmm+ceiling"},
+                evidence_plan={"children": ["PD-1", "CD8a"]})
+    stub = _Stub([parent, _u("PD-1", "awaiting_t2"), _u("CD8a", "accepted")],
+                 entries={"PD-1": {"role": "state"}, "CD8a": {"role": "lineage_reliable"}})
+    assert Engine.defer_for_children(stub, parent) is False
+    assert parent["deferred"] == "resumed" and stub.rescored == []
 
 
 def test_a_clear_or_looked_at_parent_never_waits():

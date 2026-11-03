@@ -62,6 +62,11 @@ def _without_close_split(state):
     return state
 
 
+#: Rules newer than the stored sessions this replays: off, so a replay
+#: reaches the stored decisions; an override turns one on to measure it.
+NEWER_OFF = {"flat_reads": None, "carriers": None, "redraw_invalid": False}
+
+
 def prepared(h, rules, seed, overrides=None):
     state = copy.deepcopy(h)
     for key, value in (("n_finite", 0), ("grown", {"up": 0, "down": 0}), ("split", [])):
@@ -72,7 +77,7 @@ def prepared(h, rules, seed, overrides=None):
     else:
         state = _without_close_split(state)
         fresh = {k: v for k, v in hypotheses.PARAMS.items() if k not in stored}
-        params = {**stored, **fresh, "split_at_close": False, **(overrides or {})}
+        params = {**stored, **fresh, "split_at_close": False, **NEWER_OFF, **(overrides or {})}
         state["seed"] = state.get("seed") or seed
     state["params"] = params
     return state

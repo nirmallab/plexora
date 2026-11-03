@@ -260,3 +260,23 @@ def make_gating_dataset(data_root, name="cohort", *, shifts=(0.0, 0.0, 0.4), gri
             shift=shift)
     registry.create(name, projects=list(made), known=list(made))
     return made
+
+
+def answer_review(session, started, link=None):
+    """Answer a started session's partner review with nothing to add or change
+    -- a reader that knows no biology -- so a test reads the session from where
+    it read it before the review existed. Stops at the first packet that is not
+    the review: it stays out, and the next `gating_next` returns it again."""
+    from plexora.agent import invoke
+
+    sid = started["session_id"]
+    for _ in range((started.get("partner_review") or {}).get("packets", 0)):
+        result = invoke(session, "gating_next", {"session_id": sid, "wait_s": 20}, link=link)
+        packet = (result.get("result") or {}).get("packet") or {}
+        if packet.get("kind") != "partner_review":
+            return
+        answered = invoke(session, "gating_answer", {
+            "session_id": sid, "packet_id": packet["packet_id"],
+            "answer": {"kind": "partner_review", "entries": []}, "include_next": False},
+            link=link)
+        assert answered["ok"], answered

@@ -132,6 +132,9 @@ def _run(tmp_path, name, options):
 
 
 def test_delta_and_trimmed_sheets_reach_the_same_gates_for_less(tmp_path, monkeypatch):
+    # The panel's partner review is asked once per panel: settled here, so
+    # neither measured run pays for it.
+    _run(tmp_path, "warm", {})
     gates_full, sent_full = _run(tmp_path, "full", {"evidence": "full", "sheets": "full"})
     gates_lean, sent_lean = _run(tmp_path, "lean", {})
     assert gates_lean == gates_full

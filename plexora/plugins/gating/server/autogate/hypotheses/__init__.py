@@ -52,7 +52,8 @@ VERSION = "6"
 #: (`tools/bench_gates/ablate.py ABL=v5`, `replay_v6.py`).
 V5_RULES = {"decision": "wilson", "sampling": "survey_refine", "split_at_close": True,
             "added_min_reads": 0, "strata": None, "uncertain_state": False,
-            "positive_sentinels": 0}
+            "positive_sentinels": 0, "flat_reads": None, "carriers": None,
+            "redraw_invalid": False}
 
 #: [cal] the controller's parameters (unmeasured until the dev bench).
 PARAMS = {
@@ -168,6 +169,32 @@ PARAMS = {
     # Clear positives among the sentinels (taking that many of `sentinels`):
     # off until the reader audit on the person's labelled cells (E0.5).
     "positive_sentinels": 0,
+    # Own stain read about as often at every value, in under half the cells
+    # (`controller.flat`): review at the start, not a climb to the last
+    # look's top. Each read interval's pooled share under one half, the
+    # lowest at least `floor`, within `rise` of each other, on `min_reads`
+    # definite reads over `min_looks` looks. [cal] set from one marker
+    # (ImageLSP23362 PD-1: 0.25 to 0.32); stored with the unit's params, so a
+    # session started without it keeps deciding without it.
+    "flat_reads": {"min_looks": 2, "min_reads": 16, "floor": 0.15, "rise": 0.15},
+    # A state marker's carriers (`Engine.carrier_start`): of the gated
+    # carrier lineages whose cleaned cells are above the marker's Auto gate
+    # more often than all cells are (`min_enrichment`: x1, no more often than
+    # any cell, is the null, not a tuned bar), the `top` by those positives;
+    # a split inside one is usable from
+    # `min_cells` cleaned cells when it holds within `tolerance` on cleaning,
+    # in the lineages the marker excludes and over `resamples` redraws of
+    # the cells (`bivariate.carrier_fit`). Its looks show `borderline`
+    # disputed cells, `sentinels` negatives of which `carrier_negatives` are
+    # carrier cells, and `anchors` clear positives (carrier cells standing
+    # above their neighbours). [cal] from one image (ImageLSP23362); stored
+    # with the unit's params, so a session started without it keeps drawing
+    # without it.
+    "carriers": {"top": 2, "min_enrichment": 1.0, "min_cells": 500, "resamples": 30,
+                 "borderline": 18, "carrier_negatives": 2, "anchors": 2},
+    # A look its controls discard is drawn again instead of counting
+    # against `looks_max` (`controller.looks_spent`).
+    "redraw_invalid": True,
 }
 
 #: Terminal status -> the unit's closed state (a review state writes the
@@ -230,6 +257,9 @@ def start(engine, unit) -> dict:
                               "reason": "the lattice has fewer than two candidate gates"}
         return unit["hypotheses"]
     params = {**PARAMS, "looks_max": int(engine.options["panel_looks"])}
+    if params.get("carriers") and (unit.get("carriers") or {}).get("chosen"):
+        # The carrier negatives and anchors take their place in the panel.
+        params["panel_cells"] = int(params["carriers"]["borderline"])
     at_start = points[int(cands["prior"])]["n_positive"] / max(1, col.n_finite)
     rare = at_start < params["rare_fraction"] or unit.get("class") == "long_tail"
     unit["hypotheses"] = {
@@ -310,17 +340,32 @@ def packet(engine, units):
     # Every look records which cells a brighter neighbour crowds (a record,
     # and what the bench's reader reads by); `strata` says whether the
     # reads are weighed by it (`controller.crowding`).
+    payload = {
+        "marker": unit["marker"],
+        "intervals": [{"from": iv["from"], "to": iv["to"], "n": iv["n"]}
+                      for iv in plan["intervals"]],
+        "exclude": _shown_ids(state), "n_sentinels": int(params["sentinels"]) - positive,
+        "sentinel_below": bounds[0], "seed": _seed(engine, state),
+        "ids": plan.get("ids") or [],
+        "n_positive_sentinels": positive, "sentinel_above": above_top if positive else None,
+        "strata_bounds": [float(b) for b in bounds],
+        "crowding_margin": float(params["tolerance"])}
+    carried = _carrier_payload(unit, params, bounds, col)
     with engine.timed("sample"):
-        sampled = tableops.local_or_node(ds, "gating.autogate.panel_cells", {
-            "marker": unit["marker"],
-            "intervals": [{"from": iv["from"], "to": iv["to"], "n": iv["n"]}
-                          for iv in plan["intervals"]],
-            "exclude": _shown_ids(state), "n_sentinels": int(params["sentinels"]) - positive,
-            "sentinel_below": bounds[0], "seed": _seed(engine, state),
-            "ids": plan.get("ids") or [],
-            "n_positive_sentinels": positive, "sentinel_above": above_top if positive else None,
-            "strata_bounds": [float(b) for b in bounds],
-            "crowding_margin": float(params["tolerance"])})
+        sampled = None
+        if carried:
+            try:
+                sampled = tableops.local_or_node(ds, "gating.autogate.panel_cells_carriers",
+                                                 {**payload, **carried})
+            except Exception as exc:
+                if ds.table.is_local:
+                    raise
+                # A node too old to draw them: today's panel, said so.
+                state["carriers_unsupported"] = str(exc)[:200]
+        if sampled is None:
+            sampled = tableops.local_or_node(ds, "gating.autogate.panel_cells", payload)
+    if sampled.get("anchors") is not None:
+        state.setdefault("anchors", []).append(sampled["anchors"])
     if sampled.get("crowding") is not None:
         state["crowding"] = {"bounds": [float(b) for b in bounds], "sizes": sampled["crowding"]}
     for cell in sampled["cells"]:
@@ -388,7 +433,9 @@ def packet(engine, units):
             {"number": c["number"], "cell_id": int(c["cell_id"]), "value": float(c["value"]),
              **({"sentinel": True, "side": c.get("side") or "negative"} if c.get("sentinel")
                 else {"interval": c.get("interval")}),
-             **({"crowded": int(c["crowded"])} if c.get("crowded") is not None else {})}
+             **({"anchor": True} if c.get("anchor") else {}),
+             **({"crowded": int(c["crowded"])} if c.get("crowded") is not None else {}),
+             **({"carrier": int(c["carrier"])} if c.get("carrier") is not None else {})}
             for c in arranged]},
     }
     shown = [(main, "panel_collage", "numbered cells, random order")]
@@ -399,6 +446,26 @@ def packet(engine, units):
     images = packets._images(pkt, tuple(shown))
     unit["last_manifest"] = main["manifest"]
     return pkt, images
+
+
+def _carrier_payload(unit, params, bounds, col) -> dict | None:
+    """What a carrier look adds to `panel_cells` (`panel.panel_cells`'s
+    carrier arguments), or None: no carriers chosen for the unit
+    (`Engine.carrier_start`) or a session started without them. Anchors
+    come from above the range's top by the tolerance, from a pool of at
+    least five times every anchor the marker's looks could show."""
+    rule = params.get("carriers")
+    chosen = (unit.get("carriers") or {}).get("chosen") or []
+    if not rule or not chosen:
+        return None
+    tolerance = float(params["tolerance"])
+    anchors = int(rule["anchors"])
+    return {"carriers": [{k: c[k] for k in ("marker", "low", "high")} for c in chosen],
+            "n_carrier_negatives": int(rule["carrier_negatives"]),
+            "n_anchors": anchors,
+            "anchor_above": float(col.from_fit(float(col.to_fit(bounds[-1])) + tolerance)),
+            "anchor_pool": 5 * anchors * (int(params["looks_max"]) + 1),
+            "anchor_margin": tolerance}
 
 
 def _panel_plots(engine, unit, ds, state, bounds, partners, seed):
@@ -578,27 +645,41 @@ def apply(engine, packet, answer) -> dict:
                          detail={"missing": missing, "allowed": numbers})
     transitions._note(unit, answer)
     cells = [dict(c, label=answer.cells[c["number"]]) for c in shown]
-    valid, record = sentinel_check(cells, int(state["params"]["sentinel_misses"]))
+    own_read = any(c.get("label") == evidence.OWN and not c.get("sentinel")
+                   for o in [*controller._valid(state), {"cells": cells}]
+                   for c in o.get("cells") or ())
+    valid, record = sentinel_check(cells, int(state["params"]["sentinel_misses"]),
+                                   own_read=own_read)
     state["observations"].append({
         "packet_id": packet.get("packet_id"), "plan": (packet.get("_panel") or {}).get("plan"),
         "cells": cells, "valid": valid, "sentinels": record})
     return step(engine, unit)
 
 
-def sentinel_check(cells, bar) -> tuple:
+def sentinel_check(cells, bar, *, own_read=True) -> tuple:
     """(valid, record) of one look's labelled cells: discarded when `bar`
     clear negatives were read stained, or `bar` clear positives (all of
     them, when fewer were shown) read unstained. `artifact` on a sentinel
-    is not a miss."""
+    is not a miss. A carrier look's anchors (`anchor`) count only once the
+    reader has called some evidence cell `own_stain` (`own_read`: this look
+    or an earlier valid one): read unstained by a reader who sees no stain
+    anywhere, they say the marker may have no positives here, which is the
+    looks' question (`positives_not_confirmed`), not a reader's slip."""
     sentinels = [c for c in cells if c.get("sentinel")]
     negatives = [c for c in sentinels if (c.get("side") or "negative") == "negative"]
     positives = [c for c in sentinels if c.get("side") == "positive"]
+    judged = [c for c in positives if own_read or not c.get("anchor")]
     misses = sum(1 for c in negatives if c["label"] == evidence.OWN)
-    missed = sum(1 for c in positives if c["label"] == evidence.NOT_OWN)
-    valid = misses < bar and (not positives or missed < min(bar, len(positives)))
+    missed = sum(1 for c in judged if c["label"] == evidence.NOT_OWN)
+    valid = misses < bar and (not judged or missed < min(bar, len(judged)))
+    anchors = [c for c in positives if c.get("anchor")]
     return valid, {"n": len(sentinels), "read_stained": misses,
                    **({"positive": len(positives), "read_unstained": missed}
-                      if positives else {})}
+                      if positives else {}),
+                   **({"anchors": len(anchors),
+                       "anchors_read_unstained": sum(1 for c in anchors
+                                                     if c["label"] == evidence.NOT_OWN),
+                       "anchors_judged": bool(own_read)} if anchors else {})}
 
 
 def reader(state) -> dict:
@@ -675,7 +756,8 @@ def _split_at_close(ds, marker, col, state, s):
 
 def finish(engine, unit, status):
     """Write the unit's outcome: a resolved leader goes through the numeric
-    checks (`settle`); anything else closes for review at the leader."""
+    checks (`settle`); anything else closes for review at the leader, or at
+    the start when the reads are not trusted or flat (`at_start`)."""
     state = unit["hypotheses"]
     state["status"] = status
     leader = state.get("leader")
@@ -689,7 +771,7 @@ def finish(engine, unit, status):
             # not choose. Its strata hold for this range only.
             state["status"] = None
             state["pending"] = check
-            state["params"]["looks_max"] = len(state["observations"]) + 1
+            state["params"]["looks_max"] = controller.looks_spent(state, state["params"]) + 1
             return
         posterior = (state.get("support") or {}).get("posterior")
         state["reason"] = (
@@ -706,10 +788,12 @@ def finish(engine, unit, status):
         engine.settle(unit)
         return
     state["reason"] = controller.REASONS.get(status, status)
-    if status != "readers_unreliable":
+    # These close at the start: the reads that chose the leader are not
+    # trusted (the sentinels), or say no value separates the stain.
+    at_start = status in ("readers_unreliable", "flat_reads")
+    if not at_start:
         state["reason"] += plateau_note(state)
-    proposed = leader if leader is not None and status != "readers_unreliable" \
-        else state.get("start")
+    proposed = leader if leader is not None and not at_start else state.get("start")
     engine.close(unit, CLOSE_STATE[status], f"cell panels: {state['reason']}",
                  proposed=proposed)
 
@@ -797,7 +881,34 @@ def provenance(unit) -> dict | None:
                              for o in state.get("observations") or ()],
             "confidence": ({"calibrated": state["calibrated"]} if state.get("calibrated")
                            else "uncalibrated"),
-            **_posterior_summary(state)}
+            **_posterior_summary(state), **_carrier_summary(unit, state)}
+
+
+def _carrier_summary(unit, state) -> dict:
+    """A state marker's carriers, as the provenance and the report say them:
+    which lineages carry it (and who said so), which were drawn from (cells,
+    grade), each split inside them (usable or why not), the start's inputs,
+    and per look the anchors shown (or why none) and how they were read."""
+    found = unit.get("carriers")
+    if not found:
+        return {}
+    out = {"listed": [f"{c['marker']} ({c['source']})" for c in found.get("listed") or ()],
+           "chosen": [{"marker": c["marker"], "n": c["n"], "grade": c["grade"],
+                       **{k: c[k] for k in ("positives", "enrichment") if k in c},
+                       "split": {k: (c.get("fit") or {}).get(k)
+                                 for k in ("usable", "low", "d", "raw_low", "n_clean",
+                                           "controls", "wander", "why")}}
+                      for c in found.get("chosen") or ()],
+           "skipped": found.get("skipped") or [], "start": found.get("start")}
+    looks = []
+    for anchors, obs in zip(state.get("anchors") or (), state.get("observations") or ()):
+        looks.append({**anchors, **{k: v for k, v in (obs.get("sentinels") or {}).items()
+                                    if k.startswith("anchors")}, "valid": obs.get("valid")})
+    if looks:
+        out["anchors"] = looks
+    if state.get("carriers_unsupported"):
+        out["node_unsupported"] = state["carriers_unsupported"]
+    return {"carriers": out}
 
 
 def _posterior_summary(state) -> dict:

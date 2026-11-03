@@ -179,10 +179,26 @@ def overlay(panel, record) -> dict:
     the stored panel is shared by every session of the panel and is never
     changed). Relations a context names are added, or set to its
     confidence, on vocabulary entries and tagged `context`; an entry the
-    user, metadata or an agent stated is left as it is."""
+    user, metadata or an agent stated is left as it is. Then what the
+    partner review of this panel in this context settled -- only the changes
+    it was sure of (`context.apply_changes`) -- then the partners a planner
+    proposed for the markers still naming none, for their tiles
+    (`context.apply_proposals`), and the carriers it named for state markers
+    (`context.apply_carriers`)."""
+    from plexora.plugins.gating.server.autogate import context
+
     ctxs = contexts_of(record)
+    proposed = context.proposals_for(panel, record)
+    changes = context.changes_for(panel, record)
+    carriers = context.carriers_planned(panel, record)
     if not ctxs:
-        return panel
+        if not any(proposed.values()) and not any(changes.values()) and not carriers:
+            return panel
+        out = context.apply_changes(copy.deepcopy(panel), changes)
+        context.apply_proposals(out, proposed)
+        context.apply_carriers(out, carriers)
+        out["order"], out["order_basis"] = context.order(out)
+        return out
     out = copy.deepcopy(panel)
     entries = out.get("entries") or {}
     by_canonical = {}
@@ -209,8 +225,9 @@ def overlay(panel, record) -> dict:
                         hit.update(confidence=confidence, context=ctx["name"])
                     changed.append({"a": a, "b": b, "relation": rel["relation"],
                                     "confidence": confidence, "context": ctx["name"]})
-    from plexora.plugins.gating.server.autogate import context
-
+    context.apply_changes(out, changes)
+    context.apply_proposals(out, proposed)
+    context.apply_carriers(out, carriers)
     out["biology"] = {"contexts": [c["name"] for c in ctxs], "relations": changed,
                       "source": (record or {}).get("source")}
     out["order"], out["order_basis"] = context.order(out)

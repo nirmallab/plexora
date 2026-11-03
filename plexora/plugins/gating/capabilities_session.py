@@ -670,6 +670,7 @@ def _plan(call, inp, images) -> dict:
 def _plan_fields(call, inp, images, plan) -> dict:
     """The planned part of a session record (`_plan`, then the pixel size,
     QC, biology and one unit per image and marker), plus `unresolved`."""
+    from plexora.plugins.gating.server.autogate import context
     from plexora.plugins.gating.server.autogate import engine as engines
     from plexora.plugins.gating.server.autogate import views
 
@@ -696,9 +697,22 @@ def _plan_fields(call, inp, images, plan) -> dict:
                                   "judges every gate on the pixels")
             units[engines.unit_key(project, marker)] = unit
     unresolved = [m for m in panel["unresolved"] if m in order]
+    # The planner reviews every marker's partners (`context.review_markers`,
+    # each batch twice): it fills empty partner slots whatever the context,
+    # and changes a stated relation only for a tissue or disease named or
+    # inferred. Once per panel and context; a later session reads what was
+    # settled. An auto-contrast session gates nothing, so asks nothing.
+    reviewed = context.review_markers(panel, biology_record, order) \
+        if inp.purpose == "gating" else []
+    queue = context.review_queue(reviewed) \
+        if reviewed and not context.review_done(panel, biology_record, reviewed) else []
+    settled = context.review_for(panel, biology_record) if reviewed and not queue else {}
     return {"order": order, "skipped_markers": plan["skipped"], "units": units,
             "panel_hash": panel["panel_hash"], "biology": biology_record,
             "panel_pending": bool(unresolved), "unresolved": unresolved,
+            "review_queue": queue, "review_pending": bool(queue),
+            "review_batches": len({q["batch"] for q in queue}),
+            "partner_review": context.review_brief(settled) if settled.get("done") else None,
             "channel_match": {k: match[k] for k in ("state", "n_markers", "n_matched",
                                                     "unmatched")},
             "pixel": pixel, "display": display, "qc_exclusion": qc_blocks,
@@ -709,7 +723,9 @@ def _unplanned_fields() -> dict:
     """A session waiting on a column it cannot plan without: planned at
     `_settle_setup`."""
     return {"order": [], "skipped_markers": [], "units": {}, "panel_hash": None,
-            "biology": None, "panel_pending": False, "unresolved": [], "channel_match": None,
+            "biology": None, "panel_pending": False, "unresolved": [],
+            "review_queue": [], "review_pending": False,
+            "review_batches": 0, "partner_review": None, "channel_match": None,
             "pixel": {}, "display": {}, "qc_exclusion": {}, "qc_missing": []}
 
 
@@ -933,6 +949,10 @@ def start(call, inp):
             "n_units": len(record["units"]), "lanes": engines.lanes_for(record),
             "skipped_markers": record["skipped_markers"],
             "unresolved_markers": unresolved, "mode": inp.mode,
+            **({"partner_review": {"markers": len({m for q in record["review_queue"]
+                                                   for m in q["markers"]}),
+                                   "packets": len(record["review_queue"])}}
+               if record.get("review_queue") else {}),
             "mirror": {k: record["mirror"].get(k) for k in ("status", "view_id", "last_error",
                                                             "hint") if record["mirror"].get(k)},
             "receipt": receipt.model_dump(mode="json"),
@@ -1548,9 +1568,10 @@ class NextInput(AgentModel):
 
 
 def _slim_mirror(mirror):
-    """What an agent needs of the viewer's mirror: whether it worked."""
+    """What an agent needs of the viewer's mirror: whether it worked, and
+    whether the tab is watching at all (`detached`)."""
     if mirror.get("status") in ("ok", "queued") and not mirror.get("last_error"):
-        return {k: mirror[k] for k in ("status", "sent", "resent") if k in mirror}
+        return {k: mirror[k] for k in ("status", "sent", "resent", "detached") if k in mirror}
     return mirror
 
 
@@ -1805,6 +1826,8 @@ def _subject(packet):
         return "expression source"
     if kind == "panel_context":
         return "panel context"
+    if kind == "partner_review":
+        return "partner review"
     if kind == "replan":
         return "re-planning"
     if kind == "pixel_setup":
@@ -2356,6 +2379,10 @@ def _full_status(engine, st, inp, guide, reader):
         # learned for later panels only once a person confirms it
         # (`set_panel_context` with source user).
         out["unconfirmed_context"] = list(record["unconfirmed_context"])
+    if record.get("partner_review"):
+        # The planner's review of the panel's partners: only the changes both
+        # draws were sure of were made; `tiles_only` drew empty slots alone.
+        out["partner_review"] = record["partner_review"]
     return out
 
 

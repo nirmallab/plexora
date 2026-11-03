@@ -16,7 +16,7 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 
-from tests.autogate_fixtures import FakeData, make_gating_project
+from tests.autogate_fixtures import FakeData, answer_review, make_gating_project
 
 
 # -- structural channels -----------------------------------------------------------------
@@ -306,6 +306,7 @@ def test_a_marker_sent_to_review_is_written_and_tagged_not_left_ungated(tmp_path
     sid = started["result"]["session_id"]
     assert "DNA" in started["result"]["skipped_markers"]          # named, still not gated
     jobs.drain(120)
+    answer_review(session, started["result"])
     packet = invoke(session, "gating_next", {"session_id": sid})["result"]["packet"]
     for _ in range(2):
         bad = invoke(session, "gating_answer", {"session_id": sid,

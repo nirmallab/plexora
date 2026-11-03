@@ -11,7 +11,23 @@
 # relation   subset       this marker's positives should be positive for the partner
 #            coexpressed  the two are usually positive together
 #            exclusive    the two should almost never be positive together
+#            subset_any   every positive is positive for at least one of the marker's
+#                         subset_any partners, one per lineage that carries it, and only
+#                         some cells of each are (LAG-3 on T or NK cells). Two or more.
+#                         It draws a look's expected partner; nothing that weighs a gate
+#                         reads it, and on a panel missing one of them it is not used
 # confidence high | moderate | low
+# expression which cells carry the marker, in plain words, and how that varies with
+#            the tissue. A marker whose carriers depend on the tissue (PD-L1, HLA-DR)
+#            names no partners here: a gating session's planner fills its empty partner
+#            slots from this note and the panel's lineages, and reviews every relation
+#            here against the tissue or disease named or inferred; only a change it is
+#            sure of twice is made (autogate/context.py `settle_review`), for that
+#            context only
+#
+# These relations hold in general. A tissue or disease can break one (an immune
+# disease, a cancer whose tumour cells carry a myeloid marker): the review is
+# where that is caught, never by editing a relation here for one sample.
 # binary     false for markers expressed on a continuum (HLA-ABC, B2M, PD-L1): there
 #            is no valley, but there is background, so the gate marks where real
 #            expression rises out of it (autogate/scoring.py, the `onset`
@@ -50,6 +66,8 @@ markers:
     role: lineage_reliable
     compartment: membrane
     lineage: immune (all leukocytes)
+    expression: "every leukocyte, lymphoid and myeloid; never epithelial, tumour, stromal or
+      endothelial cells; dim on some myeloid and plasma cells"
     binary: true
     partners:
       - {marker: PanCK, relation: exclusive, confidence: high}
@@ -64,6 +82,8 @@ markers:
     role: state
     compartment: membrane
     lineage: naive T cells, B cells and most NK cells
+    expression: "naive T cells, most B cells and NK cells; an isoform of CD45, so only on CD45+
+      immune cells"
     binary: true
     partners:
       - {marker: CD45, relation: subset, confidence: high}
@@ -75,6 +95,8 @@ markers:
     role: state
     compartment: membrane
     lineage: memory and activated T cells; also some myeloid cells
+    expression: "memory and activated T cells, some myeloid cells; an isoform of CD45, so only on
+      CD45+ immune cells"
     binary: true
     partners:
       - {marker: CD45, relation: subset, confidence: high}
@@ -86,6 +108,8 @@ markers:
     role: lineage_reliable
     compartment: membrane
     lineage: T cells
+    expression: "every T cell (helper, cytotoxic, regulatory, gamma-delta); not B, NK, myeloid or
+      non-immune cells"
     binary: true
     partners:
       - {marker: CD45, relation: subset, confidence: high}
@@ -100,6 +124,8 @@ markers:
     role: lineage_other
     compartment: membrane
     lineage: helper T cells; also monocytes and macrophages (weaker)
+    expression: "helper and regulatory T cells, bright; monocytes, macrophages and some dendritic
+      cells, dim"
     binary: true
     partners:
       - {marker: CD45, relation: subset, confidence: high}
@@ -115,6 +141,7 @@ markers:
     role: lineage_other
     compartment: membrane
     lineage: cytotoxic T cells
+    expression: "cytotoxic T cells; dimmer on some NK cells and a dendritic-cell subset"
     binary: true
     partners:
       - {marker: CD3, relation: subset, confidence: high}
@@ -128,6 +155,7 @@ markers:
     role: lineage_reliable
     compartment: membrane
     lineage: B cells
+    expression: "B cells (naive, memory, germinal centre); lost by plasma cells"
     binary: true
     partners:
       - {marker: CD45, relation: subset, confidence: high}
@@ -139,6 +167,7 @@ markers:
     role: lineage_other
     compartment: membrane
     lineage: B cells
+    expression: "B cells, including early plasmablasts: broader than CD20 within the B lineage"
     binary: true
     partners:
       - {marker: CD45, relation: subset, confidence: high}
@@ -150,6 +179,8 @@ markers:
     role: lineage_other
     compartment: cytoplasmic
     lineage: macrophages and monocytes
+    expression: "macrophages and monocytes, granular in the cytoplasm; dimmer on dendritic cells,
+      some fibroblasts and some tumour cells"
     binary: true
     partners:
       - {marker: CD45, relation: subset, confidence: moderate}
@@ -162,6 +193,7 @@ markers:
     role: lineage_other
     compartment: membrane
     lineage: M2-like macrophages
+    expression: "M2-like and tissue-resident macrophages: a subset of the CD68+ macrophages"
     binary: true
     partners:
       - {marker: CD68, relation: coexpressed, confidence: moderate}
@@ -173,6 +205,8 @@ markers:
     role: lineage_other
     compartment: membrane
     lineage: myeloid cells
+    expression: "myeloid cells (monocytes, macrophages, neutrophils, some dendritic cells) and NK
+      cells"
     binary: true
     partners:
       - {marker: CD45, relation: subset, confidence: moderate}
@@ -183,6 +217,7 @@ markers:
     role: lineage_other
     compartment: membrane
     lineage: dendritic cells and some macrophages
+    expression: "dendritic cells and many macrophages; some activated B and NK cells"
     binary: true
     partners:
       - {marker: CD45, relation: subset, confidence: moderate}
@@ -193,6 +228,7 @@ markers:
     role: lineage_other
     compartment: membrane
     lineage: NK cells; neuroendocrine cells
+    expression: "NK cells; some T cells (NKT), neuroendocrine cells and nerves"
     binary: true
     partners:
       - {marker: CD3, relation: exclusive, confidence: low}
@@ -202,6 +238,7 @@ markers:
     role: lineage_other
     compartment: membrane
     lineage: NK cells, non-classical monocytes, neutrophils and some macrophages
+    expression: "NK cells, non-classical monocytes, neutrophils and some macrophages"
     binary: true
     partners:
       - {marker: CD45, relation: subset, confidence: high}
@@ -214,6 +251,7 @@ markers:
     role: lineage_other
     compartment: membrane
     lineage: NK cells and terminally differentiated T cells
+    expression: "terminally differentiated NK and T cells; also neural and neuroendocrine cells"
     binary: true
     partners:
       - {marker: CD45, relation: subset, confidence: high}
@@ -226,6 +264,7 @@ markers:
     role: lineage_other
     compartment: cytoplasmic
     lineage: neutrophils (granules)
+    expression: "neutrophils only, in their granules; outside cells in extracellular traps"
     binary: true
     partners:
       - {marker: CD45, relation: subset, confidence: moderate}
@@ -237,6 +276,7 @@ markers:
     role: state
     compartment: nuclear
     lineage: regulatory T cells
+    expression: "regulatory T cells (CD3+CD4+, rarely CD8+); weak in some tumours"
     binary: true
     partners:
       - {marker: CD45, relation: subset, confidence: high}
@@ -251,6 +291,8 @@ markers:
     role: lineage_reliable
     compartment: cytoplasmic
     lineage: epithelial and carcinoma cells
+    expression: "epithelial and carcinoma cells, mesothelium; not immune, stromal or endothelial
+      cells"
     binary: true
     partners:
       - {marker: CD45, relation: exclusive, confidence: high}
@@ -262,6 +304,8 @@ markers:
     role: tumour_stromal
     compartment: membrane
     lineage: epithelial cells
+    expression: "epithelial cells, at their junctions; reduced on invasive or poorly cohesive tumour
+      cells"
     binary: true
     partners:
       - {marker: PanCK, relation: coexpressed, confidence: high}
@@ -272,6 +316,7 @@ markers:
     role: lineage_reliable
     compartment: nuclear
     lineage: melanocytes, melanoma, glia
+    expression: "melanocytes and melanoma, Schwann cells and glia, myoepithelial cells"
     binary: true
     partners:
       - {marker: CD45, relation: exclusive, confidence: high}
@@ -283,6 +328,7 @@ markers:
     role: tumour_stromal
     compartment: cytoplasmic
     lineage: melanocytes and melanoma
+    expression: "melanocytes and differentiated melanoma; lost on dedifferentiated melanoma"
     binary: true
     partners:
       - {marker: SOX10, relation: coexpressed, confidence: moderate}
@@ -293,6 +339,8 @@ markers:
     role: tumour_stromal
     compartment: nuclear_cytoplasmic
     lineage: melanocytic, neural and dendritic cells
+    expression: "melanocytic and neural cells, Langerhans and other dendritic cells, some
+      macrophages and myoepithelium"
     binary: false
     partners:
       - {marker: SOX10, relation: coexpressed, confidence: moderate}
@@ -303,6 +351,8 @@ markers:
     role: state
     compartment: nuclear
     lineage: cycling cells (any lineage)
+    expression: "cycling cells of any lineage (tumour, immune, stromal): no lineage holds all of its
+      positives"
     binary: true
     caveats: [intensity follows the cell cycle; a dim tail of G1 cells is expected]
 
@@ -311,6 +361,8 @@ markers:
     role: state
     compartment: membrane
     lineage: activated and exhausted T cells
+    expression: "activated and exhausted T cells, brightest on follicular helper T cells; weak on
+      some B and myeloid cells"
     binary: true
     partners:
       - {marker: CD3, relation: subset, confidence: moderate}
@@ -322,6 +374,9 @@ markers:
     role: state
     compartment: membrane
     lineage: tumour cells, macrophages, dendritic cells
+    expression: "mostly myeloid cells (macrophages, dendritic cells); tumour cells in some cancers;
+      weak on activated T and B cells. Which lineages carry it, and how many of their
+      cells, depends on the tumour"
     binary: false
     caveats: ["graded; scored clinically by fraction at a fixed cut-off, not by a valley"]
 
@@ -330,6 +385,7 @@ markers:
     role: state
     compartment: cytoplasmic
     lineage: cytotoxic T and NK cells
+    expression: "cytotoxic T cells and NK cells; plasmacytoid dendritic cells in some tissues"
     binary: true
     partners:
       - {marker: CD45, relation: subset, confidence: moderate}
@@ -339,6 +395,8 @@ markers:
     role: state
     compartment: membrane
     lineage: antigen-presenting cells; activated T cells; some tumours
+    expression: "antigen-presenting cells (dendritic cells, macrophages, B cells); activated T
+      cells; tumour cells in some cancers. Which lineages carry it depends on the tissue"
     binary: false
 
   - canonical: aSMA
@@ -346,6 +404,7 @@ markers:
     role: tumour_stromal
     compartment: cytoplasmic
     lineage: myofibroblasts, smooth muscle, pericytes
+    expression: "smooth muscle, myofibroblasts and pericytes: vessel walls and stroma"
     binary: true
     partners:
       - {marker: CD45, relation: exclusive, confidence: moderate}
@@ -360,6 +419,7 @@ markers:
     role: tumour_stromal
     compartment: membrane
     lineage: endothelial cells
+    expression: "endothelial cells; dimmer on platelets, some macrophages and some leukocytes"
     binary: true
     morphology: fibrous
     caveats: [thin vessel walls wrap the nuclei beside them]
@@ -372,6 +432,8 @@ markers:
     role: tumour_stromal
     compartment: cytoplasmic
     lineage: mesenchymal cells (and many others)
+    expression: "mesenchymal cells (fibroblasts, endothelium, smooth muscle), immune cells and some
+      tumours: broad"
     binary: false
     caveats: [broadly and gradedly expressed]
     morphology: fibrous
@@ -381,6 +443,7 @@ markers:
     role: signalling
     compartment: nuclear_cytoplasmic
     lineage: any
+    expression: "any cell with active MAPK signalling"
     binary: false
     caveats: [a signalling readout; gate only on explicit request]
 
@@ -389,6 +452,7 @@ markers:
     role: signalling
     compartment: cytoplasmic
     lineage: any
+    expression: "any cell with active mTOR signalling"
     binary: false
     caveats: [a signalling readout; gate only on explicit request]
 
@@ -397,6 +461,8 @@ markers:
     role: signalling
     compartment: nuclear
     lineage: any
+    expression: "any cell with active STAT3 signalling (cytokine-stimulated immune, tumour or
+      stromal cells)"
     binary: false
     caveats: [a signalling readout; gate only on explicit request]
 
@@ -405,6 +471,7 @@ markers:
     role: state
     compartment: membrane
     lineage: all nucleated cells; lost or reduced on some tumour cells
+    expression: "all nucleated cells; lost or reduced on some tumour cells"
     binary: false
     partners:
       - {marker: B2M, relation: coexpressed, confidence: high}
@@ -416,6 +483,7 @@ markers:
     role: state
     compartment: membrane
     lineage: all nucleated cells; lost or reduced on some tumour cells
+    expression: "all nucleated cells, with HLA class I; lost or reduced on some tumour cells"
     binary: false
     partners:
       - {marker: HLAABC, relation: coexpressed, confidence: high}
@@ -426,6 +494,7 @@ markers:
     role: state
     compartment: nuclear
     lineage: cycling cells (any lineage)
+    expression: "cycling and repairing cells of any lineage"
     binary: false
     partners:
       - {marker: Ki67, relation: coexpressed, confidence: moderate}
@@ -441,9 +510,14 @@ markers:
     role: state
     compartment: membrane
     lineage: exhausted T cells, NK cells, macrophages and dendritic cells
+    expression: "exhausted T cells, NK cells, macrophages and dendritic cells"
     binary: true
     partners:
       - {marker: CD45, relation: subset, confidence: moderate}
+      - {marker: CD3, relation: subset_any, confidence: moderate}
+      - {marker: CD56, relation: subset_any, confidence: moderate}
+      - {marker: CD68, relation: subset_any, confidence: moderate}
+      - {marker: CD11c, relation: subset_any, confidence: moderate}
     caveats: [weak and broad on myeloid cells; dense infiltrates spill between neighbours]
 
   - canonical: LAG3
@@ -451,9 +525,12 @@ markers:
     role: state
     compartment: membrane
     lineage: activated and exhausted T cells, NK cells
+    expression: "activated and exhausted T cells and NK cells; a few plasmacytoid dendritic cells"
     binary: true
     partners:
       - {marker: CD45, relation: subset, confidence: moderate}
+      - {marker: CD3, relation: subset_any, confidence: moderate}
+      - {marker: CD56, relation: subset_any, confidence: moderate}
     caveats: [low dynamic range in most panels; few positives]
 
   - canonical: TIGIT
@@ -461,15 +538,19 @@ markers:
     role: state
     compartment: membrane
     lineage: T cells and NK cells
+    expression: "T cells (regulatory, exhausted, follicular helper) and NK cells"
     binary: true
     partners:
       - {marker: CD45, relation: subset, confidence: moderate}
+      - {marker: CD3, relation: subset_any, confidence: moderate}
+      - {marker: CD56, relation: subset_any, confidence: moderate}
 
   - canonical: CTLA4
     synonyms: [CTLA-4, CD152]
     role: state
     compartment: cytoplasmic
     lineage: regulatory and activated T cells
+    expression: "regulatory and activated T cells"
     binary: true
     partners:
       - {marker: CD45, relation: subset, confidence: high}
@@ -481,6 +562,7 @@ markers:
     role: state
     compartment: nuclear
     lineage: naive and stem-like memory T cells
+    expression: "naive and stem-like memory T cells; some NK and innate lymphoid cells"
     binary: true
     partners:
       - {marker: CD45, relation: subset, confidence: moderate}
@@ -492,24 +574,33 @@ markers:
     role: state
     compartment: nuclear
     lineage: Th1 and cytotoxic T cells, NK cells, some B cells
+    expression: "Th1 and cytotoxic T cells, NK cells, some memory B cells"
     binary: true
     partners:
       - {marker: CD45, relation: subset, confidence: high}
+      - {marker: CD3, relation: subset_any, confidence: moderate}
+      - {marker: CD56, relation: subset_any, confidence: moderate}
+      - {marker: CD20, relation: subset_any, confidence: moderate}
 
   - canonical: CD103
     synonyms: [ITGAE, alphaE integrin]
     role: state
     compartment: membrane
     lineage: tissue-resident memory T cells, some dendritic cells
+    expression: "tissue-resident memory T cells (mostly CD8+) and intraepithelial lymphocytes; some
+      dendritic cells"
     binary: true
     partners:
       - {marker: CD45, relation: subset, confidence: moderate}
+      - {marker: CD3, relation: subset_any, confidence: moderate}
+      - {marker: CD11c, relation: subset_any, confidence: moderate}
 
   - canonical: TUBB3
     synonyms: [TubbIII, TUBB-III, beta-III tubulin, beta3-tubulin, TUJ1]
     role: tumour_stromal
     compartment: cytoplasmic
     lineage: neurons and nerves; many melanomas and other tumours
+    expression: "neurons and nerves; many melanomas and some carcinomas"
     binary: true
     partners:
       - {marker: CD45, relation: exclusive, confidence: moderate}
@@ -520,6 +611,8 @@ markers:
     role: tumour_stromal
     compartment: membrane
     lineage: neural crest-derived cells, nerves, dedifferentiated melanoma
+    expression: "nerves and Schwann cells, neural crest-derived and dedifferentiated melanoma cells,
+      some fibroblasts"
     binary: true
     partners:
       - {marker: CD45, relation: exclusive, confidence: moderate}
@@ -530,6 +623,7 @@ markers:
     role: tumour_stromal
     compartment: nuclear
     lineage: epithelial progenitors, chondrocytes, some melanomas
+    expression: "epithelial progenitors and some carcinomas, chondrocytes, some melanomas"
     binary: true
     partners:
       - {marker: CD45, relation: exclusive, confidence: moderate}
@@ -539,6 +633,7 @@ markers:
     role: lineage_other
     compartment: membrane
     lineage: plasma cells; also squamous epithelium
+    expression: "plasma cells; squamous and other epithelia; some carcinomas"
     binary: true
     partners:
       - {marker: CD3, relation: exclusive, confidence: moderate}
@@ -549,5 +644,6 @@ markers:
     role: signalling
     compartment: cytoplasmic
     lineage: interferon-responsive macrophages, tumour and endothelial cells
+    expression: "interferon-responsive macrophages, tumour and endothelial cells; secreted"
     binary: false
     caveats: [a secreted chemokine; vessels autofluoresce in its channel in some panels]

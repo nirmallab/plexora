@@ -27,7 +27,7 @@ from plexora.plugins.gating.server.autogate import cells as cellmod
 from plexora.plugins.gating.server.autogate import profile as profmod
 
 #: The vocabulary's relations, and "independent" for a pair it relates not at all.
-RELATIONS = (*vocabulary.RELATIONS, "independent")
+RELATIONS = (*vocabulary.PAIR_RELATIONS, "independent")
 
 #: [cal] how far a relation may be off before it is called a contradiction.
 THRESHOLDS = {"coexpressed_expected": 0.7, "exclusive_tolerated": 0.15,
@@ -235,6 +235,152 @@ def purity_excess(ds, marker, low, partner, partner_gate, *, relation, high=None
 WITHIN = {"min_cells": 200, "components": (3, 2), "max_orphan": 0.5}
 
 
+def _fit_within(col, values, mask, seed):
+    """(split, d, body): the Auto gate's rule on the cells of `mask` -- the
+    marker's values there in its column's fit units, the floor spike off, a
+    mixture of `WITHIN["components"]` and its crossover (`profile.pools`) --
+    with the separation (Ashman d) of the two pools; (None, None, body) when
+    no mixture fits."""
+    body = np.sort(col.to_fit(values[mask]))
+    body = body[profmod.floor_spike(body):]
+    split, d = _fit_body(body, seed)
+    return split, d, body
+
+
+def _fit_body(body, seed):
+    """(split, d): `_fit_within`'s mixture and crossover on values already
+    in fit units; (None, None) when no mixture fits."""
+    fitted = None
+    for k in WITHIN["components"]:
+        fitted = profmod._fit_light(body, k, seed=seed)
+        if fitted is not None:
+            break
+    if fitted is None:
+        return None, None
+    pool = profmod.pools(fitted)
+    return pool["gate"], profmod._pair_d(pool["mu_bg"], pool["sd_bg"],
+                                         pool["mu_pos"], pool["sd_pos"])
+
+
+def _wander(body, split, *, resamples, sure, seed):
+    """How far a split moves when the cells are drawn again: over
+    `resamples` bootstrap draws of `body` (fit units), the `sure` quantile
+    of |the redrawn split - `split`| -- the move it stays within that
+    often. None when half the draws fit no mixture."""
+    rng = np.random.default_rng(seed + 1)
+    moved = []
+    for i in range(int(resamples)):
+        again, _d = _fit_body(np.sort(rng.choice(body, size=body.size)), seed + i)
+        if again is not None:
+            moved.append(abs(float(again) - float(split)))
+    if len(moved) < resamples / 2:
+        return None
+    return float(np.quantile(moved, sure))
+
+
+def _positive(ds, gate):
+    """The cells `gate` ({marker, low, high}) calls positive."""
+    v = cellmod.values(ds, gate["marker"])
+    return gate_rule.passes(v, float(gate["low"]), float(gate["high"])) & np.isfinite(v)
+
+
+def _carrier_cells(ds, values, carrier, exclusives):
+    """(inside, clean): the carrier's cells with a value of the marker
+    (`values`), and those of them positive for none of `exclusives` -- the
+    lineages the carrier excludes, whose positives among its cells are
+    another lineage's or a neighbour's spill."""
+    inside = _positive(ds, carrier) & np.isfinite(values)
+    clean = inside.copy()
+    for other in exclusives:
+        clean &= ~_positive(ds, other)
+    return inside, clean
+
+
+def carrier_enrichment(ds, marker, low, carrier, *, exclusives=()) -> dict:
+    """How much more often a carrier's cells carry the marker than the
+    average cell: the share of its cleaned cells (`_carrier_cells`, as
+    `carrier_fit` fits them) above `low` -- the marker's whole-population
+    Auto gate -- over the share of every cell. A lineage the planner names
+    that carries the marker no more than any cell is not a carrier here
+    (LSP23362 PD-1: x1.9 in the CD68 cells, x0.30 once the T cells touching
+    them are cleaned out). {n_clean, positives, share, enrichment}."""
+    va = cellmod.values(ds, marker)
+    finite = np.isfinite(va)
+    above = finite & gate_rule.passes(va, float(low), float(np.nanmax(va[finite])))
+    _inside, clean = _carrier_cells(ds, va, carrier, exclusives)
+    base = above.sum() / max(int(finite.sum()), 1)
+    positives = int((above & clean).sum())
+    share = positives / max(int(clean.sum()), 1)
+    return {"n_clean": int(clean.sum()), "positives": positives, "share": round(share, 4),
+            "enrichment": round(share / base, 3) if base > 0 else None}
+
+
+def carrier_fit(ds, marker, carrier, *, exclusives=(), controls=(), min_cells=500,
+                stable=0.2, resamples=30, sure=0.8, seed=0) -> dict:
+    """A state marker's split inside one carrier lineage (PD-1 inside the T
+    cells), as the start's evidence beside the whole population's
+    (`Engine.carrier_start`).
+
+    `carrier` is {marker, low, high} (a gate this run settled); `exclusives`
+    [{marker, low, high}] the gated lineages the carrier excludes -- cells
+    positive for any of them are another lineage's or a neighbour's spill
+    and are cleaned out; `controls` gated lineages the marker is not common
+    in (`Engine._marker_controls`: every carrier excludes them).
+    The marker is fitted (`_fit_within`) inside the raw carrier cells and
+    inside the cleaned ones. The split is `usable` from `min_cells` cleaned
+    cells when it holds within `stable` (fit units, the gate tolerance)
+    three ways:
+    - on cleaning: a split the contamination makes moves or goes when it is
+      removed;
+    - in no control: the same split in a lineage that does not carry the
+      marker is the channel's background (LSP23362: PD-1 split at 6.45 in
+      the cleaned T cells and at 6.46 in the tumour cells);
+    - on drawing the cells again (`_wander`), with probability `sure` (the
+      engine's `resolve_p`, its bar for a gate very likely within the
+      tolerance): a split the fit places by chance moves (PD-1 in the T
+      cells: 6.43-7.09), and so does one the Auto gate's pooling places two
+      ways (a third component splitting one group).
+    The separation d is recorded, never a bar: one lopsided peak alone
+    scores d near 2 with this fit, and a real split with a long background
+    tail can score below 1. {usable, low, d, n, n_clean, raw_low, raw_d,
+    controls, wander, why}."""
+    col = profmod.column(ds, marker)
+    va = cellmod.values(ds, marker)
+    inside, clean = _carrier_cells(ds, va, carrier, exclusives)
+    out ={"carrier": carrier["marker"], "n": int(inside.sum()), "n_clean": int(clean.sum()),
+           "cleaned_of": [o["marker"] for o in exclusives], "usable": False}
+    if out["n_clean"] < min_cells:
+        return {**out, "why": f"{out['n_clean']} cells after cleaning, fewer than {min_cells}"}
+    raw, raw_d, _ = _fit_within(col, va, inside, seed)
+    split, d, body = _fit_within(col, va, clean, seed)
+    if split is None or raw is None:
+        return {**out, "why": "no mixture fits"}
+    out.update(low=float(col.from_fit(split)), d=round(float(d), 3),
+               raw_low=float(col.from_fit(raw)), raw_d=round(float(raw_d), 3))
+    if abs(float(split) - float(raw)) > stable:
+        return {**out, "why": f"the split moved {abs(float(split) - float(raw)):.2f} on "
+                              "cleaning: it comes from the contamination"}
+    out["controls"] = []
+    for other in controls:
+        cells = _positive(ds, other) & ~inside & np.isfinite(va)
+        if int(cells.sum()) < min_cells:
+            continue
+        there, _d, _body = _fit_within(col, va, cells, seed)
+        row = {"marker": other["marker"], "n": int(cells.sum()),
+               "low": None if there is None else float(col.from_fit(there))}
+        out["controls"].append(row)
+        if there is not None and abs(float(there) - float(split)) <= stable:
+            return {**out, "why": f"the same split ({row['low']:.2f}) in {other['marker']}+ "
+                                  "cells, which do not carry it: the channel's background"}
+    wander = _wander(body, split, resamples=resamples, sure=sure, seed=seed)
+    out["wander"] = None if wander is None else round(wander, 3)
+    if wander is None:
+        return {**out, "why": "most redrawn cells fit no mixture"}
+    if wander > stable:
+        return {**out, "why": f"the split wanders {wander:.2f} when the cells are drawn again"}
+    return {**out, "usable": True, "why": "a split that holds inside the carrier"}
+
+
 def within_partner(ds, marker, partner, partner_gate, *, current=None, seed=0) -> dict:
     """The marker's gate among the partner's positives only: a subset marker
     whose stain is real inside the partner's population and noise (or another
@@ -262,19 +408,10 @@ def within_partner(ds, marker, partner, partner_gate, *, current=None, seed=0) -
         return {**out, "ok": False,
                 "reason": f"only {n_in} {partner}-positive cells; a conditional gate needs "
                           f"{WITHIN['min_cells']}"}
-    body = np.sort(col.to_fit(va[inside]))
-    body = body[profmod.floor_spike(body):]
-    fitted = None
-    for k in WITHIN["components"]:
-        fitted = profmod._fit_light(body, k, seed=seed)
-        if fitted is not None:
-            break
-    d, gate_fit, method = None, None, None
-    if fitted is not None:
-        pool = profmod.pools(fitted)
-        d = profmod._pair_d(pool["mu_bg"], pool["sd_bg"], pool["mu_pos"], pool["sd_pos"])
-        if d >= profmod.THRESHOLDS["weak_d"]:
-            gate_fit, method = pool["gate"], "gmm_within"
+    split, d, body = _fit_within(col, va, inside, seed)
+    gate_fit, method = None, None
+    if split is not None and d >= profmod.THRESHOLDS["weak_d"]:
+        gate_fit, method = split, "gmm_within"
     control = negative_control(ds, marker, float(current if current is not None else
                                                  col.from_fit(body[len(body) // 2])),
                                partner, float(partner_gate), relation="subset")

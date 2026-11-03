@@ -18,6 +18,29 @@ What a reader answers in a `panel_context` packet is used by this session
 and listed in the status as `unconfirmed_context`; the vocabulary learns it
 only once the user confirms it (`set_panel_context`, `source: "user"`).
 
+`partner_review` packets go through every marker, each batch twice. Fill
+each marker's `empty` partner slots from the `panel`, reading its
+`expression` note against their lineages: `subset` for one lineage,
+`subset_any` for any of several (one partner per lineage, every one the note
+names that the panel marks), `coexpressed` only when most cells of both are
+positive, `exclusive` only for a lineage the note does not name, each with a
+`basis`. Then list in `checks` the stated relations that hold less in this
+`sample`, and add what its tissue or disease calls for. Say `high` only when
+sure; a change to a stated relation also needs a `basis` naming the sample's
+tissue or disease. With none named, give the one the panel tells you in
+`inferred_context`, if it does. A change is made only when both answers give
+it that way; code drops what breaks the rules; otherwise the vocabulary's
+partners stand, and an empty slot's partner draws only the look's tile.
+For a `state` marker (it lists `carriers_stated`), also give `carriers`: the
+panel's lineage markers whose cells carry it, as its `expression` note names
+them, most cells first. Those both answers name join the stated ones; of
+those gated in the run whose cells carry the marker more often than the
+average cell, the two holding the most of its positives set the marker's
+start beside the whole population and supply its looks' carrier negatives
+and clear positives. Name a lineage only where the marker is common in it:
+one where it is rare is dropped on the numbers anyway.
+Status `partner_review` lists what was changed and the context used.
+
 ## The sample's biology
 
 When the user names the sample's biology, pass it to `gating_session_start`
@@ -53,6 +76,7 @@ the markers it cannot place in the panel context.
     `user_stated` with the user's value; only that one is written to the
     project (as `set_pixel_size` would).
   - `panel_context`: as above, only what you know.
+  - `partner_review`: as above; nothing to change is an empty answer.
   - `display_setup`: how bright each marker is drawn, once per image (the
     choice outlives the session): per row, the columns where the background
     reads as a faint floor (`background_ok`) and where the row's `pattern`

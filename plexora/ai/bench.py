@@ -352,6 +352,9 @@ class TruthAgent:
             return {"kind": kind,
                     "markers": {k: "keep_for_review" for k in allowed.get("markers") or ()},
                     "images": {p: "not_image_level" for p in allowed.get("images") or ()}}
+        if kind == "partner_review":
+            # Nor does it know a tissue's biology: the stated partners stand.
+            return {"kind": kind, "entries": []}
         return {"kind": "panel_context", "entries": []}
 
 

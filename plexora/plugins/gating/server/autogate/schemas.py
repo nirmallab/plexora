@@ -105,8 +105,11 @@ USER_SETUP_KINDS = ("expression_setup",)
 #: `display_setup` (how bright each marker is drawn, chosen on a contrast
 #: grid -- `agent/evidence/display_grid.py`) comes after the panel context,
 #: per image, before that image's first look: every later picture is drawn
-#: with what it settles.
-SETUP_KINDS = USER_SETUP_KINDS + ("pixel_setup", "panel_context", "display_setup")
+#: with what it settles. `partner_review` (the planner's review of every
+#: marker's partners for a stated tissue or disease, each batch asked twice:
+#: `context.settle_review`) comes after the panel context too.
+SETUP_KINDS = USER_SETUP_KINDS + ("pixel_setup", "panel_context", "partner_review",
+                                  "display_setup")
 #: Re-planning after failures (`replan`): the planning task's, out alone,
 #: and asked any time during the run -- not set-up, which comes first.
 PLAN_KINDS = ("replan",)
@@ -154,6 +157,8 @@ NARRATION = {
     "t1_strip": "Reviewing {n} markers whose populations split cleanly, at a glance.",
     "transfer_check": "Checking that the {marker} threshold holds on the other images.",
     "panel_context": "Reading the panel to learn which markers belong together.",
+    "partner_review": "Checking which markers belong together in this sample's tissue and "
+                      "disease.",
     "replan": "Re-planning the rest of the panel around the markers that failed.",
     "expression_setup": "Working out which expression values to gate on.",
     "pixel_setup": "Estimating this image's pixel size from the size of its nuclei.",

@@ -55,6 +55,8 @@ allowance (asked of the user, or granted), or manual review. Never accepted.
 
 from __future__ import annotations
 
+import copy
+
 from plexora.plugins.gating.server.autogate import schemas
 from plexora.plugins.gating.server.autogate.engine import ENGINE, TERMINAL, unit_key
 
@@ -873,6 +875,63 @@ def apply_panel(engine, packet, answer):
             "order": engine.record["order"]}
 
 
+def apply_review(engine, packet, answer):
+    """One draw of one batch of the partner review: each marker's verdicts
+    and additions checked (`context.check_review`, `context.check_proposal`
+    on the panel with this answer's own drops), kept with the panel, and --
+    once every batch is in twice -- the review settled: only what both draws
+    gave at high confidence is made, and a change to a stated relation only
+    with a basis in the sample's context (`context.settle_review`)."""
+    from plexora.plugins.gating.server.autogate import context
+
+    evidence = packet.get("evidence") or {}
+    draw = int(evidence.get("draw") or context.REVIEW_DRAWS[0])
+    batch = int((evidence.get("batch") or [1])[0]) - 1
+    asked = [m.get("marker") for m in evidence.get("markers") or ()]
+    project = engine.record["images"][0]
+    stored = context.for_project(engine.call.session.data(project))
+    view = engine.panel_for(project)
+    sample = engine.record.get("biology")
+    answers_, refused = {}, []
+    for entry in answer.entries:
+        if entry.marker not in asked:
+            refused.append({"marker": entry.marker, "reason": "not a marker of this packet"})
+            continue
+        checks, bad = context.check_review(view, entry.marker,
+                                           [c.model_dump() for c in entry.checks])
+        drops = [{"marker": entry.marker, "partner": c["marker"], "relation": c["relation"]}
+                 for c in checks if c["verdict"] == "does_not_hold_here"]
+        draft = context.apply_changes(copy.deepcopy(view), {"drop": drops})
+        adds, bad_adds = context.check_proposal(draft, entry.marker,
+                                                [p.model_dump() for p in entry.partners])
+        carriers, bad_carriers = context.check_carriers(view, entry.marker, entry.carriers)
+        answers_[entry.marker] = {"checks": checks, "partners": adds, "carriers": carriers}
+        refused += [{"marker": entry.marker, "partner": r.get("marker"), "reason": r["reason"]}
+                    for r in bad + bad_adds + bad_carriers]
+    inferred = answer.inferred_context.model_dump() if answer.inferred_context else None
+    context.store_review_draw(stored, sample, draw, answers_, asked, inferred=inferred)
+    queue = [q for q in engine.record.get("review_queue") or ()
+             if (q["batch"], q["draw"]) != (batch, draw)]
+    engine.record["review_queue"] = queue
+    engine.record["review_pending"] = bool(queue)
+    outcome = {"draw": draw, "batch": batch + 1, "markers": asked, "refused": refused}
+    if not queue:
+        settled = context.settle_review(stored, sample, view=view)
+        engine.record["partner_review"] = context.review_brief(settled)
+        touched = {}
+        for kind, items in settled["changes"].items():
+            for change in items:
+                line = f"{kind} {change['relation']} {change['marker']} ~ {change['partner']}"
+                for name in (change["marker"], change["partner"]):
+                    touched.setdefault(name, []).append(line)
+        for unit in engine.record["units"].values():
+            if unit["marker"] in touched:
+                unit["context_changes"] = touched[unit["marker"]]
+        outcome["settled"] = engine.record["partner_review"]
+    context.save(stored)
+    return outcome
+
+
 def apply_replan(engine, packet, answer):
     """The planning task's verdicts on what failed (`replan.apply`)."""
     from plexora.plugins.gating.server.autogate import replan
@@ -1124,7 +1183,8 @@ def apply_transfer(engine, packet, answer):
 APPLY = {"t2_confirm": apply_t2, "t3_biological": apply_t3, "t4_candidates": apply_t4,
          "qc_confirm": apply_qc, "absence_check": apply_absence,
          "regression_confirm": apply_regression,
-         "t1_strip": apply_strip, "panel_context": apply_panel, "replan": apply_replan,
+         "t1_strip": apply_strip, "panel_context": apply_panel,
+         "partner_review": apply_review, "replan": apply_replan,
          "transfer_check": apply_transfer, "expression_setup": apply_expression,
          "pixel_setup": apply_pixel, "display_setup": apply_display}
 

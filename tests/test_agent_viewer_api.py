@@ -16,6 +16,7 @@ from plexora.agent.attach import ServerLink
 from plexora.agent.sessions import mirror as session_mirror
 from plexora.server.models import viewer_sessions as vs
 from tests.agent_fixtures import make_synthetic_project
+from tests.autogate_fixtures import answer_review
 
 #: These exercise Pro (AI) capabilities, so they run with a test licence
 #: installed; what Free refuses is tests/test_licensing_enforcement.py's job.
@@ -178,6 +179,7 @@ def test_a_mirrored_gating_session_shows_the_tab_what_the_agent_sees(served, tmp
             "mirror_delay_ms": 0, "display_check": "rule"}, link=served)
         assert started["ok"], started
         jobs.drain(60)
+        answer_review(session, started["result"], link=served)
         answer = invoke(session, "gating_next", {"session_id": started["result"]["session_id"]},
                         link=served)
         assert answer["ok"], answer
@@ -231,6 +233,10 @@ def test_a_detached_session_leaves_the_tab_be_and_attach_replays_the_packet(serv
             "mirror_delay_ms": 0, "display_check": "rule"}, link=served)["result"]
         sid = started["session_id"]
         jobs.drain(60)
+        answer_review(session, started, link=served)
+        # The review packets' mirror runs on its own thread: settled first,
+        # so `before` counts every command they sent.
+        assert session_mirror.wait_idle(sid)
         engine.store().set_control(sid, viewer_detached=True)
         before = len(tab.seen)
         packet = invoke(session, "gating_next", {"session_id": sid},
@@ -274,6 +280,7 @@ def test_the_mirror_does_not_repeat_what_the_tab_already_shows(served, tmp_path)
             "scope": "project", "project": "gsynth", "markers": ["CD4"], "mirror": True,
             "mirror_delay_ms": 0, "display_check": "rule"}, link=served)["result"]
         jobs.drain(60)
+        answer_review(session, started, link=served)
         invoke(session, "gating_next", {"session_id": started["session_id"]}, link=served)
         assert session_mirror.wait_idle(started["session_id"])
         types = [c["type"] for c in tab.seen]
@@ -303,6 +310,7 @@ def test_a_slow_hd_swap_is_waited_for(served, tmp_path, monkeypatch):
                 "scope": "project", "project": "gsynth", "markers": ["CD4"], "mirror": True,
                 "mirror_delay_ms": 0, "display_check": "rule"}, link=served)["result"]
             jobs.drain(60)
+            answer_review(session, started, link=served)
             invoke(session, "gating_next", {"session_id": started["session_id"]}, link=served)
             assert session_mirror.wait_idle(started["session_id"], 30)
             mirror = invoke(session, "gating_session_status",
@@ -366,10 +374,10 @@ def test_a_contrast_check_is_shown_settling_marker_by_marker(served, tmp_path):
         jobs.drain(60)
         packet = invoke(session, "gating_next", {"session_id": sid}, link=served)["result"]["packet"]
         while packet["kind"] != "display_setup":
-            assert packet["kind"] == "panel_context", packet["kind"]
+            assert packet["kind"] in ("panel_context", "partner_review"), packet["kind"]
             packet = invoke(session, "gating_answer", {
                 "session_id": sid, "packet_id": packet["packet_id"],
-                "answer": {"kind": "panel_context", "entries": []}},
+                "answer": {"kind": packet["kind"], "entries": []}},
                 link=served)["result"]["next"]["packet"]
         rows = [r["marker"] for r in packet["evidence"]["rows"]]
         before = len(tab.seen)

@@ -85,7 +85,9 @@ READING_GUIDE = {
                     "stays dark), four magenta ticks around its nucleus. Top right, context: the "
                     "marker at one fixed window for the whole marker, the judged cell's outline "
                     "white, its neighbours' thin grey. Bottom left, the expected partner "
-                    "(`partner_panels.expected`) alone in grey, bottom right the not-expected one "
+                    "(`partner_panels.expected`) alone in grey -- several joined by 'or' are "
+                    "drawn together: the marker is carried by any of them -- bottom right the "
+                    "not-expected one "
                     "(`partner_panels.not_expected`): each at its own gate's 40 % grey, the judged "
                     "cell outlined in magenta, black when there is none. An expected partner lit "
                     "inside the outline supports the cell's own stain; a not-expected partner lit "
@@ -136,8 +138,10 @@ READING_GUIDE = {
               "touching that nucleus with no other nucleus inside it (a ring or halo around "
               "it, a fill inside it, cytoplasm hugging it); `not_own_stain` -- nothing "
               "touches the nucleus, or the stain is a neighbour's or apart by a dark gap; "
-              "`uncertain` -- the picture cannot say; `artifact` -- debris, a fold, an edge "
-              "or a smear across cells. The cells come from across the marker's range in "
+              "`uncertain` -- the picture cannot say; `artifact` -- debris, a fold, an edge, "
+              "a smear across cells, or a haze or streaks lighting the field alike with no "
+              "edge at this cell's outline (a fibrous stain's bands: `panel_fibrous`). The "
+              "cells come from across the marker's range in "
               "random order, so a row means nothing; judge every cell on its own, by shape, "
               "not brightness. In a crowded field a ring may be partial: stain on the "
               "sides that touch no other cell, or all round it inside a cluster of stained "
@@ -171,7 +175,8 @@ READING_GUIDE = {
     "collage_panel_m": ("each cell is a 2 x 2 block. Top: morphology (the marker windowed on "
                         "this cell's own brightest pixels) and context (one fixed window for "
                         "the marker, the judged cell outlined white). Bottom: the expected "
-                        "partner (`partner_panels.expected`) and the not-expected one "
+                        "partner (`partner_panels.expected`; several joined by 'or' are drawn "
+                        "together, any of them may carry the marker) and the not-expected one "
                         "(`partner_panels.not_expected`) alone in grey, the judged cell "
                         "outlined magenta, black when there is none. The partners are context: "
                         "an expected partner lit inside the outline is consistent with the "
@@ -1693,6 +1698,21 @@ def _strip_verdicts():
     return list(get_args(get_args(annotation)[1]))
 
 
+#: What each relation a planner may propose in the partner review means
+#: (`context.check_proposal` keeps the rules a prompt cannot).
+PROPOSED_RELATIONS = {
+    "subset": "every positive is positive for this partner: all its carriers are one "
+              "lineage the panel marks (PD-1: T cells)",
+    "subset_any": "every positive is positive for at least one of these partners, and only "
+                  "some cells of each are: one partner per lineage that carries it, every "
+                  "lineage the note names that the panel marks (PD-L1: the panel's myeloid "
+                  "markers and its tumour marker)",
+    "coexpressed": "most cells of each are positive for the other -- rarely true of a marker "
+                   "only some cells of a lineage carry",
+    "exclusive": "almost never positive together: only a lineage the note does not name",
+}
+
+
 def panel_context(engine, units):
     from plexora.plugins.gating.server.autogate import context
 
@@ -1719,6 +1739,98 @@ def panel_context(engine, units):
                      "rule": "your entries order the markers and pick references; they never "
                              "move a gate, and the vocabulary outranks them"},
         "allowed": ["entries"],
+        "_image_meta": [],
+    }
+    return packet, []
+
+
+#: What a `partner_review` verdict does when it is sure (`context.settle_review`).
+REVIEW_VERDICTS = {
+    "holds": "true here as stated: leave it out of `checks`",
+    "weaker_here": "true for fewer cells or less reliably in this sample: its confidence "
+                   "goes one step down",
+    "does_not_hold_here": "this sample's tissue or disease breaks it: it is dropped for this "
+                          "sample",
+}
+
+
+def partner_review(engine, units):
+    """One batch of the partner review, in one of its two draws
+    (`context.review_queue`): each marker's stated partners, its `expression`
+    note and lineage, the panel's lineages and the sample's context. Draw 2
+    lists the markers and their partners in reverse order: an answer that
+    changes with the order is not a sure one (`context.settle_review`)."""
+    from plexora.plugins.gating.server.autogate import context
+
+    queue = engine.record.get("review_queue") or []
+    if not queue:
+        engine.record["review_pending"] = False
+        return None
+    item = queue[0]
+    project = engine.record["images"][0]
+    panel = engine.panel_for(project)
+    entries = panel["entries"]
+    flip = item["draw"] != context.REVIEW_DRAWS[0]
+    markers = [m for m in item["markers"] if m in entries]
+    if flip:
+        markers = markers[::-1]
+
+    def described(marker):
+        entry = entries[marker]
+        stated = context.reviewable(panel, marker)
+        open_ = {(p["marker"], p["relation"]) for p in stated}
+        fixed = [{"marker": p["marker"], "relation": p["relation"]}
+                 for p in entry.get("partners") or []
+                 if (p["marker"], p["relation"]) not in open_ and not p.get("proposed")]
+        carriers = [c["marker"] for c in context.carriers_for(panel, marker)
+                    if c["source"] == "vocabulary"]
+        return {"marker": marker, "role": entry.get("role"), "lineage": entry.get("lineage"),
+                "expression": entry.get("expression"),
+                "partners": stated[::-1] if flip else stated,
+                "empty": sorted(context.empty_slots(panel, marker)),
+                **({"fixed": fixed} if fixed else {}),
+                **({"carriers_stated": carriers} if context.wants_carriers(entry) else {})}
+
+    record = engine.record.get("biology") or {}
+    named = context.stated_context(record)
+    if named:
+        sample = {k: record[k] for k in ("said", "contexts", "original") if record.get(k)}
+    elif record.get("source") == "inferred" and record.get("contexts"):
+        sample = {"contexts": record["contexts"], "inferred": "from the panel's markers",
+                  **({"basis": record["basis"]} if record.get("basis") else {})}
+    else:
+        sample = {"named": "no tissue or disease was named"}
+    n_batches = engine.record.get("review_batches") or item["batch"] + 1
+    question = (
+        "Review each marker in `markers`. Fill its `empty` partner slots (`co`: a partner its "
+        "positives are expected in; `anti`: one they are not) from the markers in `panel`, "
+        "reading its `expression` note against their lineages. Then, for this sample "
+        "(`sample`), say which stated `partners` hold less here (`checks`, as `verdicts` "
+        "means) and add what its tissue or disease calls for beside them. Each partner is a "
+        "word as `relations` means it, with a `basis`. Say `high` only when you are sure; "
+        "a change to a stated relation also needs a basis naming the sample's tissue or "
+        "disease. Anything less leaves the stated partners as they are. For a `state` marker "
+        "(it has `carriers_stated`), list in `carriers` the lineage markers of `panel` in "
+        "whose cells it is common, as its `expression` note names them, most cells first -- "
+        "the stated ones too; never a lineage in which it is rare. A marker with nothing to "
+        "add or change is left out. `fixed` relations "
+        "were stated by a person or for this tissue, and are not reviewed.")
+    if not named:
+        question += (" No tissue or disease was named: if the panel's markers tell you one, "
+                     "give it in `inferred_context` (`high` only when they leave no doubt).")
+    packet = {
+        "question": question,
+        "evidence": {
+            "project": project, "draw": item["draw"], "batch": [item["batch"] + 1, n_batches],
+            "markers": [described(m) for m in markers],
+            "panel": [{"marker": m, "role": entries[m].get("role"),
+                       "lineage": entries[m].get("lineage")}
+                      for m in panel["markers"] if entries[m].get("role") != "context"],
+            "sample": sample, "relations": PROPOSED_RELATIONS, "verdicts": REVIEW_VERDICTS,
+            "rule": "a change is made only when both of two answers give it at high "
+                    "confidence; one to a stated relation only with a basis in the sample's "
+                    "tissue or disease; otherwise the vocabulary's partners stand"},
+        "allowed": {"markers": markers},
         "_image_meta": [],
     }
     return packet, []
@@ -1772,8 +1884,8 @@ BUILDERS = {"t2_confirm": t2_confirm, "t3_biological": t3_biological,
             "t4_candidates": t4_candidates, "qc_confirm": qc_confirm,
             "absence_check": absence_check,
             "regression_confirm": regression_confirm, "t1_strip": t1_strip,
-            "panel_context": panel_context, "replan": replan_packet,
-            "transfer_check": transfer_check,
+            "panel_context": panel_context, "partner_review": partner_review,
+            "replan": replan_packet, "transfer_check": transfer_check,
             "expression_setup": expression_setup, "pixel_setup": pixel_setup,
             "display_setup": display_setup}
 

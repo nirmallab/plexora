@@ -91,7 +91,13 @@ One session option, `SessionOptions.tiles` (default False). On, every look's
 collage draws each cell as a 2 x 2 block (`collage.LAYOUTS["t2m"]`, 64 px
 panels): morphology; the context with the judged cell's outline white; one
 expected and one not-expected partner channel, each windowed so its gate sits
-at 40 % grey (`collage.PARTNER_GATE_GREY`), the judged outline magenta. The
+at 40 % grey (`collage.PARTNER_GATE_GREY`), the judged outline magenta. A gate
+low in the partner's display window is drawn on the asinh curve that also puts
+the display's white at 95 % grey (`PARTNER_WHITE_GREY`, `display_curve.solve`):
+LSP23362's CD45 gate alone set white at 1,437 against a display white of
+7,865, every lit cell clipped, and the reader called cells `not_own_stain`
+from a white Pan-CK tile (CD68: 68 % white on those, 18 % on accepted ones).
+A higher gate, or one above the display's white, keeps the gate's window. The
 partners come from the panel context's vocabulary relations alone
 (`partners.partner_plan`, gated ones first; `Engine.partner_panels`); a look
 that asked for a reference shows it in the panel its relation belongs to.
@@ -99,6 +105,60 @@ Guide entries `collage_t2m`, `collage_flips_m`. The pictures differ, so a
 tiles session's packets carry `tiles:1` in their memo key; off, packets, memo
 keys, provenance and gates are the session's without it, byte for byte. The
 bench runs it as `--variants baseline,tiles`.
+
+Engine v2's cell panels (`hypotheses.packet`) draw the same 2 x 2 block
+whenever the marker has a partner, whatever `tiles` says.
+
+**Groups and proposed partners (2026-11-02).** A marker carried by any of
+several lineages names them as one `subset_any` group (TIM-3: CD3, CD56, CD68,
+CD11c): every positive is positive for at least one member, only some cells of
+each are. The expected tile draws the group together, each member at its own
+window, the brightest pixel kept, captioned with the names joined by "or".
+On a panel missing a member (`subset_any_missing`, or a member with no
+channel) the group is not drawn and the plan falls back to the pairs.
+
+**The partner review (2026-11-02).** Every gating session's planner goes
+through every marker (`partner_review` set-up packets, `review_markers`, 12 a
+packet, each batch twice -- draw 2 in reverse order), with each marker's
+`expression` note (markers.yaml), its stated partners and `empty` slots
+(`context.empty_slots`: PD-L1 has both, CD45 its expected one), every panel
+marker's lineage and the sample's context. The vocabulary's relations hold
+in general; empty slots exist on every panel, and a tissue or disease can
+break a relation (CD68 exclusive of Pan-CK where tumour cells carry CD68).
+`context.check_proposal` and `check_review` keep the rules a prompt cannot:
+a basis per item, no restated relation, no two exclusive `subset` partners,
+no `exclusive` partner the positives sit in or under. A change is made only
+when it is sure (`settle_review`): both draws give it identically, both at
+`high`, it passes the rules on the panel as changed, and the agreed changes
+stay within max(3, 25 % of the stated relations) -- more and none is made.
+Filling an empty slot needs no more. Changing a stated relation -- a drop, a
+weakening, an addition beside a stated partner of its kind -- also needs a
+context each basis names (`review_context`): the one a person or the
+metadata named; else the one the panel's markers imply (`biology.infer`);
+else the one both draws read off the panel at `high` (`inferred_context`).
+An inferred one is always said to be. Sure: `does_not_hold_here` drops the
+relation from both entries and from what the tree derives (`dropped_pairs`),
+`weaker_here` lowers it one confidence step, an addition joins at moderate
+tagged `planner` and is evidence like a vocabulary relation. Never touched:
+relations a person, the metadata or a biology.yaml context stated. Not sure:
+listed (`unsure`), the vocabulary stands, and draw 1's partners for empty
+slots draw the tiles only (`proposed`): `hierarchy._evidence` leaves them out
+of the tree, references, scoring, the lineage screen and re-planning,
+`context._edges` out of the order, `Engine._links` out of the waits, and
+`partner_plan` ranks them after every stated partner of their kind. Kept per
+panel and context (`context.proposal_key`) and laid on by `biology.overlay`;
+status `partner_review`, units `context_changes`. Auto-contrast sessions
+gate nothing and ask nothing. The review is its own AI task,
+`gating.partner_review` (text, reasoning): planning's kinds share one answer
+schema already at `harness.schema.VERIFIED`, and the review's answer is its
+own shape -- typed partners, required strings, 14 optional fields and 4
+unions. Until the registry is synced (`tools/bioc_sync.py`) the gateway
+serves it at the product's default model. For each `state` marker the
+review also names its **carriers** -- the panel's lineages whose cells carry
+it (`ReviewEntry.carriers`, kept when both draws name it; a stored review
+without them is asked again once, `context.REVIEW_VERSION`). They set the
+marker's start beside the whole population and give its v2 panels carrier
+negatives and clear positives (`GATING_ENGINE_V2.md`, Carriers).
 
 Split looks, tried and removed (2026-10-20): a dim marker's first look and
 every look at candidates drew each cell as DNA | marker (display black to the
@@ -1015,7 +1075,14 @@ partner's errors. So the run keeps an evidence graph
   (`context.references_for`) take moderate+ only and exclude state readouts;
   the scoring's partners (`scoring.evidence_partners`) take all usable ones,
   and a low-reliability partner leads only when no reliable one can, at
-  `low_lead_weight`.
+  `low_lead_weight`. For the scoring a gate closed for review (a review
+  write, `not_binary`, `insufficient_information`) counts as `low`, not
+  `failed` (`Engine._scoring_grade`); failed QC and no positives stay
+  `failed`. LSP23406: CD45 closed for review at 5.85 left CD11c and CD163
+  no positive partner, and their starts came from their distributions (5.78,
+  6.26); read as `low`, co-expression with CD45 gives 5.55 and 5.98. On
+  LSP23362's two runs, where a reliable partner was always there, no start
+  moved.
 - **Upward evidence**: reliable children's `sens:` values that agree
   (`children_min`, within `children_agree_sd`) give the `children`
   candidate, which leads only when the parent's own evidence is weak (no

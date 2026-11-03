@@ -38,6 +38,13 @@ def test_prompts_resources_and_webp_packets(tmp_path):
             session_id = json.loads(started.content[-1].text)["session_id"]
             await anyio.to_thread.run_sync(jobs.drain, 60)
             packet = await c.call_tool("gating_next", {"session_id": session_id})
+            # The partner review comes first and has no pictures: nothing to change.
+            while json.loads(packet.content[-1].text)["packet"]["kind"] == "partner_review":
+                review = json.loads(packet.content[-1].text)["packet"]
+                await c.call_tool("gating_answer", {
+                    "session_id": session_id, "packet_id": review["packet_id"],
+                    "answer": {"kind": "partner_review", "entries": []}, "include_next": False})
+                packet = await c.call_tool("gating_next", {"session_id": session_id})
             images = [part for part in packet.content if isinstance(part, ImageContent)]
             assert images and all(part.mime_type == "image/webp" for part in images)
             body = json.loads(packet.content[-1].text)

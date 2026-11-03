@@ -56,6 +56,60 @@ def test_the_multi_view_collage_draws_partners_and_redraws_byte_for_byte(tmp_pat
         session.close()
 
 
+def test_a_partner_tile_keeps_its_gate_at_grey_and_its_display_white_short_of_white(tmp_path):
+    """A gated partner's tile: its gate always at `PARTNER_GATE_GREY` (the
+    reader is told so). A gate low in its display window is drawn on a curve
+    that also puts the display's white at `PARTNER_WHITE_GREY` (LSP23362's
+    CD45: a gate of 719 made the white 1,437 against a display white of
+    7,865, and every lit cell clipped); higher gates keep the gate's window."""
+    import math
+
+    from plexora.agent.evidence import collage
+    from plexora.agent.expression import values_logged
+    from plexora.plugins.gating.server.autogate import cells as cellmod
+    from plexora.server.utils import display_curve
+
+    make_gating_project(tmp_path, grid=16, size=640)
+    session = AgentSession()
+    try:
+        ds = session.data("gsynth")
+        c = cellmod.cells(ds)
+        rows = [{"label": "a", "key": "above", "cells": [
+            {"cell_id": int(c.ids[i]), "x": float(c.xs[i]), "y": float(c.ys[i]), "value": 1.0}
+            for i in range(0, 30, 5)]}]
+
+        def drawn(gate_px):
+            gate = math.log1p(gate_px) if values_logged(ds) else gate_px
+            out = collage.render_collage(
+                session, ds, layout="t2m", rows=rows, marker="CD8", gate=1.5,
+                partners={"co": "CD3", "anti": "CD20", "gates": {"CD3": gate}},
+                fmt="png", store=False)
+            manifest = out["manifest"]
+            channel = next(ch for ch in manifest["channels"] if ch["name"] == "CD3")
+            window = manifest["partner_windows"]["CD3"]
+            curve = manifest["partner_curves"]["CD3"]
+            return channel, window, curve, out
+
+        channel, _, _, _ = drawn(1.0)
+        black, white = channel["window"]
+        span = white - black
+        for at in (0.1, 0.7, 1.5):          # low in the window, high, above its white
+            gate_px = black + at * span
+            channel, window, curve, out = drawn(gate_px)
+            assert window[0] == black
+            assert abs(display_curve.level(gate_px, window, curve)
+                       - collage.PARTNER_GATE_GREY) < 1e-3, at
+            shown = display_curve.level(white, window, curve)
+            if at < collage.PARTNER_GATE_GREY / collage.PARTNER_WHITE_GREY:
+                assert curve and curve["kind"] == "asinh"
+                assert abs(shown - collage.PARTNER_WHITE_GREY) < 1e-3
+            else:
+                assert curve == channel.get("curve") and shown <= collage.PARTNER_WHITE_GREY
+            assert collage.rerender(session, ds, out["manifest"])["png"] == out["png"]
+    finally:
+        session.close()
+
+
 def test_the_multi_view_look_costs_at_most_a_fifth_more_pixels():
     from plexora.agent.evidence import collage
 

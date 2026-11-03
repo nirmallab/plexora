@@ -743,25 +743,31 @@ class Engine(BaseEngine):
         """{co, anti, gates, markers} for a multi-view look (`collage`'s `co` /
         `anti` panels): one expected and one not-expected partner of the
         marker (`partners.partner_plan`: gated partners first), by image channel, with the gates this run holds for
-        them; {} when the marker has none."""
-        from plexora.plugins.gating.server.autogate import partners, views
+        them; {} when the marker has none. A `subset_any` group is one
+        expected panel: its channels as a list, drawn together."""
+        from plexora.plugins.gating.server.autogate import context, partners, views
 
         ds = _data(self.call, unit["project"])
-        entries = self.panel_for(unit["project"]).get("entries") or {}
+        panel = self.panel_for(unit["project"])
+        entries = panel.get("entries") or {}
         channels = {m: views.image_channel(ds, m) for m in ds.table.markers}
         present = {m for m, c in channels.items() if c and m != unit["marker"]}
         book = self.ledger(unit["project"], without=unit)
         gated = {m: e["gate"] for m, e in book.items()
                  if e["grade"] not in ("failed", "pending") and e.get("gate") is not None}
-        plan = partners.partner_plan(entries, unit["marker"], present, {}, 1, set(gated))
+        plan = partners.partner_plan(entries, unit["marker"], present, {}, 1, set(gated),
+                                     dropped=context.dropped_pairs(panel))
         out = {"markers": {}, "gates": {}}
         for p in plan:
             if p["kind"] in out["markers"]:
                 continue
+            members = p.get("members") or [p["marker"]]
             out["markers"][p["kind"]] = p["marker"]
-            out[p["kind"]] = channels[p["marker"]]
-            if p["marker"] in gated:
-                out["gates"][channels[p["marker"]]] = float(gated[p["marker"]])
+            out[p["kind"]] = [channels[m] for m in members] if p.get("members") \
+                else channels[p["marker"]]
+            for m in members:
+                if m in gated:
+                    out["gates"][channels[m]] = float(gated[m])
         return out if out["markers"] else {}
 
     def unit_ref(self, unit):
@@ -1556,12 +1562,32 @@ class Engine(BaseEngine):
 
     def evidence_gates(self, unit):
         """{marker: (gate, grade)}: every marker of the unit's image this run
-        decided, graded by `hierarchy.grade` -- failed ones included, so the
-        selection can say it avoided them. The scoring's partners, wider than
-        the two references a look plots."""
-        return {m: (e["gate"], e["grade"])
+        decided, graded by `hierarchy.grade` as a scored start reads it
+        (`_scoring_grade`) -- failed ones included, so the selection can say
+        it avoided them. The scoring's partners, wider than the two references
+        a look plots."""
+        return {m: (e["gate"], self._scoring_grade(e))
                 for m, e in self.ledger(unit["project"], without=unit).items()
                 if e["grade"] != "pending"}
+
+    @staticmethod
+    def _scoring_grade(entry) -> str:
+        """A ledger entry's grade as a scored start reads it. A gate closed
+        for manual review counts as `low`, not `failed`: down-weighted, and
+        leading a start only where no reliable partner of the same kind is
+        (`hierarchy.select`, `scoring.score`). Such a gate is most often near
+        right, and without it a marker can be left with no positive partner
+        at all -- LSP23406, CD45 closed for review at 5.85 (6.02 accepted in
+        another run): CD11c and CD163 started from their distributions, 5.78
+        and 6.26, where co-expression with CD45 gives 5.55 and 5.98. Replayed
+        on LSP23362's two runs, where a reliable partner was always there, no
+        start moved. A gate that failed QC or found no positives stays
+        `failed` (`_carrier_grade` draws the same line); the references a
+        look plots are graded as before."""
+        if entry["grade"] != "failed" or entry.get("gate") is None \
+                or entry.get("state") in ("technically_failed", "no_positive_population"):
+            return entry["grade"]
+        return "low"
 
     def propose(self, unit, *, rescore=False):
         """Score the unit's candidate thresholds (`scoring.score`) before its
@@ -1595,6 +1621,7 @@ class Engine(BaseEngine):
         unit.pop("lattice", None)
         if proposal is None:
             unit["start"] = {"source": "gmm", "low": unit["gmm"]}
+            self.carrier_start(unit, ds)
             self.observed_start(unit, ds)
             self.vision_start(unit, ds)
             return unit["scoring"]
@@ -1610,9 +1637,211 @@ class Engine(BaseEngine):
         self.log(event="scored", unit=unit_key(unit["project"], unit["marker"]),
                  proposal=float(proposal), gmm=unit["gmm"],
                  basis=result.get("proposal_source"), leading=result.get("leading"))
+        self.carrier_start(unit, ds)
         self.observed_start(unit, ds)
         self.vision_start(unit, ds)
         return unit["scoring"]
+
+    def _gated(self, ds, marker, low) -> dict:
+        """{marker, low, high, n}: a gate this run holds and the cells it
+        calls (the plain rule, QC-kept cells)."""
+        from plexora.agent import gate_rule
+        from plexora.plugins.gating.server.autogate import cells as cellmod
+
+        high = float(profmod.column(ds, marker).sorted32[-1])
+        v = cellmod.values(ds, marker)
+        n = int((gate_rule.passes(v, float(low), high) & np.isfinite(v)).sum())
+        return {"marker": marker, "low": float(low), "high": high, "n": n}
+
+    @staticmethod
+    def _carrier_grade(entry) -> str | None:
+        """The grade a gate of this run is drawn on with as a carrier, or
+        None. Unlike a reference, a gate closed for manual review still
+        serves (`review`): the whole population stands beside it in the
+        start, and a split its errors make fails the cleaning test. A gate
+        that failed outright or found no positives is written at the
+        column's maximum and holds no carrier cells."""
+        grade = entry.get("grade")
+        if grade in (None, "pending") or entry.get("gate") is None \
+                or entry.get("state") in ("technically_failed", "no_positive_population"):
+            return None
+        return "review" if grade == "failed" else grade
+
+    def carrier_populations(self, unit, ds, rule) -> dict | None:
+        """A state marker's carriers (`context.carriers_for`) and, of those
+        this run has gated (`_carrier_grade`) whose cleaned cells carry the
+        marker more often than the average cell (`bivariate.
+        carrier_enrichment` above `rule["min_enrichment"]`, at the marker's
+        Auto gate), the `rule["top"]` holding the most of its positives:
+        {listed, chosen: [{marker, source, low, high, n, grade, n_clean,
+        positives, share, enrichment}], skipped}. Without an Auto gate or
+        start to count positives at, the most cells. None when it has no
+        carriers. Frozen on the unit: every look draws from these gates."""
+        from plexora.plugins.gating.server.autogate import bivariate, context
+
+        listed = context.carriers_for(self.panel_for(unit["project"]), unit["marker"])
+        if not listed:
+            return None
+        book = self.ledger(unit["project"], without=unit)
+        low = unit.get("gmm")
+        if low is None:
+            low = (unit.get("start") or {}).get("low")
+        rows, skipped = [], []
+        for carrier in listed:
+            entry = book.get(carrier["marker"]) or {}
+            grade = self._carrier_grade(entry)
+            if grade is None:
+                skipped.append({"marker": carrier["marker"], "why": (
+                    f"no gate to draw on ({entry['state']})" if entry.get("state")
+                    else "not gated in this run")})
+                continue
+            row = {**carrier, **self._gated(ds, carrier["marker"], entry["gate"]), "grade": grade}
+            if low is not None:
+                row.update(bivariate.carrier_enrichment(
+                    ds, unit["marker"], float(low), row,
+                    exclusives=self._excluded_lineages(ds, unit["project"], carrier["marker"],
+                                                       book)))
+                if row["enrichment"] is None \
+                        or row["enrichment"] <= float(rule["min_enrichment"]):
+                    skipped.append({"marker": carrier["marker"], "why": (
+                        "its cells carry it no more often than the average cell "
+                        f"(x{row['enrichment'] or 0:.2f} once cleaned)")})
+                    continue
+            rows.append(row)
+        most = (lambda r: -r["positives"]) if low is not None else (lambda r: -r["n"])
+        chosen = sorted(rows, key=most)[:int(rule["top"])]
+        return {"listed": listed, "chosen": chosen, "skipped": skipped}
+
+    def _excluded_lineages(self, ds, project, marker, book) -> list:
+        """The gated lineages `marker` excludes (the panel's exclusions,
+        stated or derived, at moderate or above; gates as `_carrier_grade`
+        takes them). A carrier's are cleaned out of its cells; a state
+        marker's are the controls its carrier splits must not recur in."""
+        from plexora.plugins.gating.server.autogate import context, hierarchy
+
+        out = {}
+        for rel in hierarchy.relations(self.panel_for(project), marker):
+            entry = book.get(rel["marker"]) or {}
+            if rel["relation"] != "exclusive" or rel["marker"] in out \
+                    or context.CONFIDENCE_RANK.get(rel["confidence"], 0) < 1 \
+                    or self._carrier_grade(entry) is None:
+                continue
+            out[rel["marker"]] = self._gated(ds, rel["marker"], entry["gate"])
+        return list(out.values())
+
+    def _marker_controls(self, ds, project, marker, listed, book, *, low=None, chosen=(),
+                         bar=1.0) -> list:
+        """The lineages a state marker's carrier splits must not recur in:
+        gated lineages every listed carrier excludes (moderate or above),
+        other than the carriers and the marker's own partners, whose cells
+        -- cleaned of the `chosen` carriers' -- carry it less often than the
+        average cell (`bivariate.carrier_enrichment` below `bar` at `low`,
+        the marker's Auto gate). The carriers are where the marker is
+        common, so a lineage none of them can be is one it is not common in;
+        but one that still carries it splits where the stain does, like a
+        carrier (LSP23362 PD-L1: the T cells, x1.6 once cleaned, split at
+        6.21 and 6.30 beside the CD11c and CD68 cells' 6.28 and 6.26). The
+        marker's own exclusions are no test: derived through one carrier,
+        they are low (PD-1 excludes Pan-CK via CD3), and a review states one
+        only now and then (LSP23362 arm 5: none, and PD-1's T-cell split at
+        6.45 -- the CD68 cells' too, x0.30 -- passed)."""
+        from plexora.plugins.gating.server.autogate import bivariate, context, hierarchy
+
+        panel = self.panel_for(project)
+        carriers = {c["marker"] for c in listed}
+        if not carriers:
+            return []
+
+        def excluded_by(carrier):
+            return {r["marker"] for r in hierarchy.relations(panel, carrier)
+                    if r["relation"] == "exclusive"
+                    and context.CONFIDENCE_RANK.get(r["confidence"], 0) >= 1}
+
+        common = set.intersection(*(excluded_by(c) for c in carriers))
+        own = {r["marker"] for r in hierarchy.relations(panel, marker)
+               if r["relation"] != "exclusive"}
+        out = []
+        for other in panel.get("markers") or ():
+            entry = book.get(other) or {}
+            if other not in common or other in carriers or other in own \
+                    or self._carrier_grade(entry) is None:
+                continue
+            gate = self._gated(ds, other, entry["gate"])
+            if low is not None:
+                found = bivariate.carrier_enrichment(ds, marker, float(low), gate,
+                                                     exclusives=list(chosen))
+                if found["enrichment"] is None or found["enrichment"] >= bar:
+                    continue
+                gate["enrichment"] = found["enrichment"]
+            out.append(gate)
+        return out
+
+    def carrier_start(self, unit, ds):
+        """Engine v2, a state marker with carriers this run has gated: the
+        start beside the whole population's.
+
+        Each chosen carrier's split (`bivariate.carrier_fit`: the marker
+        inside the carrier's cells, cleaned of the lineages it excludes,
+        usable only when it holds on cleaning, on drawing the cells again
+        and in none of the lineages the marker excludes) joins the scored
+        candidates (`carrier:<marker>`, a lattice point the reads can
+        choose), and the start becomes the median of today's start, the
+        Auto gate and every usable split: where the whole population and the
+        carrier lineages agree, never the carriers' value alone (LSP23362
+        FOXP3: 5.86, the Auto gate 6.32, 6.60 inside the CD4 cells and 6.71
+        inside the T cells -> 6.46). No usable split: the start stands.
+        Recorded with every input on the unit (`carriers`, `start.carriers`)."""
+        from plexora.plugins.gating.server.autogate import bivariate, hypotheses
+
+        rule = hypotheses.PARAMS.get("carriers")
+        if not rule or schemas.engine_name(self.options["engine"]) != "v2" \
+                or unit.get("condition"):
+            return
+        found = self.carrier_populations(unit, ds, rule)
+        if found is None:
+            return
+        book = self.ledger(unit["project"], without=unit)
+        auto = unit.get("gmm")
+        if auto is None:
+            auto = (unit.get("start") or {}).get("low")
+        controls = self._marker_controls(ds, unit["project"], unit["marker"],
+                                         found["listed"], book, low=auto, chosen=found["chosen"],
+                                         bar=float(rule["min_enrichment"]))
+        for carrier in found["chosen"]:
+            carrier["fit"] = bivariate.carrier_fit(
+                ds, unit["marker"], carrier,
+                exclusives=self._excluded_lineages(ds, unit["project"], carrier["marker"], book),
+                controls=controls, min_cells=int(rule["min_cells"]),
+                stable=float(hypotheses.PARAMS["tolerance"]), resamples=int(rule["resamples"]),
+                sure=float(hypotheses.PARAMS["resolve_p"]), seed=int(self.options["seed"]))
+        unit["carriers"] = found
+        usable = [c for c in found["chosen"] if c["fit"].get("usable")]
+        candidates = (unit.get("scoring") or {}).setdefault("candidates", []) \
+            if unit.get("scoring") is not None else []
+        for carrier in usable:
+            cid = f"carrier:{carrier['marker']}"
+            if not any(c.get("id") == cid for c in candidates):
+                candidates.append({"id": cid, "family": "carrier", "low": carrier["fit"]["low"],
+                                   "fraction": None, "score": None, "components": {}})
+        start = unit.get("start") or {}
+        low = start.get("low")
+        if low is None or not usable:
+            found["start"] = {"unchanged": "no carrier split usable" if low is not None
+                              else "no start"}
+            return
+        inputs = [float(low), float(unit["gmm"]), *(float(c["fit"]["low"]) for c in usable)]
+        median = float(np.median(inputs))
+        if unit.get("judged") or unit.get("judged_rows"):
+            median = self.clamp_to_judged(unit, ds, median, why="carriers")
+        found["start"] = {"inputs": [round(v, 4) for v in inputs], "before": float(low),
+                          "low": median}
+        unit.pop("lattice", None)
+        if abs(median - float(low)) > 1e-9:
+            unit["start"] = {**start, "low": median, "carriers": found["start"]}
+            unit["candidate"] = median
+        self.log(event="carrier_start", unit=unit_key(unit["project"], unit["marker"]),
+                 before=float(low), start=median, inputs=found["start"]["inputs"],
+                 carriers=[c["marker"] for c in usable])
 
     def observed_start(self, unit, ds):
         """With observations on and dim cells the contrast check saw stained
@@ -1696,7 +1925,12 @@ class Engine(BaseEngine):
             if not weak or not self.options["defer_parents"]:
                 unit["deferred"] = "resumed"
                 return False
-        children = set((unit.get("evidence_plan") or {}).get("children") or [])
+        # A state marker is never a child to wait for: its positives are not
+        # this parent's evidence, and it waits for its carriers -- this parent
+        # among them -- so a weak CD3 would let PD-1 run with CD3 pending.
+        entries = (self.panel_for(unit["project"]) or {}).get("entries") or {}
+        children = {c for c in (unit.get("evidence_plan") or {}).get("children") or ()
+                    if (entries.get(c) or {}).get("role") not in ("state", "signalling")}
         waiting = {u["marker"] for u in self.waiting_for_user()}
         open_ = [u["marker"] for u in self.units_of(unit["project"])
                  if u["marker"] in children and u["marker"] not in waiting
@@ -1733,6 +1967,7 @@ class Engine(BaseEngine):
                 continue
             leaned = {p["marker"] for p in (other.get("scoring") or {}).get("partners") or []}
             leaned |= {r["marker"] for r in other.get("reference_gates") or []}
+            leaned |= {c["marker"] for c in (other.get("carriers") or {}).get("chosen") or []}
             if marker not in leaned:
                 continue
             key = unit_key(other["project"], other["marker"])
@@ -1763,6 +1998,9 @@ class Engine(BaseEngine):
             if condition.get("within"):
                 rows.append([unit["project"], unit["marker"], "within", condition["within"],
                              condition.get("partner_gate")])
+            for carrier in (unit.get("carriers") or {}).get("chosen") or ():
+                rows.append([unit["project"], unit["marker"], "carrier", carrier["marker"],
+                             carrier["low"], carrier.get("high")])
         if not rows:
             return ""
         blob = json.dumps(rows, sort_keys=True, separators=(",", ":"), default=str)
@@ -1799,12 +2037,21 @@ class Engine(BaseEngine):
                 ref = partner.get("marker")
                 if ref not in markers or ref == marker:
                     continue
-                if context.CONFIDENCE_RANK.get(partner.get("confidence"), 0) < 1:
+                # A planner's tiles-only proposal never makes a look wait.
+                if context.CONFIDENCE_RANK.get(partner.get("confidence"), 0) < 1 \
+                        or partner.get("proposed"):
                     continue
                 if (entries.get(ref) or {}).get("role") in ("state", "signalling"):
                     continue
                 links[marker].add(ref)
                 links[ref].add(marker)
+            # A state marker's carriers (`context.carriers_for`): its start and
+            # its looks are drawn from their positives, so it waits for them.
+            for carrier in context.carriers_for(panel, marker):
+                ref = carrier["marker"]
+                if ref in markers and ref != marker:
+                    links[marker].add(ref)
+                    links[ref].add(marker)
             # The exclusions the tree derives (a subset inherits its parents':
             # CD20 within CD45 excludes what CD45 excludes): the lineage check
             # needs those partners' gates, so a look waits for them too
@@ -1896,6 +2143,7 @@ class Engine(BaseEngine):
                 ("expression_setup", (record.get("expression") or {}).get("status") == "pending"),
                 ("pixel_setup", (record.get("pixel") or {}).get("status") == "pending"),
                 ("panel_context", bool(record.get("panel_pending"))),
+                ("partner_review", bool(record.get("review_pending"))),
                 ("display_setup", bool(display_due)),
                 ("replan", self._replan_due())):
             if pending:
@@ -2111,6 +2359,8 @@ class Engine(BaseEngine):
             return "pixel_setup", []
         if record.get("panel_pending"):
             return "panel_context", []
+        if record.get("review_pending"):
+            return "partner_review", []
         display_due, display_waiting = self.display_due()
         if display_due:
             return "display_setup", []
@@ -2246,7 +2496,7 @@ def phase_for(record, *, mirroring=False) -> str:
         return "summarizing"
     kind = record.get("outstanding_kind")
     if kind in schemas.SETUP_KINDS or kind in schemas.PLAN_KINDS or record.get("panel_pending") \
-            or record.get("state") == "needs_setup":
+            or record.get("review_pending") or record.get("state") == "needs_setup":
         return "planning"
     if kind in schemas.LOOK_KINDS:
         return "inspecting" if mirroring else "thinking"

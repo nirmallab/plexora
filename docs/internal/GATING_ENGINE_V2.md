@@ -183,9 +183,100 @@ sent:
   | `no_identifiable_boundary` | `not_binary`: the stain rises with the value |
   | `positives_not_confirmed` | a rare tail not confirmed |
   | `unresolved_evidence` | the reads leave it undecided |
+  | `flat_reads` | own stain read about as often at every value, in under half the cells |
 
   A review closure writes the leader and records the plateau, so the note can
-  say "7.31 or 7.69, reads split 0.55 / 0.35".
+  say "7.31 or 7.69, reads split 0.55 / 0.35". `readers_unreliable` and
+  `flat_reads` write the start instead: their reads cannot choose a leader.
+  `flat_reads` (`controller.flat`, `PARAMS["flat_reads"]`) needs 2 looks and
+  16 definite reads, every read interval's pooled share under one half, the
+  lowest at least 0.15 and all within 0.15. ImageLSP23362 PD-1 (2026-11-02)
+  read 0.25 to 0.38 from 6.44 to 7.22 -- a haze across the field read
+  `not_own_stain` -- and, with the fewest cells wrong always the highest
+  candidate, stepped to 7.47 against a start of 6.88. Reads unstained low
+  down (0 below the floor) are a gate above them and still step. The
+  thresholds come from that one marker; replayed over the six stored v2
+  sessions here, the rule fired on it alone.
+- **Carriers** (2026-11-02, `PARAMS["carriers"]`). A `state` marker's
+  carriers are the lineages whose cells carry it: its stated `subset` /
+  `subset_any` partners of a lineage role, plus those both draws of the
+  partner review name (`ReviewEntry.carriers`), the narrowest only
+  (`context.carriers_for`; CD45 goes when CD3 is there). They join
+  `Engine._links`, so the marker waits for their gates.
+  - **Populations:** of the carriers gated in the run, those whose cleaned
+    cells (as the split is fitted in them) are above the marker's Auto gate
+    more often than all cells are (`bivariate.carrier_enrichment` > x1,
+    `min_enrichment`: x1 is "no more often than any cell", the null, not a
+    tuned bar), and of those the two holding the most of its positives
+    (`Engine.carrier_populations`; with no Auto gate or start, the most
+    cells). A named lineage can look enriched only through the carrier
+    cells touching it.
+
+    LSP23362 PD-1 (enrichment raw, then cleaned):
+    - CD68: x1.9, then x0.30 once the T cells touching it were cleaned out.
+    - T cells: x1.9 cleaned.
+    - CD20: x3.2 cleaned, though only 1,066 of 5,946 cells were left.
+
+    Run by cell count, the choice took Pan-CK for PD-L1 (x0.07) and CD45 for
+    Ki-67 (x0.18). Unlike a reference, a gate
+    closed for manual review serves (grade `review`): the whole population
+    stands beside it in the start and the cleaning test catches a split its
+    errors make; `technically_failed` and `no_positive_population` gates
+    (written at the column's maximum) and pending ones do not
+    (`Engine._carrier_grade`). The populations are
+    frozen on the unit (`unit["carriers"]`), in its ledger fingerprint and
+    `reference_failed`'s set.
+  - **Start** (`Engine.carrier_start`, in `propose`): per carrier,
+    `bivariate.carrier_fit` -- the marker's split inside the carrier's cells
+    and inside them cleaned of the lineages the carrier excludes. Usable
+    from 500 cleaned cells when the split holds within the tolerance (0.2)
+    three ways: on cleaning (a contamination's split moves), in every
+    gated lineage all the listed carriers exclude (`Engine._marker_controls`:
+    the marker is not common there, so the same split there is the
+    channel's background; the marker's own exclusions are derived through
+    one carrier at low confidence, and arm 5's review stated none, so PD-1's
+    background split passed on them), and over 30 bootstrap redraws of the
+    cells (`wander`: the
+    move that `resolve_p`, 0.8, of the redraws stay within -- the engine's
+    own bar for a gate very likely within the tolerance; a split the fit
+    places by chance moves, and so does one the Auto gate's pooling places
+    two ways when a third component splits one group). Usable splits join the scored candidates
+    (`carrier:<marker>`, in `lattice.SCORED`/`PRIORITY`,
+    `candidates.ESTIMATORS`), and the start is the median of the scored
+    start, the Auto gate and each usable split. LSP23362 (arm 4):
+    - FOXP3: 5.86, 6.32, 6.60 inside CD4+ (wander 0.08) and 6.71 inside
+      CD3e+ (0.17; 5.54 in the tumour cells) -> 6.46.
+    - PD-1: no usable split. Inside CD3e+ (cleaned to 14,383 cells) it split
+      at 6.45, at 6.46 in Pan-CK+ tumour cells, which do not carry PD-1, and
+      redraws moved it up to 7.09.
+    - Earlier, inside CD68+, the split moved 6.54 -> 6.24 on cleaning out the
+      T cells: the contamination's.
+
+    The separation d is recorded, never a bar. With this fit, one lopsided
+    peak alone scores d of about 2: simulated from a skew-normal fitted to
+    each carrier's cells, the 95th percentile ran 1.87-2.17. Meanwhile,
+    FOXP3's real splits scored 2.5-2.8, and PD-1's background split scored
+    0.96. A likelihood test of two groups against one skew-normal or
+    skew-t peak did not separate them either: it called the FOXP3-in-tumour
+    control two groups. Only comparisons with something in the image did.
+  - **Panels:** 18 borderline cells (drawn as before, each marked `carrier`
+    for the record), 4 negatives of which 2 are carrier cells, and 2
+    anchors -- carrier cells above the range's top by the tolerance that
+    stand above their neighbours' mean by it (`panel.stand_out`), only from
+    a pool of 5 x anchors x (looks + 1). A table operation of its own
+    (`gating.autogate.panel_cells_carriers`): an older node refuses it and
+    the look is today's.
+  - **Strict anchors:** both read `not_own_stain` discard the look, once the
+    reader has read `own_stain` on some evidence cell (`sentinel_check`
+    `own_read`) -- a marker with no positives ends
+    `positives_not_confirmed`, never `readers_unreliable`. With
+    `redraw_invalid` a discarded look does not count against `panel_looks`
+    (`controller.looks_spent`); two still close the marker.
+  - Why only through the start and the reads: the gate is one threshold
+    for every cell, scored on the cells it gets wrong over the whole
+    population (`evidence.losses`), so showing carrier cells and weighting
+    their reads back would not move it in expectation. The replay tools
+    turn every rule newer than the stored sessions off (`NEWER_OFF`).
 - **Confidence.** P(within 0.2), mapped to levels by `calibration.LEVELS`.
   **It is not calibrated** (section 4, F1).
 

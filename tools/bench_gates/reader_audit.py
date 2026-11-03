@@ -104,7 +104,8 @@ def render(args) -> int:
     try:
         base = context.for_project(ds, create=False)
         bio = biology.infer(base)
-        entries = (biology.overlay(base, bio).get("entries") or {})
+        panel_ctx = biology.overlay(base, bio)
+        entries = panel_ctx.get("entries") or {}
         by_marker = defaultdict(list)
         for tid, tile in key["tiles"].items():
             if tid.startswith("r") or tid not in words:
@@ -141,15 +142,19 @@ def render(args) -> int:
                                         crowding_margin=0.2)
             arranged = panel.arrange(sampled["cells"], sampled["sentinels"], seed)
             present = {m for m, c in channels.items() if c and m != marker}
-            plan = partners.partner_plan(entries, marker, present, {}, 1, set(gates) - {marker})
+            plan = partners.partner_plan(entries, marker, present, {}, 1, set(gates) - {marker},
+                                         dropped=context.dropped_pairs(panel_ctx))
             pp = {"markers": {}, "gates": {}}
             for p in plan:
                 if p["kind"] in pp["markers"]:
                     continue
+                members = p.get("members") or [p["marker"]]
                 pp["markers"][p["kind"]] = p["marker"]
-                pp[p["kind"]] = channels[p["marker"]]
-                if p["marker"] in gates:
-                    pp["gates"][channels[p["marker"]]] = gates[p["marker"]]
+                pp[p["kind"]] = [channels[m] for m in members] if p.get("members") \
+                    else channels[p["marker"]]
+                for m in members:
+                    if m in gates:
+                        pp["gates"][channels[m]] = gates[m]
             pp = pp if pp["markers"] else {}
             layout = "t2m" if pp else "t2"
             drawn = panel.rows_of([{k: c[k] for k in ("cell_id", "x", "y", "caption", "number")}

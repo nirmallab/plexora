@@ -55,7 +55,7 @@ def test_a_task_line_wins_over_its_module_default_and_a_blank_is_the_agents(mode
     groups = models_config.groups("gating")
     # The note interpreter is the harness's own call, never a packet: no worker for it.
     assert groups[0] == {"model": "model-a", "tasks": [
-        "gating.planning", "gating.display", "gating.image_inspection",
+        "gating.planning", "gating.partner_review", "gating.display", "gating.image_inspection",
         "gating.classifier_check", "gating.final_validation"]}
     assert models_config.model_for("gating.biological_context") == "model-a"
     assert groups[1] == {"model": "model-b", "tasks": ["gating.threshold_evaluation"]}
@@ -162,7 +162,7 @@ def test_a_session_with_lanes_hands_out_one_worker_per_lane_launched_together(
 # -- gating: scoped readers -------------------------------------------------------------------
 
 
-LOOKS = ["gating.planning", "gating.image_inspection"]
+LOOKS = ["gating.planning", "gating.partner_review", "gating.image_inspection"]
 JUDGES = ["gating.threshold_evaluation", "gating.final_validation"]
 
 

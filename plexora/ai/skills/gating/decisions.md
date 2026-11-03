@@ -50,9 +50,22 @@ nearest the scored start, and it resolves when the best gate is very likely
 within the tolerance of it. Else another panel, aimed at the cells that
 could change that, up to `panel_looks`; or review with a stated reason, which
 names the gates the reads still leave and how likely each is -- including
-when another look could not settle it (`looks_uninformative`). `uncertain`
+when another look could not settle it (`looks_uninformative`), and at the
+start when own stain was read about as often at every value (`flat_reads`:
+the value does not separate it). `artifact` -- a haze across the field
+among them -- is no vote either, though with `uncertain` it counts towards
+most cells unreadable (`unreadable`). `uncertain`
 is never a vote: a marker whose crowded cells cannot be read may resolve on
-its isolated cells alone, and says so. The gate written is always one of the candidates and
+its isolated cells alone, and says so. A state marker with carriers gated in
+the run (`PD-1`: the T cells) starts at the median of its scored start, the
+Auto gate and its split inside each carrier, when that split holds on
+cleaning out the lineages the carrier excludes and on drawing the cells
+again, and is not found as well in a lineage the marker excludes (then it
+is the channel's background); its panels add two carrier
+cells below every candidate and two clear positives (carrier cells standing
+above their neighbours). A panel whose reader calls both clear positives
+unstained, after reading stain somewhere, is discarded and drawn again --
+two discarded panels close the marker. The gate written is always one of the candidates and
 passes the same whole-image checks; a failed check caps its confidence, it
 never moves the gate. A conditional gate (a `within` answer of engine
 `v1`) or a marker with no candidates gets `v1` looks, whose reading comes with

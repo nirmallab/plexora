@@ -53,9 +53,12 @@ for path in sys.argv[3:]:
             continue
         m = unit["marker"]
         state = copy.deepcopy(h)
-        state["params"] = {**hypotheses.PARAMS, **{k: v for k, v in state["params"].items()
-                                                   if k not in ("split_order_min", "split_order_p",
-                                                                "split_at_close")}}
+        state["params"] = {**hypotheses.PARAMS,
+                           # rules newer than the stored sessions: off
+                           "flat_reads": None, "carriers": None, "redraw_invalid": False,
+                           **{k: v for k, v in state["params"].items()
+                              if k not in ("split_order_min", "split_order_p",
+                                           "split_at_close")}}
         for k, v in (("n_finite", 0), ("grown", {"up": 0, "down": 0}), ("split", [])):
             state.setdefault(k, v)
         obs = state["observations"]

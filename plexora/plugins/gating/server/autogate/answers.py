@@ -130,8 +130,9 @@ class CellPanelAnswer(_Base):
                     "stain belongs to this cell, touching the nucleus the ticks mark with no "
                     "other nucleus inside it; `not_own_stain` -- nothing touches that nucleus, "
                     "or the stain is a neighbour's or apart by a dark gap; `uncertain` -- the "
-                    "picture cannot say; `artifact` -- debris, a fold, an edge or a smear "
-                    "across cells.")
+                    "picture cannot say; `artifact` -- debris, a fold, an edge, a smear across "
+                    "cells, or a haze or streaks lighting the field alike with no edge at this "
+                    "cell's outline.")
 
 
 class ConfirmAnswer(_Base):
@@ -218,6 +219,64 @@ class PanelContextAnswer(_Base):
     entries: list[PanelEntry] = Field(max_length=context.MAX_ENTRIES)
 
 
+# The review's answer stays inside what the provider compiles
+# (`harness.schema.VERIFIED`): its nested fields are required plain strings,
+# not optional unions, and a partner is a typed object -- a `list[dict]`
+# reaches a structured-output model as an object with no properties at all.
+
+class PartnerCheck(AgentModel):
+    marker: str = Field(description="A partner this marker's `partners` states.")
+    verdict: Literal[context.CHECK_VERDICTS]
+    confidence: Literal[vocabulary.CONFIDENCE] = Field(
+        description="`high` only when you are sure; anything less leaves the stated "
+                    "relation as it is.")
+    basis: Annotated[str, clipped(context.MAX_BASIS)] = Field(
+        max_length=context.MAX_BASIS,
+        description="The words of the sample's tissue or disease that make it hold less here.")
+
+
+class ProposedPartner(AgentModel):
+    marker: str = Field(description="A marker of `panel`.")
+    relation: Literal[vocabulary.RELATIONS]
+    confidence: Literal[vocabulary.CONFIDENCE] = Field(
+        description="`high` only when you are sure.")
+    basis: Annotated[str, clipped(context.MAX_BASIS)] = Field(
+        max_length=context.MAX_BASIS,
+        description="The note's words and the partner's lineage that justify it.")
+
+
+class ReviewEntry(AgentModel):
+    marker: str
+    checks: list[PartnerCheck] = Field(
+        default_factory=list, max_length=context.MAX_PARTNERS * 2,
+        description="Only the stated relations that hold less in this sample; the rest hold.")
+    partners: list[ProposedPartner] = Field(
+        default_factory=list, max_length=context.MAX_PARTNERS,
+        description="Partners for its empty slots, and what the sample's context adds.")
+    carriers: list[str] = Field(
+        default_factory=list, max_length=context.MAX_CARRIERS,
+        description="A `state` marker only: the `panel`'s lineage markers in whose cells it "
+                    "is common, as its `expression` note names them, most cells first; never "
+                    "one in which it is rare.")
+
+
+class InferredContext(AgentModel):
+    tissue: Annotated[str, clipped(60)] = Field(max_length=60, description="'' when unknown.")
+    disease: Annotated[str, clipped(60)] = Field(max_length=60, description="'' when unknown.")
+    confidence: Literal[vocabulary.CONFIDENCE] = Field(
+        description="`high` only when the panel's markers leave no doubt.")
+    basis: Annotated[str, clipped(context.MAX_BASIS)] = Field(
+        max_length=context.MAX_BASIS, description="The panel's markers that tell you.")
+
+
+class PartnerReviewAnswer(_Base):
+    kind: Literal["partner_review"] = "partner_review"
+    entries: list[ReviewEntry] = Field(default_factory=list, max_length=context.REVIEW_BATCH)
+    inferred_context: InferredContext | None = Field(
+        None, description="Only when `sample` names no tissue or disease: the one the panel's "
+                          "markers tell, if they do.")
+
+
 class ReplanAnswer(_Base):
     kind: Literal["replan"] = "replan"
     markers: dict[str, Literal[replan.MARKER_VERDICTS]] = Field(
@@ -239,8 +298,8 @@ class ReplanAnswer(_Base):
 
 
 MODELS = (T1StripAnswer, QCAnswer, AbsenceAnswer, T2Answer, T3Answer, T4Answer, ConfirmAnswer,
-          TransferAnswer, PanelContextAnswer, ExpressionSetupAnswer, PixelSetupAnswer,
-          ReplanAnswer, DisplaySetupAnswer, CellPanelAnswer)
+          TransferAnswer, PanelContextAnswer, PartnerReviewAnswer, ExpressionSetupAnswer,
+          PixelSetupAnswer, ReplanAnswer, DisplaySetupAnswer, CellPanelAnswer)
 
 Answer = Annotated[Union[MODELS], Field(discriminator="kind")]
 

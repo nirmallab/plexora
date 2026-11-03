@@ -38,7 +38,9 @@ by rule (`decide`): resolved when the leader beats every rival farther than
 `resolve_within`; otherwise review, for a stated reason, at the leader --
 when the look budget is spent, when no new cell can separate the leader
 from a rival, when the negative sentinels were read stained twice, or when
-most cells could not be read. Running out of looks never counts as resolved.
+most cells could not be read; at the start when own stain was read about as
+often at every value, in under half the cells (`flat`: the value does not
+separate it). Running out of looks never counts as resolved.
 
 The first look gives every interval between candidates an equal share of
 its cells; later looks spread theirs in proportion to the cells in dispute.
@@ -67,7 +69,7 @@ from plexora.plugins.gating.server.autogate.hypotheses import evidence
 #: leader (or the start, when the reader failed the sentinels).
 STATUSES = ("resolved", "budget_exhausted", "unresolved_evidence", "readers_unreliable",
             "unreadable", "no_identifiable_boundary", "positives_not_confirmed",
-            "looks_uninformative")
+            "looks_uninformative", "flat_reads")
 
 REASONS = {
     "budget_exhausted": "the looks allowed were spent before the leading gate beat every "
@@ -83,6 +85,9 @@ REASONS = {
     "positives_not_confirmed": "a rare marker whose cells above the leading gate were read "
                                "as not carrying the stain: whether this image has a positive "
                                "population is for a person to say",
+    "flat_reads": "own stain was read about as often at every value looked at, in under half "
+                  "the cells: the value does not separate this marker's own stain, so the "
+                  "start stands for review",
 }
 
 
@@ -101,12 +106,14 @@ def above(state) -> int:
 
 
 def shown(state) -> list:
-    """Cells already shown per interval of the window (sentinels apart)."""
+    """Cells already shown per interval of the window (sentinels apart, but
+    for anchors: a clear positive a carrier look showed is gone from every
+    later draw, so it is shown though never read)."""
     bounds, n_cells = window(state)
     out = [0] * len(n_cells)
     for obs in state["observations"]:
         for cell in obs.get("cells") or ():
-            if cell.get("sentinel"):
+            if cell.get("sentinel") and not cell.get("anchor"):
                 continue
             k = evidence.interval_of(float(cell["value"]), bounds)
             if k is not None:
@@ -359,7 +366,11 @@ def tail(state, s) -> dict:
     own = read = shown_above = 0
     for obs in state["observations"]:
         for cell in obs.get("cells") or ():
-            if cell.get("sentinel") or float(cell["value"]) <= low:
+            if float(cell["value"]) <= low:
+                continue
+            if cell.get("sentinel"):
+                # An anchor is gone from the draws above, never read as evidence.
+                shown_above += bool(cell.get("anchor"))
                 continue
             shown_above += 1
             if not obs.get("valid", True):
@@ -578,6 +589,39 @@ def extend(state, side) -> dict:
     return {"interval": hi + 1 - lo - 1}
 
 
+def looks_spent(state, params) -> int:
+    """The looks counted against `looks_max`: every look, or with
+    `redraw_invalid` the valid ones only -- a look discarded on its controls
+    is drawn again (new cells; `invalid_looks` of them still close the
+    marker, `readers_unreliable`)."""
+    if params.get("redraw_invalid"):
+        return len(_valid(state))
+    return len(state["observations"])
+
+
+def flat(state, s, params) -> bool:
+    """Whether the reads say the value does not separate the stain: own
+    stain read in every interval looked at, about as often, and in under
+    half its cells (`params["flat_reads"]`). The fewest cells wrong is then
+    always the highest candidate, so the looks would only step up until they
+    ran out (ImageLSP23362 PD-1, 2026-11-02: 0.25 to 0.32 own from 6.44 to
+    7.47, a haze across the field read `not_own_stain`, closed at 7.47
+    against a start of 6.88; a rare marker, whose tail check runs only once
+    a leader would stand). Never when the lowest interval read is
+    unstained: that is a gate above the cells looked at
+    (`test_a_leader_on_the_lattices_top_point_steps_beyond_it`)."""
+    rule = params.get("flat_reads")
+    valid = sum(1 for o in state["observations"] if o.get("valid", True))
+    if not rule or valid < int(rule["min_looks"]):
+        return False
+    read = [c["own"] + c["not"] for c in s["table"]]
+    shares = [f for f, r in zip(s["fractions"], read) if r and f is not None]
+    if sum(read) < int(rule["min_reads"]) or len(shares) < 2:
+        return False
+    return max(shares) < 0.5 and min(shares) >= float(rule["floor"]) \
+        and max(shares) - min(shares) <= float(rule["rise"])
+
+
 def decide(state, to_fit, params, *, continuous=False) -> tuple:
     """(status or None to keep looking, support)."""
     s = support(state, to_fit, params)
@@ -586,6 +630,8 @@ def decide(state, to_fit, params, *, continuous=False) -> tuple:
         return "readers_unreliable", s
     if s is None:
         return None, s
+    if flat(state, s, params):
+        return "flat_reads", s
     if s["resolved"] and growth(state, s, to_fit, params) is None:
         # A leader at the edge of the surveyed range says the gate is there or
         # beyond it: the next point is looked at first; one beside a wide
@@ -614,7 +660,7 @@ def decide(state, to_fit, params, *, continuous=False) -> tuple:
             if alone is not None:
                 return "resolved", alone
         return "unreadable", s
-    if len(state["observations"]) >= int(params["looks_max"]):
+    if looks_spent(state, params) >= int(params["looks_max"]):
         return ("no_identifiable_boundary" if continuous else "budget_exhausted"), s
     if params.get("sampling") == "voi" and not s["resolved"] \
             and float(params.get("voi_epsilon") or 0) > 0 \

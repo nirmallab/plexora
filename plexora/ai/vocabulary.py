@@ -48,7 +48,14 @@ _signature = {"at": 0.0, "value": None}
 ROLES = ("context", "lineage_reliable", "lineage_other", "tumour_stromal", "state",
          "signalling")
 COMPARTMENTS = ("nuclear", "cytoplasmic", "membrane", "nuclear_cytoplasmic", "extracellular")
-RELATIONS = ("subset", "coexpressed", "exclusive")
+#: Relations between two markers: what a reference, a score or a quadrant
+#: count can read.
+PAIR_RELATIONS = ("subset", "coexpressed", "exclusive")
+#: `subset_any` is a group, not a pair: every positive is positive for at
+#: least one of the marker's `subset_any` partners (PD-L1 on myeloid or on
+#: tumour cells), and only some cells of each are. It draws a look's
+#: expected partner tile; nothing that weighs a gate reads it.
+RELATIONS = (*PAIR_RELATIONS, "subset_any")
 #: What the stain is shaped like (markers.yaml's `morphology`; absent is
 #: `cell`). `fibrous`: fibres, processes or vessel walls run between cells
 #: and across their masks, so stain beside a nucleus is weak evidence of its
@@ -264,6 +271,10 @@ def check(entry):
             raise ValueError(f"markers.yaml entry {name!r}: partner {partner.get('marker')!r} "
                              f"has confidence {partner.get('confidence')!r}, not one of "
                              f"{CONFIDENCE}")
+    group = [p for p in entry.get("partners") or [] if p.get("relation") == "subset_any"]
+    if len(group) == 1:
+        raise ValueError(f"markers.yaml entry {name!r}: one subset_any partner is a subset "
+                         f"({group[0].get('marker')!r})")
 
 
 def version() -> str:

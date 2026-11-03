@@ -97,6 +97,14 @@ def _stated_ok(partner):
     return STATED.get(partner.get("confidence") or "moderate", 0) >= STATED["moderate"]
 
 
+def _evidence(partner) -> bool:
+    """A partner the tree and the references may read: a relation between two
+    markers, stated by the vocabulary, the tissue, the user or metadata. A
+    `subset_any` group and a planner's proposal (`proposed`) only draw a
+    look's partner tiles."""
+    return partner.get("relation") in vocabulary.PAIR_RELATIONS and not partner.get("proposed")
+
+
 def build(context) -> dict:
     """{version, nodes: {marker: {stage, depth, placed_under, parents,
     children}}, stages: {stage: [markers]}} for every gated marker of the
@@ -111,7 +119,8 @@ def build(context) -> dict:
         hard, soft = [], []
         for partner in entry.get("partners") or []:
             ref = partner.get("marker")
-            if ref not in present or ref == marker or not _stated_ok(partner):
+            if ref not in present or ref == marker or not _stated_ok(partner) \
+                    or not _evidence(partner):
                 continue
             if partner["relation"] == "subset":
                 hard.append(ref)
@@ -181,14 +190,15 @@ def _direct(context, marker):
     own = entries.get(marker) or {}
     out = []
     for partner in own.get("partners") or []:
-        if partner.get("marker") in entries and partner["marker"] != marker:
+        if partner.get("marker") in entries and partner["marker"] != marker \
+                and _evidence(partner):
             out.append(_Rel(partner["marker"], partner["relation"], "forward",
                             partner.get("confidence") or "high", partner.get("context")))
     for other, entry in entries.items():
         if other == marker:
             continue
         for partner in entry.get("partners") or []:
-            if partner.get("marker") != marker:
+            if partner.get("marker") != marker or not _evidence(partner):
                 continue
             direction = "reverse" if partner["relation"] == "subset" else "forward"
             out.append(_Rel(other, partner["relation"], direction,
@@ -222,12 +232,19 @@ def relations(context, marker) -> list:
     the tree implies (`derived`, with the chain in `via`). Each is {marker,
     relation, direction, confidence, derived, via, kind, relevance}; a
     relation stated directly is never repeated as a derived one."""
+    from plexora.plugins.gating.server.autogate.context import dropped_pairs
+
     entries = context.get("entries") or {}
     out, seen = [], set()
+    # What a partner review dropped for this sample is not derived back.
+    dropped = dropped_pairs(context)
 
     def add(other, relation, direction, confidence, via=None, context=None):
         key = (other, relation, direction)
         if other == marker or key in seen or other not in entries:
+            return
+        pair = (marker, other) if direction == "forward" else (other, marker)
+        if (*pair, relation) in dropped:
             return
         if (entries.get(other) or {}).get("role") == "context":
             return

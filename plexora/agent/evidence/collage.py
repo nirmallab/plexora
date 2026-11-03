@@ -26,9 +26,14 @@ Panels per cell:
 - `co` / `anti`   the marker's expected / not-expected partner channel
                   alone, grey, windowed so the partner's gate sits at
                   `PARTNER_GATE_GREY` (its calibrated window when it has no
-                  gate), the judged cell's outline in magenta; dark when the
+                  gate) -- a gate low in its display window on a curve that
+                  also puts the display's white at `PARTNER_WHITE_GREY`, so
+                  its bright cells do not all clip -- the judged cell's
+                  outline in magenta; dark when the
                   panel has no partner. A lit not-expected partner on a lit
-                  cell points to light from elsewhere.
+                  cell points to light from elsewhere. An expected group (a
+                  marker carried by any of several lineages) is its channels
+                  together, each at its own window, the brightest kept.
 
 Four magenta ticks around the table centroid mark the judged cell in the
 morphology and merge panels: the centroid is the one thing every project has
@@ -94,10 +99,16 @@ LAYOUTS = {
 
 #: Which drawing rule made a collage: bumped whenever the same manifest would
 #: draw different pixels (part of what makes a remembered answer reusable).
-RENDERER = "plexora.agent.evidence.collage/3"
+RENDERER = "plexora.agent.evidence.collage/4"
 
 #: Where a partner's gate sits on its panel's grey ramp (`co` / `anti`).
 PARTNER_GATE_GREY = 0.4
+
+#: Where the partner's display white sits on that ramp when its gate is low
+#: in its display window: short of white, so its bright cells are told apart
+#: (LSP23362's CD45, gate 719: the gate's window alone made white 1,437
+#: against a display white of 7,865, and every lit cell clipped).
+PARTNER_WHITE_GREY = 0.95
 
 #: Where the marker's own gate sits on a split look's marker panel
 #: (`marker_gate`): below it grey, above it brighter, black the display's.
@@ -315,12 +326,18 @@ def _panel(crop, kind, spec):
         cropmod.outline(panel, crop, target=None, alpha=0.6)
         return cropmod.outline(panel, crop, target=WHITE, neighbours=None)
     if kind in ("co", "anti"):
-        name = (spec.get("partners") or {}).get(kind)
-        if not name or crop.planes.get(name) is None:
+        names = [n for n in (spec.get("partners") or {}).get(kind) or ()
+                 if crop.planes.get(n) is not None]
+        if not names:
             return np.zeros((size, size, 3), dtype=np.uint8)
-        panel = cropmod.blend(crop, [{"name": name, "window": spec["partner_windows"][name],
-                                      "curve": spec["windows"][name].get("curve"),
-                                      "color": WHITE}], size)
+        # A group (`subset_any`: expected in any of several lineages) is lit
+        # where any member is: each at its own window, the brightest kept.
+        panel = None
+        for name in names:
+            one = cropmod.blend(crop, [{"name": name, "window": spec["partner_windows"][name],
+                                        "curve": spec["partner_curves"][name],
+                                        "color": WHITE}], size)
+            panel = one if panel is None else np.maximum(panel, one)
         return cropmod.outline(panel, crop, target=cropmod.OUTLINE_COLOR, neighbours=None)
     if kind == "gate_relative":
         panel = cropmod.log_window_panel(crop, marker, spec["gate"], size,
@@ -376,8 +393,16 @@ def render_collage(session, data, *, layout, rows, marker, gate=None, high=None,
         if name not in channel_names:
             raise AgentError("precondition_missing", f"{name!r} has no image channel")
     partners = dict(partners or {})
-    partner_names = [partners[k] for k in ("co", "anti")
-                     if partners.get(k) in channel_names and ("co" in panels or "anti" in panels)]
+    # {co|anti: [channel]}: a panel names one channel, or a group's several.
+    shown = {}
+    if "co" in panels or "anti" in panels:
+        for kind in ("co", "anti"):
+            names = partners.get(kind)
+            names = [n for n in ([names] if isinstance(names, str) else names or ())
+                     if n in channel_names]
+            if names:
+                shown[kind] = names
+    partner_names = list(dict.fromkeys(n for names in shown.values() for n in names))
     needed = list(dict.fromkeys(n for n in (nuclear, marker, a, b, *references, *row_markers,
                                             *partner_names) if n))
     windows = resolve_windows(session, record, dict.fromkeys(needed))
@@ -439,23 +464,34 @@ def render_collage(session, data, *, layout, rows, marker, gate=None, high=None,
         return float(math.expm1(float(value)))
 
     radius_px, radius_how = cropmod.cell_radius_px(record, pixel=pixel)
-    partner_windows = {}
+    partner_windows, partner_curves = {}, {}
     for name in partner_names:
         black, white = (float(v) for v in windows[name]["window"])
+        curve = windows[name].get("curve")
         gate_px = pixel_gate((partners.get("gates") or {}).get(name))
         if gate_px is not None and gate_px > black:
             # The partner's gate at PARTNER_GATE_GREY: brighter than that
             # grey is above the partner's own gate, whatever its display.
-            white = display_curve.white_for(black, float(gate_px), PARTNER_GATE_GREY,
-                                            windows[name].get("curve"))
+            # A gate low in the display window is drawn on the curve that
+            # also puts the display's white at PARTNER_WHITE_GREY; higher
+            # (or above the display's white), the gate's window alone.
+            solved = None
+            if gate_px < white:
+                solved, white_gap = display_curve.solve(float(gate_px) - black, white - black,
+                                                        PARTNER_GATE_GREY, PARTNER_WHITE_GREY)
+            if solved is not None:
+                curve, white = solved, black + white_gap
+            else:
+                white = display_curve.white_for(black, float(gate_px), PARTNER_GATE_GREY, curve)
         partner_windows[name] = [black, white]
+        partner_curves[name] = curve
     spec = {"tile_px": tile_px, "windows": windows, "nuclear": nuclear, "marker": marker,
             "gate": pixel_gate(gate), "references": references, "a": a, "b": b,
             "to_log": to_log or table_log,
             "half_width": half_width, "radius_px": radius_px,
             "ticks": bool(spec_layout.get("ticks")),
-            "partners": {k: partners.get(k) for k in ("co", "anti") if partners.get(k) in
-                         partner_names}, "partner_windows": partner_windows}
+            "partners": shown, "partner_windows": partner_windows,
+            "partner_curves": partner_curves}
     manifest_rows = []
     y = header_h
     dropped = 0
@@ -556,7 +592,8 @@ def render_collage(session, data, *, layout, rows, marker, gate=None, high=None,
                                                (partners.get("gates") or {}).items()
                                                if v is not None}}}
                        if partner_names else {})},
-        **({"partner_windows": partner_windows} if partner_windows else {}),
+        **({"partner_windows": partner_windows, "partner_curves": partner_curves}
+           if partner_windows else {}),
         **(extra_manifest or {}),
     }
     artifact = artifacts.put(record.name, png, manifest, kind="gating_collage") if store \

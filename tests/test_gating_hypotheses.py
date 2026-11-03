@@ -712,6 +712,70 @@ def test_a_leader_on_the_top_point_with_a_rival_still_blocking_is_refined_first(
     assert controller.next_action(state, IDENTITY, GROW)["kind"] == "refine"
 
 
+FLAT = dict(GROW, flat_reads={"min_looks": 2, "min_reads": 16, "floor": 0.15, "rise": 0.15})
+
+
+def test_own_stain_read_alike_at_every_value_closes_at_the_start():
+    # ImageLSP23362 PD-1 (2026-11-02): a quarter to a third of the cells read
+    # own stain in every interval, so the fewest cells wrong was always the
+    # highest candidate and the looks climbed until they ran out.
+    state = _state(window=(0, 4), prior=2)
+    state.update(n_finite=5000, grown={"up": 0, "down": 0})
+    flat = ["own_stain", "not_own_stain", "not_own_stain"] * 2
+    state["observations"].append(_obs([1.5] * 6 + [2.5] * 6 + [3.5] * 6 + [4.5] * 6,
+                                      flat * 4))
+    assert controller.decide(state, IDENTITY, FLAT)[0] != "flat_reads"     # one look is not
+    state["observations"].append(_obs([1.6] * 6 + [2.6] * 6 + [3.6] * 6 + [4.6] * 6,
+                                      flat * 4))
+    status, s = controller.decide(state, IDENTITY, FLAT)
+    assert status == "flat_reads" and max(f for f in s["fractions"] if f is not None) < 0.5
+    # A session started without the rule decides as it did.
+    assert controller.decide(state, IDENTITY, GROW)[0] != "flat_reads"
+    # Reads that rise with the value are a boundary, however low they start.
+    rising = ["own_stain"] + ["not_own_stain"] * 4 + ["own_stain"] * 2 + ["not_own_stain"] * 3 \
+        + ["own_stain"] * 4 + ["not_own_stain"] + ["own_stain"] * 5
+    state["observations"] = [_obs([1.5] * 5 + [2.5] * 5 + [3.5] * 5 + [4.5] * 5, rising),
+                             _obs([1.6] * 5 + [2.6] * 5 + [3.6] * 5 + [4.6] * 5, rising)]
+    assert controller.decide(state, IDENTITY, FLAT)[0] != "flat_reads"
+
+
+def test_reads_unstained_below_the_top_still_step_up_under_the_flat_rule():
+    # lsp11385_2 CD68 (2026-10-21): the gate lay above every cell shown.
+    state = _state(lows=(1.0, 2.0, 3.0), n_positive=(1000, 600, 300), window=(0, 2), prior=1)
+    state.update(n_finite=1500, grown={"up": 0, "down": 0})
+    for _ in range(2):
+        state["observations"].append(_obs([1.5] * 10 + [2.5] * 10, ["not_own_stain"] * 20))
+    status, s = controller.decide(state, IDENTITY, FLAT)
+    assert status is None and s["resolved"]
+    assert controller.next_action(state, IDENTITY, FLAT) == {"kind": "step", "side": "up"}
+
+
+def test_flat_reads_close_for_review_at_the_start_not_the_leader():
+    from plexora.plugins.gating.server.autogate import hypotheses
+
+    closed = {}
+
+    class Engine:
+        def close(self, unit, state, reason, proposed=None):
+            closed.update(state=state, reason=reason, proposed=proposed)
+
+    unit = {"hypotheses": {"leader": 7.47, "start": 6.88, "support": {}}}
+    hypotheses.finish(Engine(), unit, "flat_reads")
+    assert closed["proposed"] == 6.88 and closed["state"] == "manual_review_recommended"
+    assert "does not separate" in closed["reason"]
+    hypotheses.finish(Engine(), unit, "budget_exhausted")
+    assert closed["proposed"] == 7.47
+    assert hypotheses.PARAMS["flat_reads"] and hypotheses.V5_RULES["flat_reads"] is None
+
+
+def test_a_haze_across_the_field_is_an_artifact_in_the_guide_and_the_answer():
+    from plexora.plugins.gating.server.autogate import answers, packets
+
+    assert "a haze or streaks lighting the field alike" in packets.READING_GUIDE["panel"]
+    assert "a haze or streaks lighting the field alike" in \
+        answers.CellPanelAnswer.model_fields["cells"].description
+
+
 def test_a_wide_mixed_interval_beside_the_leader_is_split_once():
     state = _state(lows=(1.0, 2.0, 3.0, 4.0), n_positive=(1000, 800, 200, 100), window=(0, 3),
                    prior=1)

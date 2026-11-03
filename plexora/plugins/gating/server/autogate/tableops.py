@@ -164,12 +164,33 @@ def _panel_cells(ds, payload):
         crowding_margin=payload.get("crowding_margin"))
 
 
+def _panel_cells_carriers(ds, payload):
+    """`_panel_cells` for a state marker with carriers: its own name, so a
+    node too old to draw carrier negatives and anchors refuses it (501) and
+    the look falls back to the plain panel (`hypotheses.packet`)."""
+    from plexora.plugins.gating.server.autogate.hypotheses import panel
+
+    return panel.panel_cells(
+        ds, payload["marker"], payload["intervals"], exclude=payload.get("exclude") or (),
+        n_sentinels=int(payload.get("n_sentinels", 4)),
+        sentinel_below=payload.get("sentinel_below"), seed=int(payload.get("seed") or 0),
+        ids=payload.get("ids") or (),
+        strata_bounds=payload.get("strata_bounds"),
+        crowding_margin=payload.get("crowding_margin"),
+        carriers=payload.get("carriers") or (),
+        n_carrier_negatives=int(payload.get("n_carrier_negatives") or 0),
+        n_anchors=int(payload.get("n_anchors") or 0), anchor_above=payload.get("anchor_above"),
+        anchor_pool=int(payload.get("anchor_pool") or 0),
+        anchor_margin=payload.get("anchor_margin"))
+
+
 OPERATIONS = {
     "gating.autogate.profile": _profile,
     "gating.autogate.profile_all": _profile_all,
     "gating.autogate.sample": _sample,
     "gating.autogate.delta": _delta,
     "gating.autogate.panel_cells": _panel_cells,
+    "gating.autogate.panel_cells_carriers": _panel_cells_carriers,
     "gating.autogate.quadrants": _quadrants,
     "gating.autogate.bivariate": _bivariate,
     "gating.autogate.candidates": _candidates,

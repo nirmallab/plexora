@@ -15,7 +15,7 @@ import pytest
 
 from plexora.agent import AgentSession, invoke, jobs, registry
 from plexora.plugins.gating.server.autogate import schemas
-from tests.autogate_fixtures import make_gating_project
+from tests.autogate_fixtures import answer_review, make_gating_project
 
 #: These exercise Pro (AI) capabilities, so they run with a test licence
 #: installed; what Free refuses is tests/test_licensing_enforcement.py's job.
@@ -142,7 +142,7 @@ class Oracle:
             direction = self.direction(marker, ev["this"]["aligned_gate"])
             return {"kind": kind, "per_image": {project: "holds" if direction == "about_right"
                                                 else direction}}
-        if kind == "panel_context":
+        if kind in ("panel_context", "partner_review"):
             return {"kind": kind, "entries": []}
         if kind == "display_setup":
             # The darker half of the ladder for both questions: the rule's own
@@ -188,6 +188,9 @@ def start(session, **options):
     started = ok(invoke(session, "gating_session_start", {"engine": "v1", "scope": "project",
                                                           "project": "gsynth", **options}))
     jobs.drain(120)
+    # The partner review is the subject of test_gating_partner_groups: here
+    # it is answered with nothing to change, which changes nothing.
+    answer_review(session, started)
     return started
 
 
@@ -304,12 +307,15 @@ def test_packets_are_idempotent_and_stale_answers_are_refused(tmp_path):
     session = AgentSession()
     started = start(session, markers=["CD4"])
     sid = started["session_id"]
+    # The partner review's packets, answered by `start`, are counted too.
+    before = ok(invoke(session, "gating_session_status",
+                       {"detail": "full", "session_id": sid}))["used"]["packets"]
     first = ok(invoke(session, "gating_next", {"session_id": sid}))
     again = ok(invoke(session, "gating_next", {"session_id": sid}))
     assert first["packet"]["packet_id"] == again["packet"]["packet_id"]
     used = units(session, sid)  # budget charged once, at issue
     status = ok(invoke(session, "gating_session_status", {"detail": "full", "session_id": sid}))
-    assert status["used"]["packets"] == 1
+    assert status["used"]["packets"] == before + 1
     stale = invoke(session, "gating_answer", {"session_id": sid, "packet_id": "pk_9999",
                                               "answer": {"kind": "t2_confirm"}})
     assert not stale["ok"] and stale["error"]["code"] == "conflict"
@@ -2050,7 +2056,10 @@ def test_a_stored_session_replays_and_its_pictures_draw_again_byte_for_byte(tmp_
     asked = drive(session, sid, agent)
     assert {"t1_strip", "t2_confirm"} <= {p["kind"] for p in asked}
     rows = bench.replay_session(sid, agent, rerender=True, session=session)
-    assert [r["packet_id"] for r in rows] == [p["packet_id"] for p in asked]
+    # The partner review was answered by `start`, before `drive` began.
+    assert [r["packet_id"] for r in rows if r["kind"] != "partner_review"] == \
+        [p["packet_id"] for p in asked]
+    assert {r["kind"] for r in rows[:2]} == {"partner_review"}
     compared = [r["agreement"] for r in rows if r["agreement"] is not None]
     assert compared and all(a == 1.0 for a in compared)
     drawn = [i for r in rows for i in r["images"] if i["rerendered"]]
