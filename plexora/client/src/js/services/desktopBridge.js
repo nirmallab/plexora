@@ -111,6 +111,20 @@
         return invoke("open_in_browser", {path: here});
     }
 
+    /**
+     * View > Reload: the browser's reload button, which the window has no
+     * toolbar for, and what to reach for when the page has got stuck.
+     *
+     * The page reloads itself rather than asking the shell, so the row works
+     * whatever version of the shell is around it. It is as good as a hard
+     * refresh for Plexora's own code: everything under /client/ is served
+     * `Cache-Control: no-cache` (Werkzeug's send_file default), so every
+     * script and stylesheet is checked against the server on every load.
+     */
+    function reload() {
+        window.location.reload();
+    }
+
     const api = {
         version: shell.version,
         platform: shell.platform,
@@ -126,6 +140,7 @@
         fileFromPath,
         revealPath: (path) => invoke("reveal_path", {path}),
         openInBrowser,
+        reload,
         openUrl: (url) => invoke("open_url", {url}),
         quit: () => invoke("quit_app"),
         newWindow: () => invoke("new_window"),
@@ -213,9 +228,11 @@
     // window, above the navbar), and a native accelerator would never fire
     // there anyway while the WebView has focus -- so these chords are run
     // from here. macOS hands key equivalents to its menu before the page sees
-    // them, so there this stays out of the way. None of these chords is one a
-    // page or plugin can bind (plexora/api/plugin.py refuses mod+Q/W/N), so
-    // nothing else is displaced.
+    // them, so there this stays out of the way. Almost none of these chords is
+    // one a page or plugin can bind (plexora/api/plugin.py refuses mod+Q/W/N),
+    // so nothing else is displaced. The reload keys are a browser's own, and
+    // a plugin could take mod+R; none does, and ROI and Rotate both passed on
+    // it because it reloads a browser tab, which is all it does here too.
 
     const SHELL_CHORDS = [
         {key: "n", mod: true, run: () => api.newWindow()},
@@ -223,6 +240,10 @@
         {key: "q", mod: true, run: () => api.quit()},
         {key: "b", mod: true, shift: true, run: () => openInBrowser()},
         {key: "F11", run: () => api.toggleFullscreen()},
+        {key: "r", mod: true, run: reload},
+        {key: "r", mod: true, shift: true, run: reload},
+        {key: "F5", run: reload},
+        {key: "F5", mod: true, run: reload},
     ];
 
     function shellChord(event) {
@@ -245,13 +266,14 @@
 
     // -- the navbar's window rows ------------------------------------------------
     //
-    // What the native menu carried that the page could not do itself: New
-    // Window, Full Screen, Interface Size, Show Data Folder, Show Logs
+    // What the native menu carried that a browser tab has elsewhere: Reload,
+    // New Window, Full Screen, Interface Size, Show Data Folder, Show Logs
     // (base.html, `data-desktop-action`). Off macOS the navbar is the app's
     // only menu bar, so these are the only rows for them. Delegated from the
     // document, so a row is live however the navbar came to be on the page.
 
     const ROW_ACTIONS = {
+        reload: () => reload(),
         new_window: () => api.newWindow(),
         fullscreen: () => api.toggleFullscreen(),
     };

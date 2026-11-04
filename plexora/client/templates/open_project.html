@@ -1,6 +1,6 @@
 {% extends layout|default('base.html', true) %}
 {% block style %}
-    <link rel="stylesheet" href="{{ data.base_url }}/client/src/css/openProject.css?v=20261029_bucket_datasets">
+    <link rel="stylesheet" href="{{ data.base_url }}/client/src/css/openProject.css?v=20261103_select_all">
 {% endblock %}
 {% block content %}
 <title>Plexora - Open Project</title>
@@ -51,6 +51,16 @@
     <nav class="open-project-crumbs" id="project-crumbs" aria-label="Location"></nav>
 
     <div class="open-project-toolbar">
+        {# Ticks every sample shown -- this folder's, or a search's matches --
+           and is the way to learn that cards can be selected at all. Hidden
+           when there is no sample on screen to select. #}
+        <button type="button" id="project-select-all" class="open-project-select-all"
+                role="checkbox" aria-checked="false" title="Select every sample shown" hidden>
+            <span class="open-project-select-box" aria-hidden="true">
+                <span class="fas fa-check"></span><span class="fas fa-minus"></span>
+            </span>
+            Select all
+        </button>
         <div class="open-project-search">
             <span class="fas fa-magnifying-glass"></span>
             <input type="text" id="project-search" placeholder="Search projects&hellip;" autocomplete="off">
@@ -114,5 +124,5 @@
         <p>No projects match your search</p>
     </div>
 </div>
-<script src="{{ data.base_url }}/client/src/js/views/openProjectPage.js?v=20261029_bucket_datasets" defer></script>
+<script src="{{ data.base_url }}/client/src/js/views/openProjectPage.js?v=20261103_select_all" defer></script>
 {% endblock %}

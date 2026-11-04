@@ -32,7 +32,7 @@
          window, null in any browser. Early and not deferred, so its
          subscriptions to the shell exist before a menu or a drop can arrive,
          and so every later script can feature-test it synchronously. -->
-    <script src="{{ data.base_url }}/client/src/js/services/desktopBridge.js?v=20261024_drop_router" type="text/javascript"></script>
+    <script src="{{ data.base_url }}/client/src/js/services/desktopBridge.js?v=20261103_reload" type="text/javascript"></script>
     <!-- App-wide status indicator. Loaded here, before everything else and not
          deferred, because it wraps window.fetch to detect a dead/erroring
          server and must be installed before any script issues a request. -->
@@ -477,12 +477,19 @@
                         <span class="fas fa-ruler-horizontal view-menu-icon" aria-hidden="true"></span>
                         <span class="nav-item-label">Scalebar</span>
                     </label>
-                    {# The window, not the image: full screen, and the size of
-                       the whole interface (the native View menu's Zoom rows,
-                       named for what they change so they are never mistaken
-                       for zooming the slide). #}
+                    {# The window, not the image: reload, full screen, and the
+                       size of the whole interface (the native View menu's Zoom
+                       rows, named for what they change so they are never
+                       mistaken for zooming the slide). Reload is the browser's
+                       reload button, which the app's window has no toolbar
+                       for: what to reach for when the page has got stuck. #}
                     {% if data.desktop %}
                     <div class="dropdown-divider desktop-only"></div>
+                    <button type="button" id="nav_reload" class="dropdown-item desktop-only"
+                            data-desktop-action="reload">
+                        <span class="fas fa-rotate-right nav-item-icon"></span>
+                        <span class="nav-item-label">Reload</span>
+                        <span class="nav-item-key" data-key-hint="mod+r"></span></button>
                     <button type="button" id="nav_fullscreen" class="dropdown-item desktop-only"
                             data-desktop-action="fullscreen">
                         <span class="fas fa-expand nav-item-icon"></span>

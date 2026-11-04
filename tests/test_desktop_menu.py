@@ -3,9 +3,10 @@
 On Windows and Linux a native menu is drawn inside the window, as a strip
 above the page, and the page's navbar is already a menu bar with the same File
 / View / Help. The shell sets no native menu there (desktop/src-tauri/src/
-menu.rs), so what only the native menu carried -- New Window, Full Screen,
-Interface Size, Show Data Folder, Show Logs -- lives in the navbar as
-desktop-only rows that reach the shell through commands. macOS keeps its menu:
+menu.rs), so what only the native menu carried -- Reload, New Window, Full
+Screen, Interface Size, Show Data Folder, Show Logs -- lives in the navbar as
+desktop-only rows that the bridge runs or that reach the shell through
+commands. macOS keeps its menu:
 it is the system's bar along the top of the screen, not a second one inside
 the window.
 
@@ -51,7 +52,7 @@ def test_the_native_menu_bar_is_set_on_macos_only():
 def test_every_window_row_in_the_navbar_is_something_the_bridge_or_the_shell_runs():
     template = read(REPO / "plexora" / "client" / "templates" / "base.html")
     used = set(re.findall(r'data-desktop-action="([a-z_]+)"', template))
-    assert used == {"new_window", "fullscreen", "zoom_in", "zoom_out", "zoom_reset",
+    assert used == {"reload", "new_window", "fullscreen", "zoom_in", "zoom_out", "zoom_reset",
                     "show_data", "show_logs"}
     unknown = used - row_actions() - shell_actions()
     assert not unknown, f"rows nothing runs: {unknown}"

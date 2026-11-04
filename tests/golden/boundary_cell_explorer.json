@@ -82,6 +82,7 @@
         "project-no-results",
         "project-results",
         "project-search",
+        "project-select-all",
         "project-selection-bar",
         "project-selection-count",
         "project-sort",
@@ -97,7 +98,7 @@
       ],
       "scripts": [
         "/client/src/js/services/passVariablesToFrontend.js?v=20260910_unreachable_message",
-        "/client/src/js/services/desktopBridge.js?v=20261024_drop_router",
+        "/client/src/js/services/desktopBridge.js?v=20261103_reload",
         "/client/src/js/services/appStatus.js?v=20260926_help_menu",
         "/client/src/js/services/telemetry.js?v=20260928_qc_owner",
         "/client/src/js/services/errors.js?v=20260927_telemetry",
@@ -187,14 +188,14 @@
         "/client/src/js/views/toolLoader.js?v=20261025_dataset_answers",
         "/client/src/js/services/pageBoot.js?v=20260825_app_shell",
         "/client/src/js/services/appRouter.js?v=20261002_hash_tab",
-        "/client/src/js/views/openProjectPage.js?v=20261029_bucket_datasets"
+        "/client/src/js/views/openProjectPage.js?v=20261103_select_all"
       ],
       "status": 200,
       "styles": [
         "/client/src/css/tokens.css?v=20261027_sidebar_radius",
         "/client/src/css/main.css?v=20261029_bucket_datasets",
         "/client/src/css/explorer.css?v=20261021_explorer_waiting",
-        "/client/src/css/openProject.css?v=20261029_bucket_datasets"
+        "/client/src/css/openProject.css?v=20261103_select_all"
       ],
       "tool_mounts": []
     },
@@ -318,7 +319,7 @@
       ],
       "scripts": [
         "/client/src/js/services/passVariablesToFrontend.js?v=20260910_unreachable_message",
-        "/client/src/js/services/desktopBridge.js?v=20261024_drop_router",
+        "/client/src/js/services/desktopBridge.js?v=20261103_reload",
         "/client/src/js/services/appStatus.js?v=20260926_help_menu",
         "/client/src/js/services/telemetry.js?v=20260928_qc_owner",
         "/client/src/js/services/errors.js?v=20260927_telemetry",
@@ -650,7 +651,7 @@
       ],
       "scripts": [
         "/client/src/js/services/passVariablesToFrontend.js?v=20260910_unreachable_message",
-        "/client/src/js/services/desktopBridge.js?v=20261024_drop_router",
+        "/client/src/js/services/desktopBridge.js?v=20261103_reload",
         "/client/src/js/services/appStatus.js?v=20260926_help_menu",
         "/client/src/js/services/telemetry.js?v=20260928_qc_owner",
         "/client/src/js/services/errors.js?v=20260927_telemetry",

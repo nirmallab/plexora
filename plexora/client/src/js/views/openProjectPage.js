@@ -89,6 +89,7 @@
         const crumbsEl = document.getElementById("project-crumbs");
         const barEl = document.getElementById("project-selection-bar");
         const barCountEl = document.getElementById("project-selection-count");
+        const selectAllEl = document.getElementById("project-select-all");
         const createDatasetButton = document.getElementById("dataset-create");
 
         const state = {
@@ -497,6 +498,12 @@
 
         function paintSelection() {
             const n = state.selection.size;
+            // Select all speaks for what is on screen. `render` has already
+            // dropped anything selected that is not, so `n` counts within it.
+            const shown = state.order.length;
+            selectAllEl.hidden = shown === 0;
+            selectAllEl.setAttribute("aria-checked",
+                n === 0 ? "false" : n >= shown ? "true" : "mixed");
             barEl.hidden = n === 0;
             if (!n) return;
             barCountEl.textContent = `${countPhrase(n, "sample")} selected`;
@@ -607,6 +614,15 @@
         function clearSelection() {
             if (!state.selection.size) return;
             state.selection.clear();
+            state.anchor = null;
+            render();
+        }
+
+        /** Every sample on screen: this folder's, or this search's matches.
+         *  Never the folders, which are not things a selection can hold. */
+        function selectAll() {
+            if (!state.order.length) return;
+            state.order.forEach((name) => state.selection.add(name));
             state.anchor = null;
             render();
         }
@@ -965,6 +981,16 @@
 
         // -- toolbar ---------------------------------------------------------
 
+        // A checkbox for the whole view, as a mail client's is: ticked when
+        // everything shown is selected, mixed when some is, and a click on a
+        // ticked one puts the selection down.
+        selectAllEl.addEventListener("click", () => {
+            if (selectAllEl.getAttribute("aria-checked") === "true") clearSelection();
+            else selectAll();
+        });
+        const selectAllKey = window.PlexoraShortcuts?.format?.("mod+a");
+        if (selectAllKey) selectAllEl.title = `Select every sample shown (${selectAllKey})`;
+
         searchInput.addEventListener("input", () => {
             state.query = searchInput.value;
             state.selection.clear();
@@ -990,16 +1016,23 @@
             void createDataset(Array.from(state.selection));
         });
 
-        // Escape puts the selection down. On `document` because the focus may
-        // be anywhere by then -- and skipped while a dialog is up, since a
+        // Escape puts the selection down, and Ctrl/Cmd+A selects every sample
+        // shown, as in a file browser. On `document` because the focus may be
+        // anywhere by then -- and skipped while a dialog is up, since a
         // <dialog> traps focus but not keydown, so Escape dismissing a
-        // confirmation would clear the selection it was asking about.
-        function onEscape(event) {
-            if (event.key !== "Escape") return;
+        // confirmation would clear the selection it was asking about. Ctrl+A
+        // in the search box selects its text, as it always did.
+        function onKeydown(event) {
             if (window.PlexoraConfirm?.modalOpen()) return;
-            clearSelection();
+            if (event.key === "Escape") return clearSelection();
+            const selectAllChord = (event.ctrlKey || event.metaKey)
+                && !event.shiftKey && !event.altKey && event.key.toLowerCase() === "a";
+            if (!selectAllChord || window.PlexoraShortcuts?.isTyping?.()) return;
+            if (!state.order.length) return;
+            event.preventDefault();
+            selectAll();
         }
-        document.addEventListener("keydown", onEscape);
+        document.addEventListener("keydown", onKeydown);
 
         // How something outside this page asks for a re-list. The import
         // dialog is the one caller: a sample imported while this page is open
@@ -1020,6 +1053,6 @@
         // The page is mounted as a fragment by the app shell, so it is torn
         // down and re-registered on every navigation. Everything else here is
         // bound to an element that goes with the fragment; this one is not.
-        return () => document.removeEventListener("keydown", onEscape);
+        return () => document.removeEventListener("keydown", onKeydown);
     });
 })();

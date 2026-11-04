@@ -93,6 +93,7 @@ function makeWorld({ desktop = true, platform = "windows", router = false,
         createElement: () => ({ getContext: () => ({}) }),
     };
     const invoked = [];
+    const reloads = [];
     const tauriListeners = {};
     const toasts = [];
     const drops = [];
@@ -104,7 +105,8 @@ function makeWorld({ desktop = true, platform = "windows", router = false,
         document,
         devicePixelRatio: 2,
         PLEXORA_BASE_URL: "",
-        location: { pathname: "/tonsil", search: "?tool=roi", href: "" },
+        location: { pathname: "/tonsil", search: "?tool=roi", href: "",
+                    reload: () => reloads.push(true) },
         PlexoraToast: { show: (options) => toasts.push(options) },
         PlexoraImportSample: { dropPaths: (paths) => drops.push(paths), open: () => {} },
         PlexoraRouter: { go: (url) => navigations.push(url) },
@@ -148,8 +150,8 @@ function makeWorld({ desktop = true, platform = "windows", router = false,
     });
     runInContext(SOURCE, context);
     return {
-        window, document, classes, elements, invoked, toasts, drops, navigations, pending,
-        routed, tauriListeners, webviewListeners,
+        window, document, classes, elements, invoked, reloads, toasts, drops, navigations,
+        pending, routed, tauriListeners, webviewListeners,
         emitOnWebview(name, payload) {
             (webviewListeners[name] || []).forEach((fn) => fn({ payload }));
         },
@@ -232,6 +234,15 @@ const tick = () => new Promise((resolve) => setTimeout(resolve, 0));
     const plain = world.key({ key: "e", ctrlKey: true });
     check("a chord the page owns is left to the page", !plain.defaultPrevented);
 
+    const reloadKeys = [{ key: "r", ctrlKey: true }, { key: "R", ctrlKey: true, shiftKey: true },
+                        { key: "F5" }, { key: "F5", ctrlKey: true }];
+    const reloadEvents = reloadKeys.map((init) => world.key(init));
+    await tick();
+    check("Ctrl+R, Ctrl+Shift+R, F5 and Ctrl+F5 each reload the window",
+          reloadEvents.every((e) => e.defaultPrevented) && world.reloads.length === 4);
+    check("from the page itself, so an older shell needs nothing new",
+          !world.invoked.some((c) => c.command === "shell_action" && c.args.id === "reload"));
+
     const blob = { arrayBuffer: () => Promise.resolve(new Uint8Array([1, 2, 3]).buffer) };
     const saved = await api.saveBlob(blob, "café view.png");
     const call = world.invoked.find((c) => c.command === "save_bytes");
@@ -258,6 +269,10 @@ const tick = () => new Promise((resolve) => setTimeout(resolve, 0));
     check("the New Window row opens a window",
           world.invoked.filter((c) => c.command === "new_window").length === before + 1);
     check("the Full Screen row prints F11 off macOS", api._internal.keyHint("fullscreen") === "F11");
+    const reloadsBefore = world.reloads.length;
+    click("reload");
+    await tick();
+    check("the Reload row reloads the window", world.reloads.length === reloadsBefore + 1);
 
     world.pending.push({ kind: "project", name: "tonsil 2" });
     world.emit("plexora://opens-pending", null);
@@ -298,6 +313,9 @@ const tick = () => new Promise((resolve) => setTimeout(resolve, 0));
     await tick();
     check("on macOS the menu owns Cmd+N and the page leaves it alone",
           !event.defaultPrevented && !world.invoked.some((c) => c.command === "new_window"));
+    const cmdR = world.key({ key: "r", metaKey: true });
+    check("and Cmd+R, which its View > Reload carries",
+          !cmdR.defaultPrevented && world.reloads.length === 0);
     check("and the Full Screen row prints the Mac's chord",
           world.window.PlexoraDesktop._internal.keyHint("fullscreen") === "⌃⌘F");
 }

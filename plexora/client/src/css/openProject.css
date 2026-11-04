@@ -494,33 +494,36 @@ button.open-project-crumb:hover {
 
 /* Top-left, opposite the actions: the two never collide, and the corner a
    card is selected from is the corner every file browser puts it in.
-   Invisible until the card is hovered or already selected, so an ordinary
-   grid of projects looks exactly as it did. */
+   Always shown. It used to appear only on hover, which kept the grid quiet
+   but hid the one sign that cards can be selected at all. The light border
+   on a dark plate keeps the empty box readable over any thumbnail. */
 .project-select {
     align-items: center;
-    background: rgba(5, 7, 10, 0.82);
-    border: 1px solid var(--border-strong);
+    background: rgba(5, 7, 10, 0.72);
+    border: 1.5px solid rgba(255, 255, 255, 0.78);
     border-radius: var(--radius-sm);
     box-shadow: var(--shadow-sm);
     color: transparent;
     cursor: pointer;
     display: flex;
-    font-size: 11px;
+    font-size: 12px;
     height: 22px;
     justify-content: center;
     left: var(--space-2);
-    opacity: 0;
     position: absolute;
     top: var(--space-2);
-    transition: opacity var(--duration-fast) var(--ease-standard);
+    transition: background var(--duration-fast) var(--ease-standard),
+        border-color var(--duration-fast) var(--ease-standard),
+        color var(--duration-fast) var(--ease-standard);
     width: 22px;
     z-index: 2;
 }
 
-.project-card:hover .project-select,
-.project-row:hover .project-select,
+/* A faint tick under the pointer says what a click will do. */
+.project-select:hover,
 .project-select:focus-visible {
-    opacity: 1;
+    border-color: var(--accent-channel);
+    color: rgba(255, 255, 255, 0.5);
 }
 
 .project-card.is-selected .project-select,
@@ -541,10 +544,76 @@ button.open-project-crumb:hover {
     position: relative;
 }
 
+/* In a row the tick has a column of its own, ahead of the thumbnail it
+   would otherwise sit on. Folder rows have no tick but keep the same
+   indent, so every thumbnail in the list lines up. */
 .project-row .project-select {
-    left: var(--space-1);
+    left: var(--space-3);
     top: 50%;
     transform: translateY(-50%);
+}
+
+.project-list .project-row-link {
+    padding-left: calc(var(--space-3) * 2 + 22px);
+}
+
+/* -- select all ---------------------------------------------------------- */
+
+/* Sized by the toolbar row (align-self: stretch) so it matches the search
+   box and the sort menu beside it. */
+.open-project-select-all {
+    align-items: center;
+    align-self: stretch;
+    background: var(--surface-1);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-md);
+    color: var(--text-primary);
+    cursor: pointer;
+    display: flex;
+    font-size: 13px;
+    gap: var(--space-2);
+    padding: 0 var(--space-3);
+    transition: border-color var(--duration-fast) var(--ease-standard);
+    white-space: nowrap;
+}
+
+/* `display: flex` above outranks the UA stylesheet's [hidden] rule. */
+.open-project-select-all[hidden] {
+    display: none;
+}
+
+.open-project-select-all:hover {
+    border-color: var(--accent-channel);
+}
+
+.open-project-select-box {
+    align-items: center;
+    border: 1.5px solid var(--text-muted);
+    border-radius: var(--radius-sm);
+    color: #05070a;
+    display: inline-flex;
+    flex: 0 0 auto;
+    font-size: 11px;
+    height: 18px;
+    justify-content: center;
+    width: 18px;
+}
+
+/* Both: Font Awesome swaps each `.fas` span for an `svg.svg-inline--fa`
+   once it has loaded, and a rule on `.fas` alone stops matching then. */
+.open-project-select-box :is(.fas, .svg-inline--fa) {
+    display: none;
+}
+
+.open-project-select-all[aria-checked="true"] .open-project-select-box,
+.open-project-select-all[aria-checked="mixed"] .open-project-select-box {
+    background: var(--accent-channel);
+    border-color: var(--accent-channel);
+}
+
+.open-project-select-all[aria-checked="true"] .fa-check,
+.open-project-select-all[aria-checked="mixed"] .fa-minus {
+    display: inline-block;
 }
 
 /* Faded rather than hidden while a drag is in flight: the cards being moved

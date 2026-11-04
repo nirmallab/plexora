@@ -1,7 +1,7 @@
 /**
  * The project browser: folders, selection, and moving things between them.
  *
- * Six properties, and most of them are about what the folder metaphor must NOT
+ * Seven properties, and most of them are about what the folder metaphor must NOT
  * be allowed to imply:
  *
  *   1. **A dataset owns nothing.** Deleting one releases its projects. Taking a
@@ -23,6 +23,8 @@
  *      off.** Open Project is mounted as a fragment by the app shell and torn
  *      down on every navigation; a listener left behind clears a selection on
  *      a page that no longer has one.
+ *   7. **Select all is what is on screen.** This folder's samples, or a
+ *      search's matches -- never a folder, and never a sample the view hides.
  *
  * Run directly:  node tests/js/open_project_probe.mjs
  */
@@ -54,6 +56,9 @@ function makeElement(id) {
         disabled: false,
         title: "",
         dataset: {},
+        attributes: new Map(),
+        setAttribute(name, value) { element.attributes.set(name, String(value)); },
+        getAttribute(name) { return element.attributes.get(name) ?? null; },
         get className() { return Array.from(classes).join(" "); },
         set className(value) {
             classes.clear();
@@ -123,13 +128,13 @@ function hit(descriptor, extra = {}) {
 
 // -- the world the page runs in ---------------------------------------------
 
-function build({ projects, datasets, answers = {}, folder = null } = {}) {
+function build({ projects, datasets, answers = {}, folder = null, typing = false } = {}) {
     const ids = ["project-results", "project-search", "project-sort",
                  "project-view-grid", "project-view-list", "project-count",
                  "project-empty-state", "project-no-results",
                  "dataset-empty-state", "project-crumbs",
                  "project-selection-bar", "project-selection-count",
-                 "dataset-create"];
+                 "project-select-all", "dataset-create"];
     const elements = new Map(ids.map((id) => [id, makeElement(id)]));
 
     //: Every POST the page makes, in order. The whole point of the probe.
@@ -180,6 +185,10 @@ function build({ projects, datasets, answers = {}, folder = null } = {}) {
     context.window.location = { get href() { return url; } };
     context.window.history = { replaceState(_s, _t, next) { url = String(next); } };
     context.window.PlexoraStatus = { begin: () => ({ done() {}, fail() {} }) };
+    context.window.PlexoraShortcuts = {
+        isTyping: () => typing,
+        format: (spec) => (spec === "mod+a" ? "Ctrl+A" : spec),
+    };
     context.window.PlexoraConfirm = {
         escapeHtml: (v) => String(v),
         modalOpen: () => false,
@@ -201,6 +210,13 @@ function build({ projects, datasets, answers = {}, folder = null } = {}) {
         crumbs: elements.get("project-crumbs"),
         posted, asked, teardown,
         doc: context.document,
+        async key(init) {
+            const event = { key: "", ctrlKey: false, metaKey: false, shiftKey: false,
+                            altKey: false, defaultPrevented: false,
+                            preventDefault() { this.defaultPrevented = true; }, ...init };
+            for (const fn of context.document.listeners.get("keydown") || []) await fn(event);
+            return event;
+        },
         get url() { return url; },
         settle: () => new Promise((r) => setTimeout(r, 0)),
     };
@@ -383,6 +399,79 @@ const setup = async (options) => {
     check("shift-click extends the range",
         page.el("project-selection-count").textContent === "2 samples selected",
         page.el("project-selection-count").textContent);
+}
+
+// -- select all ----------------------------------------------------------------
+
+{
+    const page = await setup({ folder: "d1" });
+    const all = page.el("project-select-all");
+    check("Select all is offered when there are samples on screen",
+        all.hidden === false && all.getAttribute("aria-checked") === "false");
+
+    await page.results.fire("click", hit({ dataset: { selectProject: "slide_a" } }));
+    check("and reads as mixed when some of them are selected",
+        all.getAttribute("aria-checked") === "mixed", all.getAttribute("aria-checked"));
+
+    await all.fire("click", {});
+    check("clicking it selects every sample in the folder",
+        page.el("project-selection-count").textContent === "2 samples selected",
+        page.el("project-selection-count").textContent);
+    check("and it reads as ticked", all.getAttribute("aria-checked") === "true");
+
+    await all.fire("click", {});
+    check("clicking it again puts the selection down",
+        page.bar.hidden === true && all.getAttribute("aria-checked") === "false");
+}
+
+{
+    const page = await setup();
+    await page.el("project-select-all").fire("click", {});
+    check("at the top level it selects the loose samples and never a folder",
+        page.el("project-selection-count").textContent === "2 samples selected",
+        page.el("project-selection-count").textContent);
+}
+
+{
+    const page = await setup();
+    const search = page.el("project-search");
+    search.value = "slide";
+    await search.fire("input", {});
+    await page.el("project-select-all").fire("click", {});
+    check("in a search it selects the matches, wherever they live",
+        page.el("project-selection-count").textContent === "2 samples selected",
+        page.el("project-selection-count").textContent);
+}
+
+{
+    const page = await setup({ folder: "d2" });
+    check("an empty folder offers no Select all",
+        page.el("project-select-all").hidden === true);
+}
+
+{
+    const page = await setup({ folder: "d1" });
+    const event = await page.key({ key: "a", ctrlKey: true });
+    check("Ctrl+A selects every sample shown",
+        event.defaultPrevented
+        && page.el("project-selection-count").textContent === "2 samples selected");
+    await page.key({ key: "Escape" });
+    check("and Escape puts them down", page.bar.hidden === true);
+}
+
+{
+    const page = await setup({ folder: "d1", typing: true });
+    const event = await page.key({ key: "a", metaKey: true });
+    check("Cmd+A in a text field is left to the field",
+        !event.defaultPrevented && page.bar.hidden === true,
+        "it selects the search box's text, as it always did");
+}
+
+{
+    const page = await setup();
+    check("Select all names its key in its tooltip",
+        page.el("project-select-all").title === "Select every sample shown (Ctrl+A)",
+        page.el("project-select-all").title);
 }
 
 {
