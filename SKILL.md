@@ -3373,7 +3373,7 @@ deliberately left out and what should be built next.
   only when nothing better of the same kind exists; children are evidence for
   a weak parent too, `Engine.defer_for_children` holding such a unit's first
   look until they close), `biology.py` (the sample's tissue and disease as a
-  prior for one session, from `ai/knowledge/biology.yaml`, never from code;
+  prior for one session, from the marker graph's contexts, never from code;
   `overlay` lays the context's relations over the panel's for the session
   only, tagged `context` so `hierarchy` weighs them higher (`hierarchy.CONTEXT`);
   `brief` tells a look the tissue/disease, who said so, and what looks alike;
@@ -3772,7 +3772,7 @@ deliberately left out and what should be built next.
   the gate walks past each pair the look reads the classifier's way
   (`cellcalls.confirms`; rows at least a half-band wide, `check_points`;
   `check_reading` auto|word|mixed|count; auto = word for a fibrous marker,
-  markers.yaml `morphology`, else mixed); the check look is AI task
+  the marker graph's `morphology`, else mixed); the check look is AI task
   `gating.classifier_check`. The layer's own rule still adds nothing:
   the classifier's positives below a gate were right 47 % of the time
   (`docs/internal/bench/CLASSIFIER_RULE_2026-10-19.md`). `rules.py`
@@ -4387,35 +4387,48 @@ deliberately left out and what should be built next.
   out-of-focus region in a cycle the cells were not segmented from leaves
   them standing with that cycle's markers unreliable — scored as
   `marker_recall`/`marker_precision` beside the cell metrics).
-- `plexora/ai/vocabulary.py` + `ai/knowledge/markers.yaml` — the shipped
-  marker vocabulary automatic gating grounds its biology in (packaged via
-  `pyproject.toml`'s `ai/knowledge/*.yaml`). `ROLES`, `COMPARTMENTS`,
-  `RELATIONS` and `CONFIDENCE` are the only values an entry may use in those
-  fields; `load()` calls `check()` on every entry and raises, naming the
-  entry, the first time one doesn't — a markers.yaml typo fails at load, not
-  as a silent no-op downstream. markers.yaml is `version: "2"`.
-  A learned layer sits beside it: `learned_path()`
-  (`<data_root>/vocabulary/learned_markers.yaml`, or `PLEXORA_VOCABULARY_PATH`
-  -- a file or a folder, so a lab share learns for every install on it),
-  written by `learn(entries, source="ai"|"user", about=)` and read back by
-  `learned()`/`forget()` (`plexora ai vocabulary [list|path|forget MARKER]`),
-  so a marker the user described once is not asked about again (a model's
-  account is learned only once the user confirms it, `context.learn_from`).
-  The shipped layer always wins a name both know, the first account stands and
-  only the user's word replaces a model's (`LEARNED_SOURCES`); a malformed
-  learned entry is skipped, not fatal. `load()` re-reads the learned file when
-  its stat changes (looked at once a second, because `load` runs per name),
-  `version()` gains `+learned.<digest>`, `origin(name)` says which layer,
-  `canonical(name, learned=False)` asks the shipped layer only, `plain_name`
-  strips position and fluorophore suffixes to name a learned entry, and
-  `clear_cache()` forgets both. `conftest.py` unsets `PLEXORA_VOCABULARY_PATH`
-  so no test teaches a lab's shared file (`tests/test_vocabulary_learned.py`).
+- `plexora/ai/vocabulary.py` — the marker vocabulary automatic gating
+  grounds its biology in, built from the BioCognia marker graph
+  (`biocognia-markers`, a core dependency; SCIMAP Pro reads the same graph).
+  `_build` turns every graph marker Plexora can gate (a role from `class` +
+  `tier`, and a `compartment`; or a `products.plexora` block, which also holds
+  Plexora's own name -- PanCK, Ki67, PD1, aSMA, DNA -- and a role that differs
+  from the class: FOXP3 state, CD57 lineage_other, aSMA tumour_stromal) into
+  an entry; its partners are the graph's subset/subset_any/coexpressed/
+  exclusive edges (a family endpoint is the family's anchors; an exclusion on
+  both markers, a co-expression on both unless the edge names the one read
+  `under` the other, which places it in `hierarchy.build`'s tree), graded
+  strong/moderate/weak -> high/moderate/low, narrowest partner first (family
+  depth, else subset depth: FOXP3's carriers CD4 then CD3). Spellings are
+  claimed in tiers (names, synonyms, protein, gene); one two markers share in
+  a tier is neither's (PTPRC is CD45's as a protein name). `ROLES`,
+  `COMPARTMENTS`, `RELATIONS` and `CONFIDENCE` are the only values an entry
+  may use; `check()` names the entry. `version()` is the graph's version and
+  a digest of its file (an edited caveat rebuilds stored panel contexts), with
+  `+learned.<digest>` when overlays are laid.
+  The learned layer is the graph's overlay (`overlay_paths()`:
+  `BIOCOGNIA_MARKER_GRAPH`, else the folder `PLEXORA_VOCABULARY_PATH` names,
+  else the user's config dir, shared with SCIMAP Pro), written by
+  `learn(entries, source="ai"|"user", about=)` (origin `layer: learned`; a
+  graph marker without a compartment, CDX2, is filled in, never changed) and
+  read back by `learned()`/`forget()` (`plexora ai vocabulary [list|path|forget
+  MARKER]`), so a marker the user described once is not asked about again (a
+  model's account is learned only once the user confirms it,
+  `context.learn_from`). The shipped graph always wins a name both know, the
+  first account stands and only the user's word replaces a model's
+  (`LEARNED_SOURCES`), and a replaced account's relations go with it. An
+  overlay edge is a partner when a person stated it, its quotes checked
+  (`citation:`), or the learned layer wrote it (`counts`) -- never an agent's
+  unchecked proposal. A `learned_markers.yaml` from before the graph moves
+  into the overlay the first time `load` looks (`_migrate_legacy`, kept as
+  `.migrated`). `conftest.py` points `BIOCOGNIA_MARKER_GRAPH` at the test's
+  own folder and unsets `PLEXORA_VOCABULARY_PATH`.
   `structural()` recognises a nuclear counterstain or an autofluorescence/
   blank channel by name pattern (`NUCLEAR_PATTERN`, `NOT_NUCLEAR_PATTERN`,
   `AUTOFLUORESCENCE_PATTERN`, which moved here from `agent/presets.py`;
   presets imports them) rather than a list of spellings, so `Nucleus2` or
   `AF_2` resolves through `canonical()` to `DNA`/`Autofluorescence` and is
-  never gated. `ai/knowledge/biology.yaml` (new, packaged the same way) is the
+  never gated. The graph's contexts (and the edges scoped to them) are the
   tissue/disease knowledge `autogate/biology.py` resolves the session's
   `biology` option against — relations a tissue or disease adds or
   strengthens (MART1 with SOX10 in melanoma), never a list of marker names
@@ -10253,8 +10266,8 @@ in **5.6 s**.
   profiles sit beside gates of the old values.
 - **No marker names in `autogate/hierarchy.py` or `autogate/biology.py`.**
   Both build their tree and their tissue/disease relations only from the
-  panel's own entries — the shipped vocabulary (`ai/knowledge/markers.yaml`,
-  `biology.yaml`) and its learned layer, then whatever the user, a project's
+  panel's own entries — the vocabulary (the marker graph, its contexts and
+  its overlay), then whatever the user, a project's
   metadata or an agent (`set_panel_context`) added to them. Neither module hardcodes a CD-number or
   a disease's marker list; a panel with no vocabulary entries builds a tree of
   `unplaced` nodes and a biology overlay with no relations, not a wrong guess.

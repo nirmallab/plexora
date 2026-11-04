@@ -2040,6 +2040,22 @@ def test_a_changed_partner_gate_flags_its_dependants(tmp_path):
     assert ("CD4", "CD3") in stale and "CD4" in qc["needs_review"]
 
 
+def test_qc_reads_a_carrier_group_as_no_pair(tmp_path):
+    """TBX21's partners are a `subset_any` group (T, B or NK cells): QC tests
+    pairs, and a group says nothing about one pair -- it was handed to the
+    bivariate count, which refused the relation and failed the whole QC."""
+    from plexora.plugins.gating.server import model
+
+    make_gating_project(tmp_path, grid=16, size=640, markers=("CD3", "CD20", "TBX21"))
+    session = AgentSession()
+    ds = session.data("gsynth")
+    for marker in ("CD3", "CD20", "TBX21"):           # between the painted levels (raw)
+        model.set_gate(ds, marker, float(np.expm1(5.6)), float(np.expm1(9.5)))
+    qc = ok(invoke(session, "gating_qc", {"project": "gsynth"}))
+    assert {(p["a"], p["b"], p["relation"]) for p in qc["pairs"]} == {("CD3", "CD20", "exclusive")}
+    assert not qc["zero_positive_pairs"]
+
+
 def test_a_stored_session_replays_and_its_pictures_draw_again_byte_for_byte(tmp_path):
     """The bench's replay (plexora/ai/bench.py): every packet a session issued,
     asked again from disk. Its pictures are a function of their manifests and

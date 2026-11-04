@@ -43,8 +43,8 @@ def test_the_vocabulary_names_groups_and_leaves_tissue_dependent_markers_to_the_
 
     vocabulary.clear_cache()
     entries = vocabulary.load()["entries"]
-    lag3 = {p["marker"] for p in entries["LAG3"]["partners"] if p["relation"] == "subset_any"}
-    assert lag3 == {"CD3", "CD56"}
+    tigit = {p["marker"] for p in entries["TIGIT"]["partners"] if p["relation"] == "subset_any"}
+    assert tigit == {"CD3", "CD56"}
     # Which cells carry PD-L1 depends on the tumour: no partner, a note instead.
     assert entries["PDL1"]["partners"] == []
     assert "myeloid" in entries["PDL1"]["expression"]
@@ -58,12 +58,12 @@ def test_the_vocabulary_names_groups_and_leaves_tissue_dependent_markers_to_the_
 def test_a_panel_missing_a_lineage_of_a_group_says_so():
     from plexora.plugins.gating.server.autogate import context
 
-    whole = context.build(["CD3", "CD56", "LAG3"])
-    assert "subset_any_missing" not in whole["entries"]["LAG3"]
-    part = context.build(["CD3", "LAG3"])
-    assert part["entries"]["LAG3"]["subset_any_missing"] == ["CD56"]
-    assert {(p["marker"], p["relation"]) for p in part["entries"]["LAG3"]["partners"]} == \
-        {("CD3", "subset_any")}
+    whole = context.build(["CD3", "CD56", "TIGIT"])
+    assert "subset_any_missing" not in whole["entries"]["TIGIT"]
+    part = context.build(["CD3", "TIGIT"])
+    assert part["entries"]["TIGIT"]["subset_any_missing"] == ["CD56"]
+    assert {(p["marker"], p["relation"]) for p in part["entries"]["TIGIT"]["partners"]
+            if p["relation"] == "subset_any"} == {("CD3", "subset_any")}
 
 
 # -- the partner plan --------------------------------------------------------------------

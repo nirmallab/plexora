@@ -41,7 +41,9 @@ def test_the_panel_becomes_a_tree_from_its_own_relations():
     assert nodes["CD45"]["stage"] == "broad"
     assert nodes["CD3e"]["stage"] == "lineage" and nodes["CD3e"]["placed_under"] == "CD45"
     assert nodes["CD8a"]["stage"] == "subtype" and nodes["CD8a"]["placed_under"] == "CD3e"
-    assert nodes["CD163"]["placed_under"] == "CD68"               # a co-expressed placement
+    # Not under CD68: CD163+ cells often outnumber CD68+ ones and carcinoma cells carry CD163 (the
+    # marker graph's research round 2), so neither is read beneath the other.
+    assert nodes["CD163"]["placed_under"] == "CD45" and nodes["CD4"]["placed_under"] == "CD3e"
     assert nodes["FOXP3"]["stage"] == "state" and nodes["PD1"]["stage"] == "state"
     assert nodes["Mystery"]["stage"] == "unplaced"
     assert {"CD3e", "CD20", "CD68", "CD11c"} <= set(nodes["CD45"]["children"])
@@ -52,9 +54,8 @@ def test_gating_follows_the_tree_and_partners_still_come_first():
     stage = {m: i for i, m in enumerate(order)}
     assert order[0] == "CD45" and order[-1] == "Mystery"
     assert stage["CD3e"] < stage["CD8a"] < stage["FOXP3"]
-    assert stage["CD68"] < stage["CD163"]
     assert max(stage[m] for m in ("CD3e", "CD20", "CD68", "CD11c")) \
-        < min(stage[m] for m in ("CD4", "CD8a", "CD163"))
+        < min(stage[m] for m in ("CD4", "CD8a"))
     assert max(stage[m] for m in ("CD4", "CD8a", "CD163")) \
         < min(stage[m] for m in ("PD1", "Ki67", "PCNA", "FOXP3"))
 
@@ -62,9 +63,13 @@ def test_gating_follows_the_tree_and_partners_still_come_first():
 def test_a_mutual_relation_is_not_a_level():
     from plexora.plugins.gating.server.autogate import hierarchy
 
+    # Each states the co-expression of the other, in one bucket: neither is placed under the other (it
+    # was the one walked second, so CD68 landed under CD163 in one panel and over it in another).
     tree = hierarchy.build(_panel(["HLAABC", "B2M", "CD45"]))
     depths = sorted(tree["nodes"][m]["depth"] for m in ("HLAABC", "B2M"))
-    assert depths == [0, 1]
+    assert depths == [0, 0]
+    tree = hierarchy.build(_panel(["CD45", "CD163", "CD68"]))
+    assert tree["nodes"]["CD68"]["placed_under"] == tree["nodes"]["CD163"]["placed_under"] == "CD45"
 
 
 def test_the_tree_implies_relations_the_vocabulary_does_not_state():

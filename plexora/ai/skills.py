@@ -12,6 +12,11 @@ only sometimes is a reference (`skills/<group>/<name>.md`, read as
 `read_skill("<group>/<name>")`), listed in the manifest beside the skills
 that point at it. A skill's old name stays readable through the manifest's
 `aliases`, so a brief or an installed copy that names it keeps working.
+
+A shared skill comes from another BioCognia package and keeps that package's
+name and house rules (`shared`): the marker graph's, `biocognia-marker-graph`,
+which SCIMAP Pro serves and installs too. It is listed, read and installed
+beside Plexora's own; Plexora's lint does not read it.
 """
 
 from __future__ import annotations
@@ -82,11 +87,43 @@ def _source(name: str, data=None):
     return None
 
 
+#: The marker graph's skill, by the name its package gives it
+#: (`biocognia_markers.SKILL_NAME`).
+MARKER_GRAPH_SKILL = "biocognia-marker-graph"
+
+
+def shared() -> list:
+    """The shared skills, each {name, title, description, when, tier, tools,
+    text}: the marker graph's, whose tools Plexora serves under the same
+    names."""
+    try:
+        import biocognia_markers
+    except ImportError:          # pragma: no cover - a core dependency
+        return []
+    return [{"name": MARKER_GRAPH_SKILL,
+             "title": "Read and fill the BioCognia marker graph",
+             "description": "What the marker graph shared with SCIMAP Pro holds about a panel's "
+                            "markers, how to fill a gap with evidence, and where to search.",
+             "when": "A panel marker is unresolved, or resolved without the relations gating "
+                     "leans on (a state marker with no carriers, a lineage marker in no "
+                     "exclusion).",
+             "tier": "judgement",
+             "tools": ["marker_graph", "propose_marker_edges", "verify_marker_evidence",
+                       "get_panel_context"],
+             "text": biocognia_markers.skill_text}]
+
+
+def _shared(name):
+    return next((s for s in shared() if s["name"] == name), None)
+
+
 def readable_names(data=None) -> list:
-    """Every name `read_skill` answers: skills, references, old names."""
+    """Every name `read_skill` answers: skills, references, old names, shared
+    skills."""
     return ([e["name"] for e in _entries("skills", data)]
             + [e["name"] for e in _entries("references", data)]
-            + [e["name"] for e in _entries("aliases", data)])
+            + [e["name"] for e in _entries("aliases", data)]
+            + [s["name"] for s in shared()])
 
 
 def list_skills() -> list:
@@ -116,6 +153,9 @@ def list_skills() -> list:
         if old:
             row["aliases"] = old
         out.append(row)
+    for skill in shared():
+        out.append({**{k: v for k, v in skill.items() if k != "text"}, "available": True,
+                    "uri": f"plexora://skill/{skill['name']}", "shared": True})
     return out
 
 
@@ -135,6 +175,8 @@ def raw_skill(name: str) -> str:
     """The skill or reference as written, placeholders and all; an old name
     reads what replaced it. KeyError naming what can be read."""
     found = _source(resolve(name))
+    if found is None and _shared(name):
+        return _shared(name)["text"]()
     if found is None or not found[1].exists():
         raise KeyError(f"no skill named {name!r}; available: {', '.join(readable_names())}")
     return found[1].read_text(encoding="utf-8")
@@ -152,6 +194,8 @@ def read_skill(name: str) -> str:
     from the code's own constants (`constants`) and its `{{tools}}` from the
     manifest. An old name (`aliases`) reads what replaced it."""
     text = raw_skill(name)
+    if _source(resolve(name)) is None:
+        return text                  # a shared skill: its own package's words
     return render(text, _values(_source(resolve(name))[0]))
 
 
@@ -311,6 +355,8 @@ def vocabulary() -> set:
     for section in ("skills", "references", "aliases"):
         for entry in _entries(section):
             words.update((entry["name"], entry.get("prompt") or entry["name"]))
+    for skill in shared():
+        words.update((skill["name"], *_IDENT.findall(skill["name"])))
     # Marker names, as the shipped vocabulary knows them: a skill's examples.
     from plexora.ai import vocabulary as markers
 

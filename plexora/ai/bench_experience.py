@@ -8,7 +8,7 @@ markdown a person reads to decide what to change:
 
 - **gates the user moved**: per marker, how far and which way from the
   session's final gate, and from its scored start (a start that is always
-  low for a marker across projects is a `scoring` or markers.yaml finding);
+  low for a marker across projects is a `scoring` or marker graph finding);
 - **the classifier's layers**: adopted, reverted or discarded per marker
   role, what each removed or added, by signal grade;
 - **the classifier check**: fired, which way, how many rows the look
@@ -17,8 +17,8 @@ markdown a person reads to decide what to change:
   `--exclude-version`.
 
 Nothing here changes a parameter. A finding becomes a `[cal]` constant or a
-markers.yaml caveat by hand, with a VERSION bump of the owning module and a
-ledger row in docs/internal/bench/AUTOGATE_STEP_LEDGER.md citing a bench on
+marker graph caveat (biocognia-markers) by hand, with a VERSION bump of the
+owning module and a ledger row in docs/internal/bench/AUTOGATE_STEP_LEDGER.md citing a bench on
 the frozen label sets.
 """
 
@@ -156,7 +156,7 @@ def to_markdown(summary) -> str:
              f"{summary['n_decisions']} marker decisions (the latest per project and marker), "
              f"{summary['n_corrections']} corrections recorded.", "",
              "Read-only: nothing here changes a parameter. A finding goes into a `[cal]` "
-             "constant or markers.yaml by hand, with a VERSION bump and bench evidence.", ""]
+             "constant or the marker graph by hand, with a VERSION bump and bench evidence.", ""]
     lines += ["## Gates the user moved", "",
               "| marker | projects | mean change from the session's gate | each (final -> user) |",
               "|---|---|---|---|"]

@@ -60,6 +60,12 @@ dependencies = [
     # workspace (`imports()`, the `import_image` guest tool); 0.3.0 only
     # labels it.
     "biocognia-intelligence>=0.2.1,<0.4",
+    # The marker graph SCIMAP Pro reads too (`plexora.ai.vocabulary` builds
+    # its entries from it, `autogate.biology` its tissue and disease
+    # contexts): markers, their relations and the overlay a user or an agent
+    # adds to. Data and pure numpy; it brings platformdirs and scipy, both
+    # here already.
+    "biocognia-markers>=0.1,<0.2",
     "Flask>=3.1",
     "fsspec>=2024.12",
     # Declared rather than leaned on transitively: gating reads and writes
@@ -321,6 +327,10 @@ plexora = "plexora.proxy:setup_plexora"
 [project.entry-points."biocognia.products"]
 plexora = "plexora_intelligence:PRODUCT"
 
+# Until biocognia-markers is on PyPI: the sibling checkout, as SCIMAP Pro does.
+[tool.uv.sources]
+biocognia-markers = { path = "../biocognia-markers", editable = true }
+
 [tool.setuptools.packages.find]
 include = ["plexora*"]
 # Namespace discovery is ON (the default) and must stay on: plexora/server and
@@ -352,8 +362,6 @@ plexora = [
     "ai/skills/**/*.md",
     # The AI tasks a gateway call names (plexora/ai/tasks.py).
     "ai/tasks.yaml",
-    # The shipped marker vocabulary automatic gating grounds its biology in.
-    "ai/knowledge/*.yaml",
 ]
 # The tools Plexora offers as a guest in Biocognia Intelligence
 # (tools/intelligence_manifest.py writes it).

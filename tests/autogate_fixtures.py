@@ -112,6 +112,8 @@ MARKER_LEVELS = {
     # CD4 T cell in eight (~3% of cells), too few for the mixture to see.
     "CD4":   (4.05,  4.95,  4.05,  4.05),
     "FOXP3": (4.0,   4.0,   4.0,   4.0),
+    # A state marker the graph puts on T, B or NK cells (`subset_any`).
+    "TBX21": (6.8,   4.1,   6.5,   4.0),
 }
 #: Per-cell spread (log1p sd) per marker; 0.18 unless named.
 MARKER_SD = {"CD4": 0.4, "FOXP3": 0.3}

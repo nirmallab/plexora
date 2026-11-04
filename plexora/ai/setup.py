@@ -159,14 +159,18 @@ def _merge_codex_file(path: Path, command, dry_run: bool, url=None) -> str:
 
 
 def _install_skills(target: Path, dry_run: bool) -> list:
+    """Plexora's skills as `plexora-<name>`, and the shared ones under their
+    own names (`biocognia-marker-graph`, which SCIMAP Pro installs too: one
+    file, whichever product wrote it last, from the same package)."""
     from plexora.ai.skills import SKILLS_DIR, list_skills, read_skill
 
     written = []
     for skill in list_skills():
         source = SKILLS_DIR / skill["name"] / "SKILL.md"
-        if not source.exists():
+        if not skill.get("shared") and not source.exists():
             continue
-        destination = target / f"plexora-{skill['name']}" / "SKILL.md"
+        folder = skill["name"] if skill.get("shared") else f"plexora-{skill['name']}"
+        destination = target / folder / "SKILL.md"
         written.append(str(destination))
         if not dry_run:
             destination.parent.mkdir(parents=True, exist_ok=True)

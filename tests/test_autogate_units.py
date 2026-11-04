@@ -1562,12 +1562,9 @@ def test_every_immune_marker_names_cd45_as_its_superset():
     PD-L1 on tumour cells) are the exceptions, and say so in `lineage`."""
     import re
 
-    import yaml
-
     from plexora.ai import vocabulary
 
-    path = Path(vocabulary.__file__).parent / "knowledge" / "markers.yaml"
-    entries = yaml.safe_load(path.read_text(encoding="utf-8"))["markers"]
+    entries = list(vocabulary.load()["entries"].values())
     immune = re.compile(r"\b(T|B|NK) cells?\b|macrophage|monocyte|myeloid|dendritic|"
                         r"neutrophil|regulatory T", re.I)
     shared = re.compile(r"tumou?r|neuro|neural|melano|epitheli|any lineage", re.I)

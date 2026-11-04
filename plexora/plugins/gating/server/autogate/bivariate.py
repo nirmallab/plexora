@@ -303,16 +303,20 @@ def carrier_enrichment(ds, marker, low, carrier, *, exclusives=()) -> dict:
     Auto gate -- over the share of every cell. A lineage the planner names
     that carries the marker no more than any cell is not a carrier here
     (LSP23362 PD-1: x1.9 in the CD68 cells, x0.30 once the T cells touching
-    them are cleaned out). {n_clean, positives, share, enrichment}."""
+    them are cleaned out). {n_clean, positives, share, enrichment}: the
+    marker graph's one definition (`biocognia_markers.discover.enrichment`),
+    which SCIMAP Pro's rulebook check reads too."""
+    from biocognia_markers.discover import enrichment
+
     va = cellmod.values(ds, marker)
     finite = np.isfinite(va)
     above = finite & gate_rule.passes(va, float(low), float(np.nanmax(va[finite])))
     _inside, clean = _carrier_cells(ds, va, carrier, exclusives)
-    base = above.sum() / max(int(finite.sum()), 1)
-    positives = int((above & clean).sum())
-    share = positives / max(int(clean.sum()), 1)
-    return {"n_clean": int(clean.sum()), "positives": positives, "share": round(share, 4),
-            "enrichment": round(share / base, 3) if base > 0 else None}
+    found = enrichment(above, clean, finite)
+    rate = found["rate"] if np.isfinite(found["rate"]) else 0.0
+    return {"n_clean": found["n_clean"], "positives": found["positives"], "share": round(rate, 4),
+            "enrichment": round(found["enrichment"], 3) if found["base"] > 0
+            and np.isfinite(found["enrichment"]) else None}
 
 
 def carrier_fit(ds, marker, carrier, *, exclusives=(), controls=(), min_cells=500,

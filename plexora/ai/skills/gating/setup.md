@@ -8,11 +8,16 @@ For skill gate-image, and gating/dataset: what to settle before and at
 `get_panel_context` gives each marker's role, compartment, lineage and
 partners, and lists as `unresolved` the markers the vocabulary does not know.
 Partners are evidence: where a look starts leans on them (gating/decisions).
-Give each unresolved marker, with `set_panel_context` (`source: "ai"`), the
-lineage-specific partners you know (`HLA-DR` for a dendritic or macrophage
-marker, `CD163` for `CD68`, `SOX10` for a melanocytic marker) and the
-exclusive ones. A wrong partner misleads the start, so skip what you do not
-know; never invent one. `source: "user"` is for what the user said.
+The vocabulary is the marker graph SCIMAP Pro reads too, so an unresolved
+marker is filled there first, with evidence (skill `biocognia-marker-graph`):
+`marker_graph` names what it lacks; research it, write it with
+`propose_marker_edges` and check its quotes with `verify_marker_evidence`;
+then read `get_panel_context` again. What no evidence places, give this
+session with `set_panel_context` (`source: "ai"`): the lineage-specific
+partners you know (`HLA-DR` for a dendritic or macrophage marker, `CD163` for
+`CD68`, `SOX10` for a melanocytic marker) and the exclusive ones. A wrong
+partner misleads the start, so skip what you do not know; never invent one.
+`source: "user"` is for what the user said.
 
 What a reader answers in a `panel_context` packet is used by this session
 and listed in the status as `unconfirmed_context`; the vocabulary learns it

@@ -14,10 +14,24 @@ from plexora.ai import skills
 
 
 def test_the_manifest_and_the_skill_folders_agree():
-    listed = [s["name"] for s in skills.list_skills()]
+    listed = [s["name"] for s in skills.list_skills() if not s.get("shared")]
     on_disk = sorted(p.parent.name for p in skills.SKILLS_DIR.glob("*/SKILL.md"))
     assert sorted(listed) == on_disk and len(set(listed)) == len(listed)
     assert all(s["available"] for s in skills.list_skills())
+
+
+def test_the_marker_graph_skill_is_served_and_its_tools_exist():
+    """The marker graph's skill comes from biocognia-markers, under the name
+    SCIMAP Pro gives it, and names the tools Plexora serves for it."""
+    import biocognia_markers
+
+    assert skills.MARKER_GRAPH_SKILL == biocognia_markers.SKILL_NAME
+    row = next(s for s in skills.list_skills() if s["name"] == "biocognia-marker-graph")
+    assert row["shared"] and row["available"]
+    assert skills.read_skill("biocognia-marker-graph") == biocognia_markers.skill_text()
+    registry.discover()
+    tools = {cap.tool_name for cap in registry.all_capabilities()}
+    assert set(row["tools"]) <= tools
 
 
 def test_every_skill_is_valid_against_the_live_registry():

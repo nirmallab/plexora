@@ -13,7 +13,7 @@ the one the session wrote, and the labels the user clicked since.
 
 Nothing here reads the rows back into a decision. `plexora ai bench
 experience` (plexora/ai/bench_experience.py) turns them into ledger lines;
-a change they argue for becomes a `[cal]` constant or a markers.yaml caveat
+a change they argue for becomes a `[cal]` constant or a marker graph caveat
 by hand, with a VERSION bump of the module it lives in and bench evidence on
 the frozen label sets -- and rows carry those versions, so a later reader can
 leave out the runs of a superseded version.

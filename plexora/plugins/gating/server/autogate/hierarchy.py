@@ -9,7 +9,9 @@ vocabulary, then the user's, metadata's or an agent's entries -- never a list
 of marker names here). A marker's *parents* are the markers its positives
 must be positive for (`subset`); it is *placed* under the deepest of those,
 or of a `coexpressed` partner from an earlier role bucket (CD4 under CD3,
-CD163 under CD68). Depth along that placement gives the stage:
+E-cadherin under Pan-CK). A co-expression both markers state of each other
+in one bucket (CD68 and CD163) places neither: it is not a level. Depth
+along that placement gives the stage:
 
 - `broad` -- no parent in the panel (CD45, a pan-tumour or stromal marker);
 - `lineage` -- one level down (CD3, CD20, CD68, CD11c);
@@ -56,7 +58,7 @@ from __future__ import annotations
 
 from plexora.ai import vocabulary
 
-VERSION = "1"
+VERSION = "2"
 
 #: The stages, in gating order.
 STAGES = ("broad", "lineage", "subtype", "state", "unplaced")
@@ -114,6 +116,13 @@ def build(context) -> dict:
              (entries.get(m) or {}).get("role") != "context"]
     present = set(gated)
     parents, placement = {}, {}
+
+    def mutual(marker, ref):
+        """`ref` states the co-expression back, in the same role bucket."""
+        return _role_rank(entries.get(ref)) == _role_rank(entries.get(marker)) and any(
+            p.get("marker") == marker and p.get("relation") == "coexpressed"
+            for p in (entries.get(ref) or {}).get("partners") or [])
+
     for marker in gated:
         entry = entries[marker]
         hard, soft = [], []
@@ -125,7 +134,7 @@ def build(context) -> dict:
             if partner["relation"] == "subset":
                 hard.append(ref)
             elif partner["relation"] == "coexpressed" \
-                    and _role_rank(entries.get(ref)) <= _role_rank(entry):
+                    and _role_rank(entries.get(ref)) <= _role_rank(entry) and not mutual(marker, ref):
                 soft.append(ref)
         parents[marker] = sorted(set(hard))
         placement[marker] = sorted(set(hard) | set(soft))
@@ -193,7 +202,8 @@ def _direct(context, marker):
         if partner.get("marker") in entries and partner["marker"] != marker \
                 and _evidence(partner):
             out.append(_Rel(partner["marker"], partner["relation"], "forward",
-                            partner.get("confidence") or "high", partner.get("context")))
+                            partner.get("confidence") or vocabulary.DEFAULT_CONFIDENCE,
+                            partner.get("context")))
     for other, entry in entries.items():
         if other == marker:
             continue
@@ -202,7 +212,8 @@ def _direct(context, marker):
                 continue
             direction = "reverse" if partner["relation"] == "subset" else "forward"
             out.append(_Rel(other, partner["relation"], direction,
-                            partner.get("confidence") or "high", partner.get("context")))
+                            partner.get("confidence") or vocabulary.DEFAULT_CONFIDENCE,
+                            partner.get("context")))
     return out
 
 

@@ -31,8 +31,10 @@ def _panel():
 
 def test_a_state_markers_carriers_are_its_narrowest_lineage_partners():
     panel = _panel()
-    # PD-1 is a subset of CD3 and CD45: the T cells carry it, CD45 is wider.
-    assert context.carriers_for(panel, "PD-1") == [{"marker": "CD3", "source": "vocabulary"}]
+    # PD-1 is carried by CD8 and CD4 T cells (the graph's narrowest carriers) within CD3 and CD45:
+    # with no CD8 in this panel, the T cells and the CD4 cells carry it; CD45 is wider.
+    assert context.carriers_for(panel, "PD-1") == [{"marker": "CD3", "source": "vocabulary"},
+                                                   {"marker": "CD4", "source": "vocabulary"}]
     assert [c["marker"] for c in context.carriers_for(panel, "FOXP3")] == ["CD4", "CD3"]
     assert context.carriers_for(panel, "Ki-67") == []
     # A lineage marker is its own carrier.
@@ -55,6 +57,7 @@ def test_a_planners_carriers_are_checked_and_laid_beside_the_stated_ones():
     carriers = context.carriers_for(view, "PD-1")
     # CD45 goes: CD3 (stated) and CD20 sit inside it.
     assert carriers == [{"marker": "CD3", "source": "vocabulary"},
+                        {"marker": "CD4", "source": "vocabulary"},
                         {"marker": "CD20", "source": "planner"},
                         {"marker": "CD68", "source": "planner"}]
 
@@ -222,13 +225,13 @@ def test_a_control_is_a_lineage_no_carrier_can_be():
     book = {m: {"grade": "moderate", "state": "accepted", "gate": 6.0}
             for m in ("CD45", "CD3", "CD20", "CD68", "CD11c", "Pan-CK")}
     # PD-1's own exclusions are derived through CD3, low: never the test.
-    # CD3 excludes CD20, CD68, CD11c and Pan-CK; CD68 excludes only Pan-CK
-    # of them, and is a carrier.
+    # CD3 excludes CD20, CD68 and Pan-CK (CD11c only weakly: some CD8 T cells
+    # carry it); CD68 excludes only Pan-CK of them, and is a carrier.
     both = Engine._marker_controls(stub, None, "p", "PD-1",
                                    [{"marker": "CD3"}, {"marker": "CD68"}], book)
     assert [c["marker"] for c in both] == ["Pan-CK"]
     t_only = Engine._marker_controls(stub, None, "p", "PD-1", [{"marker": "CD3"}], book)
-    assert [c["marker"] for c in t_only] == ["CD20", "CD68", "CD11c", "Pan-CK"]
+    assert [c["marker"] for c in t_only] == ["CD20", "CD68", "Pan-CK"]
     # A lineage not gated in the run is no control.
     book.pop("CD20")
     assert "CD20" not in [c["marker"] for c in

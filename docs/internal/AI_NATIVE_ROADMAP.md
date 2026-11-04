@@ -171,7 +171,7 @@ entitlement), `find_project_for_table`/`bind_project`, launch context,
 ### 4.3 Better scope and semantic grounding
 - Marker synonyms and canonical names (CD8 / CD8a / CD8A, PanCK / pan-CK /
   KRT), from a shipped vocabulary plus per-project aliases. *Shipped*:
-  `plexora/ai/knowledge/markers.yaml` and `plexora/ai/vocabulary.py`, used by
+  the BioCognia marker graph (`biocognia-markers`) through `plexora/ai/vocabulary.py`, used by
   `validate_scope` and automatic gating's panel context. Per-project aliases
   are `set_panel_context` entries.
 - Capability descriptions tagged with the biological tasks they serve

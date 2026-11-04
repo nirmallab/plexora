@@ -426,6 +426,30 @@ wheels = [
 ]
 
 [[package]]
+name = "biocognia-markers"
+version = "0.1.0"
+source = { editable = "../biocognia-markers" }
+dependencies = [
+    { name = "numpy" },
+    { name = "platformdirs" },
+    { name = "scipy" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "numpy", specifier = ">=1.26" },
+    { name = "platformdirs", specifier = ">=4" },
+    { name = "scipy", specifier = ">=1.11" },
+]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "pytest", specifier = ">=9.1.1" },
+    { name = "pytest-timeout", specifier = ">=2.3" },
+    { name = "pyyaml", specifier = ">=6" },
+]
+
+[[package]]
 name = "bleach"
 version = "6.4.0"
 source = { registry = "https://pypi.org/simple" }
@@ -3163,6 +3187,7 @@ dependencies = [
     { name = "anndata" },
     { name = "biocognia" },
     { name = "biocognia-intelligence" },
+    { name = "biocognia-markers" },
     { name = "flask" },
     { name = "fsspec" },
     { name = "h5py" },
@@ -3253,6 +3278,7 @@ requires-dist = [
     { name = "anndata", specifier = ">=0.10" },
     { name = "biocognia", specifier = ">=0.1.2,<0.2" },
     { name = "biocognia-intelligence", specifier = ">=0.2.1,<0.4" },
+    { name = "biocognia-markers", editable = "../biocognia-markers" },
     { name = "cellpose", marker = "extra == 'segment3d'", specifier = ">=4" },
     { name = "flask", specifier = ">=3.1" },
     { name = "fsspec", specifier = ">=2024.12" },

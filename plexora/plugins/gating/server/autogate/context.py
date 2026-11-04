@@ -81,7 +81,7 @@ def _entry_from_vocabulary(marker, canonical, panel_by_canonical):
             missing.append(partner["marker"])
         for panel_marker in here:
             partners.append({"marker": panel_marker, "relation": partner["relation"],
-                             "confidence": partner.get("confidence", "moderate")})
+                             "confidence": partner.get("confidence") or vocabulary.DEFAULT_CONFIDENCE})
     entry = {
         "marker": marker, "canonical": canonical, "role": found.get("role"),
         "compartment": found.get("compartment"), "lineage": found.get("lineage"),
@@ -559,13 +559,13 @@ def apply_carriers(context, carriers):
 def reviewable(context, marker) -> list:
     """[{marker, relation, confidence}] the review may change for `marker`:
     the relations its own entry states, when the vocabulary stated them --
-    never a person's, the metadata's or a tissue context's (biology.yaml),
+    never a person's, the metadata's or a tissue context's (`biology`),
     which already speak for this sample."""
     entry = (context.get("entries") or {}).get(marker) or {}
     if entry.get("source") not in REVIEWABLE_SOURCES:
         return []
     return [{"marker": p["marker"], "relation": p["relation"],
-             "confidence": p.get("confidence") or "high"}
+             "confidence": p.get("confidence") or vocabulary.DEFAULT_CONFIDENCE}
             for p in entry.get("partners") or []
             if not (p.get("proposed") or p.get("planner") or p.get("context"))]
 
@@ -725,7 +725,7 @@ def apply_changes(context, changes):
     for change in (changes or {}).get("weaken") or ():
         for p in touched(change["marker"], change["partner"], change["relation"]):
             p["confidence"] = vocabulary.CONFIDENCE[min(
-                vocabulary.CONFIDENCE.index(p.get("confidence") or "high") + 1,
+                vocabulary.CONFIDENCE.index(p.get("confidence") or vocabulary.DEFAULT_CONFIDENCE) + 1,
                 len(vocabulary.CONFIDENCE) - 1)]
     for change in (changes or {}).get("add") or ():
         entry = entries.get(change["marker"])

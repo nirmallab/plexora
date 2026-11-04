@@ -416,7 +416,7 @@ PANEL_LABELS = ("own_stain", "not_own_stain", "uncertain", "artifact")
 
 #: How a classifier check's pairs are read (`cellcalls.confirms`), each an
 #: arm of the p193 comparison (2026-10-19): `auto` -- `word` for a marker the
-#: panel calls fibrous (markers.yaml `morphology`: smooth muscle, vessel
+#: panel calls fibrous (the marker graph's `morphology`: smooth muscle, vessel
 #: walls), `mixed` for the rest (the user's rule, after aSMA went to 30 %
 #: positive on `mixed` while CD3E and CD8a reached the user's gates); `word` -- one row word per half,
 #: the flagged half must read `own_stain`; `mixed` -- the same words, a

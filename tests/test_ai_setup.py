@@ -139,3 +139,14 @@ def test_claude_pins_this_interpreter_through_its_cli_when_installed(tmp_path, m
     lines.clear()
     real.setup("claude", project_dir=tmp_path, out=lines.append)
     assert any("claude mcp add --scope local" in line for line in lines)
+
+
+def test_setup_installs_the_marker_graph_skill_under_its_shared_name(tmp_path):
+    """SCIMAP Pro installs the same file: one skill, whichever product wrote it."""
+    import biocognia_markers
+
+    setup.setup("claude", project_dir=tmp_path, install_skills=True, out=lambda line: None)
+    skills = tmp_path / ".claude" / "skills"
+    assert (skills / "biocognia-marker-graph" / "SKILL.md").read_text(encoding="utf-8") \
+        == biocognia_markers.skill_text()
+    assert (skills / "plexora-gate-image" / "SKILL.md").is_file()

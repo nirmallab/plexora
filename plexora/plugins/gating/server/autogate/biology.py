@@ -3,9 +3,10 @@
 "A melanoma from the skin" carries two contexts, and each changes how a
 marker should be read: MART1 and SOX10 together mean much more in melanoma;
 SOX9 also marks hair follicles in skin, so place and shape matter; keratin
-along the surface is epidermis, not infiltrate. The knowledge lives in
-`plexora/ai/knowledge/biology.yaml`, never in code; this module resolves
-what the user said against it and applies it:
+along the surface is epidermis, not infiltrate. The knowledge lives in the
+BioCognia marker graph (`biocognia_markers`: its contexts, and the relations
+scoped to them), never in code; this module resolves what the user said
+against it and applies it:
 
 - **Panel** (`overlay`): the context's relations are laid over the panel's,
   for the session only -- added, or their confidence set, and tagged
@@ -33,11 +34,9 @@ from __future__ import annotations
 
 import copy
 import functools
-from pathlib import Path
 
 from plexora.ai import vocabulary
 
-PATH = Path(vocabulary.__file__).parent / "knowledge" / "biology.yaml"
 SOURCES = ("user", "metadata", "inferred")
 KINDS = ("tissue", "disease")
 #: What a look is told of the Context Interpreter's reading (beside `said`).
@@ -70,31 +69,59 @@ def project_metadata(call, project) -> dict:
     return out
 
 
-@functools.lru_cache(maxsize=1)
 def load() -> dict:
-    import yaml
+    """{version, contexts, lookup}: the graph's tissue and disease contexts in
+    Plexora's names -- each {name, kind, synonyms, structures, expect,
+    relations, indicators} -- read again whenever the vocabulary is."""
+    return _load(vocabulary.version())
 
-    with open(PATH, encoding="utf-8") as handle:
-        raw = yaml.safe_load(handle) or {}
+
+@functools.lru_cache(maxsize=4)
+def _load(version) -> dict:
+    from biocognia_markers import graph as graphmod
+
+    loaded = vocabulary.load()
+    graph = graphmod.load(paths=vocabulary.overlay_paths())
+    names = {mid: item["canonical"] for mid, item in graph.markers.items()}
+    names.update(loaded["ids"])
+
+    def expand(ref):
+        if graphmod.is_family(ref):
+            return [names[a] for a in graph.anchors(graphmod.family_slug(ref))]
+        return [names.get(ref, ref)]
+
     contexts, lookup = {}, {}
-    for entry in raw.get("contexts") or []:
-        entry = {"structures": [], "expect": {}, "relations": [], "indicators": [],
-                 "synonyms": [], **entry}
-        if entry.get("kind") not in KINDS:
-            raise ValueError(f"biology.yaml context {entry.get('name')!r}: kind is one of "
-                             f"{KINDS}")
-        for rel in entry["relations"]:
-            if rel.get("relation") not in vocabulary.RELATIONS:
-                raise ValueError(f"biology.yaml context {entry['name']!r}: relation "
-                                 f"{rel.get('relation')!r}")
-            if rel.get("confidence", "moderate") not in vocabulary.CONFIDENCE:
-                raise ValueError(f"biology.yaml context {entry['name']!r}: confidence "
-                                 f"{rel.get('confidence')!r}")
-        contexts[entry["name"]] = entry
-        for alias in [entry["name"], *entry["synonyms"]]:
-            lookup.setdefault(vocabulary.fold(alias), entry["name"])
-    return {"version": str(raw.get("version") or "0"), "contexts": contexts,
-            "lookup": lookup}
+    for key, item in graph.contexts.items():
+        entry = {"name": key, "kind": item.get("kind"),
+                 "synonyms": list(item.get("synonyms") or ()),
+                 "structures": [{"name": s["name"], "markers": [names.get(m, m) for m in s.get("markers") or ()],
+                                 "where": s.get("where", "")} for s in item.get("structures") or ()],
+                 "expect": {names.get(m, m): text for m, text in (item.get("expect") or {}).items()},
+                 "relations": [], "indicators": [names.get(m, m) for m in item.get("indicators") or ()]}
+        if entry["kind"] not in KINDS:
+            raise ValueError(f"marker graph context {key!r}: kind is one of {KINDS}")
+        for edge in graph.edges:
+            if key not in (edge.get("contexts") or ()) or not vocabulary.counts(edge):
+                continue
+            confidence = vocabulary.GRADE.get(edge.get("confidence"), vocabulary.DEFAULT_CONFIDENCE)
+            group = [b for ref in graphmod.targets(edge) for b in expand(ref)]
+            relation = edge["type"]
+            if relation == "subset_any" and len(group) < 2:
+                relation = "subset"
+            if relation not in vocabulary.RELATIONS:
+                continue
+            first = edge["from"]
+            if edge.get("under") and edge["under"] != first:       # laid on the one beneath
+                first, group = edge["under"], expand(edge["from"])
+            for a in expand(first):
+                for b in group:
+                    if a != b:
+                        entry["relations"].append({"a": a, "b": b, "relation": relation,
+                                                   "confidence": confidence})
+        contexts[key] = entry
+        for alias in [key, *entry["synonyms"]]:
+            lookup.setdefault(vocabulary.fold(alias), key)
+    return {"version": version, "contexts": contexts, "lookup": lookup}
 
 
 def version() -> str:
@@ -217,7 +244,7 @@ def overlay(panel, record) -> dict:
                     partners = entry.setdefault("partners", [])
                     hit = next((p for p in partners if p["marker"] == b
                                 and p["relation"] == rel["relation"]), None)
-                    confidence = rel.get("confidence", "moderate")
+                    confidence = rel.get("confidence") or vocabulary.DEFAULT_CONFIDENCE
                     if hit is None:
                         partners.append({"marker": b, "relation": rel["relation"],
                                          "confidence": confidence, "context": ctx["name"]})

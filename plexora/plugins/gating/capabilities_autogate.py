@@ -563,7 +563,9 @@ def gating_qc(call, inp):
     for marker in active:
         for partner in (panel["entries"].get(marker) or {}).get("partners", []):
             other = partner["marker"]
-            if other not in active or (other, marker) in seen:
+            # A `subset_any` group says nothing about one pair (as `_relation`).
+            if other not in active or (other, marker) in seen \
+                    or partner["relation"] not in bivariate.RELATIONS:
                 continue
             seen.add((marker, other))
             if fractions[marker]["no_positives"] or fractions[other]["no_positives"]:
@@ -678,6 +680,69 @@ def set_panel_context(call, inp):
     return {"receipt": receipt.model_dump(mode="json"), "applied": applied,
             "learned": learned, "kept_as_suggestions": suggestions,
             "unresolved": panel["unresolved"], "order": panel["order"]}
+
+
+# -- the marker graph -----------------------------------------------------------
+#
+# The BioCognia marker graph (`biocognia_markers`) is where the vocabulary
+# comes from, and SCIMAP Pro reads the same one: a marker the panel context
+# lists as unresolved is filled there first, with evidence, so every later
+# panel and the other product know it (skill biocognia-marker-graph).
+
+
+class MarkerGraphInput(AgentModel):
+    names: list[str] = Field(min_length=1, max_length=100,
+                             description="Marker names as the panel spells them.")
+    context: str | None = Field(None, max_length=80,
+                                description="A tissue or disease: the relations scoped to it "
+                                            "come back too.")
+
+
+def marker_graph(call, inp):
+    from biocognia_markers import agent
+    from biocognia_markers import graph as graphmod
+
+    found = agent.lookup(inp.names, context=inp.context,
+                         graph=graphmod.load(paths=vocabulary.overlay_paths()))
+    return {**found, "plexora": {name: vocabulary.canonical(name) for name in inp.names},
+            "next": ("Fill each gap before gating with it: research it (the Cell Ontology, "
+                     "UniProt, Europe PMC; skill biocognia-marker-graph), propose_marker_edges "
+                     "with verbatim quotes, then verify_marker_evidence. A marker Plexora "
+                     "can gate needs a class and a compartment.")}
+
+
+class ProposeMarkerEdgesInput(AgentModel):
+    additions: dict = Field(description="Graph sections to add -- markers, families, edges, "
+                                        "contexts, evidence -- each item as the skill "
+                                        "biocognia-marker-graph describes, every part with a "
+                                        "verbatim quote.")
+    by: str | None = Field(None, max_length=120, description="Who proposes it (an agent or "
+                                                             "session name).")
+
+
+def propose_marker_edges(call, inp):
+    from biocognia_markers import agent
+
+    report = agent.propose(inp.additions, by=inp.by, about={"product": vocabulary.PRODUCT},
+                           path=vocabulary.learned_path())
+    vocabulary.clear_cache()
+    return {**report, "next": ("verify_marker_evidence checks the quotes: an item counts "
+                               "only once every part of it checks (source citation:<ref>), "
+                               "or a person states it.")}
+
+
+class VerifyMarkerEvidenceInput(AgentModel):
+    ids: list[str] | None = Field(None, max_length=200,
+                                  description="Evidence ids to check (all the overlay's when "
+                                              "absent).")
+
+
+def verify_marker_evidence(call, inp):
+    from biocognia_markers import agent
+
+    report = agent.verify(inp.ids, path=vocabulary.learned_path())
+    vocabulary.clear_cache()
+    return report
 
 
 # -- statuses -----------------------------------------------------------------
@@ -832,6 +897,27 @@ def capabilities():
             permission="reversible_write", input_model=SetContextInput,
             handler=set_panel_context, writes=("config",), reads=("table",),
             egress="metadata", tags=TAGS + ("context", "biology", "panel")),
+        cap(name="gating.marker_graph", entitlement="ai:gating:session", tool_name="marker_graph",
+            purpose="What the BioCognia marker graph (shared with SCIMAP Pro) holds about "
+                    "each marker: its node, relations and their evidence, and the gaps to "
+                    "fill before gating with it.",
+            permission="read", input_model=MarkerGraphInput, handler=marker_graph,
+            egress="metadata", tags=TAGS + ("context", "biology", "markers", "graph")),
+        cap(name="gating.propose_marker_edges", entitlement="ai:gating:session",
+            tool_name="propose_marker_edges",
+            purpose="Add what you found about a marker -- with verbatim quotes -- to the "
+                    "user's overlay of the marker graph, as an agent's proposal: used once "
+                    "verify_marker_evidence finds every quote, or a person states it.",
+            permission="reversible_write", input_model=ProposeMarkerEdgesInput,
+            handler=propose_marker_edges, writes=("config",), egress="metadata",
+            tags=TAGS + ("context", "biology", "markers", "graph")),
+        cap(name="gating.verify_marker_evidence", entitlement="ai:gating:session",
+            tool_name="verify_marker_evidence",
+            purpose="Check the overlay's quotes against their sources (Europe PMC, the Cell "
+                    "Ontology) and mark what checks as verified.",
+            permission="reversible_write", input_model=VerifyMarkerEvidenceInput,
+            handler=verify_marker_evidence, writes=("config",), egress="metadata",
+            tags=TAGS + ("context", "biology", "markers", "graph", "evidence")),
         cap(name="gating.set_status", tool_name="set_gate_status",
             purpose="Approve, lock, exclude (or undo any of those for) one marker's gate. "
                     "Locked and approved gates are never overwritten by an agent; excluded "

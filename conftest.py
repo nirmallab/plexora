@@ -32,9 +32,15 @@ def plexora_data_root(tmp_path, monkeypatch):
     # it is what every test meant when it set `data_path` to tmp_path by hand.
     monkeypatch.setenv("PLEXORA_DATA_PATH", str(tmp_path))
     monkeypatch.delenv("PLEXORA_SHARED_PATH", raising=False)
-    # The learned marker vocabulary lives under the data root unless this
-    # points at a lab's shared file -- which no test may teach.
+    # What Plexora learns about markers goes to the marker graph's overlay,
+    # which is the user's own (shared with SCIMAP Pro) unless this names
+    # another -- every test gets one of its own, and a lab's shared folder from
+    # before the graph is never taught.
+    monkeypatch.setenv("BIOCOGNIA_MARKER_GRAPH", str(tmp_path / "_markergraph"))
     monkeypatch.delenv("PLEXORA_VOCABULARY_PATH", raising=False)
+    from plexora.ai import vocabulary
+
+    vocabulary.clear_cache()
     # A developer who exported the suggestion variable to reproduce a connect
     # problem would otherwise have every test resolve against it -- quietly,
     # because a suggestion that loses says nothing.

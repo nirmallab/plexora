@@ -26,8 +26,8 @@ public:
     example: /lab/shared/plexora
   - name: PLEXORA_VOCABULARY_PATH
     group: Data
-    description: Where Plexora keeps the markers it learned -- what a model or you said about markers its own vocabulary does not know, so they are not asked about again. A file, or a folder for `learned_markers.yaml`; point several installs at one shared folder and they learn together. `plexora ai vocabulary` lists and forgets them.
-    default: <data directory>/vocabulary/learned_markers.yaml
+    description: Where the markers Plexora learned are kept -- what a model or you said about markers the BioCognia marker graph does not let it gate, so they are not asked about again -- as the graph's overlay (`overlay.json` in this folder), which SCIMAP Pro reads too. Point several installs at one shared folder and they learn together. `BIOCOGNIA_MARKER_GRAPH`, the variable both products read, wins over it. A `learned_markers.yaml` from before the graph, here or under the data directory, moves into the overlay the first time Plexora reads it and is kept as `learned_markers.yaml.migrated`. `plexora ai vocabulary` lists and forgets them.
+    default: <config directory>/biocognia/markers/overlay.json
     example: /lab/shared/plexora/vocabulary
   - name: PLEXORA_EXPERIENCE_PATH
     group: Data

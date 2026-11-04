@@ -1603,13 +1603,14 @@ def _build_ai_parser():
     skills.add_argument("--check", action="store_true",
                         help="Validate every skill against the live capabilities.")
     vocab = subs.add_parser("vocabulary", help="The markers Plexora learned: what a model or "
-                                               "you said about markers its own vocabulary "
-                                               "does not know.")
+                                               "you said about markers the BioCognia marker "
+                                               "graph does not let it gate.")
     vocab.add_argument("action", nargs="?", choices=("list", "path", "forget"), default="list",
                        help="list (default): every learned marker and who said so; path: "
-                            "where the file is (PLEXORA_VOCABULARY_PATH moves it, e.g. to a "
-                            "lab's shared folder); forget: take MARKER off, so the next "
-                            "session asks about it again.")
+                            "where the overlay is (shared with SCIMAP Pro; "
+                            "BIOCOGNIA_MARKER_GRAPH moves it, e.g. to a lab's shared "
+                            "folder); forget: take MARKER off, so the next session asks "
+                            "about it again.")
     vocab.add_argument("marker", nargs="?", default=None, help="With forget: the marker.")
     audit = subs.add_parser("audit", help="What agents did: the audit log, or a report.")
     audit.add_argument("--since", default=None, metavar="ISO",

@@ -120,7 +120,7 @@ channel) the group is not drawn and the plan falls back to the pairs.
 **The partner review (2026-11-02).** Every gating session's planner goes
 through every marker (`partner_review` set-up packets, `review_markers`, 12 a
 packet, each batch twice -- draw 2 in reverse order), with each marker's
-`expression` note (markers.yaml), its stated partners and `empty` slots
+`expression` note (the marker graph), its stated partners and `empty` slots
 (`context.empty_slots`: PD-L1 has both, CD45 its expected one), every panel
 marker's lineage and the sample's context. The vocabulary's relations hold
 in general; empty slots exist on every panel, and a tissue or disease can
@@ -140,7 +140,7 @@ An inferred one is always said to be. Sure: `does_not_hold_here` drops the
 relation from both entries and from what the tree derives (`dropped_pairs`),
 `weaker_here` lowers it one confidence step, an addition joins at moderate
 tagged `planner` and is evidence like a vocabulary relation. Never touched:
-relations a person, the metadata or a biology.yaml context stated. Not sure:
+relations a person, the metadata or a tissue context (the marker graph) stated. Not sure:
 listed (`unsure`), the vocabulary stands, and draw 1's partners for empty
 slots draw the tiles only (`proposed`): `hierarchy._evidence` leaves them out
 of the tree, references, scoring, the lineage screen and re-planning,
@@ -329,7 +329,7 @@ distinct. `SessionOptions.classifier` (`schemas.CLASSIFIER_MODES`):
   the wrong way; counts moved nothing (bench record above). The default,
   `auto` (`cellcalls.reading_for`, the user's rule), reads a marker whose
   stain is fibrous strictly (`word`) and every other by `mixed`. Which
-  markers are fibrous is biology, not a tuned value: markers.yaml
+  markers are fibrous is biology, not a tuned value: the marker graph
   `morphology` (aSMA, CD31, Vimentin), the panel-context step's answer for a
   marker the vocabulary does not know, or the user (`set_panel_context`),
   by the usual precedence (`context.apply_entry`). A check look is its own
@@ -585,7 +585,7 @@ plexora/plugins/gating/server/experience.py        decision and correction rows
 plexora/ai/bench_experience.py                     `plexora ai bench experience`
 plexora/plugins/gating/capabilities_autogate.py   analytical tools
 plexora/plugins/gating/capabilities_session.py    the session tools
-plexora/ai/knowledge/markers.yaml, vocabulary.py  shipped marker vocabulary
+plexora/ai/vocabulary.py                       marker vocabulary, from the marker graph
 plexora/ai/skills/{gate-image,gate-dataset,review-gating,diagnose-marker}
 plexora/mcp/prompts.py, resources_gating.py       prompts and plexora://gating/*
 plexora/ai/bench.py, bench_data.py                `plexora ai bench gating`
@@ -802,7 +802,7 @@ plexora/ai/bench.py, bench_data.py                `plexora ai bench gating`
   marker.** `Engine.propose` runs `autogate/scoring.py` against every gated
   partner the panel context relates to the marker (both directions,
   `scoring.evidence_partners`). Biology lives in the vocabulary
-  (`markers.yaml`) and the panel context; scoring, lattice and transitions are
+  (the marker graph) and the panel context; scoring, lattice and transitions are
   generic over it -- no marker name, no per-marker threshold in code.
 - **A marker is never accepted because it ran out.** Reaching an allowance
   (looks, or rounds of candidates) while the evidence says to go on goes to
@@ -1053,7 +1053,7 @@ scoring outside a session.
 Gates are not independent: a marker scored against a partner inherits that
 partner's errors. So the run keeps an evidence graph
 (`autogate/hierarchy.py`) and a prior from the sample's biology
-(`autogate/biology.py`, knowledge in `plexora/ai/knowledge/biology.yaml`).
+(`autogate/biology.py`, knowledge in the marker graph's contexts, `biocognia-markers`).
 
 - **The tree** comes from the panel's own relations, never a list of names:
   parents are `subset` partners; a marker is placed under the deepest of
