@@ -209,6 +209,21 @@ def test_running_out_of_looks_is_review_never_resolved():
         "no_identifiable_boundary"
 
 
+def test_a_member_the_reads_resolve_on_leads_before_the_one_nearest_the_start():
+    from plexora.plugins.gating.server.autogate import hypotheses
+
+    # LSP23402 CD45: P 0.80 on 7.35, 0.11 on 6.92 nearer the start (7.06);
+    # led at 6.92, it ran out of looks there and closed for review.
+    p = [0.0025, 0.0075, 0.0025, 0.0225, 0.1125, 0.01, 0.0175, 0.795, 0.0225, 0.0075, 0.0]
+    fits = [6.27, 6.4, 6.52, 6.73, 6.92, 7.06, 7.17, 7.35, 7.74, 7.96, 8.45]
+    same = np.array([[1.0 if abs(a - b) <= 0.2 + 1e-9 else 0.0 for b in fits] for a in fits])
+    nearest, _ = evidence.plateau_leader(p, fits, 5, None, 0.1)
+    resolving, plateau = evidence.plateau_leader(p, fits, 5, None, 0.1, same=same, rho=0.8)
+    assert set(plateau) == {4, 7} and fits[nearest] == 6.92 and fits[resolving] == 7.35
+    assert hypotheses.PARAMS["leader"] == "resolving"
+    assert hypotheses.V5_RULES["leader"] == "prior"
+
+
 def test_a_reader_that_calls_clear_negatives_stained_twice_is_not_trusted():
     state = _state()
     state["observations"] += [_obs([2.5], ["own_stain"], valid=False)] * 2

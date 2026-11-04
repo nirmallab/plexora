@@ -197,6 +197,70 @@ sent:
   down (0 below the floor) are a gate above them and still step. The
   thresholds come from that one marker; replayed over the six stored v2
   sessions here, the rule fired on it alone.
+- **Out of looks: the leader the reads resolve on** (VERSION 7,
+  2026-11-03, `leader: "resolving"`). Of 96 markers in six stored runs
+  (LSP23362 arms 3-5, LSP23406 V3 and base V2, LSP23402 with Claude
+  readers), 31 closed `budget_exhausted`. 2 of them had reads settled on
+  another candidate than the leader nearest the start, and closed for
+  review at the gate the reads disfavoured: LSP23402 CD45, 6.92 led at P
+  0.11 near it with 7.35 at 0.80; LSP23406 Ki-67, 6.75 at 0.16 with 6.23 at
+  0.84. Now a plateau member the reads resolve on leads first. It costs no
+  look, and it moved no leader on its first live run
+  (`gs_20261103T202129_72bd5f`).
+  - **Tried and taken out: one more look.** 17 of the 31 had settled
+    reads, but a check before the leader may stand had no look left: a
+    point past the range's edge (9), a split beside it (2) or a rare
+    marker's tail (6). The other 12 had reads still split. One extra look
+    was tried for each: the missing check, or a close look of 12 cells from
+    between the leader and its rivals, drawn at twice the side. In two live
+    runs of LSP23402 (`gs_20261103T202129_72bd5f`, and
+    `gs_20261103T234637_8f5e23` with leans on), 12 extra looks were taken
+    and one marker was accepted after one (CD45, in the run with leans). An
+    answered check raised the next one at an edge: CD20's look past the edge
+    settled 7.75 and left a split above it. The run took 49 looks against
+    the V3 run's 40, and a close look is about 1.26 MP against a look's
+    0.59. The gates moved 0.16 a marker from the V3 run, the same as between
+    two runs of the same engine. Taken out.
+- **Leans, and unreadable meaning clearly most: tried and taken out**
+  (2026-11-03). Two runs of LSP23402 with one reader and one planner review
+  differed by 0.15 a marker and closed 8 and 3 markers `unreadable`; of the
+  cells both read, the disagreements were nearly all a word in one run and
+  `uncertain` in the other, almost never opposite words. Two rules were
+  tried against that: a lean on an `uncertain` cell (`own` / `not`)
+  counting half a read, and `unreadable` holding the low end of the
+  uncertain share's one-sided Wilson interval (z 1.645) against 0.5, not
+  the share. A third run (`gs_20261103T234637_8f5e23`; same reader, review
+  and seed):
+  - Readers leaned on 68 % of their `uncertain` cells, and a lean matched an
+    earlier run's word on the same cell 56 of 64 times (a word: 121 of
+    125). But 69 % of all cells were read `uncertain` (57 % and 52 % in the
+    runs before): offered a lean, the reader gave fewer words. Counting a
+    lean as half, the cells an earlier run read firmly kept about as much
+    (157 of 210, against 93 of 120 between the earlier runs).
+  - Closed `unreadable`: 2 (before: 8 and 3); the same reads with leans off
+    close 7, under either bar. Fewer `unreadable` is a change of label,
+    not of outcome: those markers close for review out of looks instead.
+  - The gates moved 0.16 a marker from the run before, as that run did from
+    the first. 11 markers started at the same point in all three runs and
+    still spread 0.14 to 0.37: the variation is in the reads, not the
+    start.
+  - Against the user's 8 corrected gates (CD20 left out), 0.24 a marker off
+    (before: 0.31 and 0.35), inside the run-to-run spread. The three runs'
+    mean is 0.29 off: the error is a bias per marker, not noise, and no
+    rule that steadies the runs can remove it. In the band between the
+    user's gate and the engine's, the reader's words go against the user's
+    gate (CD163, user 6.75, engine 7.29: 4 own, 14 not; CD31, user 6.78,
+    engine 6.51: 21 own, 4 not), or there are none (PD-L1: 37 of 44
+    `uncertain` with no lean, so the start decides).
+  - Shown those cells, the user called every CD163 one negative: weak
+    signal, with strong positives elsewhere in the field. That includes
+    the 4 the reader called own. They called most of the CD31 own-stain
+    cells positive: cells beside a vessel carry its stain, because vessels
+    do not segment. On both, the hand gate was off, not the engine. A
+    user's hand gate is not their cell-level call. Score a change on the
+    cells between the two gates, judged by the user, not on the distance
+    to their gate.
+  Both rules were taken out.
 - **Carriers** (2026-11-02, `PARAMS["carriers"]`). A `state` marker's
   carriers are the lineages whose cells carry it: its stated `subset` /
   `subset_any` partners of a lineage role, plus those both draws of the

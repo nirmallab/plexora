@@ -64,7 +64,8 @@ def _without_close_split(state):
 
 #: Rules newer than the stored sessions this replays: off, so a replay
 #: reaches the stored decisions; an override turns one on to measure it.
-NEWER_OFF = {"flat_reads": None, "carriers": None, "redraw_invalid": False}
+NEWER_OFF = {"flat_reads": None, "carriers": None, "redraw_invalid": False,
+             "leader": "prior"}
 
 
 def prepared(h, rules, seed, overrides=None):

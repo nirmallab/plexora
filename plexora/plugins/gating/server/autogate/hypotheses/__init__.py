@@ -20,8 +20,9 @@ beyond them:
    (`evidence.support`) and decides (`controller.decide`): resolved when the
    leader beats every rival outside the tolerance (VERSION 5), or when the
    posterior over candidates puts P >= `resolve_p` within the tolerance of
-   the plateau member nearest the start (VERSION 6), else another novel
-   look (`controller.next_action`) or review with a stated reason.
+   the plateau member nearest the start (VERSION 6) or, first, of one the
+   reads resolve on (VERSION 7), else another novel look
+   (`controller.next_action`) or review with a stated reason.
 4. A resolved gate passes the same numeric checks as any other
    (`Engine.run_regression`) and is written with them; a failed check caps
    its confidence, it never moves the gate (`settle`).
@@ -45,15 +46,16 @@ from plexora.plugins.gating.server.autogate.hypotheses import panel as panelmod
 #: and a marker out of looks may split on the reads in hand; "6": the
 #: posterior over candidates decides and stops, looks go where they could
 #: change it, added points lead only once read on both sides, no split at
-#: close, crowded and isolated cells are weighed apart).
-VERSION = "6"
+#: close, crowded and isolated cells are weighed apart; "7": a plateau
+#: member the reads resolve on leads).
+VERSION = "7"
 
 #: The VERSION 5 rules, for a bench arm or a replay of stored records
 #: (`tools/bench_gates/ablate.py ABL=v5`, `replay_v6.py`).
 V5_RULES = {"decision": "wilson", "sampling": "survey_refine", "split_at_close": True,
             "added_min_reads": 0, "strata": None, "uncertain_state": False,
             "positive_sentinels": 0, "flat_reads": None, "carriers": None,
-            "redraw_invalid": False}
+            "redraw_invalid": False, "leader": "prior"}
 
 #: [cal] the controller's parameters (unmeasured until the dev bench).
 PARAMS = {
@@ -138,10 +140,12 @@ PARAMS = {
     "draws": 400,
     # Which plateau member leads: `prior` (the nearest the start) or
     # `resolving` (a member the reads put within the tolerance with
-    # P >= `resolve_p` first, then the nearest the start). `prior` until the
-    # replay and the bench say otherwise (CANDIDATES_PLAN.md, "Replicates,
-    # VERSION 6"); changing it is a VERSION bump.
-    "leader": "prior",
+    # P >= `resolve_p` first, then the nearest the start). `resolving` from
+    # VERSION 7: under `prior` a member the reads all but rule out led and
+    # kept the marker looking -- LSP23402 CD45 led at 6.92 (P 0.11 near it)
+    # with 7.35 at P 0.80, LSP23406 Ki-67 at 6.75 (0.16) with 6.23 at 0.84,
+    # both closed for review out of looks at the gate the reads disfavoured.
+    "leader": "resolving",
     # A point a step or a split added may lead once each side of it in the
     # range has this many cells read either way (a fifth of a look).
     "added_min_reads": 5,
