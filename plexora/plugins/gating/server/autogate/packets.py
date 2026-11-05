@@ -25,6 +25,7 @@ from typing import get_args
 from plexora.agent.errors import AgentError
 from plexora.plugins.gating.server.autogate import answers, schemas, tableops, views
 from plexora.plugins.gating.server.autogate.engine import ENGINE, seeded_order
+from plexora.plugins.gating.server.autogate.partners import tiles_of
 
 #: At most this many images in one packet (`Engine.issue` refuses more).
 MAX_IMAGES = 2
@@ -744,6 +745,11 @@ def _sheet(engine, unit, ds, channel, low, *, references=(), candidates=None,
     rendered["row_fps"] = {row: fps[row] for row in drawn}
     rendered["left_out"] = left_out
     rendered["epoch"] = briefed(engine.record)["epoch"]
+    plot = (rendered.get("manifest") or {}).get("plot") or {}
+    if plot.get("kind") == "density" and plot.get("partner"):
+        engine.note_partners_drawn(unit, plot={
+            "marker": plot["partner"], "relation": plot.get("relation"),
+            **({"why": plot["why"]} if plot.get("why") else {})})
     if rendered.get("artifact"):
         unit.setdefault("artifacts", []).append(rendered["artifact"]["id"])
     return rendered
@@ -849,13 +855,15 @@ def _images(packet, pairs):
     return images
 
 
-def _multiview(engine, unit, ds, reference=None, look=None):
+def _multiview(engine, unit, ds, reference=None, look=None, kind=None):
     """(layout, partners, evidence) for a look's collage with tiles on
     (`SessionOptions.tiles`): the 2 x 2 multi-view layout `t2m` and the
     partner channels its `co` / `anti` panels show -- the reference, when a
     look asked for one, in the panel its relation belongs to. Without tiles,
     `split` (DNA | marker | combined) where `engine.split_on` says so for
-    the `look`, else (None, None, {}): the look is morphology | context."""
+    the `look`, else (None, None, {}): the look is morphology | context.
+    With tiles the partners drawn are recorded on the unit under the
+    packet's `kind` (`Engine.note_partners_drawn`)."""
     if not engine.tiles_on():
         if look is not None and engine.split_on(unit, look):
             return "split", None, {}
@@ -863,13 +871,18 @@ def _multiview(engine, unit, ds, reference=None, look=None):
     partners = dict(engine.partner_panels(unit) or {})
     partners.setdefault("markers", {})
     partners.setdefault("gates", {})
+    partners["relations"] = dict(partners.get("relations") or {})
+    partners["members"] = dict(partners.get("members") or {})
     if reference:
-        kind = "anti" if reference["relation"] == "exclusive" else "co"
+        side = "anti" if reference["relation"] == "exclusive" else "co"
         channel = views.image_channel(ds, reference["marker"])
         if channel:
-            partners[kind] = channel
-            partners["markers"][kind] = reference["marker"]
+            partners[side] = channel
+            partners["markers"][side] = reference["marker"]
             partners["gates"][channel] = float(reference["gate"])
+            partners["relations"][side] = reference["relation"]
+            partners["members"].pop(side, None)
+    engine.note_partners_drawn(unit, kind=kind, tiles=tiles_of(partners))
     names = partners["markers"]
     return "t2m", partners, {"partner_panels": {"expected": names.get("co"),
                                                 "not_expected": names.get("anti")}}
@@ -905,7 +918,7 @@ def t2_confirm(engine, units):
     rows = views.t2_rows(sample, low, unit.get("high"))
     to_log = sample.get("fit_space") == "log1p"
     within_note = f" · only {condition['within']}+ cells" if condition else ""
-    layout, partner_panels, multiview = _multiview(engine, unit, ds)
+    layout, partner_panels, multiview = _multiview(engine, unit, ds, kind="t2_confirm")
     main = collage.render_collage(
         engine.call.session, ds, layout=layout or "t2", rows=rows, marker=channel, gate=low,
         high=unit.get("high"), fmt=_fmt(engine), to_log=to_log,
@@ -979,7 +992,18 @@ def t3_biological(engine, units):
     rows = views.t2_rows(sample, low, unit.get("high"))
     to_log = sample.get("fit_space") == "log1p"
     layout, partner_panels, multiview = _multiview(engine, unit, ds,
-                                                   reference=refs[0] if refs else None)
+                                                   reference=refs[0] if refs else None,
+                                                   kind="t3_biological")
+    if not layout:
+        # Without tiles the collage's third panel is the first reference
+        # with a channel.
+        drawn = next(((r, c) for r in refs
+                      for c in (views.image_channel(ds, r["marker"]),) if c), None)
+        engine.note_partners_drawn(unit, kind="t3_biological", tiles=[
+            {"panel": "reference", "marker": drawn[0]["marker"], "channel": drawn[1],
+             "relation": drawn[0].get("relation"),
+             **({"gate": float(drawn[0]["gate"])} if drawn[0].get("gate") is not None
+                else {})}] if drawn else [])
     main = collage.render_collage(
         engine.call.session, ds, layout=layout or "t3", rows=rows, marker=channel, gate=low,
         high=unit.get("high"), references=() if layout else ref_channels, fmt=_fmt(engine),
@@ -1101,7 +1125,8 @@ def t4_candidates(engine, units):
              for index, iv in enumerate(intervals)}
     rows = views.flip_rows(ordered, labels=names) if check is None \
         else _check_rows(ds, unit, check, names)
-    layout, partner_panels, multiview = _multiview(engine, unit, ds, look="t4")
+    layout, partner_panels, multiview = _multiview(engine, unit, ds, look="t4",
+                                                   kind="t4_candidates")
     main = collage.render_collage(
         engine.call.session, ds, layout=layout or "flips", rows=rows, marker=channel,
         gate=current, high=unit.get("high"), fmt=_fmt(engine),

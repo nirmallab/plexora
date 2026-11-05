@@ -50,8 +50,9 @@ Review:
    looks started is in the session report (the scored proposal or the Auto
    gate); `score_gate_candidates` shows the candidates it was chosen among,
    against the partners gated now. Gates with method `needs_review` were
-   written where the evidence stopped short: review those first. Present
-   what you see; the user decides.
+   written where the evidence stopped short: review those first. Quote a
+   gate's partners from its provenance `detail.review`. Present what you
+   see; the user decides.
 4. Act only on the user's decision:
    - approve (`set_gate_status` `approved`) -- agents will not overwrite it;
    - lock (`locked`) -- nobody but the user changes it, and the viewer reverts

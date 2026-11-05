@@ -591,3 +591,51 @@ def test_review_walks_uncertain_cells_from_the_keyboard():
     assert "scene.fitRegion(imageViewer" in classifier and "scene.panTo(imageViewer" in classifier
     assert "classifierReview(marker)" in classifier
 
+
+
+def test_an_automatic_gate_under_review_brings_its_channels_and_notes():
+    """The channels a gate was decided with come on beside the marker, the
+    agent's notes stand on the contrast control's glass at the top centre,
+    and the AI evidence row under the provenance line lists the channels,
+    with an eye that keeps them off and a chevron that folds the list."""
+    panel, controller, styles = _code(PANEL), _code(CONTROLLER), _code(STYLES)
+    notes = _code(PLUGIN_ROOT / "static" / "gatingReviewNotes.js")
+    # A slot the review holds is put back before the marker is mirrored into
+    # slot 2: the mirror switches off every other slot showing the channel.
+    marker = controller[controller.index("setGateMarker(name, options = {}) {"):]
+    assert marker.index("this.reviewChannels?.releaseChannel(name)") \
+        < marker.index("this.sidebar.setSlotMarker(1, name")
+    assert 'view.dock(el, { corner: "top-center", order: 30 })' in notes
+    glass = styles[styles.index(".gate-ai-notes {"):]
+    glass = glass[:glass.index("}")]
+    assert "backdrop-filter: blur(16px) saturate(160%)" in glass
+    assert "max-width: min(440px, 100%)" in glass
+    assert ".brightfield-ground ~ .plx-canvas-safe .gate-ai-notes {" in styles
+    # The AI evidence row, under the provenance line: an eye that says
+    # whether it is pressed, a chevron that says what it folds.
+    row = panel[panel.index('id="gate_ai_evidence"'):]
+    row = row[:row.index('id="gate_ai_evidence_chips"')]
+    assert 'class="gate-ai-evidence" hidden' in row and "AI evidence" in row
+    assert 'id="gate_ai_evidence_toggle"' in row and 'aria-pressed="true"' in row
+    assert 'aria-controls="gate_ai_evidence_chips"' in row and 'aria-expanded="true"' in row
+    assert "fa-eye" in row and "fa-chevron-down" in row and "fa-layer-group" in row
+    assert panel.index('id="gate_provenance"') < panel.index('id="gate_ai_evidence"')
+    assert '[data-gate-mode="classifier"] #gate_ai_evidence' in styles
+    assert "color-mix(in srgb, var(--chip-color)" in styles
+    # The AI Notes link is the provenance line's own kind of button, with the
+    # header AI button's sparkle.
+    assert '"gate-provenance-action gate-ai-notes-link"' in controller
+    assert 'closest?.("[data-ai-notes]")' in controller
+    spark = _code(CORE.parent / "templates" / "index.html")
+    assert "M11 3c.5 4.6 3.4 7.5 8 8-4.6.5-7.5 3.4-8 8-.5-4.6-3.4-7.5-8-8 4.6-.5 7.5-3.4 8-8z" in spark
+    assert "M11 3c.5 4.6 3.4 7.5 8 8-4.6.5-7.5 3.4-8 8-.5-4.6-3.4-7.5-8-8 '" in controller
+    # "Needs review" sits muted beside the marker's name in the notes.
+    assert 'flag.className = "gate-ai-notes-flag"' in notes
+    # A supporting channel is a transient row: never saved, never handed to
+    # the next sample of a dataset.
+    channels = _code(PLUGIN_ROOT / "static" / "gatingReviewChannels.js")
+    assert "slot.transient = true;" in channels
+    persist = _code(CORE / "js" / "views" / "viewerSidebar.js").split(
+        "    persistChannelList() {", 1)[1].split("\n    }", 1)[0]
+    assert "if (slot.transient) return;" in persist
+    assert "!slot.transient" in _code(CORE / "js" / "services" / "carryOver.js")

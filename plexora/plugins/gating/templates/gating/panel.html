@@ -269,6 +269,31 @@
        muted line, drawn by paintProvenance; hidden for a gate with no
        provenance. #}
     <div id="gate_provenance" class="gate-provenance" hidden></div>
+    {# THE AI'S EVIDENCE: the channels an automatic gate was decided with,
+       switched on beside the marker when it is picked (gatingReviewChannels.js)
+       and listed here in the colours they are drawn in. The eye keeps them off
+       (for every marker, until pressed again); the chevron folds the list.
+       Shown only once the panel holds a gate an agent set; muted, not hidden,
+       on a gate set by hand among them, so the eye can be changed from any
+       marker. Painted by paintReviewEvidence. #}
+    <div id="gate_ai_evidence" class="gate-ai-evidence" hidden>
+        <div class="gate-ai-evidence-head">
+            <span class="fas fa-layer-group gate-ai-evidence-icon" aria-hidden="true"></span>
+            <span class="gate-ai-evidence-label">AI evidence</span>
+            <span id="gate_ai_evidence_count" class="gate-ai-evidence-count" hidden></span>
+            <button id="gate_ai_evidence_toggle" class="gate-ai-evidence-action gate-ai-evidence-eye"
+                    type="button" aria-pressed="true" aria-label="Hide the AI's channels"
+                    title="Hide the channels the agent used, for every gate until shown again">
+                <span class="far fa-eye" aria-hidden="true"></span>
+            </button>
+            <button id="gate_ai_evidence_fold" class="gate-ai-evidence-action gate-ai-evidence-fold"
+                    type="button" aria-expanded="true" aria-controls="gate_ai_evidence_chips"
+                    aria-label="Fold the channel list" title="Fold the channel list">
+                <span class="fas fa-chevron-down" aria-hidden="true"></span>
+            </button>
+        </div>
+        <div id="gate_ai_evidence_chips" class="gate-ai-evidence-chips"></div>
+    </div>
     {# WHERE THE THREE INPUTS DISAGREE, if they do. A table, a mask and an
        image come from three steps of a pipeline and nothing in any of them
        says they belong together, so pairing a table with the wrong image, or

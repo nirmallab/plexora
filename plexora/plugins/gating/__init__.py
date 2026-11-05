@@ -12,7 +12,7 @@ scipy/sklearn/anndata/h5py.
 
 from plexora.api.plugin import Plugin, Requires
 
-VERSION = "20261105_gating_v4"
+VERSION = "20261105_gating_review"
 
 
 def _blueprint():
@@ -53,8 +53,11 @@ PLUGIN = Plugin(
     # plays an agent's look for it (window.PlexoraGatingShow).
     # gatingPlanes.js before the controller, which builds its plane control.
     # gatingClassifier.js before the controller too: setup() builds its
-    # GateClassifierControl when the class is defined.
+    # GateClassifierControl when the class is defined. So do
+    # gatingReviewChannels.js and gatingReviewNotes.js: an automatic gate's
+    # channels and notes under review (GateReviewChannels, GateReviewNotes).
     scripts=("gatingApi.js", "csvGatingList.js", "gatingPlanes.js", "gatingClassifier.js",
+             "gatingReviewChannels.js", "gatingReviewNotes.js",
              "gatingSidebarController.js", "gatingAgentShow.js", "gatingAgentBridge.js"),
     styles=("gating.css",),
     # Gating thresholds feature-table columns, so a project without one has

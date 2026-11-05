@@ -667,6 +667,390 @@
 }
 
 /* ---------------------------------------------------------------------------
+   An automatic gate under review (gatingReviewNotes.js): the agent's notes
+   on the same pane of glass as the contrast control, docked top centre.
+
+   AI NOTES  CD8                                                   x
+   Decided by 3 blind looks at numbered cells: ...
+   (o within CD3) (o excludes CD4 . not shown)
+   Needs review . the reads leave 6.4 (P 0.55) and 6.9 (P 0.35)
+
+   A chip's dot is the colour of the slot showing that partner, so the chip
+   and the channel on the image are read together.
+   --------------------------------------------------------------------------- */
+.gate-ai-notes {
+    -webkit-backdrop-filter: blur(16px) saturate(160%);
+    backdrop-filter: blur(16px) saturate(160%);
+    background: linear-gradient(180deg, rgba(34, 40, 52, 0.62), rgba(12, 16, 22, 0.58) 70%);
+    border: 1px solid rgba(255, 255, 255, 0.14);
+    border-radius: var(--radius-md);
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.14),
+                0 8px 24px rgba(0, 0, 0, 0.32);
+    box-sizing: border-box;
+    color: var(--text-secondary);
+    display: flex;
+    flex-direction: column;
+    font-size: var(--panel-font-note);
+    gap: 6px;
+    line-height: 1.45;
+    max-width: min(440px, 100%);
+    padding: 8px 10px 10px 12px;
+    pointer-events: auto;
+    transition: opacity var(--duration-fast) var(--ease-standard),
+                translate var(--duration-fast) var(--ease-standard);
+}
+
+.gate-ai-notes[hidden] {
+    display: none;
+}
+
+.gate-ai-notes.is-entering {
+    animation: gate-ai-notes-in var(--duration-fast) var(--ease-standard);
+}
+
+.gate-ai-notes.is-leaving {
+    opacity: 0;
+    translate: 0 -4px;
+}
+
+@keyframes gate-ai-notes-in {
+    from {
+        opacity: 0;
+        translate: 0 -4px;
+    }
+}
+
+.gate-ai-notes-head {
+    align-items: baseline;
+    display: flex;
+    gap: var(--space-2);
+    min-width: 0;
+}
+
+.gate-ai-notes-label {
+    color: var(--text-muted);
+    font-size: var(--panel-font-footer);
+    font-weight: 600;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+}
+
+.gate-ai-notes-marker {
+    color: var(--text-primary);
+    flex: 0 1 auto;
+    font-size: var(--panel-font-meta);
+    font-weight: 600;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+/* "Needs review", muted beside the marker: the provenance line under the
+   gate says it in its colour already. */
+.gate-ai-notes-flag {
+    color: var(--text-muted);
+    flex: 0 0 auto;
+    white-space: nowrap;
+}
+
+.gate-ai-notes-flag::before {
+    content: "·";
+    margin-right: var(--space-2);
+}
+
+.gate-ai-notes-flag[hidden] {
+    display: none;
+}
+
+.gate-ai-notes-dismiss {
+    align-self: center;
+    background: transparent;
+    border: 0;
+    border-radius: var(--radius-sm);
+    color: var(--text-muted);
+    cursor: pointer;
+    flex: 0 0 auto;
+    font: inherit;
+    font-size: 15px;
+    height: 22px;
+    line-height: 1;
+    margin: -2px -4px -2px auto;
+    padding: 0;
+    width: 22px;
+}
+
+.gate-ai-notes-dismiss:hover {
+    color: var(--text-primary);
+}
+
+.gate-ai-notes-dismiss:focus-visible {
+    outline: 2px solid var(--accent-channel-soft);
+    outline-offset: 1px;
+}
+
+.gate-ai-notes-text,
+.gate-ai-notes-uncertainty {
+    margin: 0;
+}
+
+.gate-ai-notes-uncertainty {
+    color: var(--text-muted);
+}
+
+.gate-ai-notes-chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+}
+
+.gate-ai-notes-chips[hidden],
+.gate-ai-notes-uncertainty[hidden] {
+    display: none;
+}
+
+.gate-ai-chip {
+    align-items: center;
+    border: 1px solid rgba(255, 255, 255, 0.16);
+    border-radius: var(--radius-sm);
+    color: var(--text-secondary);
+    display: inline-flex;
+    gap: 5px;
+    line-height: 18px;
+    padding: 0 8px 0 6px;
+    white-space: nowrap;
+}
+
+.gate-ai-chip::before {
+    background: var(--chip-color, var(--text-muted));
+    border-radius: 50%;
+    content: "";
+    flex: 0 0 auto;
+    height: 7px;
+    width: 7px;
+}
+
+/* A partner the review wanted on screen and could not put there. */
+.gate-ai-chip.is-missing {
+    color: var(--text-muted);
+}
+
+.gate-ai-chip.is-missing::before {
+    background: transparent;
+    border: 1px dashed var(--text-muted);
+    box-sizing: border-box;
+}
+
+/* Not meant to be on screen: the eye is shut, or the partner only weighed
+   a number. */
+.gate-ai-chip.is-off::before {
+    background: var(--text-muted);
+    opacity: 0.5;
+}
+
+/* Over brightfield: frosted white and dark text, as the contrast pane. */
+.brightfield-ground ~ .plx-canvas-safe .gate-ai-notes {
+    background: linear-gradient(180deg, rgba(255, 255, 255, 0.74), rgba(242, 245, 249, 0.68) 70%);
+    border-color: rgba(18, 24, 32, 0.12);
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.7),
+                0 8px 24px rgba(18, 24, 32, 0.18);
+    color: rgba(18, 24, 32, 0.75);
+}
+
+.brightfield-ground ~ .plx-canvas-safe .gate-ai-notes-marker {
+    color: rgba(18, 24, 32, 0.9);
+}
+
+.brightfield-ground ~ .plx-canvas-safe .gate-ai-notes-label,
+.brightfield-ground ~ .plx-canvas-safe .gate-ai-notes-flag,
+.brightfield-ground ~ .plx-canvas-safe .gate-ai-notes-dismiss,
+.brightfield-ground ~ .plx-canvas-safe .gate-ai-notes-uncertainty,
+.brightfield-ground ~ .plx-canvas-safe .gate-ai-chip.is-missing {
+    color: rgba(18, 24, 32, 0.6);
+}
+
+.brightfield-ground ~ .plx-canvas-safe .gate-ai-chip {
+    border-color: rgba(18, 24, 32, 0.18);
+    color: rgba(18, 24, 32, 0.75);
+}
+
+/* The AI Notes button beside "needs review", once the notes are dismissed:
+   the provenance line's own kind of button, in the channel accent and with
+   the header AI button's sparkle. */
+.gate-provenance-action.gate-ai-notes-link {
+    align-items: center;
+    background: var(--accent-channel-tint);
+    border-color: var(--accent-channel-soft);
+    color: var(--accent-channel);
+    display: inline-flex;
+    gap: 4px;
+}
+
+.gate-provenance-action.gate-ai-notes-link:hover {
+    border-color: var(--accent-channel);
+    color: var(--text-primary);
+}
+
+.gate-ai-spark {
+    flex: 0 0 auto;
+    height: 12px;
+    width: 12px;
+}
+
+/* ---------------------------------------------------------------------------
+   AI EVIDENCE: the channels an automatic gate was decided with, under the
+   provenance line (gatingSidebarController.js paintReviewEvidence).
+
+   [layers] AI evidence (2 channels)                       [eye] [v]
+   (o CD3) (o CD8)
+
+   A chip is tinted with the colour of the slot drawing its channel, so the
+   chip and the channel on the image are read together. The eye shuts every
+   gate's channels off until opened; the chevron folds the chips away. Muted
+   on a gate set by hand among automatic ones: it still works there.
+   --------------------------------------------------------------------------- */
+.gate-ai-evidence {
+    border-top: 1px solid var(--border-subtle);
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2);
+    margin-top: var(--space-1);
+    padding-top: var(--space-2);
+}
+
+.gate-ai-evidence[hidden],
+.gate-ai-evidence-count[hidden],
+.gate-ai-evidence-chips[hidden] {
+    display: none;
+}
+
+.gate-ai-evidence.is-muted {
+    opacity: 0.5;
+}
+
+.gate-ai-evidence.is-muted:hover,
+.gate-ai-evidence.is-muted:focus-within {
+    opacity: 1;
+}
+
+.gate-ai-evidence-head {
+    align-items: center;
+    color: var(--text-secondary);
+    display: flex;
+    font-size: var(--panel-font-meta);
+    gap: var(--space-2);
+    min-width: 0;
+}
+
+.gate-ai-evidence-icon {
+    color: var(--text-muted);
+    flex: 0 0 auto;
+}
+
+.gate-ai-evidence-label {
+    white-space: nowrap;
+}
+
+.gate-ai-evidence-count {
+    background: rgba(255, 255, 255, 0.08);
+    border-radius: var(--radius-sm);
+    color: var(--text-secondary);
+    font-size: var(--panel-font-note);
+    line-height: 18px;
+    padding: 0 8px;
+    white-space: nowrap;
+}
+
+.gate-ai-evidence-action {
+    align-items: center;
+    background: transparent;
+    border: 0;
+    border-radius: var(--radius-sm);
+    color: var(--text-muted);
+    cursor: pointer;
+    display: inline-flex;
+    flex: 0 0 auto;
+    height: 24px;
+    justify-content: center;
+    padding: 0;
+    width: 24px;
+}
+
+/* The eye pushes itself and the chevron to the end of the line. */
+.gate-ai-evidence-eye {
+    margin-left: auto;
+}
+
+.gate-ai-evidence-eye[aria-pressed="true"] {
+    color: var(--accent-channel);
+}
+
+.gate-ai-evidence-action:hover {
+    background: rgba(255, 255, 255, 0.06);
+    color: var(--text-primary);
+}
+
+.gate-ai-evidence-action:focus-visible {
+    outline: 2px solid var(--accent-channel-soft);
+    outline-offset: 1px;
+}
+
+.gate-ai-evidence-fold svg {
+    transition: rotate var(--duration-fast) var(--ease-standard);
+}
+
+.gate-ai-evidence.is-folded .gate-ai-evidence-fold svg {
+    rotate: -90deg;
+}
+
+.gate-ai-evidence-chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+}
+
+.gate-ai-evidence-chip {
+    --chip-color: var(--text-muted);
+    align-items: center;
+    background: color-mix(in srgb, var(--chip-color) 16%, transparent);
+    border: 1px solid color-mix(in srgb, var(--chip-color) 48%, transparent);
+    border-radius: var(--radius-sm);
+    color: var(--text-primary);
+    display: inline-flex;
+    font-size: var(--panel-font-meta);
+    gap: 6px;
+    line-height: 22px;
+    padding: 0 9px 0 8px;
+    white-space: nowrap;
+}
+
+.gate-ai-evidence-chip::before {
+    background: var(--chip-color);
+    border-radius: 50%;
+    content: "";
+    flex: 0 0 auto;
+    height: 7px;
+    width: 7px;
+}
+
+/* The eye shut: every chip neutral. */
+.gate-ai-evidence-chip.is-off {
+    color: var(--text-secondary);
+}
+
+/* Wanted on screen and not there (no free row, not an image channel). */
+.gate-ai-evidence-chip.is-missing {
+    border-style: dashed;
+    color: var(--text-muted);
+}
+
+.gate-ai-evidence-chip.is-missing::before {
+    background: transparent;
+    border: 1px dashed currentColor;
+    box-sizing: border-box;
+}
+
+/* ---------------------------------------------------------------------------
    A z-stack, gated plane by plane (gatingPlanes.js).
 
    VIEW   [ Plane | Slab ]  |  5 µm
@@ -842,6 +1226,7 @@
 #gate_marker_section[data-gate-mode="classifier"] #gate_plane_readout,
 #gate_marker_section[data-gate-mode="classifier"] #gate_qc_note,
 #gate_marker_section[data-gate-mode="classifier"] #gate_provenance,
+#gate_marker_section[data-gate-mode="classifier"] #gate_ai_evidence,
 #gate_marker_section:not([data-gate-mode="classifier"]) .gate-classifier-only {
     display: none !important;
 }

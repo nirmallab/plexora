@@ -446,6 +446,16 @@ class Engine(BaseEngine):
 
     def __init__(self, call, session_id, *, st=None):
         super().__init__(call, session_id, st=st or store())
+        #: The packet a rerender is drawing again, so the partners its look
+        #: draws are recorded against it (`note_partners_drawn`).
+        self._rerendering = None
+
+    def rerender(self, packet_id):
+        self._rerendering = packet_id
+        try:
+            return super().rerender(packet_id)
+        finally:
+            self._rerendering = None
 
     def _migrate(self):
         """A session stored while gating had its per-cell model (removed
@@ -771,10 +781,41 @@ class Engine(BaseEngine):
             out["markers"][p["kind"]] = p["marker"]
             out[p["kind"]] = [channels[m] for m in members] if p.get("members") \
                 else channels[p["marker"]]
+            # Read by the record of what a look drew (`note_partners_drawn`),
+            # not by `collage`.
+            out.setdefault("relations", {})[p["kind"]] = p["relation"]
+            if p.get("members"):
+                out.setdefault("members", {})[p["kind"]] = list(members)
             for m in members:
                 if m in gated:
                     out["gates"][channels[m]] = float(gated[m])
         return out if out["markers"] else {}
+
+    def note_partners_drawn(self, unit, *, kind=None, tiles=None, plot=None):
+        """Record on the unit which partners the look being built draws
+        (`unit["partners_drawn"]`, one entry a look: {look, kind, tiles,
+        plot}), so a gate's review names the partners its looks showed and
+        not every partner the vocabulary knows (`explain.build`). The look
+        is the packet's ordinal (its id is given after the builder returns:
+        `unit["packets"][look - 1]`); a rerender of the same look replaces
+        its entry, and a second call while one look is built (the sheet's
+        plot after the collage's tiles) fills it in. An entry past the
+        unit's last packet is a look that was never sent; readers skip it."""
+        packets = unit.get("packets") or []
+        again = getattr(self, "_rerendering", None)
+        look = packets.index(again) + 1 if again in packets else len(packets) + 1
+        drawn = unit.setdefault("partners_drawn", [])
+        entry = next((e for e in drawn if e.get("look") == look), None)
+        if entry is None:
+            entry = {"look": look, "kind": kind, "tiles": [], "plot": None}
+            drawn.append(entry)
+        if kind is not None:
+            entry["kind"] = kind
+        if tiles is not None:
+            entry["tiles"] = list(tiles)
+        if plot is not None:
+            entry["plot"] = dict(plot)
+        return entry
 
     def unit_ref(self, unit):
         return {"project": unit["project"], "marker": unit["marker"]}
@@ -1002,6 +1043,11 @@ class Engine(BaseEngine):
 
             # The candidates, the looks and why they stopped (`hypotheses`).
             detail["hypotheses"] = hypotheses.provenance(unit)
+        # What the viewer shows beside the gate under review: the partners the
+        # decision drew on, its notes and what stays uncertain. Always set, so
+        # a merge never keeps an earlier write's record.
+        detail["review"] = self._review(unit, ds, state=state, method=method,
+                                        confidence=confidence)
         row = {"status": "accepted", "method": method, "tier": tier,
                "confidence": confidence, "state": state, "gmm_proposal": unit.get("gmm"),
                "delta_fit": unit.get("delta_fit"), "delta_fraction": unit.get("delta_fraction"),
@@ -1121,10 +1167,31 @@ class Engine(BaseEngine):
                         provenance.record(ds.name, unit["marker"], **fields,
                                           detail={"reason": reason,
                                                   "flags": unit.get("flags"),
-                                                  "question": unit.get("question")})
+                                                  "question": unit.get("question"),
+                                                  # A skipped or user-edited gate
+                                                  # is the user's.
+                                                  "review": None if state in
+                                                  schemas.SKIPPED_STATES or method == "manual"
+                                                  or unit.get("user_edited")
+                                                  else self._review(
+                                                      unit, ds, state=state, method=method,
+                                                      confidence=fields["confidence"])})
             except Exception:  # provenance is a record, never a reason to fail
                 pass
         self._close_tail(unit, state, reason, confidence)
+
+    def _review(self, unit, ds, *, state, method, confidence):
+        """The gate's review record (`explain.build`), or None when it cannot
+        be built (logged): a record, never a reason to fail a write."""
+        from plexora.plugins.gating.server.autogate import explain, views
+
+        try:
+            return explain.build(unit, state=state, method=method, confidence=confidence,
+                                 channel_of=lambda m: views.image_channel(ds, m))
+        except Exception as exc:
+            self.log(event="review_note_error", unit=unit_key(unit["project"], unit["marker"]),
+                     error=str(exc)[:200])
+            return None
 
     def _review_gate(self, unit, state, proposed):
         """The gate a unit closed for review is written at: the proposal it

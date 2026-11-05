@@ -69,7 +69,7 @@ const METHODS = [
     "syncGatingContrast", "applyGatingContrast", "onSlotAutoClick", "revertSlotRange",
     "syncSlotAutoButton", "checkedEntry", "savedCurveMode", "gatingEntry", "gatingLook", "showsGating", "setCurveMode", "applyCurveMode", "logCurveFor", "byteStep", "rawToByteRangeFine", "setSlotCurve",
     "easeSlotRange", "setSlotRange", "normalizeRange", "toRawRangeForSlot", "updateSlotReadout",
-    "persistChannelList",
+    "persistChannelList", "setSlotColor", "hexToRgb",
 ];
 const source = await readFile(path.join(repoRoot, "plexora/client/src/js/views/viewerSidebar.js"),
                               "utf8");
@@ -270,6 +270,32 @@ function makeSidebar(slotState = {}) {
                  "saved with Log on: on");
     assert.equal(sidebar.savedCurveMode([{ curve: "linear" }, { curve: "asinh" }]), "asinh");
     ok("Linear unless the saved rows say Log was on");
+}
+
+// A row a plugin holds for a moment (Thresholding's supporting channels for a
+// gate under review) is never in the saved list, and is the user's once
+// anyone changes it.
+{
+    globalThis.ChannelList = { events: { COLOR_TRANSFER_CHANGE: "color" } };
+    globalThis.d3 = { rgb: (r, g, b) => ({ r, g, b }) };
+    globalThis.imageChannelsIdx = { 0: "CD3", 1: "CD8" };
+    globalThis.imageChannels = { CD3: 0, CD8: 1 };
+    const sidebar = makeSidebar();
+    const held = { ...sidebar.slot, index: 1, name: "CD8", colorHex: "#22e6e6",
+                   color: { r: 34, g: 230, b: 230 }, transient: true };
+    sidebar.channelSlots.push(held);
+    let saved = null;
+    sidebar.persist = true;
+    sidebar.dataLayer.saveChannelList = (...args) => { saved = args; return Promise.resolve(); };
+    sidebar.persistChannelList();
+    assert.deepEqual(Object.keys(saved[1]), ["0"], "only the user's row is on");
+    assert.equal(saved[2][1], undefined, "nor is its colour kept");
+    assert.equal(saved[5].CD8, undefined);
+    sidebar.setSlotColor(1, "#123456", true);
+    assert.equal(held.transient, undefined, "recoloured, it is the user's");
+    sidebar.persistChannelList();
+    assert.deepEqual(Object.keys(saved[1]).sort(), ["0", "1"]);
+    ok("a row a plugin holds for a moment is not saved until someone changes it");
 }
 
 console.log(`${passed} checks passed`);

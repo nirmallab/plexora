@@ -905,6 +905,9 @@ class ViewerSidebar {
         const enablesSlot = options.enable && !slot.enabled;
         const revealsSlot = options.reveal && !slot.visible;
         if (!markerChanged && !enablesSlot && !revealsSlot && !options.force) return;
+        // Changed by anyone, a row a plugin held for a moment is an ordinary
+        // row again (see persistChannelList).
+        delete slot.transient;
         if (slot.name && slot.enabled && markerChanged) {
             this.deactivateChannel(slot);
         }
@@ -958,6 +961,7 @@ class ViewerSidebar {
         const slot = this.channelSlots[slotIndex];
         if (!slot || !slot.name) return;
         const wasEnabled = slot.enabled;
+        delete slot.transient;
         slot.enabled = enabled;
         slot.visible = true;
         if (enabled) {
@@ -978,6 +982,7 @@ class ViewerSidebar {
     setSlotColor(slotIndex, hex, userColorChanged) {
         const slot = this.channelSlots[slotIndex];
         if (!slot) return;
+        delete slot.transient;
         slot.colorHex = hex;
         slot.color = this.hexToRgb(hex);
         slot.userColorChanged = Boolean(userColorChanged || slot.userColorChanged);
@@ -2856,6 +2861,7 @@ class ViewerSidebar {
             this.deactivateChannel(slot);
         }
         const color = this.getDefaultColor(slotIndex);
+        delete slot.transient;
         slot.name = "";
         slot.range = this.getImageRange("");
         slot.enabled = false;
@@ -3404,6 +3410,11 @@ class ViewerSidebar {
         const ordered = [...this.channelSlots].sort((a, b) => Number(b.enabled) - Number(a.enabled));
         ordered.forEach((slot) => {
             if (!slot.name || !slot.visible) return;
+            // A row a plugin put on screen for a moment and will take away
+            // again -- Thresholding's supporting channels for a gate under
+            // review -- is not the user's: saved as the hidden row it was.
+            // Any setter changing it (the user taking it over) clears this.
+            if (slot.transient) return;
             if (!slot.enabled) {
                 // An off row is kept too, as its marker, colour and place,
                 // so the rows the user had come back (applySavedChannels).

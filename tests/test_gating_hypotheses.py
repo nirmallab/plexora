@@ -439,6 +439,63 @@ def test_the_candidates_engine_decides_markers_by_blind_panels(tmp_path):
     assert {u["marker"] for u in status["units"]} == set(HARD)
 
 
+@pytest.mark.pro
+def test_a_panel_gates_review_names_the_partners_its_looks_drew(tmp_path):
+    from plexora.plugins.gating.server import provenance
+    from plexora.plugins.gating.server.autogate import engine as engines
+    from tests.test_gating_session import Oracle, ok
+
+    registry.discover(["gating"])
+    markers = ("CD3", "CD8", "CD4")
+    info = make_gating_project(tmp_path, grid=24, size=960, markers=markers)
+    session = AgentSession()
+    started = ok(invoke(session, "gating_session_start", {
+        "scope": "project", "project": "gsynth", "markers": list(markers),
+        "engine": "v2", "tiles": True}))
+    jobs.drain(120)
+    sid = started["session_id"]
+    oracle = Oracle(info)
+    index = {c["id"]: i for i, c in enumerate(info["cells"])}
+    result = ok(invoke(session, "gating_next", {"session_id": sid, "wait_s": 20}))
+    for _ in range(120):
+        if result["state"] != "decision":
+            break
+        packet = result["packet"]
+        if packet["kind"] == "cell_panel":
+            stored, _ = engines.store().read_packet(sid, packet["packet_id"])
+            truth = oracle.truth[packet["units"][0]["marker"]]
+            reply = {"kind": "cell_panel", "cells": {
+                c["number"]: ("own_stain" if truth[index[c["cell_id"]]] else "not_own_stain")
+                for c in stored["_panel"]["cells"]}}
+        else:
+            reply = oracle.answer(packet)
+        result = ok(invoke(session, "gating_answer", {
+            "session_id": sid, "packet_id": packet["packet_id"], "answer": reply}))["next"]
+    assert result["state"] in ("decided", "done"), result
+    record = engines.store().load(sid)
+    rows = provenance.read("gsynth")
+    panelled = 0
+    for unit in record["units"].values():
+        hyp = unit.get("hypotheses") or {}
+        if not hyp.get("observations"):
+            continue
+        panelled += 1
+        drawn = [e for e in unit.get("partners_drawn") or [] if e["kind"] == "cell_panel"]
+        assert len(drawn) >= len(hyp["observations"]), unit["marker"]
+        review = ((rows.get(unit["marker"]) or {}).get("detail") or {}).get("review")
+        assert review and review["version"] == 1, unit["marker"]
+        tiled = {t["marker"] for e in drawn for t in e["tiles"]} \
+            | {(e.get("plot") or {}).get("marker") for e in drawn}
+        for s in review["supporting"]:
+            if {"tile_expected", "tile_not_expected", "plot"} & set(s["roles"]):
+                assert s["marker"] in tiled
+        if hyp.get("status") == "resolved":
+            assert review["notes"].startswith("Decided by"), review["notes"]
+        if unit["state"] == "manual_review_recommended":
+            assert review["needs_review"] and review["uncertainty"]
+    assert panelled
+
+
 # -- calibration ------------------------------------------------------------------------------
 
 

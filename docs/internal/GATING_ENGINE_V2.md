@@ -123,6 +123,35 @@ whole-image check, classifier layer beside the gate     (shared with v1)
 | `hypotheses/candidates.py` | 110 | the candidate set and its window |
 | `hypotheses/calibration.py` | 165 | confidence levels; a logistic table, not fitted yet |
 | `hypotheses/classifier_check.py` | 200 | `classifier: check`: one look at cells the classifier disputes. Off by default; no trust table exists |
+| `explain.py` | 490 | `build`: the gate's `review` record in its provenance (below). Pure; shared with v1 |
+
+### What a gate's provenance says about its partners
+
+Every write puts a `review` record in the gate's provenance detail
+(`Engine._write`, and the slimmer row `Engine.close` writes when nothing is
+written). The viewer reads it: the channels it names come on beside the marker
+when the user picks it in Thresholding, and its notes show over the image
+(`gatingReviewChannels.js`, `gatingReviewNotes.js`).
+
+- **What was drawn is recorded per look.** `Engine.note_partners_drawn` keeps
+  `unit["partners_drawn"]`: one entry a look (`{look, kind, tiles, plot}`,
+  `look` the packet's ordinal in `unit["packets"]`), filled by `hypotheses.packet`
+  and `_pooled_packet` (`cell_panel`), `packets._multiview` (the three v1 look
+  kinds, tiles on), the v1 T3 collage's reference panel (tiles off), and the
+  context sheet's density plot. A rerender replaces its look's entry.
+- **`explain.build` names only what the unit recorded as drawn or leaned on.**
+  The condition a gate was fitted within, the chosen carriers, the drawn tiles
+  and plots, the references the purity check ran against, the lineages it was
+  checked on, and a scored start's partners (named, not switched on). Never
+  the vocabulary's partners wholesale, nor `evidence_plan`'s plan on its own.
+  Partners left out (`carriers.skipped`, `evidence_plan.avoided`, not gated
+  yet) go to `not_used`.
+- **Bounded.** At most 6 partners, notes of 600 characters, 4 uncertainties;
+  numbers as plain floats (`provenance._write` keeps a numpy scalar as a
+  string).
+- **Older rows have `review: null`.** The viewer then shows the row's `reason`
+  and switches nothing on. A gate an agent set by hand (`agent_set`) clears
+  any earlier session's record.
 
 The packet loop is the same for both engines. `gating_next` and
 `gating_answer` run it, and the `gate-packets` skill drives the workers.

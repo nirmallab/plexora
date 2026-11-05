@@ -232,7 +232,10 @@ def _restore_locked(datasource):
 
 
 def _detail_brief(row):
-    """The reason and flags of a provenance row, for the status line."""
+    """The reason and flags of a provenance row, for the status line, and the
+    gate's review record (`autogate.explain`: the partners its decision drew
+    on and the agent's notes), for the review's channels and notes; None for
+    a row written before it or not by the agent."""
     detail = row.get("detail")
     if isinstance(detail, str):
         try:
@@ -241,9 +244,11 @@ def _detail_brief(row):
             detail = None
     detail = detail if isinstance(detail, dict) else {}
     condition = detail.get("condition") if isinstance(detail.get("condition"), dict) else None
+    review = detail.get("review")
     return {"reason": detail.get("reason"), "flags": detail.get("flags"),
             "condition": ({k: condition.get(k) for k in ("within", "n_positive_outside")}
-                          if condition else None)}
+                          if condition else None),
+            "review": review if isinstance(review, dict) else None}
 
 
 @gating_bp.route('/get_gate_provenance', methods=['GET'])

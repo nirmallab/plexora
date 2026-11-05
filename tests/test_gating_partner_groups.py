@@ -226,6 +226,7 @@ def test_every_session_reviews_its_panel_once_and_fills_empty_slots(tmp_path, mo
     from plexora.ai import vocabulary
     from plexora.plugins.gating.server.autogate import engine as engines
     from plexora.plugins.gating.server.autogate import hierarchy
+    from plexora.plugins.gating.server.autogate import partners
     from tests import autogate_fixtures
     from tests.test_gating_session import answer, next_packet, ok
 
@@ -264,6 +265,12 @@ def test_every_session_reviews_its_panel_once_and_fills_empty_slots(tmp_path, mo
             shown = engine.partner_panels(unit)
             panel = engine.panel_for("gsynth")
         assert set(shown["co"]) == {"CD20", "CD3"} and " or " in shown["markers"]["co"]
+        # The record of what a look drew names the group's relation and members.
+        assert shown["relations"]["co"] == "subset_any"
+        assert set(shown["members"]["co"]) == {"CD20", "CD3"}
+        tiles = [t for t in partners.tiles_of(shown) if t["panel"] == "co"]
+        assert {t["marker"] for t in tiles} == {"CD20", "CD3"}
+        assert all(t["relation"] == "subset_any" and t["members"] for t in tiles)
         # Tiles only: no relation, reference or score reads them.
         assert hierarchy.relations(panel, "PDL1") == []
         ok(invoke(session, "gating_session_finish", {"session_id": sid, "action": "close"}))

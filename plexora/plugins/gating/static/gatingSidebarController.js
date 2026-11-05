@@ -27,6 +27,23 @@ const MARKER_KEYS = { z: -1, x: 1 };
 // slider thumb's own 12px, split across the line.
 const GATE_LINE_GRIP = 6;
 
+// The states an automatic gate is written in for review (the server's
+// schemas.REVIEW_WRITE_STATES), and the methods whose gate is the user's,
+// whatever an earlier session's provenance row still says.
+const GATE_REVIEW_STATES = ["manual_review_recommended", "not_binary", "insufficient_information"];
+const GATE_USER_METHODS = ["manual", "imported", "rolled_back"];
+// Whether selecting an automatic gate switches on the channels it was decided
+// with (the AI evidence row's eye), and whether that row's list is folded:
+// per-browser choices, on and open unless changed.
+const GATE_REVIEW_CHANNELS_KEY = "plexora.gating.reviewChannels";
+const GATE_REVIEW_FOLDED_KEY = "plexora.gating.reviewEvidenceFolded";
+// The sparkle of the header's AI button (index.html `plx-ai-spark`), for the
+// AI Notes button under the gate.
+const GATE_AI_SPARK = '<svg class="gate-ai-spark" viewBox="0 0 24 24" aria-hidden="true" focusable="false">'
+    + '<path fill="currentColor" d="M11 3c.5 4.6 3.4 7.5 8 8-4.6.5-7.5 3.4-8 8-.5-4.6-3.4-7.5-8-8 '
+    + '4.6-.5 7.5-3.4 8-8z"/><path fill="currentColor" d="M19 1.5c.2 1.7 1.1 2.6 2.8 2.8-1.7.2-2.6 '
+    + '1.1-2.8 2.8-.2-1.7-1.1-2.6-2.8-2.8 1.7-.2 2.6-1.1 2.8-2.8z"/></svg>';
+
 class GatingSidebarController {
     constructor(ctx) {
         this.ctx = ctx;
@@ -87,6 +104,16 @@ class GatingSidebarController {
         this._plotRedrawFrame = 0;
         //: The contrast slider over the viewer (GateContrastControl below).
         this.contrast = null;
+        //: An automatic gate under review: the channels it was decided with,
+        //: beside the marker (gatingReviewChannels.js), and the agent's notes
+        //: over the viewer (gatingReviewNotes.js). Built at setup().
+        this.reviewChannels = null;
+        this.reviewNotes = null;
+        //: Review keys (marker @ session) whose notes the user dismissed, for
+        //: the life of the page.
+        this._reviewDismissed = new Set();
+        //: The newest provenance request: an older answer landing late is dropped.
+        this._provenanceSeq = 0;
         //: The card's second mode (gatingClassifier.js), built at setup().
         this.classifier = null;
         //: A z-stack with a 3-D mask: the plane or the slab around it on screen,
@@ -114,6 +141,9 @@ class GatingSidebarController {
             this._plotResize?.disconnect?.();
             window.cancelAnimationFrame?.(this._plotRedrawFrame);
             this.contrast?.dispose();
+            this.reviewChannels?.release();
+            this.reviewChannels?.dispose();
+            this.reviewNotes?.dispose();
         });
     }
 
@@ -173,6 +203,18 @@ class GatingSidebarController {
         // A panel restored on reload was shown before this line ran.
         if (this._shown) this.contrast.show();
 
+        // An automatic gate under review: its channels beside the marker and
+        // the agent's notes over the viewer, both from the gate's provenance.
+        if (typeof GateReviewChannels === "function") this.reviewChannels = new GateReviewChannels(this);
+        if (typeof GateReviewNotes === "function") this.reviewNotes = new GateReviewNotes(this);
+        // The AI evidence row: the eye keeps the channels off, the chevron folds the list.
+        document.getElementById("gate_ai_evidence_toggle")?.addEventListener("click", () => {
+            this.setReviewChannelsEnabled(!this.reviewChannelsEnabled());
+        });
+        document.getElementById("gate_ai_evidence_fold")?.addEventListener("click", () => {
+            this.setReviewEvidenceFolded(!this.reviewEvidenceFolded());
+        });
+
         // Gating a z-stack plane by plane (gatingPlanes.js): built only where
         // there are whole cells in depth -- a 3-D mask -- to step through.
         if (typeof GatePlaneControl === "function" && GatePlaneControl.applies(this.ctx)) {
@@ -190,6 +232,7 @@ class GatingSidebarController {
         document.getElementById("gate_provenance")?.addEventListener("click", (event) => {
             const button = event.target.closest?.("[data-gate-status]");
             if (button) this.onStatusClick(button.dataset.gateStatus);
+            if (event.target.closest?.("[data-ai-notes]")) this.reviewNotes?.reopen();
         });
 
         // The two step buttons in the plot's corner (gating/panel.html). On
@@ -233,6 +276,7 @@ class GatingSidebarController {
         // Opening the panel on a z-stack shows the slab around the plane.
         if (!this._viewerCovered) this.planes?.enterSlab();
         this._viewerCovered = false;
+        this.syncReview();
     }
 
     // Called by toolLoader.js when the panel is put away, and when a routed
@@ -243,6 +287,9 @@ class GatingSidebarController {
         this._shown = false;
         this.contrast?.hide();
         this.classifier?.hide();
+        // The review's channels are the panel's: put back while it is away.
+        this.reviewChannels?.release();
+        this.reviewNotes?.hide();
     }
 
     armKeys() {
@@ -566,6 +613,7 @@ class GatingSidebarController {
         if (!name) return;
         if (name === this.gateMarker && !options.force) return;
         const enableSlot = options.enableSlot !== false;
+        const previous = this.gateMarker;
         this.gateMarker = name;
         if (this.gateMarkerSelect) {
             this.gateMarkerSelect.setValue(name);
@@ -596,11 +644,25 @@ class GatingSidebarController {
         // index), not the marker vocabulary.
         const hasMatchingImageChannel = this.ctx.dataset.image.has(this.dataLayer.getFullChannelName(name));
         if (options.syncSlot !== false && hasMatchingImageChannel) {
+            // A slot the last marker's review switched on for this channel is
+            // put back first: the mirror switches every other slot showing it
+            // off, which would read as the user switching it off.
+            this.reviewChannels?.releaseChannel(name);
             this.sidebar.setSlotMarker(1, name, { keepColor: true, enable: enableSlot, reveal: enableSlot });
         }
         // After the mirror above, which may just have put this marker on
         // screen: the viewer's contrast slider is always the gated marker's.
         this.contrast?.sync();
+        // The review follows the marker the user picks. An agent moving the
+        // panel switches nothing on; the last marker's channels go back
+        // unless the agent holds the view (core puts the slots back then).
+        if (options.syncSlot !== false && options.persist !== false) {
+            this.syncReview();
+        } else if (previous !== name) {
+            if (!window.PlexoraAgentBridge?.hasLease?.()) this.reviewChannels?.release();
+            this.reviewNotes?.hide();
+            this.paintReviewEvidence();
+        }
         // `persist: false`: an agent moving the panel (gatingAgentBridge.js),
         // which is not the user choosing a marker to save.
         if (options.persist !== false) this.scheduleSaveGating();
@@ -1553,9 +1615,15 @@ class GatingSidebarController {
 
     /** Fetch where each gate came from, then repaint what shows it. */
     async loadProvenance() {
-        this.provenance = await this.api.getGateProvenance();
+        const seq = ++this._provenanceSeq;
+        const rows = await this.api.getGateProvenance();
+        // A newer request is on its way: its answer is the one to show.
+        if (seq !== this._provenanceSeq) return;
+        this.provenance = rows;
         this.paintProvenance();
         this.gateMarkerSelect?.setOptions?.(this.getGateMarkerNames());
+        // For the marker on screen now, whichever it was when this was asked.
+        this.syncReview();
     }
 
     /** One line under the gate: who set it, how sure, and the user's say. */
@@ -1574,6 +1642,18 @@ class GatingSidebarController {
         text.textContent = describeGateProvenance(row);
         text.title = describeGateProvenance(row, { long: true });
         target.appendChild(text);
+        // The agent's notes, dismissed: brought back from here. The sparkle is
+        // the header's AI button's own (index.html, `plx-ai-spark`).
+        const review = this.reviewFor(this.gateMarker);
+        if (review && this.isReviewDismissed(review.key)) {
+            const link = document.createElement("button");
+            link.type = "button";
+            link.className = "gate-provenance-action gate-ai-notes-link";
+            link.dataset.aiNotes = "";
+            link.title = "Show the agent's notes for this gate";
+            link.innerHTML = `${GATE_AI_SPARK}<span>AI Notes</span>`;
+            target.appendChild(link);
+        }
         const actions = row.status === "locked" ? [["unlocked", "Unlock"]]
             : row.status === "approved" ? [["unapproved", "Unapprove"], ["locked", "Lock"]]
             : row.status === "excluded" ? [["included", "Include"]]
@@ -1588,6 +1668,169 @@ class GatingSidebarController {
         });
         target.dataset.confidence = row.confidence || "";
         target.hidden = false;
+    }
+
+    /**
+     * The review record of the gate `name` holds -- the server's `review`
+     * (autogate/explain.py) with `key` (marker @ the session that wrote it)
+     * and the provenance `row` -- or null for a gate that is not an
+     * automatic one. A gate an agent wrote before the record existed has its
+     * reason for notes and no channels.
+     */
+    reviewFor(name) {
+        if (!name) return null;
+        const fullName = this.dataLayer.getFullChannelName(name);
+        const row = this.provenance[fullName] || this.provenance[name];
+        if (!row || GATE_USER_METHODS.includes(row.method)) return null;
+        const key = `${name}@${row.session_id || ""}`;
+        if (row.review && typeof row.review === "object") return { ...row.review, key, row };
+        const agent = typeof row.method === "string"
+            && (row.method.startsWith("ai_") || ["agent_set", "needs_review"].includes(row.method));
+        if (!agent || !row.reason) return null;
+        return { version: 0, supporting: [], notes: String(row.reason), uncertainty: [],
+                 needs_review: GATE_REVIEW_STATES.includes(row.state), key, row };
+    }
+
+    /**
+     * The review in step with the marker on screen: its channels on beside
+     * it (while the eye is open and the marker itself is on screen), and its
+     * notes over the viewer. Nothing while the panel is away, and nothing
+     * switched while an agent holds the view.
+     */
+    syncReview() {
+        const marker = this.gateMarker;
+        const review = this._shown ? this.reviewFor(marker) : null;
+        if (window.PlexoraAgentBridge?.hasLease?.()) {
+            this.reviewNotes?.hide();
+        } else if (!review) {
+            this.reviewChannels?.release();
+            this.reviewNotes?.hide();
+        } else {
+            const on = this.reviewChannelsEnabled();
+            if (on && this.sidebar.slotShowing?.(marker)) this.reviewChannels?.follow(marker, review);
+            else this.reviewChannels?.release();
+            this.reviewNotes?.show(marker, review, { channelsOff: !on });
+        }
+        this.paintReviewEvidence();
+    }
+
+    /** Whether an automatic gate brings its channels on (the evidence row's eye). */
+    reviewChannelsEnabled() {
+        try {
+            const kept = window.localStorage?.getItem(GATE_REVIEW_CHANNELS_KEY);
+            if (kept === "on" || kept === "off") return kept === "on";
+        } catch (error) {
+            // No storage (a private window): this page's choice, below.
+        }
+        return !this._reviewChannelsOff;
+    }
+
+    setReviewChannelsEnabled(on) {
+        this._reviewChannelsOff = !on;
+        try {
+            window.localStorage?.setItem(GATE_REVIEW_CHANNELS_KEY, on ? "on" : "off");
+        } catch (error) {
+            // Not kept past this page; it still applies now.
+        }
+        this.syncReview();
+    }
+
+    /** Whether the evidence row's channel list is folded (per browser, like the eye). */
+    reviewEvidenceFolded() {
+        try {
+            const kept = window.localStorage?.getItem(GATE_REVIEW_FOLDED_KEY);
+            if (kept === "folded" || kept === "open") return kept === "folded";
+        } catch (error) {
+            // No storage: this page's choice, below.
+        }
+        return Boolean(this._reviewEvidenceFolded);
+    }
+
+    setReviewEvidenceFolded(folded) {
+        this._reviewEvidenceFolded = Boolean(folded);
+        try {
+            window.localStorage?.setItem(GATE_REVIEW_FOLDED_KEY, folded ? "folded" : "open");
+        } catch (error) {
+            // Not kept past this page; it still applies now.
+        }
+        this.paintReviewEvidence();
+    }
+
+    /**
+     * The AI evidence row under the provenance line: the gate's supporting
+     * channels counted and listed, each chip in the colour of the slot
+     * drawing it, with the eye (channels on or off) and the fold. Hidden with
+     * no automatic gate in the panel, shown with one, and muted (still
+     * usable) on a gate set by hand beside automatic ones.
+     */
+    paintReviewEvidence() {
+        const section = document.getElementById("gate_ai_evidence");
+        if (!section) return;
+        const any = this.getGateMarkerNames().some((name) => this.reviewFor(name) !== null);
+        section.hidden = !any;
+        if (!any) return;
+        const review = this.reviewFor(this.gateMarker);
+        section.classList.toggle("is-muted", review === null);
+        const on = this.reviewChannelsEnabled();
+        const eye = document.getElementById("gate_ai_evidence_toggle");
+        if (eye && eye.getAttribute("aria-pressed") !== String(on)) {
+            eye.setAttribute("aria-pressed", String(on));
+            eye.setAttribute("aria-label", on ? "Hide the AI's channels" : "Show the AI's channels");
+            eye.title = on ? "Hide the channels the agent used, for every gate until shown again"
+                : "Show the channels the agent used beside each gate it set";
+            // Font Awesome swaps a span for its svg, so the icon is replaced, not reclassed.
+            eye.innerHTML = `<span class="far ${on ? "fa-eye" : "fa-eye-slash"}" aria-hidden="true"></span>`;
+        }
+        const folded = this.reviewEvidenceFolded();
+        section.classList.toggle("is-folded", folded);
+        const fold = document.getElementById("gate_ai_evidence_fold");
+        if (fold) {
+            fold.setAttribute("aria-expanded", String(!folded));
+            const words = folded ? "Show the channel list" : "Fold the channel list";
+            fold.setAttribute("aria-label", words);
+            fold.title = words;
+        }
+        const entries = (review?.supporting || []).filter((entry) => entry && entry.display !== false);
+        const count = document.getElementById("gate_ai_evidence_count");
+        if (count) {
+            count.hidden = review === null;
+            count.textContent = entries.length
+                ? `${entries.length} channel${entries.length === 1 ? "" : "s"}` : "no channels";
+        }
+        const chips = document.getElementById("gate_ai_evidence_chips");
+        if (!chips) return;
+        chips.replaceChildren(...entries.map((entry) => this.reviewEvidenceChip(entry, on)));
+        chips.hidden = folded || !entries.length;
+    }
+
+    /** One supporting channel: its name, in the colour of the slot drawing it. */
+    reviewEvidenceChip(entry, on) {
+        const chip = document.createElement("span");
+        chip.className = "gate-ai-evidence-chip";
+        chip.textContent = entry.marker;
+        const notes = [entry.influence].filter(Boolean);
+        const shown = this.reviewChannels?.shownAs(entry) || { color: null, why: null };
+        if (!on) {
+            chip.classList.add("is-off");
+        } else if (shown.color) {
+            chip.style.setProperty("--chip-color", shown.color);
+        } else {
+            chip.classList.add("is-missing");
+            notes.push(shown.why ? `Not on screen: ${shown.why}` : "Not on screen");
+        }
+        chip.title = notes.join("\n");
+        return chip;
+    }
+
+    isReviewDismissed(key) {
+        return this._reviewDismissed.has(key);
+    }
+
+    /** The notes dismissed (true) or brought back; the link under the gate follows. */
+    setReviewDismissed(key, dismissed) {
+        if (dismissed) this._reviewDismissed.add(key);
+        else this._reviewDismissed.delete(key);
+        this.paintProvenance();
     }
 
     async onStatusClick(status) {

@@ -95,8 +95,9 @@ window.PlexoraCarryOver = (function () {
     function captureChannels() {
         const sidebar = window.__plexora && window.__plexora.viewerSidebar;
         if (!sidebar || !Array.isArray(sidebar.channelSlots)) return null;
+        // Not a row a plugin holds for a moment (viewerSidebar persistChannelList).
         const entries = sidebar.channelSlots
-            .filter((slot) => slot && slot.enabled && slot.name)
+            .filter((slot) => slot && slot.enabled && slot.name && !slot.transient)
             .map((slot) => ({ name: slot.name, color: slot.colorHex }));
         if (!entries.length) return null;
         // Deliberately no range. A contrast window is a reading off this

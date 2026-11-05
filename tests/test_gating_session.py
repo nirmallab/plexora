@@ -884,6 +884,8 @@ def test_a_failed_stain_is_written_as_an_empty_gate_and_undone(tmp_path):
     row = provenance.read("gsynth")["CD20"]
     assert row["method"] == "failed_marker" and row["confidence"] == "failed_qc"
     assert "failed_marker" in row["detail"]["flags"] and row["detail"]["reason"]
+    review = row["detail"]["review"]
+    assert review["notes"].startswith("The stain failed") and review["supporting"] == []
     finished = ok(invoke(session, "gating_session_finish",
                          {"session_id": started["session_id"], "action": "rollback"}))
     assert finished["undone"] and not finished["refused"]

@@ -147,3 +147,33 @@ def _group(entries, marker, rel, present, gated, told=()):
             members.append(name)
     return (members, min(rel[(marker, b)][1] for b in members),
             any((marker, b) in told for b in members))
+
+
+def tiles_of(panels):
+    """[{marker, channel, panel: co|anti, relation, gate?, members?}]: the
+    partner tiles `Engine.partner_panels` laid out for a look, one row a
+    marker (a `subset_any` group is one tile, one row per member, each
+    naming the group's `members`). [] for a look without tiles."""
+    out = []
+    panels = panels or {}
+    names = panels.get("markers") or {}
+    relations = panels.get("relations") or {}
+    groups = panels.get("members") or {}
+    gates = panels.get("gates") or {}
+    for kind in ("co", "anti"):
+        channels = panels.get(kind)
+        if not names.get(kind) or not channels:
+            continue
+        members = groups.get(kind)
+        channels = channels if isinstance(channels, list) else [channels]
+        markers = members if members else [names[kind]]
+        for marker, channel in zip(markers, channels):
+            row = {"marker": marker, "channel": channel, "panel": kind,
+                   "relation": relations.get(kind) or ("exclusive" if kind == "anti"
+                                                       else "subset")}
+            if gates.get(channel) is not None:
+                row["gate"] = float(gates[channel])
+            if members:
+                row["members"] = list(members)
+            out.append(row)
+    return out

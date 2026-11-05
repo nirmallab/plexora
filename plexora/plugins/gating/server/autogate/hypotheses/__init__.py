@@ -35,6 +35,7 @@ unit (`unit["hypotheses"]`) and in the gate's provenance.
 from __future__ import annotations
 
 from plexora.plugins.gating.server.autogate import schemas, tableops
+from plexora.plugins.gating.server.autogate.partners import tiles_of
 from plexora.plugins.gating.server.autogate.hypotheses import candidates as candmod
 from plexora.plugins.gating.server.autogate.hypotheses import controller, evidence
 from plexora.plugins.gating.server.autogate.hypotheses import panel as panelmod
@@ -481,6 +482,7 @@ def packet(engine, units):
     # The distribution and a partner beside the cells: context for the reads,
     # never a cell's place on them (the panel stays blind).
     plots = _panel_plots(engine, unit, ds, state, bounds, partners, seed)
+    density = {}
     if plots is not None:
         guide.append("panel_plots")
         density = plots["manifest"]["plots"].get("density") or {}
@@ -488,6 +490,10 @@ def packet(engine, units):
             multiview["plots"] = {"partner": density["partner"],
                                   "relation": density["relation"]}
             guide.append(f"plot:{density['relation']}")
+    engine.note_partners_drawn(
+        unit, kind="cell_panel", tiles=tiles_of(partners),
+        plot={"marker": density["partner"], "relation": density["relation"]}
+        if density else None)
     pkt = {
         "question": (f"{unit['marker']} ({ds.name}): for EVERY numbered cell, does it carry "
                      f"its OWN {stain} stain, around the nucleus the ticks mark? One word per "
@@ -574,6 +580,7 @@ def _pooled_packet(engine, unit, state, plan, bounds, project, positive, above_t
         return None
     channel = views.image_channel(ds, unit["marker"])
     partners = engine.partner_panels(other) if other else None
+    engine.note_partners_drawn(unit, kind="cell_panel", tiles=tiles_of(partners))
     layout = "t2m" if partners else "t2"
     per_row = views._per_row(layout)
     rows = panelmod.rows_of([{k: c[k] for k in ("cell_id", "x", "y", "caption", "number")}

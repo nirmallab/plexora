@@ -280,7 +280,9 @@ def _record_agent_write(call, ds, marker, after, operation_id, method="agent_set
                           value_low=after["low"], value_high=after["high"],
                           written_low=after["low"], written_high=after["high"],
                           operation_id=operation_id, state=None, confidence=None,
-                          principal=getattr(call.policy, "principal", None) or "agent")
+                          principal=getattr(call.policy, "principal", None) or "agent",
+                          # An earlier session's review is not this gate's.
+                          detail={"review": None})
     except Exception:  # provenance records a write; it never undoes one
         pass
 

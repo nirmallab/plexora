@@ -279,3 +279,53 @@ def test_tiles_draw_every_look_as_the_multi_view_block(tmp_path):
             assert artifacts.get(art)[1]["manifest"]["layout"] == "t2m"
     finally:
         session.close()
+
+
+@pytest.mark.pro
+def test_each_look_records_the_partners_it_drew_and_the_review_names_only_those(tmp_path):
+    from types import SimpleNamespace
+
+    from plexora.plugins.gating.server import provenance
+    from plexora.plugins.gating.server.autogate import engine as engines
+    from tests.test_gating_session import Oracle, drive
+
+    info = make_gating_project(tmp_path, grid=24, size=960, markers=("CD3", "CD8", "CD4"))
+    session = AgentSession()
+    try:
+        started = _start(session, "gsynth", mode="propose", agent="tiles", tiles=True,
+                         reuse_answers=False)
+        sid = started["session_id"]
+        seen = drive(session, sid, Oracle(info))
+        looks = [p for p in seen if p["kind"] in ("t2_confirm", "t3_biological",
+                                                 "t4_candidates")]
+        assert looks
+        with engines.engine_for(SimpleNamespace(session=session), sid, save=False) as engine:
+            by_marker = {u["marker"]: u for u in engine.record["units"].values()}
+        # Each tile look recorded the partners it drew, under its own ordinal.
+        for packet in looks:
+            unit = by_marker[packet["units"][0]["marker"]]
+            look = unit["packets"].index(packet["packet_id"]) + 1
+            entry = next(e for e in unit["partners_drawn"] if e["look"] == look)
+            assert entry["kind"] == packet["kind"]
+            shown = packet["evidence"]["partner_panels"]
+            assert {t["marker"] for t in entry["tiles"]} >= {
+                m for m in (shown.get("expected"), shown.get("not_expected"))
+                if m and " or " not in m}
+        rows = provenance.read("gsynth")
+        for unit in by_marker.values():
+            drawn = unit.get("partners_drawn") or []
+            for entry in drawn:
+                assert 1 <= entry["look"] <= len(unit["packets"])
+                for tile in entry["tiles"]:
+                    assert {"marker", "channel", "panel", "relation"} <= set(tile)
+            tiled = {t["marker"] for e in drawn for t in e["tiles"]} \
+                | {(e.get("plot") or {}).get("marker") for e in drawn}
+            review = (rows.get(unit["marker"]) or {}).get("detail", {}).get("review")
+            if review is None:
+                continue
+            assert review["version"] == 1 and review["marker"] == unit["marker"]
+            for s in review["supporting"]:
+                if {"tile_expected", "tile_not_expected", "plot"} & set(s["roles"]):
+                    assert s["marker"] in tiled
+    finally:
+        session.close()

@@ -113,6 +113,28 @@ def test_a_locked_gate_survives_the_sidebars_save(client):
     assert _save(client, {"CD8": (40.0, 5000.0)}).get_json()["reverted"] == []
 
 
+def test_provenance_carries_a_gates_review_record(client):
+    from plexora.plugins.gating.server import provenance
+
+    review = {"version": 1, "marker": "CD8", "notes": "Decided by 2 blind looks.",
+              "supporting": [{"marker": "CD3", "channel": "CD3", "kind": "parent_child"}],
+              "uncertainty": [], "needs_review": False}
+    provenance.record("gsynth", "CD8", method="ai_panel", status="accepted",
+                      state="accepted", confidence="moderate",
+                      detail={"reason": "accepted at T2", "flags": ["pileup"],
+                              "condition": {"within": "CD45", "n_positive_outside": 4,
+                                            "relation": "subset"},
+                              "review": review})
+    provenance.record("gsynth", "CD3", method="ai_accepted", status="accepted",
+                      detail={"reason": "an older row"})
+    rows = client.get("/plugins/gating/get_gate_provenance?datasource=gsynth") \
+        .get_json()["provenance"]
+    assert rows["CD8"]["review"] == review
+    assert rows["CD8"]["reason"] == "accepted at T2" and rows["CD8"]["flags"] == ["pileup"]
+    assert rows["CD8"]["condition"] == {"within": "CD45", "n_positive_outside": 4}
+    assert rows["CD3"]["review"] is None and rows["CD3"]["reason"] == "an older row"
+
+
 def test_a_page_holding_an_older_list_saves_only_what_it_changed(client):
     # ImageLSP23362, 2026-10-30: a session wrote Ki-67's gate, and a page
     # still holding the list from before saved its whole list back over it.

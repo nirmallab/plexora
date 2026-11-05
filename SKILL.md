@@ -3507,7 +3507,33 @@ deliberately left out and what should be built next.
   pause/resume/stop/take-over to, so it never names the plugin),
   `partners.py` (`partner_plan`: the expected and not-expected partners a
   multi-view look shows, from the panel context's vocabulary relations
-  alone). The spatial-evidence switch that once sat here
+  alone; `tiles_of` turns `Engine.partner_panels` — which also returns
+  `relations` and `members` — into one row a partner tile),
+  `explain.py` (pure `build(unit, *, state, method, confidence, channel_of)`:
+  the gate's `review` record, `VERSION` 1 — the supporting partners the
+  decision actually drew on, notes, uncertainty, `needs_review`, `not_used` —
+  written to provenance `detail["review"]` by `Engine._write` and the slim
+  `Engine.close` row through `Engine._review`, None for a skipped or user
+  gate, cleared by `capabilities._record_agent_write` for `agent_set`, because
+  an earlier session's review is not that gate's; it names only what the unit
+  recorded — `unit["partners_drawn"]`, one entry a look from
+  `Engine.note_partners_drawn` ({look, kind, tiles, plot}), called by
+  `hypotheses.packet`, `hypotheses._pooled_packet`, `packets._multiview`, the
+  v1 T3 tiles-off reference panel and `packets._sheet`'s partner plot, and
+  `Engine.rerender` keeps a rerender on its own look — never the
+  vocabulary's partners wholesale; `get_gate_provenance` (`routes._detail_brief`)
+  ships it, and the panel's `static/gatingReviewChannels.js` (switches the
+  review's channels on in hidden or new rows past slot 2 and restores them;
+  each such row is `slot.transient`, which core's `persistChannelList` and
+  `carryOver.js` leave out and core's slot setters clear; listed under the
+  provenance line in the "AI evidence" row, `#gate_ai_evidence`, whose eye
+  `#gate_ai_evidence_toggle` keeps them off, localStorage
+  `plexora.gating.reviewChannels`, and whose chevron folds the chips) and
+  `static/gatingReviewNotes.js` (the notes toast, docked top-center through
+  `ctx.view.dock`) read it;
+  `docs/internal/GATING_ENGINE_V2.md`, "What a gate's provenance says about
+  its partners"; `tests/test_gating_explain.py`, `tests/js/gating_review_probe.mjs`
+  pinned by `plugins/gating/tests/test_gating_review_client.py`). The spatial-evidence switch that once sat here
   (`spatial.py`, `calls.py`, `SessionOptions.spatial`, `t3_contrast`, the
   uncertain layer) was removed, because on real tissue its decide mode
   engaged none of its rules (`AUTOMATIC_GATING.md` §2a). The per-cell model
@@ -10275,7 +10301,10 @@ in **5.6 s**.
   decisions behind a gate are in `plugin_gating_provenance`
   (`autogate/provenance.py`), never folded into the row the browser saves
   whole, because a field that lived only in the row would vanish the next
-  time the sidebar wrote it back.
+  time the sidebar wrote it back. The same holds for its review
+  (`detail["review"]`, `autogate/explain.py`), which names only partners the
+  unit recorded drawing on, because a review listing what the decision never
+  looked at would be a guess presented as a reason.
 - **Locked and approved gates refuse an agent write.** `model.set_gate` raises
   `GateLocked`, and `capabilities.apply_to_dataset` turns that into a skip
   rather than a raised error across a dataset. The sidebar's own
