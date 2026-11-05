@@ -246,6 +246,9 @@ def constants() -> dict:
     except ImportError:  # pragma: no cover - the gating plugin is always shipped
         return out
     out["ENGINE"] = dict(schemas.ENGINE)
+    from plexora.plugins.gating.server.autogate import groups
+
+    out["GROUPS"] = dict(groups.GROUPS)
     out["strip"] = {"cells_each_side": schemas.ENGINE["strip_cells"] // 2,
                     "markers": schemas.ENGINE["strip_batch"]}
     out["layouts"] = {name: dict(spec) for name, spec in collage.LAYOUTS.items()}

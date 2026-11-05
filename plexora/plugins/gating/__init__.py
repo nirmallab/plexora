@@ -12,7 +12,7 @@ scipy/sklearn/anndata/h5py.
 
 from plexora.api.plugin import Plugin, Requires
 
-VERSION = "20261030_gating_versions"
+VERSION = "20261105_gating_v4"
 
 
 def _blueprint():

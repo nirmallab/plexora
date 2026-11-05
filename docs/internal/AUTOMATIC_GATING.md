@@ -565,7 +565,8 @@ plexora/plugins/gating/server/autogate/  the intensity-marker implementation
                      the whole image, the partner plot
     regression.py    the seven numeric checks
     reference.py     cross-image alignment, drift classes, strategy
-    transfer.py      carrying the reference image's gates to the rest
+    transfer.py      carrying the reference image's gates to the rest (v1, v3)
+    groups.py        engine v4: grouping a dataset's images, carrying a group's gate
     context.py       panel context (vocabulary first), order, references
     provenance.py    sidecar table: method, status, confidence, locks
     engine.py        the session state machine, writes, confidence
@@ -1234,6 +1235,21 @@ New AI features declare a role here and a tier in the manifest. The QC loop
 is the next candidate (a `qc_worker` with a qc-packets skill).
 
 ## 6. Datasets
+
+Engine `v4` is the default for a dataset (`schemas.DEFAULT_ENGINE_BY_SCOPE`):
+no image decides for the rest. The bulk pass profiles a few images at once
+(`bulk.IMAGE_WORKERS`); each marker's units wait (`group_pending`) until every
+image is profiled; then `groups.partition` groups the images whose
+backgrounds align (`reference.align_bg`), each group decides once on its
+scale image's unit with looks rotating over up to six of its images (each
+look's values carried back onto the scale image's axis), and `groups.carry`
+carries the gate into every member with bounded checks. A packet ceiling of
+three plus one per image holds per marker. On one image v4 is v3. How and
+why: [GATING_ENGINE_V4.md](GATING_ENGINE_V4.md). With `mirror` the viewer
+follows the tab (`mirror.follow == "tab"`), never moving it; the tab's image
+switcher and the agent panel read `dataset_progress`.
+
+Engines `v1` and `v3` keep the reference-first path below.
 
 The reference image (the user's choice, else the one with most cells) is gated
 in full first. Each other image is profiled by the bulk pass meanwhile and its

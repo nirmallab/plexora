@@ -1209,6 +1209,146 @@ async function running(options = {}, marker = "CD3") {
         shown && sized && opened && none, { shown, sized, opened, none });
 }
 
+// -- a dataset run: several images at once, the mirror following the tab ---------------
+
+/** A dataset run's `dataset_progress`, this tab's image ("demo") in `here`. */
+function datasetProgress(here, { active = 3, total = 8, done = 41, of = 128 } = {}) {
+    return {
+        dataset: "Cohort", reference_image: "ref", order: ["ref", "demo", "img_c"],
+        images: { ref: { state: "gating", markers_done: 9, markers_total: 16, active_markers: ["CD3"] },
+                  demo: here,
+                  img_c: { state: "queued", markers_done: 0, markers_total: 16, active_markers: [] } },
+        counts: { images_active: active, images_total: total, images_done: 1, images_review: 0,
+                  images_queued: 4, markers_done: done, markers_total: of },
+    };
+}
+
+{
+    const pg = makePage();
+    const heard = [];
+    pg.g.addEventListener("plexora:agent-dataset-progress", (event) => heard.push(event.detail));
+    const line = () => byClass(pg.root(), "plx-agent-progress").textContent;
+    pg.send("started", { phase: "analyzing", view_id: "view_1", progress: {
+        units_done: 41, units_total: 128,
+        bulk: { state: "bulk_running", stage: "profiling", message: "profiled CD8", done: 3, total: 16 },
+        dataset_progress: datasetProgress({ state: "gating", markers_done: 4, markers_total: 16,
+                                            active_markers: ["CD45"], needs_review: 0 }) } }, "gs_d");
+    const gating = line();
+    pg.send("dataset_progress", { dataset_progress: datasetProgress(
+        { state: "queued", markers_done: 0, markers_total: 16, active_markers: [] }, { active: 3, done: 44 }) },
+            "gs_d");
+    const queued = line();
+    pg.send("dataset_progress", { dataset_progress: datasetProgress(
+        { state: "review", markers_done: 16, markers_total: 16, needs_review: 2 }, { active: 2, done: 60 }) },
+            "gs_d");
+    const review = line();
+    pg.send("dataset_progress", { dataset_progress: datasetProgress(
+        { state: "done", markers_done: 16, markers_total: 16 }, { active: 1, total: 1, done: 16, of: 16 }) },
+            "gs_d");
+    const one = line();
+    const passed = heard.length === 4 && heard.every((d) => d.session_id === "gs_d" && d.done === false)
+        && heard[1].dataset_progress.images.demo.state === "queued";
+    pg.send("finished", { reason: "closed", summary: { units_total: 128, accepted: 120 } }, "gs_d");
+    const ended = heard.length === 5 && heard[4].done === true && heard[4].session_id === "gs_d";
+    // A tab on another image hears the run's own event first: it puts the card up.
+    const other = makePage();
+    other.send("dataset_progress", { dataset_progress: datasetProgress(
+        { state: "gating", markers_done: 2, markers_total: 16 }) }, "gs_d");
+    const otherLine = other.root() && byClass(other.root(), "plx-agent-progress").textContent;
+    check('a dataset run says "Gating 3 of 8 images in parallel · 41 of 128 markers · this image: gating '
+        + '(4 of 16)" (over the bulk pass\'s stage), from its progress or its own event, and passes it on '
+        + "as plexora:agent-dataset-progress, done on finished",
+        gating === "Gating 3 of 8 images in parallel · 41 of 128 markers · this image: gating (4 of 16)"
+        && queued === "Gating 3 of 8 images in parallel · 44 of 128 markers · this image: queued"
+        && review === "Gating 2 of 8 images in parallel · 60 of 128 markers · this image: needs review"
+        && one === "Gating 1 of 1 image in parallel · 16 of 16 markers · this image: done"
+        && passed && ended
+        && otherLine === "Gating 3 of 8 images in parallel · 41 of 128 markers · this image: gating (2 of 16)",
+        { gating, queued, review, one, heard: heard.length, ended, otherLine });
+}
+
+/** A reloaded page on "demo", with a dataset run started from "ref". */
+function datasetReload(session) {
+    const page = makePage({ paid: true });
+    page.onFetch = (input) => {
+        if (/ai\/v1\/runs\?limit=/.test(input)) {
+            return json(200, { success: true, runs: [
+                { run_id: "air_x", project: "elsewhere", status: "running", session_id: "gs_x", kind: "gating" },
+                { run_id: "air_d", project: "ref", status: "running", session_id: "gs_d", kind: "gating" }] });
+        }
+        if (input.endsWith("ai/v1/runs/air_x")) {
+            return json(200, { success: true, run_id: "air_x", status: "running", session: {
+                session_id: "gs_x", control: { url: "plugins/gating/agent_session/gs_x/control" },
+                phase: "analyzing", progress: { units_done: 1, units_total: 4 }, paused: false, stopped: false,
+                images: ["elsewhere"] } });
+        }
+        if (input.endsWith("ai/v1/runs/air_d")) {
+            return json(200, { success: true, run_id: "air_d", status: "running", session: Object.assign({
+                session_id: "gs_d", control: { url: "plugins/gating/agent_session/gs_d/control" },
+                phase: "inspecting", paused: false, stopped: false, images: ["ref", "demo", "img_c"],
+                progress: { units_done: 41, units_total: 128, dataset_progress: datasetProgress(
+                    { state: "gating", markers_done: 4, markers_total: 16 }) } }, session) });
+        }
+        return null;
+    };
+    page.panel.configure({ typing: false });
+    return page;
+}
+const attachPosts = (page) => page.fetches.filter((f) => f.method === "POST" && f.body
+    && f.body.action === "attach_viewer");
+
+{
+    const page = datasetReload({ viewer_attached: false, view_id: "view_1",
+                                 mirror: { status: "off", view_id: "view_1", follow: "tab" } });
+    const back = await page.panel._reattach();
+    const card = page.root();
+    const shown = page.panel.current();
+    const line = card && byClass(card, "plx-agent-progress").textContent;
+    const asked = page.fetches.filter((f) => /ai\/v1\/runs\/air_/.test(f.url)).map((f) => f.url.split("/").pop());
+    check("after a reload on another image of a dataset run, its card is put back from the run whose "
+        + "session lists this image (a run that does not is passed over)",
+        back === "gs_d" && shown.id === "gs_d" && shown.phase === "inspecting"
+        && line === "Gating 3 of 8 images in parallel · 41 of 128 markers · this image: gating (4 of 16)"
+        && JSON.stringify(asked) === JSON.stringify(["air_x", "air_d"])
+        && attachPosts(page).length === 0 && shown.attached === false,
+        { back, shown, line, asked, posts: attachPosts(page).length });
+}
+
+{
+    // Mirrored into this tab when it left the other image (the bridge kept
+    // its viewer session across the walk): the page re-attaches, naming its
+    // image, and the server shows that image's newest look here.
+    const page = datasetReload({ viewer_attached: true, view_id: "view_1",
+                                 mirror: { status: "active", view_id: "view_1", follow: "tab" } });
+    await page.panel._reattach();
+    await tick(5);
+    const posts = attachPosts(page);
+    const follows = posts.length === 1 && posts[0].body.view_id === "view_1" && posts[0].body.project === "demo"
+        && posts[0].url.endsWith("plugins/gating/agent_session/gs_d/control")
+        && page.panel.current().attached === true && byAction(page.root(), "detach") !== null;
+    // A project-scope run (no follow) is not re-pointed; nor one mirrored
+    // into another tab.
+    const still = datasetReload({ viewer_attached: true, view_id: "view_1",
+                                  mirror: { status: "active", view_id: "view_1" } });
+    await still.panel._reattach();
+    const elsewhere = datasetReload({ viewer_attached: true, view_id: "view_9",
+                                      mirror: { status: "active", view_id: "view_9", follow: "tab" } });
+    await elsewhere.panel._reattach();
+    const quiet = attachPosts(still).length === 0 && attachPosts(elsewhere).length === 0
+        && elsewhere.panel.current().attached === false && elsewhere.toasts.length === 0;
+    // Watch in viewer names the image too.
+    const watch = await running();
+    watch.send("control", { paused: false, viewer_attached: false, view_id: "view_1" });
+    watch.fetches.length = 0;
+    byAction(watch.root(), "attach").click();
+    await tick(5);
+    const named = attachPosts(watch)[0];
+    check("a dataset run mirrored into this tab follows it: the reloaded page posts attach_viewer with "
+        + "its view id and project; a run that does not follow the tab, or is mirrored elsewhere, is left be",
+        follows && quiet && Boolean(named) && named.body.project === "demo" && named.body.view_id === "view_1",
+        { posts, quiet, named });
+}
+
 if (failures.length) {
     console.error(`\n${failures.length} check(s) failed`);
     process.exit(1);

@@ -21,7 +21,12 @@
  *   `gating.session` events -- an automatic-gating session mirrored into this
  *     tab: a pill over the panel saying so, with Take over. Pause, Resume and
  *     Stop live in core's agent panel (views/agentPanel.js), which hears the
- *     same events -- two places to pause one session was the ambiguity.
+ *     same events -- two places to pause one session was the ambiguity. Only
+ *     in the tab the session is mirrored into (`viewer_attached`, and its
+ *     `view_id` this tab's bridge session); a dataset run's own word on this
+ *     image (`plexora:agent-dataset-progress`, passed on by the agent panel)
+ *     says whether the agent is gating it or another one, and Take over is
+ *     offered only on an image it is gating.
  *   `plexora:agent-restore` -- the agent's session is over and core is giving
  *     the viewer back: drop the candidate gate on the slider (the stored one
  *     comes back) and return to the marker the user was on.
@@ -163,9 +168,50 @@
 
     let pillSession = null;
     let pillPaused = false;
+    //: Where the session mirrors, as the last event that said so had it
+    //: (`started`, `control`): most events say neither, and keep these.
+    let pillViewId = null;
+    let pillAttached = false;
+    //: A dataset run's word on its images, `{session, progress}` (core's
+    //: agent panel passes it on): which one the agent is gating.
+    let pillDataset = null;
+
+    //: A dataset run's image states that mean the agent is at it now.
+    const GATING_NOW = new Set(["profiling", "gating", "checking"]);
 
     function pill() {
         return document.getElementById("gating_agent_pill");
+    }
+
+    /** Whether the session mirrors into THIS tab: another tab on the same
+     *  image hears the same events and is not being shown anything. */
+    function mirroredHere() {
+        const mine = window.PlexoraAgentBridge?.sessionId?.() || null;
+        if (!mine) return false;
+        if (pillViewId === null) {
+            // Nothing heard yet: a tab reloaded mid-run hears neither
+            // `started` nor `control` until something changes. Core's agent
+            // panel put its card back from the run's own record, and knows.
+            const card = window.PlexoraAgentPanel?.current?.();
+            return Boolean(card && card.id === pillSession && card.attached);
+        }
+        return pillAttached && pillViewId === mine;
+    }
+
+    /** This image in a dataset run: `{entry, others}` -- its state and how
+     *  many other images are being gated -- or null outside one. */
+    function datasetHere() {
+        if (!pillDataset || pillDataset.session !== pillSession) return null;
+        const progress = pillDataset.progress || {};
+        const here = window.flaskVariables?.datasource || "";
+        const entry = (progress.images || {})[here];
+        if (!entry || typeof entry !== "object") return null;
+        const counted = Number(progress.counts?.images_active);
+        const others = Number.isFinite(counted)
+            ? counted - (GATING_NOW.has(entry.state) ? 1 : 0)
+            : Object.entries(progress.images || {})
+                .filter(([name, image]) => name !== here && GATING_NOW.has(image?.state)).length;
+        return { entry, others: Math.max(0, others) };
     }
 
     function showPill(payload) {
@@ -176,32 +222,77 @@
             element.hidden = true;
             pillSession = null;
             pillPaused = false;
+            pillViewId = null;
+            pillAttached = false;
             return;
         }
-        if (payload.session_id !== pillSession) pillPaused = false;
+        if (payload.session_id !== pillSession) {
+            pillPaused = false;
+            pillViewId = null;
+            pillAttached = false;
+        }
         pillSession = payload.session_id;
         // `control` carries the pause state; `started` is a fresh run.
         if (payload.paused !== undefined) pillPaused = Boolean(payload.paused);
         else if (payload.event === "started") pillPaused = false;
+        if (payload.view_id) pillViewId = String(payload.view_id);
+        if (payload.viewer_attached !== undefined) pillAttached = Boolean(payload.viewer_attached);
         // Taken over from the agent panel (core): the marker it was on is
         // locked now, and the provenance readout says so.
         if (payload.taken_over) live.loadProvenance?.();
+        paintPill();
+    }
+
+    function paintPill() {
+        const element = pill();
+        if (!element || !controller() || !pillSession) return;
+        if (!mirroredHere()) {
+            element.hidden = true;
+            return;
+        }
+        // In a dataset run the agent may be at another image: say so, and
+        // offer no Take over of a marker it is not gating here.
+        const dataset = datasetHere();
+        const gatingHere = !dataset || GATING_NOW.has(dataset.entry.state);
+        let words = "An agent is gating this image";
+        if (pillPaused) {
+            words = "Agent gating paused";
+        } else if (!gatingHere) {
+            const n = dataset.others;
+            const elsewhere = n ? `Agent gating ${n} other ${n === 1 ? "image" : "images"}`
+                : "Agent gating this dataset";
+            const state = dataset.entry.state;
+            words = `${elsewhere} · this one ${state === "review" ? "needs review"
+                : state === "done" ? "is done" : "is queued"}`;
+        }
         element.replaceChildren();
         const text = document.createElement("span");
         text.className = "gating-agent-pill-text";
-        text.textContent = pillPaused ? "Agent gating paused" : "An agent is gating this image";
+        text.textContent = words;
         text.title = text.textContent;
         element.appendChild(text);
-        const button = document.createElement("button");
-        button.type = "button";
-        button.className = "gating-agent-pill-action";
-        button.dataset.action = "take_over";
-        button.textContent = "Take over";
-        button.title = "Pause the agent and lock the marker on screen, so its gate is yours";
-        button.addEventListener("click", () => controlSession("take_over"));
-        element.appendChild(button);
+        if (gatingHere) {
+            const button = document.createElement("button");
+            button.type = "button";
+            button.className = "gating-agent-pill-action";
+            button.dataset.action = "take_over";
+            button.textContent = "Take over";
+            button.title = "Pause the agent and lock the marker on screen, so its gate is yours";
+            button.addEventListener("click", () => controlSession("take_over"));
+            element.appendChild(button);
+        }
         element.hidden = false;
     }
+
+    // A dataset run's images moved on (core's agent panel, the one place
+    // that reads them off the session's events).
+    window.addEventListener("plexora:agent-dataset-progress", (event) => {
+        const detail = event.detail || {};
+        if (!detail.session_id) return;
+        pillDataset = detail.done || !detail.dataset_progress ? null
+            : { session: detail.session_id, progress: detail.dataset_progress };
+        if (detail.session_id === pillSession) paintPill();
+    });
 
     async function controlSession(action) {
         const live = controller();

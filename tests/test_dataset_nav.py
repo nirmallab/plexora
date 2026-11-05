@@ -54,6 +54,9 @@ CHECKS = (
     "picking a sample from the strip walks there",
     "walking closes the strip before it carries the arrangement",
     "without the strip module the counter is harmless",
+    'a dataset run\'s "3 gating" sits beside the counter, and clears when it is done',
+    "the grid is handed the run's states, re-badged as it goes, and keeps Gating only",
+    "walking goes through the agent bridge, so a mirrored run follows the tab",
 )
 
 

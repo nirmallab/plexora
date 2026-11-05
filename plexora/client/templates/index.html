@@ -4,7 +4,7 @@
 {% block title %}{% if data.datasource %}<title>{{ project_title or data.datasource }}</title>{% endif %}{% endblock %}
 
 {% block style %}
-<link rel="stylesheet" href="{{ data.base_url }}/client/src/css/viewer.css?v=20261027_add_row_hint">
+<link rel="stylesheet" href="{{ data.base_url }}/client/src/css/viewer.css?v=20261105_gating_v4">
 <link rel="stylesheet" href="{{ data.base_url }}/client/src/css/quickView.css?v=20261021_native_drop">
 <link rel="stylesheet" href="{{ data.base_url }}/client/src/css/agentPanel.css?v=20261030_ai_top_up">
 <link rel="stylesheet" href="{{ data.base_url }}/client/src/css/chatPanel.css?v=20261011_fold">
@@ -559,8 +559,8 @@
    independent of main.js: a sample whose image will not open has no viewer at
    all, and this is the way out of it. It mounts off its own fetch and asks
    the viewer for nothing. #}
-<script src="{{ data.base_url }}/client/src/js/views/datasetStrip.js?v=20261022_strip_search" defer></script>
-<script src="{{ data.base_url }}/client/src/js/views/datasetNav.js?v=20261029_bucket_datasets" defer></script>
+<script src="{{ data.base_url }}/client/src/js/views/datasetStrip.js?v=20261105_gating_v4" defer></script>
+<script src="{{ data.base_url }}/client/src/js/views/datasetNav.js?v=20261105_gating_v4" defer></script>
 <script src="{{ data.base_url }}/client/src/js/views/pluginHelp.js?v=20261025_roi_map_confirm" defer></script>
 {# Why the canvas is empty, when it is. Before main.js, which calls it from
    the boot path the moment a load comes back without an image. #}
@@ -630,11 +630,11 @@
    and controls. Its orb driver is base.html's, which the import dialog draws
    with too. Before agentBridge.js, which routes show_evidence to the panel
    when one is up. #}
-<script src="{{ data.base_url }}/client/src/js/views/agentPanel.js?v=20261030_ai_top_up" defer></script>
+<script src="{{ data.base_url }}/client/src/js/views/agentPanel.js?v=20261105_gating_v4" defer></script>
 {# Plexora AI chat (/ai/v1/conversations): a launcher chip and a non-modal
    panel in the viewer's lower-left corner. #}
 <script src="{{ data.base_url }}/client/src/js/views/chatPanel.js?v=20261012_merge_main" defer></script>
-<script src="{{ data.base_url }}/client/src/js/services/agentBridge.js?v=20261030_gating_show" defer></script>
+<script src="{{ data.base_url }}/client/src/js/services/agentBridge.js?v=20261105_gating_v4" defer></script>
 {# What a launch link asked this page to show beyond its channels -- a colour-by
    column, cells, regions, a viewport (page_routes.launch_from_dict). After
    agentBridge.js: it applies them through the bridge's own handlers. #}

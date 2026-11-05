@@ -250,6 +250,31 @@ def test_stop_through_control_ends_the_session_at_its_next_packet(client, gatewa
     assert len(gateway.calls) == 2, [c["packet_id"] for c in gateway.calls]
 
 
+def test_the_harness_tells_a_tab_on_any_image_of_a_dataset_session(client):
+    """A dataset's session is followed in whichever of its images the tab
+    shows: the harness's own events (`ai_usage`, `ai_paused`, `ai_finished`)
+    reach a tab switched to another image than the run was launched from,
+    as the session's own events do -- and the launching tab still hears them."""
+    from types import SimpleNamespace
+
+    from plexora.ai.harness import capabilities
+    from plexora.plugins.gating.server.autogate import engine
+
+    engine.store().create({"session_id": "gs_relay", "images": ["img_a", "img_b"]})
+    launched, switched, elsewhere = _tab(client, "img_a"), _tab(client, "img_b"), _tab(client, "img_c")
+    call = SimpleNamespace(notify=vs.publish, job={"job_id": "job_relay"},
+                           progress=lambda *args: None)
+    relay = capabilities._Relay(call, capabilities.RunInput(kind="gating", project="img_a"))
+    relay({"event": "answered", "session_id": "gs_relay", "usage": {"packets": 1}})
+    relay({"event": "finished", "session_id": "gs_relay", "status": "done", "usage": {"packets": 1}})
+    for view in (launched, switched):
+        events = [e["payload"] for e in _events(client, view)]
+        assert [e["event"] for e in events] == ["ai_usage", "ai_finished"], view
+        assert events[-1]["session_id"] == "gs_relay" and events[-1]["status"] == "done"
+        assert events[-1]["resume"]["project"] == "img_a"
+    assert _events(client, elsewhere) == []
+
+
 @pytest.mark.pro
 def test_a_gating_run_over_http_gates_every_marker(client, tmp_path, monkeypatch):
     from tests.autogate_fixtures import make_gating_project

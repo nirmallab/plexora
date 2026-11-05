@@ -268,6 +268,82 @@ def test_a_detached_session_leaves_the_tab_be_and_attach_replays_the_packet(serv
         assert status["control"]["viewer_detached"] is False
 
 
+def test_a_dataset_session_follows_the_tab_and_never_switches_its_image(served, tmp_path,
+                                                                        monkeypatch):
+    """A dataset's images are gated side by side, so its mirror follows the
+    tab: a look of an image the tab does not show is never sent there (no
+    `open_project`), a tab between pages is waited for, and once the user has
+    switched the tab to that image (it registers again on it and attaches)
+    the image's look plays."""
+    import time
+
+    from plexora.agent import jobs
+    from tests.autogate_fixtures import make_gating_dataset
+
+    made = make_gating_dataset(tmp_path, shifts=(0.0, 0.0), grid=16, size=768,
+                               markers=("CD3", "CD4"))
+    first, second = list(made)
+    session = AgentSession()
+    with FakeTab(project=second) as tab:
+        started = invoke(session, "gating_session_start", {
+            "engine": "v1", "scope": "dataset", "dataset": "cohort", "markers": ["CD4"],
+            "reference_image": first, "mirror": True, "mirror_delay_ms": 0,
+            "display_check": "rule"}, link=served)
+        assert started["ok"], started
+        sid = started["result"]["session_id"]
+        jobs.drain(120)
+        answer_review(session, started["result"], link=served)
+        packet = invoke(session, "gating_next", {"session_id": sid},
+                        link=served)["result"]["packet"]
+        assert packet["units"][0]["project"] == first, packet["kind"]
+        assert session_mirror.wait_idle(sid)
+        assert [c["type"] for c in tab.seen] == []     # not even woken: another image
+        status = invoke(session, "gating_session_status",
+                        {"detail": "full", "session_id": sid})["result"]
+        assert status["mirror"]["follow"] == "tab"
+        assert status["mirror"]["status"] == "pending", status["mirror"]
+
+        # The user picks the first image in the dataset switcher: the tab is
+        # between pages, then registers again under its id on that image.
+        vs.leave(tab.view_id, navigating_to=f"/{first}")
+        session_mirror.presenter(sid).poke()
+        assert session_mirror.wait_idle(sid) and tab.seen == []
+        vs.register(session_id=tab.view_id, project=first, client="browser")
+        tab.state["project"] = first
+
+        monkeypatch.setitem(plexora.app.config, "PLEXORA_SERVING", True)
+        answer = plexora.app.test_client().post(
+            f"/plugins/gating/agent_session/{sid}/control",
+            data=json.dumps({"action": "attach_viewer", "view_id": tab.view_id,
+                             "project": first}))
+        assert answer.status_code == 200
+        deadline = time.time() + 10
+        while not any(c["type"] == "preview_gate" for c in tab.seen) \
+                and time.time() < deadline:
+            time.sleep(0.05)
+        preview = next(c for c in tab.seen if c["type"] == "preview_gate")["arguments"]
+        assert preview["marker"] == "CD4"
+        assert preview["show"]["seed"] == mirror_seed(first, "CD4")
+        assert "open_project" not in [c["type"] for c in tab.seen]
+        deadline = time.time() + 5
+        while time.time() < deadline:
+            status = invoke(session, "gating_session_status",
+                            {"detail": "full", "session_id": sid})["result"]
+            if (status.get("mirror") or {}).get("status") == "ok":
+                break
+            time.sleep(0.05)
+        assert status["mirror"]["status"] == "ok", status["mirror"]
+        assert status["mirror"]["packet_id"] == packet["packet_id"]
+        invoke(session, "gating_session_finish", {"session_id": sid, "action": "cancel"})
+
+
+def mirror_seed(project, marker):
+    """The seed a look of `marker` on `project` is played with (`mirror_script._show`)."""
+    import zlib
+
+    return zlib.crc32(f"{project}::{marker}".encode("utf-8"))
+
+
 def test_the_mirror_does_not_repeat_what_the_tab_already_shows(served, tmp_path):
     from plexora.agent import jobs
     from tests.autogate_fixtures import make_gating_project

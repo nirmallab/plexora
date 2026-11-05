@@ -175,6 +175,31 @@ def build(call, session_id) -> dict:
     return out
 
 
+#: The columns of the report's groups table (engine v4, `group_rows`).
+GROUP_COLUMNS = ("marker", "group", "scale image", "members", "gate", "outcome", "checks")
+
+
+def group_rows(report) -> list:
+    """Engine v4: one row per group of aligned images and marker, then one
+    per marker's images gated alone -- what the report's "Across images"
+    section lists in the HTML and the PDF."""
+    rows = []
+    for marker, row in ((report.get("dataset") or {}).get("strategy") or {}).items():
+        for group in row.get("groups") or ():
+            tally = {}
+            for outcome in (group.get("checks") or {}).values():
+                tally[outcome] = tally.get(outcome, 0) + 1
+            rows.append([marker, group["id"].rsplit(":", 1)[-1], group["scale"],
+                         str(len(group["members"])), _n(group.get("gate")),
+                         group.get("outcome") or group.get("state") or "-",
+                         ", ".join(f"{n} {k}" for k, n in sorted(tally.items())) or "-"])
+        alone = row.get("singletons") or {}
+        if alone:
+            rows.append([marker, "alone", ", ".join(sorted(alone)), str(len(alone)), "-",
+                         "gated on its own", ", ".join(sorted(set(alone.values())))])
+    return rows
+
+
 def _final_cell(unit):
     """The written gate (tagged when it was written for manual review), or a
     gate the evidence reached that a propose-mode run has not committed."""
@@ -314,6 +339,17 @@ def to_html(call, report) -> str:
                          f"{esc(str((strategy.get(marker) or {}).get('strategy') or '-'))}"
                          "</td></tr>")
         parts.append("</table><p class='muted'>The image is the experimental unit.</p>")
+        grouped = group_rows(report)
+        if grouped:
+            parts.append("<h3>Groups of aligned images</h3><table><tr>" + "".join(
+                f"<th>{esc(c)}</th>" for c in GROUP_COLUMNS) + "</tr>")
+            for cells in grouped:
+                parts.append("<tr>" + "".join(f"<td>{esc(str(c))}</td>" for c in cells)
+                             + "</tr>")
+            parts.append("</table><p class='muted'>Each group was decided once, its looks "
+                         "drawn from up to six of its images; its gate was carried into "
+                         "every member through the member's background alignment and "
+                         "checked there.</p>")
     if report["questions"]:
         parts.append("<h2>Questions for you</h2><ul>" + "".join(
             f"<li><b>{esc(q['unit'])}</b>: {esc(q['question'])}"
@@ -426,7 +462,22 @@ def to_pdf(call, report, path, *, compress=True):
         ("VALIGN", (0, 0), (-1, -1), "TOP"),
         ("TOPPADDING", (0, 0), (-1, -1), 2), ("BOTTOMPADDING", (0, 0), (-1, -1), 2),
         *tints]))
-    story += [table, PageBreak()]
+    story += [table]
+    grouped = group_rows(report)
+    if grouped:
+        story += [Spacer(1, 4 * mm),
+                  Paragraph("Across images: groups of aligned images", header_cell)]
+        group_widths = [24, 14, 40, 16, 18, 30]
+        group_widths.append(frame_w / mm - sum(group_widths))
+        grid = [[Paragraph(c, header_cell) for c in GROUP_COLUMNS]] +             [[Paragraph(esc(str(c)), small) for c in cells] for cells in grouped]
+        group_table = Table(grid, colWidths=[w * mm for w in group_widths], repeatRows=1)
+        group_table.setStyle(TableStyle([
+            ("GRID", (0, 0), (-1, -1), 0.4, colors.HexColor("#d0d4da")),
+            ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#f1f3f5")),
+            ("VALIGN", (0, 0), (-1, -1), "TOP"),
+            ("TOPPADDING", (0, 0), (-1, -1), 2), ("BOTTOMPADDING", (0, 0), (-1, -1), 2)]))
+        story.append(group_table)
+    story.append(PageBreak())
 
     def picture(png, max_w, max_h):
         from PIL import Image as PILImage

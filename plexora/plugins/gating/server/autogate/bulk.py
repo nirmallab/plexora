@@ -25,6 +25,7 @@ it stands on does not depend on how far the pass has got.
 from __future__ import annotations
 
 import contextvars
+import threading
 import time
 
 from plexora.agent.errors import AgentError
@@ -108,7 +109,8 @@ def prepare_unit(call, session_id, project, marker, panel, options):
 def settle_unit(engine, unit, prepared):
     """Record a profiled unit's numbers and make its first decision (under
     the lock). In a dataset, an image other than the reference waits for the
-    reference's gate instead (`transfer_pending`)."""
+    reference's gate instead (`transfer_pending`); with engine v4 every image
+    waits for its group's decision (`group_pending`, `groups`)."""
     unit["seen"] = prepared.get("seen")
     unit["thresholded"] = prepared.get("thresholded")
     if "close" in prepared:
@@ -118,9 +120,15 @@ def settle_unit(engine, unit, prepared):
         return
     fill_unit(unit, prepared)
     record = engine.record
-    if record.get("scope") == "dataset" and unit["project"] != record.get("reference_image"):
-        unit["state"] = "transfer_pending"
-        return
+    if record.get("scope") == "dataset":
+        from plexora.plugins.gating.server.autogate import groups
+
+        if groups.active(engine):
+            unit["state"] = "group_pending"
+            return
+        if unit["project"] != record.get("reference_image"):
+            unit["state"] = "transfer_pending"
+            return
     decide_first(engine, unit)
 
 
@@ -219,6 +227,7 @@ BULK_WORDS = {
     "qc_confirm": "the stain gets a look first",
     "awaiting_absence": "waiting for a look at six regions",
     "transfer_pending": "waiting for the reference image",
+    "group_pending": "waiting for every image, then decided with its group",
     "transfer_check": "reference gate carried, waiting for a look",
     "skipped_no_channel": "no image channel, skipped",
     "skipped_manual": "your gate kept",
@@ -240,11 +249,13 @@ def _progress_announcer(call, session_id):
     `bulk` now holds the marker just settled (`bulk_progress`) -- as QC's
     bulk pass does, so core's agent panel shows each marker as it is decided
     instead of six silent minutes."""
-    from plexora.plugins.gating.capabilities_session import _phase
+    from plexora.plugins.gating.capabilities_session import _dataset_progress, _phase
 
     sent = {"at": 0.0}
 
     def announce(images, progress, *, last=False):
+        # Where each image is goes whenever it changes (its own throttle).
+        _dataset_progress(call, {"images": images}, session_id, progress)
         now = time.monotonic()
         if not last and now - sent["at"] < PROGRESS_THROTTLE_S:
             return
@@ -343,7 +354,8 @@ def _basic_qc(call, session_id, project):
 
 
 def run(call, inp):
-    """The bulk job's handler."""
+    """The bulk job's handler. A dataset's images are profiled a few at a
+    time (`IMAGE_WORKERS`), each image's markers in gating order."""
     session_id = inp.session_id
     with engine_for(call, session_id) as engine:
         engine.record["state"] = "bulk_running"
@@ -352,71 +364,143 @@ def run(call, inp):
         order = list(engine.record["order"])
         options = dict(engine.options)
         sample_biology = engine.record.get("biology")
+        stages = engine.record.setdefault("bulk_images", {})
+        for project in images:
+            if stages.get(project) != "profiled":
+                stages[project] = "queued"
     total = len(images) * len(order)
-    done = 0
+    counter = _Counter()
     call.progress(done=0, total=total, message="starting")
     with engine_for(call, session_id, save=False) as engine:
         # A resumed pass keeps the calibration it already made.
         calibrations = dict(engine.record.get("calibration") or {})
     announce = _progress_announcer(call, session_id)
-    for project in images:
-        call.check_cancelled()
-        if options["basic_qc"]:
-            _basic_qc(call, session_id, project)
-        if project not in calibrations:
-            started = time.perf_counter()
-            calibrations[project] = calibrate_image(
-                call, project, session_id, image_cells=options["purpose"] == "contrast")
-            with engine_for(call, session_id) as engine:
-                engine.log(event="calibrated", project=project,
-                           ms={"calibrate": round((time.perf_counter() - started) * 1e3, 1)})
-                # Stored now, not after the image's markers: the contrast
-                # check (`display_setup`) goes out as soon as it is there.
-                engine.record.setdefault("calibration", {})[project] = calibrations[project]
-                display = (engine.record.get("display") or {}).get("projects") or {}
-                if calibrations[project].get("error") and project in display \
-                        and display[project].get("status") == "pending":
-                    display[project].update(status="unavailable",
-                                            reason=calibrations[project]["error"])
-                    engine.settle_display()
-        if options["purpose"] == "contrast":
-            # Auto contrast on its own: the calibration is all this pass
-            # makes; the markers wait for the image's contrast check and
-            # close with it (`close_display_units`), never profiled.
-            with engine_for(call, session_id) as engine:
-                engine.close_display_units()
-                profiled = engine.record.setdefault("images_profiled", [])
-                if project not in profiled:
-                    profiled.append(project)
-            done += len(order)
-            call.progress(done=done, total=total, message=f"{project}: calibrated")
-            continue
-        ds = call.session.data(project)
-        with engine_for(call, session_id, save=False) as engine:
-            waiting = [m for m in order
-                       if (engine.record["units"].get(unit_key(project, m)) or {}).get("state")
-                       == "pending"]
-        ahead = _Ahead(call, session_id, project, ds, sample_biology, options, waiting)
+    workers = min(IMAGE_WORKERS, len(images))
+    profile_workers = max(1, BULK_THREADS // max(1, workers))
+    halt = threading.Event()
+
+    def image_pass(project):
         try:
-            for marker in order:
-                done = _settle_next(call, session_id, project, marker, ahead, done, total,
-                                    announce)
-        finally:
-            ahead.close()
-        with engine_for(call, session_id) as engine:
-            engine.record.setdefault("calibration", {})[project] = calibrations[project]
-            profiled = engine.record.setdefault("images_profiled", [])
-            if project not in profiled:
-                profiled.append(project)
+            _image_pass(call, session_id, project, options, sample_biology, order,
+                        calibrations, counter, total, announce, profile_workers, halt)
+        except BaseException:
+            halt.set()
+            raise
+
+    if workers <= 1:
+        for project in images:
+            image_pass(project)
+    else:
+        from concurrent.futures import ThreadPoolExecutor
+
+        # The images held at once: one per worker, plus the ones a look reads.
+        call.session.table_limit = max(call.session.table_limit, workers + 3)
+        with ThreadPoolExecutor(max_workers=workers, thread_name_prefix="gating-image") as pool:
+            futures = [pool.submit(contextvars.copy_context().run, image_pass, project)
+                       for project in images]
+        errors = [f.exception() for f in futures if f.exception() is not None]
+        if errors:
+            # The first that is not another image's stop (`_Halted`).
+            raise next((e for e in errors if not isinstance(e, _Halted)), errors[0])
     with engine_for(call, session_id) as engine:
         if engine.record.get("scope") == "dataset":
-            from plexora.plugins.gating.server.autogate import transfer
+            from plexora.plugins.gating.server.autogate import groups, transfer
 
-            transfer.after_bulk(engine)
+            if groups.active(engine):
+                groups.maintain(engine)
+            else:
+                transfer.after_bulk(engine)
         engine.record["state"] = "deciding"
         engine.record.pop("bulk_progress", None)
         progress = engine.progress()
     return {"session_id": session_id, "progress": progress, "calibration": calibrations}
+
+
+class _Halted(Exception):
+    """Another image's pass failed: this one stops where it is."""
+
+
+class _Counter:
+    """The markers settled so far, over every image's pass."""
+
+    def __init__(self):
+        self.done = 0
+        self._lock = threading.Lock()
+
+    def add(self, n=1) -> int:
+        with self._lock:
+            self.done += n
+            return self.done
+
+
+def _image_pass(call, session_id, project, options, sample_biology, order, calibrations,
+                counter, total, announce, profile_workers, halt):
+    """One image: basic QC, the display calibration, then every pending
+    marker profiled and settled in gating order."""
+    if halt.is_set():
+        raise _Halted()
+    call.check_cancelled()
+    with engine_for(call, session_id) as engine:
+        engine.record.setdefault("bulk_images", {})[project] = "profiling"
+    if options["basic_qc"]:
+        _basic_qc(call, session_id, project)
+    if project not in calibrations:
+        started = time.perf_counter()
+        calibrations[project] = calibrate_image(
+            call, project, session_id, image_cells=options["purpose"] == "contrast")
+        with engine_for(call, session_id) as engine:
+            engine.log(event="calibrated", project=project,
+                       ms={"calibrate": round((time.perf_counter() - started) * 1e3, 1)})
+            # Stored now, not after the image's markers: the contrast
+            # check (`display_setup`) goes out as soon as it is there.
+            engine.record.setdefault("calibration", {})[project] = calibrations[project]
+            display = (engine.record.get("display") or {}).get("projects") or {}
+            if calibrations[project].get("error") and project in display \
+                    and display[project].get("status") == "pending":
+                display[project].update(status="unavailable",
+                                        reason=calibrations[project]["error"])
+                engine.settle_display()
+    if options["purpose"] == "contrast":
+        # Auto contrast on its own: the calibration is all this pass
+        # makes; the markers wait for the image's contrast check and
+        # close with it (`close_display_units`), never profiled.
+        with engine_for(call, session_id) as engine:
+            engine.close_display_units()
+            profiled = engine.record.setdefault("images_profiled", [])
+            if project not in profiled:
+                profiled.append(project)
+            engine.record.setdefault("bulk_images", {})[project] = "profiled"
+        done = counter.add(len(order))
+        call.progress(done=done, total=total, message=f"{project}: calibrated")
+        return
+    ds = call.session.data(project)
+    with engine_for(call, session_id, save=False) as engine:
+        waiting = [m for m in order
+                   if (engine.record["units"].get(unit_key(project, m)) or {}).get("state")
+                   == "pending"]
+    ahead = _Ahead(call, session_id, project, ds, sample_biology, options, waiting,
+                   workers=profile_workers)
+    try:
+        for marker in order:
+            if halt.is_set():
+                raise _Halted()
+            _settle_next(call, session_id, project, marker, ahead, counter, total, announce)
+    finally:
+        ahead.close()
+    with engine_for(call, session_id) as engine:
+        engine.record.setdefault("calibration", {})[project] = calibrations[project]
+        profiled = engine.record.setdefault("images_profiled", [])
+        if project not in profiled:
+            profiled.append(project)
+        engine.record.setdefault("bulk_images", {})[project] = "profiled"
+
+
+#: [cal] Images profiled at once, and the threads the pass spends in all
+#: (split between them; `PROFILE_WORKERS` when one image is profiled). Each
+#: image's columns are held while it is profiled; measured on the synthetic
+#: datasets only -- raise it after watching memory on whole slides.
+IMAGE_WORKERS = 3
+BULK_THREADS = 8
 
 
 #: Markers of one image profiled at once. A profile's mixture fits are numpy
@@ -430,14 +514,16 @@ class _Ahead:
     """The profiles (`prepare_unit`) of an image's pending markers, computed
     on a few threads ahead of the marker being settled."""
 
-    def __init__(self, call, session_id, project, ds, sample_biology, options, markers):
+    def __init__(self, call, session_id, project, ds, sample_biology, options, markers, *,
+                 workers=None):
         from concurrent.futures import ThreadPoolExecutor
 
         self.call, self.session_id, self.project = call, session_id, project
         self.ds, self.sample_biology, self.options = ds, sample_biology, options
         self.markers = list(markers)
         self.futures = {}
-        self.pool = ThreadPoolExecutor(max_workers=PROFILE_WORKERS,
+        self.workers = int(workers or PROFILE_WORKERS)
+        self.pool = ThreadPoolExecutor(max_workers=self.workers,
                                        thread_name_prefix="gating-profile") \
             if len(self.markers) > 1 else None
 
@@ -463,7 +549,7 @@ class _Ahead:
         if self.pool is None or marker not in self.markers:
             return self._profile(marker)
         at = self.markers.index(marker)
-        for name in self.markers[at:at + PROFILE_WORKERS + 1]:
+        for name in self.markers[at:at + self.workers + 1]:
             if name not in self.futures:
                 # The job's context goes with it: the session's QC mode
                 # (`cell_exclusions.mode`) decides which cells are profiled.
@@ -476,8 +562,8 @@ class _Ahead:
             self.pool.shutdown(wait=False, cancel_futures=True)
 
 
-def _settle_next(call, session_id, project, marker, ahead, done, total, announce):
-    """Settle one marker from its profile (`_Ahead`); returns `done` moved on."""
+def _settle_next(call, session_id, project, marker, ahead, counter, total, announce):
+    """Settle one marker from its profile (`_Ahead`), counted on `counter`."""
     call.check_cancelled()
     _check_stopped(session_id)
     _check_matrix(call, session_id)
@@ -499,11 +585,11 @@ def _settle_next(call, session_id, project, marker, ahead, done, total, announce
             words = BULK_WORDS.get(settled, settled.replace("_", " "))
             engine.record["bulk_progress"] = {
                 "stage": "profiling", "message": f"{marker}: {words}",
-                "done": done + 1, "total": total}
+                "done": counter.done + 1, "total": total,
+                **({"project": project} if len(engine.record["images"]) > 1 else {})}
             progress = engine.progress()
             images_now = list(engine.record["images"])
-    done += 1
+    done = counter.add()
     call.progress(done=done, total=total, message=f"{project}: {marker}")
     if settled is not None:
         announce(images_now, progress, last=done == total)
-    return done

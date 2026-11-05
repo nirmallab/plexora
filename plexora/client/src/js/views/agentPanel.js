@@ -76,6 +76,18 @@
  * A setup question (`needs_setup`: which values to gate on) opens the
  * existing requirements modal for this tab -- not for another tab's mirror.
  *
+ * A dataset-scope gating run gates several images at once and says how each
+ * stands (`progress.dataset_progress`, and its own `dataset_progress` event,
+ * which reaches a tab on any of its images). The progress line becomes the
+ * whole run's ("Gating 3 of 8 images in parallel · 41 of 128 markers · this
+ * image: gating (4 of 16)"), and the same object is passed on as the window
+ * event `plexora:agent-dataset-progress` -- `{session_id, dataset_progress,
+ * done}` -- which the dataset chip and its grid (datasetNav.js,
+ * datasetStrip.js) and gating's pill read; this file is their one source. In
+ * that scope the mirror follows the TAB (`mirror.follow: "tab"`): the user
+ * walking to another image of the run takes the mirror along (the page there
+ * re-attaches it, naming its image), and the agent never moves the tab.
+ *
  * What the agent says (the phase, its subject, the caption, the progress
  * and summary lines) is TYPED in, a few characters at a time, the way a
  * model's tokens arrive -- `type()` below; instant under reduced motion. The
@@ -544,10 +556,45 @@ window.PlexoraAgentPanel = (function () {
         return `${stage}${message}${step}`;
     }
 
-    /** The progress line's first clause, outside a bulk pass: "N of M
-     *  channels" from `by_type.channel` (QC) when it is there, else the
-     *  generic units count every workflow (gating included) always sends. */
+    //: How an image of a dataset run stands, as "this image: ..." says it
+    //: (`dataset_progress.images[name].state`). The first three are the
+    //: agent at work on it, and carry its marker count.
+    const IMAGE_STATES = {
+        profiling: "profiling", gating: "gating", checking: "checking",
+        queued: "queued", done: "done", review: "needs review",
+    };
+    const IMAGE_ACTIVE = new Set(["profiling", "gating", "checking"]);
+
+    /** "Gating 3 of 8 images in parallel · 41 of 128 markers · this image:
+     *  gating (4 of 16)" -- a dataset run's whole picture, and where the
+     *  image on this tab is in it; "" outside a dataset run. */
+    function datasetLine(dataset) {
+        const counts = dataset && dataset.counts;
+        if (!counts || typeof counts !== "object") return "";
+        const n = (key) => Math.max(0, Math.floor(Number(counts[key]) || 0));
+        const total = n("images_total");
+        if (!total) return "";
+        const parts = [`Gating ${n("images_active")} of ${total} ${total === 1 ? "image" : "images"} in parallel`];
+        if (n("markers_total")) parts.push(`${n("markers_done")} of ${plural(n("markers_total"), "marker")}`);
+        const images = dataset.images && typeof dataset.images === "object" ? dataset.images : {};
+        const here = images[datasource()];
+        const word = here && IMAGE_STATES[here.state];
+        if (word) {
+            const done = Math.max(0, Math.floor(Number(here.markers_done) || 0));
+            const of = Math.max(0, Math.floor(Number(here.markers_total) || 0));
+            parts.push(IMAGE_ACTIVE.has(here.state) && of
+                ? `this image: ${word} (${done} of ${of})` : `this image: ${word}`);
+        }
+        return parts.join(" · ");
+    }
+
+    /** The progress line's first clause, outside a bulk pass: a dataset
+     *  run's own line (above) in that scope, else "N of M channels" from
+     *  `by_type.channel` (QC) when it is there, else the generic units
+     *  count every workflow (gating included) always sends. */
     function unitsLine(session, progress) {
+        const dataset = datasetLine(session.datasetProgress);
+        if (dataset) return dataset;
         const channels = progress.by_type && progress.by_type.channel;
         if (channels && Number(channels.total) > 0) {
             return `${Number(channels.done) || 0} of ${plural(Number(channels.total), "channel")}`;
@@ -597,7 +644,9 @@ window.PlexoraAgentPanel = (function () {
         const line = [];
         const progress = session.progress || {};
         const bulk = session.bulk || {};
-        if (bulk.state === "bulk_running" && bulk.stage) {
+        // A dataset run profiles some images while it gates others: its own
+        // line says both, so it stands in for the bulk pass's stage.
+        if (bulk.state === "bulk_running" && bulk.stage && !datasetLine(session.datasetProgress)) {
             line.push(bulkStageLine(bulk));
         } else {
             const units = unitsLine(session, progress);
@@ -1414,23 +1463,27 @@ window.PlexoraAgentPanel = (function () {
     }
 
     /** "Watch in viewer": mirror into this tab again. The server replays
-     *  the packet the agent is on; the card stays the size it is. */
-    async function attachViewer(session) {
-        if (session.done || session.stopping || session.switching || session.attached) return;
+     *  the packet the agent is on -- for a dataset run, its newest look at
+     *  the image this tab is on (`project`); the card stays the size it is.
+     *  `again`: the mirror is on this tab already and is pointed at the
+     *  image the tab has since moved to (a dataset run follows the tab). */
+    async function attachViewer(session, again = false) {
+        if (session.done || session.stopping || session.switching || (session.attached && !again)) return;
         const live = bridge();
         const viewId = live && typeof live.sessionId === "function" ? live.sessionId() : null;
         if (!viewId) {
             toast("This tab cannot show the agent yet", "the viewer is still connecting; try again in a moment");
             return;
         }
+        const was = session.attached;
         session.switching = true;
         session.attached = true;
         session.viewId = viewId;
         render(session);
         try {
-            await control(session, "attach_viewer", { view_id: viewId });
+            await control(session, "attach_viewer", { view_id: viewId, project: datasource() });
         } catch (error) {
-            session.attached = false;
+            session.attached = was;
             session.switching = false;
             render(session);
             toast("The agent could not be shown here", error);
@@ -1538,14 +1591,35 @@ window.PlexoraAgentPanel = (function () {
 
     // -- the events --------------------------------------------------------------
 
+    /** Pass a dataset run's progress on to the page (see the header): the
+     *  dataset chip, its grid and gating's pill read it, not the session
+     *  events. `done` once the run is over, so they clear. */
+    function announceDataset(session, done) {
+        if (typeof window.dispatchEvent !== "function" || typeof CustomEvent !== "function") return;
+        try {
+            window.dispatchEvent(new CustomEvent("plexora:agent-dataset-progress", { detail: {
+                session_id: session.id, dataset_progress: session.datasetProgress || null, done: Boolean(done),
+            } }));
+        } catch (error) {
+            console.error("agentPanel: the dataset's progress could not be passed on", error);
+        }
+    }
+
     function adoptProgress(session, payload) {
-        if (!payload.progress || typeof payload.progress !== "object") return;
-        session.progress = payload.progress;
-        // QC's own shortcut, kept beside `progress` the way `phase` and
-        // `subject` already are: the bulk pass's stage, while it runs
-        // (`progress.bulk`, QC's engine folding `bulk_progress` in).
-        if (payload.progress.bulk && typeof payload.progress.bulk === "object") {
-            session.bulk = payload.progress.bulk;
+        const progress = payload.progress && typeof payload.progress === "object" ? payload.progress : null;
+        if (progress) {
+            session.progress = progress;
+            // QC's own shortcut, kept beside `progress` the way `phase` and
+            // `subject` already are: the bulk pass's stage, while it runs
+            // (`progress.bulk`, QC's engine folding `bulk_progress` in).
+            if (progress.bulk && typeof progress.bulk === "object") session.bulk = progress.bulk;
+        }
+        // A dataset run's images: on its progress, or the whole of its own
+        // `dataset_progress` event.
+        const dataset = (progress && progress.dataset_progress) || payload.dataset_progress;
+        if (dataset && typeof dataset === "object") {
+            session.datasetProgress = dataset;
+            announceDataset(session, false);
         }
     }
 
@@ -1674,6 +1748,12 @@ window.PlexoraAgentPanel = (function () {
             adoptProgress(session, payload);
             if (payload.narration) session.narration = String(payload.narration);
         },
+        // A dataset run's images moved on (one started, one finished): sent
+        // to a tab on every image of the run, so this card may be the
+        // first this tab shows of it.
+        dataset_progress(session, payload) {
+            adoptProgress(session, payload);
+        },
         // A contrast check settled how bright some markers are drawn: one
         // line, and the viewer's own channels follow (gatingAgentBridge.js).
         display(session, payload) {
@@ -1788,6 +1868,8 @@ window.PlexoraAgentPanel = (function () {
             session.orb?.pause();
             syncChip(session);
             restoreViewer(reason);
+            // The dataset chip's "3 gating" and the grid's badges go with it.
+            if (session.datasetProgress) announceDataset(session, true);
         },
         ai_run(session, payload) {
             session.aiRun = { run_id: payload.run_id, quote_credits: payload.quote_credits, kind: payload.kind };
@@ -1852,28 +1934,78 @@ window.PlexoraAgentPanel = (function () {
         if (!session.done) render(session);
     }
 
+    /** This tab's viewer session id, once the bridge has one: it registers
+     *  after the viewer has booted, which can be after a reload's card is
+     *  back. Null if it never does (no bridge, or it was refused). */
+    async function bridgeId(tries = 40) {
+        for (let attempt = 0; attempt < tries; attempt += 1) {
+            const live = bridge();
+            const id = live && typeof live.sessionId === "function" ? live.sessionId() : null;
+            if (id) return String(id);
+            if (!live || typeof setTimeout !== "function") return null;
+            await new Promise((resolve) => setTimeout(resolve, 250));
+        }
+        return null;
+    }
+
+    /** A dataset run's mirror follows the tab (`mirror.follow: "tab"`): this
+     *  tab was mirrored into and has moved to another image of the run (the
+     *  bridge kept its viewer session across the move), so the mirror is
+     *  pointed at the image it is on now, and the server shows that image's
+     *  newest look here. Quiet: a tab the mirror was not on is left alone. */
+    async function followTab(session, live) {
+        const mirror = live.mirror && typeof live.mirror === "object" ? live.mirror : {};
+        if (mirror.follow !== "tab" || !live.viewer_attached || !live.view_id) return false;
+        const viewId = await bridgeId();
+        if (!viewId || viewId !== String(live.view_id) || current !== session || session.done) return false;
+        await attachViewer(session, true);
+        return true;
+    }
+
     /** A reloaded tab missed `started`, and the session may say nothing for
      *  a while (a model call): a run already going on this project has its
      *  card put back now, from the run's `session` snapshot. The next live
-     *  event carries on from it. */
+     *  event carries on from it. A dataset run counts on every image it
+     *  gates (`session.images`): its row names only the one it started from. */
     async function reattachRunning() {
         if (current || !aiAllowed() || !datasource()) return null;
+        const here = datasource();
         try {
             const list = await aiFetch("ai/v1/runs?limit=10");
-            const row = (list.runs || []).find((r) => r.project === datasource()
-                && r.status === "running" && r.session_id);
-            if (!row || current) return null;
-            const run = await aiFetch(`ai/v1/runs/${encodeURIComponent(row.run_id)}`);
-            const live = run.session;
-            if (!live || live.stopped || current) return null;
-            const id = String(live.session_id);
-            handle({ session_id: id, event: "started", control: live.control,
-                     phase: live.phase, progress: live.progress });
-            handle({ session_id: id, event: "control", paused: Boolean(live.paused),
-                     ...(live.viewer_attached !== undefined ? { viewer_attached: Boolean(live.viewer_attached) } : {}),
-                     ...(live.view_id ? { view_id: String(live.view_id) } : {}) });
-            handle({ session_id: id, event: "ai_run", run_id: row.run_id, kind: row.kind });
-            return id;
+            const going = (list.runs || []).filter((r) => r.status === "running" && r.session_id);
+            // This image's own run first; then the others, each asked for
+            // its session to see whether it gates this image too.
+            const rows = going.filter((r) => r.project === here).concat(going.filter((r) => r.project !== here));
+            // A live event may put this run's card up while these are asked
+            // (the bridge starts polling once the viewer has booted): that
+            // card is kept, and still follows; another run's ends this.
+            const other = (id) => Boolean(current && (current.id !== id || current.done));
+            for (const row of rows) {
+                if (other(String(row.session_id))) return null;
+                let run;
+                try {
+                    run = await aiFetch(`ai/v1/runs/${encodeURIComponent(row.run_id)}`);
+                } catch (error) {
+                    continue;
+                }
+                const live = run && run.session;
+                if (!live || live.stopped) continue;
+                const images = Array.isArray(live.images) ? live.images.map(String) : [];
+                if (row.project !== here && !images.includes(here)) continue;
+                const id = String(live.session_id);
+                if (other(id)) return null;
+                if (!current) {
+                    handle({ session_id: id, event: "started", control: live.control,
+                             phase: live.phase, progress: live.progress });
+                    handle({ session_id: id, event: "control", paused: Boolean(live.paused),
+                             ...(live.viewer_attached !== undefined ? { viewer_attached: Boolean(live.viewer_attached) } : {}),
+                             ...(live.view_id ? { view_id: String(live.view_id) } : {}) });
+                }
+                handle({ session_id: id, event: "ai_run", run_id: row.run_id, kind: row.kind });
+                if (current) await followTab(current, live);
+                return id;
+            }
+            return null;
         } catch (error) {
             return null;    // nothing to put back; the next event still attaches
         }

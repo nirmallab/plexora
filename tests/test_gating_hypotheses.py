@@ -288,16 +288,18 @@ def test_v2_is_the_default_engine_and_the_first_names_still_work(tmp_path):
     from plexora.plugins.gating.server.autogate import schemas
     from plexora.plugins.gating.server.autogate.engine import Engine
 
-    assert SessionOptions().engine == "v2" == schemas.DEFAULT_ENGINE
+    assert SessionOptions().engine == "v3" == schemas.DEFAULT_ENGINE
     assert SessionOptions(engine="classic").engine == "v1"
-    assert SessionOptions(engine="candidates").engine == "v2"
+    assert SessionOptions(engine="candidates").engine == "v3"
+    assert SessionOptions(engine="v2").engine == "v3"
+    assert SessionOptions(scope="dataset", dataset="d").engine == "v4"
     assert SessionOptions(engine="v1").model_dump(mode="json")["engine"] == "v1"
     with pytest.raises(Exception):
-        SessionOptions(engine="v3")
+        SessionOptions(engine="v5")
     st = SessionStore("gating", root=tmp_path)
     for sid, options, expected in (("s_old", {}, "v1"), ("s_classic", {"engine": "classic"}, "v1"),
-                                   ("s_cand", {"engine": "candidates"}, "v2"),
-                                   ("s_v2", {"engine": "v2"}, "v2")):
+                                   ("s_cand", {"engine": "candidates"}, "v3"),
+                                   ("s_v2", {"engine": "v2"}, "v3")):
         st.create({"session_id": sid, "options": options, "units": {}})
         engine = Engine(SimpleNamespace(), sid, st=st)
         assert engine.options["engine"] == expected, sid
@@ -319,7 +321,8 @@ def test_each_engine_has_the_contrast_check_and_reader_it_was_measured_with(tmp_
     assert SessionOptions(engine="candidates").display_check == "off"
     assert SessionOptions(engine="v1").display_check == "vision"
     assert SessionOptions(engine="classic").display_check == "vision"
-    assert SessionOptions(engine="v2", display_check="vision").display_check == "vision"
+    assert SessionOptions(engine="v3", display_check="vision").display_check == "vision"
+    assert SessionOptions(scope="dataset", dataset="d").display_check == "off"
     assert SessionOptions(engine="v1", display_check="rule").display_check == "rule"
     assert option_defaults()["display_check"] == "off"
     st = SessionStore("gating", root=tmp_path)
@@ -331,7 +334,8 @@ def test_each_engine_has_the_contrast_check_and_reader_it_was_measured_with(tmp_
     assert tasks.task_for("gating", "t2_confirm") == "gating.image_inspection"
     # Basic QC on an image with no QC: on with v2, off with v1, as named when named.
     assert SessionOptions().basic_qc is True and SessionOptions(engine="v1").basic_qc is False
-    assert SessionOptions(engine="v2", basic_qc=False).basic_qc is False
+    assert SessionOptions(engine="v3", basic_qc=False).basic_qc is False
+    assert SessionOptions(engine="v4").basic_qc is True
     assert Engine(SimpleNamespace(), "s_old", st=st).options["basic_qc"] is False
 
 

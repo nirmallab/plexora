@@ -71,6 +71,10 @@ ASKS = {"qc_confirm": "qc_confirm", "awaiting_absence": "absence_check",
         "awaiting_t4": "t4_candidates", "awaiting_panel": "cell_panel",
         "regression_confirm": "regression_confirm", "transfer_check": "transfer_check"}
 
+#: The packets that check gates already placed: an image with only these out
+#: is `checking`, not `gating` (`Engine.dataset_progress`).
+CHECKING_KINDS = frozenset(("t1_strip", "transfer_check", "regression_confirm"))
+
 #: [cal] the engine's own cut-points (defined with the vocabulary, so the
 #: answer models can describe them without importing the engine).
 ENGINE = schemas.ENGINE
@@ -488,7 +492,9 @@ class Engine(BaseEngine):
                 "basic_qc": schemas.BASIC_QC_DEFAULT["v1"]}
 
     def unit_key_of(self, ref):
-        return unit_key(ref["project"], ref["marker"])
+        # A v4 group's look drawn from another image than the deciding unit's
+        # names that image (`project`) and the unit it informs (`unit`).
+        return ref.get("unit") or unit_key(ref["project"], ref["marker"])
 
     # -- the multi-view looks (`SessionOptions.tiles`) --
 
@@ -827,6 +833,15 @@ class Engine(BaseEngine):
     def lean(self, packet):
         from plexora.plugins.gating.server.autogate import packets
 
+        look = packet.pop("_look_project", None)
+        if look is not None and packet.get("units"):
+            # A v4 group's look drawn from another of its images
+            # (`hypotheses._pooled_packet`): the packet is about that image,
+            # its answer goes to the scale image's unit.
+            ref = packet["units"][0]
+            packet["units"][0] = {"project": look, "marker": ref["marker"],
+                                  "unit": self.unit_key_of(ref)}
+            self.record.setdefault("look_images", {})[packet["packet_id"]] = look
         self._qc_brief(packet)
         self.observed_brief(packet)
         return packets.lean(packet, self.options)
@@ -967,6 +982,13 @@ class Engine(BaseEngine):
                   "confidence_notes": unit.get("confidence_notes")}
         if unit.get("condition"):
             detail["condition"] = unit["condition"]
+        if unit.get("transfer"):
+            # Carried from another image of the dataset: from which, through
+            # which alignment, and what that image's class was.
+            detail["transfer"] = unit["transfer"]
+        if unit.get("group"):
+            # Engine v4: the group of aligned images the gate was decided in.
+            detail["group"] = unit["group"]
         depends = unit.get("depends_on") or {r["marker"]: r["gate"]
                                              for r in unit.get("reference_gates") or []}
         if depends:
@@ -1813,7 +1835,7 @@ class Engine(BaseEngine):
         from plexora.plugins.gating.server.autogate import bivariate, hypotheses
 
         rule = hypotheses.PARAMS.get("carriers")
-        if not rule or schemas.engine_name(self.options["engine"]) != "v2" \
+        if not rule or not schemas.panel_engine(self.options["engine"]) \
                 or unit.get("condition"):
             return
         found = self.carrier_populations(unit, ds, rule)
@@ -2167,6 +2189,9 @@ class Engine(BaseEngine):
                 ("replan", self._replan_due())):
             if pending:
                 return ([], "busy") if held else ([(kind, [])], None)
+        from plexora.plugins.gating.server.autogate import groups
+
+        groups.maintain(self)
         bulk_running = record.get("state") == "bulk_running"
         picks = []
 
@@ -2355,7 +2380,7 @@ class Engine(BaseEngine):
         first = kind in ("t2_confirm", "absence_check", "cell_panel")
         if first and unit.get("scoring") is None:
             self.propose(unit)
-        if kind == "t2_confirm" and schemas.engine_name(self.options["engine"]) == "v2":
+        if kind == "t2_confirm" and schemas.panel_engine(self.options["engine"]):
             kind = self._to_panel(unit) or kind
         if kind in ("t2_confirm", "cell_panel"):
             self.lineage_screen(unit)
@@ -2385,6 +2410,9 @@ class Engine(BaseEngine):
             return "display_setup", []
         if self._replan_due():
             return "replan", []
+        from plexora.plugins.gating.server.autogate import groups
+
+        groups.maintain(self)
         # Stay on the marker being refined: its next look follows its last,
         # so the evidence (and a mirrored viewer) does not jump between markers.
         last = self.last_unit()
@@ -2442,7 +2470,28 @@ class Engine(BaseEngine):
         waiting = self.waiting_for_user()
         if waiting:
             return "wait_user", waiting
+        if self.close_ungrouped():
+            return self.next_unit()
         return None, []
+
+    def close_ungrouped(self) -> bool:
+        """Units still waiting for a group (engine v4) when nothing else is
+        left to decide: True once something moved -- a marker grouped now
+        that its last units were closed, a group carried -- else, the last
+        resort, each closed for review rather than left open forever."""
+        from plexora.plugins.gating.server.autogate import groups
+
+        stuck = [u for u in self.record["units"].values() if u["state"] == "group_pending"]
+        if not stuck or self.record.get("state") == "bulk_running":
+            return False
+        groups.maintain(self)
+        if any(u["state"] != "group_pending" for u in stuck):
+            return True
+        for unit in stuck:
+            self.close(unit, "manual_review_recommended",
+                       "its group never reached a decision; written at its Auto gate for "
+                       "review", unlooked="group_review")
+        return True
 
     # -- packets (issue, replay, rerender: `BaseEngine`) --
 
@@ -2460,7 +2509,12 @@ class Engine(BaseEngine):
                 # what core's agent panel shows while the pass runs.
                 "bulk": {"job_id": self.record.get("bulk_job_id"),
                          "state": self.record.get("state"),
-                         **(self.record.get("bulk_progress") or {})}}
+                         **(self.record.get("bulk_progress") or {})},
+                **({"dataset_progress": self.dataset_progress()}
+                   if self.record.get("scope") == "dataset" else {})}
+
+    def dataset_progress(self) -> dict:
+        return dataset_progress(self.record)
 
     # -- questions for the user --
 
@@ -2494,6 +2548,57 @@ def observed_line(seen) -> str:
     if seen.get("off_pattern"):
         parts.append("not the pattern its compartment has")
     return "; ".join(parts)
+
+
+def dataset_progress(record) -> dict:
+    """Where each image of a dataset session is, for the viewer's image
+    switcher and the agent panel: `gating` while a look of it is out
+    (`checking` when every one out is an audit sheet or a check),
+    `profiling` while the bulk pass reads it, `done` / `review` once
+    every marker closed, else `queued`; with the markers each counts."""
+    looks = record.get("look_images") or {}
+    out_now = {}
+    for packet_id, entry in (record.get("outstanding") or {}).items():
+        for key in entry.get("units") or ():
+            unit = record["units"].get(key)
+            if unit is None:
+                continue
+            slot = out_now.setdefault(looks.get(packet_id) or unit["project"],
+                                      {"markers": [], "kinds": set()})
+            if unit["marker"] not in slot["markers"]:
+                slot["markers"].append(unit["marker"])
+            slot["kinds"].add(entry.get("kind"))
+    stages = record.get("bulk_images") or {}
+    images = {}
+    counts = {"images_active": 0, "images_total": len(record["images"]),
+              "images_done": 0, "images_review": 0, "images_queued": 0,
+              "markers_done": 0, "markers_total": 0}
+    for project in record["images"]:
+        units = [u for u in record["units"].values() if u.get("project") == project]
+        done = sum(1 for u in units if u["state"] in TERMINAL)
+        review = sum(1 for u in units if u["state"] in schemas.REVIEW_STATES
+                     or u.get("needs_review"))
+        slot = out_now.get(project)
+        if slot:
+            state = "checking" if slot["kinds"] <= CHECKING_KINDS else "gating"
+        elif units and done == len(units):
+            state = "review" if review else "done"
+        elif stages.get(project) == "profiling":
+            state = "profiling"
+        else:
+            state = "queued"
+        images[project] = {"state": state, "markers_done": done,
+                           "markers_total": len(units),
+                           "active_markers": list(slot["markers"]) if slot else [],
+                           "needs_review": review}
+        counts["markers_done"] += done
+        counts["markers_total"] += len(units)
+        key = {"gating": "images_active", "checking": "images_active",
+               "profiling": "images_active", "done": "images_done",
+               "review": "images_review"}.get(state, "images_queued")
+        counts[key] += 1
+    return {"dataset": record.get("dataset"), "reference_image": record.get("reference_image"),
+            "order": list(record["images"]), "images": images, "counts": counts}
 
 
 def state_confidence(state):

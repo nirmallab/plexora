@@ -215,12 +215,12 @@ class SessionOptions(AgentModel):
     #: vision: markers in rows, five brightnesses in columns, code picks the
     #: column, for the markers no earlier check settled; a choice outlives the
     #: session. rule: black under the background, the bright cells' structure
-    #: near the top. off with v2 is the setting v2 was measured with.
+    #: near the top. off with v3 is the setting v3 was measured with.
     display_check: Literal[schemas.DISPLAY_CHECKS] = Field(
         schemas.DISPLAY_CHECK_DEFAULT[schemas.DEFAULT_ENGINE],
         description="Auto contrast for every look: vision (a contrast grid to the model, "
                     "once per image), rule (the calibration's window), off. Default: off "
-                    "with engine v2, vision with v1.")
+                    "with engines v3 and v4, vision with v1.")
     #: contrast: the set-up, the calibration and the contrast check; each
     #: marker closes `display_set` once its image's brightness is settled.
     purpose: Literal[schemas.PURPOSES] = Field(
@@ -276,25 +276,28 @@ class SessionOptions(AgentModel):
     #: as stained; count: the cells in each row with their own stain.
     check_reading: Literal[schemas.CHECK_READINGS] = Field(
         "auto", description="How a classifier check's look is read (count: unmeasured).")
-    #: v2: the lattice's candidate gates are competing hypotheses; blind
+    #: v3: the lattice's candidate gates are competing hypotheses; blind
     #: panels, numbered and shuffled with no value or gate shown; looks again
     #: only where the leader has not beaten a rival; closes for review with a
-    #: reason when it cannot. v1: then candidates beyond the gate.
+    #: reason when it cannot. v4: v3, with a dataset's aligned images gated as
+    #: groups. v1: then candidates beyond the gate. Named by none, the scope's
+    #: (`schemas.DEFAULT_ENGINE_BY_SCOPE`).
     engine: Literal[schemas.ENGINES] = Field(
         schemas.DEFAULT_ENGINE,
-        description="v2: blind panels of single cells labelled one at a time, code picks the "
-                    "candidate gate the labels support; v1: rows below, at and above the gate. "
-                    "classic (v1) and candidates (v2) are accepted.")
+        description="v3: blind panels of single cells labelled one at a time, code picks the "
+                    "candidate gate the labels support; v4: v3, a dataset's aligned images "
+                    "decided together (the default for scope=dataset); v1: rows below, at and "
+                    "above the gate. classic (v1), candidates and v2 (v3) are accepted.")
     #: Folds (also ones that come or go between imaging cycles), tears,
     #: debris, saturation, lost nuclei; no model calls; marked automatic and
     #: unreviewed. Needs the QC plugin.
     basic_qc: bool = Field(
         schemas.BASIC_QC_DEFAULT[schemas.DEFAULT_ENGINE],
         description="On an image with no QC result, run QC's model-free checks first "
-                    "(run_basic_qc) and leave out what they find. Default: on with v2, off "
-                    "with v1.")
-    panel_looks: int = Field(3, ge=1, le=6, description="Engine v2: the most cell panels a "
-                             "marker is shown before review.")
+                    "(run_basic_qc) and leave out what they find. Default: on with v3 and v4, "
+                    "off with v1.")
+    panel_looks: int = Field(3, ge=1, le=6, description="Engines v3 and v4: the most cell "
+                             "panels a marker is shown before review.")
     #: The pattern, dim cells seen stained, bright cells seen to be debris:
     #: starts the gate no higher than the dim stained cells, keeps the fields
     #: from the debris, caps confidence on a doubt, gives a clean split with a
@@ -318,11 +321,16 @@ class SessionOptions(AgentModel):
     @model_validator(mode="before")
     @classmethod
     def _defaults_by_engine(cls, data):
-        """A session that names no contrast check, or no basic QC, gets its
-        engine's (`schemas.DISPLAY_CHECK_DEFAULT`, `schemas.BASIC_QC_DEFAULT`)."""
+        """A session that names no engine gets its scope's
+        (`schemas.DEFAULT_ENGINE_BY_SCOPE`); one that names no contrast check,
+        or no basic QC, gets its engine's (`schemas.DISPLAY_CHECK_DEFAULT`,
+        `schemas.BASIC_QC_DEFAULT`)."""
         if not isinstance(data, dict):
             return data
-        engine = schemas.engine_name(data.get("engine") or schemas.DEFAULT_ENGINE)
+        if not data.get("engine"):
+            data = {**data, "engine": schemas.DEFAULT_ENGINE_BY_SCOPE.get(
+                data.get("scope") or "project", schemas.DEFAULT_ENGINE)}
+        engine = schemas.engine_name(data["engine"])
         for key, table in (("display_check", schemas.DISPLAY_CHECK_DEFAULT),
                            ("basic_qc", schemas.BASIC_QC_DEFAULT)):
             if data.get(key) is None and engine in table:
@@ -954,7 +962,8 @@ def start(call, inp):
                                    "packets": len(record["review_queue"])}}
                if record.get("review_queue") else {}),
             "mirror": {k: record["mirror"].get(k) for k in ("status", "view_id", "last_error",
-                                                            "hint") if record["mirror"].get(k)},
+                                                            "hint", "follow")
+                       if record["mirror"].get(k)},
             "receipt": receipt.model_dump(mode="json"),
             "biology": _biology_brief(record["biology"]),
             "resource": session_uri(session_id), "expression": expression,
@@ -1245,8 +1254,8 @@ def _delegate_block(record, session_id, options, packet=None):
         return {}
     contexts = (record.get("biology") or {}).get("contexts") or []
     first = tasks.task_for("gating", packet.get("kind", "")) if isinstance(packet, dict) else None
-    if first is None and schemas.engine_name(options["engine"]) == "v2":
-        # v2's looks are all cell panels: their worker starts, not the one
+    if first is None and schemas.panel_engine(options["engine"]):
+        # v3's and v4's looks are all cell panels: their worker starts, not the one
         # for v1's first looks (`delegation.ROLES` `first_task`).
         first = tasks.task_for("gating", "cell_panel")
     from plexora.plugins.gating.server.autogate import engine as engines
@@ -1469,9 +1478,12 @@ def session_uri(session_id):
 def _mirror_at_start(call, inp):
     """The session's mirror, probed once: `pending` when a tab can be driven,
     `off` (and why) when none can -- a viewer that predates agent control,
-    no tab open, no server attached."""
+    no tab open, no server attached. A dataset's session gates its images
+    side by side, so it follows the tab (`follow: tab`): only the image the
+    tab shows is mirrored, and the tab is never sent to another; a
+    project's session (`follow` None) takes the tab to its image."""
     mirror = {"enabled": inp.mirror, "view_id": inp.view_id, "status": "off",
-              "last_error": None}
+              "last_error": None, "follow": "tab" if inp.scope == "dataset" else None}
     if not inp.mirror:
         return mirror
     from plexora.agent import viewer
@@ -1627,6 +1639,39 @@ def _phase(call, record, session_id, phase, /, **payload):
     _announce(call, record, session_id, "phase", phase=phase, **payload)
 
 
+#: Per dataset session: (each image's state, marker counts, when sent) of the
+#: last `dataset_progress` event from this process.
+_LAST_DATASET_PROGRESS: dict = {}
+#: Marker counts alone move the switcher's badges at most this often; an
+#: image changing state (starts gating, finishes, needs review) always goes.
+DATASET_PROGRESS_THROTTLE_S = 1.0
+
+
+def _dataset_progress(call, record, session_id, progress, *, last=False):
+    """Tell every tab of a dataset session where each image is
+    (`Engine.dataset_progress`), when that changed."""
+    import time
+
+    dataset = (progress or {}).get("dataset_progress")
+    if not dataset:
+        return
+    states = tuple(sorted((p, i["state"]) for p, i in dataset["images"].items()))
+    counts = tuple(sorted(dataset["counts"].items()))
+    now = time.monotonic()
+    before = _LAST_DATASET_PROGRESS.get(session_id)
+    if before is not None and not last:
+        if before[0] == states and before[1] == counts:
+            return
+        if before[0] == states and now - before[2] < DATASET_PROGRESS_THROTTLE_S:
+            return
+    _LAST_DATASET_PROGRESS[session_id] = (states, counts, now)
+    try:
+        _announce(call, record, session_id, "dataset_progress", dataset_progress=dataset,
+                  done=bool(last))
+    except Exception:  # the switcher's badges are never a reason to fail a call
+        pass
+
+
 def _mirroring(mirror) -> bool:
     return bool(mirror.get("enabled")) and mirror.get("status") != "off"
 
@@ -1732,6 +1777,7 @@ def next_packet(call, inp):
                           project=refs[0]["project"] if refs else None,
                           subject=_subject(packet), phase=phase, progress=progress,
                           narration=packet.get("narration"))
+                _dataset_progress(call, snapshot, inp.session_id, progress)
             if mirrors and (fresh or mirror.get("status") in ("pending", "degraded")):
                 sent["mirror"] = _mirror(call, inp.session_id, packet)
             elif mirror.get("enabled"):
@@ -1864,7 +1910,22 @@ def _resume_bulk(call, session_id, st):
 
 
 def _mirror_brief(mirror):
-    return {k: mirror.get(k) for k in ("status", "view_id", "last_error", "sent")}
+    return {k: mirror.get(k) for k in ("status", "view_id", "last_error", "sent", "follow")}
+
+
+def _tab_of(call, view_id):
+    """The presenter's `where` for a session that follows the tab: what the
+    tab mirrored into shows ({project, status, ...},
+    `viewer_sessions.describe`), or None once it is gone."""
+    def where():
+        from plexora.agent import viewer
+
+        try:
+            return viewer.resolve_view(viewer.require(call.link), view_id)
+        except AgentError:
+            return None
+
+    return where
 
 
 def _mirror(call, session_id, packet, *, replay=False):
@@ -1875,15 +1936,20 @@ def _mirror(call, session_id, packet, *, replay=False):
     `queued` (or, for a replay that is not needed, what is on record).
 
     `replay` is the tab asking to watch again (`attach_viewer`): it skips a
-    packet the harness has just shown, and a viewer detached meanwhile."""
+    packet the harness has just shown, and a viewer detached meanwhile.
+
+    A session that follows the tab (`mirror.follow`) offers the look under
+    its image, with the tab's `where`: the presenter sends it only while the
+    tab shows that image. A look the tab was not on (`skipped`) is not
+    recorded as shown, so the tab's attach after a switch replays it."""
     from plexora.agent.sessions import mirror as session_mirror
     from plexora.plugins.gating.server.autogate import engine as engines
     from plexora.plugins.gating.server.autogate import mirror_script
 
     packet_id = packet.get("packet_id")
     st = engines.store()
+    current = st.load(session_id).get("mirror") or {}
     if replay:
-        current = st.load(session_id).get("mirror") or {}
         if st.control(session_id).get("viewer_detached") or (
                 current.get("status") == "ok" and current.get("packet_id") == packet_id
                 and time.time() - float(current.get("sent_at") or 0) < 30):
@@ -1896,15 +1962,23 @@ def _mirror(call, session_id, packet, *, replay=False):
             result = mirror_script.run(call, session_id, packet)
         except Exception as exc:  # mirroring never breaks a session
             result = {"status": "degraded", "sent": 0, "errors": [{"message": str(exc)}]}
+        if result.get("status") == "skipped":
+            return session_mirror.SKIPPED
         return _mirrored(call, session_id, result, started, packet_id=packet_id,
                          show=bool(refs))
 
+    follow = {}
+    if current.get("follow") == "tab":
+        images = mirror_script.packet_images(packet)
+        # A set-up question waiting on several images is shown on any of them.
+        follow = {"project": images[0] if len(images) == 1 else None,
+                  "where": _tab_of(call, current.get("view_id"))}
     queued = session_mirror.presenter(session_id).offer(
         show, subject=engines.unit_key(refs[0]["project"], refs[0]["marker"])
         if len(refs) == 1 else None,
         # A set-up packet is a question the tab puts to the user too, and a
         # replay was asked for: neither waits out the look being played.
-        wait=bool(refs) and not replay, key=None if replay else packet_id)
+        wait=bool(refs) and not replay, key=None if replay else packet_id, **follow)
     return {"status": queued, "packet_id": packet_id}
 
 
@@ -1954,7 +2028,10 @@ def _mirror_display(call, session_id, project):
             result = mirror_script.run_display(call, session_id, project)
         except Exception as exc:  # mirroring never breaks a session
             result = {"status": "degraded", "sent": 0, "errors": [{"message": str(exc)}]}
-        if result.get("sent") or result.get("status") != "ok":
+        # Skipped (the tab follows another image): what was settled is eased
+        # in with this image's next look instead.
+        if result.get("status") != "skipped" and (result.get("sent")
+                                                  or result.get("status") != "ok"):
             _mirrored(call, session_id, result, started)
         return 0.0
 
@@ -2020,6 +2097,7 @@ def answer(call, inp):
                            "low": unit.get("final") if unit.get("final") is not None
                            else unit.get("proposed"), "reason": unit.get("reason")}
                           for unit in closed])
+        _dataset_progress(call, snapshot, inp.session_id, progress)
         if kind == "display_setup" and outcome.get("project"):
             # The viewer's channels nobody set take the chosen brightness
             # (viewerSidebar.syncGatingContrast); a mirrored tab is shown it
@@ -2059,6 +2137,9 @@ class StatusInput(AgentModel):
                                 "out in the viewer now, not at the next packet.")
     view_id: str | None = Field(None, description="With reattach_viewer: the tab to mirror "
                                 "into (defaults to the one mirrored before).")
+    project: str | None = Field(None, description="With reattach_viewer, in a dataset's "
+                                "session: the image the tab shows (default: what it reports); "
+                                "the packet replayed is that image's.")
     pause: bool | None = Field(None, description="Pause (true) or resume (false) the "
                                                  "session.")
     detail: Literal["brief", "full"] = Field(
@@ -2255,10 +2336,15 @@ def _brief(engine, st, session_id, inp):
     if len(record.get("outstanding") or {}) > 1:
         out["outstanding_packets"] = list(record["outstanding"])
     if record.get("scope") == "dataset":
+        from plexora.plugins.gating.server.autogate import groups as group_mod
+
         dataset = transfer.dataset_summary(engine)
         out["reference_image"] = dataset["reference_image"]
         out["strategy"] = {marker: row.get("strategy")
                            for marker, row in dataset["markers"].items()}
+        if record.get("groups"):
+            out["groups"] = group_mod.brief(engine)
+        out["dataset_progress"] = progress["dataset_progress"]["counts"]
     if inp.reattach_viewer:
         out["mirror"] = record.get("mirror")
     if record["state"] not in schemas.FINISHED_STATES \
@@ -2301,12 +2387,20 @@ def status(call, inp):
             # A caller sent the guide is a new conversation: nothing sent
             # before may be pointed at (`packets.as_in`).
             reader = packets.new_reader(record)
+        follow, view_id = False, None
         if inp.reattach_viewer:
             mirror_ = record.setdefault("mirror", {})
             mirror_.update(status="pending", enabled=True,
                            view_id=inp.view_id or mirror_.get("view_id"))
-        replay = record.get("outstanding_packet") \
-            if inp.reattach_viewer and inp.replay_mirror else None
+            # A dataset's session recorded before the mirror followed the tab
+            # follows it from now on.
+            mirror_.setdefault("follow", "tab" if record.get("scope") == "dataset" else None)
+            follow, view_id = mirror_["follow"] == "tab", mirror_["view_id"]
+        replay = None
+        if inp.reattach_viewer and inp.replay_mirror:
+            # Following the tab: the packets out, newest first, for the one of
+            # the image it shows (`_replay_for`).
+            replay = engine.outstanding()[::-1] if follow else record.get("outstanding_packet")
         guide = _guide(record["options"]["reading"], inp.known_guide,
                        engine.options["engine"]) if send_guide else {}
         if inp.detail == "brief":
@@ -2321,13 +2415,42 @@ def status(call, inp):
             if record.get("scope") == "dataset":
                 out["dataset"] = transfer.dataset_summary(engine)
     if replay and not st.control(inp.session_id).get("viewer_detached"):
-        try:
-            packet, _ = st.read_packet(inp.session_id, replay)
-        except AgentError:
-            packet = None     # answered meanwhile: the next packet is mirrored
+        if follow:
+            shows = inp.project or (_tab_of(call, view_id)() or {}).get("project")
+            packet = _replay_for(st, inp.session_id, replay, shows)
+        else:
+            try:
+                packet, _ = st.read_packet(inp.session_id, replay)
+            except AgentError:
+                packet = None     # answered meanwhile: the next packet is mirrored
         if packet is not None:
             out["mirror"] = _mirror(call, inp.session_id, packet, replay=True)
+    if inp.reattach_viewer and follow:
+        from plexora.agent.sessions import mirror as session_mirror
+
+        # The tab may show another image than before: the looks waiting for
+        # it are weighed again at once.
+        session_mirror.presenter(inp.session_id).poke()
     return out
+
+
+def _replay_for(st, session_id, packet_ids, project):
+    """The packet of `packet_ids` (newest first) the tab, following it, is
+    shown again on attaching: the newest of the image it shows (`project`) --
+    a look's `units[0].project`, or an image a set-up question waits on --
+    or None (none out for that image, or answered meanwhile)."""
+    from plexora.plugins.gating.server.autogate import mirror_script
+
+    if not project:
+        return None
+    for packet_id in packet_ids:
+        try:
+            packet, _ = st.read_packet(session_id, packet_id)
+        except AgentError:
+            continue
+        if project in mirror_script.packet_images(packet):
+            return packet
+    return None
 
 
 def _full_status(engine, st, inp, guide, reader):
@@ -2532,6 +2655,8 @@ def finish(call, inp):
                                         "cancel": "cancelled",
                                         "rollback": "rolled_back"}[action]
     _LAST_PHASE.pop(inp.session_id, None)
+    _dataset_progress(call, snapshot, inp.session_id, out["progress"], last=True)
+    _LAST_DATASET_PROGRESS.pop(inp.session_id, None)
     _announce(call, snapshot, inp.session_id, "finished", reason=reason, state=state,
               summary=summary, phase="summarizing")
     from plexora.agent.sessions import mirror as session_mirror

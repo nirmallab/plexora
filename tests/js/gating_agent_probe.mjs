@@ -216,8 +216,10 @@ function pillPage() {
 
 await check("the pill offers Take over only; pause and resume live in the agent panel", async () => {
     controller();
+    sandbox.PlexoraAgentBridge = { sessionId: () => "view_1" };
     const { pill, send, text, buttons } = pillPage();
-    send({ session_id: "gs_1", event: "started", phase: "planning" });
+    send({ session_id: "gs_1", event: "started", phase: "planning", view_id: "view_1",
+           viewer_attached: true });
     assert.equal(pill.hidden, false);
     assert.deepEqual(plain(buttons()), ["Take over"]);
     assert.equal(text(), "An agent is gating this image");
@@ -231,6 +233,47 @@ await check("the pill offers Take over only; pause and resume live in the agent 
     send({ session_id: "gs_1", event: "finished", reason: "closed" });
     assert.equal(pill.hidden, true);
     sandbox.__elements = {};
+    delete sandbox.PlexoraAgentBridge;
+});
+
+await check("the pill shows only in the mirrored tab, and in a dataset run says which image the agent "
+    + "is gating", async () => {
+    controller();
+    sandbox.PlexoraAgentBridge = { sessionId: () => "view_1" };
+    sandbox.flaskVariables = { datasource: "img_b" };
+    const { pill, send, text, buttons } = pillPage();
+    // Mirrored into another tab on the same image: nothing here.
+    send({ session_id: "gs_d", event: "started", view_id: "view_2", viewer_attached: true });
+    assert.equal(pill.hidden, true);
+    // Detached from this one: nothing either.
+    send({ session_id: "gs_d", event: "control", paused: false, view_id: "view_1", viewer_attached: false });
+    assert.equal(pill.hidden, true);
+    send({ session_id: "gs_d", event: "control", paused: false, view_id: "view_1", viewer_attached: true });
+    assert.equal(pill.hidden, false);
+    assert.equal(text(), "An agent is gating this image");
+    // A dataset run passes on its images (core's agent panel): this one waits.
+    const progress = (state, active) => {
+        for (const fn of windowListeners["plexora:agent-dataset-progress"] || []) {
+            fn({ detail: { session_id: "gs_d", done: false, dataset_progress: {
+                images: { img_a: { state: "gating" }, img_b: { state }, img_c: { state: "gating" } },
+                counts: { images_active: active, images_total: 3 } } } });
+        }
+    };
+    progress("queued", 2);
+    assert.equal(text(), "Agent gating 2 other images · this one is queued");
+    assert.deepEqual(plain(buttons()), [], "no Take over of a marker it is not gating here");
+    progress("gating", 3);
+    assert.equal(text(), "An agent is gating this image");
+    assert.deepEqual(plain(buttons()), ["Take over"]);
+    progress("done", 1);
+    assert.equal(text(), "Agent gating 1 other image · this one is done");
+    send({ session_id: "gs_d", event: "issued", marker: "CD3" });
+    assert.equal(pill.hidden, false, "an event that names no tab keeps the last word on it");
+    send({ session_id: "gs_d", event: "finished", reason: "closed" });
+    assert.equal(pill.hidden, true);
+    sandbox.__elements = {};
+    delete sandbox.PlexoraAgentBridge;
+    delete sandbox.flaskVariables;
 });
 
 await check("a restore puts the marker and the stored gate back", async () => {

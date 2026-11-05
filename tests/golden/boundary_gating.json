@@ -422,8 +422,8 @@
         "/client/src/js/views/channelNamesUpload.js?v=20261027_machine_chip",
         "/client/src/js/services/carryOver.js?v=20260921_dataset_nav",
         "/client/src/js/services/renderClipboard.js?v=20260924_shortcuts_clipboard",
-        "/client/src/js/views/datasetStrip.js?v=20261022_strip_search",
-        "/client/src/js/views/datasetNav.js?v=20261029_bucket_datasets",
+        "/client/src/js/views/datasetStrip.js?v=20261105_gating_v4",
+        "/client/src/js/views/datasetNav.js?v=20261105_gating_v4",
         "/client/src/js/views/pluginHelp.js?v=20261025_roi_map_confirm",
         "/client/src/js/views/viewerErrorState.js?v=20260926_remote_import",
         "/client/src/js/views/viewTransformTools.js?v=20260926_one_orientation_card",
@@ -461,9 +461,9 @@
         "/client/src/js/views/paneStatus.js?v=20261013_pane_status",
         "/client/src/js/views/sectionCells.js?v=20261014_late_mask",
         "/client/src/js/views/planeMotion.js?v=20261013_znav",
-        "/client/src/js/views/agentPanel.js?v=20261030_ai_top_up",
+        "/client/src/js/views/agentPanel.js?v=20261105_gating_v4",
         "/client/src/js/views/chatPanel.js?v=20261012_merge_main",
-        "/client/src/js/services/agentBridge.js?v=20261030_gating_show",
+        "/client/src/js/services/agentBridge.js?v=20261105_gating_v4",
         "/client/src/js/services/launchContext.js?v=20261005_bridge",
         "/client/src/js/main.js?v=20261028_gating_show"
       ],
@@ -472,7 +472,7 @@
         "/client/src/css/tokens.css?v=20261027_sidebar_radius",
         "/client/src/css/main.css?v=20261029_bucket_datasets",
         "/client/src/css/explorer.css?v=20261021_explorer_waiting",
-        "/client/src/css/viewer.css?v=20261027_add_row_hint",
+        "/client/src/css/viewer.css?v=20261105_gating_v4",
         "/client/src/css/quickView.css?v=20261021_native_drop",
         "/client/src/css/agentPanel.css?v=20261030_ai_top_up",
         "/client/src/css/chatPanel.css?v=20261011_fold"
@@ -496,16 +496,16 @@
           "tool_panel_slot": "gating/panel.html"
         },
         "active_tool_scripts": [
-          "/plugins/gating/static/gatingApi.js?v=20261030_gating_versions",
-          "/plugins/gating/static/csvGatingList.js?v=20261030_gating_versions",
-          "/plugins/gating/static/gatingPlanes.js?v=20261030_gating_versions",
-          "/plugins/gating/static/gatingClassifier.js?v=20261030_gating_versions",
-          "/plugins/gating/static/gatingSidebarController.js?v=20261030_gating_versions",
-          "/plugins/gating/static/gatingAgentShow.js?v=20261030_gating_versions",
-          "/plugins/gating/static/gatingAgentBridge.js?v=20261030_gating_versions"
+          "/plugins/gating/static/gatingApi.js?v=20261105_gating_v4",
+          "/plugins/gating/static/csvGatingList.js?v=20261105_gating_v4",
+          "/plugins/gating/static/gatingPlanes.js?v=20261105_gating_v4",
+          "/plugins/gating/static/gatingClassifier.js?v=20261105_gating_v4",
+          "/plugins/gating/static/gatingSidebarController.js?v=20261105_gating_v4",
+          "/plugins/gating/static/gatingAgentShow.js?v=20261105_gating_v4",
+          "/plugins/gating/static/gatingAgentBridge.js?v=20261105_gating_v4"
         ],
         "active_tool_styles": [
-          "/plugins/gating/static/gating.css?v=20261030_gating_versions"
+          "/plugins/gating/static/gating.css?v=20261105_gating_v4"
         ],
         "available_tools": [
           {
@@ -776,13 +776,13 @@
         "/client/src/js/views/toolLoader.js?v=20261025_dataset_answers",
         "/client/src/js/services/pageBoot.js?v=20260825_app_shell",
         "/client/src/js/services/appRouter.js?v=20261002_hash_tab",
-        "/plugins/gating/static/gatingApi.js?v=20261030_gating_versions",
-        "/plugins/gating/static/csvGatingList.js?v=20261030_gating_versions",
-        "/plugins/gating/static/gatingPlanes.js?v=20261030_gating_versions",
-        "/plugins/gating/static/gatingClassifier.js?v=20261030_gating_versions",
-        "/plugins/gating/static/gatingSidebarController.js?v=20261030_gating_versions",
-        "/plugins/gating/static/gatingAgentShow.js?v=20261030_gating_versions",
-        "/plugins/gating/static/gatingAgentBridge.js?v=20261030_gating_versions",
+        "/plugins/gating/static/gatingApi.js?v=20261105_gating_v4",
+        "/plugins/gating/static/csvGatingList.js?v=20261105_gating_v4",
+        "/plugins/gating/static/gatingPlanes.js?v=20261105_gating_v4",
+        "/plugins/gating/static/gatingClassifier.js?v=20261105_gating_v4",
+        "/plugins/gating/static/gatingSidebarController.js?v=20261105_gating_v4",
+        "/plugins/gating/static/gatingAgentShow.js?v=20261105_gating_v4",
+        "/plugins/gating/static/gatingAgentBridge.js?v=20261105_gating_v4",
         "/client/src/js/services/viewerLoader.js?v=20260915_center_loader",
         "/client/src/js/services/viewSnapshot.js?v=20261004_magic_select",
         "/client/src/js/services/segmentService.js?v=20261011_merge",
@@ -796,8 +796,8 @@
         "/client/src/js/views/channelNamesUpload.js?v=20261027_machine_chip",
         "/client/src/js/services/carryOver.js?v=20260921_dataset_nav",
         "/client/src/js/services/renderClipboard.js?v=20260924_shortcuts_clipboard",
-        "/client/src/js/views/datasetStrip.js?v=20261022_strip_search",
-        "/client/src/js/views/datasetNav.js?v=20261029_bucket_datasets",
+        "/client/src/js/views/datasetStrip.js?v=20261105_gating_v4",
+        "/client/src/js/views/datasetNav.js?v=20261105_gating_v4",
         "/client/src/js/views/pluginHelp.js?v=20261025_roi_map_confirm",
         "/client/src/js/views/viewerErrorState.js?v=20260926_remote_import",
         "/client/src/js/views/viewTransformTools.js?v=20260926_one_orientation_card",
@@ -835,9 +835,9 @@
         "/client/src/js/views/paneStatus.js?v=20261013_pane_status",
         "/client/src/js/views/sectionCells.js?v=20261014_late_mask",
         "/client/src/js/views/planeMotion.js?v=20261013_znav",
-        "/client/src/js/views/agentPanel.js?v=20261030_ai_top_up",
+        "/client/src/js/views/agentPanel.js?v=20261105_gating_v4",
         "/client/src/js/views/chatPanel.js?v=20261012_merge_main",
-        "/client/src/js/services/agentBridge.js?v=20261030_gating_show",
+        "/client/src/js/services/agentBridge.js?v=20261105_gating_v4",
         "/client/src/js/services/launchContext.js?v=20261005_bridge",
         "/client/src/js/main.js?v=20261028_gating_show"
       ],
@@ -846,11 +846,11 @@
         "/client/src/css/tokens.css?v=20261027_sidebar_radius",
         "/client/src/css/main.css?v=20261029_bucket_datasets",
         "/client/src/css/explorer.css?v=20261021_explorer_waiting",
-        "/client/src/css/viewer.css?v=20261027_add_row_hint",
+        "/client/src/css/viewer.css?v=20261105_gating_v4",
         "/client/src/css/quickView.css?v=20261021_native_drop",
         "/client/src/css/agentPanel.css?v=20261030_ai_top_up",
         "/client/src/css/chatPanel.css?v=20261011_fold",
-        "/plugins/gating/static/gating.css?v=20261030_gating_versions"
+        "/plugins/gating/static/gating.css?v=20261105_gating_v4"
       ],
       "tool_mounts": [
         [

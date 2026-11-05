@@ -35,6 +35,14 @@
  * THE COUNTER OPENS EVERY SAMPLE. Pressing "2 / 12" drops a grid of the
  * dataset's thumbnails under the chip (views/datasetStrip.js). The grid only
  * picks; the move is this file's go(), so persistence has one path.
+ *
+ * AN AGENT GATING THE DATASET is said here too. A dataset-scope gating run
+ * works on several images at once; the agent panel passes on what it hears
+ * of them (`plexora:agent-dataset-progress`), and the chip says how many are
+ * being gated ("3 gating") while the grid badges each tile. The move to one
+ * of them goes through the agent bridge (PlexoraAgentBridge.navigate), which
+ * keeps this tab's viewer session for the next page, so a mirror that was on
+ * this tab follows it there instead of being switched off by the unload.
  */
 window.PlexoraDatasetNav = (function () {
     "use strict";
@@ -51,6 +59,17 @@ window.PlexoraDatasetNav = (function () {
     let root = null;
     let previousButton = null;
     let nextButton = null;
+
+    //: What a dataset-scope gating run says of this dataset's images, as the
+    //: agent panel last passed it on: `{images, counts}` (images: name ->
+    //: `{state, markers_done, markers_total, ...}`). Null when no run is
+    //: going, and again once it is done.
+    let gating = null;
+    //: "3 gating", beside the counter; rebuilt with the chip.
+    let gatingBadge = null;
+    //: The grid's "Gating only" chip, as the user last left it, so the next
+    //: opening starts the same way.
+    let gatingOnly = false;
 
     //: Whether the bare keys (PageUp/PageDown, B/N) are live. Off while the app shell
     //: has a routed page (Settings, Figures) over the viewer: the keys belong
@@ -150,9 +169,74 @@ window.PlexoraDatasetNav = (function () {
         // Through the router, which declines a cross-project link and hands it
         // to the browser -- the full navigation this needs. Going straight to
         // window.location would work today and would be the one call site that
-        // stops working if that rule is ever relaxed.
-        if (window.PlexoraRouter && window.PlexoraRouter.go) window.PlexoraRouter.go(href);
-        else window.location.href = href;
+        // stops working if that rule is ever relaxed. Once only: a bridge that
+        // failed after it had already moved must not move twice.
+        let went = false;
+        const route = () => {
+            if (went) return;
+            went = true;
+            if (window.PlexoraRouter && window.PlexoraRouter.go) window.PlexoraRouter.go(href);
+            else window.location.href = href;
+        };
+        // And through the agent bridge when the page has one: it tells the
+        // server this tab is moving, not closing, so an agent's session keeps
+        // the tab -- and a dataset run mirrored here follows it to `target`.
+        const bridge = window.PlexoraAgentBridge;
+        if (bridge && typeof bridge.navigate === "function") {
+            Promise.resolve(bridge.navigate(href, route)).catch((error) => {
+                console.error("datasetNav: the agent bridge could not see the tab off", error);
+                route();
+            });
+        } else {
+            route();
+        }
+    }
+
+    // -- an agent gating the dataset -----------------------------------------
+
+    //: The image states that mean an agent is at work on it now.
+    const ACTIVE = new Set(["profiling", "gating", "checking"]);
+
+    /** How many images are being gated now: the run's own count, else the
+     *  states counted. */
+    function activeCount() {
+        if (!gating) return 0;
+        const counted = Number(gating.counts && gating.counts.images_active);
+        if (Number.isFinite(counted)) return Math.max(0, counted);
+        return Object.values(gating.images).filter((entry) => entry && ACTIVE.has(entry.state)).length;
+    }
+
+    /** The image states, for the grid (empty with no run going). */
+    function states() {
+        return gating ? gating.images : {};
+    }
+
+    function paintGating() {
+        if (!gatingBadge) return;
+        const n = activeCount();
+        gatingBadge.hidden = !n;
+        gatingBadge.textContent = n ? n + " gating" : "";
+        gatingBadge.title = n
+            ? "An agent is gating " + n + (n === 1 ? " image" : " images") + " in this dataset"
+            : "";
+    }
+
+    /** The agent panel passing on a dataset run's progress (agentPanel.js
+     *  adoptProgress): `{session_id, dataset_progress, done}`. */
+    function onDatasetProgress(event) {
+        const detail = (event && event.detail) || {};
+        const progress = detail.dataset_progress;
+        if (detail.done || !progress || typeof progress !== "object") {
+            gating = null;
+        } else {
+            gating = {
+                images: progress.images && typeof progress.images === "object" ? progress.images : {},
+                counts: progress.counts && typeof progress.counts === "object" ? progress.counts : {},
+            };
+        }
+        paintGating();
+        const strip = window.PlexoraDatasetStrip;
+        if (strip && typeof strip.update === "function") strip.update(states());
     }
 
     /** Whether a keystroke is the user talking to the app rather than typing. */
@@ -268,9 +352,18 @@ window.PlexoraDatasetNav = (function () {
             strip.open({
                 anchor: counter, chip, members: place.members, current: datasource(),
                 label: place.datasetName, onPick: go, titles: place.titles,
+                states: states(), activeOnly: gatingOnly,
+                onFilter: (on) => { gatingOnly = Boolean(on); },
             });
         });
         root.appendChild(counter);
+
+        // How many images an agent is gating, while a dataset run goes on.
+        // Words rather than an icon: "3 gating" needs no legend.
+        gatingBadge = document.createElement("span");
+        gatingBadge.className = "dataset-nav-gating";
+        paintGating();
+        root.appendChild(gatingBadge);
 
         nextButton = button("next", "next", place.next);
         root.appendChild(nextButton);
@@ -309,6 +402,13 @@ window.PlexoraDatasetNav = (function () {
         window.addEventListener("plexora:viewer-shown", () => { keysArmed = true; });
     }
 
+    // From the start, not from mount(): the agent panel may say what a run
+    // is doing before /datasets has answered, and the chip, when it is
+    // drawn, shows what was said.
+    if (typeof window.addEventListener === "function") {
+        window.addEventListener("plexora:agent-dataset-progress", onDatasetProgress);
+    }
+
     if (typeof document !== "undefined") {
         if (document.readyState === "loading") {
             document.addEventListener("DOMContentLoaded", mount);
@@ -330,6 +430,9 @@ window.PlexoraDatasetNav = (function () {
          *  the same move from somewhere else. */
         place: () => place,
         go,
+        /** What a dataset gating run says of this dataset's images, as
+         *  `{images, counts}`; null with none going. */
+        gating: () => gating,
         //: Test seams. The probe drives mount() against a stand-in document.
         _mount: mount,
         _resolve: resolve,

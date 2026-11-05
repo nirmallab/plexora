@@ -30,6 +30,8 @@ CHECKS = [
     "a locked gate reverted by the server is re-read and said out loud",
     "provenance reads as a few words",
     "the pill offers Take over only; pause and resume live in the agent panel",
+    "the pill shows only in the mirrored tab, and in a dataset run says which image the agent "
+    "is gating",
     "a restore puts the marker and the stored gate back",
     "a failed or empty marker reads as a gate at the maximum",
     "a first look tries a gate well off, closes in on a cell, and ends on the agent's",

@@ -355,7 +355,7 @@ def test_a_compact_schema_keeps_every_option_a_call_can_use():
         assert sorted(schema.get("required") or ()) == sorted(
             field for field, info in model.model_fields.items() if info.is_required()), name
     start = _schemas()["gating_session_start"]["properties"]
-    assert start["engine"]["enum"] == ["v1", "v2"] and start["engine"]["default"] == "v2"
+    assert start["engine"]["enum"] == ["v1", "v3", "v4"] and start["engine"]["default"] == "v3"
     assert start["setup"]["enum"] == ["ask", "wait", "fail"]
     assert "expression_setup" in start["setup"]["description"]
 

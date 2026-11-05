@@ -83,8 +83,9 @@ WAITING_STATES = ("accepted_t1", "qc_confirm", "awaiting_absence", "awaiting_t2"
                   "awaiting_regression", "regression_confirm", "transfer_check",
                   "awaiting_replan")
 
-#: Before any decision: not profiled yet, or (a dataset) waiting for the reference.
-OPEN_STATES = ("pending", "transfer_pending")
+#: Before any decision: not profiled yet, or (a dataset) waiting for the
+#: reference, or (engine v4) for its group's decision (`groups`).
+OPEN_STATES = ("pending", "transfer_pending", "group_pending")
 
 #: A session's own states; the last four end it. `needs_setup` waits on the
 #: user (which expression matrix to gate) before the bulk pass may start.
@@ -123,7 +124,10 @@ PHASES = ("planning", "analyzing", "inspecting", "thinking", "validating", "wait
 #: The `gating.session` events a viewer is told about (`_announce`).
 SESSION_EVENTS = ("started", "control", "issued", "phase", "answered", "unit_closed",
                   "needs_setup", "limit_reached", "limit_answered", "finished", "report",
-                  "display")
+                  "display",
+                  # A dataset session's images, each gating / profiling / done
+                  # (`Engine.dataset_progress`): the viewer's image switcher.
+                  "dataset_progress")
 
 #: What the viewer's agent panel says the agent is doing, one line per packet
 #: (`packets.narrate`): for the user watching, in the first person, never
@@ -381,35 +385,50 @@ CLASSIFIER_MODES = ("off", "layer", "check")
 
 #: How a marker that needs a look is decided (`SessionOptions.engine`).
 #: v1 (first called "classic"): the look at rows below, at and above the
-#: gate, then the candidates beyond it. v2 (first called "candidates"): blind
-#: panels of single cells choose among the lattice's candidate gates
-#: (`hypotheses`, whose decision rules carry their own revision,
-#: `hypotheses.VERSION`).
-ENGINES = ("v1", "v2")
-#: The engine of a session that names none: v2 since 2026-10-22, after it
-#: tied v1 on four dev images (docs/internal/GATING_ENGINE_V2.md).
-DEFAULT_ENGINE = "v2"
-#: The engines' first names, accepted wherever an engine is named, so a
+#: gate, then the candidates beyond it. v3 (first called "candidates", then
+#: "v2"): blind panels of single cells choose among the lattice's candidate
+#: gates (`hypotheses`, whose decision rules carry their own revision,
+#: `hypotheses.VERSION`). v4: v3 on one image; across a dataset, images
+#: whose backgrounds align are gated as a group, one pooled decision per
+#: group and marker (`groups`, docs/internal/GATING_ENGINE_V4.md).
+ENGINES = ("v1", "v3", "v4")
+#: The engines whose looks are cell panels (`panel_engine`).
+PANEL_ENGINES = ("v3", "v4")
+#: The engine of a session that names none: v3 (then called v2) since
+#: 2026-10-22, after it tied v1 on four dev images
+#: (docs/internal/GATING_ENGINE_V2.md); v4 for a dataset.
+DEFAULT_ENGINE = "v3"
+DEFAULT_ENGINE_BY_SCOPE = {"project": "v3", "dataset": "v4"}
+#: The engines' earlier names, accepted wherever an engine is named, so a
 #: stored session or an older caller keeps the engine it was started with.
-ENGINE_ALIASES = {"classic": "v1", "candidates": "v2"}
+ENGINE_ALIASES = {"classic": "v1", "candidates": "v3", "v2": "v3"}
 
 
 def engine_name(value) -> str:
-    """The engine `value` names (`ENGINES`), a first name mapped to it."""
+    """The engine `value` names (`ENGINES`), an earlier name mapped to it."""
     return ENGINE_ALIASES.get(value, value)
 
 
+def panel_engine(value) -> bool:
+    """Whether engine `value` decides its looks with cell panels (v3, v4)."""
+    return engine_name(value) in PANEL_ENGINES
+
+
+def is_v4(value) -> bool:
+    return engine_name(value) == "v4"
+
+
 #: The contrast check (`DISPLAY_CHECKS`) of a session that names none, by
-#: engine. v2 was measured without it (the 2026-10-22 dev campaign), and its
+#: engine. v3 was measured without it (the 2026-10-22 dev campaign), and its
 #: blind panels are drawn at the windows the check would choose, which the
 #: reader audit found move its reader more than any wording does; v1 keeps
-#: the check it has always run with.
-DISPLAY_CHECK_DEFAULT = {"v1": "vision", "v2": "off"}
+#: the check it has always run with; v4 is v3's.
+DISPLAY_CHECK_DEFAULT = {"v1": "vision", "v3": "off", "v4": "off"}
 #: Whether a session that names no `basic_qc` runs QC's model-free checks on
-#: an image with no QC result before gating it, by engine: v2 does (its
-#: windows, fits and panels then leave folds and debris out); v1 keeps what
-#: it always did.
-BASIC_QC_DEFAULT = {"v1": False, "v2": True}
+#: an image with no QC result before gating it, by engine: v3 and v4 do
+#: (their windows, fits and panels then leave folds and debris out); v1
+#: keeps what it always did.
+BASIC_QC_DEFAULT = {"v1": False, "v3": True, "v4": True}
 
 #: What a reader says about one cell of a panel (`answers.CellPanelAnswer`).
 PANEL_LABELS = ("own_stain", "not_own_stain", "uncertain", "artifact")

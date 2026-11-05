@@ -1,7 +1,8 @@
 """Candidate gates as competing hypotheses, chosen by blind cell panels.
 
-`SessionOptions.engine = "v2"` (first called "candidates"; the default
-since 2026-10-22). A marker that needs a look (not a
+`SessionOptions.engine = "v3"` (first called "candidates", then "v2"; the
+default since 2026-10-22), and v4, which runs the same loop for a group of
+aligned images (`groups`). A marker that needs a look (not a
 clean split the audit sheet settles, not a conditional gate) is decided
 here instead of by the classic below/at/above rows and the candidates
 beyond them:
@@ -223,7 +224,7 @@ def active(engine, unit) -> bool:
     5 of 543 stored marker-images were conditional, and on the 3 held-out
     the conditional gate was farther from the person's than the plain one
     twice (CD3e 1.43 vs 0.89; PD1 0.16 vs 0.11; CD20L 0.10 vs 0.19)."""
-    return schemas.engine_name(engine.options["engine"]) == "v2" \
+    return schemas.panel_engine(engine.options["engine"]) \
         and not unit.get("condition") \
         and (unit.get("hypotheses") or {}).get("status") != "no_candidates"
 
@@ -251,6 +252,13 @@ def start(engine, unit) -> dict:
     if len(candmod.thin(lattice_points, col.to_fit, PARAMS["min_gap"])) < 2:
         added = _steps(ds, unit["marker"], col, lattice_points, begin, top)
         lattice_points = sorted(lattice_points + added, key=lambda p: p["low"])
+    pool = _pool(engine, unit)
+    if pool:
+        # Engine v4: the group's other anchors' own estimates, carried onto
+        # this image's axis, are candidates too.
+        peers = _peers(engine, unit, ds, col, pool, lattice_points, top)
+        added = added + peers
+        lattice_points = sorted(lattice_points + peers, key=lambda p: p["low"])
     cands = candmod.build({"points": lattice_points}, begin, col.to_fit,
                           PARAMS["tolerance"], min_gap=PARAMS["min_gap"])
     points = [{"low": float(p["low"]), "n_positive": int(p["n_positive"]), "id": p["id"],
@@ -261,6 +269,12 @@ def start(engine, unit) -> dict:
                               "reason": "the lattice has fewer than two candidate gates"}
         return unit["hypotheses"]
     params = {**PARAMS, "looks_max": int(engine.options["panel_looks"])}
+    if pool:
+        # One more look per anchor past the first, up to the groups' cap.
+        from plexora.plugins.gating.server.autogate import groups
+
+        params["looks_max"] = min(int(groups.GROUPS["looks_cap"]),
+                                  params["looks_max"] - 1 + len(pool["anchors"]))
     if params.get("carriers") and (unit.get("carriers") or {}).get("chosen"):
         # The carrier negatives and anchors take their place in the panel.
         params["panel_cells"] = int(params["carriers"]["borderline"])
@@ -276,8 +290,48 @@ def start(engine, unit) -> dict:
         "rare": ({"fraction_at_start": round(at_start, 5), "class": unit.get("class")}
                  if rare else None),
         **({"added_points": [p["id"] for p in added]} if added else {}),
+        **({"pool": pool} if pool else {}),
         "params": params}
     return unit["hypotheses"]
+
+
+def _pool(engine, unit) -> dict | None:
+    """Engine v4: the images a group's scale image's looks rotate over
+    (`groups.pool_for`), frozen into the hypotheses so a replay draws the same."""
+    if not schemas.is_v4(engine.options["engine"]):
+        return None
+    from plexora.plugins.gating.server.autogate import groups
+
+    return groups.pool_for(engine, unit)
+
+
+def _peers(engine, unit, ds, col, pool, lattice_points, top) -> list:
+    """Each other anchor's own GMM gate carried onto this image's axis, as a
+    point (`peer:<image>`) where no lattice point is within `min_gap`. Added
+    points: one leads only once read on both sides (`added_min_reads`)."""
+    from plexora.plugins.gating.server.autogate import reference
+
+    min_gap = float(PARAMS["min_gap"])
+    taken = [float(col.to_fit(p["low"])) for p in lattice_points]
+    out = []
+    for project in pool["anchors"]:
+        if project == unit["project"]:
+            continue
+        other = engine.record["units"].get(f"{project}::{unit['marker']}") or {}
+        if other.get("gmm") is None:
+            continue
+        raw = reference.carry_back(pool["alignments"][project], other["gmm"],
+                                   pool["spaces"][project], pool["spaces"][unit["project"]])
+        point = _point(ds, unit["marker"], col, float(col.to_fit(raw)), top, "peer")
+        fit = float(col.to_fit(point["low"]))
+        if not point["low"] < top or point["n_positive"] <= 0 \
+                or any(abs(fit - t) < min_gap - 1e-9 for t in taken):
+            continue
+        point["id"] = f"peer:{project}:{point['low']:g}"
+        point["sources"] = [point["id"]]
+        taken.append(fit)
+        out.append(point)
+    return out
 
 
 def _steps(ds, marker, col, lattice_points, begin, top) -> list:
@@ -308,8 +362,11 @@ def _steps(ds, marker, col, lattice_points, begin, top) -> list:
     return out
 
 
-def _shown_ids(state) -> list:
-    return [int(c["cell_id"]) for o in state["observations"] for c in o.get("cells") or ()]
+def _shown_ids(state, project=None) -> list:
+    """The cells this unit's looks showed of its own image, or (engine v4) of
+    another anchor image `project`: a cell id names a cell in one image."""
+    return [int(c["cell_id"]) for o in state["observations"] for c in o.get("cells") or ()
+            if c.get("image") == project]
 
 
 def packet(engine, units):
@@ -322,8 +379,8 @@ def packet(engine, units):
     state = start(engine, unit)
     ds, col = _column(engine, unit)
     with engine.timed("plan"):
-        plan = state.pop("pending", None) or controller.next_action(state, col.to_fit,
-                                                                    state["params"])
+        pending = state.pop("pending", None)
+        plan = pending or controller.next_action(state, col.to_fit, state["params"])
     # A change to the range comes first (each records itself, so none
     # repeats), then the look at the cells it adds.
     for _ in range(4):
@@ -341,6 +398,16 @@ def packet(engine, units):
     positive = 0 if state.get("rare") else int(params.get("positive_sentinels") or 0)
     above_top = float(col.from_fit(float(col.to_fit(state["points"][-1]["low"]))
                                    + float(params["tolerance"])))
+    pool = state.get("pool")
+    if pool and pending is None and not plan.get("ids"):
+        # Engine v4: the looks rotate over the group's anchors; a classifier
+        # check's look (its cells chosen here) stays on this image.
+        project = pool["anchors"][len(state["observations"]) % len(pool["anchors"])]
+        if project != unit["project"]:
+            pooled = _pooled_packet(engine, unit, state, plan, bounds, project, positive,
+                                    above_top)
+            if pooled is not None:
+                return pooled
     # Every look records which cells a brighter neighbour crowds (a record,
     # and what the bench's reader reads by); `strata` says whether the
     # reads are weighed by it (`controller.crowding`).
@@ -448,6 +515,111 @@ def packet(engine, units):
         unit.setdefault("artifacts", []).extend(
             a["id"] for a in (plots.get("artifact"),) if a)
     images = packets._images(pkt, tuple(shown))
+    unit["last_manifest"] = main["manifest"]
+    return pkt, images
+
+
+def _pooled_packet(engine, unit, state, plan, bounds, project, positive, above_top):
+    """Engine v4: the look `plan` asks for, drawn from another of the group's
+    anchors (`project`) -- an ordinary single-image panel there. The
+    intervals and sentinel bars are carried into that image through its
+    alignment; each cell's value is carried back onto the scale image's
+    axis (kept inside the interval it was drawn from), so the controller
+    counts it beside the scale image's own reads (`groups`). No carriers and
+    no plots: both stand on the scale image's own gates and distribution."""
+    from plexora.agent.evidence import collage
+    from plexora.plugins.gating.server.autogate import packets, reference, views
+
+    params = state["params"]
+    pool = state["pool"]
+    al = pool["alignments"][project]
+    space_s, space_i = pool["spaces"][unit["project"]], pool["spaces"][project]
+
+    def into(value):
+        return float(reference.carry(al, value, space_s, space_i))
+
+    def back(value):
+        return float(reference.carry_back(al, value, space_i, space_s))
+
+    other = engine.record["units"].get(f"{project}::{unit['marker']}") or {}
+    ds = engine.call.session.data(project)
+    payload = {
+        "marker": unit["marker"],
+        "intervals": [{"from": into(iv["from"]), "to": into(iv["to"]), "n": iv["n"]}
+                      for iv in plan["intervals"]],
+        "exclude": _shown_ids(state, project), "n_sentinels": int(params["sentinels"]) - positive,
+        "sentinel_below": into(bounds[0]), "seed": _seed(engine, state), "ids": [],
+        "n_positive_sentinels": positive,
+        "sentinel_above": into(above_top) if positive else None,
+        "strata_bounds": [into(b) for b in bounds],
+        "crowding_margin": float(params["tolerance"]) * float(al["b"])}
+    with engine.timed("sample"):
+        sampled = tableops.local_or_node(ds, "gating.autogate.panel_cells", payload)
+    for cell in sampled["cells"]:
+        cell["value_image"] = float(cell["value"])
+        value = back(cell["value"])
+        if cell.get("interval") is not None:
+            iv = plan["intervals"][cell["interval"]]
+            lo, hi = float(iv["from"]), float(iv["to"])
+            value = min(max(value, lo + 1e-6 * max(hi - lo, 1e-12)), hi)
+            cell["interval"] = iv["interval"]
+        cell["value"] = value
+    for cell in sampled["sentinels"]:
+        cell["value_image"] = float(cell["value"])
+        cell["value"] = back(cell["value"])
+    seed = _seed(engine, state)
+    arranged = panelmod.arrange(sampled["cells"], sampled["sentinels"], seed)
+    if not arranged:
+        # Nothing to show in that image: this look is the scale image's.
+        return None
+    channel = views.image_channel(ds, unit["marker"])
+    partners = engine.partner_panels(other) if other else None
+    layout = "t2m" if partners else "t2"
+    per_row = views._per_row(layout)
+    rows = panelmod.rows_of([{k: c[k] for k in ("cell_id", "x", "y", "caption", "number")}
+                             for c in arranged], per_row)
+    with engine.timed("render"):
+        main = collage.render_collage(
+            engine.call.session, ds, layout=layout, rows=rows, marker=channel, gate=None,
+            high=other.get("high"), fmt=packets._fmt(engine),
+            pixel=engine.pixel_for(ds.name), partners=partners or None,
+            title=f"{unit['marker']} · numbered cells in random order (each cell: "
+                  f"{packets._panel_words(layout, partners) or 'morphology | context'})")
+    unit.setdefault("artifacts", []).extend(a["id"] for a in (main.get("artifact"),) if a)
+    context = other.get("context") or unit.get("context") or {}
+    compartment = context.get("compartment")
+    lineage = context.get("lineage")
+    stain = f"{compartment} {unit['marker']}" if compartment else unit["marker"]
+    numbers = [c["number"] for c in arranged]
+    multiview = ({"partner_panels": {"expected": partners["markers"].get("co"),
+                                     "not_expected": partners["markers"].get("anti")}}
+                 if partners else {})
+    guide = ["panel", "collage_panel_m" if partners else "collage_panel"]
+    if ((engine.panel_for(project).get("entries") or {}).get(unit["marker"]) or {}).get(
+            "morphology") == "fibrous":
+        guide.append("panel_fibrous")
+    pkt = {
+        "question": (f"{unit['marker']} ({ds.name}): for EVERY numbered cell, does it carry "
+                     f"its OWN {stain} stain, around the nucleus the ticks mark? One word per "
+                     "cell."),
+        "evidence": {"marker": unit["marker"], "project": ds.name,
+                     "cells": len(numbers), **multiview,
+                     "context": {"compartment": compartment,
+                                 **({"lineage": lineage} if lineage else {})},
+                     "look": len(state["observations"]) + 1,
+                     **packets._reading(engine, guide)},
+        "allowed": {"cells": numbers, "labels": list(evidence.LABELS)},
+        "_image_meta": [],
+        "_look_project": project,
+        "_panel": {"plan": plan, "image": project, "cells": [
+            {"number": c["number"], "cell_id": int(c["cell_id"]), "value": float(c["value"]),
+             "image": project, "value_image": float(c["value_image"]),
+             **({"sentinel": True, "side": c.get("side") or "negative"} if c.get("sentinel")
+                else {"interval": c.get("interval")}),
+             **({"crowded": int(c["crowded"])} if c.get("crowded") is not None else {})}
+            for c in arranged]},
+    }
+    images = packets._images(pkt, ((main, "panel_collage", "numbered cells, random order"),))
     unit["last_manifest"] = main["manifest"]
     return pkt, images
 

@@ -3282,7 +3282,15 @@ deliberately left out and what should be built next.
   `MIN_SHOW_S`..`MAX_SHOW_S` (8-30 s), before a newer replaces it,
   and `close(teardown)` drops what waits and sends the teardown last, because
   how far a session has got must never wait on its tab, nor the tab play a
-  backlog after the session has decided;
+  backlog after the session has decided; an offer with `where` (what the tab
+  shows, `{project, status}`) makes the presenter follow the tab: one slot
+  per image (`project`), only the look for the image the tab shows is sent,
+  none while it is `navigating`, a job that returns `SKIPPED` puts its look
+  back, and `poke` (called when the tab attaches again after a switch, the
+  control action `attach_viewer` carrying `{view_id, project}`, which
+  `control.py` passes to the status capability's `reattach_viewer` replay of
+  that image's packet) weighs the slots at once, because a dataset session gates several images at once and must
+  never move the user's tab;
   `attached()` stops a script once `closing(session_id)`, `wait_idle` waits
   for everything offered (tests), and an atexit drain gives teardowns
   `EXIT_DRAIN_S`; `send_lock` is gone), `memo.py` (a kind-keyed memo of what a session already
@@ -3393,7 +3401,24 @@ deliberately left out and what should be built next.
   words → a direction, `direction_from_rows`; `MOVES`/`AGAINST` for T4
   placement in `lattice.place` — decided in code, never by the agent, so two
   agents that see the cells alike move the gate alike), `reference.py` + `transfer.py` (cross-image alignment
-  and carrying the reference image's gate to the rest), `context.py` (panel
+  and carrying the reference image's gate to the rest; `reference.background`/
+  `align_bg` map an image's background onto another's, `classify_group`,
+  `batch_split`, and `carry`/`carry_back` a gate into a member and a member's
+  value back onto the scale image's axis, all for engine v4), `groups.py`
+  (engine v4, `docs/internal/GATING_ENGINE_V4.md`: once every image's unit of
+  a marker is profiled, `partition` (pure) groups the images whose
+  backgrounds align, `build` names each group's scale image and anchors, the
+  scale image's unit alone decides the group with looks pooled over the
+  anchors, and `carry` takes its gate into every member — accepted, checked
+  by a `transfer_check` (`after_check`, `after_strip`), or closed for review
+  at the carried gate — because one decision per group reads every image's
+  cells where the reference-first path read one image's and ran a full
+  gating per image whenever the reference failed; members wait in
+  `group_pending`, an `OPEN_STATES` member, `maintain` runs before each
+  packet is chosen, and `Engine.close_ungrouped` closes for review what never
+  got a group decision; every carried gate keeps `detail.group` and
+  `detail.transfer` in provenance, and `summary` feeds the report's groups
+  table, `report.GROUP_COLUMNS`; `tests/test_gating_groups.py`), `context.py` (panel
   context — `order` sorts by `hierarchy.stage_rank` before role bucket,
   unlocks, T1 score and name; `references_for` delegates the actual choice to
   `hierarchy.select`, so the vocabulary and the session's biology together
@@ -3425,7 +3450,15 @@ deliberately left out and what should be built next.
   question, `accepted_t1`, or a parent `deferred` for its children), and
   `unprofiled_partner` keeps a marker from being decided, serially or in
   lanes, while a linked marker is still `pending` in the bulk pass, so a look
-  out beside others stands on the gates the one-at-a-time run would),
+  out beside others stands on the gates the one-at-a-time run would;
+  `dataset_progress(record)` — a module function, `Engine.dataset_progress`
+  its method — says where each image of a dataset session is, `gating`
+  (`checking` when every packet out is in `CHECKING_KINDS`), `profiling`,
+  `done`, `review` or `queued`, with marker counts, carried in `progress()`
+  and in the `dataset_progress` session event (`schemas.SESSION_EVENTS`,
+  throttled to 1 s unless an image changes state), sent to every image of
+  the session; `unit_key_of` honours a ref's `unit`, so a v4 look drawn from
+  another image of the group answers the scale image's unit),
   `packets.py`/`transitions.py`/`answers.py` (one builder per packet kind, one
   handler per answer kind, the typed pydantic answers; a stored packet stays
   self-contained — memo keys, replays, the report never change — but what is
@@ -3446,15 +3479,23 @@ deliberately left out and what should be built next.
   image's pending markers on `PROFILE_WORKERS` (4) threads (each job's
   contextvars copied, because the session's QC mode decides which cells are
   profiled) and `_settle_next` settles them in gating order, exactly as one
-  at a time; the pass logs `calibrated` and `profiled` events with their
-  `ms`; the panel context is
+  at a time; a dataset's images are profiled `IMAGE_WORKERS` (3) at a time,
+  `BULK_THREADS` (8) split between them, each image's stage —
+  `queued`/`profiling`/`profiled` — kept in `record["bulk_images"]`, which
+  `engine.dataset_progress` reads; the pass logs `calibrated` and `profiled`
+  events with their `ms`; the panel context is
   re-read per marker, because a snapshot taken before the loop overwrote the
   `panel_context` answer on every later unit; `_progress_announcer` sends a
   `phase` event per settled marker, throttled to 1 s with the last always
   sent, its `record["bulk_progress"]` — `{stage: "profiling", message, done,
   total}`, words from `BULK_WORDS` — folded into `engine.progress()["bulk"]`
   and popped when the pass ends), `mirror_script.py` (what a mirrored viewer
-  tab is told), `report.py` (HTML + reportlab PDF, CSV export), `tableops.py`
+  tab is told; a session with `mirror.follow == "tab"` — every dataset
+  session — is shown only the packets of the image the tab shows,
+  `packet_images`, a packet of another image `skipped` with reason
+  `other_image` or `navigating`, and is never sent `open_project`, because
+  a run gating several images at once must not drag the user between them),
+  `report.py` (HTML + reportlab PDF, CSV export), `tableops.py`
   (the column work as a table operation, so it runs local-or-node),
   `sheet.py` (the context sheet: three fields at slide and mesoscale beside
   every look, plus a FACS-style partner plot against the first gated
@@ -3501,13 +3542,17 @@ deliberately left out and what should be built next.
   dropped, and `record["cellcall"]`/`["model_withheld"]`/`unit["model"]`
   are never read. Which steps earned their place is
   `docs/internal/bench/AUTOGATE_STEP_LEDGER.md`.
-  `hypotheses/` is engine `v2` (first called `candidates`; the default since
-  2026-10-22, `schemas.DEFAULT_ENGINE`; `v1`, first called `classic`, is the
-  rows engine, kept as the alternative; `schemas.ENGINES`, the first names in
-  `schemas.ENGINE_ALIASES` are accepted everywhere and a record stored
-  without an engine resumes as v1; `docs/internal/GATING_ENGINE_V2.md` is the
-  architecture and where it fails, `docs/internal/bench/CANDIDATES_PLAN.md`
-  pre-registers its live bars): a marker that needs a look is decided by blind panels of single
+  `hypotheses/` is engine `v3` (first called `candidates`, then `v2`; the
+  default for a project since 2026-10-22, `schemas.DEFAULT_ENGINE`; `v1`,
+  first called `classic`, is the rows engine, kept as the alternative; `v4`
+  is v3 with a dataset's aligned images gated as groups (`groups.py` above),
+  the default for scope=dataset, `schemas.DEFAULT_ENGINE_BY_SCOPE`;
+  `schemas.ENGINES`, the earlier names in `schemas.ENGINE_ALIASES` are
+  accepted everywhere, `schemas.panel_engine` is true for v3 and v4 and
+  `schemas.is_v4` for v4 alone, and a record stored without an engine
+  resumes as v1; `docs/internal/GATING_ENGINE_V2.md` is v3's architecture
+  and where it fails, `docs/internal/bench/CANDIDATES_PLAN.md` pre-registers
+  its live bars): a marker that needs a look is decided by blind panels of single
   cells choosing among the frozen lattice's points, instead of rows below,
   at and above a moving gate, because the gate written must be one of the
   candidates and a reader shown values or calls is no longer blind.
@@ -3525,7 +3570,11 @@ deliberately left out and what should be built next.
   `classifier_trust.json` beside it, written by
   `tools/bench_gates/classifier_trust.py`; absent, the check is exploratory),
   `__init__.py` (`PARAMS`, `start`/`settle`, provenance; `_steps` gives a
-  one-point lattice a step either side). The unit waits in
+  one-point lattice a step either side; for a v4 group, `_pool`/`_peers`/
+  `_pooled_packet` draw a look from one of the group's anchors, its
+  intervals carried into that image and its cells' values carried back onto
+  the scale image's axis, and add other anchors' estimates as `peer:`
+  candidates). The unit waits in
   `awaiting_panel`; `cell_panel` is a `LOOK_KINDS` member and in
   `BUDGETED_KINDS`; anything but `resolved` closes for review at the leader,
   and a resolved leader passes `run_regression`, a failed check capping its
@@ -3616,7 +3665,7 @@ deliberately left out and what should be built next.
   `transitions.strike_display` keeps the rule after two unusable answers.
   `SessionOptions.display_check` (`vision` | `rule` | `off`,
   `schemas.DISPLAY_CHECKS`; left out, `schemas.DISPLAY_CHECK_DEFAULT` by
-  engine: `vision` for v1, `off` for v2) — `rule` skips the look and keeps the
+  engine: `vision` for v1, `off` for v3 and v4) — `rule` skips the look and keeps the
   calibration's own window, `off` leaves the step out (`DISPLAY_STATES` has
   `off`); session tests that expect a look
   first pass `display_check="rule"`. The task is `gating.display` in
@@ -3723,7 +3772,10 @@ deliberately left out and what should be built next.
   not finished, so nothing was started". With no session yet, `_Relay._tell_run`
   (`ai/harness/capabilities.py`) sends these as `ai_setup`/`ai_setup_done` by
   run id, and `ai.run_control` `stop` on such a run cancels its job (other
-  actions still conflict). In `agentPanel.js`, `onEvent` routes session-less
+  actions still conflict). Once there is a session, `_Relay._tell` sends its
+  events to every image of it (`_Relay.images`: the launching project, then
+  the session's `images`), so a tab switched to another image of a dataset
+  run still hears it. In `agentPanel.js`, `onEvent` routes session-less
   run events to `RUN_HANDLERS`: `ai_setup` opens the form in the tab whose
   pending card launched the run, and closing it unfinished calls
   `stopPendingRun` (`ai/v1/runs/<id>/control` stop); `watchStart` keeps the
@@ -4136,7 +4188,7 @@ deliberately left out and what should be built next.
   `BASIC_MIN_SCORE` (0.7) or more as automatic, unapproved regions
   (`region_write.AUTOMATIC_BY`) in a `results.BASIC_ORIGIN` result, runs DNA
   retention where it can, and derives the cells' calls; it never writes over
-  another QC result. Gating v2 runs it on an image with no QC
+  another QC result. Gating engines v3 and v4 run it on an image with no QC
   (`SessionOptions.basic_qc`, `autogate/bulk._basic_qc`, before calibration).
   An attribution pass gathers each
   object's per-channel evidence; stage 2 re-reads each merged box at the
@@ -4459,7 +4511,8 @@ deliberately left out and what should be built next.
   `status["sent_to_agent"]` (packets/chars/images/pixels actually sent,
   before a reader fills in its `as_in`s) alongside the stored-packet numbers,
   so a delta-evidence run's real cost is visible next to its accuracy.
-  `--variants v2` runs engine v2 (`candidates` is its first name); the
+  `--variants v2` runs engine v3 (`v2` and `candidates` are its earlier
+  names, which `schemas.ENGINE_ALIASES` maps to it); the
   other variants run on `bench.BASE`, engine v1, whatever the default.
   `tools/bench_gates/run_arms.py` (dev only) is the live campaign driver:
   it records under `docs/internal/bench/campaigns/<campaign>/` (tracked) and
@@ -5736,6 +5789,16 @@ deliberately left out and what should be built next.
   first, in the capture phase). `pendingTable()` is the open sample's entry
   in its dataset's `meta.tables` -- a bucket table left where it is -- which
   `viewerControls.bindCta` passes as `paths` to the scoped Import Sample.
+  While a dataset-scope gating run is going, the chip says how many images
+  are being gated ("3 gating") and hands the grid the image states
+  (`states()`, `strip.update`), all from the `plexora:agent-dataset-progress`
+  window event `agentPanel.js` dispatches (`{session_id, dataset_progress,
+  done}`; the panel's own progress line reads "Gating N of M images in
+  parallel"), which is their one source. `go()` leaves through
+  `PlexoraAgentBridge.navigate(href, go)` when the bridge is there, because
+  it tells the server first and the tab's viewer session survives as
+  `navigating`, where a bare navigation's pagehide would say "closed" and
+  switch a mirrored run off for the rest of the run.
 - `views/datasetStrip.js` — `window.PlexoraDatasetStrip`, every sample's
   thumbnail (`GET project_thumbnail/<name>`) in a grid under the "2 / 12"
   counter, for reaching the fortieth sample rather than the next one. Exactly
@@ -5755,7 +5818,10 @@ deliberately left out and what should be built next.
   counter pressed again. Lives in `#openseadragon_wrapper`, not a portal,
   because fullscreen fullscreens the whole page and OpenSeadragon only listens
   on `#openseadragon`. Its z-index is 250 — above the plugin dock and scale
-  float at 240, below tooltips at 400.
+  float at 240, below tooltips at 400. During a dataset-scope gating run each
+  tile carries a badge (markers done, "4/16", or waiting/done/review), re-badged
+  in place by `update` rather than rebuilt, and a "Gating only" chip in the
+  search row narrows the grid to the images being gated now.
 - `services/carryOver.js` — `window.PlexoraCarryOver`, what survives that
   navigation. `capture()`/`stash(to)` on the way out, `take(datasource)` on
   the way in, both through `sessionStorage` (key `plexora:carry-over`,

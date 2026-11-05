@@ -66,7 +66,12 @@
  * same things during the run is undone with it. That is accepted -- the
  * alternative is an agent that leaves its channels behind. The lease lives in
  * this document only: `open_project` navigates, and the page it lands on has
- * none (a restore there is `had_lease: false`, a no-op).
+ * none (a restore there is `had_lease: false`, a no-op). So after a switch
+ * to another image -- the agent's `open_project`, or the user walking a
+ * dataset while a dataset-scope run is mirrored here (`navigate`, which
+ * datasetNav.js goes through) -- "restore" means "put THIS image back as the
+ * agent found it when the tab arrived": the new page leases afresh on the
+ * first look it is shown, and the image left behind is not revisited.
  *
  * Loaded by index.html (the viewer page only) BEFORE main.js, deferred like
  * it, and started once `window.__plexoraReady` settles -- the viewer, the
@@ -2556,6 +2561,14 @@ window.PlexoraAgentBridge = (function () {
         showEvidence,
         /** Whether a lease is held (the probe's, and the panel's, question). */
         hasLease: () => Boolean(lease),
+        /** Leave for `href` on purpose: `(href, go)`, where `go()` makes the
+         *  move. The server is told first, so it keeps this tab's session
+         *  (status `navigating`, for its grace period) for the page `href`
+         *  loads, which re-registers under the same id -- where a bare
+         *  navigation's pagehide would say "closed" and switch a running
+         *  session's mirror off for the rest of the run. datasetNav.js's
+         *  walk goes through this. */
+        navigate: navigateTo,
         /** Run one command in this tab without the server: what a launch link's
          *  context (services/launchContext.js) is applied through, so a link and
          *  an agent reach the same handler. `(type, args) -> result`; rejects

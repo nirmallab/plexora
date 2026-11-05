@@ -76,11 +76,14 @@ function find(node, predicate) {
  *   list. The control must not mount there.
  */
 function boot({ datasets = [], here = "b", known = null, wrapper = true,
-                activeTool = "", ok = true, strip = true } = {}) {
+                activeTool = "", ok = true, strip = true, bridge = false } = {}) {
     const mount = wrapper ? element("div") : null;
     const documentListeners = {};
+    const windowListeners = {};
     const navigated = [];
     const stashed = [];
+    //: What the agent bridge was asked to see off: [href, go].
+    const bridged = [];
     //: What the counter asked of the thumbnail grid, in order.
     const stripCalls = [];
     let stripOpen = false;
@@ -107,7 +110,7 @@ function boot({ datasets = [], here = "b", known = null, wrapper = true,
         plexoraUrl: (path) => "/" + String(path || "").replace(/^\/+/, ""),
     };
     context.window = context;
-    context.addEventListener = () => {};
+    context.addEventListener = (name, fn) => { (windowListeners[name] ||= []).push(fn); };
     context.flaskVariables = {
         datasource: here,
         datasources: known === null ? members : known,
@@ -119,16 +122,32 @@ function boot({ datasets = [], here = "b", known = null, wrapper = true,
         context.PlexoraDatasetStrip = {
             open: (options) => { stripOpen = true; stripCalls.push(["open", options]); return true; },
             close: () => { stripOpen = false; stripCalls.push(["close"]); },
+            update: (states) => { stripCalls.push(["update", states]); },
             isOpen: () => stripOpen,
+        };
+    }
+    // services/agentBridge.js's navigate: it tells the server first, then
+    // calls `go` -- here at once, as a bridge with no session does.
+    if (bridge) {
+        context.PlexoraAgentBridge = {
+            navigate: async (href, go) => {
+                bridged.push([href, go]);
+                if (bridge === "fails") throw new Error("the server did not answer");
+                go();
+            },
         };
     }
     createContext(context);
     runInContext(readFileSync(SOURCE, "utf8"), context);
     return {
         api: context.PlexoraDatasetNav,
-        mount, navigated, stashed, documentListeners, stripCalls,
+        mount, navigated, stashed, documentListeners, stripCalls, bridged,
         setTyping: (tag) => { activeElement = tag ? { tagName: tag } : null; },
         setDialogOpen: (on) => { dialogOpen = on; },
+        /** The agent panel passing on a dataset run's progress. */
+        progress: (detail) => {
+            for (const fn of windowListeners["plexora:agent-dataset-progress"] || []) fn({ detail });
+        },
     };
 }
 
@@ -431,6 +450,85 @@ await checkAsync("without the strip module the counter is harmless", async () =>
     press(counterOf(t));
     t.api.go("c");
     assert.equal(t.navigated.length, 1);
+});
+
+// -- an agent gating the dataset ----------------------------------------------
+
+const RUN = (active, done = false) => ({
+    session_id: "gs_d", done,
+    dataset_progress: {
+        dataset: "Cohort", reference_image: "a", order: ["a", "b", "c"],
+        images: { a: { state: "gating", markers_done: 4, markers_total: 16 },
+                  b: { state: "queued", markers_done: 0, markers_total: 16 },
+                  c: { state: active > 1 ? "gating" : "done", markers_done: 2, markers_total: 16 } },
+        counts: { images_active: active, images_total: 3 },
+    },
+});
+// The chip drawn last: mount() runs on load and again in each check, and this
+// stand-in's removeChild never sees a parentNode, so earlier ones stay behind.
+const chipOf = (t) => t.mount.children[t.mount.children.length - 1];
+const gatingOf = (t) => find(chipOf(t), (n) => n.className === "dataset-nav-gating");
+
+await checkAsync("a dataset run's \"3 gating\" sits beside the counter, and clears when it is done", async () => {
+    const t = boot({ datasets: COHORT, here: "b" });
+    // Heard before /datasets answered: the chip, once drawn, says it.
+    t.progress(RUN(2));
+    await t.api._mount();
+    const badge = gatingOf(t);
+    const row = chipOf(t).children;
+    const counter = find(chipOf(t), (n) => n.className === "dataset-nav-count");
+    assert.equal(row.indexOf(badge), row.indexOf(counter) + 1, "right after the counter");
+    assert.equal(badge.textContent, "2 gating");
+    assert.equal(badge.hidden, false);
+    assert.equal(badge.title, "An agent is gating 2 images in this dataset");
+    t.progress(RUN(0));
+    assert.equal(badge.hidden, true, "nothing being gated, nothing said");
+    t.progress(RUN(1));
+    assert.equal(badge.textContent, "1 gating");
+    t.progress(RUN(1, true));
+    assert.equal(badge.hidden, true, "the run is over");
+    assert.equal(badge.textContent, "");
+    assert.equal(t.api.gating(), null);
+});
+
+await checkAsync("the grid is handed the run's states, re-badged as it goes, and keeps Gating only", async () => {
+    const t = boot({ datasets: COHORT, here: "b" });
+    await t.api._mount();
+    t.progress(RUN(2));
+    const [verb, states] = t.stripCalls.at(-1);
+    assert.equal(verb, "update");
+    assert.equal(states.a.state, "gating");
+    press(counterOf(t));
+    const [, options] = t.stripCalls.at(-1);
+    assert.equal(options.states.c.state, "gating");
+    assert.equal(options.activeOnly, false);
+    options.onFilter(true);
+    press(counterOf(t));                                // closes
+    press(counterOf(t));                                // and opens again
+    assert.equal(t.stripCalls.at(-1)[1].activeOnly, true, "as the user left it");
+    t.progress(RUN(1, true));
+    assert.deepEqual({ ...t.stripCalls.at(-1)[1] }, {}, "done: every badge goes");
+});
+
+await checkAsync("walking goes through the agent bridge, so a mirrored run follows the tab", async () => {
+    const t = boot({ datasets: COHORT, here: "b", bridge: true, activeTool: "gating" });
+    await t.api._mount();
+    t.api.go("c");
+    assert.equal(t.bridged.length, 1);
+    assert.match(t.bridged[0][0], /\/c\?tool=gating$/);
+    assert.deepEqual(JSON.parse(JSON.stringify(t.stashed)), ["c"], "the same carry-over");
+    assert.equal(t.navigated.length, 1, "the bridge's go is the router's");
+    assert.match(t.navigated[0], /\/c\?tool=gating$/);
+    t.bridged[0][1]();
+    assert.equal(t.navigated.length, 1, "and it moves once");
+    // A bridge that fails before it moves still lets the walk happen.
+    const broken = boot({ datasets: COHORT, here: "b", bridge: "fails" });
+    await broken.api._mount();
+    broken.api.go("a");
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    assert.equal(broken.bridged.length, 1);
+    assert.equal(broken.navigated.length, 1, "the router takes it");
+    assert.match(broken.navigated[0], /\/a$/);
 });
 
 console.log(`\n${checks} checks passed`);

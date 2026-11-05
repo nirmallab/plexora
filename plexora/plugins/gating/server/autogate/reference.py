@@ -138,6 +138,163 @@ def dataset_classes(per_image):
     return out
 
 
+def batch_split(shifts):
+    """The cut between two separated groups of `shifts`, or None: at least
+    four shifts, the largest gap more than `batch_gap` times the spread
+    within the two sides, and two or more on each side."""
+    shifts = np.asarray([s for s in shifts if s is not None], dtype=np.float64)
+    if shifts.size < 4:
+        return None
+    ordered = np.sort(shifts)
+    gaps = np.diff(ordered)
+    k = int(np.argmax(gaps))
+    low, high = ordered[:k + 1], ordered[k + 1:]
+    within = max(float(np.concatenate([low - low.mean(), high - high.mean()]).std()), 1e-9)
+    if low.size >= 2 and high.size >= 2 and gaps[k] > THRESHOLDS["batch_gap"] * within:
+        return float((ordered[k] + ordered[k + 1]) / 2)
+    return None
+
+
+# -- engine v4: images aligned on their background (`groups`) --------------------
+
+#: The classes whose mixture's background component is the image's
+#: background; the others (one mode, or none) are all background, read
+#: robustly (median and IQR), where a mixture would split one mode in two.
+MIXTURE_BASIS = ("bimodal", "weakly_bimodal", "long_tail", "continuous")
+#: [cal] An image's background maps onto another's when the contrast ratio
+#: lies within `scale_range` and the mapped background quantiles stay within
+#: `change_rms_bg` background sds (`mappable`); it joins a group within
+#: `member_shift` sds of the scale image, a carried-without-positives image
+#: within `no_positive_shift` and `no_positive_scale`.
+GROUP_THRESHOLDS = {"scale_range": (0.5, 2.0), "member_shift": 1.0,
+                    "no_positive_shift": 0.5, "no_positive_scale": (0.7, 1.4),
+                    "failed_s2b": 1.5, "scale_s2b": 2.0}
+#: The hard flags that make an image's stain a failure on its own.
+FAILED_FLAGS = ("empty_channel", "no_values", "saturated")
+#: v4's classes of one image against its group's scale image
+#: (`classify_group`): `member_shifted` joins the group as `stable` does;
+#: `no_positives` (one mode, matching the scale image's background) joins and
+#: is carried without positives of its own to check.
+GROUP_CLASSES = ("stable", "member_shifted", "no_positives", "image_specific_shift",
+                 "distribution_change", "staining_failure")
+MEMBER_CLASSES = ("stable", "member_shifted", "no_positives")
+#: The percents of the profile's quantiles the background fit is checked on.
+BG_PERCENTS = (1.0, 5.0, 10.0, 25.0, 50.0, 75.0, 90.0, 95.0)
+
+
+def background(unit):
+    """{mu, sd, basis} of a profiled unit's background in its fit space, or
+    None: the mixture's background component for a class with one
+    (`MIXTURE_BASIS`), else the median and IQR / 1.349 of all its cells."""
+    space = unit.get("fit_space")
+    metrics = unit.get("metrics") or {}
+    if unit.get("class") in MIXTURE_BASIS and metrics.get("mu_bg") is not None \
+            and (metrics.get("sd_bg") or 0) > 0:
+        return {"mu": float(metrics["mu_bg"]), "sd": float(metrics["sd_bg"]), "basis": "mixture"}
+    q = (unit.get("summary") or {}).get("quantiles_raw") or {}
+    p25, p50, p75 = (to_fit(q.get(k), space) for k in ("p25", "p50", "p75"))
+    if p25 is None or p50 is None or p75 is None or p75 <= p25:
+        return None
+    return {"mu": p50, "sd": (p75 - p25) / 1.349, "basis": "robust"}
+
+
+def _positive_fraction(unit):
+    return float((unit.get("summary") or {}).get("positive_fraction")
+                 or (unit.get("metrics") or {}).get("fraction") or 0.0)
+
+
+def _bg_rms(target, scale, a, b, sd):
+    """The rms, in the target's background sds, of the target's background
+    quantiles against the scale image's carried through `a + b * q`: the
+    percents below both images' positives, at least three of them, else None."""
+    space_t, space_s = target.get("fit_space"), scale.get("fit_space")
+    qt = (target.get("summary") or {}).get("quantiles_raw") or {}
+    qs = (scale.get("summary") or {}).get("quantiles_raw") or {}
+    top = 100.0 * (1.0 - max(_positive_fraction(target), _positive_fraction(scale))) - 5.0
+    residuals = []
+    for p in BG_PERCENTS:
+        key = f"p{p:g}"
+        if p > top or qt.get(key) is None or qs.get(key) is None:
+            continue
+        residuals.append(to_fit(qt[key], space_t) - (a + b * to_fit(qs[key], space_s)))
+    if len(residuals) < 3:
+        return None
+    return float(np.sqrt(np.mean(np.square(residuals)))) / sd
+
+
+def align_bg(target, scale):
+    """{a, b, shift_bg_sd, rms_bg, basis}: the target's background as
+    `a + b * scale's` (`b` the ratio of the background sds), the shift of
+    the background means in the scale image's sds, and how well the
+    background quantiles follow the line (`_bg_rms`); None when either
+    background cannot be read."""
+    bt, bs = background(target), background(scale)
+    if bt is None or bs is None or bs["sd"] <= 0 or bt["sd"] <= 0:
+        return None
+    b = bt["sd"] / bs["sd"]
+    a = bt["mu"] - b * bs["mu"]
+    rms = _bg_rms(target, scale, a, b, bt["sd"])
+    return {"a": float(a), "b": float(b), "shift_bg_sd": float((bt["mu"] - bs["mu"]) / bs["sd"]),
+            "rms_bg": None if rms is None else float(rms),
+            "basis": bt["basis"] if bt["basis"] == bs["basis"] else f"{bt['basis']}/{bs['basis']}"}
+
+
+def identity_alignment():
+    return {"a": 0.0, "b": 1.0, "shift_bg_sd": 0.0, "rms_bg": 0.0, "basis": "self"}
+
+
+def mappable(al) -> bool:
+    """Whether a gate carries through alignment `al` at all: the contrast
+    ratio in range, the background quantiles on the line."""
+    lo, hi = GROUP_THRESHOLDS["scale_range"]
+    return al is not None and lo <= al["b"] <= hi \
+        and (al["rms_bg"] is None or al["rms_bg"] <= THRESHOLDS["change_rms_bg"])
+
+
+def carry(al, gate_raw, space_scale, space_target):
+    """The scale image's gate carried into the target through `al`."""
+    return from_fit(al["a"] + al["b"] * to_fit(gate_raw, space_scale), space_target)
+
+
+def carry_back(al, value_raw, space_target, space_scale):
+    """A target value carried onto the scale image's axis (the inverse map)."""
+    return from_fit((to_fit(value_raw, space_target) - al["a"]) / al["b"], space_scale)
+
+
+def classify_group(al, target, scale) -> str:
+    """One image's class against its group's scale image (`GROUP_CLASSES`).
+    A failed stain only on a hard flag, or a weak signal where the scale
+    image's is clear and the target still has two modes; one mode on the
+    scale image's background is `no_positives`; anything that does not map
+    is a `distribution_change`."""
+    t, g = THRESHOLDS, GROUP_THRESHOLDS
+    if any(f in FAILED_FLAGS for f in target.get("flags") or ()):
+        return "staining_failure"
+    if target.get("class") in ("degenerate", "unimodal"):
+        lo, hi = g["no_positive_scale"]
+        if al is not None and abs(al["shift_bg_sd"]) <= g["no_positive_shift"] \
+                and lo <= al["b"] <= hi and (al["rms_bg"] is None
+                                             or al["rms_bg"] <= t["change_rms_bg"]):
+            return "no_positives"
+        return "distribution_change"
+    s2b = (target.get("summary") or {}).get("signal_to_background")
+    s2b_scale = (scale.get("summary") or {}).get("signal_to_background") or 0.0
+    if s2b is not None and s2b < g["failed_s2b"] and s2b_scale >= g["scale_s2b"] \
+            and target.get("class") in ("bimodal", "weakly_bimodal"):
+        return "staining_failure"
+    if not mappable(al):
+        return "distribution_change"
+    rms = al["rms_bg"] or 0.0
+    if abs(al["shift_bg_sd"]) <= t["stable_shift_bg"] and abs(al["b"] - 1.0) <= t["stable_scale"] \
+            and rms <= t["drift_rms_bg"]:
+        return "stable"
+    if abs(al["shift_bg_sd"]) <= g["member_shift"]:
+        # Mappable already (rms within `change_rms_bg`): on a small image the
+        # background quantiles' own noise is past `drift_rms_bg`.
+        return "member_shifted"
+    return "image_specific_shift"
+
+
 #: How a marker is gated across a dataset (`strategy`): one aligned gate, a
 #: gate per batch, each image informed by the reference, or each on its own.
 STRATEGIES = ("global_aligned", "per_batch", "globally_informed_per_image", "per_image")

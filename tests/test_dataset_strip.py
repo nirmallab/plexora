@@ -65,6 +65,9 @@ CHECKS = (
     "ArrowDown from the search reaches the first match; the arrows walk only matches",
     "Escape clears a search first and closes second",
     "the clear button is drawn only with a query, and empties it",
+    "a dataset run badges its tiles: markers done on the ones being gated, a word on the rest",
+    "Gating only narrows to the images being gated, together with the search",
+    "update re-badges the tiles in place, and re-narrows without a jump",
     "a page with no canvas opens nothing",
 )
 

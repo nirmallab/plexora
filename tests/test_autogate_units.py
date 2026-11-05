@@ -1725,11 +1725,13 @@ def test_packets_are_sent_lean():
         assert set(parts["kinds"]) <= guides[name]
         assert not set(parts["kinds"]) & set().union(
             *(g for other, g in guides.items() if other != name))
-    assert packets.guide_version("v1") != packets.guide_version("v2")
-    # The engines' first names give the same guide.
+    assert packets.guide_version("v1") != packets.guide_version("v3")
+    # The engines' earlier names give the same guide; v4's looks are v3's.
     assert packets.guide_version("classic") == packets.guide_version("v1")
-    assert packets.guide_version("candidates") == packets.guide_version("v2")
-    assert packets.guide_version() == packets.guide_version("v2")
+    assert packets.guide_version("candidates") == packets.guide_version("v3")
+    assert packets.guide_version("v2") == packets.guide_version("v3")
+    assert packets.guide_version("v4") == packets.guide_version("v3")
+    assert packets.guide_version() == packets.guide_version("v3")
 
 
 # -- determinism: the lattice, row placement, the memo --------------------------------

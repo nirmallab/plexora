@@ -118,7 +118,9 @@ def replayer(status_capability, plugins, *, notify):
     own status capability (`reattach_viewer` + `replay_mirror`) as the
     viewer, on a thread -- the route answers at once, and a packet's script
     takes seconds. Best effort: a refusal leaves the mirror `pending`, and
-    the next packet is shown."""
+    the next packet is shown. The image the tab shows (`project`, posted by a
+    tab that switched image) is passed on to a status that takes one: a
+    session following the tab replays that image's packet."""
     import dataclasses
     import threading
 
@@ -129,13 +131,17 @@ def replayer(status_capability, plugins, *, notify):
 
             try:
                 try:
-                    registry.get(status_capability)
+                    capability = registry.get(status_capability)
                 except Exception:
                     registry.discover(list(plugins))
+                    capability = registry.get(status_capability)
+                arguments = {"session_id": session_id, "reattach_viewer": True,
+                             "replay_mirror": True, "view_id": post.get("view_id")}
+                if post.get("project") and "project" in getattr(
+                        capability.input_model, "model_fields", {}):
+                    arguments["project"] = post["project"]
                 policy = dataclasses.replace(Policy.from_flags(), principal="viewer")
-                registry.invoke(AgentSession(), status_capability,
-                                {"session_id": session_id, "reattach_viewer": True,
-                                 "replay_mirror": True, "view_id": post.get("view_id")},
+                registry.invoke(AgentSession(), status_capability, arguments,
                                 policy=policy, notify=notify)
             except Exception:
                 pass

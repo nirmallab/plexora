@@ -68,6 +68,7 @@ function element(tag = "div", doc = null) {
         },
         setAttribute(name, value) { this.attributes[name] = String(value); },
         getAttribute(name) { return this.attributes[name]; },
+        removeAttribute(name) { delete this.attributes[name]; },
         addEventListener(name, fn) { (this.listeners[name] ||= []).push(fn); },
         contains(other) {
             for (let at = other; at; at = at.parentNode) if (at === this) return true;
@@ -673,6 +674,112 @@ check("the clear button is drawn only with a query, and empties it", () => {
     assert.equal(input.value, "");
     assert.equal(shown(t).length, 5);
     assert.equal(t.doc.activeElement, input, "back in the field to type again");
+});
+
+// ---------------------------------------------------------------- an agent gating the dataset
+
+const RUN = {
+    s1: { state: "done", markers_done: 16, markers_total: 16 },
+    s2: { state: "gating", markers_done: 4, markers_total: 16 },
+    s3: { state: "profiling", markers_done: 0, markers_total: 16 },
+    s4: { state: "queued", markers_done: 0, markers_total: 16 },
+    s5: { state: "review", markers_done: 16, markers_total: 16, needs_review: 2 },
+};
+const badgeOf = (item) => find(item, (n) => hasClass(n, "dataset-nav-strip-badge"));
+
+check("a dataset run badges its tiles: markers done on the ones being gated, a word on the rest", () => {
+    const t = boot();
+    t.strip.open({ anchor: t.anchor, chip: t.chip, members: SAMPLES, current: "s2", states: RUN });
+    const [s1, s2, s3, s4, s5] = t.tiles();
+    assert.equal(s2.attributes["data-gating"], "gating");
+    assert.equal(s3.attributes["data-gating"], "profiling");
+    assert.ok(hasClass(s2, "is-gating") && hasClass(s2, "is-current"), "still the current sample");
+    assert.ok(hasClass(s3, "is-gating"), "profiling is the agent at work too");
+    assert.ok(hasClass(s1, "is-done") && hasClass(s4, "is-queued") && hasClass(s5, "is-review"));
+    assert.equal(badgeOf(s2).textContent, "4/16");
+    assert.equal(badgeOf(s2).title, "Being gated: 4 of 16 markers");
+    assert.equal(badgeOf(s2).hidden, false);
+    assert.deepEqual([s1, s4, s5].map((n) => badgeOf(n).textContent), ["Done", "Queued", "Review"]);
+    assert.equal(badgeOf(s5).title, "Gated; 2 markers to review");
+    assert.ok(hasClass(s2.children[s2.children.length - 1], "dataset-nav-strip-name"),
+        "the name stays on top");
+    assert.equal(s2.title, "s2", "the badge is not searched: its words are not the sample's");
+    const plainRun = boot();
+    openOn(plainRun);
+    const [first] = plainRun.tiles();
+    assert.equal(badgeOf(first).hidden, true, "no run, no badge");
+    assert.equal(first.attributes["data-gating"], undefined);
+});
+
+check("Gating only narrows to the images being gated, together with the search", () => {
+    const t = boot();
+    const said = [];
+    t.strip.open({ anchor: t.anchor, chip: t.chip, members: SAMPLES, current: "s1", states: RUN,
+                   onFilter: (on) => said.push(on) });
+    const chip = t.part("dataset-nav-strip-filter");
+    assert.equal(chip.parentNode, t.part("dataset-nav-strip-search"), "in the search row");
+    assert.equal(chip.hidden, false);
+    assert.equal(chip.textContent, "Gating only (2)");
+    assert.equal(chip.attributes["aria-pressed"], "false");
+    assert.equal(shown(t).length, 5, "off until pressed");
+    chip.fire("click");
+    assert.deepEqual(shown(t), ["s2", "s3"]);
+    assert.equal(chip.attributes["aria-pressed"], "true");
+    assert.ok(hasClass(chip, "is-on"));
+    assert.deepEqual(said, [true], "the chip's state is handed back, for the next opening");
+    typeInto(t, "s3");
+    assert.deepEqual(shown(t), ["s3"], "the search narrows what the chip left");
+    typeInto(t, "s4");
+    assert.deepEqual(shown(t), [], "a queued image is not shown while the chip is on");
+    assert.equal(t.part("dataset-nav-strip-empty").style.display, "");
+    chip.fire("click");
+    assert.deepEqual(shown(t), ["s4"], "off again, the search alone");
+    assert.deepEqual(said, [true, false]);
+    // A press on the chip is the chip's, not a press on the field.
+    t.doc.activeElement = null;
+    t.part("dataset-nav-strip-search").fire("click", { target: chip });
+    assert.equal(t.doc.activeElement, null);
+    // Opened with it on, it starts narrowed.
+    const again = boot();
+    again.strip.open({ anchor: again.anchor, chip: again.chip, members: SAMPLES, current: "s1",
+                       states: RUN, activeOnly: true });
+    assert.deepEqual(shown(again), ["s2", "s3"]);
+    assert.notEqual(again.doc.activeElement, again.tiles()[0], "the hidden current tile is not focused");
+    // No run going: no chip, and nothing hidden.
+    const none = boot();
+    none.strip.open({ anchor: none.anchor, chip: none.chip, members: SAMPLES, current: "s1",
+                      activeOnly: true });
+    assert.equal(none.part("dataset-nav-strip-filter").hidden, true);
+    assert.equal(shown(none).length, 5);
+});
+
+check("update re-badges the tiles in place, and re-narrows without a jump", () => {
+    const t = boot();
+    t.strip.open({ anchor: t.anchor, chip: t.chip, members: SAMPLES, current: "s1", states: RUN });
+    const before = t.tiles().slice();
+    const s2 = before[1];
+    t.part("dataset-nav-strip-filter").fire("click");
+    const grid = t.part("dataset-nav-strip-grid");
+    grid.scrollLeft = 40;
+    t.strip.update(Object.assign({}, RUN, {
+        s2: { state: "gating", markers_done: 9, markers_total: 16 },
+        s3: { state: "done", markers_done: 16, markers_total: 16 },
+        s4: { state: "gating", markers_done: 1, markers_total: 16 },
+    }));
+    assert.deepEqual(t.tiles(), before, "the same tiles, not a rebuild");
+    assert.equal(badgeOf(s2).textContent, "9/16");
+    assert.ok(hasClass(before[2], "is-done") && !hasClass(before[2], "is-gating"));
+    assert.equal(before[2].attributes["data-gating"], "done");
+    assert.deepEqual(shown(t), ["s2", "s4"], "the chip follows the run");
+    assert.equal(t.part("dataset-nav-strip-filter").textContent, "Gating only (2)");
+    assert.equal(grid.scrollLeft, 40, "a run moving on does not scroll the grid back");
+    t.strip.update({});
+    assert.equal(t.part("dataset-nav-strip-filter").hidden, true, "the run is over");
+    assert.equal(shown(t).length, 5, "and nothing stays hidden behind it");
+    assert.ok(before.every((n) => badgeOf(n).hidden && !n.attributes["data-gating"]));
+    t.strip.close();
+    t.strip.update(RUN);
+    assert.equal(t.strip.isOpen(), false, "closed, an update builds nothing");
 });
 
 check("a page with no canvas opens nothing", () => {

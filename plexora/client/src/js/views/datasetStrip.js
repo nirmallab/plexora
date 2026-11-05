@@ -20,6 +20,13 @@
  * away. In it, ArrowDown goes to the first match and Enter picks it; Escape
  * clears a search before it closes the strip.
  *
+ * AN AGENT GATING THE DATASET marks the tiles: each image a dataset-scope run
+ * is working on carries a badge with its markers done ("4/16"), and the ones
+ * waiting, done or needing review say so. The states come from datasetNav.js
+ * (`states`, and `update` as the run goes on, which re-badges the tiles in
+ * place rather than rebuilding them). A "Gating only" chip in the search row
+ * narrows the grid to the images being gated now, together with the search.
+ *
  * WHERE IT MAY GO is measured, not assumed: fit() is plain arithmetic over the
  * boxes of whatever else sits on the canvas -- the sample's caption and the
  * expand button top-left, the channel legend and scale float bottom-right, the
@@ -57,6 +64,15 @@ window.PlexoraDatasetStrip = (function () {
         "viewer_canvas_caption", "viewer_project_label", "sidebar_expand_button",
         "viewer_channel_legend", "viewer_mini_map",
     ];
+
+    //: A dataset gating run's image states (agentPanel.js, `dataset_progress`
+    //: `images[name].state`) -> the tile's class. The first three are one
+    //: thing to the user: the agent is at work on that image now.
+    const STATE_CLASS = {
+        profiling: "is-gating", gating: "is-gating", checking: "is-gating",
+        queued: "is-queued", done: "is-done", review: "is-review",
+    };
+    const STATE_CLASSES = ["is-gating", "is-queued", "is-done", "is-review"];
 
     let state = null;
 
@@ -193,7 +209,54 @@ window.PlexoraDatasetStrip = (function () {
         grid.style.gridTemplateRows = "repeat(" + placed.rows + ", " + placed.tile.height + "px)";
     }
 
-    function tile(name, isCurrent, onChoose, shown = name) {
+    //: tile -> its badge, so a re-badge finds it without a query.
+    const badges = new WeakMap();
+
+    function markers(n) {
+        return n + (n === 1 ? " marker" : " markers");
+    }
+
+    /**
+     * Mark a tile with what a dataset gating run is doing to its image:
+     * `data-gating`, one of STATE_CLASSES and a corner badge ("4/16" while
+     * it is being gated) -- or none of them, when the run says nothing of
+     * the image or there is no run. In place, so the tile keeps its focus
+     * and its thumbnail as the run goes on.
+     */
+    function mark(item, entry) {
+        const kind = entry && typeof entry === "object" ? String(entry.state || "") : "";
+        const cls = STATE_CLASS[kind] || "";
+        item.className = String(item.className).split(" ")
+            .filter((name) => name && STATE_CLASSES.indexOf(name) === -1)
+            .concat(cls ? [cls] : []).join(" ");
+        if (cls) item.setAttribute("data-gating", kind);
+        else if (item.removeAttribute) item.removeAttribute("data-gating");
+        const badge = badges.get(item);
+        if (!badge) return;
+        badge.hidden = !cls;
+        let text = "";
+        let title = "";
+        if (cls === "is-gating") {
+            const done = Math.max(0, Math.floor(Number(entry.markers_done) || 0));
+            const total = Math.max(0, Math.floor(Number(entry.markers_total) || 0));
+            text = total ? done + "/" + total : "Gating";
+            title = total ? "Being gated: " + done + " of " + markers(total) : "Being gated";
+        } else if (cls === "is-queued") {
+            text = "Queued";
+            title = "Waiting for the agent";
+        } else if (cls === "is-done") {
+            text = "Done";
+            title = "Gated";
+        } else if (cls === "is-review") {
+            const review = Math.max(0, Math.floor(Number(entry.needs_review) || 0));
+            text = "Review";
+            title = review ? "Gated; " + markers(review) + " to review" : "Gated; needs review";
+        }
+        badge.textContent = text;
+        badge.title = title;
+    }
+
+    function tile(name, isCurrent, onChoose, shown = name, entry = null) {
         const item = document.createElement("button");
         item.type = "button";
         item.className = "dataset-nav-strip-item" + (isCurrent ? " is-current" : "");
@@ -223,11 +286,20 @@ window.PlexoraDatasetStrip = (function () {
         image.src = plexoraUrl("project_thumbnail/" + encodeURIComponent(name));
         item.appendChild(image);
 
+        // What an agent gating the dataset is doing to this image, in the
+        // corner; hidden while it is doing nothing.
+        const badge = document.createElement("span");
+        badge.className = "dataset-nav-strip-badge";
+        badge.hidden = true;
+        item.appendChild(badge);
+        badges.set(item, badge);
+
         const label = document.createElement("span");
         label.className = "dataset-nav-strip-name";
         label.textContent = shown;
         item.appendChild(label);
 
+        mark(item, entry);
         item.addEventListener("click", () => onChoose(name, isCurrent));
         return item;
     }
@@ -245,18 +317,28 @@ window.PlexoraDatasetStrip = (function () {
         return words.every((word) => text.indexOf(word) !== -1);
     }
 
+    /** Whether a tile's image is being gated now. */
+    function isGating(item) {
+        return String(item.className).split(" ").indexOf("is-gating") !== -1;
+    }
+
     /**
-     * Show the tiles that match `query` and refit to them. Hidden by an
-     * inline display rather than detached: moving a focused tile out of the
-     * DOM and back would drop its focus.
+     * Show the tiles that match `query` -- and, with "Gating only" on, are
+     * being gated -- and refit to them. Hidden by an inline display rather
+     * than detached: moving a focused tile out of the DOM and back would
+     * drop its focus. `keepScroll` for a run moving on under the user, who
+     * did not ask for the grid to jump back to its start.
      */
-    function filter(query) {
+    function filter(query, keepScroll = false) {
         if (!state) return;
         const { all, grid, empty, search } = state;
         const words = terms(query);
         state.query = words.length ? String(query) : "";
+        // Only while something is being gated: with nothing, a chip left on
+        // would hide every tile behind a chip that is no longer drawn.
+        const only = state.activeOnly && all.some(isGating);
         state.tiles = all.filter((item) => {
-            const shown = matches(item, words);
+            const shown = matches(item, words) && (!only || isGating(item));
             item.style.display = shown ? "" : "none";
             return shown;
         });
@@ -264,8 +346,30 @@ window.PlexoraDatasetStrip = (function () {
         grid.style.display = none ? "none" : "";
         empty.style.display = none ? "" : "none";
         search.className = "dataset-nav-strip-search" + (state.query ? " has-query" : "");
-        grid.scrollLeft = 0;
+        if (!keepScroll) grid.scrollLeft = 0;
         refit();
+    }
+
+    /** "Gating only (N)": drawn while N images are being gated, pressed
+     *  while it narrows the grid. */
+    function paintFilter() {
+        if (!state) return;
+        const n = state.all.filter(isGating).length;
+        const on = Boolean(state.activeOnly && n);
+        const chip = state.only;
+        chip.hidden = !n;
+        chip.textContent = "Gating only (" + n + ")";
+        chip.className = "dataset-nav-strip-filter" + (on ? " is-on" : "");
+        chip.setAttribute("aria-pressed", on ? "true" : "false");
+        chip.title = on ? "Show every sample" : "Show only the images an agent is gating now";
+    }
+
+    function toggleGatingOnly() {
+        if (!state) return;
+        state.activeOnly = !state.activeOnly;
+        paintFilter();
+        filter(state.input.value);
+        if (state.onFilter) state.onFilter(state.activeOnly);
     }
 
     function onSearchInput() {
@@ -305,7 +409,8 @@ window.PlexoraDatasetStrip = (function () {
         const row = document.createElement("div");
         row.className = "dataset-nav-strip-search";
         row.addEventListener("click", (event) => {
-            if (!state || event.target === state.input || inside(clear, event.target)) return;
+            if (!state || event.target === state.input || inside(clear, event.target)
+                || inside(only, event.target)) return;
             state.input.focus();
         });
 
@@ -338,7 +443,18 @@ window.PlexoraDatasetStrip = (function () {
         clear.addEventListener("click", () => clearSearch(true));
         row.appendChild(clear);
 
-        return { row, input };
+        // The images an agent is gating now, and nothing else -- together
+        // with whatever is typed. Hidden until a dataset run is gating some
+        // (paintFilter).
+        const only = document.createElement("button");
+        only.type = "button";
+        only.className = "dataset-nav-strip-filter";
+        only.hidden = true;
+        only.setAttribute("aria-pressed", "false");
+        only.addEventListener("click", toggleGatingOnly);
+        row.appendChild(only);
+
+        return { row, input, only };
     }
 
     // -- dismissal ----------------------------------------------------------
@@ -408,8 +524,14 @@ window.PlexoraDatasetStrip = (function () {
      * @param onPick  called with a name AFTER the strip has closed.
      * @param titles  name -> display title, for members that have one; a
      *                tile shows that and is still picked by its name.
+     * @param states  name -> what a dataset gating run is doing to that
+     *                image (`{state, markers_done, markers_total,
+     *                needs_review}`); `update` moves them on while open.
+     * @param activeOnly start with "Gating only" pressed.
+     * @param onFilter called with the chip's new state when it is pressed.
      */
-    function open({ anchor, chip, members, current, label, onPick, titles = {} }) {
+    function open({ anchor, chip, members, current, label, onPick, titles = {},
+                    states = {}, activeOnly = false, onFilter = null }) {
         close();
         const host = document.getElementById("openseadragon_wrapper");
         if (!host || !anchor || !members || !members.length) return false;
@@ -420,7 +542,7 @@ window.PlexoraDatasetStrip = (function () {
         root.setAttribute("role", "group");
         root.setAttribute("aria-label", label ? "Samples in " + label : "Samples");
 
-        const { row: search, input } = searchRow();
+        const { row: search, input, only } = searchRow();
         root.appendChild(search);
 
         const grid = document.createElement("div");
@@ -437,19 +559,23 @@ window.PlexoraDatasetStrip = (function () {
             close();
             if (!isCurrent && onPick) onPick(name);
         };
+        const known = states && typeof states === "object" ? states : {};
         const tiles = members.map((name) => tile(name, name === current, choose,
-                                                   (titles && titles[name]) || name));
+                                                   (titles && titles[name]) || name, known[name]));
         for (const item of tiles) grid.appendChild(item);
         grid.addEventListener("keydown", onGridKey);
         grid.addEventListener("wheel", onWheel, { passive: false });
 
         host.appendChild(root);
         state = {
-            host, anchor, chip, root, grid, empty, search, input,
+            host, anchor, chip, root, grid, empty, search, input, only,
             all: tiles, tiles: tiles.slice(), query: "", choose, rows: 1, observer: null,
+            activeOnly: Boolean(activeOnly), onFilter: typeof onFilter === "function" ? onFilter : null,
         };
         anchor.setAttribute("aria-expanded", "true");
-        refit();
+        paintFilter();
+        if (state.activeOnly) filter("");
+        else refit();
 
         document.addEventListener("keydown", onKeyDown, true);
         document.addEventListener("pointerdown", onPointerDown, true);
@@ -464,8 +590,9 @@ window.PlexoraDatasetStrip = (function () {
 
         // The current sample in view and focused, so the arrows start there.
         // By hand rather than scrollIntoView, which may also scroll whatever
-        // clips the canvas.
-        const here = tiles.find((item) => item.className.indexOf("is-current") !== -1);
+        // clips the canvas. Not when "Gating only" has hidden it.
+        const here = tiles.find((item) => item.className.indexOf("is-current") !== -1
+            && item.style.display !== "none");
         if (here) {
             if (grid.scrollWidth > grid.clientWidth) {
                 grid.scrollLeft = Math.max(0,
@@ -476,6 +603,23 @@ window.PlexoraDatasetStrip = (function () {
             if (here.focus) here.focus({ preventScroll: true });
         }
         return true;
+    }
+
+    /**
+     * A dataset gating run moved on: re-badge the tiles in place (no
+     * rebuild, so focus, scroll and thumbnails stay), recount the chip and,
+     * while it narrows the grid, narrow again. Nothing while closed: the
+     * next open is handed the states afresh.
+     */
+    function update(states) {
+        if (!state) return;
+        const known = states && typeof states === "object" ? states : {};
+        for (const item of state.all) mark(item, known[item.getAttribute("data-sample")]);
+        paintFilter();
+        // Refit either way: the chip it hangs from widens and narrows with
+        // its "3 gating", and the chip is not one of the boxes observed.
+        if (state.activeOnly) filter(state.input.value, true);
+        else refit();
     }
 
     /** Idempotent: the DOM, the listeners and the observer all go. */
@@ -499,6 +643,7 @@ window.PlexoraDatasetStrip = (function () {
     return {
         open,
         close,
+        update,
         isOpen: () => !!state,
         fit,
         //: Test seams.

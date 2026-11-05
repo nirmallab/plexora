@@ -3065,7 +3065,7 @@
       },
       "basic_qc": {
        "default": true,
-       "description": "On an image with no QC result, run QC's model-free checks first (run_basic_qc) and leave out what they find. Default: on with v2, off with v1.",
+       "description": "On an image with no QC result, run QC's model-free checks first (run_basic_qc) and leave out what they find. Default: on with v3 and v4, off with v1.",
        "type": "boolean"
       },
       "biology": {
@@ -3113,7 +3113,7 @@
       },
       "display_check": {
        "default": "off",
-       "description": "Auto contrast for every look: vision (a contrast grid to the model, once per image), rule (the calibration's window), off. Default: off with engine v2, vision with v1.",
+       "description": "Auto contrast for every look: vision (a contrast grid to the model, once per image), rule (the calibration's window), off. Default: off with engines v3 and v4, vision with v1.",
        "enum": [
         "vision",
         "rule",
@@ -3122,11 +3122,12 @@
        "type": "string"
       },
       "engine": {
-       "default": "v2",
-       "description": "v2: blind panels of single cells labelled one at a time, code picks the candidate gate the labels support; v1: rows below, at and above the gate. classic (v1) and candidates (v2) are accepted.",
+       "default": "v3",
+       "description": "v3: blind panels of single cells labelled one at a time, code picks the candidate gate the labels support; v4: v3, a dataset's aligned images decided together (the default for scope=dataset); v1: rows below, at and above the gate. classic (v1), candidates and v2 (v3) are accepted.",
        "enum": [
         "v1",
-        "v2"
+        "v3",
+        "v4"
        ],
        "type": "string"
       },
@@ -3238,7 +3239,7 @@
       },
       "panel_looks": {
        "default": 3,
-       "description": "Engine v2: the most cell panels a marker is shown before review.",
+       "description": "Engines v3 and v4: the most cell panels a marker is shown before review.",
        "maximum": 6,
        "minimum": 1,
        "type": "integer"
@@ -3590,6 +3591,10 @@
        "description": "Pause (true) or resume (false) the session.",
        "type": "boolean"
       },
+      "project": {
+       "description": "With reattach_viewer, in a dataset's session: the image the tab shows (default: what it reports); the packet replayed is that image's.",
+       "type": "string"
+      },
       "reattach_viewer": {
        "default": false,
        "type": "boolean"
@@ -3610,7 +3615,9 @@
      },
      "type": "object"
     },
-    "needs": [],
+    "needs": [
+     "image"
+    ],
     "permission": "read",
     "produces": [],
     "provider": "plexora",

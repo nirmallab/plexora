@@ -1,5 +1,10 @@
 # Gating engine v2: how it works, how it was measured, where it fails
 
+> **Renamed 2026-11-05:** the engine this document describes is registered as
+> `v3` (`v2` and `candidates` are accepted as its earlier names). Engine `v4`
+> runs it for a dataset's groups of aligned images; see
+> [GATING_ENGINE_V4.md](GATING_ENGINE_V4.md).
+
 Handoff, 2026-10-22. For engineers who will work on automatic gating next.
 
 ## Status

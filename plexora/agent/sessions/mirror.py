@@ -21,12 +21,18 @@ second look at one that was), and a look playing is given `MIN_SHOW_S` before
 the next replaces it. So the viewer shows one coherent marker at a time,
 never a backlog after the session has decided -- and how far the session has
 got (`progress`, the `issued` and `answered` events) never waits on it.
+
+A session gating several images at once follows the tab (`where`): the tab
+is never sent to another image. The newest look waits per image, only the
+look for the image the tab shows is sent, and when the user switches image
+(the tab navigates, then attaches again: `poke`) the new image's look plays.
 """
 
 from __future__ import annotations
 
 import atexit
 import collections
+import itertools
 import threading
 import time
 
@@ -150,6 +156,18 @@ MAX_SHOW_S = 30.0
 IDLE_S = 30.0
 #: How long the process waits, on exit, for teardowns still being sent.
 EXIT_DRAIN_S = 5.0
+#: A presenter that follows the tab asks it again this often which image it
+#: shows, while every look waiting is for another image or the tab is
+#: navigating -- and waits this long before trying a look its job skipped.
+FOLLOW_POLL_S = 1.0
+
+#: What a job returns when it did not show its look (the tab had moved to
+#: another image, or was navigating): the look waits again for its image.
+SKIPPED = object()
+#: `where` failed: the tab's image is not known, so no look goes yet.
+_UNKNOWN = object()
+#: The slot of a `keep=True` item, which is never put back.
+_KEPT = object()
 
 
 class Presenter:
@@ -157,7 +175,7 @@ class Presenter:
 
     `offer(job, ...)` returns at once. `job()` sends one script and records
     how it went; it returns the seconds the show it started should be kept
-    before a newer look replaces it. Two kinds of item wait:
+    before a newer look replaces it, or `SKIPPED`. Two kinds of item wait:
 
     - looks (`subject` a marker, or a set-up packet with none): one slot,
       latest wins. A newer look replaces the one waiting, unless the waiting
@@ -168,6 +186,14 @@ class Presenter:
     - `keep=True` items (a contrast show, the teardown): sent in order, never
       replaced, before any look.
 
+    A presenter offered a `where` follows the tab: `where()` says what the
+    tab shows ({project, status}, None once it is gone), there is a slot per
+    image (`project`; None for a look about no one image, which any image
+    shows), and only the look for the tab's image is sent -- none while it
+    is `navigating`. The others wait in their slots (`poke` looks again at
+    once); a look its job skipped goes back to its slot unless a newer one
+    took it.
+
     `close(job)` ends it: what waits is dropped, the script being sent stops
     at its next command (`closing`, read by `attached`), and `job` -- the
     teardown -- is the last thing sent."""
@@ -175,48 +201,75 @@ class Presenter:
     def __init__(self, session_id):
         self.session_id = str(session_id)
         self._cv = threading.Condition()
-        self._look = None
+        #: slot -> (job, subject, wait, key, seq): one slot (None) unless
+        #: following the tab, then one per image.
+        self._looks = {}
         self._kept = collections.deque()
         self._shown = set()
         self._sending = False
         self._closing = False
         self._thread = None
         self._until = 0.0
-        self._last_key = None
+        self._until_slot = None
+        self._last_key = {}
+        self._where = None
+        self._seq = itertools.count()
+        #: Following the tab: every look waiting is for another image (or
+        #: the tab is navigating), so `idle` does not wait for them.
+        self._parked = False
+        self._retry_at = 0.0
         self.dropped = 0
 
-    def offer(self, job, *, subject=None, wait=True, keep=False, key=None) -> str:
+    def offer(self, job, *, subject=None, wait=True, keep=False, key=None, project=None,
+              where=None) -> str:
         """`queued`, or `dropped` (a look kept waiting in its place, or the
         session is ending). A look whose `key` (its packet) is waiting, being
-        sent or was the last sent is not offered twice."""
+        sent or was the last sent is not offered twice. `where` makes the
+        presenter follow the tab, `project` naming the image the look is of."""
         with self._cv:
             if self._closing:
                 return "dropped"
-            if key is not None and key in (self._last_key, (self._look or (None,) * 4)[3]):
+            if where is not None:
+                self._where = where
+            slot = project if self._where is not None else None
+            waiting = self._looks.get(slot)
+            if key is not None and key in (self._last_key.get(slot), (waiting or (None,) * 4)[3]):
                 return "queued"
             if keep:
-                self._kept.append((job, subject, False, None))
+                self._kept.append((job, subject, False, None, None))
             else:
-                waiting = self._look
                 if waiting is not None and self._fresh(waiting[1]) \
                         and not self._fresh(subject) and wait:
                     self.dropped += 1
                     return "dropped"
                 if waiting is not None:
                     self.dropped += 1
-                self._look = (job, subject, wait, key)
+                self._looks[slot] = (job, subject, wait, key, next(self._seq))
+            self._parked = False
             self._start()
             self._cv.notify_all()
         return "queued"
 
+    def poke(self):
+        """The tab may show another image now (it attached again after
+        navigating): the looks waiting are weighed again at once."""
+        with self._cv:
+            if self._closing:
+                return
+            self._parked = False
+            self._retry_at = 0.0
+            if self._looks or self._kept:
+                self._start()
+            self._cv.notify_all()
+
     def close(self, job=None):
         with self._cv:
-            self.dropped += len(self._kept) + (self._look is not None)
-            self._look = None
+            self.dropped += len(self._kept) + len(self._looks)
+            self._looks.clear()
             self._kept.clear()
             self._closing = True
             if job is not None:
-                self._kept.append((job, None, False, None))
+                self._kept.append((job, None, False, None, None))
             self._start()
             self._cv.notify_all()
 
@@ -230,10 +283,11 @@ class Presenter:
             return count
 
     def idle(self, timeout=10.0) -> bool:
-        """Wait until nothing waits and nothing is being sent."""
+        """Wait until nothing waits (but looks for an image the tab does not
+        show) and nothing is being sent."""
         deadline = time.monotonic() + timeout
         with self._cv:
-            while self._look is not None or self._kept or self._sending:
+            while (self._looks and not self._parked) or self._kept or self._sending:
                 left = deadline - time.monotonic()
                 if left <= 0:
                     return False
@@ -249,20 +303,68 @@ class Presenter:
                                             name=f"mirror-{self.session_id}")
             self._thread.start()
 
+    def _ask_tab(self):
+        """`where()`, called off the condition (it may be a request to the
+        server): an offer never waits on it. `_UNKNOWN` when it failed."""
+        where = self._where
+        self._cv.release()
+        try:
+            return where()
+        except Exception:
+            return _UNKNOWN
+        finally:
+            self._cv.acquire()
+
+    def _choose(self):
+        """(slot, None): the slot whose look goes next; (None, seconds): none
+        may go yet -- the tab shows another image, is navigating or did not
+        say -- so ask again in `seconds`. One slot unless following the tab."""
+        if self._where is None:
+            return None, None
+        wait = self._retry_at - time.monotonic()
+        if wait > 0:
+            return None, wait
+        tab = self._ask_tab()
+        if tab is None:
+            # The tab is gone: the newest look goes, and finds no tab (the
+            # mirror turns itself off, as it does for a session on one image).
+            slots = list(self._looks)
+        elif tab is _UNKNOWN or tab.get("status") == "navigating":
+            slots = []
+        else:
+            slots = [s for s in (tab.get("project"), None) if s in self._looks]
+        if not slots:
+            self._parked = True
+            self._cv.notify_all()
+            return None, FOLLOW_POLL_S
+        self._parked = False
+        return max(slots, key=lambda s: self._looks[s][4]), None
+
     def _next(self):
-        """The next item to send (under the condition), waiting for one --
-        and for the show playing to have had its time, unless the look
-        waiting says not to -- or None when the presenter is done."""
+        """(slot, item): the next item to send (under the condition), waiting
+        for one -- and for the show playing to have had its time, unless the
+        look waiting says not to -- or None when the presenter is done."""
         idle_until = time.monotonic() + IDLE_S
         while True:
             if self._kept:
-                return self._kept.popleft()
-            if self._look is not None and not self._closing:
-                hold = self._until - time.monotonic()
-                if not self._look[2] or hold <= 0:
-                    item, self._look = self._look, None
-                    return item
-                self._cv.wait(hold)
+                return _KEPT, self._kept.popleft()
+            if self._looks and not self._closing:
+                slot, poll = self._choose()
+                if self._kept or self._closing or slot not in self._looks and poll is None:
+                    continue           # changed while the tab was asked
+                if poll is None:
+                    # Following the tab, a show is held only on the image it
+                    # plays on: a tab that moved has left it.
+                    hold = self._until - time.monotonic() \
+                        if self._where is None or slot == self._until_slot else 0.0
+                    if not self._looks[slot][2] or hold <= 0:
+                        return slot, self._looks.pop(slot)
+                    self._cv.wait(hold)
+                    continue
+                left = idle_until - time.monotonic()
+                if left <= 0:
+                    return None
+                self._cv.wait(min(poll, left))
                 continue
             left = idle_until - time.monotonic()
             if self._closing or left <= 0:
@@ -272,26 +374,46 @@ class Presenter:
     def _loop(self):
         while True:
             with self._cv:
-                item = self._next()
-                if item is None:
+                taken = self._next()
+                if taken is None:
                     self._thread = None
+                    # Looks still waiting are for images the tab does not
+                    # show: the next offer or `poke` weighs them again.
+                    self._parked = bool(self._looks)
                     self._cv.notify_all()
                     return
+                slot, item = taken
                 self._sending = True
-                job, subject, _wait, key = item
-                if key is not None:
-                    self._last_key = key
+                job, subject, _wait, key, _seq = item
+                before = self._last_key.get(slot)
+                if key is not None and slot is not _KEPT:
+                    self._last_key[slot] = key
+                first = self._fresh(subject)
                 if subject is not None:
                     self._shown.add(subject)
             started = time.monotonic()
-            hold = 0.0
+            hold, shown = 0.0, None
             try:
-                hold = float(job() or 0.0)
+                shown = job()
+                hold = 0.0 if shown is SKIPPED else float(shown or 0.0)
             except Exception:  # a broken tab must not end the presenter
                 pass
             with self._cv:
                 self._sending = False
-                self._until = max(self._until, started + hold)
+                if shown is SKIPPED and slot is not _KEPT and self._where is not None:
+                    # Not shown: it waits for its image again, unless a newer
+                    # look of that image took its place.
+                    if first:
+                        self._shown.discard(subject)
+                    self._last_key[slot] = before
+                    if not self._closing and slot not in self._looks:
+                        self._looks[slot] = item
+                    self._retry_at = time.monotonic() + FOLLOW_POLL_S
+                elif slot is _KEPT or slot == self._until_slot:
+                    self._until = max(self._until, started + hold)
+                else:
+                    # A look of another image: the show held is this one.
+                    self._until, self._until_slot = started + hold, slot
                 self._cv.notify_all()
 
 

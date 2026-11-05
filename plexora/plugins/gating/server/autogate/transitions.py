@@ -65,7 +65,9 @@ from plexora.plugins.gating.server.autogate.engine import ENGINE, TERMINAL, unit
 def _units(engine, packet):
     out = []
     for ref in packet["units"]:
-        unit = engine.record["units"].get(unit_key(ref["project"], ref["marker"]))
+        # A v4 group's look from another image names the unit it informs.
+        unit = engine.record["units"].get(ref.get("unit")
+                                          or unit_key(ref["project"], ref["marker"]))
         if unit is not None:
             out.append(unit)
     return out
@@ -817,6 +819,8 @@ def _reopen(engine, unit) -> bool:
 
 
 def apply_strip(engine, packet, answer):
+    from plexora.plugins.gating.server.autogate import groups
+
     units = _units(engine, packet)
     outcomes = []
     for unit in units:
@@ -827,11 +831,16 @@ def apply_strip(engine, packet, answer):
             continue
         if verdict == "ok":
             # The audit agrees with the split; the numeric checks every
-            # other write passes still run (`Engine.settle`).
+            # other write passes still run (`Engine.settle`). A gate carried
+            # from another image keeps its method (`transfer_aligned`,
+            # `group_aligned`).
             unit["audited"] = True
-            unit["method"] = "gmm"
+            if unit.get("path") != "transfer":
+                unit["method"] = "gmm"
             unit["state"] = "awaiting_regression"
             engine.settle(unit)
+        elif groups.after_strip(engine, unit, verdict):
+            pass
         else:
             unit["audited"] = False
             unit["state"] = "awaiting_t2"

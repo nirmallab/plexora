@@ -126,6 +126,20 @@ class _Relay:
         self.inp = inp
         self.wf = _workflow(inp.kind)
         self.job_id = (call.job or {}).get("job_id")
+        self._images = {}
+
+    def images(self, session_id) -> list:
+        """The images a session's events go to, as its own events do (a
+        dataset's session: every image, so a tab switched to another still
+        hears the run): the launching project first, then the session's
+        `images`, read once."""
+        if session_id not in self._images:
+            try:
+                images = _session_parts(self.inp.kind)[0].store().load(session_id).get("images")
+            except Exception:             # the launching tab is told regardless
+                return [self.inp.project]
+            self._images[session_id] = list(dict.fromkeys([self.inp.project, *(images or [])]))
+        return self._images[session_id]
 
     def _tell(self, event, session_id, **fields):
         notify = self.call.notify
@@ -135,9 +149,13 @@ class _Relay:
             channel = self.wf.events()
             body = {"session_id": session_id, "event": event, "control": channel.control_for(session_id),
                     "workflow": self.wf.name, "job_id": self.job_id, **fields}
-            notify(self.inp.project, channel.owner, channel.kind, body)
         except Exception:                 # telling the tabs never breaks a run
-            pass
+            return
+        for project in self.images(session_id):
+            try:
+                notify(project, channel.owner, channel.kind, body)
+            except Exception:             # telling the tabs never breaks a run
+                pass
 
     def _tell_run(self, event, **fields):
         """An event of a run that has no session yet (collecting its set-up):
@@ -326,15 +344,21 @@ def _session_snapshot(kind, session_id) -> dict | None:
             bucket["total"] += 1
             bucket["done"] += int(unit.get("state") in terminal)
         progress["by_type"] = by_type
+    if record.get("scope") == "dataset" and hasattr(engine, "dataset_progress"):
+        # Where each image of a dataset is: the switcher's badges and the
+        # panel's "gating 3 of 8 images" before the next event.
+        progress["dataset_progress"] = engine.dataset_progress(record)
     mirror = record.get("mirror") or {}
     mirroring = bool(mirror.get("enabled")) and mirror.get("status") != "off"
     return {"session_id": session_id, "control": events.control_for(session_id),
+            "scope": record.get("scope"), "images": list(record.get("images") or ()),
             "phase": engine.phase_for(record), "progress": progress,
             "paused": bool(control.get("paused")), "paused_by": control.get("paused_by"),
             "stopped": bool(control.get("stopped")),
             "viewer_attached": mirroring and not control.get("viewer_detached"),
             "view_id": mirror.get("view_id"),
-            "mirror": {"status": mirror.get("status"), "view_id": mirror.get("view_id")}}
+            "mirror": {"status": mirror.get("status"), "view_id": mirror.get("view_id"),
+                       "follow": mirror.get("follow")}}
 
 
 # -- ai.run_control --------------------------------------------------------------------------

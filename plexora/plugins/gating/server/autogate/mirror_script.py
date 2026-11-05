@@ -203,13 +203,15 @@ def _show(project, marker, cells, field, stops, look):
 
 
 def script_for(packet, manifest, calibration_record, *, current_project=None,
-               viewer_state=None, tool="gating", gate=None, focus=None):
+               viewer_state=None, tool="gating", gate=None, focus=None, follow=False):
     """[{type, arguments}] for one packet. `viewer_state` (the tab's
     `get_state`) drops set-up commands already in effect; `tool` is the tool
     an image is opened with (None: a contrast run, which needs none); `gate`
     ({low, high}, `_engine_gate`) is shown when the packet carries none;
     `focus` (`_medium_focus`) is where the look is played, in place of the
-    field around the cells read."""
+    field around the cells read. `follow` (a session following the tab):
+    the tab is never sent to another image -- a packet of an image it does
+    not show is [] -- and `open_project` is never in the script."""
     from plexora.agent.evidence import calibration
     from plexora.plugins.gating.server.autogate import packets, schemas
 
@@ -219,9 +221,10 @@ def script_for(packet, manifest, calibration_record, *, current_project=None,
     kind = packet.get("kind")
     units = packet.get("units") or []
     if kind in schemas.USER_SETUP_KINDS:
-        return setup_script(packet, current_project=current_project)
+        return setup_script(packet, current_project=current_project, follow=follow)
     if kind == "display_setup":
-        return display_packet_script(packet, current_project=current_project, tool=tool)
+        return display_packet_script(packet, current_project=current_project, tool=tool,
+                                     follow=follow)
     if not units:
         return []
     project = units[0]["project"]
@@ -229,6 +232,8 @@ def script_for(packet, manifest, calibration_record, *, current_project=None,
     evidence = packet.get("evidence") or {}
     script = []
     if current_project != project:
+        if follow:
+            return []
         script.append({"type": "open_project", "arguments": {"project": project,
                                                              "tool": "gating", "carry": True}})
     script.append({"type": "set_hd_mode", "arguments": {"enabled": True}})
@@ -288,17 +293,21 @@ def script_for(packet, manifest, calibration_record, *, current_project=None,
     return script
 
 
-def setup_script(packet, *, current_project=None) -> list:
+def setup_script(packet, *, current_project=None, follow=False) -> list:
     """A set-up question the user answers in the tab (`schemas.USER_SETUP_KINDS`:
     which matrix to gate). The gating panel cannot open quietly until it is
     answered -- the panel route asks for the unconfirmed input instead -- so
     the tab is told to put its own requirements prompt to the user
-    (`open_tool` with `ask`), not to open the panel and fail."""
+    (`open_tool` with `ask`), not to open the panel and fail. Following the
+    tab (`follow`), it is asked on whichever of the images waiting on it the
+    tab shows, and on no other."""
     projects = (packet.get("evidence") or {}).get("projects") or []
     if not projects:
         return []
     script = []
-    if current_project != projects[0]:
+    if follow and current_project not in projects:
+        return []
+    if current_project != projects[0] and not follow:
         # No `tool`: opening a tool while switching takes the eager path, which
         # does not ask -- the prompt comes from the `open_tool` after it.
         script.append({"type": "open_project", "arguments": {"project": projects[0],
@@ -307,16 +316,20 @@ def setup_script(packet, *, current_project=None) -> list:
     return script
 
 
-def display_packet_script(packet, *, current_project=None, tool="gating") -> list:
+def display_packet_script(packet, *, current_project=None, tool="gating",
+                          follow=False) -> list:
     """A contrast check going out: the tab on its image, in HD (an asinh
     curve stretches the dark end, where 8-bit tiles have the fewest steps).
     The channels move when the check is answered (`display_script`). A
-    contrast run (`tool` None) opens no tool: the channel panel is the show."""
+    contrast run (`tool` None) opens no tool: the channel panel is the show.
+    Following the tab (`follow`), a check of an image it does not show is []."""
     project = (packet.get("evidence") or {}).get("project")
     if not project:
         return []
     script = []
     if current_project != project:
+        if follow:
+            return []
         arguments = {"project": project, "carry": True}
         if tool:
             arguments["tool"] = tool
@@ -408,6 +421,33 @@ def _packet_project(packet):
     return evidence.get("project") or (evidence.get("projects") or [None])[0]
 
 
+def packet_images(packet) -> list:
+    """The images a packet may be shown on: the one its look is of
+    (`units[0].project`), a contrast check's, or every image a set-up
+    question waits on. [] for a packet of no image (nothing to show)."""
+    if packet.get("units"):
+        return [packet["units"][0]["project"]]
+    evidence = packet.get("evidence") or {}
+    if evidence.get("project"):
+        return [evidence["project"]]
+    return list(evidence.get("projects") or [])
+
+
+def _follow_skip(view, images, project=None):
+    """Following the tab: why `view` is not shown a packet of `images` -- a
+    `skipped` result (`navigating`, or `other_image` when it shows another;
+    `project` is what it says it shows when that is not `view`'s) -- or None
+    when it may be. A navigating tab is waited for, never turned off."""
+    if view.get("status") == "navigating":
+        return {"status": "skipped", "reason": "navigating", "sent": 0,
+                "view_id": view.get("view_id")}
+    shows = project or view.get("project")
+    if images and shows not in images:
+        return {"status": "skipped", "reason": "other_image", "sent": 0,
+                "view_id": view.get("view_id"), "project": shows}
+    return None
+
+
 #: (session, project, marker) -> its `_medium_focus` (or None): worked out at
 #: a marker's first look and kept, so every later look at it returns to the
 #: same cells. The newest `_FOCUS_MAX` kept.
@@ -460,7 +500,10 @@ def run(call, session_id, packet):
     """Send the packet's script to the session's viewer; returns
     {status (`ok`, `degraded`, `off`), sent, errors, view_id}, and `show_s`,
     the seconds from the start until the tab's look has made its moves, when
-    it played one."""
+    it played one. A session that follows the tab (`mirror.follow`) shows a
+    packet only on its image: {status: skipped, reason} when the tab shows
+    another (`other_image`) or is between pages (`navigating`), before
+    anything is sent or taken off the record."""
     import time
 
     from plexora.agent import viewer
@@ -477,20 +520,26 @@ def run(call, session_id, packet):
                 "errors": [{"code": exc.code, "message": exc.message}]}
     with engines.engine_for(call, session_id, save=False) as engine:
         options = dict(engine.options)
-        view_id = (engine.record.get("mirror") or {}).get("view_id") or options["view_id"]
-        unit = engine.record["units"].get(engines.unit_key(packet["units"][0]["project"],
-                                                           packet["units"][0]["marker"])) \
+        mirrored = engine.record.get("mirror") or {}
+        view_id = mirrored.get("view_id") or options["view_id"]
+        follow = mirrored.get("follow") == "tab"
+        unit = engine.record["units"].get(engine.unit_key_of(packet["units"][0])) \
             if packet.get("units") else None
         manifest = (unit or {}).get("last_manifest")
         gate = _engine_gate(unit)
         focus = _focus_job(engine, session_id, unit)
-    # Off the session's lock: the first look at a marker reads its column.
-    focus = focus() if callable(focus) else focus
     try:
         view = viewer.resolve_view(control, view_id)
     except AgentError as exc:
         return {"status": "off", "sent": 0,
                 "errors": [{"code": exc.code, "message": exc.message}]}
+    images = packet_images(packet)
+    if follow:
+        skipped = _follow_skip(view, images)
+        if skipped:
+            return skipped
+    # Off the session's lock: the first look at a marker reads its column.
+    focus = focus() if callable(focus) else focus
     # Wakes a throttled tab, and says what it already shows. Not an error of
     # the script when it fails: the script is then sent whole.
     state = None
@@ -501,11 +550,18 @@ def run(call, session_id, packet):
         if exc.code == "viewer_not_available":
             return {"status": "off", "sent": 0, "view_id": view["view_id"],
                     "errors": [{"code": exc.code, "message": exc.message}]}
+    current = (state or {}).get("project") or view.get("project")
     project = _packet_project(packet)
+    if follow:
+        skipped = _follow_skip(view, images, current)
+        if skipped:
+            return skipped
+        # A set-up question waiting on several images is put on the one shown.
+        project = current if images else project
     stored = calibration.load(project) if project else None
-    script = script_for(packet, manifest, stored,
-                        current_project=(state or {}).get("project") or view.get("project"),
-                        viewer_state=state, tool=_tool(options), gate=gate, focus=focus)
+    script = script_for(packet, manifest, stored, current_project=current,
+                        viewer_state=state, tool=_tool(options), gate=gate, focus=focus,
+                        follow=follow)
     if project:
         # What a contrast check settled, eased in channel by channel before
         # this packet's own channels (the tab plays it while the session asks
@@ -550,7 +606,9 @@ def run_display(call, session_id, project):
     """The tab shown what a contrast check just settled for `project`, right
     after the answer rather than with the next packet: the show starts while
     the session moves on, and a contrast run, which has no next packet, still
-    plays it. Same result shape as `run`; {status: off} without a viewer."""
+    plays it. Same result shape as `run`; {status: off} without a viewer.
+    Following the tab, {status: skipped} when it shows another image (what
+    was settled is then eased in with that image's next look)."""
     from plexora.agent import viewer
     from plexora.agent.errors import AgentError
     from plexora.agent.evidence import calibration
@@ -564,12 +622,18 @@ def run_display(call, session_id, project):
                 "errors": [{"code": exc.code, "message": exc.message}]}
     with engines.engine_for(call, session_id, save=False) as engine:
         options = dict(engine.options)
-        view_id = (engine.record.get("mirror") or {}).get("view_id") or options["view_id"]
+        mirrored = engine.record.get("mirror") or {}
+        view_id = mirrored.get("view_id") or options["view_id"]
+        follow = mirrored.get("follow") == "tab"
     try:
         view = viewer.resolve_view(control, view_id)
     except AgentError as exc:
         return {"status": "off", "sent": 0,
                 "errors": [{"code": exc.code, "message": exc.message}]}
+    if follow:
+        skipped = _follow_skip(view, [project])
+        if skipped:
+            return skipped
     stored = calibration.load(project)
     with engines.engine_for(call, session_id) as engine:
         shown = _unshown(engine, project, nuclear=(stored or {}).get("nuclear"))
@@ -585,7 +649,8 @@ def run_display(call, session_id, project):
             return {"status": "off", "sent": 0, "view_id": view["view_id"],
                     "errors": [{"code": exc.code, "message": exc.message}]}
     script = []
-    if (state or {}).get("project", view.get("project")) != project:
+    # Following the tab, the image it shows is the one checked above.
+    if (state or {}).get("project", view.get("project")) != project and not follow:
         arguments = {"project": project, "carry": True}
         if _tool(options):
             arguments["tool"] = _tool(options)

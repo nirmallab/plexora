@@ -3948,6 +3948,48 @@ body.sidebar-collapsed .viewer-shell,
     color: var(--text-primary);
 }
 
+/* "3 gating": how many of the dataset's images an agent is gating right now
+   (datasetNav.js, from the agent panel). Text set like the counter beside
+   it, in the gate accent, behind a slow breathing dot -- the chip's one
+   thing that is live. Gone, not dimmed, when no run is going. */
+.dataset-nav-gating {
+    align-items: center;
+    color: var(--accent-gate);
+    display: inline-flex;
+    font-size: 11px;
+    font-variant-numeric: tabular-nums;
+    gap: 4px;
+    letter-spacing: 0.02em;
+    line-height: 1;
+    padding: 5px 4px 5px 1px;
+    user-select: none;
+    white-space: nowrap;
+}
+
+.dataset-nav-gating[hidden] {
+    display: none;
+}
+
+.dataset-nav-gating::before {
+    animation: dataset-nav-gating-breathe 1.6s var(--ease-standard) infinite;
+    background: currentColor;
+    border-radius: 50%;
+    content: "";
+    flex: 0 0 auto;
+    height: 5px;
+    width: 5px;
+}
+
+@keyframes dataset-nav-gating-breathe {
+    50% { opacity: 0.3; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .dataset-nav-gating::before {
+        animation: none;
+    }
+}
+
 /* A transmitted-light slide is its own white background, and a dark chip with
    pale text on it reads as a hole punched in the tissue. Same inversion the
    centre spinner takes over the same pixels. */
@@ -4096,6 +4138,41 @@ body.sidebar-collapsed .viewer-shell,
     color: var(--text-primary);
 }
 
+/* "Gating only (3)": narrows the grid to the images an agent is gating now,
+   with the search. A small pill at the end of the search row, quiet until
+   pressed, then in the gate accent the tiles' badges use. */
+.dataset-nav-strip-filter {
+    background: none;
+    border: 0;
+    border-radius: 999px;
+    box-shadow: inset 0 0 0 1px var(--border-subtle);
+    color: var(--text-muted);
+    cursor: pointer;
+    flex: 0 0 auto;
+    font: inherit;
+    font-size: 10px;
+    font-variant-numeric: tabular-nums;
+    height: 16px;
+    line-height: 16px;
+    padding: 0 6px;
+    white-space: nowrap;
+}
+
+.dataset-nav-strip-filter[hidden] {
+    display: none;
+}
+
+.dataset-nav-strip-filter:hover {
+    box-shadow: inset 0 0 0 1px var(--border-strong);
+    color: var(--text-primary);
+}
+
+.dataset-nav-strip-filter.is-on {
+    background: var(--accent-gate-soft);
+    box-shadow: inset 0 0 0 1px var(--accent-gate);
+    color: var(--text-primary);
+}
+
 /* In place of the grid when nothing matches: one quiet line, not a tile. */
 .dataset-nav-strip-empty {
     color: var(--text-muted);
@@ -4211,6 +4288,52 @@ body.sidebar-collapsed .viewer-shell,
 
 .dataset-nav-strip-item.is-current .dataset-nav-strip-name {
     color: var(--text-primary);
+}
+
+/* What an agent gating the dataset is doing to each image (datasetStrip.js
+   mark()): a badge in the top corner -- markers done while it is gated,
+   else a word -- and, on a tile being gated, the gate accent's hairline.
+   The current tile keeps its own blue ring; the badge says the rest. */
+.dataset-nav-strip-badge {
+    background: rgba(11, 15, 21, 0.86);
+    border-radius: 3px;
+    color: var(--text-muted);
+    font-size: 9px;
+    font-variant-numeric: tabular-nums;
+    font-weight: 600;
+    letter-spacing: 0.02em;
+    line-height: 13px;
+    padding: 0 4px;
+    pointer-events: none;
+    position: absolute;
+    right: 3px;
+    top: 3px;
+}
+
+.dataset-nav-strip-badge[hidden] {
+    display: none;
+}
+
+.dataset-nav-strip-item.is-gating:not(.is-current) {
+    box-shadow: inset 0 0 0 1px var(--accent-gate);
+}
+
+.dataset-nav-strip-item.is-gating:not(.is-current):hover,
+.dataset-nav-strip-item.is-gating:not(.is-current):focus-visible {
+    box-shadow: inset 0 0 0 2px var(--accent-gate);
+}
+
+.dataset-nav-strip-item.is-gating .dataset-nav-strip-badge {
+    background: var(--accent-gate);
+    color: #160b06;
+}
+
+.dataset-nav-strip-item.is-review .dataset-nav-strip-badge {
+    color: var(--accent-warning);
+}
+
+.dataset-nav-strip-item.is-done .dataset-nav-strip-badge {
+    color: var(--accent-success);
 }
 
 #openseadragon.brightfield-ground ~ .dataset-nav-strip,

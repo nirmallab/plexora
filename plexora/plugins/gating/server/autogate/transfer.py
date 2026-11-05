@@ -212,6 +212,8 @@ def _verdicts():
 def apply_transfer(engine, packet, answer):
     from plexora.plugins.gating.server.autogate import transitions
 
+    from plexora.plugins.gating.server.autogate import groups
+
     units = transitions._units(engine, packet)
     outcomes = []
     for unit in units:
@@ -219,7 +221,10 @@ def apply_transfer(engine, packet, answer):
         verdict = answer.per_image.get(unit["project"]) or \
             (next(iter(answer.per_image.values())) if len(answer.per_image) == 1
              else "cannot_tell")
-        if verdict == "holds":
+        if groups.after_check(engine, unit, verdict):
+            # Engine v4: a group member's check (`groups.after_check`).
+            pass
+        elif verdict == "holds":
             unit["path"] = "transfer"
             unit["transfer_confidence"] = "moderate"
             unit["method"] = METHOD
@@ -240,8 +245,23 @@ def apply_transfer(engine, packet, answer):
 
 
 def dataset_summary(engine) -> dict:
-    """Per marker: each image's drift class, and the strategy they imply."""
+    """Per marker: each image's drift class, and the strategy they imply.
+    Engine v4: each marker's groups instead (`groups.summary`)."""
     ref = engine.record.get("reference_image")
+    if engine.record.get("groups"):
+        from plexora.plugins.gating.server.autogate import groups
+
+        per_marker = groups.summary(engine)
+        for marker, row in per_marker.items():
+            row["images"] = [{"project": p, "state": u["state"], "final": u.get("final"),
+                              "confidence": u.get("confidence"),
+                              "group": (u.get("group") or {}).get("id"),
+                              "class": (u.get("group") or {}).get("class"),
+                              "role": (u.get("group") or {}).get("role")}
+                             for p in engine.record["images"]
+                             for u in [engine.record["units"].get(unit_key(p, marker))] if u]
+        return {"reference_image": ref, "markers": per_marker, "engine": "v4",
+                "experimental_unit": "image", "n_images": len(engine.record["images"])}
     per_marker = {}
     for marker in engine.record["order"]:
         rows = []

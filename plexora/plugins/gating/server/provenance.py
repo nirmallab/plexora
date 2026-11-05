@@ -37,7 +37,7 @@ STATUSES = ("proposed", "accepted", "approved", "locked", "excluded")
 #: ("positive only within CD45+"): written as the plain gate at its threshold,
 #: with the condition in `detail.condition`.
 METHODS = ("gmm", "ai_accepted", "ai_refined", "ai_conditional", "transfer_aligned",
-           "agent_set", "manual", "imported", "rolled_back", "failed_marker",
+           "group_aligned", "agent_set", "manual", "imported", "rolled_back", "failed_marker",
            "no_positive_population")
 #: Statuses that refuse an agent's write.
 PROTECTED = ("locked", "approved")

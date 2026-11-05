@@ -8,7 +8,9 @@ Three probes, each the real client file against stand-ins:
   tests/js/agent_panel_probe.mjs    services/orbDriver.js + views/agentPanel.js
                                     -- the panel's phases, controls, Done state,
                                     setup question and reduced motion; the
-                                    viewer detached from the agent and back
+                                    viewer detached from the agent and back;
+                                    a dataset run's line, its progress passed
+                                    on, and its mirror following the tab
   tests/js/launch_state_probe.mjs   views/viewerSidebar.js -- a slot rebuild
                                     turns off the channels it drops (the rest
                                     of that probe is tests/test_launch_state.py)
@@ -96,6 +98,13 @@ PANEL_CHECKS = [
     "the reload snapshot restores a detached run; a run first heard mid-way is not assumed attached",
     "with the sidebar collapsed a live session shows the chip under the expand button; clicking it "
     "opens the sidebar and the panel",
+    'a dataset run says "Gating 3 of 8 images in parallel · 41 of 128 markers · this image: gating '
+    "(4 of 16)\" (over the bulk pass's stage), from its progress or its own event, and passes it on "
+    "as plexora:agent-dataset-progress, done on finished",
+    "after a reload on another image of a dataset run, its card is put back from the run whose "
+    "session lists this image (a run that does not is passed over)",
+    "a dataset run mirrored into this tab follows it: the reloaded page posts attach_viewer with "
+    "its view id and project; a run that does not follow the tab, or is mirrored elsewhere, is left be",
 ]
 
 LAUNCH_CHECKS = [

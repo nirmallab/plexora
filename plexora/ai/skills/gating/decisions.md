@@ -37,9 +37,10 @@ one only when nothing better exists. A parent whose own distribution is weak
 waits for its children (`defer_parents`). A marker that leaned on a reference
 which later failed carries `stood_on_failed`: say so in the report.
 
-## The default engine, `v2`
+## The default engine, `v3`
 
-With engine `v2` (first called candidates) the candidate gates are competing
+With engine `v3` (first called candidates, then `v2`; `v4` runs it for a
+dataset's groups, gating/dataset) the candidate gates are competing
 hypotheses. Each
 look is a `cell_panel`: numbered cells from the disputed intervals, shuffled,
 no value, call or gate shown; the reader labels every cell (`own_stain`,
