@@ -1,0 +1,36 @@
+{
+  "_comment": "Fixture paths on the bench machine (Windows, 2026-11-05). Override any with POC_FIXTURES=<json file>. S/M/L/XL as in docs/internal/BROWSER_NATIVE_INVESTIGATION.md; M here is LSP11385 (local), the Orion CRC02 mask and table come from s3://lin-2023-orion-crc/data/CRC02. flatMask M is LSP11385's mask level 0 written flat by fixtures.py (52923 x 45381 uint32, 9.6 GB raw, 32 MB deflated).",
+  "S": {
+    "image": "C:\\plexora-bench\\fixtures\\flat.ome.tif",
+    "mask": "C:\\Users\\aj\\Documents\\softwares\\biocognia\\plexora\\plexora\\data\\nb\\LSP26227-registered.ome_segMask.labels.pyramid.ome.tiff",
+    "table": "C:\\Users\\aj\\AppData\\Local\\plexora\\exemplar-001\\exemplar-001--unmicst_cell.csv",
+    "tableRoles": {
+      "cell_id": "CellID",
+      "x": "X_centroid",
+      "y": "Y_centroid"
+    },
+    "flatMask": "C:\\Users\\aj\\OneDrive - Mass General Brigham Incorporated\\nirmal lab\\resources\\exemplarData\\scimapExampleData\\segmentation\\unmicst-exemplar-001\\cell.ome.tif"
+  },
+  "M": {
+    "image": "C:\\Users\\aj\\Partners HealthCare Dropbox\\Ajit Nirmal\\nirmal lab\\temp\\LSP11385\\LSP11385.ome.tif",
+    "mask": "C:\\Users\\aj\\Partners HealthCare Dropbox\\Ajit Nirmal\\nirmal lab\\temp\\LSP11385\\mccellpose-LSP11385\\cell.labels.pyramid.ome.tiff",
+    "table": "C:\\Users\\aj\\Partners HealthCare Dropbox\\Ajit Nirmal\\nirmal lab\\temp\\LSP11385\\LSP11385--mccellpose_cell.csv",
+    "tableRoles": {
+      "cell_id": "CellID",
+      "x": "X_centroid",
+      "y": "Y_centroid"
+    },
+    "flatMask": "C:\\plexora-bench\\browser_node\\fixtures\\flat\\lsp11385-mask-flat.tif",
+    "marker": "CD45"
+  },
+  "L": {
+    "mask": "C:\\plexora-bench\\browser_node\\fixtures\\orion\\P37_S30-CRC02-mask.ome.tif",
+    "table": "C:\\plexora-bench\\browser_node\\fixtures\\orion\\P37_S30-CRC02.csv",
+    "tableRoles": {
+      "cell_id": "CellID",
+      "x": "X_centroid",
+      "y": "Y_centroid"
+    },
+    "marker": "CD45"
+  }
+}

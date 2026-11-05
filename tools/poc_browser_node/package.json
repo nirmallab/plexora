@@ -1,0 +1,22 @@
+{
+  "name": "plexora-poc-browser-node",
+  "private": true,
+  "version": "0.0.0",
+  "description": "Proof-of-concept pages and drivers for the browser-native Plexora investigation (docs/internal/BROWSER_NATIVE_INVESTIGATION.md). Nothing here ships.",
+  "type": "module",
+  "license": "SEE LICENSE IN ../../LICENSE",
+  "scripts": {
+    "build": "node build.mjs",
+    "test": "node --test tests/*.test.mjs"
+  },
+  "dependencies": {
+    "@duckdb/duckdb-wasm": "1.33.1-dev57.0",
+    "apache-arrow": "21.2.0",
+    "geotiff": "3.0.5",
+    "kdbush": "4.1.0"
+  },
+  "devDependencies": {
+    "esbuild": "0.28.2",
+    "playwright-core": "1.65.0"
+  }
+}
