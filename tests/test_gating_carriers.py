@@ -200,6 +200,32 @@ def test_a_carrier_must_carry_the_marker_more_often_than_the_average_cell(monkey
     assert [c["marker"] for c in bare["chosen"]] == ["CK", "CD3"]
 
 
+def test_when_no_narrow_carrier_carries_it_the_wider_ones_are_tried_narrowest_first(monkeypatch):
+    from plexora.plugins.gating.server.autogate.engine import Engine
+
+    ds = _lineages()
+    monkeypatch.setattr(context, "carriers_for", lambda panel, marker: [{"marker": "CD20", "source": "vocabulary"}])
+    monkeypatch.setattr(context, "wider_carriers", lambda panel, marker: [
+        {"marker": "CD3", "source": "vocabulary"}, {"marker": "CK", "source": "vocabulary"}])
+    stub = _Populations({m: _gate(ds, m, 5.5)["low"] for m in ("CD3", "CD20", "CK")})
+    unit = {"project": "p", "marker": "PD1", "gmm": float(np.expm1(5.0))}
+    found = Engine.carrier_populations(stub, unit, ds, {"top": 2, "min_enrichment": 1.0})
+    # The B cells carry no PD-1: the climb goes on to the T cells and stops there.
+    assert found["climbed"] == ["CD3"] and [c["marker"] for c in found["chosen"]] == ["CD3"]
+    assert [c["marker"] for c in found["listed"]] == ["CD20", "CD3"]
+    # A narrow carrier that carries it: no climb.
+    monkeypatch.setattr(context, "carriers_for", lambda panel, marker: [{"marker": "CD3", "source": "vocabulary"}])
+    assert Engine.carrier_populations(stub, unit, ds, {"top": 2, "min_enrichment": 1.0})["climbed"] == []
+
+
+def test_the_wider_carriers_are_the_stated_ones_left_out_narrowest_first():
+    panel = _panel()                       # no CD8: PD-1 is read in its CD4 cells and T cells; CD45 is wider
+    assert [c["marker"] for c in context.wider_carriers(panel, "PD-1")] == ["CD45"]
+    full = context.build([*PANEL, "CD8"])
+    assert [c["marker"] for c in context.wider_carriers(full, "PD-1")] == ["CD3", "CD45"]
+    assert context.wider_carriers(panel, "CD3") == []
+
+
 class _Controls:
     """Just what `Engine._marker_controls` reads."""
 

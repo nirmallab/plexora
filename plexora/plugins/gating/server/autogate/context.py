@@ -540,6 +540,25 @@ def carriers_for(context, marker) -> list:
             for n in most_specific(context, [*stated, *planned])]
 
 
+def wider_carriers(context, marker) -> list:
+    """[{marker, source}]: the stated carriers `carriers_for` left out as
+    wider than one it kept, narrowest first (PD-1: CD3, then CD45). Where
+    `Engine.carrier_populations` climbs when none of the narrowest carries
+    the marker more often than the average cell: it is concentrated in its
+    narrowest carriers, diluted in the wider ones."""
+    entry = (context.get("entries") or {}).get(marker) or {}
+    if not wants_carriers(entry):
+        return []
+    kept = {c["marker"] for c in carriers_for(context, marker)}
+    out = []
+    for p in entry.get("partners") or []:
+        if (p.get("relation") in ("subset", "subset_any") and not p.get("proposed")
+                and _is_carrier(context, p["marker"]) and p["marker"] not in kept
+                and p["marker"] not in {c["marker"] for c in out}):
+            out.append({"marker": p["marker"], "source": "vocabulary"})
+    return out
+
+
 def carriers_planned(context, biology_record) -> dict:
     """{marker: [carrier]} a settled review named in this context."""
     return dict(review_for(context, biology_record).get("carriers") or {})

@@ -1674,12 +1674,16 @@ class Engine(BaseEngine):
         carrier_enrichment` above `rule["min_enrichment"]`, at the marker's
         Auto gate), the `rule["top"]` holding the most of its positives:
         {listed, chosen: [{marker, source, low, high, n, grade, n_clean,
-        positives, share, enrichment}], skipped}. Without an Auto gate or
+        positives, share, enrichment}], skipped, climbed}. When none of the
+        narrowest carries it, the wider stated carriers are tried narrowest
+        first (`context.wider_carriers`, named in `climbed`) until one
+        does. Without an Auto gate or
         start to count positives at, the most cells. None when it has no
         carriers. Frozen on the unit: every look draws from these gates."""
         from plexora.plugins.gating.server.autogate import bivariate, context
 
-        listed = context.carriers_for(self.panel_for(unit["project"]), unit["marker"])
+        panel = self.panel_for(unit["project"])
+        listed = context.carriers_for(panel, unit["marker"])
         if not listed:
             return None
         book = self.ledger(unit["project"], without=unit)
@@ -1687,14 +1691,15 @@ class Engine(BaseEngine):
         if low is None:
             low = (unit.get("start") or {}).get("low")
         rows, skipped = [], []
-        for carrier in listed:
+
+        def test(carrier):
             entry = book.get(carrier["marker"]) or {}
             grade = self._carrier_grade(entry)
             if grade is None:
                 skipped.append({"marker": carrier["marker"], "why": (
                     f"no gate to draw on ({entry['state']})" if entry.get("state")
                     else "not gated in this run")})
-                continue
+                return
             row = {**carrier, **self._gated(ds, carrier["marker"], entry["gate"]), "grade": grade}
             if low is not None:
                 row.update(bivariate.carrier_enrichment(
@@ -1706,11 +1711,25 @@ class Engine(BaseEngine):
                     skipped.append({"marker": carrier["marker"], "why": (
                         "its cells carry it no more often than the average cell "
                         f"(x{row['enrichment'] or 0:.2f} once cleaned)")})
-                    continue
+                    return
             rows.append(row)
+
+        for carrier in listed:
+            test(carrier)
+        climbed = []
+        if low is not None and not rows:
+            # None of the narrowest carries it: climb to the wider stated ones, narrowest
+            # first (PD-1: CD3, then CD45), and stop at the first that does.
+            for carrier in context.wider_carriers(panel, unit["marker"]):
+                climbed.append(carrier["marker"])
+                test(carrier)
+                if rows:
+                    break
         most = (lambda r: -r["positives"]) if low is not None else (lambda r: -r["n"])
         chosen = sorted(rows, key=most)[:int(rule["top"])]
-        return {"listed": listed, "chosen": chosen, "skipped": skipped}
+        listed = listed + [c for c in context.wider_carriers(panel, unit["marker"])
+                           if c["marker"] in climbed]
+        return {"listed": listed, "chosen": chosen, "skipped": skipped, "climbed": climbed}
 
     def _excluded_lineages(self, ds, project, marker, book) -> list:
         """The gated lineages `marker` excludes (the panel's exclusions,
