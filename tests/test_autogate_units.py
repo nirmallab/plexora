@@ -410,6 +410,32 @@ def test_the_regression_check_allows_a_step_in_a_wide_population():
     assert checks["delta_from_gmm"]["ok"], checks["delta_from_gmm"]
 
 
+def test_b2m_is_held_to_the_share_the_marker_graph_expects():
+    """B2M is on most cells (graph 2026-11-05.1: expected_fraction [0.5, 1]),
+    so `prior_fraction` fails a gate at its bright peak's crossover (36% in
+    LSP11385) and passes one in its main population's lower flank."""
+    from plexora.plugins.gating.server.autogate import context, regression
+
+    panel = context.build(["CD45", "B2M", "SOX10"])
+    prior = panel["entries"]["B2M"]["expected_fraction"]
+    assert prior == [0.5, 1.0]
+    assert panel["entries"]["CD45"]["expected_fraction"] is None
+    rng = np.random.default_rng(0)
+    n = 40_000
+    main = rng.random(n) < 0.8
+    b2m = np.where(main, rng.normal(7.2, 0.45, n), rng.normal(5.6, 0.3, n))
+    ds = FakeData({"B2M": np.expm1(b2m)})
+    gmm = float(np.expm1(6.4))
+
+    def fraction(gate):
+        return {c["name"]: c for c in regression.numeric_checks(
+            ds, "B2M", float(np.expm1(gate)), gmm, prior=prior)["checks"]}["prior_fraction"]
+
+    high, flank = fraction(7.4), fraction(6.4)
+    assert high["ok"] is False and high["value"] < 0.5, high
+    assert flank["ok"] is True and flank["limit"] == [0.5, 1.0], flank
+
+
 def test_purity_is_judged_against_the_markers_own_brightest_cells():
     """The partners check is self-calibrated: a gate fails only for the
     impurity it ADDS over the marker's brightest positives, so a low gate
