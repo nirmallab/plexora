@@ -368,7 +368,7 @@ def volume_overview(pyramid):
     """The mean-pooled overview of one plane's pyramid -- the TIFF branch's
     heuristic (smallest level with both sides >= 200, pooled toward 200)."""
     import numpy as np
-    from skimage.measure import block_reduce
+    from plexora.server.utils.blocks import block_reduce
 
     from plexora.server.volume.model import is_single_array
 
@@ -489,7 +489,7 @@ class LocalImageProvider:
         import tifffile as tf
         import zarr
         from ome_types import from_xml
-        from skimage.measure import block_reduce
+        from plexora.server.utils.blocks import block_reduce
 
         from plexora.server.utils import (brightfield, dicom_wsi, ome_zarr,
                                           tiff_series, xenium_focus)

@@ -121,10 +121,12 @@ def pending() -> int:
         return len(_queue)
 
 
-def run_pending(budget_s: float | None = None) -> int:
+def run_pending(budget_s: float | None = None, ran: list | None = None) -> int:
     """Run queued tasks in the order they were queued, and those they queue in
-    turn, until none is left or `budget_s` has passed; returns how many ran.
-    A task is never cut short: the budget is checked between tasks."""
+    turn, until none is left or `budget_s` has passed; returns how many ran
+    (and appends their names to `ran`, when given). A task is never cut short:
+    the budget is checked between tasks."""
+    names = ran
     started = time.monotonic()
     ran = 0
     while True:
@@ -134,6 +136,8 @@ def run_pending(budget_s: float | None = None) -> int:
             task = _queue.pop(0)
         task.run()
         ran += 1
+        if names is not None:
+            names.append(task.name)
         if budget_s is not None and time.monotonic() - started >= budget_s:
             return ran
 
@@ -159,14 +163,48 @@ def boundary():
 
 
 _idle = None
+_waiting = None
 
 
-def set_idle(function) -> None:
+def set_idle(function, waiting=None) -> None:
     """How a cooperative runtime lets time pass without blocking: the browser
     worker installs a sleep that serves other requests meanwhile (a poll that
-    waits on the user must not stop the user's answer from arriving)."""
-    global _idle
+    waits on the user must not stop the user's answer from arriving), and
+    `waiting()`, whether a request is waiting to be served (`checkpoint`)."""
+    global _idle, _waiting
     _idle = function
+    _waiting = waiting
+
+
+#: How often a long task lets requests in (`checkpoint`), in seconds.
+CHECKPOINT_S = 0.05
+_last_yield = 0.0
+
+
+def checkpoint() -> None:
+    """A long task's place to let a waiting request in. On threads, nothing:
+    the request has a thread of its own. In the browser the worker has one
+    thread, and a background job (warming a project's channel statistics, a
+    gating pass) would otherwise hold every request behind it: here, at most
+    every `CHECKPOINT_S`, the task yields to the page for no time -- a request
+    that arrived meanwhile is served -- and carries on where it was. On a
+    clock rather than on `waiting()`: while Python runs, the worker cannot even
+    receive the message that a request is waiting."""
+    global _last_yield
+    if _idle is None or mode() != "cooperative":
+        return
+    if _waiting is not None:
+        # The page counts what it has posted (shared memory): yield exactly
+        # when a request is on its way, and not otherwise.
+        if _waiting():
+            _idle(0)
+            _last_yield = time.monotonic()
+        return
+    now = time.monotonic()
+    if now - _last_yield < CHECKPOINT_S:
+        return
+    _idle(0)
+    _last_yield = time.monotonic()
 
 
 def wsgi(application):
@@ -271,8 +309,9 @@ def daemon_timer(seconds: float, function, *args, name=None, **kwargs):
 
 def _reset_for_tests():
     """Forget queued work (a test that switched modes leaves none behind)."""
-    global _depth, _idle
+    global _depth, _idle, _waiting
     with _queue_lock:
         _queue.clear()
     _depth = 0
     _idle = None
+    _waiting = None

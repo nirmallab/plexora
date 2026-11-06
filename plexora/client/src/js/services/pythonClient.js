@@ -40,14 +40,20 @@
     let wakeups = [];
     let resolveReady;
     const ready = new Promise((resolve) => { resolveReady = resolve; });
-    const cancels = typeof SharedArrayBuffer === "function" && global.crossOriginIsolated
-        ? new SharedArrayBuffer(CANCEL_BYTES) : null;
+    const shared = typeof SharedArrayBuffer === "function" && global.crossOriginIsolated;
+    const cancels = shared ? new SharedArrayBuffer(CANCEL_BYTES) : null;
+    //: Requests posted and not yet received by the worker, counted where the
+    //: worker can read them while Python runs: a long task lets them in at its
+    //: next checkpoint (a message alone cannot say it is waiting until the
+    //: worker's event loop delivers it, which a busy loop starves).
+    const inFlight = shared ? new Int32Array(new SharedArrayBuffer(4)) : null;
     const cancelled = [];
 
     function call(op, args, transfer) {
         const id = nextId++;
         return new Promise((resolve, reject) => {
             waiting.set(id, { resolve, reject });
+            if (inFlight) Atomics.add(inFlight, 0, 1);
             worker.postMessage({ id, op, args }, transfer || []);
         });
     }
@@ -70,6 +76,10 @@
         if (data.event) {
             const event = data.event;
             if (event.kind === "job" && event.job) jobs.set(event.job.job_id, event);
+            if (event.kind === "step") {
+                steps.push({ ms: event.ms, names: event.names, at: Math.round(performance.now()) });
+                if (steps.length > RECENT) steps.shift();
+            }
             if (event.kind === "wakeup") {
                 const held = wakeups;
                 wakeups = [];
@@ -87,7 +97,7 @@
         worker = new Worker(new URL(root + WORKER, global.location.href), { type: "module" });
         worker.onmessage = onMessage;
         worker.onerror = (event) => console.error("[python] worker failed:", event.message);
-        call("boot", { base, origin, cancels, debug }).then(resolveReady, (error) => {
+        call("boot", { base, origin, cancels, inFlight, debug }).then(resolveReady, (error) => {
             resolveReady({ error: String(error?.message || error) });
         });
         return ready;
@@ -121,7 +131,14 @@
         return null;
     }
 
+    //: The last requests Python answered: {path, method, status, ms, queued},
+    //: for the performance record and the website's own diagnostics.
+    const recent = [];
+    const steps = [];
+    const RECENT = 400;
+
     async function send(url, init, request) {
+        const sent = performance.now();
         const method = ((init && init.method) || (request && request.method) || "GET").toUpperCase();
         const headers = headersOf(init, request);
         let body = await bodyOf(init, request);
@@ -147,6 +164,10 @@
             payload = new Uint8Array(await new Blob(parts).arrayBuffer());
         }
         const status = answer.status;
+        recent.push({ path: url.pathname, method, status, ms: Math.round(performance.now() - sent),
+                      pyMs: answer.pyMs ?? null, bytes: payload ? payload.byteLength : 0,
+                      at: Math.round(sent) });
+        if (recent.length > RECENT) recent.shift();
         const nullBody = status === 204 || status === 304 || method === "HEAD";
         return new Response(nullBody ? null : payload, { status, headers: answer.headers });
     }
@@ -224,7 +245,10 @@
         heap: () => ready.then(() => call("heap", {})),
         run: (code) => ready.then(() => call("run", { code })),
         sync: () => ready.then(() => call("sync", {})),
+        trace: () => ready.then(() => call("trace", {})),
         job: (id) => (jobs.has(id) ? jobs.get(id).job : null),
+        recent: () => recent.slice(),
+        steps: () => steps.slice(),
         cancel,
         on,
     });

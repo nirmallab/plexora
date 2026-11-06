@@ -1913,6 +1913,9 @@ def _warm_datasource_caches(datasource_name):
             # warm-up) would otherwise abandon every channel after the first
             # stale name.
             def warm(step, fullname):
+                # Each channel a place to let a request in: on the website the
+                # whole pass would otherwise hold every request behind it.
+                _work.checkpoint()
                 try:
                     step(fullname, datasource_name)
                 except UnknownChannelError:

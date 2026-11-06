@@ -50,7 +50,9 @@ def test_a_job_runs_after_the_call_that_queued_it(session):
     assert started["ok"], started
     job_id = started["result"]["job_id"]
     assert _work.pending() == 1  # answered first; nothing ran inside the call
-    assert cooperative.step(budget_ms=10_000) == {"ran": 1, "pending": 0}
+    stepped = cooperative.step(budget_ms=10_000)
+    assert stepped["ran"] == 1 and stepped["pending"] == 0
+    assert stepped["names"] == [f"agent-job-{job_id}"]
     mine = [message["job"] for message in posted if message["job"]["job_id"] == job_id]
     assert mine[0]["status"] == "queued" and mine[-1]["status"] == "done"
     assert all(message["kind"] == "job" for message in posted)
@@ -76,7 +78,8 @@ def test_the_budget_leaves_the_rest_for_later(session):
         invoke(session, "holography.reconstruct", {"project": "holo", "steps": 2, "step_s": 0.02})
     first = cooperative.step(budget_ms=1)
     assert first["ran"] == 1 and first["pending"] == 2
-    assert cooperative.step(budget_ms=10_000) == {"ran": 2, "pending": 0}
+    rest = cooperative.step(budget_ms=10_000)
+    assert rest["ran"] == 2 and rest["pending"] == 0
 
 
 def test_a_poll_waiting_on_the_user_sleeps_through_the_page(session):

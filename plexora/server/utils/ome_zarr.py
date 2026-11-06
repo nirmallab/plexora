@@ -1281,7 +1281,7 @@ def overview_plane(pyramid, minimum: int = 200, maximum: int = 400):
     down when it is still well above it. Bounded regardless of the image's full
     resolution, which is what makes materializing it safe.
     """
-    from skimage.measure import block_reduce
+    from plexora.server.utils.blocks import block_reduce
 
     candidates = [index for index in range(len(pyramid))
                   if all(d >= minimum for d in pyramid[index].shape[-2:])]

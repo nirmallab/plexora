@@ -271,7 +271,7 @@ def overview_plane(pyramid, minimum: int = 200, maximum: int = 400) -> np.ndarra
     above it -- which is what makes it bounded whatever the folder's full
     resolution is.
     """
-    from skimage.measure import block_reduce
+    from plexora.server.utils.blocks import block_reduce
 
     candidates = [index for index in range(len(pyramid))
                   if all(size >= minimum for size in pyramid[index].shape[-2:])]

@@ -29,16 +29,17 @@ import os
 from plexora import _work
 
 
-def install(*, post=None, cancelled=None, idle=None) -> None:
+def install(*, post=None, cancelled=None, idle=None, waiting=None) -> None:
     """Switch this process to cooperative work and connect it to the page.
 
     `post(message)` sends a dict to the page; `cancelled(job_id)` reads the
-    page's cancel flags; `idle(seconds)` passes time while serving requests.
-    Each may be None (that part is off)."""
+    page's cancel flags; `idle(seconds)` passes time while serving requests;
+    `waiting()` says whether a request is waiting (long tasks then let it in,
+    `_work.checkpoint`). Each may be None (that part is off)."""
     from plexora.agent import jobs
 
     os.environ["PLEXORA_WORK"] = "cooperative"
-    _work.set_idle(idle)
+    _work.set_idle(idle, waiting)
     jobs.set_cancel_probe(cancelled)
     if post is not None:
         from plexora.agent.bridge_wire import job_state
@@ -51,6 +52,8 @@ def install(*, post=None, cancelled=None, idle=None) -> None:
 
 def step(budget_ms: float = 50.0) -> dict:
     """Run queued work for about `budget_ms` (a task is never cut short); the
-    worker calls this when it has no request waiting. `{ran, pending}`."""
-    ran = _work.run_pending(budget_s=max(0.0, budget_ms) / 1000.0)
-    return {"ran": ran, "pending": _work.pending()}
+    worker calls this when it has no request waiting. `{ran, pending, names}`,
+    `names` the tasks that ran (what the page records when a step was long)."""
+    names = []
+    ran = _work.run_pending(budget_s=max(0.0, budget_ms) / 1000.0, ran=names)
+    return {"ran": ran, "pending": _work.pending(), "names": names}

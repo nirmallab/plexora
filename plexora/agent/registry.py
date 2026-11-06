@@ -158,8 +158,12 @@ class Call:
         """Whether someone asked this job to stop. Always False when immediate."""
         if self.job is None:
             return False
+        from plexora import _work
         from plexora.agent.jobs import cancel_requested
 
+        # A job asks this often: the place it lets a waiting request in
+        # (on the website, where it holds the only thread; _work.checkpoint).
+        _work.checkpoint()
         return cancel_requested(self.job)
 
     def check_cancelled(self):

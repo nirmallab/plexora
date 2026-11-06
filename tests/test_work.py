@@ -205,3 +205,20 @@ def test_the_suites_that_start_work_pass_with_it_queued(suites):
          "--timeout", "1800", *suites],
         cwd=ROOT, env=env, capture_output=True, text=True, timeout=7200)
     assert done.returncode == 0, done.stdout[-4000:] + done.stderr[-2000:]
+
+
+def test_a_checkpoint_lets_the_page_in_on_a_clock_and_never_on_threads(mode, monkeypatch):
+    yielded = []
+    mode("threads")
+    _work.set_idle(yielded.append)
+    _work.checkpoint()
+    assert yielded == []
+    mode("cooperative")
+    _work.set_idle(yielded.append)
+    monkeypatch.setattr(_work, "_last_yield", 0.0)
+    _work.checkpoint()  # long enough since the last: yields
+    _work.checkpoint()  # just yielded: carries on
+    assert yielded == [0]
+    monkeypatch.setattr(_work, "_last_yield", 0.0)
+    _work.checkpoint()
+    assert yielded == [0, 0]

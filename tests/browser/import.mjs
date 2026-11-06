@@ -73,6 +73,18 @@ try {
     out.picks = await page.evaluate(async () => (await window.PlexoraPicks.list())
         .map((p) => ({ id: p.id, kind: p.kind, files: (p.files || []).length })));
     if (shots) await page.screenshot({ path: path.join(shots, "import-viewer.png") });
+    // What Python answered while the viewer opened, by route.
+    const recent = await page.evaluate(() => window.PlexoraPython.recent());
+    const byRoute = {};
+    for (const r of recent) {
+        const key = r.path.replace(/\/generated\/data\/.*/, "/generated/data/*").replace(/\/\d+_\d+\.png$/, "/tile");
+        const row = byRoute[key] || (byRoute[key] = { n: 0, ms: 0, py: 0, max: 0 });
+        row.n += 1; row.ms += r.ms; row.py += r.pyMs || 0; row.max = Math.max(row.max, r.ms);
+    }
+    out.python = Object.fromEntries(Object.entries(byRoute).sort((a, b) => b[1].ms - a[1].ms).slice(0, 25));
+    out.pythonTotal = { requests: recent.length, ms: recent.reduce((a, r) => a + r.ms, 0),
+                        py: recent.reduce((a, r) => a + (r.pyMs || 0), 0) };
+    out.steps = await page.evaluate(() => window.PlexoraPython.steps());
     out.errors = errors.slice(0, 20);
     out.failed = failed.slice(0, 20);
 } catch (error) {

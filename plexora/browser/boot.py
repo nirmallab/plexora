@@ -9,6 +9,7 @@ arrive as callables -- so the same boot runs under CPython in the tests
 - `post(message)`: a dict to the page (job records, wakeups);
 - `cancelled(job_id)`: the page's cancel flags (shared memory);
 - `idle(seconds)`: let time pass while the page is served;
+- `waiting()`: whether a request is waiting to be served;
 - `columns(spec)`: a table's columns from the page's column store.
 
 What it does, in order: the environment the app reads at build; the
@@ -73,7 +74,7 @@ def http() -> bool:
     return True
 
 
-def start(origin: str, *, post=None, cancelled=None, idle=None, columns=None,
+def start(origin: str, *, post=None, cancelled=None, idle=None, waiting=None, columns=None,
           data_root: str = "/data", licence_dir: str = "/bioc") -> dict:
     """Boot once; returns what the page shows in its status chip and records:
     `{version, rules, seconds, shims}`."""
@@ -85,7 +86,7 @@ def start(origin: str, *, post=None, cancelled=None, idle=None, columns=None,
     from plexora.server.models import viewer_sessions
     from plexora.server.providers import browser as browser_provider
 
-    cooperative.install(post=post, cancelled=cancelled, idle=idle)
+    cooperative.install(post=post, cancelled=cancelled, idle=idle, waiting=waiting)
     if post is not None:
         viewer_sessions.set_wakeup(lambda: post({"kind": "wakeup"}))
     browser_provider.set_column_source(columns)

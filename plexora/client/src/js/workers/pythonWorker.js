@@ -34,6 +34,10 @@ let idling = 0;
 let syncPending = false;
 let nativeFs = null;
 let debug = false;
+//: Tests only (debug): when each message arrived, started and was answered.
+const traced = [];
+//: The page's count of messages posted and not yet received (shared memory).
+let inFlight = null;
 const at = () => performance.timeOrigin + performance.now();
 const mark = (name) => self.postMessage({ mark: name, at: at() });
 
@@ -141,6 +145,7 @@ async function boot(args) {
     origin = args.origin;
     if (args.cancels) cancels = args.cancels;
     debug = Boolean(args.debug);
+    inFlight = args.inFlight || null;
     const phases = { start: at() };
     stagesInfo = await (await fetch(`${base}stages.json`)).json();
     const wheels = Promise.all(stagesInfo.base.wheels.map(fetchWheel));
@@ -160,6 +165,7 @@ async function boot(args) {
     self.plexoraCancelled = cancelled;
     self.plexoraLoadStage = loadStage;
     self.plexoraColumns = (src) => columnStore.get(src) || null;
+    self.plexoraWaiting = () => queue.length > 0 || (inFlight !== null && Atomics.load(inFlight, 0) > 0);
     py.globals.set("ORIGIN", origin);
     const info = JSON.parse(await py.runPythonAsync(`
 import json
@@ -174,7 +180,9 @@ def _idle(seconds):
     import asyncio
     js.self.plexoraIdle(1)
     try:
-        run_sync(asyncio.sleep(seconds))
+        # No time (a long task's checkpoint): yield to whatever is queued --
+        # the messages carrying requests -- rather than to a timer.
+        run_sync(js.self.plexoraYield() if seconds <= 0 else asyncio.sleep(seconds))
     finally:
         js.self.plexoraIdle(-1)
 
@@ -190,12 +198,22 @@ def _columns(spec):
 
 _finder = stages.install(lambda name: run_sync(js.plexoraLoadStage(name, _finder.importers.get(name, "?"))))
 json.dumps(boot.start(ORIGIN, post=_post, cancelled=lambda job: bool(js.plexoraCancelled(job)),
-                      idle=_idle, columns=_columns))
+                      idle=_idle, waiting=lambda: bool(js.plexoraWaiting()), columns=_columns))
 `));
     phases.ready = at(); mark("ready");
     return { phases, info, store, stages: Object.fromEntries(
         Object.entries(stagesInfo).map(([name, stage]) => [name, stage.bytes])) };
 }
+
+//: A long task's yield (its checkpoint): turns of the event loop until every
+//: message the page has posted has been received -- and, the task idling, its
+//: request answered -- or, without the page's count, one turn.
+self.plexoraYield = async () => {
+    const turn = () => new Promise((resolve) => setTimeout(resolve, 0));
+    if (inFlight === null) return turn();
+    for (let i = 0; i < 1000 && (Atomics.load(inFlight, 0) > 0 || queue.length); i += 1) await turn();
+    return undefined;
+};
 
 self.plexoraIdle = (delta) => {
     idling += delta;
@@ -219,6 +237,7 @@ function call(fn, ...args) {
 const jspi = typeof WebAssembly.Suspending === "function";
 
 async function request(args) {
+    const started = performance.now();
     const handle = py.pyimport("plexora.browser.bridge").handle;
     const app = py.pyimport("plexora").app;
     const message = py.toPy({ ...args, body: args.body ? new Uint8Array(args.body) : null });
@@ -228,6 +247,7 @@ async function request(args) {
         headers: answer.get("headers").toJs(),
         body: toBytes(answer.get("body")),
         stream: answer.get("stream") ?? null,
+        pyMs: Math.round(performance.now() - started),
     };
     if (answer.get("wrote")) scheduleSync();
     answer.destroy(); message.destroy(); handle.destroy(); app.destroy();
@@ -270,6 +290,7 @@ const OPS = {
         if (nativeFs) await nativeFs.syncfs();
         return performance.now() - started;
     },
+    trace: () => (debug ? traced.splice(0) : null),
     run: async ({ code }) => {
         if (!debug) throw new Error("run is for tests: boot with debug: true");
         const value = await py.runPythonAsync(code);
@@ -281,13 +302,18 @@ const OPS = {
 // waiting on the user, when the next request is answered in the gap.
 async function drain() {
     while (queue.length && (!busy || idling > 0)) {
-        const { id, op, args } = queue.shift();
+        const { id, op, args, arrived } = queue.shift();
+        const began = performance.now();
         const nested = busy;
         busy = true;
         try {
             const result = await OPS[op](args || {});
             const transfer = result && result.body instanceof Uint8Array ? [result.body.buffer] : [];
             self.postMessage({ id, ok: true, result }, transfer);
+            if (debug && op === "request") {
+                traced.push({ path: args.path, arrived: Math.round(arrived), began: Math.round(began),
+                              done: Math.round(performance.now()), nested, idling });
+            }
         } catch (error) {
             self.postMessage({ id, ok: false, error: String(error?.message || error).slice(-6000) });
         } finally {
@@ -297,20 +323,36 @@ async function drain() {
     if (!busy && !queue.length) step();
 }
 
-// Background work, a slice at a time, while nothing is waiting.
+// Background work, a slice at a time, while nothing is waiting -- and once
+// requests have been quiet for a moment (a page opening asks for many things
+// in bursts, and a job started between two of them holds the next), but never
+// later than MAX_DEFER_MS after the last slice: a page that polls steadily
+// must not starve its jobs.
+const QUIET_MS = 150;
+const MAX_DEFER_MS = 500;
+let lastRequest = 0;
+let lastStep = 0;
 let stepping = false;
 function step() {
     if (!py || stepping || busy || queue.length) return;
     stepping = true;
+    const now = performance.now();
+    const wait = now - lastStep >= MAX_DEFER_MS ? 0 : Math.max(0, QUIET_MS - (now - lastRequest));
     setTimeout(async () => {
         stepping = false;
         if (busy || queue.length) return;
         busy = true;
+        lastStep = performance.now();
         let pending = 0;
         try {
             const cooperative = py.pyimport("plexora.browser.cooperative");
+            const began = performance.now();
             const outcome = await call(cooperative.step, 50);
             pending = outcome.get("pending");
+            const ms = Math.round(performance.now() - began);
+            if (outcome.get("ran")) {
+                self.postMessage({ event: { kind: "step", ms, names: outcome.get("names").toJs() } });
+            }
             outcome.destroy(); cooperative.destroy();
         } catch (error) {
             self.postMessage({ log: `step: ${error?.message || error}` });
@@ -319,10 +361,13 @@ function step() {
         }
         if (queue.length) drain();
         else if (pending) step();
-    }, 0);
+    }, wait);
 }
 
 self.onmessage = ({ data }) => {
+    if (inFlight !== null) Atomics.sub(inFlight, 0, 1);
+    data.arrived = performance.now();
+    if (data.op === "request") lastRequest = performance.now();
     queue.push(data);
     drain();
 };

@@ -76,5 +76,5 @@ def test_the_worker_boots_and_answers_through_the_bridge(tmp_path):
     assert out["projects"] == 200 and out["register"] == 200
     assert out["woken"] >= 1
     assert out["before_step"] == [] and out["after_step"] == ["job"]
-    assert out["step"] == {"ran": 1, "pending": 0}
+    assert out["step"]["ran"] == 1 and out["step"]["pending"] == 0
     assert out["tifffile_codecs"] == "plexora.browser.imagecodecs_shim"  # tifffile took the stand-in
