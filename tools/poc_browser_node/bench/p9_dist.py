@@ -28,6 +28,10 @@ P9 loads and its wheels with every module precompiled to bytecode for
 Pyodide's Python (Pyodide's own packages ship sources only, so every visit
 compiles every module it imports), and pyarrow's declared dependency on
 pandas dropped from the lockfile. Served with ``--params '{"dist": "pyc"}'``.
+``--variant pycbr`` re-stores those wheels for brotli (``.br`` beside each,
+sent with ``Content-Encoding: br``: 46 MB where ``pyc`` is 88); ``--variant
+pages`` is ``pyc`` as Cloudflare Pages can serve it (no file over 25 MiB, the
+CDN compressing only the core's wasm and JavaScript).
 
 Nothing here runs Python in the browser; the bench driver does.
 """
@@ -286,12 +290,31 @@ def variant_br(brotli: str):
     return out
 
 
+def variant_pages(brotli: str):
+    """`<V>-pages/`: what Cloudflare Pages can serve as it is. Pages holds no
+    file over 25 MiB (`pycbr`'s stored polars wheel is 110 MB) and compresses
+    on the fly only what it counts as compressible: so `<V>-pyc/`'s deflated
+    wheels (the largest 18 MB) as they are, and brotli for the core's wasm and
+    JavaScript, standing in for the CDN's own (which uses a lower level than
+    the 11 here)."""
+    src = ROOT.with_name(f"{VERSION}-pyc")
+    out = ROOT.with_name(f"{VERSION}-pages")
+    if out.exists():
+        shutil.rmtree(out)
+    shutil.copytree(src, out)
+    for name in CORE:
+        if name.endswith((".wasm", ".mjs", ".js")):
+            _brotli(out / "pyodide" / name, brotli)
+    return out
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     parser.add_argument("--force-wheels", action="store_true")
-    parser.add_argument("--variant", choices=("pyc", "pycbr"), default=None,
+    parser.add_argument("--variant", choices=("pyc", "pycbr", "pages"), default=None,
                         help="pyc: also build <V>-pyc/, every module precompiled (needs --python314); "
-                             "pycbr: <V>-pyc/ as stored wheels served with brotli (needs --brotli)")
+                             "pycbr: <V>-pyc/ as stored wheels served with brotli (needs --brotli); "
+                             "pages: <V>-pyc/ as Cloudflare Pages would serve it (needs --brotli)")
     parser.add_argument("--python314", default=os.environ.get("P9_PYTHON314"),
                         help="a CPython 3.14 to compile Pyodide's bytecode with")
     parser.add_argument("--brotli", default=os.environ.get("P9_BROTLI") or shutil.which("brotli"),
@@ -303,10 +326,11 @@ def main(argv=None):
             raise SystemExit("--variant pyc needs --python314 (a CPython 3.14 interpreter)")
         print(json.dumps({"variant": str(variant_pyc(args.python314))}))
         return
-    if args.variant == "pycbr":
+    if args.variant in ("pycbr", "pages"):
         if not args.brotli:
-            raise SystemExit("--variant pycbr needs --brotli (the brotli encoder)")
-        print(json.dumps({"variant": str(variant_br(args.brotli))}))
+            raise SystemExit(f"--variant {args.variant} needs --brotli (the brotli encoder)")
+        build = variant_br if args.variant == "pycbr" else variant_pages
+        print(json.dumps({"variant": str(build(args.brotli))}))
         return
     wheels = build_wheels(args.force_wheels)
     record = manifest(dist, wheels)

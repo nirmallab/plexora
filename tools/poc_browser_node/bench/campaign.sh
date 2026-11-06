@@ -47,6 +47,7 @@ run --poc P8 --fixture S
 if [ "${P9:-0}" = 1 ]; then
     run --poc P9 --fixture P9S
     run --poc P9 --fixture P9S --label trimmed --params '{"dist":"pycbr","tls":true,"lazy":true}'
+    run --poc P9 --fixture P9S --label pages --params '{"arms":["cold","return","throttled","viewer"],"dist":"pages","tls":true,"lazy":true}'
     run --poc P9 --fixture P9S --label metacache --params '{"arms":["cold","M"],"dist":"pycbr","tls":true,"lazy":true,"prototype":"metacache"}'
 fi
 node bench/p0_audit.mjs --out "$OUT/p0_audit-2026-11-05.json" > /dev/null
