@@ -76,6 +76,10 @@
         if (data.event) {
             const event = data.event;
             if (event.kind === "job" && event.job) jobs.set(event.job.job_id, event);
+            if (event.kind === "task") {
+                tasks.push({ name: event.name, at: Math.round(performance.now()) });
+                if (tasks.length > 50) tasks.shift();
+            }
             if (event.kind === "step") {
                 steps.push({ ms: event.ms, names: event.names, at: Math.round(performance.now()) });
                 if (steps.length > RECENT) steps.shift();
@@ -135,6 +139,7 @@
     //: for the performance record and the website's own diagnostics.
     const recent = [];
     const steps = [];
+    const tasks = [];
     const RECENT = 400;
 
     async function send(url, init, request) {
@@ -163,13 +168,32 @@
             }
             payload = new Uint8Array(await new Blob(parts).arrayBuffer());
         }
+        // A body the app compressed (Content-Encoding) is one a browser would
+        // have decoded on the way in; a Response made here is not decoded by
+        // anyone, so it is inflated here and the header goes.
+        let answered = answer.headers;
+        const encoding = (answered.find(([name]) => name.toLowerCase() === "content-encoding") || [])[1];
+        if (payload && encoding && /^(gzip|deflate)$/i.test(encoding.trim())) {
+            payload = await inflate(payload, encoding.trim().toLowerCase());
+            answered = answered.filter(([name]) => !/^content-(encoding|length)$/i.test(name));
+        }
         const status = answer.status;
         recent.push({ path: url.pathname, method, status, ms: Math.round(performance.now() - sent),
                       pyMs: answer.pyMs ?? null, bytes: payload ? payload.byteLength : 0,
                       at: Math.round(sent) });
         if (recent.length > RECENT) recent.shift();
         const nullBody = status === 204 || status === 304 || method === "HEAD";
-        return new Response(nullBody ? null : payload, { status, headers: answer.headers });
+        return new Response(nullBody ? null : payload, { status, headers: answered });
+    }
+
+    //: Bytes through the browser's own decompressor, written straight in
+    //: (a Blob in between costs a copy each way through the blob store).
+    async function inflate(bytes, format) {
+        const stream = new DecompressionStream(format);
+        const writer = stream.writable.getWriter();
+        writer.write(bytes).catch(() => {});
+        writer.close().catch(() => {});
+        return new Uint8Array(await new Response(stream.readable).arrayBuffer());
     }
 
     //: How long a held poll may be held, whatever it asked for.
@@ -246,9 +270,16 @@
         run: (code) => ready.then(() => call("run", { code })),
         sync: () => ready.then(() => call("sync", {})),
         trace: () => ready.then(() => call("trace", {})),
+        //: The worker's own account (busy, queued, current), and the calls
+        //: this page is still waiting on; null if it does not answer in 2 s.
+        state: () => Promise.race([
+            call("state", {}).then((worker) => ({ worker, waitingOn: waiting.size })),
+            new Promise((resolve) => setTimeout(() => resolve(null), 2000)),
+        ]),
         job: (id) => (jobs.has(id) ? jobs.get(id).job : null),
         recent: () => recent.slice(),
         steps: () => steps.slice(),
+        tasks: () => tasks.slice(),
         cancel,
         on,
     });

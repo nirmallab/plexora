@@ -1913,8 +1913,6 @@ def _warm_datasource_caches(datasource_name):
             # warm-up) would otherwise abandon every channel after the first
             # stale name.
             def warm(step, fullname):
-                # Each channel a place to let a request in: on the website the
-                # whole pass would otherwise hold every request behind it.
                 _work.checkpoint()
                 try:
                     step(fullname, datasource_name)
@@ -1932,6 +1930,16 @@ def _warm_datasource_caches(datasource_name):
                     # which used to abandon the warm-up at the first one and
                     # leave the other ninety-one to be computed on click.
                     _log.debug("Skipped warming %s in %s: %s", fullname, datasource_name, exc)
+            if not _work.threaded():
+                # The website: one short task per channel and pass, so the
+                # page's requests are answered between them rather than after
+                # the whole pass (its one thread would otherwise be held for
+                # seconds by work nobody is waiting on).
+                for step in (get_image_channel_stats, get_channel_gmm):
+                    for fullname in to_warm:
+                        _work.spawn(warm, step, fullname,
+                                    name=f"warm-{step.__name__}-{fullname}")
+                return
             # Pass 1 -- everything the first paint blocks on.
             for fullname in to_warm:
                 warm(get_image_channel_stats, fullname)

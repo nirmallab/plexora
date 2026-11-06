@@ -34,6 +34,8 @@ let idling = 0;
 let syncPending = false;
 let nativeFs = null;
 let debug = false;
+//: The message being handled, for `state`.
+let current = null;
 //: Tests only (debug): when each message arrived, started and was answered.
 const traced = [];
 //: The page's count of messages posted and not yet received (shared memory).
@@ -131,13 +133,17 @@ async function mountState() {
     }
 }
 
+// One write back at a time, and at most one more queued behind it: a burst of
+// writes is one more sync, never several at once (NativeFS warns, and does
+// the work twice).
+let syncing = Promise.resolve();
 function scheduleSync() {
     if (!nativeFs || syncPending) return;
     syncPending = true;
-    setTimeout(async () => {
+    syncing = syncing.then(async () => {
         syncPending = false;
         try { await nativeFs.syncfs(); } catch (error) { self.postMessage({ log: `syncfs: ${error}` }); }
-    }, 0);
+    });
 }
 
 async function boot(args) {
@@ -291,6 +297,10 @@ const OPS = {
         return performance.now() - started;
     },
     trace: () => (debug ? traced.splice(0) : null),
+    //: What the worker is doing, for the status chip and diagnostics.
+    state: () => ({ busy, idling, queued: queue.map((m) => m.op === "request" ? m.args.path : m.op),
+                    stepping, inFlight: inFlight === null ? null : Atomics.load(inFlight, 0),
+                    current: current ? { ...current, forMs: Math.round(performance.now() - current.since) } : null }),
     run: async ({ code }) => {
         if (!debug) throw new Error("run is for tests: boot with debug: true");
         const value = await py.runPythonAsync(code);
@@ -304,6 +314,8 @@ async function drain() {
     while (queue.length && (!busy || idling > 0)) {
         const { id, op, args, arrived } = queue.shift();
         const began = performance.now();
+        const outer = current;
+        current = { op, path: op === "request" ? args.path : null, since: began };
         const nested = busy;
         busy = true;
         try {
@@ -318,6 +330,7 @@ async function drain() {
             self.postMessage({ id, ok: false, error: String(error?.message || error).slice(-6000) });
         } finally {
             busy = nested;
+            current = outer;
         }
     }
     if (!busy && !queue.length) step();
@@ -367,6 +380,11 @@ function step() {
 self.onmessage = ({ data }) => {
     if (inFlight !== null) Atomics.sub(inFlight, 0, 1);
     data.arrived = performance.now();
+    if (data.op === "state") {
+        // Answered at once, whatever Python is doing: it reads only JS.
+        self.postMessage({ id: data.id, ok: true, result: OPS.state() });
+        return;
+    }
     if (data.op === "request") lastRequest = performance.now();
     queue.push(data);
     drain();

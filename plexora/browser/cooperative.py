@@ -48,6 +48,7 @@ def install(*, post=None, cancelled=None, idle=None, waiting=None) -> None:
         # answer from the mirror is the route's own.
         jobs.observe(lambda record: post({"kind": "job", "job": record,
                                           "state": job_state(record)}))
+        _work.on_start(lambda name: post({"kind": "task", "name": name}))
 
 
 def step(budget_ms: float = 50.0) -> dict:

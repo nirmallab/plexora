@@ -69,6 +69,11 @@ class Task:
     def run(self):
         if self.state != "queued":  # cancelled while it waited
             return
+        if _started is not None:
+            try:
+                _started(self.name)
+            except Exception:  # noqa: BLE001 -- a watcher must not stop the work
+                pass
         self.state = "running"
         try:
             contextvars.Context().run(self._target, *self._args, **self._kwargs)
@@ -164,6 +169,14 @@ def boundary():
 
 _idle = None
 _waiting = None
+#: Told each queued task's name as it starts (the website records the last
+#: few: a task that never yields is then named).
+_started = None
+
+
+def on_start(function) -> None:
+    global _started
+    _started = function
 
 
 def set_idle(function, waiting=None) -> None:
@@ -176,35 +189,18 @@ def set_idle(function, waiting=None) -> None:
     _waiting = waiting
 
 
-#: How often a long task lets requests in (`checkpoint`), in seconds.
-CHECKPOINT_S = 0.05
-_last_yield = 0.0
-
-
 def checkpoint() -> None:
-    """A long task's place to let a waiting request in. On threads, nothing:
-    the request has a thread of its own. In the browser the worker has one
-    thread, and a background job (warming a project's channel statistics, a
-    gating pass) would otherwise hold every request behind it: here, at most
-    every `CHECKPOINT_S`, the task yields to the page for no time -- a request
-    that arrived meanwhile is served -- and carries on where it was. On a
-    clock rather than on `waiting()`: while Python runs, the worker cannot even
-    receive the message that a request is waiting."""
-    global _last_yield
-    if _idle is None or mode() != "cooperative":
-        return
-    if _waiting is not None:
-        # The page counts what it has posted (shared memory): yield exactly
-        # when a request is on its way, and not otherwise.
-        if _waiting():
-            _idle(0)
-            _last_yield = time.monotonic()
-        return
-    now = time.monotonic()
-    if now - _last_yield < CHECKPOINT_S:
-        return
-    _idle(0)
-    _last_yield = time.monotonic()
+    """A long task's place to let a waiting request in -- which nothing does
+    yet, anywhere. On threads the request has a thread of its own. In the
+    browser it would mean answering the request inside the suspended task,
+    and that was tried and taken out: a request that wants a lock the task
+    holds (a threading.Lock around a project's load, a chunk the task is still
+    reading) waits for a release no other thread can make, and the worker
+    freezes. Background work there is cut into short tasks instead (the
+    warm-up runs a task per channel), and requests are answered between them.
+    Kept at its call sites: they are where a task could yield, if one day it
+    can do so without holding a lock."""
+    return None
 
 
 def wsgi(application):
@@ -315,3 +311,4 @@ def _reset_for_tests():
     _depth = 0
     _idle = None
     _waiting = None
+    on_start(None)
