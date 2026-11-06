@@ -7,6 +7,7 @@ import { createHash } from "node:crypto";
 import { tmpdir } from "node:os";
 import { POC_ROOT, PYTHON, freePort, peakMemory, sleep } from "./procs.mjs";
 import { P5R } from "./p5remote.mjs";
+import { P5T } from "./p5timing.mjs";
 
 /** Static origin + Chrome + the POC page with `files` picked. */
 export async function openPage(ctx, { files = [], staticOptions = {}, chrome = {}, pagePath = "poc/index.html",
@@ -966,3 +967,4 @@ export const HANDLERS = {
 
 // The manual remote records (O2, ERIS, GCP): bench/p5remote.mjs.
 HANDLERS.P5R = P5R;
+HANDLERS.P5T = P5T;

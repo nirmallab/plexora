@@ -211,21 +211,18 @@ export async function createViewer({ container, geometry, channels, feed, nodeTi
         });
     });
 
-    for (const ch of channels) {
-        const channel = { color: d3.color(ch.color), range: ch.range };
-        const source = makeTileSource({
-            geometry, srcIdx: ch.index, tileFormat: 16, channel,
-            // ".png" on the browser address too, and not for show: OSD infers
-            // a tile's transparency from its url (TileSource.hasTransparency
-            // matches ".png") and clears the tile's rectangle before drawing
-            // one -- without it the two arms composite differently (P0).
-            tileUrl: (level, x, y) => (feed === "node"
-                ? nodeTileUrl(ch.index, level, x, y)
-                : `browser://c${ch.index}/${level}/${x}_${y}.png`),
-            download: feed === "browser" ? browserDownload(browserTile, ch.index) : null,
-        });
-        await add(source);
-    }
+    const channelSource = (ch) => makeTileSource({
+        geometry, srcIdx: ch.index, tileFormat: 16, channel: { color: d3.color(ch.color), range: ch.range },
+        // ".png" on the browser address too, and not for show: OSD infers
+        // a tile's transparency from its url (TileSource.hasTransparency
+        // matches ".png") and clears the tile's rectangle before drawing
+        // one -- without it the two arms composite differently (P0).
+        tileUrl: (level, x, y) => (feed === "node"
+            ? nodeTileUrl(ch.index, level, x, y)
+            : `browser://c${ch.index}/${level}/${x}_${y}.png`),
+        download: feed === "browser" ? browserDownload(browserTile, ch.index) : null,
+    });
+    for (const ch of channels) await add(channelSource(ch));
     if (labels) {
         const source = makeTileSource({
             geometry, srcIdx: "mask", tileFormat: 32,
@@ -248,6 +245,10 @@ export async function createViewer({ container, geometry, channels, feed, nodeTi
             if (range) source.channel.range = range;
             items[i]._needsDraw = true;
             viewer.world.draw();
+        },
+        /** One more channel item, as switching a channel on adds one in the product. */
+        addChannel(ch) {
+            return add(channelSource(ch));
         },
         destroy() {
             decoderPool?.terminate?.();

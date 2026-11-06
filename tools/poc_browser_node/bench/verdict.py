@@ -265,6 +265,27 @@ def p5r(rec, _all):
     return go, []
 
 
+def p5t(rec, _all):
+    """The same remote node through the static page and through the desktop route (P5's gate)."""
+    c = rec["checks"]
+    ratio = lambda k: c.get(k)  # noqa: E731
+    go = [
+        check("open, cold (C1): browser / desktop, median of paired blocks", r1(ratio("openRatioC1")),
+              ratio("openRatioC1") is not None and ratio("openRatioC1") <= 1.2, "<= 1.2"),
+        check("navigation, cold (C1): geometric mean per block of browser / desktop, median", r1(ratio("navRatioC1")),
+              ratio("navRatioC1") is not None and ratio("navRatioC1") <= 1.2, "<= 1.2"),
+        check("navigation, warm (C2): the same", r1(ratio("navRatioC2")),
+              ratio("navRatioC2") is not None and ratio("navRatioC2") <= 1.2, "<= 1.2"),
+        check("every step of both arms full within 10 s", c.get("everyStepFullBy10s"),
+              c.get("everyStepFullBy10s") is True, "true"),
+        check("paired blocks", c.get("blocks"), (c.get("blocks") or 0) >= 4, ">= 4"),
+    ]
+    worst = [x for x in (ratio("openRatioC1"), ratio("navRatioC1")) if x is not None]
+    stop = [check("ratio > 2 on open or navigation (C1)", r1(max(worst)) if worst else None,
+                  any(x > 2 for x in worst), "> 2")]
+    return go, stop
+
+
 def p5lnah(rec, _all):
     c = rec["checks"]
     go = [
@@ -328,7 +349,7 @@ def p8(rec, _all):
     return go, stop
 
 
-RULES = {"P0": p0, "P1": p1, "P2": p2, "P2B": p2b, "P3": p3, "P4": p4, "P5": p5, "P5LNAH": p5lnah, "P5R": p5r, "P6": p6,
+RULES = {"P0": p0, "P1": p1, "P2": p2, "P2B": p2b, "P3": p3, "P4": p4, "P5": p5, "P5LNAH": p5lnah, "P5R": p5r, "P5T": p5t, "P6": p6,
          "P7": p7, "P8": p8}
 
 

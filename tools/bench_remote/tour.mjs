@@ -147,7 +147,14 @@ async function runPass(browser, opts, pass) {
                  depth: k.vs()?.depth || 1, spec: k.vs()?.spec?.() || "",
                  hd: Boolean(k.P().seaDragonViewer?.viewerManagerVMain?.isHdMode?.()),
                  size: window.__rb.imageSize(), state: window.__rb.state(),
-                 routing: window.PlexoraRouting ? "present" : "absent" };
+                 routing: window.PlexoraRouting ? "present" : "absent",
+                 // [slot, image channel] for every named slot, so another
+                 // viewer can be put on the same channels.
+                 channelOf: k.slots().filter((s) => s.name).map((s) => {
+                     const sidebar = k.P().viewerSidebar;
+                     const full = sidebar?.dataLayer?.getFullChannelName?.(s.name) ?? s.name;
+                     return [s.index, sidebar?.channelIndexOf?.(full) ?? null];
+                 }) };
     });
     open.firstTileRequest = firstRequest(browser.netSince(mark), ["tile", "batch"], open.wallFrom);
     if (p.openOnly) return await finishPass(browser, tour, mark, pass, passFrom, info);

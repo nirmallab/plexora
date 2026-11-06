@@ -9,7 +9,7 @@ const common = { bundle: true, sourcemap: true, target: "es2022", logLevel: "inf
 
 await build({
     ...common,
-    entryPoints: { poc: "page/src/poc.js" },
+    entryPoints: { poc: "page/src/poc.js", p5t: "page/src/p5t.js" },
     outdir: "page/dist",
     format: "esm",
     splitting: true,

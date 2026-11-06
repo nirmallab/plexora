@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Browser node P5T</title>
+<style>
+  :root { color-scheme: dark; }
+  html, body { margin: 0; height: 100%; background: #000; color: #ddd; font: 13px system-ui, sans-serif; }
+  #status { position: fixed; top: 4px; right: 8px; z-index: 10; opacity: .8; }
+  .pane { position: absolute; top: 0; width: 720px; height: 900px; background: #000; }
+  #paneA { left: 0; }
+  #paneB { left: 720px; }
+  #picker { position: fixed; bottom: 6px; left: 6px; z-index: 10; }
+</style>
+<script>
+  // Every product file is reached RELATIVE to this page, so the same page
+  // works at /poc/index.html and at /rnode/<host>/<port>/app/poc/index.html
+  // (a node serving the app behind an Open OnDemand-style prefix). This is the
+  // runtime `base_url` the static build needs: plexoraUrl() already reads it.
+  window.PLEXORA_BASE_URL = new URL("../repo/plexora", location.href).pathname;
+</script>
+<!-- P5T's browser arm (src/p5t.js): only what the viewer needs -- the product
+     client's rendering modules, unmodified, in base.html's order. -->
+<script src="../repo/plexora/client/src/js/services/passVariablesToFrontend.js"></script>
+<script src="../repo/plexora/client/dist/vendor_bundle.js"></script>
+<script src="../repo/plexora/client/src/js/services/displayCurve.js"></script>
+<script src="../repo/plexora/client/src/js/views/layerStack.js"></script>
+<script src="../repo/plexora/client/src/js/views/glInit.js"></script>
+<script src="../repo/plexora/client/src/js/views/tileColorize.js"></script>
+<script src="../repo/plexora/client/src/js/views/tileDecode.js"></script>
+<script src="../repo/plexora/client/src/js/views/tileFetch.js"></script>
+<script src="../repo/plexora/client/src/js/views/labelTile.js"></script>
+<script src="../repo/plexora/client/src/js/views/labelGpu.js"></script>
+<script type="module" src="dist/p5t.js"></script>
+</head>
+<body>
+</body>
+</html>
