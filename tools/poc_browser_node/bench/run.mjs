@@ -1,4 +1,4 @@
-// node bench/run.mjs --poc P0|P1|P1V|... --fixture S|M|L [--headed] [--out DIR] [--note TEXT]
+// node bench/run.mjs --poc P0|P1|P1V|... --fixture S|M|L [--headed] [--out DIR] [--note TEXT] [--browser firefox|webkit]
 //
 // Starts the static origin (serve_static.py), the Plexora data node(s) a POC
 // needs as its Python ground truth, and Chrome on the GPU; hands the page the
@@ -27,6 +27,7 @@ function parseArgs(argv) {
         else if (a === "--label") out.label = next();
         else if (a === "--note") out.note = next();
         else if (a === "--params") out.params = JSON.parse(next());
+        else if (a === "--browser") out.browser = next();
     }
     if (!out.poc) throw new Error("--poc is required");
     return out;
@@ -90,7 +91,9 @@ async function main() {
     const fixtures = loadFixtures();
     const fixture = fixtures[args.fixture] || {};
     const ctx = {
-        args, fixture, fixtureName: args.fixture, startStatic, startNode, launchChrome,
+        args, fixture, fixtureName: args.fixture, startStatic, startNode,
+        // --browser firefox|webkit runs a POC in Playwright's build of that engine.
+        launchChrome: (o = {}) => launchChrome({ engine: args.browser || "chromium", ...o }),
         log: (...m) => console.log(`[${args.poc}]`, ...m),
     };
     // The local date: a run that crosses midnight UTC is still that evening's run.

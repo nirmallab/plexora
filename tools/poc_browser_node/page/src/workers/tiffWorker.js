@@ -16,6 +16,6 @@ self.onmessage = async (event) => {
         const transfer = result?.array?.buffer ? [result.array.buffer] : [];
         self.postMessage({ id, ok: true, result }, transfer);
     } catch (error) {
-        self.postMessage({ id, ok: false, error: String(error?.stack || error) });
+        self.postMessage({ id, ok: false, error: `${error}${error?.stack ? ` | ${error.stack}` : ""}` });
     }
 };

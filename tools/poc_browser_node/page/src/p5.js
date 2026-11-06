@@ -139,6 +139,28 @@ export async function p5Lna({ node, connector = null }) {
     return out;
 }
 
+/**
+ * (b, headed) Start one loopback fetch and leave it running: with nothing
+ * granted, a headed Chrome holds it while its permission prompt waits for the
+ * user (headless denies at once). p5LnaPoll says where it got to.
+ */
+export async function p5LnaStart({ node }) {
+    const t0 = now();
+    window.__lna = { state: "pending" };
+    fetch(`${node.endpoint}/node/v1/hello?t=${node.token}`, { credentials: "omit", targetAddressSpace: "loopback" })
+        .then((r) => { window.__lna = { state: "resolved", status: r.status, ms: Math.round(now() - t0) }; })
+        .catch((e) => { window.__lna = { state: "rejected", error: String(e).slice(0, 160), ms: Math.round(now() - t0) }; });
+    const permission = {};
+    for (const name of ["loopback-network", "local-network", "local-network-access"]) {
+        try { permission[name] = (await navigator.permissions.query({ name })).state; } catch (e) { permission[name] = "unknown"; }
+    }
+    return { origin: location.origin, secure: self.isSecureContext, permission };
+}
+
+export function p5LnaPoll() {
+    return window.__lna;
+}
+
 /** (d) Under COOP/COEP: which ways of loading a node's tile still work. */
 export async function p5Isolation({ node, tile }) {
     const client = new NodeClient(node.endpoint, node.token);

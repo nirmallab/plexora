@@ -13,7 +13,12 @@
     "@duckdb/duckdb-wasm": "1.33.1-dev57.0",
     "apache-arrow": "21.2.0",
     "geotiff": "3.0.5",
-    "kdbush": "4.1.0"
+    "h5wasm": "0.10.3",
+    "h5wasm-plugins": "0.3.0",
+    "hyparquet": "1.31.5",
+    "kdbush": "4.1.0",
+    "numcodecs": "0.3.2",
+    "zarrita": "0.7.5"
   },
   "devDependencies": {
     "esbuild": "0.28.2",

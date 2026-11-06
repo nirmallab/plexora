@@ -23,19 +23,41 @@ import { histogram, percentiles } from "./stats.js";
 
 const now = () => performance.now();
 
-let dbPromise = null;
-
-/** One DuckDB-Wasm instance per page (the "eh" bundle: wasm exceptions). */
-export function getDb() {
-    dbPromise ||= (async () => {
+/** A DuckDB-Wasm instance in a worker of its own (the "eh" bundle: wasm exceptions). */
+function startDb() {
+    return (async () => {
         const t0 = now();
         const base = new URL("../nm/@duckdb/duckdb-wasm/dist/", location.href).href;
         const worker = new Worker(`${base}duckdb-browser-eh.worker.js`);
         const db = new duckdb.AsyncDuckDB(new duckdb.VoidLogger(), worker);
         await db.instantiate(`${base}duckdb-eh.wasm`);
-        return { db, initMs: now() - t0 };
+        return { db, worker, initMs: now() - t0 };
     })();
-    return dbPromise;
+}
+
+/** Instances by index; the first is the page's own (getDb). */
+const pool = [];
+
+/** One DuckDB-Wasm instance per page for everything but a parallel ingest. */
+export function getDb() {
+    pool[0] ||= startDb();
+    return pool[0];
+}
+
+/** `n` instances, started together; the parallel ingest's hands. */
+export function getDbPool(n) {
+    for (let i = 0; i < n; i += 1) pool[i] ||= startDb();
+    return Promise.all(pool.slice(0, n));
+}
+
+/** Stop every instance past the first (an ingest's hands hold wasm heaps). */
+export async function releaseDbPool() {
+    const extra = pool.splice(1);
+    for (const p of extra) {
+        const { db, worker } = await p;
+        await db.terminate().catch(() => {});
+        worker.terminate();
+    }
 }
 
 async function opfsDir(name) {
@@ -106,8 +128,15 @@ export async function ensureParquet(file, { force = false } = {}) {
  *
  * `first` names the columns written first (ids and coordinates): the load is
  * "drawable" once they are on disk, and the rest follow.
+ *
+ * A CSV or TSV is cut at line starts into `parallel` parts ("auto": one per
+ * 16 MB, up to the cores less two, at most 16), each parsed by `parser`:
+ * "js" (workers/csvWorker.js, V8's own Number(); ingestJs; the default) or
+ * "duckdb" (a DuckDB instance each; ingestParallel, which needs at least two
+ * parts). A Parquet file, a CSV a cut cannot be trusted on (a quoted field),
+ * or "duckdb" with one part takes the one-instance DuckDB path.
  */
-export async function ensureColumnStore(file, { force = false, first = [] } = {}) {
+export async function ensureColumnStore(file, { force = false, first = [], parallel = "auto", parser = "js" } = {}) {
     const root = await opfsDir("columns");
     const key = fingerprintOf(file);
     const timings = {};
@@ -121,6 +150,20 @@ export async function ensureColumnStore(file, { force = false, first = [] } = {}
     try { await root.removeEntry(key, { recursive: true }); } catch (e) { /* none */ }
     const dir = await root.getDirectoryHandle(key, { create: true });
     const t0 = now();
+    const parts = parallel === "auto"
+        ? Math.max(1, Math.min((navigator.hardwareConcurrency || 4) - 2, 16, Math.ceil(file.size / (16 << 20))))
+        : Number(parallel);
+    if (!/\.parquet$/i.test(file.name) && (parser === "js" || parts > 1)) {
+        try {
+            timings.parser = parser;
+            return parser === "js"
+                ? await ingestJs(file, dir, first, parts, t0, timings)
+                : await ingestParallel(file, dir, first, parts, t0, timings);
+        } catch (error) {
+            // Anything the cut cannot be trusted on: the one-instance path.
+            timings.parallelRefused = String(error?.message || error).slice(0, 300);
+        }
+    }
     const { db, initMs } = await getDb();
     timings.initMs = initMs;
     const source = `src-${key}`;
@@ -171,6 +214,264 @@ export async function ensureColumnStore(file, { force = false, first = [] } = {}
         await conn.close();
         await db.dropFile(source).catch(() => {});
     }
+}
+
+/** `parts` - 1 cut points at line starts, so every part holds whole lines. */
+async function lineCuts(file, parts) {
+    const cuts = [0];
+    for (let i = 1; i < parts; i += 1) {
+        const at = Math.floor((file.size * i) / parts);
+        const bytes = new Uint8Array(await file.slice(at, Math.min(file.size, at + (1 << 20))).arrayBuffer());
+        const nl = bytes.indexOf(10);
+        if (nl < 0) continue; // a line longer than 1 MB: one part fewer
+        const cut = at + nl + 1;
+        if (cut > cuts[cuts.length - 1] && cut < file.size) cuts.push(cut);
+    }
+    cuts.push(file.size);
+    return cuts;
+}
+
+/** A field as csvWorker.js reads it: a number, NaN for nothing, null for text. */
+function headValue(s) {
+    let t = s.trim();
+    if (t.length > 1 && t[0] === '"' && t[t.length - 1] === '"') t = t.slice(1, -1).trim();
+    if (!t) return NaN;
+    const n = Number(t);
+    if (n === n && /[0-9]/.test(t)) return n;
+    return /^[+-]?(nan|inf|infinity)$/i.test(t) ? NaN : null;
+}
+
+/**
+ * Write a store's columns (float64 files), ids and coordinates first: the
+ * load is drawable once those are on disk. `column(name)` makes one.
+ */
+async function writeStore(dir, file, { schema, numeric, rows, first, column, t0, timings, extra = {} }) {
+    const order = [...first.filter((c) => numeric.includes(c)), ...numeric.filter((c) => !first.includes(c))];
+    const files = {};
+    const writeColumn = async (name, i) => {
+        const values = column(name);
+        const fname = `c${i}.f64`;
+        const writable = await (await dir.getFileHandle(fname, { create: true })).createWritable();
+        await writable.write(values);
+        await writable.close();
+        files[name] = fname;
+    };
+    const s = now();
+    const nFirst = first.filter((c) => numeric.includes(c)).length;
+    await Promise.all(order.slice(0, nFirst).map((name, i) => writeColumn(name, i)));
+    timings.drawableMs = now() - t0;
+    await Promise.all(order.slice(nFirst).map((name, k) => writeColumn(name, nFirst + k)));
+    timings.opfsWriteMs = now() - s;
+    const manifest = { source: file.name, rows, columns: schema, numeric, files, version: 1, ...extra };
+    const writable = await (await dir.getFileHandle("manifest.json", { create: true })).createWritable();
+    await writable.write(JSON.stringify(manifest));
+    await writable.close();
+    timings.totalMs = now() - t0;
+    timings.bytes = rows * 8 * order.length;
+    return { table: openColumnStore(dir, manifest), reused: false, timings };
+}
+
+/**
+ * A CSV parsed by `parts` plain workers at once (workers/csvWorker.js): names,
+ * delimiter and which columns are numbers from the first MB; the rest cut at
+ * line starts. Refused for a quoted field in the data (a cut could land inside
+ * one). Returns the numeric columns' per-part arrays.
+ */
+async function parseCsvJs(file, parts) {
+    const timings = {};
+    let s = now();
+    const headBytes = new Uint8Array(await file.slice(0, Math.min(file.size, 1 << 20)).arrayBuffer());
+    const headerEnd = headBytes.indexOf(10) + 1;
+    if (headerEnd <= 0) throw new Error("no line break in the first MB");
+    const lastNl = headBytes.lastIndexOf(10);
+    const head = new TextDecoder("latin1").decode(headBytes.subarray(0, lastNl + 1));
+    const lines = head.split("\n").map((l) => l.replace(/\r$/, "")).filter((l, i) => i === 0 || l.length);
+    const headerLine = lines[0];
+    const delimiter = headerLine.split("\t").length > headerLine.split(",").length ? "\t" : ",";
+    if (lines.slice(1).some((l) => l.includes('"'))) throw new Error("a quoted field in the data");
+    const names = headerLine.split(delimiter).map((n) => n.trim().replace(/^"(.*)"$/, "$1"));
+    const sample = lines.slice(1, -1);
+    const numericFlags = names.map((_, c) => {
+        let any = false;
+        for (const line of sample) {
+            const v = headValue(line.split(delimiter)[c] ?? "");
+            if (v === null) return false;
+            if (!Number.isNaN(v)) any = true;
+        }
+        return any;
+    });
+    const avgLine = Math.max(1, (lastNl + 1 - headerEnd) / Math.max(1, sample.length + 1));
+    const cuts = [headerEnd];
+    for (let i = 1; i < parts; i += 1) {
+        const at = headerEnd + Math.floor(((file.size - headerEnd) * i) / parts);
+        const bytes = new Uint8Array(await file.slice(at, Math.min(file.size, at + (1 << 20))).arrayBuffer());
+        const nl = bytes.indexOf(10);
+        if (nl < 0) continue;
+        const cut = at + nl + 1;
+        if (cut > cuts[cuts.length - 1] && cut < file.size) cuts.push(cut);
+    }
+    cuts.push(file.size);
+    timings.sniffMs = now() - s;
+    timings.parts = cuts.length - 1;
+
+    s = now();
+    const url = new URL("dist/csvWorker.js", location.href).href;
+    const results = await Promise.all(cuts.slice(0, -1).map((start, i) => new Promise((resolve, reject) => {
+        const worker = new Worker(url);
+        worker.onmessage = (e) => {
+            worker.terminate();
+            if (e.data.ok) resolve(e.data);
+            else reject(new Error(e.data.error));
+        };
+        worker.postMessage({ id: i, file, start, end: cuts[i + 1], numeric: numericFlags, delimiter,
+                             rowsHint: Math.ceil((cuts[i + 1] - start) / avgLine) });
+    })));
+    timings.parseMs = now() - s;
+    timings.partRows = results.map((r) => r.rows);
+    const rows = results.reduce((a, r) => a + r.rows, 0);
+    const stored = names.filter((_, c) => numericFlags[c]);
+    const bad = stored.map((_, j) => results.reduce((a, r) => a + r.bad[j], 0));
+    /** One stored column, its parts joined. */
+    const join = (name) => {
+        const j = stored.indexOf(name);
+        const out = new Float64Array(rows);
+        let at = 0;
+        for (const r of results) { out.set(r.values[j], at); at += r.values[j].length; }
+        return out;
+    };
+    return { names, stored, bad, rows, join, timings };
+}
+
+/**
+ * The column store from parseCsvJs. A column the head called numeric that
+ * holds text further down is dropped, as a reader inferring from the whole
+ * file would not call it numeric either.
+ */
+async function ingestJs(file, dir, first, parts, t0, timings) {
+    const parsed = await parseCsvJs(file, parts);
+    Object.assign(timings, parsed.timings);
+    const { names, stored, bad, rows } = parsed;
+    const numeric = stored.filter((_, j) => bad[j] === 0);
+    if (bad.some((b) => b)) timings.textInNumericColumns = Object.fromEntries(stored.map((n, j) => [n, bad[j]]).filter(([, b]) => b));
+    const schema = names.map((name) => ({ name, type: numeric.includes(name) ? "DOUBLE" : "VARCHAR" }));
+    let mergeMs = 0;
+    const column = (name) => {
+        const m = now();
+        const out = parsed.join(name);
+        mergeMs += now() - m;
+        return out;
+    };
+    const result = await writeStore(dir, file, { schema, numeric, rows, first, column, t0, timings,
+                                                 extra: { parser: "js", parts: timings.parts } });
+    timings.mergeMs = mergeMs;
+    return result;
+}
+
+/** A SQL string literal. */
+const sqlString = (s) => `'${String(s).replaceAll("'", "''")}'`;
+const sqlName = (s) => `"${String(s).replaceAll('"', '""')}"`;
+
+/**
+ * The column store from `parts` DuckDB instances at once, each parsing its own
+ * run of whole lines of the CSV. Names and kinds come from the first MB
+ * (DuckDB's own sniffing); every part is then read with those columns fixed,
+ * numeric ones as DOUBLE (what the one-instance path casts them to). Refused
+ * -- and the caller falls back -- when the head shows a quoted field across a
+ * line break (a cut could land inside it) or any part fails to parse.
+ */
+async function ingestParallel(file, dir, first, parts, t0, timings) {
+    // The head: delimiter, quoting, names, kinds.
+    let s = now();
+    const headBytes = new Uint8Array(await file.slice(0, Math.min(file.size, 1 << 20)).arrayBuffer());
+    const lastNl = headBytes.lastIndexOf(10);
+    if (lastNl < 0) throw new Error("no line break in the first MB");
+    const head = new TextDecoder().decode(headBytes.subarray(0, lastNl + 1));
+    const lines = head.split("\n");
+    const headerLine = lines[0].replace(/\r$/, "");
+    const delim = headerLine.split("\t").length > headerLine.split(",").length ? "\t" : ",";
+    if (head.includes('"') && lines.some((l) => ((l.match(/"/g) || []).length % 2) === 1)) {
+        throw new Error("a quoted field spans a line break");
+    }
+    const dbs = await getDbPool(parts);
+    timings.initMs = now() - t0;
+    timings.parts = parts;
+    const { db: db0 } = dbs[0];
+    await db0.registerFileBuffer("head.csv", headBytes.slice(0, lastNl + 1));
+    const c0 = await db0.connect();
+    const schema = (await c0.query(
+        `DESCRIBE SELECT * FROM read_csv('head.csv', header = true, delim = ${sqlString(delim)}, sample_size = -1)`))
+        .toArray().map((r) => ({ name: r.column_name, type: r.column_type }));
+    await c0.close();
+    await db0.dropFile("head.csv");
+    const isNumeric = (t) => /INT|DOUBLE|FLOAT|DECIMAL|REAL/i.test(t);
+    const numeric = schema.filter((c) => isNumeric(c.type)).map((c) => c.name);
+    const spec = schema.map((c) => `${sqlString(c.name)}: ${sqlString(isNumeric(c.type) ? "DOUBLE" : "VARCHAR")}`).join(", ");
+    const cuts = await lineCuts(file, parts);
+    timings.sniffMs = now() - s;
+
+    // Every part at once, each on its own instance.
+    s = now();
+    const results = await Promise.all(cuts.slice(0, -1).map(async (start, i) => {
+        const { db } = dbs[i % dbs.length];
+        const name = `part-${i}.csv`;
+        await db.registerFileHandle(name, file.slice(start, cuts[i + 1]), duckdb.DuckDBDataProtocol.BROWSER_FILEREADER, true);
+        const conn = await db.connect();
+        try {
+            const r = await conn.query(`SELECT ${numeric.map(sqlName).join(", ")} FROM read_csv(${sqlString(name)},
+                header = ${i === 0}, auto_detect = false, delim = ${sqlString(delim)}, quote = '"', escape = '"',
+                columns = {${spec}})`);
+            return numeric.map((_, j) => {
+                const vec = r.getChildAt(j);
+                const values = vec.toArray();
+                const out = values instanceof Float64Array ? values : Float64Array.from(values);
+                if (vec.nullCount > 0) for (let k = 0; k < out.length; k += 1) if (!vec.isValid(k)) out[k] = NaN;
+                return out;
+            });
+        } finally {
+            await conn.close();
+            await db.dropFile(name).catch(() => {});
+        }
+    }));
+    timings.parseMs = now() - s;
+    const rows = results.reduce((a, cols) => a + (cols[0]?.length || 0), 0);
+    timings.partRows = results.map((cols) => cols[0]?.length || 0);
+
+    // One file per numeric column: ids and coordinates first ("drawable"),
+    // the rest written together.
+    const order = [...first.filter((c) => numeric.includes(c)), ...numeric.filter((c) => !first.includes(c))];
+    const files = {};
+    let mergeMs = 0;
+    const column = (name) => {
+        const m = now();
+        const j = numeric.indexOf(name);
+        const out = new Float64Array(rows);
+        let at = 0;
+        for (const cols of results) { out.set(cols[j], at); at += cols[j].length; }
+        mergeMs += now() - m;
+        return out;
+    };
+    const writeColumn = async (name, i) => {
+        const values = column(name);
+        const fname = `c${i}.f64`;
+        const writable = await (await dir.getFileHandle(fname, { create: true })).createWritable();
+        await writable.write(values);
+        await writable.close();
+        files[name] = fname;
+    };
+    s = now();
+    const nFirst = first.filter((c) => numeric.includes(c)).length;
+    for (let i = 0; i < nFirst; i += 1) await writeColumn(order[i], i);
+    timings.drawableMs = now() - t0;
+    await Promise.all(order.slice(nFirst).map((name, k) => writeColumn(name, nFirst + k)));
+    timings.opfsWriteMs = now() - s - mergeMs;
+    timings.mergeMs = mergeMs;
+    const manifest = { source: file.name, rows, columns: schema, numeric, files, version: 1, parts };
+    const writable = await (await dir.getFileHandle("manifest.json", { create: true })).createWritable();
+    await writable.write(JSON.stringify(manifest));
+    await writable.close();
+    timings.totalMs = now() - t0;
+    timings.bytes = rows * 8 * order.length;
+    return { table: openColumnStore(dir, manifest), reused: false, timings };
 }
 
 function openColumnStore(dir, manifest) {
@@ -229,43 +530,17 @@ export async function openTable(copy, key) {
 // ---------------------------------------------------------------------------
 // A numeric CSV parsed by N workers at once (workers/csvWorker.js)
 
-/** The header's column names, from the first 64 KB. */
-async function csvHeader(file) {
-    const head = await file.slice(0, 1 << 16).text();
-    const line = head.split(/\r?\n/, 1)[0];
-    return line.split(",").map((s) => s.trim().replace(/^"|"$/g, ""));
-}
-
 /**
- * Every column of a numeric CSV as float64, parsed by `workers` workers over
- * contiguous byte slices. Text columns come back as NaN (a table with text
- * columns takes the DuckDB path).
+ * Every numeric column of a CSV as float64, parsed by `workers` plain workers
+ * (parseCsvJs), for the P3b comparison against DuckDB's own parse.
  */
 export async function parseCsvParallel(file, workers = navigator.hardwareConcurrency || 4) {
     const t0 = now();
-    const names = await csvHeader(file);
-    const url = new URL("dist/csvWorker.js", location.href).href;
-    const size = file.size;
-    const step = Math.ceil(size / workers);
-    const parts = await Promise.all(Array.from({ length: workers }, (_, i) => new Promise((resolve, reject) => {
-        const worker = new Worker(url);
-        worker.onmessage = (e) => {
-            worker.terminate();
-            if (e.data.ok) resolve(e.data);
-            else reject(new Error(e.data.error));
-        };
-        worker.postMessage({ id: i, file, start: i * step, end: Math.min(size, (i + 1) * step),
-                             columns: names.length, skipHeader: i === 0 });
-    })));
+    const parsed = await parseCsvJs(file, workers);
     const tParsed = now();
-    const rows = parts.reduce((a, p) => a + p.rows, 0);
-    const columns = names.map((_, c) => {
-        const out = new Float64Array(rows);
-        let at = 0;
-        for (const p of parts) { out.set(p.values[c], at); at += p.rows; }
-        return out;
-    });
-    return { names, columns, rows, ms: now() - t0, parseMs: tParsed - t0, workers };
+    const columns = parsed.stored.map((name) => parsed.join(name));
+    return { names: parsed.stored, columns, rows: parsed.rows, ms: now() - t0, parseMs: tParsed - t0, workers,
+             bad: parsed.bad };
 }
 
 // ---------------------------------------------------------------------------

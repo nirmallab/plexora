@@ -96,19 +96,26 @@ export async function startNode({ serve, allowOrigins = [], token = null, port =
              stop: () => { kill(proc); try { rmSync(root, { recursive: true, force: true }); } catch (e) { /* busy */ } } };
 }
 
-/** Chrome on the GPU via playwright-core; a fresh profile unless one is given. */
-export async function launchChrome({ headed = false, profile = null, unthrottled = true, extraArgs = [] } = {}) {
-    const { chromium } = await import("playwright-core");
-    const args = [
+/**
+ * Chrome on the GPU via playwright-core; a fresh profile unless one is given.
+ * `engine` "firefox" or "webkit" launches Playwright's own build of that
+ * engine instead (P8: functional checks only; WebKit on Windows is the engine
+ * Safari uses, not Safari), with none of Chrome's flags.
+ */
+export async function launchChrome({ headed = false, profile = null, unthrottled = true, extraArgs = [],
+                                     engine = "chromium" } = {}) {
+    const pw = await import("playwright-core");
+    const args = engine !== "chromium" ? [] : [
         "--use-angle=d3d11", "--enable-gpu", "--ignore-gpu-blocklist",
         "--disable-background-timer-throttling", "--disable-renderer-backgrounding",
         "--disable-backgrounding-occluded-windows", "--enable-precise-memory-info",
         ...(unthrottled ? ["--disable-gpu-vsync", "--disable-frame-rate-limit"] : []),
         ...extraArgs,
     ];
-    const userDataDir = profile || mkdtempSync(path.join(tmpdir(), "plx-poc-chrome-"));
-    const context = await chromium.launchPersistentContext(userDataDir, {
-        executablePath: CHROME, headless: !headed, args,
+    const userDataDir = profile || mkdtempSync(path.join(tmpdir(), `plx-poc-${engine}-`));
+    const context = await pw[engine].launchPersistentContext(userDataDir, {
+        ...(engine === "chromium" ? { executablePath: CHROME, args } : {}),
+        headless: !headed,
         viewport: { width: 1440, height: 900 }, deviceScaleFactor: 1,
     });
     const page = context.pages()[0] || await context.newPage();

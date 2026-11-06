@@ -1,5 +1,5 @@
 {
-  "_comment": "Fixture paths on the bench machine (Windows, 2026-11-05). Override any with POC_FIXTURES=<json file>. S/M/L/XL as in docs/internal/BROWSER_NATIVE_INVESTIGATION.md; M here is LSP11385 (local), the Orion CRC02 mask and table come from s3://lin-2023-orion-crc/data/CRC02. flatMask M is LSP11385's mask level 0 written flat by fixtures.py (52923 x 45381 uint32, 9.6 GB raw, 32 MB deflated).",
+  "_comment": "Fixture paths on the bench machine (Windows, 2026-11-05). Override any with POC_FIXTURES=<json file>. S/M/L/XL as in docs/internal/BROWSER_NATIVE_INVESTIGATION.md; M here is LSP11385 (local), the Orion CRC02 mask and table come from s3://lin-2023-orion-crc/data/CRC02. flatMask M is LSP11385's mask level 0 written flat by fixtures.py (52923 x 45381 uint32, 9.6 GB raw, 32 MB deflated). flatImages (P7): LSP11385 level 0 written flat by fixtures.py flat-image -- S a 6001 x 7003 crop of channels 0-2, M channels 0-1 whole (52923 x 45381 uint16, 9.6 GB raw) -- as zlib strips (tifffile's strip size), uncompressed (one strip per plane) and 1024 tiles.",
   "S": {
     "image": "C:\\plexora-bench\\fixtures\\flat.ome.tif",
     "mask": "C:\\Users\\aj\\Documents\\softwares\\biocognia\\plexora\\plexora\\data\\nb\\LSP26227-registered.ome_segMask.labels.pyramid.ome.tiff",
@@ -9,7 +9,24 @@
       "x": "X_centroid",
       "y": "Y_centroid"
     },
-    "flatMask": "C:\\Users\\aj\\OneDrive - Mass General Brigham Incorporated\\nirmal lab\\resources\\exemplarData\\scimapExampleData\\segmentation\\unmicst-exemplar-001\\cell.ome.tif"
+    "flatMask": "C:\\Users\\aj\\OneDrive - Mass General Brigham Incorporated\\nirmal lab\\resources\\exemplarData\\scimapExampleData\\segmentation\\unmicst-exemplar-001\\cell.ome.tif",
+    "flatImages": {
+      "strips": "C:\\plexora-bench\\browser_node\\fixtures\\flat\\lsp11385-s3ch-strips.ome.tif",
+      "raw": "C:\\plexora-bench\\browser_node\\fixtures\\flat\\lsp11385-s3ch-raw.ome.tif",
+      "tiles": "C:\\plexora-bench\\browser_node\\fixtures\\flat\\lsp11385-s3ch-tiles.ome.tif"
+    },
+    "p4": {
+      "dir": "C:\\plexora-bench\\browser_node\\fixtures\\p4-s",
+      "h5ad": [
+        "cells-dense-none.h5ad",
+        "cells-dense-gzip.h5ad",
+        "cells-dense-lzf.h5ad",
+        "cells-csr-none.h5ad",
+        "cells-csr-gzip.h5ad",
+        "cells-csr-lzf.h5ad"
+      ],
+      "sdata": "sdata.zarr"
+    }
   },
   "M": {
     "image": "C:\\Users\\aj\\Partners HealthCare Dropbox\\Ajit Nirmal\\nirmal lab\\temp\\LSP11385\\LSP11385.ome.tif",
@@ -21,7 +38,11 @@
       "y": "Y_centroid"
     },
     "flatMask": "C:\\plexora-bench\\browser_node\\fixtures\\flat\\lsp11385-mask-flat.tif",
-    "marker": "CD45"
+    "marker": "CD45",
+    "flatImages": {
+      "strips": "C:\\plexora-bench\\browser_node\\fixtures\\flat\\lsp11385-2ch-strips.ome.tif",
+      "raw": "C:\\plexora-bench\\browser_node\\fixtures\\flat\\lsp11385-2ch-raw.ome.tif"
+    }
   },
   "L": {
     "mask": "C:\\plexora-bench\\browser_node\\fixtures\\orion\\P37_S30-CRC02-mask.ome.tif",
@@ -31,6 +52,18 @@
       "x": "X_centroid",
       "y": "Y_centroid"
     },
-    "marker": "CD45"
+    "marker": "CD45",
+    "p4": {
+      "dir": "C:\\plexora-bench\\browser_node\\fixtures\\p4-l",
+      "h5ad": [
+        "cells-dense-none.h5ad",
+        "cells-dense-gzip.h5ad",
+        "cells-dense-lzf.h5ad",
+        "cells-csr-none.h5ad",
+        "cells-csr-gzip.h5ad",
+        "cells-csr-lzf.h5ad"
+      ],
+      "sdata": "sdata.zarr"
+    }
   }
 }

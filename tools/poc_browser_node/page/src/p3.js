@@ -40,7 +40,7 @@ async function duckMemory(t) {
  * @param truth    bench/truth_table.py's output
  * @param cold     clear OPFS first (the first-ever open)
  */
-export async function p3({ file, roles, node, truth, cold = true, markers = 5, store = "columns" }) {
+export async function p3({ file, roles, node, truth, cold = true, markers = 5, store = "columns", parallel = "auto", parser = "js" }) {
     const t = await import("./table.js");
     const picked = [...document.getElementById("picker").files].find((f) => f.name === file);
     if (!picked) throw new Error(`no picked file ${file}`);
@@ -49,10 +49,12 @@ export async function p3({ file, roles, node, truth, cold = true, markers = 5, s
 
     // -- load: what the viewer waits on before it can draw a cell -------------
     const t0 = now();
-    const opened = await openStore(t, picked, roles, store);
+    const opened = await openStore(t, picked, roles, store, parallel, parser);
     const table = opened.table;
     const ids = await t.allCells(table, [roles.cell_id, roles.x, roles.y], true);
     out.timings.loadMs = now() - t0;
+    // The parallel ingest's extra DuckDB instances are done: their heaps go.
+    await t.releaseDbPool();
     out.timings.ingest = opened.timings;
     out.timings.reused = opened.reused;
     out.store = store;
@@ -279,13 +281,13 @@ export async function p3Ingest({ file, roles, workers = [4, 8, 16, 24] }) {
 }
 
 /** The table in OPFS as raw columns (default) or as a Parquet copy. */
-async function openStore(t, picked, roles, store) {
+async function openStore(t, picked, roles, store, parallel = "auto", parser = "js") {
     if (store === "parquet") {
         const parquet = await t.ensureParquet(picked);
         const table = await t.openTable(parquet.copy, parquet.key);
         return { table, timings: parquet.timings, reused: parquet.reused, bytes: parquet.copy.size };
     }
-    const r = await t.ensureColumnStore(picked, { first: [roles.cell_id, roles.x, roles.y] });
+    const r = await t.ensureColumnStore(picked, { first: [roles.cell_id, roles.x, roles.y], parallel, parser });
     return { table: r.table, timings: r.timings, reused: r.reused, bytes: r.timings.bytes ?? null };
 }
 

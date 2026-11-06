@@ -20,6 +20,8 @@ await build({
         tiffWorker: "page/src/workers/tiffWorker.js",
         csvWorker: "page/src/workers/csvWorker.js",
         pyramidWorker: "page/src/workers/pyramidWorker.js",
+        pyramidBandWorker: "page/src/workers/pyramidBandWorker.js",
+        h5Worker: "page/src/workers/h5Worker.js",
     },
     outdir: "page/dist",
     format: "iife",

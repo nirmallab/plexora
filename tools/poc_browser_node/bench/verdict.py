@@ -136,6 +136,81 @@ def p2b(rec, _all):
     return go, stop
 
 
+#: What a P4 read that the browser cannot do turns into, by the error it gives.
+P4_CONVERSIONS = [
+    ("lzf", "string", "h5wasm-plugins 0.3.0's lzf filter aborts on variable-length strings: "
+                      "re-save the strings without lzf (anndata compression='gzip'), or read the file on a node"),
+]
+
+
+def p4(rec, _all):
+    m, c = rec["metrics"], rec["checks"]
+    rows = m["matrix"]
+    core = ["obs_names", "obs_numeric", "obs_categorical", "obsm_spatial", "x_rows", "x_column"]
+    plain = [r for r in rows if r["kind"] == "h5ad" and r["codec"] in ("none", "gzip") and r["op"] in core]
+    plain_ok = [r for r in plain if r["state"] == "ok"]
+    ratios = [r["ratio"] for r in plain_ok if r.get("ratio") is not None]
+    worst = max(ratios) if ratios else None
+    worst_row = max(plain_ok, key=lambda r: r["ratio"] or 0) if plain_ok else None
+    sdata = [r for r in rows if r["kind"] == "spatialdata"]
+    unsupported = [r for r in rows if r["state"] != "ok"]
+
+    def named(r):
+        text = f"{r.get('codec', '')} {r['op']} {r.get('error', '')}".lower()
+        is_string = r["op"] in ("obs_names", "var_names", "obs_categorical")
+        return any(codec in text and (kind != "string" or is_string) for codec, kind, _ in P4_CONVERSIONS)
+
+    differs = [r for r in rows if r["state"] == "differs"]
+    go = [
+        check("h5ad none/gzip: obs, obsm, X row block and X column read and identical to h5py",
+              f"{len(plain_ok)}/{len(plain)}", len(plain) > 0 and len(plain_ok) == len(plain), "all"),
+        check("h5ad none/gzip: slowest read vs h5py (x)",
+              f"{r1(worst)} ({worst_row['file']} {worst_row['op']})" if worst_row else None,
+              worst is not None and worst <= 2, "<= 2"),
+        check("SpatialData (zarr v3): table, image, labels, shapes, points identical",
+              f"{sum(r['state'] == 'ok' for r in sdata)}/{len(sdata)}",
+              len(sdata) > 0 and all(r["state"] == "ok" for r in sdata), "all"),
+        check("every read the browser cannot do has a named conversion",
+              f"{sum(named(r) for r in unsupported)}/{len(unsupported)}",
+              all(named(r) for r in unsupported) and not differs, "all"),
+    ]
+    obs_dead = [r for r in plain if r["op"] in ("obs_numeric", "obsm_spatial") and r["state"] != "ok"]
+    stop = [check("obs or obsm unreadable (none/gzip)", len(obs_dead), bool(obs_dead), "0")]
+    return go, stop
+
+
+def p7(rec, _all):
+    """Per layout: Python-relative build time, identity, page health, reopen."""
+    m, c = rec["metrics"], rec["checks"]
+    go, stop = [], []
+    for layout, v in m["layouts"].items():
+        b = v["build"]
+        py = v["python"]["seconds"]
+        ident = c["identity"].get(layout, {})
+        reopen = v.get("reopen") or {}
+        left = (b["storage"]["quota"] - b["storage"]["usage"]) if b.get("storage") else None
+        go += [
+            check(f"[{layout}] build vs Python's pyramidize_image (x)", r1(b["wallMs"] / 1000 / py),
+                  b["wallMs"] / 1000 <= 2 * py, "<= 2"),
+            check(f"[{layout}] tiles identical to Python's pyramid, every level and channel",
+                  f"{ident.get('identical')}/{ident.get('count')}",
+                  ident.get("identical") == ident.get("count") and ident.get("count", 0) > 0, "all"),
+            check(f"[{layout}] main-thread long tasks > 50 ms during the build", b["longTasks"]["over50"],
+                  b["longTasks"]["over50"] <= 5, "<= 5"),
+            check(f"[{layout}] first tile after a relaunch (ms)", r1(reopen.get("firstTileMs")),
+                  reopen.get("firstTileMs") is not None and reopen["firstTileMs"] <= 1000, "<= 1000"),
+            check(f"[{layout}] room the browser reports after the build >= what was written (GB)",
+                  round(left / 1e9, 1) if left is not None else None,
+                  left is not None and left >= b["timings"]["bytesOut"], ">= written"),
+        ]
+        stop += [
+            check(f"[{layout}] build > 5 min", r1(b["wallMs"] / 1000), b["wallMs"] > 300000, "> 300 s"),
+            check(f"[{layout}] pyramid lost across a relaunch", reopen.get("firstTileMs") is None,
+                  reopen.get("firstTileMs") is None, "false"),
+        ]
+    return go, stop
+
+
 def p3(rec, _all):
     m, c = rec["metrics"], rec["checks"]
     polars = m["python"]["polarsReadMs"]
@@ -179,7 +254,71 @@ def p5(rec, _all):
     return go, stop
 
 
-RULES = {"P0": p0, "P1": p1, "P2": p2, "P2B": p2b, "P3": p3, "P5": p5}
+def p5lnah(rec, _all):
+    c = rec["checks"]
+    go = [
+        check("headed Chrome holds a loopback fetch from a public page while its prompt waits",
+              c.get("promptHeldTheFetch"), c.get("promptHeldTheFetch") is True, "true"),
+        check("the fetch works once the permission is granted", c.get("worksOnceGranted"),
+              c.get("worksOnceGranted") is True, "true"),
+    ]
+    return go, []
+
+
+def p6(rec, _all):
+    m = rec["metrics"]
+    cold, warm = m["cold"], m["warm"]
+    browser_blocks = [b for b in m["blocks"] if b["arm"] == "browser"]
+    page_load = statistics.median(b["pageLoadMs"] for b in browser_blocks if b.get("pageLoadMs") is not None) \
+        if browser_blocks else None
+    # The product's open counts from navigation (its page, its boot, its first
+    # view); the browser's from picking the file -- so its page load is added.
+    open_ratio = None
+    if cold["open"]["product"] and cold["open"]["browser"] is not None and page_load is not None:
+        open_ratio = (cold["open"]["browser"] + page_load) / cold["open"]["product"]
+    peak = (m.get("peakRenderer") or {}).get("browser")
+    go = [
+        check("open: browser (page load + first view) / product (C1)", r1(open_ratio),
+              open_ratio is not None and open_ratio <= 1.3, "<= 1.3"),
+        check("navigation, cold: geometric mean of browser / product per step", r1(cold["navGeoMeanRatio"]),
+              cold["navGeoMeanRatio"] is not None and cold["navGeoMeanRatio"] <= 1.3, "<= 1.3"),
+        check("navigation, revisit: geometric mean of browser / product per step", r1(warm["navGeoMeanRatio"]),
+              warm["navGeoMeanRatio"] is not None and warm["navGeoMeanRatio"] <= 1.3, "<= 1.3"),
+        check("browser renderer peak working set (GB)", round(peak / 2**30, 2) if peak else None,
+              peak is not None and peak <= 2 * 2**30, "<= 2"),
+        check("every step reached full in both arms", rec["checks"].get("everyStepFull"),
+              rec["checks"].get("everyStepFull") is True, "true"),
+    ]
+    stop = [check("ratio > 2 on open or navigation", r1(max(x for x in (open_ratio, cold["navGeoMeanRatio"]) if x is not None)),
+                  any(x is not None and x > 2 for x in (open_ratio, cold["navGeoMeanRatio"])), "> 2")]
+    return go, stop
+
+
+def p8(rec, _all):
+    results = rec["metrics"]["results"]
+    go, stop = [], []
+    for engine, v in results.items():
+        rows = v["rows"]
+        storage = {"P2B", "P7", "P3"}
+        port = engine == "webkit"   # Playwright's WebKit on Windows: the engine, not Safari
+        core = [r for r in rows if not (port and r["poc"] in storage)]
+        go.append(check(f"[{engine}] S features pass" + (" (storage features apart)" if port else ""),
+                        f"{sum(r['pass'] for r in core)}/{len(core)}", all(r["pass"] for r in core), "all"))
+        if port:
+            failed = [r["poc"] for r in rows if r["poc"] in storage and not r["pass"]]
+            go.append(check("[webkit] OPFS features (Windows WebKit has no OPFS backend; Safari not measured)",
+                            None if failed else "pass", not failed, "on Safari (Mac)"))
+        luma = [x["maxAbs"] for x in (v.get("lumaVsChrome") or []) if x]
+        go.append(check(f"[{engine}] picture vs Chrome: worst cell, mean luminance (levels)", r1(max(luma)) if luma else None,
+                        bool(luma) and max(luma) <= 2, "<= 2"))
+    every = [r for v in results.values() for r in v["rows"]]
+    stop.append(check("S fails in every other engine", None if not every else
+                      sum(not r["pass"] for r in every), every and all(not r["pass"] for r in every), "never"))
+    return go, stop
+
+
+RULES = {"P0": p0, "P1": p1, "P2": p2, "P2B": p2b, "P3": p3, "P4": p4, "P5": p5, "P5LNAH": p5lnah, "P6": p6,
+         "P7": p7, "P8": p8}
 
 
 def verdict(go, stop):

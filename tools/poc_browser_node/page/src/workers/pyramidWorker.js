@@ -1,134 +1,261 @@
 /**
- * P2b: a flat label mask turned into a label pyramid in the browser, the way
- * server/utils/segmentation_pyramid.py's FILLED mode builds one: level L's
- * pixel (y, x) is level 0's pixel (y * 2^L, x * 2^L) -- nearest-neighbour, so
- * every id survives exactly -- and levels until one tile covers the image
- * (pyramid_factors).
+ * P2b / P7: a flat TIFF -- a label mask or a multichannel image -- made into
+ * a pyramid in the browser, into OPFS, the pyramid Python builds:
  *
- * Streamed: level 0 is read one band of tile rows at a time, every coarser
- * level takes its sampled rows from that band, and a level's tiles are cut,
- * deflated and appended to that level's OPFS file the moment it has a full
- * tile row. Peak memory is one band plus one tile row per level, whatever the
- * mask's size. Level 0 is NOT copied: the viewer reads it from the user's own
- * file (a tiled TIFF is already random-access); only derived levels are kept.
+ *  - kind "labels": server/utils/segmentation_pyramid.py's FILLED mode,
+ *    nearest neighbour (every id survives);
+ *  - kind "image": server/utils/image_pyramid.py's pyramidize_image, a 2x2
+ *    mean cascade rounded half to even;
  *
- * Output, under OPFS labels/<key>/: L<n>.bin (deflated tiles back to back),
- * manifest.json {levels: [{width, height, tiles: [[offset, length], ...]}]}.
+ * and levels until one tile covers the image (pyramid_factors).
  *
- * {op: "build", file, key, tile = 1024, deflate = true} -> progress messages,
- * then {done, manifest, timings}.
+ * The work is spread over `workers` band workers (workers/pyramidBandWorker.js),
+ * each opening the file itself: a job is one band of level 0 (a tile row and a
+ * run of tiles for a tiled file; for a stripped file the full width and as many
+ * rows as `jobBytes` holds, in steps of the coarsest factor), read, decoded and
+ * reduced on its own core, every level's part of it sent back here. This worker
+ * owns the OPFS files (sync access handles live only in a dedicated worker): it
+ * pastes parts into tiles, hands each finished tile to a band worker to
+ * deflate, and appends the bytes to its level's file. Memory is bounded by the
+ * bands in flight (no more than ~1.5 GB of them), the tiles being pasted (one
+ * tile row per level per channel) and the deflate backlog: while more than
+ * `backlogBytes` wait, no band is read.
+ *
+ * Level 0 is copied only when the source cannot serve tiles itself (a
+ * stripped file): a tiled flat file is already random-access, and the viewer
+ * reads level 0 from it. A source that is already a pyramid is rebuilt from
+ * its level 0.
+ *
+ * Output, under OPFS pyramids/<key>/: L<n>.bin per level (deflated tiles of
+ * every channel, back to back, in the order they finished) and manifest.json
+ * {kind, dtype, width, height, tile, channels, factors,
+ *  levels: [{width, height, fromSource | file, tiles: [channel][ty * across + tx]
+ *            = [offset, length, w, h]}]}.
+ *
+ * {op: "build", file, key, kind, tile = 1024, compress = true, workers,
+ *  copyLevel0 = "auto", channels, jobBytes = 16 MB, backlogBytes = 128 MB}
+ *  -> progress messages, then {done, manifest, timings}.
  */
 import { createTiffReader } from "../lib/tiffReader.js";
+import { factorsFor } from "../lib/reduce.js";
 
 const now = () => performance.now();
 
-/** pyramid_factors: 1, 2, 4, ... until one tile covers the level. */
-function factorsFor(height, width, tile) {
-    const factors = [1];
-    for (;;) {
-        const f = factors[factors.length - 1];
-        if (Math.max(Math.ceil(height / f), Math.ceil(width / f)) <= tile) return factors;
-        factors.push(f * 2);
-    }
-}
+const KINDS = {
+    "8:1": Uint8Array, "16:1": Uint16Array, "32:1": Uint32Array,
+    "8:2": Int8Array, "16:2": Int16Array, "32:2": Int32Array,
+    "32:3": Float32Array, "64:3": Float64Array,
+};
 
-async function deflate(bytes) {
-    const stream = new Blob([bytes]).stream().pipeThrough(new CompressionStream("deflate"));
-    return new Uint8Array(await new Response(stream).arrayBuffer());
+/** A pool of band workers, each told the build once. */
+function startHands(count, openMessage) {
+    const url = new URL("pyramidBandWorker.js", self.location.href).href;
+    const hands = [];
+    const pending = new Map();
+    let nextId = 1;
+    for (let i = 0; i < count; i += 1) {
+        const worker = new Worker(url);
+        const hand = { worker, blocks: 0, deflates: 0 };
+        worker.onmessage = (event) => {
+            const msg = event.data;
+            const id = msg.opened ? `open${i}` : msg.id;
+            const entry = pending.get(id);
+            if (!entry) return;
+            pending.delete(id);
+            if (msg.error) entry.reject(new Error(msg.error));
+            else entry.resolve(msg);
+        };
+        hands.push(hand);
+    }
+    const call = (hand, key, message, transfer = []) => new Promise((resolve, reject) => {
+        pending.set(key, { resolve, reject });
+        hand.worker.postMessage(message, transfer);
+    });
+    const opened = Promise.all(hands.map((hand, i) => call(hand, `open${i}`, openMessage)));
+    return {
+        hands,
+        opened,
+        block(hand, job) {
+            const id = nextId++;
+            hand.blocks += 1;
+            return call(hand, id, { op: "block", id, ...job }).finally(() => { hand.blocks -= 1; });
+        },
+        deflate(buffer) {
+            // The hand with the fewest deflates waiting.
+            const hand = hands.reduce((a, b) => (b.deflates < a.deflates ? b : a));
+            const id = nextId++;
+            hand.deflates += 1;
+            return call(hand, id, { op: "deflate", id, buffer }, [buffer]).finally(() => { hand.deflates -= 1; });
+        },
+        stop() { for (const hand of hands) hand.worker.terminate(); },
+    };
 }
 
 self.onmessage = async (event) => {
-    const { op, file, key, tile = 1024, compress = true } = event.data;
+    const { op, file, key, kind = "labels", tile = 1024, compress = true, copyLevel0 = "auto",
+            workers = Math.max(1, Math.min(12, (navigator.hardwareConcurrency || 4) - 2)),
+            jobBytes = 16 * 1024 * 1024, backlogBytes = 128 * 1024 * 1024, channels: only = null } = event.data;
     if (op !== "build") return;
+    let pool = null;
     try {
         const t0 = now();
         const reader = createTiffReader();
         const { geometry } = await reader.open({ file, decoder: "native" });
-        if (geometry.bitsPerSample !== 32) throw new Error(`a label mask of ${geometry.bitsPerSample}-bit ids`);
         const { width, height } = geometry;
+        const Kind = KINDS[`${geometry.bitsPerSample}:${geometry.sampleFormat || 1}`];
+        if (!Kind) throw new Error(`${geometry.bitsPerSample}-bit samples of format ${geometry.sampleFormat}`);
+        if (kind === "labels" && Kind.BYTES_PER_ELEMENT !== 4) throw new Error(`a label mask of ${geometry.bitsPerSample}-bit ids`);
         const factors = factorsFor(height, width, tile);
-        const root = await navigator.storage.getDirectory();
-        const labels = await root.getDirectoryHandle("labels", { create: true });
-        try { await labels.removeEntry(key, { recursive: true }); } catch (e) { /* none */ }
-        const dir = await labels.getDirectoryHandle(key, { create: true });
+        if (factors[factors.length - 1] > tile) throw new Error("more levels than one tile can hold");
+        const channels = only || Array.from({ length: geometry.numChannels }, (_, c) => c);
+        const copy0 = copyLevel0 === "auto" ? !geometry.fileTile.tiled : Boolean(copyLevel0);
+        const bytesPer = Kind.BYTES_PER_ELEMENT;
 
-        // One output per derived level: its row buffer and its file.
+        const root = await navigator.storage.getDirectory();
+        const top = await root.getDirectoryHandle("pyramids", { create: true });
+        try { await top.removeEntry(key, { recursive: true }); } catch (e) { /* none */ }
+        const dir = await top.getDirectoryHandle(key, { create: true });
+
+        // Every level's geometry and output file.
         const levels = [];
-        for (let L = 1; L < factors.length; L += 1) {
+        for (let L = 0; L < factors.length; L += 1) {
             const f = factors[L];
             const w = Math.ceil(width / f);
             const h = Math.ceil(height / f);
-            const handle = await (await dir.getFileHandle(`L${L}.bin`, { create: true })).createSyncAccessHandle();
-            handle.truncate(0);
-            levels.push({ L, f, width: w, height: h, rows: new Uint32Array(tile * w), filled: 0, nextRow: 0,
-                          handle, offset: 0, tiles: [] });
+            const lv = { L, f, width: w, height: h, across: Math.ceil(w / tile),
+                         fromSource: L === 0 && !copy0, handle: null, offset: 0,
+                         tiles: channels.map(() => []) };
+            if (!lv.fromSource) {
+                lv.handle = await (await dir.getFileHandle(`L${L}.bin`, { create: true })).createSyncAccessHandle();
+                lv.handle.truncate(0);
+            }
+            levels.push(lv);
         }
-        const timings = { readMs: 0, sampleMs: 0, deflateMs: 0, writeMs: 0, bands: 0 };
+        const timings = { assembleMs: 0, writeMs: 0, jobs: 0, deflates: 0, hand: {} };
+        const handTime = (t) => { for (const [k, v] of Object.entries(t)) timings.hand[k] = (timings.hand[k] || 0) + v; };
         let bytesOut = 0;
 
-        const flush = async (lv) => {
-            // Cut lv.filled rows into tiles, left to right, and append them.
-            const rows = lv.filled;
-            for (let x0 = 0; x0 < lv.width; x0 += tile) {
-                const tw = Math.min(tile, lv.width - x0);
-                const out = new Uint32Array(tw * rows);
-                for (let r = 0; r < rows; r += 1) out.set(lv.rows.subarray(r * lv.width + x0, r * lv.width + x0 + tw), r * tw);
-                let bytes = new Uint8Array(out.buffer);
-                let s = now();
-                if (compress) bytes = await deflate(bytes);
-                timings.deflateMs += now() - s;
-                s = now();
-                lv.handle.write(bytes, { at: lv.offset });
-                timings.writeMs += now() - s;
-                lv.tiles.push([lv.offset, bytes.byteLength, tw, rows]);
-                lv.offset += bytes.byteLength;
-                bytesOut += bytes.byteLength;
-            }
-            lv.filled = 0;
+        const write = (lv, ci, tx, ty, w, h, bytes) => {
+            const s = now();
+            lv.handle.write(bytes, { at: lv.offset });
+            lv.tiles[ci][ty * lv.across + tx] = [lv.offset, bytes.byteLength, w, h];
+            lv.offset += bytes.byteLength;
+            bytesOut += bytes.byteLength;
+            timings.writeMs += now() - s;
         };
 
-        const bandRows = tile;
-        // One band of level 0 (a tile row, full width), stitched into one
-        // buffer so every level samples it with a plain strided read.
-        const band = new Uint32Array(bandRows * width);
-        for (let y0 = 0; y0 < height; y0 += bandRows) {
-            const bh = Math.min(bandRows, height - y0);
-            let s = now();
-            const pieces = await Promise.all(Array.from({ length: Math.ceil(width / tile) }, (_, tx) =>
-                reader.tile({ channel: 0, level: 0, tx, ty: y0 / tile, tw: tile, th: tile, raw: true })));
-            pieces.forEach((t, tx) => {
-                const values = new Uint32Array(t.array.buffer, t.array.byteOffset, t.array.byteLength / 4);
-                for (let r = 0; r < t.height; r += 1) {
-                    band.set(values.subarray(r * t.width, (r + 1) * t.width), r * width + tx * tile);
-                }
-            });
-            timings.readMs += now() - s;
-            s = now();
-            for (const lv of levels) {
-                // Rows y of level 0 with y % f == 0 land in this level, in order.
-                for (let y = Math.ceil(y0 / lv.f) * lv.f; y < y0 + bh; y += lv.f) {
-                    const row = lv.rows.subarray(lv.filled * lv.width, (lv.filled + 1) * lv.width);
-                    const base = (y - y0) * width;
-                    for (let x = 0, i = 0; x < width; x += lv.f, i += 1) row[i] = band[base + x];
-                    lv.filled += 1;
-                    if (lv.filled === tile) {
-                        timings.sampleMs += now() - s;
-                        await flush(lv);
-                        s = now();
+        // Tiles being pasted together: `${ci}:${L}:${tx}:${ty}`. A finished
+        // tile waits for a hand to deflate it; while too many bytes wait, no
+        // new band is read (a fast reader would otherwise pile the image up).
+        const open = new Map();
+        const finishing = [];
+        const backlogCap = backlogBytes;
+        let backlog = 0;
+        let waiters = [];
+        const room = () => (backlog <= backlogCap ? Promise.resolve() : new Promise((r) => waiters.push(r)));
+        const finish = (lv, ci, tx, ty, acc) => {
+            if (!compress) { write(lv, ci, tx, ty, acc.w, acc.h, new Uint8Array(acc.array.buffer)); return; }
+            const size = acc.array.byteLength;
+            backlog += size;
+            timings.backlogPeak = Math.max(timings.backlogPeak || 0, backlog);
+            finishing.push(pool.deflate(acc.array.buffer).then((r) => {
+                timings.deflates += 1;
+                handTime({ deflateMs: r.ms });
+                write(lv, ci, tx, ty, acc.w, acc.h, r.bytes);
+                backlog -= size;
+                if (backlog <= backlogCap && waiters.length) { const ready = waiters; waiters = []; ready.forEach((r) => r()); }
+            }));
+        };
+        const paste = (ci, part) => {
+            const s = now();
+            const lv = levels[part.level];
+            const src = new Kind(part.buffer);
+            const r1 = part.row + part.height;
+            const c1 = part.col + part.width;
+            for (let ty = Math.floor(part.row / tile); ty * tile < r1; ty += 1) {
+                for (let tx = Math.floor(part.col / tile); tx * tile < c1; tx += 1) {
+                    const id = `${ci}:${part.level}:${tx}:${ty}`;
+                    let acc = open.get(id);
+                    if (!acc) {
+                        const w = Math.min(tile, lv.width - tx * tile);
+                        const h = Math.min(tile, lv.height - ty * tile);
+                        acc = { array: new Kind(w * h), w, h, filled: 0 };
+                        open.set(id, acc);
+                    }
+                    // The overlap of this part and this tile, row by row.
+                    const y0 = Math.max(part.row, ty * tile), y1 = Math.min(r1, ty * tile + acc.h);
+                    const x0 = Math.max(part.col, tx * tile), x1 = Math.min(c1, tx * tile + acc.w);
+                    for (let y = y0; y < y1; y += 1) {
+                        const from = (y - part.row) * part.width + (x0 - part.col);
+                        acc.array.set(src.subarray(from, from + (x1 - x0)), (y - ty * tile) * acc.w + (x0 - tx * tile));
+                    }
+                    acc.filled += (y1 - y0) * (x1 - x0);
+                    if (acc.filled === acc.w * acc.h) {
+                        open.delete(id);
+                        finish(lv, ci, tx, ty, acc);
                     }
                 }
             }
-            timings.sampleMs += now() - s;
-            timings.bands += 1;
-            self.postMessage({ progress: Math.min(1, (y0 + bh) / height) });
-        }
-        for (const lv of levels) if (lv.filled) await flush(lv);
-        const manifest = {
-            version: 1, source: file.name, sourceBytes: file.size, width, height, tile, compress: compress ? "deflate" : null,
-            factors, levels: [{ width, height, fromSource: true },
-                              ...levels.map((lv) => ({ width: lv.width, height: lv.height, file: `L${lv.L}.bin`, tiles: lv.tiles }))],
+            timings.assembleMs += now() - s;
         };
-        for (const lv of levels) { lv.handle.flush(); lv.handle.close(); }
+
+        // Jobs: per channel, band by band. A tiled file: one tile row high, a
+        // run of tiles across. A stripped file: the whole width (a strip spans
+        // every column), so fewer rows -- as many as `jobBytes` holds, in steps
+        // of the coarsest factor so every level's part of a band is whole.
+        const tiled = geometry.fileTile.tiled;
+        const granule = factors[factors.length - 1];
+        const span = tiled ? tile * Math.max(1, Math.floor(jobBytes / (tile * tile * bytesPer))) : width;
+        const rows = tiled ? tile
+            : Math.min(tile, Math.max(granule, Math.floor(jobBytes / (width * bytesPer) / granule) * granule));
+        const jobs = [];
+        channels.forEach((channel, ci) => {
+            for (let y0 = 0; y0 < height; y0 += rows) {
+                for (let x0 = 0; x0 < width; x0 += span) {
+                    jobs.push({ ci, channel, y0, y1: Math.min(height, y0 + rows), x0, x1: Math.min(width, x0 + span) });
+                }
+            }
+        });
+        // No more bands in flight than ~1.5 GB holds, counting each band, its
+        // decode buffers and its parts.
+        const bandBytes = rows * span * bytesPer;
+        const hands = Math.max(1, Math.min(workers, jobs.length, Math.floor((1536 * 1024 * 1024) / (4 * bandBytes)) || 1));
+        timings.bandRows = rows;
+        timings.bandColumns = span;
+        pool = startHands(hands, { op: "open", file, kind, factors, tile, copyLevel0: copy0, compress });
+        await pool.opened;
+        const tOpened = now();
+
+        let done = 0;
+        let next = 0;
+        // Each hand takes the next band as soon as it is free and there is room.
+        await Promise.all(pool.hands.map(async (hand) => {
+            while (next < jobs.length) {
+                await room();
+                if (next >= jobs.length) break;
+                const job = jobs[next++];
+                const r = await pool.block(hand, { channel: job.channel, y0: job.y0, y1: job.y1, x0: job.x0, x1: job.x1 });
+                handTime(r.timing);
+                for (const part of r.parts) paste(job.ci, part);
+                done += 1;
+                timings.jobs += 1;
+                if (done % 8 === 0 || done === jobs.length) self.postMessage({ progress: done / jobs.length });
+            }
+        }));
+        const tBlocks = now();
+        await Promise.all(finishing);
+        if (open.size) throw new Error(`${open.size} tiles never completed`);
+        const tDeflated = now();
+
+        const manifest = {
+            version: 2, kind, dtype: Kind.name.replace("Array", "").toLowerCase(), bytesPerSample: bytesPer,
+            source: file.name, sourceBytes: file.size, width, height, tile, channels,
+            names: geometry.names, compress: compress ? "deflate" : null, factors,
+            levels: levels.map((lv) => (lv.fromSource
+                ? { width: lv.width, height: lv.height, fromSource: true }
+                : { width: lv.width, height: lv.height, file: `L${lv.L}.bin`, tiles: lv.tiles })),
+        };
+        for (const lv of levels) if (lv.handle) { lv.handle.flush(); lv.handle.close(); }
         const m = await (await dir.getFileHandle("manifest.json", { create: true })).createSyncAccessHandle();
         const text = new TextEncoder().encode(JSON.stringify(manifest));
         m.truncate(0);
@@ -136,10 +263,22 @@ self.onmessage = async (event) => {
         m.flush();
         m.close();
         timings.totalMs = now() - t0;
+        timings.openMs = tOpened - t0;
+        timings.blocksMs = tBlocks - tOpened;
+        timings.drainMs = tDeflated - tBlocks;
+        timings.hands = hands;
         timings.bytesOut = bytesOut;
-        timings.rawDerivedBytes = levels.reduce((a, lv) => a + lv.width * lv.height * 4, 0);
-        self.postMessage({ done: true, manifest: { ...manifest, levels: manifest.levels.map(({ tiles, ...rest }) => ({ ...rest, tileCount: tiles?.length })) }, timings });
+        timings.copiedLevel0 = copy0;
+        // A source that is already a pyramid is rebuilt from its level 0 (a test can ask for that).
+        timings.sourceLayout = geometry.layout;
+        timings.rawDerivedBytes = levels.reduce((a, lv) => a + (lv.fromSource ? 0 : lv.width * lv.height * bytesPer * channels.length), 0);
+        self.postMessage({
+            done: true, timings,
+            manifest: { ...manifest, levels: manifest.levels.map(({ tiles, ...rest }) => ({ ...rest, tileCount: tiles ? tiles[0].length : 0 })) },
+        });
     } catch (error) {
-        self.postMessage({ error: String(error?.stack || error) });
+        self.postMessage({ error: `${error}${error?.stack ? ` | ${error.stack}` : ""}` });
+    } finally {
+        pool?.stop();
     }
 };

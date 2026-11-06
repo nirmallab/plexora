@@ -43,51 +43,60 @@ function rng(seed) {
 }
 
 // ---------------------------------------------------------------------------
-// The OPFS label store P2b writes
+// The OPFS pyramid store P2b (masks) and P7 (flat images) write
 
-export async function openLabelStore(key, sourceFile) {
+/**
+ * A pyramid workers/pyramidWorker.js built, read back. tile() answers raw
+ * native bytes (little-endian samples) for any channel and level: from OPFS,
+ * or from the source file for a level 0 that was not copied.
+ */
+export async function openPyramidStore(key, sourceFile) {
     const root = await navigator.storage.getDirectory();
-    const dir = await (await root.getDirectoryHandle("labels")).getDirectoryHandle(key);
+    const dir = await (await root.getDirectoryHandle("pyramids")).getDirectoryHandle(key);
     const manifest = JSON.parse(await (await (await dir.getFileHandle("manifest.json")).getFile()).text());
     const files = {};
     let source = null;
     return {
         manifest,
-        async tile(level, tx, ty) {
+        async tile(ci, level, tx, ty) {
             const lv = manifest.levels[level];
             if (!lv) throw new Error(`no level ${level}`);
             if (lv.fromSource) {
                 source ||= new TiffPool(workerUrl("tiffWorker.js"), 1);
-                if (!source.opened) { await source.open({ file: sourceFile }); source.opened = true; }
-                return source.tile(0, 0, tx, ty);
+                if (!source.opened) { source.opened = source.open({ file: sourceFile }); }
+                await source.opened;
+                return source.tile(manifest.channels[ci], 0, tx, ty, { raw: true });
             }
             const across = Math.ceil(lv.width / manifest.tile);
-            const entry = lv.tiles[ty * across + tx];
+            const entry = lv.tiles[ci][ty * across + tx];
             if (!entry) return { width: 0, height: 0, array: new Uint8Array(0), format: "empty" };
             const [offset, length, w, h] = entry;
             files[level] ||= await (await dir.getFileHandle(lv.file)).getFile();
-            let blob = files[level].slice(offset, offset + length);
-            let bytes;
-            if (manifest.compress === "deflate") {
-                bytes = new Uint8Array(await new Response(blob.stream().pipeThrough(new DecompressionStream("deflate"))).arrayBuffer());
-            } else {
-                bytes = new Uint8Array(await blob.arrayBuffer());
-            }
-            return { width: w, height: h, array: bytes, format: "u32" };
+            const blob = files[level].slice(offset, offset + length);
+            const bytes = manifest.compress === "deflate"
+                ? new Uint8Array(await new Response(blob.stream().pipeThrough(new DecompressionStream("deflate"))).arrayBuffer())
+                : new Uint8Array(await blob.arrayBuffer());
+            return { width: w, height: h, array: bytes, format: `raw${manifest.bytesPerSample * 8}` };
         },
         close() { source?.terminate(); },
     };
 }
 
-/** P2b build: flat mask -> pyramid in OPFS, main thread watched for long tasks. */
-export async function p2bBuild({ mask, key = "p2b", compress = true }) {
-    const file = picked(mask);
+/**
+ * Build a pyramid of a picked flat TIFF in OPFS (workers/pyramidWorker.js),
+ * the main thread watched for long tasks and dropped frames meanwhile.
+ * kind "labels" (P2b) or "image" (P7).
+ */
+export async function buildPyramid({ file: name, kind, key, compress = true, workers, copyLevel0 = "auto",
+                                     jobBytes, backlogBytes }) {
+    const file = picked(name);
     const root = await navigator.storage.getDirectory();
-    try { await root.removeEntry("labels", { recursive: true }); } catch (e) { /* none */ }
+    try { await (await root.getDirectoryHandle("pyramids")).removeEntry(key, { recursive: true }); } catch (e) { /* none */ }
+    const before = await navigator.storage.estimate();
     const longTasks = [];
     const observer = new PerformanceObserver((list) => { for (const e of list.getEntries()) longTasks.push(e.duration); });
     observer.observe({ type: "longtask" });
-    // A frame counter: the page must keep drawing while the worker builds.
+    // A frame counter: the page must keep drawing while the workers build.
     let frames = 0, building = true;
     (async () => { while (building) { await frame(); frames += 1; } })();
     const t0 = now();
@@ -97,7 +106,8 @@ export async function p2bBuild({ mask, key = "p2b", compress = true }) {
             if (e.data.error) { worker.terminate(); reject(new Error(e.data.error)); }
             if (e.data.done) { worker.terminate(); resolve(e.data); }
         };
-        worker.postMessage({ op: "build", file, key, compress });
+        const tuning = Object.fromEntries(Object.entries({ workers, jobBytes, backlogBytes }).filter(([, v]) => v));
+        worker.postMessage({ op: "build", file, key, kind, compress, copyLevel0, ...tuning });
     });
     const wall = now() - t0;
     building = false;
@@ -107,14 +117,20 @@ export async function p2bBuild({ mask, key = "p2b", compress = true }) {
         wallMs: wall, timings: result.timings, manifest: result.manifest,
         longTasks: { count: longTasks.length, over50: longTasks.filter((d) => d > 50).length, max: Math.max(0, ...longTasks) },
         framesDuring: frames, fps: frames / (wall / 1000),
-        storage: { usage: estimate.usage, quota: estimate.quota },
+        storage: { usageBefore: before.usage, usage: estimate.usage, quota: estimate.quota },
         sourceBytes: file.size,
+        hardwareConcurrency: navigator.hardwareConcurrency,
     };
+}
+
+/** P2b build: a flat mask. */
+export async function p2bBuild({ mask, key = "p2b", compress = true, workers }) {
+    return buildPyramid({ file: mask, kind: "labels", key, compress, workers });
 }
 
 /** P2b identity: OPFS tiles vs the node's tiles of the pyramid Python built. */
 export async function p2bIdentity({ mask, key = "p2b", node, count = 200, seed = 5 }) {
-    const store = await openLabelStore(key, picked(mask));
+    const store = await openPyramidStore(key, picked(mask));
     const client = new NodeClient(node.endpoint, node.token);
     const rand = rng(seed);
     const levels = store.manifest.levels;
@@ -126,7 +142,7 @@ export async function p2bIdentity({ mask, key = "p2b", node, count = 200, seed =
         const lv = levels[level];
         const tx = Math.floor(rand() * Math.ceil(lv.width / store.manifest.tile));
         const ty = Math.floor(rand() * Math.ceil(lv.height / store.manifest.tile));
-        const mine = await store.tile(level, tx, ty);
+        const mine = await store.tile(0, level, tx, ty);
         const response = await fetch(client.segTileUrl(node.segId, level, tx, ty), { credentials: "omit" });
         const theirs = await decodePng(new Uint8Array(await response.arrayBuffer()));
         const same = mine.width === theirs.width && mine.height === theirs.height
@@ -141,20 +157,63 @@ export async function p2bIdentity({ mask, key = "p2b", node, count = 200, seed =
     return { count, identical, mismatches };
 }
 
-/** P2b reopen: a fresh page finds the store and draws its first tile. */
-export async function p2bReopen({ mask, key = "p2b" }) {
+/** A fresh page finds a store and reads its coarsest tile, then a middle one. */
+export async function pyramidReopen({ file, key }) {
     const t0 = now();
-    const store = await openLabelStore(key, picked(mask));
+    const store = await openPyramidStore(key, picked(file));
     const tManifest = now();
     const coarse = store.manifest.levels.length - 1;
-    const tile = await store.tile(coarse, 0, 0);
+    const tile = await store.tile(0, coarse, 0, 0);
     const firstTileMs = now() - t0;
     const mid = Math.max(1, coarse - 2);
     const t1 = now();
-    await store.tile(mid, 0, 0);
+    await store.tile(0, mid, 0, 0);
     const midTileMs = now() - t1;
     store.close();
-    return { manifestMs: tManifest - t0, firstTileMs, firstTile: [tile.width, tile.height], midTileMs };
+    const estimate = await navigator.storage.estimate();
+    const persisted = await navigator.storage.persisted?.();
+    return { manifestMs: tManifest - t0, firstTileMs, firstTile: [tile.width, tile.height], midTileMs,
+             storage: { usage: estimate.usage, quota: estimate.quota, persisted } };
+}
+
+export async function p2bReopen({ mask, key = "p2b" }) {
+    return pyramidReopen({ file: mask, key });
+}
+
+/**
+ * P7 identity: random tiles of every level and channel of the browser's
+ * pyramid against the pyramid Python wrote (its file picked beside the
+ * source), as raw samples.
+ */
+export async function p7Identity({ image, python, key = "p7", count = 200, seed = 7 }) {
+    const store = await openPyramidStore(key, picked(image));
+    const theirs = new TiffPool(workerUrl("tiffWorker.js"), 2);
+    const { geometry } = await theirs.open({ file: picked(python) });
+    const rand = rng(seed);
+    const levels = store.manifest.levels;
+    const out = { count, identical: 0, mismatches: [], perLevel: {},
+                  python: { layout: geometry.layout, levels: geometry.levels.length, channels: geometry.numChannels } };
+    if (geometry.levels.length !== levels.length) out.levelCountDiffers = [levels.length, geometry.levels.length];
+    for (let i = 0; i < count; i += 1) {
+        const level = Math.floor(rand() * levels.length);
+        const ci = Math.floor(rand() * store.manifest.channels.length);
+        const lv = levels[level];
+        const tx = Math.floor(rand() * Math.ceil(lv.width / store.manifest.tile));
+        const ty = Math.floor(rand() * Math.ceil(lv.height / store.manifest.tile));
+        const mine = await store.tile(ci, level, tx, ty);
+        const ref = await theirs.tile(store.manifest.channels[ci], level, tx, ty, { raw: true });
+        const same = mine.width === ref.width && mine.height === ref.height && firstDifference(mine.array, ref.array) === -1;
+        const tally = (out.perLevel[level] ||= { n: 0, identical: 0 });
+        tally.n += 1;
+        if (same) { out.identical += 1; tally.identical += 1; }
+        else if (out.mismatches.length < 10) {
+            out.mismatches.push({ ci, level, tx, ty, mine: [mine.width, mine.height], python: [ref.width, ref.height],
+                                  firstDiff: firstDifference(mine.array, ref.array) });
+        }
+    }
+    store.close();
+    theirs.terminate();
+    return out;
 }
 
 // ---------------------------------------------------------------------------

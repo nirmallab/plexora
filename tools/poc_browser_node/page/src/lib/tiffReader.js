@@ -13,11 +13,12 @@
  *    node's label PNG (low three bytes in RGB, alpha 0 for ids < 2^24).
  *  - an edge tile is the clipped size, as `read_tile` slices it.
  *
- * createTiffReader() -> {open, tile, level}; the worker (workers/tiffWorker.js)
+ * createTiffReader() -> {open, tile, level, region}; the worker (workers/tiffWorker.js)
  * puts it behind messages, and Node tests (tests/) call it directly over
  * fs.openAsBlob, which is the same file-backed Blob a page gets from a picker.
- *   open({file|url, decoder: "native"|"pako", prefetchOffsets})
+ *   open({file|url, decoder: "native"|"native-blob"|"pako", prefetchOffsets})
  *   tile({channel, level, tx, ty, tw, th, raw})  -- `timing` says where it went
+ *   region({channel, level, x0, y0, x1, y1})     -- a window as native values (the pyramid builder)
  *   level({channel, level})                      -- a whole (small) level, raw
  */
 import { addDecoder, BaseDecoder, GeoTIFF, GeoTIFFImage } from "geotiff";
@@ -31,8 +32,35 @@ const DEFLATE = [8, 32946];
 /** Decode-time accounting shared by both decoders. */
 const decodeClock = { ms: 0, calls: 0 };
 
-/** zlib inflate in the browser's own code: what the product's HD worker uses. */
+/**
+ * Bytes through a CompressionStream or DecompressionStream, written straight
+ * into it. (Wrapping them in a Blob first, as `new Blob([b]).stream()`, hands
+ * every byte to the browser process's blob store and back: a copy each way,
+ * and at gigabytes in flight the store refuses -- "Failed to fetch".)
+ */
+export async function throughStream(bytes, transform) {
+    const writer = transform.writable.getWriter();
+    writer.write(bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes)).catch(() => {});
+    writer.close().catch(() => {});
+    return new Response(transform.readable).arrayBuffer();
+}
+
+/** zlib inflate in the browser's own code, the bytes written straight in. */
 class NativeDeflate extends BaseDecoder {
+    async decodeBlock(buffer) {
+        const t0 = now();
+        const out = await throughStream(buffer, new DecompressionStream("deflate"));
+        decodeClock.ms += now() - t0;
+        decodeClock.calls += 1;
+        return out;
+    }
+}
+
+/**
+ * The same inflate fed through a Blob, as the product's HD tile worker
+ * (workers/tileDecoder.js) feeds it: kept to measure what the Blob costs.
+ */
+class NativeDeflateBlob extends BaseDecoder {
     async decodeBlock(buffer) {
         const t0 = now();
         const stream = new Blob([buffer]).stream().pipeThrough(new DecompressionStream("deflate"));
@@ -55,7 +83,7 @@ class PakoDeflate extends BaseDecoder {
 }
 
 function useDecoder(kind) {
-    addDecoder(DEFLATE, async () => (kind === "pako" ? PakoDeflate : NativeDeflate));
+    addDecoder(DEFLATE, async () => ({ pako: PakoDeflate, "native-blob": NativeDeflateBlob }[kind] || NativeDeflate));
 }
 
 /**
@@ -357,6 +385,139 @@ export function createTiffReader() {
         };
     }
 
+    /** The typed array kind of an image's samples. */
+    function arrayKind(img) {
+        const bits = Number(img.getBitsPerSample());
+        const format = Number(img.getSampleFormat?.() ?? 1);
+        if (format === 3) return bits === 64 ? Float64Array : Float32Array;
+        if (format === 2) return { 8: Int8Array, 16: Int16Array, 32: Int32Array }[bits];
+        return { 8: Uint8Array, 16: Uint16Array, 32: Uint32Array }[bits];
+    }
+
+    /** A big-endian file's samples in this machine's (little-endian) order. */
+    function fromBigEndian(buffer, Kind) {
+        const n = Kind.BYTES_PER_ELEMENT;
+        if (n === 1) return buffer;
+        const view = new DataView(buffer);
+        const out = new Kind(buffer.byteLength / n);
+        const get = Kind === Float32Array ? "getFloat32" : Kind === Float64Array ? "getFloat64"
+            : `get${Kind.name.replace("Array", "")}`;
+        for (let k = 0; k < out.length; k += 1) out[k] = view[get](k * n, false);
+        return out.buffer;
+    }
+
+    /**
+     * Rows of an uncompressed stripped image straight from the file: a row is
+     * at a fixed offset, so a band costs one read per strip it crosses.
+     * geotiff.js would read each whole strip, and a flat image written without
+     * compression is often one strip per plane, gigabytes long.
+     */
+    async function uncompressedRows(img, x0, y0, x1, y1) {
+        const Kind = arrayKind(img);
+        const W = img.getWidth();
+        const rowBytes = W * Kind.BYTES_PER_ELEMENT;
+        const rps = Number(img.fileDirectory.getValue("RowsPerStrip") || img.getHeight());
+        const offsets = await img.fileDirectory.loadValue("StripOffsets");
+        const slices = [];
+        for (let s = Math.floor(y0 / rps); s * rps < y1; s += 1) {
+            const r0 = Math.max(y0, s * rps);
+            const r1 = Math.min(y1, (s + 1) * rps);
+            slices.push({ offset: Number(offsets[s]) + (r0 - s * rps) * rowBytes, length: (r1 - r0) * rowBytes, r0, r1 });
+        }
+        const buffers = await state.source.fetch(slices.map(({ offset, length }) => ({ offset, length })));
+        const w = x1 - x0;
+        const out = new Kind(w * (y1 - y0));
+        slices.forEach((s, i) => {
+            const rows = new Kind(state.littleEndian ? buffers[i] : fromBigEndian(buffers[i], Kind));
+            if (x0 === 0 && w === W) { out.set(rows, (s.r0 - y0) * w); return; }
+            for (let r = s.r0; r < s.r1; r += 1) {
+                const from = (r - s.r0) * W + x0;
+                out.set(rows.subarray(from, from + w), (r - y0) * w);
+            }
+        });
+        return out;
+    }
+
+    /**
+     * Rows of a deflate-compressed stripped image: the strips a band crosses
+     * are read in one go (they sit back to back in every writer's output) and
+     * inflated by the browser, instead of geotiff.js's one read and one
+     * decoder call per strip -- thousands for a band of a wide image.
+     */
+    async function deflatedRows(img, x0, y0, x1, y1) {
+        const Kind = arrayKind(img);
+        const W = img.getWidth();
+        const H = img.getHeight();
+        const rps = Number(img.fileDirectory.getValue("RowsPerStrip") || H);
+        const offsets = await img.fileDirectory.loadValue("StripOffsets");
+        const counts = await img.fileDirectory.loadValue("StripByteCounts");
+        const s0 = Math.floor(y0 / rps);
+        const s1 = Math.ceil(y1 / rps);
+        let lo = Infinity, hi = 0, sum = 0;
+        for (let s = s0; s < s1; s += 1) {
+            lo = Math.min(lo, Number(offsets[s]));
+            hi = Math.max(hi, Number(offsets[s]) + Number(counts[s]));
+            sum += Number(counts[s]);
+        }
+        // One read when the strips are (nearly) contiguous; else one per strip.
+        let pieces;
+        if (hi - lo <= 1.5 * sum) {
+            const [all] = await state.source.fetch([{ offset: lo, length: hi - lo }]);
+            pieces = [];
+            for (let s = s0; s < s1; s += 1) pieces.push(new Uint8Array(all, Number(offsets[s]) - lo, Number(counts[s])));
+        } else {
+            const slices = [];
+            for (let s = s0; s < s1; s += 1) slices.push({ offset: Number(offsets[s]), length: Number(counts[s]) });
+            pieces = (await state.source.fetch(slices)).map((b) => new Uint8Array(b));
+        }
+        const t0 = now();
+        const inflated = await Promise.all(pieces.map((bytes) => throughStream(bytes, new DecompressionStream("deflate"))));
+        decodeClock.ms += now() - t0;
+        decodeClock.calls += pieces.length;
+        const w = x1 - x0;
+        const out = new Kind(w * (y1 - y0));
+        inflated.forEach((buffer, i) => {
+            const s = s0 + i;
+            const rows = new Kind(state.littleEndian ? buffer : fromBigEndian(buffer, Kind));
+            const r0 = Math.max(y0, s * rps);
+            const r1 = Math.min(y1, (s + 1) * rps, H);
+            for (let r = r0; r < r1; r += 1) {
+                const from = (r - s * rps) * W + x0;
+                out.set(rows.subarray(from, from + w), (r - y0) * w);
+            }
+        });
+        return out;
+    }
+
+    /**
+     * A window of one channel as native values, whatever the layout (tiles or
+     * strips, any codec geotiff.js knows; uncompressed and plain-deflate strips
+     * read directly).
+     */
+    async function region({ channel, level: index = 0, x0, y0, x1, y1 }) {
+        const t0 = now();
+        const decode0 = decodeClock.ms;
+        const readMs0 = state.source.readMs;
+        const bytes0 = state.source.bytes;
+        const img = await image(channel, index);
+        const compression = Number(img.fileDirectory.getValue("Compression") || 1);
+        const predictor = Number(img.fileDirectory.getValue("Predictor") || 1);
+        const single = Number(img.getSamplesPerPixel()) === 1;
+        let values;
+        if (!img.isTiled && compression === 1 && single) {
+            values = await uncompressedRows(img, x0, y0, x1, y1);
+        } else if (!img.isTiled && DEFLATE.includes(compression) && predictor === 1 && single) {
+            values = await deflatedRows(img, x0, y0, x1, y1);
+        } else {
+            [values] = await img.readRasters({ window: [x0, y0, x1, y1], samples: [0] });
+        }
+        return {
+            values, width: x1 - x0, height: y1 - y0,
+            timing: { totalMs: now() - t0, decodeMs: decodeClock.ms - decode0,
+                      readMs: state.source.readMs - readMs0, bytes: state.source.bytes - bytes0 },
+        };
+    }
+
     /** A whole level of one channel as native values (for statistics). */
     async function level({ channel, level: index }) {
         const t0 = now();
@@ -370,5 +531,5 @@ export function createTiffReader() {
         };
     }
 
-    return { open, tile, level };
+    return { open, tile, level, region };
 }

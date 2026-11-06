@@ -76,6 +76,26 @@ function cachedPythonPyramid(ctx, flat) {
     return result;
 }
 
+/** bench/truth_image.py: Python's pyramid of a flat image, timed, made once per file. */
+function cachedPythonImagePyramid(ctx, flat, repeat) {
+    mkdirSync(CACHE, { recursive: true });
+    const out = path.join(CACHE, `py-pyramid-${path.basename(flat).replace(/\.ome\.tiff?$|\.tiff?$/, "")}.pyramid.ome.tiff`);
+    const record = `${out}.json`;
+    if (existsSync(out) && existsSync(record)) {
+        const kept = JSON.parse(readFileSync(record, "utf8"));
+        if (kept.source === flat) return kept;
+    }
+    const run = spawnSync(PYTHON, [path.join(POC_ROOT, "bench", "truth_image.py"), "--image", flat, "--out", out,
+                                   "--repeat", String(repeat)],
+                          { encoding: "utf8", cwd: path.resolve(POC_ROOT, "..", ".."), maxBuffer: 64 * 1024 * 1024 });
+    if (run.status !== 0) throw new Error(`truth_image.py failed: ${run.stderr.slice(-2000)}`);
+    const lines = run.stdout.trim().split(/\r?\n/);
+    const result = { ...JSON.parse(lines[lines.length - 1]), out, source: flat };
+    writeFileSync(record, JSON.stringify(result));
+    ctx.log(`python image pyramid: ${JSON.stringify(result)}`);
+    return result;
+}
+
 /** bench/selfsigned.py's certificate for 127.0.0.1, made once. */
 function selfSignedCert() {
     const dir = path.join(CACHE, "tls");
@@ -314,11 +334,12 @@ export const HANDLERS = {
     async P2B(ctx) {
         const { fixture } = ctx;
         const flat = fixture.flatMask;
+        const params = ctx.args.params || {};
         const python = cachedPythonPyramid(ctx, flat);
         const profile = mkdtempSync(path.join(tmpdir(), "plx-poc-p2b-"));
         const port = await freePort();
         const page = await openPage(ctx, { files: [flat], chrome: { profile }, staticOptions: { port } });
-        const build = await page.page.evaluate((a) => window.POC.p2bBuild(a), { mask: path.basename(flat) });
+        const build = await page.page.evaluate((a) => window.POC.p2bBuild(a), { mask: path.basename(flat), workers: params.workers });
         const peak = peakMemory(page.browser.userDataDir);
         const node = await ctx.startNode({ serve: [`segmentation:seg=${python.out}`], allowOrigins: [page.origin] });
         const identity = await page.page.evaluate((a) => window.POC.p2bIdentity(a), {
@@ -337,6 +358,246 @@ export const HANDLERS = {
             metrics: { build: { ...build, peakWorkingSetBytes: peak }, reopen, python },
             checks: { identity }, logs,
         };
+    },
+
+    /**
+     * P4: the AnnData / SpatialData capability matrix -- every .h5ad of the
+     * fixture through h5wasm and its SpatialData store through zarrita and
+     * DuckDB, each answer's SHA-256 against bench/truth_p4.py's (h5py,
+     * zarr-python, pyarrow; median of 3 runs, cached) and its time beside
+     * Python's. The page reads the files only after Python has (warm OS cache
+     * for both).
+     */
+    async P4(ctx) {
+        const { fixture } = ctx;
+        const spec = fixture.p4;
+        if (!spec) throw new Error("fixture has no p4 entry");
+        const dir = spec.dir;
+        const h5ad = spec.h5ad.map((n) => path.join(dir, n));
+        const sdata = spec.sdata ? path.join(dir, spec.sdata) : null;
+        mkdirSync(CACHE, { recursive: true });
+        const truthFile = path.join(CACHE, `truth-p4-${ctx.fixtureName}.json`);
+        if (!existsSync(truthFile) || (ctx.args.params || {}).freshTruth) {
+            const run = spawnSync(PYTHON, ["-I", path.join(POC_ROOT, "bench", "truth_p4.py"), "--h5ad", ...h5ad,
+                                           ...(sdata ? ["--sdata", sdata] : []), "--out", truthFile, "--repeat", "3"],
+                                  { encoding: "utf8", maxBuffer: 64 * 1024 * 1024 });
+            if (run.status !== 0) throw new Error(`truth_p4.py failed: ${run.stderr.slice(-2000)}`);
+        }
+        const truth = JSON.parse(readFileSync(truthFile, "utf8"));
+        const page = await openPage(ctx, { files: h5ad });
+        if (sdata) await page.page.setInputFiles("#dirpicker", sdata);
+        // Anything the readers fetch from outside the page's own origin (a
+        // DuckDB extension, say) is a finding: the browser node works offline.
+        const external = [];
+        page.browser.context.on("request", (r) => { if (!r.url().startsWith(page.origin)) external.push(r.url()); });
+        const result = await page.page.evaluate((a) => window.POC.p4(a),
+                                                { h5ad: h5ad.map((p) => path.basename(p)), sdata: Boolean(sdata) });
+        result.externalRequests = external;
+        const peak = peakMemory(page.browser.userDataDir);
+        const logs = [...page.browser.logs];
+        await page.browser.close();
+        page.stat.proc.kill();
+
+        // The matrix: one row per file and op.
+        const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+        const matrix = [];
+        for (const t of truth.h5ad) {
+            const mine = result.h5ad?.files?.[path.basename(t.file)];
+            for (const [op, ref] of Object.entries(t.ops)) {
+                const got = mine?.ops?.[op];
+                matrix.push({
+                    kind: "h5ad", file: path.basename(t.file), layout: t.layout, codec: t.codec, op,
+                    state: !got ? "error" : got.error ? "unsupported" : same(got.sha256, ref.sha256) ? "ok" : "differs",
+                    error: got?.error || null, ms: got?.ms ?? null, pythonMs: ref.ms,
+                    ratio: got?.ms != null ? got.ms / Math.max(ref.ms, 0.05) : null,
+                });
+            }
+        }
+        if (truth.sdata) {
+            // Every read the page made; `<op>_duckdb` is the same read through
+            // DuckDB, `shapes_geojson` hyparquet's GeoJSON decoding (row count).
+            const ops = Object.keys(result.sdata?.ops || truth.sdata.ops);
+            for (const op of ops) {
+                const base = op.replace(/_duckdb$|_geojson$/, "");
+                const ref = truth.sdata.ops[base];
+                const got = result.sdata?.ops?.[op];
+                const agrees = (g) => (op === "shapes_geojson" ? g.value.rows === ref.value.rows && Boolean(g.value.type)
+                    : same(g.value, ref.value));
+                matrix.push({
+                    kind: "spatialdata", file: path.basename(sdata), op,
+                    reader: /_duckdb$/.test(op) ? "duckdb" : ["shapes", "points", "shapes_geojson"].includes(op) ? "hyparquet" : "zarrita",
+                    state: !got || !ref ? "error" : got.error ? "unsupported" : agrees(got) ? "ok" : "differs",
+                    error: got?.error || null, ms: got?.ms ?? null, pythonMs: ref?.ms ?? null,
+                    ratio: got?.ms != null && ref ? got.ms / Math.max(ref.ms, 0.05) : null,
+                    ...(got && ref && !got.error && !agrees(got) ? { mine: got.value, python: ref.value } : {}),
+                });
+            }
+        }
+        return {
+            browser: page.env, arm: "browser", state: "fresh profile; files read by Python first",
+            metrics: { h5adInitMs: result.h5ad?.initMs, plugins: result.h5ad?.plugins, info: Object.fromEntries(
+                Object.entries(result.h5ad?.files || {}).map(([k, v]) => [k, v.info])),
+                       matrix, peakWorkingSetBytes: peak, jsHeap: result.jsHeap, externalRequests: result.externalRequests,
+                       duckdbStartMs: result.sdata?.duckdbStartMs },
+            checks: { ok: matrix.filter((r) => r.state === "ok").length, rows: matrix.length,
+                      notOk: matrix.filter((r) => r.state !== "ok") },
+            fixtureInfo: { p4: spec }, logs,
+        };
+    },
+
+    /**
+     * P6: the product itself (a scratch Plexora server on a bench data root,
+     * driven by tools/bench_remote/tour.mjs: the app's own fixed tour and its
+     * completion test) against the browser node (the same steps, waypoints
+     * and completion rule on a pane of the product viewer's size), on the same
+     * image, same machine, same Chrome. Blocks in ABBA order. Product passes:
+     * C1 (empty browser cache) and C2 (warm); browser: the tour, then again in
+     * the same viewer (revisit). --params '{"order": [...], "data": DIR}'.
+     */
+    async P6(ctx) {
+        const { fixture } = ctx;
+        const params = { order: ["product", "browser", "browser", "product"], channels: [0, 1, 2],
+                         size: [1060, 855], ...(ctx.args.params || {}) };
+        const data = params.data || path.join(path.dirname(CACHE), "p6data");
+        mkdirSync(data, { recursive: true });
+        const reg = spawnSync(PYTHON, [path.join(POC_ROOT, "bench", "p6_project.py"), "--data", data,
+                                       "--image", fixture.image, "--mask", fixture.mask, "--table", fixture.table],
+                              { encoding: "utf8", cwd: path.resolve(POC_ROOT, "..", ".."),
+                                env: { ...process.env, PYTHONPATH: path.resolve(POC_ROOT, "..", "..") } });
+        if (reg.status !== 0) throw new Error(`p6_project.py failed: ${reg.stderr.slice(-1500)}`);
+        const { name, waypoints } = JSON.parse(reg.stdout.trim().split(/\r?\n/).pop());
+        const ranges = await cachedRanges(ctx, fixture, Math.max(...params.channels) + 1);
+        const channels = params.channels.map((index, i) => ({ index, color: ["#0000ff", "#00ff00", "#ff0000"][i % 3], range: ranges[index] }));
+        const serve = spawnSync(PYTHON, [path.resolve(POC_ROOT, "..", "bench3d", "serve.py"), "--data", data],
+                                { encoding: "utf8", cwd: path.resolve(POC_ROOT, "..", "..") });
+        if (serve.status !== 0) throw new Error(`serve.py failed: ${serve.stderr.slice(-1500)}`);
+        const server = JSON.parse(serve.stdout.trim().split(/\r?\n/).pop());
+        const blocks = [];
+        const logs = [];
+        try {
+            for (const arm of params.order) {
+                if (arm === "product") {
+                    const out = path.join(tmpdir(), `p6-tour-${process.pid}-${blocks.length}.json`);
+                    // The product's Chrome has a profile of its own (plx-bench-*); its
+                    // peak working set is sampled while the tour runs.
+                    const sampler = spawn("C:/Windows/System32/WindowsPowerShell/v1.0/powershell.exe", ["-NoProfile", "-Command",
+                        "$peak = 0; while ($true) { $p = Get-CimInstance Win32_Process -Filter \"Name='chrome.exe'\" | " +
+                        "Where-Object { $_.CommandLine -like '*plx-bench-*' -and $_.CommandLine -like '*--type=renderer*' }; " +
+                        "foreach ($x in $p) { $g = Get-Process -Id $x.ProcessId -ErrorAction SilentlyContinue; " +
+                        "if ($g -and $g.PeakWorkingSet64 -gt $peak) { $peak = $g.PeakWorkingSet64 } }; " +
+                        "[Console]::Out.WriteLine($peak); Start-Sleep -Milliseconds 500 }"], { stdio: ["ignore", "pipe", "ignore"] });
+                    let peak = 0;
+                    sampler.stdout.on("data", (d) => { for (const v of String(d).split(/\s+/)) if (Number(v) > peak) peak = Number(v); });
+                    const t0 = Date.now();
+                    // Asynchronously, so the sampler's lines are read while the tour runs.
+                    const run = await new Promise((resolve) => {
+                        const child = spawn(process.execPath, [path.resolve(POC_ROOT, "..", "bench_remote", "tour.mjs"),
+                            "--base", `http://127.0.0.1:${server.port}`, "--dataset", name, "--out", out,
+                            "--params", JSON.stringify({ passes: ["C1", "C2"], channels: params.channels, waypoints, timeout: 120000 })],
+                            { stdio: ["ignore", "ignore", "pipe"] });
+                        let stderr = "";
+                        child.stderr.on("data", (d) => { stderr += d; });
+                        child.on("close", (status) => resolve({ status, stderr }));
+                    });
+                    sampler.kill();
+                    if (run.status !== 0) throw new Error(`tour.mjs failed: ${(run.stderr || "").slice(-1500)}`);
+                    const r = JSON.parse(readFileSync(out, "utf8"));
+                    const steps = (pass) => (r.passes.find((p) => p.pass === pass)?.steps || [])
+                        .filter((s) => !/^z_/.test(s.step)).map((s) => ({ step: s.step, full: s.full ?? null }));
+                    blocks.push({ arm, renderer: r.renderer, wallMs: Date.now() - t0, peakRendererBytes: peak,
+                                  cold: steps("C1"), warm: steps("C2") });
+                    logs.push(...(run.stderr || "").split(/\r?\n/).slice(-40));
+                } else {
+                    const page = await openPage(ctx, { files: [fixture.image], chrome: { unthrottled: false } });
+                    const out = await page.page.evaluate((a) => window.POC.p6Tour(a), {
+                        image: { file: path.basename(fixture.image) }, channels, waypoints, size: params.size });
+                    const peak = peakMemory(page.browser.userDataDir);
+                    blocks.push({ arm, renderer: page.env.gpu, peakRendererBytes: peak?.byKind?.renderer ?? null,
+                                  cold: out.steps, warm: out.revisit, canvas: out.canvas, pageLoadMs: out.pageLoadMs });
+                    logs.push(...page.browser.logs.slice(-40));
+                    await page.browser.close();
+                    page.stat.proc.kill();
+                }
+                ctx.log(`${arm}: ${JSON.stringify(blocks[blocks.length - 1].cold.map((s) => Math.round(s.full ?? -1)))}`);
+            }
+        } finally {
+            spawnSync(PYTHON, [path.resolve(POC_ROOT, "..", "bench3d", "serve.py"), "--stop", String(server.pid)]);
+        }
+        // Per step, the median over each arm's blocks; then the geometric mean
+        // of browser / product over the navigation steps.
+        const median = (v) => {
+            const s = v.filter((x) => x != null).sort((a, b) => a - b);
+            if (!s.length) return null;
+            const mid = s.length >> 1;
+            return s.length % 2 ? s[mid] : (s[mid - 1] + s[mid]) / 2;
+        };
+        const summarise = (pass) => {
+            const names = blocks[0][pass].map((s) => s.step);
+            const per = names.map((step) => {
+                const of = (arm) => median(blocks.filter((b) => b.arm === arm).map((b) => b[pass].find((s) => s.step === step)?.full));
+                return { step, product: of("product"), browser: of("browser") };
+            });
+            const nav = per.filter((p) => p.step !== "open" && p.product > 0 && p.browser > 0);
+            const geo = nav.length ? Math.exp(nav.reduce((a, p) => a + Math.log(p.browser / p.product), 0) / nav.length) : null;
+            return { per, navGeoMeanRatio: geo, open: per.find((p) => p.step === "open") };
+        };
+        return {
+            browser: { renderer: blocks.find((b) => b.arm === "browser")?.renderer }, arm: "product,browser",
+            state: "scratch server per run; ABBA blocks; product C1/C2, browser tour + revisit",
+            metrics: { waypoints, channels, blocks, cold: summarise("cold"), warm: summarise("warm"),
+                       peakRenderer: { product: median(blocks.filter((b) => b.arm === "product").map((b) => b.peakRendererBytes)),
+                                       browser: median(blocks.filter((b) => b.arm === "browser").map((b) => b.peakRendererBytes)) } },
+            checks: { everyStepFull: blocks.every((b) => [...b.cold, ...b.warm].every((s) => s.full != null)) },
+            logs,
+        };
+    },
+
+    /**
+     * P7: a flat multichannel image -> pyramid in workers into OPFS, for each
+     * layout a flat image arrives in (strips, raw, tiles); Python's own
+     * pyramidize_image timed on the same file (median of 3, cached); random
+     * tiles of every level and channel compared with Python's pyramid as raw
+     * samples; the same profile relaunched for the first tile and the storage
+     * estimate after a reopen. --params '{"layouts": [...], "workers": N}'.
+     */
+    async P7(ctx) {
+        const { fixture } = ctx;
+        const params = ctx.args.params || {};
+        const layouts = params.layouts || Object.keys(fixture.flatImages || {});
+        if (!layouts.length) throw new Error("fixture has no flatImages");
+        const metrics = { layouts: {} };
+        const checks = { identity: {} };
+        const logs = [];
+        for (const layout of layouts) {
+            const flat = fixture.flatImages[layout];
+            const python = cachedPythonImagePyramid(ctx, flat, params.pythonRepeat || 3);
+            const profile = mkdtempSync(path.join(tmpdir(), "plx-poc-p7-"));
+            const port = await freePort();
+            const key = `p7-${layout}`;
+            const page = await openPage(ctx, { files: [flat, python.out], chrome: { profile }, staticOptions: { port } });
+            const build = await page.page.evaluate((a) => window.POC.buildPyramid(a),
+                                                   { file: path.basename(flat), kind: "image", key, workers: params.workers,
+                                                     jobBytes: params.jobBytes, backlogBytes: params.backlogBytes });
+            const peak = peakMemory(page.browser.userDataDir);
+            ctx.log(`${layout}: built in ${(build.wallMs / 1000).toFixed(1)} s (python ${python.seconds.toFixed(1)} s)`);
+            const identity = await page.page.evaluate((a) => window.POC.p7Identity(a),
+                { image: path.basename(flat), python: path.basename(python.out), key, count: params.count || 200 });
+            logs.push(...page.browser.logs);
+            await page.browser.close();
+            page.stat.proc.kill();
+            const again = await openPage(ctx, { files: [flat], chrome: { profile }, staticOptions: { port } });
+            const reopen = await again.page.evaluate((a) => window.POC.pyramidReopen(a), { file: path.basename(flat), key });
+            logs.push(...again.browser.logs);
+            await again.browser.close();
+            again.stat.proc.kill();
+            try { rmSync(profile, { recursive: true, force: true }); } catch (e) { /* busy */ }
+            metrics.layouts[layout] = { build: { ...build, peakWorkingSetBytes: peak }, reopen, python,
+                                        ratio: build.wallMs / 1000 / python.seconds };
+            checks.identity[layout] = identity;
+            metrics.env ||= page.env;
+        }
+        return { browser: metrics.env, arm: "browser", state: "fresh profile per layout; reopen = same profile relaunched",
+                 metrics, checks, logs };
     },
 
     /**
@@ -562,6 +823,131 @@ export const HANDLERS = {
         }
         return { browser: null, arm: "browser->node", state: "Chrome stable, headless, LNA by address-space override",
                  metrics: { cases, grantedNames }, checks: {}, logs: [] };
+    },
+
+    /**
+     * P5(b), headed: Chrome's Local Network Access prompt, seen. An https page
+     * the browser treats as public fetches a loopback node with nothing
+     * granted; headless Chrome denies such a fetch at once (P5LNA), a headed
+     * one should hold it while a prompt waits for the user. The screen is
+     * captured (the bubble is browser UI, outside the page), the permission is
+     * then granted over CDP, and the held fetch and a new one are recorded.
+     * Opens a visible Chrome window for about ten seconds.
+     */
+    async P5LNAH(ctx) {
+        const { fixture } = ctx;
+        const tls = selfSignedCert();
+        const port = await freePort();
+        const st = await ctx.startStatic({ port, tls });
+        const origin = `https://127.0.0.1:${port}`;
+        const n = await ctx.startNode({ serve: [`image:img=${fixture.image}`], allowOrigins: [origin] });
+        const shots = path.join(path.dirname(CACHE), "shots");
+        mkdirSync(shots, { recursive: true });
+        const b = await ctx.launchChrome({ headed: true, extraArgs: [
+            "--ignore-certificate-errors", `--ip-address-space-overrides=127.0.0.1:${port}=public`,
+            "--window-position=40,40"] });
+        const node = { endpoint: n.endpoint, token: n.token };
+        const out = {};
+        try {
+            await b.page.bringToFront();
+            await b.page.goto(`${origin}/poc/index.html`);
+            await b.page.waitForFunction(() => window.POC && document.getElementById("status").textContent === "ready", null, { timeout: 60000 });
+            out.start = await b.page.evaluate((a) => window.POC.p5LnaStart(a), { node });
+            await sleep(3000);
+            out.after3s = await b.page.evaluate(() => window.POC.p5LnaPoll());
+            const shot = path.join(shots, `lna-prompt-${Date.now()}.png`);
+            spawnSync("C:/Windows/System32/WindowsPowerShell/v1.0/powershell.exe",
+                      ["-NoProfile", "-File", path.join(POC_ROOT, "bench", "screen_capture.ps1"), "-Out", shot,
+                       "-X", "40", "-Y", "40", "-W", "1460", "-H", "1000"]);
+            out.screenshot = existsSync(shot) ? shot : null;
+            const cdp = await b.context.newCDPSession(b.page);
+            out.granted = [];
+            for (const name of ["loopback-network", "local-network", "local-network-access"]) {
+                try {
+                    await cdp.send("Browser.setPermission", { permission: { name }, setting: "granted", origin });
+                    out.granted.push(name);
+                } catch (error) { /* not a permission this Chrome has */ }
+            }
+            await sleep(3000);
+            out.heldFetchAfterGrant = await b.page.evaluate(() => window.POC.p5LnaPoll());
+            out.afterGrant = await b.page.evaluate((a) => window.POC.p5Lna(a), { node });
+        } finally {
+            await b.close();
+            n.stop();
+            st.proc.kill();
+        }
+        return { browser: null, arm: "browser->node", state: "Chrome stable, headed, page marked public, nothing granted",
+                 metrics: out,
+                 checks: { promptHeldTheFetch: out.after3s?.state === "pending",
+                           worksOnceGranted: Boolean(out.afterGrant?.loopback?.ok) },
+                 logs: b.logs.slice(-20) };
+    },
+
+    async P8(ctx) {
+        const params = ctx.args.params || {};
+        const engines = params.engines || ["firefox", "webkit"];
+        const same = (a, b) => a?.identical === a?.count && a?.count > 0;
+        const p3ok = (c) => Boolean(c.allCellsIdentical && Object.values(c.columnsIdentical || {}).every(Boolean)
+            && c.describeFloat64?.nineDigits && c.nearest?.agree === c.nearest?.count
+            && (c.roi || []).every((r) => r.identical) && c.gates?.agree === c.gates?.count);
+        // Each feature: a POC run on the S fixture, and what passing means for it.
+        const FEATURES = [
+            // As bench/verdict.py's P0: datasource and flaskVariables are the
+            // product page's own globals, absent from any static page.
+            ["P0", "product rendering modules load (page-side shims only); node-fed and browser-fed canvases identical", {},
+             (r) => r.checks.picturesIdentical === true && r.checks.byteOrder?.pngIsBigEndian === true
+                 && Object.keys(r.checks.shims || {}).every((k) => ["toFloatColor", "_"].includes(k))],
+            ["P1", "OME-TIFF tiles from a picked File, byte-identical to the node's HD tiles", { poolSizes: [1, 4], count: 100 },
+             (r) => same(r.checks.identity)],
+            ["P2B", "flat mask -> label pyramid in workers into OPFS, identical to Python's", {},
+             (r) => same(r.checks.identity)],
+            ["P7", "flat image -> pyramid in workers into OPFS, identical to Python's (strips, tiles)", { layouts: ["strips", "tiles"], count: 60 },
+             (r) => Object.values(r.checks.identity).every(same)],
+            ["P3", "CSV -> column store; all_cells, columns, describe, nearest, ROI, gates identical", {},
+             (r) => p3ok(r.checks)],
+            ["P4", "h5ad (h5wasm), SpatialData (zarrita, hyparquet) reads identical", {},
+             (r) => r.checks.notOk.every((x) => x.state === "unsupported" && /lzf/.test(x.codec || ""))],
+        ];
+        const lumaOf = (r) => (r?.metrics?.pictures || []).map((p) => p.lumaGrid || null);
+        const results = {};
+        const logs = [];
+        let reference = null;
+        for (const engine of ["chromium", ...engines]) {
+            const rows = [];
+            for (const [poc, feature, extra, pass] of (engine === "chromium" ? FEATURES.slice(0, 1) : FEATURES)) {
+                const sub = { ...ctx, args: { ...ctx.args, params: extra },
+                              launchChrome: (o) => ctx.launchChrome({ ...o, engine }) };
+                const t0 = Date.now();
+                try {
+                    const r = await HANDLERS[poc](sub);
+                    const ok = Boolean(pass(r));
+                    rows.push({ poc, feature, pass: ok, seconds: (Date.now() - t0) / 1000, browser: r.browser,
+                                luma: poc === "P0" ? lumaOf(r) : undefined,
+                                detail: ok ? undefined : JSON.stringify(r.checks).slice(0, 1500) });
+                    logs.push(...(r.logs || []).filter((l) => /error|warn/i.test(l)).slice(0, 20).map((l) => `[${engine} ${poc}] ${l}`));
+                } catch (error) {
+                    rows.push({ poc, feature, pass: false, seconds: (Date.now() - t0) / 1000,
+                                error: String(error?.message || error).slice(0, 1500) });
+                }
+                ctx.log(`${engine} ${poc}: ${rows[rows.length - 1].pass ? "pass" : "FAIL"}`);
+            }
+            if (engine === "chromium") { reference = rows[0]?.luma || null; continue; }
+            // The picture against Chrome's: mean luminance per grid cell, per view.
+            const mine = rows.find((r) => r.poc === "P0")?.luma || null;
+            const lumaVsChrome = mine && reference ? mine.map((grid, v) => {
+                const ref = reference[v];
+                if (!grid || !ref) return null;
+                const d = grid.map((g, k) => Math.abs(g - ref[k]));
+                return { maxAbs: Math.max(...d), mean: d.reduce((a, b) => a + b, 0) / d.length };
+            }) : null;
+            results[engine] = { rows, lumaVsChrome, browser: rows.find((r) => r.browser)?.browser || null };
+        }
+        return { browser: { engines }, arm: "browser", state: "S fixtures, fresh profile per run",
+                 metrics: { results, chromiumLuma: reference }, checks: {
+                     perEngine: Object.fromEntries(Object.entries(results).map(([e, v]) => [e, {
+                         passed: v.rows.filter((r) => r.pass).length, of: v.rows.length,
+                         failed: v.rows.filter((r) => !r.pass).map((r) => r.poc) }])) },
+                 logs };
     },
 
     /** P1R: a bucket OME-TIFF opened and read by the browser node over HTTP ranges. */

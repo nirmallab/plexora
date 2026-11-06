@@ -12,8 +12,9 @@ import { NodeClient } from "./nodeClient.js";
 import { decodePng, sha256, firstDifference } from "./png.js";
 import { chooseOverviewLevel, overviewOf, statsOf, gmmOf } from "./stats.js";
 import { p3, p3Ingest, p3Reopen } from "./p3.js";
-import { p2Viewer, p2bBuild, p2bIdentity, p2bReopen } from "./p2.js";
-import { p5Protocol, p5Reach, p5Isolation, p5Poll, p5Pair, p5Rnode, p5Lna } from "./p5.js";
+import { p4 } from "./p4.js";
+import { p2Viewer, p2bBuild, p2bIdentity, p2bReopen, buildPyramid, pyramidReopen, p7Identity } from "./p2.js";
+import { p5Protocol, p5Reach, p5Isolation, p5Poll, p5Pair, p5Rnode, p5Lna, p5LnaStart, p5LnaPoll } from "./p5.js";
 
 const status = (text) => { document.getElementById("status").textContent = text; };
 const frame = () => new Promise((resolve) => requestAnimationFrame(resolve));
@@ -313,7 +314,7 @@ async function autoLevel(pool, geometry, client, imageId, channels) {
     return out;
 }
 
-async function p1Tiles({ image, node, poolSizes = [1, 2, 4, 8], decoders = ["native", "pako"], count = 200 }) {
+async function p1Tiles({ image, node, poolSizes = [1, 2, 4, 8], decoders = ["native", "native-blob", "pako"], count = 200 }) {
     const out = { env: await env(), open: [], bench: [], decoders: [] };
     const client = new NodeClient(node.endpoint, node.token);
     for (const size of poolSizes) {
@@ -585,8 +586,18 @@ async function compareArms({ image, node, channels, view = null }) {
             if (d > maxDelta) maxDelta = d;
             if (pa[i] || pa[i + 1] || pa[i + 2]) nonBlack += 1;
         }
+        // A 16 x 10 grid of mean luminance of the browser arm: what P8 compares
+        // across engines, which rasterise the same tiles a little differently.
+        const height = pb.length / 4 / width;
+        const grid = new Array(160).fill(0), count = new Array(160).fill(0);
+        for (let i = 0; i < pb.length; i += 4) {
+            const p = i / 4, cell = Math.floor((Math.floor(p / width) * 10) / height) * 16 + Math.floor(((p % width) * 16) / width);
+            grid[cell] += 0.2126 * pb[i] + 0.7152 * pb[i + 1] + 0.0722 * pb[i + 2];
+            count[cell] += 1;
+        }
         return { pixels: pa.length / 4, nonBlack, differing: diff, maxDelta, diffBox: diff ? box : null,
-                 sameSize: pa.length === pb.length, shaA: await sha256(pa), shaB: await sha256(pb) };
+                 sameSize: pa.length === pb.length, shaA: await sha256(pa), shaB: await sha256(pb),
+                 lumaGrid: grid.map((g, k) => Math.round((g / Math.max(1, count[k])) * 10) / 10) };
     };
     for (const r of views) {
         goTo(a.viewer.viewer, r);
@@ -608,9 +619,106 @@ async function compareArms({ image, node, channels, view = null }) {
     return results;
 }
 
+// ---------------------------------------------------------------------------
+// P6: the product's own tour (tools/bench_remote/tour.mjs) on the browser node
+
+/**
+ * tourpage.js's completion test, on this viewer: the step is done once two
+ * redraws have followed the move, the springs are at rest, and every item is
+ * fully loaded at the level it wants -- held for two polls 5 ms apart. The
+ * time is when that run began, as tourpage reports it.
+ */
+async function waitTourStep(viewer, t0, u0, ms = 120000) {
+    const end = t0 + ms;
+    let since = null;
+    let polls = 0;
+    while (performance.now() < end) {
+        const vp = viewer.viewport;
+        const still = [vp.zoomSpring, vp.centerSpringX, vp.centerSpringY].every((s) => !s || s.isAtTargetValue());
+        const world = viewer.world;
+        let full = world.getItemCount() > 0;
+        for (let i = 0; i < world.getItemCount(); i += 1) if (!world.getItemAt(i).getFullyLoaded()) { full = false; break; }
+        if (full && still && viewer.__updates >= u0 + 2) {
+            since ??= performance.now();
+            polls += 1;
+            if (polls >= 2) return since - t0;
+        } else {
+            since = null;
+            polls = 0;
+        }
+        await new Promise((r) => setTimeout(r, 5));
+    }
+    return null;
+}
+
+/**
+ * The tour's steps, in its order (z steps left out: a 2-D image), on a pane of
+ * the product viewer's size, fed by the browser node. `open` is from creating
+ * the viewer (the file already picked) to full; the page's own load is
+ * reported beside it.
+ */
+async function p6Tour({ image, channels, waypoints: W, size = [1060, 855], timeoutMs = 120000, poolSize = 4 }) {
+    const pane = document.createElement("div");
+    pane.id = `p6pane${Date.now()}`;
+    pane.style.cssText = `position:fixed;left:0;top:0;width:${size[0]}px;height:${size[1]}px;background:#000;z-index:5`;
+    document.body.appendChild(pane);
+    const steps = [];
+    const t0 = performance.now();
+    const a = await openArm({ arm: "browser", pane: pane.id, image, node: { endpoint: "http://127.0.0.1:9", token: "" },
+                              channels, poolSize });
+    const viewer = a.viewer.viewer;
+    // The product's main viewer keeps OpenSeadragon's springs (1.2 s, stiffness
+    // 6.5; imageViewer.js sets neither); this page turns them off. The tour's
+    // animated steps are only comparable with the product's.
+    for (const spring of [viewer.viewport.zoomSpring, viewer.viewport.centerSpringX, viewer.viewport.centerSpringY]) {
+        spring.animationTime = 1.2;
+        spring.springStiffness = 6.5;
+    }
+    viewer.__updates = 0;
+    viewer.addHandler("update-viewport", () => { viewer.__updates += 1; });
+    steps.push({ step: "open", full: await waitTourStep(viewer, t0, 0, timeoutMs) });
+    const item = () => viewer.world.getItemAt(0);
+    const place = (ratio, at) => {
+        viewer.viewport.zoomTo(item().imageToViewportZoom(ratio), null, true);
+        viewer.viewport.panTo(item().imageToViewportCoordinates(at[0], at[1]), true);
+        viewer.viewport.applyConstraints(true);
+    };
+    const step = async (into, name, move) => {
+        const s = performance.now();
+        const u0 = viewer.__updates;
+        move();
+        into.push({ step: name, full: await waitTourStep(viewer, s, u0, timeoutMs) });
+    };
+    const tour = async (into) => {
+        await step(into, "zoom_L2_a", () => place(0.25, W.a));
+        await step(into, "zoom_L0_a", () => place(1, W.a));
+        await step(into, "pan_L0_b", () => place(1, W.b));
+        await step(into, "home", () => viewer.viewport.goHome(true));
+        await step(into, "revisit_L0_a", () => place(1, W.a));
+        await step(into, "jump_L0_c", () => place(1, W.c));
+        await step(into, "anim_zoom_L2", () => {
+            viewer.viewport.panTo(item().imageToViewportCoordinates(W.b[0], W.b[1]), true);
+            viewer.viewport.zoomTo(item().imageToViewportZoom(0.25));
+        });
+        await step(into, "anim_pan_L2", () => viewer.viewport.panTo(item().imageToViewportCoordinates(W.c[0], W.c[1])));
+    };
+    await tour(steps);
+    // Revisit: the same tour again in the same viewer (tiles in its caches),
+    // from the home view -- beside the product's C2.
+    const revisit = [];
+    await step(revisit, "open", () => viewer.viewport.goHome(true));
+    await tour(revisit);
+    const nav = performance.getEntriesByType("navigation")[0];
+    const out = { steps, revisit, canvas: [viewer.drawer.canvas.width, viewer.drawer.canvas.height],
+                  pageLoadMs: nav ? nav.loadEventEnd : null, jsHeap: performance.memory?.usedJSHeapSize ?? null };
+    closeArm(a);
+    pane.remove();
+    return out;
+}
+
 window.POC = {
-    env, p0, p1Tiles, p1Viewer, p1Remote, compareArms, probeU16Shader, p3, p3Ingest, p3Reopen, p2Viewer, p2bBuild, p2bIdentity, p2bReopen,
-    p5Protocol, p5Reach, p5Isolation, p5Poll, p5Pair, p5Rnode, p5Lna,
+    env, p0, p1Tiles, p1Viewer, p1Remote, compareArms, probeU16Shader, p3, p3Ingest, p3Reopen, p2Viewer, p2bBuild, p2bIdentity, p2bReopen, buildPyramid, pyramidReopen, p7Identity, p4,
+    p5Protocol, p5Reach, p5Isolation, p5Poll, p5Pair, p5Rnode, p5Lna, p5LnaStart, p5LnaPoll, p6Tour,
     // Building blocks for the driver's other POCs (p2, p3, p5 modules add theirs).
     lib: { NodeClient, TiffPool, createViewer, waitFull, summary, rng, decodePng, sha256, randomTiles,
            openArm, closeArm, goTo, panFrames, tourSteps, PALETTE, pickedFile, workerUrl, env },

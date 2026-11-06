@@ -175,9 +175,12 @@ async function runPass(browser, opts, pass) {
     await tour.step("home", () => __bench.k.viewer().viewport.goHome(true));
     await tour.step("revisit_L0_a", (at) => __rb.place(1, at), W.a);
     await tour.step("jump_L0_c", (at) => __rb.place(1, at), W.c);
-    await tour.step("z_plus1", (z) => __bench.k.vs().set({ z }), z0 + 1);
-    await tour.step("z_plus8", (z) => __bench.k.vs().set({ z }), z0 + 9);
-    await tour.step("z_plus50", (z) => __bench.k.vs().set({ z }), z0 + 59);
+    // A 2-D image has no planes to step through: no z0, no z steps.
+    if (z0 !== undefined && z0 !== null) {
+        await tour.step("z_plus1", (z) => __bench.k.vs().set({ z }), z0 + 1);
+        await tour.step("z_plus8", (z) => __bench.k.vs().set({ z }), z0 + 9);
+        await tour.step("z_plus50", (z) => __bench.k.vs().set({ z }), z0 + 59);
+    }
     // Animated: OpenSeadragon's own spring, as a drag or a scroll would move it.
     await tour.step("anim_zoom_L2", (at) => {
         const v = __bench.k.viewer();
