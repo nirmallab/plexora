@@ -121,7 +121,7 @@ BLUEPRINTS = {
     "agent_v1": "python", "ai_v1": "python", "ai_chat_v1": "python", "segment_v1": "python",
     "license": "python",
     "cell_explorer": "python", "figure_builder": "python", "gating": "python", "qc": "python",
-    "roi": "python", "segmentation": "python", "transcripts": "python",
+    "roi": "python", "transcripts": "python",
     "video_studio": "python", "visium_hd": "python",
 }
 

@@ -44,6 +44,36 @@ PERSIST_INTERVAL_S = 0.5
 
 _PRIVATE = ("_cancel", "_done", "_thread", "_folder", "_last_persist")
 
+#: Told every public record as it is written (`observe`). The website's page
+#: answers `GET /agent/v1/jobs/<id>` from what it was told while its worker is
+#: busy running that very job (plexora/browser/cooperative.py).
+_OBSERVERS: list = []
+#: `probe(job_id)` -> whether the job was asked to stop by a route that could
+#: not run while the job held the worker (the website: the page flags it in
+#: shared memory). None everywhere a cancel arrives as a request.
+_CANCEL_PROBE = None
+
+
+def observe(function) -> None:
+    """Call `function(public_record)` whenever a job's record is written."""
+    if function not in _OBSERVERS:
+        _OBSERVERS.append(function)
+
+
+def set_cancel_probe(probe) -> None:
+    global _CANCEL_PROBE
+    _CANCEL_PROBE = probe
+
+
+def cancel_requested(record: dict) -> bool:
+    """Whether `record`'s job was asked to stop, by `cancel` or the probe."""
+    if record["_cancel"].is_set():
+        return True
+    if _CANCEL_PROBE is not None and _CANCEL_PROBE(record["job_id"]):
+        record["_cancel"].set()
+        return True
+    return False
+
 
 class JobCancelled(Exception):
     """Raised inside a job's handler by `call.check_cancelled()`."""
@@ -86,6 +116,11 @@ class JobStore:
         except OSError:  # pragma: no cover - a full disk must not kill the job
             pass
         record["_last_persist"] = time.monotonic()
+        for observer in list(_OBSERVERS):
+            try:
+                observer(public(record))
+            except Exception:  # noqa: BLE001 -- a watcher must not kill the job
+                pass
 
     def _read(self, job_id: str) -> dict | None:
         path = self._path(job_id)
@@ -185,7 +220,7 @@ class JobStore:
         record["progress"] = {**record["progress"], "message": "running"}
         self._persist(record)
         try:
-            if record["_cancel"].is_set():
+            if cancel_requested(record):
                 raise JobCancelled()
             # The grants the licence had when this job was admitted: a job that
             # started on a valid licence finishes, whatever the licence does
@@ -335,5 +370,8 @@ def drain(timeout: float = 30.0) -> list:
 
 
 def _reset_for_tests():
+    global _CANCEL_PROBE
     with _STORES_LOCK:
         _STORES.clear()
+    _OBSERVERS.clear()
+    _CANCEL_PROBE = None

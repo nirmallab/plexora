@@ -156,7 +156,11 @@ class Call:
 
     def cancelled(self) -> bool:
         """Whether someone asked this job to stop. Always False when immediate."""
-        return bool(self.job is not None and self.job["_cancel"].is_set())
+        if self.job is None:
+            return False
+        from plexora.agent.jobs import cancel_requested
+
+        return cancel_requested(self.job)
 
     def check_cancelled(self):
         """Stop here if the job was cancelled (raises `jobs.JobCancelled`)."""

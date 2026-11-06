@@ -1,0 +1,56 @@
+"""Background work on the website, where Python has one thread and no other.
+
+`plexora._work` queues every job, thread and pool call when `PLEXORA_WORK` is
+``cooperative``; this module is the worker's side of that. The worker
+(`workers/pythonWorker.js`) calls `step` whenever it has no request to answer,
+so a job starts once the request that queued it has been answered and runs in
+the gaps between requests; `install` wires the three things the page needs to
+stay in charge meanwhile:
+
+- **A mirror of every job's record** (`post`), sent as the record is written.
+  While a job holds the worker, `GET /agent/v1/jobs/<id>` cannot reach Python,
+  so the page answers it from the last record it was sent.
+- **A cancel the page can make while Python is busy** (`cancelled`): the page
+  flags the job in shared memory (the site is cross-origin isolated), and the
+  job sees it at its next `call.check_cancelled()`. Without shared memory a
+  cancel lands between jobs, like any other request.
+- **A sleep that lets the page in** (`idle`): a poll waiting on the user (a
+  paused session, a set-up form) yields to the event loop for its seconds
+  rather than blocking the worker the answer has to arrive through.
+
+Under CPython this is testable as it is (tests/test_cooperative.py), with
+plain functions for the three.
+"""
+
+from __future__ import annotations
+
+import os
+
+from plexora import _work
+
+
+def install(*, post=None, cancelled=None, idle=None) -> None:
+    """Switch this process to cooperative work and connect it to the page.
+
+    `post(message)` sends a dict to the page; `cancelled(job_id)` reads the
+    page's cancel flags; `idle(seconds)` passes time while serving requests.
+    Each may be None (that part is off)."""
+    from plexora.agent import jobs
+
+    os.environ["PLEXORA_WORK"] = "cooperative"
+    _work.set_idle(idle)
+    jobs.set_cancel_probe(cancelled)
+    if post is not None:
+        from plexora.agent.bridge_wire import job_state
+
+        # `state` is what `GET /agent/v1/jobs/<id>` answers with, so the page's
+        # answer from the mirror is the route's own.
+        jobs.observe(lambda record: post({"kind": "job", "job": record,
+                                          "state": job_state(record)}))
+
+
+def step(budget_ms: float = 50.0) -> dict:
+    """Run queued work for about `budget_ms` (a task is never cut short); the
+    worker calls this when it has no request waiting. `{ran, pending}`."""
+    ran = _work.run_pending(budget_s=max(0.0, budget_ms) / 1000.0)
+    return {"ran": ran, "pending": _work.pending()}

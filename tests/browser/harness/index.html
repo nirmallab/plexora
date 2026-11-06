@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Plexora website harness</title>
+</head>
+<body>
+<p id="status">booting</p>
+<script src="/client/src/js/services/pythonClient.js"></script>
+<script>
+    // The browser tests' page (tests/browser/*.mjs): the website's Python
+    // worker on its own, with nothing of the viewer around it. ?py=<version>
+    // names the build under /py/.
+    (function () {
+        const version = new URLSearchParams(location.search).get("py") || "0.0.36";
+        const marks = {};
+        PlexoraPython.on("mark", (data) => { marks[data.mark] = data.at - performance.timeOrigin; });
+        const stages = [];
+        PlexoraPython.on("stage", (event) => stages.push(event));
+        const ready = PlexoraPython.start({ base: `/py/${version}/` }).then((info) => {
+            document.getElementById("status").textContent = info.error ? `failed: ${info.error}` : "ready";
+            return info;
+        });
+        async function ask(path, init) {
+            const started = performance.now();
+            const response = await PlexoraPython.fetch(path, init);
+            const text = await response.text();
+            return { status: response.status, ms: performance.now() - started,
+                     type: response.headers.get("Content-Type"), text };
+        }
+        window.harness = { ready, ask, marks, stages, isolated: window.crossOriginIsolated,
+                           heap: () => PlexoraPython.heap() };
+    })();
+</script>
+</body>
+</html>
