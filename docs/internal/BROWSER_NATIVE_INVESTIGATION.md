@@ -13,8 +13,9 @@ mode.
   machine. Verdicts: P0, P1, P2 and P5 GO; P2b and P3 PARTIAL; no STOP.
 - **Second round, the same evening:** P2b and P3 reworked (both now GO), and P4,
   P6, P7, P8 and the headed Local Network Access check run. P4 is PARTIAL (h5ad
-  is correct but slower than h5py); every other POC is GO; no STOP. The remote
-  records (O2, ERIS, GCP) and Safari remain. See [POC results](#poc-results) and
+  is correct but slower than h5py); every other POC is GO; no STOP. The O2
+  record followed on 2026-11-06 (GO); ERIS, GCP and Safari remain. See
+  [POC results](#poc-results) and
   [the campaign report](bench/browser_node/BROWSER_NODE_POC_2026-11-05.md).
 - **Gate:** no product change until the ladder reports GO on P1, P3 and P5. All
   three are GO. The first product commit is the Phase 0 seams (section 7). One
@@ -1153,7 +1154,7 @@ Results land in `docs/internal/bench/browser_node/` (one JSON record and one MD 
 | # | Severity | Question | Resolved by |
 |---|---|---|---|
 | 1 | Blocker → **resolved** | Can geotiff.js over a local `File` hold the HD pan budget (8.4 ms median), and open an 80-channel, 8-level OME-TIFF (hundreds of IFDs and SubIFDs) in a few seconds cold? Predicted yes for deflate and LZW; the IFD walk is the unknown. **Measured:** a 40-channel, 7-level file opens in 73–107 ms (lazy IFDs); pan frames ≤ 2.2 ms p95 at 7 channels; deflate with predictor 2 decodes byte-identically. The 80-channel file was not run | P0, P1 |
-| 2 | Blocker → **resolved on loopback** | Does a static origin reach an existing node end to end (pairing, token, CORS, PNA preflight, batch POST, table routes, restart recovery), and is the Chrome prompt a workable step? Safari 18.0–18.3 cannot do loopback at all. **Measured:** yes, byte-identical; no preflight answer needed; one `loopback-network` permission. Open: the remote records and Safari | P5 (a–h), the O2 manual record |
+| 2 | Blocker → **resolved on loopback** | Does a static origin reach an existing node end to end (pairing, token, CORS, PNA preflight, batch POST, table routes, restart recovery), and is the Chrome prompt a workable step? Safari 18.0–18.3 cannot do loopback at all. **Measured:** yes, byte-identical; no preflight answer needed; one `loopback-network` permission; and on O2 (2026-11-06), a page from main against a released 0.0.28 node in a SLURM job through one ssh tunnel, every byte identical (HD tile 66 ms p50, 1.38 M cells' all_cells in 2.6 s). Open: ERIS, GCP and Safari | P5 (a–h), P5R (O2) |
 | 3 | High | The minimal connector: how much of `plexora/connect.py` (3,430 lines: ssh, `-J`, srun, the askpass relay, the announce parse, GCP `gcloud … --tunnel-through-iap`, remotes.json) the Rust crate must port for the first release; whether Windows OpenSSH's askpass limitation (`DEPLOYMENT.md:492-494`) stays; how a downloadable binary is signed while the desktop installers are not yet | a scoping pass on `connect.py` before Phase 1; the signing item is shared with releases |
 | 4 | High → **answered, PARTIAL** | h5ad in wasm32: per-column reads of a 1.26 M × 90 dense `X` through h5wasm, against a one-time copy; CSR column reads; LZ4-filtered files; and the policy that the browser never writes into the user's source file (sidecar + export instead). **Measured (P4):** every read identical to h5py, at 2–13× its time; a column of an uncompressed dense X read alone is ~50× (one tiny read per row), so X is copied once into the column store (1–9 s at 1.26 M × 90); lzf-compressed strings abort the plugin. Open: the write-back wording | P4; a product decision on the write-back wording |
 | 5 | High | Two implementations of primary logic: describe, GMM, kd-tree, centroid tiles, `Requires`, launch parsing. Without conformance vectors this design fails its own goal | `tests/node_conformance/`, built in Phase 1 before any Phase 2 code |
@@ -1199,6 +1200,6 @@ Two rounds on 2026-11-05: one Windows machine (i9-12900K, 128 GB, RTX 3080, NVMe
   - register handlers before items.
 
 **Still to do:**
-- the O2, ERIS and GCP records (`P5R` runs the protocol check once a node is up);
+- the ERIS and GCP records (O2 done: `P5R-none-2026-11-06-o2.json`, every byte identical);
 - Safari on a Mac (P8);
 - an XL table; the LZ4 plugin on a real .ims.

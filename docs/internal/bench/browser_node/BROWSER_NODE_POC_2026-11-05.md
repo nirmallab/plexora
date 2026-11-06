@@ -1,6 +1,6 @@
 # The browser as Plexora's local node: proof-of-concept campaign
 
-Date: 2026-11-05, two rounds. The first round ran P0, P1, P2, P2b, P3 and P5. The second, the same evening, reworked P2b and P3, added P4, P6, P7, P8 and a headed Local Network Access check, and reran everything. Still to do: the remote-site records (O2, ERIS, GCP), and Safari on a Mac.
+Date: 2026-11-05, two rounds. The first round ran P0, P1, P2, P2b, P3 and P5. The second, the same evening, reworked P2b and P3, added P4, P6, P7, P8 and a headed Local Network Access check, and reran everything. On 2026-11-06 the O2 record was made (`P5R-none-2026-11-06-o2.json`). Still to do: ERIS and GCP, and Safari on a Mac.
 
 The plan is `docs/internal/BROWSER_NATIVE_INVESTIGATION.md` §8. The code is `tools/poc_browser_node/` at commit 6083284f, whose `bench/campaign.sh` made every record in this folder except `P5LNAH-S-…` (see §8).
 
@@ -25,7 +25,7 @@ Can a page served as static files be Plexora's local node? It would have to read
 | P2b flat mask → pyramid | S, M (9.6 GB raw) | **GO** (round 1: PARTIAL) | Band workers: 9.6 s against Python's 21.8 s (0.44×), identical, no jank; one worker took 58 s | [P2.md](P2.md) |
 | P3 cell table | S, M, L (1.26 M × 29) | **GO** (round 1: PARTIAL) | Plain-worker CSV parse: drawable in 0.9 s, 2.7× polars (bound 5×), every answer identical; DuckDB took 3.4 s | [P3.md](P3.md) |
 | P4 AnnData / SpatialData | S, L (1.26 M × 90) | **PARTIAL** | Every read identical to h5py / zarr-python / pyarrow (lzf strings apart), but h5wasm is 2–13× h5py (bound 2×) | [P4.md](P4.md) |
-| P5 remote node | M | **GO** (one item for O2) | Bytes identical to the desktop route; restart, pairing, isolation, the node-served app; Local Network Access headless and headed | [P5.md](P5.md) |
+| P5 remote node | M, O2 | **GO** | Bytes identical to the desktop route; restart, pairing, isolation, the node-served app; Local Network Access headless and headed; **O2**: a page from main against a released node in an O2 job, every byte identical, HD tile 66 ms p50 over a 46 ms round trip | [P5.md](P5.md) |
 | P6 against the product | M | **GO** | The real app over local Python vs the browser node, same tour and completion test: tile-fetching steps 2.4–3.3× faster, open 0.3×, half the memory | [P6.md](P6.md) |
 | P7 flat image → pyramid | S, M (9.6 GB raw) | **GO** | 27.5 s against Python's 31.2 s (zlib strips), 21.2 s against 178.6 s (uncompressed); identical; reopened in 14 ms | [P7.md](P7.md) |
 | P8 Firefox / WebKit | S | **GO** for Firefox; Safari not measured | Firefox 159: every S feature, same picture as Chrome; Windows WebKit: all but OPFS, which that port lacks | [P8.md](P8.md) |
@@ -86,7 +86,7 @@ From investigation §8.3 (fallback modes A–E):
 
 ## 6. What is open
 
-- **Remote records** (investigation §8.4): O2 (Duo, 640 GB Imaris, NLU290), ERIS and GCP. P5 ran on loopback only; `bench/p5remote.mjs` (`P5R`) runs its protocol check against a node already up, once someone is at the Duo prompt (P5.md).
+- **Remote records** (investigation §8.4): ERIS and GCP. O2 is done (P5.md). `bench/p5remote.mjs` (`P5R`) runs the protocol check against a node already up, and `bench/o2/` holds O2's job script and its one-connection session; ERIS and GCP need their own. The open-time comparison with the desktop's node arm, on the same node, is not measured.
 - **Safari on a Mac:** P8 with WebKit on macOS, which has OPFS.
 - **h5ad speed** (P4): accept the one-time copy into the column store, or have a node read large h5ad files.
 - **Not tried:** an XL table (19.9 M rows); the h5wasm-plugins LZ4 filter on a real .ims; geotiff.js's JavaScript predictor (P1, about 12 ms of a 20 ms tile).
@@ -122,7 +122,7 @@ From investigation §8.3 (fallback modes A–E):
 | `P2-{M,L}-…`, `P2B-{S,M}-…`, `P2B-M-…-{w4,w8}` | P2, P2b and its worker sweep |
 | `P3-{S,M,L}-…`, `P3-L-…-{duckdb,duckdb-par4}`, `P3-{M,L}-…-parquet`, `P3B-L-…` | P3, the superseded parsers and store, the parser comparison |
 | `P4-{S,L}-…` | P4 |
-| `P5-M-…`, `P5LNA-S-…`, `P5LNAH-S-…`, `P5LNAH-prompt-chrome156.png` | P5 (a, d–h), P5 (b) headless and headed |
+| `P5-M-…`, `P5LNA-S-…`, `P5LNAH-S-…`, `P5LNAH-prompt-chrome156.png`, `P5R-none-2026-11-06-o2.json` | P5 (a, d–h), P5 (b) headless and headed, the O2 record |
 | `P6-M-…` | P6 |
 | `P7-{S,M}-…`, `P7-M-…-w8` | P7 |
 | `P8-S-…` | P8 |

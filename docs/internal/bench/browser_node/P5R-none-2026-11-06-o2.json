@@ -1,0 +1,673 @@
+{
+ "poc": "P5R",
+ "date": "2026-11-06",
+ "commit": "92d50be3",
+ "machine": {
+  "cpuPercentBefore": [
+   7.8,
+   7.9,
+   4.2
+  ],
+  "platform": "win32 10.0.26200",
+  "cpu": "12th Gen Intel(R) Core(TM) i9-12900K",
+  "cores": 24,
+  "memoryGB": 128,
+  "load": [
+   0,
+   0,
+   0
+  ],
+  "hostname": "ajit"
+ },
+ "browser": {
+  "userAgent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/156.0.0.0 Safari/537.36",
+  "hardwareConcurrency": 24,
+  "deviceMemory": 32,
+  "webgl2": true,
+  "gpu": "ANGLE (NVIDIA, NVIDIA GeForce RTX 3080 (0x00002216) Direct3D11 vs_5_0 ps_5_0, D3D11)",
+  "crossOriginIsolated": false,
+  "isSecureContext": true,
+  "origin": "http://127.0.0.1:8650",
+  "storage": {
+   "quota": 10737418240,
+   "usage": 0
+  },
+  "hasShowOpenFilePicker": true,
+  "hasOPFS": true,
+  "jsHeap": 16191680
+ },
+ "arm": "browser->remote node",
+ "state": "node at 127.0.0.1:8765, already running",
+ "fixture": {
+  "name": "none",
+  "files": {}
+ },
+ "metrics": {
+  "rttMs": {
+   "p50": 45.749499999999955,
+   "p95": 56.875699999999995,
+   "min": 4.422900000000027
+  },
+  "windowsSettledMs": 2296.9937999999997,
+  "hello": {
+   "api_version": 1,
+   "capabilities": [
+    "gating.autogate.bivariate",
+    "gating.autogate.candidates",
+    "gating.autogate.control",
+    "gating.autogate.delta",
+    "gating.autogate.gates_at",
+    "gating.autogate.panel_cells",
+    "gating.autogate.profile",
+    "gating.autogate.profile_all",
+    "gating.autogate.quadrants",
+    "gating.autogate.regression",
+    "gating.autogate.sample",
+    "gating.autogate.within",
+    "gating.gmm",
+    "gating.load_gates",
+    "gating.save_classifier_done",
+    "gating.save_classifier_marker",
+    "gating.save_gates",
+    "qc.write_cells",
+    "roi.destinations",
+    "roi.map_to_cells",
+    "roi.save_anndata",
+    "roi.save_spatialdata",
+    "table.correction"
+   ]
+  },
+  "geometry": {
+   "levels": 8,
+   "channels": 2
+  },
+  "a": {
+   "timings": {
+    "helloMs": 15,
+    "batchMs": 559.6999998092651,
+    "statsMs": 2854.300000190735,
+    "tableLoadMs": 957.0999999046326,
+    "allCellsMs": 2639.1000003814697
+   },
+   "hello": {
+    "api_version": 1,
+    "capabilities": 23,
+    "resources": [
+     "table:cells",
+     "image:img"
+    ]
+   },
+   "geometry": {
+    "width": 67815,
+    "height": 53096,
+    "levels": 8,
+    "channels": 2
+   },
+   "tiles": {
+    "hd": [
+     {
+      "c": 1,
+      "l": 2,
+      "x": 10,
+      "y": 3,
+      "status": 200,
+      "type": "image/png",
+      "sha256": "e75fe1e24ca69996af074035b846af0c654cb091ebd1b81a43299ea45ca52ae8",
+      "ms": 97.59999990463257
+     },
+     {
+      "c": 0,
+      "l": 5,
+      "x": 1,
+      "y": 0,
+      "status": 200,
+      "type": "image/png",
+      "sha256": "8d27e390ff2cb632cdf22f3710eaf8f98ab4f62a60e47ef620fcf3a54f040575",
+      "ms": 69.09999990463257
+     },
+     {
+      "c": 0,
+      "l": 3,
+      "x": 4,
+      "y": 2,
+      "status": 200,
+      "type": "image/png",
+      "sha256": "edb4804541462c97aedb57b33cc962d3daedd977194196bc8598c1f73a51db8b",
+      "ms": 71
+     },
+     {
+      "c": 1,
+      "l": 0,
+      "x": 42,
+      "y": 27,
+      "status": 200,
+      "type": "image/png",
+      "sha256": "557b36a5ace169bb7a6d2c7e102c3a99c42c7c8266e6860fedf5d7233939050b",
+      "ms": 85.19999980926514
+     },
+     {
+      "c": 1,
+      "l": 3,
+      "x": 5,
+      "y": 1,
+      "status": 200,
+      "type": "image/png",
+      "sha256": "5407d1ac9acf3ce2edffc7020b91f75937861e7ff967dd0432aa1f7082fae613",
+      "ms": 71.30000019073486
+     },
+     {
+      "c": 1,
+      "l": 0,
+      "x": 60,
+      "y": 44,
+      "status": 200,
+      "type": "image/png",
+      "sha256": "f0513df029a1531b68a7cb8d17fc2fa516c223d7654fa46a8cfeab8a17bf659b",
+      "ms": 79.09999990463257
+     },
+     {
+      "c": 1,
+      "l": 1,
+      "x": 10,
+      "y": 12,
+      "status": 200,
+      "type": "image/png",
+      "sha256": "3ae1bb07c5ed9721d1cc922047194bea30f63e04a06e268fbd8bc70e368b3434",
+      "ms": 66.40000009536743
+     },
+     {
+      "c": 0,
+      "l": 5,
+      "x": 2,
+      "y": 1,
+      "status": 200,
+      "type": "image/png",
+      "sha256": "236134d7d790948f4cd06cd02a48b586cbc40ef9f1233951fb8bd1e315ca5a05",
+      "ms": 13.300000190734863
+     },
+     {
+      "c": 0,
+      "l": 3,
+      "x": 5,
+      "y": 0,
+      "status": 200,
+      "type": "image/png",
+      "sha256": "3d9f3f347809ca1776ff4d2c23c72c3864473f77b7378f4c530e4dc52448e4b1",
+      "ms": 71.40000009536743
+     },
+     {
+      "c": 1,
+      "l": 4,
+      "x": 3,
+      "y": 3,
+      "status": 200,
+      "type": "image/png",
+      "sha256": "b967fa584c4e4e847bd83a1b7a9094af79dbfaba9eba8c8c11ff80101f88d2be",
+      "ms": 47.90000009536743
+     },
+     {
+      "c": 1,
+      "l": 5,
+      "x": 2,
+      "y": 1,
+      "status": 200,
+      "type": "image/png",
+      "sha256": "7ae0d67d22a9176971ebee0cc6c89e9aa615055410a201ac147ad8cbd72251c7",
+      "ms": 11.400000095367432
+     },
+     {
+      "c": 1,
+      "l": 0,
+      "x": 42,
+      "y": 17,
+      "status": 200,
+      "type": "image/png",
+      "sha256": "68e0b438234997bbfcbe7f9758bc94618ecf2bf7d38d72508da4af25b87361f5",
+      "ms": 44.30000019073486
+     },
+     {
+      "c": 1,
+      "l": 4,
+      "x": 3,
+      "y": 0,
+      "status": 200,
+      "type": "image/png",
+      "sha256": "7a804158de7b4ffc93def742bc24dc91495bfefe1d33deca636d166d7ffccd14",
+      "ms": 77.69999980926514
+     },
+     {
+      "c": 0,
+      "l": 2,
+      "x": 15,
+      "y": 12,
+      "status": 200,
+      "type": "image/png",
+      "sha256": "eece48d26659dccddae80bbf5506e0d61481de2739068db5fc1e71048d91bc83",
+      "ms": 53.200000286102295
+     },
+     {
+      "c": 1,
+      "l": 5,
+      "x": 0,
+      "y": 0,
+      "status": 200,
+      "type": "image/png",
+      "sha256": "0c5aa8d60312b1ae2569e730ba92f632314e5e3644377a072716b87dfa7c723a",
+      "ms": 63.09999990463257
+     },
+     {
+      "c": 1,
+      "l": 6,
+      "x": 1,
+      "y": 0,
+      "status": 200,
+      "type": "image/png",
+      "sha256": "c1856fe158f6ab2888f92ef49f7e1671eef4bfcb159abf2c0f71a3e7cf502fba",
+      "ms": 33.19999980926514
+     },
+     {
+      "c": 0,
+      "l": 5,
+      "x": 0,
+      "y": 1,
+      "status": 200,
+      "type": "image/png",
+      "sha256": "740f52eb6ab3f4dfde685d83629c48bdd323346b2d3b6505ac72014da2d17976",
+      "ms": 51
+     },
+     {
+      "c": 0,
+      "l": 2,
+      "x": 6,
+      "y": 8,
+      "status": 200,
+      "type": "image/png",
+      "sha256": "748e89c869d6f4628e2503a3e72f589410d47786d5975c721d40ed7e36d6b61e",
+      "ms": 73.19999980926514
+     },
+     {
+      "c": 0,
+      "l": 7,
+      "x": 0,
+      "y": 0,
+      "status": 200,
+      "type": "image/png",
+      "sha256": "a8a2b7ac4a67817b6e18fa06dd8d805238b98d5e5bc80a03cee7e1135b99e19a",
+      "ms": 27.90000009536743
+     },
+     {
+      "c": 1,
+      "l": 1,
+      "x": 20,
+      "y": 13,
+      "status": 200,
+      "type": "image/png",
+      "sha256": "2a507c1575ac546491664de4da77a94e5c65aa17828137a5a2de800552e14de8",
+      "ms": 65.09999990463257
+     }
+    ],
+    "webp": [
+     {
+      "c": 1,
+      "l": 2,
+      "x": 10,
+      "y": 3,
+      "status": 200,
+      "type": "image/webp",
+      "sha256": "b486ea8efb2a461a057e4092630acfc18f9add3e370fe3a0215da3cc0acd1396",
+      "ms": 60.30000019073486
+     },
+     {
+      "c": 0,
+      "l": 5,
+      "x": 1,
+      "y": 0,
+      "status": 200,
+      "type": "image/webp",
+      "sha256": "e390000eae5158d966c9c15ea7ef250c62633ca397313efc64a0f4dae0d59d8a",
+      "ms": 108.59999990463257
+     },
+     {
+      "c": 0,
+      "l": 3,
+      "x": 4,
+      "y": 2,
+      "status": 200,
+      "type": "image/webp",
+      "sha256": "89e5c2a0b1c98b3d48262dccf62b0394f0c6ee21203c0839633ce42f925e59dc",
+      "ms": 77.2000002861023
+     },
+     {
+      "c": 1,
+      "l": 0,
+      "x": 42,
+      "y": 27,
+      "status": 200,
+      "type": "image/webp",
+      "sha256": "32083436e71186a07da6f1cc98466be4dd922808c139c224bc61d7d2df2801a6",
+      "ms": 72.09999990463257
+     },
+     {
+      "c": 1,
+      "l": 3,
+      "x": 5,
+      "y": 1,
+      "status": 200,
+      "type": "image/webp",
+      "sha256": "8cf58cbefc3acb64f209e486263ed63b23d9d2b6cc6932d1e33b4f8de8955d65",
+      "ms": 63.59999990463257
+     },
+     {
+      "c": 1,
+      "l": 0,
+      "x": 60,
+      "y": 44,
+      "status": 200,
+      "type": "image/webp",
+      "sha256": "54d64b6c2d797dfa21982a8c7ea3520d899010145c743bfad2a7801503f12fd7",
+      "ms": 92.30000019073486
+     },
+     {
+      "c": 1,
+      "l": 1,
+      "x": 10,
+      "y": 12,
+      "status": 200,
+      "type": "image/webp",
+      "sha256": "7af30469555e586231b35d48969b65f7d96a6698dabf21194eaf1db76bddc742",
+      "ms": 124.2999997138977
+     },
+     {
+      "c": 0,
+      "l": 5,
+      "x": 2,
+      "y": 1,
+      "status": 200,
+      "type": "image/webp",
+      "sha256": "75e9161758062d94e5df2c3e129e580d5df443259a193605a18223c57aee2973",
+      "ms": 14.699999809265137
+     },
+     {
+      "c": 0,
+      "l": 3,
+      "x": 5,
+      "y": 0,
+      "status": 200,
+      "type": "image/webp",
+      "sha256": "da79a77b04635c2a9c4e415c69603a9f2941966f596d618e05310c141913f708",
+      "ms": 70
+     },
+     {
+      "c": 1,
+      "l": 4,
+      "x": 3,
+      "y": 3,
+      "status": 200,
+      "type": "image/webp",
+      "sha256": "af5e200ae61e70a99dfce8c9975f7cdf7075ece2bde5abe492e24ea78b891a13",
+      "ms": 53.90000009536743
+     },
+     {
+      "c": 1,
+      "l": 5,
+      "x": 2,
+      "y": 1,
+      "status": 200,
+      "type": "image/webp",
+      "sha256": "b7c252e90a5a27697321f20090225f88be316061c895b08082b6949b56ab1bf2",
+      "ms": 35.19999980926514
+     },
+     {
+      "c": 1,
+      "l": 0,
+      "x": 42,
+      "y": 17,
+      "status": 200,
+      "type": "image/webp",
+      "sha256": "20a8399bdceadbbf989ff183eda1f1911ffa41fa5ed3cfe8aa88c9705ab80bce",
+      "ms": 95.09999990463257
+     },
+     {
+      "c": 1,
+      "l": 4,
+      "x": 3,
+      "y": 0,
+      "status": 200,
+      "type": "image/webp",
+      "sha256": "28057678a0feec9e6d2eac85e6b0ddccb128af5cb25299d82457fa3ba8625ee2",
+      "ms": 67.59999990463257
+     },
+     {
+      "c": 0,
+      "l": 2,
+      "x": 15,
+      "y": 12,
+      "status": 200,
+      "type": "image/webp",
+      "sha256": "651540056e8f0156cf4d4587964520746b541c04391c8b62181e1da6ef42eae7",
+      "ms": 61.59999990463257
+     },
+     {
+      "c": 1,
+      "l": 5,
+      "x": 0,
+      "y": 0,
+      "status": 200,
+      "type": "image/webp",
+      "sha256": "7431d450e51d5d1b51ebf578c37d93dbc70471290d89b990cbdea3668f53adb8",
+      "ms": 78.90000009536743
+     },
+     {
+      "c": 1,
+      "l": 6,
+      "x": 1,
+      "y": 0,
+      "status": 200,
+      "type": "image/webp",
+      "sha256": "370251c19d704e34cd6c5726e12d028368ddfe13d9fd2495f84d0f9c5dd7ac10",
+      "ms": 43.700000286102295
+     },
+     {
+      "c": 0,
+      "l": 5,
+      "x": 0,
+      "y": 1,
+      "status": 200,
+      "type": "image/webp",
+      "sha256": "39ee40a4d799ddfbd02310eeb69c506139d254c37ed96b220ceb2c44b5a590e4",
+      "ms": 76
+     },
+     {
+      "c": 0,
+      "l": 2,
+      "x": 6,
+      "y": 8,
+      "status": 200,
+      "type": "image/webp",
+      "sha256": "a82e158e3565e09b2619f326347eafad2142b1ce123debe02b18bfe943ef4239",
+      "ms": 101.59999990463257
+     },
+     {
+      "c": 0,
+      "l": 7,
+      "x": 0,
+      "y": 0,
+      "status": 200,
+      "type": "image/webp",
+      "sha256": "38f5bce7e680fc3f423ebbe69f8fd87e740afc2f6c79875fae433130b493687f",
+      "ms": 6.800000190734863
+     },
+     {
+      "c": 1,
+      "l": 1,
+      "x": 20,
+      "y": 13,
+      "status": 200,
+      "type": "image/webp",
+      "sha256": "322daae09c1e74e00dba95f705d2575058d1e8c7799dffb847b8d1f80cfaed07",
+      "ms": 7.900000095367432
+     }
+    ]
+   },
+   "exposedHeaders": [
+    "X-Plexora-Generation",
+    "X-Plexora-Resource",
+    "Server-Timing"
+   ],
+   "batch": [
+    {
+     "status": 200,
+     "sha256": "e75fe1e24ca69996af074035b846af0c654cb091ebd1b81a43299ea45ca52ae8"
+    },
+    {
+     "status": 200,
+     "sha256": "8d27e390ff2cb632cdf22f3710eaf8f98ab4f62a60e47ef620fcf3a54f040575"
+    },
+    {
+     "status": 200,
+     "sha256": "edb4804541462c97aedb57b33cc962d3daedd977194196bc8598c1f73a51db8b"
+    },
+    {
+     "status": 200,
+     "sha256": "557b36a5ace169bb7a6d2c7e102c3a99c42c7c8266e6860fedf5d7233939050b"
+    },
+    {
+     "status": 200,
+     "sha256": "5407d1ac9acf3ce2edffc7020b91f75937861e7ff967dd0432aa1f7082fae613"
+    },
+    {
+     "status": 200,
+     "sha256": "f0513df029a1531b68a7cb8d17fc2fa516c223d7654fa46a8cfeab8a17bf659b"
+    },
+    {
+     "status": 200,
+     "sha256": "3ae1bb07c5ed9721d1cc922047194bea30f63e04a06e268fbd8bc70e368b3434"
+    },
+    {
+     "status": 200,
+     "sha256": "236134d7d790948f4cd06cd02a48b586cbc40ef9f1233951fb8bd1e315ca5a05"
+    },
+    {
+     "status": 200,
+     "sha256": "3d9f3f347809ca1776ff4d2c23c72c3864473f77b7378f4c530e4dc52448e4b1"
+    },
+    {
+     "status": 200,
+     "sha256": "b967fa584c4e4e847bd83a1b7a9094af79dbfaba9eba8c8c11ff80101f88d2be"
+    },
+    {
+     "status": 200,
+     "sha256": "7ae0d67d22a9176971ebee0cc6c89e9aa615055410a201ac147ad8cbd72251c7"
+    },
+    {
+     "status": 200,
+     "sha256": "68e0b438234997bbfcbe7f9758bc94618ecf2bf7d38d72508da4af25b87361f5"
+    },
+    {
+     "status": 200,
+     "sha256": "7a804158de7b4ffc93def742bc24dc91495bfefe1d33deca636d166d7ffccd14"
+    },
+    {
+     "status": 200,
+     "sha256": "eece48d26659dccddae80bbf5506e0d61481de2739068db5fc1e71048d91bc83"
+    },
+    {
+     "status": 200,
+     "sha256": "0c5aa8d60312b1ae2569e730ba92f632314e5e3644377a072716b87dfa7c723a"
+    },
+    {
+     "status": 200,
+     "sha256": "c1856fe158f6ab2888f92ef49f7e1671eef4bfcb159abf2c0f71a3e7cf502fba"
+    },
+    {
+     "status": 200,
+     "sha256": "740f52eb6ab3f4dfde685d83629c48bdd323346b2d3b6505ac72014da2d17976"
+    },
+    {
+     "status": 200,
+     "sha256": "748e89c869d6f4628e2503a3e72f589410d47786d5975c721d40ed7e36d6b61e"
+    },
+    {
+     "status": 200,
+     "sha256": "a8a2b7ac4a67817b6e18fa06dd8d805238b98d5e5bc80a03cee7e1135b99e19a"
+    },
+    {
+     "status": 200,
+     "sha256": "2a507c1575ac546491664de4da77a94e5c65aa17828137a5a2de800552e14de8"
+    }
+   ],
+   "batchMatchesSingles": true,
+   "stats": {
+    "vmin_hint": 635,
+    "vmax_hint": 1460,
+    "vmin": 375,
+    "vmax": 1190
+   },
+   "tableLoaded": {
+    "generation": 1,
+    "rows": null
+   },
+   "allCellsSha": "cacf72f371de210b88da7d5c9667ed3149300b33e744a04fed448670e06cb6e2",
+   "cells": 1375578,
+   "describeColumns": 13,
+   "describeSha": "df0032b8e257d11ba2fb00d08e42602709b55b6f32076973f384650e0223010d",
+   "rowsCount": 3,
+   "requests": 8
+  }
+ },
+ "checks": {
+  "hdTilesIdentical": true,
+  "webpTilesIdentical": true,
+  "batchMatchesSingles": true,
+  "allCellsIdentical": true,
+  "describeIdentical": true
+ },
+ "thresholds": {
+  "go": [
+   {
+    "name": "(a, remote) hdTilesIdentical",
+    "value": true,
+    "bound": "true",
+    "result": "pass"
+   },
+   {
+    "name": "(a, remote) webpTilesIdentical",
+    "value": true,
+    "bound": "true",
+    "result": "pass"
+   },
+   {
+    "name": "(a, remote) batchMatchesSingles",
+    "value": true,
+    "bound": "true",
+    "result": "pass"
+   },
+   {
+    "name": "(a, remote) allCellsIdentical",
+    "value": true,
+    "bound": "true",
+    "result": "pass"
+   },
+   {
+    "name": "(a, remote) describeIdentical",
+    "value": true,
+    "bound": "true",
+    "result": "pass"
+   },
+   {
+    "name": "round trip p50 (ms), for the record",
+    "value": 45.7,
+    "bound": "recorded",
+    "result": "pass"
+   }
+  ],
+  "stop": []
+ },
+ "verdict": "GO",
+ "notes": [
+  "O2 node: NLU337.ome.tif (11 GB) and its cell table on /n/scratch, plexora 0.0.28 in a SLURM job (short, 8 cores, 32 GB) on compute-b-16-178, reached through one ssh tunnel from WSL on this machine"
+ ],
+ "logs": [
+  "[error] Failed to load resource: the server responded with a status of 404 (Not Found)"
+ ]
+}
