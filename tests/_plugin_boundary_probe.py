@@ -49,13 +49,8 @@ WATCHED = (
     "plexora.plugins.qc",
     "plexora.plugins.transcripts",
     "plexora.plugins.visium_hd",
-    "plexora.plugins.segmentation",
-    # The optional 3-D extra's model (plexora/vision/sam_video.py): imported
-    # only when a stack is carried with SAM 2.
+    # Nothing Plexora ships uses it: a build must never load PyTorch.
     "torch",
-    "sam2",
-    # The segment3d extra's (plugins/segmentation): only when a stack is segmented.
-    "cellpose",
     # Video Studio, and the video extra's ffmpeg finder: only when an export
     # asks which encoders there are (plugins/video_studio/server/encoders.py).
     "plexora.plugins.video_studio",

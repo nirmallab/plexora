@@ -43,7 +43,9 @@ SCHEMA_VERSION = 1
 
 #: The plugins and tools that ship with Plexora. Anything else is somebody
 #: else's code, and its name is theirs to publish, not ours: it is reported as
-#: `ext:<8 hex>` of its name.
+#: `ext:<8 hex>` of its name. `segmentation` (Segment in 3-D, removed
+#: 2026-11-06) stays: installs from before still report it, and the Worker's
+#: allowlist (backend/vectors) is generated from this list.
 FIRST_PARTY = ("core", "cell_explorer", "figure_builder", "gating", "qc", "roi",
                "segmentation", "transcripts", "video_studio", "visium_hd", "rotate", "depth")
 

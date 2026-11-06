@@ -244,7 +244,7 @@ const at = (x, y) => ({ position: { x, y }, preventDefaultAction: false });
 // -- one plane of a shape through the planes ----------------------------------
 
 {
-    // A region carried through planes 1..3; plane 2 is on screen.
+    // A region with an outline on planes 1..3; plane 2 is on screen.
     const store = makeStore();
     store.features[0].solid = { kind: "contours", t: 0,
         planes: { 1: SQUARE(10, 10, 60), 2: SQUARE(0, 0, 100), 3: SQUARE(10, 10, 60) } };

@@ -59,9 +59,7 @@ depth-analysis tools need a licence with `volume`, and over MCP also `mcp`. A
 8. To measure cells in depth the project needs a label volume -- one id per cell across planes (`inspect_volume`'s
    `segmentation`); `measure_objects` writes one row per whole cell. A flat mask cannot
    give volumes or surfaces -- say so rather than measuring plane by plane. With no mask
-   in depth, `segment_3d` makes one with Cellpose (an optional install): the
-   whole stack at once needs the z step and is slow; plane by plane is quicker but can
-   split a cell between planes. Say which was used when reporting counts.
+   in depth, say that one has to be made outside Plexora first.
 9. A time series is measured frame by frame (one row per cell per frame, its frame in
    `t`). With a mask per frame each frame numbers its cells on its own: `track_objects`
    links them, so one cell has one track number through the frames. Report how many cells were
@@ -88,21 +86,16 @@ conclusion rests on and whether the z step was stated, typed or missing.
 
 ## Regions through the planes
 
-A region drawn or outlined on one plane can be followed up and down the stack until the
-object ends: `carry_roi_through_planes` keeps one outline per plane as the region's shape
-through the stack and says why each direction stopped (the object ended, faded, or was lost). Read the
-reasons before trusting the shape: a direction that stopped at the stack's end or the
-plane limit may not have reached the object's pole. A region that only needs to cover a
-range of planes is `update_roi` with an `extent`; an ellipsoid through a range is
-`update_roi` with `solid`. Counting cells in a region with a shape through the planes needs a
-table with a z column.
+A region that only needs to cover a range of planes is `update_roi` with an `extent`; an
+ellipsoid through a range, or one outline per plane, is `update_roi` with `solid`.
+Counting cells in a region with a shape through the planes needs a table with a z column.
 
 ## Mutation policy
 
 `set_z_spacing` writes the project's z step; `measure_objects` writes an object table and,
 when the project has no table, makes it the cell table; `track_objects` adds a track
 column to it; `pin_projection` adds a layer and
-its file (removing the layer deletes the file); `carry_roi_through_planes` replaces a
+its file (removing the layer deletes the file); `update_roi` with `solid` replaces a
 region's shape with its outlines through the planes. All are receipted. Viewer commands
 change the open tab only.
 

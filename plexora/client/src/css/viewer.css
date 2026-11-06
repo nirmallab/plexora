@@ -4629,11 +4629,6 @@ body.sidebar-collapsed .viewer-shell,
     width: 34px;
 }
 
-/* `display` above outranks the UA sheet's `[hidden]` (Through planes). */
-.plx-draw-bar-button[hidden] {
-    display: none;
-}
-
 .plx-draw-bar-button:hover:not(:disabled) {
     background: rgba(255, 255, 255, 0.10);
     color: #ffffff;
@@ -4758,14 +4753,6 @@ body.sidebar-collapsed .viewer-shell,
 
 .plx-draw-bar.is-magic .plx-draw-bar-mode:active:not(:disabled) {
     transform: scale(0.94);
-}
-
-/* Through planes: an action, not a mode -- after the modes, its own size. */
-.plx-draw-bar-carry {
-    font-size: 13px;
-    height: 30px;
-    margin-right: 2px;
-    width: 30px;
 }
 
 /* The wand breathes while an outline is on its way. `> *`: Font Awesome has

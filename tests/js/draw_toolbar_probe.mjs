@@ -13,7 +13,6 @@
  *     click folding them back, to whatever was in hand before (nothing, on a
  *     fresh panel); folded away, they are inert, out of the tab order;
  *   - a mode on the bar becoming magic select's mode, and busy on the wand;
- *   - Through planes offered only on a z-stack, to an owner that can carry;
  *   - options opened before the bar is on screen (a panel shown again with
  *     magic select in hand) out from the first frame.
  *
@@ -299,27 +298,6 @@ check("the wand breathes while an outline is on its way", () => {
     toolbar.hide();
 });
 
-check("Through planes is offered on a z-stack, with Plexora 3D, and only there", () => {
-    const { tools, toolbar } = panel();
-    toolbar.show();
-    window.PlexoraPro = { allows: () => true };
-    window.__plexora = { viewState: { enabled: () => false, depth: 1 } };
-    button(toolbar, "magic").click();
-    assert.equal(toolbar.carry.hidden, true);
-    button(toolbar, "magic").click();
-    window.__plexora = { viewState: { enabled: () => true, depth: 12 } };
-    button(toolbar, "magic").click();
-    assert.equal(toolbar.carry.hidden, false);
-    assert.equal(toolbar.carry.disabled, false);
-    window.PlexoraPro = { allows: () => false };
-    tools.setTool(null);
-    button(toolbar, "magic").click();
-    assert.equal(toolbar.carry.hidden, true);
-    delete window.PlexoraPro;
-    delete window.__plexora;
-    toolbar.hide();
-});
-
 check("disarming the tools folds the options", () => {
     const { tools, toolbar } = panel();
     toolbar.show();
@@ -346,8 +324,7 @@ check("a button's name shows under the bar while the pointer is on it, with no s
     assert.equal(toolbar.name.classList.contains("is-shown"), true);
     toolbar.hide();
     assert.equal(toolbar.name.classList.contains("is-shown"), false);
-    for (const each of [...Object.values(toolbar.buttons), ...Object.values(toolbar.modeButtons),
-                        toolbar.carry]) {
+    for (const each of [...Object.values(toolbar.buttons), ...Object.values(toolbar.modeButtons)]) {
         assert.equal(each.title, "", each.getAttribute("aria-label"));
     }
 });

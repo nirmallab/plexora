@@ -332,9 +332,8 @@ def extent_planes(extent):
 #: its footprint -- what it covers seen from above -- so everything that reads
 #: one outline per region, and main's reader, keeps working):
 #:
-#: - `contours`: one outline per plane, `planes: {"z": geometry}`, with no gaps
-#:   (an outline carried through planes, plexora/vision/propagate.py). `keys`
-#:   are the planes a person or a prompt fixed; the rest were carried.
+#: - `contours`: one outline per plane, `planes: {"z": geometry}`, with no
+#:   gaps. `keys` are the planes a person or a prompt fixed.
 #: - `ellipsoid`: the footprint is the outline on its middle plane `z` (which
 #:   may fall between planes); on plane p it shrinks about its centre by
 #:   sqrt(1 - ((p - z) / rz)^2), and is gone where |p - z| >= rz.

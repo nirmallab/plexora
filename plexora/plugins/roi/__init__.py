@@ -22,7 +22,7 @@ adapter code) is left to the factory.
 
 from plexora.api.plugin import Plugin, Requires
 
-VERSION = "20261027_sidebar_radius"
+VERSION = "20261106_no_carry"
 
 
 def _blueprint():

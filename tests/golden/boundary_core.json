@@ -1,7 +1,6 @@
 {
   "imported": {
     "anndata": false,
-    "cellpose": false,
     "h5py": false,
     "imageio_ffmpeg": false,
     "plexora.plugins.cell_explorer": false,
@@ -9,12 +8,10 @@
     "plexora.plugins.gating": false,
     "plexora.plugins.qc": false,
     "plexora.plugins.roi": false,
-    "plexora.plugins.segmentation": false,
     "plexora.plugins.transcripts": false,
     "plexora.plugins.video_studio": false,
     "plexora.plugins.visium_hd": false,
     "pyarrow": true,
-    "sam2": false,
     "scipy.stats": true,
     "sklearn.mixture": true,
     "torch": false
@@ -401,8 +398,8 @@
         "/client/src/js/services/appRouter.js?v=20261002_hash_tab",
         "/client/src/js/services/viewerLoader.js?v=20260915_center_loader",
         "/client/src/js/services/viewSnapshot.js?v=20261004_magic_select",
-        "/client/src/js/services/segmentService.js?v=20261011_merge",
-        "/client/src/js/services/drawToolbar.js?v=20261027_draw_bar",
+        "/client/src/js/services/segmentService.js?v=20261106_no_carry",
+        "/client/src/js/services/drawToolbar.js?v=20261106_no_carry",
         "/client/src/js/services/canvasHint.js?v=20261015_display_contrast",
         "/client/src/js/views/panCursor.js?v=20260919_pan_cursor",
         "/client/src/js/views/jobWait.js?v=20261013_mask_surfaces",
@@ -462,7 +459,7 @@
         "/client/src/css/tokens.css?v=20261027_sidebar_radius",
         "/client/src/css/main.css?v=20261029_bucket_datasets",
         "/client/src/css/explorer.css?v=20261021_explorer_waiting",
-        "/client/src/css/viewer.css?v=20261105_gating_v4",
+        "/client/src/css/viewer.css?v=20261106_no_carry",
         "/client/src/css/quickView.css?v=20261021_native_drop",
         "/client/src/css/agentPanel.css?v=20261030_ai_top_up",
         "/client/src/css/chatPanel.css?v=20261011_fold"
@@ -682,8 +679,8 @@
         "/client/src/js/services/appRouter.js?v=20261002_hash_tab",
         "/client/src/js/services/viewerLoader.js?v=20260915_center_loader",
         "/client/src/js/services/viewSnapshot.js?v=20261004_magic_select",
-        "/client/src/js/services/segmentService.js?v=20261011_merge",
-        "/client/src/js/services/drawToolbar.js?v=20261027_draw_bar",
+        "/client/src/js/services/segmentService.js?v=20261106_no_carry",
+        "/client/src/js/services/drawToolbar.js?v=20261106_no_carry",
         "/client/src/js/services/canvasHint.js?v=20261015_display_contrast",
         "/client/src/js/views/panCursor.js?v=20260919_pan_cursor",
         "/client/src/js/views/jobWait.js?v=20261013_mask_surfaces",
@@ -743,7 +740,7 @@
         "/client/src/css/tokens.css?v=20261027_sidebar_radius",
         "/client/src/css/main.css?v=20261029_bucket_datasets",
         "/client/src/css/explorer.css?v=20261021_explorer_waiting",
-        "/client/src/css/viewer.css?v=20261105_gating_v4",
+        "/client/src/css/viewer.css?v=20261106_no_carry",
         "/client/src/css/quickView.css?v=20261021_native_drop",
         "/client/src/css/agentPanel.css?v=20261030_ai_top_up",
         "/client/src/css/chatPanel.css?v=20261011_fold"
@@ -760,7 +757,7 @@
       ]
     }
   },
-  "route_count": 239,
+  "route_count": 237,
   "routes": [
     "DELETE /nodes/<name>/resources/<resource_id>",
     "DELETE /project/<string:name>/layers/<path:layer_id>",
@@ -943,10 +940,8 @@
     "POST /rename_channels",
     "POST /save_channel_list",
     "POST /search_dir",
-    "POST /segment/v1/carry",
     "POST /segment/v1/install",
     "POST /segment/v1/install/cancel",
-    "POST /segment/v1/install3d",
     "POST /segment/v1/segment",
     "POST /set_pixel_size",
     "POST /settings/data",

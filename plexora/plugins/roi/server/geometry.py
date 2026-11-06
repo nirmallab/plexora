@@ -179,3 +179,20 @@ def iter_rings(geometry):
 
 def vertex_count(geometry):
     return sum(len(ring) for ring in iter_rings(geometry))
+
+
+def footprint(planes):
+    """The outline covering every plane's outline (GeoJSON, image pixels):
+    what a region with one outline per plane (`contours`, `labels`) covers
+    seen from above -- the 2-D geometry it is stored with, so everything
+    reading one outline per region keeps working. `planes` maps a plane to
+    its GeoJSON outline."""
+    import shapely
+    from shapely.geometry import mapping, shape
+
+    from plexora.server.utils import mask_polygon
+
+    union = shapely.unary_union([shape(g) for g in planes.values()])
+    geometry = mask_polygon.to_geojson(mask_polygon.polygonal(union), simplify_px=0.5,
+                                       max_vertices=mask_polygon.MAX_VERTICES)
+    return geometry or mapping(union)

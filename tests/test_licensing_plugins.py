@@ -37,8 +37,6 @@ def _blueprint(name):
 #: The shipped plugins that are Pro, and the entitlement each needs. One entry
 #: per deliberate decision: a plugin turning Pro by accident fails below.
 PRO_SHIPPED = {"video_studio": "plugin:video_studio",
-                # Plexora 3D: Cellpose over a whole stack.
-                "segmentation": "volume:segmentation",
                 # Spatial transcriptomics, one child per vendor plugin.
                 "transcripts": "transcriptomics:xenium",
                 "visium_hd": "transcriptomics:visium"}
