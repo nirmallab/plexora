@@ -1481,7 +1481,7 @@
        "description": "A region's shape through a z-stack (its geometry stays its footprint).",
        "properties": {
         "kind": {
-         "description": "ellipsoid: the geometry is the outline on its middle plane `z` and it tapers to nothing `rz` planes above and below; contours: one outline per plane in `planes` (consecutive planes, no gaps) -- usually made by carry_roi_through_planes rather than by hand.",
+         "description": "ellipsoid: the geometry is the outline on its middle plane `z` and it tapers to nothing `rz` planes above and below; contours: one outline per plane in `planes` (consecutive planes, no gaps).",
          "enum": [
           "ellipsoid",
           "contours",
@@ -1676,7 +1676,7 @@
        "description": "A region's shape through a z-stack (its geometry stays its footprint).",
        "properties": {
         "kind": {
-         "description": "ellipsoid: the geometry is the outline on its middle plane `z` and it tapers to nothing `rz` planes above and below; contours: one outline per plane in `planes` (consecutive planes, no gaps) -- usually made by carry_roi_through_planes rather than by hand.",
+         "description": "ellipsoid: the geometry is the outline on its middle plane `z` and it tapers to nothing `rz` planes above and below; contours: one outline per plane in `planes` (consecutive planes, no gaps).",
          "enum": [
           "ellipsoid",
           "contours",

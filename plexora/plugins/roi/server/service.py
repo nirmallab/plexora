@@ -95,10 +95,8 @@ def solid_summary(solid):
 
 def footprint_of(planes):
     """The outline covering every plane's outline: what a 3-D region covers
-    seen from above, stored as its 2-D geometry (plexora/vision/propagate.py)."""
-    from plexora.vision.propagate import footprint
-
-    return geometry_rules.validate_geometry(footprint(planes))
+    seen from above, stored as its 2-D geometry (geometry.footprint)."""
+    return geometry_rules.validate_geometry(geometry_rules.footprint(planes))
 
 
 def labels_solid(ds, ids, *, t=0, simplify_px=0.5):
@@ -307,64 +305,6 @@ def update_roi(ds, roi_id, *, name=None, notes=None, category=None, geometry=Non
     after_revision = repo.apply(base, ops)
     _, after = get_roi(ds, roi_id)
     return base, after_revision, before, after
-
-
-def section_at(feature, plane):
-    """A region's outline on one plane: a solid's section there (None where it
-    does not reach), else its geometry."""
-    solid = feature.get("solid")
-    if not solid:
-        return feature["geometry"]
-    for z, geometry in mapping.solid_sections(feature, solid):
-        if z == int(plane):
-            return geometry
-    return None
-
-
-def carry_through_planes(ds, session, roi_id, *, z=None, view=None, z_range=None,
-                         engine="auto", channels=None, base_revision=None):
-    """Carry a region's outline on plane `z` up and down the stack and keep the
-    outlines as its shape through the planes (`solid: contours`), in one step.
-
-    `z` defaults to the middle of the planes it covers (its own plane for a
-    region drawn on one). `view` (full-resolution {x, y, width, height})
-    defaults to the outline's box with as much again around it, which is the
-    context the model needs to find an edge. Returns (before_revision,
-    after_revision, before, after, result) -- `result` is
-    plexora/vision/propagate.py's answer without the outlines.
-    """
-    from plexora.vision import propagate
-
-    repo = ROIRepository(ds.name)
-    state = repo.load()
-    base = state["revision"] if base_revision is None else base_revision
-    _, feature = schema.find(_features(state), roi_id)
-    if feature is None:
-        raise KeyError(roi_id)
-    if z is None:
-        bounds = schema.extent_planes(feature.get("extent"))
-        if bounds is None:
-            raise ValueError("say which plane to carry the outline from (z): "
-                             "this region is on every plane")
-        z = (bounds[0] + bounds[1]) // 2
-    outline = section_at(feature, z)
-    if outline is None:
-        raise ValueError(f"the region has no outline on plane {z}")
-    if view is None:
-        from shapely.geometry import shape
-
-        x0, y0, x1, y1 = shape(outline).bounds
-        pad = max(32.0, x1 - x0, y1 - y0)
-        view = {"x": x0 - pad, "y": y0 - pad, "width": x1 - x0 + 2 * pad,
-                "height": y1 - y0 + 2 * pad}
-    result = propagate.carry(session, ds.name, z=int(z), view=view, geometry=outline,
-                             z_range=z_range, engine=engine, channels=channels)
-    planes = result.pop("planes")
-    solid = {"kind": "contours", "planes": planes, "keys": [int(z)],
-             "t": (feature.get("extent") or {}).get("t", 0)}
-    before_rev, after_rev, before, after = update_roi(ds, roi_id, solid=solid,
-                                                      base_revision=base)
-    return before_rev, after_rev, before, after, result
 
 
 def delete_roi(ds, roi_id, *, base_revision=None):

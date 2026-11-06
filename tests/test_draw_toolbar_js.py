@@ -28,7 +28,6 @@ CHECKS = (
     "...and back to the tool that was in hand before it",
     "another tool picked while they are out folds them too",
     "the wand breathes while an outline is on its way",
-    "Through planes is offered on a z-stack, with Plexora 3D, and only there",
     "disarming the tools folds the options",
     "a button's name shows under the bar while the pointer is on it, with no system tooltip",
     "options opened before the bar is on screen are out from its first frame",

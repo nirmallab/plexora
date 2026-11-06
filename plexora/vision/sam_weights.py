@@ -123,9 +123,8 @@ def download(directory: Path | None = None, *, progress=None, cancelled=None,
 
 def fetch(files: dict, base: str, directory: Path | None = None, *, progress=None,
           cancelled=None, force: bool = False) -> Path:
-    """`download` for any table of `{name: {sha256, bytes}}` served under `base`
-    (magic select through a z-stack keeps its own weights in a subdirectory:
-    plexora/vision/sam_video.py). The fetching itself is model_files.download's."""
+    """`download` for any table of `{name: {sha256, bytes}}` served under `base`.
+    The fetching itself is model_files.download's."""
     directory = Path(directory) if directory is not None else model_dir()
     return model_files.download(directory, files, base, progress=progress,
                                 cancelled=cancelled, force=force)

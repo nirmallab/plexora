@@ -39,8 +39,8 @@ class RoiTree {
         this.onFeatureRename = options.onFeatureRename || (() => {});
         this.onFeatureChange = options.onFeatureChange || (() => {});
         this.onFeatureDelete = options.onFeatureDelete || (() => {});
-        //: A region's shape through a z-stack: (feature, "carry" | "ellipsoid" |
-        //: "flat-here" | "flat-all", planes) -- see roiTools' carryThroughPlanes.
+        //: A region's shape through a z-stack: (feature, "ellipsoid" |
+        //: "flat-here" | "flat-all", planes) -- see roiTools' makeEllipsoid.
         this.onFeatureSolid = options.onFeatureSolid || (() => {});
         //: Selecting a region highlights it on the IMAGE as well as here, and
         //: nothing else repaints the overlay for a selection made from the
@@ -397,7 +397,7 @@ class RoiTree {
     static solidText(solid, planes) {
         if (solid.kind === "ellipsoid") return `an ellipsoid through ${planes}`;
         const keys = (solid.keys || []).map((z) => `z ${z}`).join(", ");
-        return `an outline on every plane of ${planes}` + (keys ? `, carried from ${keys}` : "");
+        return `an outline on every plane of ${planes}` + (keys ? `, drawn on ${keys}` : "");
     }
 
     /** "z 12" or "z 8–20" for a region limited to some planes; "" for all. */
@@ -745,34 +745,26 @@ class RoiTree {
                 const live = this.store.feature(id);
                 if (live) this.onFeatureSolid(live, action, shown);
             };
-            const middle = Math.round((shown[0] + shown[1]) / 2);
-            // Carrying a region through planes and making it an ellipsoid are
-            // Plexora 3D: without it they are not offered. Flattening a 3-D
-            // region, and limiting a flat one to planes, stay.
+            // Making a region an ellipsoid is Plexora 3D: without it it is not
+            // offered. Flattening a 3-D region, and limiting a flat one to
+            // planes, stay.
             const in3d = Boolean(window.PlexoraPro?.allows?.("volume:objects"));
             if (feature.solid) {
-                // Its planes come from its shape: reshaped by carrying again,
-                // or made flat -- never limited to planes as a flat one is.
-                if (in3d) {
-                    items.push({
-                        label: `Carry through planes again (from z ${middle})`,
-                        className: "is-sectioned",
-                        disabled: !editable || locked,
-                        onSelect: solid("carry"),
-                    });
-                }
-                if (shown[0] === shown[1] && RoiGeometry.sectionAt(feature, shown[0])) {
+                // Its planes come from its shape: it is made flat -- never
+                // limited to planes as a flat one is.
+                const onThisPlane = shown[0] === shown[1]
+                    && Boolean(RoiGeometry.sectionAt(feature, shown[0]));
+                if (onThisPlane) {
                     items.push({
                         label: `Flat, only on ${RoiTree.planesText(here, frames)}`,
-                        className: in3d ? "" : "is-sectioned",
+                        className: "is-sectioned",
                         disabled: !editable || locked,
                         onSelect: solid("flat-here"),
                     });
                 }
                 items.push({
                     label: "Flat, on every plane",
-                    className: in3d || (shown[0] === shown[1]
-                        && RoiGeometry.sectionAt(feature, shown[0])) ? "" : "is-sectioned",
+                    className: onThisPlane ? "" : "is-sectioned",
                     disabled: !editable || locked,
                     onSelect: solid("flat-all"),
                 });
@@ -795,17 +787,10 @@ class RoiTree {
                         onSelect: () => act({ extent: here }),
                     });
                 }
-                if (in3d) {
-                    items.push({
-                        label: `Carry through planes (from z ${middle})`,
-                        className: "is-sectioned",
-                        disabled: !editable || locked,
-                        onSelect: solid("carry"),
-                    });
-                }
                 if (in3d && shown[0] !== shown[1]) {
                     items.push({
                         label: `Ellipsoid through z ${shown[0]}–${shown[1]}`,
+                        className: "is-sectioned",
                         disabled: !editable || locked,
                         onSelect: solid("ellipsoid"),
                     });

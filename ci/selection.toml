@@ -84,7 +84,6 @@ browser_api = ["plexora/client/src/js/pluginRegistry.js", "plexora/client/src/js
 "plexora/plugins/gating/**" = ["plexora/plugins/gating/tests/*.py", "tests/test_gating_*.py"]
 "plexora/plugins/qc/**" = ["plexora/plugins/qc/tests/*.py"]
 "plexora/plugins/roi/**" = ["plexora/plugins/roi/tests/*.py"]
-"plexora/plugins/segmentation/**" = ["plexora/plugins/segmentation/tests/*.py"]
 "plexora/plugins/transcripts/**" = ["plexora/plugins/transcripts/tests/*.py"]
 "plexora/plugins/video_studio/**" = ["plexora/plugins/video_studio/tests/*.py"]
 "plexora/plugins/visium_hd/**" = ["plexora/plugins/visium_hd/tests/*.py"]

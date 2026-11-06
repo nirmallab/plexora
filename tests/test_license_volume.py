@@ -1,8 +1,8 @@
 """Plexora 3D (`volume`): looking at a stack is Free, analysing it is Pro.
 
 On Free a z-stack opens with its planes, projections, sections and volume
-view; the controls that measure, track, review or segment cells in 3-D, run
-Stack QC, make surfaces, carry a region through planes or make one from cells
+view; the controls that measure, track or review cells in 3-D, run Stack QC,
+make surfaces, give a region a shape through the planes or make one from cells
 are absent from the page, and their routes and capabilities refuse with the
 `license` block. What those features made stays readable. With `volume` it is
 all there.
@@ -40,7 +40,7 @@ def stack(tmp_path):
     tifffile.imwrite(tmp_path / f"{NAME}_mask.tif", labels)
     register_image_datasource(NAME, path)
     datasets.add_layers(NAME, tmp_path / f"{NAME}_mask.tif", wait=True)
-    registry.discover(["qc", "roi", "segmentation"])
+    registry.discover(["qc", "roi"])
     return NAME
 
 
@@ -69,8 +69,6 @@ def test_a_free_stack_page_shows_viewing_and_nothing_pro(stack, client):
     assert 'id="depth_panel"' in depth or "depth-panel" in depth, "viewing a stack is Free"
     for marker in DEPTH_3D_IDS:
         assert marker not in depth, marker
-    assert 'data-tool="segmentation"' not in html
-    assert "/plugins/segmentation/static/" not in html
     assert "plx-pro-badge" not in html
 
 
@@ -78,7 +76,6 @@ def test_a_pro_stack_page_has_every_3d_control(stack, client, pro_license):
     html = client.get(f"/{stack}").get_data(as_text=True)
     for marker in VIEWER_3D_IDS:
         assert marker in html, marker
-    assert 'data-tool="segmentation"' in html
     depth = client.get(f"/{stack}?tool=depth").get_data(as_text=True)
     for marker in DEPTH_3D_IDS:
         assert marker in depth, marker
@@ -114,20 +111,10 @@ def test_stack_qc_refuses_on_free_but_its_last_answer_reads(stack, client):
     assert client.get(f"/plugins/qc/stack?datasource={stack}").status_code == 200
 
 
-def test_a_region_from_cells_and_carrying_refuse_on_free(stack, client):
+def test_a_region_from_cells_refuses_on_free(stack, client):
     _license_block(client.post("/plugins/roi/api/from_cells",
                                json={"datasource": stack, "ids": [5]}))
-    _license_block(client.post("/segment/v1/carry", json={"datasource": stack, "z": 2}))
-    _license_block(client.post("/segment/v1/install3d", json={}))
     assert client.get("/segment/v1/status").status_code == 200
-
-
-def test_the_segmentation_plugin_refuses_on_free(stack, client):
-    routes = [rule.rule for rule in plexora.app.url_map.iter_rules()
-              if rule.rule.startswith("/plugins/segmentation/") and "static" not in rule.rule
-              and "POST" in rule.methods]
-    assert routes
-    _license_block(client.post(routes[0].replace("<", "").replace(">", ""), json={}))
 
 
 def _flat_region(stack):

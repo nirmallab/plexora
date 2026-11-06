@@ -52,7 +52,7 @@ roots, and the first-party plugins licensed as a whole:
 | Root | Shown as | What it unlocks |
 |---|---|---|
 | `ai` | Plexora AI | Every AI path: gating and QC sessions and their analysis, evidence in the viewer, the chat |
-| `volume` | Plexora 3D | Surface Studio (`volume:surfaces`), measuring, tracking and reviewing 3-D cells and regions made from them or carried through planes (`volume:objects`), Cellpose over a stack (`volume:segmentation`), Stack QC and 3-D analysis (`volume:analysis`) |
+| `volume` | Plexora 3D | Surface Studio (`volume:surfaces`), measuring, tracking and reviewing 3-D cells and regions made from them or given a shape through the planes (`volume:objects`), Stack QC and 3-D analysis (`volume:analysis`) |
 | `transcriptomics` | Spatial transcriptomics | Xenium (`transcriptomics:xenium`), Visium and Visium HD (`transcriptomics:visium`): import, transcript and bin layers, gene lists |
 | `mcp` | External MCP access | Off by default (`manifest.OFF_BY_DEFAULT`): Pro tools from an outside agent |
 | `plugin:video_studio` | Video Studio | The Video Studio plugin as a whole (`manifest.PLUGINS`) |
@@ -84,8 +84,7 @@ the `plexora.pro` plan does not carry exactly `pro_default()`.
 | `ai:qc:session` | `qc_session_start`, `qc_session_bulk`, `qc_next`, `qc_answer`, `qc_session_status`, `qc_session_finish`, `qc_report` |
 | `ai:qc:analytics` | `profile_image_qc`, `render_qc_overview`, `refine_qc_roi`, `sample_qc_examples` |
 | `volume:surfaces` | `surface_create`, `surface_suggest_threshold`, `surface_inspect`, `surface_refine`, `surface_neighbours` |
-| `volume:objects` | `measure_objects`, `track_objects`, `render_object_views`, `object_z_profile`, `object_review_start`, `object_review_next`, `object_review_answer`, `object_review_finish`, `carry_roi_through_planes`; `create_roi` / `update_roi` with `cells` or `solid` |
-| `volume:segmentation` | `segment_3d` (the segmentation plugin as a whole) |
+| `volume:objects` | `measure_objects`, `track_objects`, `render_object_views`, `object_z_profile`, `object_review_start`, `object_review_next`, `object_review_answer`, `object_review_finish`; `create_roi` / `update_roi` with `cells` or `solid` |
 | `volume:analysis` | `check_volume_quality`, `colocalize_3d`, `find_regions_of_interest_3d`, `run_qc_3d`, `set_qc_plane`, `write_qc_3d_regions` |
 | `transcriptomics:xenium` | the transcripts plugin as a whole |
 | `transcriptomics:visium` | the Visium HD plugin as a whole |
@@ -182,14 +181,14 @@ kept for it and nothing calls them today.
 - **Templates.** `licensed(entitlement)` is a template global (a context
   processor, never raises): a mixed panel wraps a Pro control in
   `{% if licensed('volume:objects') %}` so the element is absent from the HTML.
-- **The client.** A control built in JavaScript (a context-menu item, the
-  magic bar's Through planes, a card action) is not built when
+- **The client.** A control built in JavaScript (a context-menu item, a
+  card action) is not built when
   `PlexoraPro.allows(entitlement)` says no. That is a hint from the page's
   render-time licence summary; the server decides. A 403 that still arrives
   (a licence lapsed while the page was open) is a `console.warn` and a quiet
   close, never a modal.
-- **Core's scripts are never gated by licence**: a surface or a carried
-  region must stay drawable on Free. A locked plugin's own scripts are not
+- **Core's scripts are never gated by licence**: a surface or a region with
+  a shape through the planes must stay drawable on Free. A locked plugin's own scripts are not
   emitted (see Import below for what that means for transcripts).
 - **Import.** Without `transcriptomics` a Xenium, Visium or Visium HD run is
   not detected at all: no layers, no bundle, no warning, and the import

@@ -79,7 +79,7 @@ PRO = {
     "surface.refine": "volume:surfaces",
     "surface.neighbours": "volume:surfaces",
     # Plexora 3D beyond looking at a stack (agent/core/volume*.py, QC's stack
-    # and object review, ROI carry, the segmentation plugin).
+    # and object review).
     "volume.measure_objects": "volume:objects",
     "volume.track_objects": "volume:objects",
     "volume.render_object_views": "volume:objects",
@@ -94,8 +94,6 @@ PRO = {
     "qc.object_review_next": "volume:objects",
     "qc.object_review_answer": "volume:objects",
     "qc.object_review_finish": "volume:objects",
-    "roi.carry": "volume:objects",
-    "segmentation.segment_3d": "volume:segmentation",
 }
 
 #: Manual-equivalent gating that must stay Free (a user decision, among others).
@@ -122,13 +120,13 @@ MUST_BE_FREE = ("gating.set", "gating.get", "gating.get_all", "gating.distributi
 
 @pytest.fixture
 def session(tmp_path):
-    """Exactly these four plugins registered, from an empty registry. It is
+    """Exactly these three plugins registered, from an empty registry. It is
     process-wide, so without the reset the classification asserted below would
     be whatever an earlier test in the same worker happened to leave in it --
     and the plugins left here would in turn change later tests' answers."""
     make_synthetic_project(tmp_path)
     registry._reset_for_tests()
-    registry.discover(["gating", "roi", "qc", "segmentation"])
+    registry.discover(["gating", "roi", "qc"])
     yield AgentSession()
     registry._reset_for_tests()
 

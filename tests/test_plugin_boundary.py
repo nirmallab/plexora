@@ -36,18 +36,16 @@ GOLDEN_DIR = Path(__file__).resolve().parent / "golden"
 # Dependencies that exist ONLY to serve an addon. sklearn/scipy are deliberately
 # absent from this list: core's auto-contrast GMM imports them, so they are
 # present in every build and asserting on them would be asserting a falsehood.
-# torch and sam2 belong to the optional `volume3d` extra (magic select through
-# a z-stack, plexora/vision/sam_video.py): imported only when a stack is
-# carried with SAM 2, never by a build starting up. cellpose is the
-# `segment3d` extra's (plugins/segmentation), imported only when a stack is
-# segmented.
+# Nothing Plexora ships uses torch (magic select runs MobileSAM on ONNX
+# Runtime): a build starting up must never pay for PyTorch, even where it is
+# installed.
 ADDON_ONLY_IMPORTS = ("anndata", "h5py", "plexora.plugins.cell_explorer",
                       "plexora.plugins.figure_builder",
                       "plexora.plugins.gating", "plexora.plugins.roi",
                       "plexora.plugins.qc", "plexora.plugins.transcripts",
-                      "plexora.plugins.visium_hd", "plexora.plugins.segmentation",
+                      "plexora.plugins.visium_hd",
                       "plexora.plugins.video_studio", "imageio_ffmpeg",
-                      "torch", "sam2", "cellpose")
+                      "torch")
 
 
 def _probe(plugins, data_path, tool=None):
@@ -127,11 +125,6 @@ def qc(tmp_path_factory):
 @pytest.fixture(scope="module")
 def visium_hd(tmp_path_factory):
     return _probe("visium_hd", tmp_path_factory.mktemp("visium_hd"))
-
-
-@pytest.fixture(scope="module")
-def segmentation(tmp_path_factory):
-    return _probe("segmentation", tmp_path_factory.mktemp("segmentation"))
 
 
 @pytest.fixture(scope="module")
@@ -541,25 +534,6 @@ def test_visium_hd_installs_only_namespaced_routes(core, visium_hd):
     added = set(visium_hd["routes"]) - set(core["routes"])
     assert added and all("/plugins/visium_hd/" in r for r in added), added
     assert set(core["routes"]) <= set(visium_hd["routes"])
-
-
-def test_segmentation_route_inventory_matches_golden(segmentation):
-    _check_golden("segmentation", segmentation)
-
-
-def test_segmentation_installs_only_namespaced_routes(core, segmentation):
-    added = set(segmentation["routes"]) - set(core["routes"])
-    assert added and all("/plugins/segmentation/" in r for r in added), added
-    assert set(core["routes"]) <= set(segmentation["routes"])
-
-
-def test_no_build_imports_cellpose_by_starting_up(core, segmentation):
-    """Cellpose (and PyTorch behind it) load only when a stack is segmented:
-    not in a core build, and not in one with the segmentation plugin."""
-    assert core["imported"]["plexora.plugins.segmentation"] is False
-    for build in (core, segmentation):
-        assert build["imported"]["cellpose"] is False
-        assert build["imported"]["torch"] is False
 
 
 def test_a_core_build_does_not_pay_for_the_bin_reader(core):

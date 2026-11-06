@@ -41,7 +41,7 @@ class RoiSidebarController {
             },
         });
         this.tools.magicBars = this.toolbar.magicBars();
-        // A carry started from a row's menu is busy too, with the options shut.
+        // The wand breathes while an outline is on its way, options open or shut.
         this.tools.onBusy = (busy) => this.toolbar.setBusy(busy);
         // The tree decides what a click on a row MEANS; every one of these
         // decides what it DOES, because doing it is a commit with an undo
@@ -58,8 +58,7 @@ class RoiSidebarController {
             onFeatureChange: (feature, changes) => this.propertyChange(feature, changes),
             onFeatureDelete: (feature) => this.tools.deleteFeature(feature),
             onFeatureSolid: (feature, action, shown) => {
-                if (action === "carry") this.tools.carryThroughPlanes(feature);
-                else if (action === "ellipsoid") this.tools.makeEllipsoid(feature, shown);
+                if (action === "ellipsoid") this.tools.makeEllipsoid(feature, shown);
                 else if (action === "flat-here") this.tools.makeFlat(feature, shown[0]);
                 else if (action === "flat-all") this.tools.makeFlat(feature, null);
             },

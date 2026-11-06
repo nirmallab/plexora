@@ -3,9 +3,8 @@
 A region keeps one 2-D `geometry` -- its footprint, what it covers seen from
 above -- so everything that reads one outline per region, and main's reader
 (which drops the unknown field), keeps working. `solid` says what it is on
-each plane: one outline per plane (contours, usually carried through the planes
-by magic select), or an ellipsoid tapering from the footprint on its middle
-plane. Its planes (`extent`) always follow from the solid. Cells are counted by
+each plane: one outline per plane (contours), or an ellipsoid tapering from
+the footprint on its middle plane. Its planes (`extent`) always follow from the solid. Cells are counted by
 their own plane's outline when the table says where they are in z.
 """
 

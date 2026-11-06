@@ -86,7 +86,7 @@ PROFILES: dict[str, tuple | None] = {
     # picture -- and the viewer commands that show them (skill volume-triage).
     "volume": _COMMON + (
         "inspect_volume", "set_z_spacing", "sample_z_planes", "axis_profile", "measure_objects",
-        "track_objects", "segment_3d", "run_qc_3d", "get_qc_3d", "colocalize_3d",
+        "track_objects", "run_qc_3d", "get_qc_3d", "colocalize_3d",
         "find_regions_of_interest_3d", "object_review_start", "object_review_next",
         "object_review_answer", "object_review_status", "object_review_finish",
         "check_volume_quality", "pin_projection",
@@ -95,8 +95,7 @@ PROFILES: dict[str, tuple | None] = {
         "list_artifacts",
         "list_viewers", "viewer_get_state", "viewer_capture", "viewer_set_view",
         "viewer_set_z", "viewer_set_slab", "viewer_set_channels", "viewer_navigate",
-        "list_rois", "get_roi", "create_roi", "update_roi", "carry_roi_through_planes",
-        "count_cells_in_roi",
+        "list_rois", "get_roi", "create_roi", "update_roi", "count_cells_in_roi",
         # Surfaces (plexora/agent/core/surface.py; skill surface-rendering).
         "surface_create", "surface_suggest_threshold", "surface_list", "surface_inspect",
         "surface_measure", "surface_objects", "surface_refine", "surface_neighbours",

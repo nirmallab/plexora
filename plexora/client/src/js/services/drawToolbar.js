@@ -9,11 +9,10 @@
  * two panels draw with one bar, and each owner makes its own.
  *
  * Magic select's own choices are not a second bar. Add, Remove, Box and
- * Scribble (and Through planes, on a z-stack, with Plexora 3D) open out of
- * this one, to the right of the wand, while magic select is the tool; a second
- * click on the wand folds them back in. The owner's magic select drives them
- * through `magicBars()`: show({owner, mode, onMode, onCarry}) returns a handle
- * {setMode, setBusy, setCanCarry, hide, isShown} for that owner alone.
+ * Scribble open out of this one, to the right of the wand, while magic select
+ * is the tool; a second click on the wand folds them back in. The owner's
+ * magic select drives them through `magicBars()`: show({owner, mode, onMode})
+ * returns a handle {setMode, setBusy, hide, isShown} for that owner alone.
  *
  * The name of the button under the pointer shows under the bar at once
  * (`named`): the browser's own tooltip came a second or two late.
@@ -176,18 +175,6 @@ class PlexoraDrawBar {
             this.modeButtons[mode.id] = button;
         }
         inner.appendChild(modes);
-        // Through planes: an action, not a mode -- after the modes, dim until
-        // there is an outline to carry.
-        const carry = PlexoraDrawBar.button("plx-draw-bar-button plx-draw-bar-carry", {
-            icon: "fas fa-layer-group", label: "Through planes",
-        });
-        carry.hidden = true;
-        carry.disabled = true;
-        carry.addEventListener("click", () => {
-            if (!carry.disabled) this.magic?.onCarry?.();
-        });
-        this.named(carry, "Through planes");
-        inner.appendChild(carry);
         drawer.appendChild(inner);
         root.appendChild(drawer);
 
@@ -217,7 +204,6 @@ class PlexoraDrawBar {
         this.tools = tools;
         this.drawer = drawer;
         this.drawerInner = inner;
-        this.carry = carry;
         this.applyMagic();
         this.setMode(this.mode);
         this.setBusy(this.busy);
@@ -371,28 +357,18 @@ class PlexoraDrawBar {
         this.buttons.magic?.setAttribute("aria-busy", this.busy ? "true" : "false");
     }
 
-    /** Through planes, for an owner that can carry, on a z-stack. */
-    offerCarry(onCarry) {
-        if (!this.carry) return;
-        const stack = window.__plexora?.viewState;
-        this.carry.hidden = !(onCarry && stack?.enabled?.() && stack.depth > 1);
-        this.carry.disabled = true;
-    }
-
     /** Magic select's options, for the owner's magic select to drive. */
     magicBars() {
         return {
-            show: ({ owner, mode = "box", onMode = null, onCarry = null } = {}) => {
+            show: ({ owner, mode = "box", onMode = null } = {}) => {
                 if (!this.root) this.build();
-                this.magic = { owner, onMode, onCarry };
-                this.offerCarry(onCarry);
+                this.magic = { owner, onMode };
                 this.setMode(mode);
                 this.setOpen(true);
                 const mine = () => Boolean(this.magic && this.magic.owner === owner);
                 return {
                     setMode: (next) => { if (mine()) this.setMode(next); },
                     setBusy: (busy) => { if (mine()) this.setBusy(busy); },
-                    setCanCarry: (can) => { if (mine() && this.carry) this.carry.disabled = !can; },
                     hide: () => {
                         if (!mine()) return;
                         this.magic = null;

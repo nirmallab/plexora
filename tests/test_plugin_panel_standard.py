@@ -34,11 +34,7 @@ JINJA_COMMENT = re.compile(r"\{#.*?#\}", re.S)
 CSS_COMMENT = re.compile(r"/\*.*?\*/", re.S)
 
 #: Tool panels not yet on the standard, and why.
-PENDING = {
-    # 3-D only, a short form with no keys of its own yet; its footer needs a
-    # key worth having (Enter to segment, say) before it can have one.
-    "segmentation",
-}
+PENDING: set[str] = set()
 
 
 def _tool_panels():
@@ -106,7 +102,7 @@ def test_the_panel_ends_on_a_footer_of_its_keys(name, template):
 
 
 #: Every plugin that draws in the sidebar, tool card or layer section.
-SIDEBAR_PLUGINS = ["cell_explorer", "gating", "qc", "roi", "segmentation", "transcripts", "visium_hd"]
+SIDEBAR_PLUGINS = ["cell_explorer", "gating", "qc", "roi", "transcripts", "visium_hd"]
 #: Retired panel tokens: their two radii are --radius-control now.
 RETIRED = ("--panel-field-radius", "--panel-hover-radius")
 

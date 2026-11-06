@@ -235,19 +235,13 @@ Set to `0` to switch magic select off everywhere -- the ROI and QC panels, and t
 
 <Param name={"PLEXORA_SEGMENT_DEVICE"} default={"auto"}>
 
-`auto` uses a GPU when this machine's ONNX Runtime offers one (CUDA, ROCm, DirectML or Apple's CoreML) and falls back to the CPU; `cpu` never uses one; `gpu` refuses to run without one. The optional through-planes model (SAM 2.1, the `volume3d` extra) uses CUDA when there is one and the CPU otherwise -- never Apple's GPU, where its tracking comes out wrong; `mps` forces it there, to check a newer PyTorch.
+`auto` uses a GPU when this machine's ONNX Runtime offers one (CUDA, ROCm, DirectML or Apple's CoreML) and falls back to the CPU; `cpu` never uses one; `gpu` refuses to run without one.
 
 </Param>
 
 <Param name={"PLEXORA_SEGMENT_MODEL_URL"}>
 
 Fetch magic select's model files from this address instead of Plexora's release (a mirror inside a firewalled site). The files are checked against the same checksums either way.
-
-</Param>
-
-<Param name={"PLEXORA_SEGMENT3D_MODEL_URL"}>
-
-Fetch the optional through-planes model (SAM 2.1, used when the `volume3d` extra is installed) from this address instead of Meta's release. Checked against the same checksum either way.
 
 </Param>
 

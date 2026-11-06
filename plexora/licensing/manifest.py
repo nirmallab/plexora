@@ -15,9 +15,9 @@ and prices are edited only there); what the roots ARE is said here.
 
 Four roots. `ai` is every AI path. `volume` ("Plexora 3D") is working with
 z-stacks and time series beyond looking at them: Surface Studio
-(plexora/server/surface), measuring and tracking 3-D cells, Cellpose over a
-stack, Stack QC and 3-D analysis. Viewing a stack -- planes, projections,
-sections, the volume view, a 3-D mask drawn over it -- is Free.
+(plexora/server/surface), measuring and tracking 3-D cells, Stack QC and 3-D
+analysis. Viewing a stack -- planes, projections, sections, the volume view, a
+3-D mask drawn over it -- is Free.
 `transcriptomics` is the spatial-transcriptomics modality as a whole: without
 it a Xenium or Visium run is not even offered at import
 (`import_proposal._licensed`), and the transcripts and Visium HD plugins
@@ -43,9 +43,9 @@ Two principles hold for every root:
   template global, `PlexoraPro.allows` in the client). The server still
   refuses a direct call, with the `license` block (`guards`).
 - What a Pro feature produced stays readable on any plan. A surface, a 3-D
-  object table, a region carried through planes, an imported transcript or
-  bin layer is drawn, exported, measured and deleted on Free, like everything
-  else; only making more of them is Pro.
+  object table, a region with a shape through the planes, an imported
+  transcript or bin layer is drawn, exported, measured and deleted on Free,
+  like everything else; only making more of them is Pro.
 
 Some roots are off by default (`OFF_BY_DEFAULT`): not part of Pro or its
 trial, never sold, and turned on for a licence by an administrator, on the
@@ -112,8 +112,7 @@ ENTITLEMENTS: dict[str, tuple[str, str]] = {
     "volume": (
         "Plexora 3D",
         "Working with z-stacks and time series beyond looking at them: "
-        "surfaces, 3-D cells measured and tracked, segmentation over a stack, "
-        "Stack QC and 3-D analysis."),
+        "surfaces, 3-D cells measured and tracked, Stack QC and 3-D analysis."),
     "volume:surfaces": (
         "Surface Studio",
         "Surfaces in the 3-D view: isosurfaces of a channel with live "
@@ -123,10 +122,7 @@ ENTITLEMENTS: dict[str, tuple[str, str]] = {
         "Cells in 3-D",
         "Measuring the objects of a 3-D mask, tracking them across time "
         "points, reviewing them plane by plane, and regions made from cells "
-        "or carried through planes."),
-    "volume:segmentation": (
-        "3-D segmentation",
-        "Segmenting cells over a whole z-stack with Cellpose in 3-D."),
+        "or given a shape through the planes."),
     "volume:analysis": (
         "3-D analysis",
         "Stack QC across planes, 3-D colocalisation and finding regions of "

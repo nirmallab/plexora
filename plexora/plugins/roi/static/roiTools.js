@@ -1168,8 +1168,8 @@ class RoiInteraction {
             if (method) out.flags = { ...(feature.flags || {}), method };
             return out;
         };
-        // Applied locally already (a drag) or not at all (a carry): put the
-        // old state back first, so commit()'s own applyLocal draws the change.
+        // Applied locally already (a drag) or not at all (a menu action): put
+        // the old state back first, so commit()'s own applyLocal draws the change.
         feature.geometry = before.geometry;
         if (before.solid) feature.solid = before.solid;
         else delete feature.solid;
@@ -1250,23 +1250,6 @@ class RoiInteraction {
     static solidState(feature) {
         return { solid: feature.solid || null, geometry: feature.geometry,
                  extent: feature.extent || { kind: "all" } };
-    }
-
-    /** "Outlined on z 8–19 (12 planes); stopped where the object ends both ways." */
-    static carriedText(zs, stopped = {}) {
-        const why = {
-            object_ended: "where the object ends", faded: "where the object fades out",
-            lost: "where it lost the object",
-            grew: "where the outline began to spill", shrank: "where the outline fell apart",
-            drifted: "where the object moved too far", stack_end: "at the end of the stack",
-            range_end: "at the end of the range", limit: "at the 64-plane limit",
-        };
-        const up = why[stopped.increasing_z] || "";
-        const down = why[stopped.decreasing_z] || "";
-        const span = zs.length > 1 ? `z ${zs[0]}–${zs[zs.length - 1]}` : `z ${zs[0]}`;
-        const where = up === down ? (up ? ` Stopped ${up} both ways.` : "")
-            : ` Stopped ${[down && `below: ${down}`, up && `above: ${up}`].filter(Boolean).join("; ")}.`;
-        return `Outlined on ${span} (${zs.length} plane${zs.length === 1 ? "" : "s"}).${where}`;
     }
 
     /** A contours solid with every plane's outline moved by (dx, dy). A
@@ -1412,100 +1395,14 @@ class RoiInteraction {
     showMagicBar() {
         const bars = this.magicBars;
         if (!bars || !this.armed) return;
-        // Through planes is Plexora 3D: without it the bar has no such button
-        // (drawToolbar.js draws it only for an owner that can carry).
-        const carry = window.PlexoraPro?.allows?.("volume:objects")
-            ? () => this.carryMagic() : null;
         this.magicBar = bars.show({
             owner: this, mode: this.magicMode,
             onMode: (mode) => this.setMagicMode(mode),
             onClose: () => this.setTool(this.previousTool),
-            onCarry: carry,
         });
-        this.magicBar?.setCanCarry?.(true);
-    }
-
-    /** The region Through planes would carry: the outline being made, else
-     *  the selected region. */
-    magicTarget() {
-        const id = this.magic?.session?.roiId || this.store.selectionId;
-        return id ? this.store.feature(id) : null;
-    }
-
-    carryMagic() {
-        const feature = this.magicTarget();
-        if (!feature) {
-            this.notify("Outline something on this plane first (or select a region), "
-                + "then carry it through the planes.");
-            return;
-        }
-        this.carryThroughPlanes(feature);
     }
 
     // -- shapes through the planes of a z-stack ---------------------------
-
-    /** The plane a carry starts from: the one on screen (a projection's middle). */
-    planeOnScreen() {
-        const shown = this.ctx.view?.planes?.();
-        if (!shown) return null;
-        return Math.round((shown[0] + shown[1]) / 2);
-    }
-
-    /**
-     * Follow a region's outline on the plane on screen up and down the stack
-     * (plexora/vision/propagate.py) and keep one outline per plane as its
-     * shape: one undo step, which puts back exactly what it had.
-     */
-    async carryThroughPlanes(feature) {
-        if (!feature || this.carrying) return;
-        if (this.store.isLocked(feature)) {
-            this.notify("That ROI is locked. Unlock it to reshape it.");
-            return;
-        }
-        const z = this.planeOnScreen();
-        if (z === null) return;
-        const outline = RoiGeometry.sectionAt(feature, z);
-        if (!outline) {
-            this.notify(`It has no outline on z ${z}: move to a plane it reaches.`);
-            return;
-        }
-        this.carrying = true;
-        this.setMagicBusy(true);
-        this.notify(`Carrying the outline up and down from z ${z}...`);
-        let result;
-        try {
-            result = await window.PlexoraSegment.carry({
-                datasource: this.ctx.datasource, geometry: outline, z,
-                t: this.ctx.view?.frame?.() || 0,
-                retry: () => { this.carryThroughPlanes(this.store.feature(feature.id)); },
-            });
-        } finally {
-            this.carrying = false;
-            this.setMagicBusy(false);
-        }
-        if (!result || result.ok === false) {
-            if (result && result.kind === "setup") return;
-            if (result && result.kind === "busy") {
-                this.notify("One moment -- still outlining the last click.");
-            } else if (result && result.message) {
-                this.notify(result.message);
-            }
-            return;
-        }
-        const live = this.store.feature(feature.id);
-        const zs = Object.keys(result.planes || {}).map(Number).sort((a, b) => a - b);
-        if (!live || !zs.length || !result.footprint) {
-            this.notify("Nothing to keep: the outline did not carry onto any plane.");
-            return;
-        }
-        this.commitSolid(live, RoiInteraction.solidState(live),
-                         { solid: { kind: "contours", planes: result.planes, keys: [z],
-                                    t: this.ctx.view?.frame?.() || 0 },
-                           geometry: result.footprint },
-                         { label: "Carry through planes" });
-        this.store.select(live.id);
-        this.notify(RoiInteraction.carriedText(zs, result.stopped));
-    }
 
     /** A flat region made an ellipsoid through planes `first`..`last`: its
      *  outline is the middle plane's, tapering to nothing past either end. */
@@ -1598,9 +1495,9 @@ class RoiInteraction {
         const geometry = this.tidyMagic(result.geometry);
         const feature = session.roiId ? this.store.feature(session.roiId) : null;
         if (feature?.solid) {
-            // A 3-D region is redrawn by carrying it again, not on one plane.
+            // A 3-D region is not redrawn on one plane.
             this.notify("That region has an outline on every plane it covers: make it flat "
-                + "first, or carry it through the planes again.");
+                + "first.");
             return drop();
         }
         if (feature) {

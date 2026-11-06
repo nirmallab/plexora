@@ -24,8 +24,8 @@ from plexora.plugins.roi import PLUGIN
 
 OWNER = "roi"
 
-#: A region made 3-D -- a shape through the planes, carried, or exactly some
-#: cells of a 3-D mask -- is Plexora 3D (plexora/licensing/manifest.py). Flat
+#: A region made 3-D -- a shape through the planes, or exactly some cells of
+#: a 3-D mask -- is Plexora 3D (plexora/licensing/manifest.py). Flat
 #: regions, and flattening a 3-D one, stay Free.
 SOLID_ENTITLEMENT = "volume:objects"
 
@@ -108,8 +108,7 @@ class SolidInput(AgentModel):
     kind: Literal["ellipsoid", "contours", "labels"] = Field(
         description="ellipsoid: the geometry is the outline on its middle plane `z` and it "
                     "tapers to nothing `rz` planes above and below; contours: one outline "
-                    "per plane in `planes` (consecutive planes, no gaps) -- usually made by "
-                    "carry_roi_through_planes rather than by hand.")
+                    "per plane in `planes` (consecutive planes, no gaps).")
     z: float | None = Field(None, ge=0, description="ellipsoid: its middle plane.")
     rz: float | None = Field(None, gt=0, description="ellipsoid: half its depth, in planes.")
     planes: dict[str, dict[str, Any]] | None = Field(
@@ -233,54 +232,6 @@ def update_roi(call, inp):
     return {"receipt": receipt.model_dump(mode="json"), "roi": after}
 
 
-class CarryInput(RoiInput):
-    z: int | None = Field(None, ge=0, description="The plane whose outline is carried "
-                          "(default: the middle of the planes the region covers).")
-    z_first: int | None = Field(None, ge=0, description="Go no further down than this plane.")
-    z_last: int | None = Field(None, ge=0, description="Go no further up than this plane.")
-    engine: Literal["auto", "sam2", "mobile"] = Field(
-        "auto", description="auto: SAM 2 through the planes when the 3-D extra is installed, "
-                            "else MobileSAM plane by plane (which tends to run past the "
-                            "object's poles in blurred stacks).")
-    channels: list[str] | None = Field(None, description="Channel names to outline from "
-                                       "(default: the first channel).")
-    base_revision: int | None = None
-
-
-def carry_roi(call, inp):
-    from plexora.vision.segment import SegmentError
-
-    ds = call.session.image_data(inp.project)
-    z_range = None
-    if inp.z_first is not None or inp.z_last is not None:
-        z_range = (inp.z_first if inp.z_first is not None else 0,
-                   inp.z_last if inp.z_last is not None else 10**6)
-    try:
-        before_rev, after_rev, before, after, result = _guarded(
-            _service().carry_through_planes, ds, call.session, inp.roi_id, z=inp.z,
-            z_range=z_range, engine=inp.engine,
-            channels=[{"name": name} for name in inp.channels] if inp.channels else None,
-            base_revision=inp.base_revision)
-    except SegmentError as exc:
-        raise AgentError("precondition_missing" if exc.code == "precondition_missing"
-                         else "invalid_input", str(exc), detail=exc.detail) from exc
-    except ValueError as exc:
-        raise AgentError("invalid_input", str(exc)) from exc
-    undo = {"project": inp.project, "roi_id": inp.roi_id, "base_revision": after_rev}
-    partial = bool(before.get("solid")) or before.get("geometry") is None
-    if not partial:
-        undo.update(flatten=True, geometry=before["geometry"],
-                    extent=before.get("extent") or {"kind": "all"})
-    hint = {"tool": "update_roi", "arguments": undo, **({"partial": True} if partial else {})}
-    receipt = make_receipt(call, changed=True, before=before, after=after,
-                           revision_before=before_rev, revision_after=after_rev,
-                           persistent_state=STATE, reversible=not partial, undo_hint=hint)
-    return {"receipt": receipt.model_dump(mode="json"), "roi": after,
-            "carried": {key: result[key] for key in
-                        ("start", "range", "stopped", "engine", "per_plane", "timing",
-                         "provenance") if key in result}}
-
-
 class DeleteInput(RoiInput):
     confirm: Literal[True] = Field(description="Must be true, on the user's explicit request.")
     base_revision: int | None = None
@@ -358,13 +309,6 @@ def capabilities():
         cap(name="roi.update", tool_name="update_roi",
             purpose="Rename, recategorize, reshape, hide or lock a region.",
             permission="reversible_write", input_model=UpdateInput, handler=update_roi,
-            writes=("rois",), persistent=True),
-        cap(name="roi.carry", tool_name="carry_roi_through_planes",
-            entitlement=SOLID_ENTITLEMENT,
-            purpose="On a z-stack: follow a region's outline up and down the planes until "
-                    "the object ends, and keep one outline per plane as the region's 3-D "
-                    "shape. Says why each direction stopped. Reversible.",
-            permission="reversible_write", input_model=CarryInput, handler=carry_roi,
             writes=("rois",), persistent=True),
         cap(name="roi.delete", tool_name="delete_roi",
             purpose="Delete a region. Destructive: needs --allow-destructive and "

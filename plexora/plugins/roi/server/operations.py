@@ -35,7 +35,7 @@ import copy
 from datetime import datetime, timezone
 
 from plexora.plugins.roi.server import schema
-from plexora.plugins.roi.server.geometry import validate_geometry
+from plexora.plugins.roi.server.geometry import footprint, validate_geometry
 
 #: How many operations one request may carry. An import arrives as a single
 #: bulk operation rather than N creates, so a batch this long is a client
@@ -224,8 +224,9 @@ def _roi_update_properties(state, op):
 
 def _roi_set_solid(state, op):
     """A region's shape through a z-stack (schema.normalize_solid), with the
-    footprint and planes that go with it, as one step: carrying an outline
-    through the planes is one undo, and its undo is this op with the old values.
+    footprint and planes that go with it, as one step: giving a region its
+    shape through the planes is one undo, and its undo is this op with the old
+    values.
 
     `solid: null` makes the region flat again; then `extent` (when given) says
     which planes it is left on, as roi.update_properties would.
@@ -239,8 +240,6 @@ def _roi_set_solid(state, op):
     elif solid is not None and solid["kind"] in ("contours", "labels"):
         # One plane's outline edited by hand: the footprint is derived again
         # from every plane's, rather than trusted from the editor.
-        from plexora.vision.propagate import footprint
-
         geometry = validate_geometry(footprint(solid["planes"]))
     else:
         geometry = feature["geometry"]
