@@ -21,8 +21,15 @@ Used for:
 import struct
 import zlib
 
-import imagecodecs
 import numpy as np
+
+try:
+    from imagecodecs import zlibng_encode as _deflate
+except ImportError:  # no build for this runtime (the website's Pyodide)
+    # The stdlib's deflate: the same stream format, several times slower, and
+    # only where there is no imagecodecs at all.
+    def _deflate(data, level=6):
+        return zlib.compress(data, level)
 
 _PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
 _ZLIBNG_LEVEL = 6
@@ -51,7 +58,7 @@ def _encode_png(width: int, height: int, bit_depth: int, color_type: int, row_by
     filtered[:, 0] = 0  # filter type 0 ("None") on every scanline
     filtered[:, 1:] = row_bytes
 
-    idat_data = imagecodecs.zlibng_encode(filtered.tobytes(), level=compress_level)
+    idat_data = _deflate(filtered.tobytes(), level=compress_level)
     ihdr = struct.pack(">IIBBBBB", width, height, bit_depth, color_type, 0, 0, 0)
 
     return (

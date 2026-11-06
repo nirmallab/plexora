@@ -37,6 +37,7 @@ import time
 import uuid
 from datetime import datetime, timezone
 
+from plexora import _work
 from plexora.plugins.video_studio.server import encoders, manifest, repository, writers
 
 MAX_JOBS = 10
@@ -114,10 +115,7 @@ def start(video_id: str, document: dict, output: dict, *, frames: int, name: str
             raise JobError("too many exports are running; wait for one to finish", 429)
         _JOBS[export_id] = job
     repository.record_export(video_id, export_id, status="running", output=output)
-    thread = threading.Thread(target=_run, args=(job,), name=f"video-export-{export_id}",
-                              daemon=True)
-    job["_thread"] = thread
-    thread.start()
+    job["_thread"] = _work.spawn(_run, job, name=f"video-export-{export_id}")
     return describe(job)
 
 
@@ -149,6 +147,7 @@ def push(video_id: str, export_id: str, first: int, count: int, payload: bytes, 
         raise JobError("the encoder is busy", 503) from None
     job["frames_received"] += count
     job["_touched"] = time.monotonic()
+    _resume(job)
     return describe(job)
 
 
@@ -183,6 +182,7 @@ def finish(video_id: str, export_id: str, client_manifest: dict) -> dict:
     job["_finish"] = client_manifest if isinstance(client_manifest, dict) else {}
     job["status"] = "finishing"
     job["_queue"].put(None)
+    _resume(job)
     return describe(job)
 
 
@@ -196,6 +196,7 @@ def cancel(video_id: str, export_id: str) -> bool:
         job["_queue"].put_nowait(None)
     except queue.Full:
         pass
+    _resume(job)
     return True
 
 
@@ -211,16 +212,31 @@ def _decode_png(data: bytes, width: int, height: int) -> bytes:
     return image.tobytes()
 
 
+def _resume(job: dict):
+    """Without threads (the website) the encoder writes what has arrived and
+    stops (`_run`); a chunk, the finish or a cancel queues it again."""
+    if _work.threaded() or job["status"] not in ("running", "finishing"):
+        return
+    thread = job.get("_thread")
+    if thread is None or not thread.is_alive():
+        job["_thread"] = _work.spawn(_run, job, name=f"video-export-{job['export_id']}")
+
+
 def _run(job: dict):
     writer = job["_writer"]
     output = job["_output"]
+    paused = False
     try:
         while True:
             if job["_cancel"].is_set():
                 break
             try:
-                chunk = job["_queue"].get(timeout=5)
+                chunk = (job["_queue"].get(timeout=5) if _work.threaded()
+                         else job["_queue"].get_nowait())
             except queue.Empty:
+                if not _work.threaded():
+                    paused = True
+                    return
                 if time.monotonic() - job["_touched"] > IDLE_TIMEOUT_S:
                     job["error"] = "no frames arrived for 15 minutes; the export was abandoned"
                     job["_cancel"].set()
@@ -278,9 +294,10 @@ def _run(job: dict):
         except Exception:  # noqa: BLE001 - the video itself may have been deleted
             pass
     finally:
-        job["finished_at"] = _now()
-        job["_touched"] = time.monotonic()
-        job["_document"] = None
+        if not paused:
+            job["finished_at"] = _now()
+            job["_touched"] = time.monotonic()
+            job["_document"] = None
 
 
 def _keep_partial(job):

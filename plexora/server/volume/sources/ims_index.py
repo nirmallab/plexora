@@ -46,6 +46,8 @@ from pathlib import Path
 
 import numpy as np
 
+from plexora import _work
+
 #: Bumped when the file's layout changes; an index of another version is
 #: built again.
 VERSION = 1
@@ -235,6 +237,9 @@ def build(path, *, workers=None) -> Path:
         datasets = _datasets(handle)
     arrays = {}
     count = max(1, min(int(workers or BUILD_WORKERS), len(datasets), os.cpu_count() or 1))
+    if not _work.threaded():
+        # No worker processes either where there are no threads (the website).
+        count = 1
     if count == 1:
         with h5py.File(path, "r") as handle:
             for dataset in datasets:

@@ -29,6 +29,7 @@ import time
 import uuid
 from pathlib import Path
 
+from plexora import _work
 from plexora.agent.audit import now_iso
 from plexora.agent.errors import as_agent_error
 
@@ -153,10 +154,8 @@ class JobStore:
             if call.extras.get("origin"):
                 line["origin"] = call.extras["origin"]
             call.audit.append(line)
-        thread = threading.Thread(target=self._run, args=(record, call, inp),
-                                  name=f"agent-job-{job_id}", daemon=True)
-        record["_thread"] = thread
-        thread.start()
+        record["_thread"] = _work.spawn(self._run, record, call, inp,
+                                        name=f"agent-job-{job_id}")
         return {"job_id": job_id, "status": "queued", "resource": f"plexora://job/{job_id}",
                 "operation_id": call.operation_id,
                 "next": "job_wait (streams progress) or job_get"}
@@ -281,7 +280,7 @@ class JobStore:
             record = self._jobs.get(job_id)
         if record is None:
             return self.get(job_id)
-        record["_done"].wait(timeout=max(0.0, float(timeout_s)))
+        _work.wait_event(record["_done"], timeout=max(0.0, float(timeout_s)))
         return public(record)
 
     def _sweep(self):

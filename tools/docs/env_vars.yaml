@@ -241,6 +241,7 @@ internal:
   - PLEXORA_UPDATE_INDEX
   - PLEXORA_UPDATE_RESTART
   - PLEXORA_WINDOW_SCANS_INLINE
+  - PLEXORA_WORK
 
 ignore:
   PLEXORA_MODEL_: The prefix of PLEXORA_MODEL_<TIER> in plexora/ai/delegation.py.

@@ -404,10 +404,11 @@ def cell_windows(session, project, channels, *, nuclear=None, seed=0,
     items = list(cells["columns"].items())
     if len(items) > 1:
         import contextvars
-        from concurrent.futures import ThreadPoolExecutor
 
-        with ThreadPoolExecutor(max_workers=CHANNEL_WORKERS,
-                                thread_name_prefix="cell-window") as pool:
+        from plexora import _work
+
+        with _work.executor(max_workers=CHANNEL_WORKERS,
+                            thread_name_prefix="cell-window") as pool:
             found = list(pool.map(lambda item: contextvars.copy_context().run(one, *item),
                                   items))
     else:

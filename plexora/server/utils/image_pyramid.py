@@ -34,7 +34,6 @@ import shutil
 import tempfile
 import time
 import xml.etree.ElementTree as ElementTree
-from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Callable, NamedTuple, Optional
 
@@ -42,6 +41,7 @@ import numpy as np
 import tifffile as tf
 import zarr
 
+from plexora import _work
 from plexora.server.utils import segmentation_pyramid
 from plexora.server.utils.segmentation_pyramid import PyramidError
 
@@ -636,8 +636,8 @@ def pyramidize_image(
             for window in range(0, level_w, span)
         ]
         position = {key: index for index, key in enumerate(order)}
-        reduce_pool = ThreadPoolExecutor(max_workers=workers, thread_name_prefix="pyramid-reduce")
-        prefetch = ThreadPoolExecutor(max_workers=1, thread_name_prefix="pyramid-read")
+        reduce_pool = _work.executor(max_workers=workers, thread_name_prefix="pyramid-reduce")
+        prefetch = _work.executor(max_workers=1, thread_name_prefix="pyramid-read")
         pools = (prefetch, reduce_pool)
         pending = {}
 

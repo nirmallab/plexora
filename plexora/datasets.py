@@ -805,13 +805,14 @@ def _wait_for_layers(name, timeout=3600):
     """
     import time
 
+    from plexora import _work
     from plexora.server.models import layer_jobs
 
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         if not layer_jobs.status(name).get("pending"):
             return True
-        time.sleep(0.25)
+        _work.wait(0.25)
     return False
 
 

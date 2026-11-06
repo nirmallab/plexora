@@ -37,12 +37,13 @@ from __future__ import annotations
 import hashlib
 import json
 import math
-from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
 from datetime import datetime, timezone
 from typing import Any, Callable, Mapping
 
 import numpy as np
+
+from plexora import _work
 
 #: The findings a correction can answer (consistency.py's codes).
 FIXABLE = ("ids_below_one", "cells_in_a_corner", "cells_outside_image")
@@ -294,7 +295,7 @@ def propose(frame, roles, *, width: int, height: int, depth: int = 1,
         if not wanted:
             return
         if workers > 1 and len(wanted) > 1:
-            with ThreadPoolExecutor(max_workers=workers) as pool:
+            with _work.executor(max_workers=workers) as pool:
                 found = list(pool.map(lambda p: _safe_read(read_window, *p), wanted))
         else:
             found = [_safe_read(read_window, *p) for p in wanted]

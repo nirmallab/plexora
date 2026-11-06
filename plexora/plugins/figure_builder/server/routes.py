@@ -30,7 +30,7 @@ from __future__ import annotations
 
 from flask import Blueprint, Response, jsonify, render_template, request, send_file
 
-from plexora import api, app
+from plexora import api
 from plexora.plugins.figure_builder import PLUGIN, VERSION
 from plexora.plugins.figure_builder.server import (
     captures, pixels, render, repository, schema, sources)
@@ -720,7 +720,9 @@ def _page_data(**values):
     base.html reads, and the asset lists come from the descriptor so they cannot
     drift from what the tool path serves.
     """
-    from plexora import get_config_names
+    # The app at call time, never at import: importing this module must not
+    # build it (plexora.create_app imports this module while building).
+    from plexora import app, get_config_names
     from plexora.server import plugins as plugin_registry
 
     base_url = app.config.get('PLEXORA_BASE_URL', '')

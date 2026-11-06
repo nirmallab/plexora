@@ -36,6 +36,8 @@ import itertools
 import threading
 import time
 
+from plexora import _work
+
 #: Milliseconds between two commands of a script (a session may change it).
 DEFAULT_DELAY_MS = 600
 
@@ -44,7 +46,7 @@ DWELL_AFTER = ("fit_region", "focus_cell", "preview_gate", "open_project")
 
 
 def run_script(send, script, *, delay_ms=DEFAULT_DELAY_MS, dwell_factor=2.0,
-               sleep=time.sleep, keep_going=None) -> dict:
+               sleep=_work.wait, keep_going=None) -> dict:
     """Send `script` = [{type, arguments}] through `send(type, arguments)`.
 
     Returns {status: ok|degraded|off, sent, errors}, plus `aborted: true`
@@ -291,7 +293,7 @@ class Presenter:
                 left = deadline - time.monotonic()
                 if left <= 0:
                     return False
-                self._cv.wait(left)
+                _work.wait_condition(self._cv, left)
             return True
 
     def _fresh(self, subject) -> bool:
@@ -299,9 +301,7 @@ class Presenter:
 
     def _start(self):
         if self._thread is None or not self._thread.is_alive():
-            self._thread = threading.Thread(target=self._loop, daemon=True,
-                                            name=f"mirror-{self.session_id}")
-            self._thread.start()
+            self._thread = _work.spawn(self._loop, name=f"mirror-{self.session_id}")
 
     def _ask_tab(self):
         """`where()`, called off the condition (it may be a request to the
@@ -359,17 +359,17 @@ class Presenter:
                         if self._where is None or slot == self._until_slot else 0.0
                     if not self._looks[slot][2] or hold <= 0:
                         return slot, self._looks.pop(slot)
-                    self._cv.wait(hold)
+                    _work.wait_condition(self._cv, hold)
                     continue
                 left = idle_until - time.monotonic()
                 if left <= 0:
                     return None
-                self._cv.wait(min(poll, left))
+                _work.wait_condition(self._cv, min(poll, left))
                 continue
             left = idle_until - time.monotonic()
             if self._closing or left <= 0:
                 return None
-            self._cv.wait(left)
+            _work.wait_condition(self._cv, left)
 
     def _loop(self):
         while True:

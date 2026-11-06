@@ -122,7 +122,8 @@ def replayer(status_capability, plugins, *, notify):
     tab that switched image) is passed on to a status that takes one: a
     session following the tab replays that image's packet."""
     import dataclasses
-    import threading
+
+    from plexora import _work
 
     def replay(session_id, post, control):
         def run():
@@ -146,6 +147,6 @@ def replayer(status_capability, plugins, *, notify):
             except Exception:
                 pass
 
-        threading.Thread(target=run, name=f"replay-{session_id}", daemon=True).start()
+        _work.spawn(run, name=f"replay-{session_id}")
 
     return replay

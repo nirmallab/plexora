@@ -261,6 +261,9 @@ def remove() -> list[str]:
 
 
 def _build_backend():
+    made = sam_backend.executor()
+    if made is not None:
+        return made()
     sam_backend.import_runtime()
     directory = sam_weights.model_dir()
     missing = sam_weights.missing(directory, deep=True)

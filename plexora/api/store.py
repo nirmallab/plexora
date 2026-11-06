@@ -23,8 +23,9 @@ identifiers are validated here rather than trusted.
 
 Storage reuses `database_model`'s engine unchanged -- one sqlite file per
 datasource, one row per (table, datasource), lazily created. Tabular values are
-serialized as Parquet so dtypes survive the round trip; opaque state is stored
-as raw bytes exactly as handed over.
+serialized as Arrow IPC so dtypes survive the round trip (tables stored as
+Parquet by earlier versions are still read); opaque state is stored as raw bytes
+exactly as handed over.
 """
 
 from __future__ import annotations
@@ -46,6 +47,10 @@ _PREFIX = "plugin_"
 #: Name of the per-plugin table holding opaque plugin state, as opposed to a
 #: named result table.
 _STATE = "state"
+
+#: How a stored table begins: an Arrow IPC file, or (written before 0.0.37) a
+#: Parquet file.
+_IPC_MAGIC = b"ARROW1"
 
 
 def _validate(kind, value):
@@ -182,13 +187,16 @@ class PluginStore:
         Raises:
             TypeError: If `frame` is not a polars DataFrame.
         """
-        # Parquet rather than CSV or pickle: dtypes survive, it is compact,
-        # and it is readable by anything, which matters for data a user may
-        # want to get back out without running Plexora.
+        # Arrow IPC rather than CSV or pickle: dtypes survive, and it is
+        # readable by anything (polars, pyarrow, DuckDB), which matters for data
+        # a user may want to get back out without running Plexora. Rather than
+        # Parquet, which it was until 0.0.37: the website's polars (Pyodide) is
+        # built without Parquet, and every build of polars has IPC. Uncompressed,
+        # so no build needs a codec to read what another wrote.
         if not isinstance(frame, pl.DataFrame):
             raise TypeError(f"expected a polars DataFrame, got {type(frame).__name__}")
         buffer = io.BytesIO()
-        frame.write_parquet(buffer)
+        frame.write_ipc(buffer, compression="uncompressed")
         database_model.save_list(
             _model_for(self.table_name(name)), datasource=self._datasource, cells=buffer.getvalue()
         )
@@ -206,6 +214,8 @@ class PluginStore:
         row = database_model.get(_model_for(self.table_name(name)), datasource=self._datasource)
         if row is None:
             return None
+        if bytes(row.cells[:len(_IPC_MAGIC)]) == _IPC_MAGIC:
+            return pl.read_ipc(io.BytesIO(row.cells))
         return pl.read_parquet(io.BytesIO(row.cells))
 
     # -- file storage ---------------------------------------------------

@@ -26,6 +26,8 @@ from typing import Any, Literal
 
 from pydantic import Field, field_validator, model_validator
 
+from plexora import _work
+
 from plexora.agent import presets
 from plexora.agent.errors import AgentError
 from plexora.agent.limits import MAX_LIST
@@ -1821,7 +1823,7 @@ def next_packet(call, inp):
                             "pass is still profiling the next marker"}
         # A reader waiting on another's answer looks again soon: answers come
         # in seconds, the bulk pass in tens of them.
-        time.sleep(0.1 if status == "busy" else 0.5)
+        _work.wait(0.1 if status == "busy" else 0.5)
 
 
 #: How soon a driver asks again while the user fills in the set-up form.

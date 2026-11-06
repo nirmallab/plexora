@@ -29,16 +29,29 @@ from __future__ import annotations
 import json
 import re
 import struct
-from concurrent.futures import ThreadPoolExecutor
+import threading
 from time import perf_counter
 
+from plexora import _work
+
 MAX_TILES = 64
-_POOL = ThreadPoolExecutor(max_workers=6, thread_name_prefix="tile-batch")
+_POOL = None
+_POOL_LOCK = threading.Lock()
 
 #: Channel, section and layer tiles of this server.
 PRIMARY = re.compile(r"^/generated/(data|layer)/[^?#]+/\d+/\d+_\d+\.png(\?[^#]*)?$")
 #: A data node's image and mask tiles.
 NODE = re.compile(r"^/node/v1/(image|seg)/[^/?#]+/tile/[^?#]+\.png(\?[^#]*)?$")
+
+
+def _pool():
+    """The batch's pool, made on first use: importing this module starts no
+    thread (the website has none; see plexora._work)."""
+    global _POOL
+    with _POOL_LOCK:
+        if _POOL is None:
+            _POOL = _work.executor(max_workers=6, thread_name_prefix="tile-batch")
+        return _POOL
 
 
 class BadBatch(ValueError):
@@ -88,7 +101,7 @@ def serve(app, paths, headers=None) -> bytes:
             return ({"status": 500, "type": "text/plain", "etag": None, "bytes": 0,
                      "error": str(exc)[:200]}, b"")
 
-    results = list(_POOL.map(one, paths))
+    results = list(_pool().map(one, paths))
     header = json.dumps({"tiles": [meta for meta, _body in results]}).encode("utf-8")
     return struct.pack("<I", len(header)) + header + b"".join(body for _meta, body in results)
 

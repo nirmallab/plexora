@@ -82,6 +82,25 @@ class SamBackend(Protocol):
                mask_input: np.ndarray, has_mask: np.ndarray): ...
 
 
+#: How a session is made where ONNX Runtime is not Python's to load: the
+#: website installs one that runs the same model files in the page
+#: (onnxruntime-web), with this module's pre- and post-processing unchanged.
+#: None: `OnnxSamBackend` over the files on disk.
+_EXECUTOR = None
+
+
+def set_executor(factory) -> None:
+    """`factory()` -> a `SamBackend`, used in place of ONNX Runtime (None: back
+    to it)."""
+    global _EXECUTOR
+    _EXECUTOR = factory
+
+
+def executor():
+    """The installed factory, or None."""
+    return _EXECUTOR
+
+
 def requested_device() -> str:
     raw = (os.environ.get(ENV_DEVICE) or "auto").strip().lower()
     return raw if raw in DEVICE_CHOICES else "auto"

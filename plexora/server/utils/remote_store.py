@@ -72,6 +72,7 @@ from zarr.abc.store import (
 )
 from zarr.storage import WrapperStore
 
+from plexora import _work
 from plexora.server.providers.base import RemoteUnreachable, is_remote_locator
 
 _log = logging.getLogger(__name__)
@@ -896,8 +897,7 @@ class CacheIndex:
                     except OSError:
                         trash.append(directory)
         if trash:
-            threading.Thread(target=_remove_all, args=(trash,), daemon=True,
-                             name="remote-cache-clear").start()
+            _work.spawn(_remove_all, trash, name="remote-cache-clear")
 
     # -- reconciliation --------------------------------------------------
 
@@ -1094,8 +1094,7 @@ def cache_index() -> CacheIndex:
             _index.close()
         _index = CacheIndex(Path(root))
         index = _index
-    threading.Thread(target=index.reconcile, daemon=True,
-                     name="remote-cache-reconcile").start()
+    _work.spawn(index.reconcile, name="remote-cache-reconcile")
     return index
 
 

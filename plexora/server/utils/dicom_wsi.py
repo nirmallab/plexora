@@ -396,14 +396,13 @@ def _scan_remote(urls) -> list[_Instance]:
     the headers are parsed on a few threads -- a header larger than its head
     blocks reads the rest itself.
     """
-    from concurrent.futures import ThreadPoolExecutor
-
+    from plexora import _work
     from plexora.server.utils import remote_store
 
     _pydicom(True)
     remote_store.prefetch_heads(urls)
-    with ThreadPoolExecutor(max_workers=_REMOTE_SCAN_WORKERS,
-                            thread_name_prefix="dicom-scan") as pool:
+    with _work.executor(max_workers=_REMOTE_SCAN_WORKERS,
+                        thread_name_prefix="dicom-scan") as pool:
         instances = list(pool.map(_read_instance, urls))
     return [instance for instance in instances if instance is not None]
 

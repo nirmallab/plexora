@@ -78,9 +78,8 @@ class LocalTableProvider:
         Both optional: a node calls this with neither, and so does every test.
         """
         from plexora.server.models import table_correction
-        from plexora.server.models.adapters import get_adapter
 
-        adapter = get_adapter(self._spec.type)(self._spec)
+        adapter = self._open_adapter()
         # Read as the project says to read it (table_correction.py): here for a
         # local table, and on the node for one held there -- a node loads its
         # tables through this same method, so every node route serves the
@@ -91,6 +90,12 @@ class LocalTableProvider:
         # the adapter reads on demand -- see `read_feature_column`.
         self._adapter = adapter
         return self._loaded
+
+    def _open_adapter(self):
+        """What `load()` reads through: the adapter for the file's type."""
+        from plexora.server.models.adapters import get_adapter
+
+        return get_adapter(self._spec.type)(self._spec)
 
     @property
     def lazy_features(self) -> bool:

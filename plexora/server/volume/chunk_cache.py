@@ -39,11 +39,11 @@ import contextlib
 import os
 import threading
 from collections import OrderedDict
-from concurrent.futures import ThreadPoolExecutor
 from time import perf_counter
 
 import numpy as np
 
+from plexora import _work
 from plexora.telemetry import performance as _perf
 
 
@@ -208,11 +208,29 @@ class ChunkCache:
 
 CACHE = ChunkCache(_env_int("PLEXORA_CHUNK_CACHE_MB", _default_budget_mb()) * 2**20)
 DECODE_THREADS = max(1, _env_int("PLEXORA_DECODE_THREADS", _default_decode_threads()))
-DECODE_POOL = ThreadPoolExecutor(max_workers=DECODE_THREADS,
-                                 thread_name_prefix="plexora-decode")
 BACKGROUND_THREADS = max(2, DECODE_THREADS // 4)
-BACKGROUND_POOL = ThreadPoolExecutor(max_workers=BACKGROUND_THREADS,
-                                     thread_name_prefix="plexora-decode-bg")
+#: `DECODE_POOL` and `BACKGROUND_POOL` are made on first use (`__getattr__`):
+#: importing this module starts no thread, which a runtime without threads
+#: (the website) could not, and the pool is whichever `_work` provides then.
+_POOLS = {"DECODE_POOL": ("DECODE_THREADS", "plexora-decode"),
+          "BACKGROUND_POOL": ("BACKGROUND_THREADS", "plexora-decode-bg")}
+_POOLS_LOCK = threading.Lock()
+
+
+def _pool_named(name):
+    with _POOLS_LOCK:
+        made = globals().get(name)
+        if made is None:
+            threads, prefix = _POOLS[name]
+            made = globals()[name] = _work.executor(max_workers=globals()[threads],
+                                                    thread_name_prefix=prefix)
+        return made
+
+
+def __getattr__(name):
+    if name in _POOLS:
+        return _pool_named(name)
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 _lane = threading.local()
 
@@ -233,9 +251,9 @@ def in_background() -> bool:
     return bool(getattr(_lane, "background", False))
 
 
-def pool() -> ThreadPoolExecutor:
+def pool():
     """Where this thread's chunk reads run (see `background`)."""
-    return BACKGROUND_POOL if in_background() else DECODE_POOL
+    return _pool_named("BACKGROUND_POOL" if in_background() else "DECODE_POOL")
 
 
 def keep_for(nbytes: int) -> bool:

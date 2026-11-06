@@ -16,6 +16,8 @@ from typing import Any, Literal
 
 from pydantic import Field
 
+from plexora import _work
+
 from plexora.agent.errors import AgentError
 from plexora.agent.limits import MAX_LIST
 from plexora.agent.receipts import make_receipt
@@ -488,7 +490,7 @@ class SessionTools:
                                  if record.get("bulk_job_id") else
                                  f"call {tool_name_of(self.NEXT)} again; the deterministic "
                                  "pass is still running")}
-            time.sleep(BUSY_POLL_S if status == "busy" else 0.5)
+            _work.wait(BUSY_POLL_S if status == "busy" else 0.5)
 
     def answer(self, call, inp):
         st = self.store()

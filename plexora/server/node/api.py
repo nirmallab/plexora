@@ -38,6 +38,7 @@ from time import perf_counter
 
 from flask import Blueprint, Response, current_app, jsonify, request, send_file
 
+from plexora import _work
 from plexora.server.node import resources as node_resources
 from plexora.server.providers import wire
 from plexora.server.providers.base import ResourceError
@@ -506,8 +507,7 @@ def _pyramidize_in_background(resource):
         if path:
             node_resources.save_manifest(path, app.config["PLEXORA_NODE_RESOURCES"])
 
-    threading.Thread(target=run, name=f"pyramidize-{resource.id}",
-                     daemon=True).start()
+    _work.spawn(run, name=f"pyramidize-{resource.id}")
 
 
 @node_bp.route("/resources/<resource_id>", methods=["DELETE"])
@@ -836,8 +836,7 @@ def _prepare_in_background(resource):
             node_resources.save_manifest(
                 path, app.config["PLEXORA_NODE_RESOURCES"])
 
-    threading.Thread(target=run, name=f"prepare-{resource.id}",
-                     daemon=True).start()
+    _work.spawn(run, name=f"prepare-{resource.id}")
 
 
 def _prepare_on_first_use(resource):
@@ -1286,7 +1285,7 @@ def _start_job(name, work):
             if _JOBS[oldest]["state"] == "running":
                 break
             _JOBS.pop(oldest)
-    threading.Thread(target=run, name=f"plexora-{name}-{job_id}", daemon=True).start()
+    _work.spawn(run, name=f"plexora-{name}-{job_id}")
     return job_id
 
 
@@ -2931,9 +2930,7 @@ def _ensure_window_scanner():
     with _window_scan_state:
         if _window_scan_thread is not None and _window_scan_thread.is_alive():
             return
-        _window_scan_thread = threading.Thread(
-            target=_window_scan_loop, name="plexora-node-window-scan", daemon=True)
-        _window_scan_thread.start()
+        _window_scan_thread = _work.spawn(_window_scan_loop, name="plexora-node-window-scan")
 
 
 def _window_scan_loop():
@@ -2943,6 +2940,9 @@ def _window_scan_loop():
     # channel, and its chunks must never be what a tile on screen waits for.
     with chunk_cache.background():
         while True:
+            if not _work.threaded():
+                _drain_window_scans()  # without threads: what is queued, then stop
+                return
             _window_scan_wake.wait()
             _window_scan_wake.clear()
             _drain_window_scans()

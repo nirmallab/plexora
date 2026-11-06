@@ -15,6 +15,44 @@ def clean():
     vs._reset_for_tests()
 
 
+def test_the_wakeup_hears_every_change_a_held_poll_waits_for():
+    """The website's page holds a tab's long-poll itself (a worker without
+    threads cannot) and asks again when this says something changed."""
+    woken = []
+    vs.set_wakeup(lambda: woken.append(1))
+    try:
+        sid = vs.register(project="a")["view_id"]
+        command = vs.enqueue(sid, "pan_to", {"x": 1})
+        vs.ack(sid, command.command_id, status="ok")
+        vs.publish("a", "core", "layers", {})
+    finally:
+        vs.set_wakeup(None)
+    assert len(woken) == 4
+
+
+def test_a_wakeup_that_fails_loses_nothing(caplog):
+    def broken():
+        raise RuntimeError("the page went away")
+
+    vs.set_wakeup(broken)
+    try:
+        sid = vs.register(project="a")["view_id"]
+        vs.enqueue(sid, "pan_to", {"x": 1})
+    finally:
+        vs.set_wakeup(None)
+    assert [c["type"] for c in vs.wait_for_work(sid)["commands"]] == ["pan_to"]
+    assert "wakeup failed" in caplog.text
+
+
+def test_without_threads_a_poll_is_never_held(monkeypatch):
+    monkeypatch.setenv("PLEXORA_WORK", "cooperative")
+    sid = vs.register(project="a")["view_id"]
+    started = time.monotonic()
+    work = vs.wait_for_work(sid, wait_s=5)
+    assert time.monotonic() - started < 1
+    assert work["held"] is False and work["commands"] == []
+
+
 def test_register_is_idempotent_and_keeps_queued_commands():
     first = vs.register(project="a")
     sid = first["view_id"]

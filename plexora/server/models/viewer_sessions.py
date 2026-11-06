@@ -26,11 +26,16 @@ No Flask here; the routes are in server/routes/agent_routes.py.
 from __future__ import annotations
 
 import itertools
+import logging
 import threading
 import time
 import uuid
 from collections import deque
 from dataclasses import dataclass, field
+
+from plexora import _work
+
+_log = logging.getLogger(__name__)
 
 #: A tab not heard from for this long is gone.
 SESSION_TTL_S = 90
@@ -153,6 +158,29 @@ def _expire(now=None):
         _COMMANDS.pop(cid, None)
 
 
+#: Called (no arguments) after anything a held poll waits for has changed.
+#: The website installs one (`set_wakeup`): its page holds a tab's long-poll
+#: itself rather than in Python -- a worker with no threads cannot block in
+#: `_CHANGED.wait` -- and asks again when told something changed.
+_wakeup = None
+
+
+def set_wakeup(function) -> None:
+    """Install the wakeup above (None removes it)."""
+    global _wakeup
+    _wakeup = function
+
+
+def _changed():
+    """Wake every held poll and waiting sender. Called with `_LOCK` held."""
+    _CHANGED.notify_all()
+    if _wakeup is not None:
+        try:
+            _wakeup()
+        except Exception:  # noqa: BLE001 -- a lost wakeup costs a poll, not the change
+            _log.exception("the viewer sessions' wakeup failed")
+
+
 def _reset_for_tests():
     global _HELD
     with _LOCK:
@@ -186,7 +214,7 @@ def register(*, session_id=None, project=None, dataset=None, client="browser",
         session.last_seen = _now()
         session.navigating_to = None
         session.navigating_until = 0.0
-        _CHANGED.notify_all()
+        _changed()
         return session.describe()
 
 
@@ -219,7 +247,7 @@ def leave(session_id, *, navigating_to=None) -> bool:
                 if command.status in ("pending", "delivered"):
                     command.status = "expired"
                     command.error = "the viewer was closed"
-        _CHANGED.notify_all()
+        _changed()
         return True
 
 
@@ -237,6 +265,9 @@ def wait_for_work(session_id, *, after=0, after_event=0, wait_s=0.0, revision=No
     budget is spent; otherwise holds up to `wait_s` (capped at MAX_WAIT_S)."""
     global _HELD
     wait_s = max(0.0, min(float(wait_s or 0.0), MAX_WAIT_S))
+    if _work.mode() == "cooperative":
+        # The website's worker cannot hold a request: its page does (`set_wakeup`).
+        wait_s = 0.0
     with _LOCK:
         _expire()
         session = heartbeat(session_id, revision=revision, visible=visible)
@@ -299,7 +330,7 @@ def ack(session_id, command_id, *, status, result=None, error=None, warning=None
                 session.revision = int(resulting_revision)
             if command.type == "get_state" and command.result:
                 session.state = command.result
-        _CHANGED.notify_all()
+        _changed()
         return command.describe()
 
 
@@ -331,7 +362,7 @@ def attach(session_id, ttl_s=ATTACH_TTL_S) -> dict | None:
         if session is None:
             return None
         session.attached_until = _now() + max(1.0, float(ttl_s))
-        _CHANGED.notify_all()
+        _changed()
         return session.describe()
 
 
@@ -364,7 +395,7 @@ def enqueue(session_id, type, arguments=None, *, expected_revision=None, origin=
         _COMMANDS[command.command_id] = command
         # Sending to a tab is an attachment in itself: it should start holding.
         session.attached_until = max(session.attached_until, _now() + ATTACH_TTL_S)
-        _CHANGED.notify_all()
+        _changed()
         return command
 
 
@@ -387,7 +418,7 @@ def wait_for_ack(command_id, timeout_s=DEFAULT_SEND_TIMEOUT_S) -> dict | None:
             remaining = deadline - _now()
             if remaining <= 0:
                 return found.describe()
-            _CHANGED.wait(remaining)
+            _work.wait_condition(_CHANGED, remaining)
 
 
 def withdraw(command_id) -> dict | None:
@@ -404,7 +435,7 @@ def withdraw(command_id) -> dict | None:
             found.status = "withdrawn"
             found.error = "the sender stopped waiting before the viewer took this command"
             found.acked = _now()
-            _CHANGED.notify_all()
+            _changed()
         return found.describe()
 
 
@@ -425,5 +456,5 @@ def publish(project, plugin, kind, payload=None, *, origin="agent") -> int:
                                    "created": _now()})
             delivered += 1
         if delivered:
-            _CHANGED.notify_all()
+            _changed()
         return delivered

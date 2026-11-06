@@ -78,6 +78,25 @@ def test_an_unrecognised_source_is_read_as_manual():
 # -- what gets stored ----------------------------------------------------
 
 
+def test_a_reader_this_environment_lacks_is_said_not_swallowed(project, monkeypatch, caplog):
+    """P9: a missing package made a calibrated image read as uncalibrated,
+    silently. Uncalibrated is still the answer; the reason is now logged."""
+    import logging
+
+    from plexora.server.utils import pixel_scale
+
+    name, _root = project(microns=0.65)
+
+    def lacking(path):
+        raise ModuleNotFoundError("No module named 'pydantic_extra_types'",
+                                  name="pydantic_extra_types")
+
+    monkeypatch.setattr(pixel_scale, "_local_metadata", lacking)
+    with caplog.at_level(logging.WARNING, logger="plexora.server.utils.pixel_scale"):
+        assert pixel_scale.pixel_size(Project.load(name)) is None
+    assert "pydantic_extra_types is not installed" in caplog.text
+
+
 def test_setting_a_size_records_it_on_the_project(project):
     name, data_dir = project()
 

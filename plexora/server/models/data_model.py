@@ -3,7 +3,7 @@ import polars as pl
 import os
 import io
 from pathlib import Path
-from plexora import paths, get_config
+from plexora import _work, paths, get_config
 from plexora.server.utils import brightfield
 from plexora.server.utils import fast_png
 from plexora.server.utils import safe_pickle
@@ -1136,15 +1136,12 @@ def load_datasource(datasource_name, reload=False, wait_for_table=False):
         progress.finish()
 
     if behind:
-        threading.Thread(
-            target=_load_table_behind, args=(datasource_name, *behind),
-            name=f"table-{datasource_name}", daemon=True).start()
+        _work.spawn(_load_table_behind, datasource_name, *behind,
+                    name=f"table-{datasource_name}")
 
     # Warm the description/GMM caches in the background so the first real
     # request after this load doesn't pay for them synchronously.
-    threading.Thread(
-        target=_warm_datasource_caches, args=(datasource_name,), daemon=True
-    ).start()
+    _work.spawn(_warm_datasource_caches, datasource_name)
     _warm_remote_image(datasource_name)
 
 
@@ -1270,8 +1267,7 @@ def _warm_remote_image(datasource_name):
 
     previous = _warming_remote
     if previous and previous != datasource_name:
-        threading.Thread(target=remote_sources.stop_warm, args=(previous,),
-                         daemon=True).start()
+        _work.spawn(remote_sources.stop_warm, previous)
     if not providers.is_remote_locator(src):
         _warming_remote = None
         return
@@ -2546,9 +2542,7 @@ def _describe_frame(frame):
     numeric = [name for name, dtype in frame.schema.items() if dtype.is_numeric()]
     if len(numeric) < 4 or frame.height < 50_000:
         return {column: _describe_column(frame[column].to_numpy()) for column in numeric}
-    from concurrent.futures import ThreadPoolExecutor
-
-    with ThreadPoolExecutor(_DESCRIBE_WORKERS, thread_name_prefix="describe") as pool:
+    with _work.executor(_DESCRIBE_WORKERS, thread_name_prefix="describe") as pool:
         described = pool.map(lambda column: _describe_column(frame[column].to_numpy()),
                              numeric)
         return dict(zip(numeric, described))
@@ -3182,9 +3176,8 @@ def queue_exact_window(channel_name, datasource_name, urgent=False):
                        [0 if urgent else 1, next(_exact_window_seq), datasource_name,
                         channel_name])
         if _exact_window_worker is None or not _exact_window_worker.is_alive():
-            _exact_window_worker = threading.Thread(target=_exact_window_loop, daemon=True,
-                                                    name="plexora-exact-windows")
-            _exact_window_worker.start()
+            _exact_window_worker = _work.spawn(_exact_window_loop,
+                                               name="plexora-exact-windows")
         _exact_window_cv.notify()
 
 
@@ -3192,7 +3185,10 @@ def _exact_window_loop():
     while True:
         with _exact_window_cv:
             if not _exact_window_queue:
-                _exact_window_cv.wait(timeout=30)
+                # Without threads nothing can arrive while this waits: the
+                # next channel queued starts the loop again.
+                if _work.threaded():
+                    _exact_window_cv.wait(timeout=30)
                 if not _exact_window_queue:
                     return
             _, _, datasource_name, channel_name = heapq.heappop(_exact_window_queue)
@@ -5850,8 +5846,7 @@ def start_segmentation_job(datasource_name, label_file, data_directory,
 
     # Named so a test teardown (conftest `_finish_layer_builds`) can find and
     # join it while PLEXORA_DATA_PATH still points at that test's root.
-    threading.Thread(target=_run, name=f"segmentation-{datasource_name}",
-                     daemon=True).start()
+    _work.spawn(_run, name=f"segmentation-{datasource_name}")
 
 
 def get_segmentation_job_status(datasource_name):

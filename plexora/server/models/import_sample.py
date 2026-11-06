@@ -37,6 +37,7 @@ import time
 from dataclasses import replace as _replace
 from pathlib import Path
 
+from plexora import _work
 from plexora.server.models import import_proposal, layer_jobs
 from plexora.server.models.project import LayerSpec, Project
 from plexora.server.utils import boundary_mask, segmentation_pyramid
@@ -215,7 +216,7 @@ def _pyramidize_on_node(node, resource_id, answers, address):
     node_api.pyramidize_on_node(node, resource_id)
     misses = 0
     while True:
-        time.sleep(NODE_PYRAMID_POLL_S)
+        _work.wait(NODE_PYRAMID_POLL_S)
         try:
             described = node_api.resource_status(node, resource_id)
         except Exception as error:  # noqa: BLE001 -- counted, then said

@@ -207,13 +207,13 @@ def _answering(links):
     if len(links) == 1:
         link = links[0]
         return [link] if link.accepts() and link.health() else []
-    from concurrent.futures import ThreadPoolExecutor
+    from plexora import _work
 
     def probe(link):
         return link.accepts() and link.health()
 
-    with ThreadPoolExecutor(max_workers=min(8, len(links)),
-                            thread_name_prefix="plexora-find-server") as pool:
+    with _work.executor(max_workers=min(8, len(links)),
+                        thread_name_prefix="plexora-find-server") as pool:
         answers = list(pool.map(probe, links))
     return [link for link, ok in zip(links, answers) if ok]
 

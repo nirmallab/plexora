@@ -20,6 +20,7 @@ import threading
 
 import numpy as np
 
+from plexora import _work
 from plexora.agent.errors import AgentError
 
 #: Largest block one group may read, per side, at the chosen level.
@@ -177,10 +178,7 @@ def _pool():
     global _POOL
     with _POOL_LOCK:
         if _POOL is None:
-            from concurrent.futures import ThreadPoolExecutor
-
-            _POOL = ThreadPoolExecutor(max_workers=PARALLEL_READS,
-                                       thread_name_prefix="crop-read")
+            _POOL = _work.executor(max_workers=PARALLEL_READS, thread_name_prefix="crop-read")
         return _POOL
 
 

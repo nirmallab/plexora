@@ -113,7 +113,9 @@ def _say_unavailable_once(message, context=""):
     logging.getLogger(__name__).warning("%s", f"{context} -- {message}" if context else message)
 
 
-app = None
+#: Serialises the first `plexora.app`: two threads asking at once must not
+#: build two apps (the second would have no core routes; see create_app).
+_app_lock = threading.RLock()
 
 
 def create_app(plugins=None):
@@ -127,13 +129,15 @@ def create_app(plugins=None):
     `app = create_app()` after this function returns), that import would
     fail on a partially-initialized package.
 
-    In practice this is called exactly once, at import time, at the bottom
-    of this file -- it's a factory (rather than a bare module-level
-    Flask()) only so plugins can be chosen before route registration
-    happens. Calling it a second time in one interpreter does NOT rebuild
-    the app: the route modules below are already in sys.modules, so their
-    @app.route decorators never run again and the second app comes back
-    with no core routes at all.
+    In practice this is called exactly once, by the first `plexora.app`
+    (the module `__getattr__` at the bottom of this file) -- so `import
+    plexora` alone builds nothing, which a headless import (a script, the
+    MCP server, the website's Python worker) does not want to pay for. It's
+    a factory (rather than a bare module-level Flask()) so plugins can be
+    chosen before route registration happens. Calling it a second time in
+    one interpreter does NOT rebuild the app: the route modules below are
+    already in sys.modules, so their @app.route decorators never run again
+    and the second app comes back with no core routes at all.
     """
     global app
     # static_folder is None on purpose. It used to be "data", which Flask
@@ -388,6 +392,12 @@ def create_app(plugins=None):
     from plexora.telemetry import flask_hooks
     flask_hooks.install(app)
 
+    # Every request an outermost call: on a runtime without threads, the work
+    # a request queued runs once it has been answered (plexora._work).
+    from plexora import _work
+
+    app.wsgi_app = _work.wsgi(app.wsgi_app)
+
     return app
 
 
@@ -570,11 +580,25 @@ _PUBLIC_API = {
 
 
 def __getattr__(name):
-    """The public API, imported on first use. See `_PUBLIC_API`."""
+    """The public API, imported on first use (see `_PUBLIC_API`), and `app`,
+    built on first use (see `create_app`)."""
+    if name == "app":
+        return _built_app()
+    import importlib.util
+
     module = _PUBLIC_API.get(name)
     if module is None:
+        # A submodule not imported yet: `plexora.datasource.register_...`
+        # after a bare `import plexora` worked when importing the package built
+        # the app (which imported them all), and must keep working now it does
+        # not.
+        try:
+            found = not name.startswith("__") and importlib.util.find_spec(f"{__name__}.{name}")
+        except (ImportError, ValueError):  # a stand-in in sys.modules (a test's)
+            found = None
+        if found:
+            return importlib.import_module(f"{__name__}.{name}")
         raise AttributeError(f"module 'plexora' has no attribute {name!r}")
-    import importlib
 
     value = getattr(importlib.import_module(module), name)
     if callable(value) and not isinstance(value, type):
@@ -613,15 +637,27 @@ def _counted(name, function):
     return counted
 
 
+def _built_app():
+    """The Flask app, built by the first caller to ask. `create_app` sets the
+    module global itself, before importing a route module, so this runs once;
+    a build that fails leaves no half-built app behind for the next asker."""
+    with _app_lock:
+        built = globals().get("app")
+        if built is not None:
+            return built
+        try:
+            return create_app()
+        except BaseException:
+            globals().pop("app", None)
+            raise
+
+
 def __dir__():
-    return sorted(set(globals()) | set(_PUBLIC_API))
+    return sorted(set(globals()) | set(_PUBLIC_API) | {"app"})
 
 
-app = create_app()
-
-# After the app, because building it is what pulls zarr in: by here the module
-# is loaded and the shim costs an attribute assignment. Before anything can
-# write, because the first write is a request or an API call away. See
+# Before anything can write, because the first write is a request or an API
+# call away. Windows only, so this is where Windows pays for importing zarr; see
 # `plexora._transient_locks` for what Windows refuses and why.
 from plexora._transient_locks import install_zarr_retry  # noqa: E402
 

@@ -10,7 +10,8 @@ import time
 
 import pytest
 
-from plexora import paths
+# Bound now: a test may stand a fake in for `plexora` in sys.modules (test_cli).
+from plexora import _work, paths
 from plexora.server.models import data_model
 
 
@@ -323,6 +324,10 @@ def _finish_layer_builds(plexora_data_root):
     happen, so it has to finish while this test's root is still in force.
     """
     yield
+    # Work queued rather than threaded (PLEXORA_WORK=inline, plexora/_work.py)
+    # runs now, for the same reason a thread is joined below.
+    _work.run_pending()
+    _work._reset_for_tests()
     deadline = time.monotonic() + 30
     for thread in threading.enumerate():
         if (not thread.name.startswith(("layer-", "segmentation-", "table-"))
@@ -482,6 +487,18 @@ def pytest_configure(config):
                    "unlocked). The default is Free, as it is for a real install.")
     config.addinivalue_line(
         "markers", "perf: a timing, skipped unless PLEXORA_PERF=1 (run with -m perf -s).")
+    config.addinivalue_line(
+        "markers", "threads: watches background work while it runs (progress, a cancel, "
+                   "two at once), which no runtime without threads can show: skipped when "
+                   "PLEXORA_WORK queues work (plexora/_work.py, tests/test_work.py).")
+
+
+@pytest.fixture(autouse=True)
+def _threads_only(request):
+    """Skip a `threads` test when work is queued rather than threaded."""
+    if request.node.get_closest_marker("threads") is not None:
+        if not _work.threaded():
+            pytest.skip("watches work while it runs; PLEXORA_WORK queues it")
 
 
 #: What the `pro` marker and the `pro_license` fixture install: the Pro

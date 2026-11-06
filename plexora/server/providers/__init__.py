@@ -17,6 +17,7 @@ from dataclasses import dataclass
 
 from plexora.server.models.project import IMAGE_TYPE_BRIGHTFIELD
 from plexora.server.providers.base import (
+    BROWSER,
     LOCAL,
     NODE,
     NODE_SCHEME,
@@ -203,8 +204,14 @@ def resolve_providers(project) -> ProviderSet:
         segmentation = NodeSegmentationProvider(seg_binding).with_tile_size(*tile_size)
     else:
         segmentation = LocalSegmentationProvider(project.segmentation.derived)
+    in_browser = getattr(bindings.get("table"), "provider", None) == BROWSER
     if table_binding:
         table = NodeTableProvider(table_binding, project.dataset)
+    elif project.has_table and in_browser:
+        # The website's page holds this table's columns (providers/browser.py).
+        from plexora.server.providers.browser import BrowserTableProvider
+
+        table = BrowserTableProvider(project.dataset, project.name)
     elif project.has_table:
         table = LocalTableProvider(project.dataset, project.name)
     else:
@@ -214,6 +221,7 @@ def resolve_providers(project) -> ProviderSet:
 
 
 __all__ = [
+    "BROWSER",
     "EMPTY",
     "Fingerprint",
     "ImageProvider",

@@ -57,6 +57,8 @@ from typing import Any, Optional, Sequence
 
 import numpy as np
 
+from plexora.server.utils import metacache
+
 #: The two answers. `image_kind` carries the first one verbatim; the second is
 #: never an `image_kind` (a fluorescence image is `ome_tiff`/`ome_zarr`, named
 #: for the container it came out of) and only ever appears in a detection
@@ -265,6 +267,7 @@ class _opened:
         return False
 
 
+@metacache.per_file
 def _tiff_layout(path) -> Optional[dict]:
     """Storage facts about a TIFF's first series, or None if it is not a TIFF.
 

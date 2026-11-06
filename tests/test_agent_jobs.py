@@ -76,6 +76,7 @@ def test_progress_and_result_are_persisted(session, tmp_path):
     assert lines[1]["operation_id"] == submitted["operation_id"]
 
 
+@pytest.mark.threads
 def test_cancelling_stops_the_job_and_is_audited(session, tmp_path):
     submitted = _submit(session, steps=500, step_s=0.01)
     cancelled = invoke(session, "job_cancel", {"job_id": submitted["job_id"]})
@@ -138,6 +139,7 @@ def test_threads_are_drained(session):
     assert jobs.store().get(submitted["job_id"])["status"] == "done"
 
 
+@pytest.mark.threads
 def test_job_wait_streams_progress_over_mcp(session):
     pytest.importorskip("mcp")
     import anyio

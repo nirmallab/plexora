@@ -72,7 +72,7 @@ def test_datasources_stay_isolated(isolated_data_dir):
 # --------------------------------------------------------------------------
 
 def test_result_tables_preserve_dtypes(isolated_data_dir):
-    """Parquet rather than CSV so a classification column comes back as the
+    """Arrow IPC rather than CSV so a classification column comes back as the
     type it went in as, not as text."""
     frame = pl.DataFrame(
         {
@@ -87,6 +87,27 @@ def test_result_tables_preserve_dtypes(isolated_data_dir):
     restored = store.get_table("classifications")
     assert restored.equals(frame)
     assert restored.schema == frame.schema
+
+
+def test_a_table_is_stored_as_arrow_ipc(isolated_data_dir):
+    """The website's polars has no Parquet; every build of polars has IPC."""
+    store = api.store("proj", "gating")
+    store.put_table("results", pl.DataFrame({"cell_id": [1, 2]}))
+    row = database_model.get(type("PluginTable", (), {"__tablename__": store.table_name("results")}),
+                             datasource="proj")
+    assert bytes(row.cells[:6]) == b"ARROW1"
+
+
+def test_a_table_stored_as_parquet_by_an_earlier_version_still_reads(isolated_data_dir):
+    import io
+
+    frame = pl.DataFrame({"cell_id": [1, 2, 3], "gate": [0.5, 0.25, 0.125]})
+    buffer = io.BytesIO()
+    frame.write_parquet(buffer)
+    store = api.store("proj", "gating")
+    database_model.save_list(type("PluginTable", (), {"__tablename__": store.table_name("old")}),
+                             datasource="proj", cells=buffer.getvalue())
+    assert store.get_table("old").equals(frame)
 
 
 def test_missing_table_is_none_not_an_error(isolated_data_dir):

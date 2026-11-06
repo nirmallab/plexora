@@ -28,6 +28,7 @@ import contextvars
 import threading
 import time
 
+from plexora import _work
 from plexora.agent.errors import AgentError
 from plexora.plugins.gating.server import model
 from plexora.plugins.gating.server.autogate import schemas, views
@@ -391,11 +392,9 @@ def run(call, inp):
         for project in images:
             image_pass(project)
     else:
-        from concurrent.futures import ThreadPoolExecutor
-
         # The images held at once: one per worker, plus the ones a look reads.
         call.session.table_limit = max(call.session.table_limit, workers + 3)
-        with ThreadPoolExecutor(max_workers=workers, thread_name_prefix="gating-image") as pool:
+        with _work.executor(max_workers=workers, thread_name_prefix="gating-image") as pool:
             futures = [pool.submit(contextvars.copy_context().run, image_pass, project)
                        for project in images]
         errors = [f.exception() for f in futures if f.exception() is not None]
@@ -516,15 +515,13 @@ class _Ahead:
 
     def __init__(self, call, session_id, project, ds, sample_biology, options, markers, *,
                  workers=None):
-        from concurrent.futures import ThreadPoolExecutor
-
         self.call, self.session_id, self.project = call, session_id, project
         self.ds, self.sample_biology, self.options = ds, sample_biology, options
         self.markers = list(markers)
         self.futures = {}
         self.workers = int(workers or PROFILE_WORKERS)
-        self.pool = ThreadPoolExecutor(max_workers=self.workers,
-                                       thread_name_prefix="gating-profile") \
+        self.pool = _work.executor(max_workers=self.workers,
+                                   thread_name_prefix="gating-profile") \
             if len(self.markers) > 1 else None
 
     def _profile(self, marker):

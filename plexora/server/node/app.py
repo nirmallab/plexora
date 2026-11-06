@@ -28,11 +28,11 @@ import os
 import secrets
 import socket
 import sys
-import threading
 from pathlib import Path
 
 from flask import Flask, jsonify
 
+from plexora import _work
 from plexora.server.node import resources as node_resources
 from plexora.server.node.api import API_VERSION, node_bp
 
@@ -609,9 +609,7 @@ def warm_resources(registry, log=print):
                 log(f"  could not warm {resource.id}: {exc}")
         log("Warm-up finished; tiles will not have to open anything.")
 
-    thread = threading.Thread(target=run, name="plexora-node-warm", daemon=True)
-    thread.start()
-    return thread
+    return _work.spawn(run, name="plexora-node-warm")
 
 
 def _exit_when_stdin_closes(log=print):

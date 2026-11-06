@@ -40,6 +40,8 @@ import threading
 import time
 from pathlib import Path
 
+from plexora import _work
+
 #: The most volumes one answer lists. A cluster node's mount table can name
 #: hundreds of automounted shares; the ranked first forty are the ones a
 #: person browses from.
@@ -963,12 +965,9 @@ def _usage_many(paths):
                 answers[path] = None
                 continue
             _usage_running.add(path)
-            box = {}
-            waiting.append((path, box, threading.Thread(
-                target=_measure, args=(path, box), daemon=True,
-                name="plexora-disk-usage")))
-    for _, _, thread in waiting:
-        thread.start()
+            waiting.append((path, {}))
+    waiting = [(path, box, _work.spawn(_measure, path, box, name="plexora-disk-usage"))
+               for path, box in waiting]
     for path, box, thread in waiting:
         thread.join(max(0.0, min(USAGE_EACH_S, began + USAGE_TOTAL_S - _now())))
         if "value" in box:

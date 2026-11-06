@@ -39,6 +39,9 @@ from typing import Any, Mapping, Protocol
 LOCAL = "local"
 #: A resource read over the node API from another Plexora process.
 NODE = "node"
+#: A table the website's page holds (its column store), read by the Python
+#: running in that page's worker; see providers/browser.py.
+BROWSER = "browser"
 
 #: The three scientific resources a project can have. Deliberately not a list
 #: of everything a project owns: ROIs, figures, gates and settings are

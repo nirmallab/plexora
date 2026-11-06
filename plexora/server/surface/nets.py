@@ -37,10 +37,11 @@ from __future__ import annotations
 
 import os
 import threading
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import as_completed
 
 import numpy as np
 
+from plexora import _work
 from plexora.server.utils.jit import njit, register_primer
 
 #: Tiles follow the label store's chunks (volume/labels.CHUNK).
@@ -438,7 +439,7 @@ def surface_pieces(volume, *, regions=None, tile=TILE, block_voxels=BLOCK_VOXELS
             pieces[futures[future]] = future.result()
             tick()
 
-    with ThreadPoolExecutor(max_workers=workers, thread_name_prefix="surface-nets") as pool_:
+    with _work.executor(max_workers=workers, thread_name_prefix="surface-nets") as pool_:
         try:
             run_all(tiles, run_tile, pool_)
             run_all(seams, run_seam, pool_)

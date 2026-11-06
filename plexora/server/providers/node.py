@@ -27,6 +27,7 @@ from urllib.parse import quote
 
 import numpy as np
 
+from plexora import _work
 from plexora.server.models import nodes as node_registry
 from plexora.server.providers import http, wire
 from plexora.server.providers.base import (
@@ -1143,7 +1144,7 @@ def measure_objects_on_node(image_binding, seg_binding, *, channel_names, indice
                 raise ResourceError(status.get("error") or "the measurement failed on the node")
             if state == "cancelled":
                 raise InterruptedError("cancelled")
-            time.sleep(poll)
+            _work.wait(poll)
         data, _ = http.bytes_request(node, "GET", f"/node/v1/volume/measure/{job}/result",
                                      expected_api=API_VERSION)
     except ResourceUnavailable:
@@ -1195,7 +1196,7 @@ def cell_features_on_node(image_binding, seg_binding, *, marker_index, dna_index
             raise ResourceError(status.get("error") or "building cell features failed on the node")
         if state == "cancelled":
             raise InterruptedError("cancelled")
-        time.sleep(poll)
+        _work.wait(poll)
     data, _ = http.bytes_request(node, "GET", f"/node/v1/volume/jobs/{job}/result",
                                  expected_api=API_VERSION)
     return cell_features.unpack(data)
@@ -1331,7 +1332,7 @@ def build_surface_on_node(binding, body, *, stage=None, progress=None, cancelled
             raise ResourceError(status.get("error") or "the surface build failed on the node")
         if state == "cancelled":
             raise InterruptedError("cancelled")
-        time.sleep(poll)
+        _work.wait(poll)
     data, _ = http.bytes_request(node, "GET", f"/node/v1/volume/jobs/{job}/result",
                                  expected_api=API_VERSION)
     arrays = np.load(io.BytesIO(data), allow_pickle=False)

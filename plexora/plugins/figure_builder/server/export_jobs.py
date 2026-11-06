@@ -27,6 +27,7 @@ import threading
 import uuid
 from datetime import datetime, timezone
 
+from plexora import _work
 from plexora.plugins.figure_builder.server import export, repository
 
 #: Finished jobs kept before the oldest is swept. Each holds a document copy
@@ -60,10 +61,7 @@ def start(figure_id, document, options):
         _sweep()
         _JOBS[job_id] = job
 
-    thread = threading.Thread(
-        target=_run, args=(job, document, options), name=f"figure-export-{job_id}", daemon=True)
-    job["_thread"] = thread
-    thread.start()
+    job["_thread"] = _work.spawn(_run, job, document, options, name=f"figure-export-{job_id}")
     return job_id
 
 

@@ -55,6 +55,7 @@ import threading
 import time
 from collections import OrderedDict
 
+from plexora import _work
 from plexora.server.volume import chunk_cache
 
 #: Reads waiting; past this the oldest are dropped.
@@ -258,15 +259,14 @@ class PlanePrefetcher:
         """Called with the lock held."""
         self._threads = [thread for thread in self._threads if thread.is_alive()]
         while len(self._threads) < self._workers:
-            thread = threading.Thread(target=self._run, name="plexora-plane-prefetch",
-                                      daemon=True)
-            thread.start()
-            self._threads.append(thread)
+            self._threads.append(_work.spawn(self._run, name="plexora-plane-prefetch"))
 
     def _run(self):
         while True:
             with self._lock:
                 while not self._jobs:
+                    if not _work.threaded():
+                        return  # without threads: drained; the next job queues it again
                     self._wake.wait()
                 key, (job, remember) = self._jobs.popitem(last=True)
                 if remember:
@@ -317,7 +317,7 @@ class PlanePrefetcher:
             with self._lock:
                 if not self._jobs and not self._running:
                     return True
-            time.sleep(0.005)
+            _work.wait(0.005)
         return False
 
 

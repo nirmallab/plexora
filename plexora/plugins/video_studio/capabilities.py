@@ -27,6 +27,7 @@ from typing import Any, Literal
 
 from pydantic import Field
 
+from plexora import _work
 from plexora.agent.errors import AgentError
 from plexora.agent.receipts import make_receipt
 from plexora.agent.registry import Capability
@@ -476,7 +477,7 @@ def export_video(call, inp):
                                      "the viewer's export stopped before it wrote anything "
                                      "(the Video Studio bar in that tab says why)",
                                      detail={"view_id": view["view_id"]})
-            time.sleep(0.5)
+            _work.wait(0.5)
             continue
         job = _job_status(call, inp.video_id, export_id)
         if job is not None:
@@ -489,7 +490,7 @@ def export_video(call, inp):
                              detail={"export_id": export_id, "status": row["status"],
                                      "path": row.get("path"),
                                      "tail": (job or {}).get("error_tail")})
-        time.sleep(0.5)
+        _work.wait(0.5)
     raise AgentError("viewer_not_responding", "the export did not finish in time",
                      detail={"export_id": export_id})
 

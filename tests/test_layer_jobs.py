@@ -49,13 +49,15 @@ def sample(tmp_path, monkeypatch):
 
 
 def _wait(name, layer_id, want, tries=200):
-    import time
+    # A poll's sleep that is also where queued work runs (plexora/_work.py):
+    # a plain sleep on threads, as before.
+    from plexora import _work
 
     for _ in range(tries):
         record = layer_jobs.get(name, layer_id)
         if record and record["status"] == want:
             return record
-        time.sleep(0.01)
+        _work.wait(0.01)
     raise AssertionError(
         f"{layer_id} never reached {want}: {layer_jobs.get(name, layer_id)}")
 

@@ -39,7 +39,7 @@ import threading
 from pathlib import Path
 from typing import NamedTuple
 
-from plexora import paths
+from plexora import _work, paths
 
 #: Copy and leave the originals where they are. Costs twice the disk while both
 #: copies exist, and is the only mode that cannot lose anything.
@@ -301,12 +301,8 @@ def start(source, target, mode, on_success) -> None:
         _job.update(status="running", done=0, total=0, current="",
                     migrated=[], error="", mode=mode,
                     source=str(source), target=str(target))
-    threading.Thread(
-        target=_run,
-        args=(Path(source), Path(target), mode, on_success),
-        daemon=True,
-        name="plexora-data-migration",
-    ).start()
+    _work.spawn(_run, Path(source), Path(target), mode, on_success,
+                name="plexora-data-migration")
 
 
 def reset() -> None:

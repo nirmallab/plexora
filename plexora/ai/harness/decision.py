@@ -67,6 +67,7 @@ from spatialagents import gateway as _gateway
 from spatialagents.wire import (ModelRequest, ModelResponse, Usage, canonical, image_block, text_block,
                                with_breakpoints)
 
+from plexora import _work
 from plexora.ai import tasks
 from plexora.ai.context import ContextRefused
 from plexora.ai.harness import cache_plan, prefix, schema
@@ -596,7 +597,7 @@ class DecisionRun:
             self.check()
             if self._halt is not None:
                 raise self._halt
-            time.sleep(PARK_POLL_S)
+            _work.wait(PARK_POLL_S)
             result = self._next(lane, wait_s=0)
             if result.get("state") != "paused" or result.get("by") == "agent":
                 return result
@@ -707,7 +708,7 @@ class DecisionRun:
             self.check()
             if self._halt is not None:
                 raise self._halt
-            time.sleep(SETUP_POLL_S)
+            _work.wait(SETUP_POLL_S)
             result = self._next(lane, wait_s=0)
         self._emit("setup_done")
         return result
@@ -777,7 +778,7 @@ class DecisionRun:
                 self._emit("waiting_for_setup", setup=needs, message=setup._setup_message(needs))
                 told = time.monotonic()
             self._still_wanted()
-            time.sleep(SETUP_POLL_S)
+            _work.wait(SETUP_POLL_S)
         self._emit("setup_done")
 
     def _still_wanted(self) -> None:

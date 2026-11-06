@@ -16,7 +16,12 @@ is wrong looks exactly like one that is right.
 
 from __future__ import annotations
 
+import logging
 from typing import Any, Mapping
+
+from plexora.server.utils import metacache
+
+_log = logging.getLogger(__name__)
 
 #: Units a stated physical size may arrive in, as microns per unit.
 _TO_MICRONS = {
@@ -67,6 +72,7 @@ def _from_metadata(raw) -> dict | None:
                                         plain.get("physical_size_x_unit")) or "µm")}}
 
 
+@metacache.per_file
 def _local_metadata(path: str):
     """The file's own statement of scale, by the same layout dispatch
     `LocalImageProvider.open` makes -- but reading only the metadata."""
@@ -115,9 +121,18 @@ def pixel_size(project) -> dict | None:
         if not project.image.src:
             return None
         return _from_metadata(_local_metadata(str(project.image.src)))
-    except Exception:
+    except ImportError as exc:
+        # Not an answer about the image: a reader this environment lacks. Said
+        # loudly, because "uncalibrated" is a fact users act on, and in the
+        # website's first proof a missing package made a calibrated image read
+        # as uncalibrated with no word anywhere (P9.md).
+        _log.warning("%s: the pixel size could not be read -- %s is not installed",
+                     project.name, exc.name or exc)
+        return None
+    except Exception as exc:
         # An unreadable header, a node that is asleep: no calibration is the
         # honest answer, and the caller already knows what to do with it.
+        _log.debug("%s: no pixel size from the image -- %s", project.name, exc)
         return None
 
 

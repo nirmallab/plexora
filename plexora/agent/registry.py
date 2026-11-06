@@ -354,11 +354,16 @@ def invoke(session, name, arguments=None, *, policy=None, audit=None, link=None,
 
     if origin is not None and origin not in ORIGINS:
         raise ValueError(f"unknown call origin {origin!r}; one of {ORIGINS}")
+    from plexora import _work
+
     token = CALL_ORIGIN.set(origin) if origin is not None else None
     try:
-        return timed_invoke(_invoke, session, name, arguments, policy=policy, audit=audit,
-                            link=link, notify=notify, operation_id=operation_id,
-                            undo_of=undo_of)
+        # The outermost call: without threads, what it queued runs when it
+        # returns (plexora._work).
+        with _work.boundary():
+            return timed_invoke(_invoke, session, name, arguments, policy=policy,
+                                audit=audit, link=link, notify=notify,
+                                operation_id=operation_id, undo_of=undo_of)
     finally:
         if token is not None:
             CALL_ORIGIN.reset(token)

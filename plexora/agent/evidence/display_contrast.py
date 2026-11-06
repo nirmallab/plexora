@@ -32,6 +32,8 @@ from __future__ import annotations
 import threading
 import time
 
+from plexora import _work
+
 _LOCK = threading.Lock()
 #: project -> {state: computing|failed, started, finished?, error?, channels}
 _JOBS: dict = {}
@@ -186,7 +188,7 @@ def compute(project, channels=None, session=None, *, wait=False) -> dict:
     if wait:
         run()
     else:
-        threading.Thread(target=run, name=f"display-contrast:{project}", daemon=True).start()
+        _work.spawn(run, name=f"display-contrast:{project}")
     return describe(project, session)
 
 

@@ -35,6 +35,7 @@ import contextlib
 import threading
 from dataclasses import replace
 
+from plexora import _work
 from plexora.server.models.project import (MASK_LAYER_ID, Project)
 
 #: modality -> `(fn(project, layer, stage, report), stages)`. Filled by plugins
@@ -168,8 +169,7 @@ def start(project_name, layer_id, work, *, stages=None, message=None):
             _finish(project_name, layer_id, "failed", error=str(error),
                     install=getattr(type(error), "INSTALL", None))
 
-    threading.Thread(target=run, name=f"layer-{project_name}-{layer_id}",
-                     daemon=True).start()
+    _work.spawn(run, name=f"layer-{project_name}-{layer_id}")
     return get(project_name, layer_id)
 
 
@@ -264,14 +264,13 @@ def start_task(project_name, task_id, work, *, stages=None, message=None,
             _jobs[key] = outcome
             _tasks.pop(key, None)
 
-    thread = threading.Thread(target=run, name=f"layer-{project_name}-{task_id}",
-                              daemon=True)
     with _lock:
-        _tasks[key] = (thread, cancel)
         # Taken before the thread starts: a quick task can finish before this
         # returns, and the caller is owed the record the poller sees first.
         first_record = dict(_jobs[key])
-    thread.start()
+        # Started with the lock held, so its last step (which takes the lock
+        # to drop this entry) cannot run before the entry exists.
+        _tasks[key] = (_work.spawn(run, name=f"layer-{project_name}-{task_id}"), cancel)
     return first_record
 
 

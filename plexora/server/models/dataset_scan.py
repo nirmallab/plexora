@@ -826,13 +826,15 @@ def inspect(inventory, *, cancel=None, progress=None, budget_s=None):
 def _inspect_together(pending, one, cancel, progress):
     """`one(entry)` for every entry, `WEB_INSPECT_WORKERS` at a time, taken in
     order (rasters first). Takes no new one once cancelled."""
-    from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
+    from concurrent.futures import FIRST_COMPLETED, wait
+
+    from plexora import _work
 
     total, done = len(pending), 0
     queue = deque(pending)
     # `layer-` threads, as every background job's: the suite joins them.
-    with ThreadPoolExecutor(max_workers=WEB_INSPECT_WORKERS,
-                            thread_name_prefix="layer-scan") as pool:
+    with _work.executor(max_workers=WEB_INSPECT_WORKERS,
+                        thread_name_prefix="layer-scan") as pool:
         running = set()
         while queue or running:
             while queue and len(running) < WEB_INSPECT_WORKERS and not (

@@ -23,6 +23,7 @@ from typing import Literal
 import numpy as np
 from pydantic import Field
 
+from plexora import _work
 from plexora.agent.errors import AgentError
 from plexora.agent.registry import Capability
 from plexora.agent.schemas import AgentModel, ProjectInput
@@ -146,7 +147,7 @@ def surface_create(call, inp):
             store.cancel(record.name, layer_id)
             raise InterruptedError("cancelled")
         call.progress(job.get("progress"), 100, job.get("message") or "extracting")
-        time.sleep(0.25)
+        _work.wait(0.25)
     if status == "failed":
         raise AgentError("invalid_input", f"the surface could not be built: "
                          f"{job.get('error') or 'see the server log'}")
