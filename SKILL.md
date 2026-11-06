@@ -13833,13 +13833,18 @@ two in `test_gating_delta`,
     intensity. It now reads `qmax` (full-resolution, already in the same packet).
     `tests/test_hd_slider_domain.py` pins it. Note `image_max` is deliberately
     left pooled — it is the axis `image_histogram` is plotted against.
-  - **Open.** `frag.glsl`'s `u16_rg_range` reconstructs the sample as
-    `pixel.r * 255 + pixel.g`; the high byte's weight is 256, not 255. Values are
-    under-read by up to `r/65535` (~0.39% of full scale) and raw 255/256 collide.
-    Separately the shader normalizes by 65535 while `toImageConnectorRange`
-    normalizes by 65536. Both are one-token fixes but shift HD rendering
-    slightly brighter and move where existing saved thresholds bite, so they
-    need a deliberate pixel-hash comparison, not a drive-by edit.
+  - **Fixed (2026-11-05).** `frag.glsl`'s `u16_rg_range` reconstructed the
+    sample as `pixel.r * 255 + pixel.g`; the high byte's weight is 256. Values
+    were under-read by `r/65535` of full scale: invisible over a full window, up
+    to 11 of 255 levels dark across a tight bright window, and a saturated pixel
+    in a window at the top of the range drawn near black.
+    `tests/test_hd_u16_shader.py` (`tests/js/hd_u16_shader_parity.mjs`) draws
+    through glInit's renderer and the shipped shader in Chromium against the
+    exact arithmetic, and fails on the old line.
+  - **Open, and below one raw unit.** The shader normalizes by 65535 while
+    `toImageConnectorRange` (and the saved channel list) normalize by
+    `imageBitRange[1]` = 65536, so a slider value R bites at R * 65535/65536.
+    Changing it moves what saved ranges mean, so it needs its own change.
 - `tests/baseline_orion2.py` depends on datasource files that may not exist on
   the current machine; those tests skip rather than fail.
 - A floating popup on the viewer page must be portaled with

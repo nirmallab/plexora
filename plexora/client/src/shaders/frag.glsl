@@ -498,10 +498,13 @@ float tile_alpha(float opaque, float coverage) {
   return u_alpha_mode == 1 ? coverage : opaque;
 }
 
-// Colorize continuous u16 signal
+// Colorize continuous u16 signal. The tile arrives as RG8UI, high byte in r
+// (the HD PNG is big-endian), so the value is r * 256 + g: 65535 at white.
+// (It was r * 255 + g until 2026-11, a value short by its high byte: up to
+// 11 of 255 levels dark for a bright channel in a tight window.)
 vec4 u16_rg_range(float alpha) {
   uvec2 pixel = offset(u_tile, u_tile_shape, uv, vec2(0, 0)).rg;
-  float value = float(pixel.r * uint(255) + pixel.g) / 65535.;
+  float value = float(pixel.r * uint(256) + pixel.g) / 65535.;
 
   // Threshhold pixel within range
   float pixel_val = range_clamp(value);
