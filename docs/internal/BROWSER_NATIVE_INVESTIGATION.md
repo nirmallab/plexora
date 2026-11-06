@@ -19,6 +19,15 @@ mode.
   navigation 1.03×). ERIS, GCP and Safari remain. See
   [POC results](#poc-results) and
   [the campaign report](bench/browser_node/BROWSER_NODE_POC_2026-11-05.md).
+- **P9, 2026-11-06: the AI layer in the browser.** The gating session's
+  Python ran unchanged in Pyodide in a worker beside the viewer.
+  - **Met:** the same packets, answers, states and gates as CPython, at
+    0.9–1.2× its time, with no main-thread long tasks added. Eight small
+    substitutions stand in for what Pyodide lacks.
+  - **Missed:** startup. Ready 6.2–7.1 s after a visit; a first visit over
+    50 Mbps takes 13.8 s at best (bars: 3 s and 10 s).
+  - **Verdict:** PARTIAL, not STOP, so the small download beside the browser
+    is not triggered. See [P9.md](bench/browser_node/P9.md).
 - **Gate:** no product change until the ladder reports GO on P1, P3 and P5. All
   three are GO. The first product commit is the Phase 0 seams (section 7). One
   product fix came out of the POCs already: `frag.glsl`'s 16-bit rebuild
@@ -1175,6 +1184,7 @@ Results land in `docs/internal/bench/browser_node/` (one JSON record and one MD 
 | 12 | Low | COOP/COEP later (DuckDB threads, ffmpeg.wasm). **Measured:** CORS reads of a node (fetch, XHR) load under `require-corp` without CORP, so nodes need nothing; `credentialless` is still absent in Safari. Memory64 for tables over 4 GB is Chrome and Firefox only | Phase 4 |
 | 13 | Medium → **resolved** | OPFS quota in a fresh Chrome profile on the bench machine read about 10.7 GB. **Measured:** that is Chrome 156's report, not its limit: `estimate().quota` is usage + 10 GiB (exactly 10,737,418,240 when empty), headless or headed, persistent profile or not, and 14.2 GB wrote without error (the report then read 25.0 GB). It is no setting of Plexora's; the site uses the browser's own limit (about 60 % of the disk in Chrome), calls `navigator.storage.persist()`, and treats `QuotaExceededError`, not the estimate, as the signal. Firefox's 10 GiB is real | P7 |
 | 14 | Medium → **resolved** | P3's first-ever CSV open was 5–10× polars' read (one-threaded wasm parse): 3.4 s to drawable at 1.26 M cells. **Measured since:** plain workers parsing with V8's `Number()` reach drawable in about 1 s (under 3× polars), bit-identical to DuckDB's parse; no isolation needed | P3 |
+| 15 | High → **answered, PARTIAL** | Can the AI layer (agent capabilities, the gating engine, spatialagents, spatialbridge, biocognia) run unchanged in a no-install website, keeping one Python codebase? Or does the website need a small download beside the browser? **Measured (P9):** in Pyodide in a worker, the gating session's packets, answers, states and gates are identical to CPython's, at 0.9–1.2× its time. Eight substitutions (threads, imagecodecs, polars' missing Parquet, `os.link`) total 111 lines. The viewer is unaffected. Startup misses the user's bars: ready 6.2–7.1 s after a visit, and 13.8 s on a first visit over 50 Mbps with the 46 MB trimmed build (17.3 s with the 70 MB build Cloudflare Pages can serve). The proof also lists nine product changes a browser build needs | P9; a decision on startup |
 
 ## POC results
 
@@ -1192,6 +1202,7 @@ Two rounds on 2026-11-05: one Windows machine (i9-12900K, 128 GB, RTX 3080, NVMe
 | P6 | **GO** | The product page over a scratch Python server against the browser node, same image, tour, waypoints and completion test, ABBA: every step that needs new tiles 2.4–3.3× faster in the browser; open 0.3× the product's (page load included); renderer peak 0.68 GB against 1.3 GB |
 | P7 | **GO** | A 9.6 GB-raw flat image (2 channels) → pyramid by band workers with `image_pyramid.reduce2`'s arithmetic: 27.5 s against Python's 31.2 s from zlib strips, 21.2 s against 178.6 s from an uncompressed file; 200/200 tiles identical at every level; no long tasks; reopened in 14 ms after a relaunch. Chrome's `estimate()` reads usage + 10 GiB: not a limit |
 | P8 | **GO** for Firefox | Firefox 159: every S feature, the same picture as Chrome (0.4 of 255 levels, worst grid cell). WebKit on Windows: all but OPFS, which that port lacks; Safari unmeasured |
+| P9 | **PARTIAL** (2026-11-06) | Plexora's gating session in Pyodide 314.0.7 beside the viewer, against CPython: S and M sessions identical in packets, answers, final states and gates; 0.87–1.22× CPython's time; no long tasks added to the viewer. Ready (trimmed build: precompiled bytecode, brotli, pyarrow on demand) 7.1 s cold, 6.4 s on return, 13.8 s on a first visit at 50 Mbps / 20 ms (46 MB); as published 16.3, 16.1 and 28.9 s (81.5 MB). 1.26 M cells reach Python through the column store in 2.3 s; polars in wasm cannot parse that CSV |
 
 **What changed in the design** (each section above notes it):
 - the browser's table store is raw columns in OPFS, not Parquet, filled by plain workers, not DuckDB (§3, §6.4);
@@ -1208,6 +1219,7 @@ Two rounds on 2026-11-05: one Windows machine (i9-12900K, 128 GB, RTX 3080, NVMe
   - register handlers before items.
 
 **Still to do:**
+- P9's startup: decide whether 6–7 s to AI-ready (14 s on a first visit at 50 Mbps) is acceptable, or measure the next steps against the same bars. Those steps are staged readiness, fetching packages while the core starts, and snapshots that keep loaded libraries ([P9.md](bench/browser_node/P9.md));
 - the ERIS and GCP records (O2 done: `P5R-none-2026-11-06-o2.json`, every byte identical; `P5T-none-2026-11-06-o2.json`, open and tour times against the desktop route);
 - Safari on a Mac (P8);
 - an XL table; the LZ4 plugin on a real .ims.

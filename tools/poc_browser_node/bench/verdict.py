@@ -391,6 +391,10 @@ def p9(rec, _all):
         check("M: the same", verdict_of("P9M"), verdict_of("P9M") in ("identical", "within"), "identical | within"),
         check("first-visit transfer (MB; sizes the fallback download too)",
               None if cold_bytes is None else r1(cold_bytes / 1e6), True, "recorded"),
+        # A record with a product change prototyped on both sides measures that
+        # change; it is not a verdict on the product as it ships.
+        check("the product's code as it ships (no prototype applied)", m.get("prototype") or "none",
+              not m.get("prototype"), "none"),
     ]
     stop = [
         check("a hard correctness rule failed (packet kinds, packets, final states and gates)",

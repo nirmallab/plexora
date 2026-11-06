@@ -1,0 +1,5140 @@
+{
+ "poc": "P9",
+ "date": "2026-11-06",
+ "commit": "423eb3fb",
+ "machine": {
+  "cpuPercentBefore": [
+   13.5,
+   6.2,
+   16.1
+  ],
+  "platform": "win32 10.0.26200",
+  "cpu": "12th Gen Intel(R) Core(TM) i9-12900K",
+  "cores": 24,
+  "memoryGB": 128,
+  "load": [
+   0,
+   0,
+   0
+  ],
+  "hostname": "ajit"
+ },
+ "browser": "chromium",
+ "arm": "pyodide-worker",
+ "state": "P9",
+ "fixture": {
+  "name": "P9S",
+  "files": {}
+ },
+ "metrics": {
+  "arms": [
+   "cold",
+   "return",
+   "throttled",
+   "viewer",
+   "M",
+   "L"
+  ],
+  "dist": "314.0.7",
+  "prototype": null,
+  "tls": false,
+  "lazy": false,
+  "throttle": {
+   "mbps": 50,
+   "rttMs": 20,
+   "how": "serve_static.py --throttle: one shared link, server side"
+  },
+  "boot": {
+   "cold": {
+    "startedAt": 324.30000019073486,
+    "marks": {
+     "loaded": 344.199951171875,
+     "core": 1682.10009765625,
+     "packages": 7620.699951171875,
+     "wheels": 7773.800048828125,
+     "shims": 9080.60009765625,
+     "ready": 16253.800048828125
+    },
+    "phases": {
+     "start": 344.699951171875,
+     "core": 1682.10009765625,
+     "packages": 7620.699951171875,
+     "wheels": 7773.800048828125,
+     "shims": 9080.60009765625,
+     "ready": 16253.800048828125
+    },
+    "shims": {
+     "stub_root": {
+      "lines": 21,
+      "code": 13
+     },
+     "zlib_for_zlibng": {
+      "lines": 14,
+      "code": 9
+     },
+     "deferred_threads": {
+      "lines": 27,
+      "code": 18
+     },
+     "jobs_between_calls": {
+      "lines": 21,
+      "code": 14
+     },
+     "sync_executor": {
+      "lines": 20,
+      "code": 14
+     },
+     "yielding_sleep": {
+      "lines": 18,
+      "code": 11
+     },
+     "parquet_by_pyarrow": {
+      "lines": 32,
+      "code": 19
+     },
+     "licence": {
+      "lines": 22,
+      "code": 13
+     }
+    },
+    "ready": {
+     "modules": {
+      "plexora.paths": 39,
+      "plexora.agent": 0,
+      "plexora.agent.registry": 0,
+      "plexora.agent.jobs": 4.8,
+      "plexora.agent.session": 0,
+      "plexora.agent.render": 107.3,
+      "plexora.agent.evidence.crops": 4.8,
+      "plexora.server.providers.memory": 48.7,
+      "plexora.server.models.project": 0,
+      "plexora.plugins.gating.capabilities_session": 6369,
+      "plexora.plugins.gating.server.autogate.engine": 154.4,
+      "plexora.plugins.gating.server.autogate.bulk": 8.9,
+      "plexora.plugins.gating.server.autogate.packets": 24.5,
+      "plexora.plugins.gating.server.autogate.cellcalls": 6.3,
+      "plexora.ai.bench": 16.1,
+      "plexora.licensing": 0,
+      "spatialagents": 0,
+      "spatialbridge": 0
+     },
+     "python": "3.14.2",
+     "discover": {
+      "ms": 370.1,
+      "count": 150,
+      "gating": [
+       "gating.adjust",
+       "gating.answer",
+       "gating.apply_to_dataset",
+       "gating.auto",
+       "gating.bivariate",
+       "gating.calibrate_display",
+       "gating.classifier_adopt",
+       "gating.classifier_annotate",
+       "gating.classifier_clear_examples",
+       "gating.classifier_export",
+       "gating.classifier_revert",
+       "gating.classifier_review",
+       "gating.classifier_run",
+       "gating.classifier_state",
+       "gating.compare_images",
+       "gating.contrast_start",
+       "gating.distribution",
+       "gating.export",
+       "gating.get",
+       "gating.get_all",
+       "gating.get_panel_context",
+       "gating.hierarchy",
+       "gating.marker_graph",
+       "gating.next",
+       "gating.profile_marker",
+       "gating.propose_marker_edges",
+       "gating.provenance",
+       "gating.qc",
+       "gating.render_collage",
+       "gating.render_validation",
+       "gating.report",
+       "gating.reset",
+       "gating.restore",
+       "gating.sample_cells",
+       "gating.sample_validation_regions",
+       "gating.score_candidates",
+       "gating.session_bulk",
+       "gating.session_classifier",
+       "gating.session_finish",
+       "gating.session_start",
+       "gating.session_status",
+       "gating.set",
+       "gating.set_panel_context",
+       "gating.set_status",
+       "gating.summary",
+       "gating.verify_marker_evidence",
+       "gating.write_source"
+      ]
+     },
+     "webp": true,
+     "sqlite": "3.39.0",
+     "versions": {
+      "plexora": "0.0.36",
+      "numpy": "2.4.6",
+      "scipy": "1.18.0",
+      "scikit-learn": "1.8.0",
+      "polars": "1.33.1",
+      "pillow": "12.2.0",
+      "pandas": "3.0.2",
+      "zarr": "3.2.1",
+      "pydantic": "2.12.5",
+      "pydantic-core": "2.41.5",
+      "tifffile": "2026.8.23",
+      "spatialagents": "0.2.5",
+      "spatialbridge": "0.2.3",
+      "biocognia": "0.1.2"
+     }
+    },
+    "heap": 461766656,
+    "bytes": {
+     "total": 81543161,
+     "pyodideCore": 13516944,
+     "packages": 64476519,
+     "wheels": 6068804,
+     "fetches": 57,
+     "cacheHits": 0,
+     "files": [
+      {
+       "name": "polars-1.33.1-cp314-cp314-pyemscripten_2026_0_wasm32.whl",
+       "encoded": 18323371,
+       "transfer": 18323671,
+       "start": 1350,
+       "ms": 516
+      },
+      {
+       "name": "scipy-1.18.0-cp314-cp314-pyemscripten_2026_0_wasm32.whl",
+       "encoded": 14029750,
+       "transfer": 14030050,
+       "start": 1350,
+       "ms": 428
+      },
+      {
+       "name": "pyarrow-22.0.0-cp314-cp314-pyemscripten_2026_0_wasm32.whl",
+       "encoded": 10018597,
+       "transfer": 10018897,
+       "start": 1354,
+       "ms": 428
+      },
+      {
+       "name": "pyodide.asm.wasm",
+       "encoded": 9598218,
+       "transfer": 9598518,
+       "start": 157,
+       "ms": 81
+      },
+      {
+       "name": "scikit_learn-1.8.0-cp314-cp314-pyemscripten_2026_0_wasm32.whl",
+       "encoded": 4449204,
+       "transfer": 4449504,
+       "start": 1350,
+       "ms": 109
+      },
+      {
+       "name": "pandas-3.0.2-cp314-cp314-pyemscripten_2026_0_wasm32.whl",
+       "encoded": 4177749,
+       "transfer": 4178049,
+       "start": 1354,
+       "ms": 231
+      },
+      {
+       "name": "plexora-0.0.36-py3-none-any.whl",
+       "encoded": 3697994,
+       "transfer": 3698294,
+       "start": 13,
+       "ms": 49
+      },
+      {
+       "name": "numpy-2.4.6-cp314-cp314-pyemscripten_2026_0_wasm32.whl",
+       "encoded": 2960568,
+       "transfer": 2960868,
+       "start": 1350,
+       "ms": 54
+      },
+      {
+       "name": "python_stdlib.zip",
+       "encoded": 2545637,
+       "transfer": 2545937,
+       "start": 157,
+       "ms": 24
+      },
+      {
+       "name": "cryptography-47.0.0-cp314-abi3-pyemscripten_2026_0_wasm32.whl",
+       "encoded": 2174338,
+       "transfer": 2174638,
+       "start": 1352,
+       "ms": 204
+      },
+      {
+       "name": "pydantic_core-2.41.5-cp314-cp314-pyemscripten_2026_0_wasm32.whl",
+       "encoded": 1310164,
+       "transfer": 1310464,
+       "start": 1352,
+       "ms": 63
+      },
+      {
+       "name": "pyodide.asm.mjs",
+       "encoded": 1250344,
+       "transfer": 1250644,
+       "start": 157,
+       "ms": 13
+      },
+      {
+       "name": "pillow-12.2.0-cp314-cp314-pyemscripten_2026_0_wasm32.whl",
+       "encoded": 1037806,
+       "transfer": 1038106,
+       "start": 1351,
+       "ms": 27
+      },
+      {
+       "name": "spatialagents-0.2.5-py3-none-any.whl",
+       "encoded": 783285,
+       "transfer": 783585,
+       "start": 13,
+       "ms": 35
+      },
+      {
+       "name": "pytz-2026.1.post1-py2.py3-none-any.whl",
+       "encoded": 510489,
+       "transfer": 510789,
+       "start": 1354,
+       "ms": 112
+      },
+      {
+       "name": "pydantic-2.12.5-py3-none-any.whl",
+       "encoded": 463578,
+       "transfer": 463878,
+       "start": 1352,
+       "ms": 56
+      },
+      {
+       "name": "numcodecs-0.15.1-cp314-cp314-pyemscripten_2026_0_wasm32.whl",
+       "encoded": 458519,
+       "transfer": 458819,
+       "start": 1351,
+       "ms": 34
+      },
+      {
+       "name": "zarr-3.2.1-py3-none-any.whl",
+       "encoded": 320113,
+       "transfer": 320413,
+       "start": 1351,
+       "ms": 16
+      },
+      {
+       "name": "tifffile-2026.8.23-py3-none-any.whl",
+       "encoded": 273795,
+       "transfer": 274095,
+       "start": 13,
+       "ms": 24
+      },
+      {
+       "name": "ome_types-0.6.3-py3-none-any.whl",
+       "encoded": 245802,
+       "transfer": 246102,
+       "start": 13,
+       "ms": 15
+      },
+      {
+       "name": "xsdata-26.2-py3-none-any.whl",
+       "encoded": 235561,
+       "transfer": 235861,
+       "start": 14,
+       "ms": 28
+      },
+      {
+       "name": "biocognia_markers-0.1.0-py3-none-any.whl",
+       "encoded": 233690,
+       "transfer": 233990,
+       "start": 12,
+       "ms": 9
+      },
+      {
+       "name": "python_dateutil-2.9.0.post0-py2.py3-none-any.whl",
+       "encoded": 229892,
+       "transfer": 230192,
+       "start": 1354,
+       "ms": 109
+      },
+      {
+       "name": "werkzeug-3.1.9-py3-none-any.whl",
+       "encoded": 228700,
+       "transfer": 229000,
+       "start": 14,
+       "ms": 28
+      },
+      {
+       "name": "fsspec-2026.3.0-py3-none-any.whl",
+       "encoded": 189819,
+       "transfer": 190119,
+       "start": 1354,
+       "ms": 79
+      },
+      {
+       "name": "joblib-1.5.3-py3-none-any.whl",
+       "encoded": 180317,
+       "transfer": 180617,
+       "start": 1350,
+       "ms": 10
+      },
+      {
+       "name": "orjson-3.11.8-cp314-cp314-pyemscripten_2026_0_wasm32.whl",
+       "encoded": 151833,
+       "transfer": 152133,
+       "start": 1353,
+       "ms": 71
+      },
+      {
+       "name": "cffi-2.0.0-cp314-cp314-pyemscripten_2026_0_wasm32.whl",
+       "encoded": 148947,
+       "transfer": 149247,
+       "start": 1353,
+       "ms": 64
+      },
+      {
+       "name": "jinja2-3.1.6-py3-none-any.whl",
+       "encoded": 134899,
+       "transfer": 135199,
+       "start": 1353,
+       "ms": 73
+      },
+      {
+       "name": "pyodide-lock.json",
+       "encoded": 119077,
+       "transfer": 119377,
+       "start": 156,
+       "ms": 3
+      },
+      {
+       "name": "pyyaml-6.0.3-cp314-cp314-pyemscripten_2026_0_wasm32.whl",
+       "encoded": 112901,
+       "transfer": 113201,
+       "start": 1351,
+       "ms": 46
+      },
+      {
+       "name": "click-8.3.1-py3-none-any.whl",
+       "encoded": 108274,
+       "transfer": 108574,
+       "start": 1354,
+       "ms": 77
+      },
+      {
+       "name": "flask-3.1.3-py3-none-any.whl",
+       "encoded": 103424,
+       "transfer": 103724,
+       "start": 13,
+       "ms": 6
+      },
+      {
+       "name": "packaging-26.1-py3-none-any.whl",
+       "encoded": 95852,
+       "transfer": 96152,
+       "start": 1351,
+       "ms": 23
+      },
+      {
+       "name": "spatialbridge-0.2.3-py3-none-any.whl",
+       "encoded": 81985,
+       "transfer": 82285,
+       "start": 13,
+       "ms": 17
+      },
+      {
+       "name": "pydantic_extra_types-2.11.1-py3-none-any.whl",
+       "encoded": 79526,
+       "transfer": 79826,
+       "start": 13,
+       "ms": 18
+      },
+      {
+       "name": "biocognia-0.1.2-py3-none-any.whl",
+       "encoded": 61400,
+       "transfer": 61700,
+       "start": 12,
+       "ms": 6
+      },
+      {
+       "name": "wrapt-2.1.2-cp314-cp314-pyemscripten_2026_0_wasm32.whl",
+       "encoded": 52189,
+       "transfer": 52489,
+       "start": 1351,
+       "ms": 41
+      },
+      {
+       "name": "msgpack-1.1.2-cp314-cp314-pyemscripten_2026_0_wasm32.whl",
+       "encoded": 50624,
+       "transfer": 50924,
+       "start": 1353,
+       "ms": 69
+      },
+      {
+       "name": "pycparser-3.0-py3-none-any.whl",
+       "encoded": 48172,
+       "transfer": 48472,
+       "start": 1353,
+       "ms": 63
+      },
+      {
+       "name": "typing_extensions-4.15.0-py3-none-any.whl",
+       "encoded": 44613,
+       "transfer": 44913,
+       "start": 1351,
+       "ms": 51
+      },
+      {
+       "name": "platformdirs-4.9.4-py3-none-any.whl",
+       "encoded": 21215,
+       "transfer": 21515,
+       "start": 1354,
+       "ms": 75
+      },
+      {
+       "name": "google_crc32c-1.8.0-cp314-cp314-pyemscripten_2026_0_wasm32.whl",
+       "encoded": 20916,
+       "transfer": 21216,
+       "start": 1351,
+       "ms": 41
+      },
+      {
+       "name": "threadpoolctl-3.6.0-py3-none-any.whl",
+       "encoded": 18638,
+       "transfer": 18938,
+       "start": 1350,
+       "ms": 6
+      },
+      {
+       "name": "itsdangerous-2.2.0-py3-none-any.whl",
+       "encoded": 16234,
+       "transfer": 16534,
+       "start": 13,
+       "ms": 6
+      },
+      {
+       "name": "donfig-0.8.1.post1-py3-none-any.whl",
+       "encoded": 15360,
+       "transfer": 15660,
+       "start": 1351,
+       "ms": 46
+      },
+      {
+       "name": "typing_inspection-0.4.4-py3-none-any.whl",
+       "encoded": 14750,
+       "transfer": 15050,
+       "start": 13,
+       "ms": 24
+      },
+      {
+       "name": "typing_inspection-0.4.2-py3-none-any.whl",
+       "encoded": 14610,
+       "transfer": 14910,
+       "start": 1352,
+       "ms": 59
+      },
+      {
+       "name": "annotated_types-0.7.0-py3-none-any.whl",
+       "encoded": 11963,
+       "transfer": 12263,
+       "start": 1352,
+       "ms": 56
+      },
+      {
+       "name": "deprecated-1.3.1-py2.py3-none-any.whl",
+       "encoded": 11298,
+       "transfer": 11598,
+       "start": 1351,
+       "ms": 32
+      },
+      {
+       "name": "six-1.17.0-py2.py3-none-any.whl",
+       "encoded": 11050,
+       "transfer": 11350,
+       "start": 1352,
+       "ms": 61
+      },
+      {
+       "name": "p9_boot.py",
+       "encoded": 10572,
+       "transfer": 10872,
+       "start": 14,
+       "ms": 141
+      },
+      {
+       "name": "markupsafe-3.0.3-cp314-cp314-pyemscripten_2026_0_wasm32.whl",
+       "encoded": 9986,
+       "transfer": 10286,
+       "start": 1354,
+       "ms": 73
+      },
+      {
+       "name": "p9_run.py",
+       "encoded": 9172,
+       "transfer": 9472,
+       "start": 14,
+       "ms": 139
+      },
+      {
+       "name": "p9_oracle.py",
+       "encoded": 8655,
+       "transfer": 8955,
+       "start": 14,
+       "ms": 141
+      },
+      {
+       "name": "blinker-1.9.0-py3-none-any.whl",
+       "encoded": 8458,
+       "transfer": 8758,
+       "start": 12,
+       "ms": 5
+      },
+      {
+       "name": "pyodide_unix_timezones-1.0.0-py3-none-any.whl",
+       "encoded": 2168,
+       "transfer": 2468,
+       "start": 1355,
+       "ms": 114
+      }
+     ]
+    },
+    "logs": []
+   },
+   "return": {
+    "startedAt": 256.80000019073486,
+    "marks": {
+     "loaded": 273.800048828125,
+     "core": 1447,
+     "packages": 7212.5,
+     "wheels": 7358.300048828125,
+     "shims": 8849.900146484375,
+     "ready": 16092
+    },
+    "phases": {
+     "start": 274.400146484375,
+     "core": 1447,
+     "packages": 7212.5,
+     "wheels": 7358.300048828125,
+     "shims": 8849.900146484375,
+     "ready": 16092
+    },
+    "shims": {
+     "stub_root": {
+      "lines": 21,
+      "code": 13
+     },
+     "zlib_for_zlibng": {
+      "lines": 14,
+      "code": 9
+     },
+     "deferred_threads": {
+      "lines": 27,
+      "code": 18
+     },
+     "jobs_between_calls": {
+      "lines": 21,
+      "code": 14
+     },
+     "sync_executor": {
+      "lines": 20,
+      "code": 14
+     },
+     "yielding_sleep": {
+      "lines": 18,
+      "code": 11
+     },
+     "parquet_by_pyarrow": {
+      "lines": 32,
+      "code": 19
+     },
+     "licence": {
+      "lines": 22,
+      "code": 13
+     }
+    },
+    "ready": {
+     "modules": {
+      "plexora.paths": 41.1,
+      "plexora.agent": 0,
+      "plexora.agent.registry": 0,
+      "plexora.agent.jobs": 8.3,
+      "plexora.agent.session": 0,
+      "plexora.agent.render": 135.3,
+      "plexora.agent.evidence.crops": 8.2,
+      "plexora.server.providers.memory": 76.9,
+      "plexora.server.models.project": 0,
+      "plexora.plugins.gating.capabilities_session": 6417.6,
+      "plexora.plugins.gating.server.autogate.engine": 154.7,
+      "plexora.plugins.gating.server.autogate.bulk": 14.2,
+      "plexora.plugins.gating.server.autogate.packets": 34.1,
+      "plexora.plugins.gating.server.autogate.cellcalls": 6.6,
+      "plexora.ai.bench": 15.8,
+      "plexora.licensing": 0,
+      "spatialagents": 0,
+      "spatialbridge": 0
+     },
+     "python": "3.14.2",
+     "discover": {
+      "ms": 313.2,
+      "count": 150,
+      "gating": [
+       "gating.adjust",
+       "gating.answer",
+       "gating.apply_to_dataset",
+       "gating.auto",
+       "gating.bivariate",
+       "gating.calibrate_display",
+       "gating.classifier_adopt",
+       "gating.classifier_annotate",
+       "gating.classifier_clear_examples",
+       "gating.classifier_export",
+       "gating.classifier_revert",
+       "gating.classifier_review",
+       "gating.classifier_run",
+       "gating.classifier_state",
+       "gating.compare_images",
+       "gating.contrast_start",
+       "gating.distribution",
+       "gating.export",
+       "gating.get",
+       "gating.get_all",
+       "gating.get_panel_context",
+       "gating.hierarchy",
+       "gating.marker_graph",
+       "gating.next",
+       "gating.profile_marker",
+       "gating.propose_marker_edges",
+       "gating.provenance",
+       "gating.qc",
+       "gating.render_collage",
+       "gating.render_validation",
+       "gating.report",
+       "gating.reset",
+       "gating.restore",
+       "gating.sample_cells",
+       "gating.sample_validation_regions",
+       "gating.score_candidates",
+       "gating.session_bulk",
+       "gating.session_classifier",
+       "gating.session_finish",
+       "gating.session_start",
+       "gating.session_status",
+       "gating.set",
+       "gating.set_panel_context",
+       "gating.set_status",
+       "gating.summary",
+       "gating.verify_marker_evidence",
+       "gating.write_source"
+      ]
+     },
+     "webp": true,
+     "sqlite": "3.39.0",
+     "versions": {
+      "plexora": "0.0.36",
+      "numpy": "2.4.6",
+      "scipy": "1.18.0",
+      "scikit-learn": "1.8.0",
+      "polars": "1.33.1",
+      "pillow": "12.2.0",
+      "pandas": "3.0.2",
+      "zarr": "3.2.1",
+      "pydantic": "2.12.5",
+      "pydantic-core": "2.41.5",
+      "tifffile": "2026.8.23",
+      "spatialagents": "0.2.5",
+      "spatialbridge": "0.2.3",
+      "biocognia": "0.1.2"
+     }
+    },
+    "heap": 461766656,
+    "bytes": {
+     "total": 29299,
+     "pyodideCore": 0,
+     "packages": 0,
+     "wheels": 0,
+     "fetches": 57,
+     "cacheHits": 54,
+     "files": [
+      {
+       "name": "polars-1.33.1-cp314-cp314-pyemscripten_2026_0_wasm32.whl",
+       "encoded": 18323371,
+       "transfer": 0,
+       "start": 1186,
+       "ms": 437
+      },
+      {
+       "name": "scipy-1.18.0-cp314-cp314-pyemscripten_2026_0_wasm32.whl",
+       "encoded": 14029750,
+       "transfer": 0,
+       "start": 1185,
+       "ms": 360
+      },
+      {
+       "name": "pyarrow-22.0.0-cp314-cp314-pyemscripten_2026_0_wasm32.whl",
+       "encoded": 10018597,
+       "transfer": 0,
+       "start": 1188,
+       "ms": 355
+      },
+      {
+       "name": "pyodide.asm.wasm",
+       "encoded": 9598218,
+       "transfer": 0,
+       "start": 182,
+       "ms": 70
+      },
+      {
+       "name": "scikit_learn-1.8.0-cp314-cp314-pyemscripten_2026_0_wasm32.whl",
+       "encoded": 4449204,
+       "transfer": 0,
+       "start": 1186,
+       "ms": 94
+      },
+      {
+       "name": "pandas-3.0.2-cp314-cp314-pyemscripten_2026_0_wasm32.whl",
+       "encoded": 4177749,
+       "transfer": 0,
+       "start": 1188,
+       "ms": 97
+      },
+      {
+       "name": "plexora-0.0.36-py3-none-any.whl",
+       "encoded": 3697994,
+       "transfer": 0,
+       "start": 12,
+       "ms": 16
+      },
+      {
+       "name": "numpy-2.4.6-cp314-cp314-pyemscripten_2026_0_wasm32.whl",
+       "encoded": 2960568,
+       "transfer": 0,
+       "start": 1185,
+       "ms": 59
+      },
+      {
+       "name": "python_stdlib.zip",
+       "encoded": 2545637,
+       "transfer": 0,
+       "start": 181,
+       "ms": 11
+      },
+      {
+       "name": "cryptography-47.0.0-cp314-abi3-pyemscripten_2026_0_wasm32.whl",
+       "encoded": 2174338,
+       "transfer": 0,
+       "start": 1187,
+       "ms": 85
+      },
+      {
+       "name": "pydantic_core-2.41.5-cp314-cp314-pyemscripten_2026_0_wasm32.whl",
+       "encoded": 1310164,
+       "transfer": 0,
+       "start": 1187,
+       "ms": 34
+      },
+      {
+       "name": "pyodide.asm.mjs",
+       "encoded": 1250344,
+       "transfer": 0,
+       "start": 182,
+       "ms": 8
+      },
+      {
+       "name": "pillow-12.2.0-cp314-cp314-pyemscripten_2026_0_wasm32.whl",
+       "encoded": 1037806,
+       "transfer": 0,
+       "start": 1186,
+       "ms": 31
+      },
+      {
+       "name": "spatialagents-0.2.5-py3-none-any.whl",
+       "encoded": 783285,
+       "transfer": 0,
+       "start": 12,
+       "ms": 13
+      },
+      {
+       "name": "pytz-2026.1.post1-py2.py3-none-any.whl",
+       "encoded": 510489,
+       "transfer": 0,
+       "start": 1188,
+       "ms": 24
+      },
+      {
+       "name": "pydantic-2.12.5-py3-none-any.whl",
+       "encoded": 463578,
+       "transfer": 0,
+       "start": 1187,
+       "ms": 25
+      },
+      {
+       "name": "numcodecs-0.15.1-cp314-cp314-pyemscripten_2026_0_wasm32.whl",
+       "encoded": 458519,
+       "transfer": 0,
+       "start": 1186,
+       "ms": 23
+      },
+      {
+       "name": "zarr-3.2.1-py3-none-any.whl",
+       "encoded": 320113,
+       "transfer": 0,
+       "start": 1186,
+       "ms": 21
+      },
+      {
+       "name": "tifffile-2026.8.23-py3-none-any.whl",
+       "encoded": 273795,
+       "transfer": 0,
+       "start": 12,
+       "ms": 11
+      },
+      {
+       "name": "ome_types-0.6.3-py3-none-any.whl",
+       "encoded": 245802,
+       "transfer": 0,
+       "start": 12,
+       "ms": 10
+      },
+      {
+       "name": "xsdata-26.2-py3-none-any.whl",
+       "encoded": 235561,
+       "transfer": 0,
+       "start": 12,
+       "ms": 10
+      },
+      {
+       "name": "biocognia_markers-0.1.0-py3-none-any.whl",
+       "encoded": 233690,
+       "transfer": 0,
+       "start": 11,
+       "ms": 6
+      },
+      {
+       "name": "python_dateutil-2.9.0.post0-py2.py3-none-any.whl",
+       "encoded": 229892,
+       "transfer": 0,
+       "start": 1188,
+       "ms": 20
+      },
+      {
+       "name": "werkzeug-3.1.9-py3-none-any.whl",
+       "encoded": 228700,
+       "transfer": 0,
+       "start": 12,
+       "ms": 10
+      },
+      {
+       "name": "fsspec-2026.3.0-py3-none-any.whl",
+       "encoded": 189819,
+       "transfer": 0,
+       "start": 1188,
+       "ms": 19
+      },
+      {
+       "name": "joblib-1.5.3-py3-none-any.whl",
+       "encoded": 180317,
+       "transfer": 0,
+       "start": 1186,
+       "ms": 12
+      },
+      {
+       "name": "orjson-3.11.8-cp314-cp314-pyemscripten_2026_0_wasm32.whl",
+       "encoded": 151833,
+       "transfer": 0,
+       "start": 1187,
+       "ms": 19
+      },
+      {
+       "name": "cffi-2.0.0-cp314-cp314-pyemscripten_2026_0_wasm32.whl",
+       "encoded": 148947,
+       "transfer": 0,
+       "start": 1187,
+       "ms": 19
+      },
+      {
+       "name": "jinja2-3.1.6-py3-none-any.whl",
+       "encoded": 134899,
+       "transfer": 0,
+       "start": 1187,
+       "ms": 19
+      },
+      {
+       "name": "pyodide-lock.json",
+       "encoded": 119077,
+       "transfer": 0,
+       "start": 181,
+       "ms": 1
+      },
+      {
+       "name": "pyyaml-6.0.3-cp314-cp314-pyemscripten_2026_0_wasm32.whl",
+       "encoded": 112901,
+       "transfer": 0,
+       "start": 1187,
+       "ms": 16
+      },
+      {
+       "name": "click-8.3.1-py3-none-any.whl",
+       "encoded": 108274,
+       "transfer": 0,
+       "start": 1188,
+       "ms": 17
+      },
+      {
+       "name": "flask-3.1.3-py3-none-any.whl",
+       "encoded": 103424,
+       "transfer": 0,
+       "start": 11,
+       "ms": 6
+      },
+      {
+       "name": "packaging-26.1-py3-none-any.whl",
+       "encoded": 95852,
+       "transfer": 0,
+       "start": 1186,
+       "ms": 11
+      },
+      {
+       "name": "spatialbridge-0.2.3-py3-none-any.whl",
+       "encoded": 81985,
+       "transfer": 0,
+       "start": 12,
+       "ms": 9
+      },
+      {
+       "name": "pydantic_extra_types-2.11.1-py3-none-any.whl",
+       "encoded": 79526,
+       "transfer": 0,
+       "start": 12,
+       "ms": 9
+      },
+      {
+       "name": "biocognia-0.1.2-py3-none-any.whl",
+       "encoded": 61400,
+       "transfer": 0,
+       "start": 11,
+       "ms": 2
+      },
+      {
+       "name": "wrapt-2.1.2-cp314-cp314-pyemscripten_2026_0_wasm32.whl",
+       "encoded": 52189,
+       "transfer": 0,
+       "start": 1186,
+       "ms": 9
+      },
+      {
+       "name": "msgpack-1.1.2-cp314-cp314-pyemscripten_2026_0_wasm32.whl",
+       "encoded": 50624,
+       "transfer": 0,
+       "start": 1187,
+       "ms": 13
+      },
+      {
+       "name": "pycparser-3.0-py3-none-any.whl",
+       "encoded": 48172,
+       "transfer": 0,
+       "start": 1187,
+       "ms": 12
+      },
+      {
+       "name": "typing_extensions-4.15.0-py3-none-any.whl",
+       "encoded": 44613,
+       "transfer": 0,
+       "start": 1187,
+       "ms": 11
+      },
+      {
+       "name": "platformdirs-4.9.4-py3-none-any.whl",
+       "encoded": 21215,
+       "transfer": 0,
+       "start": 1188,
+       "ms": 14
+      },
+      {
+       "name": "google_crc32c-1.8.0-cp314-cp314-pyemscripten_2026_0_wasm32.whl",
+       "encoded": 20916,
+       "transfer": 0,
+       "start": 1186,
+       "ms": 10
+      },
+      {
+       "name": "threadpoolctl-3.6.0-py3-none-any.whl",
+       "encoded": 18638,
+       "transfer": 0,
+       "start": 1186,
+       "ms": 4
+      },
+      {
+       "name": "itsdangerous-2.2.0-py3-none-any.whl",
+       "encoded": 16234,
+       "transfer": 0,
+       "start": 11,
+       "ms": 6
+      },
+      {
+       "name": "donfig-0.8.1.post1-py3-none-any.whl",
+       "encoded": 15360,
+       "transfer": 0,
+       "start": 1186,
+       "ms": 10
+      },
+      {
+       "name": "typing_inspection-0.4.4-py3-none-any.whl",
+       "encoded": 14750,
+       "transfer": 0,
+       "start": 12,
+       "ms": 7
+      },
+      {
+       "name": "typing_inspection-0.4.2-py3-none-any.whl",
+       "encoded": 14610,
+       "transfer": 0,
+       "start": 1187,
+       "ms": 11
+      },
+      {
+       "name": "annotated_types-0.7.0-py3-none-any.whl",
+       "encoded": 11963,
+       "transfer": 0,
+       "start": 1187,
+       "ms": 11
+      },
+      {
+       "name": "deprecated-1.3.1-py2.py3-none-any.whl",
+       "encoded": 11298,
+       "transfer": 0,
+       "start": 1186,
+       "ms": 8
+      },
+      {
+       "name": "six-1.17.0-py2.py3-none-any.whl",
+       "encoded": 11050,
+       "transfer": 0,
+       "start": 1187,
+       "ms": 12
+      },
+      {
+       "name": "p9_boot.py",
+       "encoded": 10572,
+       "transfer": 10872,
+       "start": 12,
+       "ms": 168
+      },
+      {
+       "name": "markupsafe-3.0.3-cp314-cp314-pyemscripten_2026_0_wasm32.whl",
+       "encoded": 9986,
+       "transfer": 0,
+       "start": 1187,
+       "ms": 13
+      },
+      {
+       "name": "p9_run.py",
+       "encoded": 9172,
+       "transfer": 9472,
+       "start": 12,
+       "ms": 164
+      },
+      {
+       "name": "p9_oracle.py",
+       "encoded": 8655,
+       "transfer": 8955,
+       "start": 13,
+       "ms": 167
+      },
+      {
+       "name": "blinker-1.9.0-py3-none-any.whl",
+       "encoded": 8458,
+       "transfer": 0,
+       "start": 11,
+       "ms": 2
+      },
+      {
+       "name": "pyodide_unix_timezones-1.0.0-py3-none-any.whl",
+       "encoded": 2168,
+       "transfer": 0,
+       "start": 1188,
+       "ms": 16
+      }
+     ]
+    },
+    "logs": []
+   },
+   "throttled": {
+    "startedAt": 994.3999996185303,
+    "marks": {
+     "loaded": 1083,
+     "core": 5531,
+     "packages": 20411,
+     "wheels": 20559.39990234375,
+     "shims": 21891.89990234375,
+     "ready": 28918.199951171875
+    },
+    "phases": {
+     "start": 1083.300048828125,
+     "core": 5531,
+     "packages": 20410.89990234375,
+     "wheels": 20559.39990234375,
+     "shims": 21891.89990234375,
+     "ready": 28918.199951171875
+    },
+    "shims": {
+     "stub_root": {
+      "lines": 21,
+      "code": 13
+     },
+     "zlib_for_zlibng": {
+      "lines": 14,
+      "code": 9
+     },
+     "deferred_threads": {
+      "lines": 27,
+      "code": 18
+     },
+     "jobs_between_calls": {
+      "lines": 21,
+      "code": 14
+     },
+     "sync_executor": {
+      "lines": 20,
+      "code": 14
+     },
+     "yielding_sleep": {
+      "lines": 18,
+      "code": 11
+     },
+     "parquet_by_pyarrow": {
+      "lines": 32,
+      "code": 19
+     },
+     "licence": {
+      "lines": 22,
+      "code": 13
+     }
+    },
+    "ready": {
+     "modules": {
+      "plexora.paths": 35,
+      "plexora.agent": 0,
+      "plexora.agent.registry": 0,
+      "plexora.agent.jobs": 5.6,
+      "plexora.agent.session": 0,
+      "plexora.agent.render": 103.1,
+      "plexora.agent.evidence.crops": 7,
+      "plexora.server.providers.memory": 51,
+      "plexora.server.models.project": 0,
+      "plexora.plugins.gating.capabilities_session": 6310.1,
+      "plexora.plugins.gating.server.autogate.engine": 162.1,
+      "plexora.plugins.gating.server.autogate.bulk": 8.6,
+      "plexora.plugins.gating.server.autogate.packets": 23.4,
+      "plexora.plugins.gating.server.autogate.cellcalls": 6.2,
+      "plexora.ai.bench": 17.1,
+      "plexora.licensing": 0,
+      "spatialagents": 0,
+      "spatialbridge": 0
+     },
+     "python": "3.14.2",
+     "discover": {
+      "ms": 278.1,
+      "count": 150,
+      "gating": [
+       "gating.adjust",
+       "gating.answer",
+       "gating.apply_to_dataset",
+       "gating.auto",
+       "gating.bivariate",
+       "gating.calibrate_display",
+       "gating.classifier_adopt",
+       "gating.classifier_annotate",
+       "gating.classifier_clear_examples",
+       "gating.classifier_export",
+       "gating.classifier_revert",
+       "gating.classifier_review",
+       "gating.classifier_run",
+       "gating.classifier_state",
+       "gating.compare_images",
+       "gating.contrast_start",
+       "gating.distribution",
+       "gating.export",
+       "gating.get",
+       "gating.get_all",
+       "gating.get_panel_context",
+       "gating.hierarchy",
+       "gating.marker_graph",
+       "gating.next",
+       "gating.profile_marker",
+       "gating.propose_marker_edges",
+       "gating.provenance",
+       "gating.qc",
+       "gating.render_collage",
+       "gating.render_validation",
+       "gating.report",
+       "gating.reset",
+       "gating.restore",
+       "gating.sample_cells",
+       "gating.sample_validation_regions",
+       "gating.score_candidates",
+       "gating.session_bulk",
+       "gating.session_classifier",
+       "gating.session_finish",
+       "gating.session_start",
+       "gating.session_status",
+       "gating.set",
+       "gating.set_panel_context",
+       "gating.set_status",
+       "gating.summary",
+       "gating.verify_marker_evidence",
+       "gating.write_source"
+      ]
+     },
+     "webp": true,
+     "sqlite": "3.39.0",
+     "versions": {
+      "plexora": "0.0.36",
+      "numpy": "2.4.6",
+      "scipy": "1.18.0",
+      "scikit-learn": "1.8.0",
+      "polars": "1.33.1",
+      "pillow": "12.2.0",
+      "pandas": "3.0.2",
+      "zarr": "3.2.1",
+      "pydantic": "2.12.5",
+      "pydantic-core": "2.41.5",
+      "tifffile": "2026.8.23",
+      "spatialagents": "0.2.5",
+      "spatialbridge": "0.2.3",
+      "biocognia": "0.1.2"
+     }
+    },
+    "heap": 431489024,
+    "bytes": {
+     "total": 81543161,
+     "pyodideCore": 13516944,
+     "packages": 64476519,
+     "wheels": 6068804,
+     "fetches": 57,
+     "cacheHits": 0,
+     "files": [
+      {
+       "name": "polars-1.33.1-cp314-cp314-pyemscripten_2026_0_wasm32.whl",
+       "encoded": 18323371,
+       "transfer": 18323671,
+       "start": 4499,
+       "ms": 10083
+      },
+      {
+       "name": "scipy-1.18.0-cp314-cp314-pyemscripten_2026_0_wasm32.whl",
+       "encoded": 14029750,
+       "transfer": 14030050,
+       "start": 4498,
+       "ms": 9244
+      },
+      {
+       "name": "pyarrow-22.0.0-cp314-cp314-pyemscripten_2026_0_wasm32.whl",
+       "encoded": 10018597,
+       "transfer": 10018897,
+       "start": 4502,
+       "ms": 9113
+      },
+      {
+       "name": "pyodide.asm.wasm",
+       "encoded": 9598218,
+       "transfer": 9598518,
+       "start": 513,
+       "ms": 2748
+      },
+      {
+       "name": "scikit_learn-1.8.0-cp314-cp314-pyemscripten_2026_0_wasm32.whl",
+       "encoded": 4449204,
+       "transfer": 4449504,
+       "start": 4498,
+       "ms": 3999
+      },
+      {
+       "name": "pandas-3.0.2-cp314-cp314-pyemscripten_2026_0_wasm32.whl",
+       "encoded": 4177749,
+       "transfer": 4178049,
+       "start": 4502,
+       "ms": 6346
+      },
+      {
+       "name": "plexora-0.0.36-py3-none-any.whl",
+       "encoded": 3697994,
+       "transfer": 3698294,
+       "start": 50,
+       "ms": 2109
+      },
+      {
+       "name": "numpy-2.4.6-cp314-cp314-pyemscripten_2026_0_wasm32.whl",
+       "encoded": 2960568,
+       "transfer": 2960868,
+       "start": 4498,
+       "ms": 2698
+      },
+      {
+       "name": "python_stdlib.zip",
+       "encoded": 2545637,
+       "transfer": 2545937,
+       "start": 512,
+       "ms": 1485
+      },
+      {
+       "name": "cryptography-47.0.0-cp314-abi3-pyemscripten_2026_0_wasm32.whl",
+       "encoded": 2174338,
+       "transfer": 2174638,
+       "start": 4500,
+       "ms": 3999
+      },
+      {
+       "name": "pydantic_core-2.41.5-cp314-cp314-pyemscripten_2026_0_wasm32.whl",
+       "encoded": 1310164,
+       "transfer": 1310464,
+       "start": 4500,
+       "ms": 2579
+      },
+      {
+       "name": "pyodide.asm.mjs",
+       "encoded": 1250344,
+       "transfer": 1250644,
+       "start": 513,
+       "ms": 879
+      },
+      {
+       "name": "pillow-12.2.0-cp314-cp314-pyemscripten_2026_0_wasm32.whl",
+       "encoded": 1037806,
+       "transfer": 1038106,
+       "start": 4499,
+       "ms": 1054
+      },
+      {
+       "name": "spatialagents-0.2.5-py3-none-any.whl",
+       "encoded": 783285,
+       "transfer": 783585,
+       "start": 50,
+       "ms": 616
+      },
+      {
+       "name": "pytz-2026.1.post1-py2.py3-none-any.whl",
+       "encoded": 510489,
+       "transfer": 510789,
+       "start": 4503,
+       "ms": 4472
+      },
+      {
+       "name": "pydantic-2.12.5-py3-none-any.whl",
+       "encoded": 463578,
+       "transfer": 463878,
+       "start": 4500,
+       "ms": 1818
+      },
+      {
+       "name": "numcodecs-0.15.1-cp314-cp314-pyemscripten_2026_0_wasm32.whl",
+       "encoded": 458519,
+       "transfer": 458819,
+       "start": 4499,
+       "ms": 1095
+      },
+      {
+       "name": "zarr-3.2.1-py3-none-any.whl",
+       "encoded": 320113,
+       "transfer": 320413,
+       "start": 4499,
+       "ms": 495
+      },
+      {
+       "name": "tifffile-2026.8.23-py3-none-any.whl",
+       "encoded": 273795,
+       "transfer": 274095,
+       "start": 51,
+       "ms": 415
+      },
+      {
+       "name": "ome_types-0.6.3-py3-none-any.whl",
+       "encoded": 245802,
+       "transfer": 246102,
+       "start": 50,
+       "ms": 208
+      },
+      {
+       "name": "xsdata-26.2-py3-none-any.whl",
+       "encoded": 235561,
+       "transfer": 235861,
+       "start": 51,
+       "ms": 438
+      },
+      {
+       "name": "biocognia_markers-0.1.0-py3-none-any.whl",
+       "encoded": 233690,
+       "transfer": 233990,
+       "start": 50,
+       "ms": 169
+      },
+      {
+       "name": "python_dateutil-2.9.0.post0-py2.py3-none-any.whl",
+       "encoded": 229892,
+       "transfer": 230192,
+       "start": 4502,
+       "ms": 4243
+      },
+      {
+       "name": "werkzeug-3.1.9-py3-none-any.whl",
+       "encoded": 228700,
+       "transfer": 229000,
+       "start": 51,
+       "ms": 420
+      },
+      {
+       "name": "fsspec-2026.3.0-py3-none-any.whl",
+       "encoded": 189819,
+       "transfer": 190119,
+       "start": 4502,
+       "ms": 3305
+      },
+      {
+       "name": "joblib-1.5.3-py3-none-any.whl",
+       "encoded": 180317,
+       "transfer": 180617,
+       "start": 4499,
+       "ms": 161
+      },
+      {
+       "name": "orjson-3.11.8-cp314-cp314-pyemscripten_2026_0_wasm32.whl",
+       "encoded": 151833,
+       "transfer": 152133,
+       "start": 4501,
+       "ms": 2958
+      },
+      {
+       "name": "cffi-2.0.0-cp314-cp314-pyemscripten_2026_0_wasm32.whl",
+       "encoded": 148947,
+       "transfer": 149247,
+       "start": 4500,
+       "ms": 2832
+      },
+      {
+       "name": "jinja2-3.1.6-py3-none-any.whl",
+       "encoded": 134899,
+       "transfer": 135199,
+       "start": 4501,
+       "ms": 3086
+      },
+      {
+       "name": "pyodide-lock.json",
+       "encoded": 119077,
+       "transfer": 119377,
+       "start": 512,
+       "ms": 113
+      },
+      {
+       "name": "pyyaml-6.0.3-cp314-cp314-pyemscripten_2026_0_wasm32.whl",
+       "encoded": 112901,
+       "transfer": 113201,
+       "start": 4500,
+       "ms": 1335
+      },
+      {
+       "name": "click-8.3.1-py3-none-any.whl",
+       "encoded": 108274,
+       "transfer": 108574,
+       "start": 4502,
+       "ms": 3211
+      },
+      {
+       "name": "flask-3.1.3-py3-none-any.whl",
+       "encoded": 103424,
+       "transfer": 103724,
+       "start": 50,
+       "ms": 119
+      },
+      {
+       "name": "packaging-26.1-py3-none-any.whl",
+       "encoded": 95852,
+       "transfer": 96152,
+       "start": 4499,
+       "ms": 636
+      },
+      {
+       "name": "spatialbridge-0.2.3-py3-none-any.whl",
+       "encoded": 81985,
+       "transfer": 82285,
+       "start": 51,
+       "ms": 231
+      },
+      {
+       "name": "pydantic_extra_types-2.11.1-py3-none-any.whl",
+       "encoded": 79526,
+       "transfer": 79826,
+       "start": 50,
+       "ms": 162
+      },
+      {
+       "name": "biocognia-0.1.2-py3-none-any.whl",
+       "encoded": 61400,
+       "transfer": 61700,
+       "start": 50,
+       "ms": 47
+      },
+      {
+       "name": "wrapt-2.1.2-cp314-cp314-pyemscripten_2026_0_wasm32.whl",
+       "encoded": 52189,
+       "transfer": 52489,
+       "start": 4499,
+       "ms": 1168
+      },
+      {
+       "name": "msgpack-1.1.2-cp314-cp314-pyemscripten_2026_0_wasm32.whl",
+       "encoded": 50624,
+       "transfer": 50924,
+       "start": 4501,
+       "ms": 2913
+      },
+      {
+       "name": "pycparser-3.0-py3-none-any.whl",
+       "encoded": 48172,
+       "transfer": 48472,
+       "start": 4501,
+       "ms": 2777
+      },
+      {
+       "name": "typing_extensions-4.15.0-py3-none-any.whl",
+       "encoded": 44613,
+       "transfer": 44913,
+       "start": 4500,
+       "ms": 1317
+      },
+      {
+       "name": "platformdirs-4.9.4-py3-none-any.whl",
+       "encoded": 21215,
+       "transfer": 21515,
+       "start": 4501,
+       "ms": 3100
+      },
+      {
+       "name": "google_crc32c-1.8.0-cp314-cp314-pyemscripten_2026_0_wasm32.whl",
+       "encoded": 20916,
+       "transfer": 21216,
+       "start": 4499,
+       "ms": 1203
+      },
+      {
+       "name": "threadpoolctl-3.6.0-py3-none-any.whl",
+       "encoded": 18638,
+       "transfer": 18938,
+       "start": 4499,
+       "ms": 48
+      },
+      {
+       "name": "itsdangerous-2.2.0-py3-none-any.whl",
+       "encoded": 16234,
+       "transfer": 16534,
+       "start": 50,
+       "ms": 60
+      },
+      {
+       "name": "donfig-0.8.1.post1-py3-none-any.whl",
+       "encoded": 15360,
+       "transfer": 15660,
+       "start": 4499,
+       "ms": 1237
+      },
+      {
+       "name": "typing_inspection-0.4.4-py3-none-any.whl",
+       "encoded": 14750,
+       "transfer": 15050,
+       "start": 51,
+       "ms": 234
+      },
+      {
+       "name": "typing_inspection-0.4.2-py3-none-any.whl",
+       "encoded": 14610,
+       "transfer": 14910,
+       "start": 4500,
+       "ms": 1969
+      },
+      {
+       "name": "annotated_types-0.7.0-py3-none-any.whl",
+       "encoded": 11963,
+       "transfer": 12263,
+       "start": 4500,
+       "ms": 1893
+      },
+      {
+       "name": "deprecated-1.3.1-py2.py3-none-any.whl",
+       "encoded": 11298,
+       "transfer": 11598,
+       "start": 4499,
+       "ms": 1128
+      },
+      {
+       "name": "six-1.17.0-py2.py3-none-any.whl",
+       "encoded": 11050,
+       "transfer": 11350,
+       "start": 4500,
+       "ms": 2652
+      },
+      {
+       "name": "p9_boot.py",
+       "encoded": 10572,
+       "transfer": 10872,
+       "start": 52,
+       "ms": 370
+      },
+      {
+       "name": "markupsafe-3.0.3-cp314-cp314-pyemscripten_2026_0_wasm32.whl",
+       "encoded": 9986,
+       "transfer": 10286,
+       "start": 4501,
+       "ms": 3033
+      },
+      {
+       "name": "p9_run.py",
+       "encoded": 9172,
+       "transfer": 9472,
+       "start": 52,
+       "ms": 431
+      },
+      {
+       "name": "p9_oracle.py",
+       "encoded": 8655,
+       "transfer": 8955,
+       "start": 52,
+       "ms": 459
+      },
+      {
+       "name": "blinker-1.9.0-py3-none-any.whl",
+       "encoded": 8458,
+       "transfer": 8758,
+       "start": 50,
+       "ms": 27
+      },
+      {
+       "name": "pyodide_unix_timezones-1.0.0-py3-none-any.whl",
+       "encoded": 2168,
+       "transfer": 2468,
+       "start": 4503,
+       "ms": 4316
+      }
+     ]
+    },
+    "logs": []
+   },
+   "coldM": {
+    "startedAt": 280.5,
+    "marks": {
+     "loaded": 305.800048828125,
+     "core": 1746.900146484375,
+     "packages": 7833.900146484375,
+     "wheels": 7973.300048828125,
+     "shims": 9247.800048828125,
+     "ready": 16242
+    },
+    "phases": {
+     "start": 306.10009765625,
+     "core": 1746.900146484375,
+     "packages": 7833.900146484375,
+     "wheels": 7973.300048828125,
+     "shims": 9247.800048828125,
+     "ready": 16242
+    },
+    "shims": {
+     "stub_root": {
+      "lines": 21,
+      "code": 13
+     },
+     "zlib_for_zlibng": {
+      "lines": 14,
+      "code": 9
+     },
+     "deferred_threads": {
+      "lines": 27,
+      "code": 18
+     },
+     "jobs_between_calls": {
+      "lines": 21,
+      "code": 14
+     },
+     "sync_executor": {
+      "lines": 20,
+      "code": 14
+     },
+     "yielding_sleep": {
+      "lines": 18,
+      "code": 11
+     },
+     "parquet_by_pyarrow": {
+      "lines": 32,
+      "code": 19
+     },
+     "licence": {
+      "lines": 22,
+      "code": 13
+     }
+    },
+    "ready": {
+     "modules": {
+      "plexora.paths": 39.3,
+      "plexora.agent": 0,
+      "plexora.agent.registry": 0.1,
+      "plexora.agent.jobs": 9.6,
+      "plexora.agent.session": 0,
+      "plexora.agent.render": 134,
+      "plexora.agent.evidence.crops": 5.8,
+      "plexora.server.providers.memory": 44.8,
+      "plexora.server.models.project": 0,
+      "plexora.plugins.gating.capabilities_session": 6216.7,
+      "plexora.plugins.gating.server.autogate.engine": 145.5,
+      "plexora.plugins.gating.server.autogate.bulk": 9.1,
+      "plexora.plugins.gating.server.autogate.packets": 25.9,
+      "plexora.plugins.gating.server.autogate.cellcalls": 6.4,
+      "plexora.ai.bench": 16.1,
+      "plexora.licensing": 0,
+      "spatialagents": 0,
+      "spatialbridge": 0
+     },
+     "python": "3.14.2",
+     "discover": {
+      "ms": 316,
+      "count": 150,
+      "gating": [
+       "gating.adjust",
+       "gating.answer",
+       "gating.apply_to_dataset",
+       "gating.auto",
+       "gating.bivariate",
+       "gating.calibrate_display",
+       "gating.classifier_adopt",
+       "gating.classifier_annotate",
+       "gating.classifier_clear_examples",
+       "gating.classifier_export",
+       "gating.classifier_revert",
+       "gating.classifier_review",
+       "gating.classifier_run",
+       "gating.classifier_state",
+       "gating.compare_images",
+       "gating.contrast_start",
+       "gating.distribution",
+       "gating.export",
+       "gating.get",
+       "gating.get_all",
+       "gating.get_panel_context",
+       "gating.hierarchy",
+       "gating.marker_graph",
+       "gating.next",
+       "gating.profile_marker",
+       "gating.propose_marker_edges",
+       "gating.provenance",
+       "gating.qc",
+       "gating.render_collage",
+       "gating.render_validation",
+       "gating.report",
+       "gating.reset",
+       "gating.restore",
+       "gating.sample_cells",
+       "gating.sample_validation_regions",
+       "gating.score_candidates",
+       "gating.session_bulk",
+       "gating.session_classifier",
+       "gating.session_finish",
+       "gating.session_start",
+       "gating.session_status",
+       "gating.set",
+       "gating.set_panel_context",
+       "gating.set_status",
+       "gating.summary",
+       "gating.verify_marker_evidence",
+       "gating.write_source"
+      ]
+     },
+     "webp": true,
+     "sqlite": "3.39.0",
+     "versions": {
+      "plexora": "0.0.36",
+      "numpy": "2.4.6",
+      "scipy": "1.18.0",
+      "scikit-learn": "1.8.0",
+      "polars": "1.33.1",
+      "pillow": "12.2.0",
+      "pandas": "3.0.2",
+      "zarr": "3.2.1",
+      "pydantic": "2.12.5",
+      "pydantic-core": "2.41.5",
+      "tifffile": "2026.8.23",
+      "spatialagents": "0.2.5",
+      "spatialbridge": "0.2.3",
+      "biocognia": "0.1.2"
+     }
+    },
+    "heap": 461766656,
+    "bytes": {
+     "total": 81543161,
+     "pyodideCore": 13516944,
+     "packages": 64476519,
+     "wheels": 6068804,
+     "fetches": 57,
+     "cacheHits": 0,
+     "files": [
+      {
+       "name": "polars-1.33.1-cp314-cp314-pyemscripten_2026_0_wasm32.whl",
+       "encoded": 18323371,
+       "transfer": 18323671,
+       "start": 1457,
+       "ms": 493
+      },
+      {
+       "name": "scipy-1.18.0-cp314-cp314-pyemscripten_2026_0_wasm32.whl",
+       "encoded": 14029750,
+       "transfer": 14030050,
+       "start": 1457,
+       "ms": 446
+      },
+      {
+       "name": "pyarrow-22.0.0-cp314-cp314-pyemscripten_2026_0_wasm32.whl",
+       "encoded": 10018597,
+       "transfer": 10018897,
+       "start": 1462,
+       "ms": 441
+      },
+      {
+       "name": "pyodide.asm.wasm",
+       "encoded": 9598218,
+       "transfer": 9598518,
+       "start": 246,
+       "ms": 90
+      },
+      {
+       "name": "scikit_learn-1.8.0-cp314-cp314-pyemscripten_2026_0_wasm32.whl",
+       "encoded": 4449204,
+       "transfer": 4449504,
+       "start": 1457,
+       "ms": 111
+      },
+      {
+       "name": "pandas-3.0.2-cp314-cp314-pyemscripten_2026_0_wasm32.whl",
+       "encoded": 4177749,
+       "transfer": 4178049,
+       "start": 1462,
+       "ms": 362
+      },
+      {
+       "name": "plexora-0.0.36-py3-none-any.whl",
+       "encoded": 3697994,
+       "transfer": 3698294,
+       "start": 16,
+       "ms": 46
+      },
+      {
+       "name": "numpy-2.4.6-cp314-cp314-pyemscripten_2026_0_wasm32.whl",
+       "encoded": 2960568,
+       "transfer": 2960868,
+       "start": 1456,
+       "ms": 95
+      },
+      {
+       "name": "python_stdlib.zip",
+       "encoded": 2545637,
+       "transfer": 2545937,
+       "start": 246,
+       "ms": 18
+      },
+      {
+       "name": "cryptography-47.0.0-cp314-abi3-pyemscripten_2026_0_wasm32.whl",
+       "encoded": 2174338,
+       "transfer": 2174638,
+       "start": 1460,
+       "ms": 140
+      },
+      {
+       "name": "pydantic_core-2.41.5-cp314-cp314-pyemscripten_2026_0_wasm32.whl",
+       "encoded": 1310164,
+       "transfer": 1310464,
+       "start": 1460,
+       "ms": 58
+      },
+      {
+       "name": "pyodide.asm.mjs",
+       "encoded": 1250344,
+       "transfer": 1250644,
+       "start": 246,
+       "ms": 26
+      },
+      {
+       "name": "pillow-12.2.0-cp314-cp314-pyemscripten_2026_0_wasm32.whl",
+       "encoded": 1037806,
+       "transfer": 1038106,
+       "start": 1457,
+       "ms": 27
+      },
+      {
+       "name": "spatialagents-0.2.5-py3-none-any.whl",
+       "encoded": 783285,
+       "transfer": 783585,
+       "start": 16,
+       "ms": 35
+      },
+      {
+       "name": "pytz-2026.1.post1-py2.py3-none-any.whl",
+       "encoded": 510489,
+       "transfer": 510789,
+       "start": 1462,
+       "ms": 119
+      },
+      {
+       "name": "pydantic-2.12.5-py3-none-any.whl",
+       "encoded": 463578,
+       "transfer": 463878,
+       "start": 1459,
+       "ms": 51
+      },
+      {
+       "name": "numcodecs-0.15.1-cp314-cp314-pyemscripten_2026_0_wasm32.whl",
+       "encoded": 458519,
+       "transfer": 458819,
+       "start": 1458,
+       "ms": 35
+      },
+      {
+       "name": "zarr-3.2.1-py3-none-any.whl",
+       "encoded": 320113,
+       "transfer": 320413,
+       "start": 1457,
+       "ms": 17
+      },
+      {
+       "name": "tifffile-2026.8.23-py3-none-any.whl",
+       "encoded": 273795,
+       "transfer": 274095,
+       "start": 16,
+       "ms": 24
+      },
+      {
+       "name": "ome_types-0.6.3-py3-none-any.whl",
+       "encoded": 245802,
+       "transfer": 246102,
+       "start": 16,
+       "ms": 12
+      },
+      {
+       "name": "xsdata-26.2-py3-none-any.whl",
+       "encoded": 235561,
+       "transfer": 235861,
+       "start": 16,
+       "ms": 28
+      },
+      {
+       "name": "biocognia_markers-0.1.0-py3-none-any.whl",
+       "encoded": 233690,
+       "transfer": 233990,
+       "start": 15,
+       "ms": 10
+      },
+      {
+       "name": "python_dateutil-2.9.0.post0-py2.py3-none-any.whl",
+       "encoded": 229892,
+       "transfer": 230192,
+       "start": 1462,
+       "ms": 113
+      },
+      {
+       "name": "werkzeug-3.1.9-py3-none-any.whl",
+       "encoded": 228700,
+       "transfer": 229000,
+       "start": 16,
+       "ms": 28
+      },
+      {
+       "name": "fsspec-2026.3.0-py3-none-any.whl",
+       "encoded": 189819,
+       "transfer": 190119,
+       "start": 1461,
+       "ms": 86
+      },
+      {
+       "name": "joblib-1.5.3-py3-none-any.whl",
+       "encoded": 180317,
+       "transfer": 180617,
+       "start": 1457,
+       "ms": 10
+      },
+      {
+       "name": "orjson-3.11.8-cp314-cp314-pyemscripten_2026_0_wasm32.whl",
+       "encoded": 151833,
+       "transfer": 152133,
+       "start": 1460,
+       "ms": 70
+      },
+      {
+       "name": "cffi-2.0.0-cp314-cp314-pyemscripten_2026_0_wasm32.whl",
+       "encoded": 148947,
+       "transfer": 149247,
+       "start": 1460,
+       "ms": 64
+      },
+      {
+       "name": "jinja2-3.1.6-py3-none-any.whl",
+       "encoded": 134899,
+       "transfer": 135199,
+       "start": 1460,
+       "ms": 75
+      },
+      {
+       "name": "pyodide-lock.json",
+       "encoded": 119077,
+       "transfer": 119377,
+       "start": 245,
+       "ms": 4
+      },
+      {
+       "name": "pyyaml-6.0.3-cp314-cp314-pyemscripten_2026_0_wasm32.whl",
+       "encoded": 112901,
+       "transfer": 113201,
+       "start": 1459,
+       "ms": 45
+      },
+      {
+       "name": "click-8.3.1-py3-none-any.whl",
+       "encoded": 108274,
+       "transfer": 108574,
+       "start": 1461,
+       "ms": 81
+      },
+      {
+       "name": "flask-3.1.3-py3-none-any.whl",
+       "encoded": 103424,
+       "transfer": 103724,
+       "start": 16,
+       "ms": 9
+      },
+      {
+       "name": "packaging-26.1-py3-none-any.whl",
+       "encoded": 95852,
+       "transfer": 96152,
+       "start": 1457,
+       "ms": 22
+      },
+      {
+       "name": "spatialbridge-0.2.3-py3-none-any.whl",
+       "encoded": 81985,
+       "transfer": 82285,
+       "start": 16,
+       "ms": 19
+      },
+      {
+       "name": "pydantic_extra_types-2.11.1-py3-none-any.whl",
+       "encoded": 79526,
+       "transfer": 79826,
+       "start": 16,
+       "ms": 19
+      },
+      {
+       "name": "biocognia-0.1.2-py3-none-any.whl",
+       "encoded": 61400,
+       "transfer": 61700,
+       "start": 15,
+       "ms": 5
+      },
+      {
+       "name": "wrapt-2.1.2-cp314-cp314-pyemscripten_2026_0_wasm32.whl",
+       "encoded": 52189,
+       "transfer": 52489,
+       "start": 1458,
+       "ms": 40
+      },
+      {
+       "name": "msgpack-1.1.2-cp314-cp314-pyemscripten_2026_0_wasm32.whl",
+       "encoded": 50624,
+       "transfer": 50924,
+       "start": 1460,
+       "ms": 73
+      },
+      {
+       "name": "pycparser-3.0-py3-none-any.whl",
+       "encoded": 48172,
+       "transfer": 48472,
+       "start": 1460,
+       "ms": 67
+      },
+      {
+       "name": "typing_extensions-4.15.0-py3-none-any.whl",
+       "encoded": 44613,
+       "transfer": 44913,
+       "start": 1459,
+       "ms": 48
+      },
+      {
+       "name": "platformdirs-4.9.4-py3-none-any.whl",
+       "encoded": 21215,
+       "transfer": 21515,
+       "start": 1461,
+       "ms": 78
+      },
+      {
+       "name": "google_crc32c-1.8.0-cp314-cp314-pyemscripten_2026_0_wasm32.whl",
+       "encoded": 20916,
+       "transfer": 21216,
+       "start": 1458,
+       "ms": 39
+      },
+      {
+       "name": "threadpoolctl-3.6.0-py3-none-any.whl",
+       "encoded": 18638,
+       "transfer": 18938,
+       "start": 1457,
+       "ms": 5
+      },
+      {
+       "name": "itsdangerous-2.2.0-py3-none-any.whl",
+       "encoded": 16234,
+       "transfer": 16534,
+       "start": 16,
+       "ms": 8
+      },
+      {
+       "name": "donfig-0.8.1.post1-py3-none-any.whl",
+       "encoded": 15360,
+       "transfer": 15660,
+       "start": 1459,
+       "ms": 44
+      },
+      {
+       "name": "typing_inspection-0.4.4-py3-none-any.whl",
+       "encoded": 14750,
+       "transfer": 15050,
+       "start": 16,
+       "ms": 18
+      },
+      {
+       "name": "typing_inspection-0.4.2-py3-none-any.whl",
+       "encoded": 14610,
+       "transfer": 14910,
+       "start": 1460,
+       "ms": 55
+      },
+      {
+       "name": "annotated_types-0.7.0-py3-none-any.whl",
+       "encoded": 11963,
+       "transfer": 12263,
+       "start": 1460,
+       "ms": 54
+      },
+      {
+       "name": "deprecated-1.3.1-py2.py3-none-any.whl",
+       "encoded": 11298,
+       "transfer": 11598,
+       "start": 1458,
+       "ms": 32
+      },
+      {
+       "name": "six-1.17.0-py2.py3-none-any.whl",
+       "encoded": 11050,
+       "transfer": 11350,
+       "start": 1460,
+       "ms": 60
+      },
+      {
+       "name": "p9_boot.py",
+       "encoded": 10572,
+       "transfer": 10872,
+       "start": 17,
+       "ms": 227
+      },
+      {
+       "name": "markupsafe-3.0.3-cp314-cp314-pyemscripten_2026_0_wasm32.whl",
+       "encoded": 9986,
+       "transfer": 10286,
+       "start": 1461,
+       "ms": 77
+      },
+      {
+       "name": "p9_run.py",
+       "encoded": 9172,
+       "transfer": 9472,
+       "start": 17,
+       "ms": 227
+      },
+      {
+       "name": "p9_oracle.py",
+       "encoded": 8655,
+       "transfer": 8955,
+       "start": 17,
+       "ms": 219
+      },
+      {
+       "name": "blinker-1.9.0-py3-none-any.whl",
+       "encoded": 8458,
+       "transfer": 8758,
+       "start": 15,
+       "ms": 9
+      },
+      {
+       "name": "pyodide_unix_timezones-1.0.0-py3-none-any.whl",
+       "encoded": 2168,
+       "transfer": 2468,
+       "start": 1463,
+       "ms": 122
+      }
+     ]
+    },
+    "logs": []
+   }
+  },
+  "session": {
+   "P9S": {
+    "wall": 5414.400000095367,
+    "times": {
+     "discover": 0.0058000000000006935,
+     "start": 2.391400000000001,
+     "drain": 0,
+     "review": 0.09479999999999933,
+     "drive": 2.804100000000002,
+     "settle": 0,
+     "finish": 0.08929999999999794,
+     "total": 5.3865
+    },
+    "cpython": {
+     "discover": 0.03819150011986494,
+     "start": 1.1082993000745773,
+     "drain": 1.1640590000897646,
+     "review": 0.1457805000245571,
+     "drive": 1.404455200303346,
+     "settle": 2.1948028998449445,
+     "finish": 0.09066169988363981,
+     "total": 6.1929812002927065,
+     "import": 4.611064599826932
+    },
+    "cpythonRuns": [
+     {
+      "discover": 0.03822209965437651,
+      "start": 1.072579300031066,
+      "drain": 1.2664117999374866,
+      "review": 0.14756389986723661,
+      "drive": 1.404455200303346,
+      "settle": 2.322276399936527,
+      "finish": 0.09066169988363981,
+      "total": 6.344003399834037,
+      "import": 4.823632099665701
+     },
+     {
+      "discover": 0.035853699781000614,
+      "start": 1.1082993000745773,
+      "drain": 1.133507499936968,
+      "review": 0.14577420009300113,
+      "drive": 1.3872414999641478,
+      "settle": 2.1948028998449445,
+      "finish": 0.09088760009035468,
+      "total": 6.09674819977954,
+      "import": 4.611064599826932
+     },
+     {
+      "discover": 0.03819150011986494,
+      "start": 1.1871195998974144,
+      "drain": 1.1640590000897646,
+      "review": 0.1457805000245571,
+      "drive": 1.4155123997479677,
+      "settle": 2.1532851001247764,
+      "finish": 0.08867470035329461,
+      "total": 6.1929812002927065,
+      "import": 4.526983600109816
+     }
+    ],
+    "ratio": 0.869774963913246,
+    "packets": 2,
+    "kinds": [
+     "display_setup",
+     "t1_strip"
+    ],
+    "units": {
+     "CD20": {
+      "state": "accepted",
+      "final": 360,
+      "confidence": "high"
+     },
+     "CD3": {
+      "state": "accepted",
+      "final": 213,
+      "confidence": "high"
+     },
+     "CD8": {
+      "state": "accepted",
+      "final": 382,
+      "confidence": "high"
+     }
+    },
+    "excess": {
+     "CD20": 0,
+     "CD3": 0,
+     "CD8": 0
+    },
+    "counters": {
+     "sleep": {
+      "calls": 0,
+      "seconds": 0
+     },
+     "threads": [
+      [
+       "agent-job-job_2a6147dd9180",
+       1.4542000000000002
+      ],
+      [
+       "agent-job-job_b5880111f9d3",
+       0.3885000000000005
+      ],
+      [
+       "agent-job-job_825259f16786",
+       1.2352999999999987
+      ],
+      [
+       "mirror-gs_20261106T172621_e4b466",
+       0
+      ]
+     ]
+    },
+    "reads": {
+     "calls": 5555,
+     "slices": 10,
+     "bytes": 696351288
+    }
+   },
+   "P9M": {
+    "wall": 14996.300000190735,
+    "times": {
+     "discover": 0.00969999999999871,
+     "start": 4.3325,
+     "drain": 9.999999999976694e-05,
+     "review": 0.09420000000000073,
+     "drive": 10.352799999999998,
+     "settle": 0,
+     "finish": 0.10930000000000106,
+     "total": 14.902999999999999
+    },
+    "cpython": {
+     "discover": 0.037874399684369564,
+     "start": 1.0709869000129402,
+     "drain": 2.5394425000995398,
+     "review": 0.16585320001468062,
+     "drive": 7.014006200246513,
+     "settle": 2.554406199604273,
+     "finish": 0.10517399990931153,
+     "total": 13.409198500216007,
+     "import": 4.541193299926817
+    },
+    "cpythonRuns": [
+     {
+      "discover": 0.037874399684369564,
+      "start": 1.3125612000003457,
+      "drain": 2.624432200100273,
+      "review": 0.16585320001468062,
+      "drive": 7.154267699923366,
+      "settle": 2.554406199604273,
+      "finish": 0.10680670011788607,
+      "total": 13.957210599910468,
+      "import": 5.060288300272077
+     },
+     {
+      "discover": 0.05702120019122958,
+      "start": 1.0709869000129402,
+      "drain": 2.4713188000023365,
+      "review": 0.1565998001024127,
+      "drive": 6.859372199978679,
+      "settle": 2.6823859000578523,
+      "finish": 0.10517399990931153,
+      "total": 13.403836399782449,
+      "import": 4.541193299926817
+     },
+     {
+      "discover": 0.03363520000129938,
+      "start": 1.0699706999585032,
+      "drain": 2.5394425000995398,
+      "review": 0.17232830030843616,
+      "drive": 7.014006200246513,
+      "settle": 2.482584500219673,
+      "finish": 0.09618250001221895,
+      "total": 13.409198500216007,
+      "import": 4.526523499749601
+     }
+    ],
+    "ratio": 1.1114012518913736,
+    "packets": 8,
+    "kinds": [
+     "display_setup",
+     "t2_confirm",
+     "t4_candidates",
+     "t4_candidates",
+     "t4_candidates",
+     "t4_candidates",
+     "regression_confirm",
+     "t1_strip"
+    ],
+    "units": {
+     "CD3": {
+      "state": "accepted",
+      "final": 230,
+      "confidence": "high"
+     },
+     "CD20": {
+      "state": "accepted",
+      "final": 284,
+      "confidence": "high"
+     },
+     "CD4": {
+      "state": "accepted_low_confidence",
+      "final": 119,
+      "confidence": "low"
+     },
+     "CD8": {
+      "state": "accepted",
+      "final": 316,
+      "confidence": "high"
+     },
+     "FOXP3": {
+      "state": "accepted",
+      "final": 186,
+      "confidence": "high"
+     }
+    },
+    "excess": {
+     "CD3": 0,
+     "CD20": 0,
+     "CD4": 13,
+     "CD8": 0,
+     "FOXP3": 0
+    },
+    "counters": {
+     "sleep": {
+      "calls": 0,
+      "seconds": 0
+     },
+     "threads": [
+      [
+       "agent-job-job_9358e35615eb",
+       3.3778000000000006
+      ],
+      [
+       "agent-job-job_8df1463e3987",
+       0.28330000000000055
+      ],
+      [
+       "agent-job-job_16300f3d6606",
+       1.4981000000000009
+      ],
+      [
+       "agent-job-job_7322fa40903e",
+       1.4680999999999997
+      ],
+      [
+       "mirror-gs_20261106T172903_f8ff3e",
+       0
+      ]
+     ]
+    },
+    "reads": {
+     "calls": 31177,
+     "slices": 34,
+     "bytes": 3977751744
+    }
+   }
+  },
+  "heap": {
+   "P9S": {
+    "afterReady": 461766656,
+    "afterSession": 554172416
+   },
+   "P9M": {
+    "afterReady": 461766656,
+    "afterSession": 554172416
+   }
+  },
+  "peakMemory": {
+   "P9S": {
+    "byKind": {
+     "browser": 145367040,
+     "crashpad-handler": 11042816,
+     "gpu-process": 90755072,
+     "utility": 60776448,
+     "renderer": 1760567296
+    },
+    "processes": 8
+   },
+   "P9M": {
+    "byKind": {
+     "browser": 163983360,
+     "crashpad-handler": 11046912,
+     "gpu-process": 89837568,
+     "utility": 58355712,
+     "renderer": 2016243712
+    },
+    "processes": 8
+   }
+  },
+  "python": {
+   "pyodide": {
+    "plexora": "0.0.36",
+    "numpy": "2.4.6",
+    "scipy": "1.18.0",
+    "scikit-learn": "1.8.0",
+    "polars": "1.33.1",
+    "pillow": "12.2.0",
+    "pandas": "3.0.2",
+    "zarr": "3.2.1",
+    "pydantic": "2.12.5",
+    "pydantic-core": "2.41.5",
+    "tifffile": "2026.8.23",
+    "spatialagents": "0.2.5",
+    "spatialbridge": "0.2.3",
+    "biocognia": "0.1.2"
+   },
+   "cpython": {
+    "plexora": "0.0.36",
+    "numpy": "2.5.2",
+    "scipy": "1.18.1",
+    "scikit-learn": "1.9.0",
+    "polars": "1.44.0",
+    "pillow": "13.0.0",
+    "pandas": "3.0.5",
+    "opencv-python-headless": "5.0.0.93",
+    "h5py": "3.16.0",
+    "zarr": "3.3.0",
+    "pydantic": "2.13.4",
+    "pydantic-core": "2.46.4",
+    "tifffile": "2026.8.23",
+    "spatialagents": "0.2.5",
+    "spatialbridge": "0.2.3",
+    "biocognia": "0.1.2",
+    "anndata": "0.13.2"
+   },
+   "python": [
+    "3.14.2",
+    "3.13.15"
+   ]
+  },
+  "shims": {
+   "stub_root": {
+    "lines": 21,
+    "code": 13
+   },
+   "zlib_for_zlibng": {
+    "lines": 14,
+    "code": 9
+   },
+   "deferred_threads": {
+    "lines": 27,
+    "code": 18
+   },
+   "jobs_between_calls": {
+    "lines": 21,
+    "code": 14
+   },
+   "sync_executor": {
+    "lines": 20,
+    "code": 14
+   },
+   "yielding_sleep": {
+    "lines": 18,
+    "code": 11
+   },
+   "parquet_by_pyarrow": {
+    "lines": 32,
+    "code": 19
+   },
+   "licence": {
+    "lines": 22,
+    "code": 13
+   }
+  },
+  "shimCodeLines": {
+   "stub_root": 13,
+   "zlib_for_zlibng": 9,
+   "deferred_threads": 18,
+   "jobs_between_calls": 14,
+   "sync_executor": 14,
+   "yielding_sleep": 11,
+   "parquet_by_pyarrow": 19,
+   "licence": 13
+  },
+  "viewer": {
+   "rows": [
+    {
+     "block": 0,
+     "worker": true,
+     "openMs": 335.90000009536743,
+     "full": {
+      "ms": 54.30000019073486,
+      "full": true
+     },
+     "pan": {
+      "intervals": {
+       "n": 240,
+       "min": 0.20000000000004547,
+       "p50": 0.5,
+       "p90": 0.8999999999999773,
+       "p95": 1,
+       "max": 17.600000000000023,
+       "mean": 0.6341666666666669
+      },
+      "over16": 1,
+      "over25": 0,
+      "frames": 240,
+      "drawMs": {
+       "n": 240,
+       "min": 0,
+       "p50": 0.19999980926513672,
+       "p90": 0.3000001907348633,
+       "p95": 0.40000009536743164,
+       "max": 1,
+       "mean": 0.1729166567325592
+      },
+      "longTasks": {
+       "n": 0
+      }
+     },
+     "panEndedBeforeReady": true,
+     "longTasks": {
+      "count": 2,
+      "ms": 324,
+      "max": 191
+     },
+     "boot": {
+      "phases": {
+       "start": 309.39990234375,
+       "core": 1624.5,
+       "packages": 7583.39990234375,
+       "wheels": 7788,
+       "shims": 9190.5,
+       "ready": 15971.199951171875
+      },
+      "bytes": {
+       "total": 81543161,
+       "pyodideCore": 13516944,
+       "packages": 64476519,
+       "wheels": 6068804,
+       "fetches": 57,
+       "cacheHits": 0,
+       "files": [
+        {
+         "name": "polars-1.33.1-cp314-cp314-pyemscripten_2026_0_wasm32.whl",
+         "encoded": 18323371,
+         "transfer": 18323671,
+         "start": 1329,
+         "ms": 493
+        },
+        {
+         "name": "scipy-1.18.0-cp314-cp314-pyemscripten_2026_0_wasm32.whl",
+         "encoded": 14029750,
+         "transfer": 14030050,
+         "start": 1329,
+         "ms": 413
+        },
+        {
+         "name": "pyarrow-22.0.0-cp314-cp314-pyemscripten_2026_0_wasm32.whl",
+         "encoded": 10018597,
+         "transfer": 10018897,
+         "start": 1332,
+         "ms": 413
+        },
+        {
+         "name": "pyodide.asm.wasm",
+         "encoded": 9598218,
+         "transfer": 9598518,
+         "start": 147,
+         "ms": 79
+        },
+        {
+         "name": "scikit_learn-1.8.0-cp314-cp314-pyemscripten_2026_0_wasm32.whl",
+         "encoded": 4449204,
+         "transfer": 4449504,
+         "start": 1329,
+         "ms": 103
+        },
+        {
+         "name": "pandas-3.0.2-cp314-cp314-pyemscripten_2026_0_wasm32.whl",
+         "encoded": 4177749,
+         "transfer": 4178049,
+         "start": 1333,
+         "ms": 232
+        },
+        {
+         "name": "plexora-0.0.36-py3-none-any.whl",
+         "encoded": 3697994,
+         "transfer": 3698294,
+         "start": 14,
+         "ms": 45
+        },
+        {
+         "name": "numpy-2.4.6-cp314-cp314-pyemscripten_2026_0_wasm32.whl",
+         "encoded": 2960568,
+         "transfer": 2960868,
+         "start": 1328,
+         "ms": 86
+        },
+        {
+         "name": "python_stdlib.zip",
+         "encoded": 2545637,
+         "transfer": 2545937,
+         "start": 147,
+         "ms": 22
+        },
+        {
+         "name": "cryptography-47.0.0-cp314-abi3-pyemscripten_2026_0_wasm32.whl",
+         "encoded": 2174338,
+         "transfer": 2174638,
+         "start": 1330,
+         "ms": 148
+        },
+        {
+         "name": "pydantic_core-2.41.5-cp314-cp314-pyemscripten_2026_0_wasm32.whl",
+         "encoded": 1310164,
+         "transfer": 1310464,
+         "start": 1330,
+         "ms": 57
+        },
+        {
+         "name": "pyodide.asm.mjs",
+         "encoded": 1250344,
+         "transfer": 1250644,
+         "start": 148,
+         "ms": 11
+        },
+        {
+         "name": "pillow-12.2.0-cp314-cp314-pyemscripten_2026_0_wasm32.whl",
+         "encoded": 1037806,
+         "transfer": 1038106,
+         "start": 1329,
+         "ms": 21
+        },
+        {
+         "name": "spatialagents-0.2.5-py3-none-any.whl",
+         "encoded": 783285,
+         "transfer": 783585,
+         "start": 14,
+         "ms": 34
+        },
+        {
+         "name": "pytz-2026.1.post1-py2.py3-none-any.whl",
+         "encoded": 510489,
+         "transfer": 510789,
+         "start": 1333,
+         "ms": 107
+        },
+        {
+         "name": "pydantic-2.12.5-py3-none-any.whl",
+         "encoded": 463578,
+         "transfer": 463878,
+         "start": 1330,
+         "ms": 52
+        },
+        {
+         "name": "numcodecs-0.15.1-cp314-cp314-pyemscripten_2026_0_wasm32.whl",
+         "encoded": 458519,
+         "transfer": 458819,
+         "start": 1329,
+         "ms": 34
+        },
+        {
+         "name": "zarr-3.2.1-py3-none-any.whl",
+         "encoded": 320113,
+         "transfer": 320413,
+         "start": 1329,
+         "ms": 15
+        },
+        {
+         "name": "tifffile-2026.8.23-py3-none-any.whl",
+         "encoded": 273795,
+         "transfer": 274095,
+         "start": 15,
+         "ms": 24
+        },
+        {
+         "name": "ome_types-0.6.3-py3-none-any.whl",
+         "encoded": 245802,
+         "transfer": 246102,
+         "start": 14,
+         "ms": 11
+        },
+        {
+         "name": "xsdata-26.2-py3-none-any.whl",
+         "encoded": 235561,
+         "transfer": 235861,
+         "start": 15,
+         "ms": 27
+        },
+        {
+         "name": "biocognia_markers-0.1.0-py3-none-any.whl",
+         "encoded": 233690,
+         "transfer": 233990,
+         "start": 13,
+         "ms": 12
+        },
+        {
+         "name": "python_dateutil-2.9.0.post0-py2.py3-none-any.whl",
+         "encoded": 229892,
+         "transfer": 230192,
+         "start": 1333,
+         "ms": 104
+        },
+        {
+         "name": "werkzeug-3.1.9-py3-none-any.whl",
+         "encoded": 228700,
+         "transfer": 229000,
+         "start": 15,
+         "ms": 28
+        },
+        {
+         "name": "fsspec-2026.3.0-py3-none-any.whl",
+         "encoded": 189819,
+         "transfer": 190119,
+         "start": 1332,
+         "ms": 80
+        },
+        {
+         "name": "joblib-1.5.3-py3-none-any.whl",
+         "encoded": 180317,
+         "transfer": 180617,
+         "start": 1329,
+         "ms": 10
+        },
+        {
+         "name": "orjson-3.11.8-cp314-cp314-pyemscripten_2026_0_wasm32.whl",
+         "encoded": 151833,
+         "transfer": 152133,
+         "start": 1331,
+         "ms": 67
+        },
+        {
+         "name": "cffi-2.0.0-cp314-cp314-pyemscripten_2026_0_wasm32.whl",
+         "encoded": 148947,
+         "transfer": 149247,
+         "start": 1331,
+         "ms": 61
+        },
+        {
+         "name": "jinja2-3.1.6-py3-none-any.whl",
+         "encoded": 134899,
+         "transfer": 135199,
+         "start": 1331,
+         "ms": 72
+        },
+        {
+         "name": "pyodide-lock.json",
+         "encoded": 119077,
+         "transfer": 119377,
+         "start": 147,
+         "ms": 3
+        },
+        {
+         "name": "pyyaml-6.0.3-cp314-cp314-pyemscripten_2026_0_wasm32.whl",
+         "encoded": 112901,
+         "transfer": 113201,
+         "start": 1330,
+         "ms": 44
+        },
+        {
+         "name": "click-8.3.1-py3-none-any.whl",
+         "encoded": 108274,
+         "transfer": 108574,
+         "start": 1332,
+         "ms": 78
+        },
+        {
+         "name": "flask-3.1.3-py3-none-any.whl",
+         "encoded": 103424,
+         "transfer": 103724,
+         "start": 14,
+         "ms": 8
+        },
+        {
+         "name": "packaging-26.1-py3-none-any.whl",
+         "encoded": 95852,
+         "transfer": 96152,
+         "start": 1329,
+         "ms": 21
+        },
+        {
+         "name": "spatialbridge-0.2.3-py3-none-any.whl",
+         "encoded": 81985,
+         "transfer": 82285,
+         "start": 14,
+         "ms": 16
+        },
+        {
+         "name": "pydantic_extra_types-2.11.1-py3-none-any.whl",
+         "encoded": 79526,
+         "transfer": 79826,
+         "start": 14,
+         "ms": 17
+        },
+        {
+         "name": "biocognia-0.1.2-py3-none-any.whl",
+         "encoded": 61400,
+         "transfer": 61700,
+         "start": 13,
+         "ms": 6
+        },
+        {
+         "name": "wrapt-2.1.2-cp314-cp314-pyemscripten_2026_0_wasm32.whl",
+         "encoded": 52189,
+         "transfer": 52489,
+         "start": 1329,
+         "ms": 33
+        },
+        {
+         "name": "msgpack-1.1.2-cp314-cp314-pyemscripten_2026_0_wasm32.whl",
+         "encoded": 50624,
+         "transfer": 50924,
+         "start": 1331,
+         "ms": 70
+        },
+        {
+         "name": "pycparser-3.0-py3-none-any.whl",
+         "encoded": 48172,
+         "transfer": 48472,
+         "start": 1331,
+         "ms": 64
+        },
+        {
+         "name": "typing_extensions-4.15.0-py3-none-any.whl",
+         "encoded": 44613,
+         "transfer": 44913,
+         "start": 1330,
+         "ms": 44
+        },
+        {
+         "name": "platformdirs-4.9.4-py3-none-any.whl",
+         "encoded": 21215,
+         "transfer": 21515,
+         "start": 1332,
+         "ms": 76
+        },
+        {
+         "name": "google_crc32c-1.8.0-cp314-cp314-pyemscripten_2026_0_wasm32.whl",
+         "encoded": 20916,
+         "transfer": 21216,
+         "start": 1330,
+         "ms": 40
+        },
+        {
+         "name": "threadpoolctl-3.6.0-py3-none-any.whl",
+         "encoded": 18638,
+         "transfer": 18938,
+         "start": 1329,
+         "ms": 5
+        },
+        {
+         "name": "itsdangerous-2.2.0-py3-none-any.whl",
+         "encoded": 16234,
+         "transfer": 16534,
+         "start": 14,
+         "ms": 8
+        },
+        {
+         "name": "donfig-0.8.1.post1-py3-none-any.whl",
+         "encoded": 15360,
+         "transfer": 15660,
+         "start": 1330,
+         "ms": 40
+        },
+        {
+         "name": "typing_inspection-0.4.4-py3-none-any.whl",
+         "encoded": 14750,
+         "transfer": 15050,
+         "start": 15,
+         "ms": 22
+        },
+        {
+         "name": "typing_inspection-0.4.2-py3-none-any.whl",
+         "encoded": 14610,
+         "transfer": 14910,
+         "start": 1330,
+         "ms": 58
+        },
+        {
+         "name": "annotated_types-0.7.0-py3-none-any.whl",
+         "encoded": 11963,
+         "transfer": 12263,
+         "start": 1330,
+         "ms": 55
+        },
+        {
+         "name": "deprecated-1.3.1-py2.py3-none-any.whl",
+         "encoded": 11298,
+         "transfer": 11598,
+         "start": 1329,
+         "ms": 29
+        },
+        {
+         "name": "six-1.17.0-py2.py3-none-any.whl",
+         "encoded": 11050,
+         "transfer": 11350,
+         "start": 1331,
+         "ms": 60
+        },
+        {
+         "name": "p9_boot.py",
+         "encoded": 10572,
+         "transfer": 10872,
+         "start": 15,
+         "ms": 129
+        },
+        {
+         "name": "markupsafe-3.0.3-cp314-cp314-pyemscripten_2026_0_wasm32.whl",
+         "encoded": 9986,
+         "transfer": 10286,
+         "start": 1332,
+         "ms": 74
+        },
+        {
+         "name": "p9_run.py",
+         "encoded": 9172,
+         "transfer": 9472,
+         "start": 15,
+         "ms": 128
+        },
+        {
+         "name": "p9_oracle.py",
+         "encoded": 8655,
+         "transfer": 8955,
+         "start": 15,
+         "ms": 131
+        },
+        {
+         "name": "blinker-1.9.0-py3-none-any.whl",
+         "encoded": 8458,
+         "transfer": 8758,
+         "start": 13,
+         "ms": 8
+        },
+        {
+         "name": "pyodide_unix_timezones-1.0.0-py3-none-any.whl",
+         "encoded": 2168,
+         "transfer": 2468,
+         "start": 1333,
+         "ms": 109
+        }
+       ]
+      }
+     }
+    },
+    {
+     "block": 0,
+     "worker": false,
+     "openMs": 307.19999980926514,
+     "full": {
+      "ms": 52.69999980926514,
+      "full": true
+     },
+     "pan": {
+      "intervals": {
+       "n": 240,
+       "min": 0.1999999999999318,
+       "p50": 0.39999999999997726,
+       "p90": 0.5,
+       "p95": 0.5,
+       "max": 17.100000000000023,
+       "mean": 0.4362499999999997
+      },
+      "over16": 1,
+      "over25": 0,
+      "frames": 240,
+      "drawMs": {
+       "n": 240,
+       "min": 0,
+       "p50": 0.09999990463256836,
+       "p90": 0.19999980926513672,
+       "p95": 0.20000028610229492,
+       "max": 0.40000009536743164,
+       "mean": 0.11166666150093078
+      },
+      "longTasks": {
+       "n": 0
+      }
+     },
+     "panEndedBeforeReady": null,
+     "longTasks": {
+      "count": 2,
+      "ms": 316,
+      "max": 182
+     },
+     "boot": null
+    },
+    {
+     "block": 1,
+     "worker": false,
+     "openMs": 347.5,
+     "full": {
+      "ms": 53,
+      "full": true
+     },
+     "pan": {
+      "intervals": {
+       "n": 240,
+       "min": 0.1999999999999318,
+       "p50": 0.39999999999997726,
+       "p90": 0.5,
+       "p95": 0.6000000000000227,
+       "max": 17.299999999999955,
+       "mean": 0.4708333333333333
+      },
+      "over16": 1,
+      "over25": 0,
+      "frames": 240,
+      "drawMs": {
+       "n": 240,
+       "min": 0,
+       "p50": 0.09999990463256836,
+       "p90": 0.20000028610229492,
+       "p95": 0.20000028610229492,
+       "max": 0.3000001907348633,
+       "mean": 0.1129166583220164
+      },
+      "longTasks": {
+       "n": 0
+      }
+     },
+     "panEndedBeforeReady": null,
+     "longTasks": {
+      "count": 2,
+      "ms": 337,
+      "max": 197
+     },
+     "boot": null
+    },
+    {
+     "block": 1,
+     "worker": true,
+     "openMs": 357.1000003814697,
+     "full": {
+      "ms": 56.10000038146973,
+      "full": true
+     },
+     "pan": {
+      "intervals": {
+       "n": 240,
+       "min": 0.1999999999999318,
+       "p50": 0.5,
+       "p90": 0.8999999999999773,
+       "p95": 1.1999999999999318,
+       "max": 17.399999999999977,
+       "mean": 0.6604166666666667
+      },
+      "over16": 1,
+      "over25": 0,
+      "frames": 240,
+      "drawMs": {
+       "n": 240,
+       "min": 0,
+       "p50": 0.19999980926513672,
+       "p90": 0.3000001907348633,
+       "p95": 0.39999961853027344,
+       "max": 2.5,
+       "mean": 0.18291664322217305
+      },
+      "longTasks": {
+       "n": 0
+      }
+     },
+     "panEndedBeforeReady": true,
+     "longTasks": {
+      "count": 2,
+      "ms": 336,
+      "max": 195
+     },
+     "boot": {
+      "phases": {
+       "start": 321.099853515625,
+       "core": 1650.999755859375,
+       "packages": 7565.699951171875,
+       "wheels": 7724.199951171875,
+       "shims": 9127.7998046875,
+       "ready": 16451.699951171875
+      },
+      "bytes": {
+       "total": 81543161,
+       "pyodideCore": 13516944,
+       "packages": 64476519,
+       "wheels": 6068804,
+       "fetches": 57,
+       "cacheHits": 0,
+       "files": [
+        {
+         "name": "polars-1.33.1-cp314-cp314-pyemscripten_2026_0_wasm32.whl",
+         "encoded": 18323371,
+         "transfer": 18323671,
+         "start": 1346,
+         "ms": 517
+        },
+        {
+         "name": "scipy-1.18.0-cp314-cp314-pyemscripten_2026_0_wasm32.whl",
+         "encoded": 14029750,
+         "transfer": 14030050,
+         "start": 1346,
+         "ms": 463
+        },
+        {
+         "name": "pyarrow-22.0.0-cp314-cp314-pyemscripten_2026_0_wasm32.whl",
+         "encoded": 10018597,
+         "transfer": 10018897,
+         "start": 1350,
+         "ms": 411
+        },
+        {
+         "name": "pyodide.asm.wasm",
+         "encoded": 9598218,
+         "transfer": 9598518,
+         "start": 165,
+         "ms": 87
+        },
+        {
+         "name": "scikit_learn-1.8.0-cp314-cp314-pyemscripten_2026_0_wasm32.whl",
+         "encoded": 4449204,
+         "transfer": 4449504,
+         "start": 1346,
+         "ms": 93
+        },
+        {
+         "name": "pandas-3.0.2-cp314-cp314-pyemscripten_2026_0_wasm32.whl",
+         "encoded": 4177749,
+         "transfer": 4178049,
+         "start": 1350,
+         "ms": 357
+        },
+        {
+         "name": "plexora-0.0.36-py3-none-any.whl",
+         "encoded": 3697994,
+         "transfer": 3698294,
+         "start": 16,
+         "ms": 54
+        },
+        {
+         "name": "numpy-2.4.6-cp314-cp314-pyemscripten_2026_0_wasm32.whl",
+         "encoded": 2960568,
+         "transfer": 2960868,
+         "start": 1346,
+         "ms": 90
+        },
+        {
+         "name": "python_stdlib.zip",
+         "encoded": 2545637,
+         "transfer": 2545937,
+         "start": 165,
+         "ms": 22
+        },
+        {
+         "name": "cryptography-47.0.0-cp314-abi3-pyemscripten_2026_0_wasm32.whl",
+         "encoded": 2174338,
+         "transfer": 2174638,
+         "start": 1348,
+         "ms": 135
+        },
+        {
+         "name": "pydantic_core-2.41.5-cp314-cp314-pyemscripten_2026_0_wasm32.whl",
+         "encoded": 1310164,
+         "transfer": 1310464,
+         "start": 1348,
+         "ms": 55
+        },
+        {
+         "name": "pyodide.asm.mjs",
+         "encoded": 1250344,
+         "transfer": 1250644,
+         "start": 165,
+         "ms": 12
+        },
+        {
+         "name": "pillow-12.2.0-cp314-cp314-pyemscripten_2026_0_wasm32.whl",
+         "encoded": 1037806,
+         "transfer": 1038106,
+         "start": 1346,
+         "ms": 26
+        },
+        {
+         "name": "spatialagents-0.2.5-py3-none-any.whl",
+         "encoded": 783285,
+         "transfer": 783585,
+         "start": 16,
+         "ms": 39
+        },
+        {
+         "name": "pytz-2026.1.post1-py2.py3-none-any.whl",
+         "encoded": 510489,
+         "transfer": 510789,
+         "start": 1351,
+         "ms": 102
+        },
+        {
+         "name": "pydantic-2.12.5-py3-none-any.whl",
+         "encoded": 463578,
+         "transfer": 463878,
+         "start": 1348,
+         "ms": 50
+        },
+        {
+         "name": "numcodecs-0.15.1-cp314-cp314-pyemscripten_2026_0_wasm32.whl",
+         "encoded": 458519,
+         "transfer": 458819,
+         "start": 1347,
+         "ms": 32
+        },
+        {
+         "name": "zarr-3.2.1-py3-none-any.whl",
+         "encoded": 320113,
+         "transfer": 320413,
+         "start": 1347,
+         "ms": 15
+        },
+        {
+         "name": "tifffile-2026.8.23-py3-none-any.whl",
+         "encoded": 273795,
+         "transfer": 274095,
+         "start": 17,
+         "ms": 34
+        },
+        {
+         "name": "ome_types-0.6.3-py3-none-any.whl",
+         "encoded": 245802,
+         "transfer": 246102,
+         "start": 16,
+         "ms": 12
+        },
+        {
+         "name": "xsdata-26.2-py3-none-any.whl",
+         "encoded": 235561,
+         "transfer": 235861,
+         "start": 17,
+         "ms": 26
+        },
+        {
+         "name": "biocognia_markers-0.1.0-py3-none-any.whl",
+         "encoded": 233690,
+         "transfer": 233990,
+         "start": 16,
+         "ms": 12
+        },
+        {
+         "name": "python_dateutil-2.9.0.post0-py2.py3-none-any.whl",
+         "encoded": 229892,
+         "transfer": 230192,
+         "start": 1350,
+         "ms": 96
+        },
+        {
+         "name": "werkzeug-3.1.9-py3-none-any.whl",
+         "encoded": 228700,
+         "transfer": 229000,
+         "start": 17,
+         "ms": 26
+        },
+        {
+         "name": "fsspec-2026.3.0-py3-none-any.whl",
+         "encoded": 189819,
+         "transfer": 190119,
+         "start": 1350,
+         "ms": 76
+        },
+        {
+         "name": "joblib-1.5.3-py3-none-any.whl",
+         "encoded": 180317,
+         "transfer": 180617,
+         "start": 1346,
+         "ms": 6
+        },
+        {
+         "name": "orjson-3.11.8-cp314-cp314-pyemscripten_2026_0_wasm32.whl",
+         "encoded": 151833,
+         "transfer": 152133,
+         "start": 1349,
+         "ms": 65
+        },
+        {
+         "name": "cffi-2.0.0-cp314-cp314-pyemscripten_2026_0_wasm32.whl",
+         "encoded": 148947,
+         "transfer": 149247,
+         "start": 1349,
+         "ms": 59
+        },
+        {
+         "name": "jinja2-3.1.6-py3-none-any.whl",
+         "encoded": 134899,
+         "transfer": 135199,
+         "start": 1350,
+         "ms": 69
+        },
+        {
+         "name": "pyodide-lock.json",
+         "encoded": 119077,
+         "transfer": 119377,
+         "start": 164,
+         "ms": 3
+        },
+        {
+         "name": "pyyaml-6.0.3-cp314-cp314-pyemscripten_2026_0_wasm32.whl",
+         "encoded": 112901,
+         "transfer": 113201,
+         "start": 1348,
+         "ms": 44
+        },
+        {
+         "name": "click-8.3.1-py3-none-any.whl",
+         "encoded": 108274,
+         "transfer": 108574,
+         "start": 1350,
+         "ms": 74
+        },
+        {
+         "name": "flask-3.1.3-py3-none-any.whl",
+         "encoded": 103424,
+         "transfer": 103724,
+         "start": 16,
+         "ms": 8
+        },
+        {
+         "name": "packaging-26.1-py3-none-any.whl",
+         "encoded": 95852,
+         "transfer": 96152,
+         "start": 1347,
+         "ms": 20
+        },
+        {
+         "name": "spatialbridge-0.2.3-py3-none-any.whl",
+         "encoded": 81985,
+         "transfer": 82285,
+         "start": 16,
+         "ms": 18
+        },
+        {
+         "name": "pydantic_extra_types-2.11.1-py3-none-any.whl",
+         "encoded": 79526,
+         "transfer": 79826,
+         "start": 16,
+         "ms": 19
+        },
+        {
+         "name": "biocognia-0.1.2-py3-none-any.whl",
+         "encoded": 61400,
+         "transfer": 61700,
+         "start": 15,
+         "ms": 6
+        },
+        {
+         "name": "wrapt-2.1.2-cp314-cp314-pyemscripten_2026_0_wasm32.whl",
+         "encoded": 52189,
+         "transfer": 52489,
+         "start": 1347,
+         "ms": 38
+        },
+        {
+         "name": "msgpack-1.1.2-cp314-cp314-pyemscripten_2026_0_wasm32.whl",
+         "encoded": 50624,
+         "transfer": 50924,
+         "start": 1349,
+         "ms": 67
+        },
+        {
+         "name": "pycparser-3.0-py3-none-any.whl",
+         "encoded": 48172,
+         "transfer": 48472,
+         "start": 1349,
+         "ms": 63
+        },
+        {
+         "name": "typing_extensions-4.15.0-py3-none-any.whl",
+         "encoded": 44613,
+         "transfer": 44913,
+         "start": 1348,
+         "ms": 47
+        },
+        {
+         "name": "platformdirs-4.9.4-py3-none-any.whl",
+         "encoded": 21215,
+         "transfer": 21515,
+         "start": 1350,
+         "ms": 72
+        },
+        {
+         "name": "google_crc32c-1.8.0-cp314-cp314-pyemscripten_2026_0_wasm32.whl",
+         "encoded": 20916,
+         "transfer": 21216,
+         "start": 1347,
+         "ms": 38
+        },
+        {
+         "name": "threadpoolctl-3.6.0-py3-none-any.whl",
+         "encoded": 18638,
+         "transfer": 18938,
+         "start": 1346,
+         "ms": 6
+        },
+        {
+         "name": "itsdangerous-2.2.0-py3-none-any.whl",
+         "encoded": 16234,
+         "transfer": 16534,
+         "start": 16,
+         "ms": 8
+        },
+        {
+         "name": "donfig-0.8.1.post1-py3-none-any.whl",
+         "encoded": 15360,
+         "transfer": 15660,
+         "start": 1347,
+         "ms": 44
+        },
+        {
+         "name": "typing_inspection-0.4.4-py3-none-any.whl",
+         "encoded": 14750,
+         "transfer": 15050,
+         "start": 17,
+         "ms": 24
+        },
+        {
+         "name": "typing_inspection-0.4.2-py3-none-any.whl",
+         "encoded": 14610,
+         "transfer": 14910,
+         "start": 1348,
+         "ms": 56
+        },
+        {
+         "name": "annotated_types-0.7.0-py3-none-any.whl",
+         "encoded": 11963,
+         "transfer": 12263,
+         "start": 1348,
+         "ms": 53
+        },
+        {
+         "name": "deprecated-1.3.1-py2.py3-none-any.whl",
+         "encoded": 11298,
+         "transfer": 11598,
+         "start": 1347,
+         "ms": 31
+        },
+        {
+         "name": "six-1.17.0-py2.py3-none-any.whl",
+         "encoded": 11050,
+         "transfer": 11350,
+         "start": 1349,
+         "ms": 57
+        },
+        {
+         "name": "p9_boot.py",
+         "encoded": 10572,
+         "transfer": 10872,
+         "start": 17,
+         "ms": 140
+        },
+        {
+         "name": "markupsafe-3.0.3-cp314-cp314-pyemscripten_2026_0_wasm32.whl",
+         "encoded": 9986,
+         "transfer": 10286,
+         "start": 1350,
+         "ms": 71
+        },
+        {
+         "name": "p9_run.py",
+         "encoded": 9172,
+         "transfer": 9472,
+         "start": 17,
+         "ms": 144
+        },
+        {
+         "name": "p9_oracle.py",
+         "encoded": 8655,
+         "transfer": 8955,
+         "start": 18,
+         "ms": 146
+        },
+        {
+         "name": "blinker-1.9.0-py3-none-any.whl",
+         "encoded": 8458,
+         "transfer": 8758,
+         "start": 16,
+         "ms": 8
+        },
+        {
+         "name": "pyodide_unix_timezones-1.0.0-py3-none-any.whl",
+         "encoded": 2168,
+         "transfer": 2468,
+         "start": 1351,
+         "ms": 108
+        }
+       ]
+      }
+     }
+    },
+    {
+     "block": 2,
+     "worker": true,
+     "openMs": 346.59999990463257,
+     "full": {
+      "ms": 59.09999990463257,
+      "full": true
+     },
+     "pan": {
+      "intervals": {
+       "n": 240,
+       "min": 0.20000000000004547,
+       "p50": 0.5,
+       "p90": 0.8999999999999773,
+       "p95": 1,
+       "max": 17.399999999999977,
+       "mean": 0.6237500000000001
+      },
+      "over16": 1,
+      "over25": 0,
+      "frames": 240,
+      "drawMs": {
+       "n": 240,
+       "min": 0,
+       "p50": 0.10000038146972656,
+       "p90": 0.3000001907348633,
+       "p95": 0.40000009536743164,
+       "max": 1.6000003814697266,
+       "mean": 0.17749998172124226
+      },
+      "longTasks": {
+       "n": 0
+      }
+     },
+     "panEndedBeforeReady": true,
+     "longTasks": {
+      "count": 2,
+      "ms": 331,
+      "max": 192
+     },
+     "boot": {
+      "phases": {
+       "start": 296.60009765625,
+       "core": 1698.10009765625,
+       "packages": 7851.39990234375,
+       "wheels": 8087.699951171875,
+       "shims": 9636.199951171875,
+       "ready": 16819.300048828125
+      },
+      "bytes": {
+       "total": 81543161,
+       "pyodideCore": 13516944,
+       "packages": 64476519,
+       "wheels": 6068804,
+       "fetches": 57,
+       "cacheHits": 0,
+       "files": [
+        {
+         "name": "polars-1.33.1-cp314-cp314-pyemscripten_2026_0_wasm32.whl",
+         "encoded": 18323371,
+         "transfer": 18323671,
+         "start": 1416,
+         "ms": 493
+        },
+        {
+         "name": "scipy-1.18.0-cp314-cp314-pyemscripten_2026_0_wasm32.whl",
+         "encoded": 14029750,
+         "transfer": 14030050,
+         "start": 1415,
+         "ms": 406
+        },
+        {
+         "name": "pyarrow-22.0.0-cp314-cp314-pyemscripten_2026_0_wasm32.whl",
+         "encoded": 10018597,
+         "transfer": 10018897,
+         "start": 1419,
+         "ms": 403
+        },
+        {
+         "name": "pyodide.asm.wasm",
+         "encoded": 9598218,
+         "transfer": 9598518,
+         "start": 194,
+         "ms": 85
+        },
+        {
+         "name": "scikit_learn-1.8.0-cp314-cp314-pyemscripten_2026_0_wasm32.whl",
+         "encoded": 4449204,
+         "transfer": 4449504,
+         "start": 1415,
+         "ms": 99
+        },
+        {
+         "name": "pandas-3.0.2-cp314-cp314-pyemscripten_2026_0_wasm32.whl",
+         "encoded": 4177749,
+         "transfer": 4178049,
+         "start": 1419,
+         "ms": 230
+        },
+        {
+         "name": "plexora-0.0.36-py3-none-any.whl",
+         "encoded": 3697994,
+         "transfer": 3698294,
+         "start": 14,
+         "ms": 48
+        },
+        {
+         "name": "numpy-2.4.6-cp314-cp314-pyemscripten_2026_0_wasm32.whl",
+         "encoded": 2960568,
+         "transfer": 2960868,
+         "start": 1415,
+         "ms": 45
+        },
+        {
+         "name": "python_stdlib.zip",
+         "encoded": 2545637,
+         "transfer": 2545937,
+         "start": 193,
+         "ms": 22
+        },
+        {
+         "name": "cryptography-47.0.0-cp314-abi3-pyemscripten_2026_0_wasm32.whl",
+         "encoded": 2174338,
+         "transfer": 2174638,
+         "start": 1417,
+         "ms": 215
+        },
+        {
+         "name": "pydantic_core-2.41.5-cp314-cp314-pyemscripten_2026_0_wasm32.whl",
+         "encoded": 1310164,
+         "transfer": 1310464,
+         "start": 1417,
+         "ms": 58
+        },
+        {
+         "name": "pyodide.asm.mjs",
+         "encoded": 1250344,
+         "transfer": 1250644,
+         "start": 194,
+         "ms": 11
+        },
+        {
+         "name": "pillow-12.2.0-cp314-cp314-pyemscripten_2026_0_wasm32.whl",
+         "encoded": 1037806,
+         "transfer": 1038106,
+         "start": 1416,
+         "ms": 25
+        },
+        {
+         "name": "spatialagents-0.2.5-py3-none-any.whl",
+         "encoded": 783285,
+         "transfer": 783585,
+         "start": 14,
+         "ms": 34
+        },
+        {
+         "name": "pytz-2026.1.post1-py2.py3-none-any.whl",
+         "encoded": 510489,
+         "transfer": 510789,
+         "start": 1419,
+         "ms": 101
+        },
+        {
+         "name": "pydantic-2.12.5-py3-none-any.whl",
+         "encoded": 463578,
+         "transfer": 463878,
+         "start": 1417,
+         "ms": 52
+        },
+        {
+         "name": "numcodecs-0.15.1-cp314-cp314-pyemscripten_2026_0_wasm32.whl",
+         "encoded": 458519,
+         "transfer": 458819,
+         "start": 1416,
+         "ms": 34
+        },
+        {
+         "name": "zarr-3.2.1-py3-none-any.whl",
+         "encoded": 320113,
+         "transfer": 320413,
+         "start": 1416,
+         "ms": 17
+        },
+        {
+         "name": "tifffile-2026.8.23-py3-none-any.whl",
+         "encoded": 273795,
+         "transfer": 274095,
+         "start": 14,
+         "ms": 23
+        },
+        {
+         "name": "ome_types-0.6.3-py3-none-any.whl",
+         "encoded": 245802,
+         "transfer": 246102,
+         "start": 13,
+         "ms": 15
+        },
+        {
+         "name": "xsdata-26.2-py3-none-any.whl",
+         "encoded": 235561,
+         "transfer": 235861,
+         "start": 15,
+         "ms": 26
+        },
+        {
+         "name": "biocognia_markers-0.1.0-py3-none-any.whl",
+         "encoded": 233690,
+         "transfer": 233990,
+         "start": 13,
+         "ms": 11
+        },
+        {
+         "name": "python_dateutil-2.9.0.post0-py2.py3-none-any.whl",
+         "encoded": 229892,
+         "transfer": 230192,
+         "start": 1419,
+         "ms": 98
+        },
+        {
+         "name": "werkzeug-3.1.9-py3-none-any.whl",
+         "encoded": 228700,
+         "transfer": 229000,
+         "start": 14,
+         "ms": 27
+        },
+        {
+         "name": "fsspec-2026.3.0-py3-none-any.whl",
+         "encoded": 189819,
+         "transfer": 190119,
+         "start": 1419,
+         "ms": 76
+        },
+        {
+         "name": "joblib-1.5.3-py3-none-any.whl",
+         "encoded": 180317,
+         "transfer": 180617,
+         "start": 1415,
+         "ms": 10
+        },
+        {
+         "name": "orjson-3.11.8-cp314-cp314-pyemscripten_2026_0_wasm32.whl",
+         "encoded": 151833,
+         "transfer": 152133,
+         "start": 1418,
+         "ms": 67
+        },
+        {
+         "name": "cffi-2.0.0-cp314-cp314-pyemscripten_2026_0_wasm32.whl",
+         "encoded": 148947,
+         "transfer": 149247,
+         "start": 1418,
+         "ms": 60
+        },
+        {
+         "name": "jinja2-3.1.6-py3-none-any.whl",
+         "encoded": 134899,
+         "transfer": 135199,
+         "start": 1418,
+         "ms": 70
+        },
+        {
+         "name": "pyodide-lock.json",
+         "encoded": 119077,
+         "transfer": 119377,
+         "start": 193,
+         "ms": 5
+        },
+        {
+         "name": "pyyaml-6.0.3-cp314-cp314-pyemscripten_2026_0_wasm32.whl",
+         "encoded": 112901,
+         "transfer": 113201,
+         "start": 1416,
+         "ms": 45
+        },
+        {
+         "name": "click-8.3.1-py3-none-any.whl",
+         "encoded": 108274,
+         "transfer": 108574,
+         "start": 1419,
+         "ms": 74
+        },
+        {
+         "name": "flask-3.1.3-py3-none-any.whl",
+         "encoded": 103424,
+         "transfer": 103724,
+         "start": 13,
+         "ms": 8
+        },
+        {
+         "name": "packaging-26.1-py3-none-any.whl",
+         "encoded": 95852,
+         "transfer": 96152,
+         "start": 1416,
+         "ms": 22
+        },
+        {
+         "name": "spatialbridge-0.2.3-py3-none-any.whl",
+         "encoded": 81985,
+         "transfer": 82285,
+         "start": 14,
+         "ms": 15
+        },
+        {
+         "name": "pydantic_extra_types-2.11.1-py3-none-any.whl",
+         "encoded": 79526,
+         "transfer": 79826,
+         "start": 14,
+         "ms": 15
+        },
+        {
+         "name": "biocognia-0.1.2-py3-none-any.whl",
+         "encoded": 61400,
+         "transfer": 61700,
+         "start": 13,
+         "ms": 6
+        },
+        {
+         "name": "wrapt-2.1.2-cp314-cp314-pyemscripten_2026_0_wasm32.whl",
+         "encoded": 52189,
+         "transfer": 52489,
+         "start": 1416,
+         "ms": 38
+        },
+        {
+         "name": "msgpack-1.1.2-cp314-cp314-pyemscripten_2026_0_wasm32.whl",
+         "encoded": 50624,
+         "transfer": 50924,
+         "start": 1418,
+         "ms": 63
+        },
+        {
+         "name": "pycparser-3.0-py3-none-any.whl",
+         "encoded": 48172,
+         "transfer": 48472,
+         "start": 1418,
+         "ms": 59
+        },
+        {
+         "name": "typing_extensions-4.15.0-py3-none-any.whl",
+         "encoded": 44613,
+         "transfer": 44913,
+         "start": 1417,
+         "ms": 48
+        },
+        {
+         "name": "platformdirs-4.9.4-py3-none-any.whl",
+         "encoded": 21215,
+         "transfer": 21515,
+         "start": 1418,
+         "ms": 72
+        },
+        {
+         "name": "google_crc32c-1.8.0-cp314-cp314-pyemscripten_2026_0_wasm32.whl",
+         "encoded": 20916,
+         "transfer": 21216,
+         "start": 1416,
+         "ms": 40
+        },
+        {
+         "name": "threadpoolctl-3.6.0-py3-none-any.whl",
+         "encoded": 18638,
+         "transfer": 18938,
+         "start": 1415,
+         "ms": 6
+        },
+        {
+         "name": "itsdangerous-2.2.0-py3-none-any.whl",
+         "encoded": 16234,
+         "transfer": 16534,
+         "start": 13,
+         "ms": 8
+        },
+        {
+         "name": "donfig-0.8.1.post1-py3-none-any.whl",
+         "encoded": 15360,
+         "transfer": 15660,
+         "start": 1416,
+         "ms": 43
+        },
+        {
+         "name": "typing_inspection-0.4.4-py3-none-any.whl",
+         "encoded": 14750,
+         "transfer": 15050,
+         "start": 14,
+         "ms": 22
+        },
+        {
+         "name": "typing_inspection-0.4.2-py3-none-any.whl",
+         "encoded": 14610,
+         "transfer": 14910,
+         "start": 1417,
+         "ms": 54
+        },
+        {
+         "name": "annotated_types-0.7.0-py3-none-any.whl",
+         "encoded": 11963,
+         "transfer": 12263,
+         "start": 1417,
+         "ms": 51
+        },
+        {
+         "name": "deprecated-1.3.1-py2.py3-none-any.whl",
+         "encoded": 11298,
+         "transfer": 11598,
+         "start": 1416,
+         "ms": 30
+        },
+        {
+         "name": "six-1.17.0-py2.py3-none-any.whl",
+         "encoded": 11050,
+         "transfer": 11350,
+         "start": 1417,
+         "ms": 56
+        },
+        {
+         "name": "p9_boot.py",
+         "encoded": 10572,
+         "transfer": 10872,
+         "start": 15,
+         "ms": 175
+        },
+        {
+         "name": "markupsafe-3.0.3-cp314-cp314-pyemscripten_2026_0_wasm32.whl",
+         "encoded": 9986,
+         "transfer": 10286,
+         "start": 1418,
+         "ms": 70
+        },
+        {
+         "name": "p9_run.py",
+         "encoded": 9172,
+         "transfer": 9472,
+         "start": 15,
+         "ms": 176
+        },
+        {
+         "name": "p9_oracle.py",
+         "encoded": 8655,
+         "transfer": 8955,
+         "start": 16,
+         "ms": 177
+        },
+        {
+         "name": "blinker-1.9.0-py3-none-any.whl",
+         "encoded": 8458,
+         "transfer": 8758,
+         "start": 13,
+         "ms": 6
+        },
+        {
+         "name": "pyodide_unix_timezones-1.0.0-py3-none-any.whl",
+         "encoded": 2168,
+         "transfer": 2468,
+         "start": 1420,
+         "ms": 103
+        }
+       ]
+      }
+     }
+    },
+    {
+     "block": 2,
+     "worker": false,
+     "openMs": 331.7999997138977,
+     "full": {
+      "ms": 54.40000009536743,
+      "full": true
+     },
+     "pan": {
+      "intervals": {
+       "n": 240,
+       "min": 0.1999999999999318,
+       "p50": 0.39999999999997726,
+       "p90": 0.6999999999999318,
+       "p95": 0.7000000000000455,
+       "max": 17.799999999999955,
+       "mean": 0.49208333333333293
+      },
+      "over16": 1,
+      "over25": 0,
+      "frames": 240,
+      "drawMs": {
+       "n": 240,
+       "min": 0,
+       "p50": 0.09999990463256836,
+       "p90": 0.20000028610229492,
+       "p95": 0.2999997138977051,
+       "max": 0.40000009536743164,
+       "mean": 0.12874999046325683
+      },
+      "longTasks": {
+       "n": 0
+      }
+     },
+     "panEndedBeforeReady": null,
+     "longTasks": {
+      "count": 2,
+      "ms": 336,
+      "max": 190
+     },
+     "boot": null
+    },
+    {
+     "block": 3,
+     "worker": false,
+     "openMs": 315.2999997138977,
+     "full": {
+      "ms": 55.799999713897705,
+      "full": true
+     },
+     "pan": {
+      "intervals": {
+       "n": 240,
+       "min": 0.1999999999999318,
+       "p50": 0.39999999999997726,
+       "p90": 0.5,
+       "p95": 0.6000000000000227,
+       "max": 17.09999999999991,
+       "mean": 0.4487499999999997
+      },
+      "over16": 1,
+      "over25": 0,
+      "frames": 240,
+      "drawMs": {
+       "n": 240,
+       "min": 0,
+       "p50": 0.09999990463256836,
+       "p90": 0.20000028610229492,
+       "p95": 0.20000028610229492,
+       "max": 0.40000009536743164,
+       "mean": 0.11458333134651184
+      },
+      "longTasks": {
+       "n": 0
+      }
+     },
+     "panEndedBeforeReady": null,
+     "longTasks": {
+      "count": 2,
+      "ms": 336,
+      "max": 181
+     },
+     "boot": null
+    },
+    {
+     "block": 3,
+     "worker": true,
+     "openMs": 344.5,
+     "full": {
+      "ms": 58.60000038146973,
+      "full": true
+     },
+     "pan": {
+      "intervals": {
+       "n": 240,
+       "min": 0.2999999999999545,
+       "p50": 0.5,
+       "p90": 0.8999999999999773,
+       "p95": 1.2000000000000455,
+       "max": 17.90000000000009,
+       "mean": 0.680416666666667
+      },
+      "over16": 1,
+      "over25": 0,
+      "frames": 240,
+      "drawMs": {
+       "n": 240,
+       "min": 0,
+       "p50": 0.19999980926513672,
+       "p90": 0.3000001907348633,
+       "p95": 0.40000009536743164,
+       "max": 0.8999996185302734,
+       "mean": 0.18583333094914753
+      },
+      "longTasks": {
+       "n": 0
+      }
+     },
+     "panEndedBeforeReady": true,
+     "longTasks": {
+      "count": 2,
+      "ms": 335,
+      "max": 197
+     },
+     "boot": {
+      "phases": {
+       "start": 309.60009765625,
+       "core": 1681.900146484375,
+       "packages": 7773.7001953125,
+       "wheels": 7916.2001953125,
+       "shims": 9426.2001953125,
+       "ready": 16716.30029296875
+      },
+      "bytes": {
+       "total": 81543161,
+       "pyodideCore": 13516944,
+       "packages": 64476519,
+       "wheels": 6068804,
+       "fetches": 57,
+       "cacheHits": 0,
+       "files": [
+        {
+         "name": "polars-1.33.1-cp314-cp314-pyemscripten_2026_0_wasm32.whl",
+         "encoded": 18323371,
+         "transfer": 18323671,
+         "start": 1386,
+         "ms": 495
+        },
+        {
+         "name": "scipy-1.18.0-cp314-cp314-pyemscripten_2026_0_wasm32.whl",
+         "encoded": 14029750,
+         "transfer": 14030050,
+         "start": 1385,
+         "ms": 416
+        },
+        {
+         "name": "pyarrow-22.0.0-cp314-cp314-pyemscripten_2026_0_wasm32.whl",
+         "encoded": 10018597,
+         "transfer": 10018897,
+         "start": 1388,
+         "ms": 404
+        },
+        {
+         "name": "pyodide.asm.wasm",
+         "encoded": 9598218,
+         "transfer": 9598518,
+         "start": 142,
+         "ms": 86
+        },
+        {
+         "name": "scikit_learn-1.8.0-cp314-cp314-pyemscripten_2026_0_wasm32.whl",
+         "encoded": 4449204,
+         "transfer": 4449504,
+         "start": 1385,
+         "ms": 92
+        },
+        {
+         "name": "pandas-3.0.2-cp314-cp314-pyemscripten_2026_0_wasm32.whl",
+         "encoded": 4177749,
+         "transfer": 4178049,
+         "start": 1389,
+         "ms": 227
+        },
+        {
+         "name": "plexora-0.0.36-py3-none-any.whl",
+         "encoded": 3697994,
+         "transfer": 3698294,
+         "start": 13,
+         "ms": 49
+        },
+        {
+         "name": "numpy-2.4.6-cp314-cp314-pyemscripten_2026_0_wasm32.whl",
+         "encoded": 2960568,
+         "transfer": 2960868,
+         "start": 1385,
+         "ms": 47
+        },
+        {
+         "name": "python_stdlib.zip",
+         "encoded": 2545637,
+         "transfer": 2545937,
+         "start": 142,
+         "ms": 21
+        },
+        {
+         "name": "cryptography-47.0.0-cp314-abi3-pyemscripten_2026_0_wasm32.whl",
+         "encoded": 2174338,
+         "transfer": 2174638,
+         "start": 1387,
+         "ms": 215
+        },
+        {
+         "name": "pydantic_core-2.41.5-cp314-cp314-pyemscripten_2026_0_wasm32.whl",
+         "encoded": 1310164,
+         "transfer": 1310464,
+         "start": 1387,
+         "ms": 56
+        },
+        {
+         "name": "pyodide.asm.mjs",
+         "encoded": 1250344,
+         "transfer": 1250644,
+         "start": 142,
+         "ms": 13
+        },
+        {
+         "name": "pillow-12.2.0-cp314-cp314-pyemscripten_2026_0_wasm32.whl",
+         "encoded": 1037806,
+         "transfer": 1038106,
+         "start": 1386,
+         "ms": 26
+        },
+        {
+         "name": "spatialagents-0.2.5-py3-none-any.whl",
+         "encoded": 783285,
+         "transfer": 783585,
+         "start": 14,
+         "ms": 33
+        },
+        {
+         "name": "pytz-2026.1.post1-py2.py3-none-any.whl",
+         "encoded": 510489,
+         "transfer": 510789,
+         "start": 1389,
+         "ms": 97
+        },
+        {
+         "name": "pydantic-2.12.5-py3-none-any.whl",
+         "encoded": 463578,
+         "transfer": 463878,
+         "start": 1387,
+         "ms": 50
+        },
+        {
+         "name": "numcodecs-0.15.1-cp314-cp314-pyemscripten_2026_0_wasm32.whl",
+         "encoded": 458519,
+         "transfer": 458819,
+         "start": 1386,
+         "ms": 31
+        },
+        {
+         "name": "zarr-3.2.1-py3-none-any.whl",
+         "encoded": 320113,
+         "transfer": 320413,
+         "start": 1386,
+         "ms": 15
+        },
+        {
+         "name": "tifffile-2026.8.23-py3-none-any.whl",
+         "encoded": 273795,
+         "transfer": 274095,
+         "start": 14,
+         "ms": 25
+        },
+        {
+         "name": "ome_types-0.6.3-py3-none-any.whl",
+         "encoded": 245802,
+         "transfer": 246102,
+         "start": 13,
+         "ms": 13
+        },
+        {
+         "name": "xsdata-26.2-py3-none-any.whl",
+         "encoded": 235561,
+         "transfer": 235861,
+         "start": 15,
+         "ms": 32
+        },
+        {
+         "name": "biocognia_markers-0.1.0-py3-none-any.whl",
+         "encoded": 233690,
+         "transfer": 233990,
+         "start": 12,
+         "ms": 14
+        },
+        {
+         "name": "python_dateutil-2.9.0.post0-py2.py3-none-any.whl",
+         "encoded": 229892,
+         "transfer": 230192,
+         "start": 1389,
+         "ms": 93
+        },
+        {
+         "name": "werkzeug-3.1.9-py3-none-any.whl",
+         "encoded": 228700,
+         "transfer": 229000,
+         "start": 15,
+         "ms": 29
+        },
+        {
+         "name": "fsspec-2026.3.0-py3-none-any.whl",
+         "encoded": 189819,
+         "transfer": 190119,
+         "start": 1388,
+         "ms": 74
+        },
+        {
+         "name": "joblib-1.5.3-py3-none-any.whl",
+         "encoded": 180317,
+         "transfer": 180617,
+         "start": 1385,
+         "ms": 7
+        },
+        {
+         "name": "orjson-3.11.8-cp314-cp314-pyemscripten_2026_0_wasm32.whl",
+         "encoded": 151833,
+         "transfer": 152133,
+         "start": 1388,
+         "ms": 64
+        },
+        {
+         "name": "cffi-2.0.0-cp314-cp314-pyemscripten_2026_0_wasm32.whl",
+         "encoded": 148947,
+         "transfer": 149247,
+         "start": 1388,
+         "ms": 58
+        },
+        {
+         "name": "jinja2-3.1.6-py3-none-any.whl",
+         "encoded": 134899,
+         "transfer": 135199,
+         "start": 1388,
+         "ms": 68
+        },
+        {
+         "name": "pyodide-lock.json",
+         "encoded": 119077,
+         "transfer": 119377,
+         "start": 142,
+         "ms": 3
+        },
+        {
+         "name": "pyyaml-6.0.3-cp314-cp314-pyemscripten_2026_0_wasm32.whl",
+         "encoded": 112901,
+         "transfer": 113201,
+         "start": 1387,
+         "ms": 42
+        },
+        {
+         "name": "click-8.3.1-py3-none-any.whl",
+         "encoded": 108274,
+         "transfer": 108574,
+         "start": 1388,
+         "ms": 73
+        },
+        {
+         "name": "flask-3.1.3-py3-none-any.whl",
+         "encoded": 103424,
+         "transfer": 103724,
+         "start": 13,
+         "ms": 9
+        },
+        {
+         "name": "packaging-26.1-py3-none-any.whl",
+         "encoded": 95852,
+         "transfer": 96152,
+         "start": 1386,
+         "ms": 22
+        },
+        {
+         "name": "spatialbridge-0.2.3-py3-none-any.whl",
+         "encoded": 81985,
+         "transfer": 82285,
+         "start": 14,
+         "ms": 18
+        },
+        {
+         "name": "pydantic_extra_types-2.11.1-py3-none-any.whl",
+         "encoded": 79526,
+         "transfer": 79826,
+         "start": 14,
+         "ms": 18
+        },
+        {
+         "name": "biocognia-0.1.2-py3-none-any.whl",
+         "encoded": 61400,
+         "transfer": 61700,
+         "start": 12,
+         "ms": 6
+        },
+        {
+         "name": "wrapt-2.1.2-cp314-cp314-pyemscripten_2026_0_wasm32.whl",
+         "encoded": 52189,
+         "transfer": 52489,
+         "start": 1386,
+         "ms": 36
+        },
+        {
+         "name": "msgpack-1.1.2-cp314-cp314-pyemscripten_2026_0_wasm32.whl",
+         "encoded": 50624,
+         "transfer": 50924,
+         "start": 1388,
+         "ms": 64
+        },
+        {
+         "name": "pycparser-3.0-py3-none-any.whl",
+         "encoded": 48172,
+         "transfer": 48472,
+         "start": 1388,
+         "ms": 60
+        },
+        {
+         "name": "typing_extensions-4.15.0-py3-none-any.whl",
+         "encoded": 44613,
+         "transfer": 44913,
+         "start": 1387,
+         "ms": 47
+        },
+        {
+         "name": "platformdirs-4.9.4-py3-none-any.whl",
+         "encoded": 21215,
+         "transfer": 21515,
+         "start": 1388,
+         "ms": 71
+        },
+        {
+         "name": "google_crc32c-1.8.0-cp314-cp314-pyemscripten_2026_0_wasm32.whl",
+         "encoded": 20916,
+         "transfer": 21216,
+         "start": 1386,
+         "ms": 36
+        },
+        {
+         "name": "threadpoolctl-3.6.0-py3-none-any.whl",
+         "encoded": 18638,
+         "transfer": 18938,
+         "start": 1386,
+         "ms": 7
+        },
+        {
+         "name": "itsdangerous-2.2.0-py3-none-any.whl",
+         "encoded": 16234,
+         "transfer": 16534,
+         "start": 13,
+         "ms": 8
+        },
+        {
+         "name": "donfig-0.8.1.post1-py3-none-any.whl",
+         "encoded": 15360,
+         "transfer": 15660,
+         "start": 1387,
+         "ms": 42
+        },
+        {
+         "name": "typing_inspection-0.4.4-py3-none-any.whl",
+         "encoded": 14750,
+         "transfer": 15050,
+         "start": 14,
+         "ms": 18
+        },
+        {
+         "name": "typing_inspection-0.4.2-py3-none-any.whl",
+         "encoded": 14610,
+         "transfer": 14910,
+         "start": 1387,
+         "ms": 53
+        },
+        {
+         "name": "annotated_types-0.7.0-py3-none-any.whl",
+         "encoded": 11963,
+         "transfer": 12263,
+         "start": 1387,
+         "ms": 50
+        },
+        {
+         "name": "deprecated-1.3.1-py2.py3-none-any.whl",
+         "encoded": 11298,
+         "transfer": 11598,
+         "start": 1386,
+         "ms": 31
+        },
+        {
+         "name": "six-1.17.0-py2.py3-none-any.whl",
+         "encoded": 11050,
+         "transfer": 11350,
+         "start": 1387,
+         "ms": 57
+        },
+        {
+         "name": "p9_boot.py",
+         "encoded": 10572,
+         "transfer": 10872,
+         "start": 15,
+         "ms": 115
+        },
+        {
+         "name": "markupsafe-3.0.3-cp314-cp314-pyemscripten_2026_0_wasm32.whl",
+         "encoded": 9986,
+         "transfer": 10286,
+         "start": 1388,
+         "ms": 68
+        },
+        {
+         "name": "p9_run.py",
+         "encoded": 9172,
+         "transfer": 9472,
+         "start": 15,
+         "ms": 125
+        },
+        {
+         "name": "p9_oracle.py",
+         "encoded": 8655,
+         "transfer": 8955,
+         "start": 16,
+         "ms": 125
+        },
+        {
+         "name": "blinker-1.9.0-py3-none-any.whl",
+         "encoded": 8458,
+         "transfer": 8758,
+         "start": 12,
+         "ms": 9
+        },
+        {
+         "name": "pyodide_unix_timezones-1.0.0-py3-none-any.whl",
+         "encoded": 2168,
+         "transfer": 2468,
+         "start": 1389,
+         "ms": 100
+        }
+       ]
+      }
+     }
+    }
+   ],
+   "openRatio": 1.092610213487467,
+   "panP95": {
+    "worker": 1,
+    "control": 0.6000000000000227
+   },
+   "longTasks": {
+    "worker": 2,
+    "control": 2,
+    "workerMs": 331,
+    "controlMs": 336
+   },
+   "panDuringBoot": 4
+  },
+  "tableProbe": {
+   "storeMs": 1765.4000000953674,
+   "storeTimings": {
+    "parser": "js",
+    "sniffMs": 75.19999980926514,
+    "parts": 16,
+    "parseMs": 760,
+    "partRows": [
+     79280,
+     79103,
+     78959,
+     78881,
+     78868,
+     78818,
+     78815,
+     78844,
+     78779,
+     78725,
+     78732,
+     78710,
+     78604,
+     78495,
+     78423,
+     78556
+    ],
+    "drawableMs": 835.7000002861023,
+    "opfsWriteMs": 884.0999999046326,
+    "totalMs": 1740,
+    "bytes": 292457344,
+    "mergeMs": 82.59999942779541
+   },
+   "handMs": 463,
+   "rows": 1260592,
+   "columns": 29,
+   "frameMs": 91.99999999999875,
+   "describeMs": 1449.2000000000012,
+   "filterMs": 48.60000000000042,
+   "filtered": 236354,
+   "heap": 2088828928,
+   "csvParse": "polars read_csv in Pyodide panics on this file (could not spawn threads)",
+   "browserMs": 2320.400000095366,
+   "cpythonReadMs": 337.06519985571504,
+   "ratio": 6.88412805916672,
+   "peakMemory": {
+    "byKind": {
+     "browser": 214208512,
+     "crashpad-handler": 11055104,
+     "gpu-process": 89882624,
+     "utility": 57577472,
+     "renderer": 2467368960
+    },
+    "processes": 8
+   }
+  }
+ },
+ "checks": {
+  "P9S": {
+   "verdict": "within",
+   "packets": {
+    "count": 2,
+    "kindsIdentical": true,
+    "identical": 2,
+    "firstDifference": null
+   },
+   "images": {
+    "count": 3,
+    "bytesIdentical": 0,
+    "within": 3,
+    "maxAbs": 0,
+    "maxMean": 0,
+    "shapes": true,
+    "worst": null
+   },
+   "units": {
+    "count": 3,
+    "statesIdentical": true,
+    "maxRel": 0,
+    "within": true
+   },
+   "gates": {
+    "identical": true,
+    "firstDifference": null
+   },
+   "modules": {
+    "missingInRun": [
+     "PIL",
+     "asyncio",
+     "bdb",
+     "biocognia_markers",
+     "cffi",
+     "charset_normalizer",
+     "click",
+     "cloudpickle",
+     "colorama",
+     "concurrent",
+     "cryptography",
+     "dateutil",
+     "encodings",
+     "faulthandler",
+     "fsspec",
+     "getpass",
+     "imagecodecs",
+     "iniconfig",
+     "joblib",
+     "llvmlite",
+     "narwhals",
+     "numba",
+     "numpy",
+     "pathlib",
+     "pathlib_abc",
+     "platformdirs",
+     "plexora._guard",
+     "plexora._lifetime",
+     "plexora._resources",
+     "plexora._subprocess",
+     "plexora._url",
+     "plexora.datasource",
+     "plexora.plugins.cell_explorer.server",
+     "plexora.plugins.figure_builder.server",
+     "plexora.plugins.gating.server",
+     "plexora.plugins.qc.server",
+     "plexora.plugins.roi.server",
+     "plexora.plugins.segmentation.server",
+     "plexora.plugins.transcripts.server",
+     "plexora.plugins.video_studio.server",
+     "plexora.plugins.visium_hd.server",
+     "plexora.server.models.data_migration",
+     "plexora.server.models.dataset_build",
+     "plexora.server.models.dataset_scan",
+     "plexora.server.models.datasets",
+     "plexora.server.models.drop_plan",
+     "plexora.server.models.import_proposal",
+     "plexora.server.models.layer_jobs",
+     "plexora.server.models.layer_sources",
+     "plexora.server.models.remote_sources",
+     "plexora.server.models.viewer_sessions",
+     "plexora.server.surface",
+     "plexora.server.surface.isosurface",
+     "plexora.server.surface.labels",
+     "plexora.server.surface.levels",
+     "plexora.server.surface.marching",
+     "plexora.server.surface.mesh",
+     "plexora.server.surface.nets",
+     "plexora.server.surface.store",
+     "plexora.server.utils.boundary_mask",
+     "plexora.server.utils.channel_file",
+     "plexora.server.utils.colormaps",
+     "plexora.server.utils.dataset_marks",
+     "plexora.server.utils.dir_listing",
+     "plexora.server.utils.dir_search",
+     "plexora.server.utils.file_transfer",
+     "plexora.server.utils.fs_places",
+     "plexora.server.utils.native_dialog",
+     "plexora.server.utils.ngff_transform",
+     "plexora.server.utils.remote_store",
+     "plexora.server.utils.spatial_scene",
+     "plexora.server.volume.pin",
+     "plexora.server.volume.serve",
+     "plexora.telemetry.batch",
+     "plexora.telemetry.redact",
+     "plexora.telemetry.report",
+     "plexora.telemetry.uploader",
+     "pluggy",
+     "polars",
+     "psutil",
+     "py",
+     "pycparser",
+     "pydantic",
+     "pygments",
+     "pytest",
+     "pythoncom",
+     "pywin32_system32",
+     "pywintypes",
+     "rich",
+     "runpy",
+     "shlex",
+     "sklearn",
+     "spatialagents",
+     "statistics",
+     "upath",
+     "webbrowser",
+     "win32api",
+     "win32com",
+     "zarr",
+     "zoneinfo",
+     "zstandard"
+    ],
+    "count": 101
+   },
+   "cpythonSelf": [
+    "identical",
+    "identical"
+   ]
+  },
+  "P9M": {
+   "verdict": "within",
+   "packets": {
+    "count": 8,
+    "kindsIdentical": true,
+    "identical": 8,
+    "firstDifference": null
+   },
+   "images": {
+    "count": 14,
+    "bytesIdentical": 0,
+    "within": 14,
+    "maxAbs": 0,
+    "maxMean": 0,
+    "shapes": true,
+    "worst": null
+   },
+   "units": {
+    "count": 5,
+    "statesIdentical": true,
+    "maxRel": 0,
+    "within": true
+   },
+   "gates": {
+    "identical": true,
+    "firstDifference": null
+   },
+   "modules": {
+    "missingInRun": [
+     "PIL",
+     "asyncio",
+     "bdb",
+     "biocognia_markers",
+     "cffi",
+     "charset_normalizer",
+     "click",
+     "cloudpickle",
+     "colorama",
+     "concurrent",
+     "cryptography",
+     "dateutil",
+     "encodings",
+     "faulthandler",
+     "fsspec",
+     "getpass",
+     "imagecodecs",
+     "iniconfig",
+     "joblib",
+     "llvmlite",
+     "narwhals",
+     "numba",
+     "numpy",
+     "pathlib",
+     "pathlib_abc",
+     "platformdirs",
+     "plexora._guard",
+     "plexora._lifetime",
+     "plexora._resources",
+     "plexora._subprocess",
+     "plexora._url",
+     "plexora.datasource",
+     "plexora.plugins.cell_explorer.server",
+     "plexora.plugins.figure_builder.server",
+     "plexora.plugins.gating.server",
+     "plexora.plugins.qc.server",
+     "plexora.plugins.roi.server",
+     "plexora.plugins.segmentation.server",
+     "plexora.plugins.transcripts.server",
+     "plexora.plugins.video_studio.server",
+     "plexora.plugins.visium_hd.server",
+     "plexora.server.models.data_migration",
+     "plexora.server.models.dataset_build",
+     "plexora.server.models.dataset_scan",
+     "plexora.server.models.datasets",
+     "plexora.server.models.drop_plan",
+     "plexora.server.models.import_proposal",
+     "plexora.server.models.layer_jobs",
+     "plexora.server.models.layer_sources",
+     "plexora.server.models.remote_sources",
+     "plexora.server.models.viewer_sessions",
+     "plexora.server.surface",
+     "plexora.server.surface.isosurface",
+     "plexora.server.surface.labels",
+     "plexora.server.surface.levels",
+     "plexora.server.surface.marching",
+     "plexora.server.surface.mesh",
+     "plexora.server.surface.nets",
+     "plexora.server.surface.store",
+     "plexora.server.utils.boundary_mask",
+     "plexora.server.utils.channel_file",
+     "plexora.server.utils.colormaps",
+     "plexora.server.utils.dataset_marks",
+     "plexora.server.utils.dir_listing",
+     "plexora.server.utils.dir_search",
+     "plexora.server.utils.file_transfer",
+     "plexora.server.utils.fs_places",
+     "plexora.server.utils.native_dialog",
+     "plexora.server.utils.ngff_transform",
+     "plexora.server.utils.remote_store",
+     "plexora.server.utils.spatial_scene",
+     "plexora.server.volume.pin",
+     "plexora.server.volume.serve",
+     "plexora.telemetry.batch",
+     "plexora.telemetry.redact",
+     "plexora.telemetry.report",
+     "plexora.telemetry.uploader",
+     "pluggy",
+     "polars",
+     "psutil",
+     "py",
+     "pycparser",
+     "pydantic",
+     "pygments",
+     "pytest",
+     "pythoncom",
+     "pywin32_system32",
+     "pywintypes",
+     "rich",
+     "runpy",
+     "shlex",
+     "sklearn",
+     "spatialagents",
+     "statistics",
+     "upath",
+     "webbrowser",
+     "win32api",
+     "win32com",
+     "zarr",
+     "zoneinfo",
+     "zstandard"
+    ],
+    "count": 101
+   },
+   "cpythonSelf": [
+    "identical",
+    "identical"
+   ]
+  }
+ },
+ "thresholds": {
+  "go": [
+   {
+    "name": "cold ready, first visit over 50 Mbps / 20 ms (s from navigation)",
+    "value": 28.92,
+    "bound": "<= 10",
+    "result": "fail"
+   },
+   {
+    "name": "cold ready, this origin unthrottled (s; recorded)",
+    "value": 16.25,
+    "bound": "recorded",
+    "result": "pass"
+   },
+   {
+    "name": "return ready, same profile (s)",
+    "value": 16.09,
+    "bound": "<= 3",
+    "result": "fail"
+   },
+   {
+    "name": "viewer open with / without the worker booting (median of ABAB)",
+    "value": 1.1,
+    "bound": "<= 1.1",
+    "result": "pass"
+   },
+   {
+    "name": "main-thread long tasks added by the boot (median, worker - control)",
+    "value": 0,
+    "bound": "0",
+    "result": "pass"
+   },
+   {
+    "name": "pan frame interval p95 while the worker boots (ms)",
+    "value": 1.0,
+    "bound": "<= 25",
+    "result": "pass"
+   },
+   {
+    "name": "session wall, Pyodide / CPython, S",
+    "value": 0.9,
+    "bound": "<= 2",
+    "result": "pass"
+   },
+   {
+    "name": "session wall, Pyodide / CPython, M",
+    "value": 1.1,
+    "bound": "<= 2",
+    "result": "pass"
+   },
+   {
+    "name": "wasm heap after the M session (GiB)",
+    "value": 0.52,
+    "bound": "<= 2",
+    "result": "pass"
+   },
+   {
+    "name": "renderer peak, M (GiB)",
+    "value": 1.88,
+    "bound": "<= 2",
+    "result": "pass"
+   },
+   {
+    "name": "S: packets, answers, states and gates as CPython's",
+    "value": "within",
+    "bound": "identical | within",
+    "result": "pass"
+   },
+   {
+    "name": "M: the same",
+    "value": "within",
+    "bound": "identical | within",
+    "result": "pass"
+   },
+   {
+    "name": "first-visit transfer (MB; sizes the fallback download too)",
+    "value": 81.5,
+    "bound": "recorded",
+    "result": "pass"
+   },
+   {
+    "name": "the product's code as it ships (no prototype applied)",
+    "value": "none",
+    "bound": "none",
+    "result": "pass"
+   }
+  ],
+  "stop": [
+   {
+    "name": "a hard correctness rule failed (packet kinds, packets, final states and gates)",
+    "value": [],
+    "bound": "none",
+    "result": "fail"
+   },
+   {
+    "name": "a shim over 20 lines of code",
+    "value": 19,
+    "bound": "> 20",
+    "result": "fail"
+   },
+   {
+    "name": "cold ready over 50 Mbps / 20 ms beyond 30 s",
+    "value": 28.92,
+    "bound": "> 30",
+    "result": "fail"
+   },
+   {
+    "name": "wasm heap after the M session beyond 3 GiB",
+    "value": 0.52,
+    "bound": "> 3",
+    "result": "fail"
+   },
+   {
+    "name": "session 10x CPython or more",
+    "value": 1.1,
+    "bound": ">= 10",
+    "result": "fail"
+   }
+  ]
+ },
+ "verdict": "PARTIAL",
+ "notes": [
+  "Served: 314.0.7 over http."
+ ],
+ "logs": [
+  "[error] Failed to load resource: the server responded with a status of 404 (Not Found)",
+  "[warning] /lib/python3.14/site-packages/threadpoolctl.py:1135: RuntimeWarning: JsProxy.as_object_map() is deprecated. Use as_py_json() instead.",
+  "[warning]   for filepath in LDSO.loadedLibsByName.as_object_map():"
+ ]
+}
