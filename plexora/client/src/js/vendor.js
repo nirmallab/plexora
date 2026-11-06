@@ -13,6 +13,7 @@ import Sortable from 'sortablejs';
 import OpenSeadragon from 'openseadragon';
 import {jsPDF} from 'jspdf';
 import {ViewerManager, RGB_TILE_FORMAT} from './views/viewerManager';
+import * as PlexoraTileSource from './services/tileSource';
 import {GLRenderer} from './services/glRenderer';
 import Dropzone from 'dropzone';
 
@@ -30,4 +31,9 @@ window.ViewerManager = ViewerManager;
 // bundle, so the one constant the two share has to cross here. See
 // viewerManager.js for what 24 means.
 window.RGB_TILE_FORMAT = RGB_TILE_FORMAT;
+// The tile-source functions every source ViewerManager builds carries (its
+// pyramid arithmetic, tile addresses and cache keys), for a tile source built
+// outside this bundle. The same module instance viewerManager.js imports, so
+// the HD flag in it is the one the viewer's addresses read.
+window.PlexoraTileSource = PlexoraTileSource;
 window.GLRenderer = GLRenderer;

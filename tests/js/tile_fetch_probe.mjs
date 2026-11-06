@@ -29,7 +29,15 @@
  *   server's own time, over BATCH_ENTER_MS -- a slow server is not a slow
  *   link; a batch carries one server's tiles of one tier in order of need,
  *   each tile its own part, and a server without the route goes back to
- *   single tiles for good.
+ *   single tiles for good;
+ * - a raster source's tiles (a label or RGB tile, `attach`'s `raster`) are
+ *   fetched, shared, ranked, failed and cancelled the same way, but never
+ *   decoded or batched: each job is finished as OSD's own loader finishes
+ *   one, the bytes as a "rasterBlob" and the response where `tile-loaded`
+ *   reads `tileRequest.response` -- and attaching one leaves the loader's job
+ *   limit alone;
+ * - a request says which address space it goes to (`targetAddressSpace`)
+ *   only when `addressSpace` names one: by default it is what it always was.
  *
  * Run directly:  node tests/js/tile_fetch_probe.mjs
  */
@@ -51,7 +59,7 @@ function check(label, ok, why) {
 }
 
 const box = { console, setTimeout, clearTimeout, performance, AbortController, Promise, URL,
-              TextDecoder, location: { href: "http://127.0.0.1:8792/proj" } };
+              TextDecoder, Blob, location: { href: "http://127.0.0.1:8792/proj" } };
 box.window = box;
 box.globalThis = box;
 runInContext(readFileSync(join(JS, "views/tileFetch.js"), "utf8"), createContext(box));
@@ -104,7 +112,7 @@ function job(url, tiledImage, { level = 3, distance = 0 } = {}) {
     return {
         src: url, tile, source: tiledImage.source, userData: {}, tries: 1,
         finished: null, failed: null,
-        finish(data, request, dataType) { this.finished = { data, dataType }; },
+        finish(data, request, dataType) { this.finished = { data, request, dataType }; },
         fail(message) { this.failed = message; },
     };
 }
@@ -668,6 +676,135 @@ async function warm(s, prefix, count = BATCH.SAMPLES) {
     check("a server without the batch route is asked singly from then on",
           link.unbatchable && !link.batching && late.every((j) => j.finished) && posts404.length === 1,
           JSON.stringify({ link, posts: posts404.length, done: late.map((j) => Boolean(j.finished)) }));
+}
+
+// -- raster tiles: a label or an RGB tile, handed over as OSD's own loader would ---------------
+
+/** An item whose source was attached as raster (ViewerManager.rasterTiles). */
+function rasterItem(s, { standby = false, opacity = 1 } = {}) {
+    items += 1;
+    const source = { tileFormat: 32 };
+    s.attach(source, { raster: true, standby });
+    return { id: items, opacity, getOpacity() { return this.opacity; }, source };
+}
+
+{
+    let raised = 0;
+    const { s, net, decoder } = scheduler({ onAttach: () => { raised += 1; } });
+    const label = rasterItem(s);
+    check("a raster attach routes the source's downloads here but leaves the loader's job limit "
+          + "alone (onAttach is a volume's)",
+          raised === 0 && label.source.plexoraRaster === true
+          && typeof label.source.downloadTileStart === "function");
+    // A tile past full resolution addresses its source tile: the same URL.
+    const a = job("/generated/data/ds/ds_label/2/0_1.png?v=2", label);
+    const b = job("/generated/data/ds/ds_label/2/0_1.png?v=2", label);
+    label.source.downloadTileStart(a);
+    label.source.downloadTileStart(b);
+    check("one fetch per address, as for a channel tile",
+          net.calls.length === 1 && net.calls[0].url === a.src);
+    check("...a GET as the page's own, nothing declared (no targetAddressSpace)",
+          !net.calls[0].options.method && net.calls[0].options.credentials === "same-origin"
+          && !("targetAddressSpace" in net.calls[0].options), JSON.stringify(net.calls[0].options));
+    const bytes = png();
+    net.calls[0].respond(bytes);
+    await tick(); await tick();
+    check("never decoded here", decoder.seen.length === 0 && !a.tile._array && !b.tile._array);
+    check("each job finished as OSD's loader finishes one: its own Blob, data type rasterBlob",
+          a.finished?.dataType === "rasterBlob" && b.finished?.dataType === "rasterBlob"
+          && a.finished.data instanceof Blob && a.finished.data !== b.finished.data,
+          JSON.stringify({ a: a.finished?.dataType, b: b.finished?.dataType }));
+    const read = new Uint8Array(await a.finished.data.arrayBuffer());
+    check("...holding exactly the bytes that came back",
+          a.finished.data.size === bytes.byteLength && read.join() === new Uint8Array(bytes).join());
+    check("...with the response where tile-loaded reads tileRequest.response (tileDecode.js)",
+          a.finished.request?.response === bytes && a.finished.request.status === 200
+          && b.finished.request?.response === bytes);
+}
+
+{
+    const { s, net } = scheduler();
+    s.start(job("/t/same.png", rasterItem(s)));
+    s.start(job("/t/same.png", item()));
+    check("a raster job and one to decode never share a request", net.calls.length === 2);
+}
+
+{
+    const { s, net } = scheduler();
+    const label = rasterItem(s);
+    const missing = job("/t/label/missing.png", label);
+    s.start(missing);
+    net.calls[0].respond(png(), 404);
+    await tick(); await tick();
+    check("a raster tile that fails fails its job, tagged for OSD to ask again",
+          missing.failed && !missing.finished && missing.tile._plexoraFailed === "retrying");
+    const empty = job("/t/label/empty.png", label);
+    s.start(empty);
+    net.calls[1].respond(new ArrayBuffer(0));
+    await tick(); await tick();
+    check("...and so does an empty one, as OSD's loader fails it", empty.failed && !empty.finished);
+    const again = job("/t/label/missing.png", label);
+    again.tries = 2;
+    again.tile._plexoraFailed = "retrying";
+    s.start(again);
+    net.calls[2].respond(png());
+    await tick(); await tick();
+    check("...and a retry that lands is a tile, no longer a hole",
+          again.finished?.dataType === "rasterBlob" && !("_plexoraFailed" in again.tile));
+}
+
+{
+    const { s, net } = scheduler();
+    const label = rasterItem(s);
+    const gone = job("/t/label/gone.png", label);
+    s.start(gone);
+    s.cancelItem(label);
+    await tick();
+    check("an item taken off its world gives up its raster tiles: finished quietly, request aborted",
+          gone.finished?.dataType === "context2d" && net.calls[0].aborted);
+}
+
+{
+    const { s, net } = scheduler({ maxInFlight: 1 });
+    s.start(job("/t/first", item()));
+    s.start(job("/t/label-prefetch", rasterItem(s, { standby: true, opacity: 0 })));
+    s.start(job("/t/label-on-screen", rasterItem(s)));
+    net.calls[0].respond();
+    for (let i = 0; i < 4; i += 1) await tick();
+    check("raster tiles are in the same line: on screen before a prefetched label plane",
+          net.calls[1]?.url === "/t/label-on-screen", net.calls.map((c) => c.url).join());
+}
+
+{
+    const net = slowFetch(90, 5);
+    const s = new TileFetchScheduler({ decoderPool: pool(), fetchImpl: net.fetchImpl,
+                                       makeContext: () => ({ canvas: { width: 1, height: 1 } }) });
+    await warm(s, "/generated/data/rs/rs_0");
+    const link = s.linkOf("/generated/data/rs/rs_0/0/0_0.png").link;
+    const label = rasterItem(s);
+    net.calls.length = 0;
+    const jobs = Array.from({ length: 3 }, (_, i) =>
+        job(`/generated/data/rs/rs_label/1/${i}_0.png?v=2`, label));
+    for (const j of jobs) s.start(j);
+    for (let i = 0; i < 40 && (s.inFlight || s.queue.length); i += 1) await sleep(10);
+    await tick();
+    check("a raster tile is never batched, even from a server whose link is",
+          link.batching && net.calls.length === 3
+          && net.calls.every((call) => call.options?.method !== "POST")
+          && jobs.every((j) => j.finished?.dataType === "rasterBlob"),
+          JSON.stringify(net.calls.map((c) => [c.options?.method || "GET", c.url])));
+}
+
+{
+    const node = "http://127.0.0.1:7001/node/v1/seg/r/tile/r_0";
+    const { s, net } = scheduler({
+        addressSpace: (url) => (url.startsWith("http://127.0.0.1:7001/") ? "loopback" : null) });
+    s.start(job(`${node}/0/0_0.png?t=x`, rasterItem(s)));
+    s.start(job("/generated/data/ds/ds_0/0/0_0.png", item()));
+    check("a request `addressSpace` names a space for declares it (targetAddressSpace)",
+          net.calls[0].options.targetAddressSpace === "loopback");
+    check("...and one it names none for declares nothing",
+          !("targetAddressSpace" in net.calls[1].options));
 }
 
 if (failures.length) {

@@ -20,8 +20,10 @@ import assert from "node:assert/strict";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.join(here, "..", "..");
+//: services/tileSource.js holds the tile-source functions every source the
+//: viewer builds carries (viewerManager.js imports them from there).
 const source = await readFile(
-    path.join(repoRoot, "plexora/client/src/js/views/viewerManager.js"), "utf8");
+    path.join(repoRoot, "plexora/client/src/js/services/tileSource.js"), "utf8");
 
 /** Slice one top-level function out by brace matching. */
 function extractFunction(text, name) {
