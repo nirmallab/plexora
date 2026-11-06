@@ -1,0 +1,393 @@
+{
+ "poc": "P5LNA",
+ "date": "2026-11-05",
+ "commit": "4e18de00-dirty",
+ "machine": {
+  "cpuPercentBefore": [
+   8.8,
+   10,
+   12.7
+  ],
+  "platform": "win32 10.0.26200",
+  "cpu": "12th Gen Intel(R) Core(TM) i9-12900K",
+  "cores": 24,
+  "memoryGB": 128,
+  "load": [
+   0,
+   0,
+   0
+  ],
+  "hostname": "ajit"
+ },
+ "browser": null,
+ "arm": "browser->node",
+ "state": "Chrome stable, headless, LNA by address-space override",
+ "fixture": {
+  "name": "S",
+  "files": {
+   "image": {
+    "name": "flat.ome.tif",
+    "bytes": 31031689,
+    "mtime": "2026-10-13T21:15:39.180Z"
+   },
+   "mask": {
+    "name": "LSP26227-registered.ome_segMask.labels.pyramid.ome.tiff",
+    "bytes": 98631559,
+    "mtime": "2026-08-19T20:18:20.079Z"
+   },
+   "table": {
+    "name": "exemplar-001--unmicst_cell.csv",
+    "bytes": 4039642,
+    "mtime": "2024-03-13T20:07:12.978Z"
+   },
+   "flatMask": {
+    "name": "cell.ome.tif",
+    "bytes": 43010132,
+    "mtime": "2024-03-13T20:07:15.832Z"
+   }
+  }
+ },
+ "metrics": {
+  "cases": [
+   {
+    "scheme": "https",
+    "space": "public",
+    "grant": false,
+    "origin": "https://127.0.0.1:57463",
+    "secure": true,
+    "connectorPlain": {
+     "ok": false,
+     "error": "TypeError: Failed to fetch"
+    },
+    "connectorLoopback": {
+     "ok": false,
+     "error": "TypeError: Failed to fetch"
+    },
+    "permission": {
+     "local-network-access": "denied",
+     "loopback-network": "denied",
+     "local-network": "prompt"
+    },
+    "plain": {
+     "ok": false,
+     "error": "TypeError: Failed to fetch",
+     "ms": 1
+    },
+    "loopback": {
+     "ok": false,
+     "error": "TypeError: Failed to fetch",
+     "ms": 1
+    },
+    "local": {
+     "ok": false,
+     "error": "TypeError: Failed to fetch",
+     "ms": 0
+    },
+    "console": [
+     "[error] Access to fetch at 'http://127.0.0.1:57520/connector/v1/hello' from origin 'https://127.0.0.1:57463' has been blocked by CORS policy: Permission was denied for this request to access the `loopback` address space.",
+     "[error] Access to fetch at 'http://127.0.0.1:57520/connector/v1/hello' from origin 'https://127.0.0.1:57463' has been blocked by CORS policy: Permission was denied for this request to access the `loopback` address space.",
+     "[error] Access to fetch at 'http://127.0.0.1:57464/node/v1/hello?t=<token>' from origin 'https://127.0.0.1:57463' has been blocked by CORS policy: Permission was denied for this request to access the `loopback` address space.",
+     "[error] Access to fetch at 'http://127.0.0.1:57464/node/v1/hello?t=<token>' from origin 'https://127.0.0.1:57463' has been blocked by CORS policy: Permission was denied for this request to access the `loopback` address space.",
+     "[error] Access to fetch at 'http://127.0.0.1:57464/node/v1/hello?t=<token>' from origin 'https://127.0.0.1:57463' has been blocked by CORS policy: Request had a target IP address space of `local` yet the resource is in address space `loopback`."
+    ]
+   },
+   {
+    "scheme": "https",
+    "space": "public",
+    "grant": true,
+    "origin": "https://127.0.0.1:57524",
+    "secure": true,
+    "connectorPlain": {
+     "ok": true,
+     "status": 200
+    },
+    "connectorLoopback": {
+     "ok": true,
+     "status": 200
+    },
+    "permission": {
+     "local-network-access": "granted",
+     "loopback-network": "granted",
+     "local-network": "granted"
+    },
+    "plain": {
+     "ok": true,
+     "status": 200,
+     "ms": 135
+    },
+    "loopback": {
+     "ok": true,
+     "status": 200,
+     "ms": 2
+    },
+    "local": {
+     "ok": false,
+     "error": "TypeError: Failed to fetch",
+     "ms": 1
+    },
+    "console": [
+     "[error] Access to fetch at 'http://127.0.0.1:57525/node/v1/hello?t=<token>' from origin 'https://127.0.0.1:57524' has been blocked by CORS policy: Request had a target IP address space of `local` yet the resource is in address space `loopback`."
+    ]
+   },
+   {
+    "scheme": "https",
+    "space": "default (loopback)",
+    "grant": false,
+    "origin": "https://127.0.0.1:57581",
+    "secure": true,
+    "connectorPlain": {
+     "ok": true,
+     "status": 200
+    },
+    "connectorLoopback": {
+     "ok": true,
+     "status": 200
+    },
+    "permission": {
+     "local-network-access": "prompt",
+     "loopback-network": "prompt",
+     "local-network": "prompt"
+    },
+    "plain": {
+     "ok": true,
+     "status": 200,
+     "ms": 143
+    },
+    "loopback": {
+     "ok": true,
+     "status": 200,
+     "ms": 3
+    },
+    "local": {
+     "ok": false,
+     "error": "TypeError: Failed to fetch",
+     "ms": 2
+    },
+    "console": [
+     "[error] Access to fetch at 'http://127.0.0.1:57582/node/v1/hello?t=<token>' from origin 'https://127.0.0.1:57581' has been blocked by CORS policy: Request had a target IP address space of `local` yet the resource is in address space `loopback`."
+    ]
+   },
+   {
+    "scheme": "https",
+    "space": "default (loopback)",
+    "grant": true,
+    "origin": "https://127.0.0.1:57641",
+    "secure": true,
+    "connectorPlain": {
+     "ok": true,
+     "status": 200
+    },
+    "connectorLoopback": {
+     "ok": true,
+     "status": 200
+    },
+    "permission": {
+     "local-network-access": "granted",
+     "loopback-network": "granted",
+     "local-network": "granted"
+    },
+    "plain": {
+     "ok": true,
+     "status": 200,
+     "ms": 125
+    },
+    "loopback": {
+     "ok": true,
+     "status": 200,
+     "ms": 3
+    },
+    "local": {
+     "ok": false,
+     "error": "TypeError: Failed to fetch",
+     "ms": 1
+    },
+    "console": [
+     "[error] Access to fetch at 'http://127.0.0.1:57643/node/v1/hello?t=<token>' from origin 'https://127.0.0.1:57641' has been blocked by CORS policy: Request had a target IP address space of `local` yet the resource is in address space `loopback`."
+    ]
+   },
+   {
+    "scheme": "http",
+    "space": "public",
+    "grant": false,
+    "origin": "http://127.0.0.1:57700",
+    "secure": true,
+    "connectorPlain": {
+     "ok": false,
+     "error": "TypeError: Failed to fetch"
+    },
+    "connectorLoopback": {
+     "ok": false,
+     "error": "TypeError: Failed to fetch"
+    },
+    "permission": {
+     "local-network-access": "denied",
+     "loopback-network": "denied",
+     "local-network": "prompt"
+    },
+    "plain": {
+     "ok": false,
+     "error": "TypeError: Failed to fetch",
+     "ms": 1
+    },
+    "loopback": {
+     "ok": false,
+     "error": "TypeError: Failed to fetch",
+     "ms": 1
+    },
+    "local": {
+     "ok": false,
+     "error": "TypeError: Failed to fetch",
+     "ms": 1
+    },
+    "console": [
+     "[error] Access to fetch at 'http://127.0.0.1:57752/connector/v1/hello' from origin 'http://127.0.0.1:57700' has been blocked by CORS policy: Permission was denied for this request to access the `loopback` address space.",
+     "[error] Access to fetch at 'http://127.0.0.1:57752/connector/v1/hello' from origin 'http://127.0.0.1:57700' has been blocked by CORS policy: Permission was denied for this request to access the `loopback` address space.",
+     "[error] Access to fetch at 'http://127.0.0.1:57701/node/v1/hello?t=<token>' from origin 'http://127.0.0.1:57700' has been blocked by CORS policy: Permission was denied for this request to access the `loopback` address space.",
+     "[error] Access to fetch at 'http://127.0.0.1:57701/node/v1/hello?t=<token>' from origin 'http://127.0.0.1:57700' has been blocked by CORS policy: Permission was denied for this request to access the `loopback` address space.",
+     "[error] Access to fetch at 'http://127.0.0.1:57701/node/v1/hello?t=<token>' from origin 'http://127.0.0.1:57700' has been blocked by CORS policy: Request had a target IP address space of `local` yet the resource is in address space `loopback`."
+    ]
+   },
+   {
+    "scheme": "http",
+    "space": "public",
+    "grant": true,
+    "origin": "http://127.0.0.1:57756",
+    "secure": true,
+    "connectorPlain": {
+     "ok": true,
+     "status": 200
+    },
+    "connectorLoopback": {
+     "ok": true,
+     "status": 200
+    },
+    "permission": {
+     "local-network-access": "granted",
+     "loopback-network": "granted",
+     "local-network": "granted"
+    },
+    "plain": {
+     "ok": true,
+     "status": 200,
+     "ms": 828
+    },
+    "loopback": {
+     "ok": true,
+     "status": 200,
+     "ms": 3
+    },
+    "local": {
+     "ok": false,
+     "error": "TypeError: Failed to fetch",
+     "ms": 1
+    },
+    "console": [
+     "[error] Access to fetch at 'http://127.0.0.1:57757/node/v1/hello?t=<token>' from origin 'http://127.0.0.1:57756' has been blocked by CORS policy: Request had a target IP address space of `local` yet the resource is in address space `loopback`."
+    ]
+   },
+   {
+    "scheme": "http",
+    "space": "default (loopback)",
+    "grant": false,
+    "origin": "http://127.0.0.1:58142",
+    "secure": true,
+    "connectorPlain": {
+     "ok": true,
+     "status": 200
+    },
+    "connectorLoopback": {
+     "ok": true,
+     "status": 200
+    },
+    "permission": {
+     "local-network-access": "prompt",
+     "loopback-network": "prompt",
+     "local-network": "prompt"
+    },
+    "plain": {
+     "ok": true,
+     "status": 200,
+     "ms": 137
+    },
+    "loopback": {
+     "ok": true,
+     "status": 200,
+     "ms": 3
+    },
+    "local": {
+     "ok": false,
+     "error": "TypeError: Failed to fetch",
+     "ms": 1
+    },
+    "console": [
+     "[error] Access to fetch at 'http://127.0.0.1:58143/node/v1/hello?t=<token>' from origin 'http://127.0.0.1:58142' has been blocked by CORS policy: Request had a target IP address space of `local` yet the resource is in address space `loopback`."
+    ]
+   },
+   {
+    "scheme": "http",
+    "space": "default (loopback)",
+    "grant": true,
+    "origin": "http://127.0.0.1:58199",
+    "secure": true,
+    "connectorPlain": {
+     "ok": true,
+     "status": 200
+    },
+    "connectorLoopback": {
+     "ok": true,
+     "status": 200
+    },
+    "permission": {
+     "local-network-access": "granted",
+     "loopback-network": "granted",
+     "local-network": "granted"
+    },
+    "plain": {
+     "ok": true,
+     "status": 200,
+     "ms": 127
+    },
+    "loopback": {
+     "ok": true,
+     "status": 200,
+     "ms": 2
+    },
+    "local": {
+     "ok": false,
+     "error": "TypeError: Failed to fetch",
+     "ms": 1
+    },
+    "console": [
+     "[error] Access to fetch at 'http://127.0.0.1:58200/node/v1/hello?t=<token>' from origin 'http://127.0.0.1:58199' has been blocked by CORS policy: Request had a target IP address space of `local` yet the resource is in address space `loopback`."
+    ]
+   }
+  ],
+  "grantedNames": {
+   "https-public": [
+    "local-network-access",
+    "loopback-network",
+    "local-network"
+   ],
+   "https-null": [
+    "local-network-access",
+    "loopback-network",
+    "local-network"
+   ],
+   "http-public": [
+    "local-network-access",
+    "loopback-network",
+    "local-network"
+   ],
+   "http-null": [
+    "local-network-access",
+    "loopback-network",
+    "local-network"
+   ]
+  }
+ },
+ "checks": {},
+ "thresholds": null,
+ "verdict": null,
+ "notes": [],
+ "logs": []
+}

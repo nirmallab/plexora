@@ -1,0 +1,279 @@
+{
+ "poc": "P2",
+ "date": "2026-11-05",
+ "commit": "4e18de00-dirty",
+ "machine": {
+  "cpuPercentBefore": [
+   5.7,
+   10.2,
+   19.2
+  ],
+  "platform": "win32 10.0.26200",
+  "cpu": "12th Gen Intel(R) Core(TM) i9-12900K",
+  "cores": 24,
+  "memoryGB": 128,
+  "load": [
+   0,
+   0,
+   0
+  ],
+  "hostname": "ajit"
+ },
+ "browser": {
+  "userAgent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/156.0.0.0 Safari/537.36",
+  "hardwareConcurrency": 24,
+  "deviceMemory": 32,
+  "webgl2": true,
+  "gpu": "ANGLE (NVIDIA, NVIDIA GeForce RTX 3080 (0x00002216) Direct3D11 vs_5_0 ps_5_0, D3D11)",
+  "crossOriginIsolated": false,
+  "isSecureContext": true,
+  "origin": "http://127.0.0.1:55712",
+  "storage": {
+   "quota": 10737418240,
+   "usage": 0
+  },
+  "hasShowOpenFilePicker": true,
+  "hasOPFS": true,
+  "jsHeap": 15267971
+ },
+ "arm": "node,browser",
+ "state": "fresh profile and node per block",
+ "fixture": {
+  "name": "L",
+  "files": {
+   "mask": {
+    "name": "P37_S30-CRC02-mask.ome.tif",
+    "bytes": 222860136,
+    "mtime": "2026-11-05T22:28:10.621Z"
+   },
+   "table": {
+    "name": "P37_S30-CRC02.csv",
+    "bytes": 634268626,
+    "mtime": "2026-11-05T22:28:37.681Z"
+   }
+  }
+ },
+ "metrics": {
+  "marker": "CD45",
+  "blocks": [
+   {
+    "arm": "node",
+    "tableMs": 639.1999998092651,
+    "cells": 1260592,
+    "labelGpu": {
+     "active": true,
+     "reason": null
+    },
+    "viewFullMs": 449.3999996185303,
+    "drag": {
+     "ticks": 40,
+     "evalMs": {
+      "n": 40,
+      "min": 2,
+      "p50": 2.3000001907348633,
+      "p90": 3.8000001907348633,
+      "p95": 5.099999904632568,
+      "max": 10.400000095367432
+     },
+     "updateMs": {
+      "n": 40,
+      "min": 7.900000095367432,
+      "p50": 18.200000286102295,
+      "p90": 19.399999618530273,
+      "p95": 19.40000009536743,
+      "max": 20
+     },
+     "positives": [
+      7476,
+      1197562
+     ],
+     "labelStats": {
+      "draws": 257,
+      "tileUploads": 17,
+      "tableUploads": 40
+     }
+    },
+    "canvas": "c6b8cd9f5ee27bc914572b7966b718fd0d4dc949c536337915863086bece8cfe",
+    "jsHeap": 162779940
+   },
+   {
+    "arm": "browser",
+    "tableMs": 617.5,
+    "cells": 1260592,
+    "labelGpu": {
+     "active": true,
+     "reason": null
+    },
+    "viewFullMs": 211.7000002861023,
+    "drag": {
+     "ticks": 40,
+     "evalMs": {
+      "n": 40,
+      "min": 1.8999996185302734,
+      "p50": 2.5,
+      "p90": 4.300000190734863,
+      "p95": 5.099999904632568,
+      "max": 10.299999713897705
+     },
+     "updateMs": {
+      "n": 40,
+      "min": 11.599999904632568,
+      "p50": 18.600000381469727,
+      "p90": 19.200000286102295,
+      "p95": 19.5,
+      "max": 20.200000286102295
+     },
+     "positives": [
+      7476,
+      1197562
+     ],
+     "labelStats": {
+      "draws": 258,
+      "tileUploads": 18,
+      "tableUploads": 40
+     }
+    },
+    "canvas": "c6b8cd9f5ee27bc914572b7966b718fd0d4dc949c536337915863086bece8cfe",
+    "labelIdentity": {
+     "count": 200,
+     "identical": 200,
+     "mismatches": []
+    },
+    "jsHeap": 178301364
+   },
+   {
+    "arm": "browser",
+    "tableMs": 551,
+    "cells": 1260592,
+    "labelGpu": {
+     "active": true,
+     "reason": null
+    },
+    "viewFullMs": 219.7000002861023,
+    "drag": {
+     "ticks": 40,
+     "evalMs": {
+      "n": 40,
+      "min": 1.9000000953674316,
+      "p50": 2.799999713897705,
+      "p90": 4.099999904632568,
+      "p95": 5.200000286102295,
+      "max": 11
+     },
+     "updateMs": {
+      "n": 40,
+      "min": 12.599999904632568,
+      "p50": 18.800000190734863,
+      "p90": 19.59999990463257,
+      "p95": 19.699999809265137,
+      "max": 19.899999618530273
+     },
+     "positives": [
+      7476,
+      1197562
+     ],
+     "labelStats": {
+      "draws": 258,
+      "tileUploads": 18,
+      "tableUploads": 40
+     }
+    },
+    "canvas": "c6b8cd9f5ee27bc914572b7966b718fd0d4dc949c536337915863086bece8cfe",
+    "jsHeap": 168555004
+   },
+   {
+    "arm": "node",
+    "tableMs": 533.4000000953674,
+    "cells": 1260592,
+    "labelGpu": {
+     "active": true,
+     "reason": null
+    },
+    "viewFullMs": 417.09999990463257,
+    "drag": {
+     "ticks": 40,
+     "evalMs": {
+      "n": 40,
+      "min": 1.8000001907348633,
+      "p50": 2.4000000953674316,
+      "p90": 4.099999904632568,
+      "p95": 5.099999904632568,
+      "max": 14.299999713897705
+     },
+     "updateMs": {
+      "n": 40,
+      "min": 16.399999618530273,
+      "p50": 18.199999809265137,
+      "p90": 19,
+      "p95": 19.100000381469727,
+      "max": 19.40000009536743
+     },
+     "positives": [
+      7476,
+      1197562
+     ],
+     "labelStats": {
+      "draws": 256,
+      "tileUploads": 16,
+      "tableUploads": 40
+     }
+    },
+    "canvas": "c6b8cd9f5ee27bc914572b7966b718fd0d4dc949c536337915863086bece8cfe",
+    "jsHeap": 162878420
+   }
+  ]
+ },
+ "checks": {
+  "labelIdentity": {
+   "count": 200,
+   "identical": 200,
+   "mismatches": []
+  },
+  "labelGpuActive": true,
+  "canvasesAgree": true
+ },
+ "thresholds": {
+  "go": [
+   {
+    "name": "gate drag, drawn update median (ms) at 1260592 ids",
+    "value": 18.7,
+    "bound": "<= 30",
+    "result": "pass"
+   },
+   {
+    "name": "label tiles byte-identical to the node's",
+    "value": "200/200",
+    "bound": "all",
+    "result": "pass"
+   },
+   {
+    "name": "GPU cell layer active in every block",
+    "value": true,
+    "bound": "true",
+    "result": "pass"
+   },
+   {
+    "name": "every block drew the same canvas",
+    "value": true,
+    "bound": "true",
+    "result": "pass"
+   }
+  ],
+  "stop": [
+   {
+    "name": "GPU cell layer could not run",
+    "value": false,
+    "bound": "false",
+    "result": "fail"
+   }
+  ]
+ },
+ "verdict": "GO",
+ "notes": [],
+ "logs": [
+  "[error] Failed to load resource: the server responded with a status of 404 (Not Found)",
+  "[error] Failed to load resource: the server responded with a status of 404 (Not Found)",
+  "[error] Failed to load resource: the server responded with a status of 404 (Not Found)",
+  "[error] Failed to load resource: the server responded with a status of 404 (Not Found)"
+ ]
+}

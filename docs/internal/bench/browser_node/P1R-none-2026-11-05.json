@@ -1,0 +1,209 @@
+{
+ "poc": "P1R",
+ "date": "2026-11-05",
+ "commit": "4e18de00-dirty",
+ "machine": {
+  "cpuPercentBefore": [
+   14.6,
+   15.7,
+   19.5
+  ],
+  "platform": "win32 10.0.26200",
+  "cpu": "12th Gen Intel(R) Core(TM) i9-12900K",
+  "cores": 24,
+  "memoryGB": 128,
+  "load": [
+   0,
+   0,
+   0
+  ],
+  "hostname": "ajit"
+ },
+ "browser": {
+  "userAgent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/156.0.0.0 Safari/537.36",
+  "hardwareConcurrency": 24,
+  "deviceMemory": 32,
+  "webgl2": true,
+  "gpu": "ANGLE (NVIDIA, NVIDIA GeForce RTX 3080 (0x00002216) Direct3D11 vs_5_0 ps_5_0, D3D11)",
+  "crossOriginIsolated": false,
+  "isSecureContext": true,
+  "origin": "http://127.0.0.1:54051",
+  "storage": {
+   "quota": 10737418240,
+   "usage": 0
+  },
+  "hasShowOpenFilePicker": true,
+  "hasOPFS": true,
+  "jsHeap": 15907757
+ },
+ "arm": "browser",
+ "state": "cold: fresh profile, nothing cached",
+ "fixture": {
+  "name": "none",
+  "files": {}
+ },
+ "metrics": {
+  "url": "https://lin-2023-orion-crc.s3.amazonaws.com/data/CRC02/P37_S30_A24_C59kX_E15_20220106_014319_409148-zlib.ome.tiff",
+  "openMs": 6912.599999904633,
+  "openPerWorker": [
+   {
+    "openMs": 6851,
+    "headerMs": 689.6999998092651,
+    "mainIfdsMs": 4133.5,
+    "reads": 28,
+    "bytes": 107035,
+    "readMs": 6847.599999904633
+   },
+   {
+    "openMs": 6714.599999904633,
+    "headerMs": 688.0999999046326,
+    "mainIfdsMs": 4172,
+    "reads": 28,
+    "bytes": 107035,
+    "readMs": 6710.799999713898
+   },
+   {
+    "openMs": 6798.099999904633,
+    "headerMs": 684.5999999046326,
+    "mainIfdsMs": 4051.7000002861023,
+    "reads": 28,
+    "bytes": 107035,
+    "readMs": 6794.799999237061
+   },
+   {
+    "openMs": 6878.800000190735,
+    "headerMs": 679.7000002861023,
+    "mainIfdsMs": 4027.9000000953674,
+    "reads": 28,
+    "bytes": 107035,
+    "readMs": 6874.400002002716
+   }
+  ],
+  "geometry": {
+   "layout": "subifd",
+   "width": 58709,
+   "height": 48460,
+   "numChannels": 19,
+   "levels": [
+    {
+     "width": 58709,
+     "height": 48460
+    },
+    {
+     "width": 29355,
+     "height": 24230
+    },
+    {
+     "width": 14678,
+     "height": 12115
+    },
+    {
+     "width": 7339,
+     "height": 6058
+    },
+    {
+     "width": 3670,
+     "height": 3029
+    },
+    {
+     "width": 1835,
+     "height": 1515
+    },
+    {
+     "width": 918,
+     "height": 758
+    }
+   ],
+   "fileTile": {
+    "width": 1024,
+    "height": 1024,
+    "tiled": true
+   },
+   "bitsPerSample": 16,
+   "sampleFormat": 1,
+   "compression": 8,
+   "predictor": 1,
+   "littleEndian": true,
+   "bigTiff": true,
+   "names": [
+    "01_Hoechst",
+    "AF1",
+    "04_CD31_Argo515",
+    "05_CD45_Argo555L",
+    "06_CD68_Argo535",
+    "07_Blank_Argo550",
+    "08_CD4_Argo572",
+    "09_FOXP3_Argo584",
+    "10_CD8a_Argo602",
+    "11_CD45RO_Argo624",
+    "12_CD20_Argo660L",
+    "13_PD-L1_Argo662",
+    "14_CD3e_Argo686",
+    "15_CD163_Argo706",
+    "16_E-Cadherin_Argo730",
+    "17_PD-1_Argo760",
+    "18_Ki-67_Argo795",
+    "19_Pan-CK_Argo845",
+    "20_SMA_Argo875"
+   ],
+   "physicalSize": {
+    "value": 0.325,
+    "unit": "\u00b5m"
+   },
+   "mainIfds": 19,
+   "size": null
+  },
+  "tileMs": {
+   "n": 20,
+   "min": 211,
+   "p50": 372.3999996185303,
+   "p90": 576.7999997138977,
+   "p95": 580.2999997138977,
+   "max": 683.3000001907349,
+   "mean": 410.4700000047684
+  },
+  "readMs": {
+   "n": 20,
+   "min": 192.59999990463257,
+   "p50": 374.2000002861023,
+   "p90": 589.0999999046326,
+   "p95": 662.0999999046326,
+   "max": 877.8999996185303,
+   "mean": 416.2549999713898
+  },
+  "decodeMs": {
+   "n": 20,
+   "min": 1.9000000953674316,
+   "p50": 7,
+   "p90": 11,
+   "p95": 12.600000381469727,
+   "max": 18.40000009536743,
+   "mean": 7.460000085830688
+  },
+  "reads": {
+   "n": 20,
+   "min": 1,
+   "p50": 3,
+   "p90": 3,
+   "p95": 4,
+   "max": 5,
+   "mean": 2.7
+  },
+  "bytes": {
+   "n": 20,
+   "min": 35592,
+   "p50": 879306,
+   "p90": 1246603,
+   "p95": 1550110,
+   "max": 1677100,
+   "mean": 871221.65
+  }
+ },
+ "checks": {},
+ "thresholds": null,
+ "verdict": null,
+ "notes": [],
+ "logs": [
+  "[error] Failed to load resource: the server responded with a status of 404 (Not Found)"
+ ]
+}

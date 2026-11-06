@@ -1,0 +1,223 @@
+{
+ "poc": "P3B",
+ "date": "2026-11-05",
+ "commit": "4e18de00-dirty",
+ "machine": {
+  "cpuPercentBefore": [
+   5.7,
+   13.5,
+   8.5
+  ],
+  "platform": "win32 10.0.26200",
+  "cpu": "12th Gen Intel(R) Core(TM) i9-12900K",
+  "cores": 24,
+  "memoryGB": 128,
+  "load": [
+   0,
+   0,
+   0
+  ],
+  "hostname": "ajit"
+ },
+ "browser": {
+  "userAgent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/156.0.0.0 Safari/537.36",
+  "hardwareConcurrency": 24,
+  "deviceMemory": 32,
+  "webgl2": true,
+  "gpu": "ANGLE (NVIDIA, NVIDIA GeForce RTX 3080 (0x00002216) Direct3D11 vs_5_0 ps_5_0, D3D11)",
+  "crossOriginIsolated": false,
+  "isSecureContext": true,
+  "origin": "http://127.0.0.1:52517",
+  "storage": {
+   "quota": 10737418240,
+   "usage": 0
+  },
+  "hasShowOpenFilePicker": true,
+  "hasOPFS": true,
+  "jsHeap": 15267735
+ },
+ "arm": "browser",
+ "state": null,
+ "fixture": {
+  "name": "L",
+  "files": {
+   "mask": {
+    "name": "P37_S30-CRC02-mask.ome.tif",
+    "bytes": 222860136,
+    "mtime": "2026-11-05T22:28:10.621Z"
+   },
+   "table": {
+    "name": "P37_S30-CRC02.csv",
+    "bytes": 634268626,
+    "mtime": "2026-11-05T22:28:37.681Z"
+   }
+  }
+ },
+ "metrics": {
+  "initMs": 390.30000019073486,
+  "duckdb": {
+   "copyToParquetMs": 10544.199999809265,
+   "createTableMs": 2347.699999809265,
+   "projectionMs": 1626.3000001907349,
+   "projectionRows": 1260592,
+   "parquetFromTable_snappyMs": 7494.300000190735,
+   "parquetFromTable_snappyBytes": 277270926,
+   "parquetFromTable_uncompressedMs": 7686.900000095367,
+   "parquetFromTable_uncompressedBytes": 284314839,
+   "parquetFromTable_zstdMs": 8161.700000286102
+  },
+  "parallel": [
+   {
+    "workers": 8,
+    "ms": 11921.5,
+    "parseMs": 11833.400000095367,
+    "rows": 1260592
+   }
+  ],
+  "arrowIpcMs": 51,
+  "parquetFromColumnsMs": 7964.599999904633,
+  "jsHeap": 593186270,
+  "peakWorkingSetBytes": {
+   "byKind": {
+    "browser": 159674368,
+    "crashpad-handler": 11055104,
+    "gpu-process": 90857472,
+    "utility": 45969408,
+    "renderer": 3906965504
+   },
+   "processes": 8
+  }
+ },
+ "checks": {
+  "parallelVsDuckdb": {
+   "CellID": {
+    "rows": true,
+    "differ": 0
+   },
+   "Hoechst": {
+    "rows": true,
+    "differ": 0
+   },
+   "AF1": {
+    "rows": true,
+    "differ": 0
+   },
+   "CD31": {
+    "rows": true,
+    "differ": 0
+   },
+   "CD45": {
+    "rows": true,
+    "differ": 0
+   },
+   "CD68": {
+    "rows": true,
+    "differ": 0
+   },
+   "Argo550": {
+    "rows": true,
+    "differ": 0
+   },
+   "CD4": {
+    "rows": true,
+    "differ": 0
+   },
+   "FOXP3": {
+    "rows": true,
+    "differ": 0
+   },
+   "CD8a": {
+    "rows": true,
+    "differ": 0
+   },
+   "CD45RO": {
+    "rows": true,
+    "differ": 0
+   },
+   "CD20": {
+    "rows": true,
+    "differ": 0
+   },
+   "PD-L1": {
+    "rows": true,
+    "differ": 0
+   },
+   "CD3e": {
+    "rows": true,
+    "differ": 0
+   },
+   "CD163": {
+    "rows": true,
+    "differ": 0
+   },
+   "E-cadherin": {
+    "rows": true,
+    "differ": 0
+   },
+   "PD-1": {
+    "rows": true,
+    "differ": 0
+   },
+   "Ki67": {
+    "rows": true,
+    "differ": 0
+   },
+   "Pan-CK": {
+    "rows": true,
+    "differ": 0
+   },
+   "SMA": {
+    "rows": true,
+    "differ": 0
+   },
+   "X_centroid": {
+    "rows": true,
+    "differ": 0
+   },
+   "Y_centroid": {
+    "rows": true,
+    "differ": 0
+   },
+   "Area": {
+    "rows": true,
+    "differ": 0
+   },
+   "MajorAxisLength": {
+    "rows": true,
+    "differ": 0
+   },
+   "MinorAxisLength": {
+    "rows": true,
+    "differ": 0
+   },
+   "Eccentricity": {
+    "rows": true,
+    "differ": 0
+   },
+   "Solidity": {
+    "rows": true,
+    "differ": 0
+   },
+   "Extent": {
+    "rows": true,
+    "differ": 0
+   },
+   "Orientation": {
+    "rows": true,
+    "differ": 0
+   }
+  },
+  "allIdentical": true
+ },
+ "thresholds": null,
+ "verdict": null,
+ "notes": [],
+ "logs": [
+  "[error] Failed to load resource: the server responded with a status of 404 (Not Found)",
+  "[warning] Buffering missing file: ingest-a.parquet",
+  "[warning] Buffering missing file: ingest-snappy.parquet",
+  "[warning] Buffering missing file: ingest-uncompressed.parquet",
+  "[warning] Buffering missing file: ingest-zstd.parquet",
+  "[warning] Buffering missing file: ingest-e.parquet"
+ ]
+}

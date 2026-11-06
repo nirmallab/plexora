@@ -1,0 +1,845 @@
+{
+ "poc": "P5",
+ "date": "2026-11-05",
+ "commit": "4e18de00-dirty",
+ "machine": {
+  "cpuPercentBefore": [
+   15.5,
+   15.7,
+   16.6
+  ],
+  "platform": "win32 10.0.26200",
+  "cpu": "12th Gen Intel(R) Core(TM) i9-12900K",
+  "cores": 24,
+  "memoryGB": 128,
+  "load": [
+   0,
+   0,
+   0
+  ],
+  "hostname": "ajit"
+ },
+ "browser": {
+  "userAgent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/156.0.0.0 Safari/537.36",
+  "hardwareConcurrency": 24,
+  "deviceMemory": 32,
+  "webgl2": true,
+  "gpu": "ANGLE (NVIDIA, NVIDIA GeForce RTX 3080 (0x00002216) Direct3D11 vs_5_0 ps_5_0, D3D11)",
+  "crossOriginIsolated": false,
+  "isSecureContext": true,
+  "origin": "http://127.0.0.1:54550",
+  "storage": {
+   "quota": 10737418240,
+   "usage": 0
+  },
+  "hasShowOpenFilePicker": true,
+  "hasOPFS": true,
+  "jsHeap": 15865521
+ },
+ "arm": "browser->node",
+ "state": "static origin; loopback node",
+ "fixture": {
+  "name": "M",
+  "files": {
+   "image": {
+    "name": "LSP11385.ome.tif",
+    "bytes": 66747709231,
+    "mtime": "2026-10-05T19:28:16.679Z"
+   },
+   "mask": {
+    "name": "cell.labels.pyramid.ome.tiff",
+    "bytes": 52706763,
+    "mtime": "2026-09-30T17:28:59.000Z"
+   },
+   "table": {
+    "name": "LSP11385--mccellpose_cell.csv",
+    "bytes": 180165929,
+    "mtime": "2026-09-30T16:31:36.000Z"
+   },
+   "flatMask": {
+    "name": "lsp11385-mask-flat.tif",
+    "bytes": 31899917,
+    "mtime": "2026-11-05T23:25:32.412Z"
+   }
+  }
+ },
+ "metrics": {
+  "a": {
+   "timings": {
+    "helloMs": 227.7999997138977,
+    "batchMs": 234,
+    "statsMs": 332.19999980926514,
+    "tableLoadMs": 242.59999990463257,
+    "allCellsMs": 398
+   },
+   "hello": {
+    "api_version": 1,
+    "capabilities": 24,
+    "resources": [
+     "table:cells",
+     "image:img"
+    ]
+   },
+   "geometry": {
+    "width": 45381,
+    "height": 52923,
+    "levels": 7,
+    "channels": 40
+   },
+   "tiles": {
+    "hd": [
+     {
+      "c": 30,
+      "l": 2,
+      "x": 7,
+      "y": 3,
+      "status": 200,
+      "type": "image/png",
+      "sha256": "d7cf7237cb3402d7420445a116e25e073bf51693a73e323aea04b70517d65119",
+      "ms": 40.200000286102295
+     },
+     {
+      "c": 3,
+      "l": 4,
+      "x": 1,
+      "y": 0,
+      "status": 200,
+      "type": "image/png",
+      "sha256": "c9ff12b633dd22e40eb1435ac668c01fa7c9289cc96208bb87bc4f81085b5e4b",
+      "ms": 32.69999980926514
+     },
+     {
+      "c": 10,
+      "l": 3,
+      "x": 2,
+      "y": 2,
+      "status": 200,
+      "type": "image/png",
+      "sha256": "5a048f3ee111fe38ffdeab1ec7a0fb941356ee85f9943fc9cd6fdceeb50c4734",
+      "ms": 42.299999713897705
+     },
+     {
+      "c": 30,
+      "l": 0,
+      "x": 28,
+      "y": 27,
+      "status": 200,
+      "type": "image/png",
+      "sha256": "5a048f3ee111fe38ffdeab1ec7a0fb941356ee85f9943fc9cd6fdceeb50c4734",
+      "ms": 37.5
+     },
+     {
+      "c": 28,
+      "l": 3,
+      "x": 3,
+      "y": 1,
+      "status": 200,
+      "type": "image/png",
+      "sha256": "6ab447b9e7000238890f5a91a27d342e68a607e4df720dba534001ed1d70d8eb",
+      "ms": 29
+     },
+     {
+      "c": 20,
+      "l": 0,
+      "x": 40,
+      "y": 44,
+      "status": 200,
+      "type": "image/png",
+      "sha256": "5a048f3ee111fe38ffdeab1ec7a0fb941356ee85f9943fc9cd6fdceeb50c4734",
+      "ms": 37.40000009536743
+     },
+     {
+      "c": 35,
+      "l": 1,
+      "x": 7,
+      "y": 12,
+      "status": 200,
+      "type": "image/png",
+      "sha256": "2f66b8c0205ca4eb6b1265ffa5a56d1f9826bc8c7570899cf1a3285b342ef6ba",
+      "ms": 28.09999990463257
+     },
+     {
+      "c": 7,
+      "l": 5,
+      "x": 1,
+      "y": 1,
+      "status": 200,
+      "type": "image/png",
+      "sha256": "f312e20a2da0f466623fe51b3daef4502ef1107b5f3685e989ba8308e7831e79",
+      "ms": 34.19999980926514
+     },
+     {
+      "c": 14,
+      "l": 2,
+      "x": 6,
+      "y": 0,
+      "status": 200,
+      "type": "image/png",
+      "sha256": "f56f67257c0c8153fdb7da928e9a4d4328e239e8149b7541e945d0e11aba8a7b",
+      "ms": 46.09999990463257
+     },
+     {
+      "c": 21,
+      "l": 3,
+      "x": 3,
+      "y": 6,
+      "status": 200,
+      "type": "image/png",
+      "sha256": "c4ca1577e5a6ae9e47d87137cad06e9a0835063efca4f309a757a3085eeae295",
+      "ms": 31
+     },
+     {
+      "c": 31,
+      "l": 4,
+      "x": 2,
+      "y": 3,
+      "status": 200,
+      "type": "image/png",
+      "sha256": "d892fc216031a8e8c0c3c1781063f69e3825cd8ddf47b3ea8f6c2bdb6847ac39",
+      "ms": 26.199999809265137
+     },
+     {
+      "c": 22,
+      "l": 0,
+      "x": 28,
+      "y": 17,
+      "status": 200,
+      "type": "image/png",
+      "sha256": "8297861f00be3e3f8a4d7475d30d17f350db7d65d3dfd4456677df9081ec850b",
+      "ms": 37.90000009536743
+     },
+     {
+      "c": 33,
+      "l": 4,
+      "x": 2,
+      "y": 0,
+      "status": 200,
+      "type": "image/png",
+      "sha256": "4df2d7210e63ddb6a992cd120f80d2a43b3a9cb60266e96b59770e95b4316a58",
+      "ms": 30.5
+     },
+     {
+      "c": 18,
+      "l": 2,
+      "x": 10,
+      "y": 12,
+      "status": 200,
+      "type": "image/png",
+      "sha256": "61d13697212fca43e7ed2671b53f3cf46e485104fb183c461d81568339488834",
+      "ms": 45.700000286102295
+     },
+     {
+      "c": 29,
+      "l": 4,
+      "x": 0,
+      "y": 1,
+      "status": 200,
+      "type": "image/png",
+      "sha256": "4f09431bffbef045f8c6c653bdfcfa7928b59c1d5a091e3be160313bf89d4fc7",
+      "ms": 51
+     },
+     {
+      "c": 21,
+      "l": 5,
+      "x": 1,
+      "y": 0,
+      "status": 200,
+      "type": "image/png",
+      "sha256": "c56cd1ca79a63a1b0dd9a1b6176c8318470a4ff1223655c3ce5b6c0b377b6600",
+      "ms": 39.700000286102295
+     },
+     {
+      "c": 9,
+      "l": 4,
+      "x": 0,
+      "y": 3,
+      "status": 200,
+      "type": "image/png",
+      "sha256": "026a5b7dfb4eb4b33f6604d4975e09e91f3f8ff2dcc6d1ea60f18f8bfa1dd303",
+      "ms": 19.59999990463257
+     },
+     {
+      "c": 13,
+      "l": 1,
+      "x": 8,
+      "y": 17,
+      "status": 200,
+      "type": "image/png",
+      "sha256": "2bfdf5169dec116de6e169c43354f7cd99ba4ff2a4bd21d7fb195e2cc5538045",
+      "ms": 34.40000009536743
+     },
+     {
+      "c": 13,
+      "l": 6,
+      "x": 0,
+      "y": 0,
+      "status": 200,
+      "type": "image/png",
+      "sha256": "e2ba531855b4246349345be52e902c81ef248a7833a3f86709c0f09c550d4ffd",
+      "ms": 29.90000009536743
+     },
+     {
+      "c": 20,
+      "l": 1,
+      "x": 13,
+      "y": 13,
+      "status": 200,
+      "type": "image/png",
+      "sha256": "5a048f3ee111fe38ffdeab1ec7a0fb941356ee85f9943fc9cd6fdceeb50c4734",
+      "ms": 29.199999809265137
+     }
+    ],
+    "webp": [
+     {
+      "c": 30,
+      "l": 2,
+      "x": 7,
+      "y": 3,
+      "status": 200,
+      "type": "image/webp",
+      "sha256": "4728985019effbd6c8a6f730146952559f2331a0c67866c970ee10c3517de83c",
+      "ms": 66.69999980926514
+     },
+     {
+      "c": 3,
+      "l": 4,
+      "x": 1,
+      "y": 0,
+      "status": 200,
+      "type": "image/webp",
+      "sha256": "91eddffe96058b048a9b6490d35977d4052a58d9f8956972a3540f0b1e14bde0",
+      "ms": 64.10000038146973
+     },
+     {
+      "c": 10,
+      "l": 3,
+      "x": 2,
+      "y": 2,
+      "status": 200,
+      "type": "image/webp",
+      "sha256": "abb229ac632066cd4e07c55fdf868d4d61225a8aac63b97f2fe4c1b8c9ee4ef3",
+      "ms": 42.30000019073486
+     },
+     {
+      "c": 30,
+      "l": 0,
+      "x": 28,
+      "y": 27,
+      "status": 200,
+      "type": "image/webp",
+      "sha256": "abb229ac632066cd4e07c55fdf868d4d61225a8aac63b97f2fe4c1b8c9ee4ef3",
+      "ms": 46.09999990463257
+     },
+     {
+      "c": 28,
+      "l": 3,
+      "x": 3,
+      "y": 1,
+      "status": 200,
+      "type": "image/webp",
+      "sha256": "b27364318e52cd0e60bbed5e4a130486d423cdd8e0ec089b5159c43e8f506525",
+      "ms": 49.69999980926514
+     },
+     {
+      "c": 20,
+      "l": 0,
+      "x": 40,
+      "y": 44,
+      "status": 200,
+      "type": "image/webp",
+      "sha256": "abb229ac632066cd4e07c55fdf868d4d61225a8aac63b97f2fe4c1b8c9ee4ef3",
+      "ms": 46.700000286102295
+     },
+     {
+      "c": 35,
+      "l": 1,
+      "x": 7,
+      "y": 12,
+      "status": 200,
+      "type": "image/webp",
+      "sha256": "88701809e100fee8a9a1b2aff18febeb3320906bb067bd1f54e073a0517f839e",
+      "ms": 49.40000009536743
+     },
+     {
+      "c": 7,
+      "l": 5,
+      "x": 1,
+      "y": 1,
+      "status": 200,
+      "type": "image/webp",
+      "sha256": "e9a12769f7c0b565ad883ee4dbbf87290235c93be9835de69dd2c7f1f93f3307",
+      "ms": 35
+     },
+     {
+      "c": 14,
+      "l": 2,
+      "x": 6,
+      "y": 0,
+      "status": 200,
+      "type": "image/webp",
+      "sha256": "ef6ad523b3380950babf025a7bfca0594733f1f8931fd8eec2d4a6ecb7091205",
+      "ms": 51.90000009536743
+     },
+     {
+      "c": 21,
+      "l": 3,
+      "x": 3,
+      "y": 6,
+      "status": 200,
+      "type": "image/webp",
+      "sha256": "c70b1a9350f9b4a6aedd3389a16437a44c0432362ba9763ee5ed1248f378d80d",
+      "ms": 31.90000009536743
+     },
+     {
+      "c": 31,
+      "l": 4,
+      "x": 2,
+      "y": 3,
+      "status": 200,
+      "type": "image/webp",
+      "sha256": "6e318c22847f29b80fbe2bc5457ce8de4c5c59b71b1737aa7399369b9d05544a",
+      "ms": 26.300000190734863
+     },
+     {
+      "c": 22,
+      "l": 0,
+      "x": 28,
+      "y": 17,
+      "status": 200,
+      "type": "image/webp",
+      "sha256": "59bc106189ed6e4af8e2ca13be31bf1fc715c45f02ef90bd43cd7db5953fdff3",
+      "ms": 66.39999961853027
+     },
+     {
+      "c": 33,
+      "l": 4,
+      "x": 2,
+      "y": 0,
+      "status": 200,
+      "type": "image/webp",
+      "sha256": "e1fbc2d44b568bae01d378c1ff775b091d60d01cfd012504d8f5d54ea9ffd275",
+      "ms": 53.90000009536743
+     },
+     {
+      "c": 18,
+      "l": 2,
+      "x": 10,
+      "y": 12,
+      "status": 200,
+      "type": "image/webp",
+      "sha256": "26a9ddcf53addf61ee3762ef99c9c38bfc853b95200c5dcd664704f0f01d886c",
+      "ms": 59
+     },
+     {
+      "c": 29,
+      "l": 4,
+      "x": 0,
+      "y": 1,
+      "status": 200,
+      "type": "image/webp",
+      "sha256": "6dab7aa3e64fc7ccef9fd210223cfe0a8b09e3b16b3ffc6c4d6ff7cc772804fc",
+      "ms": 75.89999961853027
+     },
+     {
+      "c": 21,
+      "l": 5,
+      "x": 1,
+      "y": 0,
+      "status": 200,
+      "type": "image/webp",
+      "sha256": "41b34c5c8ae791eaefbd3756dff54098dde60e782e8b1ee4f602652655d754aa",
+      "ms": 67.40000009536743
+     },
+     {
+      "c": 9,
+      "l": 4,
+      "x": 0,
+      "y": 3,
+      "status": 200,
+      "type": "image/webp",
+      "sha256": "f8a1af53bfca172eea72fd25c9d3f3eadfe800188a599b4e7e3cecf48f831484",
+      "ms": 27.799999713897705
+     },
+     {
+      "c": 13,
+      "l": 1,
+      "x": 8,
+      "y": 17,
+      "status": 200,
+      "type": "image/webp",
+      "sha256": "89ba7c39123415a993d27986ca16b1ae6193075538d854300feb5652ad2f6446",
+      "ms": 76.09999990463257
+     },
+     {
+      "c": 13,
+      "l": 6,
+      "x": 0,
+      "y": 0,
+      "status": 200,
+      "type": "image/webp",
+      "sha256": "c7da1674443f2f8dba2794740d6ab65eab2b9ca5898ad95a0f98cd273e38c306",
+      "ms": 45.200000286102295
+     },
+     {
+      "c": 20,
+      "l": 1,
+      "x": 13,
+      "y": 13,
+      "status": 200,
+      "type": "image/webp",
+      "sha256": "abb229ac632066cd4e07c55fdf868d4d61225a8aac63b97f2fe4c1b8c9ee4ef3",
+      "ms": 44.5
+     }
+    ]
+   },
+   "exposedHeaders": [
+    "X-Plexora-Generation",
+    "X-Plexora-Resource",
+    "Server-Timing"
+   ],
+   "batch": [
+    {
+     "status": 200,
+     "sha256": "d7cf7237cb3402d7420445a116e25e073bf51693a73e323aea04b70517d65119"
+    },
+    {
+     "status": 200,
+     "sha256": "c9ff12b633dd22e40eb1435ac668c01fa7c9289cc96208bb87bc4f81085b5e4b"
+    },
+    {
+     "status": 200,
+     "sha256": "5a048f3ee111fe38ffdeab1ec7a0fb941356ee85f9943fc9cd6fdceeb50c4734"
+    },
+    {
+     "status": 200,
+     "sha256": "5a048f3ee111fe38ffdeab1ec7a0fb941356ee85f9943fc9cd6fdceeb50c4734"
+    },
+    {
+     "status": 200,
+     "sha256": "6ab447b9e7000238890f5a91a27d342e68a607e4df720dba534001ed1d70d8eb"
+    },
+    {
+     "status": 200,
+     "sha256": "5a048f3ee111fe38ffdeab1ec7a0fb941356ee85f9943fc9cd6fdceeb50c4734"
+    },
+    {
+     "status": 200,
+     "sha256": "2f66b8c0205ca4eb6b1265ffa5a56d1f9826bc8c7570899cf1a3285b342ef6ba"
+    },
+    {
+     "status": 200,
+     "sha256": "f312e20a2da0f466623fe51b3daef4502ef1107b5f3685e989ba8308e7831e79"
+    },
+    {
+     "status": 200,
+     "sha256": "f56f67257c0c8153fdb7da928e9a4d4328e239e8149b7541e945d0e11aba8a7b"
+    },
+    {
+     "status": 200,
+     "sha256": "c4ca1577e5a6ae9e47d87137cad06e9a0835063efca4f309a757a3085eeae295"
+    },
+    {
+     "status": 200,
+     "sha256": "d892fc216031a8e8c0c3c1781063f69e3825cd8ddf47b3ea8f6c2bdb6847ac39"
+    },
+    {
+     "status": 200,
+     "sha256": "8297861f00be3e3f8a4d7475d30d17f350db7d65d3dfd4456677df9081ec850b"
+    },
+    {
+     "status": 200,
+     "sha256": "4df2d7210e63ddb6a992cd120f80d2a43b3a9cb60266e96b59770e95b4316a58"
+    },
+    {
+     "status": 200,
+     "sha256": "61d13697212fca43e7ed2671b53f3cf46e485104fb183c461d81568339488834"
+    },
+    {
+     "status": 200,
+     "sha256": "4f09431bffbef045f8c6c653bdfcfa7928b59c1d5a091e3be160313bf89d4fc7"
+    },
+    {
+     "status": 200,
+     "sha256": "c56cd1ca79a63a1b0dd9a1b6176c8318470a4ff1223655c3ce5b6c0b377b6600"
+    },
+    {
+     "status": 200,
+     "sha256": "026a5b7dfb4eb4b33f6604d4975e09e91f3f8ff2dcc6d1ea60f18f8bfa1dd303"
+    },
+    {
+     "status": 200,
+     "sha256": "2bfdf5169dec116de6e169c43354f7cd99ba4ff2a4bd21d7fb195e2cc5538045"
+    },
+    {
+     "status": 200,
+     "sha256": "e2ba531855b4246349345be52e902c81ef248a7833a3f86709c0f09c550d4ffd"
+    },
+    {
+     "status": 200,
+     "sha256": "5a048f3ee111fe38ffdeab1ec7a0fb941356ee85f9943fc9cd6fdceeb50c4734"
+    }
+   ],
+   "batchMatchesSingles": true,
+   "stats": {
+    "vmin_hint": 458,
+    "vmax_hint": 2925,
+    "vmin": 894,
+    "vmax": 2529
+   },
+   "tableLoaded": {
+    "generation": 1,
+    "rows": null
+   },
+   "allCellsSha": "cc8aa95c3f4df86935a2c3061b4e460f081c12970711f4cb225a9ed4d9a322d8",
+   "cells": 202049,
+   "describeColumns": 51,
+   "describeSha": "560ba8c5d6971cfe96847656437190d02f2ebb24563173e1054bb2c783a580d7",
+   "rowsCount": 3,
+   "requests": 8
+  },
+  "e": {
+   "timeline": [
+    {
+     "at": 3,
+     "state": "up"
+    },
+    {
+     "at": 2772,
+     "state": "down"
+    },
+    {
+     "at": 10560,
+     "state": "up"
+    },
+    {
+     "at": 15032,
+     "state": "down"
+    },
+    {
+     "at": 21305,
+     "state": "refused"
+    }
+   ]
+  },
+  "f": [
+   {
+    "allowOrigin": "http://127.0.0.1:PORT",
+    "pageHost": "127.0.0.1",
+    "reached": true,
+    "error": null
+   },
+   {
+    "allowOrigin": "http://localhost:PORT",
+    "pageHost": "localhost",
+    "reached": true,
+    "error": null
+   },
+   {
+    "allowOrigin": "http://127.0.0.1:PORT",
+    "pageHost": "localhost",
+    "reached": false,
+    "error": "TypeError: Failed to fetch"
+   },
+   {
+    "allowOrigin": "http://localhost:PORT",
+    "pageHost": "127.0.0.1",
+    "reached": false,
+    "error": "TypeError: Failed to fetch"
+   },
+   {
+    "allowOrigin": "http://127.0.0.1:PORT/",
+    "pageHost": "127.0.0.1",
+    "reached": true,
+    "error": null
+   }
+  ],
+  "d": [
+   {
+    "coep": "require-corp",
+    "crossOriginIsolated": true,
+    "sharedArrayBuffer": true,
+    "fetchCors": true,
+    "xhr": true,
+    "imgNoCors": "blocked",
+    "imgAnonymous": true
+   },
+   {
+    "coep": "credentialless",
+    "crossOriginIsolated": true,
+    "sharedArrayBuffer": true,
+    "fetchCors": true,
+    "xhr": true,
+    "imgNoCors": true,
+    "imgAnonymous": true
+   },
+   {
+    "coep": null,
+    "crossOriginIsolated": false,
+    "sharedArrayBuffer": false,
+    "fetchCors": true,
+    "xhr": true,
+    "imgNoCors": true,
+    "imgAnonymous": true
+   }
+  ],
+  "g": {
+   "steps": [
+    {
+     "name": "stored",
+     "at": 274
+    },
+    {
+     "name": "profiles",
+     "at": 284
+    },
+    {
+     "name": "connected",
+     "at": 336
+    },
+    {
+     "name": "node",
+     "at": 493
+    }
+   ],
+   "hashAfter": "",
+   "helloUnpaired": {
+    "status": 200,
+    "body": {
+     "connector": "plexora-connector-stub",
+     "api_version": 1,
+     "paired": false
+    }
+   },
+   "profilesWithoutToken": 403,
+   "profiles": {
+    "status": 200,
+    "body": {
+     "profiles": [
+      {
+       "id": "o2",
+       "host": "o2.hms.harvard.edu",
+       "srun": true,
+       "jump": null,
+       "secret": "password+duo"
+      }
+     ]
+    }
+   },
+   "connectMs": 52.90000009536743,
+   "connected": 200,
+   "nodeHello": {
+    "api_version": 1,
+    "resources": 1
+   },
+   "pairingUrlHadToken": true
+  },
+  "h": {
+   "endpoint": "http://127.0.0.1:64149/rnode/127.0.0.1/64152",
+   "base": "/rnode/127.0.0.1/64152/app/repo/plexora",
+   "hello": {
+    "api_version": 1
+   },
+   "viewerFull": {
+    "ms": 207.09999990463257,
+    "full": true
+   },
+   "nonBlack": 198395
+  }
+ },
+ "checks": {
+  "a": {
+   "hdTilesIdentical": true,
+   "webpTilesIdentical": true,
+   "batchMatchesSingles": true,
+   "allCellsIdentical": true,
+   "describeIdentical": true,
+   "exposedHeaders": [
+    "X-Plexora-Generation",
+    "X-Plexora-Resource",
+    "Server-Timing"
+   ]
+  },
+  "e": {
+   "recoveredWithSameToken": true,
+   "newTokenRefused": true
+  },
+  "f": {
+   "hostMustMatch": true,
+   "trailingSlashTolerated": true
+  },
+  "g": {
+   "paired": true,
+   "refusedUnpaired": true,
+   "fragmentCleared": true
+  },
+  "h": {
+   "sameOriginWithoutAllowOrigin": true,
+   "viewerFull": true,
+   "drewPixels": true,
+   "base": "/rnode/127.0.0.1/64152/app/repo/plexora"
+  }
+ },
+ "thresholds": {
+  "go": [
+   {
+    "name": "(a) HD and 8-bit tiles identical to the same requests outside the browser",
+    "value": true,
+    "bound": "true",
+    "result": "pass"
+   },
+   {
+    "name": "(a) table ops identical (all_cells, describe) and batch = singles",
+    "value": true,
+    "bound": "true",
+    "result": "pass"
+   },
+   {
+    "name": "(e) recovers when its node restarts with the same token",
+    "value": true,
+    "bound": "true",
+    "result": "pass"
+   },
+   {
+    "name": "(g) connector pairing",
+    "value": true,
+    "bound": "true",
+    "result": "pass"
+   },
+   {
+    "name": "(h) node-served app under an /rnode/ prefix draws",
+    "value": true,
+    "bound": "true",
+    "result": "pass"
+   },
+   {
+    "name": "open C1 vs the desktop node arm",
+    "value": null,
+    "bound": "<= 1.2 (manual O2 record)",
+    "result": "not measured"
+   }
+  ],
+  "stop": [
+   {
+    "name": "a primary-only capability with no node route",
+    "value": false,
+    "bound": "false",
+    "result": "fail"
+   }
+  ]
+ },
+ "verdict": "GO (some not measured)",
+ "notes": [],
+ "logs": [
+  "[error] Failed to load resource: the server responded with a status of 403 (FORBIDDEN)",
+  "[error] Failed to load resource: the server responded with a status of 403 (FORBIDDEN)",
+  "[error] Failed to load resource: the server responded with a status of 403 (FORBIDDEN)",
+  "[error] Failed to load resource: the server responded with a status of 403 (FORBIDDEN)",
+  "[error] Failed to load resource: the server responded with a status of 403 (FORBIDDEN)",
+  "[error] Failed to load resource: the server responded with a status of 403 (FORBIDDEN)",
+  "[error] Failed to load resource: the server responded with a status of 403 (FORBIDDEN)",
+  "[error] Failed to load resource: the server responded with a status of 403 (FORBIDDEN)",
+  "[error] Failed to load resource: the server responded with a status of 403 (FORBIDDEN)",
+  "[error] Failed to load resource: the server responded with a status of 403 (FORBIDDEN)",
+  "[error] Failed to load resource: the server responded with a status of 404 (Not Found)"
+ ]
+}

@@ -1,0 +1,239 @@
+{
+ "scanned": 271,
+ "totals": {
+  "plexoraUrl": 170,
+  "datasourceGlobal": 333,
+  "flaskVariables": 69,
+  "fetchCall": 249,
+  "xhr": 1,
+  "imageViewerGlobals": 301
+ },
+ "filesUsing": {
+  "plexoraUrl": 65,
+  "datasourceGlobal": 47,
+  "flaskVariables": 31,
+  "fetchCall": 76,
+  "xhr": 1,
+  "imageViewerGlobals": 52
+ },
+ "rendering": [
+  {
+   "file": "plexora/client/src/js/services/displayCurve.js",
+   "plexoraUrl": 0,
+   "datasourceGlobal": 0,
+   "flaskVariables": 0,
+   "fetchCall": 0,
+   "xhr": 0,
+   "imageViewerGlobals": 0
+  },
+  {
+   "file": "plexora/client/src/js/services/glRenderer.js",
+   "plexoraUrl": 0,
+   "datasourceGlobal": 0,
+   "flaskVariables": 0,
+   "fetchCall": 0,
+   "xhr": 1,
+   "imageViewerGlobals": 0
+  },
+  {
+   "file": "plexora/client/src/js/views/glInit.js",
+   "plexoraUrl": 2,
+   "datasourceGlobal": 0,
+   "flaskVariables": 0,
+   "fetchCall": 0,
+   "xhr": 0,
+   "imageViewerGlobals": 0
+  },
+  {
+   "file": "plexora/client/src/js/views/labelGpu.js",
+   "plexoraUrl": 0,
+   "datasourceGlobal": 0,
+   "flaskVariables": 0,
+   "fetchCall": 1,
+   "xhr": 0,
+   "imageViewerGlobals": 0
+  },
+  {
+   "file": "plexora/client/src/js/views/labelTile.js",
+   "plexoraUrl": 0,
+   "datasourceGlobal": 0,
+   "flaskVariables": 0,
+   "fetchCall": 0,
+   "xhr": 0,
+   "imageViewerGlobals": 0
+  },
+  {
+   "file": "plexora/client/src/js/views/tileColorize.js",
+   "plexoraUrl": 0,
+   "datasourceGlobal": 0,
+   "flaskVariables": 0,
+   "fetchCall": 0,
+   "xhr": 0,
+   "imageViewerGlobals": 2
+  },
+  {
+   "file": "plexora/client/src/js/views/tileDecode.js",
+   "plexoraUrl": 0,
+   "datasourceGlobal": 0,
+   "flaskVariables": 0,
+   "fetchCall": 0,
+   "xhr": 0,
+   "imageViewerGlobals": 0
+  },
+  {
+   "file": "plexora/client/src/js/views/tileFetch.js",
+   "plexoraUrl": 0,
+   "datasourceGlobal": 0,
+   "flaskVariables": 0,
+   "fetchCall": 1,
+   "xhr": 0,
+   "imageViewerGlobals": 0
+  },
+  {
+   "file": "plexora/client/src/js/workers/tileDecoder.js",
+   "plexoraUrl": 0,
+   "datasourceGlobal": 0,
+   "flaskVariables": 0,
+   "fetchCall": 0,
+   "xhr": 0,
+   "imageViewerGlobals": 0
+  }
+ ],
+ "heaviest": [
+  {
+   "file": "plexora/client/src/js/services/dataLayer.js",
+   "plexoraUrl": 18,
+   "datasourceGlobal": 18,
+   "flaskVariables": 0,
+   "fetchCall": 18,
+   "xhr": 0,
+   "imageViewerGlobals": 2
+  },
+  {
+   "file": "plexora/plugins/gating/static/gatingApi.js",
+   "plexoraUrl": 0,
+   "datasourceGlobal": 2,
+   "flaskVariables": 0,
+   "fetchCall": 26,
+   "xhr": 0,
+   "imageViewerGlobals": 0
+  },
+  {
+   "file": "plexora/client/src/js/views/importSample.js",
+   "plexoraUrl": 13,
+   "datasourceGlobal": 0,
+   "flaskVariables": 0,
+   "fetchCall": 12,
+   "xhr": 0,
+   "imageViewerGlobals": 1
+  },
+  {
+   "file": "plexora/plugins/figure_builder/static/figureBuilderApi.js",
+   "plexoraUrl": 1,
+   "datasourceGlobal": 14,
+   "flaskVariables": 0,
+   "fetchCall": 16,
+   "xhr": 0,
+   "imageViewerGlobals": 0
+  },
+  {
+   "file": "plexora/client/src/js/views/settingsPage.js",
+   "plexoraUrl": 7,
+   "datasourceGlobal": 0,
+   "flaskVariables": 0,
+   "fetchCall": 7,
+   "xhr": 0,
+   "imageViewerGlobals": 0
+  },
+  {
+   "file": "plexora/client/src/js/views/depthTools.js",
+   "plexoraUrl": 6,
+   "datasourceGlobal": 0,
+   "flaskVariables": 0,
+   "fetchCall": 7,
+   "xhr": 0,
+   "imageViewerGlobals": 6
+  },
+  {
+   "file": "plexora/client/src/js/views/layerManager.js",
+   "plexoraUrl": 6,
+   "datasourceGlobal": 0,
+   "flaskVariables": 10,
+   "fetchCall": 6,
+   "xhr": 0,
+   "imageViewerGlobals": 24
+  },
+  {
+   "file": "plexora/client/src/js/views/openProjectPage.js",
+   "plexoraUrl": 7,
+   "datasourceGlobal": 0,
+   "flaskVariables": 0,
+   "fetchCall": 4,
+   "xhr": 0,
+   "imageViewerGlobals": 0
+  },
+  {
+   "file": "plexora/client/src/js/views/projectEdit.js",
+   "plexoraUrl": 6,
+   "datasourceGlobal": 0,
+   "flaskVariables": 0,
+   "fetchCall": 5,
+   "xhr": 0,
+   "imageViewerGlobals": 0
+  },
+  {
+   "file": "plexora/client/src/js/main.js",
+   "plexoraUrl": 7,
+   "datasourceGlobal": 27,
+   "flaskVariables": 3,
+   "fetchCall": 2,
+   "xhr": 0,
+   "imageViewerGlobals": 91
+  },
+  {
+   "file": "plexora/plugins/qc/static/qcApi.js",
+   "plexoraUrl": 0,
+   "datasourceGlobal": 4,
+   "flaskVariables": 0,
+   "fetchCall": 9,
+   "xhr": 0,
+   "imageViewerGlobals": 0
+  },
+  {
+   "file": "plexora/plugins/roi/static/roiApi.js",
+   "plexoraUrl": 0,
+   "datasourceGlobal": 0,
+   "flaskVariables": 0,
+   "fetchCall": 9,
+   "xhr": 0,
+   "imageViewerGlobals": 0
+  },
+  {
+   "file": "plexora/client/src/js/services/browsePicker.js",
+   "plexoraUrl": 4,
+   "datasourceGlobal": 0,
+   "flaskVariables": 0,
+   "fetchCall": 4,
+   "xhr": 0,
+   "imageViewerGlobals": 0
+  },
+  {
+   "file": "plexora/client/src/js/services/explorer/fileExplorer.js",
+   "plexoraUrl": 4,
+   "datasourceGlobal": 0,
+   "flaskVariables": 0,
+   "fetchCall": 4,
+   "xhr": 0,
+   "imageViewerGlobals": 0
+  },
+  {
+   "file": "plexora/client/src/js/services/surfaceLayers.js",
+   "plexoraUrl": 1,
+   "datasourceGlobal": 4,
+   "flaskVariables": 2,
+   "fetchCall": 7,
+   "xhr": 0,
+   "imageViewerGlobals": 16
+  }
+ ]
+}

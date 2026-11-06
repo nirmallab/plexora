@@ -1,0 +1,611 @@
+{
+ "poc": "P3",
+ "date": "2026-11-05",
+ "commit": "4e18de00-dirty",
+ "machine": {
+  "cpuPercentBefore": [
+   20,
+   12.4,
+   13.4
+  ],
+  "platform": "win32 10.0.26200",
+  "cpu": "12th Gen Intel(R) Core(TM) i9-12900K",
+  "cores": 24,
+  "memoryGB": 128,
+  "load": [
+   0,
+   0,
+   0
+  ],
+  "hostname": "ajit"
+ },
+ "browser": {
+  "userAgent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/156.0.0.0 Safari/537.36",
+  "hardwareConcurrency": 24,
+  "deviceMemory": 32,
+  "webgl2": true,
+  "gpu": "ANGLE (NVIDIA, NVIDIA GeForce RTX 3080 (0x00002216) Direct3D11 vs_5_0 ps_5_0, D3D11)",
+  "crossOriginIsolated": false,
+  "isSecureContext": true,
+  "origin": "http://127.0.0.1:57126",
+  "storage": {
+   "quota": 10737418240,
+   "usage": 0
+  },
+  "hasShowOpenFilePicker": true,
+  "hasOPFS": true,
+  "jsHeap": 15267435
+ },
+ "arm": "browser",
+ "state": "cold: OPFS cleared, fresh profile; reopen: same profile, Chrome relaunched",
+ "fixture": {
+  "name": "L",
+  "files": {
+   "mask": {
+    "name": "P37_S30-CRC02-mask.ome.tif",
+    "bytes": 222860136,
+    "mtime": "2026-11-05T22:28:10.621Z"
+   },
+   "table": {
+    "name": "P37_S30-CRC02.csv",
+    "bytes": 634268626,
+    "mtime": "2026-11-05T22:28:37.681Z"
+   }
+  },
+  "rows": 1260592,
+  "columns": 29
+ },
+ "metrics": {
+  "loadMs": 4678.900000095367,
+  "ingest": {
+   "initMs": 482.7999997138977,
+   "parseMs": 2610,
+   "drawableMs": 3345.4000000953674,
+   "extractMs": 491.70000171661377,
+   "opfsWriteMs": 967.5999984741211,
+   "totalMs": 4651.60000038147,
+   "bytes": 292457344
+  },
+  "reused": false,
+  "columnMs": [
+   8.900000095367432,
+   6.900000095367432,
+   9.099999904632568,
+   9.599999904632568,
+   8.099999904632568
+  ],
+  "describeMs": 881.8000001907349,
+  "describe32Ms": 875.9000000953674,
+  "indexBuildMs": 212,
+  "nearestMs": [
+   0.2999997138977051,
+   0,
+   0,
+   0,
+   0.20000028610229492,
+   0,
+   0,
+   0,
+   0,
+   0.6999998092651367,
+   0,
+   0,
+   0.09999990463256836,
+   0.09999990463256836,
+   0,
+   0,
+   0,
+   0.10000038146972656,
+   0,
+   0,
+   0,
+   0.19999980926513672,
+   0,
+   0,
+   0.09999990463256836,
+   0,
+   0,
+   0,
+   0.20000028610229492,
+   0,
+   0.09999990463256836,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0.19999980926513672,
+   0,
+   4,
+   0.09999990463256836,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0.10000038146972656,
+   0,
+   0,
+   0.39999961853027344,
+   0,
+   0,
+   0,
+   0,
+   0.10000038146972656,
+   0,
+   0.6999998092651367,
+   0,
+   0,
+   0,
+   0.09999990463256836,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0.09999990463256836,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0.10000038146972656,
+   0.09999990463256836,
+   0,
+   0.9000000953674316,
+   0,
+   0.09999990463256836,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0.09999990463256836,
+   0,
+   0,
+   0,
+   0,
+   0.09999990463256836,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0,
+   1.4000000953674316,
+   0.8000001907348633,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0.09999990463256836,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0.09999990463256836,
+   0,
+   0,
+   0.09999990463256836,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0.20000028610229492,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0.19999980926513672,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0.09999990463256836,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0.09999990463256836,
+   0,
+   0.40000009536743164,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0,
+   1.200000286102295,
+   0,
+   0,
+   0,
+   0,
+   0
+  ],
+  "nodeLoadMs": 262.90000009536743,
+  "nodeAllCellsMs": 1710.9000000953674,
+  "nodeColumnsMs": 105.09999990463257,
+  "nodeDescribeMs": 330.2000002861023,
+  "store": "columns",
+  "reopenMs": 31.09999990463257,
+  "reopenReused": true,
+  "table": {
+   "rows": 1260592,
+   "columns": 29,
+   "numeric": 29,
+   "storeBytes": 292457344,
+   "csvBytes": 634268626
+  },
+  "memory": {
+   "duckdbBytes": 0,
+   "jsHeap": 416413557,
+   "peakWorkingSetBytes": {
+    "byKind": {
+     "browser": 150347776,
+     "crashpad-handler": 11038720,
+     "gpu-process": 90566656,
+     "utility": 44163072,
+     "renderer": 1665753088
+    },
+    "processes": 8
+   }
+  },
+  "storage": {
+   "usage": 292464448,
+   "quota": 11029882688
+  },
+  "python": {
+   "polarsReadMs": 337.06519985571504,
+   "kdtreeBuildMs": 304.63809985667467,
+   "nearest200Ms": 0.7845000363886356,
+   "roi20Ms": 469.2994002252817
+  }
+ },
+ "checks": {
+  "nearest": {
+   "count": 200,
+   "agree": 200,
+   "tiesResolvedDifferently": 0,
+   "misses": []
+  },
+  "roi": [
+   {
+    "vertices": 10,
+    "count": 5818,
+    "truthCount": 5818,
+    "identical": true,
+    "symmetricDiff": null,
+    "ms": 4.799999713897705
+   },
+   {
+    "vertices": 10,
+    "count": 652,
+    "truthCount": 652,
+    "identical": true,
+    "symmetricDiff": null,
+    "ms": 0.2999997138977051
+   },
+   {
+    "vertices": 10,
+    "count": 668,
+    "truthCount": 668,
+    "identical": true,
+    "symmetricDiff": null,
+    "ms": 0.19999980926513672
+   },
+   {
+    "vertices": 10,
+    "count": 479,
+    "truthCount": 479,
+    "identical": true,
+    "symmetricDiff": null,
+    "ms": 0.19999980926513672
+   },
+   {
+    "vertices": 10,
+    "count": 2644,
+    "truthCount": 2644,
+    "identical": true,
+    "symmetricDiff": null,
+    "ms": 0.6000003814697266
+   },
+   {
+    "vertices": 10,
+    "count": 1607,
+    "truthCount": 1607,
+    "identical": true,
+    "symmetricDiff": null,
+    "ms": 0.40000009536743164
+   },
+   {
+    "vertices": 10,
+    "count": 738,
+    "truthCount": 738,
+    "identical": true,
+    "symmetricDiff": null,
+    "ms": 0.19999980926513672
+   },
+   {
+    "vertices": 100,
+    "count": 718,
+    "truthCount": 718,
+    "identical": true,
+    "symmetricDiff": null,
+    "ms": 1.4000000953674316
+   },
+   {
+    "vertices": 100,
+    "count": 6446,
+    "truthCount": 6446,
+    "identical": true,
+    "symmetricDiff": null,
+    "ms": 7.099999904632568
+   },
+   {
+    "vertices": 100,
+    "count": 1052,
+    "truthCount": 1052,
+    "identical": true,
+    "symmetricDiff": null,
+    "ms": 0.7000002861022949
+   },
+   {
+    "vertices": 100,
+    "count": 1526,
+    "truthCount": 1526,
+    "identical": true,
+    "symmetricDiff": null,
+    "ms": 1.0999999046325684
+   },
+   {
+    "vertices": 100,
+    "count": 4094,
+    "truthCount": 4094,
+    "identical": true,
+    "symmetricDiff": null,
+    "ms": 3.200000286102295
+   },
+   {
+    "vertices": 100,
+    "count": 528,
+    "truthCount": 528,
+    "identical": true,
+    "symmetricDiff": null,
+    "ms": 0.3000001907348633
+   },
+   {
+    "vertices": 100,
+    "count": 3684,
+    "truthCount": 3684,
+    "identical": true,
+    "symmetricDiff": null,
+    "ms": 3.3999996185302734
+   },
+   {
+    "vertices": 1000,
+    "count": 73,
+    "truthCount": 73,
+    "identical": true,
+    "symmetricDiff": null,
+    "ms": 0.5
+   },
+   {
+    "vertices": 1000,
+    "count": 1594,
+    "truthCount": 1594,
+    "identical": true,
+    "symmetricDiff": null,
+    "ms": 12
+   },
+   {
+    "vertices": 1000,
+    "count": 4571,
+    "truthCount": 4571,
+    "identical": true,
+    "symmetricDiff": null,
+    "ms": 30.199999809265137
+   },
+   {
+    "vertices": 1000,
+    "count": 2945,
+    "truthCount": 2945,
+    "identical": true,
+    "symmetricDiff": null,
+    "ms": 22.600000381469727
+   },
+   {
+    "vertices": 1000,
+    "count": 578,
+    "truthCount": 578,
+    "identical": true,
+    "symmetricDiff": null,
+    "ms": 3.6999998092651367
+   },
+   {
+    "vertices": 1000,
+    "count": 6706,
+    "truthCount": 6706,
+    "identical": true,
+    "symmetricDiff": null,
+    "ms": 54.59999990463257
+   }
+  ],
+  "gates": {
+   "count": 20,
+   "agree": 20,
+   "disagree": [],
+   "ms": [
+    6,
+    3.9000000953674316,
+    3.9000000953674316,
+    1.5999999046325684,
+    2.3000001907348633,
+    2.4000000953674316,
+    5.900000095367432,
+    7.599999904632568,
+    5.800000190734863,
+    6.099999904632568,
+    5.099999904632568,
+    4.599999904632568,
+    3.9000000953674316,
+    1.5999999046325684,
+    1.5999999046325684,
+    5.400000095367432,
+    6.599999904632568,
+    8,
+    4.200000286102295,
+    6.900000095367432
+   ]
+  },
+  "allCellsIdentical": true,
+  "allCellsFirstDiff": -1,
+  "columnsIdentical": {
+   "Hoechst": true,
+   "AF1": true,
+   "CD31": true,
+   "CD45": true,
+   "CD68": true
+  },
+  "describeFloat64": {
+   "columns": 29,
+   "missing": [
+    "id"
+   ],
+   "worstRelativeDiff": 2.6891525086053368e-12,
+   "worstAt": "CellID.std",
+   "nineDigits": true
+  },
+  "describeFloat32": {
+   "columns": 29,
+   "missing": [
+    "id"
+   ],
+   "worstRelativeDiff": 0.002666682564941044,
+   "worstAt": "Solidity.histogram[21]",
+   "nineDigits": false
+  }
+ },
+ "thresholds": {
+  "go": [
+   {
+    "name": "cold load to drawable / polars' read of the same file (x)",
+    "value": 9.9,
+    "bound": "<= 5",
+    "result": "fail"
+   },
+   {
+    "name": "reopen (ms)",
+    "value": 31.1,
+    "bound": "<= 5000",
+    "result": "pass"
+   },
+   {
+    "name": "describe, every column (ms)",
+    "value": 881.8,
+    "bound": "<= 3000",
+    "result": "pass"
+   },
+   {
+    "name": "uncached column (ms, worst of 5)",
+    "value": 9.6,
+    "bound": "<= 200",
+    "result": "pass"
+   },
+   {
+    "name": "nearest cell (ms, worst of 200)",
+    "value": 4.0,
+    "bound": "<= 5",
+    "result": "pass"
+   },
+   {
+    "name": "ROI, 100 vertices (ms, worst)",
+    "value": 7.1,
+    "bound": "<= 300",
+    "result": "pass"
+   },
+   {
+    "name": "identity: all_cells, columns, describe to 9 digits, nearest, ROI, gates",
+    "value": true,
+    "bound": "all",
+    "result": "pass"
+   },
+   {
+    "name": "peak renderer working set (GB)",
+    "value": 1.55,
+    "bound": "<= 2",
+    "result": "pass"
+   }
+  ],
+  "stop": [
+   {
+    "name": "an identity failure",
+    "value": false,
+    "bound": "false",
+    "result": "fail"
+   }
+  ]
+ },
+ "verdict": "PARTIAL",
+ "notes": [],
+ "logs": [
+  "[error] Failed to load resource: the server responded with a status of 404 (Not Found)",
+  "[error] Failed to load resource: the server responded with a status of 404 (Not Found)"
+ ]
+}

@@ -93,7 +93,9 @@ async function main() {
         args, fixture, fixtureName: args.fixture, startStatic, startNode, launchChrome,
         log: (...m) => console.log(`[${args.poc}]`, ...m),
     };
-    const date = new Date().toISOString().slice(0, 10);
+    // The local date: a run that crosses midnight UTC is still that evening's run.
+    const now = new Date();
+    const date = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
     let result;
     try {
         result = await handler(ctx);

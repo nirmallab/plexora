@@ -1,0 +1,1589 @@
+{
+ "poc": "P1V",
+ "date": "2026-11-05",
+ "commit": "4e18de00-dirty",
+ "machine": {
+  "cpuPercentBefore": [
+   15.3,
+   11.6,
+   9.5
+  ],
+  "platform": "win32 10.0.26200",
+  "cpu": "12th Gen Intel(R) Core(TM) i9-12900K",
+  "cores": 24,
+  "memoryGB": 128,
+  "load": [
+   0,
+   0,
+   0
+  ],
+  "hostname": "ajit"
+ },
+ "browser": {
+  "userAgent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/156.0.0.0 Safari/537.36",
+  "hardwareConcurrency": 24,
+  "deviceMemory": 32,
+  "webgl2": true,
+  "gpu": "ANGLE (NVIDIA, NVIDIA GeForce RTX 3080 (0x00002216) Direct3D11 vs_5_0 ps_5_0, D3D11)",
+  "crossOriginIsolated": false,
+  "isSecureContext": true,
+  "origin": "http://127.0.0.1:58532",
+  "storage": {
+   "quota": 10737418240,
+   "usage": 0
+  },
+  "hasShowOpenFilePicker": true,
+  "hasOPFS": true,
+  "jsHeap": 15268123
+ },
+ "arm": "node,browser",
+ "state": "OS file cache warmed by one unrecorded node block; then a fresh Chrome profile and (node arm) a fresh node per block",
+ "fixture": {
+  "name": "M",
+  "files": {
+   "image": {
+    "name": "LSP11385.ome.tif",
+    "bytes": 66747709231,
+    "mtime": "2026-10-05T19:28:16.679Z"
+   },
+   "mask": {
+    "name": "cell.labels.pyramid.ome.tiff",
+    "bytes": 52706763,
+    "mtime": "2026-09-30T17:28:59.000Z"
+   },
+   "table": {
+    "name": "LSP11385--mccellpose_cell.csv",
+    "bytes": 180165929,
+    "mtime": "2026-09-30T16:31:36.000Z"
+   },
+   "flatMask": {
+    "name": "lsp11385-mask-flat.tif",
+    "bytes": 31899917,
+    "mtime": "2026-11-05T23:25:32.412Z"
+   }
+  }
+ },
+ "metrics": {
+  "order": [
+   "node",
+   "browser",
+   "browser",
+   "node"
+  ],
+  "channelRanges": [
+   [
+    0.0069886320286869615,
+    0.044632639047837035
+   ],
+   [
+    0.017517357137407492,
+    0.05113298237582971
+   ],
+   [
+    0.004074158846417945,
+    0.0797436484321355
+   ],
+   [
+    0.0032349126420996416,
+    0.007385366598001068
+   ],
+   [
+    0.004623483634699016,
+    0.028534370946822308
+   ],
+   [
+    0.003189135576409552,
+    0.005874723430228122
+   ],
+   [
+    0.002746623941405356,
+    0.007431143663691157
+   ],
+   [
+    0.0028992141603723202,
+    0.009658960860608835
+   ],
+   [
+    0.0034943160143434807,
+    0.028747997253376057
+   ],
+   [
+    0.0028686961165789275,
+    0.010101472495613032
+   ],
+   [
+    0.002609292744335088,
+    0.05008010986495766
+   ],
+   [
+    0.003402761882963302,
+    0.008346684977492943
+   ],
+   [
+    0.003341725795376516,
+    0.01168841077286946
+   ],
+   [
+    0.003036545357442588,
+    0.04852368963149462
+   ],
+   [
+    0.0033112077515831235,
+    0.006149385824368658
+   ]
+  ],
+  "blocks": [
+   {
+    "arm": "node",
+    "nodeReadyMs": 5315,
+    "env": {
+     "userAgent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/156.0.0.0 Safari/537.36",
+     "hardwareConcurrency": 24,
+     "deviceMemory": 32,
+     "webgl2": true,
+     "gpu": "ANGLE (NVIDIA, NVIDIA GeForce RTX 3080 (0x00002216) Direct3D11 vs_5_0 ps_5_0, D3D11)",
+     "crossOriginIsolated": false,
+     "isSecureContext": true,
+     "origin": "http://127.0.0.1:51823",
+     "storage": {
+      "quota": 10737418240,
+      "usage": 0
+     },
+     "hasShowOpenFilePicker": true,
+     "hasOPFS": true,
+     "jsHeap": 15299739
+    },
+    "runs": [
+     {
+      "channels": 3,
+      "openMs": 586.4000000953674,
+      "homeFull": {
+       "ms": 428.2999997138977,
+       "full": true
+      },
+      "steps": [
+       {
+        "scale": 16,
+        "ms": 586.7999997138977,
+        "full": true
+       },
+       {
+        "scale": 8,
+        "ms": 943,
+        "full": true
+       },
+       {
+        "scale": 16,
+        "ms": 519.5999999046326,
+        "full": true
+       },
+       {
+        "scale": 2,
+        "ms": 778.0999999046326,
+        "full": true
+       },
+       {
+        "scale": 8,
+        "ms": 285.2999997138977,
+        "full": true
+       },
+       {
+        "scale": 2,
+        "ms": 696.5,
+        "full": true
+       },
+       {
+        "scale": 16,
+        "ms": 220.90000009536743,
+        "full": true
+       },
+       {
+        "scale": 1,
+        "ms": 437.3999996185303,
+        "full": true
+       },
+       {
+        "scale": 2,
+        "ms": 692.5,
+        "full": true
+       },
+       {
+        "scale": 32,
+        "ms": 152.30000019073486,
+        "full": true
+       },
+       {
+        "scale": 32,
+        "ms": 19.399999618530273,
+        "full": true
+       }
+      ],
+      "stepMs": {
+       "n": 11,
+       "min": 19.399999618530273,
+       "p50": 519.5999999046326,
+       "p90": 778.0999999046326,
+       "p95": 943,
+       "max": 943,
+       "mean": 484.7090907963839
+      },
+      "allFull": true,
+      "pan": {
+       "intervals": {
+        "n": 120,
+        "min": 0.4000000000014552,
+        "p50": 0.8999999999996362,
+        "p90": 1.3000000000010914,
+        "p95": 1.5,
+        "max": 17.200000000000728,
+        "mean": 1.1583333333333334
+       },
+       "over16": 1,
+       "over25": 0,
+       "frames": 120,
+       "drawMs": {
+        "n": 120,
+        "min": 0.09999990463256836,
+        "p50": 0.40000009536743164,
+        "p90": 0.6000003814697266,
+        "p95": 0.7000002861022949,
+        "max": 3,
+        "mean": 0.4400000174840291
+       },
+       "longTasks": {
+        "n": 0
+       }
+      },
+      "afterPanFull": {
+       "ms": 19.09999990463257,
+       "full": true
+      },
+      "browserTiles": null,
+      "jsHeap": 568623132
+     },
+     {
+      "channels": 7,
+      "openMs": 432.90000009536743,
+      "homeFull": {
+       "ms": 403,
+       "full": true
+      },
+      "steps": [
+       {
+        "scale": 16,
+        "ms": 1064.6999998092651,
+        "full": true
+       },
+       {
+        "scale": 8,
+        "ms": 2142.7999997138977,
+        "full": true
+       },
+       {
+        "scale": 16,
+        "ms": 1161.2000002861023,
+        "full": true
+       },
+       {
+        "scale": 2,
+        "ms": 1787,
+        "full": true
+       },
+       {
+        "scale": 8,
+        "ms": 487.69999980926514,
+        "full": true
+       },
+       {
+        "scale": 2,
+        "ms": 1452.3000001907349,
+        "full": true
+       },
+       {
+        "scale": 16,
+        "ms": 373.09999990463257,
+        "full": true
+       },
+       {
+        "scale": 1,
+        "ms": 928.9000000953674,
+        "full": true
+       },
+       {
+        "scale": 2,
+        "ms": 1425.4000000953674,
+        "full": true
+       },
+       {
+        "scale": 32,
+        "ms": 353.40000009536743,
+        "full": true
+       },
+       {
+        "scale": 32,
+        "ms": 23.59999990463257,
+        "full": true
+       }
+      ],
+      "stepMs": {
+       "n": 11,
+       "min": 23.59999990463257,
+       "p50": 1064.6999998092651,
+       "p90": 1787,
+       "p95": 2142.7999997138977,
+       "max": 2142.7999997138977,
+       "mean": 1018.1909090822393
+      },
+      "allFull": true,
+      "pan": {
+       "intervals": {
+        "n": 120,
+        "min": 0.9000000000014552,
+        "p50": 1.7999999999992724,
+        "p90": 2.6999999999970896,
+        "p95": 2.8000000000029104,
+        "max": 17,
+        "mean": 1.9858333333333273
+       },
+       "over16": 1,
+       "over25": 0,
+       "frames": 120,
+       "drawMs": {
+        "n": 120,
+        "min": 0.5999999046325684,
+        "p50": 1.0999999046325684,
+        "p90": 1.8000001907348633,
+        "p95": 1.9000000953674316,
+        "max": 5.100000381469727,
+        "mean": 1.190833310286204
+       },
+       "longTasks": {
+        "n": 0
+       }
+      },
+      "afterPanFull": {
+       "ms": 20.59999990463257,
+       "full": true
+      },
+      "browserTiles": null,
+      "jsHeap": 1369893587
+     },
+     {
+      "channels": 15,
+      "openMs": 685.4000000953674,
+      "homeFull": {
+       "ms": 753.4000000953674,
+       "full": true
+      },
+      "steps": [
+       {
+        "scale": 16,
+        "ms": 2313,
+        "full": true
+       },
+       {
+        "scale": 8,
+        "ms": 4839.900000095367,
+        "full": true
+       },
+       {
+        "scale": 16,
+        "ms": 2361.9000000953674,
+        "full": true
+       },
+       {
+        "scale": 2,
+        "ms": 4148.89999961853,
+        "full": true
+       },
+       {
+        "scale": 8,
+        "ms": 2008,
+        "full": true
+       },
+       {
+        "scale": 2,
+        "ms": 4630.10000038147,
+        "full": true
+       },
+       {
+        "scale": 16,
+        "ms": 2078.5999999046326,
+        "full": true
+       },
+       {
+        "scale": 1,
+        "ms": 1989.5,
+        "full": true
+       },
+       {
+        "scale": 2,
+        "ms": 3642.5,
+        "full": true
+       },
+       {
+        "scale": 32,
+        "ms": 605.9000000953674,
+        "full": true
+       },
+       {
+        "scale": 32,
+        "ms": 890.9000000953674,
+        "full": true
+       }
+      ],
+      "stepMs": {
+       "n": 11,
+       "min": 605.9000000953674,
+       "p50": 2313,
+       "p90": 4630.10000038147,
+       "p95": 4839.900000095367,
+       "max": 4839.900000095367,
+       "mean": 2682.6545454805546
+      },
+      "allFull": true,
+      "pan": {
+       "intervals": {
+        "n": 120,
+        "min": 1.5999999999985448,
+        "p50": 2.2999999999956344,
+        "p90": 4.799999999995634,
+        "p95": 5,
+        "max": 17.099999999998545,
+        "mean": 3.0625
+       },
+       "over16": 1,
+       "over25": 0,
+       "frames": 120,
+       "drawMs": {
+        "n": 120,
+        "min": 1.0999999046325684,
+        "p50": 1.5,
+        "p90": 3.5999999046325684,
+        "p95": 3.700000286102295,
+        "max": 4.699999809265137,
+        "mean": 1.97166668176651
+       },
+       "longTasks": {
+        "n": 0
+       }
+      },
+      "afterPanFull": {
+       "ms": 21.399999618530273,
+       "full": true
+      },
+      "browserTiles": null,
+      "jsHeap": 2776979018
+     }
+    ],
+    "tissue": {
+     "x": 28123,
+     "y": 4091
+    }
+   },
+   {
+    "arm": "browser",
+    "nodeReadyMs": null,
+    "env": {
+     "userAgent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/156.0.0.0 Safari/537.36",
+     "hardwareConcurrency": 24,
+     "deviceMemory": 32,
+     "webgl2": true,
+     "gpu": "ANGLE (NVIDIA, NVIDIA GeForce RTX 3080 (0x00002216) Direct3D11 vs_5_0 ps_5_0, D3D11)",
+     "crossOriginIsolated": false,
+     "isSecureContext": true,
+     "origin": "http://127.0.0.1:51457",
+     "storage": {
+      "quota": 10737418240,
+      "usage": 0
+     },
+     "hasShowOpenFilePicker": true,
+     "hasOPFS": true,
+     "jsHeap": 15297295
+    },
+    "runs": [
+     {
+      "channels": 3,
+      "openMs": 301,
+      "homeFull": {
+       "ms": 115.80000019073486,
+       "full": true
+      },
+      "steps": [
+       {
+        "scale": 16,
+        "ms": 220.2000002861023,
+        "full": true
+       },
+       {
+        "scale": 8,
+        "ms": 347.90000009536743,
+        "full": true
+       },
+       {
+        "scale": 16,
+        "ms": 197.5,
+        "full": true
+       },
+       {
+        "scale": 2,
+        "ms": 274.59999990463257,
+        "full": true
+       },
+       {
+        "scale": 8,
+        "ms": 118.80000019073486,
+        "full": true
+       },
+       {
+        "scale": 2,
+        "ms": 269.80000019073486,
+        "full": true
+       },
+       {
+        "scale": 16,
+        "ms": 82,
+        "full": true
+       },
+       {
+        "scale": 1,
+        "ms": 188.90000009536743,
+        "full": true
+       },
+       {
+        "scale": 2,
+        "ms": 284.5,
+        "full": true
+       },
+       {
+        "scale": 32,
+        "ms": 76,
+        "full": true
+       },
+       {
+        "scale": 32,
+        "ms": 19.5,
+        "full": true
+       }
+      ],
+      "stepMs": {
+       "n": 11,
+       "min": 19.5,
+       "p50": 197.5,
+       "p90": 284.5,
+       "p95": 347.90000009536743,
+       "max": 347.90000009536743,
+       "mean": 189.06363643299449
+      },
+      "allFull": true,
+      "pan": {
+       "intervals": {
+        "n": 120,
+        "min": 0.29999999999972715,
+        "p50": 0.5,
+        "p90": 0.599999999999909,
+        "p95": 0.6999999999998181,
+        "max": 17.800000000000182,
+        "mean": 0.6333333333333333
+       },
+       "over16": 1,
+       "over25": 0,
+       "frames": 120,
+       "drawMs": {
+        "n": 120,
+        "min": 0.09999990463256836,
+        "p50": 0.19999980926513672,
+        "p90": 0.3000001907348633,
+        "p95": 0.3000001907348633,
+        "max": 0.5999999046325684,
+        "mean": 0.20166667699813842
+       },
+       "longTasks": {
+        "n": 0
+       }
+      },
+      "afterPanFull": {
+       "ms": 17.59999990463257,
+       "full": true
+      },
+      "browserTiles": {
+       "n": 279,
+       "min": 10.900000095367432,
+       "p50": 53.5,
+       "p90": 79.90000009536743,
+       "p95": 86.09999990463257,
+       "max": 127.30000019073486,
+       "mean": 55.559856647231676
+      },
+      "jsHeap": 563147408
+     },
+     {
+      "channels": 7,
+      "openMs": 189.09999990463257,
+      "homeFull": {
+       "ms": 246.69999980926514,
+       "full": true
+      },
+      "steps": [
+       {
+        "scale": 16,
+        "ms": 455,
+        "full": true
+       },
+       {
+        "scale": 8,
+        "ms": 927.6000003814697,
+        "full": true
+       },
+       {
+        "scale": 16,
+        "ms": 517.5999999046326,
+        "full": true
+       },
+       {
+        "scale": 2,
+        "ms": 720.0999999046326,
+        "full": true
+       },
+       {
+        "scale": 8,
+        "ms": 256.90000009536743,
+        "full": true
+       },
+       {
+        "scale": 2,
+        "ms": 712.9000000953674,
+        "full": true
+       },
+       {
+        "scale": 16,
+        "ms": 158.5,
+        "full": true
+       },
+       {
+        "scale": 1,
+        "ms": 450.5,
+        "full": true
+       },
+       {
+        "scale": 2,
+        "ms": 691.8000001907349,
+        "full": true
+       },
+       {
+        "scale": 32,
+        "ms": 153.90000009536743,
+        "full": true
+       },
+       {
+        "scale": 32,
+        "ms": 19.5,
+        "full": true
+       }
+      ],
+      "stepMs": {
+       "n": 11,
+       "min": 19.5,
+       "p50": 455,
+       "p90": 720.0999999046326,
+       "p95": 927.6000003814697,
+       "max": 927.6000003814697,
+       "mean": 460.39090915159744
+      },
+      "allFull": true,
+      "pan": {
+       "intervals": {
+        "n": 120,
+        "min": 0.7999999999992724,
+        "p50": 1,
+        "p90": 1.2000000000007276,
+        "p95": 1.4000000000014552,
+        "max": 17.299999999999272,
+        "mean": 1.1358333333333273
+       },
+       "over16": 1,
+       "over25": 0,
+       "frames": 120,
+       "drawMs": {
+        "n": 120,
+        "min": 0.5,
+        "p50": 0.5999999046325684,
+        "p90": 0.7000002861022949,
+        "p95": 0.9000000953674316,
+        "max": 1.1999998092651367,
+        "mean": 0.6316667159398397
+       },
+       "longTasks": {
+        "n": 0
+       }
+      },
+      "afterPanFull": {
+       "ms": 18.09999990463257,
+       "full": true
+      },
+      "browserTiles": {
+       "n": 658,
+       "min": 18.90000009536743,
+       "p50": 70.59999990463257,
+       "p90": 103.5,
+       "p95": 114.09999990463257,
+       "max": 171.89999961853027,
+       "mean": 72.53252279939622
+      },
+      "jsHeap": 1295465648
+     },
+     {
+      "channels": 15,
+      "openMs": 173.5,
+      "homeFull": {
+       "ms": 430,
+       "full": true
+      },
+      "steps": [
+       {
+        "scale": 16,
+        "ms": 993.9000000953674,
+        "full": true
+       },
+       {
+        "scale": 8,
+        "ms": 2023.3000001907349,
+        "full": true
+       },
+       {
+        "scale": 16,
+        "ms": 950.1999998092651,
+        "full": true
+       },
+       {
+        "scale": 2,
+        "ms": 1510.2000002861023,
+        "full": true
+       },
+       {
+        "scale": 8,
+        "ms": 793.2999997138977,
+        "full": true
+       },
+       {
+        "scale": 2,
+        "ms": 1894,
+        "full": true
+       },
+       {
+        "scale": 16,
+        "ms": 667.7000002861023,
+        "full": true
+       },
+       {
+        "scale": 1,
+        "ms": 851.6999998092651,
+        "full": true
+       },
+       {
+        "scale": 2,
+        "ms": 1453.9000000953674,
+        "full": true
+       },
+       {
+        "scale": 32,
+        "ms": 250.59999990463257,
+        "full": true
+       },
+       {
+        "scale": 32,
+        "ms": 330.30000019073486,
+        "full": true
+       }
+      ],
+      "stepMs": {
+       "n": 11,
+       "min": 250.59999990463257,
+       "p50": 950.1999998092651,
+       "p90": 1894,
+       "p95": 2023.3000001907349,
+       "max": 2023.3000001907349,
+       "mean": 1065.3727273074064
+      },
+      "allFull": true,
+      "pan": {
+       "intervals": {
+        "n": 120,
+        "min": 1.5,
+        "p50": 1.7000000000007276,
+        "p90": 2,
+        "p95": 2.2000000000007276,
+        "max": 17.700000000000728,
+        "mean": 1.9300000000000181
+       },
+       "over16": 1,
+       "over25": 0,
+       "frames": 120,
+       "drawMs": {
+        "n": 120,
+        "min": 1.0999999046325684,
+        "p50": 1.299999713897705,
+        "p90": 1.4000000953674316,
+        "p95": 1.5999999046325684,
+        "max": 2.9000000953674316,
+        "mean": 1.3058333158493043
+       },
+       "longTasks": {
+        "n": 0
+       }
+      },
+      "afterPanFull": {
+       "ms": 18.5,
+       "full": true
+      },
+      "browserTiles": {
+       "n": 1674,
+       "min": 17.899999618530273,
+       "p50": 69.40000009536743,
+       "p90": 102,
+       "p95": 110.80000019073486,
+       "max": 188.90000009536743,
+       "mean": 72.18178016908708
+      },
+      "jsHeap": 2757266412
+     }
+    ],
+    "tissue": {
+     "x": 28123,
+     "y": 4091
+    }
+   },
+   {
+    "arm": "browser",
+    "nodeReadyMs": null,
+    "env": {
+     "userAgent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/156.0.0.0 Safari/537.36",
+     "hardwareConcurrency": 24,
+     "deviceMemory": 32,
+     "webgl2": true,
+     "gpu": "ANGLE (NVIDIA, NVIDIA GeForce RTX 3080 (0x00002216) Direct3D11 vs_5_0 ps_5_0, D3D11)",
+     "crossOriginIsolated": false,
+     "isSecureContext": true,
+     "origin": "http://127.0.0.1:54934",
+     "storage": {
+      "quota": 10737418240,
+      "usage": 0
+     },
+     "hasShowOpenFilePicker": true,
+     "hasOPFS": true,
+     "jsHeap": 15360363
+    },
+    "runs": [
+     {
+      "channels": 3,
+      "openMs": 295.1000003814697,
+      "homeFull": {
+       "ms": 110.90000009536743,
+       "full": true
+      },
+      "steps": [
+       {
+        "scale": 16,
+        "ms": 215.2000002861023,
+        "full": true
+       },
+       {
+        "scale": 8,
+        "ms": 389.59999990463257,
+        "full": true
+       },
+       {
+        "scale": 16,
+        "ms": 213.30000019073486,
+        "full": true
+       },
+       {
+        "scale": 2,
+        "ms": 284.7999997138977,
+        "full": true
+       },
+       {
+        "scale": 8,
+        "ms": 118,
+        "full": true
+       },
+       {
+        "scale": 2,
+        "ms": 261.8999996185303,
+        "full": true
+       },
+       {
+        "scale": 16,
+        "ms": 81.2000002861023,
+        "full": true
+       },
+       {
+        "scale": 1,
+        "ms": 202.40000009536743,
+        "full": true
+       },
+       {
+        "scale": 2,
+        "ms": 282.59999990463257,
+        "full": true
+       },
+       {
+        "scale": 32,
+        "ms": 76.59999990463257,
+        "full": true
+       },
+       {
+        "scale": 32,
+        "ms": 18.700000286102295,
+        "full": true
+       }
+      ],
+      "stepMs": {
+       "n": 11,
+       "min": 18.700000286102295,
+       "p50": 213.30000019073486,
+       "p90": 284.7999997138977,
+       "p95": 389.59999990463257,
+       "max": 389.59999990463257,
+       "mean": 194.93636365370318
+      },
+      "allFull": true,
+      "pan": {
+       "intervals": {
+        "n": 120,
+        "min": 0.29999999999972715,
+        "p50": 0.5,
+        "p90": 0.599999999999909,
+        "p95": 0.6999999999998181,
+        "max": 17.200000000000273,
+        "mean": 0.6458333333333334
+       },
+       "over16": 1,
+       "over25": 0,
+       "frames": 120,
+       "drawMs": {
+        "n": 120,
+        "min": 0.09999990463256836,
+        "p50": 0.19999980926513672,
+        "p90": 0.2999997138977051,
+        "p95": 0.3000001907348633,
+        "max": 0.5999999046325684,
+        "mean": 0.2041666587193807
+       },
+       "longTasks": {
+        "n": 0
+       }
+      },
+      "afterPanFull": {
+       "ms": 18,
+       "full": true
+      },
+      "browserTiles": {
+       "n": 279,
+       "min": 12.099999904632568,
+       "p50": 55.90000009536743,
+       "p90": 81.5,
+       "p95": 89.2999997138977,
+       "max": 123,
+       "mean": 57.10358421605975
+      },
+      "jsHeap": 567315108
+     },
+     {
+      "channels": 7,
+      "openMs": 162.80000019073486,
+      "homeFull": {
+       "ms": 247.09999990463257,
+       "full": true
+      },
+      "steps": [
+       {
+        "scale": 16,
+        "ms": 496.69999980926514,
+        "full": true
+       },
+       {
+        "scale": 8,
+        "ms": 988.8000001907349,
+        "full": true
+       },
+       {
+        "scale": 16,
+        "ms": 557.5,
+        "full": true
+       },
+       {
+        "scale": 2,
+        "ms": 729.5,
+        "full": true
+       },
+       {
+        "scale": 8,
+        "ms": 270.90000009536743,
+        "full": true
+       },
+       {
+        "scale": 2,
+        "ms": 687.6999998092651,
+        "full": true
+       },
+       {
+        "scale": 16,
+        "ms": 119.09999990463257,
+        "full": true
+       },
+       {
+        "scale": 1,
+        "ms": 400.5,
+        "full": true
+       },
+       {
+        "scale": 2,
+        "ms": 660.9000000953674,
+        "full": true
+       },
+       {
+        "scale": 32,
+        "ms": 166.89999961853027,
+        "full": true
+       },
+       {
+        "scale": 32,
+        "ms": 20.5,
+        "full": true
+       }
+      ],
+      "stepMs": {
+       "n": 11,
+       "min": 20.5,
+       "p50": 496.69999980926514,
+       "p90": 729.5,
+       "p95": 988.8000001907349,
+       "max": 988.8000001907349,
+       "mean": 463.5454545021057
+      },
+      "allFull": true,
+      "pan": {
+       "intervals": {
+        "n": 120,
+        "min": 0.7999999999992724,
+        "p50": 1.3000000000010914,
+        "p90": 2.600000000000364,
+        "p95": 2.7000000000007276,
+        "max": 18.100000000000364,
+        "mean": 1.730000000000003
+       },
+       "over16": 1,
+       "over25": 0,
+       "frames": 120,
+       "drawMs": {
+        "n": 120,
+        "min": 0.5,
+        "p50": 0.9000000953674316,
+        "p90": 1.700000286102295,
+        "p95": 1.8000001907348633,
+        "max": 2,
+        "mean": 1.009166689713796
+       },
+       "longTasks": {
+        "n": 0
+       }
+      },
+      "afterPanFull": {
+       "ms": 19.100000381469727,
+       "full": true
+      },
+      "browserTiles": {
+       "n": 658,
+       "min": 14.5,
+       "p50": 70.60000038146973,
+       "p90": 102.40000009536743,
+       "p95": 109.90000009536743,
+       "max": 165.2000002861023,
+       "mean": 73.02310029931344
+      },
+      "jsHeap": 1305996236
+     },
+     {
+      "channels": 15,
+      "openMs": 226.40000009536743,
+      "homeFull": {
+       "ms": 440.5,
+       "full": true
+      },
+      "steps": [
+       {
+        "scale": 16,
+        "ms": 931.2000002861023,
+        "full": true
+       },
+       {
+        "scale": 8,
+        "ms": 2036.0999999046326,
+        "full": true
+       },
+       {
+        "scale": 16,
+        "ms": 941.0999999046326,
+        "full": true
+       },
+       {
+        "scale": 2,
+        "ms": 1466.5,
+        "full": true
+       },
+       {
+        "scale": 8,
+        "ms": 832.5,
+        "full": true
+       },
+       {
+        "scale": 2,
+        "ms": 1897.5,
+        "full": true
+       },
+       {
+        "scale": 16,
+        "ms": 714.7000002861023,
+        "full": true
+       },
+       {
+        "scale": 1,
+        "ms": 807.4000000953674,
+        "full": true
+       },
+       {
+        "scale": 2,
+        "ms": 1518.4000000953674,
+        "full": true
+       },
+       {
+        "scale": 32,
+        "ms": 245.89999961853027,
+        "full": true
+       },
+       {
+        "scale": 32,
+        "ms": 327.80000019073486,
+        "full": true
+       }
+      ],
+      "stepMs": {
+       "n": 11,
+       "min": 245.89999961853027,
+       "p50": 931.2000002861023,
+       "p90": 1897.5,
+       "p95": 2036.0999999046326,
+       "max": 2036.0999999046326,
+       "mean": 1065.3727273074064
+      },
+      "allFull": true,
+      "pan": {
+       "intervals": {
+        "n": 120,
+        "min": 1.5999999999985448,
+        "p50": 2.2000000000007276,
+        "p90": 4.299999999999272,
+        "p95": 4.900000000001455,
+        "max": 17.5,
+        "mean": 2.6666666666666665
+       },
+       "over16": 1,
+       "over25": 0,
+       "frames": 120,
+       "drawMs": {
+        "n": 120,
+        "min": 1.1000003814697266,
+        "p50": 1.5,
+        "p90": 3.299999713897705,
+        "p95": 3.700000286102295,
+        "max": 4,
+        "mean": 1.7916666825612386
+       },
+       "longTasks": {
+        "n": 0
+       }
+      },
+      "afterPanFull": {
+       "ms": 22.199999809265137,
+       "full": true
+      },
+      "browserTiles": {
+       "n": 1674,
+       "min": 17.40000009536743,
+       "p50": 69,
+       "p90": 101.90000009536743,
+       "p95": 110.90000009536743,
+       "max": 206.09999990463257,
+       "mean": 71.88978495478203
+      },
+      "jsHeap": 2776438144
+     }
+    ],
+    "tissue": {
+     "x": 28123,
+     "y": 4091
+    }
+   },
+   {
+    "arm": "node",
+    "nodeReadyMs": 5319,
+    "env": {
+     "userAgent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/156.0.0.0 Safari/537.36",
+     "hardwareConcurrency": 24,
+     "deviceMemory": 32,
+     "webgl2": true,
+     "gpu": "ANGLE (NVIDIA, NVIDIA GeForce RTX 3080 (0x00002216) Direct3D11 vs_5_0 ps_5_0, D3D11)",
+     "crossOriginIsolated": false,
+     "isSecureContext": true,
+     "origin": "http://127.0.0.1:65354",
+     "storage": {
+      "quota": 10737418240,
+      "usage": 0
+     },
+     "hasShowOpenFilePicker": true,
+     "hasOPFS": true,
+     "jsHeap": 15298407
+    },
+    "runs": [
+     {
+      "channels": 3,
+      "openMs": 602.0999999046326,
+      "homeFull": {
+       "ms": 443.40000009536743,
+       "full": true
+      },
+      "steps": [
+       {
+        "scale": 16,
+        "ms": 563.4000000953674,
+        "full": true
+       },
+       {
+        "scale": 8,
+        "ms": 972.3000001907349,
+        "full": true
+       },
+       {
+        "scale": 16,
+        "ms": 538.5,
+        "full": true
+       },
+       {
+        "scale": 2,
+        "ms": 859.2000002861023,
+        "full": true
+       },
+       {
+        "scale": 8,
+        "ms": 327,
+        "full": true
+       },
+       {
+        "scale": 2,
+        "ms": 670.5,
+        "full": true
+       },
+       {
+        "scale": 16,
+        "ms": 182.2000002861023,
+        "full": true
+       },
+       {
+        "scale": 1,
+        "ms": 447,
+        "full": true
+       },
+       {
+        "scale": 2,
+        "ms": 715.2000002861023,
+        "full": true
+       },
+       {
+        "scale": 32,
+        "ms": 152.7999997138977,
+        "full": true
+       },
+       {
+        "scale": 32,
+        "ms": 18.700000286102295,
+        "full": true
+       }
+      ],
+      "stepMs": {
+       "n": 11,
+       "min": 18.700000286102295,
+       "p50": 538.5,
+       "p90": 859.2000002861023,
+       "p95": 972.3000001907349,
+       "max": 972.3000001907349,
+       "mean": 495.16363646767354
+      },
+      "allFull": true,
+      "pan": {
+       "intervals": {
+        "n": 120,
+        "min": 0.2999999999992724,
+        "p50": 0.7000000000007276,
+        "p90": 1.2000000000007276,
+        "p95": 1.3000000000010914,
+        "max": 16.899999999999636,
+        "mean": 0.9641666666666576
+       },
+       "over16": 1,
+       "over25": 0,
+       "frames": 120,
+       "drawMs": {
+        "n": 120,
+        "min": 0.09999990463256836,
+        "p50": 0.3000001907348633,
+        "p90": 0.5999999046325684,
+        "p95": 0.6000003814697266,
+        "max": 3.1000003814697266,
+        "mean": 0.35583337148030597
+       },
+       "longTasks": {
+        "n": 0
+       }
+      },
+      "afterPanFull": {
+       "ms": 18.59999990463257,
+       "full": true
+      },
+      "browserTiles": null,
+      "jsHeap": 611459983
+     },
+     {
+      "channels": 7,
+      "openMs": 315.7000002861023,
+      "homeFull": {
+       "ms": 413.69999980926514,
+       "full": true
+      },
+      "steps": [
+       {
+        "scale": 16,
+        "ms": 998.7000002861023,
+        "full": true
+       },
+       {
+        "scale": 8,
+        "ms": 2183.699999809265,
+        "full": true
+       },
+       {
+        "scale": 16,
+        "ms": 1122.0999999046326,
+        "full": true
+       },
+       {
+        "scale": 2,
+        "ms": 1780,
+        "full": true
+       },
+       {
+        "scale": 8,
+        "ms": 469.69999980926514,
+        "full": true
+       },
+       {
+        "scale": 2,
+        "ms": 1388,
+        "full": true
+       },
+       {
+        "scale": 16,
+        "ms": 347.2000002861023,
+        "full": true
+       },
+       {
+        "scale": 1,
+        "ms": 894.8999996185303,
+        "full": true
+       },
+       {
+        "scale": 2,
+        "ms": 1442.5999999046326,
+        "full": true
+       },
+       {
+        "scale": 32,
+        "ms": 337.2000002861023,
+        "full": true
+       },
+       {
+        "scale": 32,
+        "ms": 11.799999713897705,
+        "full": true
+       }
+      ],
+      "stepMs": {
+       "n": 11,
+       "min": 11.799999713897705,
+       "p50": 998.7000002861023,
+       "p90": 1780,
+       "p95": 2183.699999809265,
+       "max": 2183.699999809265,
+       "mean": 997.8090908744118
+      },
+      "allFull": true,
+      "pan": {
+       "intervals": {
+        "n": 120,
+        "min": 1,
+        "p50": 2.2000000000007276,
+        "p90": 2.7999999999992724,
+        "p95": 2.900000000001455,
+        "max": 17.5,
+        "mean": 2.217499999999988
+       },
+       "over16": 1,
+       "over25": 0,
+       "frames": 120,
+       "drawMs": {
+        "n": 120,
+        "min": 0.5,
+        "p50": 1.3000001907348633,
+        "p90": 1.9000000953674316,
+        "p95": 2,
+        "max": 2.3000001907348633,
+        "mean": 1.3116666754086812
+       },
+       "longTasks": {
+        "n": 0
+       }
+      },
+      "afterPanFull": {
+       "ms": 19.300000190734863,
+       "full": true
+      },
+      "browserTiles": null,
+      "jsHeap": 1359321143
+     },
+     {
+      "channels": 15,
+      "openMs": 618.6999998092651,
+      "homeFull": {
+       "ms": 739.5,
+       "full": true
+      },
+      "steps": [
+       {
+        "scale": 16,
+        "ms": 2312.5999999046326,
+        "full": true
+       },
+       {
+        "scale": 8,
+        "ms": 4935.099999904633,
+        "full": true
+       },
+       {
+        "scale": 16,
+        "ms": 2370.6000003814697,
+        "full": true
+       },
+       {
+        "scale": 2,
+        "ms": 4212.39999961853,
+        "full": true
+       },
+       {
+        "scale": 8,
+        "ms": 1998.1999998092651,
+        "full": true
+       },
+       {
+        "scale": 2,
+        "ms": 4401.099999904633,
+        "full": true
+       },
+       {
+        "scale": 16,
+        "ms": 1977.3000001907349,
+        "full": true
+       },
+       {
+        "scale": 1,
+        "ms": 2123.5,
+        "full": true
+       },
+       {
+        "scale": 2,
+        "ms": 3697.4000000953674,
+        "full": true
+       },
+       {
+        "scale": 32,
+        "ms": 636.3999996185303,
+        "full": true
+       },
+       {
+        "scale": 32,
+        "ms": 961.8000001907349,
+        "full": true
+       }
+      ],
+      "stepMs": {
+       "n": 11,
+       "min": 636.3999996185303,
+       "p50": 2312.5999999046326,
+       "p90": 4401.099999904633,
+       "p95": 4935.099999904633,
+       "max": 4935.099999904633,
+       "mean": 2693.309090874412
+      },
+      "allFull": true,
+      "pan": {
+       "intervals": {
+        "n": 120,
+        "min": 1.9000000000014552,
+        "p50": 2.8999999999941792,
+        "p90": 5.299999999995634,
+        "p95": 5.400000000001455,
+        "max": 17.099999999998545,
+        "mean": 3.5783333333332847
+       },
+       "over16": 1,
+       "over25": 0,
+       "frames": 120,
+       "drawMs": {
+        "n": 120,
+        "min": 1.299999713897705,
+        "p50": 2,
+        "p90": 3.9000000953674316,
+        "p95": 4,
+        "max": 4.400000095367432,
+        "mean": 2.490833306312561
+       },
+       "longTasks": {
+        "n": 0
+       }
+      },
+      "afterPanFull": {
+       "ms": 23.40000009536743,
+       "full": true
+      },
+      "browserTiles": null,
+      "jsHeap": 2772045424
+     }
+    ],
+    "tissue": {
+     "x": 28123,
+     "y": 4091
+    }
+   }
+  ]
+ },
+ "checks": {},
+ "thresholds": null,
+ "verdict": null,
+ "notes": [],
+ "logs": [
+  "[error] Failed to load resource: the server responded with a status of 404 (Not Found)",
+  "[error] Failed to load resource: the server responded with a status of 404 (Not Found)",
+  "[error] Failed to load resource: the server responded with a status of 404 (Not Found)",
+  "[error] Failed to load resource: the server responded with a status of 404 (Not Found)",
+  "[error] Failed to load resource: the server responded with a status of 404 (Not Found)"
+ ]
+}

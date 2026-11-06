@@ -1,0 +1,783 @@
+{
+ "poc": "P0",
+ "date": "2026-11-05",
+ "commit": "4e18de00-dirty",
+ "machine": {
+  "cpuPercentBefore": [
+   16.3,
+   16.1,
+   13.3
+  ],
+  "platform": "win32 10.0.26200",
+  "cpu": "12th Gen Intel(R) Core(TM) i9-12900K",
+  "cores": 24,
+  "memoryGB": 128,
+  "load": [
+   0,
+   0,
+   0
+  ],
+  "hostname": "ajit"
+ },
+ "browser": {
+  "userAgent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/156.0.0.0 Safari/537.36",
+  "hardwareConcurrency": 24,
+  "deviceMemory": 32,
+  "webgl2": true,
+  "gpu": "ANGLE (NVIDIA, NVIDIA GeForce RTX 3080 (0x00002216) Direct3D11 vs_5_0 ps_5_0, D3D11)",
+  "crossOriginIsolated": false,
+  "isSecureContext": true,
+  "origin": "http://127.0.0.1:56687",
+  "storage": {
+   "quota": 10737418240,
+   "usage": 0
+  },
+  "hasShowOpenFilePicker": true,
+  "hasOPFS": true,
+  "jsHeap": 15266379
+ },
+ "arm": null,
+ "state": null,
+ "fixture": {
+  "name": "M",
+  "files": {
+   "image": {
+    "name": "LSP11385.ome.tif",
+    "bytes": 66747709231,
+    "mtime": "2026-10-05T19:28:16.679Z"
+   },
+   "mask": {
+    "name": "cell.labels.pyramid.ome.tiff",
+    "bytes": 52706763,
+    "mtime": "2026-09-30T17:28:59.000Z"
+   },
+   "table": {
+    "name": "LSP11385--mccellpose_cell.csv",
+    "bytes": 180165929,
+    "mtime": "2026-09-30T16:31:36.000Z"
+   },
+   "flatMask": {
+    "name": "lsp11385-mask-flat.tif",
+    "bytes": 31899917,
+    "mtime": "2026-11-05T23:25:32.412Z"
+   }
+  }
+ },
+ "metrics": {
+  "nodeReadyMs": 5753,
+  "pictures": [
+   {
+    "rect": {
+     "x": 0,
+     "y": 0,
+     "w": 45381,
+     "h": 52923
+    },
+    "fullA": true,
+    "fullB": true,
+    "pixels": 648000,
+    "nonBlack": 192961,
+    "differing": 0,
+    "maxDelta": 0,
+    "diffBox": null,
+    "sameSize": true,
+    "shaA": "6d356696b458c6ac2e965bcb3b332cbd9edbc49446f8c45620fd137121e9014d",
+    "shaB": "6d356696b458c6ac2e965bcb3b332cbd9edbc49446f8c45620fd137121e9014d",
+    "atFull": {
+     "differing": 0,
+     "maxDelta": 0,
+     "diffBox": null
+    }
+   },
+   {
+    "rect": {
+     "x": 25243,
+     "y": 491,
+     "w": 5760,
+     "h": 7200
+    },
+    "fullA": true,
+    "fullB": true,
+    "pixels": 648000,
+    "nonBlack": 100646,
+    "differing": 0,
+    "maxDelta": 0,
+    "diffBox": null,
+    "sameSize": true,
+    "shaA": "8b8db607b1f32b1ca6b2dbfc6cca8b8839503d991fb4335a65c2dd9fe453c81f",
+    "shaB": "8b8db607b1f32b1ca6b2dbfc6cca8b8839503d991fb4335a65c2dd9fe453c81f",
+    "atFull": {
+     "differing": 0,
+     "maxDelta": 0,
+     "diffBox": null
+    }
+   },
+   {
+    "rect": {
+     "x": 27763,
+     "y": 3641,
+     "w": 720,
+     "h": 900
+    },
+    "fullA": true,
+    "fullB": true,
+    "pixels": 648000,
+    "nonBlack": 648000,
+    "differing": 0,
+    "maxDelta": 0,
+    "diffBox": null,
+    "sameSize": true,
+    "shaA": "d5bef912c1e878b285ee6472372a551350cc50327a8d76a650897f77c200da23",
+    "shaB": "d5bef912c1e878b285ee6472372a551350cc50327a8d76a650897f77c200da23",
+    "atFull": {
+     "differing": 0,
+     "maxDelta": 0,
+     "diffBox": null
+    }
+   }
+  ],
+  "audit": {
+   "scanned": 271,
+   "totals": {
+    "plexoraUrl": 170,
+    "datasourceGlobal": 333,
+    "flaskVariables": 69,
+    "fetchCall": 249,
+    "xhr": 1,
+    "imageViewerGlobals": 301
+   },
+   "filesUsing": {
+    "plexoraUrl": 65,
+    "datasourceGlobal": 47,
+    "flaskVariables": 31,
+    "fetchCall": 76,
+    "xhr": 1,
+    "imageViewerGlobals": 52
+   },
+   "rendering": [
+    {
+     "file": "plexora/client/src/js/services/displayCurve.js",
+     "plexoraUrl": 0,
+     "datasourceGlobal": 0,
+     "flaskVariables": 0,
+     "fetchCall": 0,
+     "xhr": 0,
+     "imageViewerGlobals": 0
+    },
+    {
+     "file": "plexora/client/src/js/services/glRenderer.js",
+     "plexoraUrl": 0,
+     "datasourceGlobal": 0,
+     "flaskVariables": 0,
+     "fetchCall": 0,
+     "xhr": 1,
+     "imageViewerGlobals": 0
+    },
+    {
+     "file": "plexora/client/src/js/views/glInit.js",
+     "plexoraUrl": 2,
+     "datasourceGlobal": 0,
+     "flaskVariables": 0,
+     "fetchCall": 0,
+     "xhr": 0,
+     "imageViewerGlobals": 0
+    },
+    {
+     "file": "plexora/client/src/js/views/labelGpu.js",
+     "plexoraUrl": 0,
+     "datasourceGlobal": 0,
+     "flaskVariables": 0,
+     "fetchCall": 1,
+     "xhr": 0,
+     "imageViewerGlobals": 0
+    },
+    {
+     "file": "plexora/client/src/js/views/labelTile.js",
+     "plexoraUrl": 0,
+     "datasourceGlobal": 0,
+     "flaskVariables": 0,
+     "fetchCall": 0,
+     "xhr": 0,
+     "imageViewerGlobals": 0
+    },
+    {
+     "file": "plexora/client/src/js/views/tileColorize.js",
+     "plexoraUrl": 0,
+     "datasourceGlobal": 0,
+     "flaskVariables": 0,
+     "fetchCall": 0,
+     "xhr": 0,
+     "imageViewerGlobals": 2
+    },
+    {
+     "file": "plexora/client/src/js/views/tileDecode.js",
+     "plexoraUrl": 0,
+     "datasourceGlobal": 0,
+     "flaskVariables": 0,
+     "fetchCall": 0,
+     "xhr": 0,
+     "imageViewerGlobals": 0
+    },
+    {
+     "file": "plexora/client/src/js/views/tileFetch.js",
+     "plexoraUrl": 0,
+     "datasourceGlobal": 0,
+     "flaskVariables": 0,
+     "fetchCall": 1,
+     "xhr": 0,
+     "imageViewerGlobals": 0
+    },
+    {
+     "file": "plexora/client/src/js/workers/tileDecoder.js",
+     "plexoraUrl": 0,
+     "datasourceGlobal": 0,
+     "flaskVariables": 0,
+     "fetchCall": 0,
+     "xhr": 0,
+     "imageViewerGlobals": 0
+    }
+   ],
+   "heaviest": [
+    {
+     "file": "plexora/client/src/js/services/dataLayer.js",
+     "plexoraUrl": 18,
+     "datasourceGlobal": 18,
+     "flaskVariables": 0,
+     "fetchCall": 18,
+     "xhr": 0,
+     "imageViewerGlobals": 2
+    },
+    {
+     "file": "plexora/plugins/gating/static/gatingApi.js",
+     "plexoraUrl": 0,
+     "datasourceGlobal": 2,
+     "flaskVariables": 0,
+     "fetchCall": 26,
+     "xhr": 0,
+     "imageViewerGlobals": 0
+    },
+    {
+     "file": "plexora/client/src/js/views/importSample.js",
+     "plexoraUrl": 13,
+     "datasourceGlobal": 0,
+     "flaskVariables": 0,
+     "fetchCall": 12,
+     "xhr": 0,
+     "imageViewerGlobals": 1
+    },
+    {
+     "file": "plexora/plugins/figure_builder/static/figureBuilderApi.js",
+     "plexoraUrl": 1,
+     "datasourceGlobal": 14,
+     "flaskVariables": 0,
+     "fetchCall": 16,
+     "xhr": 0,
+     "imageViewerGlobals": 0
+    },
+    {
+     "file": "plexora/client/src/js/views/settingsPage.js",
+     "plexoraUrl": 7,
+     "datasourceGlobal": 0,
+     "flaskVariables": 0,
+     "fetchCall": 7,
+     "xhr": 0,
+     "imageViewerGlobals": 0
+    },
+    {
+     "file": "plexora/client/src/js/views/depthTools.js",
+     "plexoraUrl": 6,
+     "datasourceGlobal": 0,
+     "flaskVariables": 0,
+     "fetchCall": 7,
+     "xhr": 0,
+     "imageViewerGlobals": 6
+    },
+    {
+     "file": "plexora/client/src/js/views/layerManager.js",
+     "plexoraUrl": 6,
+     "datasourceGlobal": 0,
+     "flaskVariables": 10,
+     "fetchCall": 6,
+     "xhr": 0,
+     "imageViewerGlobals": 24
+    },
+    {
+     "file": "plexora/client/src/js/views/openProjectPage.js",
+     "plexoraUrl": 7,
+     "datasourceGlobal": 0,
+     "flaskVariables": 0,
+     "fetchCall": 4,
+     "xhr": 0,
+     "imageViewerGlobals": 0
+    },
+    {
+     "file": "plexora/client/src/js/views/projectEdit.js",
+     "plexoraUrl": 6,
+     "datasourceGlobal": 0,
+     "flaskVariables": 0,
+     "fetchCall": 5,
+     "xhr": 0,
+     "imageViewerGlobals": 0
+    },
+    {
+     "file": "plexora/client/src/js/main.js",
+     "plexoraUrl": 7,
+     "datasourceGlobal": 27,
+     "flaskVariables": 3,
+     "fetchCall": 2,
+     "xhr": 0,
+     "imageViewerGlobals": 91
+    },
+    {
+     "file": "plexora/plugins/qc/static/qcApi.js",
+     "plexoraUrl": 0,
+     "datasourceGlobal": 4,
+     "flaskVariables": 0,
+     "fetchCall": 9,
+     "xhr": 0,
+     "imageViewerGlobals": 0
+    },
+    {
+     "file": "plexora/plugins/roi/static/roiApi.js",
+     "plexoraUrl": 0,
+     "datasourceGlobal": 0,
+     "flaskVariables": 0,
+     "fetchCall": 9,
+     "xhr": 0,
+     "imageViewerGlobals": 0
+    },
+    {
+     "file": "plexora/client/src/js/services/browsePicker.js",
+     "plexoraUrl": 4,
+     "datasourceGlobal": 0,
+     "flaskVariables": 0,
+     "fetchCall": 4,
+     "xhr": 0,
+     "imageViewerGlobals": 0
+    },
+    {
+     "file": "plexora/client/src/js/services/explorer/fileExplorer.js",
+     "plexoraUrl": 4,
+     "datasourceGlobal": 0,
+     "flaskVariables": 0,
+     "fetchCall": 4,
+     "xhr": 0,
+     "imageViewerGlobals": 0
+    },
+    {
+     "file": "plexora/client/src/js/services/surfaceLayers.js",
+     "plexoraUrl": 1,
+     "datasourceGlobal": 4,
+     "flaskVariables": 2,
+     "fetchCall": 7,
+     "xhr": 0,
+     "imageViewerGlobals": 16
+    }
+   ]
+  }
+ },
+ "checks": {
+  "productModulesLoaded": [
+   "_",
+   "d3",
+   "OpenSeadragon",
+   "GLRenderer",
+   "UPNG",
+   "PNG",
+   "Buffer",
+   "RGB_TILE_FORMAT",
+   "PlexoraGL",
+   "PlexoraTileColorize",
+   "PlexoraTileDecode",
+   "PlexoraTileFetch",
+   "PlexoraLabelTile",
+   "PlexoraLabelGpu",
+   "PlexoraLayerStack",
+   "plexoraUrl",
+   "PlexoraDisplayCurve",
+   "toFloatColor"
+  ],
+  "productModulesMissing": [
+   "datasource",
+   "flaskVariables"
+  ],
+  "shims": {
+   "toFloatColor": "declared in imageViewer.js; copied (one line)"
+  },
+  "byteOrder": {
+   "tile": {
+    "channel": 0,
+    "level": 6,
+    "x": 0,
+    "y": 0,
+    "width": 710,
+    "height": 827
+   },
+   "pngIsBigEndian": true,
+   "geotiffIsLittleEndian": true,
+   "samples": 587170,
+   "beMatches": 587170,
+   "leMatches": 335766,
+   "conclusion": "the HD PNG carries big-endian samples; geotiff.js returns native little-endian, so the browser node swaps before delivery"
+  },
+  "shader": {
+   "full": {
+    "range": [
+     0,
+     1
+    ],
+    "red": [
+     0,
+     32,
+     64,
+     96,
+     127,
+     159,
+     191,
+     223
+    ],
+    "exact": [
+     0,
+     1,
+     2,
+     3,
+     4,
+     5,
+     6,
+     7,
+     8,
+     9,
+     10,
+     11,
+     12,
+     13,
+     14,
+     15,
+     16,
+     17,
+     18,
+     19,
+     20,
+     21,
+     22,
+     23,
+     24,
+     25,
+     26,
+     27,
+     28,
+     29,
+     30,
+     31,
+     32,
+     33,
+     34,
+     35,
+     36,
+     37,
+     38,
+     39,
+     40,
+     41,
+     42,
+     43,
+     44,
+     45,
+     46,
+     47,
+     48,
+     49,
+     50,
+     51,
+     52,
+     53,
+     54,
+     55,
+     56,
+     57,
+     58,
+     59,
+     60,
+     61,
+     62,
+     63,
+     64,
+     65,
+     66,
+     67,
+     68,
+     69,
+     70,
+     71,
+     72,
+     73,
+     74,
+     75,
+     76,
+     77,
+     78,
+     79,
+     80,
+     81,
+     82,
+     83,
+     84,
+     85,
+     86,
+     87,
+     88,
+     89,
+     90,
+     91,
+     92,
+     93,
+     94,
+     95,
+     96,
+     97,
+     98,
+     99,
+     100,
+     101,
+     102,
+     103,
+     104,
+     105,
+     106,
+     107,
+     108,
+     109,
+     110,
+     111,
+     112,
+     113,
+     114,
+     115,
+     116,
+     117,
+     118,
+     119,
+     120,
+     121,
+     122,
+     123,
+     124,
+     125,
+     126,
+     127,
+     128,
+     129,
+     130,
+     131,
+     132,
+     133,
+     134,
+     135,
+     136,
+     137,
+     138,
+     139,
+     140,
+     141,
+     142,
+     143,
+     144,
+     145,
+     146,
+     147,
+     148,
+     149,
+     150,
+     151,
+     152,
+     153,
+     154,
+     155,
+     156,
+     157,
+     158,
+     159,
+     160,
+     161,
+     162,
+     163,
+     164,
+     165,
+     166,
+     167,
+     168,
+     169,
+     170,
+     171,
+     172,
+     173,
+     174,
+     175,
+     176,
+     177,
+     178,
+     179,
+     180,
+     181,
+     182,
+     183,
+     184,
+     185,
+     186,
+     187,
+     188,
+     189,
+     190,
+     191,
+     192,
+     193,
+     194,
+     195,
+     196,
+     197,
+     198,
+     199,
+     200,
+     201,
+     202,
+     203,
+     204,
+     205,
+     206,
+     207,
+     208,
+     209,
+     210,
+     211,
+     212,
+     213,
+     214,
+     215,
+     216,
+     217,
+     218,
+     219,
+     220,
+     221,
+     222,
+     223,
+     224,
+     225,
+     226,
+     227,
+     228,
+     229,
+     230,
+     231,
+     232,
+     233,
+     234,
+     235,
+     236,
+     237,
+     238,
+     239,
+     240,
+     241,
+     242,
+     243,
+     244,
+     245,
+     246,
+     247,
+     248,
+     249,
+     250,
+     251,
+     252,
+     253,
+     254,
+     255
+    ],
+    "maxAbsError": 1,
+    "meanError": -0.5,
+    "firstErrorAt": -1,
+    "values": [
+     0,
+     65535
+    ]
+   },
+   "narrow": {
+    "range": [
+     0.5,
+     0.55
+    ],
+    "red": [
+     0,
+     22,
+     54,
+     86,
+     118,
+     149,
+     181,
+     213
+    ],
+    "exact": [
+     0,
+     32,
+     64,
+     96,
+     128,
+     160,
+     192,
+     224
+    ],
+    "maxAbsError": 11,
+    "meanError": -10.234375,
+    "firstErrorAt": 2,
+    "values": [
+     32768,
+     36044
+    ]
+   },
+   "note": "frag.glsl:504 rebuilds value = r*255 + g; exact is r*256 + g. Errors are in 8-bit display levels."
+  },
+  "base": "/repo/plexora",
+  "shaderUrl": "/repo/plexora/client/src/shaders/frag.glsl",
+  "picturesIdentical": true
+ },
+ "thresholds": {
+  "go": [
+   {
+    "name": "pictures identical (node HD tiles vs browser node, every view)",
+    "value": true,
+    "bound": "true",
+    "result": "pass"
+   },
+   {
+    "name": "rendering modules load unmodified (shims needed)",
+    "value": [
+     "toFloatColor"
+    ],
+    "bound": "page-side shims only",
+    "result": "pass"
+   },
+   {
+    "name": "byte order understood (HD PNG big-endian, geotiff little-endian)",
+    "value": true,
+    "bound": "true",
+    "result": "pass"
+   }
+  ],
+  "stop": [
+   {
+    "name": "a module needs an edit in plexora/client/src",
+    "value": false,
+    "bound": "false",
+    "result": "fail"
+   }
+  ]
+ },
+ "verdict": "GO",
+ "notes": [],
+ "logs": [
+  "[error] Failed to load resource: the server responded with a status of 404 (Not Found)",
+  "[warning] Canvas2D: Multiple readback operations using getImageData are faster with the willReadFrequently attribute set to true. See: https://html.spec.whatwg.org/multipage/canvas.html#concept-canvas-will-read-frequently",
+  "[warning] Canvas2D: Multiple readback operations using getImageData are faster with the willReadFrequently attribute set to true. See: https://html.spec.whatwg.org/multipage/canvas.html#concept-canvas-will-read-frequently"
+ ]
+}
