@@ -87,6 +87,10 @@ public:
   - name: PLEXORA_NODE_TOKEN
     group: Data nodes
     description: Default for `plexora node serve --token`, the shared secret a viewer authenticates with.
+  - name: PLEXORA_NODE_ORIGINS
+    group: Data nodes
+    description: Browser origins a data node allows, separated by commas or spaces, in addition to every `plexora node serve --allow-origin`. For a launcher that starts nodes for a page served from elsewhere (the hosted viewer, say) without rebuilding each command line. Written as the browser sends them -- `http://127.0.0.1:8000` and `http://localhost:8000` are different origins.
+    example: https://viewer.plexoraapp.com
   - name: PLEXORA_FEATURE_CACHE_MB
     group: Performance
     description: Memory, in megabytes, for caching feature columns read on demand from wide tables.
@@ -252,11 +256,12 @@ ignore:
   PLEXORA_INSTALLED_PLUGINS: Flask config key.
   PLEXORA_LABEL_GPU: JavaScript constant.
   PLEXORA_LABEL_TILE: JavaScript constant.
+  PLEXORA_NODE_APP_DIR: Flask config key on a data node.
   PLEXORA_NODE_DYNAMIC: Flask config key on a data node.
   PLEXORA_NODE_ID: Flask config key on a data node.
   PLEXORA_NODE_MANIFEST: Flask config key on a data node.
-  PLEXORA_NODE_ORIGINS: Flask config key on a data node.
   PLEXORA_NODE_RESOURCES: Flask config key on a data node.
+  PLEXORA_NODE_URL_PREFIX: Flask config key on a data node.
   PLEXORA_NS: UUID namespace constant.
   PLEXORA_QC_CHANGED: JavaScript constant (services/numericData.js).
   PLEXORA_SERVER_CONCURRENCY: JavaScript global set by the page template.

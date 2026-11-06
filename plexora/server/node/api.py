@@ -238,6 +238,10 @@ def hello():
         # this omits the key, and a missing answer means the primary keeps
         # doing what it did before. Absence is the compatibility story.
         dialogs=native_dialog.dialog_kind(),
+        # What this node's software can do beyond api_version 1's routes, for
+        # a page deciding what to offer. Additive like `dialogs`: a node too
+        # old to say has none of them.
+        features=_features(),
         resources=[resource.describe() for resource in _registry().all()],
         # Cumulative tile and request counts for the primary's optional
         # telemetry (plexora/telemetry/node_hooks.py); a node never uploads.
@@ -250,6 +254,16 @@ def hello():
 def _node_telemetry_block():
     block = _node_telemetry.snapshot()
     return {"telemetry": block} if block is not None else {}
+
+
+def _features():
+    """`pair`: `node serve --pair` prints a pairing link. `origins-env`: the
+    node reads PLEXORA_NODE_ORIGINS. `app`: `/app/` serves the static build --
+    only when it was asked for AND this install has one (`node/webapp.py`)."""
+    features = ["pair", "origins-env"]
+    if current_app.config.get("PLEXORA_NODE_APP_DIR"):
+        features.append("app")
+    return features
 
 
 @node_bp.route("/health")

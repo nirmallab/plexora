@@ -15,7 +15,8 @@ Serve one or more files to a Plexora viewer. Every --serve names one resource as
 
 ```bash
 plexora node serve [-h] [--serve KIND:ID=PATH] [--host HOST] [--port PORT] [--token TOKEN]
-                          [--node-id NODE_ID] [--allow-origin ORIGIN] [--plugins PLUGINS]
+                          [--node-id NODE_ID] [--allow-origin ORIGIN] [--pair [ORIGIN]]
+                          [--browser-endpoint URL] [--app] [--url-prefix PATH] [--plugins PLUGINS]
                           [--dynamic] [--manifest PATH] [--exit-on-stdin-close]
 ```
 
@@ -51,7 +52,31 @@ Stable name for this node, used in cache keys. Generated per launch if unset.
 
 <Param name={"--allow-origin ORIGIN"} kind={"repeatable"}>
 
-A viewer origin allowed to read this node from a browser, e.g. http://127.0.0.1:8000. Repeat for each. Needed only when the browser talks to this node directly rather than through the viewer.
+A viewer origin allowed to read this node from a browser, e.g. http://127.0.0.1:8000. Repeat for each. Needed only when the browser talks to this node directly rather than through the viewer. Origins in PLEXORA_NODE_ORIGINS (separated by commas or spaces) are allowed as well.
+
+</Param>
+
+<Param name={"--pair [ORIGIN]"}>
+
+Once listening, print a link that pairs this node with the Plexora page at ORIGIN (default https://viewer.plexoraapp.com), and allow that origin. The token rides in the link's #fragment, which the browser never sends to a server; the link is printed here and nowhere else.
+
+</Param>
+
+<Param name={"--browser-endpoint URL"}>
+
+With --pair: the address the browser should use for this node, when it is not this machine's own http://127.0.0.1:\<port> -- a lab gateway's hostname, or the local end of a tunnel on another port.
+
+</Param>
+
+<Param name={"--app"}>
+
+Also serve the Plexora web app at /app/, from the static build shipped with this install (when it has one). The app is public code and is served without the token; every data route still needs it.
+
+</Param>
+
+<Param name={"--url-prefix PATH"}>
+
+The path this node is reached under behind a reverse proxy, e.g. /rnode/\<host>/\<port>, for the app's redirects. Without it, an X-Forwarded-Prefix header is used, and otherwise the redirects are relative.
 
 </Param>
 

@@ -51,6 +51,10 @@ DESKTOP_PROTOCOL = 1
 #: plexora package being importable. tests/test_cli.py pins the two together.
 DEFAULT_REMOTE_COMMAND = "plexora"
 
+#: The page `--pair` links to when it names none. connect.DEFAULT_PAIR_ORIGIN's
+#: twin, for the reason above; tests/test_node_pairing.py pins the two together.
+DEFAULT_PAIR_ORIGIN = "https://viewer.plexoraapp.com"
+
 #: Set on the child of the one re-exec `python -m plexora --plugins` may need,
 #: so a mistake in that logic loops zero times instead of forever.
 REEXEC_ENV_VAR = "PLEXORA_CLI_REEXEC"
@@ -1172,10 +1176,12 @@ def build_parser(command=None):
     )
     parser.add_argument(
         "--node-allow-origin",
+        action="append",
         default=None,
         metavar="ORIGIN",
         help="A viewer origin the data node will accept browser requests "
-             "from, so tiles can be fetched directly rather than relayed.",
+             "from, so tiles can be fetched directly rather than relayed. "
+             "Repeat for each.",
     )
     parser.add_argument(
         "--no-detect",
@@ -1271,7 +1277,46 @@ def _build_node_parser():
         help="A viewer origin allowed to read this node from a browser, e.g. "
              "http://127.0.0.1:8000. Repeat for each. Needed only when the "
              "browser talks to this node directly rather than through the "
-             "viewer.",
+             "viewer. Origins in PLEXORA_NODE_ORIGINS (separated by commas or "
+             "spaces) are allowed as well.",
+    )
+    serve.add_argument(
+        "--pair",
+        nargs="?",
+        const=DEFAULT_PAIR_ORIGIN,
+        default=None,
+        metavar="ORIGIN",
+        help="Once listening, print a link that pairs this node with the "
+             f"Plexora page at ORIGIN (default {DEFAULT_PAIR_ORIGIN}), and "
+             "allow that origin. The token rides in the link's #fragment, "
+             "which the browser never sends to a server; the link is printed "
+             "here and nowhere else.",
+    )
+    serve.add_argument(
+        "--browser-endpoint",
+        default=None,
+        metavar="URL",
+        help="With --pair: the address the browser should use for this node, "
+             "when it is not this machine's own http://127.0.0.1:<port> -- a "
+             "lab gateway's hostname, or the local end of a tunnel on "
+             "another port.",
+    )
+    serve.add_argument(
+        "--app",
+        action="store_true",
+        help="Also serve the Plexora web app at /app/, from the static build "
+             "shipped with this install (when it has one). The app is public "
+             "code and is served without the token; every data route still "
+             "needs it.",
+    )
+    serve.add_argument(
+        "--url-prefix",
+        default=None,
+        metavar="PATH",
+        help="The path this node is reached under behind a reverse proxy, "
+             "e.g. /rnode/<host>/<port>, for the app's redirects. Without "
+             "it, an X-Forwarded-Prefix header is used, and otherwise the "
+             "redirects are relative.",
     )
     serve.add_argument("--plugins", default=None,
                        help="Comma-separated plugin names whose file-side work "
@@ -1350,6 +1395,12 @@ def _build_node_parser():
              "--upgrade plexora`, in the environment --remote-command names.")
     node_connect.add_argument("--plugins", default=None,
                               help="Plugins the node should be able to run.")
+    node_connect.add_argument(
+        "--pair", nargs="?", const=DEFAULT_PAIR_ORIGIN, default=None,
+        metavar="ORIGIN",
+        help="Also print a link that pairs the node with the Plexora page at "
+             f"ORIGIN (default {DEFAULT_PAIR_ORIGIN}), and allow that origin "
+             "on it. Put it after the host.")
 
     prepare = subs.add_parser(
         "prepare",
@@ -1402,6 +1453,7 @@ def _run_node_connect(args):
         plugins=args.plugins,
         install=bool(getattr(args, "install", False)),
         register=register,
+        pair=getattr(args, "pair", None),
     )
 
 
@@ -1443,6 +1495,10 @@ def _run_node(args):
             dynamic=args.dynamic,
             manifest=args.manifest,
             exit_on_stdin_close=args.exit_on_stdin_close,
+            pair=args.pair,
+            browser_endpoint=args.browser_endpoint,
+            serve_app=args.app,
+            url_prefix=args.url_prefix,
         )
     except NodeStartupError as exc:
         raise SystemExit(str(exc))
@@ -2184,6 +2240,25 @@ def _build_connect_parser():
         "--node-port", type=int, default=None,
         help="Port for the remote data node (default: a free-looking high one).",
     )
+    connect.add_argument(
+        "--node-allow-origin",
+        action="append",
+        default=[],
+        metavar="ORIGIN",
+        help="Another browser origin the data nodes this connection starts "
+             "should answer, besides this machine's own viewer address. "
+             "Repeat for each.",
+    )
+    connect.add_argument(
+        "--pair",
+        nargs="?",
+        const=DEFAULT_PAIR_ORIGIN,
+        default=None,
+        metavar="ORIGIN",
+        help="Also print a link per data node that pairs it with the Plexora "
+             f"page at ORIGIN (default {DEFAULT_PAIR_ORIGIN}), and allow that "
+             "origin on every node. Put it after the server name.",
+    )
     return connect
 
 
@@ -2802,6 +2877,10 @@ def connect_kwargs(args, profile=None):
         # silently gets POSIX quoting from this entry point alone.
         "remote_os": ((saved("workstation") or {}).get("os")
                       if profile is not None else None),
+        # For this run only, never saved: both are about the browser in front
+        # of somebody today, not about the server being reached.
+        "allow_origin": list(getattr(args, "node_allow_origin", None) or ()) or None,
+        "pair": getattr(args, "pair", None),
     }
 
 
@@ -2891,8 +2970,12 @@ def node_serve_argv(serve, port, allow_origin=None, python=None):
             "--host", "127.0.0.1", "--port", str(int(port))]
     for entry in serve or ():
         argv += ["--serve", entry]
-    if allow_origin:
-        argv += ["--allow-origin", allow_origin]
+    # One origin or several (`--node-allow-origin` repeats); a single string
+    # is still what older callers pass.
+    origins = [allow_origin] if isinstance(allow_origin, str) else allow_origin
+    for origin in origins or ():
+        if origin:
+            argv += ["--allow-origin", origin]
     return argv
 
 

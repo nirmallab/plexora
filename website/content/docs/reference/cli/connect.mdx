@@ -19,6 +19,7 @@ plexora connect [-h] [--remote-command REMOTE_COMMAND] [--save NAME] [--srun ARG
                        [--data-dir DATA_DIR] [--plugins PLUGINS] [--no-browser]
                        [--also-serve KIND:ID=PATH] [--local-serve KIND:ID=PATH] [--install]
                        [--no-local-node] [--node-name NODE_NAME] [--node-port NODE_PORT]
+                       [--node-allow-origin ORIGIN] [--pair [ORIGIN]]
                        target [datasource]
 ```
 
@@ -155,6 +156,18 @@ What to call the data nodes this connection registers. Defaults to the saved ser
 <Param name={"--node-port NODE_PORT"}>
 
 Port for the remote data node (default: a free-looking high one).
+
+</Param>
+
+<Param name={"--node-allow-origin ORIGIN"} kind={"repeatable"}>
+
+Another browser origin the data nodes this connection starts should answer, besides this machine's own viewer address. Repeat for each.
+
+</Param>
+
+<Param name={"--pair [ORIGIN]"}>
+
+Also print a link per data node that pairs it with the Plexora page at ORIGIN (default https://viewer.plexoraapp.com), and allow that origin on every node. Put it after the server name.
 
 </Param>
 
