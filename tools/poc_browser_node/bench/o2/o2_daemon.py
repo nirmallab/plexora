@@ -18,11 +18,22 @@ rerun. `start` makes the run's only login and keeps it:
 
 The node runs as a step of a job that only holds the allocation, so it can be
 stopped and started per arm (cold) without a login. It listens on the compute
-node's interfaces and the login node forwards to it (Plexora's own `bind_node`
-layout), so no ssh into the compute node is needed; it answers nothing without
-the token. The token is made here, written to a mode-600 file on O2 through
-the session's stdin and to `DIR/node.token` here, and never appears on a
-command line or in this daemon's output.
+node's interfaces and answers nothing without the token. How the tunnel's far
+end reaches it is `tunnel`'s mode: `direct` (the login node connects to the
+node's port, Plexora's `bind_node` layout) or `hop` (an ssh from the login
+node into the compute node, with the cluster's own key -- what O2's
+`srun --tunnel` plugin does for Jupyter). On O2 (2026-11-06) the login node
+cannot reach a compute node's port (connection refused or dropped: HTTP 000),
+and the hop needs no Duo, so the run there used `hop`. The token is made here,
+written to a mode-600 file on O2 through the session's stdin and to
+`DIR/node.token` here, and never appears on a command line or in this
+daemon's output.
+
+    call setup '{"image": ..., "data_root": ..., "conda": ..., "conda_env": ..., "pip": "plexora==X"}'
+    call node_start '{"origins": [...]}'
+    call tunnel '{"mode": "hop"}'
+    ... the driver (bench/p5timing.mjs, site "o2") ...
+    call close
 
 The daemon listens on loopback for its driver; every call carries the key in
 `DIR/daemon.json` (keep DIR in a folder only this account can read). When the
@@ -262,9 +273,9 @@ class Run:
         """The forward from this machine to the node, added to the run's one
         connection. `direct`: the login node connects to the compute node's
         port (Plexora's bind_node layout). `hop`: an ssh from the login node
-        into the compute node carries it instead, for a cluster whose compute
-        ports the login node cannot reach -- an ssh inside the cluster, which
-        may or may not ask for Duo there; used only when `direct` cannot work."""
+        into the compute node carries it instead, with the cluster's own key,
+        for a cluster whose compute ports the login node cannot reach (O2: an
+        ssh inside the cluster asks for no Duo; its srun --tunnel does the same)."""
         local = f"127.0.0.1:{int(self.cfg.get('tunnel_port', 8765))}"
         port = self.cfg["node_port"]
         if mode == "direct":

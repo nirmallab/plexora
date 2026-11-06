@@ -1,0 +1,2854 @@
+{
+ "poc": "P5T",
+ "date": "2026-11-06",
+ "commit": "b442cedb-dirty",
+ "machine": {
+  "cpuPercentBefore": [
+   10,
+   11.3,
+   10.4
+  ],
+  "platform": "win32 10.0.26200",
+  "cpu": "12th Gen Intel(R) Core(TM) i9-12900K",
+  "cores": 24,
+  "memoryGB": 128,
+  "load": [
+   0,
+   0,
+   0
+  ],
+  "hostname": "ajit"
+ },
+ "browser": {
+  "renderer": "ANGLE (NVIDIA, NVIDIA GeForce RTX 3080 (0x00002216) Direct3D11 vs_5_0 ps_5_0, D3D11)"
+ },
+ "arm": "desktop (Plexora here + product page, tiles node-direct) vs browser (static page, everything node-direct)",
+ "state": "ABBA blocks; each arm C1 cold (node restarted, image pages dropped from its page cache, new Chrome profile, new Plexora for desktop) then C2 warm",
+ "fixture": {
+  "name": "none",
+  "files": {}
+ },
+ "metrics": {
+  "site": "o2",
+  "where": {
+   "job": "58783094",
+   "host": "compute-b-16-187"
+  },
+  "setup": {
+   "geometry": {
+    "width": 67815,
+    "height": 53096,
+    "levels": 8,
+    "channels": 2,
+    "names": null
+   },
+   "project": {
+    "name": "nlu337",
+    "channels": 2,
+    "resource": "nlu337-ome-57261d4f"
+   },
+   "windowsExactMs": {
+    "img/0": 18233,
+    "img/1": 34413,
+    "nlu337-ome-57261d4f/0": 48606,
+    "nlu337-ome-57261d4f/1": 62796
+   },
+   "slots": [
+    0,
+    1
+   ],
+   "openChannels": [
+    0
+   ],
+   "addChannels": [
+    1
+   ],
+   "channelOf": [
+    [
+     0,
+     0
+    ],
+    [
+     1,
+     1
+    ]
+   ],
+   "probeOpenMs": 1159.5999999046326
+  },
+  "firstStart": {
+   "stop_s": 0.2,
+   "login_reach": "000",
+   "announce_s": 8.83,
+   "page_cache": {
+    "host": "compute-b-16-187",
+    "before": 23318528,
+    "after": 0
+   },
+   "health_s": 8.85
+  },
+  "slots": [
+   0,
+   1
+  ],
+  "openChannels": [
+   0
+  ],
+  "addChannels": [
+   1
+  ],
+  "C1": {
+   "blocks": 6,
+   "per": [
+    {
+     "step": "open",
+     "desktop": 1566.2999999523163,
+     "browser": 769.8999998569489,
+     "ratioMedian": 0.495395972972508,
+     "ratios": [
+      0.5114336846305965,
+      0.49778719693763673,
+      0.49300474900737923,
+      0.46747967476843094,
+      0.47155443687270915,
+      0.522231737198168
+     ]
+    },
+    {
+     "step": "channels",
+     "desktop": 26.399999856948853,
+     "browser": 235.44999980926514,
+     "ratioMedian": 8.34698582724845,
+     "ratios": [
+      11.519999991522894,
+      6.698507465533356,
+      7.486238567027046,
+      7.8619403753203105,
+      8.83203127917659,
+      9.899999985328087
+     ]
+    },
+    {
+     "step": "zoom_L2_a",
+     "desktop": 484.69999980926514,
+     "browser": 374.5499999523163,
+     "ratioMedian": 0.7838104438766655,
+     "ratios": [
+      0.9731981990573643,
+      0.8485363545116104,
+      0.645757354946232,
+      0.6842405791035726,
+      1.0531883629734056,
+      0.7190845332417207
+     ]
+    },
+    {
+     "step": "zoom_L0_a",
+     "desktop": 418.90000009536743,
+     "browser": 467.40000009536743,
+     "ratioMedian": 1.1403521781694894,
+     "ratios": [
+      1.1306379524901504,
+      1.1500664038488286,
+      0.9985290514721935,
+      1.1581871850834289,
+      0.9176377109373649,
+      1.2270295414816965
+     ]
+    },
+    {
+     "step": "pan_L0_b",
+     "desktop": 602.2999999523163,
+     "browser": 685.3000001907349,
+     "ratioMedian": 1.0433880028322389,
+     "ratios": [
+      1.1157415225300247,
+      1.1591763361336611,
+      0.8802726100781324,
+      0.9587538390020452,
+      0.971034483134453,
+      1.1252362355036591
+     ]
+    },
+    {
+     "step": "home",
+     "desktop": 24.799999952316284,
+     "browser": 28.450000047683716,
+     "ratioMedian": 1.084866794252811,
+     "ratios": [
+      1.252136734807036,
+      1.0121457372640803,
+      1.0780669297862415,
+      1.0916666587193806,
+      1.124498009195259,
+      0.7261306521826382
+     ]
+    },
+    {
+     "step": "revisit_L0_a",
+     "desktop": 25.199999809265137,
+     "browser": 28.199999809265137,
+     "ratioMedian": 1.080652003587632,
+     "ratios": [
+      0.8213058344351931,
+      1.2948717977455668,
+      1.0293040186193556,
+      1.310204097202846,
+      0.9803149791073984,
+      1.1319999885559082
+     ]
+    },
+    {
+     "step": "jump_L0_c",
+     "desktop": 555.0500001907349,
+     "browser": 578.9499998092651,
+     "ratioMedian": 1.100153918673314,
+     "ratios": [
+      1.0887480187878928,
+      0.9682680365890803,
+      1.0672549013997994,
+      1.1203296699803391,
+      1.1681378731008403,
+      1.1115598185587354
+     ]
+    },
+    {
+     "step": "anim_zoom_L2",
+     "desktop": 1192.4000000953674,
+     "browser": 1195.2000000476837,
+     "ratioMedian": 1.001090980992958,
+     "ratios": [
+      0.9929460580912863,
+      0.9994964750073199,
+      1.0004199214553768,
+      1.010219467489551,
+      1.0113998322754674,
+      1.0017620405305392
+     ]
+    },
+    {
+     "step": "anim_pan_L2",
+     "desktop": 1193.75,
+     "browser": 1195.7999999523163,
+     "ratioMedian": 1.0011309652351614,
+     "ratios": [
+      1.0010871384772084,
+      1.0011747919931142,
+      0.9914871175305687,
+      0.9933620975761152,
+      1.004541249765201,
+      1.0025178346621906
+     ]
+    }
+   ],
+   "open": {
+    "step": "open",
+    "desktop": 1566.2999999523163,
+    "browser": 769.8999998569489,
+    "ratioMedian": 0.495395972972508,
+    "ratios": [
+     0.5114336846305965,
+     0.49778719693763673,
+     0.49300474900737923,
+     0.46747967476843094,
+     0.47155443687270915,
+     0.522231737198168
+    ]
+   },
+   "navGeoRatioPerBlock": [
+    1.039791478824081,
+    1.0463149569848105,
+    0.9505977380741785,
+    1.0253546533430242,
+    1.0259829189671457,
+    0.9884192005641506
+   ],
+   "navGeoRatioMedian": 1.025668786155085,
+   "stepsFull": 120,
+   "steps": 120,
+   "stepsFullBy10s": 120
+  },
+  "C2": {
+   "blocks": 6,
+   "per": [
+    {
+     "step": "open",
+     "desktop": 704.6500000953674,
+     "browser": 350.5499999523163,
+     "ratioMedian": 0.48994953214085485,
+     "ratios": [
+      0.4387264456200553,
+      0.612596284493361,
+      0.5296517556447282,
+      0.5510458514173473,
+      0.36889714970169163,
+      0.4502473086369815
+     ]
+    },
+    {
+     "step": "channels",
+     "desktop": 46.049999952316284,
+     "browser": 101.4500002861023,
+     "ratioMedian": 2.3241952422854073,
+     "ratios": [
+      5.009090900421143,
+      2.5176715305940456,
+      3.017543884843658,
+      2.0020080302058147,
+      2.1307189539767686,
+      1.8441558579620587
+     ]
+    },
+    {
+     "step": "zoom_L2_a",
+     "desktop": 259.60000014305115,
+     "browser": 128.35000014305115,
+     "ratioMedian": 0.6031922405099543,
+     "ratios": [
+      0.45745428924404474,
+      0.7203678476454347,
+      0.5088638177611224,
+      0.7927807487511674,
+      0.46494464944649444,
+      0.6975206632587864
+     ]
+    },
+    {
+     "step": "zoom_L0_a",
+     "desktop": 252.64999985694885,
+     "browser": 173.20000004768372,
+     "ratioMedian": 0.7437768851106792,
+     "ratios": [
+      0.7429326282939633,
+      0.8058997044521096,
+      0.6493767596455923,
+      0.9061128988134578,
+      0.7446211419273951,
+      0.720576773827307
+     ]
+    },
+    {
+     "step": "pan_L0_b",
+     "desktop": 433.0000002384186,
+     "browser": 372.5000002384186,
+     "ratioMedian": 0.7776142622242035,
+     "ratios": [
+      0.7857142856339939,
+      0.9662743320757474,
+      0.769514238814413,
+      0.8083644227712099,
+      0.6098654705023119,
+      0.7628713785248465
+     ]
+    },
+    {
+     "step": "home",
+     "desktop": 27,
+     "browser": 24.350000143051147,
+     "ratioMedian": 0.9312251423333777,
+     "ratios": [
+      0.8599221816595217,
+      1.6380090482116676,
+      1.2486772373306576,
+      0.9755244821119124,
+      0.8869258025548429,
+      0.5673077049457581
+     ]
+    },
+    {
+     "step": "revisit_L0_a",
+     "desktop": 26.200000047683716,
+     "browser": 29.199999809265137,
+     "ratioMedian": 1.0855237674440128,
+     "ratios": [
+      1.1742424200005877,
+      0.7846715301156165,
+      0.996805114887438,
+      1.206751036260689,
+      0.8923076849717361,
+      1.2314049565607257
+     ]
+    },
+    {
+     "step": "jump_L0_c",
+     "desktop": 391.7000000476837,
+     "browser": 259.7000000476837,
+     "ratioMedian": 0.6742936249901788,
+     "ratios": [
+      0.5765306121518045,
+      0.6455987707030694,
+      0.8224209520230986,
+      0.6670911873636939,
+      0.6814960626166636,
+      0.7036295366824344
+     ]
+    },
+    {
+     "step": "anim_zoom_L2",
+     "desktop": 1193.8500001430511,
+     "browser": 1194.4000000953674,
+     "ratioMedian": 1.0001286093587556,
+     "ratios": [
+      1.0017658933583977,
+      0.9984913253591136,
+      0.9971687899949226,
+      0.996232733361239,
+      1.0155883338083915,
+      1.003659956427785
+     ]
+    },
+    {
+     "step": "anim_pan_L2",
+     "desktop": 1194.349999666214,
+     "browser": 1195.349999666214,
+     "ratioMedian": 1.0010047937497895,
+     "ratios": [
+      1.000753516489999,
+      0.9991633195476927,
+      0.9948208171332729,
+      1.0021770073727334,
+      1.0047911236531721,
+      1.0012560710095801
+     ]
+    }
+   ],
+   "open": {
+    "step": "open",
+    "desktop": 704.6500000953674,
+    "browser": 350.5499999523163,
+    "ratioMedian": 0.48994953214085485,
+    "ratios": [
+     0.4387264456200553,
+     0.612596284493361,
+     0.5296517556447282,
+     0.5510458514173473,
+     0.36889714970169163,
+     0.4502473086369815
+    ]
+   },
+   "navGeoRatioPerBlock": [
+    0.7926597484695755,
+    0.9085742581913108,
+    0.8443021433496298,
+    0.9063294922859899,
+    0.7641061210054776,
+    0.8122187434188358
+   ],
+   "navGeoRatioMedian": 0.8282604433842329,
+   "stepsFull": 120,
+   "steps": 120,
+   "stepsFullBy10s": 120
+  },
+  "rows": [
+   {
+    "block": 0,
+    "arm": "desktop",
+    "order": 0,
+    "waypoints": {
+     "a": [
+      46867,
+      46798
+     ],
+     "b": [
+      28147,
+      33298
+     ],
+     "c": [
+      52627,
+      40498
+     ]
+    },
+    "started": "2026-11-06T13:48:38.363Z",
+    "restart": {
+     "stop_s": 0.19,
+     "login_reach": "000",
+     "announce_s": 12.47,
+     "page_cache": {
+      "host": "compute-b-16-187",
+      "before": 8484208640,
+      "after": 0
+     },
+     "health_s": 12.48
+    },
+    "rttMs": {
+     "p50": 5.845900000000256,
+     "min": 4.686199999996461,
+     "max": 15.236900000003516
+    },
+    "primaryStartS": 4.896,
+    "renderer": "ANGLE (NVIDIA, NVIDIA GeForce RTX 3080 (0x00002216) Direct3D11 vs_5_0 ps_5_0, D3D11)",
+    "C1": {
+     "steps": [
+      {
+       "step": "open",
+       "full": 1508.6999998092651,
+       "firstPixel": 1440
+      },
+      {
+       "step": "channels",
+       "full": 22.5,
+       "firstPixel": null
+      },
+      {
+       "step": "zoom_L2_a",
+       "full": 444,
+       "firstPixel": 35.200000286102295
+      },
+      {
+       "step": "zoom_L0_a",
+       "full": 492.19999980926514,
+       "firstPixel": 103.90000009536743
+      },
+      {
+       "step": "pan_L0_b",
+       "full": 592.6999998092651,
+       "firstPixel": 7.299999713897705
+      },
+      {
+       "step": "home",
+       "full": 23.40000009536743,
+       "firstPixel": 10
+      },
+      {
+       "step": "revisit_L0_a",
+       "full": 29.100000381469727,
+       "firstPixel": null
+      },
+      {
+       "step": "jump_L0_c",
+       "full": 378.59999990463257,
+       "firstPixel": 77.5
+      },
+      {
+       "step": "anim_zoom_L2",
+       "full": 1205,
+       "firstPixel": 161.40000009536743
+      },
+      {
+       "step": "anim_pan_L2",
+       "full": 1195.7999997138977,
+       "firstPixel": 125.69999980926514
+      }
+     ],
+     "info": {
+      "enabled": [
+       0
+      ],
+      "hd": true
+     },
+     "openNet": {
+      "local": {
+       "n": 206,
+       "bytes": 9115158,
+       "disk": 2
+      },
+      "node-direct": {
+       "n": 14,
+       "bytes": 9253609,
+       "disk": 4
+      }
+     },
+     "firstTileRequestMs": 1202,
+     "requests": 421
+    },
+    "C2": {
+     "steps": [
+      {
+       "step": "open",
+       "full": 769.5,
+       "firstPixel": 666.1999998092651
+      },
+      {
+       "step": "channels",
+       "full": 22,
+       "firstPixel": 17.799999713897705
+      },
+      {
+       "step": "zoom_L2_a",
+       "full": 284.40000009536743,
+       "firstPixel": 1.3000001907348633
+      },
+      {
+       "step": "zoom_L0_a",
+       "full": 378.5,
+       "firstPixel": 75.09999990463257
+      },
+      {
+       "step": "pan_L0_b",
+       "full": 424.2000002861023,
+       "firstPixel": 8
+      },
+      {
+       "step": "home",
+       "full": 25.699999809265137,
+       "firstPixel": 12.400000095367432
+      },
+      {
+       "step": "revisit_L0_a",
+       "full": 26.40000009536743,
+       "firstPixel": null
+      },
+      {
+       "step": "jump_L0_c",
+       "full": 313.6000003814697,
+       "firstPixel": 97.90000009536743
+      },
+      {
+       "step": "anim_zoom_L2",
+       "full": 1189.1999998092651,
+       "firstPixel": 55.69999980926514
+      },
+      {
+       "step": "anim_pan_L2",
+       "full": 1194.3999996185303,
+       "firstPixel": 76.69999980926514
+      }
+     ],
+     "info": {
+      "enabled": [
+       0
+      ],
+      "hd": true
+     },
+     "openNet": {
+      "local": {
+       "n": 205,
+       "bytes": 145076,
+       "disk": 2
+      },
+      "node-direct": {
+       "n": 14,
+       "bytes": 500,
+       "disk": 13
+      }
+     },
+     "firstTileRequestMs": 615,
+     "requests": 442
+    },
+    "finished": "2026-11-06T13:49:12.971Z"
+   },
+   {
+    "block": 0,
+    "arm": "browser",
+    "order": 1,
+    "waypoints": {
+     "a": [
+      46867,
+      46798
+     ],
+     "b": [
+      28147,
+      33298
+     ],
+     "c": [
+      52627,
+      40498
+     ]
+    },
+    "started": "2026-11-06T13:49:12.973Z",
+    "restart": {
+     "stop_s": 0.22,
+     "login_reach": "000",
+     "announce_s": 7.62,
+     "page_cache": {
+      "host": "compute-b-16-187",
+      "before": 225456128,
+      "after": 0
+     },
+     "health_s": 7.64
+    },
+    "rttMs": {
+     "p50": 9.984600000025239,
+     "min": 4.087499999994179,
+     "max": 13.54759999999078
+    },
+    "renderer": "ANGLE (NVIDIA, NVIDIA GeForce RTX 3080 (0x00002216) Direct3D11 vs_5_0 ps_5_0, D3D11)",
+    "C1": {
+     "steps": [
+      {
+       "step": "open",
+       "full": 771.5999999046326,
+       "firstPixel": 612
+      },
+      {
+       "step": "channels",
+       "full": 259.19999980926514,
+       "firstPixel": 67.90000009536743
+      },
+      {
+       "step": "zoom_L2_a",
+       "full": 432.1000003814697,
+       "firstPixel": 195.60000038146973
+      },
+      {
+       "step": "zoom_L0_a",
+       "full": 556.5,
+       "firstPixel": 140.09999990463257
+      },
+      {
+       "step": "pan_L0_b",
+       "full": 661.3000001907349,
+       "firstPixel": 125.2000002861023
+      },
+      {
+       "step": "home",
+       "full": 29.299999713897705,
+       "firstPixel": null
+      },
+      {
+       "step": "revisit_L0_a",
+       "full": 23.90000009536743,
+       "firstPixel": null
+      },
+      {
+       "step": "jump_L0_c",
+       "full": 412.19999980926514,
+       "firstPixel": 153
+      },
+      {
+       "step": "anim_zoom_L2",
+       "full": 1196.5,
+       "firstPixel": 146.09999990463257
+      },
+      {
+       "step": "anim_pan_L2",
+       "full": 1197.0999999046326,
+       "firstPixel": 134.2999997138977
+      }
+     ],
+     "open": {
+      "step": "open",
+      "t0": 0,
+      "firstPixel": 612,
+      "full": 771.5999999046326,
+      "metadataMs": 335,
+      "viewerMs": 546.5999999046326
+     },
+     "metadataRequests": [
+      {
+       "path": "image/img/\u2026",
+       "ms": 26
+      },
+      {
+       "path": "image/img/\u2026",
+       "ms": 116
+      },
+      {
+       "path": "image/img/\u2026",
+       "ms": 17
+      }
+     ],
+     "pageLoadMs": 221.69999980926514,
+     "tiles": 0,
+     "canvas": [
+      1060,
+      855
+     ]
+    },
+    "C2": {
+     "steps": [
+      {
+       "step": "open",
+       "full": 337.59999990463257,
+       "firstPixel": 263.3999996185303
+      },
+      {
+       "step": "channels",
+       "full": 110.19999980926514,
+       "firstPixel": 32.19999980926514
+      },
+      {
+       "step": "zoom_L2_a",
+       "full": 130.09999990463257,
+       "firstPixel": 49.19999980926514
+      },
+      {
+       "step": "zoom_L0_a",
+       "full": 281.19999980926514,
+       "firstPixel": 43.19999980926514
+      },
+      {
+       "step": "pan_L0_b",
+       "full": 333.30000019073486,
+       "firstPixel": 52
+      },
+      {
+       "step": "home",
+       "full": 22.09999990463257,
+       "firstPixel": null
+      },
+      {
+       "step": "revisit_L0_a",
+       "full": 31,
+       "firstPixel": null
+      },
+      {
+       "step": "jump_L0_c",
+       "full": 180.80000019073486,
+       "firstPixel": 57.200000286102295
+      },
+      {
+       "step": "anim_zoom_L2",
+       "full": 1191.3000001907349,
+       "firstPixel": 54
+      },
+      {
+       "step": "anim_pan_L2",
+       "full": 1195.2999997138977,
+       "firstPixel": 58.69999980926514
+      }
+     ],
+     "open": {
+      "step": "open",
+      "t0": 0,
+      "firstPixel": 263.3999996185303,
+      "full": 337.59999990463257,
+      "metadataMs": 217,
+      "viewerMs": 252.19999980926514
+     },
+     "metadataRequests": [
+      {
+       "path": "image/img/\u2026",
+       "ms": 30
+      },
+      {
+       "path": "image/img/\u2026",
+       "ms": 133
+      },
+      {
+       "path": "image/img/\u2026",
+       "ms": 10
+      }
+     ],
+     "pageLoadMs": 87.19999980926514,
+     "tiles": 0,
+     "canvas": [
+      1060,
+      855
+     ]
+    },
+    "logs": [
+     "[error] Failed to load resource: the server responded with a status of 404 (Not Found)"
+    ],
+    "finished": "2026-11-06T13:49:32.564Z"
+   },
+   {
+    "block": 1,
+    "arm": "browser",
+    "order": 0,
+    "waypoints": {
+     "a": [
+      52627,
+      18898
+     ],
+     "b": [
+      55507,
+      46798
+     ],
+     "c": [
+      12307,
+      3598
+     ]
+    },
+    "started": "2026-11-06T13:49:32.565Z",
+    "restart": {
+     "stop_s": 0.2,
+     "login_reach": "000",
+     "announce_s": 10.05,
+     "page_cache": {
+      "host": "compute-b-16-187",
+      "before": 228016128,
+      "after": 0
+     },
+     "health_s": 10.06
+    },
+    "rttMs": {
+     "p50": 5.479300000006333,
+     "min": 4.658800000004703,
+     "max": 8.031099999992875
+    },
+    "renderer": "ANGLE (NVIDIA, NVIDIA GeForce RTX 3080 (0x00002216) Direct3D11 vs_5_0 ps_5_0, D3D11)",
+    "C1": {
+     "steps": [
+      {
+       "step": "open",
+       "full": 798.5999999046326,
+       "firstPixel": 641.1999998092651
+      },
+      {
+       "step": "channels",
+       "full": 224.40000009536743,
+       "firstPixel": 67
+      },
+      {
+       "step": "zoom_L2_a",
+       "full": 449.2999997138977,
+       "firstPixel": 148.2999997138977
+      },
+      {
+       "step": "zoom_L0_a",
+       "full": 259.80000019073486,
+       "firstPixel": 139.7000002861023
+      },
+      {
+       "step": "pan_L0_b",
+       "full": 709.3000001907349,
+       "firstPixel": 123.59999990463257
+      },
+      {
+       "step": "home",
+       "full": 25,
+       "firstPixel": null
+      },
+      {
+       "step": "revisit_L0_a",
+       "full": 30.300000190734863,
+       "firstPixel": null
+      },
+      {
+       "step": "jump_L0_c",
+       "full": 546.1999998092651,
+       "firstPixel": 109.39999961853027
+      },
+      {
+       "step": "anim_zoom_L2",
+       "full": 1191,
+       "firstPixel": 219.5
+      },
+      {
+       "step": "anim_pan_L2",
+       "full": 1193.0999999046326,
+       "firstPixel": 161.40000009536743
+      }
+     ],
+     "open": {
+      "step": "open",
+      "t0": 0,
+      "firstPixel": 641.1999998092651,
+      "full": 798.5999999046326,
+      "metadataMs": 345.3999996185303,
+      "viewerMs": 568.7999997138977
+     },
+     "metadataRequests": [
+      {
+       "path": "image/img/\u2026",
+       "ms": 27
+      },
+      {
+       "path": "image/img/\u2026",
+       "ms": 118
+      },
+      {
+       "path": "image/img/\u2026",
+       "ms": 17
+      }
+     ],
+     "pageLoadMs": 231.39999961853027,
+     "tiles": 0,
+     "canvas": [
+      1060,
+      855
+     ]
+    },
+    "C2": {
+     "steps": [
+      {
+       "step": "open",
+       "full": 405.59999990463257,
+       "firstPixel": 345
+      },
+      {
+       "step": "channels",
+       "full": 121.10000038146973,
+       "firstPixel": 28.5
+      },
+      {
+       "step": "zoom_L2_a",
+       "full": 211.5,
+       "firstPixel": 51.5
+      },
+      {
+       "step": "zoom_L0_a",
+       "full": 136.59999990463257,
+       "firstPixel": 38
+      },
+      {
+       "step": "pan_L0_b",
+       "full": 426.90000009536743,
+       "firstPixel": 68.7000002861023
+      },
+      {
+       "step": "home",
+       "full": 36.19999980926514,
+       "firstPixel": null
+      },
+      {
+       "step": "revisit_L0_a",
+       "full": 21.5,
+       "firstPixel": null
+      },
+      {
+       "step": "jump_L0_c",
+       "full": 252.2999997138977,
+       "firstPixel": 44.59999990463257
+      },
+      {
+       "step": "anim_zoom_L2",
+       "full": 1191.3000001907349,
+       "firstPixel": 104.5
+      },
+      {
+       "step": "anim_pan_L2",
+       "full": 1194.1999998092651,
+       "firstPixel": 43.299999713897705
+      }
+     ],
+     "open": {
+      "step": "open",
+      "t0": 0,
+      "firstPixel": 345,
+      "full": 405.59999990463257,
+      "metadataMs": 222.30000019073486,
+      "viewerMs": 284.30000019073486
+     },
+     "metadataRequests": [
+      {
+       "path": "image/img/\u2026",
+       "ms": 18
+      },
+      {
+       "path": "image/img/\u2026",
+       "ms": 108
+      },
+      {
+       "path": "image/img/\u2026",
+       "ms": 8
+      }
+     ],
+     "pageLoadMs": 117,
+     "tiles": 0,
+     "canvas": [
+      1060,
+      855
+     ]
+    },
+    "logs": [
+     "[error] Failed to load resource: the server responded with a status of 404 (Not Found)"
+    ],
+    "finished": "2026-11-06T13:49:54.563Z"
+   },
+   {
+    "block": 1,
+    "arm": "desktop",
+    "order": 1,
+    "waypoints": {
+     "a": [
+      52627,
+      18898
+     ],
+     "b": [
+      55507,
+      46798
+     ],
+     "c": [
+      12307,
+      3598
+     ]
+    },
+    "started": "2026-11-06T13:49:54.566Z",
+    "restart": {
+     "stop_s": 0.21,
+     "login_reach": "000",
+     "announce_s": 7,
+     "page_cache": {
+      "host": "compute-b-16-187",
+      "before": 247005184,
+      "after": 0
+     },
+     "health_s": 7.02
+    },
+    "rttMs": {
+     "p50": 5.437999999994645,
+     "min": 4.857499999983702,
+     "max": 15.793100000009872
+    },
+    "primaryStartS": 4.874,
+    "renderer": "ANGLE (NVIDIA, NVIDIA GeForce RTX 3080 (0x00002216) Direct3D11 vs_5_0 ps_5_0, D3D11)",
+    "C1": {
+     "steps": [
+      {
+       "step": "open",
+       "full": 1604.2999997138977,
+       "firstPixel": 1540.6999998092651
+      },
+      {
+       "step": "channels",
+       "full": 33.5,
+       "firstPixel": 34.5
+      },
+      {
+       "step": "zoom_L2_a",
+       "full": 529.5,
+       "firstPixel": 52.69999980926514
+      },
+      {
+       "step": "zoom_L0_a",
+       "full": 225.89999961853027,
+       "firstPixel": 102.09999990463257
+      },
+      {
+       "step": "pan_L0_b",
+       "full": 611.9000000953674,
+       "firstPixel": 9.199999809265137
+      },
+      {
+       "step": "home",
+       "full": 24.700000286102295,
+       "firstPixel": 6.900000095367432
+      },
+      {
+       "step": "revisit_L0_a",
+       "full": 23.40000009536743,
+       "firstPixel": null
+      },
+      {
+       "step": "jump_L0_c",
+       "full": 564.1000003814697,
+       "firstPixel": 97.40000009536743
+      },
+      {
+       "step": "anim_zoom_L2",
+       "full": 1191.6000003814697,
+       "firstPixel": 185.60000038146973
+      },
+      {
+       "step": "anim_pan_L2",
+       "full": 1191.7000002861023,
+       "firstPixel": 114.7000002861023
+      }
+     ],
+     "info": {
+      "enabled": [
+       0
+      ],
+      "hd": true
+     },
+     "openNet": {
+      "local": {
+       "n": 206,
+       "bytes": 9115168,
+       "disk": 2
+      },
+      "node-direct": {
+       "n": 14,
+       "bytes": 9253610,
+       "disk": 4
+      }
+     },
+     "firstTileRequestMs": 1271,
+     "requests": 411
+    },
+    "C2": {
+     "steps": [
+      {
+       "step": "open",
+       "full": 662.0999999046326,
+       "firstPixel": 561.6999998092651
+      },
+      {
+       "step": "channels",
+       "full": 48.09999990463257,
+       "firstPixel": 42.59999990463257
+      },
+      {
+       "step": "zoom_L2_a",
+       "full": 293.59999990463257,
+       "firstPixel": 1.799999713897705
+      },
+      {
+       "step": "zoom_L0_a",
+       "full": 169.5,
+       "firstPixel": 80.7999997138977
+      },
+      {
+       "step": "pan_L0_b",
+       "full": 441.80000019073486,
+       "firstPixel": 32.30000019073486
+      },
+      {
+       "step": "home",
+       "full": 22.09999990463257,
+       "firstPixel": null
+      },
+      {
+       "step": "revisit_L0_a",
+       "full": 27.40000009536743,
+       "firstPixel": null
+      },
+      {
+       "step": "jump_L0_c",
+       "full": 390.80000019073486,
+       "firstPixel": 51.200000286102295
+      },
+      {
+       "step": "anim_zoom_L2",
+       "full": 1193.0999999046326,
+       "firstPixel": 104.09999990463257
+      },
+      {
+       "step": "anim_pan_L2",
+       "full": 1195.2000002861023,
+       "firstPixel": 34.700000286102295
+      }
+     ],
+     "info": {
+      "enabled": [
+       0
+      ],
+      "hd": true
+     },
+     "openNet": {
+      "local": {
+       "n": 205,
+       "bytes": 145086,
+       "disk": 2
+      },
+      "node-direct": {
+       "n": 14,
+       "bytes": 500,
+       "disk": 13
+      }
+     },
+     "firstTileRequestMs": 536,
+     "requests": 437
+    },
+    "finished": "2026-11-06T13:50:23.828Z"
+   },
+   {
+    "block": 2,
+    "arm": "desktop",
+    "order": 0,
+    "waypoints": {
+     "a": [
+      13747,
+      898
+     ],
+     "b": [
+      31027,
+      40498
+     ],
+     "c": [
+      20947,
+      17998
+     ]
+    },
+    "started": "2026-11-06T13:50:23.829Z",
+    "restart": {
+     "stop_s": 0.22,
+     "login_reach": "000",
+     "announce_s": 7.61,
+     "page_cache": {
+      "host": "compute-b-16-187",
+      "before": 238907392,
+      "after": 0
+     },
+     "health_s": 7.65
+    },
+    "rttMs": {
+     "p50": 5.724400000006426,
+     "min": 4.97609999999986,
+     "max": 11.60209999998915
+    },
+    "primaryStartS": 4.857,
+    "renderer": "ANGLE (NVIDIA, NVIDIA GeForce RTX 3080 (0x00002216) Direct3D11 vs_5_0 ps_5_0, D3D11)",
+    "C1": {
+     "steps": [
+      {
+       "step": "open",
+       "full": 1558.1999998092651,
+       "firstPixel": 1507.0999999046326
+      },
+      {
+       "step": "channels",
+       "full": 32.69999980926514,
+       "firstPixel": 32.5
+      },
+      {
+       "step": "zoom_L2_a",
+       "full": 411.2999997138977,
+       "firstPixel": 12.699999809265137
+      },
+      {
+       "step": "zoom_L0_a",
+       "full": 407.90000009536743,
+       "firstPixel": 74.7999997138977
+      },
+      {
+       "step": "pan_L0_b",
+       "full": 542.9000000953674,
+       "firstPixel": 9.799999713897705
+      },
+      {
+       "step": "home",
+       "full": 26.899999618530273,
+       "firstPixel": 9
+      },
+      {
+       "step": "revisit_L0_a",
+       "full": 27.300000190734863,
+       "firstPixel": null
+      },
+      {
+       "step": "jump_L0_c",
+       "full": 510,
+       "firstPixel": 93.30000019073486
+      },
+      {
+       "step": "anim_zoom_L2",
+       "full": 1190.6999998092651,
+       "firstPixel": 74.89999961853027
+      },
+      {
+       "step": "anim_pan_L2",
+       "full": 1327.4000000953674,
+       "firstPixel": 87.19999980926514
+      }
+     ],
+     "info": {
+      "enabled": [
+       0
+      ],
+      "hd": true
+     },
+     "openNet": {
+      "local": {
+       "n": 206,
+       "bytes": 9115162,
+       "disk": 2
+      },
+      "node-direct": {
+       "n": 14,
+       "bytes": 9253607,
+       "disk": 3
+      }
+     },
+     "firstTileRequestMs": 1265,
+     "requests": 420
+    },
+    "C2": {
+     "steps": [
+      {
+       "step": "open",
+       "full": 686.3000001907349,
+       "firstPixel": 570.1000003814697
+      },
+      {
+       "step": "channels",
+       "full": 34.19999980926514,
+       "firstPixel": 11
+      },
+      {
+       "step": "zoom_L2_a",
+       "full": 248.2000002861023,
+       "firstPixel": 8.099999904632568
+      },
+      {
+       "step": "zoom_L0_a",
+       "full": 248.69999980926514,
+       "firstPixel": 66.09999990463257
+      },
+      {
+       "step": "pan_L0_b",
+       "full": 298.5,
+       "firstPixel": 52.69999980926514
+      },
+      {
+       "step": "home",
+       "full": 18.90000009536743,
+       "firstPixel": null
+      },
+      {
+       "step": "revisit_L0_a",
+       "full": 31.300000190734863,
+       "firstPixel": null
+      },
+      {
+       "step": "jump_L0_c",
+       "full": 313.09999990463257,
+       "firstPixel": 33.69999980926514
+      },
+      {
+       "step": "anim_zoom_L2",
+       "full": 1200.9000000953674,
+       "firstPixel": 43.59999990463257
+      },
+      {
+       "step": "anim_pan_L2",
+       "full": 1197.0999999046326,
+       "firstPixel": 74.2000002861023
+      }
+     ],
+     "info": {
+      "enabled": [
+       0
+      ],
+      "hd": true
+     },
+     "openNet": {
+      "local": {
+       "n": 205,
+       "bytes": 145080,
+       "disk": 2
+      },
+      "node-direct": {
+       "n": 15,
+       "bytes": 500,
+       "disk": 14
+      }
+     },
+     "firstTileRequestMs": 537,
+     "requests": 465
+    },
+    "finished": "2026-11-06T13:50:53.390Z"
+   },
+   {
+    "block": 2,
+    "arm": "browser",
+    "order": 1,
+    "waypoints": {
+     "a": [
+      13747,
+      898
+     ],
+     "b": [
+      31027,
+      40498
+     ],
+     "c": [
+      20947,
+      17998
+     ]
+    },
+    "started": "2026-11-06T13:50:53.391Z",
+    "restart": {
+     "stop_s": 0.21,
+     "login_reach": "000",
+     "announce_s": 7.01,
+     "page_cache": {
+      "host": "compute-b-16-187",
+      "before": 257073152,
+      "after": 0
+     },
+     "health_s": 7.02
+    },
+    "rttMs": {
+     "p50": 5.18739999999525,
+     "min": 4.4359999999869615,
+     "max": 11.255799999984447
+    },
+    "renderer": "ANGLE (NVIDIA, NVIDIA GeForce RTX 3080 (0x00002216) Direct3D11 vs_5_0 ps_5_0, D3D11)",
+    "C1": {
+     "steps": [
+      {
+       "step": "open",
+       "full": 768.1999998092651,
+       "firstPixel": 598.5999999046326
+      },
+      {
+       "step": "channels",
+       "full": 244.7999997138977,
+       "firstPixel": 69.2999997138977
+      },
+      {
+       "step": "zoom_L2_a",
+       "full": 265.59999990463257,
+       "firstPixel": 112.2999997138977
+      },
+      {
+       "step": "zoom_L0_a",
+       "full": 407.30000019073486,
+       "firstPixel": 204.69999980926514
+      },
+      {
+       "step": "pan_L0_b",
+       "full": 477.90000009536743,
+       "firstPixel": 124
+      },
+      {
+       "step": "home",
+       "full": 29,
+       "firstPixel": null
+      },
+      {
+       "step": "revisit_L0_a",
+       "full": 28.09999990463257,
+       "firstPixel": null
+      },
+      {
+       "step": "jump_L0_c",
+       "full": 544.2999997138977,
+       "firstPixel": 124.5
+      },
+      {
+       "step": "anim_zoom_L2",
+       "full": 1191.2000002861023,
+       "firstPixel": 122.80000019073486
+      },
+      {
+       "step": "anim_pan_L2",
+       "full": 1316.0999999046326,
+       "firstPixel": 123.2999997138977
+      }
+     ],
+     "open": {
+      "step": "open",
+      "t0": 0,
+      "firstPixel": 598.5999999046326,
+      "full": 768.1999998092651,
+      "metadataMs": 317.2999997138977,
+      "viewerMs": 536.9000000953674
+     },
+     "metadataRequests": [
+      {
+       "path": "image/img/\u2026",
+       "ms": 25
+      },
+      {
+       "path": "image/img/\u2026",
+       "ms": 117
+      },
+      {
+       "path": "image/img/\u2026",
+       "ms": 17
+      }
+     ],
+     "pageLoadMs": 204.5,
+     "tiles": 0,
+     "canvas": [
+      1060,
+      855
+     ]
+    },
+    "C2": {
+     "steps": [
+      {
+       "step": "open",
+       "full": 363.5,
+       "firstPixel": 248.19999980926514
+      },
+      {
+       "step": "channels",
+       "full": 103.2000002861023,
+       "firstPixel": 23.200000286102295
+      },
+      {
+       "step": "zoom_L2_a",
+       "full": 126.2999997138977,
+       "firstPixel": 32.69999980926514
+      },
+      {
+       "step": "zoom_L0_a",
+       "full": 161.5,
+       "firstPixel": 33.5
+      },
+      {
+       "step": "pan_L0_b",
+       "full": 229.7000002861023,
+       "firstPixel": 33.5
+      },
+      {
+       "step": "home",
+       "full": 23.59999990463257,
+       "firstPixel": null
+      },
+      {
+       "step": "revisit_L0_a",
+       "full": 31.200000286102295,
+       "firstPixel": null
+      },
+      {
+       "step": "jump_L0_c",
+       "full": 257.5,
+       "firstPixel": 39.5
+      },
+      {
+       "step": "anim_zoom_L2",
+       "full": 1197.5,
+       "firstPixel": 38.80000019073486
+      },
+      {
+       "step": "anim_pan_L2",
+       "full": 1190.9000000953674,
+       "firstPixel": 36.200000286102295
+      }
+     ],
+     "open": {
+      "step": "open",
+      "t0": 0,
+      "firstPixel": 248.19999980926514,
+      "full": 363.5,
+      "metadataMs": 208.80000019073486,
+      "viewerMs": 241.30000019073486
+     },
+     "metadataRequests": [
+      {
+       "path": "image/img/\u2026",
+       "ms": 16
+      },
+      {
+       "path": "image/img/\u2026",
+       "ms": 115
+      },
+      {
+       "path": "image/img/\u2026",
+       "ms": 9
+      }
+     ],
+     "pageLoadMs": 95.09999990463257,
+     "tiles": 0,
+     "canvas": [
+      1060,
+      855
+     ]
+    },
+    "logs": [
+     "[error] Failed to load resource: the server responded with a status of 404 (Not Found)"
+    ],
+    "finished": "2026-11-06T13:51:12.246Z"
+   },
+   {
+    "block": 3,
+    "arm": "browser",
+    "order": 0,
+    "waypoints": {
+     "a": [
+      42547,
+      38698
+     ],
+     "b": [
+      41107,
+      22498
+     ],
+     "c": [
+      39667,
+      14398
+     ]
+    },
+    "started": "2026-11-06T13:51:12.247Z",
+    "restart": {
+     "stop_s": 0.21,
+     "login_reach": "000",
+     "announce_s": 7.31,
+     "page_cache": {
+      "host": "compute-b-16-187",
+      "before": 258764800,
+      "after": 0
+     },
+     "health_s": 7.33
+    },
+    "rttMs": {
+     "p50": 6.884200000000419,
+     "min": 4.715100000001257,
+     "max": 10.777600000001257
+    },
+    "renderer": "ANGLE (NVIDIA, NVIDIA GeForce RTX 3080 (0x00002216) Direct3D11 vs_5_0 ps_5_0, D3D11)",
+    "C1": {
+     "steps": [
+      {
+       "step": "open",
+       "full": 736,
+       "firstPixel": 610.6999998092651
+      },
+      {
+       "step": "channels",
+       "full": 210.69999980926514,
+       "firstPixel": 70.5
+      },
+      {
+       "step": "zoom_L2_a",
+       "full": 359.5,
+       "firstPixel": 136
+      },
+      {
+       "step": "zoom_L0_a",
+       "full": 667,
+       "firstPixel": 167.10000038146973
+      },
+      {
+       "step": "pan_L0_b",
+       "full": 874,
+       "firstPixel": 171
+      },
+      {
+       "step": "home",
+       "full": 26.199999809265137,
+       "firstPixel": null
+      },
+      {
+       "step": "revisit_L0_a",
+       "full": 32.10000038146973,
+       "firstPixel": null
+      },
+      {
+       "step": "jump_L0_c",
+       "full": 611.6999998092651,
+       "firstPixel": 161.5
+      },
+      {
+       "step": "anim_zoom_L2",
+       "full": 1206,
+       "firstPixel": 193.5
+      },
+      {
+       "step": "anim_pan_L2",
+       "full": 1197.1999998092651,
+       "firstPixel": 137
+      }
+     ],
+     "open": {
+      "step": "open",
+      "t0": 0,
+      "firstPixel": 610.6999998092651,
+      "full": 736,
+      "metadataMs": 336.2999997138977,
+      "viewerMs": 550.4000000953674
+     },
+     "metadataRequests": [
+      {
+       "path": "image/img/\u2026",
+       "ms": 25
+      },
+      {
+       "path": "image/img/\u2026",
+       "ms": 120
+      },
+      {
+       "path": "image/img/\u2026",
+       "ms": 17
+      }
+     ],
+     "pageLoadMs": 219.2999997138977,
+     "tiles": 0,
+     "canvas": [
+      1060,
+      855
+     ]
+    },
+    "C2": {
+     "steps": [
+      {
+       "step": "open",
+       "full": 397.80000019073486,
+       "firstPixel": 300.09999990463257
+      },
+      {
+       "step": "channels",
+       "full": 99.7000002861023,
+       "firstPixel": 36
+      },
+      {
+       "step": "zoom_L2_a",
+       "full": 177.90000009536743,
+       "firstPixel": 56.5
+      },
+      {
+       "step": "zoom_L0_a",
+       "full": 309.80000019073486,
+       "firstPixel": 97
+      },
+      {
+       "step": "pan_L0_b",
+       "full": 411.7000002861023,
+       "firstPixel": 39.5
+      },
+      {
+       "step": "home",
+       "full": 27.90000009536743,
+       "firstPixel": null
+      },
+      {
+       "step": "revisit_L0_a",
+       "full": 28.59999990463257,
+       "firstPixel": null
+      },
+      {
+       "step": "jump_L0_c",
+       "full": 261.90000009536743,
+       "firstPixel": 38.40000009536743
+      },
+      {
+       "step": "anim_zoom_L2",
+       "full": 1190,
+       "firstPixel": 109.5
+      },
+      {
+       "step": "anim_pan_L2",
+       "full": 1196.8999996185303,
+       "firstPixel": 46.19999980926514
+      }
+     ],
+     "open": {
+      "step": "open",
+      "t0": 0,
+      "firstPixel": 300.09999990463257,
+      "full": 397.80000019073486,
+      "metadataMs": 261.90000009536743,
+      "viewerMs": 294.09999990463257
+     },
+     "metadataRequests": [
+      {
+       "path": "image/img/\u2026",
+       "ms": 21
+      },
+      {
+       "path": "image/img/\u2026",
+       "ms": 149
+      },
+      {
+       "path": "image/img/\u2026",
+       "ms": 10
+      }
+     ],
+     "pageLoadMs": 116.59999990463257,
+     "tiles": 0,
+     "canvas": [
+      1060,
+      855
+     ]
+    },
+    "logs": [
+     "[error] Failed to load resource: the server responded with a status of 404 (Not Found)"
+    ],
+    "finished": "2026-11-06T13:51:36.596Z"
+   },
+   {
+    "block": 3,
+    "arm": "desktop",
+    "order": 1,
+    "waypoints": {
+     "a": [
+      42547,
+      38698
+     ],
+     "b": [
+      41107,
+      22498
+     ],
+     "c": [
+      39667,
+      14398
+     ]
+    },
+    "started": "2026-11-06T13:51:36.598Z",
+    "restart": {
+     "stop_s": 0.19,
+     "login_reach": "000",
+     "announce_s": 6.7,
+     "page_cache": {
+      "host": "compute-b-16-187",
+      "before": 204759040,
+      "after": 0
+     },
+     "health_s": 6.73
+    },
+    "rttMs": {
+     "p50": 6.682600000000093,
+     "min": 5.304600000032224,
+     "max": 10.660199999983888
+    },
+    "primaryStartS": 4.854,
+    "renderer": "ANGLE (NVIDIA, NVIDIA GeForce RTX 3080 (0x00002216) Direct3D11 vs_5_0 ps_5_0, D3D11)",
+    "C1": {
+     "steps": [
+      {
+       "step": "open",
+       "full": 1574.4000000953674,
+       "firstPixel": 1507
+      },
+      {
+       "step": "channels",
+       "full": 26.799999713897705,
+       "firstPixel": null
+      },
+      {
+       "step": "zoom_L2_a",
+       "full": 525.3999996185303,
+       "firstPixel": 29.09999990463257
+      },
+      {
+       "step": "zoom_L0_a",
+       "full": 575.9000000953674,
+       "firstPixel": 81.60000038146973
+      },
+      {
+       "step": "pan_L0_b",
+       "full": 911.6000003814697,
+       "firstPixel": 14.100000381469727
+      },
+      {
+       "step": "home",
+       "full": 24,
+       "firstPixel": 10
+      },
+      {
+       "step": "revisit_L0_a",
+       "full": 24.5,
+       "firstPixel": null
+      },
+      {
+       "step": "jump_L0_c",
+       "full": 546,
+       "firstPixel": 120
+      },
+      {
+       "step": "anim_zoom_L2",
+       "full": 1193.7999997138977,
+       "firstPixel": 139.7999997138977
+      },
+      {
+       "step": "anim_pan_L2",
+       "full": 1205.1999998092651,
+       "firstPixel": 144.59999990463257
+      }
+     ],
+     "info": {
+      "enabled": [
+       0
+      ],
+      "hd": true
+     },
+     "openNet": {
+      "local": {
+       "n": 206,
+       "bytes": 9115153,
+       "disk": 2
+      },
+      "node-direct": {
+       "n": 14,
+       "bytes": 9253607,
+       "disk": 4
+      }
+     },
+     "firstTileRequestMs": 1248,
+     "requests": 390
+    },
+    "C2": {
+     "steps": [
+      {
+       "step": "open",
+       "full": 721.9000000953674,
+       "firstPixel": 615.6999998092651
+      },
+      {
+       "step": "channels",
+       "full": 49.80000019073486,
+       "firstPixel": 54
+      },
+      {
+       "step": "zoom_L2_a",
+       "full": 224.40000009536743,
+       "firstPixel": 4.099999904632568
+      },
+      {
+       "step": "zoom_L0_a",
+       "full": 341.90000009536743,
+       "firstPixel": 56.90000009536743
+      },
+      {
+       "step": "pan_L0_b",
+       "full": 509.2999997138977,
+       "firstPixel": 35.89999961853027
+      },
+      {
+       "step": "home",
+       "full": 28.59999990463257,
+       "firstPixel": null
+      },
+      {
+       "step": "revisit_L0_a",
+       "full": 23.700000286102295,
+       "firstPixel": null
+      },
+      {
+       "step": "jump_L0_c",
+       "full": 392.59999990463257,
+       "firstPixel": 52.200000286102295
+      },
+      {
+       "step": "anim_zoom_L2",
+       "full": 1194.5,
+       "firstPixel": 119.19999980926514
+      },
+      {
+       "step": "anim_pan_L2",
+       "full": 1194.2999997138977,
+       "firstPixel": 67.7999997138977
+      }
+     ],
+     "info": {
+      "enabled": [
+       0
+      ],
+      "hd": true
+     },
+     "openNet": {
+      "local": {
+       "n": 205,
+       "bytes": 145071,
+       "disk": 2
+      },
+      "node-direct": {
+       "n": 15,
+       "bytes": 500,
+       "disk": 14
+      }
+     },
+     "firstTileRequestMs": 571,
+     "requests": 409
+    },
+    "finished": "2026-11-06T13:52:09.599Z"
+   },
+   {
+    "block": 4,
+    "arm": "desktop",
+    "order": 0,
+    "waypoints": {
+     "a": [
+      19507,
+      898
+     ],
+     "b": [
+      54067,
+      44098
+     ],
+     "c": [
+      43987,
+      16198
+     ]
+    },
+    "started": "2026-11-06T13:52:09.600Z",
+    "restart": {
+     "stop_s": 0.2,
+     "login_reach": "000",
+     "announce_s": 8.22,
+     "page_cache": {
+      "host": "compute-b-16-187",
+      "before": 204759040,
+      "after": 0
+     },
+     "health_s": 8.25
+    },
+    "rttMs": {
+     "p50": 6.85930000001099,
+     "min": 4.518199999991339,
+     "max": 10.634699999995064
+    },
+    "primaryStartS": 5.01,
+    "renderer": "ANGLE (NVIDIA, NVIDIA GeForce RTX 3080 (0x00002216) Direct3D11 vs_5_0 ps_5_0, D3D11)",
+    "C1": {
+     "steps": [
+      {
+       "step": "open",
+       "full": 1589,
+       "firstPixel": 1505.1000003814697
+      },
+      {
+       "step": "channels",
+       "full": 25.59999990463257,
+       "firstPixel": null
+      },
+      {
+       "step": "zoom_L2_a",
+       "full": 340.2999997138977,
+       "firstPixel": 1.5999999046325684
+      },
+      {
+       "step": "zoom_L0_a",
+       "full": 377.6000003814697,
+       "firstPixel": 98
+      },
+      {
+       "step": "pan_L0_b",
+       "full": 507.5,
+       "firstPixel": 8.200000286102295
+      },
+      {
+       "step": "home",
+       "full": 24.899999618530273,
+       "firstPixel": 12.199999809265137
+      },
+      {
+       "step": "revisit_L0_a",
+       "full": 25.399999618530273,
+       "firstPixel": null
+      },
+      {
+       "step": "jump_L0_c",
+       "full": 713.6999998092651,
+       "firstPixel": 71
+      },
+      {
+       "step": "anim_zoom_L2",
+       "full": 1193,
+       "firstPixel": 154.5
+      },
+      {
+       "step": "anim_pan_L2",
+       "full": 1189.0999999046326,
+       "firstPixel": 79
+      }
+     ],
+     "info": {
+      "enabled": [
+       0
+      ],
+      "hd": true
+     },
+     "openNet": {
+      "local": {
+       "n": 206,
+       "bytes": 9115149,
+       "disk": 2
+      },
+      "node-direct": {
+       "n": 15,
+       "bytes": 9253608,
+       "disk": 5
+      }
+     },
+     "firstTileRequestMs": 1244,
+     "requests": 413
+    },
+    "C2": {
+     "steps": [
+      {
+       "step": "open",
+       "full": 807,
+       "firstPixel": 692.3000001907349
+      },
+      {
+       "step": "channels",
+       "full": 45.90000009536743,
+       "firstPixel": 53.200000286102295
+      },
+      {
+       "step": "zoom_L2_a",
+       "full": 271,
+       "firstPixel": 1.4000000953674316
+      },
+      {
+       "step": "zoom_L0_a",
+       "full": 213.80000019073486,
+       "firstPixel": 32.5
+      },
+      {
+       "step": "pan_L0_b",
+       "full": 379.09999990463257,
+       "firstPixel": 56.799999713897705
+      },
+      {
+       "step": "home",
+       "full": 28.300000190734863,
+       "firstPixel": null
+      },
+      {
+       "step": "revisit_L0_a",
+       "full": 26,
+       "firstPixel": null
+      },
+      {
+       "step": "jump_L0_c",
+       "full": 508,
+       "firstPixel": 71.30000019073486
+      },
+      {
+       "step": "anim_zoom_L2",
+       "full": 1193.2000002861023,
+       "firstPixel": 104.2000002861023
+      },
+      {
+       "step": "anim_pan_L2",
+       "full": 1189.6999998092651,
+       "firstPixel": 32.69999980926514
+      }
+     ],
+     "info": {
+      "enabled": [
+       0
+      ],
+      "hd": true
+     },
+     "openNet": {
+      "local": {
+       "n": 205,
+       "bytes": 145067,
+       "disk": 2
+      },
+      "node-direct": {
+       "n": 15,
+       "bytes": 500,
+       "disk": 14
+      }
+     },
+     "firstTileRequestMs": 640,
+     "requests": 445
+    },
+    "finished": "2026-11-06T13:52:40.308Z"
+   },
+   {
+    "block": 4,
+    "arm": "browser",
+    "order": 1,
+    "waypoints": {
+     "a": [
+      19507,
+      898
+     ],
+     "b": [
+      54067,
+      44098
+     ],
+     "c": [
+      43987,
+      16198
+     ]
+    },
+    "started": "2026-11-06T13:52:40.310Z",
+    "restart": {
+     "stop_s": 0.21,
+     "login_reach": "000",
+     "announce_s": 8.82,
+     "page_cache": {
+      "host": "compute-b-16-187",
+      "before": 249991168,
+      "after": 0
+     },
+     "health_s": 8.86
+    },
+    "rttMs": {
+     "p50": 5.120400000014342,
+     "min": 4.190900000045076,
+     "max": 10.072199999995064
+    },
+    "renderer": "ANGLE (NVIDIA, NVIDIA GeForce RTX 3080 (0x00002216) Direct3D11 vs_5_0 ps_5_0, D3D11)",
+    "C1": {
+     "steps": [
+      {
+       "step": "open",
+       "full": 749.3000001907349,
+       "firstPixel": 599.5
+      },
+      {
+       "step": "channels",
+       "full": 226.09999990463257,
+       "firstPixel": 67.69999980926514
+      },
+      {
+       "step": "zoom_L2_a",
+       "full": 358.3999996185303,
+       "firstPixel": 114.5
+      },
+      {
+       "step": "zoom_L0_a",
+       "full": 346.5,
+       "firstPixel": 168.80000019073486
+      },
+      {
+       "step": "pan_L0_b",
+       "full": 492.80000019073486,
+       "firstPixel": 152.90000009536743
+      },
+      {
+       "step": "home",
+       "full": 28,
+       "firstPixel": null
+      },
+      {
+       "step": "revisit_L0_a",
+       "full": 24.90000009536743,
+       "firstPixel": null
+      },
+      {
+       "step": "jump_L0_c",
+       "full": 833.6999998092651,
+       "firstPixel": 155.5
+      },
+      {
+       "step": "anim_zoom_L2",
+       "full": 1206.5999999046326,
+       "firstPixel": 190.2999997138977
+      },
+      {
+       "step": "anim_pan_L2",
+       "full": 1194.5,
+       "firstPixel": 177.19999980926514
+      }
+     ],
+     "open": {
+      "step": "open",
+      "t0": 0,
+      "firstPixel": 599.5,
+      "full": 749.3000001907349,
+      "metadataMs": 321.40000009536743,
+      "viewerMs": 528.0999999046326
+     },
+     "metadataRequests": [
+      {
+       "path": "image/img/\u2026",
+       "ms": 26
+      },
+      {
+       "path": "image/img/\u2026",
+       "ms": 120
+      },
+      {
+       "path": "image/img/\u2026",
+       "ms": 17
+      }
+     ],
+     "pageLoadMs": 204.40000009536743,
+     "tiles": 0,
+     "canvas": [
+      1060,
+      855
+     ]
+    },
+    "C2": {
+     "steps": [
+      {
+       "step": "open",
+       "full": 297.69999980926514,
+       "firstPixel": 231.19999980926514
+      },
+      {
+       "step": "channels",
+       "full": 97.80000019073486,
+       "firstPixel": 31.199999809265137
+      },
+      {
+       "step": "zoom_L2_a",
+       "full": 126,
+       "firstPixel": 42.5
+      },
+      {
+       "step": "zoom_L0_a",
+       "full": 159.2000002861023,
+       "firstPixel": 50.30000019073486
+      },
+      {
+       "step": "pan_L0_b",
+       "full": 231.19999980926514,
+       "firstPixel": 40.89999961853027
+      },
+      {
+       "step": "home",
+       "full": 25.100000381469727,
+       "firstPixel": null
+      },
+      {
+       "step": "revisit_L0_a",
+       "full": 23.199999809265137,
+       "firstPixel": null
+      },
+      {
+       "step": "jump_L0_c",
+       "full": 346.19999980926514,
+       "firstPixel": 45.40000009536743
+      },
+      {
+       "step": "anim_zoom_L2",
+       "full": 1211.8000001907349,
+       "firstPixel": 108.90000009536743
+      },
+      {
+       "step": "anim_pan_L2",
+       "full": 1195.3999996185303,
+       "firstPixel": 43.39999961853027
+      }
+     ],
+     "open": {
+      "step": "open",
+      "t0": 0,
+      "firstPixel": 231.19999980926514,
+      "full": 297.69999980926514,
+      "metadataMs": 194.59999990463257,
+      "viewerMs": 225.59999990463257
+     },
+     "metadataRequests": [
+      {
+       "path": "image/img/\u2026",
+       "ms": 13
+      },
+      {
+       "path": "image/img/\u2026",
+       "ms": 119
+      },
+      {
+       "path": "image/img/\u2026",
+       "ms": 9
+      }
+     ],
+     "pageLoadMs": 77.89999961853027,
+     "tiles": 0,
+     "canvas": [
+      1060,
+      855
+     ]
+    },
+    "logs": [
+     "[error] Failed to load resource: the server responded with a status of 404 (Not Found)"
+    ],
+    "finished": "2026-11-06T13:53:06.266Z"
+   },
+   {
+    "block": 5,
+    "arm": "browser",
+    "order": 0,
+    "waypoints": {
+     "a": [
+      52627,
+      43198
+     ],
+     "b": [
+      59827,
+      32398
+     ],
+     "c": [
+      19507,
+      44998
+     ]
+    },
+    "started": "2026-11-06T13:53:06.267Z",
+    "restart": {
+     "stop_s": 0.2,
+     "login_reach": "000",
+     "announce_s": 7.93,
+     "page_cache": {
+      "host": "compute-b-16-187",
+      "before": 257376256,
+      "after": 0
+     },
+     "health_s": 7.95
+    },
+    "rttMs": {
+     "p50": 5.9817000000039116,
+     "min": 4.468700000026729,
+     "max": 13.022700000030454
+    },
+    "renderer": "ANGLE (NVIDIA, NVIDIA GeForce RTX 3080 (0x00002216) Direct3D11 vs_5_0 ps_5_0, D3D11)",
+    "C1": {
+     "steps": [
+      {
+       "step": "open",
+       "full": 792.8000001907349,
+       "firstPixel": 643.5999999046326
+      },
+      {
+       "step": "channels",
+       "full": 257.3999996185303,
+       "firstPixel": 79.09999990463257
+      },
+      {
+       "step": "zoom_L2_a",
+       "full": 389.59999990463257,
+       "firstPixel": 162.5
+      },
+      {
+       "step": "zoom_L0_a",
+       "full": 527.5,
+       "firstPixel": 168.69999980926514
+      },
+      {
+       "step": "pan_L0_b",
+       "full": 893.0999999046326,
+       "firstPixel": 129.59999990463257
+      },
+      {
+       "step": "home",
+       "full": 28.90000009536743,
+       "firstPixel": null
+      },
+      {
+       "step": "revisit_L0_a",
+       "full": 28.299999713897705,
+       "firstPixel": null
+      },
+      {
+       "step": "jump_L0_c",
+       "full": 660.6000003814697,
+       "firstPixel": 131.80000019073486
+      },
+      {
+       "step": "anim_zoom_L2",
+       "full": 1193.9000000953674,
+       "firstPixel": 123.5
+      },
+      {
+       "step": "anim_pan_L2",
+       "full": 1194.5,
+       "firstPixel": 129.09999990463257
+      }
+     ],
+     "open": {
+      "step": "open",
+      "t0": 0,
+      "firstPixel": 643.5999999046326,
+      "full": 792.8000001907349,
+      "metadataMs": 362.2000002861023,
+      "viewerMs": 569.5999999046326
+     },
+     "metadataRequests": [
+      {
+       "path": "image/img/\u2026",
+       "ms": 27
+      },
+      {
+       "path": "image/img/\u2026",
+       "ms": 121
+      },
+      {
+       "path": "image/img/\u2026",
+       "ms": 18
+      }
+     ],
+     "pageLoadMs": 243.90000009536743,
+     "tiles": 0,
+     "canvas": [
+      1060,
+      855
+     ]
+    },
+    "C2": {
+     "steps": [
+      {
+       "step": "open",
+       "full": 309.5,
+       "firstPixel": 237.60000038146973
+      },
+      {
+       "step": "channels",
+       "full": 85.2000002861023,
+       "firstPixel": 21
+      },
+      {
+       "step": "zoom_L2_a",
+       "full": 126.60000038146973,
+       "firstPixel": 43.80000019073486
+      },
+      {
+       "step": "zoom_L0_a",
+       "full": 184.90000009536743,
+       "firstPixel": 47.299999713897705
+      },
+      {
+       "step": "pan_L0_b",
+       "full": 413.40000009536743,
+       "firstPixel": 73
+      },
+      {
+       "step": "home",
+       "full": 17.700000286102295,
+       "firstPixel": null
+      },
+      {
+       "step": "revisit_L0_a",
+       "full": 29.799999713897705,
+       "firstPixel": null
+      },
+      {
+       "step": "jump_L0_c",
+       "full": 281.09999990463257,
+       "firstPixel": 37.30000019073486
+      },
+      {
+       "step": "anim_zoom_L2",
+       "full": 1206.5999999046326,
+       "firstPixel": 34.299999713897705
+      },
+      {
+       "step": "anim_pan_L2",
+       "full": 1195.7000002861023,
+       "firstPixel": 41.40000009536743
+      }
+     ],
+     "open": {
+      "step": "open",
+      "t0": 0,
+      "firstPixel": 237.60000038146973,
+      "full": 309.5,
+      "metadataMs": 190,
+      "viewerMs": 223
+     },
+     "metadataRequests": [
+      {
+       "path": "image/img/\u2026",
+       "ms": 11
+      },
+      {
+       "path": "image/img/\u2026",
+       "ms": 111
+      },
+      {
+       "path": "image/img/\u2026",
+       "ms": 8
+      }
+     ],
+     "pageLoadMs": 81.7000002861023,
+     "tiles": 0,
+     "canvas": [
+      1060,
+      855
+     ]
+    },
+    "logs": [
+     "[error] Failed to load resource: the server responded with a status of 404 (Not Found)"
+    ],
+    "finished": "2026-11-06T13:53:27.167Z"
+   },
+   {
+    "block": 5,
+    "arm": "desktop",
+    "order": 1,
+    "waypoints": {
+     "a": [
+      52627,
+      43198
+     ],
+     "b": [
+      59827,
+      32398
+     ],
+     "c": [
+      19507,
+      44998
+     ]
+    },
+    "started": "2026-11-06T13:53:27.169Z",
+    "restart": {
+     "stop_s": 0.21,
+     "login_reach": "000",
+     "announce_s": 7.31,
+     "page_cache": {
+      "host": "compute-b-16-187",
+      "before": 276865024,
+      "after": 0
+     },
+     "health_s": 7.35
+    },
+    "rttMs": {
+     "p50": 7.025900000007823,
+     "min": 5.115400000009686,
+     "max": 15.694000000017695
+    },
+    "primaryStartS": 4.875,
+    "renderer": "ANGLE (NVIDIA, NVIDIA GeForce RTX 3080 (0x00002216) Direct3D11 vs_5_0 ps_5_0, D3D11)",
+    "C1": {
+     "steps": [
+      {
+       "step": "open",
+       "full": 1518.0999999046326,
+       "firstPixel": 1454.7999997138977
+      },
+      {
+       "step": "channels",
+       "full": 26,
+       "firstPixel": null
+      },
+      {
+       "step": "zoom_L2_a",
+       "full": 541.7999997138977,
+       "firstPixel": 33.59999990463257
+      },
+      {
+       "step": "zoom_L0_a",
+       "full": 429.90000009536743,
+       "firstPixel": 96.40000009536743
+      },
+      {
+       "step": "pan_L0_b",
+       "full": 793.6999998092651,
+       "firstPixel": 10.900000095367432
+      },
+      {
+       "step": "home",
+       "full": 39.80000019073486,
+       "firstPixel": 8
+      },
+      {
+       "step": "revisit_L0_a",
+       "full": 25,
+       "firstPixel": null
+      },
+      {
+       "step": "jump_L0_c",
+       "full": 594.3000001907349,
+       "firstPixel": 114.90000009536743
+      },
+      {
+       "step": "anim_zoom_L2",
+       "full": 1191.8000001907349,
+       "firstPixel": 70
+      },
+      {
+       "step": "anim_pan_L2",
+       "full": 1191.5,
+       "firstPixel": 79.59999990463257
+      }
+     ],
+     "info": {
+      "enabled": [
+       0
+      ],
+      "hd": true
+     },
+     "openNet": {
+      "local": {
+       "n": 206,
+       "bytes": 9115163,
+       "disk": 2
+      },
+      "node-direct": {
+       "n": 14,
+       "bytes": 9253609,
+       "disk": 4
+      }
+     },
+     "firstTileRequestMs": 1203,
+     "requests": 429
+    },
+    "C2": {
+     "steps": [
+      {
+       "step": "open",
+       "full": 687.4000000953674,
+       "firstPixel": 582.3000001907349
+      },
+      {
+       "step": "channels",
+       "full": 46.19999980926514,
+       "firstPixel": 53
+      },
+      {
+       "step": "zoom_L2_a",
+       "full": 181.5,
+       "firstPixel": 1.3000001907348633
+      },
+      {
+       "step": "zoom_L0_a",
+       "full": 256.59999990463257,
+       "firstPixel": 35.799999713897705
+      },
+      {
+       "step": "pan_L0_b",
+       "full": 541.9000000953674,
+       "firstPixel": 78.69999980926514
+      },
+      {
+       "step": "home",
+       "full": 31.199999809265137,
+       "firstPixel": null
+      },
+      {
+       "step": "revisit_L0_a",
+       "full": 24.199999809265137,
+       "firstPixel": null
+      },
+      {
+       "step": "jump_L0_c",
+       "full": 399.5,
+       "firstPixel": 34
+      },
+      {
+       "step": "anim_zoom_L2",
+       "full": 1202.2000002861023,
+       "firstPixel": 48
+      },
+      {
+       "step": "anim_pan_L2",
+       "full": 1194.2000002861023,
+       "firstPixel": 40.09999990463257
+      }
+     ],
+     "info": {
+      "enabled": [
+       0
+      ],
+      "hd": true
+     },
+     "openNet": {
+      "local": {
+       "n": 205,
+       "bytes": 145081,
+       "disk": 2
+      },
+      "node-direct": {
+       "n": 14,
+       "bytes": 500,
+       "disk": 13
+      }
+     },
+     "firstTileRequestMs": 540,
+     "requests": 467
+    },
+    "finished": "2026-11-06T13:53:58.490Z"
+   }
+  ],
+  "failed": []
+ },
+ "checks": {
+  "blocks": 6,
+  "openRatioC1": 0.495395972972508,
+  "navRatioC1": 1.025668786155085,
+  "openRatioC2": 0.48994953214085485,
+  "navRatioC2": 0.8282604433842329,
+  "everyStepFull": true,
+  "everyStepFullBy10s": true,
+  "armsFailed": 0
+ },
+ "thresholds": {
+  "go": [
+   {
+    "name": "open, cold (C1): browser / desktop, median of paired blocks",
+    "value": 0.5,
+    "bound": "<= 1.2",
+    "result": "pass"
+   },
+   {
+    "name": "navigation, cold (C1): geometric mean per block of browser / desktop, median",
+    "value": 1.0,
+    "bound": "<= 1.2",
+    "result": "pass"
+   },
+   {
+    "name": "navigation, warm (C2): the same",
+    "value": 0.8,
+    "bound": "<= 1.2",
+    "result": "pass"
+   },
+   {
+    "name": "every step of both arms full within 10 s",
+    "value": true,
+    "bound": "true",
+    "result": "pass"
+   },
+   {
+    "name": "paired blocks",
+    "value": 6,
+    "bound": ">= 4",
+    "result": "pass"
+   }
+  ],
+  "stop": [
+   {
+    "name": "ratio > 2 on open or navigation (C1)",
+    "value": 1.0,
+    "bound": "> 2",
+    "result": "fail"
+   }
+  ]
+ },
+ "verdict": "GO",
+ "notes": [
+  "O2 node: NLU337.ome.tif (11 GB, 2 channels) on /n/scratch, plexora 0.0.36 (PyPI, private venv) in SLURM job 58783094 (short, 8 cores, 32 GB) on compute-b-16-187; reached from this machine through one ssh login (bench/o2/o2_daemon.py) and an in-cluster ssh hop from the login node, because O2 does not let the login node reach a compute node's port"
+ ],
+ "logs": []
+}

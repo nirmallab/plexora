@@ -14,7 +14,9 @@ mode.
 - **Second round, the same evening:** P2b and P3 reworked (both now GO), and P4,
   P6, P7, P8 and the headed Local Network Access check run. P4 is PARTIAL (h5ad
   is correct but slower than h5py); every other POC is GO; no STOP. The O2
-  record followed on 2026-11-06 (GO); ERIS, GCP and Safari remain. See
+  records followed on 2026-11-06: the protocol (GO) and the open and tour
+  times against the desktop route on the same node (GO: open 0.50×,
+  navigation 1.03×). ERIS, GCP and Safari remain. See
   [POC results](#poc-results) and
   [the campaign report](bench/browser_node/BROWSER_NODE_POC_2026-11-05.md).
 - **Gate:** no product change until the ladder reports GO on P1, P3 and P5. All
@@ -1138,7 +1140,13 @@ mode proceeds:
 **Manual records, one each:**
 
 - **O2:** a SLURM job, Duo once, the 640 GB Imaris file and NLU290, restart
-  recovery, and the `-t` time-limit cliff.
+  recovery, and the `-t` time-limit cliff. Made on 2026-11-06 with NLU337:
+  P5R (the protocol, byte-identical) and P5T (open and tour against the
+  desktop route), each on one login. On O2 the login node cannot reach a
+  compute node's port, so the `bind_node` layout fails there. An ssh from
+  the login node into the job's node, with the cluster's own key, works and
+  asks for no Duo; it is what O2's `srun --tunnel` does for Jupyter. The
+  connector should build O2 tunnels that way (§6.5).
 - **ERIS:** portal address rewriting. A static page has no proxy fallback when
   direct routing fails.
 - **GCP:** a VM node behind a TLS proxy, a public address space, CORS
@@ -1180,7 +1188,7 @@ Two rounds on 2026-11-05: one Windows machine (i9-12900K, 128 GB, RTX 3080, NVMe
 | P2b | **GO** (round 1 PARTIAL) | Whole-slide flat mask (9.6 GB raw) → pyramid by band workers: 9.6 s against Python's 21.8 s; 15.7 s in 4 workers and 0.75 GB; identical; no long tasks |
 | P3 | **GO** (round 1 PARTIAL) | 1.26 M × 29 CSV parsed by plain workers: drawable in 0.9 s (2.7× polars; DuckDB-Wasm took 3.4 s), peak 1.09 GB; every column bit-identical to DuckDB's parse; every answer identical to the server's; reopen 40 ms |
 | P4 | **PARTIAL** | h5ad (1.26 M × 90; dense and CSR; none, gzip, lzf) and a spatialdata 0.8 store: every read identical to Python's except lzf-compressed strings; h5wasm 2–13× h5py (a lone dense column 56×); one pass copies X into the column store in 1–9 s. DuckDB fetches its Parquet reader from the network; hyparquet does not |
-| P5 | **GO** | Static page ↔ node: tiles, batch, all_cells and describe byte-identical to the desktop route. Restart recovery; connector pairing; COOP/COEP; the node-served app under `/rnode/`; Local Network Access with one `loopback-network` permission and no server header, and, headed, the prompt that holds the first fetch |
+| P5 | **GO** | Static page ↔ node: tiles, batch, all_cells and describe byte-identical to the desktop route. Restart recovery; connector pairing; COOP/COEP; the node-served app under `/rnode/`; Local Network Access with one `loopback-network` permission and no server header, and, headed, the prompt that holds the first fetch. On an O2 node against the desktop route (6 ABBA blocks, cold): open 0.50× (0.63× with both channels drawn), navigation 1.03×, 240/240 steps full within 10 s |
 | P6 | **GO** | The product page over a scratch Python server against the browser node, same image, tour, waypoints and completion test, ABBA: every step that needs new tiles 2.4–3.3× faster in the browser; open 0.3× the product's (page load included); renderer peak 0.68 GB against 1.3 GB |
 | P7 | **GO** | A 9.6 GB-raw flat image (2 channels) → pyramid by band workers with `image_pyramid.reduce2`'s arithmetic: 27.5 s against Python's 31.2 s from zlib strips, 21.2 s against 178.6 s from an uncompressed file; 200/200 tiles identical at every level; no long tasks; reopened in 14 ms after a relaunch. Chrome's `estimate()` reads usage + 10 GiB: not a limit |
 | P8 | **GO** for Firefox | Firefox 159: every S feature, the same picture as Chrome (0.4 of 255 levels, worst grid cell). WebKit on Windows: all but OPFS, which that port lacks; Safari unmeasured |
@@ -1200,6 +1208,6 @@ Two rounds on 2026-11-05: one Windows machine (i9-12900K, 128 GB, RTX 3080, NVMe
   - register handlers before items.
 
 **Still to do:**
-- the ERIS and GCP records (O2 done: `P5R-none-2026-11-06-o2.json`, every byte identical);
+- the ERIS and GCP records (O2 done: `P5R-none-2026-11-06-o2.json`, every byte identical; `P5T-none-2026-11-06-o2.json`, open and tour times against the desktop route);
 - Safari on a Mac (P8);
 - an XL table; the LZ4 plugin on a real .ims.
