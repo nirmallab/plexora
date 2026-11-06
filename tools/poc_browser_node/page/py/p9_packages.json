@@ -1,0 +1,35 @@
+{
+ "_comment": "P9: the Pyodide builds the gating session imports (S1: page/py/p9_run.py's dump lists sys.modules after a session), loaded with loadPackage; their own dependencies follow from pyodide-lock.json. Left out because the session never imports them: opencv-python, h5py, shapely (and anndata's wheels); pandas, which only scikit-learn's import-time compatibility check reaches (sklearn.utils.fixes: `try: import pandas`). pyarrow is here for Parquet: Pyodide's polars is built without it (p9_boot.parquet_by_pyarrow). `lazy` lists what a boot may leave out (p9Boot({lazy: true})): pyarrow is then fetched at the first Parquet call (p9_boot.parquet_by_pyarrow).",
+ "pyodide": [
+  "numpy",
+  "scipy",
+  "scikit-learn",
+  "polars",
+  "pillow",
+  "zarr",
+  "numcodecs",
+  "pydantic",
+  "pyyaml",
+  "cryptography",
+  "orjson",
+  "msgpack",
+  "jinja2",
+  "markupsafe",
+  "packaging",
+  "platformdirs",
+  "click",
+  "fsspec",
+  "typing-extensions",
+  "pyarrow"
+ ],
+ "skipWheels": [
+  "anndata",
+  "array_api_compat",
+  "legacy_api_wrap",
+  "natsort",
+  "scverse_misc"
+ ],
+ "lazy": [
+  "pyarrow"
+ ]
+}

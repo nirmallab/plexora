@@ -349,8 +349,67 @@ def p8(rec, _all):
     return go, stop
 
 
+def p9(rec, _all):
+    """Plexora's gating session in Pyodide beside the viewer (the user's bars, 2026-11-06)."""
+    m, c = rec["metrics"], rec["checks"]
+    boot = m.get("boot", {})
+    ready = lambda arm: (boot.get(arm) or {}).get("phases", {}).get("ready")  # noqa: E731
+    sec = lambda ms: None if ms is None else round(ms / 1000, 2)  # noqa: E731
+    session = m.get("session", {})
+    ratio = lambda f: (session.get(f) or {}).get("ratio")  # noqa: E731
+    viewer = m.get("viewer") or {}
+    long_tasks = viewer.get("longTasks") or {}
+    extra = (None if long_tasks.get("worker") is None
+             else long_tasks["worker"] - long_tasks["control"])
+    pan = (viewer.get("panP95") or {}).get("worker")
+    heap_m = (m.get("heap", {}).get("P9M") or {}).get("afterSession")
+    peak_m = ((m.get("peakMemory", {}).get("P9M") or {}).get("byKind") or {}).get("renderer")
+    verdict_of = lambda f: (c.get(f) or {}).get("verdict")  # noqa: E731
+    hard_ok = lambda f: verdict_of(f) in ("identical", "within", "soft")  # noqa: E731
+    shim_lines = m.get("shimCodeLines") or {}
+    gib = lambda b: None if b is None else round(b / 2 ** 30, 2)  # noqa: E731
+    cold_bytes = ((boot.get("cold") or {}).get("bytes") or {}).get("total")
+    go = [
+        check("cold ready, first visit over 50 Mbps / 20 ms (s from navigation)", sec(ready("throttled")),
+              ready("throttled") is not None and ready("throttled") <= 10000, "<= 10"),
+        check("cold ready, this origin unthrottled (s; recorded)", sec(ready("cold")), True, "recorded"),
+        check("return ready, same profile (s)", sec(ready("return")),
+              ready("return") is not None and ready("return") <= 3000, "<= 3"),
+        check("viewer open with / without the worker booting (median of ABAB)", r1(viewer.get("openRatio")),
+              viewer.get("openRatio") is not None and viewer["openRatio"] <= 1.1, "<= 1.1"),
+        check("main-thread long tasks added by the boot (median, worker - control)", extra,
+              extra is not None and extra <= 0, "0"),
+        check("pan frame interval p95 while the worker boots (ms)", r1(pan), pan is not None and pan <= 25, "<= 25"),
+        check("session wall, Pyodide / CPython, S", r1(ratio("P9S")), ratio("P9S") is not None and ratio("P9S") <= 2,
+              "<= 2"),
+        check("session wall, Pyodide / CPython, M", r1(ratio("P9M")), ratio("P9M") is not None and ratio("P9M") <= 2,
+              "<= 2"),
+        check("wasm heap after the M session (GiB)", gib(heap_m), heap_m is not None and heap_m <= 2 * 2 ** 30, "<= 2"),
+        check("renderer peak, M (GiB)", gib(peak_m), peak_m is not None and peak_m <= 2 * 2 ** 30, "<= 2"),
+        check("S: packets, answers, states and gates as CPython's", verdict_of("P9S"),
+              verdict_of("P9S") in ("identical", "within"), "identical | within"),
+        check("M: the same", verdict_of("P9M"), verdict_of("P9M") in ("identical", "within"), "identical | within"),
+        check("first-visit transfer (MB; sizes the fallback download too)",
+              None if cold_bytes is None else r1(cold_bytes / 1e6), True, "recorded"),
+    ]
+    stop = [
+        check("a hard correctness rule failed (packet kinds, packets, final states and gates)",
+              [f for f in ("P9S", "P9M") if f in c and not hard_ok(f)],
+              any(f in c and not hard_ok(f) for f in ("P9S", "P9M")), "none"),
+        check("a shim over 20 lines of code", max(shim_lines.values()) if shim_lines else None,
+              bool(shim_lines) and max(shim_lines.values()) > 20, "> 20"),
+        check("cold ready over 50 Mbps / 20 ms beyond 30 s", sec(ready("throttled")),
+              ready("throttled") is not None and ready("throttled") > 30000, "> 30"),
+        check("wasm heap after the M session beyond 3 GiB", gib(heap_m),
+              heap_m is not None and heap_m > 3 * 2 ** 30, "> 3"),
+        check("session 10x CPython or more", r1(max(filter(None, [ratio("P9S"), ratio("P9M")]), default=None)),
+              any(r is not None and r >= 10 for r in (ratio("P9S"), ratio("P9M"))), ">= 10"),
+    ]
+    return go, stop
+
+
 RULES = {"P0": p0, "P1": p1, "P2": p2, "P2B": p2b, "P3": p3, "P4": p4, "P5": p5, "P5LNAH": p5lnah, "P5R": p5r, "P5T": p5t, "P6": p6,
-         "P7": p7, "P8": p8}
+         "P7": p7, "P8": p8, "P9": p9}
 
 
 def verdict(go, stop):

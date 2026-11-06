@@ -36,13 +36,17 @@ function kill(proc) {
 }
 
 /** serve_static.py; resolves {port, url, proc} once it prints its port. */
-export async function startStatic({ coopCoep = null, rnode = false, port = 0, tls = null } = {}) {
+export async function startStatic({ coopCoep = null, rnode = false, port = 0, tls = null, pyodide = null,
+                                    throttle = null } = {}) {
     // A fixed port when a test needs the SAME origin twice (OPFS and
     // IndexedDB are per origin, and the port is part of the origin).
     const args = [path.join(POC_ROOT, "serve_static.py"), "--port", String(port)];
     if (coopCoep) args.push("--coop-coep", coopCoep);
     if (rnode) args.push("--rnode");
     if (tls) args.push("--tls-cert", tls.cert, "--tls-key", tls.key);
+    // P9: the Pyodide release and wheels (bench/p9_dist.py), and a shared link.
+    if (pyodide) args.push("--pyodide", pyodide);
+    if (throttle) args.push("--throttle", throttle);
     const proc = spawn(PYTHON, ["-I", ...args], { stdio: ["ignore", "pipe", "inherit"] });
     started.push(proc);
     const line = await new Promise((resolve, reject) => {

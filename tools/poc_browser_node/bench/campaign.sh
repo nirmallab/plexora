@@ -42,5 +42,12 @@ run --poc P7 --fixture S
 run --poc P7 --fixture M
 run --poc P7 --fixture M --label w8 --params '{"layouts":["strips"],"workers":8}'
 run --poc P8 --fixture S
+# P9 (Pyodide beside the viewer; needs bench/p9_dist.py's downloads): off by
+# default. P9=1 runs the published release and the trimmed build.
+if [ "${P9:-0}" = 1 ]; then
+    run --poc P9 --fixture P9S
+    run --poc P9 --fixture P9S --label trimmed --params '{"dist":"pycbr","tls":true,"lazy":true}'
+    run --poc P9 --fixture P9S --label metacache --params '{"arms":["cold","M"],"dist":"pycbr","tls":true,"lazy":true,"prototype":"metacache"}'
+fi
 node bench/p0_audit.mjs --out "$OUT/p0_audit-2026-11-05.json" > /dev/null
 echo "== done $(date +%H:%M:%S)"

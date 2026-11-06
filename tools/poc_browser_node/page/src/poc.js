@@ -15,6 +15,7 @@ import { p3, p3Ingest, p3Reopen } from "./p3.js";
 import { p4 } from "./p4.js";
 import { p2Viewer, p2bBuild, p2bIdentity, p2bReopen, buildPyramid, pyramidReopen, p7Identity } from "./p2.js";
 import { p5Protocol, p5Reach, p5Isolation, p5Poll, p5Pair, p5Rnode, p5Lna, p5LnaStart, p5LnaPoll } from "./p5.js";
+import { p9Boot, p9Prepare, p9Session, p9Run, p9TableProbe, p9ViewerOpen, p9Close } from "./p9.js";
 
 const status = (text) => { document.getElementById("status").textContent = text; };
 const frame = () => new Promise((resolve) => requestAnimationFrame(resolve));
@@ -719,6 +720,7 @@ async function p6Tour({ image, channels, waypoints: W, size = [1060, 855], timeo
 window.POC = {
     env, p0, p1Tiles, p1Viewer, p1Remote, compareArms, probeU16Shader, p3, p3Ingest, p3Reopen, p2Viewer, p2bBuild, p2bIdentity, p2bReopen, buildPyramid, pyramidReopen, p7Identity, p4,
     p5Protocol, p5Reach, p5Isolation, p5Poll, p5Pair, p5Rnode, p5Lna, p5LnaStart, p5LnaPoll, p6Tour,
+    p9Boot, p9Prepare, p9Session, p9Run, p9TableProbe, p9Close, p9ViewerOpen: (o) => p9ViewerOpen({ ...o, panFrames }),
     // Building blocks for the driver's other POCs (p2, p3, p5 modules add theirs).
     lib: { NodeClient, TiffPool, createViewer, waitFull, summary, rng, decodePng, sha256, randomTiles,
            openArm, closeArm, goTo, panFrames, tourSteps, PALETTE, pickedFile, workerUrl, env },

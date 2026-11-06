@@ -11,7 +11,14 @@ Serves three trees and nothing else:
   page that works here works with the product files unmodified -- which is
   P0's question.
 - ``/nm/...``  this folder's ``node_modules`` (DuckDB-Wasm's worker and wasm).
+- ``/pyodide/...`` and ``/wheels/...`` (with ``--pyodide DIR``, P9): a Pyodide
+  release and the wheels installed on top (``bench/p9_dist.py``), served
+  same-origin as viewer.plexoraapp.com would serve them. Cacheable
+  (``max-age``), unlike every other tree: P9's return visit measures the
+  browser's HTTP cache.
 
+``--throttle MBPS:RTT_MS`` sends every response over one shared link of that
+speed after one round trip (P9's first visit on a 50 Mbps / 20 ms line).
 ``--tls-cert``/``--tls-key`` serve https (a secure context, as plexoraapp.com
 would be; P5 scenario b). ``--coop-coep`` adds Cross-Origin-Opener-Policy and Cross-Origin-Embedder-Policy
 to every page response (P5 scenario d). ``--rnode`` adds an Open OnDemand-style
@@ -32,6 +39,8 @@ import mimetypes
 import os
 import posixpath
 import sys
+import threading
+import time
 import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -47,6 +56,7 @@ TREES = {
 #: static origin that served the whole checkout would serve its secrets too.
 REPO_ALLOWED = ("plexora/client/",)
 TYPES = {
+    ".whl": "application/zip", ".zip": "application/zip",
     ".js": "text/javascript", ".mjs": "text/javascript", ".cjs": "text/javascript",
     ".wasm": "application/wasm", ".glsl": "text/plain", ".json": "application/json",
     ".html": "text/html; charset=utf-8", ".css": "text/css", ".map": "application/json",
@@ -57,10 +67,37 @@ HOP_HEADERS = {"connection", "keep-alive", "proxy-authenticate", "proxy-authoriz
                "te", "trailers", "transfer-encoding", "upgrade", "host"}
 
 
+class Link:
+    """One shared link for every response (P9's first-visit profile): each
+    response waits one round trip, then its bytes leave at `mbps` in total
+    across all connections, as a home line would carry them. Cache hits never
+    reach the server, so a return visit is unaffected."""
+
+    CHUNK = 64 * 1024
+
+    def __init__(self, mbps, rtt_ms):
+        self.rate = mbps * 1e6 / 8
+        self.rtt = rtt_ms / 1000.0
+        self.lock = threading.Lock()
+        self.free_at = time.monotonic()
+
+    def send(self, wfile, body):
+        time.sleep(self.rtt)
+        for i in range(0, len(body), self.CHUNK):
+            chunk = body[i:i + self.CHUNK]
+            with self.lock:
+                start = max(time.monotonic(), self.free_at)
+                self.free_at = start + len(chunk) / self.rate
+                done = self.free_at
+            time.sleep(max(0.0, done - time.monotonic()))
+            wfile.write(chunk)
+
+
 class Handler(BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
     coop_coep = None
     rnode = False
+    link = None
 
     def log_message(self, fmt, *args):  # quiet: the driver records what matters
         if os.environ.get("POC_SERVE_LOG"):
@@ -114,15 +151,34 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(404, b"not found")
         ctype = TYPES.get(target.suffix.lower()) or mimetypes.guess_type(target.name)[0] \
             or "application/octet-stream"
-        body = b"" if head else target.read_bytes()
+        # A precompressed sibling (P9's pycbr variant: bench/p9_dist.py) is
+        # sent as it is, the way a CDN serves a .br it holds.
+        encoded = target.with_name(target.name + ".br")
+        brotli = (tree in ("pyodide", "wheels") and encoded.is_file()
+                  and "br" in (self.headers.get("Accept-Encoding") or ""))
+        source = encoded if brotli else target
+        body = b"" if head else source.read_bytes()
         self.send_response(200)
         self.send_header("Content-Type", ctype)
-        self.send_header("Content-Length", str(target.stat().st_size if head else len(body)))
-        self.send_header("Cache-Control", "no-store")
+        if brotli:
+            self.send_header("Content-Encoding", "br")
+        if tree in ("pyodide", "wheels"):
+            self.send_header("Vary", "Accept-Encoding")
+        self.send_header("Content-Length", str(source.stat().st_size if head else len(body)))
+        self.send_header("Cache-Control", self._cache_control(tree))
         self._isolation_headers()
         self.end_headers()
-        if body:
+        if body and self.link:
+            self.link.send(self.wfile, body)
+        elif body:
             self.wfile.write(body)
+
+    def _cache_control(self, tree):
+        # P9's return visit reads the browser's cache, as a CDN's long-lived
+        # immutable files would let it; every other tree stays uncached.
+        if tree in ("pyodide", "wheels"):
+            return "public, max-age=31536000, immutable"
+        return "no-store"
 
     def _isolation_headers(self):
         if self.coop_coep:
@@ -181,11 +237,21 @@ def main(argv=None):
     parser.add_argument("--port", type=int, default=0)
     parser.add_argument("--coop-coep", choices=("require-corp", "credentialless"), default=None)
     parser.add_argument("--rnode", action="store_true")
+    parser.add_argument("--throttle", default=None, metavar="MBPS:RTT_MS",
+                        help="P9: every response over one shared link of this speed and round trip")
+    parser.add_argument("--pyodide", default=None,
+                        help="P9: a folder holding pyodide/ and wheels/ (bench/p9_dist.py)")
     parser.add_argument("--tls-cert", default=None, help="serve https with this PEM certificate")
     parser.add_argument("--tls-key", default=None)
     args = parser.parse_args(argv)
     Handler.coop_coep = args.coop_coep
     Handler.rnode = args.rnode
+    if args.throttle:
+        mbps, rtt = (float(v) for v in args.throttle.split(":"))
+        Handler.link = Link(mbps, rtt)
+    if args.pyodide:
+        TREES["pyodide"] = Path(args.pyodide) / "pyodide"
+        TREES["wheels"] = Path(args.pyodide) / "wheels"
     server = ThreadingHTTPServer((args.host, args.port), Handler)
     server.daemon_threads = True
     if args.tls_cert:

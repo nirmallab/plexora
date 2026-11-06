@@ -19,6 +19,7 @@ python bench/verdict.py ../../docs/internal/bench/browser_node --write   # GO / 
 Requirements:
 - Chrome stable at its default path (`PLEXORA_BENCH_CHROME` overrides). Runs are headless, on the GPU (`--use-angle=d3d11`), with the frame-rate limit off (so frame intervals are frame cost), except P6, which runs Chrome as the product tour does.
 - P8 needs Playwright's own Firefox and WebKit: `node node_modules/playwright-core/cli.js install firefox webkit`.
+- P9 needs a Pyodide release and the wheels beside it: `python bench/p9_dist.py` (about 320 MB, once; the trimmed builds with `--variant pyc --python314 <a CPython 3.14>` and then `--variant pycbr`, which needs the `brotli` encoder). Its fixtures are made by `bench/p9_fixture.py`, CPython's reference by `bench/truth_p9.py`, both cached.
 - The Plexora conda env (`PLEXORA_PYTHON`) for the data nodes, the scratch product server (P6) and the Python ground truth.
 - Fixture paths in `bench/fixtures.json` (`POC_FIXTURES` overrides). `fixtures.py` writes the flat masks and flat images; `bench/p4_fixtures.py` the AnnData and SpatialData files.
 - Scratch caches (channel windows, Python truth, Python's own pyramids, a throwaway TLS certificate, the P6 data root, screenshots) go under `$PLEXORA_BENCH_HOME/browser_node/` (default `C:/plexora-bench`).
@@ -36,6 +37,7 @@ Requirements:
 | P6 | `P6` | The product itself (a scratch Plexora server, `tools/bench_remote/tour.mjs`: the app's own tour and completion test) against the browser node (the same steps, waypoints and completion rule), ABBA. |
 | P7 | `P7` | A flat multichannel image (zlib strips, uncompressed, tiles) made into a pyramid by the same band workers, compared with Python's `pyramidize_image`, then reopened after a relaunch. |
 | P8 | `P8` | The S features (P0, P1, P2b, P7, P3, P4) in Playwright's Firefox and WebKit, and the picture against Chrome's. |
+| P9 | `P9` (`bench/p9.mjs`) | Plexora's AI layer in the browser: the gating session's Python, as it ships, in Pyodide in a worker beside the viewer (`page/src/workers/pyWorker.js`, `page/py/`), against CPython on the same synthetic project (`bench/truth_p9.py`, `bench/compare_p9.py`): startup cold, return and over a 50 Mbps / 20 ms link, the viewer with and without the worker booting, the oracle session's packets, gates and time, and a 1.26 M-cell table handed to Python. Not in `campaign.sh`'s default run. |
 
 ## Layout
 
