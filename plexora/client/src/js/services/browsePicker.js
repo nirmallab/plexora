@@ -348,6 +348,19 @@ async function browseForPath({mode = "file", filter = "any", node = null,
                               accept = null, select = null, primary = "",
                               title = ""} = {}) {
     try {
+        // The website: the user's own disk is the browser's to show, and a
+        // pick becomes a path Plexora's Python can open (services/pickedFiles.js).
+        if (!node && window.PlexoraPicks && window.PlexoraBackend
+            && window.PlexoraBackend.kind === "browser") {
+            let kind = mode;
+            if (kind === "any") {
+                kind = anchorEl ? await chooseKind(anchorEl, examples || filter) : "file";
+                if (!kind) return;
+            }
+            const picked = await window.PlexoraPicks.pick({ mode: kind, multiple: select === "many" });
+            if (picked && onPicked) onPicked(picked);
+            return;
+        }
         const explorer = window.PlexoraFileExplorer;
         if (explorer) {
             const picked = await explorer.pick({

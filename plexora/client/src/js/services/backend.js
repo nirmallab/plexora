@@ -80,6 +80,8 @@
     //: What the website can do itself, by the same names (a feature arriving
     //: in a later phase says false until it does).
     const BROWSER_FEATURES = Object.freeze({
+        //: The browser's own file picker (services/pickedFiles.js).
+        file_picker: true,
         volume: true,
         surfaces: true,
         agent: true,

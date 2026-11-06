@@ -9,6 +9,7 @@
 //   read {stream, size}            the rest of a long body -> {body, done}
 //   close {stream}                 the page stopped reading it
 //   mount {dir, files}             the user's picked files, read on demand (WORKERFS)
+//   mountTree {dir, blobs}         a picked folder: [{name: "<folder>/<path>", data: File}]
 //   columns {key, names, buffers}  a table's columns from the page's column store
 //   heap                           the wasm heap's bytes
 //   run {code}                     tests only (boot with debug: true): Python's
@@ -247,12 +248,19 @@ function mount({ dir, files }) {
     return files.map((file) => `${dir}/${file.name}`);
 }
 
+function mountTree({ dir, blobs }) {
+    py.FS.mkdirTree(dir);
+    py.FS.mount(py.FS.filesystems.WORKERFS, { blobs }, dir);
+    return blobs.length;
+}
+
 const OPS = {
     boot,
     request,
     read,
     close: ({ stream }) => { py.pyimport("plexora.browser.bridge").close(stream); return true; },
     mount,
+    mountTree,
     columns: ({ key, names, buffers }) => { columnStore.set(key, { names, buffers }); return names.length; },
     forget: ({ key }) => columnStore.delete(key),
     heap: () => (py ? py._module.HEAP8.length : null),

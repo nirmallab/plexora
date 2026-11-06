@@ -51,6 +51,14 @@ def test_a_write_from_the_page_is_admitted_and_marked(app):
     assert answer["wrote"] is True
 
 
+def test_a_body_that_arrives_as_a_buffer_is_read_as_bytes(app):
+    """The worker hands Python a memoryview, never bytes."""
+    body = memoryview(json.dumps({"prefs": {"hd": False}}).encode())
+    answer = bridge.handle(app, {"method": "PUT", "path": "/viewer_prefs", "body": body,
+                                 "headers": {"Content-Type": "application/json"}}, ORIGIN)
+    assert answer["status"] in (200, 204), answer["body"][:300]
+
+
 def test_a_write_from_another_site_is_refused_as_on_the_desktop(app):
     answer = bridge.handle(app, {"method": "PUT", "path": "/viewer_prefs", "body": b"{}",
                                  "headers": {"Content-Type": "application/json",

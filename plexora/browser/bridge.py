@@ -45,13 +45,18 @@ def environ(request: dict, origin: str) -> dict:
         # A browser sends Origin with every write; the facade's own calls
         # (a fetch made by the page) carry it already, a test's may not.
         headers.append(("Origin", origin))
+    body = request.get("body") or b""
+    if not isinstance(body, (bytes, str)):
+        # From the worker a body arrives as a buffer (a memoryview, a
+        # Uint8Array's proxy), which Werkzeug would read as form fields.
+        body = bytes(body)
     builder = EnvironBuilder(
         path=request.get("path") or "/",
         base_url=f"{page.scheme}://{page.netloc}",
         query_string=request.get("query") or "",
         method=(request.get("method") or "GET").upper(),
         headers=headers,
-        data=request.get("body") or b"",
+        data=body,
         environ_base={"REMOTE_ADDR": "127.0.0.1", "SERVER_SOFTWARE": "plexora-browser"},
     )
     try:

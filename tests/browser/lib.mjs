@@ -52,3 +52,13 @@ export async function launch({ headed = false } = {}) {
         },
     };
 }
+
+//: The app's frame on a page of the site (services/shell.js shows the app in
+//: one), once its first page has been written.
+export async function appFrame(page, { timeout = 120000 } = {}) {
+    const element = await page.waitForSelector("#plexora-app", { timeout });
+    const frame = await element.contentFrame();
+    await frame.waitForFunction(() => window.PlexoraShellFramed && document.body
+                                && !document.getElementById("plexora-boot"), null, { timeout });
+    return frame;
+}

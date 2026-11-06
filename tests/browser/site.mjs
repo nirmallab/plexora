@@ -5,7 +5,7 @@
 //
 //   node tests/browser/site.mjs [--paths /,/settings] [--shots DIR] [--headed]
 import path from "node:path";
-import { REPO, launch, startServer } from "./lib.mjs";
+import { REPO, appFrame, launch, startServer } from "./lib.mjs";
 
 const args = process.argv.slice(2);
 const opt = (name, fallback) => (args.includes(name) ? args[args.indexOf(name) + 1] : fallback);
@@ -33,12 +33,13 @@ try {
         failed = [];
         const started = Date.now();
         await page.goto(`http://127.0.0.1:${server.port}${address}`);
-        await page.waitForFunction(() => !document.getElementById("plexora-boot")
-                                         || document.querySelector(".plexora-boot-failed"),
-                                   null, { timeout: 120000 });
+        const failedBoot = await page.waitForSelector(".plexora-boot-failed", { timeout: 1500 })
+            .then(() => true, () => false);
+        const frame = failedBoot ? page.mainFrame() : await appFrame(page);
         const written = Date.now() - started;
         await page.waitForTimeout(2500);
-        const state = await page.evaluate(() => ({
+        const tab = await page.evaluate(() => ({ address: location.pathname, title: document.title }));
+        const state = await frame.evaluate(() => ({
             title: document.title,
             failedBoot: document.querySelector(".plexora-boot-failed")?.textContent || null,
             kind: window.PlexoraBackend && window.PlexoraBackend.kind,
@@ -50,7 +51,7 @@ try {
             const name = address === "/" ? "home" : address.replace(/[^a-z0-9]+/gi, "_");
             await page.screenshot({ path: path.join(shots, `site-${name}.png`) });
         }
-        out.pages[address] = { writtenMs: written, ...state, errors: errors.slice(0, 15),
+        out.pages[address] = { writtenMs: written, tab, ...state, errors: errors.slice(0, 15),
                                failed: failed.slice(0, 15) };
     }
 } finally {

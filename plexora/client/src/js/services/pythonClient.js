@@ -21,6 +21,7 @@
  *   ready                   a promise of the same, for whoever asks later
  *   fetch(url, init)        -> promise of a Response, as from the server
  *   mount(dir, files)       picked File objects under `dir` in Python's files
+ *   mountTree(dir, blobs)   a picked folder: [{name: "<folder>/<path>", data: File}]
  *   columns(key, names, buffers)  a table's columns for the table provider
  *   job(id) / cancel(id) / on(kind, fn)
  *
@@ -153,9 +154,15 @@
     //: How long a held poll may be held, whatever it asked for.
     const MAX_HOLD_MS = 30000;
 
+    //: A Request -- from this window or the app's frame, whose Request is
+    //: another realm's and fails `instanceof`.
+    const isRequest = (value) => value instanceof Request
+        || (value !== null && typeof value === "object" && typeof value.url === "string"
+            && typeof value.method === "string" && typeof value.arrayBuffer === "function");
+
     async function fetch(input, init) {
         await ready;
-        const request = input instanceof Request ? input : null;
+        const request = isRequest(input) ? input : null;
         const url = new URL(request ? request.url : String(input), global.location.href);
         const job = url.pathname.match(/\/agent\/v1\/jobs\/([^/]+)$/);
         if (job && busyWithJob(job[1])) {
@@ -211,6 +218,7 @@
         ready,
         fetch,
         mount: (dir, files) => ready.then(() => call("mount", { dir, files })),
+        mountTree: (dir, blobs) => ready.then(() => call("mountTree", { dir, blobs })),
         columns: (key, names, buffers) => ready.then(() => call("columns", { key, names, buffers },
                                                                buffers)),
         heap: () => ready.then(() => call("heap", {})),

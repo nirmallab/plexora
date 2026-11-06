@@ -152,6 +152,20 @@ def closure(lock: dict, names) -> list:
     return sorted(out)
 
 
+#: Run by the CPython 3.14 that compiles for Pyodide: every module under
+#: argv[1] to sourceless bytecode, its path in tracebacks the one Pyodide
+#: installs it at (argv[2]/<relative path>, POSIX on every build machine --
+#: compileall's own -p joins with this machine's separator).
+COMPILE = '''
+import pathlib, py_compile, sys
+root, site = pathlib.Path(sys.argv[1]), sys.argv[2]
+for source in root.rglob("*.py"):
+    py_compile.compile(str(source), cfile=str(source.with_suffix(".pyc")),
+                       dfile=site + "/" + source.relative_to(root).as_posix(), doraise=True,
+                       invalidation_mode=py_compile.PycInvalidationMode.UNCHECKED_HASH)
+'''
+
+
 def precompile(wheel: Path, out: Path, python314: str | None, stored: bool) -> None:
     """`wheel` into `out`: modules as sourceless bytecode when `python314`
     is given, members stored (for brotli) or deflated."""
@@ -165,9 +179,7 @@ def precompile(wheel: Path, out: Path, python314: str | None, stored: bool) -> N
         root = Path(scratch)
         with zipfile.ZipFile(wheel) as src:
             src.extractall(root)
-        subprocess.run([python314, "-I", "-m", "compileall", "-q", "-b", "-j", "0", "-s",
-                        str(root), "-p", SITE, "--invalidation-mode", "unchecked-hash",
-                        str(root)], check=True)
+        subprocess.run([python314, "-I", "-c", COMPILE, str(root), SITE], check=True)
         for source in root.rglob("*.py"):
             if source.with_suffix(".pyc").exists():
                 source.unlink()
