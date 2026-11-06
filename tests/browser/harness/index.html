@@ -17,7 +17,7 @@
         PlexoraPython.on("mark", (data) => { marks[data.mark] = data.at - performance.timeOrigin; });
         const stages = [];
         PlexoraPython.on("stage", (event) => stages.push(event));
-        const ready = PlexoraPython.start({ base: `/py/${version}/` }).then((info) => {
+        const ready = PlexoraPython.start({ base: `/py/${version}/`, debug: true }).then((info) => {
             document.getElementById("status").textContent = info.error ? `failed: ${info.error}` : "ready";
             return info;
         });
@@ -29,7 +29,8 @@
                      type: response.headers.get("Content-Type"), text };
         }
         window.harness = { ready, ask, marks, stages, isolated: window.crossOriginIsolated,
-                           heap: () => PlexoraPython.heap() };
+                           heap: () => PlexoraPython.heap(), run: (code) => PlexoraPython.run(code),
+                           sync: () => PlexoraPython.sync() };
     })();
 </script>
 </body>

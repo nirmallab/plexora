@@ -81,12 +81,12 @@
         if (data.log) console.warn("[python]", data.log);
     }
 
-    function start({ base, origin = global.location.origin, root = "/" } = {}) {
+    function start({ base, origin = global.location.origin, root = "/", debug = false } = {}) {
         if (worker) return ready;
         worker = new Worker(new URL(root + WORKER, global.location.href), { type: "module" });
         worker.onmessage = onMessage;
         worker.onerror = (event) => console.error("[python] worker failed:", event.message);
-        call("boot", { base, origin, cancels }).then(resolveReady, (error) => {
+        call("boot", { base, origin, cancels, debug }).then(resolveReady, (error) => {
             resolveReady({ error: String(error?.message || error) });
         });
         return ready;
@@ -214,6 +214,8 @@
         columns: (key, names, buffers) => ready.then(() => call("columns", { key, names, buffers },
                                                                buffers)),
         heap: () => ready.then(() => call("heap", {})),
+        run: (code) => ready.then(() => call("run", { code })),
+        sync: () => ready.then(() => call("sync", {})),
         job: (id) => (jobs.has(id) ? jobs.get(id).job : null),
         cancel,
         on,

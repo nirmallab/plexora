@@ -11,6 +11,8 @@
 //   mount {dir, files}             the user's picked files, read on demand (WORKERFS)
 //   columns {key, names, buffers}  a table's columns from the page's column store
 //   heap                           the wasm heap's bytes
+//   run {code}                     tests only (boot with debug: true): Python's
+//                                  last expression, as text
 // Events posted to the page, unasked: {event: {kind: "job", job}} as a job's
 // record is written, {event: {kind: "wakeup"}} when a held poll should ask
 // again, {event: {kind: "stage", stage, ms}} as a stage arrives, {mark, at}.
@@ -30,6 +32,7 @@ let busy = false;
 let idling = 0;
 let syncPending = false;
 let nativeFs = null;
+let debug = false;
 const at = () => performance.timeOrigin + performance.now();
 const mark = (name) => self.postMessage({ mark: name, at: at() });
 
@@ -136,6 +139,7 @@ async function boot(args) {
     base = args.base.endsWith("/") ? args.base : `${args.base}/`;
     origin = args.origin;
     if (args.cancels) cancels = args.cancels;
+    debug = Boolean(args.debug);
     const phases = { start: at() };
     stagesInfo = await (await fetch(`${base}stages.json`)).json();
     const wheels = Promise.all(stagesInfo.base.wheels.map(fetchWheel));
@@ -252,6 +256,17 @@ const OPS = {
     columns: ({ key, names, buffers }) => { columnStore.set(key, { names, buffers }); return names.length; },
     forget: ({ key }) => columnStore.delete(key),
     heap: () => (py ? py._module.HEAP8.length : null),
+    sync: async () => {
+        if (!debug) throw new Error("sync is for tests: boot with debug: true");
+        const started = performance.now();
+        if (nativeFs) await nativeFs.syncfs();
+        return performance.now() - started;
+    },
+    run: async ({ code }) => {
+        if (!debug) throw new Error("run is for tests: boot with debug: true");
+        const value = await py.runPythonAsync(code);
+        return value === undefined || value === null ? null : String(value);
+    },
 };
 
 // Requests go in order; one at a time unless Python is asleep inside a job

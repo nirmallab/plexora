@@ -113,12 +113,17 @@ def main(argv=None) -> int:
     parser.add_argument("--port", type=int, default=0)
     bench = Path(os.environ.get("PLEXORA_BENCH_HOME") or "C:/plexora-bench") / "browser_node" / "web"
     parser.add_argument("--py", default=str(bench / "py"), help="build.py's py/ folder")
+    parser.add_argument("--tree", action="append", default=[], metavar="PREFIX=DIR",
+                        help="also serve DIR at /PREFIX/ (tests' fixtures), never cached")
     args = parser.parse_args(argv)
     Handler.trees = {
         "/client/": (REPO / "plexora" / "client", "no-store"),
         "/py/": (Path(args.py), "public, max-age=31536000, immutable"),
         "/tests/browser/": (REPO / "tests" / "browser", "no-store"),
     }
+    for tree in args.tree:
+        prefix, _, directory = tree.partition("=")
+        Handler.trees[f"/{prefix.strip('/')}/"] = (Path(directory), "no-store")
     server = ThreadingHTTPServer((args.host, args.port), Handler)
     print(json.dumps({"port": server.server_address[1], "pid": os.getpid()}), flush=True)
     try:
