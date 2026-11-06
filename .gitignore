@@ -90,3 +90,7 @@ tools/docs/.build
 
 # Benchmark captures, transcripts and project snapshots (tools/bench_harness_vs_cc.py); the reports beside them hold the results.
 docs/internal/bench/runs/
+
+# The website's static build (python -m plexora.client.static_build): a
+# build product, made for each release.
+plexora/client/dist/static/

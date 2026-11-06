@@ -232,7 +232,8 @@ def generate_js(app) -> str:
             "// each route (services/backend.js): js | python | static | network | handoff.\n"
             "(function () {\n"
             "  \"use strict\";\n"
-            "  window.PlexoraBackendRoutes = Object.freeze([\n"
+            "  // globalThis: the page reads it, and so does the site's service worker.\n"
+            "  globalThis.PlexoraBackendRoutes = Object.freeze([\n"
             f"{body}\n"
             "  ]);\n"
             "})();\n")

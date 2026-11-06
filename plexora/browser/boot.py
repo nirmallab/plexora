@@ -38,6 +38,7 @@ def environment(origin: str, *, data_root: str = "/data", licence_dir: str = "/b
         "PLEXORA_TELEMETRY": "off",
         "PLEXORA_ALLOWED_ORIGINS": origin,
         "PLEXORA_WORK": "cooperative",
+        "PLEXORA_BACKEND": "browser",
         "PLEXORA_NO_NUMBA": "1",
         "BIOCOGNIA_DIR": licence_dir,
         "BIOCOGNIA_NO_HEARTBEAT": "1",

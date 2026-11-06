@@ -17,6 +17,12 @@
 
     <!-- Flask variables -->
     <script src="{{ data.base_url }}/client/src/js/services/passVariablesToFrontend.js?v=20260910_unreachable_message" type="text/javascript"></script>
+    {% if data.backend == 'browser' %}
+    {# The website: no inline script, which its Content-Security-Policy does
+       not allow -- the same values as data, read by an external script. #}
+    <script type="application/json" id="plexora-variables">{{ data|tojson }}</script>
+    <script src="{{ data.base_url }}/client/src/js/services/shellVariables.js" type="text/javascript"></script>
+    {% else %}
     <script type="text/javascript">
         //<!--@formatter:off-->
         window.flaskVariables = passVariablesToFrontend({{data|tojson}});
@@ -28,6 +34,7 @@
         window.PLEXORA_SERVER_CONCURRENCY = {{ server_concurrency|default(3)|int }};
         //<!--@formatter:on-->
     </script>
+    {% endif %}
     <!-- The desktop app's bridge: window.PlexoraDesktop inside the app's
          window, null in any browser. Early and not deferred, so its
          subscriptions to the shell exist before a menu or a drop can arrive,

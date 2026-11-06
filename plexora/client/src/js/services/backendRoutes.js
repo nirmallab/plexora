@@ -3,7 +3,8 @@
 // each route (services/backend.js): js | python | static | network | handoff.
 (function () {
   "use strict";
-  window.PlexoraBackendRoutes = Object.freeze([
+  // globalThis: the page reads it, and so does the site's service worker.
+  globalThis.PlexoraBackendRoutes = Object.freeze([
   {"class": "python", "endpoint": "gating.classifier_export_annotations", "methods": ["GET"], "pattern": "^\\/plugins\\/gating\\/classifier\\/export\\/annotations\\.json$"},
   {"class": "python", "endpoint": "gating.classifier_annotations_preview", "methods": ["POST"], "pattern": "^\\/plugins\\/gating\\/classifier\\/annotations\\/preview$"},
   {"class": "python", "endpoint": "gating.get_gating_csv_values", "methods": ["GET"], "pattern": "^\\/plugins\\/gating\\/get_uploaded_gating_csv_values$"},

@@ -254,6 +254,40 @@ def build(out_root: Path, python314: str | None, encoder: str | None) -> Path:
     return out
 
 
+def plexora_only(out_root: Path, python314: str | None, encoder: str | None) -> Path:
+    """Rebuild the plexora wheel inside an existing bundle (development: a
+    change to Plexora's Python without the 15 minutes of brotli the packages
+    take). stages.json and manifest.json are rewritten to match."""
+    from plexora import __version__
+
+    out = out_root / "py" / __version__
+    stages = json.loads((out / "stages.json").read_text(encoding="utf-8"))
+    with tempfile.TemporaryDirectory(prefix="pxweb-plexora-") as scratch:
+        built = Path(scratch) / "wheels"
+        built.mkdir()
+        subprocess.run([sys.executable, "-m", "pip", "--disable-pip-version-check", "-q",
+                        "wheel", "--no-deps", "--no-build-isolation", "-w", str(built),
+                        str(REPO)], check=True)
+        wheel = next(built.glob("plexora-*.whl"))
+        lean(wheel)
+        for old in (out / "wheels").glob("plexora-*.whl*"):
+            old.unlink()
+        target = out / "wheels" / wheel.name
+        precompile(wheel, target, python314, encoder is not None)
+        if encoder:
+            brotli(target, encoder)
+    for stage in stages.values():
+        stage["wheels"] = [wheel.name if name.startswith("plexora-") else name
+                           for name in stage["wheels"]]
+    (out / "stages.json").write_text(json.dumps(stages, indent=1), encoding="utf-8")
+    manifest = json.loads((out / "manifest.json").read_text(encoding="utf-8"))
+    manifest["files"] = {path.relative_to(out).as_posix(): {"bytes": path.stat().st_size,
+                                                            "sha256": sha256(path)}
+                         for path in sorted(out.rglob("*")) if path.is_file()}
+    (out / "manifest.json").write_text(json.dumps(manifest, indent=1), encoding="utf-8")
+    return out
+
+
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     parser.add_argument("--out", default=str(CACHE.parent / "web"),
@@ -262,7 +296,12 @@ def main(argv=None) -> int:
                         help="a CPython 3.14 to compile Pyodide's bytecode with")
     parser.add_argument("--brotli", default=os.environ.get("PLEXORA_BROTLI") or shutil.which("brotli"),
                         help="the brotli encoder (omit for deflated wheels and no .br)")
+    parser.add_argument("--plexora-only", action="store_true",
+                        help="rebuild only the plexora wheel in an existing bundle")
     args = parser.parse_args(argv)
+    if args.plexora_only:
+        print(json.dumps({"out": str(plexora_only(Path(args.out), args.python314, args.brotli))}))
+        return 0
     out = build(Path(args.out), args.python314, args.brotli)
     manifest = json.loads((out / "manifest.json").read_text(encoding="utf-8"))
     print(json.dumps({"out": str(out), "first_visit_mb": round(manifest["first_visit_bytes"] / 1e6, 1),

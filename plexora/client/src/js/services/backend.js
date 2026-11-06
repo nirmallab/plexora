@@ -10,14 +10,17 @@
  * yes to what the server can do, and `verify` has nothing to check. Nothing a
  * server-mode page does changes because this file is loaded.
  *
- * A static build of the same pages (no Flask behind them; the browser primary
- * and node answer in the page, a paired Python node answers the rest) is a
- * different kind. Its route table (backendRoutes.js, generated from the Flask
- * app's url map, loaded before this file) classes every endpoint pattern as
- * "js" (answered in the page), "python" (a paired Python node), "static" (a
- * file of the build), "handoff" (another app's) or "network" (as it is), and
- * `fetch` will answer by that class. Not yet: until those backends exist a
- * page of any kind sends every request to the network, exactly as here.
+ * The website is the "browser" kind: the same Flask app runs in the page's
+ * own worker (services/pythonClient.js, plexora/browser). Its route table
+ * (backendRoutes.js, generated from the app's url map by
+ * plexora/browser/routes.py) classes every endpoint as "js" (answered in the
+ * page), "python" (the worker), "static" (a page of the site), "network" (a
+ * file, as it is) or "handoff" (what a web page cannot do; answered with the
+ * sentence that says so). `answer(request)` answers by that class; the site's
+ * service worker (workers/backendRelay.js) hands it every same-origin request
+ * the page makes -- fetch, XMLHttpRequest, an <img>, a stylesheet's url() --
+ * so no caller changes. Until the page's own primary exists, "js" routes are
+ * the worker's too. Any other kind sends every request to the network.
  *
  *   kind          "server", or `flaskVariables.backend` where the page says
  *   target        where what the page does not answer itself goes: "server",
@@ -30,7 +33,9 @@
  *   verify(path)  a promise of whether `path` is answered here as the server
  *                 would answer it; the server is its own answer:
  *                 `{ok: true, skipped: "server"}`
- *   fetch(...)    `window.fetch(...)`
+ *   fetch(...)    `window.fetch(...)` (browser: answered as `answer` would)
+ *   answer(req)   browser: a promise of the Response for a Request
+ *   classify(url, method)  browser: the route table's row for it, or null
  *
  * Classic script, `window.PlexoraBackend`; not deferred, and right before
  * appStatus.js in base.html, so it exists before anything issues a request.
@@ -61,16 +66,68 @@
         agent: true,
     });
 
+    const BROWSER = "browser";
+
     const variables = global.flaskVariables || {};
     const kind = typeof variables.backend === "string" && variables.backend
         ? variables.backend : SERVER;
     const server = kind === SERVER;
+    const browser = kind === BROWSER;
     const routes = server ? null : (global.PlexoraBackendRoutes || null);
+    //: The browser's own fetch, before anything wraps window.fetch.
+    const nativeFetch = global.fetch;
+
+    //: What the website can do itself, by the same names (a feature arriving
+    //: in a later phase says false until it does).
+    const BROWSER_FEATURES = Object.freeze({
+        volume: true,
+        surfaces: true,
+        agent: true,
+    });
+
+    const compiled = routes ? routes.map((row) => ({ ...row, regex: new RegExp(row.pattern) })) : [];
+
+    function classify(url, method = "GET") {
+        const path = new URL(String(url), global.location ? global.location.href : "http://x/").pathname;
+        const verb = String(method || "GET").toUpperCase();
+        for (const row of compiled) {
+            if ((row.methods.includes(verb) || (verb === "HEAD" && row.methods.includes("GET")))
+                && row.regex.test(path)) {
+                return row;
+            }
+        }
+        return null;
+    }
+
+    function json(value, status) {
+        return new Response(JSON.stringify(value), {
+            status, headers: { "Content-Type": "application/json" },
+        });
+    }
+
+    async function answer(request) {
+        const url = new URL(request.url, global.location.href);
+        if (url.origin !== global.location.origin) return nativeFetch(request);
+        const row = classify(url, request.method);
+        const kindOf = row ? row.class : "network";
+        // A "static" page asked for by fetch (the app's router wants a
+        // fragment) is rendered by the worker; only a navigation gets the
+        // site's own page, and navigations never come here.
+        if (kindOf === "network") return nativeFetch(request);
+        if (kindOf === "handoff") {
+            return json({ success: false, error: row.handoff.why, handoff: row.handoff }, 501);
+        }
+        // "python", and "js" until the page's own primary answers it.
+        const python = global.PlexoraPython;
+        if (!python) return json({ success: false, error: "Plexora's Python is not loaded" }, 503);
+        return python.fetch(request);
+    }
 
     function supports(feature) {
-        if (!server || typeof feature !== "string") return false;
-        return Object.prototype.hasOwnProperty.call(SERVER_FEATURES, feature)
-            && SERVER_FEATURES[feature] === true;
+        if (typeof feature !== "string") return false;
+        const table = server ? SERVER_FEATURES : (browser ? BROWSER_FEATURES : null);
+        return Boolean(table) && Object.prototype.hasOwnProperty.call(table, feature)
+            && table[feature] === true;
     }
 
     function verify(path) {
@@ -82,16 +139,51 @@
     }
 
     function fetch(...args) {
+        if (browser) {
+            const [input, init] = args;
+            const request = input instanceof Request ? new Request(input, init)
+                : new Request(new URL(String(input), global.location.href), init);
+            return answer(request);
+        }
         return global.fetch(...args);
+    }
+
+    // The service worker's side asks here (workers/backendRelay.js): one
+    // message per request, answered on the port it came with. Registered once
+    // per window, though a page written into it (the site's loader writes the
+    // worker's page) loads this file again.
+    if (browser && global.navigator && global.navigator.serviceWorker
+        && !global.__plexoraRelayListening) {
+        global.__plexoraRelayListening = true;
+        global.navigator.serviceWorker.addEventListener("message", async (event) => {
+            const data = event.data;
+            if (!data || data.type !== "plexora-relay" || !event.ports[0]) return;
+            const port = event.ports[0];
+            try {
+                const request = new Request(data.url, {
+                    method: data.method, headers: data.headers,
+                    body: ["GET", "HEAD"].includes(data.method) ? undefined : data.body,
+                });
+                const response = await global.PlexoraBackend.answer(request);
+                const body = await response.arrayBuffer();
+                port.postMessage({ status: response.status, headers: [...response.headers.entries()],
+                                   body }, [body]);
+            } catch (error) {
+                port.postMessage({ status: 500, headers: [["Content-Type", "text/plain"]],
+                                   body: new TextEncoder().encode(String(error && error.message || error)).buffer });
+            }
+        });
     }
 
     global.PlexoraBackend = Object.freeze({
         kind,
-        target: server ? SERVER : "network",
+        target: server ? SERVER : (browser ? "worker" : "network"),
         routes,
         supports,
         verify,
         fetch,
+        answer: browser ? answer : null,
+        classify: browser ? classify : null,
     });
     if (typeof module !== "undefined" && module.exports) {
         module.exports = global.PlexoraBackend;

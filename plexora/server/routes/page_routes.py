@@ -230,6 +230,11 @@ def template_data(**values):
         # network call, and for a Free user it is one missing-file stat.
         'license': _license_summary(),
     }
+    # Who answers the page's requests, said only when it is not the server
+    # that rendered it: on the website the same app runs in the page's own
+    # worker (plexora/browser), and services/backend.js routes by it.
+    if os.environ.get("PLEXORA_BACKEND"):
+        data['backend'] = os.environ["PLEXORA_BACKEND"]
     data.update(values)
     return data
 

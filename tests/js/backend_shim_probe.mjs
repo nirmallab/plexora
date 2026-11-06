@@ -15,8 +15,12 @@
  *   prototype names included; `verify` resolves `{ok: true, skipped:
  *   "server"}`;
  * - the object cannot be changed by whoever holds it;
- * - a page of another kind is read as that kind, with no server features, and
- *   still sends every request to the network (no backend routes yet).
+ * - the website's kind ("browser") answers by the route table the app
+ *   generates (backendRoutes.js): a file goes to the network, a route to the
+ *   page's Python worker, what a web page cannot do to a sentence (501), and
+ *   a request to another site to the network as it is;
+ * - a kind with no backend in this build still sends everything to the
+ *   network.
  *
  * Run directly:  node tests/js/backend_shim_probe.mjs
  */
@@ -153,18 +157,57 @@ function sameFields(a, b) {
           Object.isFrozen(backend) && backend.kind === "server" && threw);
 }
 
-// -- another kind --------------------------------------------------------------------------
+// -- the website ---------------------------------------------------------------------------
 
 {
-    const table = { "/generated/data/<datasource>/<channel>/<level>/<tile>": "js" };
-    const { box, calls, backend } = page({ flaskVariables: { backend: "browser" },
-                                           PlexoraBackendRoutes: table });
-    check("a page that says another kind is that kind, with its route table",
-          backend.kind === "browser" && backend.target === "network" && backend.routes === table);
+    // The table as generated (plexora/browser/routes.py), read by the page.
+    const TABLE_SOURCE = readFileSync(join(REPO, "plexora/client/src/js/services/backendRoutes.js"), "utf8");
+    const holder = {};
+    runInContext(TABLE_SOURCE, createContext(holder));
+    const table = holder.PlexoraBackendRoutes;
+    const asked = [];
+    const python = { fetch: async (request) => { asked.push(request.url); return new Response("py"); } };
+    const location = { href: "https://viewer.plexoraapp.com/demo", origin: "https://viewer.plexoraapp.com" };
+    const { box, calls, backend } = page({
+        flaskVariables: { backend: "browser" }, PlexoraBackendRoutes: table, PlexoraPython: python,
+        location, URL, Request, Response, Headers, TextEncoder,
+    });
+    box.nextAnswer = Promise.resolve(new Response("file"));
+    check("the website is the browser kind, with the generated table",
+          backend.kind === "browser" && backend.target === "worker" && backend.routes === table
+          && Array.isArray(table) && table.length > 300);
+    check("...where a tile is the page's own route and a script a file",
+          backend.classify("/generated/data/demo/DAPI/0/3_4.png").class === "js"
+          && backend.classify("/client/src/js/main.js").class === "network");
+    check("...and /config wins over a project's page",
+          backend.classify("/config").endpoint === "serve_config"
+          && backend.classify("/demo").endpoint === "image_viewer");
+    const routed = await backend.fetch("/projects");
+    check("...a route is answered by the page's Python",
+          (await routed.text()) === "py" && asked.length === 1 && calls.length === 0);
+    const file = await backend.fetch("/client/src/js/main.js");
+    check("...a file is fetched as it is", (await file.text()) === "file" && calls.length === 1);
+    const elsewhere = await backend.fetch("https://example.org/data.json");
+    check("...as is a request to another site", calls.length === 2 && elsewhere instanceof Response);
+    const refused = await backend.fetch("/shutdown", { method: "POST" });
+    const said = await refused.json();
+    check("...and what a web page cannot do says so, with what to do instead",
+          refused.status === 501 && said.success === false && typeof said.handoff.why === "string"
+          && Array.isArray(said.handoff.actions));
+    check("...with the features the website has", backend.supports("volume") === true
+          && backend.supports("remote") === false);
+}
+
+// -- a kind with no backend here -------------------------------------------------------------
+
+{
+    const { box, calls, backend } = page({ flaskVariables: { backend: "elsewhere" } });
+    check("a kind this build has no backend for is that kind", backend.kind === "elsewhere"
+          && backend.target === "network");
     check("...and none of the server's features", backend.supports("ai") === false);
     const answer = Promise.resolve({ ok: true });
     box.nextAnswer = answer;
-    check("...and, with no backend routes yet, still sends a request to the network as it is",
+    check("...and still sends a request to the network as it is",
           backend.fetch("/generated/data/demo/demo_0/3/4_5.png") === answer && calls.length === 1);
     const verdict = await backend.verify("/generated/data/demo/demo_0/3/4_5.png");
     check("...and does not claim to have checked anything", verdict.ok === false, JSON.stringify(verdict));

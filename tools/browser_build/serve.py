@@ -40,6 +40,9 @@ TYPES = {".js": "text/javascript", ".mjs": "text/javascript", ".wasm": "applicat
 
 class Handler(BaseHTTPRequestHandler):
     trees: dict = {}
+    #: The static build (`client/static_build.py`), served at / as Pages
+    #: would: a file if there is one, else the loader (`_redirects`).
+    site: Path | None = None
     protocol_version = "HTTP/1.1"
 
     def log_message(self, fmt, *args):  # quiet; the tests record what matters
@@ -64,6 +67,14 @@ class Handler(BaseHTTPRequestHandler):
                 if target.is_dir():
                     target = target / "index.html"
                 return self._file(target, cache, head)
+        if self.site is not None:
+            rel = posixpath.normpath(urllib.parse.unquote(path)).lstrip("/")
+            target = (self.site / rel).resolve() if rel and rel != "." else self.site / "index.html"
+            if self.site.resolve() not in target.parents and target != self.site.resolve():
+                return self._send(403, b"forbidden")
+            if not target.is_file():
+                target = self.site / "index.html"
+            return self._file(target, "no-cache", head)
         if path in ("/", ""):
             return self._redirect("/tests/browser/harness/index.html")
         return self._send(404, b"not found")
@@ -80,6 +91,8 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Content-Type", kind)
         if use is encoded:
             self.send_header("Content-Encoding", "br")
+        if target.name == "backendRelay.js":
+            self.send_header("Service-Worker-Allowed", "/")
         self.send_header("Content-Length", str(use.stat().st_size))
         self.send_header("Cache-Control", cache)
         self._isolation()
@@ -113,14 +126,18 @@ def main(argv=None) -> int:
     parser.add_argument("--port", type=int, default=0)
     bench = Path(os.environ.get("PLEXORA_BENCH_HOME") or "C:/plexora-bench") / "browser_node" / "web"
     parser.add_argument("--py", default=str(bench / "py"), help="build.py's py/ folder")
+    parser.add_argument("--site", default=None, help="a static build to serve at / (static_build.py --out)")
     parser.add_argument("--tree", action="append", default=[], metavar="PREFIX=DIR",
                         help="also serve DIR at /PREFIX/ (tests' fixtures), never cached")
     args = parser.parse_args(argv)
     Handler.trees = {
-        "/client/": (REPO / "plexora" / "client", "no-store"),
         "/py/": (Path(args.py), "public, max-age=31536000, immutable"),
         "/tests/browser/": (REPO / "tests" / "browser", "no-store"),
     }
+    if args.site:
+        Handler.site = Path(args.site)
+    else:
+        Handler.trees["/client/"] = (REPO / "plexora" / "client", "no-store")
     for tree in args.tree:
         prefix, _, directory = tree.partition("=")
         Handler.trees[f"/{prefix.strip('/')}/"] = (Path(directory), "no-store")
