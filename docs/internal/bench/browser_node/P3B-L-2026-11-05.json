@@ -1,12 +1,12 @@
 {
  "poc": "P3B",
  "date": "2026-11-05",
- "commit": "4e18de00-dirty",
+ "commit": "6083284f-dirty",
  "machine": {
   "cpuPercentBefore": [
-   5.7,
-   13.5,
-   8.5
+   5.4,
+   6.9,
+   17.4
   ],
   "platform": "win32 10.0.26200",
   "cpu": "12th Gen Intel(R) Core(TM) i9-12900K",
@@ -27,14 +27,14 @@
   "gpu": "ANGLE (NVIDIA, NVIDIA GeForce RTX 3080 (0x00002216) Direct3D11 vs_5_0 ps_5_0, D3D11)",
   "crossOriginIsolated": false,
   "isSecureContext": true,
-  "origin": "http://127.0.0.1:52517",
+  "origin": "http://127.0.0.1:62854",
   "storage": {
    "quota": 10737418240,
    "usage": 0
   },
   "hasShowOpenFilePicker": true,
   "hasOPFS": true,
-  "jsHeap": 15267735
+  "jsHeap": 15428371
  },
  "arm": "browser",
  "state": null,
@@ -54,36 +54,42 @@
   }
  },
  "metrics": {
-  "initMs": 390.30000019073486,
+  "initMs": 440.59999990463257,
   "duckdb": {
-   "copyToParquetMs": 10544.199999809265,
-   "createTableMs": 2347.699999809265,
-   "projectionMs": 1626.3000001907349,
+   "copyToParquetMs": 10690.10000038147,
+   "createTableMs": 2358.0999999046326,
+   "projectionMs": 1567.2000002861023,
    "projectionRows": 1260592,
-   "parquetFromTable_snappyMs": 7494.300000190735,
+   "parquetFromTable_snappyMs": 7499.700000286102,
    "parquetFromTable_snappyBytes": 277270926,
-   "parquetFromTable_uncompressedMs": 7686.900000095367,
+   "parquetFromTable_uncompressedMs": 7946,
    "parquetFromTable_uncompressedBytes": 284314839,
-   "parquetFromTable_zstdMs": 8161.700000286102
+   "parquetFromTable_zstdMs": 7825.900000095367
   },
   "parallel": [
    {
-    "workers": 8,
-    "ms": 11921.5,
-    "parseMs": 11833.400000095367,
+    "workers": 4,
+    "ms": 1476.4000000953674,
+    "parseMs": 1421.8000001907349,
+    "rows": 1260592
+   },
+   {
+    "workers": 12,
+    "ms": 1009.5999999046326,
+    "parseMs": 943.8000001907349,
     "rows": 1260592
    }
   ],
-  "arrowIpcMs": 51,
-  "parquetFromColumnsMs": 7964.599999904633,
-  "jsHeap": 593186270,
+  "arrowIpcMs": 47.59999990463257,
+  "parquetFromColumnsMs": 8117.300000190735,
+  "jsHeap": 594382400,
   "peakWorkingSetBytes": {
    "byKind": {
-    "browser": 159674368,
-    "crashpad-handler": 11055104,
-    "gpu-process": 90857472,
-    "utility": 45969408,
-    "renderer": 3906965504
+    "browser": 166785024,
+    "crashpad-handler": 11026432,
+    "gpu-process": 91152384,
+    "utility": 46129152,
+    "renderer": 3850264576
    },
    "processes": 8
   }

@@ -1,0 +1,125 @@
+{
+ "poc": "P5LNAH",
+ "date": "2026-11-05",
+ "commit": "9a2b1912-dirty",
+ "machine": {
+  "cpuPercentBefore": [
+   10.8,
+   9.8,
+   8.8
+  ],
+  "platform": "win32 10.0.26200",
+  "cpu": "12th Gen Intel(R) Core(TM) i9-12900K",
+  "cores": 24,
+  "memoryGB": 128,
+  "load": [
+   0,
+   0,
+   0
+  ],
+  "hostname": "ajit"
+ },
+ "browser": null,
+ "arm": "browser->node",
+ "state": "Chrome stable, headed, page marked public, nothing granted",
+ "fixture": {
+  "name": "S",
+  "files": {
+   "image": {
+    "name": "flat.ome.tif",
+    "bytes": 31031689,
+    "mtime": "2026-10-13T21:15:39.180Z"
+   },
+   "mask": {
+    "name": "LSP26227-registered.ome_segMask.labels.pyramid.ome.tiff",
+    "bytes": 98631559,
+    "mtime": "2026-08-19T20:18:20.079Z"
+   },
+   "table": {
+    "name": "exemplar-001--unmicst_cell.csv",
+    "bytes": 4039642,
+    "mtime": "2024-03-13T20:07:12.978Z"
+   },
+   "flatMask": {
+    "name": "cell.ome.tif",
+    "bytes": 43010132,
+    "mtime": "2024-03-13T20:07:15.832Z"
+   }
+  }
+ },
+ "metrics": {
+  "start": {
+   "origin": "https://127.0.0.1:54278",
+   "secure": true,
+   "permission": {
+    "loopback-network": "prompt",
+    "local-network": "prompt",
+    "local-network-access": "prompt"
+   }
+  },
+  "after3s": {
+   "state": "pending"
+  },
+  "screenshot": "P5LNAH-prompt-chrome156.png (cropped to the browser window)",
+  "granted": [
+   "loopback-network",
+   "local-network",
+   "local-network-access"
+  ],
+  "heldFetchAfterGrant": {
+   "state": "pending"
+  },
+  "afterGrant": {
+   "origin": "https://127.0.0.1:54278",
+   "secure": true,
+   "permission": {
+    "local-network-access": "granted",
+    "loopback-network": "granted",
+    "local-network": "granted"
+   },
+   "plain": {
+    "ok": true,
+    "status": 200,
+    "ms": 20255
+   },
+   "loopback": {
+    "ok": true,
+    "status": 200,
+    "ms": 20016
+   },
+   "local": {
+    "ok": false,
+    "error": "TypeError: Failed to fetch",
+    "ms": 20004
+   }
+  }
+ },
+ "checks": {
+  "promptHeldTheFetch": true,
+  "worksOnceGranted": true
+ },
+ "thresholds": {
+  "go": [
+   {
+    "name": "headed Chrome holds a loopback fetch from a public page while its prompt waits",
+    "value": true,
+    "bound": "true",
+    "result": "pass"
+   },
+   {
+    "name": "the fetch works once the permission is granted",
+    "value": true,
+    "bound": "true",
+    "result": "pass"
+   }
+  ],
+  "stop": []
+ },
+ "verdict": "GO",
+ "notes": [],
+ "logs": [
+  "[error] Failed to load resource: the server responded with a status of 404 (Not Found)",
+  "[error] Access to fetch at 'http://127.0.0.1:54279/node/v1/hello?t=<token>' from origin 'https://127.0.0.1:54278' has been blocked by CORS policy: Request had a target IP address space of `local` yet the resource is in address space `loopback`.",
+  "[error] Failed to load resource: net::ERR_FAILED"
+ ]
+}

@@ -148,7 +148,7 @@ async function p0({ node, image, glProbe = true }) {
  * Draw a 256 x 1 tile of values v = k * 257 (k = 0..255; hi byte = lo byte =
  * k) through glInit's renderer and frag.glsl with range [0, 1] and colour
  * white, and read the red channel back. Exact reconstruction gives k; the
- * shader's `r * 255 + g` gives round(k * 256 / 257).
+ * shader's old `r * 255 + g` (fixed in 9a2b1912) gave round(k * 256 / 257).
  */
 async function probeU16Shader() {
     installShims();
@@ -215,7 +215,7 @@ async function probeU16Shader() {
     return {
         full: { ...full, red: full.red.filter((_, k) => k % 32 === 0) },
         narrow: { ...narrow, red: narrow.red.filter((_, k) => k % 32 === 0), exact: narrow.exact.filter((_, k) => k % 32 === 0) },
-        note: "frag.glsl:504 rebuilds value = r*255 + g; exact is r*256 + g. Errors are in 8-bit display levels.",
+        note: "Errors are in 8-bit display levels against the exact r*256 + g. frag.glsl rebuilt r*255 + g until 9a2b1912.",
     };
 }
 

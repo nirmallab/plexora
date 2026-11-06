@@ -1,12 +1,12 @@
 {
  "poc": "P2B",
  "date": "2026-11-05",
- "commit": "4e18de00-dirty",
+ "commit": "6083284f-dirty",
  "machine": {
   "cpuPercentBefore": [
-   8.8,
-   13.7,
-   8.4
+   10.6,
+   14.2,
+   22.2
   ],
   "platform": "win32 10.0.26200",
   "cpu": "12th Gen Intel(R) Core(TM) i9-12900K",
@@ -27,14 +27,14 @@
   "gpu": "ANGLE (NVIDIA, NVIDIA GeForce RTX 3080 (0x00002216) Direct3D11 vs_5_0 ps_5_0, D3D11)",
   "crossOriginIsolated": false,
   "isSecureContext": true,
-  "origin": "http://127.0.0.1:53436",
+  "origin": "http://127.0.0.1:57718",
   "storage": {
    "quota": 10737418240,
    "usage": 0
   },
   "hasShowOpenFilePicker": true,
   "hasOPFS": true,
-  "jsHeap": 15268123
+  "jsHeap": 15430507
  },
  "arm": "browser",
  "state": "fresh profile; reopen = same profile relaunched",
@@ -65,24 +65,48 @@
  },
  "metrics": {
   "build": {
-   "wallMs": 57899.5,
+   "wallMs": 9611.5,
    "timings": {
-    "readMs": 42604.09999990463,
-    "sampleMs": 2171.5,
-    "deflateMs": 12187.600006103516,
-    "writeMs": 75.70000171661377,
-    "bands": 52,
-    "totalMs": 57880.09999990463,
+    "assembleMs": 1868.7000017166138,
+    "writeMs": 97.00000047683716,
+    "jobs": 624,
+    "deflates": 813,
+    "hand": {
+     "readMs": 84224.49999570847,
+     "decodeMs": 128599.60000324249,
+     "fileReadMs": 80157.60000228882,
+     "bytesRead": 32208397,
+     "deriveMs": 5739.199995994568,
+     "totalMs": 89971.79999113083,
+     "deflateMs": 33372.19999933243
+    },
+    "bandRows": 1024,
+    "bandColumns": 4096,
+    "backlogPeak": 143908864,
+    "totalMs": 9589.10000038147,
+    "openMs": 121.5,
+    "blocksMs": 9439.300000190735,
+    "drainMs": 9.800000190734863,
+    "hands": 12,
     "bytesOut": 20173510,
+    "copiedLevel0": false,
+    "sourceLayout": "flat",
     "rawDerivedBytes": 3201678912
    },
    "manifest": {
-    "version": 1,
+    "version": 2,
+    "kind": "labels",
+    "dtype": "uint32",
+    "bytesPerSample": 4,
     "source": "lsp11385-mask-flat.tif",
     "sourceBytes": 31899917,
     "width": 45381,
     "height": 52923,
     "tile": 1024,
+    "channels": [
+     0
+    ],
+    "names": null,
     "compress": "deflate",
     "factors": [
      1,
@@ -97,7 +121,8 @@
      {
       "width": 45381,
       "height": 52923,
-      "fromSource": true
+      "fromSource": true,
+      "tileCount": 0
      },
      {
       "width": 22691,
@@ -142,32 +167,39 @@
     "over50": 0,
     "max": 0
    },
-   "framesDuring": 3322,
-   "fps": 57.37527957927097,
+   "framesDuring": 553,
+   "fps": 57.535244238672426,
    "storage": {
-    "usage": 20196054,
-    "quota": 10757614294
+    "usageBefore": 0,
+    "usage": 20196138,
+    "quota": 10757614378
    },
    "sourceBytes": 31899917,
+   "hardwareConcurrency": 24,
    "peakWorkingSetBytes": {
     "byKind": {
-     "browser": 189755392,
+     "browser": 148955136,
      "crashpad-handler": 11026432,
-     "gpu-process": 90341376,
-     "utility": 40816640,
-     "renderer": 1089425408
+     "gpu-process": 90943488,
+     "utility": 41254912,
+     "renderer": 1785966592
     },
     "processes": 8
    }
   },
   "reopen": {
-   "manifestMs": 9.5,
-   "firstTileMs": 14.900000095367432,
+   "manifestMs": 12,
+   "firstTileMs": 18.799999713897705,
    "firstTile": [
     710,
     827
    ],
-   "midTileMs": 7.900000095367432
+   "midTileMs": 9,
+   "storage": {
+    "usage": 1434,
+    "quota": 10737419674,
+    "persisted": false
+   }
   },
   "python": {
    "seconds": 21.812229999806732,
@@ -217,15 +249,15 @@
   "go": [
    {
     "name": "build wall (s)",
-    "value": 57.9,
+    "value": 9.6,
     "bound": "<= 120",
     "result": "pass"
    },
    {
     "name": "build vs Python's own conversion (x)",
-    "value": 2.7,
+    "value": 0.4,
     "bound": "<= 2 (hypothesis)",
-    "result": "fail"
+    "result": "pass"
    },
    {
     "name": "main-thread long tasks > 50 ms during the build",
@@ -241,7 +273,7 @@
    },
    {
     "name": "first tile after a reopen (ms)",
-    "value": 14.9,
+    "value": 18.8,
     "bound": "<= 1000",
     "result": "pass"
    },
@@ -255,7 +287,7 @@
   "stop": [
    {
     "name": "build > 5 min",
-    "value": 57.9,
+    "value": 9.6,
     "bound": "> 300 s",
     "result": "fail"
    },
@@ -267,7 +299,7 @@
    }
   ]
  },
- "verdict": "PARTIAL",
+ "verdict": "GO",
  "notes": [],
  "logs": [
   "[error] Failed to load resource: the server responded with a status of 404 (Not Found)",

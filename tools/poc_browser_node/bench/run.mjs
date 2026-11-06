@@ -124,11 +124,21 @@ async function main() {
     mkdirSync(args.out, { recursive: true });
     const name = `${args.poc}-${args.fixture || "none"}-${date}${args.label ? "-" + args.label : ""}.json`;
     const file = path.join(args.out, name);
-    writeFileSync(file, JSON.stringify(record, null, 1) + "\n");
+    // Node tokens, even of throwaway loopback nodes, never go into a record:
+    // they turn up in logged URLs (?t=...) and fields.
+    const text = JSON.stringify(record, null, 1)
+        .replace(/([?&]t=)[0-9a-f]{8,}/g, "$1<token>")
+        .replace(/("token":\s*")[0-9a-f]{8,}"/g, "$1<token>\"");
+    writeFileSync(file, text + "\n");
     console.log(`wrote ${file}`);
 }
 
-main().catch((error) => {
+// Exit once the record is written: a handler that failed half-way can leave a
+// browser behind (P8's WebKit runs did), which would keep this process alive.
+main().then(() => {
+    stopAll();
+    process.exit(0);
+}, (error) => {
     console.error(error);
     stopAll();
     process.exit(1);

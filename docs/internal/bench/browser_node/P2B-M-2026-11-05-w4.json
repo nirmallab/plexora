@@ -1,0 +1,308 @@
+{
+ "poc": "P2B",
+ "date": "2026-11-05",
+ "commit": "6083284f-dirty",
+ "machine": {
+  "cpuPercentBefore": [
+   3.4,
+   12.7,
+   13.5
+  ],
+  "platform": "win32 10.0.26200",
+  "cpu": "12th Gen Intel(R) Core(TM) i9-12900K",
+  "cores": 24,
+  "memoryGB": 128,
+  "load": [
+   0,
+   0,
+   0
+  ],
+  "hostname": "ajit"
+ },
+ "browser": {
+  "userAgent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/156.0.0.0 Safari/537.36",
+  "hardwareConcurrency": 24,
+  "deviceMemory": 32,
+  "webgl2": true,
+  "gpu": "ANGLE (NVIDIA, NVIDIA GeForce RTX 3080 (0x00002216) Direct3D11 vs_5_0 ps_5_0, D3D11)",
+  "crossOriginIsolated": false,
+  "isSecureContext": true,
+  "origin": "http://127.0.0.1:54587",
+  "storage": {
+   "quota": 10737418240,
+   "usage": 0
+  },
+  "hasShowOpenFilePicker": true,
+  "hasOPFS": true,
+  "jsHeap": 15491095
+ },
+ "arm": "browser",
+ "state": "fresh profile; reopen = same profile relaunched",
+ "fixture": {
+  "name": "M",
+  "files": {
+   "image": {
+    "name": "LSP11385.ome.tif",
+    "bytes": 66747709231,
+    "mtime": "2026-10-05T19:28:16.679Z"
+   },
+   "mask": {
+    "name": "cell.labels.pyramid.ome.tiff",
+    "bytes": 52706763,
+    "mtime": "2026-09-30T17:28:59.000Z"
+   },
+   "table": {
+    "name": "LSP11385--mccellpose_cell.csv",
+    "bytes": 180165929,
+    "mtime": "2026-09-30T16:31:36.000Z"
+   },
+   "flatMask": {
+    "name": "lsp11385-mask-flat.tif",
+    "bytes": 31899917,
+    "mtime": "2026-11-05T23:25:32.412Z"
+   }
+  }
+ },
+ "metrics": {
+  "build": {
+   "wallMs": 15657.900000095367,
+   "timings": {
+    "assembleMs": 1120.500005722046,
+    "writeMs": 76.59999990463257,
+    "jobs": 624,
+    "deflates": 813,
+    "hand": {
+     "readMs": 52736.69999551773,
+     "decodeMs": 76789.80000448227,
+     "fileReadMs": 39322.19999742508,
+     "bytesRead": 31983757,
+     "deriveMs": 2153.000002384186,
+     "totalMs": 54896.09999752045,
+     "deflateMs": 22123.99999523163
+    },
+    "bandRows": 1024,
+    "bandColumns": 4096,
+    "backlogPeak": 62914560,
+    "totalMs": 15638.900000095367,
+    "openMs": 74.40000009536743,
+    "blocksMs": 15524.5,
+    "drainMs": 23.59999990463257,
+    "hands": 4,
+    "bytesOut": 20173510,
+    "copiedLevel0": false,
+    "sourceLayout": "flat",
+    "rawDerivedBytes": 3201678912
+   },
+   "manifest": {
+    "version": 2,
+    "kind": "labels",
+    "dtype": "uint32",
+    "bytesPerSample": 4,
+    "source": "lsp11385-mask-flat.tif",
+    "sourceBytes": 31899917,
+    "width": 45381,
+    "height": 52923,
+    "tile": 1024,
+    "channels": [
+     0
+    ],
+    "names": null,
+    "compress": "deflate",
+    "factors": [
+     1,
+     2,
+     4,
+     8,
+     16,
+     32,
+     64
+    ],
+    "levels": [
+     {
+      "width": 45381,
+      "height": 52923,
+      "fromSource": true,
+      "tileCount": 0
+     },
+     {
+      "width": 22691,
+      "height": 26462,
+      "file": "L1.bin",
+      "tileCount": 598
+     },
+     {
+      "width": 11346,
+      "height": 13231,
+      "file": "L2.bin",
+      "tileCount": 156
+     },
+     {
+      "width": 5673,
+      "height": 6616,
+      "file": "L3.bin",
+      "tileCount": 42
+     },
+     {
+      "width": 2837,
+      "height": 3308,
+      "file": "L4.bin",
+      "tileCount": 12
+     },
+     {
+      "width": 1419,
+      "height": 1654,
+      "file": "L5.bin",
+      "tileCount": 4
+     },
+     {
+      "width": 710,
+      "height": 827,
+      "file": "L6.bin",
+      "tileCount": 1
+     }
+    ]
+   },
+   "longTasks": {
+    "count": 0,
+    "over50": 0,
+    "max": 0
+   },
+   "framesDuring": 902,
+   "fps": 57.60670332512701,
+   "storage": {
+    "usageBefore": 0,
+    "usage": 20196145,
+    "quota": 10757614385
+   },
+   "sourceBytes": 31899917,
+   "hardwareConcurrency": 24,
+   "peakWorkingSetBytes": {
+    "byKind": {
+     "browser": 143572992,
+     "crashpad-handler": 11030528,
+     "gpu-process": 90779648,
+     "utility": 40861696,
+     "renderer": 802193408
+    },
+    "processes": 8
+   }
+  },
+  "reopen": {
+   "manifestMs": 8.899999618530273,
+   "firstTileMs": 14.699999809265137,
+   "firstTile": [
+    710,
+    827
+   ],
+   "midTileMs": 7.900000095367432,
+   "storage": {
+    "usage": 1434,
+    "quota": 10737419674,
+    "persisted": false
+   }
+  },
+  "python": {
+   "seconds": 21.812229999806732,
+   "bytes": 52706763,
+   "levels": [
+    [
+     52923,
+     45381
+    ],
+    [
+     26462,
+     22691
+    ],
+    [
+     13231,
+     11346
+    ],
+    [
+     6616,
+     5673
+    ],
+    [
+     3308,
+     2837
+    ],
+    [
+     1654,
+     1419
+    ],
+    [
+     827,
+     710
+    ]
+   ],
+   "fullReadBudget": 8589934592,
+   "out": "C:\\plexora-bench\\browser_node\\cache\\py-pyramid-lsp11385-mask-flat.labels.pyramid.ome.tiff"
+  }
+ },
+ "checks": {
+  "identity": {
+   "count": 200,
+   "identical": 200,
+   "mismatches": []
+  }
+ },
+ "thresholds": {
+  "go": [
+   {
+    "name": "build wall (s)",
+    "value": 15.7,
+    "bound": "<= 120",
+    "result": "pass"
+   },
+   {
+    "name": "build vs Python's own conversion (x)",
+    "value": 0.7,
+    "bound": "<= 2 (hypothesis)",
+    "result": "pass"
+   },
+   {
+    "name": "main-thread long tasks > 50 ms during the build",
+    "value": 0,
+    "bound": "<= 5",
+    "result": "pass"
+   },
+   {
+    "name": "derived bytes / source file bytes",
+    "value": 0.63,
+    "bound": "<= 2",
+    "result": "pass"
+   },
+   {
+    "name": "first tile after a reopen (ms)",
+    "value": 14.7,
+    "bound": "<= 1000",
+    "result": "pass"
+   },
+   {
+    "name": "derived tiles identical to Python's pyramid",
+    "value": "200/200",
+    "bound": "all",
+    "result": "pass"
+   }
+  ],
+  "stop": [
+   {
+    "name": "build > 5 min",
+    "value": 15.7,
+    "bound": "> 300 s",
+    "result": "fail"
+   },
+   {
+    "name": "quota exceeded with >= 50 GB free",
+    "value": null,
+    "bound": "never",
+    "result": "not measured"
+   }
+  ]
+ },
+ "verdict": "GO",
+ "notes": [],
+ "logs": [
+  "[error] Failed to load resource: the server responded with a status of 404 (Not Found)",
+  "[error] Failed to load resource: the server responded with a status of 404 (Not Found)"
+ ]
+}

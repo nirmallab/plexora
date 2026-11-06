@@ -1,0 +1,611 @@
+{
+ "poc": "P3",
+ "date": "2026-11-05",
+ "commit": "6083284f-dirty",
+ "machine": {
+  "cpuPercentBefore": [
+   7.5,
+   17.6,
+   3.9
+  ],
+  "platform": "win32 10.0.26200",
+  "cpu": "12th Gen Intel(R) Core(TM) i9-12900K",
+  "cores": 24,
+  "memoryGB": 128,
+  "load": [
+   0,
+   0,
+   0
+  ],
+  "hostname": "ajit"
+ },
+ "browser": {
+  "userAgent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/156.0.0.0 Safari/537.36",
+  "hardwareConcurrency": 24,
+  "deviceMemory": 32,
+  "webgl2": true,
+  "gpu": "ANGLE (NVIDIA, NVIDIA GeForce RTX 3080 (0x00002216) Direct3D11 vs_5_0 ps_5_0, D3D11)",
+  "crossOriginIsolated": false,
+  "isSecureContext": true,
+  "origin": "http://127.0.0.1:49261",
+  "storage": {
+   "quota": 10737418240,
+   "usage": 0
+  },
+  "hasShowOpenFilePicker": true,
+  "hasOPFS": true,
+  "jsHeap": 15490215
+ },
+ "arm": "browser",
+ "state": "cold: OPFS cleared, fresh profile; reopen: same profile, Chrome relaunched",
+ "fixture": {
+  "name": "L",
+  "files": {
+   "mask": {
+    "name": "P37_S30-CRC02-mask.ome.tif",
+    "bytes": 222860136,
+    "mtime": "2026-11-05T22:28:10.621Z"
+   },
+   "table": {
+    "name": "P37_S30-CRC02.csv",
+    "bytes": 634268626,
+    "mtime": "2026-11-05T22:28:37.681Z"
+   }
+  },
+  "rows": 1260592,
+  "columns": 29
+ },
+ "metrics": {
+  "loadMs": 4827.599999904633,
+  "ingest": {
+   "initMs": 521.4000000953674,
+   "parseMs": 2655.7999997138977,
+   "drawableMs": 3411.5999999046326,
+   "extractMs": 499.0999994277954,
+   "opfsWriteMs": 1014.6000008583069,
+   "totalMs": 4781.700000286102,
+   "bytes": 292457344
+  },
+  "reused": false,
+  "columnMs": [
+   12.100000381469727,
+   10.199999809265137,
+   7.5,
+   10.900000095367432,
+   9.900000095367432
+  ],
+  "describeMs": 901,
+  "describe32Ms": 801.7999997138977,
+  "indexBuildMs": 202.5,
+  "nearestMs": [
+   0.3000001907348633,
+   0,
+   0,
+   0,
+   0.19999980926513672,
+   0,
+   0,
+   0,
+   0,
+   0.5,
+   0,
+   0,
+   0,
+   0.10000038146972656,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0.2999997138977051,
+   0,
+   0,
+   0.20000028610229492,
+   0,
+   0,
+   0,
+   0.09999990463256836,
+   0.09999990463256836,
+   0.09999990463256836,
+   0,
+   0,
+   0,
+   0.09999990463256836,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0.20000028610229492,
+   0,
+   3.299999713897705,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0.10000038146972656,
+   0,
+   0,
+   0.39999961853027344,
+   0,
+   0,
+   0,
+   0,
+   0.10000038146972656,
+   0,
+   0.5999999046325684,
+   0,
+   0,
+   0,
+   0.09999990463256836,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0.09999990463256836,
+   0,
+   0.09999990463256836,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0.10000038146972656,
+   0,
+   1,
+   0,
+   0.09999990463256836,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0.09999990463256836,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0.19999980926513672,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0.10000038146972656,
+   1.299999713897705,
+   0.8000001907348633,
+   0,
+   0,
+   0,
+   0.09999990463256836,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0.09999990463256836,
+   0,
+   0,
+   0.09999990463256836,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0.20000028610229492,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0.19999980926513672,
+   0,
+   0,
+   0,
+   0.09999990463256836,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0.10000038146972656,
+   0,
+   0,
+   0.5,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0,
+   1.299999713897705,
+   0,
+   0,
+   0.09999990463256836,
+   0,
+   0
+  ],
+  "nodeLoadMs": 270.19999980926514,
+  "nodeAllCellsMs": 1781.4000000953674,
+  "nodeColumnsMs": 177.90000009536743,
+  "nodeDescribeMs": 386.09999990463257,
+  "store": "columns",
+  "reopenMs": 31.300000190734863,
+  "reopenReused": true,
+  "table": {
+   "rows": 1260592,
+   "columns": 29,
+   "numeric": 29,
+   "storeBytes": 292457344,
+   "csvBytes": 634268626
+  },
+  "memory": {
+   "duckdbBytes": 0,
+   "jsHeap": 441776382,
+   "peakWorkingSetBytes": {
+    "byKind": {
+     "browser": 150245376,
+     "crashpad-handler": 11030528,
+     "gpu-process": 90394624,
+     "utility": 44494848,
+     "renderer": 1674543104
+    },
+    "processes": 8
+   }
+  },
+  "storage": {
+   "usage": 292464448,
+   "quota": 11029882688
+  },
+  "python": {
+   "polarsReadMs": 337.06519985571504,
+   "kdtreeBuildMs": 304.63809985667467,
+   "nearest200Ms": 0.7845000363886356,
+   "roi20Ms": 469.2994002252817
+  }
+ },
+ "checks": {
+  "nearest": {
+   "count": 200,
+   "agree": 200,
+   "tiesResolvedDifferently": 0,
+   "misses": []
+  },
+  "roi": [
+   {
+    "vertices": 10,
+    "count": 5818,
+    "truthCount": 5818,
+    "identical": true,
+    "symmetricDiff": null,
+    "ms": 4.300000190734863
+   },
+   {
+    "vertices": 10,
+    "count": 652,
+    "truthCount": 652,
+    "identical": true,
+    "symmetricDiff": null,
+    "ms": 0.19999980926513672
+   },
+   {
+    "vertices": 10,
+    "count": 668,
+    "truthCount": 668,
+    "identical": true,
+    "symmetricDiff": null,
+    "ms": 0.20000028610229492
+   },
+   {
+    "vertices": 10,
+    "count": 479,
+    "truthCount": 479,
+    "identical": true,
+    "symmetricDiff": null,
+    "ms": 0.19999980926513672
+   },
+   {
+    "vertices": 10,
+    "count": 2644,
+    "truthCount": 2644,
+    "identical": true,
+    "symmetricDiff": null,
+    "ms": 0.6999998092651367
+   },
+   {
+    "vertices": 10,
+    "count": 1607,
+    "truthCount": 1607,
+    "identical": true,
+    "symmetricDiff": null,
+    "ms": 0.40000009536743164
+   },
+   {
+    "vertices": 10,
+    "count": 738,
+    "truthCount": 738,
+    "identical": true,
+    "symmetricDiff": null,
+    "ms": 0.09999990463256836
+   },
+   {
+    "vertices": 100,
+    "count": 718,
+    "truthCount": 718,
+    "identical": true,
+    "symmetricDiff": null,
+    "ms": 0.8000001907348633
+   },
+   {
+    "vertices": 100,
+    "count": 6446,
+    "truthCount": 6446,
+    "identical": true,
+    "symmetricDiff": null,
+    "ms": 5.5
+   },
+   {
+    "vertices": 100,
+    "count": 1052,
+    "truthCount": 1052,
+    "identical": true,
+    "symmetricDiff": null,
+    "ms": 1
+   },
+   {
+    "vertices": 100,
+    "count": 1526,
+    "truthCount": 1526,
+    "identical": true,
+    "symmetricDiff": null,
+    "ms": 1.5999999046325684
+   },
+   {
+    "vertices": 100,
+    "count": 4094,
+    "truthCount": 4094,
+    "identical": true,
+    "symmetricDiff": null,
+    "ms": 3.1000003814697266
+   },
+   {
+    "vertices": 100,
+    "count": 528,
+    "truthCount": 528,
+    "identical": true,
+    "symmetricDiff": null,
+    "ms": 0.5
+   },
+   {
+    "vertices": 100,
+    "count": 3684,
+    "truthCount": 3684,
+    "identical": true,
+    "symmetricDiff": null,
+    "ms": 3.3999996185302734
+   },
+   {
+    "vertices": 1000,
+    "count": 73,
+    "truthCount": 73,
+    "identical": true,
+    "symmetricDiff": null,
+    "ms": 0.5999999046325684
+   },
+   {
+    "vertices": 1000,
+    "count": 1594,
+    "truthCount": 1594,
+    "identical": true,
+    "symmetricDiff": null,
+    "ms": 13.799999713897705
+   },
+   {
+    "vertices": 1000,
+    "count": 4571,
+    "truthCount": 4571,
+    "identical": true,
+    "symmetricDiff": null,
+    "ms": 31.800000190734863
+   },
+   {
+    "vertices": 1000,
+    "count": 2945,
+    "truthCount": 2945,
+    "identical": true,
+    "symmetricDiff": null,
+    "ms": 22.700000286102295
+   },
+   {
+    "vertices": 1000,
+    "count": 578,
+    "truthCount": 578,
+    "identical": true,
+    "symmetricDiff": null,
+    "ms": 3.8999996185302734
+   },
+   {
+    "vertices": 1000,
+    "count": 6706,
+    "truthCount": 6706,
+    "identical": true,
+    "symmetricDiff": null,
+    "ms": 52.40000009536743
+   }
+  ],
+  "gates": {
+   "count": 20,
+   "agree": 20,
+   "disagree": [],
+   "ms": [
+    6,
+    4,
+    4.099999904632568,
+    1.5999999046325684,
+    2.9000000953674316,
+    2.5,
+    5.099999904632568,
+    6.800000190734863,
+    4.599999904632568,
+    5,
+    4.5,
+    4.5,
+    5.400000095367432,
+    2.799999713897705,
+    2.6000003814697266,
+    5.299999713897705,
+    5.5,
+    7.600000381469727,
+    5.599999904632568,
+    8.699999809265137
+   ]
+  },
+  "allCellsIdentical": true,
+  "allCellsFirstDiff": -1,
+  "columnsIdentical": {
+   "Hoechst": true,
+   "AF1": true,
+   "CD31": true,
+   "CD45": true,
+   "CD68": true
+  },
+  "describeFloat64": {
+   "columns": 29,
+   "missing": [
+    "id"
+   ],
+   "worstRelativeDiff": 2.6891525086053368e-12,
+   "worstAt": "CellID.std",
+   "nineDigits": true
+  },
+  "describeFloat32": {
+   "columns": 29,
+   "missing": [
+    "id"
+   ],
+   "worstRelativeDiff": 0.002666682564941044,
+   "worstAt": "Solidity.histogram[21]",
+   "nineDigits": false
+  }
+ },
+ "thresholds": {
+  "go": [
+   {
+    "name": "cold load to drawable / polars' read of the same file (x)",
+    "value": 10.1,
+    "bound": "<= 5",
+    "result": "fail"
+   },
+   {
+    "name": "reopen (ms)",
+    "value": 31.3,
+    "bound": "<= 5000",
+    "result": "pass"
+   },
+   {
+    "name": "describe, every column (ms)",
+    "value": 901.0,
+    "bound": "<= 3000",
+    "result": "pass"
+   },
+   {
+    "name": "uncached column (ms, worst of 5)",
+    "value": 12.1,
+    "bound": "<= 200",
+    "result": "pass"
+   },
+   {
+    "name": "nearest cell (ms, worst of 200)",
+    "value": 3.3,
+    "bound": "<= 5",
+    "result": "pass"
+   },
+   {
+    "name": "ROI, 100 vertices (ms, worst)",
+    "value": 5.5,
+    "bound": "<= 300",
+    "result": "pass"
+   },
+   {
+    "name": "identity: all_cells, columns, describe to 9 digits, nearest, ROI, gates",
+    "value": true,
+    "bound": "all",
+    "result": "pass"
+   },
+   {
+    "name": "peak renderer working set (GB)",
+    "value": 1.56,
+    "bound": "<= 2",
+    "result": "pass"
+   }
+  ],
+  "stop": [
+   {
+    "name": "an identity failure",
+    "value": false,
+    "bound": "false",
+    "result": "fail"
+   }
+  ]
+ },
+ "verdict": "PARTIAL",
+ "notes": [],
+ "logs": [
+  "[error] Failed to load resource: the server responded with a status of 404 (Not Found)",
+  "[error] Failed to load resource: the server responded with a status of 404 (Not Found)"
+ ]
+}

@@ -1,0 +1,639 @@
+{
+ "poc": "P6",
+ "date": "2026-11-05",
+ "commit": "6083284f-dirty",
+ "machine": {
+  "cpuPercentBefore": [
+   9.5,
+   10.7,
+   6.5
+  ],
+  "platform": "win32 10.0.26200",
+  "cpu": "12th Gen Intel(R) Core(TM) i9-12900K",
+  "cores": 24,
+  "memoryGB": 128,
+  "load": [
+   0,
+   0,
+   0
+  ],
+  "hostname": "ajit"
+ },
+ "browser": {
+  "renderer": "ANGLE (NVIDIA, NVIDIA GeForce RTX 3080 (0x00002216) Direct3D11 vs_5_0 ps_5_0, D3D11)"
+ },
+ "arm": "product,browser",
+ "state": "scratch server per run; ABBA blocks; product C1/C2, browser tour + revisit",
+ "fixture": {
+  "name": "M",
+  "files": {
+   "image": {
+    "name": "LSP11385.ome.tif",
+    "bytes": 66747709231,
+    "mtime": "2026-10-05T19:28:16.679Z"
+   },
+   "mask": {
+    "name": "cell.labels.pyramid.ome.tiff",
+    "bytes": 52706763,
+    "mtime": "2026-09-30T17:28:59.000Z"
+   },
+   "table": {
+    "name": "LSP11385--mccellpose_cell.csv",
+    "bytes": 180165929,
+    "mtime": "2026-09-30T16:31:36.000Z"
+   },
+   "flatMask": {
+    "name": "lsp11385-mask-flat.tif",
+    "bytes": 31899917,
+    "mtime": "2026-11-05T23:25:32.412Z"
+   }
+  }
+ },
+ "metrics": {
+  "waypoints": {
+   "a": [
+    11726.8,
+    16845.8
+   ],
+   "b": [
+    33382.6,
+    25063.2
+   ],
+   "c": [
+    43135.2,
+    32106.7
+   ]
+  },
+  "channels": [
+   {
+    "index": 0,
+    "color": "#0000ff",
+    "range": [
+     0.0069886320286869615,
+     0.044632639047837035
+    ]
+   },
+   {
+    "index": 1,
+    "color": "#00ff00",
+    "range": [
+     0.017517357137407492,
+     0.05113298237582971
+    ]
+   },
+   {
+    "index": 2,
+    "color": "#ff0000",
+    "range": [
+     0.004074158846417945,
+     0.0797436484321355
+    ]
+   }
+  ],
+  "blocks": [
+   {
+    "arm": "product",
+    "renderer": "ANGLE (NVIDIA, NVIDIA GeForce RTX 3080 (0x00002216) Direct3D11 vs_5_0 ps_5_0, D3D11)",
+    "wallMs": 19843,
+    "peakRendererBytes": 1473380352,
+    "cold": [
+     {
+      "step": "open",
+      "full": 3312
+     },
+     {
+      "step": "zoom_L2_a",
+      "full": 711.6999998092651
+     },
+     {
+      "step": "zoom_L0_a",
+      "full": 296.40000009536743
+     },
+     {
+      "step": "pan_L0_b",
+      "full": 503.59999990463257
+     },
+     {
+      "step": "home",
+      "full": 27.90000009536743
+     },
+     {
+      "step": "revisit_L0_a",
+      "full": 23
+     },
+     {
+      "step": "jump_L0_c",
+      "full": 609.0999999046326
+     },
+     {
+      "step": "anim_zoom_L2",
+      "full": 1193.9000000953674
+     },
+     {
+      "step": "anim_pan_L2",
+      "full": 1192.2999997138977
+     }
+    ],
+    "warm": [
+     {
+      "step": "open",
+      "full": 739.5999999046326
+     },
+     {
+      "step": "zoom_L2_a",
+      "full": 502
+     },
+     {
+      "step": "zoom_L0_a",
+      "full": 320.40000009536743
+     },
+     {
+      "step": "pan_L0_b",
+      "full": 365.09999990463257
+     },
+     {
+      "step": "home",
+      "full": 29.5
+     },
+     {
+      "step": "revisit_L0_a",
+      "full": 26.59999990463257
+     },
+     {
+      "step": "jump_L0_c",
+      "full": 472.2999997138977
+     },
+     {
+      "step": "anim_zoom_L2",
+      "full": 1202.9000000953674
+     },
+     {
+      "step": "anim_pan_L2",
+      "full": 1204.9000000953674
+     }
+    ]
+   },
+   {
+    "arm": "browser",
+    "renderer": "ANGLE (NVIDIA, NVIDIA GeForce RTX 3080 (0x00002216) Direct3D11 vs_5_0 ps_5_0, D3D11)",
+    "peakRendererBytes": 730816512,
+    "cold": [
+     {
+      "step": "open",
+      "full": 469.90000009536743
+     },
+     {
+      "step": "zoom_L2_a",
+      "full": 174.10000038146973
+     },
+     {
+      "step": "zoom_L0_a",
+      "full": 114.2000002861023
+     },
+     {
+      "step": "pan_L0_b",
+      "full": 161
+     },
+     {
+      "step": "home",
+      "full": 23.700000286102295
+     },
+     {
+      "step": "revisit_L0_a",
+      "full": 30.199999809265137
+     },
+     {
+      "step": "jump_L0_c",
+      "full": 189.5
+     },
+     {
+      "step": "anim_zoom_L2",
+      "full": 1195.6999998092651
+     },
+     {
+      "step": "anim_pan_L2",
+      "full": 1195.7000002861023
+     }
+    ],
+    "warm": [
+     {
+      "step": "open",
+      "full": 23.299999713897705
+     },
+     {
+      "step": "zoom_L2_a",
+      "full": 29.800000190734863
+     },
+     {
+      "step": "zoom_L0_a",
+      "full": 28.699999809265137
+     },
+     {
+      "step": "pan_L0_b",
+      "full": 24.200000286102295
+     },
+     {
+      "step": "home",
+      "full": 30
+     },
+     {
+      "step": "revisit_L0_a",
+      "full": 27.5
+     },
+     {
+      "step": "jump_L0_c",
+      "full": 25.799999713897705
+     },
+     {
+      "step": "anim_zoom_L2",
+      "full": 1201
+     },
+     {
+      "step": "anim_pan_L2",
+      "full": 1187.5
+     }
+    ],
+    "canvas": [
+     1060,
+     855
+    ],
+    "pageLoadMs": 251.40000009536743
+   },
+   {
+    "arm": "browser",
+    "renderer": "ANGLE (NVIDIA, NVIDIA GeForce RTX 3080 (0x00002216) Direct3D11 vs_5_0 ps_5_0, D3D11)",
+    "peakRendererBytes": 735588352,
+    "cold": [
+     {
+      "step": "open",
+      "full": 430.09999990463257
+     },
+     {
+      "step": "zoom_L2_a",
+      "full": 175.30000019073486
+     },
+     {
+      "step": "zoom_L0_a",
+      "full": 95
+     },
+     {
+      "step": "pan_L0_b",
+      "full": 160.7999997138977
+     },
+     {
+      "step": "home",
+      "full": 29.5
+     },
+     {
+      "step": "revisit_L0_a",
+      "full": 24.600000381469727
+     },
+     {
+      "step": "jump_L0_c",
+      "full": 180.69999980926514
+     },
+     {
+      "step": "anim_zoom_L2",
+      "full": 1192.5
+     },
+     {
+      "step": "anim_pan_L2",
+      "full": 1194.4000000953674
+     }
+    ],
+    "warm": [
+     {
+      "step": "open",
+      "full": 29.09999990463257
+     },
+     {
+      "step": "zoom_L2_a",
+      "full": 24.299999713897705
+     },
+     {
+      "step": "zoom_L0_a",
+      "full": 24.90000009536743
+     },
+     {
+      "step": "pan_L0_b",
+      "full": 30.200000286102295
+     },
+     {
+      "step": "home",
+      "full": 24.299999713897705
+     },
+     {
+      "step": "revisit_L0_a",
+      "full": 29
+     },
+     {
+      "step": "jump_L0_c",
+      "full": 29.399999618530273
+     },
+     {
+      "step": "anim_zoom_L2",
+      "full": 1211.6000003814697
+     },
+     {
+      "step": "anim_pan_L2",
+      "full": 1190.0999999046326
+     }
+    ],
+    "canvas": [
+     1060,
+     855
+    ],
+    "pageLoadMs": 208.5
+   },
+   {
+    "arm": "product",
+    "renderer": "ANGLE (NVIDIA, NVIDIA GeForce RTX 3080 (0x00002216) Direct3D11 vs_5_0 ps_5_0, D3D11)",
+    "wallMs": 16195,
+    "peakRendererBytes": 1361399808,
+    "cold": [
+     {
+      "step": "open",
+      "full": 1246.2999997138977
+     },
+     {
+      "step": "zoom_L2_a",
+      "full": 443.2000002861023
+     },
+     {
+      "step": "zoom_L0_a",
+      "full": 209.90000009536743
+     },
+     {
+      "step": "pan_L0_b",
+      "full": 373.6000003814697
+     },
+     {
+      "step": "home",
+      "full": 27.699999809265137
+     },
+     {
+      "step": "revisit_L0_a",
+      "full": 21
+     },
+     {
+      "step": "jump_L0_c",
+      "full": 516.3000001907349
+     },
+     {
+      "step": "anim_zoom_L2",
+      "full": 1191.0999999046326
+     },
+     {
+      "step": "anim_pan_L2",
+      "full": 1189
+     }
+    ],
+    "warm": [
+     {
+      "step": "open",
+      "full": 838.1999998092651
+     },
+     {
+      "step": "zoom_L2_a",
+      "full": 457.5
+     },
+     {
+      "step": "zoom_L0_a",
+      "full": 242
+     },
+     {
+      "step": "pan_L0_b",
+      "full": 360.69999980926514
+     },
+     {
+      "step": "home",
+      "full": 24.799999713897705
+     },
+     {
+      "step": "revisit_L0_a",
+      "full": 25.09999990463257
+     },
+     {
+      "step": "jump_L0_c",
+      "full": 413.2000002861023
+     },
+     {
+      "step": "anim_zoom_L2",
+      "full": 1189.6000003814697
+     },
+     {
+      "step": "anim_pan_L2",
+      "full": 1191.0999999046326
+     }
+    ]
+   }
+  ],
+  "cold": {
+   "per": [
+    {
+     "step": "open",
+     "product": 2279.149999856949,
+     "browser": 450
+    },
+    {
+     "step": "zoom_L2_a",
+     "product": 577.4500000476837,
+     "browser": 174.7000002861023
+    },
+    {
+     "step": "zoom_L0_a",
+     "product": 253.15000009536743,
+     "browser": 104.60000014305115
+    },
+    {
+     "step": "pan_L0_b",
+     "product": 438.60000014305115,
+     "browser": 160.89999985694885
+    },
+    {
+     "step": "home",
+     "product": 27.799999952316284,
+     "browser": 26.600000143051147
+    },
+    {
+     "step": "revisit_L0_a",
+     "product": 22,
+     "browser": 27.40000009536743
+    },
+    {
+     "step": "jump_L0_c",
+     "product": 562.7000000476837,
+     "browser": 185.09999990463257
+    },
+    {
+     "step": "anim_zoom_L2",
+     "product": 1192.5,
+     "browser": 1194.0999999046326
+    },
+    {
+     "step": "anim_pan_L2",
+     "product": 1190.6499998569489,
+     "browser": 1195.0500001907349
+    }
+   ],
+   "navGeoMeanRatio": 0.6054973877494363,
+   "open": {
+    "step": "open",
+    "product": 2279.149999856949,
+    "browser": 450
+   }
+  },
+  "warm": {
+   "per": [
+    {
+     "step": "open",
+     "product": 788.8999998569489,
+     "browser": 26.199999809265137
+    },
+    {
+     "step": "zoom_L2_a",
+     "product": 479.75,
+     "browser": 27.049999952316284
+    },
+    {
+     "step": "zoom_L0_a",
+     "product": 281.2000000476837,
+     "browser": 26.799999952316284
+    },
+    {
+     "step": "pan_L0_b",
+     "product": 362.89999985694885,
+     "browser": 27.200000286102295
+    },
+    {
+     "step": "home",
+     "product": 27.149999856948853,
+     "browser": 27.149999856948853
+    },
+    {
+     "step": "revisit_L0_a",
+     "product": 25.84999990463257,
+     "browser": 28.25
+    },
+    {
+     "step": "jump_L0_c",
+     "product": 442.75,
+     "browser": 27.59999966621399
+    },
+    {
+     "step": "anim_zoom_L2",
+     "product": 1196.2500002384186,
+     "browser": 1206.3000001907349
+    },
+    {
+     "step": "anim_pan_L2",
+     "product": 1198,
+     "browser": 1188.7999999523163
+    }
+   ],
+   "navGeoMeanRatio": 0.2690487222828126,
+   "open": {
+    "step": "open",
+    "product": 788.8999998569489,
+    "browser": 26.199999809265137
+   }
+  },
+  "peakRenderer": {
+   "product": 1417390080,
+   "browser": 733202432
+  }
+ },
+ "checks": {
+  "everyStepFull": true
+ },
+ "thresholds": {
+  "go": [
+   {
+    "name": "open: browser (page load + first view) / product (C1)",
+    "value": 0.3,
+    "bound": "<= 1.3",
+    "result": "pass"
+   },
+   {
+    "name": "navigation, cold: geometric mean of browser / product per step",
+    "value": 0.6,
+    "bound": "<= 1.3",
+    "result": "pass"
+   },
+   {
+    "name": "navigation, revisit: geometric mean of browser / product per step",
+    "value": 0.3,
+    "bound": "<= 1.3",
+    "result": "pass"
+   },
+   {
+    "name": "browser renderer peak working set (GB)",
+    "value": 0.68,
+    "bound": "<= 2",
+    "result": "pass"
+   },
+   {
+    "name": "every step reached full in both arms",
+    "value": true,
+    "bound": "true",
+    "result": "pass"
+   }
+  ],
+  "stop": [
+   {
+    "name": "ratio > 2 on open or navigation",
+    "value": 0.6,
+    "bound": "> 2",
+    "result": "fail"
+   }
+  ]
+ },
+ "verdict": "GO",
+ "notes": [],
+ "logs": [
+  "pass C1",
+  "  open: 3312 ms",
+  "  zoom_L2_a: 712 ms",
+  "  zoom_L0_a: 296 ms",
+  "  pan_L0_b: 504 ms",
+  "  home: 28 ms",
+  "  revisit_L0_a: 23 ms",
+  "  jump_L0_c: 609 ms",
+  "  anim_zoom_L2: 1194 ms",
+  "  anim_pan_L2: 1192 ms",
+  "pass C2",
+  "  open: 740 ms",
+  "  zoom_L2_a: 502 ms",
+  "  zoom_L0_a: 320 ms",
+  "  pan_L0_b: 365 ms",
+  "  home: 30 ms",
+  "  revisit_L0_a: 27 ms",
+  "  jump_L0_c: 472 ms",
+  "  anim_zoom_L2: 1203 ms",
+  "  anim_pan_L2: 1205 ms",
+  "",
+  "[error] Failed to load resource: the server responded with a status of 404 (Not Found)",
+  "[error] Failed to load resource: the server responded with a status of 404 (Not Found)",
+  "pass C1",
+  "  open: 1246 ms",
+  "  zoom_L2_a: 443 ms",
+  "  zoom_L0_a: 210 ms",
+  "  pan_L0_b: 374 ms",
+  "  home: 28 ms",
+  "  revisit_L0_a: 21 ms",
+  "  jump_L0_c: 516 ms",
+  "  anim_zoom_L2: 1191 ms",
+  "  anim_pan_L2: 1189 ms",
+  "pass C2",
+  "  open: 838 ms",
+  "  zoom_L2_a: 458 ms",
+  "  zoom_L0_a: 242 ms",
+  "  pan_L0_b: 361 ms",
+  "  home: 25 ms",
+  "  revisit_L0_a: 25 ms",
+  "  jump_L0_c: 413 ms",
+  "  anim_zoom_L2: 1190 ms",
+  "  anim_pan_L2: 1191 ms",
+  ""
+ ]
+}

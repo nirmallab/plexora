@@ -1,12 +1,12 @@
 {
  "poc": "P3",
  "date": "2026-11-05",
- "commit": "4e18de00-dirty",
+ "commit": "6083284f-dirty",
  "machine": {
   "cpuPercentBefore": [
-   7.4,
-   15.1,
-   7.1
+   8.2,
+   8.6,
+   8.5
   ],
   "platform": "win32 10.0.26200",
   "cpu": "12th Gen Intel(R) Core(TM) i9-12900K",
@@ -27,14 +27,14 @@
   "gpu": "ANGLE (NVIDIA, NVIDIA GeForce RTX 3080 (0x00002216) Direct3D11 vs_5_0 ps_5_0, D3D11)",
   "crossOriginIsolated": false,
   "isSecureContext": true,
-  "origin": "http://127.0.0.1:56291",
+  "origin": "http://127.0.0.1:59656",
   "storage": {
    "quota": 10737418240,
    "usage": 0
   },
   "hasShowOpenFilePicker": true,
   "hasOPFS": true,
-  "jsHeap": 15267435
+  "jsHeap": 15491039
  },
  "arm": "browser",
  "state": "cold: OPFS cleared, fresh profile; reopen: same profile, Chrome relaunched",
@@ -66,60 +66,34 @@
   "columns": 22
  },
  "metrics": {
-  "loadMs": 934.3999996185303,
+  "loadMs": 255.69999980926514,
   "ingest": {
-   "initMs": 419.19999980926514,
-   "parseMs": 179.40000009536743,
-   "drawableMs": 712.7999997138977,
-   "extractMs": 30.900001049041748,
-   "opfsWriteMs": 192.0999994277954,
-   "totalMs": 918.3999996185303,
-   "bytes": 1971376
+   "parser": "js",
+   "sniffMs": 45.299999713897705,
+   "parts": 1,
+   "parseMs": 58.30000019073486,
+   "partRows": [
+    11201
+   ],
+   "drawableMs": 123.30000019073486,
+   "opfsWriteMs": 130.60000038146973,
+   "totalMs": 246.5,
+   "bytes": 1971376,
+   "mergeMs": 0.5999999046325684
   },
   "reused": false,
   "columnMs": [
-   4,
-   3.6000003814697266,
-   5.299999713897705,
-   3.200000286102295,
-   3.6999998092651367
+   2.0999999046325684,
+   1.700000286102295,
+   1.5,
+   1.5,
+   1.8000001907348633
   ],
-  "describeMs": 73.5,
-  "describe32Ms": 19.90000009536743,
-  "indexBuildMs": 10,
+  "describeMs": 43,
+  "describe32Ms": 10.299999713897705,
+  "indexBuildMs": 9.100000381469727,
   "nearestMs": [
-   0.40000009536743164,
-   0.09999990463256836,
-   0,
-   0,
-   0,
-   0,
-   0,
-   0,
-   0,
-   0,
-   0,
-   0,
-   0,
-   0,
-   0,
-   0,
-   0.19999980926513672,
-   0,
-   0,
-   0,
-   0,
-   0,
-   0,
-   0,
-   0.10000038146972656,
-   0,
-   0,
-   0,
-   0.09999990463256836,
-   0,
-   0,
-   0,
+   0.2999997138977051,
    0,
    0,
    0,
@@ -131,14 +105,6 @@
    0,
    0,
    0,
-   0,
-   0,
-   0,
-   0,
-   0.5999999046325684,
-   0,
-   0,
-   0.09999990463256836,
    0,
    0,
    0,
@@ -152,31 +118,7 @@
    0,
    0,
    0,
-   0,
-   0,
-   0,
-   0,
-   0,
-   0,
-   0,
-   0,
-   0,
    0.09999990463256836,
-   0,
-   0,
-   0,
-   0,
-   0,
-   0.09999990463256836,
-   0,
-   0,
-   0,
-   0,
-   0,
-   0,
-   0,
-   0,
-   0,
    0,
    0,
    0,
@@ -200,6 +142,25 @@
    0,
    0,
    0,
+   0.09999990463256836,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0,
    0,
    0,
    0,
@@ -208,6 +169,21 @@
    0,
    0,
    0.09999990463256836,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0,
    0,
    0,
    0,
@@ -254,6 +230,41 @@
    0,
    0,
    0,
+   0.09999990463256836,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0.09999990463256836,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0,
    0,
    0,
    0,
@@ -272,12 +283,6 @@
    0,
    0,
    0.09999990463256836,
-   0,
-   0,
-   0,
-   0,
-   0,
-   0,
    0,
    0,
    0,
@@ -289,12 +294,12 @@
    0,
    0
   ],
-  "nodeLoadMs": 14.100000381469727,
-  "nodeAllCellsMs": 31.299999713897705,
-  "nodeColumnsMs": 7.800000190734863,
-  "nodeDescribeMs": 14.799999713897705,
+  "nodeLoadMs": 15.599999904632568,
+  "nodeAllCellsMs": 33.80000019073486,
+  "nodeColumnsMs": 7.300000190734863,
+  "nodeDescribeMs": 17,
   "store": "columns",
-  "reopenMs": 13.600000381469727,
+  "reopenMs": 13.199999809265137,
   "reopenReused": true,
   "table": {
    "rows": 11201,
@@ -305,21 +310,21 @@
   },
   "memory": {
    "duckdbBytes": 0,
-   "jsHeap": 29276808,
+   "jsHeap": 35669249,
    "peakWorkingSetBytes": {
     "byKind": {
-     "browser": 144687104,
+     "browser": 147402752,
      "crashpad-handler": 11038720,
-     "gpu-process": 90718208,
-     "utility": 42647552,
-     "renderer": 364482560
+     "gpu-process": 91222016,
+     "utility": 42774528,
+     "renderer": 391442432
     },
     "processes": 8
    }
   },
   "storage": {
-   "usage": 1976968,
-   "quota": 10739395208
+   "usage": 1976992,
+   "quota": 10739395232
   },
   "python": {
    "polarsReadMs": 156.87640011310577,
@@ -342,7 +347,7 @@
     "truthCount": 2686,
     "identical": true,
     "symmetricDiff": null,
-    "ms": 4.400000095367432
+    "ms": 2.5
    },
    {
     "vertices": 10,
@@ -350,7 +355,7 @@
     "truthCount": 2141,
     "identical": true,
     "symmetricDiff": null,
-    "ms": 1.5
+    "ms": 0.9000000953674316
    },
    {
     "vertices": 10,
@@ -358,7 +363,7 @@
     "truthCount": 904,
     "identical": true,
     "symmetricDiff": null,
-    "ms": 0.3000001907348633
+    "ms": 0.09999990463256836
    },
    {
     "vertices": 10,
@@ -366,7 +371,7 @@
     "truthCount": 1990,
     "identical": true,
     "symmetricDiff": null,
-    "ms": 0.9000000953674316
+    "ms": 0.40000009536743164
    },
    {
     "vertices": 10,
@@ -374,7 +379,7 @@
     "truthCount": 5831,
     "identical": true,
     "symmetricDiff": null,
-    "ms": 2
+    "ms": 0.9000000953674316
    },
    {
     "vertices": 10,
@@ -382,7 +387,7 @@
     "truthCount": 3770,
     "identical": true,
     "symmetricDiff": null,
-    "ms": 1.0999999046325684
+    "ms": 0.5
    },
    {
     "vertices": 10,
@@ -390,7 +395,7 @@
     "truthCount": 4294,
     "identical": true,
     "symmetricDiff": null,
-    "ms": 1
+    "ms": 0.7000002861022949
    },
    {
     "vertices": 100,
@@ -398,7 +403,7 @@
     "truthCount": 1821,
     "identical": true,
     "symmetricDiff": null,
-    "ms": 1.8999996185302734
+    "ms": 1.3000001907348633
    },
    {
     "vertices": 100,
@@ -406,7 +411,7 @@
     "truthCount": 7106,
     "identical": true,
     "symmetricDiff": null,
-    "ms": 5.300000190734863
+    "ms": 4.5
    },
    {
     "vertices": 100,
@@ -414,7 +419,7 @@
     "truthCount": 2289,
     "identical": true,
     "symmetricDiff": null,
-    "ms": 2.5
+    "ms": 1.5999999046325684
    },
    {
     "vertices": 100,
@@ -422,7 +427,7 @@
     "truthCount": 5864,
     "identical": true,
     "symmetricDiff": null,
-    "ms": 4.800000190734863
+    "ms": 3.3000001907348633
    },
    {
     "vertices": 100,
@@ -430,7 +435,7 @@
     "truthCount": 4443,
     "identical": true,
     "symmetricDiff": null,
-    "ms": 4.200000286102295
+    "ms": 2.799999713897705
    },
    {
     "vertices": 100,
@@ -438,7 +443,7 @@
     "truthCount": 3154,
     "identical": true,
     "symmetricDiff": null,
-    "ms": 3.1999998092651367
+    "ms": 2.0999999046325684
    },
    {
     "vertices": 100,
@@ -446,7 +451,7 @@
     "truthCount": 9567,
     "identical": true,
     "symmetricDiff": null,
-    "ms": 6.900000095367432
+    "ms": 5.100000381469727
    },
    {
     "vertices": 1000,
@@ -454,7 +459,7 @@
     "truthCount": 316,
     "identical": true,
     "symmetricDiff": null,
-    "ms": 3.3000001907348633
+    "ms": 2.1999998092651367
    },
    {
     "vertices": 1000,
@@ -462,7 +467,7 @@
     "truthCount": 4010,
     "identical": true,
     "symmetricDiff": null,
-    "ms": 36.09999990463257
+    "ms": 23.100000381469727
    },
    {
     "vertices": 1000,
@@ -470,7 +475,7 @@
     "truthCount": 7016,
     "identical": true,
     "symmetricDiff": null,
-    "ms": 43.59999990463257
+    "ms": 32.19999980926514
    },
    {
     "vertices": 1000,
@@ -478,7 +483,7 @@
     "truthCount": 6996,
     "identical": true,
     "symmetricDiff": null,
-    "ms": 32.90000009536743
+    "ms": 34.40000009536743
    },
    {
     "vertices": 1000,
@@ -486,7 +491,7 @@
     "truthCount": 338,
     "identical": true,
     "symmetricDiff": null,
-    "ms": 2.1999998092651367
+    "ms": 2
    },
    {
     "vertices": 1000,
@@ -494,7 +499,7 @@
     "truthCount": 8018,
     "identical": true,
     "symmetricDiff": null,
-    "ms": 35.69999980926514
+    "ms": 33.69999980926514
    }
   ],
   "gates": {
@@ -505,21 +510,21 @@
     0.40000009536743164,
     0.09999990463256836,
     0.09999990463256836,
+    0,
+    0,
+    0.10000038146972656,
+    0.09999990463256836,
+    0.09999990463256836,
+    0,
+    0.09999990463256836,
+    0,
+    0.09999990463256836,
+    0,
     0.10000038146972656,
     0,
-    0,
-    0,
-    0.09999990463256836,
     0.09999990463256836,
     0,
     0.09999990463256836,
-    0,
-    0.20000028610229492,
-    0,
-    0,
-    0,
-    0.19999980926513672,
-    0,
     0,
     0.09999990463256836
    ]
@@ -556,37 +561,37 @@
   "go": [
    {
     "name": "cold load to drawable / polars' read of the same file (x)",
-    "value": 4.5,
+    "value": 0.8,
     "bound": "<= 5",
     "result": "pass"
    },
    {
     "name": "reopen (ms)",
-    "value": 13.6,
+    "value": 13.2,
     "bound": "<= 5000",
     "result": "pass"
    },
    {
     "name": "describe, every column (ms)",
-    "value": 73.5,
+    "value": 43.0,
     "bound": "<= 3000",
     "result": "pass"
    },
    {
     "name": "uncached column (ms, worst of 5)",
-    "value": 5.3,
+    "value": 2.1,
     "bound": "<= 200",
     "result": "pass"
    },
    {
     "name": "nearest cell (ms, worst of 200)",
-    "value": 0.6,
+    "value": 0.3,
     "bound": "<= 5",
     "result": "pass"
    },
    {
     "name": "ROI, 100 vertices (ms, worst)",
-    "value": 6.9,
+    "value": 5.1,
     "bound": "<= 300",
     "result": "pass"
    },
@@ -598,7 +603,7 @@
    },
    {
     "name": "peak renderer working set (GB)",
-    "value": 0.34,
+    "value": 0.36,
     "bound": "<= 2",
     "result": "pass"
    }

@@ -1,12 +1,12 @@
 {
  "poc": "P2",
  "date": "2026-11-05",
- "commit": "4e18de00-dirty",
+ "commit": "6083284f",
  "machine": {
   "cpuPercentBefore": [
-   44,
-   29.8,
-   37.9
+   11.5,
+   6.5,
+   17.4
   ],
   "platform": "win32 10.0.26200",
   "cpu": "12th Gen Intel(R) Core(TM) i9-12900K",
@@ -27,14 +27,14 @@
   "gpu": "ANGLE (NVIDIA, NVIDIA GeForce RTX 3080 (0x00002216) Direct3D11 vs_5_0 ps_5_0, D3D11)",
   "crossOriginIsolated": false,
   "isSecureContext": true,
-  "origin": "http://127.0.0.1:64315",
+  "origin": "http://127.0.0.1:53592",
   "storage": {
    "quota": 10737418240,
    "usage": 0
   },
   "hasShowOpenFilePicker": true,
   "hasOPFS": true,
-  "jsHeap": 15327759
+  "jsHeap": 15492275
  },
  "arm": "node,browser",
  "state": "fresh profile and node per block",
@@ -68,30 +68,30 @@
   "blocks": [
    {
     "arm": "node",
-    "tableMs": 100,
+    "tableMs": 111.19999980926514,
     "cells": 202049,
     "labelGpu": {
      "active": true,
      "reason": null
     },
-    "viewFullMs": 701.7999997138977,
+    "viewFullMs": 745.7999997138977,
     "drag": {
      "ticks": 40,
      "evalMs": {
       "n": 40,
-      "min": 0.39999961853027344,
-      "p50": 0.7000002861022949,
-      "p90": 1.1999998092651367,
-      "p95": 1.4000000953674316,
-      "max": 4.5
+      "min": 0.40000009536743164,
+      "p50": 0.8999996185302734,
+      "p90": 1.1000003814697266,
+      "p95": 1.1999998092651367,
+      "max": 4.599999904632568
      },
      "updateMs": {
       "n": 40,
-      "min": 8,
-      "p50": 18.5,
-      "p90": 19.199999809265137,
-      "p95": 19.300000190734863,
-      "max": 19.699999809265137
+      "min": 6.800000190734863,
+      "p50": 18.699999809265137,
+      "p90": 19.59999990463257,
+      "p95": 19.899999618530273,
+      "max": 22.700000286102295
      },
      "positives": [
       1382,
@@ -103,35 +103,80 @@
       "tableUploads": 40
      }
     },
-    "canvas": "d888dbd4f33e1bf3ad6395495402ec6d08a46bfc6bcb0167e9f4880488ea9f9b",
-    "jsHeap": 147946495
+    "canvas": "2bd68cc7d318279d48bf5899ead3b27156978d5b0d883ef052ccf3630b440a2c",
+    "jsHeap": 137858143
    },
    {
     "arm": "browser",
-    "tableMs": 100.5,
+    "tableMs": 112.69999980926514,
     "cells": 202049,
     "labelGpu": {
      "active": true,
      "reason": null
     },
-    "viewFullMs": 270.5,
+    "viewFullMs": 213.5,
     "drag": {
      "ticks": 40,
      "evalMs": {
       "n": 40,
-      "min": 0.40000009536743164,
-      "p50": 0.6000003814697266,
-      "p90": 0.9000000953674316,
-      "p95": 1.1999998092651367,
-      "max": 2.3999996185302734
+      "min": 0.39999961853027344,
+      "p50": 0.6999998092651367,
+      "p90": 1.1999998092651367,
+      "p95": 1.200000286102295,
+      "max": 4.400000095367432
      },
      "updateMs": {
       "n": 40,
-      "min": 3.5,
-      "p50": 18.299999713897705,
-      "p90": 18.90000009536743,
-      "p95": 19,
-      "max": 19.199999809265137
+      "min": 6.900000095367432,
+      "p50": 18.300000190734863,
+      "p90": 19,
+      "p95": 19.09999990463257,
+      "max": 19.300000190734863
+     },
+     "positives": [
+      1382,
+      191946
+     ],
+     "labelStats": {
+      "draws": 171,
+      "tileUploads": 11,
+      "tableUploads": 40
+     }
+    },
+    "canvas": "2bd68cc7d318279d48bf5899ead3b27156978d5b0d883ef052ccf3630b440a2c",
+    "labelIdentity": {
+     "count": 200,
+     "identical": 200,
+     "mismatches": []
+    },
+    "jsHeap": 192037124
+   },
+   {
+    "arm": "browser",
+    "tableMs": 113.5,
+    "cells": 202049,
+    "labelGpu": {
+     "active": true,
+     "reason": null
+    },
+    "viewFullMs": 209.09999990463257,
+    "drag": {
+     "ticks": 40,
+     "evalMs": {
+      "n": 40,
+      "min": 0.3000001907348633,
+      "p50": 0.6000003814697266,
+      "p90": 1.0999999046325684,
+      "p95": 1.1000003814697266,
+      "max": 2.6999998092651367
+     },
+     "updateMs": {
+      "n": 40,
+      "min": 4.399999618530273,
+      "p50": 18.5,
+      "p90": 19.40000009536743,
+      "p95": 19.699999809265137,
+      "max": 20.59999990463257
      },
      "positives": [
       1382,
@@ -143,80 +188,35 @@
       "tableUploads": 40
      }
     },
-    "canvas": "d888dbd4f33e1bf3ad6395495402ec6d08a46bfc6bcb0167e9f4880488ea9f9b",
-    "labelIdentity": {
-     "count": 200,
-     "identical": 200,
-     "mismatches": []
-    },
-    "jsHeap": 168563921
-   },
-   {
-    "arm": "browser",
-    "tableMs": 109.40000009536743,
-    "cells": 202049,
-    "labelGpu": {
-     "active": true,
-     "reason": null
-    },
-    "viewFullMs": 271.5,
-    "drag": {
-     "ticks": 40,
-     "evalMs": {
-      "n": 40,
-      "min": 0.40000009536743164,
-      "p50": 0.6999998092651367,
-      "p90": 1,
-      "p95": 1.0999999046325684,
-      "max": 3.5
-     },
-     "updateMs": {
-      "n": 40,
-      "min": 5.5,
-      "p50": 18.199999809265137,
-      "p90": 18.700000286102295,
-      "p95": 18.90000009536743,
-      "max": 19
-     },
-     "positives": [
-      1382,
-      191946
-     ],
-     "labelStats": {
-      "draws": 171,
-      "tileUploads": 11,
-      "tableUploads": 40
-     }
-    },
-    "canvas": "d888dbd4f33e1bf3ad6395495402ec6d08a46bfc6bcb0167e9f4880488ea9f9b",
-    "jsHeap": 137498419
+    "canvas": "2bd68cc7d318279d48bf5899ead3b27156978d5b0d883ef052ccf3630b440a2c",
+    "jsHeap": 132399263
    },
    {
     "arm": "node",
-    "tableMs": 118,
+    "tableMs": 106.09999990463257,
     "cells": 202049,
     "labelGpu": {
      "active": true,
      "reason": null
     },
-    "viewFullMs": 736.0999999046326,
+    "viewFullMs": 743.4000000953674,
     "drag": {
      "ticks": 40,
      "evalMs": {
       "n": 40,
-      "min": 0.2999997138977051,
-      "p50": 0.5999999046325684,
-      "p90": 1.0999999046325684,
-      "p95": 1.299999713897705,
-      "max": 3
+      "min": 0.39999961853027344,
+      "p50": 0.7000002861022949,
+      "p90": 1.4000000953674316,
+      "p95": 1.5999999046325684,
+      "max": 4.299999713897705
      },
      "updateMs": {
       "n": 40,
-      "min": 5.199999809265137,
-      "p50": 18.700000286102295,
-      "p90": 19.40000009536743,
-      "p95": 19.5,
-      "max": 20.299999713897705
+      "min": 6,
+      "p50": 18.59999990463257,
+      "p90": 19.600000381469727,
+      "p95": 19.699999809265137,
+      "max": 20
      },
      "positives": [
       1382,
@@ -228,8 +228,8 @@
       "tableUploads": 40
      }
     },
-    "canvas": "d888dbd4f33e1bf3ad6395495402ec6d08a46bfc6bcb0167e9f4880488ea9f9b",
-    "jsHeap": 155173007
+    "canvas": "2bd68cc7d318279d48bf5899ead3b27156978d5b0d883ef052ccf3630b440a2c",
+    "jsHeap": 160476263
    }
   ]
  },
@@ -246,7 +246,7 @@
   "go": [
    {
     "name": "gate drag, drawn update median (ms) at 202049 ids",
-    "value": 18.2,
+    "value": 18.4,
     "bound": "<= 30",
     "result": "pass"
    },

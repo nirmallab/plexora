@@ -149,9 +149,10 @@ def p4(rec, _all):
     core = ["obs_names", "obs_numeric", "obs_categorical", "obsm_spatial", "x_rows", "x_column"]
     plain = [r for r in rows if r["kind"] == "h5ad" and r["codec"] in ("none", "gzip") and r["op"] in core]
     plain_ok = [r for r in plain if r["state"] == "ok"]
-    ratios = [r["ratio"] for r in plain_ok if r.get("ratio") is not None]
-    worst = max(ratios) if ratios else None
-    worst_row = max(plain_ok, key=lambda r: r["ratio"] or 0) if plain_ok else None
+    # A ratio over a read h5py does in under 5 ms is a ratio of overheads.
+    timed = [r for r in plain_ok if r.get("ratio") is not None and (r.get("pythonMs") or 0) >= 5]
+    worst = max((r["ratio"] for r in timed), default=None)
+    worst_row = max(timed, key=lambda r: r["ratio"]) if timed else None
     sdata = [r for r in rows if r["kind"] == "spatialdata"]
     unsupported = [r for r in rows if r["state"] != "ok"]
 
@@ -164,7 +165,7 @@ def p4(rec, _all):
     go = [
         check("h5ad none/gzip: obs, obsm, X row block and X column read and identical to h5py",
               f"{len(plain_ok)}/{len(plain)}", len(plain) > 0 and len(plain_ok) == len(plain), "all"),
-        check("h5ad none/gzip: slowest read vs h5py (x)",
+        check("h5ad none/gzip: slowest read vs h5py (x; reads h5py takes >= 5 ms)",
               f"{r1(worst)} ({worst_row['file']} {worst_row['op']})" if worst_row else None,
               worst is not None and worst <= 2, "<= 2"),
         check("SpatialData (zarr v3): table, image, labels, shapes, points identical",
@@ -254,6 +255,16 @@ def p5(rec, _all):
     return go, stop
 
 
+def p5r(rec, _all):
+    """A remote node's protocol answers in the page against the same requests outside it."""
+    c, m = rec["checks"], rec["metrics"]
+    go = [check(f"(a, remote) {name}", c.get(name), c.get(name) is True, "true")
+          for name in ("hdTilesIdentical", "webpTilesIdentical", "batchMatchesSingles",
+                       "allCellsIdentical", "describeIdentical") if name in c]
+    go.append(check("round trip p50 (ms), for the record", r1((m.get("rttMs") or {}).get("p50")), True, "recorded"))
+    return go, []
+
+
 def p5lnah(rec, _all):
     c = rec["checks"]
     go = [
@@ -317,7 +328,7 @@ def p8(rec, _all):
     return go, stop
 
 
-RULES = {"P0": p0, "P1": p1, "P2": p2, "P2B": p2b, "P3": p3, "P4": p4, "P5": p5, "P5LNAH": p5lnah, "P6": p6,
+RULES = {"P0": p0, "P1": p1, "P2": p2, "P2B": p2b, "P3": p3, "P4": p4, "P5": p5, "P5LNAH": p5lnah, "P5R": p5r, "P6": p6,
          "P7": p7, "P8": p8}
 
 

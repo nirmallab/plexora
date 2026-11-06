@@ -9,14 +9,17 @@ mode.
 - **Proofs of concept:** built in `tools/poc_browser_node/`. Nothing under
   `plexora/` changed. Their records are in `docs/internal/bench/browser_node/`
   (section 8).
-- **First round, done 2026-11-05:** P0, P1, P2, P2b, P3 and P5 on one Windows
-  machine. Verdicts: P0, P1, P2 and P5 GO; P2b and P3 PARTIAL; no STOP. See
-  [POC results](#poc-results) and
+- **First round, 2026-11-05:** P0, P1, P2, P2b, P3 and P5 on one Windows
+  machine. Verdicts: P0, P1, P2 and P5 GO; P2b and P3 PARTIAL; no STOP.
+- **Second round, the same evening:** P2b and P3 reworked (both now GO), and P4,
+  P6, P7, P8 and the headed Local Network Access check run. P4 is PARTIAL (h5ad
+  is correct but slower than h5py); every other POC is GO; no STOP. The remote
+  records (O2, ERIS, GCP) and Safari remain. See [POC results](#poc-results) and
   [the campaign report](bench/browser_node/BROWSER_NODE_POC_2026-11-05.md).
-- **Gate:** no product change until the ladder reports GO on P1, P3 and P5.
-  P1 and P5 are GO. P3 misses one threshold (the first-ever CSV open), which
-  needs a decision (section "POC results"). The first product commit after that
-  is the Phase 0 seams (section 7).
+- **Gate:** no product change until the ladder reports GO on P1, P3 and P5. All
+  three are GO. The first product commit is the Phase 0 seams (section 7). One
+  product fix came out of the POCs already: `frag.glsl`'s 16-bit rebuild
+  (question 11).
 
 ## How to read this document
 
@@ -115,9 +118,14 @@ current browser-platform documentation.
   - a static page uses an existing node with the same bytes the desktop
     receives.
 
-  The one miss is a first-ever CSV open, at 5–10× polars, because the wasm is
-  single-threaded. Two planned node-protocol additions turn out to be
-  unnecessary (section 6.5).
+  The first round's miss, a first-ever CSV open at 5–10× polars, is gone in the
+  second: plain workers parse the CSV, without DuckDB, in under 3× polars.
+  Flat masks and flat images are made into pyramids in the tab in 0.1–0.9×
+  Python's time, identical to Python's. On the same image and tour as the
+  product's own page, the browser node reaches full 2.4–3.3× sooner at every
+  step that needs new tiles, and ties on the rest. h5ad reads are correct but
+  2–13× slower than h5py. Two planned node-protocol
+  additions turn out to be unnecessary (section 6.5).
 
 ## Decisions (2026-11-05)
 
@@ -337,17 +345,17 @@ Phase is when the roadmap in section 7 delivers it.
 | Pyramidal OME-TIFF: deflate, LZW, zstd, packbits, raw | **B** | geotiff.js `fromBlob` plus the MIT-licensed OpenSeadragon `GeoTIFFTileSource` (SubIFD layout hint), feeding raw uint16 to the existing colorize shader | 1 |
 | Pyramidal TIFF with JPEG tiles (SVS/NDPI brightfield) | **B** | geotiff.js JPEG decoder; the existing brightfield path (`tileFormat 24`) | 2 |
 | JPEG 2000 tiles | **X** → P/N | geotiff.js has no JPEG 2000 decoder | none |
-| Flat TIFF > 4096 px | **C** | streaming pyramid build in a worker into OPFS (Predicted: minutes for a 10 GB plane, bounded by decode). Above a size threshold set by P7: prepare it first in the CLI or desktop app (mode E, section 8.3), or use P | 2 |
+| Flat TIFF > 4096 px | **C** (in the browser) | the pyramid is built by band workers into OPFS with `image_pyramid.reduce2`'s arithmetic. **Measured (P7):** 2 channels × 52923 × 45381 (9.6 GB raw) in 0.1–0.9× Python's own time, depending on layout, identical tile for tile; level 0 is copied only from a stripped file | 2 |
 | OME-Zarr directory (local) | **B** (Chromium) / **C** (Firefox, Safari) | zarrita.js + numcodecs over a `FileSystemDirectoryHandle`. Firefox and Safari get a `webkitdirectory` file list, which is slow for 100 k chunk files | 2 |
 | OME-Zarr / TIFF / DICOM at https, s3 or gs | **B only if the bucket sends CORS**, else **N** or a gateway | geotiff.js / zarrita over HTTP range requests. Python today needs no CORS, so this is a regression to document (Platform) | 2 |
 | DICOM WSI (local) | **X** in v1 → P/N | no local-file DICOM WSI assembler exists in JS; it would be new work (dcmjs parsing + frame decoding) | 4+ |
 | MRXS | **X** → P/N | OpenSlide only | none |
 | Imaris .ims (HDF5), gzip | **C** / B | h5wasm over WORKERFS; 3-D needs the brick store (section 2.3) | 3 |
-| Imaris .ims, LZ4 | **X** → P/N | h5wasm-plugins has no LZ4 filter | none |
+| Imaris .ims, LZ4 | **P/N** (was **X**) | h5wasm-plugins 0.3.0 now ships an LZ4 filter (Platform; not tried on an .ims). Its lzf filter aborts on variable-length strings (Measured, P4), so each filter needs its own test before it is relied on | 4 |
 | PNG / JPEG quick view | **B** | canvas | 1 |
 | Xenium `morphology_focus/` | **B** | per-channel TIFFs | 2 |
 | Prepared label pyramid (`*.labels.pyramid.ome.tiff`, OME-Zarr labels) | **B** | geotiff.js / zarrita → uint32 straight into `label.frag.glsl`. No 24-bit wire limit; the GPU cap of 2^24 ids stays | 1 |
-| Flat label mask | **C** | nearest-neighbour level build in a worker to OPFS. P2b sets the size threshold. Orion's 34050×5797 mask takes ~60 s in Python (Measured) | 2 |
+| Flat label mask | **C** (in the browser) | nearest-neighbour levels built by band workers into OPFS. **Measured (P2b):** a whole-slide 9.6 GB-raw mask in about half Python's time, identical to Python's pyramid; no size threshold was reached | 2 |
 | Polygon masks (Xenium parquet, GeoJSON) | **C** | rasterise on OffscreenCanvas or WebGL in a worker (Predicted: feasible at 838 k polygons; to measure) | 3 |
 | 3-D label volumes | **C** / N | | 4 |
 
@@ -355,11 +363,11 @@ Phase is when the roadmap in section 7 delivers it.
 
 | Format / query | Verdict | How | Phase |
 |---|---|---|---|
-| CSV / TSV | **C** (once) | DuckDB-Wasm streaming `read_csv` → Parquet (or Arrow IPC) in OPFS, then column reads. Wasm32's 4 GB bounds the conversion working set; P3 sets the rows × columns threshold | 1 |
-| Parquet / Arrow | **B** | column pruning via DuckDB-Wasm or hyparquet; predicate pushdown via row-group stats | 1 |
-| .h5ad (obs, var, obsm, dense X, CSR/CSC, gzip/lzf/zstd/blosc) | **B** | h5wasm in a worker over WORKERFS: random access, no full load; wide tables per column as today | 2 |
-| AnnData-zarr, SpatialData `tables/<name>` | **B** | zarrita | 2 |
-| SpatialData shapes and points (parquet, WKB geometry) | **B** | Parquet reader + well-known-binary decode | 3 |
+| CSV / TSV | **C** (once) | parsed by plain workers (V8's `Number()`, correctly rounded) into a raw float64 column store in OPFS. **Measured (P3):** 1.26 M × 29 drawable in under 3× polars' read, every column bit-identical to DuckDB's parse; DuckDB-Wasm remains the fallback for quoted fields | 1 |
+| Parquet / Arrow | **B** | hyparquet (JavaScript, column reads, GeoParquet). DuckDB-Wasm downloads its Parquet reader from `extensions.duckdb.org` on first use (Measured, P4), so it is not the default | 1 |
+| .h5ad (obs, var, obsm, dense X, CSR/CSC, gzip/lzf/zstd/blosc) | **B** for reads, **C** for speed | h5wasm in a worker over WORKERFS. **Measured (P4):** every read identical to h5py, at 2–13× its time; lzf-compressed strings unsupported. One pass copies X into the column store | 2 |
+| AnnData-zarr, SpatialData `tables/<name>` | **B** | zarrita (zarr v3, sharding, zstd). **Measured (P4):** spatialdata 0.8's store read identical to zarr-python | 2 |
+| SpatialData shapes and points (parquet, WKB geometry) | **B** | hyparquet; WKB bytes or GeoJSON. **Measured (P4)** identical to pyarrow | 3 |
 | describe + 50-bin histograms | **B** | typed-array kernels in a worker, or DuckDB SQL | 1 |
 | Range gate, gate count | **B** (already) | `numericData.js` + `labelGpu.js` | 1 |
 | Nearest cell / hover pick | **B** | kdbush over the `[id,x,y]` already in memory; also a client-side label-tile lookup | 1 |
@@ -399,7 +407,7 @@ CSR/CSC are compressed sparse row and column layouts.
 | Capability | Chromium | Firefox | Safari |
 |---|---|---|---|
 | `showOpenFilePicker` and directory handles, persisted across sessions | yes | no (`<input type=file>` only) | no |
-| OPFS quota | ~60 % of disk | min(10 %, 10 GiB); 50 % if `persist()` is granted | ~60 %; **script storage purged after 7 days without interaction** |
+| OPFS quota | ~60 % of disk. **Measured (Chrome 156):** `estimate().quota` reports usage + 10 GiB, not the limit; 14.2 GB wrote without error | min(10 %, 10 GiB); 50 % if `persist()` is granted | ~60 %; **script storage purged after 7 days without interaction** |
 | Wasm Memory64 (> 4 GB) | 133+ | 134+ | no |
 | WebGPU | 113+ | 141+ (Windows), 145–147 (macOS) | 26 |
 | COEP (Cross-Origin-Embedder-Policy) `credentialless`: threads without breaking cross-origin tiles | 113+ | 128+ | no |
@@ -414,8 +422,10 @@ Platform: library and browser documentation, November 2026.
 | TIFF / OME-TIFF tiles | geotiff.js + GeoTIFFTileSource | Viv/deck.gl; tifffile under Pyodide |
 | Zarr: OME-Zarr, SpatialData, AnnData-zarr | zarrita.js + numcodecs.js | none |
 | HDF5: .h5ad, gzip Imaris | h5wasm (+ h5wasm-plugins) | tsfive; Pyodide + h5py |
-| CSV / Parquet ingest | DuckDB-Wasm | hyparquet, held open |
-| In-browser column format | Apache Arrow JS | parquet-wasm, not needed |
+| CSV ingest | plain workers + V8's `Number()` (**Measured**, P3) | DuckDB-Wasm, kept as the fallback for quoted CSVs |
+| Parquet reads | hyparquet (**Measured**, P4) | DuckDB-Wasm, loaded on demand for SQL only |
+| In-browser column format | raw float64 columns in OPFS (**Measured**, P3) | Parquet (8 s to encode at 1.26 M × 29); parquet-wasm |
+| Flat TIFF → pyramid | band workers + `CompressionStream` (**Measured**, P2b, P7) | one worker; a JS deflate at level 1 (no faster than the native one) |
 | Nearest cell, ROI mapping | kdbush, flatbush | none |
 | Auto gate / contrast | a JS 3-component EM GMM | none |
 | Magic select | onnxruntime-web, WebGPU execution provider | none |
@@ -441,23 +451,35 @@ SpatialData and AnnData-zarr.
 
 **h5wasm** is libhdf5 compiled to Wasm. WORKERFS mounts a `File` for random
 access without loading it, and slicing happens inside libhdf5.
-`h5wasm-plugins` adds blosc, bzip2, lzf and zstd, but **no LZ4**. It runs in a
-worker; there is an IIFE build for Firefox workers. **Chosen** for .h5ad and
-gzip Imaris. Rejected: tsfive (read-only pure TypeScript, less mature) and
-Pyodide + h5py (below).
+`h5wasm-plugins` adds blosc, bzip2, lzf and zstd, and since 0.3.0 LZ4. It
+runs in a worker; there is an IIFE build for Firefox workers. **Chosen** for
+.h5ad and gzip Imaris. Rejected: tsfive (read-only pure TypeScript, less
+mature) and Pyodide + h5py (below). **Measured (P4):** every read identical to
+h5py, at 2–13× h5py's time; its lzf filter aborts on variable-length strings.
 
 **DuckDB-Wasm** does CSV/Parquet/Arrow ingest and SQL. It has
 `registerFileHandle` on a `File` and OPFS-backed databases since 1.32. It has
 the wasm32 4 GB ceiling and is single-threaded unless the page is
-cross-origin isolated. **Chosen for ingest and ad-hoc column access, not for hot
-paths.** Plexora's query set is small and fixed; typed-array kernels in workers
-are faster and need no SQL engine. Kept open as an alternative: **hyparquet**
-(dependency-free Parquet column reads), if DuckDB's bundle size (~30 MB) or
-memory ceiling bites.
+cross-origin isolated. It was chosen for ingest. **Measured since, it is not
+the right default:**
+
+- one instance parses the 1.26 M-row table in 2.6 s, and splitting the file
+  over several instances only trades their start-up (about 0.4 s each, a few
+  hundred MB of heap each) for parse time (P3);
+- plain workers calling V8's `Number()`, which is correctly rounded, parse the
+  same file several times faster, bit-identical to DuckDB's parse in all 29
+  columns (P3b);
+- its Parquet reader is an extension it downloads from `extensions.duckdb.org`
+  on first use (P4): a third-party request from a page that should work
+  offline, unless Plexora serves the extension itself.
+
+It stays as the fallback for CSVs with quoted fields and for ad-hoc SQL, loaded
+on demand. **hyparquet** (JavaScript, no dependencies) reads Parquet and
+GeoParquet with no network, identical to pyarrow (P4).
 
 **Apache Arrow JS.** The node already speaks Arrow IPC for the compact table
-copy. Arrow becomes the in-browser column format. No parquet-wasm is needed if
-DuckDB does the conversion.
+copy, so Arrow is how node columns arrive. In the browser node itself a column
+is a raw float64 file in OPFS (P3); no parquet-wasm is needed.
 
 **kdbush and flatbush** handle nearest-cell and ROI mapping. A JS 3-component
 GMM fitted by EM replaces sklearn for auto gate and auto contrast.
@@ -533,6 +555,16 @@ back on, and ask the user.
   succeed. That holds over https and over http, with **no** header from the
   server.
 - `targetAddressSpace: "local"` for a loopback address is refused.
+
+**Measured headed (P5LNAH).** In a visible Chrome 156 window, with nothing
+granted, the fetch is not refused: it is held while a bubble anchored to the
+address bar asks "127.0.0.1:PORT wants to — Access other apps and services on
+this device — Allow / Block" (screenshot in the P5 report). Headless Chrome
+denies the same request at once, which is why the first round saw only
+refusals. Granting the permission over CDP did not release the held request;
+new requests then succeeded. The pairing page must therefore start its probe
+only after telling the user what the prompt will say, and retry after it is
+answered.
 
 ### 4.2 Safari
 
@@ -672,12 +704,24 @@ the hub proxy. The kernel-node path is therefore "node serves the app".
   15 channels is 2.8 GB in both the browser and the node arm (OpenSeadragon's
   tile cache).
 
+**Measured in the second round (2026-11-05, evening).**
+- **Tables:** the CSV parsed by plain workers is drawable in about 1 s for
+  1.26 M × 29 (under 3× polars), peaking near 1 GB, every column bit-identical
+  to DuckDB's parse (P3, P3b).
+- **Pyramids:** the whole-slide flat mask builds in about half Python's time
+  with band workers, and a 9.6 GB-raw flat image in 0.1–0.9× Python's time
+  depending on how it was written, every tile identical (P2b, P7).
+- **AnnData:** h5wasm reads are correct and 2–13× slower than h5py (P4).
+- **The product page:** on the same image and tour, the browser node reaches
+  full 2.4–3.3× sooner than the local Python app at every step that needs new
+  tiles, ties on the others, and peaks at about half its memory (P6).
+
 ### 5.3 Hard limits and the experiment that turns each into a threshold
 
 | Limit | Value | Experiment |
 |---|---|---|
 | Wasm32 heap | 4 GB per module instance (DuckDB and h5wasm each) | P3: CSV sizes 0.2 / 0.8 / 3 GB; record the peak and the failure mode |
-| OPFS quota | 60 % of disk (Chromium, Safari); 10 GiB (Firefox) | P2b, P3, P7: conversion output sizes; `navigator.storage.estimate()`; Safari's 7-day purge → re-conversion cost |
+| OPFS quota | 60 % of disk (Chromium, Safari); 10 GiB (Firefox). Chrome's `estimate()` reports usage + 10 GiB, not this limit (Measured) | P2b, P3, P7: conversion output sizes; writing past the reported quota; Safari's 7-day purge → re-conversion cost |
 | Per-tab memory | 2–4 GB in practice | P6: memory under 15 channels + mask + 8 columns; Chrome's `performance.measureUserAgentSpecificMemory` |
 | GPU | label tile budget 160 MB, texture LRU 384 MB, volume 1 GB (`labelGpu.js`, `glInit.js`, `volumeRenderer.js`) | unchanged; reuse the bench3d memory probes |
 | Ids | 2^24 on the GPU label path | unchanged (CPU fallback) |
@@ -791,19 +835,29 @@ build.
   - Stats come from the coarsest adequate level, with a provisional window and
     an exact scan in the background.
   - A JS 3-component EM GMM, held to tolerance vectors.
-  - Flat-TIFF pyramids and flat-mask label pyramids are built strip-wise into
-    OPFS. Only derived levels are kept, deflated; level 0 is read from the
-    user's own file (P2b: 20 MB for a 9.6 GB mask).
-  - Unsupported, and said loudly: DICOM, SVS with JPEG 2000, MRXS, Imaris LZ4,
-    3-D label volumes, `/volume/*`, surfaces.
+  - Flat-TIFF pyramids (images and label masks) are built by band workers into
+    OPFS, with Python's own arithmetic (`segmentation_pyramid`'s nearest
+    neighbour, `image_pyramid.reduce2`). Level 0 is read from the user's own
+    file when it is tiled, and copied (deflated) only from a stripped file
+    (P2b: 20 MB for a 9.6 GB mask; P7: 3.8 GB for a 9.6 GB-raw image, the size
+    of Python's copy). Bytes go straight into `CompressionStream`; a Blob in
+    between fails at this scale.
+  - Unsupported, and said loudly: DICOM, SVS with JPEG 2000, MRXS, Imaris LZ4
+    (until its plugin is tested), 3-D label volumes, `/volume/*`, surfaces.
 - **Tables.**
-  - DuckDB-Wasm over a registered `File` for CSV and Parquet. It parses once;
-    every numeric column is then kept in OPFS as a raw float64 file plus a
-    manifest. The design was Parquet, but P3 measured about 8 s of
+  - CSV and TSV: plain workers parse byte ranges cut at line starts, with V8's
+    `Number()`; every numeric column is kept in OPFS as a raw float64 file plus
+    a manifest. The design was Parquet, but P3 measured about 8 s of
     single-threaded Parquet encoding for 1.26 M × 29 doubles, whatever the
-    codec. The raw store reopens in 31 ms without starting DuckDB.
+    codec; and DuckDB-Wasm's own parse was the remaining cost. The raw store
+    reopens in tens of ms without starting anything. DuckDB-Wasm parses a CSV
+    with quoted fields, loaded only then.
+  - Parquet: hyparquet. DuckDB-Wasm would fetch its Parquet reader from
+    `extensions.duckdb.org`; if it is ever the reader, Plexora serves that
+    extension itself.
   - h5wasm (WORKERFS) and zarrita for h5ad and SpatialData, copied once to the
-    same column store.
+    same column store (P4: one pass over X costs 1–9 s at 1.26 M × 90, against
+    h5py's 0.5–2.3 s).
   - Implemented: the `load_table` document, `describe`, `all_cells`,
     `geometry`, `columns`, `metadata_column`, `rows`, `roi.map_to_cells`,
     `gating.gmm`.
@@ -919,7 +973,7 @@ node token.
 | **POC** (next; section 8) | nothing under `plexora/`; `tools/poc_browser_node/` on the POC branch; records in `docs/internal/bench/browser_node/` | everything | the POC records | delete the branch |
 | **0. Seams** (small, reversible) | `services/backend.js` pass-through; `base.html` script insertion + `static_build` branch; `licensed_block` + `data-plexora-when`; `template_data` gains `backend` and `local_kind`; label, RGB and overview tiles onto `tileFetch` with `targetAddressSpace`; node: `features`, multi-origin launch + environment variable (no PNA preflight answer or CORP: P5), `--pair`, `/app/`; `connect.py --pair`; `plexora/client/static_build.py` (not yet deployed); goldens regenerated once with the diff reviewed | all `tests/test_node_*.py`; `tests/js/*_probe.mjs` (`resource_routing`, `tile_fetch`, `tile_url`, `label_tile_lifecycle`, `label_gpu`, `app_router`, `license`, `tool_assets`, `datalayer_globals`); `test_hd_default.py`, `test_plugin_boundary.py`, `test_app_shell.py`, `test_app_router.py`, `test_auth_token.py`, `test_browser_guard.py` | `tests/js/backend_shim_probe.mjs`, `tests/test_static_build.py`, `tests/test_node_pairing.py`, PNA/CORP cases in `test_node_direct_routing.py` | remove the script tag and the macro |
 | **1. Thin static client over Python nodes** (no Wasm) | `shell.js`, `node/router.js`, `node/primary.js`, `node/nodeClient.js`, `node/wire.js`, `workers/{kdtree,centroids}.js`, `node/requirements.js` + parity test, `node/guards.js`, `LicenseClient`; the connector crate and its pairing page; the node serves `/app/`; the OOD scenario | as above | `nodeClient` conformance against `tests/node_harness.py`; `static_routes.json` classification; connector pairing round trip | unpublish the static site; `/app/` off by flag |
-| **2. Browser node, read-only** | `workers/browserNode.js` (geotiff.js, zarrita, h5wasm, DuckDB-Wasm), `pyramid.js`, `histogram.js`, `gmm.js`, OPFS caches, flat image and mask conversion, Import with the browser file picker (`local_kind:"browser"` in `dataLocation.js`, `browsePicker.js`, `fileSourceRow.js`), the cell_explorer, roi and manual gating halves | as above | `tests/node_conformance/` vectors + `browser_node_conformance_probe.mjs`; GMM and histogram tolerance vectors | `supports("file_picker")=false` hides local import; Phase 1 remains |
+| **2. Browser node, read-only** | `workers/browserNode.js` (geotiff.js, zarrita, h5wasm, hyparquet; the POC's CSV workers; DuckDB-Wasm on demand for quoted CSVs, its Parquet extension served by Plexora), `pyramid.js` (the POC's band workers), `histogram.js`, `gmm.js`, OPFS caches, flat image and mask conversion, Import with the browser file picker (`local_kind:"browser"` in `dataLocation.js`, `browsePicker.js`, `fileSourceRow.js`), the cell_explorer, roi and manual gating halves | as above | `tests/node_conformance/` vectors + `browser_node_conformance_probe.mjs`; GMM and histogram tolerance vectors; the POC's `reduce` vectors and CSV edge cases | `supports("file_picker")=false` hides local import; Phase 1 remains |
 | **3. Write-back, bundles, mixed projects, lab gateway** | project-store sidecars for roi, gating and qc; `plexora project export/import` + browser export/import; mixed projects (table in the browser, image on a node); `plexora gateway` | as above | bundle round trip Python → browser → Python | feature flags |
 | **4. Optional** | COOP/COEP isolation for DuckDB threads (nodes need no CORP, P5 d; not Safari); volumes and surfaces if demanded; WebGPU kernels | | | |
 
@@ -927,7 +981,8 @@ node token.
 
 - Two implementations of primary logic. Only the conformance harness mitigates
   it.
-- h5ad in wasm32, and large flat masks: the two hard engineering items.
+- h5ad in wasm32: correct but 2–13× h5py (P4). Large flat masks and images are
+  no longer a risk (P2b, P7).
 - Safari storage semantics.
 - The Chrome prompt as a new user step. Its wording is copied into the pairing
   page.
@@ -1100,35 +1155,43 @@ Results land in `docs/internal/bench/browser_node/` (one JSON record and one MD 
 | 1 | Blocker → **resolved** | Can geotiff.js over a local `File` hold the HD pan budget (8.4 ms median), and open an 80-channel, 8-level OME-TIFF (hundreds of IFDs and SubIFDs) in a few seconds cold? Predicted yes for deflate and LZW; the IFD walk is the unknown. **Measured:** a 40-channel, 7-level file opens in 73–107 ms (lazy IFDs); pan frames ≤ 2.2 ms p95 at 7 channels; deflate with predictor 2 decodes byte-identically. The 80-channel file was not run | P0, P1 |
 | 2 | Blocker → **resolved on loopback** | Does a static origin reach an existing node end to end (pairing, token, CORS, PNA preflight, batch POST, table routes, restart recovery), and is the Chrome prompt a workable step? Safari 18.0–18.3 cannot do loopback at all. **Measured:** yes, byte-identical; no preflight answer needed; one `loopback-network` permission. Open: the remote records and Safari | P5 (a–h), the O2 manual record |
 | 3 | High | The minimal connector: how much of `plexora/connect.py` (3,430 lines: ssh, `-J`, srun, the askpass relay, the announce parse, GCP `gcloud … --tunnel-through-iap`, remotes.json) the Rust crate must port for the first release; whether Windows OpenSSH's askpass limitation (`DEPLOYMENT.md:492-494`) stays; how a downloadable binary is signed while the desktop installers are not yet | a scoping pass on `connect.py` before Phase 1; the signing item is shared with releases |
-| 4 | High | h5ad in wasm32: per-column reads of a 1.26 M × 90 dense `X` through h5wasm, against a one-time Parquet copy; CSR column reads; LZ4-filtered files; and the policy that the browser never writes into the user's source file (sidecar + export instead) | P4; a product decision on the write-back wording |
+| 4 | High → **answered, PARTIAL** | h5ad in wasm32: per-column reads of a 1.26 M × 90 dense `X` through h5wasm, against a one-time copy; CSR column reads; LZ4-filtered files; and the policy that the browser never writes into the user's source file (sidecar + export instead). **Measured (P4):** every read identical to h5py, at 2–13× its time; a column of an uncompressed dense X read alone is ~50× (one tiny read per row), so X is copied once into the column store (1–9 s at 1.26 M × 90); lzf-compressed strings abort the plugin. Open: the write-back wording | P4; a product decision on the write-back wording |
 | 5 | High | Two implementations of primary logic: describe, GMM, kd-tree, centroid tiles, `Requires`, launch parsing. Without conformance vectors this design fails its own goal | `tests/node_conformance/`, built in Phase 1 before any Phase 2 code |
-| 6 | High → **resolved** | Large flat masks: a strip-wise label-pyramid builder in a worker writing to OPFS, and the threshold above which "prepare first" is the answer. **Measured:** a 9.6 GB-raw whole-slide mask in 58 s, peak 1.09 GB, no jank, identical to Python's; about 6 s per raw GB in one worker. No "prepare first" threshold was reached | P2b |
+| 6 | High → **resolved** | Large flat masks: a strip-wise label-pyramid builder in a worker writing to OPFS, and the threshold above which "prepare first" is the answer. **Measured:** a 9.6 GB-raw whole-slide mask in 58 s, peak 1.09 GB, no jank, identical to Python's; about 6 s per raw GB in one worker. No "prepare first" threshold was reached. **Second round:** band workers build it in about half Python's time, and flat images too (P7) | P2b, P7 |
 | 7 | Medium | The node serves the app. `base_url` becomes a runtime value: 186 `base_url` substitutions in core and plugin templates today, 104 of them in `base.html` and 65 in `index.html`. The node's `/` deliberately reveals nothing (`node/app.py:123-136`), so `/app/` changes that posture and must stay token-gated. OOD cookie and prefix behaviour | Phase 0/1; P5 (h); the OOD manual record |
 | 8 | Medium | The licence in the browser: does the platform's device flow allow the app origin (CORS), or does it need a proxy route; shipping the Ed25519 public keys; the refusal UX when offline | a check against account.biocognia.com before Phase 1 |
-| 9 | Medium | Firefox and Safari: no persisted handles, Firefox's 10 GiB, Safari's 7-day purge and no Memory64; the "re-locate files" and export nudges | P7, P8 |
+| 9 | Medium → **Firefox answered** | Firefox and Safari: no persisted handles, Firefox's 10 GiB, Safari's 7-day purge and no Memory64; the "re-locate files" and export nudges. **Measured (P8):** Firefox 159 passes every S feature (tiles, pyramids in OPFS, the CSV store, h5ad, SpatialData) with the same picture as Chrome. Playwright's WebKit on Windows passes everything but OPFS, which that port lacks; Safari itself is unmeasured | P8 on a Mac |
 | 10 | Medium | Bucket CORS varies: Orion's S3 bucket is open, IDC's Google Cloud Storage object reads are not. The page must detect it and say "use a node or the Python helper" | the Phase 2 import flow; one probe per bucket |
-| 11 | Low → **confirmed bug** | An existing bug, independent of this work: `frag.glsl:504` rebuilds the 16-bit value from the two uploaded bytes as `r*255 + g`; it should be 256. **Measured** through the product's renderer: ±1 display level over the full range, up to **11 of 255 levels dark** for a bright channel in a tight window ([0.50, 0.55]) | P0; a one-character fix plus a probe, in the product |
+| 11 | Low → **fixed** | An existing bug, independent of this work: `frag.glsl:504` rebuilt the 16-bit value from the two uploaded bytes as `r*255 + g`; it should be 256. **Measured** through the product's renderer: ±1 display level over the full range, up to **11 of 255 levels dark** for a bright channel in a tight window ([0.50, 0.55]), and a saturated pixel in a window at the top of the range near black. Fixed on main (9a2b1912) with `tests/test_hd_u16_shader.py` | done |
 | 12 | Low | COOP/COEP later (DuckDB threads, ffmpeg.wasm). **Measured:** CORS reads of a node (fetch, XHR) load under `require-corp` without CORP, so nodes need nothing; `credentialless` is still absent in Safari. Memory64 for tables over 4 GB is Chrome and Firefox only | Phase 4 |
-| 13 | Medium | **New.** OPFS quota in a fresh Chrome profile on the bench machine was about 10.7 GB (a 1.9 TB disk, 330 GB free), not 60 % of the disk. Derived data must be compressed and bounded; the quota in an ordinary user profile is unmeasured | P7 |
-| 14 | Medium | **New.** P3's first-ever CSV open is 5–10× polars' read (one-threaded wasm parse): 3.4 s to drawable at 1.26 M cells. Accept it as a one-time cost, parallelise under cross-origin isolation, or send large CSVs to "prepare first" | a product decision |
+| 13 | Medium → **resolved** | OPFS quota in a fresh Chrome profile on the bench machine read about 10.7 GB. **Measured:** that is Chrome 156's report, not its limit: `estimate().quota` is usage + 10 GiB (exactly 10,737,418,240 when empty), headless or headed, persistent profile or not, and 14.2 GB wrote without error (the report then read 25.0 GB). It is no setting of Plexora's; the site uses the browser's own limit (about 60 % of the disk in Chrome), calls `navigator.storage.persist()`, and treats `QuotaExceededError`, not the estimate, as the signal. Firefox's 10 GiB is real | P7 |
+| 14 | Medium → **resolved** | P3's first-ever CSV open was 5–10× polars' read (one-threaded wasm parse): 3.4 s to drawable at 1.26 M cells. **Measured since:** plain workers parsing with V8's `Number()` reach drawable in about 1 s (under 3× polars), bit-identical to DuckDB's parse; no isolation needed | P3 |
 
 ## POC results
 
-First campaign, 2026-11-05: one Windows machine (i9-12900K, 128 GB, RTX 3080, NVMe), Chrome 156 headless on the GPU, and `plexora node serve` as the reference for every byte. The full report is [BROWSER_NODE_POC_2026-11-05.md](bench/browser_node/BROWSER_NODE_POC_2026-11-05.md); there is one report per POC beside it.
+Two rounds on 2026-11-05: one Windows machine (i9-12900K, 128 GB, RTX 3080, NVMe), Chrome 156 headless on the GPU (Firefox 159 and WebKit 27.2 for P8), and Python as the reference for every byte: `plexora node serve`, Python's own pyramid builders, h5py, zarr-python and pyarrow, and the product itself for P6. The full report is [BROWSER_NODE_POC_2026-11-05.md](bench/browser_node/BROWSER_NODE_POC_2026-11-05.md); there is one report per POC beside it. The records are the second round's.
 
 | POC | Verdict | Key numbers (Measured) |
 |---|---|---|
-| P0 | **GO** | Rendering modules unmodified; one page-side shim (`toFloatColor`). Node-fed and browser-fed canvases identical at every view (0 of 648,000 pixels differ). `frag.glsl` bug quantified |
-| P1 | **GO** | 66.7 GB, 40-channel OME-TIFF: open 0.1 s. Tile p50 21 ms, p95 31 ms. 200/200 tiles identical to the HD path. Tour to full 2.2–2.6× sooner than a local Python node. Auto-level 0.11–0.26 s per channel. The same reader on a 73 GB S3 file: open 6.9 s, tiles 0.37 s p50 |
-| P2 | **GO** | Label tiles identical (200/200). GPU gate drag 18.6 ms per drawn update at 1.26 M ids |
-| P2b | **PARTIAL** | Whole-slide flat mask → pyramid in a worker: 58 s, peak 1.09 GB, no long tasks, identical to Python's. 2.7× Python's own time (hypothesis: 2×) |
-| P3 | **PARTIAL** | 1.26 M × 29 table: every answer identical (all_cells, columns, describe to 1e-12, nearest, ROI, gates). Reopen 31 ms, describe 0.9 s, peak 1.67 GB. First-ever open 3.4 s = 9.9× polars (bound 5×) |
-| P5 | **GO** | Static page ↔ node: tiles, batch, all_cells and describe byte-identical to the desktop route. Restart recovery; connector pairing; COOP/COEP; the node-served app under `/rnode/`; Local Network Access with one `loopback-network` permission and no server header |
+| P0 | **GO** | Rendering modules unmodified; one page-side shim (`toFloatColor`). Node-fed and browser-fed canvases identical at every view (0 of 648,000 pixels differ). `frag.glsl` bug quantified, then fixed (the probe now reads 0 error) |
+| P1 | **GO** | 66.7 GB, 40-channel OME-TIFF: open 0.06 s. Tile p50 20.5 ms, p95 35.5 ms. 200/200 tiles identical to the HD path. Tour to full 2.3–2.9× sooner than a local Python node. Auto-level 0.10–0.21 s per channel. The same reader on a 73 GB S3 file: open 7.0 s, tiles 0.36 s p50 |
+| P2 | **GO** | Label tiles identical (200/200). GPU gate drag 18.4 ms per drawn update at 1.26 M ids |
+| P2b | **GO** (round 1 PARTIAL) | Whole-slide flat mask (9.6 GB raw) → pyramid by band workers: 9.6 s against Python's 21.8 s; 15.7 s in 4 workers and 0.75 GB; identical; no long tasks |
+| P3 | **GO** (round 1 PARTIAL) | 1.26 M × 29 CSV parsed by plain workers: drawable in 0.9 s (2.7× polars; DuckDB-Wasm took 3.4 s), peak 1.09 GB; every column bit-identical to DuckDB's parse; every answer identical to the server's; reopen 40 ms |
+| P4 | **PARTIAL** | h5ad (1.26 M × 90; dense and CSR; none, gzip, lzf) and a spatialdata 0.8 store: every read identical to Python's except lzf-compressed strings; h5wasm 2–13× h5py (a lone dense column 56×); one pass copies X into the column store in 1–9 s. DuckDB fetches its Parquet reader from the network; hyparquet does not |
+| P5 | **GO** | Static page ↔ node: tiles, batch, all_cells and describe byte-identical to the desktop route. Restart recovery; connector pairing; COOP/COEP; the node-served app under `/rnode/`; Local Network Access with one `loopback-network` permission and no server header, and, headed, the prompt that holds the first fetch |
+| P6 | **GO** | The product page over a scratch Python server against the browser node, same image, tour, waypoints and completion test, ABBA: every step that needs new tiles 2.4–3.3× faster in the browser; open 0.3× the product's (page load included); renderer peak 0.68 GB against 1.3 GB |
+| P7 | **GO** | A 9.6 GB-raw flat image (2 channels) → pyramid by band workers with `image_pyramid.reduce2`'s arithmetic: 27.5 s against Python's 31.2 s from zlib strips, 21.2 s against 178.6 s from an uncompressed file; 200/200 tiles identical at every level; no long tasks; reopened in 14 ms after a relaunch. Chrome's `estimate()` reads usage + 10 GiB: not a limit |
+| P8 | **GO** for Firefox | Firefox 159: every S feature, the same picture as Chrome (0.4 of 255 levels, worst grid cell). WebKit on Windows: all but OPFS, which that port lacks; Safari unmeasured |
 
 **What changed in the design** (each section above notes it):
-- the browser's table store is raw columns in OPFS, not Parquet (§6.4);
-- flat-mask pyramids keep only deflated derived levels (§6.4);
+- the browser's table store is raw columns in OPFS, not Parquet, filled by plain workers, not DuckDB (§3, §6.4);
+- Parquet is read by hyparquet; DuckDB-Wasm is a fallback loaded on demand (§3);
+- flat masks and flat images become pyramids in band workers, with Python's arithmetic (§2.1, §6.4);
+- h5ad is copied once into the column store (§2.2, §6.4);
 - the node needs no private-network preflight answer and no CORP stamp (§6.5);
+- the pairing page announces Chrome's prompt and retries after it (§4.1);
+- Chrome's `estimate()` is not a storage limit (§2.4, question 13);
 - four Phase 0 seams were found in P0:
   - export the tile-source helpers;
   - move `toFloatColor`;
@@ -1136,7 +1199,6 @@ First campaign, 2026-11-05: one Windows machine (i9-12900K, 128 GB, RTX 3080, NV
   - register handlers before items.
 
 **Still to do:**
-- the O2, ERIS and GCP records;
-- P4, P6, P7 and P8;
-- a headed Local Network Access check;
-- the decision on P3's cold-ingest ratio (question 14).
+- the O2, ERIS and GCP records (`P5R` runs the protocol check once a node is up);
+- Safari on a Mac (P8);
+- an XL table; the LZ4 plugin on a real .ims.

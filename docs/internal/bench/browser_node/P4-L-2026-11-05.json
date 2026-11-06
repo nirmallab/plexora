@@ -1,0 +1,969 @@
+{
+ "poc": "P4",
+ "date": "2026-11-05",
+ "commit": "6083284f-dirty",
+ "machine": {
+  "cpuPercentBefore": [
+   10.9,
+   21.6,
+   6.3
+  ],
+  "platform": "win32 10.0.26200",
+  "cpu": "12th Gen Intel(R) Core(TM) i9-12900K",
+  "cores": 24,
+  "memoryGB": 128,
+  "load": [
+   0,
+   0,
+   0
+  ],
+  "hostname": "ajit"
+ },
+ "browser": {
+  "userAgent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/156.0.0.0 Safari/537.36",
+  "hardwareConcurrency": 24,
+  "deviceMemory": 32,
+  "webgl2": true,
+  "gpu": "ANGLE (NVIDIA, NVIDIA GeForce RTX 3080 (0x00002216) Direct3D11 vs_5_0 ps_5_0, D3D11)",
+  "crossOriginIsolated": false,
+  "isSecureContext": true,
+  "origin": "http://127.0.0.1:49788",
+  "storage": {
+   "quota": 10737418240,
+   "usage": 0
+  },
+  "hasShowOpenFilePicker": true,
+  "hasOPFS": true,
+  "jsHeap": 16824275
+ },
+ "arm": "browser",
+ "state": "fresh profile; files read by Python first",
+ "fixture": {
+  "name": "L",
+  "files": {
+   "mask": {
+    "name": "P37_S30-CRC02-mask.ome.tif",
+    "bytes": 222860136,
+    "mtime": "2026-11-05T22:28:10.621Z"
+   },
+   "table": {
+    "name": "P37_S30-CRC02.csv",
+    "bytes": 634268626,
+    "mtime": "2026-11-05T22:28:37.681Z"
+   }
+  },
+  "p4": {
+   "dir": "C:\\plexora-bench\\browser_node\\fixtures\\p4-l",
+   "h5ad": [
+    "cells-dense-none.h5ad",
+    "cells-dense-gzip.h5ad",
+    "cells-dense-lzf.h5ad",
+    "cells-csr-none.h5ad",
+    "cells-csr-gzip.h5ad",
+    "cells-csr-lzf.h5ad"
+   ],
+   "sdata": "sdata.zarr"
+  }
+ },
+ "metrics": {
+  "h5adInitMs": 315.09999990463257,
+  "plugins": [
+   "libH5Zlzf.so",
+   "libH5Zzstd.so",
+   "libH5Zblosc.so",
+   "libH5Zlz4.so",
+   "libH5Zbshuf.so"
+  ],
+  "info": {
+   "cells-dense-none.h5ad": {
+    "layout": "dense",
+    "nObs": 1260592,
+    "nVars": 90,
+    "rowBlock": 186413,
+    "openMs": 9.5,
+    "codec": []
+   },
+   "cells-dense-gzip.h5ad": {
+    "layout": "dense",
+    "nObs": 1260592,
+    "nVars": 90,
+    "rowBlock": 186413,
+    "openMs": 9,
+    "codec": [
+     "deflate"
+    ]
+   },
+   "cells-dense-lzf.h5ad": {
+    "layout": "dense",
+    "nObs": 1260592,
+    "nVars": 90,
+    "rowBlock": 186413,
+    "openMs": 8.699999809265137,
+    "codec": [
+     "lzf"
+    ]
+   },
+   "cells-csr-none.h5ad": {
+    "layout": "csr",
+    "nObs": 1260592,
+    "nVars": 90,
+    "rowBlock": 186413,
+    "openMs": 8.900000095367432,
+    "codec": []
+   },
+   "cells-csr-gzip.h5ad": {
+    "layout": "csr",
+    "nObs": 1260592,
+    "nVars": 90,
+    "rowBlock": 186413,
+    "openMs": 8.899999618530273,
+    "codec": [
+     "deflate"
+    ]
+   },
+   "cells-csr-lzf.h5ad": {
+    "layout": "csr",
+    "nObs": 1260592,
+    "nVars": 90,
+    "rowBlock": 186413,
+    "openMs": 8,
+    "codec": [
+     "lzf"
+    ]
+   }
+  },
+  "matrix": [
+   {
+    "kind": "h5ad",
+    "file": "cells-dense-none.h5ad",
+    "layout": "dense",
+    "codec": "none",
+    "op": "obs_names",
+    "state": "ok",
+    "error": null,
+    "ms": 1187.2000002861023,
+    "pythonMs": 382.7434000559151,
+    "ratio": 3.1018170401179064
+   },
+   {
+    "kind": "h5ad",
+    "file": "cells-dense-none.h5ad",
+    "layout": "dense",
+    "codec": "none",
+    "op": "obs_numeric",
+    "state": "ok",
+    "error": null,
+    "ms": 15.399999618530273,
+    "pythonMs": 5.18570002168417,
+    "ratio": 2.9697050647231205
+   },
+   {
+    "kind": "h5ad",
+    "file": "cells-dense-none.h5ad",
+    "layout": "dense",
+    "codec": "none",
+    "op": "obs_categorical",
+    "state": "ok",
+    "error": null,
+    "ms": 4.300000190734863,
+    "pythonMs": 0.7585999555885792,
+    "ratio": 5.6683369924515725
+   },
+   {
+    "kind": "h5ad",
+    "file": "cells-dense-none.h5ad",
+    "layout": "dense",
+    "codec": "none",
+    "op": "obsm_spatial",
+    "state": "ok",
+    "error": null,
+    "ms": 28.5,
+    "pythonMs": 10.029600001871586,
+    "ratio": 2.8415888963350207
+   },
+   {
+    "kind": "h5ad",
+    "file": "cells-dense-none.h5ad",
+    "layout": "dense",
+    "codec": "none",
+    "op": "var_names",
+    "state": "ok",
+    "error": null,
+    "ms": 1,
+    "pythonMs": 0.20209979265928268,
+    "ratio": 4.948050598378824
+   },
+   {
+    "kind": "h5ad",
+    "file": "cells-dense-none.h5ad",
+    "layout": "dense",
+    "codec": "none",
+    "op": "x_rows",
+    "state": "ok",
+    "error": null,
+    "ms": 105,
+    "pythonMs": 33.33199955523014,
+    "ratio": 3.1501260470743166
+   },
+   {
+    "kind": "h5ad",
+    "file": "cells-dense-none.h5ad",
+    "layout": "dense",
+    "codec": "none",
+    "op": "x_column",
+    "state": "ok",
+    "error": null,
+    "ms": 5635.5,
+    "pythonMs": 101.1775997467339,
+    "ratio": 55.6990876844943
+   },
+   {
+    "kind": "h5ad",
+    "file": "cells-dense-none.h5ad",
+    "layout": "dense",
+    "codec": "none",
+    "op": "x_all",
+    "state": "ok",
+    "error": null,
+    "ms": 918.5,
+    "pythonMs": 525.4255998879671,
+    "ratio": 1.7481066780831491
+   },
+   {
+    "kind": "h5ad",
+    "file": "cells-dense-gzip.h5ad",
+    "layout": "dense",
+    "codec": "gzip",
+    "op": "obs_names",
+    "state": "ok",
+    "error": null,
+    "ms": 1380.1999998092651,
+    "pythonMs": 406.9937001913786,
+    "ratio": 3.391207281980681
+   },
+   {
+    "kind": "h5ad",
+    "file": "cells-dense-gzip.h5ad",
+    "layout": "dense",
+    "codec": "gzip",
+    "op": "obs_numeric",
+    "state": "ok",
+    "error": null,
+    "ms": 242.59999990463257,
+    "pythonMs": 43.083100114017725,
+    "ratio": 5.63097825510702
+   },
+   {
+    "kind": "h5ad",
+    "file": "cells-dense-gzip.h5ad",
+    "layout": "dense",
+    "codec": "gzip",
+    "op": "obs_categorical",
+    "state": "ok",
+    "error": null,
+    "ms": 71.69999980926514,
+    "pythonMs": 5.582999903708696,
+    "ratio": 12.842557951977751
+   },
+   {
+    "kind": "h5ad",
+    "file": "cells-dense-gzip.h5ad",
+    "layout": "dense",
+    "codec": "gzip",
+    "op": "obsm_spatial",
+    "state": "ok",
+    "error": null,
+    "ms": 598.5999999046326,
+    "pythonMs": 88.01059983670712,
+    "ratio": 6.801453472823291
+   },
+   {
+    "kind": "h5ad",
+    "file": "cells-dense-gzip.h5ad",
+    "layout": "dense",
+    "codec": "gzip",
+    "op": "var_names",
+    "state": "ok",
+    "error": null,
+    "ms": 1.0999999046325684,
+    "pythonMs": 0.2546999603509903,
+    "ratio": 4.31880673682363
+   },
+   {
+    "kind": "h5ad",
+    "file": "cells-dense-gzip.h5ad",
+    "layout": "dense",
+    "codec": "gzip",
+    "op": "x_rows",
+    "state": "ok",
+    "error": null,
+    "ms": 1130.0999999046326,
+    "pythonMs": 299.17370015755296,
+    "ratio": 3.7774042280771716
+   },
+   {
+    "kind": "h5ad",
+    "file": "cells-dense-gzip.h5ad",
+    "layout": "dense",
+    "codec": "gzip",
+    "op": "x_column",
+    "state": "ok",
+    "error": null,
+    "ms": 181.09999990463257,
+    "pythonMs": 39.79519987478852,
+    "ratio": 4.550800108416215
+   },
+   {
+    "kind": "h5ad",
+    "file": "cells-dense-gzip.h5ad",
+    "layout": "dense",
+    "codec": "gzip",
+    "op": "x_all",
+    "state": "ok",
+    "error": null,
+    "ms": 8636.099999904633,
+    "pythonMs": 2261.457399930805,
+    "ratio": 3.818820553581454
+   },
+   {
+    "kind": "h5ad",
+    "file": "cells-dense-lzf.h5ad",
+    "layout": "dense",
+    "codec": "lzf",
+    "op": "obs_names",
+    "state": "unsupported",
+    "error": "RuntimeError: memory access out of bounds | RuntimeError: memory access out of bounds",
+    "ms": null,
+    "pythonMs": 413.1090003065765,
+    "ratio": null
+   },
+   {
+    "kind": "h5ad",
+    "file": "cells-dense-lzf.h5ad",
+    "layout": "dense",
+    "codec": "lzf",
+    "op": "obs_numeric",
+    "state": "ok",
+    "error": null,
+    "ms": 187.2000002861023,
+    "pythonMs": 17.68269995227456,
+    "ratio": 10.586618604135868
+   },
+   {
+    "kind": "h5ad",
+    "file": "cells-dense-lzf.h5ad",
+    "layout": "dense",
+    "codec": "lzf",
+    "op": "obs_categorical",
+    "state": "unsupported",
+    "error": "TypeError: resolved is not a function | TypeError: resolved is not a function",
+    "ms": null,
+    "pythonMs": 2.765099983662367,
+    "ratio": null
+   },
+   {
+    "kind": "h5ad",
+    "file": "cells-dense-lzf.h5ad",
+    "layout": "dense",
+    "codec": "lzf",
+    "op": "obsm_spatial",
+    "state": "ok",
+    "error": null,
+    "ms": 462.80000019073486,
+    "pythonMs": 33.56470027938485,
+    "ratio": 13.788295332253648
+   },
+   {
+    "kind": "h5ad",
+    "file": "cells-dense-lzf.h5ad",
+    "layout": "dense",
+    "codec": "lzf",
+    "op": "var_names",
+    "state": "unsupported",
+    "error": "RuntimeError: memory access out of bounds | RuntimeError: memory access out of bounds",
+    "ms": null,
+    "pythonMs": 0.26430003345012665,
+    "ratio": null
+   },
+   {
+    "kind": "h5ad",
+    "file": "cells-dense-lzf.h5ad",
+    "layout": "dense",
+    "codec": "lzf",
+    "op": "x_rows",
+    "state": "ok",
+    "error": null,
+    "ms": 903.8999996185303,
+    "pythonMs": 83.24359962716699,
+    "ratio": 10.858492468693505
+   },
+   {
+    "kind": "h5ad",
+    "file": "cells-dense-lzf.h5ad",
+    "layout": "dense",
+    "codec": "lzf",
+    "op": "x_column",
+    "state": "ok",
+    "error": null,
+    "ms": 119.5,
+    "pythonMs": 12.13089982047677,
+    "ratio": 9.850876832589604
+   },
+   {
+    "kind": "h5ad",
+    "file": "cells-dense-lzf.h5ad",
+    "layout": "dense",
+    "codec": "lzf",
+    "op": "x_all",
+    "state": "ok",
+    "error": null,
+    "ms": 6256.5,
+    "pythonMs": 830.6933999992907,
+    "ratio": 7.531659695388626
+   },
+   {
+    "kind": "h5ad",
+    "file": "cells-csr-none.h5ad",
+    "layout": "csr",
+    "codec": "none",
+    "op": "obs_names",
+    "state": "ok",
+    "error": null,
+    "ms": 1380,
+    "pythonMs": 377.51090014353395,
+    "ratio": 3.6555235874654435
+   },
+   {
+    "kind": "h5ad",
+    "file": "cells-csr-none.h5ad",
+    "layout": "csr",
+    "codec": "none",
+    "op": "obs_numeric",
+    "state": "ok",
+    "error": null,
+    "ms": 15.699999809265137,
+    "pythonMs": 6.00789999589324,
+    "ratio": 2.6132258892453315
+   },
+   {
+    "kind": "h5ad",
+    "file": "cells-csr-none.h5ad",
+    "layout": "csr",
+    "codec": "none",
+    "op": "obs_categorical",
+    "state": "ok",
+    "error": null,
+    "ms": 4.300000190734863,
+    "pythonMs": 0.6383997388184071,
+    "ratio": 6.7355920268601475
+   },
+   {
+    "kind": "h5ad",
+    "file": "cells-csr-none.h5ad",
+    "layout": "csr",
+    "codec": "none",
+    "op": "obsm_spatial",
+    "state": "ok",
+    "error": null,
+    "ms": 30.5,
+    "pythonMs": 9.591700043529272,
+    "ratio": 3.1798325491397983
+   },
+   {
+    "kind": "h5ad",
+    "file": "cells-csr-none.h5ad",
+    "layout": "csr",
+    "codec": "none",
+    "op": "var_names",
+    "state": "ok",
+    "error": null,
+    "ms": 1.200000286102295,
+    "pythonMs": 0.2183998003602028,
+    "ratio": 5.494511827039935
+   },
+   {
+    "kind": "h5ad",
+    "file": "cells-csr-none.h5ad",
+    "layout": "csr",
+    "codec": "none",
+    "op": "x_rows",
+    "state": "ok",
+    "error": null,
+    "ms": 557.9000000953674,
+    "pythonMs": 58.45399992540479,
+    "ratio": 9.544257036427332
+   },
+   {
+    "kind": "h5ad",
+    "file": "cells-csr-none.h5ad",
+    "layout": "csr",
+    "codec": "none",
+    "op": "x_column",
+    "state": "ok",
+    "error": null,
+    "ms": 3609,
+    "pythonMs": 271.27829985693097,
+    "ratio": 13.3036811344783
+   },
+   {
+    "kind": "h5ad",
+    "file": "cells-csr-none.h5ad",
+    "layout": "csr",
+    "codec": "none",
+    "op": "x_all",
+    "state": "ok",
+    "error": null,
+    "ms": 3789.199999809265,
+    "pythonMs": 518.5345998033881,
+    "ratio": 7.3075162221499
+   },
+   {
+    "kind": "h5ad",
+    "file": "cells-csr-gzip.h5ad",
+    "layout": "csr",
+    "codec": "gzip",
+    "op": "obs_names",
+    "state": "ok",
+    "error": null,
+    "ms": 1703.2999997138977,
+    "pythonMs": 415.81490030512214,
+    "ratio": 4.0962938039594725
+   },
+   {
+    "kind": "h5ad",
+    "file": "cells-csr-gzip.h5ad",
+    "layout": "csr",
+    "codec": "gzip",
+    "op": "obs_numeric",
+    "state": "ok",
+    "error": null,
+    "ms": 229.90000009536743,
+    "pythonMs": 41.82159993797541,
+    "ratio": 5.497159373059054
+   },
+   {
+    "kind": "h5ad",
+    "file": "cells-csr-gzip.h5ad",
+    "layout": "csr",
+    "codec": "gzip",
+    "op": "obs_categorical",
+    "state": "ok",
+    "error": null,
+    "ms": 50.59999990463257,
+    "pythonMs": 5.349799990653992,
+    "ratio": 9.458297505145968
+   },
+   {
+    "kind": "h5ad",
+    "file": "cells-csr-gzip.h5ad",
+    "layout": "csr",
+    "codec": "gzip",
+    "op": "obsm_spatial",
+    "state": "ok",
+    "error": null,
+    "ms": 532.7000002861023,
+    "pythonMs": 82.6218998990953,
+    "ratio": 6.447443122666988
+   },
+   {
+    "kind": "h5ad",
+    "file": "cells-csr-gzip.h5ad",
+    "layout": "csr",
+    "codec": "gzip",
+    "op": "var_names",
+    "state": "ok",
+    "error": null,
+    "ms": 1.4000000953674316,
+    "pythonMs": 0.24480000138282776,
+    "ratio": 5.718954605633589
+   },
+   {
+    "kind": "h5ad",
+    "file": "cells-csr-gzip.h5ad",
+    "layout": "csr",
+    "codec": "gzip",
+    "op": "x_rows",
+    "state": "ok",
+    "error": null,
+    "ms": 749,
+    "pythonMs": 157.84530015662313,
+    "ratio": 4.745152369166515
+   },
+   {
+    "kind": "h5ad",
+    "file": "cells-csr-gzip.h5ad",
+    "layout": "csr",
+    "codec": "gzip",
+    "op": "x_column",
+    "state": "ok",
+    "error": null,
+    "ms": 4288.599999904633,
+    "pythonMs": 942.7717998623848,
+    "ratio": 4.548926898885429
+   },
+   {
+    "kind": "h5ad",
+    "file": "cells-csr-gzip.h5ad",
+    "layout": "csr",
+    "codec": "gzip",
+    "op": "x_all",
+    "state": "ok",
+    "error": null,
+    "ms": 4809,
+    "pythonMs": 1226.0253001004457,
+    "ratio": 3.92243129045217
+   },
+   {
+    "kind": "h5ad",
+    "file": "cells-csr-lzf.h5ad",
+    "layout": "csr",
+    "codec": "lzf",
+    "op": "obs_names",
+    "state": "unsupported",
+    "error": "RuntimeError: memory access out of bounds | RuntimeError: memory access out of bounds",
+    "ms": null,
+    "pythonMs": 411.52750002220273,
+    "ratio": null
+   },
+   {
+    "kind": "h5ad",
+    "file": "cells-csr-lzf.h5ad",
+    "layout": "csr",
+    "codec": "lzf",
+    "op": "obs_numeric",
+    "state": "ok",
+    "error": null,
+    "ms": 201.60000038146973,
+    "pythonMs": 21.174699999392033,
+    "ratio": 9.520796062624644
+   },
+   {
+    "kind": "h5ad",
+    "file": "cells-csr-lzf.h5ad",
+    "layout": "csr",
+    "codec": "lzf",
+    "op": "obs_categorical",
+    "state": "unsupported",
+    "error": "RuntimeError: memory access out of bounds | RuntimeError: memory access out of bounds",
+    "ms": null,
+    "pythonMs": 4.24520019441843,
+    "ratio": null
+   },
+   {
+    "kind": "h5ad",
+    "file": "cells-csr-lzf.h5ad",
+    "layout": "csr",
+    "codec": "lzf",
+    "op": "obsm_spatial",
+    "state": "ok",
+    "error": null,
+    "ms": 416.7999997138977,
+    "pythonMs": 38.31200022250414,
+    "ratio": 10.879097862112483
+   },
+   {
+    "kind": "h5ad",
+    "file": "cells-csr-lzf.h5ad",
+    "layout": "csr",
+    "codec": "lzf",
+    "op": "var_names",
+    "state": "unsupported",
+    "error": "RuntimeError: memory access out of bounds | RuntimeError: memory access out of bounds",
+    "ms": null,
+    "pythonMs": 0.3757001832127571,
+    "ratio": null
+   },
+   {
+    "kind": "h5ad",
+    "file": "cells-csr-lzf.h5ad",
+    "layout": "csr",
+    "codec": "lzf",
+    "op": "x_rows",
+    "state": "ok",
+    "error": null,
+    "ms": 568.2000002861023,
+    "pythonMs": 69.48529975488782,
+    "ratio": 8.177269181977348
+   },
+   {
+    "kind": "h5ad",
+    "file": "cells-csr-lzf.h5ad",
+    "layout": "csr",
+    "codec": "lzf",
+    "op": "x_column",
+    "state": "ok",
+    "error": null,
+    "ms": 3502.699999809265,
+    "pythonMs": 350.6106003187597,
+    "ratio": 9.990285509407773
+   },
+   {
+    "kind": "h5ad",
+    "file": "cells-csr-lzf.h5ad",
+    "layout": "csr",
+    "codec": "lzf",
+    "op": "x_all",
+    "state": "ok",
+    "error": null,
+    "ms": 3837.699999809265,
+    "pythonMs": 597.8206000290811,
+    "ratio": 6.419484373108888
+   },
+   {
+    "kind": "spatialdata",
+    "file": "sdata.zarr",
+    "op": "table_obs",
+    "reader": "zarrita",
+    "state": "ok",
+    "error": null,
+    "ms": 151.80000019073486,
+    "pythonMs": 12.922400142997503,
+    "ratio": 11.747043777544182
+   },
+   {
+    "kind": "spatialdata",
+    "file": "sdata.zarr",
+    "op": "table_obsm",
+    "reader": "zarrita",
+    "state": "ok",
+    "error": null,
+    "ms": 8.400000095367432,
+    "pythonMs": 2.1020998246967793,
+    "ratio": 3.996004374615798
+   },
+   {
+    "kind": "spatialdata",
+    "file": "sdata.zarr",
+    "op": "table_x",
+    "reader": "zarrita",
+    "state": "ok",
+    "error": null,
+    "ms": 26.899999618530273,
+    "pythonMs": 6.729300133883953,
+    "ratio": 3.997443877273518
+   },
+   {
+    "kind": "spatialdata",
+    "file": "sdata.zarr",
+    "op": "image_chunk",
+    "reader": "zarrita",
+    "state": "ok",
+    "error": null,
+    "ms": 6.799999713897705,
+    "pythonMs": 2.248300239443779,
+    "ratio": 3.0245069562328557
+   },
+   {
+    "kind": "spatialdata",
+    "file": "sdata.zarr",
+    "op": "labels_region",
+    "reader": "zarrita",
+    "state": "ok",
+    "error": null,
+    "ms": 78.30000019073486,
+    "pythonMs": 40.537099819630384,
+    "ratio": 1.9315639386914778
+   },
+   {
+    "kind": "spatialdata",
+    "file": "sdata.zarr",
+    "op": "multiscales",
+    "reader": "zarrita",
+    "state": "ok",
+    "error": null,
+    "ms": 2.5999999046325684,
+    "pythonMs": 0.295800156891346,
+    "ratio": 8.789717801223501
+   },
+   {
+    "kind": "spatialdata",
+    "file": "sdata.zarr",
+    "op": "shapes",
+    "reader": "hyparquet",
+    "state": "ok",
+    "error": null,
+    "ms": 16.100000381469727,
+    "pythonMs": 3.7401998415589333,
+    "ratio": 4.304582926980492
+   },
+   {
+    "kind": "spatialdata",
+    "file": "sdata.zarr",
+    "op": "shapes_geojson",
+    "reader": "hyparquet",
+    "state": "ok",
+    "error": null,
+    "ms": 13.899999618530273,
+    "pythonMs": 3.7401998415589333,
+    "ratio": 3.716378858712717
+   },
+   {
+    "kind": "spatialdata",
+    "file": "sdata.zarr",
+    "op": "points",
+    "reader": "hyparquet",
+    "state": "ok",
+    "error": null,
+    "ms": 17.100000381469727,
+    "pythonMs": 2.4546999484300613,
+    "ratio": 6.966228354062694
+   },
+   {
+    "kind": "spatialdata",
+    "file": "sdata.zarr",
+    "op": "shapes_duckdb",
+    "reader": "duckdb",
+    "state": "ok",
+    "error": null,
+    "ms": 593.3999996185303,
+    "pythonMs": 3.7401998415589333,
+    "ratio": 158.65462401901988
+   },
+   {
+    "kind": "spatialdata",
+    "file": "sdata.zarr",
+    "op": "points_duckdb",
+    "reader": "duckdb",
+    "state": "ok",
+    "error": null,
+    "ms": 27.200000286102295,
+    "pythonMs": 2.4546999484300613,
+    "ratio": 11.08078415184652
+   }
+  ],
+  "peakWorkingSetBytes": {
+   "byKind": {
+    "browser": 213069824,
+    "crashpad-handler": 11042816,
+    "gpu-process": 90648576,
+    "utility": 48271360,
+    "renderer": 3424944128
+   },
+   "processes": 8
+  },
+  "jsHeap": 179531349,
+  "externalRequests": [
+   "https://extensions.duckdb.org/v1.5.4/wasm_eh/parquet.duckdb_extension.wasm"
+  ],
+  "duckdbStartMs": 465.1000003814697
+ },
+ "checks": {
+  "ok": 53,
+  "rows": 59,
+  "notOk": [
+   {
+    "kind": "h5ad",
+    "file": "cells-dense-lzf.h5ad",
+    "layout": "dense",
+    "codec": "lzf",
+    "op": "obs_names",
+    "state": "unsupported",
+    "error": "RuntimeError: memory access out of bounds | RuntimeError: memory access out of bounds",
+    "ms": null,
+    "pythonMs": 413.1090003065765,
+    "ratio": null
+   },
+   {
+    "kind": "h5ad",
+    "file": "cells-dense-lzf.h5ad",
+    "layout": "dense",
+    "codec": "lzf",
+    "op": "obs_categorical",
+    "state": "unsupported",
+    "error": "TypeError: resolved is not a function | TypeError: resolved is not a function",
+    "ms": null,
+    "pythonMs": 2.765099983662367,
+    "ratio": null
+   },
+   {
+    "kind": "h5ad",
+    "file": "cells-dense-lzf.h5ad",
+    "layout": "dense",
+    "codec": "lzf",
+    "op": "var_names",
+    "state": "unsupported",
+    "error": "RuntimeError: memory access out of bounds | RuntimeError: memory access out of bounds",
+    "ms": null,
+    "pythonMs": 0.26430003345012665,
+    "ratio": null
+   },
+   {
+    "kind": "h5ad",
+    "file": "cells-csr-lzf.h5ad",
+    "layout": "csr",
+    "codec": "lzf",
+    "op": "obs_names",
+    "state": "unsupported",
+    "error": "RuntimeError: memory access out of bounds | RuntimeError: memory access out of bounds",
+    "ms": null,
+    "pythonMs": 411.52750002220273,
+    "ratio": null
+   },
+   {
+    "kind": "h5ad",
+    "file": "cells-csr-lzf.h5ad",
+    "layout": "csr",
+    "codec": "lzf",
+    "op": "obs_categorical",
+    "state": "unsupported",
+    "error": "RuntimeError: memory access out of bounds | RuntimeError: memory access out of bounds",
+    "ms": null,
+    "pythonMs": 4.24520019441843,
+    "ratio": null
+   },
+   {
+    "kind": "h5ad",
+    "file": "cells-csr-lzf.h5ad",
+    "layout": "csr",
+    "codec": "lzf",
+    "op": "var_names",
+    "state": "unsupported",
+    "error": "RuntimeError: memory access out of bounds | RuntimeError: memory access out of bounds",
+    "ms": null,
+    "pythonMs": 0.3757001832127571,
+    "ratio": null
+   }
+  ]
+ },
+ "thresholds": {
+  "go": [
+   {
+    "name": "h5ad none/gzip: obs, obsm, X row block and X column read and identical to h5py",
+    "value": "24/24",
+    "bound": "all",
+    "result": "pass"
+   },
+   {
+    "name": "h5ad none/gzip: slowest read vs h5py (x; reads h5py takes >= 5 ms)",
+    "value": "55.7 (cells-dense-none.h5ad x_column)",
+    "bound": "<= 2",
+    "result": "fail"
+   },
+   {
+    "name": "SpatialData (zarr v3): table, image, labels, shapes, points identical",
+    "value": "11/11",
+    "bound": "all",
+    "result": "pass"
+   },
+   {
+    "name": "every read the browser cannot do has a named conversion",
+    "value": "6/6",
+    "bound": "all",
+    "result": "pass"
+   }
+  ],
+  "stop": [
+   {
+    "name": "obs or obsm unreadable (none/gzip)",
+    "value": 0,
+    "bound": "0",
+    "result": "fail"
+   }
+  ]
+ },
+ "verdict": "PARTIAL",
+ "notes": [],
+ "logs": [
+  "[error] Failed to load resource: the server responded with a status of 404 (Not Found)"
+ ]
+}

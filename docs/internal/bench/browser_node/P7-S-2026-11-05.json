@@ -1,0 +1,794 @@
+{
+ "poc": "P7",
+ "date": "2026-11-05",
+ "commit": "6083284f-dirty",
+ "machine": {
+  "cpuPercentBefore": [
+   11.2,
+   8.4,
+   6.7
+  ],
+  "platform": "win32 10.0.26200",
+  "cpu": "12th Gen Intel(R) Core(TM) i9-12900K",
+  "cores": 24,
+  "memoryGB": 128,
+  "load": [
+   0,
+   0,
+   0
+  ],
+  "hostname": "ajit"
+ },
+ "browser": {
+  "userAgent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/156.0.0.0 Safari/537.36",
+  "hardwareConcurrency": 24,
+  "deviceMemory": 32,
+  "webgl2": true,
+  "gpu": "ANGLE (NVIDIA, NVIDIA GeForce RTX 3080 (0x00002216) Direct3D11 vs_5_0 ps_5_0, D3D11)",
+  "crossOriginIsolated": false,
+  "isSecureContext": true,
+  "origin": "http://127.0.0.1:49228",
+  "storage": {
+   "quota": 10737418240,
+   "usage": 0
+  },
+  "hasShowOpenFilePicker": true,
+  "hasOPFS": true,
+  "jsHeap": 15491823
+ },
+ "arm": "browser",
+ "state": "fresh profile per layout; reopen = same profile relaunched",
+ "fixture": {
+  "name": "S",
+  "files": {
+   "image": {
+    "name": "flat.ome.tif",
+    "bytes": 31031689,
+    "mtime": "2026-10-13T21:15:39.180Z"
+   },
+   "mask": {
+    "name": "LSP26227-registered.ome_segMask.labels.pyramid.ome.tiff",
+    "bytes": 98631559,
+    "mtime": "2026-08-19T20:18:20.079Z"
+   },
+   "table": {
+    "name": "exemplar-001--unmicst_cell.csv",
+    "bytes": 4039642,
+    "mtime": "2024-03-13T20:07:12.978Z"
+   },
+   "flatMask": {
+    "name": "cell.ome.tif",
+    "bytes": 43010132,
+    "mtime": "2024-03-13T20:07:15.832Z"
+   }
+  }
+ },
+ "metrics": {
+  "layouts": {
+   "strips": {
+    "build": {
+     "wallMs": 890,
+     "timings": {
+      "assembleMs": 125.99999952316284,
+      "writeMs": 62.999999046325684,
+      "jobs": 18,
+      "deflates": 177,
+      "hand": {
+       "readMs": 3506.800001144409,
+       "decodeMs": 1986.699999332428,
+       "fileReadMs": 1442.6000008583069,
+       "bytesRead": 115279447,
+       "deriveMs": 616.3999996185303,
+       "totalMs": 4124.600000858307,
+       "deflateMs": 13821.599994659424
+      },
+      "bandRows": 1024,
+      "bandColumns": 7003,
+      "backlogPeak": 198452576,
+      "totalMs": 868.4000000953674,
+      "openMs": 114.59999990463257,
+      "blocksMs": 643.6000003814697,
+      "drainMs": 60.5,
+      "hands": 12,
+      "bytesOut": 141922875,
+      "copiedLevel0": true,
+      "sourceLayout": "flat",
+      "rawDerivedBytes": 334923792
+     },
+     "manifest": {
+      "version": 2,
+      "kind": "image",
+      "dtype": "uint16",
+      "bytesPerSample": 2,
+      "source": "lsp11385-s3ch-strips.ome.tif",
+      "sourceBytes": 113531572,
+      "width": 7003,
+      "height": 6001,
+      "tile": 1024,
+      "channels": [
+       0,
+       1,
+       2
+      ],
+      "names": [
+       "01_Nucleus_Hoechst",
+       "02_AF1",
+       "03_CD45_ArgoFluor520"
+      ],
+      "compress": "deflate",
+      "factors": [
+       1,
+       2,
+       4,
+       8
+      ],
+      "levels": [
+       {
+        "width": 7003,
+        "height": 6001,
+        "file": "L0.bin",
+        "tileCount": 42
+       },
+       {
+        "width": 3502,
+        "height": 3001,
+        "file": "L1.bin",
+        "tileCount": 12
+       },
+       {
+        "width": 1751,
+        "height": 1501,
+        "file": "L2.bin",
+        "tileCount": 4
+       },
+       {
+        "width": 876,
+        "height": 751,
+        "file": "L3.bin",
+        "tileCount": 1
+       }
+      ]
+     },
+     "longTasks": {
+      "count": 0,
+      "over50": 0,
+      "max": 0
+     },
+     "framesDuring": 52,
+     "fps": 58.42696629213483,
+     "storage": {
+      "usageBefore": 0,
+      "usage": 141929300,
+      "quota": 10879347540
+     },
+     "sourceBytes": 113531572,
+     "hardwareConcurrency": 24,
+     "peakWorkingSetBytes": {
+      "byKind": {
+       "browser": 156422144,
+       "crashpad-handler": 10997760,
+       "gpu-process": 90378240,
+       "utility": 41631744,
+       "renderer": 1222942720
+      },
+      "processes": 8
+     }
+    },
+    "reopen": {
+     "manifestMs": 9.200000286102295,
+     "firstTileMs": 15.5,
+     "firstTile": [
+      876,
+      751
+     ],
+     "midTileMs": 9.800000190734863,
+     "storage": {
+      "usage": 1130,
+      "quota": 10737419370,
+      "persisted": false
+     }
+    },
+    "python": {
+     "seconds": 0.7687209998257458,
+     "runs": [
+      0.7325007999315858,
+      0.807740000076592,
+      0.7687209998257458
+     ],
+     "bytes": 142612022,
+     "levels": [
+      [
+       3,
+       6001,
+       7003
+      ],
+      [
+       3,
+       3001,
+       3502
+      ],
+      [
+       3,
+       1501,
+       1751
+      ],
+      [
+       3,
+       751,
+       876
+      ]
+     ],
+     "workers": 16,
+     "out": "C:\\plexora-bench\\browser_node\\cache\\py-pyramid-lsp11385-s3ch-strips.pyramid.ome.tiff",
+     "source": "C:\\plexora-bench\\browser_node\\fixtures\\flat\\lsp11385-s3ch-strips.ome.tif"
+    },
+    "ratio": 1.157767252620581
+   },
+   "raw": {
+    "build": {
+     "wallMs": 709.7999997138977,
+     "timings": {
+      "assembleMs": 125.39999961853027,
+      "writeMs": 59.200000286102295,
+      "jobs": 18,
+      "deflates": 177,
+      "hand": {
+       "readMs": 1806.1999998092651,
+       "decodeMs": 0,
+       "fileReadMs": 1733.7000007629395,
+       "bytesRead": 252150018,
+       "deriveMs": 626.4000000953674,
+       "totalMs": 2433.2999997138977,
+       "deflateMs": 12918.000001907349
+      },
+      "bandRows": 1024,
+      "bandColumns": 7003,
+      "backlogPeak": 217867530,
+      "totalMs": 689.9000000953674,
+      "openMs": 112.09999990463257,
+      "blocksMs": 464.59999990463257,
+      "drainMs": 67.40000009536743,
+      "hands": 12,
+      "bytesOut": 141922875,
+      "copiedLevel0": true,
+      "sourceLayout": "flat",
+      "rawDerivedBytes": 334923792
+     },
+     "manifest": {
+      "version": 2,
+      "kind": "image",
+      "dtype": "uint16",
+      "bytesPerSample": 2,
+      "source": "lsp11385-s3ch-raw.ome.tif",
+      "sourceBytes": 252151714,
+      "width": 7003,
+      "height": 6001,
+      "tile": 1024,
+      "channels": [
+       0,
+       1,
+       2
+      ],
+      "names": [
+       "01_Nucleus_Hoechst",
+       "02_AF1",
+       "03_CD45_ArgoFluor520"
+      ],
+      "compress": "deflate",
+      "factors": [
+       1,
+       2,
+       4,
+       8
+      ],
+      "levels": [
+       {
+        "width": 7003,
+        "height": 6001,
+        "file": "L0.bin",
+        "tileCount": 42
+       },
+       {
+        "width": 3502,
+        "height": 3001,
+        "file": "L1.bin",
+        "tileCount": 12
+       },
+       {
+        "width": 1751,
+        "height": 1501,
+        "file": "L2.bin",
+        "tileCount": 4
+       },
+       {
+        "width": 876,
+        "height": 751,
+        "file": "L3.bin",
+        "tileCount": 1
+       }
+      ]
+     },
+     "longTasks": {
+      "count": 0,
+      "over50": 0,
+      "max": 0
+     },
+     "framesDuring": 41,
+     "fps": 57.76275009372507,
+     "storage": {
+      "usageBefore": 0,
+      "usage": 141929269,
+      "quota": 10879347509
+     },
+     "sourceBytes": 252151714,
+     "hardwareConcurrency": 24,
+     "peakWorkingSetBytes": {
+      "byKind": {
+       "browser": 156172288,
+       "crashpad-handler": 11026432,
+       "gpu-process": 90603520,
+       "utility": 41181184,
+       "renderer": 1017303040
+      },
+      "processes": 8
+     }
+    },
+    "reopen": {
+     "manifestMs": 8.700000286102295,
+     "firstTileMs": 14.700000286102295,
+     "firstTile": [
+      876,
+      751
+     ],
+     "midTileMs": 9.699999809265137,
+     "storage": {
+      "usage": 1124,
+      "quota": 10737419364,
+      "persisted": false
+     }
+    },
+    "python": {
+     "seconds": 1.047839800361544,
+     "runs": [
+      1.047839800361544,
+      1.0623880997300148,
+      1.037438599858433
+     ],
+     "bytes": 142612019,
+     "levels": [
+      [
+       3,
+       6001,
+       7003
+      ],
+      [
+       3,
+       3001,
+       3502
+      ],
+      [
+       3,
+       1501,
+       1751
+      ],
+      [
+       3,
+       751,
+       876
+      ]
+     ],
+     "workers": 16,
+     "out": "C:\\plexora-bench\\browser_node\\cache\\py-pyramid-lsp11385-s3ch-raw.pyramid.ome.tiff",
+     "source": "C:\\plexora-bench\\browser_node\\fixtures\\flat\\lsp11385-s3ch-raw.ome.tif"
+    },
+    "ratio": 0.677393623976671
+   },
+   "tiles": {
+    "build": {
+     "wallMs": 644.2000002861023,
+     "timings": {
+      "assembleMs": 47.80000114440918,
+      "writeMs": 16.099997520446777,
+      "jobs": 18,
+      "deflates": 51,
+      "hand": {
+       "readMs": 3092.7000007629395,
+       "decodeMs": 8195.39999628067,
+       "fileReadMs": 5752.599999427795,
+       "bytesRead": 106225719,
+       "deriveMs": 615.399998664856,
+       "totalMs": 3708.899999141693,
+       "deflateMs": 2580.999999523163
+      },
+      "bandRows": 1024,
+      "bandColumns": 8192,
+      "backlogPeak": 54301876,
+      "totalMs": 624.5,
+      "openMs": 112,
+      "blocksMs": 462.6000003814697,
+      "drainMs": 31.899999618530273,
+      "hands": 12,
+      "bytesOut": 35741038,
+      "copiedLevel0": false,
+      "sourceLayout": "flat",
+      "rawDerivedBytes": 82773774
+     },
+     "manifest": {
+      "version": 2,
+      "kind": "image",
+      "dtype": "uint16",
+      "bytesPerSample": 2,
+      "source": "lsp11385-s3ch-tiles.ome.tif",
+      "sourceBytes": 106228988,
+      "width": 7003,
+      "height": 6001,
+      "tile": 1024,
+      "channels": [
+       0,
+       1,
+       2
+      ],
+      "names": [
+       "01_Nucleus_Hoechst",
+       "02_AF1",
+       "03_CD45_ArgoFluor520"
+      ],
+      "compress": "deflate",
+      "factors": [
+       1,
+       2,
+       4,
+       8
+      ],
+      "levels": [
+       {
+        "width": 7003,
+        "height": 6001,
+        "fromSource": true,
+        "tileCount": 0
+       },
+       {
+        "width": 3502,
+        "height": 3001,
+        "file": "L1.bin",
+        "tileCount": 12
+       },
+       {
+        "width": 1751,
+        "height": 1501,
+        "file": "L2.bin",
+        "tileCount": 4
+       },
+       {
+        "width": 876,
+        "height": 751,
+        "file": "L3.bin",
+        "tileCount": 1
+       }
+      ]
+     },
+     "longTasks": {
+      "count": 0,
+      "over50": 0,
+      "max": 0
+     },
+     "framesDuring": 38,
+     "fps": 58.98789193282122,
+     "storage": {
+      "usageBefore": 0,
+      "usage": 35743837,
+      "quota": 10773162077
+     },
+     "sourceBytes": 106228988,
+     "hardwareConcurrency": 24,
+     "peakWorkingSetBytes": {
+      "byKind": {
+       "browser": 168456192,
+       "crashpad-handler": 11010048,
+       "gpu-process": 90505216,
+       "utility": 41361408,
+       "renderer": 968916992
+      },
+      "processes": 8
+     }
+    },
+    "reopen": {
+     "manifestMs": 8.400000095367432,
+     "firstTileMs": 14,
+     "firstTile": [
+      876,
+      751
+     ],
+     "midTileMs": 9.600000381469727,
+     "storage": {
+      "usage": 970,
+      "quota": 10737419210,
+      "persisted": false
+     }
+    },
+    "python": {
+     "seconds": 0.7133763004094362,
+     "runs": [
+      0.7133763004094362,
+      0.7005567997694016,
+      0.717588400002569
+     ],
+     "bytes": 142612021,
+     "levels": [
+      [
+       3,
+       6001,
+       7003
+      ],
+      [
+       3,
+       3001,
+       3502
+      ],
+      [
+       3,
+       1501,
+       1751
+      ],
+      [
+       3,
+       751,
+       876
+      ]
+     ],
+     "workers": 16,
+     "out": "C:\\plexora-bench\\browser_node\\cache\\py-pyramid-lsp11385-s3ch-tiles.pyramid.ome.tiff",
+     "source": "C:\\plexora-bench\\browser_node\\fixtures\\flat\\lsp11385-s3ch-tiles.ome.tif"
+    },
+    "ratio": 0.9030297192608854
+   }
+  },
+  "env": {
+   "userAgent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/156.0.0.0 Safari/537.36",
+   "hardwareConcurrency": 24,
+   "deviceMemory": 32,
+   "webgl2": true,
+   "gpu": "ANGLE (NVIDIA, NVIDIA GeForce RTX 3080 (0x00002216) Direct3D11 vs_5_0 ps_5_0, D3D11)",
+   "crossOriginIsolated": false,
+   "isSecureContext": true,
+   "origin": "http://127.0.0.1:49228",
+   "storage": {
+    "quota": 10737418240,
+    "usage": 0
+   },
+   "hasShowOpenFilePicker": true,
+   "hasOPFS": true,
+   "jsHeap": 15491823
+  }
+ },
+ "checks": {
+  "identity": {
+   "strips": {
+    "count": 200,
+    "identical": 200,
+    "mismatches": [],
+    "perLevel": {
+     "0": {
+      "n": 55,
+      "identical": 55
+     },
+     "1": {
+      "n": 34,
+      "identical": 34
+     },
+     "2": {
+      "n": 59,
+      "identical": 59
+     },
+     "3": {
+      "n": 52,
+      "identical": 52
+     }
+    },
+    "python": {
+     "layout": "subifd",
+     "levels": 4,
+     "channels": 3
+    }
+   },
+   "raw": {
+    "count": 200,
+    "identical": 200,
+    "mismatches": [],
+    "perLevel": {
+     "0": {
+      "n": 55,
+      "identical": 55
+     },
+     "1": {
+      "n": 34,
+      "identical": 34
+     },
+     "2": {
+      "n": 59,
+      "identical": 59
+     },
+     "3": {
+      "n": 52,
+      "identical": 52
+     }
+    },
+    "python": {
+     "layout": "subifd",
+     "levels": 4,
+     "channels": 3
+    }
+   },
+   "tiles": {
+    "count": 200,
+    "identical": 200,
+    "mismatches": [],
+    "perLevel": {
+     "0": {
+      "n": 55,
+      "identical": 55
+     },
+     "1": {
+      "n": 34,
+      "identical": 34
+     },
+     "2": {
+      "n": 59,
+      "identical": 59
+     },
+     "3": {
+      "n": 52,
+      "identical": 52
+     }
+    },
+    "python": {
+     "layout": "subifd",
+     "levels": 4,
+     "channels": 3
+    }
+   }
+  }
+ },
+ "thresholds": {
+  "go": [
+   {
+    "name": "[strips] build vs Python's pyramidize_image (x)",
+    "value": 1.2,
+    "bound": "<= 2",
+    "result": "pass"
+   },
+   {
+    "name": "[strips] tiles identical to Python's pyramid, every level and channel",
+    "value": "200/200",
+    "bound": "all",
+    "result": "pass"
+   },
+   {
+    "name": "[strips] main-thread long tasks > 50 ms during the build",
+    "value": 0,
+    "bound": "<= 5",
+    "result": "pass"
+   },
+   {
+    "name": "[strips] first tile after a relaunch (ms)",
+    "value": 15.5,
+    "bound": "<= 1000",
+    "result": "pass"
+   },
+   {
+    "name": "[strips] room the browser reports after the build >= what was written (GB)",
+    "value": 10.7,
+    "bound": ">= written",
+    "result": "pass"
+   },
+   {
+    "name": "[raw] build vs Python's pyramidize_image (x)",
+    "value": 0.7,
+    "bound": "<= 2",
+    "result": "pass"
+   },
+   {
+    "name": "[raw] tiles identical to Python's pyramid, every level and channel",
+    "value": "200/200",
+    "bound": "all",
+    "result": "pass"
+   },
+   {
+    "name": "[raw] main-thread long tasks > 50 ms during the build",
+    "value": 0,
+    "bound": "<= 5",
+    "result": "pass"
+   },
+   {
+    "name": "[raw] first tile after a relaunch (ms)",
+    "value": 14.7,
+    "bound": "<= 1000",
+    "result": "pass"
+   },
+   {
+    "name": "[raw] room the browser reports after the build >= what was written (GB)",
+    "value": 10.7,
+    "bound": ">= written",
+    "result": "pass"
+   },
+   {
+    "name": "[tiles] build vs Python's pyramidize_image (x)",
+    "value": 0.9,
+    "bound": "<= 2",
+    "result": "pass"
+   },
+   {
+    "name": "[tiles] tiles identical to Python's pyramid, every level and channel",
+    "value": "200/200",
+    "bound": "all",
+    "result": "pass"
+   },
+   {
+    "name": "[tiles] main-thread long tasks > 50 ms during the build",
+    "value": 0,
+    "bound": "<= 5",
+    "result": "pass"
+   },
+   {
+    "name": "[tiles] first tile after a relaunch (ms)",
+    "value": 14.0,
+    "bound": "<= 1000",
+    "result": "pass"
+   },
+   {
+    "name": "[tiles] room the browser reports after the build >= what was written (GB)",
+    "value": 10.7,
+    "bound": ">= written",
+    "result": "pass"
+   }
+  ],
+  "stop": [
+   {
+    "name": "[strips] build > 5 min",
+    "value": 0.9,
+    "bound": "> 300 s",
+    "result": "fail"
+   },
+   {
+    "name": "[strips] pyramid lost across a relaunch",
+    "value": false,
+    "bound": "false",
+    "result": "fail"
+   },
+   {
+    "name": "[raw] build > 5 min",
+    "value": 0.7,
+    "bound": "> 300 s",
+    "result": "fail"
+   },
+   {
+    "name": "[raw] pyramid lost across a relaunch",
+    "value": false,
+    "bound": "false",
+    "result": "fail"
+   },
+   {
+    "name": "[tiles] build > 5 min",
+    "value": 0.6,
+    "bound": "> 300 s",
+    "result": "fail"
+   },
+   {
+    "name": "[tiles] pyramid lost across a relaunch",
+    "value": false,
+    "bound": "false",
+    "result": "fail"
+   }
+  ]
+ },
+ "verdict": "GO",
+ "notes": [],
+ "logs": [
+  "[error] Failed to load resource: the server responded with a status of 404 (Not Found)",
+  "[error] Failed to load resource: the server responded with a status of 404 (Not Found)",
+  "[error] Failed to load resource: the server responded with a status of 404 (Not Found)",
+  "[error] Failed to load resource: the server responded with a status of 404 (Not Found)",
+  "[error] Failed to load resource: the server responded with a status of 404 (Not Found)",
+  "[error] Failed to load resource: the server responded with a status of 404 (Not Found)"
+ ]
+}
