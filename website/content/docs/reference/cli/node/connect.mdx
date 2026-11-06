@@ -17,7 +17,7 @@ Run `plexora node serve` on a remote host over SSH, forward it to this machine, 
 plexora node connect [-h] [--serve KIND:ID=PATH] [--name NAME]
                             [--remote-command REMOTE_COMMAND] [-J JUMP] [--ssh-opt KEY=VALUE]
                             [--port PORT] [--remote-port REMOTE_PORT] [--timeout TIMEOUT]
-                            [--install] [--plugins PLUGINS]
+                            [--install] [--plugins PLUGINS] [--pair [ORIGIN]]
                             target
 ```
 
@@ -94,6 +94,12 @@ Install or update Plexora on that host first: `pip install --upgrade plexora`, i
 <Param name={"--plugins PLUGINS"}>
 
 Plugins the node should be able to run.
+
+</Param>
+
+<Param name={"--pair [ORIGIN]"}>
+
+Also print a link that pairs the node with the Plexora page at ORIGIN (default https://viewer.plexoraapp.com), and allow that origin on it. Put it after the host.
 
 </Param>
 

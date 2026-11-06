@@ -802,8 +802,10 @@ def remote_command_line(remote_command, port, *, bind_node=False, datasource=Non
         parts += ["--also-serve", entry]
     if also_serve and node_port:
         parts += ["--node-port", str(int(node_port))]
-    if also_serve and node_allow_origin:
-        parts += ["--node-allow-origin", node_allow_origin]
+    # One flag per origin. An older Plexora over there keeps only the last one
+    # it is given, so callers put the origin it has always been sent last.
+    for origin in origin_list(node_allow_origin) if also_serve else ():
+        parts += ["--node-allow-origin", origin]
     if datasource:
         parts.append(datasource)
     return " ".join([normalize_remote_command(remote_command, remote_os)]
@@ -844,8 +846,8 @@ def node_command_line(remote_command, port, serve, *, allow_origin=None,
         parts += ["--node-id", str(node_id)]
     if manifest:
         parts += ["--manifest", str(manifest)]
-    if allow_origin:
-        parts += ["--allow-origin", allow_origin]
+    for origin in origin_list(allow_origin):
+        parts += ["--allow-origin", origin]
     if plugins is not None:
         parts += ["--plugins", plugins]
     if exit_on_stdin_close:
@@ -1145,6 +1147,95 @@ def parse_node_announce(line):
     platform = NODE_PLATFORM_RE.search(line)
     found["platform"] = platform.group("platform") if platform else None
     return found
+
+
+# -- browser origins and pairing ------------------------------------------
+
+#: The page a pairing link opens when `--pair` names none: the hosted viewer.
+#: cli.py keeps its own copy (both modules load without the package, so
+#: neither can import the other's); tests/test_node_pairing.py holds them equal.
+DEFAULT_PAIR_ORIGIN = "https://viewer.plexoraapp.com"
+
+#: The version field of a pairing link's fragment. Bumped only for a change a
+#: page reading `v=1` would misread.
+PAIR_VERSION = 1
+
+#: The environment variable a launcher sets to add origins to every node it
+#: starts, without touching the command line it builds.
+NODE_ORIGINS_ENV = "PLEXORA_NODE_ORIGINS"
+
+
+def origin_list(origins):
+    """One origin or several, as a list with no blanks and no repeats.
+
+    A single string is still accepted wherever a list now is: every caller
+    before several origins passed exactly one. Spelled the way the node
+    compares them (`rstrip("/")`) and otherwise left alone -- `127.0.0.1` and
+    `localhost` are different origins to a browser, so they are different
+    here too.
+    """
+    if not origins:
+        return []
+    if isinstance(origins, str):
+        origins = [origins]
+    found = []
+    for origin in origins:
+        text = str(origin or "").strip().rstrip("/")
+        if text and text not in found:
+            found.append(text)
+    return found
+
+
+def split_origins(text):
+    """`PLEXORA_NODE_ORIGINS`: origins separated by commas, spaces or both."""
+    return origin_list(re.split(r"[\s,]+", str(text or "")))
+
+
+def pair_target(page=None):
+    """`(base, origin)` for `--pair [PAGE]`; ValueError for something else.
+
+    `page` is where the pairing link points, usually just an origin. The
+    origin is what the node must allow -- exactly as a browser will send it,
+    so the scheme and host lower-cased and a default port left out -- and the
+    base is that plus any path, for a page that is not at the root (the node's
+    own `/app`, say). None, "" and True all mean the hosted viewer.
+    """
+    from urllib.parse import urlsplit
+
+    text = DEFAULT_PAIR_ORIGIN if page in (None, "", True) else str(page).strip()
+    problem = (f"--pair takes the address of the Plexora page to pair with, "
+               f"such as {DEFAULT_PAIR_ORIGIN}; {text!r} is not one.")
+    try:
+        parts = urlsplit(text)
+        port = parts.port
+    except ValueError:
+        raise ValueError(problem) from None
+    scheme = parts.scheme.lower()
+    if (scheme not in ("http", "https") or not parts.hostname
+            or "@" in parts.netloc or parts.query or parts.fragment):
+        raise ValueError(problem)
+    host = parts.hostname
+    if ":" in host:
+        host = f"[{host}]"
+    default = 443 if scheme == "https" else 80
+    origin = f"{scheme}://{host}" + (f":{port}" if port and port != default else "")
+    return origin + parts.path.rstrip("/"), origin
+
+
+def pairing_url(page, endpoint, token):
+    """`<page>/connect#v=1&e=<endpoint>&t=<token>`: a link that pairs a node.
+
+    Everything the page needs is in the fragment, which a browser never sends
+    to a server -- so the token goes from this terminal to the page's own
+    storage without crossing any network. `endpoint` is the address the
+    BROWSER will use for the node, which is not always where it bound.
+    """
+    from urllib.parse import quote
+
+    base, _origin = pair_target(page)
+    return (f"{base}/connect#v={PAIR_VERSION}"
+            f"&e={quote(str(endpoint).rstrip('/'), safe='')}"
+            f"&t={quote(str(token), safe='')}")
 
 
 def looks_like_missing_command(lines):
@@ -2048,7 +2139,7 @@ class Session:
                  on_phase=None, also_serve=(), local_serve=(), node_name=None,
                  node_port=None, allow_origin=None, local_node=True,
                  node_manifest=None, install=False, gcloud=None,
-                 mount_command=None, remote_os=None):
+                 mount_command=None, remote_os=None, pair=None):
         self.target = target
         self.datasource = datasource
         self.remote_command = remote_command
@@ -2114,7 +2205,17 @@ class Session:
         self.local_node = bool(local_node) or bool(self.local_serve)
         self.node_name = node_name
         self.requested_node_port = node_port
+        #: Origins every data node this session starts must answer, besides
+        #: the browser's own (`_browser_origin`): one string or several.
         self.allow_origin = allow_origin
+        #: `(base, origin)` from `pair_target` when `--pair` asked for a
+        #: pairing link per data node, else None. Its origin is allowed on
+        #: every node; the links are printed by `_attempt`, to the terminal.
+        self.pair = None if pair is None else pair_target(pair)
+        #: `(name, link)` per data node registered while pairing. The link
+        #: carries the node's token, which is why it is kept apart from
+        #: `data_nodes` -- a list a page may be shown.
+        self.pair_links = []
         #: Where the laptop node records what it ends up serving, so the next
         #: session serves it again under the same ids. None means "work it out"
         #: -- see `_local_manifest_path`.
@@ -2276,7 +2377,7 @@ class Session:
             # every tile falls back to being proxied through the viewer -- for
             # a node on THIS machine that means laptop -> cluster -> back down
             # the reverse tunnel -> laptop -> cluster -> browser, per tile.
-            node_allow_origin=self.allow_origin or self._browser_origin(),
+            node_allow_origin=self._node_origins(),
             remote_os=self.remote_os,
         )
         # The viewer's own ssh has to watch for two announcements at once when
@@ -2415,6 +2516,21 @@ class Session:
             return None
         return f"http://127.0.0.1:{self.local_port}"
 
+    def _node_origins(self):
+        """Every origin a data node of this session is told to allow.
+
+        The browser's own last: an older Plexora on the far side keeps only
+        the last `--node-allow-origin` it is given, and that is the one it has
+        always been given. With nothing extra named and no pairing, this is
+        exactly the one origin it always was.
+        """
+        extra = origin_list(self.allow_origin)
+        if self.pair is not None:
+            extra = origin_list(extra + [self.pair[1]])
+        browser = self._browser_origin()
+        named = [origin for origin in extra if origin != browser]
+        return named + ([browser] if browser else [])
+
     def _local_node_id(self):
         """A stable identity for the node on this machine.
 
@@ -2459,8 +2575,7 @@ class Session:
         # The browser reaches this node directly -- it is on the same machine,
         # which makes it the fastest path of the three layouts and the one that
         # most needs the CORS header to actually be there.
-        origin = self._browser_origin()
-        if origin:
+        for origin in self._node_origins():
             argv += ["--allow-origin", origin]
         manifest = self.node_manifest or _local_manifest_path(node_id)
         if manifest:
@@ -2495,6 +2610,9 @@ class Session:
             return None
         self.data_nodes.append({"name": name, "endpoint": endpoint,
                                 "browser_endpoint": browser_endpoint})
+        if self.pair is not None and browser_endpoint:
+            self.pair_links.append(
+                (name, pairing_url(self.pair[0], browser_endpoint, token)))
         self.echo(f"  Data node {name!r} registered with the remote Plexora.")
         return name
 
@@ -3257,7 +3375,7 @@ def _attempt(target, *, datasource, remote_command, srun, bind_node, jump,
              ssh_opts, local_port, remote_port, timeout, data_dir, plugins,
              browser, echo, forwards=(), also_serve=(), local_serve=(),
              node_name=None, node_port=None, local_node=True, install=False,
-             remote_os=None):
+             remote_os=None, allow_origin=None, pair=None):
     session = Session(
         target, datasource=datasource, remote_command=remote_command, srun=srun,
         bind_node=bind_node, jump=jump, ssh_opts=ssh_opts, local_port=local_port,
@@ -3265,12 +3383,15 @@ def _attempt(target, *, datasource, remote_command, srun, bind_node, jump,
         plugins=plugins, echo=echo, forwards=forwards, also_serve=also_serve,
         local_serve=local_serve, node_name=node_name, node_port=node_port,
         local_node=local_node, install=install, remote_os=remote_os,
+        allow_origin=allow_origin, pair=pair,
     )
     try:
         session.establish()
         echo("")
         for entry in session.data_nodes:
             echo(f"Data node {entry['name']!r} is serving to it.")
+        if session.pair is not None:
+            _echo_pair_links(session.pair_links, session.pair[1], echo=echo)
         echo(f"Plexora is available at {session.open_url}")
         echo("Leave this command running; press Ctrl+C to disconnect"
              + (" and end the job." if srun is not None else "."))
@@ -3287,7 +3408,7 @@ def connect_node(target, serve, *, name=None,
                  remote_command=DEFAULT_REMOTE_COMMAND, jump=None, ssh_opts=(),
                  local_port=None, remote_port=None, timeout=None, plugins=None,
                  allow_origin=None, echo=print, register=None, browser=False,
-                 install=False):
+                 install=False, pair=None):
     """Start a data node on `target`, forward it here, and register it.
 
     The layout where the viewer stays on this machine: the browser is here, the
@@ -3299,9 +3420,18 @@ def connect_node(target, serve, *, name=None,
     `register` is injected rather than imported so this module stays loadable
     without the plexora package (see the module docstring). cli.py supplies the
     real one.
+
+    `pair` (a page address, or True for the hosted viewer) also prints a
+    pairing link for the node, and allows that page's origin on it.
     """
     if _which("ssh") is None:
         raise SystemExit(_no_ssh_message())
+    try:
+        paired = None if pair is None else pair_target(pair)
+    except ValueError as exc:
+        raise SystemExit(str(exc)) from None
+    if paired is not None:
+        allow_origin = origin_list(origin_list(allow_origin) + [paired[1]])
     # The same budget the in-app node session gets, and for the same reason:
     # what is being waited for is an import off a shared filesystem, not a
     # network round trip.
@@ -3367,6 +3497,10 @@ def connect_node(target, serve, *, name=None,
         echo(f"Data node {name!r} is registered at {endpoint}")
         echo("Point a project's image or table at it from that project's Edit "
              "page.")
+        if paired is not None:
+            _echo_pair_links(
+                [(name, pairing_url(paired[0], endpoint, announced["token"]))],
+                paired[1], echo=echo)
         echo("Leave this command running; press Ctrl+C to disconnect.")
         watched.process.wait()
         return 0
@@ -3376,12 +3510,31 @@ def connect_node(target, serve, *, name=None,
             _ACTIVE.remove(watched)
 
 
+def _echo_pair_links(links, origin, echo=print):
+    """Say each pairing link, or why there is none.
+
+    To the terminal that asked, through `echo`, and nowhere else: a link
+    carries a node's token in its fragment. The fragment never reaches a
+    server, but the terminal line is the token in clear.
+    """
+    echo("")
+    if not links:
+        echo(f"Nothing to pair with {origin}: this connection started no data "
+             f"node. Add --also-serve to start one beside the viewer.")
+        return
+    echo(f"To use a data node from {origin}, open its link in the browser "
+         f"you will use (it holds the node's token; treat it like a password):")
+    for name, link in links:
+        echo(f"  {name}: {link}")
+
+
 def connect(target, datasource=None, *, remote_command=DEFAULT_REMOTE_COMMAND,
             srun=None, bind_node=False, jump=None, ssh_opts=(),
             local_port=None, remote_port=None, timeout=None, data_dir=None,
             plugins=None, browser=True, attempts=3, echo=print, forwards=(),
             also_serve=(), local_serve=(), node_name=None, node_port=None,
-            local_node=True, install=False, remote_os=None):
+            local_node=True, install=False, remote_os=None, allow_origin=None,
+            pair=None):
     """Run Plexora on `target`, tunnel to it, open it here. Returns an exit code.
 
     Best-effort by design. Every failure below ends with the printed
@@ -3390,6 +3543,13 @@ def connect(target, datasource=None, *, remote_command=DEFAULT_REMOTE_COMMAND,
     """
     if _which("ssh") is None:
         raise SystemExit(_no_ssh_message())
+    if pair is not None:
+        # Refused before any ssh: a typo here would otherwise surface only
+        # after a login, a Duo push and perhaps a wait in a queue.
+        try:
+            pair_target(pair)
+        except ValueError as exc:
+            raise SystemExit(str(exc)) from None
 
     timeout = default_timeout(timeout, srun)
 
@@ -3410,7 +3570,7 @@ def connect(target, datasource=None, *, remote_command=DEFAULT_REMOTE_COMMAND,
                 forwards=forwards, also_serve=also_serve,
                 local_serve=local_serve, node_name=node_name,
                 node_port=node_port, local_node=local_node, install=install,
-                remote_os=remote_os,
+                remote_os=remote_os, allow_origin=allow_origin, pair=pair,
             )
         except KeyboardInterrupt:
             echo("\nDisconnecting.")

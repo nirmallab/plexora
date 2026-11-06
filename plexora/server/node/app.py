@@ -50,7 +50,8 @@ class NodeStartupError(RuntimeError):
 
 
 def create_node_app(serve, token, *, node_id=None, allow_origins=(), plugins=None,
-                    dynamic=False, manifest=None, registry=None, log=print):
+                    dynamic=False, manifest=None, registry=None, log=print,
+                    app_dir=None, url_prefix=None):
     """One node app serving the resources named in `serve`.
 
     `serve` is a list of `kind:id=path` strings -- see
@@ -78,6 +79,12 @@ def create_node_app(serve, token, *, node_id=None, allow_origins=(), plugins=Non
     nothing to serve" refusal below, because that refusal is about a command
     line with no `--serve` on it, and there is no command line here: the caller
     holding the registry is the one that fills it.
+
+    `app_dir` turns on `/app/` (see `node/webapp.py`): the static build of the
+    viewer, served without the token. Only when that directory holds a build
+    -- otherwise the routes are not added and `/hello` does not claim them.
+    `url_prefix` is the path a reverse proxy serves this node under, for the
+    app's redirects.
     """
     if not token:
         raise NodeStartupError(
@@ -116,6 +123,15 @@ def create_node_app(serve, token, *, node_id=None, allow_origins=(), plugins=Non
 
     _load_plugin_operations(plugins)
     app.register_blueprint(node_bp)
+    if app_dir is not None:
+        from plexora.server.node import webapp
+
+        built = webapp.resolve_dir(app_dir)
+        if built is not None:
+            try:
+                webapp.install(app, built, url_prefix=url_prefix)
+            except webapp.BadPrefix as exc:
+                raise NodeStartupError(f"--url-prefix: {exc}") from None
     # Counts in memory only and never uploads; see plexora/telemetry/node_hooks.
     from plexora.telemetry import node_hooks
     node_hooks.install(app)
@@ -626,10 +642,85 @@ def _exit_when_stdin_closes(log=print):
     return exit_when_stdin_closes(log=log)
 
 
+def node_origins(allow_origins=(), pair_origin=None, environ=None):
+    """Every origin this node allows: the command line's, then
+    `PLEXORA_NODE_ORIGINS`'s, then the one `--pair` names.
+
+    Read here, at startup, and only for `plexora node serve`: the variable is
+    for a launcher that wants the hosted page allowed on every node it starts
+    without rebuilding each command line. A node built in process (the
+    notebook kernel's) is never read by a browser and does not look at it.
+    """
+    from plexora.connect import NODE_ORIGINS_ENV, origin_list, split_origins
+
+    environ = os.environ if environ is None else environ
+    return origin_list(origin_list(allow_origins)
+                       + split_origins(environ.get(NODE_ORIGINS_ENV, ""))
+                       + origin_list(pair_origin))
+
+
+def pair_endpoint(host, port, browser_endpoint=None):
+    """The address a pairing link hands the browser for this node.
+
+    `--browser-endpoint` when given (a gateway's hostname, a tunnel's local
+    end on another port). Otherwise this machine's loopback, which is also
+    what an `ssh -L` with the same port number on the user's own machine
+    looks like -- unless the node bound one specific other address, where
+    loopback would not answer at all.
+    """
+    if browser_endpoint:
+        text = str(browser_endpoint).strip().rstrip("/")
+        if not text.lower().startswith(("http://", "https://")):
+            raise NodeStartupError(
+                f"--browser-endpoint takes a URL such as "
+                f"https://gateway.example.org; {browser_endpoint!r} is not one.")
+        return text
+    if host in ("0.0.0.0", "::", "", "127.0.0.1", "localhost"):
+        return f"http://127.0.0.1:{port}"
+    return f"http://{f'[{host}]' if ':' in host else host}:{port}"
+
+
+def _print_pairing(link, origin):
+    """The pairing link, on this process's stdout and nowhere else.
+
+    Not through `log` and not through `logging`: either may be pointed at a
+    file by whoever started this node, and the link is the token. The
+    fragment never leaves the browser it is opened in; this line is the one
+    place it exists in clear, and that is the terminal that asked for it.
+    """
+    print("", flush=True)
+    print(f"To use this node from {origin}, open this link in the browser you "
+          f"will use (it holds this node's token; treat it like a password):",
+          flush=True)
+    print(f"  {link}", flush=True)
+    print("", flush=True)
+
+
+def _serve_then_pair(app, options, link, origin):
+    """`waitress.serve`, with the pairing link said once the socket listens.
+
+    The link is only useful once the node answers, and a browser opened on it
+    a moment too early meets a refused connection and gives up. Building the
+    server binds and listens; `run` then serves what queued meanwhile.
+    """
+    from waitress import create_server
+
+    server = create_server(app, **options)
+    server.print_listen("Serving on http://{}:{}")
+    _print_pairing(link, origin)
+    server.run()
+
+
 def serve_node(serve, token=None, host="127.0.0.1", port=8642, *, node_id=None,
                allow_origins=(), plugins=None, dynamic=False, manifest=None,
-               exit_on_stdin_close=False, log=print):
-    """Start a node and block, printing what a primary needs to register it."""
+               exit_on_stdin_close=False, log=print, pair=None,
+               browser_endpoint=None, serve_app=False, url_prefix=None):
+    """Start a node and block, printing what a primary needs to register it.
+
+    `pair` (a page address, or True for the hosted viewer) allows that page's
+    origin and prints a link that pairs this node with it, once listening.
+    `serve_app` serves the static build at `/app/` when this install has one.
+    """
     from waitress import serve as waitress_serve
 
     from plexora import _logging
@@ -649,12 +740,32 @@ def serve_node(serve, token=None, host="127.0.0.1", port=8642, *, node_id=None,
     # has never seen, and `~` in a quoted argument is not expanded by anything.
     if dynamic and manifest is None and node_id:
         manifest = _default_manifest(node_id, log=log)
+    pairing = None
+    if pair is not None:
+        from plexora.connect import pair_target
+
+        try:
+            page, pair_origin = pair_target(pair)
+        except ValueError as exc:
+            raise NodeStartupError(str(exc)) from None
+        pairing = (page, pair_origin, pair_endpoint(host, port, browser_endpoint))
+    allow_origins = node_origins(allow_origins,
+                                 pairing[1] if pairing else None)
+    app_dir = None
+    if serve_app:
+        from plexora.server.node import webapp
+
+        app_dir = webapp.resolve_dir()
+        if app_dir is None:
+            log(f"  --app: this install has no web app build "
+                f"({webapp.DEFAULT_DIR}), so /app/ is off.")
     # `log` reaches the app builder because preparing a mask happens in there
     # and can take minutes. A terminal that sits silent for that long, before
     # the startup banner has even appeared, is one an operator kills.
     app = create_node_app(serve, token, node_id=node_id,
                           allow_origins=allow_origins, plugins=plugins,
-                          dynamic=dynamic, manifest=manifest, log=log)
+                          dynamic=dynamic, manifest=manifest, log=log,
+                          app_dir=app_dir, url_prefix=url_prefix)
     registry = app.config["PLEXORA_NODE_RESOURCES"]
 
     # The heavyweight import (sklearn, scipy, polars ride in with it) and
@@ -705,6 +816,8 @@ def serve_node(serve, token=None, host="127.0.0.1", port=8642, *, node_id=None,
         log(f"  {resource.kind:13} {resource.id:20} {resource.path}")
     if dynamic:
         log("  (accepting more from the viewer while this runs -- --dynamic)")
+    if app.config.get("PLEXORA_NODE_APP_DIR"):
+        log(f"  the Plexora web app, at http://{_advertised(host)}:{port}/app/")
     log("")
     log("Register it on the machine running the viewer:")
     log(f"  plexora.register_node(\"<name>\", \"http://{_advertised(host)}:{port}\", "
@@ -723,6 +836,14 @@ def serve_node(serve, token=None, host="127.0.0.1", port=8642, *, node_id=None,
     # does -- never touches the files it was pointed at.
     warm_resources(registry, log=log)
 
+    if pairing is not None:
+        from plexora.connect import pairing_url
+
+        page, pair_origin, endpoint = pairing
+        _serve_then_pair(app, dict(host=host, port=port, **WAITRESS_LIMITS,
+                                   threads=worker_threads()),
+                         pairing_url(page, endpoint, token), pair_origin)
+        return
     waitress_serve(
         app,
         host=host,

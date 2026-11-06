@@ -1821,6 +1821,125 @@ def test_node_connect_names_the_node_after_the_host_by_default(rig):
     assert seen["name"] == "hpc.edu-node"
 
 
+# -- pairing a page with the nodes a connection starts ---------------------
+
+
+def _pair_fragment(link):
+    from urllib.parse import parse_qs, urlsplit
+
+    return {key: values[0]
+            for key, values in parse_qs(urlsplit(link).fragment).items()}
+
+
+def test_pairing_allows_the_page_on_every_node_and_links_each_one(
+        rig, monkeypatch, tmp_path):
+    """`plexora connect --pair`: both nodes -- the one beside the viewer,
+    reached through a forward, and the one on this machine -- answer the
+    hosted page as well as the viewer, and each gets a link holding the
+    address the BROWSER uses for it and its own token."""
+    monkeypatch.setattr(connect_mod, "register_node_through", lambda *a, **kw: None)
+    monkeypatch.setattr(connect_mod, "pick_remote_port", lambda randint=None: 41000)
+    ports = iter([41001, 8642])
+    monkeypatch.setattr(connect_mod, "_free_local_port", lambda: next(ports))
+    # The local node is spawned first, then the ssh carrying the viewer and
+    # the remote node's announce.
+    rig.queue.append(FakeProcess(
+        ["[plexora-node] host=127.0.0.1 port=8642 node_id=cd token=l0cal"]))
+    rig.queue.append(FakeProcess(
+        ["[plexora-node] host=c42 port=41000 node_id=ab token=s3cr3t"]))
+
+    session = connect_mod.Session(
+        "me@host", echo=rig.echo, node_name="hpc", pair=True,
+        node_manifest=str(tmp_path / "m.json"),
+        also_serve=["table:cells=/scratch/c.h5ad"])
+    session.establish()
+
+    hosted = connect_mod.DEFAULT_PAIR_ORIGIN
+    local_argv = rig.spawned[0]
+    allowed = [local_argv[i + 1] for i, part in enumerate(local_argv)
+               if part == "--allow-origin"]
+    assert allowed == [hosted, "http://127.0.0.1:9999"]
+    launched = " ".join(rig.spawned[1])
+    # The viewer's own origin last: an older Plexora keeps only the last.
+    assert (f"--node-allow-origin {hosted} --node-allow-origin "
+            f"http://127.0.0.1:9999") in launched
+
+    links = dict(session.pair_links)
+    assert _pair_fragment(links["hpc-node"]) == {
+        "v": "1", "e": "http://127.0.0.1:41001", "t": "s3cr3t"}
+    assert _pair_fragment(links["hpc-local"]) == {
+        "v": "1", "e": "http://127.0.0.1:8642", "t": "l0cal"}
+    # The tokens stay out of the list a page may be shown.
+    assert "s3cr3t" not in repr(session.data_nodes)
+    assert "l0cal" not in repr(session.data_nodes)
+    session.stop()
+
+
+def test_without_pair_a_connection_allows_what_it_always_did(rig, monkeypatch):
+    monkeypatch.setattr(connect_mod, "register_node_through", lambda *a, **kw: None)
+    monkeypatch.setattr(connect_mod, "pick_remote_port", lambda randint=None: 41000)
+    monkeypatch.setattr(connect_mod, "_free_local_port", lambda: 41001)
+    rig.queue.append(FakeProcess(
+        ["[plexora-node] host=c42 port=41000 node_id=ab token=s3cr3t"]))
+
+    session = connect_mod.Session(
+        "me@host", echo=rig.echo, local_node=False,
+        also_serve=["table:cells=/scratch/c.h5ad"])
+    session.establish()
+
+    launched = " ".join(rig.spawned[0])
+    assert launched.count("--node-allow-origin") == 1
+    assert session.pair_links == []
+    session.stop()
+
+
+def test_connect_pair_prints_the_links_to_the_terminal(rig, monkeypatch):
+    monkeypatch.setattr(connect_mod, "register_node_through", lambda *a, **kw: None)
+    monkeypatch.setattr(connect_mod, "pick_remote_port", lambda randint=None: 41000)
+    monkeypatch.setattr(connect_mod, "_free_local_port", lambda: 41001)
+    rig.queue.append(FakeProcess(
+        ["[plexora-node] host=c42 port=41000 node_id=ab token=s3cr3t"]))
+
+    code = connect_mod.connect(
+        "me@host", echo=rig.echo, browser=False, local_node=False,
+        node_name="hpc", also_serve=["table:cells=/scratch/c.h5ad"],
+        pair="http://localhost:5173", allow_origin=["http://127.0.0.1:7000"])
+
+    assert code == 0
+    launched = " ".join(rig.spawned[0])
+    assert ("--node-allow-origin http://127.0.0.1:7000 --node-allow-origin "
+            "http://localhost:5173 --node-allow-origin http://127.0.0.1:9999") in launched
+    links = [str(line).split(": ", 1)[1] for line in rig.echoed
+             if "/connect#" in str(line)]
+    assert len(links) == 1
+    assert links[0].startswith("http://localhost:5173/connect#")
+    assert _pair_fragment(links[0])["t"] == "s3cr3t"
+
+
+def test_a_bad_pair_page_is_refused_before_any_ssh(rig):
+    with pytest.raises(SystemExit) as raised:
+        connect_mod.connect("me@host", echo=rig.echo, pair="tonsil")
+    assert "--pair" in str(raised.value)
+    assert rig.spawned == []
+
+
+def test_node_connect_pair_allows_the_page_and_prints_a_link(rig):
+    rig.queue.append(FakeProcess(
+        ["[plexora-node] host=c42 port=9999 node_id=ef token=s3cr3t"]))
+
+    connect_mod.connect_node(
+        "me@host", ["image:tonsil=/scratch/t.ome.tif"], name="hpc",
+        echo=rig.echo, pair=True, register=lambda *a: None)
+
+    hosted = connect_mod.DEFAULT_PAIR_ORIGIN
+    assert f"--allow-origin {hosted}" in rig.spawned[0][-1]
+    links = [str(line).split(": ", 1)[1] for line in rig.echoed
+             if "/connect#" in str(line)]
+    assert len(links) == 1
+    assert _pair_fragment(links[0]) == {
+        "v": "1", "e": "http://127.0.0.1:9999", "t": "s3cr3t"}
+
+
 # -- installing Plexora on the far side -----------------------------------
 #
 # The one thing a connection does that WRITES to somebody else's machine, so

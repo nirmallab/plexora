@@ -179,6 +179,16 @@ Default for `plexora node serve --token`, the shared secret a viewer authenticat
 
 </Param>
 
+<Param name={"PLEXORA_NODE_ORIGINS"}>
+
+Browser origins a data node allows, separated by commas or spaces, in addition to every `plexora node serve --allow-origin`. For a launcher that starts nodes for a page served from elsewhere (the hosted viewer, say) without rebuilding each command line. Written as the browser sends them -- `http://127.0.0.1:8000` and `http://localhost:8000` are different origins.
+
+```bash
+export PLEXORA_NODE_ORIGINS=https://viewer.plexoraapp.com
+```
+
+</Param>
+
 </ParamTable>
 
 ## Performance
