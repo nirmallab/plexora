@@ -5390,8 +5390,11 @@ deliberately left out and what should be built next.
   pointer event back through that same transform before normalising it. The
   lens toggle shows a close glyph while expanded (`LENS_CLOSE_ICON`) instead of
   moving, and no longer moves when the map opens (viewer.css).
-- `views/viewerManager.js` — tile source definition: `getTileUrl`, `getTileKey`,
-  `toTileLevels`, and one `addTiledImage` per active channel.
+- `views/viewerManager.js` — builds the tile sources, one `addTiledImage` per
+  active channel, from `services/tileSource.js` (`getTileUrl`, `getTileKey`,
+  `toTileLevels`, `tileQuality` -- an ES module bundled with it and exposed as
+  `window.PlexoraTileSource` by `vendor.js`); `rasterTiles` hands label and
+  RGB sources to the tile scheduler (`views/tileFetch.js`, `raster`).
   **The tile QUALITY a change of which rebuilds every item** (the HD toggle)
   goes through `handOverWhenReady(items, commit)` so the old items keep drawing
   **In 3-D** (`_inVolume()`) the map shows the cut, not the plane the tiles
@@ -5659,6 +5662,12 @@ deliberately left out and what should be built next.
   desktop app's window: its native file-drop handling swallows the HTML5 drag
   events SortableJS is built on there, so it runs with `forceFallback: true`
   and this is what draws the fallback drag under a pointer instead.
+- `services/backend.js` — `window.PlexoraBackend` (`kind`, `target`, `routes`,
+  `supports(feature)`, `verify(path)`, `fetch`): who answers the page's
+  requests. In server mode (every page a Plexora serves) a pass-through --
+  `fetch` is `window.fetch` read at call time, no route table -- loaded right
+  before `appStatus.js` in `base.html`. Probe: `tests/js/backend_shim_probe.mjs`
+  (`tests/test_backend_shim_js.py`).
 - `services/appStatus.js` — `window.PlexoraStatus`, the app-wide status
   indicator. See its own section below.
 - `services/viewerLoader.js` — `window.PlexoraViewerLoader`, the centre spinner
@@ -6607,8 +6616,8 @@ was split out of (`cardList.js`, `layerStack.js`, `glInit.js`, `tileColorize.js`
 layer's channel panel can mount a second `ViewerSidebar` instance), and the
 two new panels (`layerManager.js`, and `cardList.js` again for the tool
 cards). Only
-`vendor.js`, `viewerManager.js` and `glRenderer.js` go through webpack into
-`client/dist`. So none of these have a module system — top-level `class`
+`vendor.js`, `viewerManager.js`, `services/tileSource.js` and `glRenderer.js`
+go through webpack into `client/dist`. So none of these have a module system — top-level `class`
 declarations are globals, and `node --check` is a valid syntax gate for any of
 them.
 
@@ -6690,8 +6699,16 @@ the rest of the 3-D view is not mapped here yet, see `docs/internal/3d/`).
   `views/tileFetch.js` (`PlexoraTileFetch`, classic script loaded from
   `base.html` before `imageViewer.js`) — one scheduler for channel and
   section tiles via OSD's `downloadTileStart`: one request per address, in
-  order of need, decoded once in a worker, cancelled with its item; label and
-  RGB tiles keep OSD's path. `ViewerManager.prepareStandby`/`takeStandby`
+  order of need, decoded once in a worker, cancelled with its item. Label and
+  RGB tiles of every image come through it too, as raster tiles
+  (`attach(source, {raster: true})`, `ViewerManager.rasterTiles`): fetched,
+  ranked and cancelled the same way but never decoded or batched, and finished
+  as OSD's own loader finishes one (a "rasterBlob", the response as
+  `tileRequest`, which `tileDecode.js` decodes a label tile from); a raster
+  attach does not raise the loader's job limit, so a planar image's channel
+  tiles keep OSD's path and its 10. `addressSpace(url)` puts a
+  `targetAddressSpace` on a request (none in server mode).
+  `ViewerManager.prepareStandby`/`takeStandby`
   keep the next planes in the direction of travel built invisibly, so a step
   to one is an opacity flip. A plane swap does not wait for full resolution:
   `viewerManager.whenItemCanDraw(item, done, PLANE_SWAP_GRACE_MS)` (140 ms,
@@ -10089,9 +10106,12 @@ in **5.6 s**.
   loads it (and `plugins/<name>/__init__.py`'s `VERSION` for plugin assets, which
   stamps every URL `asset_urls` builds). Sources are served straight from
   `client/src/`, so a stale tag means the browser keeps running the old file and
-  the fix looks like it did nothing. `viewerManager.js` and `glRenderer.js` are
-  the exceptions: they are webpacked into `client/dist/vendor_bundle.js`, which
-  has to be rebuilt *and* re-tagged.
+  the fix looks like it did nothing. `viewerManager.js`, `services/tileSource.js`
+  and `glRenderer.js` are the exceptions: they are webpacked into
+  `client/dist/vendor_bundle.js`, which has to be rebuilt *and* re-tagged --
+  with `npm run build` on an `npm ci` of `plexora/client`'s lockfile (an
+  install that has drifted from it, as the main tree's had on 2026-11-06 with
+  jsPDF 3.0.4 against the lock's 4.2.1, builds a different bundle).
 - **A page template extends `layout`, not `'base.html'`.** Hardcoding the base
   back in makes that page unroutable: it would come back from a fragment fetch
   as a whole second document — navbar, `<head>`, another `<body>` — to be

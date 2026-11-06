@@ -1,11 +1,14 @@
 import "regenerator-runtime/runtime.js";
+import {
+    tileQuality, groundTileUrl, keyOf, toIdealTile, toRealTile, toTileBoundary,
+    toMagnifiedBounds, toTileLevels, getTileUrl, maskScale, LABEL_TILE_REVISION,
+    getTileKey, getImagePixel,
+} from "../services/tileSource.js";
 
-// Global HD-toggle state, read by getTileUrl() below. A plain module-scope
-// flag (not a ViewerManager instance field) because getTileUrl runs with
-// `this` bound to the tileSource object it's attached to, not the
-// ViewerManager -- this is the one place in the tile-loading path that
-// needs the toggle state and can't reach it via `this`.
-export const tileQuality = { hd: false };
+// The HD toggle's flag, which every tile address reads -- held with the
+// address arithmetic (services/tileSource.js), written by setHdMode below,
+// and exported from here as it always was.
+export { tileQuality };
 
 //: Which view of a volume the reference channels are showing -- a plane
 //: (`z12`), a projection (`z4-19max`) -- as the token the tile route's `view=`
@@ -66,12 +69,6 @@ export const RGB_TILE_FORMAT = 24;
 //: depend on whether the project has a segmentation.
 export const RGB_CHANNEL_KEY = "rgb";
 
-/** The tile key an `imageData` entry's address ends in.
- *
- *  Read off `origSrc` when routing has rewritten `src` to point at a data node:
- *  the two addresses end in the same key, but only while `src` is this
- *  server's. See main.js's applyRouting, which sets both.
- */
 /**
  * A layer's colour and contrast window as a tile-url query.
  *
@@ -235,35 +232,6 @@ function planeProgress(items) {
 
 
 /**
- * A 1x1 opaque tile of one colour, as a data url.
- *
- * What a layer's background is made of. It is stretched over the layer's whole
- * footprint by a tile source with exactly one tile, which is why one pixel is
- * enough -- there is nothing in it to interpolate.
- *
- * A data url rather than a route, and one tile rather than a grid, because
- * both halves of that are free: nothing is fetched, nothing is decoded, and
- * OpenSeadragon keys its tile cache on the url, so every layer asking for the
- * same colour shares one record. Memoised for the same reason: `toDataURL` is
- * a PNG encode, and a slider dragged through a colour picker would otherwise
- * run one per frame.
- */
-const GROUND_TILES = new Map();
-function groundTileUrl(hex) {
-    const held = GROUND_TILES.get(hex);
-    if (held) return held;
-    const canvas = document.createElement("canvas");
-    canvas.width = 1;
-    canvas.height = 1;
-    const context = canvas.getContext("2d");
-    context.fillStyle = hex;
-    context.fillRect(0, 0, 1, 1);
-    const url = canvas.toDataURL("image/png");
-    GROUND_TILES.set(hex, url);
-    return url;
-}
-
-/**
  * Whether this layer gets the reference image's channel controls.
  *
  * The rule is deliberately broad, because "the same controls" is the whole
@@ -327,221 +295,6 @@ function hexToChannelColor(hex) {
     return { r: (value >> 16) & 255, g: (value >> 8) & 255, b: value & 255 };
 }
 
-
-function keyOf(channel) {
-    const address = channel?.origSrc || channel?.src || "";
-    return String(address).replace(/\/+$/, "").split("/").pop();
-}
-
-/**
- * @function toIdealTile -- full tile dimension in full image pixels
- * @param fullScale - scale factor to full image
- * @param useY - 0 for x and 1 for y
- * @returns Number
- */
-function toIdealTile(fullScale, useY) {
-    const { _tileWidth, _tileHeight } = this;
-    return [_tileWidth, _tileHeight][useY] * fullScale;
-}
-
-/**
- * @function toIdealTile -- clipped tile dimension in full image pixels
- * @param fullScale - scale factor to full image
- * @param v - x or y index of tile
- * @param useY - x=0 and y=1
- * @returns Number
- */
-function toRealTile(fullScale, v, useY) {
-    const shape = [this.width, this.height][useY];
-    const tileShape = this.toIdealTile(fullScale, useY);
-    return Math.min(shape - v * tileShape, tileShape);
-}
-
-/**
- * @function toTileBoundary -- tile start and size in full image pixels
- * @param fullScale - scale factor to full image
- * @param v - x or y index of tile
- * @param useY - x=0 and y=1
- * @typedef {object} Bound
- * @property {number} start - full image pixel start of tile
- * @property {number} size - full image pixel size of tile
- * @returns Bound
- */
-function toTileBoundary(fullScale, v, useY) {
-    const start = v * this.toIdealTile(fullScale, useY);
-    const size = this.toRealTile(fullScale, v, useY);
-    return { start, size };
-}
-
-/**
- * @function toMagnifiedBounds -- return bounds of magnified tile
- * @param _level - openseadragon tile level
- * @param _x - openseadragon tile x index
- * @param _y - openseadragon tile y index
- * @typedef {object} Bounds
- * @property {Array} x - start and end image x-coordinates
- * @property {Array} y - start and end image y-coordinates
- * @returns Bounds
- */
-function toMagnifiedBounds(_level, _x, _y) {
-    const tl = this.toTileLevels(_level, _x, _y);
-    if (tl.relativeImageScale >= 1) {
-        return { x: [0, 1], y: [0, 1] };
-    }
-    const ownScale = tl.outputFullScale;
-    const parentScale = tl.inputFullScale;
-    const [x, y] = [tl.outputTile.x, tl.outputTile.y].map((parentOffset, i) => {
-        const hd = this.toTileBoundary(ownScale, [_x, _y][i], i);
-        const sd = this.toTileBoundary(parentScale, parentOffset, i);
-        const start = (hd.start - sd.start) / sd.size;
-        const end = start + hd.size / sd.size;
-        return [
-            [start, end],
-            [1 - end, 1 - start],
-        ][i];
-    });
-    return { x, y };
-}
-
-/**
- * @function toTileLevels -- measure scaled/non-scaled tile details
- * @param level - openseadragon tile level
- * @param x - openseadragon tile x index
- * @param y - openseadragon tile y index
- * @typedef {object} TileLevels
- * @property {number} inputFullScale - full scale of source tile
- * @property {number} outputFullScale - full scale of renedered tile
- * @property {number} relativeImageScale - scale relative to image pixels
- * @property {object} inputTile - level, x, and y of source tile
- * @property {object} outputTile - level, x, and y of rendered tile
- * @returns TileLevels
- */
-function toTileLevels(level, x, y) {
-    const { extraZoomLevels } = this;
-    const flipped = this.maxLevel - level;
-    const relativeLevel = flipped - extraZoomLevels;
-    const sourceLevel = Math.max(relativeLevel, 0);
-    const extraZoom = sourceLevel - relativeLevel;
-    const inputTile = {
-        x: Math.floor(x / 2 ** extraZoom),
-        y: Math.floor(y / 2 ** extraZoom),
-        level: sourceLevel,
-    };
-    const outputTile = {
-        ...inputTile,
-        level: level - extraZoom,
-    };
-    return {
-        inputFullScale: 2 ** (flipped + extraZoom),
-        relativeImageScale: 2 ** relativeLevel,
-        outputFullScale: 2 ** flipped,
-        inputTile,
-        outputTile,
-    };
-}
-
-/**
- * @function getTileUrl -- return url for tile
- * @param level - openseadragon tile level
- * @param x - openseadragon tile x index
- * @param y - openseadragon tile y index
- * @returns string
- */
-function getTileUrl(level, x, y) {
-    const s = this.toTileLevels(level, x, y).inputTile;
-    // Segmentation (tileFormat 32) always ignores the HD toggle -- it has
-    // its own fixed encoding regardless -- so its URL (and OSD's URL-keyed
-    // tile cache) never churns when HD is flipped.
-    //
-    // PINNED ON THE SOURCE, falling back to the live flag for a source built
-    // without one (the label layer, a plugin's own tiled layer). Reading the
-    // global here moved every item's address space the instant the toggle
-    // flipped, which was only ever safe because the flip tore every item down
-    // in the same tick. It stopped being safe the moment the outgoing items
-    // have to keep drawing until their replacements are ready (see
-    // `handOverWhenReady`): an outgoing item would fetch the INCOMING quality
-    // for any tile the user panned onto mid-swap, so the picture being held up
-    // would be quietly rebuilt at the very quality it was there to cover for.
-    const hd = this.tileFormat !== 32 && (this.hd ?? tileQuality.hd) ? "q=hd" : "";
-    // Empty for a tile this server serves, which is every tile of an ordinary
-    // project. A tile fetched straight from a data node carries its token and
-    // the project's tile grid -- see services/resourceRouting.js. Joined with
-    // `&` rather than concatenated blindly: the HD flag used to be written as
-    // a bare "?q=hd", which is a second "?" the moment anything else is there.
-    // A label tile's version. Tiles are cached by the browser for a year, and
-    // a mask served before it was converted -- or by a server that drew every
-    // level at full resolution -- is a different picture at the same address.
-    // The server ignores the parameter; changing it is what changes the URL.
-    const version = this.tileFormat === 32 && this.labelVersion
-        ? `v=${encodeURIComponent(this.labelVersion)}` : "";
-    // A plane, projection or section of a volume, pinned on the source like
-    // `hd`. A 2-D mask is the same picture on every plane and names none; a
-    // 3-D label volume names the plane its labels are read from (`labelView`).
-    const viewToken = this.tileFormat === 32 ? this.labelView : this.view;
-    const view = viewToken ? `view=${encodeURIComponent(viewToken)}` : "";
-    // The window a volume's 8-bit tile is quantized with, pinned like the
-    // view (services/volumeWindows.js): a provisional window's bytes and the
-    // exact window's never share an address.
-    const window = this.tileFormat !== 32 && !hd && viewToken && this.windowStamp
-        ? `w=${this.windowStamp}` : "";
-    const query = [hd, this.srcQuery || "", version, view, window].filter(Boolean).join("&");
-    const suffix = query ? `?${query}` : "";
-    return `${this.src}${s.level}/${s.x}_${s.y}.png${suffix}`;
-}
-
-/**
- * Mask pixels per image pixel for `config`: 1, or the power of two the server
- * drew a polygon mask at (`segmentationScale`). Anything else is read as 1 --
- * a tile source sized by a non-power-of-two would ask for levels that do not
- * exist.
- */
-function maskScale(config) {
-    const scale = Number(config?.segmentationScale) || 1;
-    return scale >= 1 && Number.isInteger(Math.log2(scale)) ? scale : 1;
-}
-
-//: Bumped when label tiles already in browsers' caches must not be reused.
-//: 2: single-level masks used to be served at full resolution at every level.
-const LABEL_TILE_REVISION = "2";
-
-/**
- * @function getTileKey -- return string key for tile
- * @param level - openseadragon tile level
- * @param x - openseadragon tile x index
- * @param y - openseadragon tile y index
- * @returns string
- */
-function getTileKey(level, x, y) {
-    const { srcIdx, tileFormat } = this;
-    const s = this.toTileLevels(level, x, y).inputTile;
-    // The view is part of the key (glInit.js caches GPU textures on it): plane
-    // 13 of a channel must never bind plane 12's texture. Absent for a planar
-    // image, so its keys are what they always were.
-    const token = tileFormat === 32 ? this.labelView : this.view;
-    const view = token ? `-${token}` : "";
-    const window = tileFormat !== 32 && token && this.windowStamp && !this.hd
-        ? `-w${this.windowStamp}` : "";
-    return `${tileFormat}-${srcIdx}${view}${window}-${s.level}-${s.x}-${s.y}`;
-}
-
-/**
- * @function getImagePixel -- return image pixel for screen position
- * @param tiledImage - openseadragon tiled image
- * @param position - screen position
- * @returns array
- */
-function getImagePixel(tiledImage, position) {
-    const tileScale = 2 ** this.extraZoomLevels;
-    // Through the view transform when there is one: OSD's pointFromPixel
-    // undoes a rotation but not a flip (services/viewTransform.js). Read off
-    // window lazily, because this module is webpacked and that one is not.
-    const transform = typeof window !== "undefined" ? window.PlexoraViewTransform : null;
-    const frac = transform && tiledImage.viewer
-        ? transform.pointFromPixel(tiledImage.viewer, position)
-        : tiledImage.viewport.pointFromPixel(position);
-    const zoomed = tiledImage.viewportToImageCoordinates(frac);
-    return [zoomed.x, zoomed.y].map((v) => v / tileScale);
-}
 
 /**
  * @class ViewerManager
@@ -1226,9 +979,9 @@ export class ViewerManager {
      * the stack hands to the items it holds, never reaches it. A step's
      * `prepareLabelPlane` adopts the item that already holds the plane, and
      * the swap is a flip rather than a fetch. Only while the plane on screen
-     * is still (NeighbourPrefetch's moment: label tiles do not go through the
-     * tile scheduler, so nothing else would keep them behind the plane on
-     * screen), and never for a 2-D mask, whose outlines are every plane's.
+     * is still (NeighbourPrefetch's moment; in the tile scheduler their tiles
+     * are a prefetch's too, behind the plane on screen), and never for a 2-D
+     * mask, whose outlines are every plane's.
      */
     prepareLabelStandby(tokens) {
         if (!this.labelStandby) this.labelStandby = new Map();
@@ -1246,7 +999,8 @@ export class ViewerManager {
             const entry = { token, item: null };
             this.labelStandby.set(token, entry);
             this.viewer.addTiledImage({
-                tileSource: { ...this.labelTileSource(token), plexoraLabelStandby: true },
+                tileSource: this.rasterTiles({ ...this.labelTileSource(token), plexoraLabelStandby: true },
+                                             { standby: true }),
                 compositeOperation: outgoing[0].compositeOperation
                     || (this.imageViewer.config.image_kind === "brightfield" ? "source-over" : "lighter"),
                 opacity: 0,
@@ -1286,6 +1040,8 @@ export class ViewerManager {
         const item = entry.item;
         if (!item || this.viewer?.world?.getIndexOfItem(item) < 0) return null;
         item.source.plexoraLabelStandby = false;
+        // Out of the tile scheduler's prefetch tier, as an adopted channel is.
+        item.source.plexoraStandby = false;
         globalThis.PlexoraViewPerf?.count?.("labelStandbyAdopted");
         return item;
     }
@@ -1391,7 +1147,7 @@ export class ViewerManager {
                 return;
             }
             this.viewer.addTiledImage({
-                tileSource: this.labelTileSource(next),
+                tileSource: this.rasterTiles(this.labelTileSource(next)),
                 compositeOperation: outgoing[0].compositeOperation
                     || (this.imageViewer.config.image_kind === "brightfield" ? "source-over" : "lighter"),
                 opacity: 0,
@@ -1999,7 +1755,7 @@ export class ViewerManager {
         const { maxLevel, extraZoomLevels } = this.imageViewer.config;
         const magnification = 2 ** extraZoomLevels;
         this.viewer.addTiledImage({
-            tileSource: {
+            tileSource: this.rasterTiles({
                 height: this.imageViewer.config.height * magnification,
                 width: this.imageViewer.config.width * magnification,
                 maxLevel: extraZoomLevels + maxLevel - 1,
@@ -2022,7 +1778,7 @@ export class ViewerManager {
                 // A colour stack's plane (`view=`), pinned on the source like
                 // a channel's: this item always shows the plane it was built at.
                 view: view || "",
-            },
+            }),
             // On the TiledImage rather than inside the tileSource: OSD reads
             // this one off the addTiledImage options, and the viewer-wide
             // default is `lighter`.
@@ -2149,7 +1905,7 @@ export class ViewerManager {
         const { maxLevel, extraZoomLevels } = config;
         const magnification = 2 ** extraZoomLevels;
         this.viewer.addTiledImage({
-            tileSource: {
+            tileSource: this.rasterTiles({
                 height: config.height * magnification,
                 width: config.width * magnification,
                 maxLevel: extraZoomLevels + maxLevel - 1,
@@ -2169,7 +1925,7 @@ export class ViewerManager {
                 src: src,
                 srcQuery: "",
                 layerId: PlexoraLayerStack.REFERENCE_LAYER_ID,
-            },
+            }),
             // As the brightfield base: `lighter` is the viewer-wide default
             // and it is wrong for a ground layer. Transparent either way here,
             // but the frame is what registered layers composite against.
@@ -2299,7 +2055,10 @@ export class ViewerManager {
             fade = null;
             const answer = (arrived, commit) => onReady?.(arrived, commit || (() => {}));
             self.viewer.addTiledImage({
-                tileSource: {
+                // Its tiles through the tile scheduler when they arrive as the
+                // picture (an rgb slide, a density raster); a channel's
+                // (`tileFormat` 16) keep the path they have.
+                tileSource: self.rasterTiles({
                     // The LAYER's grid, not the reference's. A second slide is
                     // its own image with its own pyramid; borrowing the
                     // reference's dimensions is what would make it draw a
@@ -2354,7 +2113,7 @@ export class ViewerManager {
                     //: here so an outgoing item cannot start fetching the
                     //: incoming one's tiles mid-swap. See getTileUrl.
                     hd: Boolean(tileQuality.hd),
-                },
+                }),
                 compositeOperation: blend,
                 x: placement.x,
                 y: placement.y,
@@ -3424,7 +3183,7 @@ export class ViewerManager {
         // fallback below.
         if (this.imageViewer.config["segmentation"] && this.imageViewer.config["imageData"]?.[0]?.["src"]) {
             this.viewer.addTiledImage({
-                tileSource: this.labelTileSource(viewSelection.labels),
+                tileSource: this.rasterTiles(this.labelTileSource(viewSelection.labels)),
                 // On the TiledImage, where OSD actually reads it -- the copy
                 // inside the tileSource above is inert, and the viewer-wide
                 // default is `lighter`. Additive is right over a fluorescence
@@ -3515,5 +3274,25 @@ export class ViewerManager {
             //: from; empty for a 2-D mask (see prepareLabelPlane).
             labelView: String(labelView || ""),
         };
+    }
+
+    /**
+     * Hand a label (32) or RGB (24) tile source's downloads to the tile
+     * scheduler (views/tileFetch.js, `raster`), as a volume's channel tiles
+     * are: one `fetch` per address, in line with every other tile, cancelled
+     * with its item, retried as OSD retries. The bytes reach OSD as its own
+     * loader handed them over (a "rasterBlob", the response as
+     * `tileRequest`), so what is drawn -- and the label ids tileDecode.js
+     * reads -- are the same. A source of any other format, or a viewer with
+     * no scheduler (a probe's), is left as it is. `standby` marks a prefetched
+     * plane's (prepareLabelStandby), which waits behind everything else.
+     */
+    rasterTiles(tileSource, { standby = false } = {}) {
+        const scheduler = this.imageViewer?.tileFetch;
+        const format = tileSource?.tileFormat;
+        if (scheduler && (format === 32 || format === RGB_TILE_FORMAT)) {
+            scheduler.attach(tileSource, { owner: "main", standby, raster: true });
+        }
+        return tileSource;
     }
 }

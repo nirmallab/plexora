@@ -49,7 +49,18 @@
  *   than six tiles. HTTP/2 would multiplex them, but browsers speak it only
  *   over TLS. On localhost the wait is nothing and nothing is batched.
  *
- * Label (32) and RGB (24) tiles keep OSD's own path: they are not channels.
+ * - RASTER TILES TOO: a label (32) or RGB (24) tile is not a channel, but it
+ *   is fetched here as well (`attach`'s `raster`) -- shared, in line with the
+ *   rest and cancelled with its item like a channel tile, though never
+ *   decoded and never batched. Its job is finished as OSD's own loader
+ *   finishes one (TileSource.downloadTileStart with loadTilesWithAjax): the
+ *   bytes as a "rasterBlob", which OSD turns into the image it draws, and a
+ *   request whose `response` is those bytes, which is where `tile-loaded`
+ *   hands tileDecode.js a label tile to decode. The same bytes either way, so
+ *   the same pixels; what changes is that they arrive by `fetch`, the one
+ *   request a page can route or declare an address space for
+ *   (`addressSpace`), which OSD's XHR loader is not.
+ *
  * Classic script, `window.PlexoraTileFetch`; loaded before imageViewer.js.
  */
 (function (global) {
@@ -123,10 +134,19 @@
 
     class TileFetchScheduler {
         constructor({ decoderPool = null, fetchImpl = null, maxInFlight = MAX_IN_FLIGHT,
-                      decodeInline = null, makeContext = null, onAttach = null } = {}) {
+                      decodeInline = null, makeContext = null, onAttach = null,
+                      addressSpace = null } = {}) {
             this.decoderPool = decoderPool;
             this.onAttach = onAttach;
             this._fetch = fetchImpl || ((...args) => global.fetch(...args));
+            //: The address space a tile's URL is in, where a request must
+            //: say so: `(url) => "loopback" | "local" | null`, passed on as
+            //: the fetch's `targetAddressSpace` (Chrome's Local Network
+            //: Access: a public page's request to a node on 127.0.0.1 or a
+            //: private address is refused without it). None for a page its
+            //: own server serves, whose tiles come from that server or a node
+            //: it routes to -- every request there is exactly what it was.
+            this.addressSpace = addressSpace;
             this.maxInFlight = maxInFlight;
             this.decodeInline = decodeInline;
             this._makeContext = makeContext;
@@ -223,18 +243,25 @@
 
         /**
          * Route `tileSource`'s downloads through this scheduler. `owner` is
-         * "main" or "pane"; `standby` marks a prefetch's items (lowest tier).
+         * "main" or "pane"; `standby` marks a prefetch's items (lowest tier);
+         * `raster` a label or RGB source, whose tiles are handed to OSD as
+         * the bytes they are (`deliverRaster`) rather than decoded.
          * Called on the options object before OSD copies it.
          */
-        attach(tileSource, { owner = "main", standby = false } = {}) {
+        attach(tileSource, { owner = "main", standby = false, raster = false } = {}) {
             const scheduler = this;
-            if (this.onAttach) {
+            // Not for a raster source, which every image has (its mask, its
+            // slide): `onAttach` raises the viewer loader's job limit for a
+            // volume (imageViewer.js), and a planar image's channel tiles,
+            // which still take OSD's own path, keep the limit they have.
+            if (this.onAttach && !raster) {
                 const once = this.onAttach;
                 this.onAttach = null;
                 once();
             }
             tileSource.plexoraOwner = owner;
             tileSource.plexoraStandby = Boolean(standby);
+            tileSource.plexoraRaster = Boolean(raster);
             tileSource.downloadTileStart = function (job) {
                 if (!scheduler.enabled) {
                     return global.OpenSeadragon.TileSource.prototype.downloadTileStart.call(this, job);
@@ -413,15 +440,23 @@
 
         start(job) {
             job.userData = job.userData || {};
-            let request = this.requests.get(job.src);
+            const raster = Boolean((job.source || job.tile?.tiledImage?.source)?.plexoraRaster);
+            // A raster job never shares a request with one to be decoded:
+            // the two end differently (`deliver`).
+            const address = raster ? `raster ${job.src}` : job.src;
+            let request = this.requests.get(address);
             if (request) {
                 this.stats.shared += 1;
             } else {
-                const where = this.linkOf(job.src);
-                request = { url: job.src, jobs: new Set(), controller: null, state: "queued",
-                            key: null, queuedAt: now(), link: where?.link || null,
+                // A raster tile is never batched, so its link is not measured
+                // either: a batch's parts are not the response OSD's loader
+                // hands `tile-loaded`, and the batch routes take channel and
+                // layer tiles only (server/tile_batch.py).
+                const where = raster ? null : this.linkOf(job.src);
+                request = { url: job.src, address, raster, jobs: new Set(), controller: null,
+                            state: "queued", key: null, queuedAt: now(), link: where?.link || null,
                             tilePath: where?.tilePath || null };
-                this.requests.set(job.src, request);
+                this.requests.set(address, request);
                 this.queue.push(request);
                 this.stats.requests += 1;
             }
@@ -462,7 +497,7 @@
             }
             const at = this.queue.indexOf(request);
             if (at >= 0) this.queue.splice(at, 1);
-            if (this.requests.get(request.url) === request) this.requests.delete(request.url);
+            if (this.requests.get(request.address) === request) this.requests.delete(request.address);
         }
 
         /**
@@ -591,7 +626,7 @@
             let requeued = false;
             try {
                 const sentAt = now();
-                const response = await this._fetch(link.url, {
+                const response = await this._fetch(link.url, this.requestInit(link.url, {
                     method: "POST",
                     credentials: "same-origin",
                     // text/plain: a "simple" request, so a node across origins
@@ -599,7 +634,7 @@
                     headers: { "Content-Type": "text/plain" },
                     body: JSON.stringify({ tiles: requests.map((request) => request.tilePath) }),
                     priority: standby ? "low" : (tier === TIER.visible ? "high" : "auto"),
-                });
+                }));
                 this.observe(link, sentAt, now(), response, link.url);
                 if (response.status === 404 || response.status === 405) {
                     // A server without the route (an older node): never again,
@@ -651,7 +686,7 @@
 
         /** A request is over: its jobs get the tile, or its failure. */
         settle(request, decoded, error) {
-            if (this.requests.get(request.url) === request) this.requests.delete(request.url);
+            if (this.requests.get(request.address) === request) this.requests.delete(request.address);
             const dropped = request.state === "dropped";
             request.state = "done";
             if (!dropped) {
@@ -662,6 +697,15 @@
                 }
             }
             request.jobs.clear();
+        }
+
+        /** A tile request's fetch options, with `targetAddressSpace` when
+         *  `addressSpace` names one for `url` -- and only then, so a request
+         *  this page has always made goes out exactly as it did. */
+        requestInit(url, init) {
+            const space = this.addressSpace ? this.addressSpace(url) : null;
+            if (space) init.targetAddressSpace = space;
+            return init;
         }
 
         async run(request) {
@@ -676,24 +720,31 @@
             let error = null;
             try {
                 const sentAt = now();
-                const response = await this._fetch(request.url, {
+                const response = await this._fetch(request.url, this.requestInit(request.url, {
                     signal: controller?.signal,
                     credentials: "same-origin",
                     priority: tier === TIER.standby ? "low" : (tier === TIER.visible ? "high" : "auto"),
-                });
+                }));
                 this.observe(request.link, sentAt, now(), response, request.url);
                 if (!response.ok) throw new Error(`HTTP ${response.status}`);
                 const buffer = await response.arrayBuffer();
                 if (request.state === "dropped") return;
                 if (!buffer.byteLength) throw new Error("empty tile response");
                 this.stats.bytes += buffer.byteLength;
-                request.state = "decoding";
-                decoded = await this.decode(buffer);
-                // A coarse stand-in for a section the server has not
-                // prepared yet (volume/plane_view.py, `no-store`): marked on
-                // the tile, so a frame capture can tell it from the real one.
-                decoded.coarse = Boolean(response.headers?.get?.("X-Plexora-Served-Steps"));
-                this.stats.decoded += 1;
+                if (request.raster) {
+                    // The bytes are the tile: OSD makes the picture of them
+                    // (deliverRaster).
+                    decoded = { raster: buffer, status: response.status };
+                    this.stats.raster = (this.stats.raster || 0) + 1;
+                } else {
+                    request.state = "decoding";
+                    decoded = await this.decode(buffer);
+                    // A coarse stand-in for a section the server has not
+                    // prepared yet (volume/plane_view.py, `no-store`): marked on
+                    // the tile, so a frame capture can tell it from the real one.
+                    decoded.coarse = Boolean(response.headers?.get?.("X-Plexora-Served-Steps"));
+                    this.stats.decoded += 1;
+                }
             } catch (caught) {
                 error = caught;
             } finally {
@@ -735,6 +786,10 @@
 
         /** The decoded plane onto the job's tile, and the job finished. */
         deliver(job, decoded) {
+            if (decoded.raster) {
+                this.deliverRaster(job, decoded);
+                return;
+            }
             const tile = job.tile;
             if (tile) {
                 tile._array = decoded.array;
@@ -746,6 +801,24 @@
             try {
                 job.finish(this.context(Math.max(1, decoded.width), Math.max(1, decoded.height)),
                            null, "context2d");
+            } catch (error) {
+                console.error("tileFetch: could not finish a tile", error);
+            }
+        }
+
+        /**
+         * A raster tile (`attach`'s `raster`) finished as OSD's own loader
+         * finishes one: its bytes as an untyped Blob, data type
+         * "rasterBlob", which OSD makes the image it draws; and, where its
+         * XHR would be, a request whose `response` is those bytes, which
+         * `tile-loaded` hands on as `tileRequest` (tileDecode.js decodes a
+         * label tile from it). A Blob per job, the bytes shared: nobody
+         * writes to them.
+         */
+        deliverRaster(job, { raster, status }) {
+            if (job.tile) delete job.tile._plexoraFailed;
+            try {
+                job.finish(new global.Blob([raster]), { response: raster, status }, "rasterBlob");
             } catch (error) {
                 console.error("tileFetch: could not finish a tile", error);
             }

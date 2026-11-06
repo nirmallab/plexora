@@ -837,9 +837,12 @@ class ImageViewer {
         // A volume's channel and section tiles go through ONE scheduler
         // (views/tileFetch.js): fetched once per address, decoded once, in
         // order of need, and cancelled with the item that wanted them. Built
-        // here for every image and only ATTACHED to a volume's tile sources
-        // (ViewerManager.addChannelItems, sectionPanes.js), so a planar
-        // image's tiles take exactly the path they always did.
+        // here for every image and ATTACHED to a volume's channel and section
+        // sources (ViewerManager.addChannelItems, sectionPanes.js), so a
+        // planar image's channel tiles take exactly the path they always did;
+        // and to every image's label and RGB sources as raster tiles
+        // (ViewerManager.rasterTiles): fetched here, never decoded here, and
+        // handed to OSD as the bytes its own loader would have handed it.
         this.tileFetch = window.PlexoraTileFetch
             ? new PlexoraTileFetch.TileFetchScheduler({
                 decoderPool,
@@ -852,8 +855,9 @@ class ImageViewer {
                 // them -- and a swap now asks for a whole view at every level
                 // at once (maxTilesPerFrame). The wire is still the
                 // scheduler's MAX_IN_FLIGHT (6): a started job is only a place
-                // in its line. Only a volume's tile sources attach, so a
-                // planar image's loader keeps its 10.
+                // in its line. Only a volume's channel and section sources
+                // raise it (a raster attach does not: tileFetch.js `attach`),
+                // so a planar image's loader keeps its 10.
                 onAttach: () => {
                     const loader = this.viewer?.imageLoader;
                     if (loader && loader.jobLimit && loader.jobLimit < 256) loader.jobLimit = 256;
