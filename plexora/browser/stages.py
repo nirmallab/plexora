@@ -63,6 +63,13 @@ STAGES = {
     },
 }
 
+#: Pure packages Pyodide ships older than a stage's wheels need. The build
+#: ships each at the version uv.lock pins, under Pyodide's own name for it, so
+#: every package that depends on it loads that one: anndata 0.13 imports
+#: typing_extensions.sentinel (new in 4.16), and Pyodide 314.0.7 has 4.15.0 --
+#: `import anndata` failed on the website (tests/browser/import_check.mjs).
+NEWER_THAN_PYODIDE = ("typing-extensions",)
+
 #: Lockfile dependencies a stage does not take: imported only by code Plexora
 #: never reaches (pyarrow's pandas conversions; networkx's drawing).
 DROP_DEPENDS = {"pyarrow": ("pandas",), "networkx": ("matplotlib",)}

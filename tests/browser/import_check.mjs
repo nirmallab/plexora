@@ -7,6 +7,8 @@
 //             library's optional import must not bring one in at boot;
 //   imports   every module of the gating and QC plugins, the AI layer (chat
 //             included) and the agent imports, once every stage is in;
+//   stage_modules  each stage's own modules (cv2, skimage, h5py, ...) by
+//             name: Plexora imports them lazily, so `imports` never does;
 //   discover  registry.discover() registers every plugin's capabilities;
 //   pixels    a calibrated OME-TIFF reports its pixel size. In the first
 //             browser proof a missing pure-Python wheel made a calibrated
@@ -129,6 +131,29 @@ json.dumps({"imported": _imported, "failed": _failed,
             "seconds": round(time.perf_counter() - _t0, 1)})
 `;
 
+//: Each stage's own top-level modules, imported by name: Plexora imports most
+//: of them lazily, inside the function that needs them, so the trees above
+//: never reach them (a bundle once shipped an OpenCV whose loader could not
+//: find its config.py, and every QC check failed on the website).
+const STAGE_MODULES = `
+import importlib
+import json
+import traceback
+
+from plexora.browser.stages import STAGES
+
+_ok, _failed = [], {}
+for _stage, _spec in STAGES.items():
+    for _module in _spec["modules"]:
+        try:
+            importlib.import_module(_module)
+            _ok.append(_module)
+        except BaseException as exc:  # noqa: BLE001 -- reported
+            _failed[f"{_stage}:{_module}"] = "".join(
+                traceback.format_exception_only(type(exc), exc)).strip()[-400:]
+json.dumps({"imported": _ok, "failed": _failed})
+`;
+
 const DISCOVER = `
 import json
 from plexora.agent import registry
@@ -204,6 +229,10 @@ try {
     const imports = JSON.parse(await py.runPythonAsync(IMPORTS));
     out.checks.imports = { ms: ms(), ...imports };
     for (const [module, error] of Object.entries(imports.failed)) fail("imports", `${module}: ${error}`);
+
+    const staged = JSON.parse(await py.runPythonAsync(STAGE_MODULES));
+    out.checks.stage_modules = { ms: ms(), ...staged };
+    for (const [module, error] of Object.entries(staged.failed)) fail("stage_modules", `${module}: ${error}`);
 
     const discovered = JSON.parse(await py.runPythonAsync(DISCOVER));
     out.checks.discover = { ms: ms(), ...discovered };

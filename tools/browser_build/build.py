@@ -87,7 +87,7 @@ CORE = ("pyodide.js", "pyodide.mjs", "pyodide.asm.mjs", "pyodide.asm.wasm", "pyt
         "package.json")
 
 sys.path.insert(0, str(REPO))
-from plexora.browser.stages import DROP_DEPENDS, STAGES  # noqa: E402
+from plexora.browser.stages import DROP_DEPENDS, NEWER_THAN_PYODIDE, STAGES  # noqa: E402
 
 
 def sha256(path: Path) -> str:
@@ -253,7 +253,8 @@ def wheels(scratch: Path) -> dict:
                     str(REPO)], check=True)
     for wheel in out.glob("plexora-*.whl"):
         lean(wheel)
-    wanted = sorted({name for stage in STAGES.values() for name in stage["wheels"]} - {"plexora"})
+    wanted = sorted(({name for stage in STAGES.values() for name in stage["wheels"]} - {"plexora"})
+                    | set(NEWER_THAN_PYODIDE))
     locked = locked_versions()
     pins = [f"{name}=={pin(name, locked)}" for name in wanted]
     subprocess.run([*pip, "download", "--no-deps", "--only-binary=:all:", "--python-version",
@@ -393,6 +394,23 @@ def brotli(path: Path, encoder: str) -> None:
                    check=True)
 
 
+def newer(lock: dict, dist: Path, found: dict) -> dict:
+    """{lockfile name: the file to ship}: Pyodide's own, except for each
+    `NEWER_THAN_PYODIDE` package, whose lockfile entry is pointed at the wheel
+    uv.lock pins (file name, version), so Pyodide loads that one wherever it
+    is a dependency."""
+    files = {}
+    for name, entry in lock["packages"].items():
+        if name in NEWER_THAN_PYODIDE:
+            wheel = found[_norm(name)]
+            entry["file_name"] = wheel.name
+            entry["version"] = wheel.name.split("-")[1]
+            files[name] = wheel
+        else:
+            files[name] = dist / entry["file_name"]
+    return files
+
+
 def build(out_root: Path, python314: str | None, encoder: str | None) -> Path:
     from plexora import __version__
 
@@ -419,22 +437,23 @@ def build(out_root: Path, python314: str | None, encoder: str | None) -> Path:
             packages = [name for name in packages if name not in base]
         stages[stage_name] = {"pyodide": packages, "wheels": [], "bytes": 0}
         shipped.update(packages)
-    for name in sorted(shipped):
-        entry = lock["packages"][name]
-        source, target = dist / entry["file_name"], out / "pyodide" / entry["file_name"]
-        if entry["file_name"].endswith(".whl"):
-            precompile(source, target, python314, stored)
-            if encoder:
-                brotli(target, encoder)
-        else:
-            shutil.copy2(source, target)
-        entry["sha256"] = sha256(target)
-        if name in DROP_DEPENDS:
-            entry["depends"] = [d for d in entry["depends"] if d not in DROP_DEPENDS[name]]
-    (out / "pyodide" / "pyodide-lock.json").write_text(json.dumps(lock), encoding="utf-8")
-
     with tempfile.TemporaryDirectory(prefix="pxweb-wheels-") as scratch:
         found = wheels(Path(scratch))
+        sources = newer(lock, dist, found)
+        for name in sorted(shipped):
+            entry = lock["packages"][name]
+            source, target = sources[name], out / "pyodide" / entry["file_name"]
+            if entry["file_name"].endswith(".whl"):
+                precompile(source, target, python314, stored)
+                if encoder:
+                    brotli(target, encoder)
+            else:
+                shutil.copy2(source, target)
+            entry["sha256"] = sha256(target)
+            if name in DROP_DEPENDS:
+                entry["depends"] = [d for d in entry["depends"] if d not in DROP_DEPENDS[name]]
+        (out / "pyodide" / "pyodide-lock.json").write_text(json.dumps(lock), encoding="utf-8")
+
         missing = unmet(lock, found)
         if missing:
             raise SystemExit(f"a stage's wheels need packages no stage ships: {missing} "

@@ -193,3 +193,19 @@ def test_the_real_h5ad_stage_lists_scverse_miscs_settings_extra():
     from plexora.browser.stages import STAGES
 
     assert {"session-info2", "pydantic-settings", "python-dotenv"} <= set(STAGES["h5ad"]["wheels"])
+
+
+def test_a_package_pyodide_ships_too_old_is_taken_at_the_locks_pin(tmp_path):
+    """anndata 0.13 imports typing_extensions.sentinel (4.16) and Pyodide
+    314.0.7 ships typing-extensions 4.15.0: the bundle ships uv.lock's under
+    Pyodide's own name, so whatever depends on it loads that one."""
+    assert set(build.NEWER_THAN_PYODIDE) <= set(build.locked_versions())
+    wheel = tmp_path / "typing_extensions-4.16.0-py3-none-any.whl"
+    wheel.write_bytes(b"pk")
+    lock = {"packages": {
+        "typing-extensions": {"file_name": "typing_extensions-4.15.0-py3-none-any.whl", "version": "4.15.0"},
+        "numpy": {"file_name": "numpy-2.3.1-cp314-cp314-pyemscripten_2026_0_wasm32.whl", "version": "2.3.1"}}}
+    files = build.newer(lock, tmp_path / "dist", {"typing-extensions": wheel})
+    assert files["typing-extensions"] == wheel
+    assert lock["packages"]["typing-extensions"] == {"file_name": wheel.name, "version": "4.16.0"}
+    assert files["numpy"] == tmp_path / "dist" / "numpy-2.3.1-cp314-cp314-pyemscripten_2026_0_wasm32.whl"
