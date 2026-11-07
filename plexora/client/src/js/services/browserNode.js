@@ -422,8 +422,9 @@
 
     /**
      * The tile `href` asks for, read from the file: `{label: false, tile}` for
-     * a channel's HD tile, `{label: true, tile, bits}` for a mask's, or null
-     * for anything Python answers (see the header).
+     * a channel's HD tile, `{label: true, tile, bits}` for a mask's,
+     * `{slide: true, bytes}` for a slide's colour tile (its PNG), or null for
+     * anything Python answers (see the header).
      */
     async function read(href, method = "GET") {
         const url = new URL(href, global.location.href);
@@ -438,7 +439,7 @@
             const [tw, th] = entry.spec.tile;
             const bytes = await global.PlexoraSlides.tile(entry.image.slide, Number(level),
                                                           Number(tx), Number(ty), tw, th);
-            return bytes ? respond(bytes) : null;
+            return bytes ? { slide: true, bytes } : null;
         }
         // `_parse_channel`: a name ending `_<n>` is channel n, anything else
         // the mask (whose tiles ignore `q`).
@@ -474,6 +475,7 @@
     async function answer(request) {
         const got = await read(request.url, request.method);
         if (!got) return null;
+        if (got.slide) return respond(got.bytes);  // the RGB PNG, as cut
         return respond(got.label ? labelPng(got.tile, got.bits) : png16(got.tile));
     }
 
@@ -488,7 +490,8 @@
      */
     async function decoded(href, { raster = false } = {}) {
         const got = await read(href, "GET");
-        if (!got || got.label !== Boolean(raster)) return null;
+        // A slide's colour tile is already a PNG: the network path's.
+        if (!got || got.slide || got.label !== Boolean(raster)) return null;
         if (got.label) return { raster: labelPng(got.tile, got.bits).buffer, status: 200 };
         const { tile } = got;
         return { array: tile.format === "u16" ? tile.array : widen(tile.array),
