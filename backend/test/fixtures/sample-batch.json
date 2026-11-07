@@ -946,6 +946,21 @@
    "rows": [
     {
      "d": {
+      "browser": "edge",
+      "major": 3,
+      "os": "windows"
+     },
+     "k": "refused",
+     "n": 12
+    }
+   ],
+   "type": "site.summary",
+   "window": "2026-09-27T14"
+  },
+  {
+   "rows": [
+    {
+     "d": {
       "event": "dataset.opened"
      },
      "k": "rejected",

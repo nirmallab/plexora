@@ -316,6 +316,20 @@
         return { endpoint: String(endpoint), dnt, context };
     }
 
+    //: A browser turned away (too old for the website's Python), counted
+    //: once the message is up: anonymously, at most once a day, under
+    //: telemetry's rules (services/refusalCount.js). Only a build that names
+    //: the service, in a browser not asking for Do Not Track or Global
+    //: Privacy Control, loads the script; nothing here can delay or break
+    //: the message.
+    function countRefusal(shell, old) {
+        const options = telemetryOptions(shell);
+        if (!options || options.dnt) return;
+        script(at("/client/src/js/services/refusalCount.js"))
+            .then(() => global.PlexoraRefusalCount.send({ options, version: shell.version, refused: old }))
+            .catch(() => null);
+    }
+
     //: The desktop app's download page (services/desktopHandoff.js's too).
     const DOWNLOAD = "https://github.com/nirmallab/plexora/releases/latest";
     const UPDATE_CHROME = "https://support.google.com/chrome/answer/95414";
@@ -399,10 +413,11 @@
         // crashes or hangs trying: asked to update, before anything starts.
         const old = global.PlexoraPython.unsupported();
         if (old) {
-            return stop(`Update ${old.browser} to use Plexora here (version ${old.version}; it needs 137 or later).`,
-                        `How to update ${old.browser}`,
-                        () => global.open(old.browser === "Edge" ? UPDATE_EDGE : UPDATE_CHROME, "_blank", "noopener"),
-                        [{ label: "Get the desktop app", act: () => global.open(DOWNLOAD, "_blank", "noopener") }]);
+            stop(`Update ${old.browser} to use Plexora here (version ${old.version}; it needs 137 or later).`,
+                 `How to update ${old.browser}`,
+                 () => global.open(old.browser === "Edge" ? UPDATE_EDGE : UPDATE_CHROME, "_blank", "noopener"),
+                 [{ label: "Get the desktop app", act: () => global.open(DOWNLOAD, "_blank", "noopener") }]);
+            return countRefusal(shell, old);
         }
         await script(at("/client/src/js/services/backend.js"));
         await script(at("/client/src/js/services/pickedFiles.js"));

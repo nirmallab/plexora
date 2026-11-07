@@ -73,6 +73,38 @@ describe('the fold', () => {
     for (const table of ROLLUP_TABLES) await env.TELEMETRY_DB.prepare(`DELETE FROM ${table}`).run();
   });
 
+  it("counts the browsers the website's loader turns away, from the batch it sends", async () => {
+    // What client src/js/services/refusalCount.js posts (tests/test_refusal_count.py
+    // pins it against the schema): uncompressed, one row, no session.
+    const today = dayOf(seconds());
+    await env.TELEMETRY_DB.prepare('DELETE FROM batches').run();
+    await env.TELEMETRY_DB.prepare('DELETE FROM maintenance_log').run();
+    const client = { os: 'windows', runtime: 'web', launch_mode: 'web', deployment: 'web', install_kind: 'web',
+                     mode: 'anonymous', plexora_version: '0.0.36' };
+    const hour = new Date(seconds() * 1000).toISOString().slice(0, 13);
+    const sent = [[hexId('c1'), 'chrome', 131], [hexId('c2'), 'chrome', 131], [hexId('e1'), 'edge', 120]] as const;
+    for (const [id, browser, major] of sent) {
+      const batch = { schema: 1, batch_id: hexId('bb'), client: { install_id: id, ...client },
+                      events: [{ type: 'site.summary', window: hour, rows: [{ k: 'refused', d: { browser, major, os: 'windows' }, n: 1 }] }] };
+      const response = await upload(batch, await tokenFor(id), { gzip: false });
+      expect(response.status).toBe(202);
+      expect(await response.json()).toMatchObject({ accepted: 1, rejected: 0, unknown: 0 });
+    }
+    await foldToDone(env, today, seconds() + DAY);
+    const rows = (await env.TELEMETRY_DB.prepare(
+      `SELECT version, dims_key, n, ok, err FROM performance_rollups WHERE day = ? AND metric = 'site.summary.refused' ORDER BY dims_key`,
+    ).bind(today).all()).results;
+    expect(rows).toEqual([
+      { version: '0.0.36', dims_key: 'browser=chrome;major=131;os=windows', n: 2, ok: 2, err: 0 },
+      { version: '0.0.36', dims_key: 'browser=edge;major=120;os=windows', n: 1, ok: 1, err: 0 },
+    ]);
+    // A refused browser runs no session.
+    expect(await one(`SELECT SUM(sessions) AS sessions FROM daily_installs WHERE day = ?`, today)).toMatchObject({ sessions: 0 });
+    await env.TELEMETRY_DB.prepare('DELETE FROM batches').run();
+    await env.TELEMETRY_DB.prepare('DELETE FROM maintenance_log').run();
+    for (const table of ROLLUP_TABLES) await env.TELEMETRY_DB.prepare(`DELETE FROM ${table}`).run();
+  });
+
   it('fills every rollup table from the fixture, per the vectors mapping', async () => {
     const today = dayOf(seconds());
     await seed(2);
@@ -120,6 +152,11 @@ describe('the fold', () => {
     });
     expect(await one(`SELECT * FROM performance_rollups WHERE day = ? AND metric = 'remote.connect.connect_ms'`, today)).toMatchObject({
       dims_key: 'kind=server;runtime=desktop', n: 2, err: 2,
+    });
+
+    // Count-only counters (COUNT_DIMS) are counts: n and ok, no bins.
+    expect(await one(`SELECT * FROM performance_rollups WHERE day = ? AND metric = 'site.summary.refused'`, today)).toMatchObject({
+      dims_key: 'browser=edge;major=3;os=windows', n: 24, ok: 24, err: 0, sum: null, max: null, b0: 0, b8: 0,
     });
 
     expect(await one(`SELECT * FROM error_daily WHERE day = ?`, today)).toMatchObject({ fp: '0123456789abcdef', n: 24, installs: 2 });

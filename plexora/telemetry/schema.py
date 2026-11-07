@@ -552,6 +552,15 @@ EVENTS = {
         err=C(source=Enum("ui", "python", "cli", "agent"), fn=FUNCTION),
         ms=H(source=Enum("ui", "python", "cli", "agent"), fn=FUNCTION),
     ),
+    # The website's loader, before any Python runs (services/shell.js,
+    # services/refusalCount.js): a browser it asked to update instead of
+    # starting -- a Chrome or Edge with no JSPI (pythonClient.js
+    # `unsupported`). At most one count per browser per day, under the
+    # website's consent rules; `major` is the browser's major version.
+    "site.summary": Counter(
+        4,
+        refused=C(browser=Enum("chrome", "edge"), major=Int(999), os=OS_FAMILY),
+    ),
     "telemetry.health": Counter(
         8,
         rejected=C(event=Pattern(r"[a-z]+\.[a-z_]+", 40, "dataset.opened")),
