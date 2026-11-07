@@ -1,0 +1,476 @@
+{
+ "what": "tests/browser/h5ad.mjs: an image, its mask and an .h5ad picked on the website, imported, the table loaded and its cell features checked against anndata in CPython and the desktop's import of the same files",
+ "date": "2026-11-07",
+ "commit": "d422dbcc",
+ "browser": "Chrome 156 headless, fresh profile",
+ "runs": {
+  "S, cells-dense-lzf.h5ad (exemplar-001, mask)": {
+   "ok": true,
+   "checks": {
+    "no h5ad stage at boot": true,
+    "inspect: one sample with the table": true,
+    "h5ad stage loaded by the import": true,
+    "import/sample made the project": true,
+    "table ready": true,
+    "every marker described": true,
+    "CD45 mean as anndata reads it": true,
+    "nearest cell is the first cell, with its marker value": true,
+    "Cell Explorer offers phenotype": true,
+    "colour by phenotype": true,
+    "colour by CD45: every cell's value": true,
+    "the project record is the desktop's": true,
+    "Cell Explorer's requirements are the desktop's": true
+   },
+   "rows": 11201,
+   "stagesAtBoot": [],
+   "stages": [
+    {
+     "kind": "stage",
+     "stage": "h5ad",
+     "importer": "plexora.server.models.import_proposal",
+     "ms": 781,
+     "at": 8334
+    }
+   ],
+   "inspect": {
+    "status": 200,
+    "ms": 1522,
+    "samples": 1,
+    "layers": [
+     "image:exemplar-001.ome.tif",
+     "labels:Segmentation mask",
+     "table:Cells"
+    ],
+    "table": "11k rows \u00c3\u2014 90 columns \u00c2\u00b7 anndata",
+    "questions": [],
+    "warnings": []
+   },
+   "answers": {},
+   "importSample": {
+    "status": 200,
+    "ms": 454,
+    "name": "exemplar-001"
+   },
+   "tableReadyMs": 324,
+   "viewerMs": 1219,
+   "heapBytes": 579469312,
+   "routesMs": {
+    "get_database_description": 1275,
+    "get_nearest_cell": 9,
+    "get_all_cells (colour by marker)": 13,
+    "cell_explorer values (colour by obs)": 12
+   },
+   "desktop": {
+    "tableReadyMs": 156,
+    "describeMs": 83,
+    "nearestMs": 5,
+    "allCellsMs": 10
+   },
+   "parity": {
+    "name": [
+     "exemplar-001",
+     "exemplar-001"
+    ],
+    "dataset": [],
+    "roles": true,
+    "requirements": []
+   },
+   "tableSrc": "/picked/h5adtest/cells-dense-lzf.h5ad",
+   "slowestPython": [
+    {
+     "path": "/import/inspect",
+     "ms": 1520,
+     "py": 1520
+    },
+    {
+     "path": "/health",
+     "ms": 1288,
+     "py": 1
+    },
+    {
+     "path": "/agent/v1/viewer/sessions/view_7c6822e6c0ed/commands",
+     "ms": 1271,
+     "py": 1
+    },
+    {
+     "path": "/get_database_description",
+     "ms": 1271,
+     "py": 2
+    },
+    {
+     "path": "/agent/v1/viewer/sessions/view_7c6822e6c0ed/commands",
+     "ms": 943,
+     "py": 1
+    },
+    {
+     "path": "/save_channel_list",
+     "ms": 936,
+     "py": 3
+    },
+    {
+     "path": "/get_channel_gmm",
+     "ms": 705,
+     "py": 669
+    },
+    {
+     "path": "/get_image_channel_stats",
+     "ms": 651,
+     "py": 648
+    }
+   ]
+  },
+  "S, scimapExampleData.h5ad, ROI1 (825 cells)": {
+   "ok": true,
+   "checks": {
+    "no h5ad stage at boot": true,
+    "inspect: one sample with the table": true,
+    "h5ad stage loaded by the import": true,
+    "import/sample made the project": true,
+    "table ready": true,
+    "every marker described": true,
+    "CD45 mean as anndata reads it": true,
+    "nearest cell is the first cell, with its marker value": true,
+    "Cell Explorer offers phenotype": true,
+    "colour by phenotype": true,
+    "colour by CD45: every cell's value": true,
+    "the project record is the desktop's": true,
+    "Cell Explorer's requirements are the desktop's": true
+   },
+   "rows": 825,
+   "stagesAtBoot": [],
+   "stages": [
+    {
+     "kind": "stage",
+     "stage": "h5ad",
+     "importer": "plexora.server.models.import_proposal",
+     "ms": 1001,
+     "at": 8307
+    }
+   ],
+   "inspect": {
+    "status": 200,
+    "ms": 1725,
+    "samples": 1,
+    "layers": [
+     "image:exemplar-001.ome.tif",
+     "labels:Segmentation mask",
+     "table:Cells"
+    ],
+    "table": "11k rows \u00c3\u2014 9 columns \u00c2\u00b7 anndata",
+    "questions": [
+     "subset:stem:exemplar-001"
+    ],
+    "warnings": []
+   },
+   "answers": {
+    "subset:stem:exemplar-001": "ROI1"
+   },
+   "importSample": {
+    "status": 200,
+    "ms": 439,
+    "name": "exemplar-001"
+   },
+   "tableReadyMs": 355,
+   "viewerMs": 1223,
+   "heapBytes": 483196928,
+   "routesMs": {
+    "get_database_description": 924,
+    "get_nearest_cell": 13,
+    "get_all_cells (colour by marker)": 6,
+    "cell_explorer values (colour by obs)": 13
+   },
+   "desktop": {
+    "tableReadyMs": 115,
+    "describeMs": 0,
+    "nearestMs": 4,
+    "allCellsMs": 3
+   },
+   "parity": {
+    "name": [
+     "exemplar-001",
+     "exemplar-001"
+    ],
+    "dataset": [],
+    "roles": true,
+    "requirements": []
+   },
+   "tableSrc": "/picked/h5adtest/scimapExampleData.h5ad",
+   "slowestPython": [
+    {
+     "path": "/import/inspect",
+     "ms": 1722,
+     "py": 1721
+    },
+    {
+     "path": "/agent/v1/viewer/sessions/view_9433bf9390d0/commands",
+     "ms": 922,
+     "py": 1
+    },
+    {
+     "path": "/get_database_description",
+     "ms": 922,
+     "py": 1
+    },
+    {
+     "path": "/get_channel_gmm",
+     "ms": 921,
+     "py": 545
+    },
+    {
+     "path": "/save_channel_list",
+     "ms": 682,
+     "py": 40
+    },
+    {
+     "path": "/display_contrast",
+     "ms": 644,
+     "py": 3
+    },
+    {
+     "path": "/get_image_channel_stats",
+     "ms": 640,
+     "py": 638
+    },
+    {
+     "path": "/save_channel_list",
+     "ms": 533,
+     "py": 7
+    }
+   ]
+  },
+  "L, cells-dense-gzip.h5ad (Orion CRC02, mask)": {
+   "ok": true,
+   "checks": {
+    "no h5ad stage at boot": true,
+    "inspect: one sample with the table": true,
+    "h5ad stage loaded by the import": true,
+    "import/sample made the project": true,
+    "table ready": true,
+    "every marker described": true,
+    "CD45 mean as anndata reads it": true,
+    "nearest cell is the first cell, with its marker value": true,
+    "Cell Explorer offers phenotype": true,
+    "colour by phenotype": true,
+    "colour by CD45: every cell's value": true,
+    "the project record is the desktop's": true,
+    "Cell Explorer's requirements are the desktop's": true
+   },
+   "rows": 1260592,
+   "stagesAtBoot": [],
+   "stages": [
+    {
+     "kind": "stage",
+     "stage": "h5ad",
+     "importer": "plexora.server.models.import_proposal",
+     "ms": 1011,
+     "at": 9358
+    }
+   ],
+   "inspect": {
+    "status": 200,
+    "ms": 1964,
+    "samples": 1,
+    "layers": [
+     "image:blank_image.ome.tif",
+     "labels:Segmentation mask",
+     "table:Cells"
+    ],
+    "table": "1.3M rows \u00c3\u2014 90 columns \u00c2\u00b7 anndata",
+    "questions": [
+     "mask-or-image:/picked/h5adtest/blank_image.ome.tif"
+    ],
+    "warnings": []
+   },
+   "answers": {},
+   "importSample": {
+    "status": 200,
+    "ms": 611,
+    "name": "blank_image"
+   },
+   "tableReadyMs": 5809,
+   "viewerMs": 12297,
+   "heapBytes": 2482044928,
+   "routesMs": {
+    "get_database_description": 45,
+    "get_nearest_cell": 5244,
+    "get_all_cells (colour by marker)": 799,
+    "cell_explorer values (colour by obs)": 832
+   },
+   "desktop": {
+    "tableReadyMs": 3689,
+    "describeMs": 1690,
+    "nearestMs": 6,
+    "allCellsMs": 627
+   },
+   "parity": {
+    "name": [
+     "blank_image",
+     "blank_image"
+    ],
+    "dataset": [],
+    "roles": true,
+    "requirements": []
+   },
+   "tableSrc": "/picked/h5adtest/cells-dense-gzip.h5ad",
+   "slowestPython": [
+    {
+     "path": "/agent/v1/viewer/sessions",
+     "ms": 7244,
+     "py": 17
+    },
+    {
+     "path": "/save_channel_list",
+     "ms": 7228,
+     "py": 58
+    },
+    {
+     "path": "/get_load_status",
+     "ms": 7172,
+     "py": 4
+    },
+    {
+     "path": "/display_contrast",
+     "ms": 7167,
+     "py": 4
+    },
+    {
+     "path": "/get_image_channel_stats",
+     "ms": 7157,
+     "py": 7157
+    },
+    {
+     "path": "/get_image_channel_stats",
+     "ms": 7063,
+     "py": 18
+    },
+    {
+     "path": "/get_load_status",
+     "ms": 6664,
+     "py": 7
+    },
+    {
+     "path": "/init_database",
+     "ms": 5642,
+     "py": 13
+    }
+   ]
+  },
+  "L, cells-csr-lzf.h5ad (Orion CRC02, mask)": {
+   "ok": true,
+   "checks": {
+    "no h5ad stage at boot": true,
+    "inspect: one sample with the table": true,
+    "h5ad stage loaded by the import": true,
+    "import/sample made the project": true,
+    "table ready": true,
+    "every marker described": true,
+    "CD45 mean as anndata reads it": true,
+    "nearest cell is the first cell, with its marker value": true,
+    "Cell Explorer offers phenotype": true,
+    "colour by phenotype": true,
+    "colour by CD45: every cell's value": true,
+    "the project record is the desktop's": true,
+    "Cell Explorer's requirements are the desktop's": true
+   },
+   "rows": 1260592,
+   "stagesAtBoot": [],
+   "stages": [
+    {
+     "kind": "stage",
+     "stage": "h5ad",
+     "importer": "plexora.server.models.import_proposal",
+     "ms": 923,
+     "at": 9760
+    }
+   ],
+   "inspect": {
+    "status": 200,
+    "ms": 1854,
+    "samples": 1,
+    "layers": [
+     "image:blank_image.ome.tif",
+     "labels:Segmentation mask",
+     "table:Cells"
+    ],
+    "table": "1.3M rows \u00c3\u2014 90 columns \u00c2\u00b7 anndata",
+    "questions": [
+     "mask-or-image:/picked/h5adtest/blank_image.ome.tif"
+    ],
+    "warnings": []
+   },
+   "answers": {},
+   "importSample": {
+    "status": 200,
+    "ms": 490,
+    "name": "blank_image"
+   },
+   "tableReadyMs": 3019,
+   "viewerMs": 8513,
+   "heapBytes": 2420178944,
+   "routesMs": {
+    "get_database_description": 70,
+    "get_nearest_cell": 2524,
+    "get_all_cells (colour by marker)": 691,
+    "cell_explorer values (colour by obs)": 625
+   },
+   "desktop": {
+    "tableReadyMs": 2177,
+    "describeMs": 1597,
+    "nearestMs": 3,
+    "allCellsMs": 560
+   },
+   "parity": {
+    "name": [
+     "blank_image",
+     "blank_image"
+    ],
+    "dataset": [],
+    "roles": true,
+    "requirements": []
+   },
+   "tableSrc": "/picked/h5adtest/cells-csr-lzf.h5ad",
+   "slowestPython": [
+    {
+     "path": "/agent/v1/viewer/sessions",
+     "ms": 7009,
+     "py": 6
+    },
+    {
+     "path": "/get_image_channel_stats",
+     "ms": 6998,
+     "py": 15
+    },
+    {
+     "path": "/save_channel_list",
+     "ms": 6986,
+     "py": 75
+    },
+    {
+     "path": "/get_load_status",
+     "ms": 6912,
+     "py": 4
+    },
+    {
+     "path": "/display_contrast",
+     "ms": 6907,
+     "py": 15
+    },
+    {
+     "path": "/get_image_channel_stats",
+     "ms": 6885,
+     "py": 6885
+    },
+    {
+     "path": "/get_load_status",
+     "ms": 6575,
+     "py": 7
+    },
+    {
+     "path": "/init_database",
+     "ms": 4653,
+     "py": 11
+    }
+   ]
+  }
+ }
+}

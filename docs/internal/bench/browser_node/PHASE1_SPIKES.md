@@ -108,7 +108,8 @@ Plexora's own adapter reads it unchanged, and the page reads nothing of it.
   app, whose AnnData reader does not load hdf5plugin either: "Can't
   synchronously read data (can't open directory)".
 - **Capacity.** The page is not needed. An L table takes 0.66 GiB of the
-  worker's heap, well short of the 3 GiB STOP.
+  worker's heap, and the whole viewer on it 2.3 GiB (below). That is short of
+  the 3 GiB STOP, and better per value than a CSV (2.1 GiB at 36.6 M values).
 - **Speed.** At L, h5py in Pyodide is faster than h5wasm at every read but one:
   a single column of chunked, compressed X, which the adapter never reads for a
   panel (it reads row blocks). At S both take a few milliseconds, and h5wasm
@@ -120,11 +121,67 @@ Plexora's own adapter reads it unchanged, and the page reads nothing of it.
   second way. The threshold table's h5ad row ("desktop reads 2-13x faster";
   "lzf strings -> D/N") came from h5wasm and no longer holds for this path.
 
+### The import, end to end
+
+`tests/browser/h5ad.mjs` runs an import the way a user's would. An image, its
+mask and an .h5ad are picked as file-backed Files and mounted and adopted as
+the picker does. Then `/import/inspect`, `/import/sample`, the viewer, and its
+table up to `get_table_status` "ready". It then checks the features that read
+the table:
+
+- the marker list and a marker's statistics;
+- the cell nearest a point;
+- colouring by a marker (`get_all_cells`, every value decoded);
+- colouring by an obs column (Cell Explorer).
+
+Each answer is checked against anndata's reading of the file in CPython. The
+project record and Cell Explorer's requirements are checked against the
+desktop's import of the same files (this checkout's app in CPython, on a data
+root of its own).
+
+Measured 2026-11-07 against the merged branch (d422dbcc, its bundle rebuilt
+in full). Record: `S4-import-2026-11-07.json`. Every check passed in all four
+runs:
+
+| Table | Rows | Inspect | Import | Table ready (desktop) | Viewer drawn | Worker heap |
+|---|---|---|---|---|---|---|
+| p4-s cells-dense-lzf, on exemplar-001 with its mask | 11,201 | 1.5 s | 0.45 s | 0.32 s (0.16 s) | 1.2 s | 0.54 GiB |
+| scimapExampleData.h5ad (SCIMAP's own: no obsm, an older string index, a `log` layer), its ROI1 | 825 | 1.7 s | 0.44 s | 0.36 s (0.12 s) | 1.2 s | 0.45 GiB |
+| p4-l cells-dense-gzip, on Orion CRC02's mask | 1,260,592 | 2.0 s | 0.61 s | 5.8 s (3.7 s) | 12.3 s | 2.31 GiB |
+| p4-l cells-csr-lzf, the same | 1,260,592 | 1.9 s | 0.49 s | 3.0 s (2.2 s) | 8.5 s | 2.25 GiB |
+
+The columns, and what the table shows:
+
+- **Inspect** includes the h5ad stage arriving on its first import (0.8-1.0 s,
+  `import_proposal` importing h5py). No stage loads at boot.
+- **Table ready** is counted from the viewer's page being asked for. The
+  desktop's is from `init_database` to ready, in the same app on CPython.
+- **The project record** (dataset spec, roles, columns, obsm) equals the
+  desktop's field for field, and the table stays where it was picked
+  (`/picked/...`, not copied).
+- **The SCIMAP file** asks which image the table is (its `ROI` column reads as
+  an image identifier). It asks the same on the desktop, and without an answer
+  both leave the table unresolved. The run answers ROI1.
+- **The viewer on L** waits mostly on the image, not the table: the blank
+  image's full-resolution window scan takes `get_image_channel_stats` 7 s.
+  That cost is the image's, whatever the table.
+- **The first nearest-cell query at L** took 5.2 s and 2.5 s, against 3-6 ms
+  on the desktop. It builds the cell index then, where the desktop builds it
+  behind the load. The index is built from the loaded frame, so this is not
+  the h5ad's doing, and it is not fixed here.
+- **Cell Explorer** asks for a Cell ID column before it opens on these
+  projects. So does the desktop: its requirements are identical.
+
+`tests/test_browser_h5ad.py` runs the driver under pytest on a table written
+in the test (2,000 cells, lzf) when Chrome, the bundle and the static site are
+there.
+
 ### Rerun S-4
 
     node tests/browser/spike_h5ad.mjs [--dir <p4-s or p4-l>] [--repeat 3] [--out FILE]
     node tests/browser/spike_h5ad.mjs --dir <p4-l> --files cells-dense-gzip.h5ad --adapter-only --repeat 1
     cd tools/poc_browser_node && node build.mjs && node bench/run.mjs --poc P4 --fixture S|L --out DIR
+    node tests/browser/h5ad.mjs --image IMG --mask MASK --table T.h5ad --marker CD45 [--subset ROI=ROI1]
 
 Each needs `PLEXORA_BENCH_HOME` pointing at the bundle's home. The P4 fixtures
 are in `C:/plexora-bench/browser_node/fixtures/p4-{s,l}` (`bench/p4_fixtures.py`).
