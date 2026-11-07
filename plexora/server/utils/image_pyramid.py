@@ -392,6 +392,8 @@ def is_adoptable_image(candidate, source) -> bool:
             if len(series.levels) < 2:
                 return False
             copy_shape = tuple(int(side) for side in series.shape)
+        if len(copy_shape) == 2:
+            copy_shape = (1,) + copy_shape  # one channel: tifffile reads the copy as YX
         tiff, series = _open_series(source)
         try:
             source_shape = tuple(int(side) for side in series.shape)
@@ -543,6 +545,48 @@ def _ome_metadata(channels, channel_names, physical, source, fingerprint,
             if unit:
                 metadata[f"PhysicalSize{axis}Unit"] = str(unit)
     return metadata
+
+
+#: Samples the page's builder writes (client src/js/node/tiffWriter.js).
+_PAGE_DTYPES = ("uint8", "uint16", "uint32", "int8", "int16", "int32", "float32", "float64")
+
+
+def page_build(source, *, channel_names=None, physical: Optional[dict] = None,
+               tile_size: int = TILE_SIZE) -> Optional[dict]:
+    """What the website's page needs to build `source`'s pyramidized copy
+    itself (client src/js/node/pyramid.js), the copy `pyramidize_image` would
+    write: `{shape, dtype, factors, tile, description, fingerprint}`, the
+    description being the OME-XML tifffile writes for these metadata. None
+    when the page would not read the same channel stack: not a 2-D stack of
+    one-sample pages that are the file's first IFDs in order, or samples it
+    does not write."""
+    source = Path(source)
+    try:
+        tiff, series = _open_series(source)
+    except Exception:  # noqa: BLE001 -- pyramidize_image says why, in a sentence
+        return None
+    try:
+        shape = tuple(int(side) for side in series.shape)
+        dtype = np.dtype(series.dtype)
+        pages = list(series.pages)
+        plain = (len(shape) == 3 and len(pages) == shape[0]
+                 and [getattr(page, "index", None) for page in pages] == list(range(shape[0]))
+                 and int(getattr(pages[0], "samplesperpixel", 1)) == 1)
+    finally:
+        tiff.close()
+    if not plain or dtype.name not in _PAGE_DTYPES:
+        return None
+    channels, height, width = shape
+    factors = segmentation_pyramid.pyramid_factors(height, width, tile_size,
+                                                   stack_min_levels(None, height, width))
+    fingerprint = segmentation_pyramid.source_fingerprint(source)
+    metadata = _ome_metadata(channels, channel_names, physical, source, fingerprint)
+    # As tf.TiffWriter(ome=True) makes it for write_tiled_pyramid's level 0.
+    ome = tf.OmeXml(**metadata)
+    ome.addimage(dtype, shape, (channels, 1, 1, height, width, 1), **metadata)
+    return {"shape": [channels, height, width], "dtype": dtype.name,
+            "factors": [int(f) for f in factors], "tile": int(tile_size),
+            "description": ome.tostring(declaration=True), "fingerprint": fingerprint}
 
 
 def pyramidize_image(

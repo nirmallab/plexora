@@ -2729,9 +2729,14 @@ def _pyramid_offer(path, layer):
         return None
     target = where.target
     render = dict(layer.render or {})
+    from plexora.server.providers import browser as browser_provider
+
+    # A web page cannot write beside a file it was handed: on the website the
+    # page builds the copy into the site's own storage (providers/browser.py).
+    location = ("in this browser's storage for this site" if browser_provider.is_page_file(path)
+                else "beside the original (or in the project's folder if that one is not writable)")
     render["pyramid"] = {**report, "output": str(target), "output_name": target.name,
-                         "location": ("beside the original (or in the project's "
-                                      "folder if that one is not writable)")}
+                         "location": location}
     note = render.get("detail")
     render["detail"] = f"{note} · No pyramid" if note else "No pyramid"
     layer.render = render

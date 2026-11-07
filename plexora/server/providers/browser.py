@@ -19,13 +19,23 @@ again.
 
 from __future__ import annotations
 
+import hashlib
 import os
+from pathlib import PurePosixPath
 
 from plexora.server.providers.base import BROWSER, ResourceLocator, ResourceNotLocal
 from plexora.server.providers.local import LocalTableProvider
 
 _column_source = None
 
+#: Where the page's own files are in Python's: picked by the user, or made from
+#: one by the page (a pyramid it built, kept in the site's storage). The page
+#: reads both itself (services/pickedFiles.js `fileFor`).
+PAGE_ROOTS = ("/picked/", "/derived/")
+
+#: How often an import waiting on the page's pyramid looks again; each look
+#: lets the requests that arrived meanwhile be answered (`_work.wait`).
+_POLL_S = 0.25
 
 _asker = None
 
@@ -45,7 +55,7 @@ def page_window(provider, pyramid, index):
     if _asker is None or os.environ.get("PLEXORA_BACKEND") != "browser":
         return None
     path = str(getattr(provider, "_path", "") or "")
-    if not path.startswith("/picked/") or not path.lower().endswith((".tif", ".tiff")):
+    if not path.startswith(PAGE_ROOTS) or not path.lower().endswith((".tif", ".tiff")):
         return None
     try:
         level = pyramid["0"]
@@ -59,6 +69,66 @@ def page_window(provider, pyramid, index):
     if found is None:
         return None
     return (0.0, max(float(found), 1.0))
+
+
+def is_page_file(path) -> bool:
+    """Whether `path` is one of the page's files on the website: picked by the
+    user (read-only to a web page) or made by the page."""
+    return os.environ.get("PLEXORA_BACKEND") == "browser" and str(path).startswith(PAGE_ROOTS)
+
+
+def _plain(value):
+    """A page's answer as Python values (a JS object arrives as a proxy)."""
+    to_py = getattr(value, "to_py", None)
+    return to_py() if callable(to_py) else value
+
+
+def page_pyramid(source, *, name, spec, progress=None, stage=None):
+    """The pyramidized copy of the picked flat TIFF `source`, built by the page
+    (services/browserPyramid.js; the copy `image_pyramid.pyramidize_image`
+    writes, tests/test_tiff_writer.py): its path in Python's files,
+    /derived/<key>/<name>. None when the page does not build it -- not the
+    website, not a picked TIFF, or `spec()` (`image_pyramid.page_build`) None
+    because the page would not read the stack Python reads -- and Python then
+    builds it itself. A build the page began and could not finish raises
+    `PyramidError` with the page's reason.
+
+    The import waits for it a look at a time (`_work.wait`): the page's
+    progress reaches the import's bar, and other requests are answered between
+    looks."""
+    if _asker is None or os.environ.get("PLEXORA_BACKEND") != "browser":
+        return None
+    path = str(source)
+    if not path.startswith("/picked/") or not path.lower().endswith((".tif", ".tiff")):
+        return None
+    wanted = spec()
+    if wanted is None:
+        return None
+    from plexora import _work
+    from plexora.server.utils.segmentation_pyramid import PyramidError
+
+    # One copy per source file as it is now, whichever pick it came through.
+    key = hashlib.sha256(f"{PurePosixPath(path).name}|{wanted['fingerprint']}".encode()).hexdigest()[:24]
+    started = _plain(_asker("pyramid", {
+        "path": path, "key": key, "name": name,
+        **{field: wanted[field] for field in ("shape", "dtype", "factors", "tile", "description")}}))
+    if not started or started.get("id") is None:
+        return None
+    if stage is not None:
+        stage("building", None)
+    while True:
+        state = _plain(_asker("pyramid_status", {"id": started["id"]})) or {}
+        if progress is not None and state.get("total"):
+            progress(int(state.get("tiles") or 0), int(state["total"]))
+        if state.get("state") == "done":
+            if stage is not None:
+                stage("writing", None)
+            return str(state["path"])
+        if state.get("state") != "building":
+            raise PyramidError(
+                f"{PurePosixPath(path).name}: this browser could not build the image's pyramid "
+                f"({state.get('error') or 'no reason given'}), so no copy was made.")
+        _work.wait(_POLL_S)
 
 
 def set_column_source(source) -> None:

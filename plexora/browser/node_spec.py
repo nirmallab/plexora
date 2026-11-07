@@ -31,6 +31,7 @@ def describe(name: str) -> dict:
     `labels` (the mask, `_labels`) beside it."""
     from plexora.server.models import data_model
     from plexora.server.models.project import IMAGE_TYPE_BRIGHTFIELD, Project
+    from plexora.server.providers.browser import PAGE_ROOTS
     from plexora.server.providers.local import LocalImageProvider
 
     data_model.ensure_loaded(name)
@@ -51,7 +52,7 @@ def describe(name: str) -> dict:
         return refuse("the image is not a local file")
     path = getattr(provider, "_path", None) or ""
     out["path"] = path
-    if not path.startswith("/picked/"):
+    if not path.startswith(PAGE_ROOTS):
         return refuse("the file is not one the page holds")
     if getattr(provider, "volume_source", None) is not None or data_model.volume_source is not None:
         return refuse("a z-stack or time series is served through the volume layer")
@@ -98,9 +99,11 @@ def _labels(data_model, config) -> dict:
         return refuse("no mask")
     if not isinstance(provider, LocalSegmentationProvider):
         return refuse("the mask is not a local file")
+    from plexora.server.providers.browser import PAGE_ROOTS
+
     path = provider.path
     out["path"] = path
-    if not path.startswith("/picked/"):
+    if not path.startswith(PAGE_ROOTS):
         return refuse("the mask is not a file the page holds (Python drew its pyramid)")
     if not path.lower().endswith(_TIFF) or os.path.isdir(path):
         return refuse("not a TIFF file")

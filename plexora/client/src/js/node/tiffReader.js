@@ -28,7 +28,7 @@
  *   max({channel, level, windows})               -- the largest sample over windows
  */
 import { addDecoder, BaseDecoder, GeoTIFF, GeoTIFFImage } from "geotiff";
-import { inflate } from "pako";
+import pako from "pako"; // CommonJS: Node takes no named import from it
 import { lzwDecode } from "./lzw.js";
 
 const now = () => performance.now();
@@ -82,7 +82,7 @@ class NativeDeflateBlob extends BaseDecoder {
 class PakoDeflate extends BaseDecoder {
     decodeBlock(buffer) {
         const t0 = now();
-        const out = inflate(new Uint8Array(buffer)).buffer;
+        const out = pako.inflate(new Uint8Array(buffer)).buffer;
         decodeClock.ms += now() - t0;
         decodeClock.calls += 1;
         return out;

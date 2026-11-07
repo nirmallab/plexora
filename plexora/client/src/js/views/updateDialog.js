@@ -656,7 +656,11 @@ window.PlexoraUpdates = (function () {
         });
     }
 
+    //: The website is always the current version: nothing to check or install.
+    const onTheWebsite = () => window.PlexoraBackend?.kind === "browser";
+
     async function autoCheck() {
+        if (onTheWebsite()) return;
         let info;
         try {
             info = (await getJSON("update/check?auto=1")).payload;
@@ -705,7 +709,11 @@ window.PlexoraUpdates = (function () {
     }
 
     onReady(() => {
-        document.getElementById("nav_check_updates")?.addEventListener("click", () => open());
+        document.getElementById("nav_check_updates")?.addEventListener("click", () => {
+            if (!onTheWebsite()) { open(); return; }
+            window.PlexoraToast?.show({ title: "Plexora is up to date",
+                                        note: "The website is always the current version of Plexora." });
+        });
         watchServerVersion();
         // Not in an iframe that is not ours to decorate, and not on every
         // router navigation: this script runs once per real page load.

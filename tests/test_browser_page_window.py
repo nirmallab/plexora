@@ -42,6 +42,12 @@ def test_a_picked_tiff_is_scanned_by_the_page(asked):
                                  "shape": [3, 40, 50], "dtype": "uint16"})]
 
 
+def test_a_pyramid_the_page_built_is_scanned_by_the_page_too(asked):
+    pyramid = {"0": np.zeros((2, 40, 50), dtype=np.uint8)}
+    assert browser.page_window(_provider("/derived/k/s.pyramid.ome.tiff"), pyramid, 1) == (0.0, 1200.0)
+    assert asked[0][1]["path"] == "/derived/k/s.pyramid.ome.tiff"
+
+
 def test_an_empty_channel_is_floored_as_python_floors_it(asked, monkeypatch):
     browser.set_asker(lambda kind, args: 0)
     assert browser.page_window(_provider("/picked/ab/i.tif"), {"0": np.zeros((1, 4, 4), np.uint8)}, 0) == (0.0, 1.0)

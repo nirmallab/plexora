@@ -37,10 +37,31 @@ try {
     await frame.click("#quick_view_go");
     const picked = Date.now();
     await (await chooser).setFiles(file);
-    const moved = await frame.waitForFunction(() => location.pathname !== "/" && window.PlexoraShellFramed
-                                                  && !document.getElementById("plexora-boot"),
-                                              null, { timeout: 90000 })
-        .then(() => true, () => false);
+    // An image that opens as it is goes straight to its page. One that needs
+    // a pyramidized copy opens Import sample first: press Import, then accept
+    // the copy (out.pressed says which were pressed).
+    out.pressed = [];
+    const goneAt = Date.now() + Number(opt("--import-timeout", "900")) * 1000;
+    let moved = false;
+    while (!moved && Date.now() < goneAt) {
+        moved = await frame.evaluate(() => location.pathname !== "/" && window.PlexoraShellFramed
+                                     && !document.getElementById("plexora-boot")).catch(() => false);
+        if (moved) break;
+        const pressed = await frame.evaluate(() => {
+            const visible = (node) => node && !node.disabled && node.offsetParent !== null;
+            const confirm = document.querySelector(".plx-confirm .plx-button-primary");
+            if (visible(confirm)) { confirm.click(); return `confirm: ${confirm.textContent.trim()}`; }
+            const go = document.querySelector('[data-role="go"]');
+            if (visible(go) && !go.dataset.pressedByTest) {
+                go.dataset.pressedByTest = "1";
+                go.click();
+                return `import: ${go.textContent.trim()}`;
+            }
+            return null;
+        }).catch(() => null);
+        if (pressed) out.pressed.push({ at: Date.now() - picked, pressed });
+        await page.waitForTimeout(500);
+    }
     if (!moved) {
         out.stuck = await frame.evaluate(() => ({
             input: document.getElementById("quick_view_path_input")?.value,
@@ -70,6 +91,7 @@ try {
         items: window.__plexora?.seaDragonViewer?.viewer?.world?.getItemCount() ?? null,
         picks: null,
     }));
+    out.pyramids = await page.evaluate(() => (window.PlexoraPyramid ? window.PlexoraPyramid.builds() : null));
     out.picks = await page.evaluate(async () => (await window.PlexoraPicks.list())
         .map((p) => ({ id: p.id, kind: p.kind, files: (p.files || []).length })));
     if (shots) await page.screenshot({ path: path.join(shots, "import-viewer.png") });

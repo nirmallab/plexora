@@ -11,7 +11,8 @@
 //   mount {dir, files}             the user's picked files, read on demand (WORKERFS)
 //   mountTree {dir, blobs}         a picked folder: [{name: "<folder>/<path>", data: File}]
 //   answer {id, value, failed}     the page's answer to Python's question `id`
-//                                  (handled at once, never queued: Python waits)
+//                                  (handled at once, never queued: Python waits);
+//                                  a `mount` {dir, files} in it is mounted first
 //   nodeSpec {name}                what the browser node may serve for a project
 //   heap                           the wasm heap's bytes
 //   run {code}                     tests only (boot with debug: true): Python's
@@ -174,6 +175,8 @@ async function boot(args) {
     const store = await mountState();
     py.FS.mkdirTree("/bioc");
     py.FS.mkdirTree("/picked");
+    py.FS.mkdirTree("/derived");
+    const derived = await mountDerived();
     self.plexoraPost = (text) => self.postMessage({ event: JSON.parse(text) });
     self.plexoraCancelled = cancelled;
     self.plexoraLoadStage = loadStage;
@@ -240,7 +243,7 @@ json.dumps(boot.start(ORIGIN, post=_post, cancelled=lambda job: bool(js.plexoraC
                       ask=_ask))
 `));
     phases.ready = at(); mark("ready");
-    return { phases, info, store, stages: Object.fromEntries(
+    return { phases, info, store, derived, stages: Object.fromEntries(
         Object.entries(stagesInfo).map(([name, stage]) => [name, stage.bytes])) };
 }
 
@@ -273,6 +276,12 @@ function ask(kind, args) {
 
 function answered({ id, value, failed }) {
     if (failed) self.postMessage({ log: `the page could not answer: ${failed}` });
+    if (value && value.mount) {
+        // A file the page made for Python (a pyramid it built): mounted before
+        // Python hears the answer that names it.
+        try { mountOnce(value.mount); } catch (error) { self.postMessage({ log: `mount: ${error}` }); }
+        delete value.mount;
+    }
     const resolve = asks.get(id);
     asks.delete(id);
     if (resolve) resolve(value === undefined ? null : value);
@@ -325,6 +334,39 @@ function mount({ dir, files }) {
     py.FS.mkdirTree(dir);
     py.FS.mount(py.FS.filesystems.WORKERFS, { files }, dir);
     return files.map((file) => `${dir}/${file.name}`);
+}
+
+//: `mount`, unless the folder is already there (a copy mounted at boot).
+function mountOnce({ dir, files }) {
+    if (py.FS.analyzePath(dir).exists && py.FS.isMountpoint(py.FS.lookupPath(dir).node)) return [];
+    return mount({ dir, files });
+}
+
+// The pyramids the page built in earlier visits (services/browserPyramid.js,
+// OPFS plexora/derived/<key>/, finished when its manifest is written), where
+// the projects that use them recorded them: /derived/<key>/<name>.
+async function mountDerived() {
+    let count = 0;
+    try {
+        const root = await navigator.storage.getDirectory();
+        const plexora = await root.getDirectoryHandle("plexora", { create: true });
+        const derived = await plexora.getDirectoryHandle("derived", { create: true });
+        for await (const [key, handle] of derived.entries()) {
+            if (handle.kind !== "directory") continue;
+            try {
+                const manifest = JSON.parse(await (await (await handle.getFileHandle("manifest.json")).getFile()).text());
+                const file = await (await handle.getFileHandle(manifest.name)).getFile();
+                if (file.size !== manifest.bytes) continue;
+                mountOnce({ dir: `/derived/${key}`, files: [file] });
+                count += 1;
+            } catch (error) {
+                // Unfinished: built again when an import asks for it.
+            }
+        }
+    } catch (error) {
+        self.postMessage({ log: `derived: ${error?.message || error}` });
+    }
+    return count;
 }
 
 function mountTree({ dir, blobs }) {

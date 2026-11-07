@@ -5001,6 +5001,25 @@ def _pyramidized_copy(filePath, dataDirectory, stage, report, volume_description
     report_ = image_pyramid.flat_image_report(
         filePath, threshold=0, all_pages=bool(volume_description),
         planes=image_pyramid.stack_planes(volume_description)) or {}
+    channels = int(report_.get("channels") or 0)
+    names = None
+    if channels and not volume_description:
+        try:
+            names = _channel_names_from_image_metadata(filePath, channels)
+        except Exception:
+            names = None
+    physical = brightfield.physical_metadata(filePath)
+    if not volume_description:
+        # On the website the page builds a picked image's copy with its own
+        # workers, into the browser's storage (providers/browser.py).
+        from plexora.server.providers import browser as browser_provider
+
+        built = browser_provider.page_pyramid(
+            filePath, name=image_pyramid.derived_output_path(filePath).name,
+            spec=lambda: image_pyramid.page_build(filePath, channel_names=names, physical=physical),
+            progress=report, stage=stage)
+        if built is not None:
+            return built
     needed = int(report_.get("output_bytes_estimate", 0)) \
         + int(report_.get("scratch_bytes_estimate", 0))
     where = image_pyramid.resolve_derived_image(
@@ -5010,17 +5029,10 @@ def _pyramidized_copy(filePath, dataDirectory, stage, report, volume_description
     if not where.writable:
         raise image_pyramid.PyramidError(where.reason)
     _log.info("Building a pyramid for %s (one-time) -> %s", Path(filePath).name, where.target)
-    channels = int(report_.get("channels") or 0)
-    names = None
-    if channels and not volume_description:
-        try:
-            names = _channel_names_from_image_metadata(filePath, channels)
-        except Exception:
-            names = None
     image_pyramid.pyramidize_image(
         filePath, where.target,
         channel_names=names,
-        physical=brightfield.physical_metadata(filePath),
+        physical=physical,
         progress_callback=report,
         stage_callback=stage,
         volume_description=volume_description,

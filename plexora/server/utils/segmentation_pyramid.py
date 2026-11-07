@@ -1182,7 +1182,11 @@ def write_tiled_pyramid(
                         tiles_written += 1
                         if progress_callback is not None:
                             progress_callback(tiles_written, total_tiles)
-                        yield np.ascontiguousarray(tile, dtype=dtype)
+                        tile = np.ascontiguousarray(tile, dtype=dtype)
+                        # tifffile compares type codes, and where C long is
+                        # 32 bits (Windows, wasm) a uint32 is 'I' or 'L' by
+                        # where it came from: hand it the declared one.
+                        yield tile if tile.dtype.char == dtype.char else tile.view(dtype)
 
         with tf.TiffWriter(str(temporary_path), bigtiff=True, ome=True) as writer:
             for level_index, factor in enumerate(factors):

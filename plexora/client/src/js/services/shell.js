@@ -88,6 +88,7 @@
         await script("/client/src/js/services/pickedFiles.js");
         await script("/client/src/js/services/browserNode.js");
         await script("/client/src/js/services/browserTable.js");
+        await script("/client/src/js/services/browserPyramid.js");
         await controlled();
         status("Starting Python");
         global.PlexoraPython.on("mark", ({ mark }) => { if (LABELS[mark]) status(LABELS[mark]); });
