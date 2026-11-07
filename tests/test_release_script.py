@@ -200,7 +200,9 @@ def test_a_synced_folder_keeps_build_products_out_of_it():
 
 def test_the_script_parses_every_documented_subcommand():
     parser = release.build_parser()
-    for argv in (["doctor"], ["bump", "patch"], ["propagate", "--check"], ["client", "--verify-only"],
+    for argv in (["doctor"], ["bump", "patch"], ["propagate", "--check"],
+                 ["propagate", "--check", "--bundle", "b", "--site", "s", "--tag", "v1.0.0"],
+                 ["client", "--verify-only"],
                  ["wheel"], ["runtime"], ["bundle", "--sign"], ["collect"],
                  ["validate", "--bundle-dir"], ["checksums"], ["all"], ["ci", "--bump", "minor"],
                  ["clean", "--all"], ["telemetry"], ["telemetry", "--check"], ["telemetry", "--deploy"]):
@@ -208,6 +210,58 @@ def test_the_script_parses_every_documented_subcommand():
     assert parser.parse_args(["--skip-telemetry", "all"]).skip_telemetry
     with pytest.raises(SystemExit):
         parser.parse_args(["telemetry", "--check", "--deploy"])
+
+
+
+def _web_release(root, version, *, manifest_version=None, wheel=None, shell_version=None, py=None):
+    bundle = root / "py" / version
+    bundle.mkdir(parents=True)
+    wheel = wheel or f"plexora-{version}-py3-none-any.whl"
+    (bundle / "manifest.json").write_text(json.dumps({
+        "plexora": manifest_version or version,
+        "files": {f"wheels/{wheel}": {}, f"wheels/{wheel}.br": {}, "wheels/flask-3-py3-none-any.whl": {}}}),
+        encoding="utf-8")
+    site = root / "static"
+    (site / "client").mkdir(parents=True)
+    (site / "client" / "shell.json").write_text(json.dumps({
+        "version": shell_version or version,
+        "py": py or f"https://assets.plexoraapp.com/py/{version}/"}), encoding="utf-8")
+    return bundle, site
+
+
+def test_a_website_release_that_says_the_version_everywhere_passes(tmp_path):
+    bundle, site = _web_release(tmp_path, "1.2.3")
+    assert release.web_versions("1.2.3", bundle=bundle, site=site, tag="refs/tags/v1.2.3") == []
+    assert release.web_versions("1.2.3", tag="v1.2.3") == []
+    assert release.web_versions("1.2.3") == []
+
+
+@pytest.mark.parametrize(("change", "says"), [
+    ({"manifest_version": "1.2.2"}, "plexora 1.2.2"),
+    ({"wheel": "plexora-1.2.2-py3-none-any.whl"}, "plexora wheel"),
+    ({"shell_version": "1.2.2"}, "version 1.2.2"),
+    ({"py": "https://assets.plexoraapp.com/py/dev/abc/"}, "loads Python from"),
+])
+def test_a_website_release_out_of_step_is_named(tmp_path, change, says):
+    bundle, site = _web_release(tmp_path, "1.2.3", **change)
+    stale = release.web_versions("1.2.3", bundle=bundle, site=site, tag="v1.2.3")
+    assert len(stale) == 1 and says in stale[0], stale
+
+
+def test_a_bundle_in_another_versions_folder_or_another_tag_is_named(tmp_path):
+    bundle, _ = _web_release(tmp_path, "1.2.2", manifest_version="1.2.3",
+                             wheel="plexora-1.2.3-py3-none-any.whl")
+    assert ["folder" in line for line in release.web_versions("1.2.3", bundle=bundle)] == [True]
+    assert release.web_versions("1.2.3", tag="v1.2.4") == ["tag v1.2.4 (want v1.2.3)"]
+    assert "unreadable" in release.web_versions("1.2.3", bundle=tmp_path / "nowhere")[0]
+
+
+def test_propagate_check_fails_on_the_website(tmp_path, monkeypatch, capsys):
+    version = release.read_version()
+    bundle, site = _web_release(tmp_path, version, shell_version="0.0.0")
+    assert release.main(["propagate", "--check", "--bundle", str(bundle), "--site", str(site)]) == 1
+    assert "shell.json" in capsys.readouterr().err
+    assert release.main(["propagate", "--check", "--tag", f"v{version}"]) == 0
 
 
 def test_relative_directories_become_absolute(tmp_path, monkeypatch):

@@ -20,7 +20,9 @@ GitHub Actions matrix for the rest.
 
 The version lives in one place, `pyproject.toml`; `propagate` copies it into
 the Tauri config, Cargo.toml and the client's package.json, and `propagate
---check` refuses to build when they disagree.
+--check` refuses to build when they disagree. `--bundle`, `--site` and `--tag`
+add the website's Python bundle, its static build and the release tag
+(release.yml's web job).
 
 Signing is off until its environment variables exist (see SIGNING below and
 docs in DEPLOYMENT.md). Nothing here changes shape when they appear.
@@ -421,8 +423,54 @@ def propagate(check=False, ctx=None) -> list[str]:
     return stale
 
 
+def web_versions(version, bundle=None, site=None, tag=None) -> list[str]:
+    """What a website release carries that must say `version` too: the Python
+    bundle (tools/browser_build/build.py's `py/<version>/`: its folder, its
+    manifest and its plexora wheel), the static build (client/shell.json, and
+    the bundle address it names) and the tag. Read only; one line per
+    disagreement."""
+    stale = []
+    if bundle is not None:
+        bundle = Path(bundle)
+        try:
+            manifest = json.loads((bundle / "manifest.json").read_text(encoding="utf-8"))
+        except (OSError, ValueError) as exc:
+            stale.append(f"{bundle / 'manifest.json'}: unreadable ({exc})")
+        else:
+            if manifest.get("plexora") != version:
+                stale.append(f"{bundle / 'manifest.json'}: plexora {manifest.get('plexora')} (want {version})")
+            if bundle.name != version:
+                stale.append(f"{bundle}: the bundle's folder is {bundle.name} (want {version})")
+            wheels = sorted(name for name in manifest.get("files", {})
+                            if name.startswith("wheels/plexora-") and name.endswith(".whl"))
+            if wheels != [f"wheels/plexora-{version}-py3-none-any.whl"]:
+                stale.append(f"{bundle}: plexora wheel(s) {wheels} (want plexora-{version}-py3-none-any.whl)")
+    if site is not None:
+        shell_json = Path(site) / "client" / "shell.json"
+        try:
+            shell = json.loads(shell_json.read_text(encoding="utf-8"))
+        except (OSError, ValueError) as exc:
+            stale.append(f"{shell_json}: unreadable ({exc})")
+        else:
+            if shell.get("version") != version:
+                stale.append(f"{shell_json}: version {shell.get('version')} (want {version})")
+            if not str(shell.get("py", "")).rstrip("/").endswith(f"/py/{version}"):
+                stale.append(f"{shell_json}: loads Python from {shell.get('py')} (want .../py/{version}/)")
+    if tag is not None:
+        name = tag[len("refs/tags/"):] if tag.startswith("refs/tags/") else tag
+        if name != f"v{version}":
+            stale.append(f"tag {name} (want v{version})")
+    return stale
+
+
 def cmd_propagate(ctx, args):
     stale = propagate(check=args.check, ctx=ctx)
+    web = web_versions(read_version(), bundle=args.bundle, site=args.site, tag=args.tag)
+    if web:
+        raise StepError("Version out of step:\n  " + "\n  ".join(stale + web),
+                        "The website's bundle and static build are made from this checkout "
+                        "(tools/browser_build/build.py, python -m plexora.client.static_build); "
+                        "the tag is v<pyproject's version>.")
     if args.check:
         if stale:
             raise StepError("Version out of step:\n  " + "\n  ".join(stale),
@@ -1885,6 +1933,11 @@ def build_parser():
 
     prop = subs.add_parser("propagate", help="Copy pyproject's version to every file.")
     prop.add_argument("--check", action="store_true")
+    prop.add_argument("--bundle", type=Path, default=None,
+                      help="Also check a website Python bundle (build.py's py/<version>/).")
+    prop.add_argument("--site", type=Path, default=None,
+                      help="Also check a website static build (its client/shell.json).")
+    prop.add_argument("--tag", default=None, help="Also check a release tag (vX.Y.Z or refs/tags/vX.Y.Z).")
 
     client = subs.add_parser("client", help="Rebuild (or verify) the client bundle.")
     client.add_argument("--verify-only", action="store_true")
