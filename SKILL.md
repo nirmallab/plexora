@@ -14789,7 +14789,10 @@ selection, with names decoded once (`_decoded`, object arrays): a 3M-cell load
 3.5 s → 2.6 s. `_describe_frame` describes columns on up to 8 threads (4.8 →
 1.4 s, same output). `centroid_tiles._load_table` reuses the loaded frame
 (`data_model.loaded_frame_for`) instead of re-reading the file (4.3 → 0.7 s).
-`/get_all_cells` compresses at gzip level 3 (`_CELLS_GZIP`). A segmentation
+`/get_all_cells` compresses at gzip level 3 (`_CELLS_GZIP`), except on the
+desktop app's own server (`PLEXORA_DESKTOP`; `data_routes._cells_gzipped`),
+which sends it raw to its own window -- by mode, never by the caller's
+address, since a tunnelled server sees 127.0.0.1 too. A segmentation
 job race is closed: a conversion finishing after its mask was removed,
 replaced or reclassified no longer writes it back
 (`_patch_config_segmentation` checks `segmentationSource`), the replacement's
