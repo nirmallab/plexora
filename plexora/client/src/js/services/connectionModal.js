@@ -264,6 +264,23 @@ window.PlexoraConnectionModal = (function () {
         window.open(url, "_blank", "noopener");
     }
 
+    //: The page's Google sign-in on the website (services/googleAuth.js;
+    //: the host's, which each page's frame borrows), or null.
+    function googleAuth() {
+        if (window.PlexoraGoogleAuth) return window.PlexoraGoogleAuth;
+        try {
+            return (window.parent && window.parent.PlexoraGoogleAuth) || null;
+        } catch (e) {
+            return null;
+        }
+    }
+
+    //: The website: a Google Cloud profile connects by starting a node on its
+    //: VM and opening it there (plan L9), never by SSH.
+    function webCloud() {
+        return Boolean(window.PlexoraBackend && window.PlexoraBackend.kind === "browser");
+    }
+
     // -- the catalogue of presets ------------------------------------------
     //
     // What a preset answers is a property of somebody else's cluster --
@@ -1565,6 +1582,7 @@ window.PlexoraConnectionModal = (function () {
          */
         async function begin() {
             if (!name) return;
+            if (webCloud() && cloudProfile(name)) return webNode(name);
             stopBackground(name, kind);
             view = "auto";
             drawnPrompt = null;
@@ -1926,6 +1944,171 @@ window.PlexoraConnectionModal = (function () {
             return answers;
         }
 
+        // -- the website's Google Cloud connection (plan L9) --------------------
+        //
+        // No SSH from a web page, so the VM runs Plexora itself: its startup
+        // script installs it, mounts the bucket and serves a node with the
+        // web app at https://<address>:8443/app/ (plexora/gcloud_rest.py).
+        // This view starts or creates the machine, follows its startup
+        // through Google's API (the page cannot reach a self-signed node to
+        // ask it), and then hands over a link to the node's own app, with the
+        // certificate's fingerprint to check the browser's warning against.
+
+        //: Whether `profile` is a Google Cloud connection.
+        function cloudProfile(profile) {
+            const known = Remotes().entry(profile);
+            return Boolean(known && known.gcloud);
+        }
+
+        //: What the VM is doing, in words: Compute Engine's status first,
+        //: then what the startup script wrote.
+        const NODE_WORDS = {
+            created: "Google is creating the VM…",
+            started: "Starting the VM…",
+            resumed: "Resuming the VM…",
+            converted: "Preparing the VM to run Plexora, then starting it…",
+            reused: "The VM is running.",
+            waiting: "Waiting for the VM…",
+            PROVISIONING: "Google is preparing the VM…",
+            STAGING: "Google is starting the VM…",
+            STOPPING: "The VM is stopping…",
+            booting: "The VM is starting up…",
+            installing: "Installing Plexora on the VM. The first time takes a few minutes…",
+            starting: "Starting Plexora on the VM…",
+        };
+        const NODE_FAILED = {
+            "failed-install": "The VM could not install Plexora or Cloud Storage FUSE. "
+                + "Its startup log is /var/log/plexora-startup.log on the VM.",
+            "failed-mount": "The VM could not mount the bucket. Check that the VM's "
+                + "service account can read it.",
+            "failed-start": "Plexora did not start on the VM. Its startup log is "
+                + "/var/log/plexora-startup.log on the VM.",
+            "failed-noapp": "Plexora started on the VM, but the version it installed "
+                + "has no web app to serve.",
+        };
+
+        async function webNode(profile) {
+            name = profile;
+            view = "webnode";
+            if (unwatch) {
+                unwatch();
+                unwatch = null;
+            }
+            dialog.classList.remove("is-handoff");
+            parts.title.textContent = "Opening “" + profile + "” on Google Cloud";
+            parts.subtitle.textContent = "Plexora runs on a VM beside your bucket, "
+                + "and this browser opens it there.";
+            parts.body.hidden = false;
+            const line = el("p", "connect-node-state", "Asking Google Cloud for the VM…");
+            line.setAttribute("role", "status");
+            const notes = el("div", "connect-node-notes");
+            const ready = el("div", "connect-node-ready");
+            ready.hidden = true;
+            parts.body.replaceChildren(line, notes, ready);
+            parts.actions.replaceChildren(
+                button("btn btn-secondary", "New connection", () => {
+                    close(null);
+                    window.PlexoraConnectionModal.open({ view: "recipe", recipe: "gcloud" });
+                }),
+                el("div", "connect-modal-spacer"),
+                button("btn btn-secondary", "Close", () => close(null)));
+            const base = "settings/remotes/" + encodeURIComponent(profile) + "/vm";
+            const ask = async (path, init) => {
+                const response = await plexoraFetch(path, init);
+                let payload = {};
+                try {
+                    payload = await response.json();
+                } catch (e) {
+                    payload = {};
+                }
+                if (!response.ok) {
+                    const error = new Error(payload.error || "Google Cloud did not answer.");
+                    error.reauth = Boolean(payload.reauth);
+                    error.recovery = payload.recovery || "";
+                    throw error;
+                }
+                return payload;
+            };
+            let node = {};
+            try {
+                const started = await ask(base + "/node", { method: "POST" });
+                (started.notes || []).forEach((note) => notes.append(
+                    el("p", "connect-node-note", note)));
+                line.textContent = NODE_WORDS[started.action] || "Waiting for the VM…";
+                node = started.node || {};
+            } catch (e) {
+                return webNodeFailed(line, e, profile, base);
+            }
+            const pause = Number(window.PlexoraConnectNodePollMs) || 5000;
+            const deadline = Date.now() + 20 * 60 * 1000;
+            while (openDialog === dialog && Date.now() < deadline) {
+                if (node.ready) return webNodeReady(line, ready, node, profile);
+                if (/^failed/.test(node.state || "")) {
+                    return webNodeFailed(line, new Error(
+                        NODE_FAILED[node.state] || "The VM could not start Plexora."),
+                                         profile, base);
+                }
+                if (node.status === "TERMINATED" || node.status === "missing") {
+                    return webNodeFailed(line, new Error(
+                        node.status === "missing"
+                            ? "The VM is gone. Connect again to make a new one."
+                            : "The VM stopped. Connect again to start it."), profile, base);
+                }
+                line.textContent = NODE_WORDS[node.state] || NODE_WORDS[node.status]
+                    || line.textContent;
+                await new Promise((done) => setTimeout(done, pause));
+                if (openDialog !== dialog) return;
+                try {
+                    node = (await ask(base)).node || {};
+                } catch (e) {
+                    return webNodeFailed(line, e, profile, base);
+                }
+            }
+            if (openDialog === dialog) {
+                webNodeFailed(line, new Error("The VM did not finish starting Plexora in "
+                                              + "twenty minutes."), profile, base);
+            }
+        }
+
+        function webNodeReady(line, ready, node, profile) {
+            line.textContent = "Plexora is running on the VM, at " + node.app_url;
+            const link = el("a", "btn btn-primary connect-node-open", "Open Plexora on the VM");
+            link.href = node.pair_url;
+            link.target = "_blank";
+            link.rel = "noopener noreferrer";
+            ready.replaceChildren(
+                el("p", "connect-node-warning",
+                   "Your browser will say the connection is not private: the VM made "
+                   + "its own certificate. Continue only if the certificate's SHA-256 "
+                   + "fingerprint is:"),
+                el("code", "connect-node-fingerprint", node.fingerprint || "(not published)"),
+                link);
+            ready.hidden = false;
+            result = Object.assign(result, { connected: true, name: profile });
+        }
+
+        function webNodeFailed(line, error, profile, base) {
+            line.replaceChildren(errorLine(error.message));
+            if (error.reauth) {
+                const auth = googleAuth();
+                line.append(button("btn btn-primary", "Sign in with Google", () => {
+                    auth.signIn(window).then(() => webNode(profile),
+                                             (e) => showError(e.message));
+                }));
+            } else if (error.recovery === "standard") {
+                line.append(button("btn btn-primary", "Use a Standard VM", async () => {
+                    try {
+                        await plexoraFetch(base + "/standard", { method: "POST" });
+                    } catch (e) {
+                        return showError(e.message);
+                    }
+                    webNode(profile);
+                }));
+            } else {
+                line.append(button("btn btn-secondary", "Try again", () => webNode(profile)));
+            }
+        }
+
         async function submitRecipe(recipe, boxes, editing) {
             try {
                 const answer = await saveRecipe(recipe.id, collect(boxes));
@@ -2090,6 +2273,10 @@ window.PlexoraConnectionModal = (function () {
             //: Why nobody can be signed in, when the reason is the CLI
             //: itself: "missing", "broken", or "" when the CLI is fine.
             let cliTrouble = "";
+            //: The website (plan L9): Google is asked through its JSON APIs
+            //: with a sign-in this page holds (services/googleAuth.js), not
+            //: through a CLI. Read off the status (`backend: "rest"`).
+            let webSignIn = false;
             let bucketLocation = "";
             //: Whether the bucket named right now is one this account can
             //: actually read. **The connection cannot be started until it is.**
@@ -2467,7 +2654,10 @@ window.PlexoraConnectionModal = (function () {
             function paint() {
                 const page = GCLOUD_PAGES[at];
                 parts.title.textContent = page.title;
-                parts.subtitle.textContent = page.subtitle;
+                parts.subtitle.textContent = at === 0 && webSignIn
+                    ? "Plexora signs in to Google in this browser. It never "
+                      + "sees your password."
+                    : page.subtitle;
                 pages.forEach((one, index) => { one.hidden = index !== at; });
                 chips.forEach((chip, index) => {
                     chip.classList.toggle("is-active", index === at);
@@ -2609,6 +2799,8 @@ window.PlexoraConnectionModal = (function () {
                     status = {};
                 }
                 identity.replaceChildren();
+                webSignIn = status.backend === "rest";
+                if (webSignIn) return webStatus(status);
                 // Both of these end in "Check again" rather than "restart
                 // Plexora": the server looks in the SDK's usual install
                 // folders as well as PATH, so an install finished while this
@@ -2688,7 +2880,77 @@ window.PlexoraConnectionModal = (function () {
                 setControlsEnabled(false);
             }
 
+            /**
+             * The website's identity row: no CLI to install or mend, only a
+             * sign-in this page holds -- or a site with no OAuth client, which
+             * is said rather than offered.
+             */
+            function webStatus(status) {
+                cliTrouble = "";
+                const auth = googleAuth();
+                if (!auth || !auth.configured()) {
+                    signedIn = "";
+                    identity.append(el(
+                        "span", "connect-gcloud-identity-text",
+                        "Google sign-in is not set up on this site, so it cannot "
+                        + "reach Google Cloud. Use the desktop app."));
+                    setControlsEnabled(false);
+                    return;
+                }
+                if (status.problem) {
+                    signedIn = "";
+                    identity.append(el("span", "connect-gcloud-identity-text",
+                                       "Google did not answer."));
+                    identity.append(el("pre", "connect-gcloud-identity-detail",
+                                       status.problem));
+                    identity.append(button("btn btn-secondary", "Check again",
+                                           loadStatus));
+                    setControlsEnabled(false);
+                    return;
+                }
+                if (status.expired) return showExpired("");
+                if (!status.account) {
+                    signedIn = "";
+                    identity.append(el(
+                        "span", "connect-gcloud-identity-text",
+                        "Sign in with Google to list your projects and buckets "
+                        + "and start a VM. The sign-in stays in this tab's memory "
+                        + "for up to an hour and is never stored."));
+                    identity.append(button("btn btn-primary",
+                                           "Sign in with Google", signIn));
+                    setControlsEnabled(false);
+                    return;
+                }
+                signedIn = status.account;
+                identity.append(el("span", "connect-gcloud-identity-text",
+                                   "Signed in as " + signedIn + "."));
+                identity.append(button("btn btn-secondary", "Use another account",
+                                       () => signInWeb("select_account")));
+                setControlsEnabled(true);
+                loadProjects();
+            }
+
+            /** Google's sign-in window, opened inside this click. */
+            function signInWeb(prompt) {
+                const auth = googleAuth();
+                let asked;
+                try {
+                    asked = auth.signIn(window, prompt ? { prompt: prompt } : {});
+                } catch (e) {
+                    asked = Promise.reject(e);
+                }
+                identity.replaceChildren();
+                identity.append(el("span", "connect-gcloud-identity-text",
+                                   "Finish signing in in Google's window; this "
+                                   + "will catch up."));
+                asked.then(() => loadStatus(), (e) => {
+                    showError(e.message);
+                    loadStatus();
+                });
+            }
+
             async function signIn() {
+                if (webSignIn) return signInWeb("");
                 identity.replaceChildren();
                 identity.append(el("span", "connect-gcloud-identity-text",
                                    "Starting Google's sign-in…"));
@@ -3145,6 +3407,10 @@ window.PlexoraConnectionModal = (function () {
         // -- a saved server, the presets, the Google Cloud form -- shows the
         // notice that says so and what to do instead (services/handoff.js),
         // never a form that would fail. Nothing is asked of the server.
+        if (name && webCloud() && cloudProfile(name) && options.view !== "recipe") {
+            webNode(name);
+            return promise;
+        }
         const handoff = window.PlexoraWebHandoff
             && (options.recipe === "gcloud"
                 ? window.PlexoraWebHandoff.forPath("settings/gcloud/status")

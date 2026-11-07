@@ -7,8 +7,11 @@
 //   quit        File has no Quit (no process to stop)
 //   remotes     Settings > Remote servers is the notice, with its buttons on
 //               one row, in place of the server list (no request is made)
-//   dialog      the Connect dialog -- presets and Google Cloud -- is the notice
-//   toast       any other caller of an SSH/CLI route gets the notice in the corner
+//   dialog      the Connect dialog's presets are the notice, with a Google
+//               Cloud button; Google Cloud itself is the form (plan L9: no
+//               SSH, so the website reaches it), which on a build with no
+//               Google OAuth client says sign-in is not set up
+//   toast       any other caller of a desktop-bound route gets the notice in the corner
 //   about       Help > About says "website" without asking /desktop/info
 //   pair        the node's printed link pairs it: the fragment is cleared
 //               from the address bar, the node is listed reachable in
@@ -163,12 +166,32 @@ try {
         return seen;
     };
     out.dialog = await dialog({ view: "recipes" }, "connect-dialog-ssh.png");
-    out.gcloud = await dialog({ view: "recipe", recipe: "gcloud" }, "connect-dialog-gcloud.png");
+    out.gcloud = await frame.evaluate(async () => {
+        window.PlexoraConnectionModal.open({ view: "recipe", recipe: "gcloud" });
+        const until = Date.now() + 30000;
+        let box = null;
+        let said = "";
+        while (Date.now() < until) {
+            box = document.querySelector("dialog.connect-modal[open]");
+            said = box?.querySelector(".connect-gcloud-identity")?.textContent || "";
+            if (/not set up/.test(said)) break;
+            await new Promise((resolve) => setTimeout(resolve, 200));
+        }
+        const seen = { handoff: Boolean(box && box.classList.contains("is-handoff")),
+                       title: box?.querySelector(".connect-modal-title")?.textContent || "",
+                       identity: said };
+        box?.close();
+        return seen;
+    });
+    await page.screenshot({ path: path.join(shots, "connect-dialog-gcloud.png") });
 
     step("toast");
     // -- toast --------------------------------------------------------------
     out.toast = await frame.evaluate(async () => {
-        const answer = await fetch("/settings/gcloud/zones?project=demo");
+        // A route whose notice is not the one already drawn inline on this
+        // page (Settings > Remote servers is the SSH notice), so the toast
+        // says it.
+        const answer = await fetch("/settings/data");
         const body = await answer.json();
         const seen = await new Promise((resolve) => {
             const until = Date.now() + 5000;
@@ -336,12 +359,13 @@ try {
 const named = (out.pair.nodes || []).find((entry) => entry.address === node.endpoint);
 out.ok = Boolean(
     out.quit && out.quit.website && !out.quit.quit
-    && out.remotes.buttons.join("|") === "Open Desktop App|Pair a Node" && out.remotes.oneRow
+    && out.remotes.buttons.join("|") === "Open Desktop App|Pair a Node|Google Cloud" && out.remotes.oneRow
     && !out.remotes.serverList && out.remotes.pairButton && out.remotes.asked === 0
     && out.dialog.title === "Connect from the desktop app" && out.dialog.forms === 0 && out.dialog.oneRow
-    && out.dialog.buttons.join("|") === "Open Desktop App|Pair a Node|Close"
-    && out.gcloud.title === "Google Cloud is in the desktop app" && out.gcloud.forms === 0
-    && out.toast.status === 501 && out.toast.toast && out.toast.toast.title === "Google Cloud is in the desktop app"
+    && out.dialog.buttons.join("|") === "Open Desktop App|Pair a Node|Google Cloud|Close"
+    && !out.gcloud.handoff && out.gcloud.title === "Connect to Google Cloud"
+    && /Google sign-in is not set up on this site/.test(out.gcloud.identity)
+    && out.toast.status === 501 && out.toast.toast && out.toast.toast.title === "A desktop app setting"
     && out.about.runningAs === "website" && !out.about.askedDesktopInfo
     && out.remotes.openDesktop === "Get the desktop app"
     && out.dialogPair.command === `plexora node serve --dynamic --pair ${site}`

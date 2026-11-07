@@ -17,12 +17,15 @@
  *   unless the same notice is already on screen inline the toast says it
  *   once per route per page.
  *
- * The actions (`ACTIONS`, the same three routes.py allows):
+ * The actions (`ACTIONS`, the same four routes.py allows):
  *   open_desktop  the desktop app, on this page's project when it has one
  *                 (services/desktopHandoff.js, in the site's host page)
  *   get_desktop   the desktop app's download page
  *   pair_node     pair a node started on the server (`plexora node serve
  *                 --pair` prints the link; services/connectorClient.js pairs)
+ *   google_cloud  the Google Cloud connection, which needs no SSH on the
+ *                 website (plan L9): a saved one opened, else the form
+ *                 (services/connectionModal.js)
  *
  * Nothing here runs for a page a Plexora served (desktop app, server):
  * `forPath` is null there and no handoff is ever answered.
@@ -32,11 +35,12 @@
 (function (global) {
     "use strict";
 
-    const ACTIONS = Object.freeze(["open_desktop", "get_desktop", "pair_node"]);
+    const ACTIONS = Object.freeze(["open_desktop", "get_desktop", "pair_node", "google_cloud"]);
     const LABELS = Object.freeze({
         open_desktop: "Open Desktop App",
         get_desktop: "Get the Desktop App",
         pair_node: "Pair a Node",
+        google_cloud: "Google Cloud",
     });
     const DOWNLOAD = "https://github.com/nirmallab/plexora/releases/latest";
 
@@ -151,7 +155,23 @@
         return host.PlexoraConnector.pair(pairing, global);
     }
 
-    const RUN = { open_desktop: openDesktop, get_desktop: getDesktop, pair_node: pairNode };
+    //: Google Cloud on the website: the saved connection opened (its VM
+    //: started and handed over), or the form for a first one.
+    async function googleCloud() {
+        const modal = global.PlexoraConnectionModal;
+        if (!modal) return null;
+        let saved = null;
+        const remotes = global.PlexoraRemotes;
+        if (remotes) {
+            const known = remotes.snapshot().loaded ? remotes.snapshot() : await remotes.refresh();
+            saved = ((known && known.entries) || []).find((entry) => entry.gcloud) || null;
+        }
+        return saved ? modal.open({ name: saved.name })
+            : modal.open({ view: "recipe", recipe: "gcloud" });
+    }
+
+    const RUN = { open_desktop: openDesktop, get_desktop: getDesktop, pair_node: pairNode,
+                  google_cloud: googleCloud };
 
     function run(action) {
         const fn = RUN[action];

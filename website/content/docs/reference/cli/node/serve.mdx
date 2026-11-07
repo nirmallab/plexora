@@ -16,8 +16,9 @@ Serve one or more files to a Plexora viewer. Every --serve names one resource as
 ```bash
 plexora node serve [-h] [--serve KIND:ID=PATH] [--host HOST] [--port PORT] [--token TOKEN]
                           [--node-id NODE_ID] [--allow-origin ORIGIN] [--pair [ORIGIN]]
-                          [--browser-endpoint URL] [--app] [--url-prefix PATH] [--plugins PLUGINS]
-                          [--dynamic] [--manifest PATH] [--exit-on-stdin-close]
+                          [--browser-endpoint URL] [--app] [--tls {self-signed}]
+                          [--url-prefix PATH] [--plugins PLUGINS] [--dynamic] [--manifest PATH]
+                          [--exit-on-stdin-close]
 ```
 
 ## Options
@@ -71,6 +72,12 @@ With --pair: the address the browser should use for this node, when it is not th
 <Param name={"--app"}>
 
 Also serve the Plexora web app at /app/, from the static build shipped with this install (when it has one). The app is public code and is served without the token; every data route still needs it.
+
+</Param>
+
+<Param name={"--tls {self-signed}"} type={"one of: self-signed"}>
+
+Serve HTTPS with a certificate this node makes once and keeps (in the data root's node-tls folder), for a browser that opens the node at its own address -- a cloud VM the website started. The browser warns once; the certificate's SHA-256 fingerprint is printed to check the warning against.
 
 </Param>
 

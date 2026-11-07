@@ -71,3 +71,26 @@ def test_what_pages_takes(built):
     assert len(files) < 20_000
     assert (out / "client" / "src" / "js" / "workers" / "pythonWorker.js").is_file()
     assert (out / "client" / "dist" / "tiffWorker_bundle.js").is_file()
+
+
+def test_google_sign_in_comes_back_to_a_page_of_the_site(built, tmp_path):
+    """Plan L9: the OAuth client's redirect URI is `<site>/google-auth.html`,
+    a file (not the loader), sent with no referrer and never cached; a build
+    names its client id (and a stand-in's endpoint for a test) in shell.json,
+    and a build without one names nothing."""
+    out, _ = built
+    page = (out / "google-auth.html").read_text(encoding="utf-8")
+    assert 'src="client/src/js/services/googleAuthReturn.js"' in page
+    assert '<meta name="referrer" content="no-referrer">' in page
+    headers = (out / "_headers").read_text(encoding="utf-8")
+    assert "/google-auth.html\n  Cache-Control: no-store\n  Referrer-Policy: no-referrer" in headers
+    assert "google" not in json.loads((out / "client" / "shell.json").read_text(encoding="utf-8"))
+    google = static_build.google_config("123-abc.apps.googleusercontent.com",
+                                        "http://127.0.0.1:9/o/oauth2/v2/auth")
+    static_build.build(tmp_path, google=google)
+    shell = json.loads((tmp_path / "client" / "shell.json").read_text(encoding="utf-8"))
+    assert shell["google"] == {"client_id": "123-abc.apps.googleusercontent.com",
+                               "auth": "http://127.0.0.1:9/o/oauth2/v2/auth"}
+    assert static_build.google_config(None) == {}
+    with pytest.raises(ValueError):
+        static_build.google_config("not a client id")

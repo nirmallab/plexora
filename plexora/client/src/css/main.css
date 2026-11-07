@@ -4176,6 +4176,35 @@ html.is-native-dragging.has-drop-target body::after {
     border-radius: var(--radius-sm);
 }
 
+/* The website's Google Cloud connection (plan L9): what the VM is doing, then
+   the hand-over link with the certificate fingerprint to check the browser's
+   warning against. */
+.connect-node-state,
+.connect-node-note,
+.connect-node-warning {
+    margin: 0 0 var(--space-2);
+}
+
+.connect-node-note {
+    color: var(--text-secondary);
+}
+
+.connect-node-fingerprint {
+    display: block;
+    margin: 0 0 var(--space-3);
+    padding: var(--space-2);
+    overflow-wrap: anywhere;
+    font-family: var(--font-mono, monospace);
+    font-size: 0.75rem;
+    background: var(--surface-1);
+    border-radius: var(--radius-sm);
+}
+
+.connect-node-open {
+    display: inline-block;
+    text-decoration: none;
+}
+
 /* Compute in one region, data in another. Amber rather than red because it is
    a working configuration that costs money, not a broken one -- and it carries
    the button that fixes it, because a warning somebody has to act on elsewhere

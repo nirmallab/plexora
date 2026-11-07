@@ -712,12 +712,14 @@ def _serve_then_pair(app, options, link, origin):
 def serve_node(serve, token=None, host="127.0.0.1", port=8642, *, node_id=None,
                allow_origins=(), plugins=None, dynamic=False, manifest=None,
                exit_on_stdin_close=False, log=print, pair=None,
-               browser_endpoint=None, serve_app=False, url_prefix=None):
+               browser_endpoint=None, serve_app=False, url_prefix=None, tls=None):
     """Start a node and block, printing what a primary needs to register it.
 
     `pair` (a page address, or True for the hosted viewer) allows that page's
     origin and prints a link that pairs this node with it, once listening.
     `serve_app` serves the static build at `/app/` when this install has one.
+    `tls="self-signed"` serves HTTPS with a certificate the node makes and
+    keeps (server/node/tls.py): a node a browser opens at its own address.
     """
     from waitress import serve as waitress_serve
 
@@ -746,9 +748,25 @@ def serve_node(serve, token=None, host="127.0.0.1", port=8642, *, node_id=None,
             page, pair_origin = pair_target(pair)
         except ValueError as exc:
             raise NodeStartupError(str(exc)) from None
-        pairing = (page, pair_origin, pair_endpoint(host, port, browser_endpoint))
+        endpoint = pair_endpoint(host, port, browser_endpoint)
+        if tls and not browser_endpoint and endpoint.startswith("http://"):
+            endpoint = "https://" + endpoint[len("http://"):]
+        pairing = (page, pair_origin, endpoint)
     allow_origins = node_origins(allow_origins,
                                  pairing[1] if pairing else None)
+    tls_files = None
+    if tls:
+        if tls != "self-signed":
+            raise NodeStartupError("--tls takes self-signed.")
+        from plexora import paths
+        from plexora.server.node import tls as node_tls
+
+        try:
+            tls_files = node_tls.certificate(
+                Path(paths.data_root()) / node_tls.FOLDER,
+                hosts=[] if host in ("0.0.0.0", "::", "") else [host])
+        except node_tls.TlsError as exc:
+            raise NodeStartupError(str(exc)) from None
     app_dir = None
     if serve_app:
         from plexora.server.node import webapp
@@ -815,7 +833,8 @@ def serve_node(serve, token=None, host="127.0.0.1", port=8642, *, node_id=None,
     if dynamic:
         log("  (accepting more from the viewer while this runs -- --dynamic)")
     if app.config.get("PLEXORA_NODE_APP_DIR"):
-        log(f"  the Plexora web app, at http://{_advertised(host)}:{port}/app/")
+        scheme = "https" if tls_files else "http"
+        log(f"  the Plexora web app, at {scheme}://{_advertised(host)}:{port}/app/")
     log("")
     log("Register it on the machine running the viewer:")
     log(f"  plexora.register_node(\"<name>\", \"http://{_advertised(host)}:{port}\", "
@@ -834,6 +853,15 @@ def serve_node(serve, token=None, host="127.0.0.1", port=8642, *, node_id=None,
     # does -- never touches the files it was pointed at.
     warm_resources(registry, log=log)
 
+    if tls_files is not None:
+        link = None
+        if pairing is not None:
+            from plexora.connect import pairing_url
+
+            link = (pairing_url(pairing[0], pairing[2], token), pairing[1])
+        _serve_tls(app, host, port, tls_files, dict(**WAITRESS_LIMITS, threads=worker_threads()),
+                   link, log)
+        return
     if pairing is not None:
         from plexora.connect import pairing_url
 
@@ -849,6 +877,33 @@ def serve_node(serve, token=None, host="127.0.0.1", port=8642, *, node_id=None,
         **WAITRESS_LIMITS,
         threads=worker_threads(),
     )
+
+
+def _serve_tls(app, host, port, files, options, link, log=print):
+    """Waitress on loopback, behind `tls.TlsFront` on the node's own port.
+
+    The fingerprint is said with the address, so whoever reads this terminal
+    (or the VM's startup script) can tell the browser's warning is about this
+    node's certificate and not somebody else's."""
+    from waitress import create_server
+
+    from plexora.server.node import tls as node_tls
+
+    server = create_server(app, host="127.0.0.1", port=0, url_scheme="https", **options)
+    try:
+        front = node_tls.TlsFront(host, port, server.effective_port, *files, log=log)
+    except OSError as exc:
+        server.close()
+        raise NodeStartupError(f"Could not listen on {host}:{port}: {exc}") from None
+    log(f"Serving on https://{_advertised(host)}:{front.port}")
+    log(f"  certificate SHA-256 {node_tls.fingerprint(files[0])}")
+    front.start()
+    if link is not None:
+        _print_pairing(*link)
+    try:
+        server.run()
+    finally:
+        front.close()
 
 
 def _default_manifest(node_id, log=print):

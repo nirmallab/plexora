@@ -399,6 +399,10 @@
         await script(at("/client/src/js/services/desktopHandoff.js"));
         await script(at("/client/src/js/services/handoffNotice.js"));
         await script(at("/client/src/js/services/connectorClient.js"));
+        // Google sign-in for Google Cloud (plan L9): the token is held here,
+        // in the host, for the tab's life, and each page's frame borrows it.
+        await script(at("/client/src/js/services/googleAuth.js"));
+        global.PlexoraGoogleAuth.configure(shell.google || {});
         // An ES module, fetched while Python starts.
         const licenceModule = import(at("/client/src/js/services/licenseClient.js"));
         licenceModule.catch(() => null);
@@ -533,6 +537,7 @@
         global.PlexoraPicks = host.PlexoraPicks;
         global.PlexoraNode = host.PlexoraNode;
         global.PlexoraLicense = host.PlexoraLicense;
+        global.PlexoraGoogleAuth = host.PlexoraGoogleAuth;
         global.PlexoraShellFramed = true;
         if (global.PlexoraNode) global.PlexoraNode.revalidate();
         await claimed();

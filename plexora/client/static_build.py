@@ -2,7 +2,7 @@
 
     python -m plexora.client.static_build [--out DIR] [--py URL] [--models URL] [--noindex]
         [--flags URL] [--licence-api URL] [--licence-portal URL] [--licence-test-key KID=KEY]
-        [--telemetry URL]
+        [--telemetry URL] [--google-client-id ID] [--google-auth URL]
 
 Plexora's pages are rendered on the website by Plexora's own Python in a
 worker beside the page (plexora/browser), so what the site serves as files is
@@ -15,7 +15,10 @@ Writes `--out` (default `plexora/client/dist/static/`):
 
 - `index.html`: the loader;
 - `client/{src,dist,external}/...` and `plugins/<name>/static/...`;
-- `client/shell.json`: `{version, py, models, flags?, licence?, telemetry?}`, `py` the base the
+- `google-auth.html`: the page Google's sign-in returns to
+  (services/googleAuthReturn.js), the `redirect_uri` the site's OAuth client
+  registers (`https://<site>/google-auth.html`);
+- `client/shell.json`: `{version, py, models, flags?, licence?, telemetry?, google?}`, `py` the base the
   Python bundle is served from (`tools/browser_build/build.py`; the assets
   bucket on the site, `/py/<version>/` in development; onnxruntime-web is its
   `ort/`), `models` the base magic select's model files are under
@@ -33,7 +36,10 @@ Writes `--out` (default `plexora/client/dist/static/`):
   with `--telemetry`: the service the website sends the desktop's anonymous
   usage counts to (plexora/browser/telemetry.py; the site's builds name
   https://analytics.plexoraapp.com, which admits their origins). A build
-  without it -- every test's, a node's -- sends nothing;
+  without it -- every test's, a node's -- sends nothing; `google` only when a client id
+  is given: `client_id`, the site's Google OAuth client for Google Cloud
+  (services/googleAuth.js; plan L9), and `auth`, Google's authorization
+  endpoint unless a stand-in is named (tests/browser/mock_google.py);
 - `_headers` and `_redirects` for Cloudflare Pages: every response
   cross-origin isolated (the site needs SharedArrayBuffer), the service worker
   allowed the whole site, and every path that is not a file answered with the
@@ -109,6 +115,25 @@ CSP = "; ".join((
     "form-action 'self'",
 ))
 
+#: Where Google's sign-in comes back to: hands the token to the page that
+#: asked and closes (services/googleAuthReturn.js). No referrer, nothing but
+#: the site's own script, and the token is out of the address before it runs
+#: anything else.
+GOOGLE_AUTH = """<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="referrer" content="no-referrer">
+<title>Plexora - Google sign-in</title>
+</head>
+<body style="font-family: system-ui, sans-serif; margin: 2rem">
+<p id="google-auth-said">Signing in to Google&hellip;</p>
+<script src="client/src/js/services/googleAuthReturn.js"></script>
+</body>
+</html>
+"""
+
 #: Cloudflare Pages' `_headers`: the site is cross-origin isolated everywhere
 #: (plan D5) and under its Content-Security-Policy; its service worker may
 #: control every path.
@@ -129,6 +154,10 @@ HEADERS = f"""/*
 
 /client/shell.json
   Cache-Control: no-cache
+
+/google-auth.html
+  Cache-Control: no-store
+  Referrer-Policy: no-referrer
 """
 
 #: Every path that is not a file is the loader (it reads the address itself).
@@ -177,9 +206,24 @@ def licence_config(api: str | None = None, portal: str | None = None, test_keys=
 TELEMETRY_ENDPOINT = "https://analytics.plexoraapp.com"
 
 
+def google_config(client_id: str | None = None, auth: str | None = None) -> dict:
+    """shell.json's `google`: the OAuth client id, and the authorization
+    endpoint when it is not Google's (a test's stand-in). Empty without a
+    client id: the page then says Google sign-in is not set up."""
+    if not client_id:
+        return {}
+    if not re.fullmatch(r"[A-Za-z0-9._-]+", client_id):
+        raise ValueError(f"--google-client-id wants an OAuth client id, not {client_id!r}")
+    out = {"client_id": client_id}
+    if auth:
+        out["auth"] = auth
+    return out
+
+
 def build(out: Path = DEFAULT_OUT, py: str | None = None, noindex: bool = False,
           licence: dict | None = None, models: str | None = None,
-          flags: str | None = None, telemetry: str | None = None) -> dict:
+          flags: str | None = None, telemetry: str | None = None,
+          google: dict | None = None) -> dict:
     from plexora import __version__
 
     py = py or f"/py/{__version__}/"
@@ -196,6 +240,7 @@ def build(out: Path = DEFAULT_OUT, py: str | None = None, noindex: bool = False,
         files += _copy(static, out / "plugins" / static.parent.name / "static")
         plugins.append(static.parent.name)
     (out / "index.html").write_bytes(LOADER.encode("utf-8"))
+    (out / "google-auth.html").write_bytes(GOOGLE_AUTH.encode("utf-8"))
     shell = {"version": __version__, "py": py, "models": models}
     if flags:
         shell["flags"] = flags
@@ -203,12 +248,15 @@ def build(out: Path = DEFAULT_OUT, py: str | None = None, noindex: bool = False,
         shell["licence"] = licence
     if telemetry:
         shell["telemetry"] = {"endpoint": telemetry.rstrip("/")}
+    if google:
+        shell["google"] = google
     (out / "client" / "shell.json").write_bytes(json.dumps(shell, indent=1).encode("utf-8"))
     headers = HEADERS.replace("/*\n", "/*\n  X-Robots-Tag: noindex\n", 1) if noindex else HEADERS
     (out / "_headers").write_bytes(headers.encode("utf-8"))
     (out / "_redirects").write_bytes(REDIRECTS.encode("utf-8"))
-    return {"out": str(out), "files": files + 4, "plugins": plugins, "version": __version__, "py": py,
+    return {"out": str(out), "files": files + 5, "plugins": plugins, "version": __version__, "py": py,
             "models": models, "flags": flags, "telemetry": shell.get("telemetry"),
+            "google": dict(google or {}),
             "licence": {k: (sorted(v) if k == "test_keys" else v) for k, v in (licence or {}).items()}}
 
 
@@ -229,10 +277,16 @@ def main(argv=None) -> int:
     parser.add_argument("--telemetry", default=None, metavar="URL",
                         help="send the desktop's anonymous usage counts to this service "
                              f"(the site's builds: {TELEMETRY_ENDPOINT}); none: nothing is sent")
+    parser.add_argument("--google-client-id", default=None,
+                        help="the site's Google OAuth client id, for Google Cloud (plan L9)")
+    parser.add_argument("--google-auth", default=None,
+                        help="the OAuth authorization endpoint, for a stand-in (default Google's)")
     args = parser.parse_args(argv)
     licence = licence_config(args.licence_api, args.licence_portal, args.licence_test_key)
-    print(json.dumps(build(Path(args.out), args.py, args.noindex, licence, args.models, args.flags,
-                           args.telemetry), indent=1))
+    google = google_config(args.google_client_id, args.google_auth)
+    print(json.dumps(build(Path(args.out), args.py, args.noindex, licence, args.models,
+                           flags=args.flags, telemetry=args.telemetry, google=google),
+                     indent=1))
     return 0
 
 

@@ -1067,7 +1067,7 @@ def _compose_gcloud(recipe, answers) -> dict:
         # called `analysis-box` should not have to know which zone they put it
         # in eighteen months ago.
         try:
-            zone = gcloud.zone_of_instance(project, vm_name)
+            zone = gcloud.backend().zone_of_instance(project, vm_name)
         except gcloud.GcloudError:
             zone = ""
         if not zone:
@@ -1081,7 +1081,7 @@ def _compose_gcloud(recipe, answers) -> dict:
         # too means a saved profile always names a zone -- and a guess would
         # be wrong for the commonest region there is: us-east1 has no zone a.
         try:
-            zone = gcloud.pick_zone(project, region)
+            zone = gcloud.backend().pick_zone(project, region)
         except gcloud.GcloudError as exc:
             # Only raised for a project that cannot run a VM anywhere, which
             # is the sentence worth showing -- not "no zone in us-east1".

@@ -92,6 +92,10 @@ public:
   - name: PLEXORA_NODE_TOKEN
     group: Data nodes
     description: Default for `plexora node serve --token`, the shared secret a viewer authenticates with.
+  - name: PLEXORA_GOOGLE_API
+    group: Data nodes
+    description: Sends every Google Cloud JSON API call the website's backend makes (`plexora/gcloud_rest.py`) to one stand-in instead of Google -- `<base>/compute/v1`, `<base>/storage/v1`, `<base>/v1/projects`, `<base>/v1/userinfo`. For tests against tests/browser/mock_google.py; never set it for real use.
+    example: http://127.0.0.1:8765
   - name: PLEXORA_NODE_ORIGINS
     group: Data nodes
     description: Browser origins a data node allows, separated by commas or spaces, in addition to every `plexora node serve --allow-origin`. For a launcher that starts nodes for a page served from elsewhere (the hosted viewer, say) without rebuilding each command line. Written as the browser sends them -- `http://127.0.0.1:8000` and `http://localhost:8000` are different origins.

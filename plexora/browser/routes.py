@@ -86,21 +86,19 @@ class Handoff(NamedTuple):
 
 
 #: The buttons a notice can offer (services/handoff.js): the desktop app
-#: opened (on this project, when there is one), its download page, and the
-#: node pairing flow (a node started on the server, paired with this browser).
-ACTIONS = ("open_desktop", "get_desktop", "pair_node")
+#: opened (on this project, when there is one), its download page, the node
+#: pairing flow (a node started on the server, paired with this browser), and
+#: Google Cloud, which the website reaches without SSH (plan L9: a VM that
+#: runs its own node, opened at its own address).
+ACTIONS = ("open_desktop", "get_desktop", "pair_node", "google_cloud")
 
 # A web page cannot open a TCP socket, so it cannot run ssh. Remote data keeps
 # its zero-cost routes: the desktop app (or the small connector), a node the
 # cluster's portal starts, or a tunnel the user opens (plan decision 1).
 _SSH = Handoff("desktop", "Connect from the desktop app",
                "A web page cannot open an SSH connection: use the desktop app, "
-               "or pair a node started on the server.", ("open_desktop", "pair_node"))
-# Google Cloud through its command-line tool, until the website reaches
-# Google's own APIs with the user's sign-in (plan L9).
-_GCLOUD = Handoff("desktop", "Google Cloud is in the desktop app",
-                  "It runs through the Google Cloud CLI, which a web page cannot start.",
-                  ("open_desktop",))
+               "or pair a node started on the server.",
+               ("open_desktop", "pair_node", "google_cloud"))
 # An installed program's own business: the website is always the current
 # version, and there is nothing to stop.
 _UPDATES = Handoff("none", "Always up to date",
@@ -112,7 +110,7 @@ _DATA_FOLDER = Handoff("desktop", "A desktop app setting",
                        ("open_desktop",))
 
 #: What a web page cannot do: the notice that says so, by endpoint. The set is
-#: exactly the ssh-, CLI- and desktop-bound routes (tests/test_handoff_routes.py
+#: exactly the ssh- and desktop-bound routes (tests/test_handoff_routes.py
 #: holds it), so a new entry is a decision, not a default.
 HANDOFF = {
     "settings_remotes_connect": _SSH,
@@ -121,18 +119,6 @@ HANDOFF = {
     "settings_remotes_status": _SSH,
     "settings_remotes_askpass_prompt": _SSH,
     "settings_remotes_askpass_answer": _SSH,
-    "gcloud_auth": _GCLOUD,
-    "gcloud_status": _GCLOUD,
-    "gcloud_projects": _GCLOUD,
-    "gcloud_buckets": _GCLOUD,
-    "gcloud_bucket": _GCLOUD,
-    "gcloud_zones": _GCLOUD,
-    "gcloud_instances": _GCLOUD,
-    "gcloud_vm_status": _GCLOUD,
-    "gcloud_vm_start": _GCLOUD,
-    "gcloud_vm_stop": _GCLOUD,
-    "gcloud_vm_delete": _GCLOUD,
-    "gcloud_vm_standard": _GCLOUD,
     "update_check": _UPDATES,
     "update_install": _UPDATES,
     "update_install_status": _UPDATES,
@@ -207,6 +193,13 @@ PYTHON = (
     "project_bundle", "projects_import_bundle", "project_size",
     "project_attach_resource", "project_thumbnail", "list_projects", "assign_projects", "put_file",
     "reload_datasource", "remote_health", "rename_channels_json", "set_pixel_size",
+    # Google Cloud over its JSON APIs with the page's sign-in (plan L9:
+    # plexora/gcloud_rest.py, services/googleAuth.js); the website's VM runs a
+    # node the page hands the user to, so no SSH is involved.
+    "gcloud_auth", "gcloud_status", "gcloud_projects", "gcloud_buckets", "gcloud_bucket",
+    "gcloud_objects", "gcloud_zones", "gcloud_instances", "gcloud_vm_status",
+    "gcloud_vm_start", "gcloud_vm_stop", "gcloud_vm_delete", "gcloud_vm_standard",
+    "gcloud_vm_resize", "gcloud_vm_node",
     "settings_nodes", "settings_nodes_add", "settings_nodes_remove", "settings_recipes",
     "settings_recipes_save", "settings_remotes", "settings_remotes_save", "settings_remotes_remove",
     "settings_webdata", "settings_webdata_budget", "settings_webdata_clear", "settings_webdata_jobs",
