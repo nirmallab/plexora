@@ -34,12 +34,16 @@ import os
 import time
 
 
-def environment(origin: str, *, data_root: str = "/data", licence_dir: str = "/bioc") -> None:
+def environment(origin: str, *, base_url: str = "", data_root: str = "/data",
+                licence_dir: str = "/bioc") -> None:
     """What the app reads from the environment as it builds (create_app) and
     as it runs: where projects live, that telemetry is the page's business,
-    where the licence the page verified is, and that the page's own origin
-    may write."""
+    where the licence the page verified is, that the page's own origin may
+    write, and the path the site is served under (`base_url`: "" at a site's
+    root; `/rnode/<host>/<port>/app` when a node serves the app behind a
+    portal), which every page's links carry."""
     os.environ.update({
+        "PLEXORA_BASE_URL": base_url or "",
         "PLEXORA_DATA_PATH": data_root,
         "PLEXORA_TELEMETRY": "off",
         "PLEXORA_ALLOWED_ORIGINS": origin,
@@ -79,12 +83,12 @@ def http() -> bool:
     return True
 
 
-def start(origin: str, *, post=None, cancelled=None, idle=None, waiting=None, columns=None,
-          ask=None, data_root: str = "/data", licence_dir: str = "/bioc") -> dict:
+def start(origin: str, *, base_url: str = "", post=None, cancelled=None, idle=None, waiting=None,
+          columns=None, ask=None, data_root: str = "/data", licence_dir: str = "/bioc") -> dict:
     """Boot once; returns what the page shows in its status chip and records:
     `{version, rules, seconds, shims}`."""
     started = time.perf_counter()
-    environment(origin, data_root=data_root, licence_dir=licence_dir)
+    environment(origin, base_url=base_url, data_root=data_root, licence_dir=licence_dir)
     shims = {"imagecodecs": codecs(), "pyodide_http": http()}
 
     from plexora.browser import cooperative, licence

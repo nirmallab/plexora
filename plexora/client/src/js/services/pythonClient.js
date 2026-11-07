@@ -119,12 +119,18 @@
         if (data.log) console.warn("[python]", data.log);
     }
 
-    function start({ base, origin = global.location.origin, root = "/", debug = false, store = null } = {}) {
+    //: The site's base path ("" at a site's root; see services/shell.js):
+    //: the app's routes are under it on the page's side, at "/" in Python.
+    let siteBase = "";
+
+    function start({ base, origin = global.location.origin, root = "/", siteBase: under = "",
+                     debug = false, store = null } = {}) {
         if (worker) return ready;
+        siteBase = String(under || "").replace(/\/+$/, "");
         worker = new Worker(new URL(root + WORKER, global.location.href), { type: "module" });
         worker.onmessage = onMessage;
         worker.onerror = (event) => console.error("[python] worker failed:", event.message);
-        call("boot", { base, origin, cancels, inFlight, debug, store }).then(resolveReady, (error) => {
+        call("boot", { base, origin, siteBase, cancels, inFlight, debug, store }).then(resolveReady, (error) => {
             resolveReady({ error: String(error?.message || error) });
         });
         return ready;
@@ -178,7 +184,7 @@
             headers.push(["Content-Type", contentTypeOf(init)]);
         }
         const answer = await call("request", {
-            method, path: url.pathname, query: url.search.replace(/^\?/, ""), headers,
+            method, path: route(url.pathname), query: url.search.replace(/^\?/, ""), headers,
             body: body ? body.buffer.slice(body.byteOffset, body.byteOffset + body.byteLength) : null,
         });
         let payload = answer.body;
@@ -207,6 +213,15 @@
         if (recent.length > RECENT) recent.shift();
         const nullBody = status === 204 || status === 304 || method === "HEAD";
         return new Response(nullBody ? null : payload, { status, headers: answered });
+    }
+
+    //: The route Python answers for a path of the site: the site's base
+    //: path taken off (a request relayed from a page under it carries it).
+    function route(path) {
+        if (siteBase && (path === siteBase || path.startsWith(siteBase + "/"))) {
+            return path.slice(siteBase.length) || "/";
+        }
+        return path;
     }
 
     //: Bytes through the browser's own decompressor, written straight in

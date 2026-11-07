@@ -36,7 +36,8 @@
 (function (global) {
     "use strict";
 
-    const WORKER = "/client/dist/tiffWorker_bundle.js";
+    // Under the site's base path (services/shell.js `BASE`; "" at its root).
+    const WORKER = (globalThis.PLEXORA_SITE_BASE || "") + "/client/dist/tiffWorker_bundle.js";
     const WORKERS = Math.min(6, Math.max(2, Math.floor((global.navigator.hardwareConcurrency || 4) / 2)));
     //: Workers for a whole-plane scan (`windowOf`), which nothing else waits beside.
     const SCAN_WORKERS = Math.min(16, Math.max(2, (global.navigator.hardwareConcurrency || 4) - 2));

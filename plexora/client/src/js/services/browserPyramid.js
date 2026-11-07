@@ -43,8 +43,9 @@
 (function (global) {
     "use strict";
 
-    const WORKER = "/client/src/js/workers/pyramidWorker.js";
-    const HANDS = "/client/dist/tiffWorker_bundle.js";
+    // Under the site's base path (services/shell.js `BASE`; "" at its root).
+    const WORKER = (globalThis.PLEXORA_SITE_BASE || "") + "/client/src/js/workers/pyramidWorker.js";
+    const HANDS = (globalThis.PLEXORA_SITE_BASE || "") + "/client/dist/tiffWorker_bundle.js";
     const ROOT = "/derived";
     const WORKERS = Math.max(1, Math.min(12, (global.navigator.hardwareConcurrency || 4) - 2));
     const DB = "plexora-copies";
