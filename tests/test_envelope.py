@@ -6,10 +6,12 @@ measured: P9's worker heap at 1.26 M x 29 cells). ORION CRC02's table opens on
 the website and must not be told otherwise; the same cells with 90 columns,
 or ORION on a 4 GB device, are offered the desktop app.
 
-Three more moments, each once per project per tab, its x remembered 30 days,
+Four more moments, each once per project per tab, its x remembered 30 days,
 its buttons on one row (at most three): a batch longer than ten minutes with
 the tab open (images x the measured seconds an image before it starts, its
-own pace once it has done a step); magic select's model about to load with
+own pace once it has done a step); a flat image's pyramid longer than two
+minutes to build here, or bigger than the room the browser has left for a
+copy kept in it; magic select's model about to load with
 no WebGPU (the measured second a click on WebAssembly); and tiles read
 slowly (the rolling p95 of 50 over 150 ms, after the open's own 50 and never
 while a job holds the worker), which offers a node beside the data.
@@ -76,6 +78,28 @@ def test_a_long_batch_is_said_before_it_runs_and_by_its_pace(probe):
                                "actions": ["*Desktop app", "Connect a node", "Continue here"]}]
 
 
+def test_a_flat_image_too_long_or_too_big_to_build_here_is_said_before_it_starts(probe):
+    """29 MB/s a band worker (P7: 9.6 GB in 27.5 s with 12), against two
+    minutes; a copy kept in the browser against the room it says is left."""
+    builds = probe["builds"]
+    assert builds["p7"]["verdict"] == "website" and round(builds["p7"]["seconds"]) == 28
+    assert builds["forty"]["verdict"] == "website"        # 40 GB: 115 s with 12 workers
+    assert builds["eighty"] == {"verdict": "desktop", "seconds": pytest.approx(229.9, abs=0.1),
+                                "title": "A long build for a browser tab",
+                                "note": "80 GB of pixels: about 4 min here, with this tab open."}
+    assert builds["p7FourCores"]["verdict"] == "desktop"  # 2 workers: 166 s
+    assert builds["noRoom"]["title"] == "No room for this pyramid here"
+    assert builds["noRoom"]["note"] == "About 5.8 GB to keep; 3.0 GB of room left here."
+    assert builds["mask"]["note"].startswith("80 GB of labels:")
+    assert builds["noShape"] == {"verdict": "website"}
+    # A copy into a folder on disk is judged on time only; one kept in the
+    # browser on the room too, said once.
+    assert probe["buildVerdicts"] == ["website", "desktop"]
+    assert probe["buildToasts"] == [{"title": "No room for this pyramid here",
+                                     "note": "About 5.8 GB to keep; 4.0 GB of room left here.",
+                                     "actions": ["*Desktop app", "Connect a node", "Continue here"]}]
+
+
 def test_a_model_without_webgpu_says_what_a_click_costs(probe):
     assert probe["model"]["gpu"] == {"verdict": "website"}
     assert probe["modelToasts"] == [{
@@ -98,7 +122,7 @@ def test_slow_tiles_offer_a_node(probe):
 
 
 def test_every_notice_is_short(probe):
-    for notice in probe["batch"] + probe["modelToasts"] + probe["stall"]:
+    for notice in probe["batch"] + probe["buildToasts"] + probe["modelToasts"] + probe["stall"]:
         assert len(notice["title"]) <= 60 and "\n" not in notice["note"] and len(notice["note"]) <= 60
         assert len(notice["actions"]) <= 3
         assert not any(word in (notice["title"] + notice["note"]).lower() for word in ("upgrade", "unlock", "pro "))

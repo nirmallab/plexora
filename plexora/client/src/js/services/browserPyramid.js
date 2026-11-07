@@ -275,6 +275,11 @@
         }
         const file = global.PlexoraPicks ? global.PlexoraPicks.fileFor(path) : null;
         if (!file) throw new Error("the page does not hold that file now");
+        // A long build, or one the browser has no room for, is said once
+        // (services/handoffNotice.js); the build starts either way.
+        if (global.PlexoraEnvelope && global.PlexoraEnvelope.beforeBuild) {
+            global.PlexoraEnvelope.beforeBuild({ shape, dtype, kind, browser: !folder }).catch(() => null);
+        }
         run(build, { op: "build", file, key, name, kind, shape, dtype, factors, tile, description,
                      hands: HANDS, workers: WORKERS, folder });
         return { value: { id } };

@@ -7,8 +7,11 @@
         "reference_device_memory_gb": 8
     },
     "image": {
-        "flat_bytes_per_second": 560000000,
-        "flat_build_seconds": 120
+        "build_bytes_per_second_per_worker": 29000000,
+        "build_workers_max": 12,
+        "build_written_per_raw": 0.6,
+        "build_limit_s": 120,
+        "measured": "2026-11-05, P7: a flat 2 x 52923 x 45381 uint16 image (9.6 GB, zlib strips) built in 27.5 s by 12 band workers, 349 MB/s or 29 MB/s a worker (21.2 s uncompressed); it wrote 3.79 GB, 0.39 of its pixels (0.57 on the 0.25 GB image: 0.6 kept)"
     },
     "batch": {
         "limit_s": 600,

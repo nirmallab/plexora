@@ -97,7 +97,29 @@ toasts[toasts.length - 1]?.onDismiss?.("user");                     // the x: re
 const rememberedStall = [...store.entries()].filter(([k]) => k.endsWith(":stall"))
     .map(([k, v]) => ({ key: k, days: Math.round((Number(v) - Date.now()) / 864e5) }));
 
+// The build: a flat image's pyramid, before it starts. P7's 9.6 GB image, a
+// 40 GB and an 80 GB one, on a 14-core computer (12 workers) and a 4-core one.
+const flat = (y, x, extra = {}) => ({ shape: [2, y, x], dtype: "uint16", kind: "image", ...extra });
+const builds = {
+    p7: E.judgeBuild(flat(52923, 45381), limits, { cores: 14 }),
+    forty: E.judgeBuild(flat(100000, 100000), limits, { cores: 14 }),
+    eighty: E.judgeBuild(flat(100000, 200000), limits, { cores: 14 }),
+    p7FourCores: E.judgeBuild(flat(52923, 45381), limits, { cores: 4 }),
+    noRoom: E.judgeBuild(flat(52923, 45381), limits, { cores: 14, room: 3e9 }),
+    mask: E.judgeBuild({ shape: [1, 100000, 200000], dtype: "uint32", kind: "labels" }, limits, { cores: 14 }),
+    noShape: E.judgeBuild({ shape: [], dtype: "uint16" }, limits, { cores: 14 }),
+};
+Object.defineProperty(globalThis, "navigator", { configurable: true, value: {
+    hardwareConcurrency: 14,
+    storage: { estimate: async () => ({ quota: 10e9, usage: 6e9 }) } } });
+mark = toasts.length;
+const inFolder = await E.beforeBuild(flat(52923, 45381, { browser: false }));   // a folder: time only
+const inBrowser = await E.beforeBuild(flat(52923, 45381, { browser: true }));   // 5.8 GB into 4 GB of room
+await E.beforeBuild(flat(52923, 45381, { browser: true }));                     // once per project per tab
+const buildToasts = said(mark);
+
 console.log(JSON.stringify({
+    builds, buildVerdicts: [inFolder.verdict, inBrowser.verdict], buildToasts,
     toasts: open.map(({ title, actions }) => ({ title, actions: actions.map((a) => a.replace(/^\*/, "")) })),
     remembered: rememberedOpen,
     orion: E.judge({ rows: 1_260_000, columns: 29 }, limits),
@@ -107,5 +129,5 @@ console.log(JSON.stringify({
     batchPrior, batchPace, quietBatch, batch,
     model, modelToasts,
     stallVerdicts, duringJob, firstVerdictAt, stall, rememberedStall,
-    limitsDated: ["batch", "model", "stall"].every((k) => /^2026-\d\d-\d\d/.test(limits[k].measured || "")),
+    limitsDated: ["image", "batch", "model", "stall"].every((k) => /^2026-\d\d-\d\d/.test(limits[k].measured || "")),
 }));
