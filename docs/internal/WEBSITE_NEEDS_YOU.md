@@ -6,8 +6,9 @@ state is on `web/phase0`. Each item says what to do and what it unblocks.
 Nothing here has been done for you: nothing pushed, nothing deployed beyond
 the preview, no DNS changed after assets.plexoraapp.com.
 
-Last updated: 2026-11-07 (web/phase0 at 39a42309 and later; the preview runs
-its bundle `py/dev/39a42309569f/`, with /selfcheck).
+Last updated: 2026-11-07 evening (web/phase0 at 4f583c3b; the preview runs
+its bundle `py/dev/4f583c3b9745/`, with /selfcheck and the capacity fixes:
+ids past 2^24, Python past 2 GiB, long flat-image imports).
 
 ## 1. Deploys (in this order)
 
@@ -139,6 +140,9 @@ Safe to delete (scratch copies; nothing reads them):
 `C:\pxstage`, `C:\pxai` (empty), `C:\pxdesk-target` (cargo cache, several GB),
 `C:\pxff-pw`, `C:\pxff-runs`, `C:\pxff-shots`, `C:\pxff-data`, `C:\pxff-swtest`,
 `C:\plexora-bench-con` and `C:\plexora-bench-wb` (0.5 GB each, merged work),
+`C:\plexora-bench-cap` (31 MB of capacity-run fixtures; the big ones are
+deleted and `tools/bench_envelope/*.py` rebuilds any of them),
+`C:\plexora-bench-dwins` (75 MB, the desktop speed-up measurements, merged),
 `C:\pxweb\website\node_modules`, and the stray locked worktree
 `plexora\.claude\worktrees\agent-a04461bf5800bad41`.
 
