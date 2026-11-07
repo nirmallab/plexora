@@ -262,6 +262,9 @@ def test_the_startup_script_keeps_the_token_off_every_command_line():
     assert "PLEXORA_NODE_TOKEN=%s" in script and "chmod 600 /etc/plexora-node.env" in script
     assert "User=plexora" in script
     assert "__NODE_PORT__" not in script
+    # Ready means /app/ answered 200 with the certificate in place; a node
+    # whose install has no web app build says so instead of handing over a 404.
+    assert 'say state ready' in script and 'say state failed-noapp' in script
 
 
 # -- the whole flow, through urllib, against the stand-in --------------------------------

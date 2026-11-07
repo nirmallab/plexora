@@ -724,14 +724,18 @@ systemctl enable plexora-node
 systemctl restart plexora-node
 [ "${IDLE:-0}" -gt 0 ] && systemctl enable --now plexora-idle-shutdown.timer
 say state starting
+CODE=000
 for i in $(seq 1 120); do
-  curl -sk -o /dev/null "https://127.0.0.1:$PORT/app/" && break
+  CODE=$(curl -sk -o /dev/null -w '%{http_code}' "https://127.0.0.1:$PORT/app/")
+  [ "$CODE" != "000" ] && break
   sleep 5
 done
 CERT="$HOMEDIR/plexora-home/node-tls/cert.pem"
-if curl -sk -o /dev/null "https://127.0.0.1:$PORT/app/" && [ -f "$CERT" ]; then
+if [ "$CODE" = "200" ] && [ -f "$CERT" ]; then
   say fingerprint "$(openssl x509 -noout -fingerprint -sha256 -in "$CERT" | cut -d= -f2)"
   say state ready
+elif [ "$CODE" = "404" ]; then
+  say state failed-noapp
 else
   say state failed-start
 fi
@@ -979,8 +983,9 @@ def node_status(cfg):
     fingerprint, app_url, pair_url}`.
 
     `state` is the startup script's own word (installing, starting, ready,
-    failed-install, failed-mount, failed-start), or booting before it has
-    said anything. `pair_url` is the hand-over: the node's own `/app/`, with
+    failed-install, failed-mount, failed-start, failed-noapp: a Plexora
+    whose install has no web app build to serve at /app/), or booting before
+    it has said anything. `pair_url` is the hand-over: the node's own `/app/`, with
     the node's token in the fragment (never sent to a server) -- read here
     from the VM's metadata, where it lives, and held nowhere."""
     project = cli._cfg(cfg, "project")

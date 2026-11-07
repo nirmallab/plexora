@@ -1983,6 +1983,8 @@ window.PlexoraConnectionModal = (function () {
                 + "service account can read it.",
             "failed-start": "Plexora did not start on the VM. Its startup log is "
                 + "/var/log/plexora-startup.log on the VM.",
+            "failed-noapp": "Plexora started on the VM, but the version it installed "
+                + "has no web app to serve.",
         };
 
         async function webNode(profile) {
