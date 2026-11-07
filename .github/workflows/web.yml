@@ -102,7 +102,7 @@ jobs:
             tests/test_browser_columns.py tests/test_browser_table_provider.py \
             tests/test_browser_node_lzw.py tests/test_browser_node_spec.py \
             tests/test_browser_page_pyramid.py tests/test_browser_page_window.py \
-            tests/test_tiff_writer.py tests/test_backend_shim_js.py
+            tests/test_browser_sam.py tests/test_tiff_writer.py tests/test_backend_shim_js.py
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: web-static

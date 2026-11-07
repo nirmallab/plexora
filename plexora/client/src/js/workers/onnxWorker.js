@@ -288,7 +288,8 @@ async function status({ model } = {}) {
         // Armed with the model already stored (a later visit): the sessions
         // are made now, in the background, so the first click does not wait
         // for them -- the desktop warms its session at start the same way.
-        if (info && !out.weights.missing.length && !sessions && !loading && !download.running) {
+        // Once: after a failure it waits for the next setup (install) or reset.
+        if (info && !out.weights.missing.length && !sessions && !loading && !download.running && !loadError) {
             load({ model: lastModel, device: lastDevice }).catch(() => null);
         }
     }

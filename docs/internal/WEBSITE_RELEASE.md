@@ -8,11 +8,20 @@ names the bundle it loads, so a shell and its bundle always travel together.
 A released bundle prefix (`py/X.Y.Z/`) is written once and never rewritten or
 deleted; development prefixes (`py/dev/<sha12>/`) come and go.
 
+Magic select's runtime (onnxruntime-web) is in the bundle (`ort/`); its model
+is not: `shell.json`'s `models` (`static_build --models`, `/models/` by
+default) is the base the page fetches `mobilesam/segment-model-v1/
+mobile_sam_{encoder,decoder}.onnx` from (`vision/sam_weights.py` `WEB_DIR`;
+checked against the sha256 pins there). **Not yet published:** the two files
+go to the bucket at `models/mobilesam/segment-model-v1/` once, and the builds
+below then pass `--models https://assets.plexoraapp.com/models/`; until then
+the website's setup ends in "… is not at …".
+
 ## What runs where
 
 | Workflow / job | When | What |
 |---|---|---|
-| `web.yml` `static` | every PR and push to main (not desktop/, backend/, website/, docs/) | both static builds; Pages' limits (`budget.py --site`); the website's 24 test files (Python and the node probes) |
+| `web.yml` `static` | every PR and push to main (not desktop/, backend/, website/, docs/) | both static builds; Pages' limits (`budget.py --site`); the website's 25 test files (Python and the node probes) |
 | `web.yml` `bundle` | same | `build.py`, cached on Pyodide's version + `uv.lock` + `build.py` + `plexora/browser/stages.py` (a hit rebuilds only Plexora's wheel); first visit <= 50 MB (`budget.py --bundle`); the bundle says pyproject's version |
 | `web.yml` `import_check` | same | `tests/browser/import_check.mjs`: the bundle booted in Node from disk; the app builds with no stage; every gating/QC/AI/agent module imports with every stage in; `registry.discover()` registers gating and QC; a calibrated OME-TIFF reports 0.5 um/px |
 | `web.yml` `smoke` | same | `tests/browser/smoke.mjs` in headless Chromium on SwiftShader, correctness only: isolated, Python ready, a picked image opens and draws, no `securitypolicyviolation`, no failed request; the shell a first visit loads <= 4 MB gzipped (`budget.py --shell`) |
