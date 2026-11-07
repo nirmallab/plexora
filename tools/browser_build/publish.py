@@ -128,9 +128,12 @@ def verify(args) -> int:
 
     def check(item):
         key, source, encoding = item
-        # Cloudflare refuses urllib's own User-Agent.
-        request = urllib.request.Request(base + key, headers={"Origin": ORIGIN, "Accept-Encoding": "br",
-                                                              "User-Agent": "plexora-publish"})
+        # Cloudflare refuses urllib's own User-Agent. An object stored as it is
+        # is asked for as it is: on a custom domain Cloudflare compresses JSON
+        # on the fly for a client that takes brotli (the browser decodes it).
+        request = urllib.request.Request(base + key, headers={
+            "Origin": ORIGIN, "Accept-Encoding": "br" if encoding else "identity",
+            "User-Agent": "plexora-publish"})
         try:
             with urllib.request.urlopen(request, timeout=120) as response:
                 body = response.read()
