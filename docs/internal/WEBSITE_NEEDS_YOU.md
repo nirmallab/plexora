@@ -3,12 +3,12 @@
 Everything the website work (plan `dreamy-brewing-sunset.md`, branch `web/phase0`)
 is waiting on from you, in one place. Kept current as work lands; the newest
 state is on `web/phase0`. Each item says what to do and what it unblocks.
-Nothing here has been done for you: nothing pushed, nothing deployed beyond
-the preview, no DNS changed after assets.plexoraapp.com.
+Nothing here has been done for you: nothing deployed beyond the preview, no
+DNS changed after assets.plexoraapp.com. `main` is pushed (section 6).
 
-Last updated: 2026-11-07 evening (web/phase0 at 4f583c3b; the preview runs
-its bundle `py/dev/4f583c3b9745/`, with /selfcheck and the capacity fixes:
-ids past 2^24, Python past 2 GiB, long flat-image imports).
+Last updated: 2026-11-07 evening (web/phase0 merged into `main` and pushed;
+the preview runs its bundle `py/dev/4f583c3b9745/`, with /selfcheck and the
+capacity fixes: ids past 2^24, Python past 2 GiB, long flat-image imports).
 
 ## 1. Deploys (in this order)
 
@@ -22,8 +22,7 @@ ids past 2^24, Python past 2 GiB, long flat-image imports).
    - Your call inside it: `askingProductOnly` in `activation.ts` registers a
      browser only for the product that asked (so it does not use a SCIMAP Pro
      device slot). Revert that one function for the old behaviour.
-2. **Plexora's telemetry Worker** (`backend/`, from Plexora `main` once
-   `web/phase0` is merged): `cd backend && npm ci && npx tsc --noEmit && npx
+2. **Plexora's telemetry Worker** (`backend/`, from Plexora `main`): `cd backend && npm ci && npx tsc --noEmit && npx
    vitest run`, then `python scripts/release.py telemetry` (deploys because
    the vectors differ; waits for `/healthz` to report `bae44f6538cfbaff`,
    the allowlist with the website's count of browsers it asks to update,
@@ -126,10 +125,14 @@ ids past 2^24, Python past 2 GiB, long flat-image imports).
 
 ## 6. Git
 
-- Merge `web/phase0` into `main` and push (`git push plexora main`) when you
-  are ready; nothing is pushed.
-- Cherry-pick **13de91ea** (`/resource_status` answers again for a project
-  whose mask pyramid is not its source) to main: main has the bug too.
+- `web/phase0` was merged into `main` (a fast-forward) and pushed on
+  2026-11-07, at your word. Work goes on on `web/phase0`; each later wave is
+  merged the same way when you say so. The push redeployed the docs site, so
+  its "Website or desktop app" page links viewer.plexoraapp.com before that
+  is attached (your call, 2026-11-07).
+- The **next desktop release** from `main` carries the removals (Segment in
+  3-D, Carry an ROI through planes), the desktop speed-ups and the new
+  telemetry values: deploy the telemetry Worker (section 1, item 2) first.
 - Old merged branches you may delete: `web/client-seams`, `web/node-pair`,
   `web/removals`.
 
