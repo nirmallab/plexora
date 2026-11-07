@@ -67,11 +67,22 @@ async function derivedDir(key) {
     return derived.getDirectoryHandle(key, { create: true });
 }
 
+//: `bytes` written at `at` through a sync access handle, or a
+//: QuotaExceededError: Firefox does not throw at its quota, it writes short
+//: and says how much it wrote (a copy was cut off at the quota, its last
+//: directories never written, and the import failed opening it).
+function writeAll(handle, bytes, at) {
+    const wrote = handle.write(bytes, { at });
+    if (typeof wrote === "number" && wrote < bytes.byteLength) {
+        throw new DOMException(`wrote ${wrote} of ${bytes.byteLength} bytes`, "QuotaExceededError");
+    }
+}
+
 async function writeJson(dir, name, value) {
     const handle = await (await dir.getFileHandle(name, { create: true })).createSyncAccessHandle();
     try {
         handle.truncate(0);
-        handle.write(new TextEncoder().encode(JSON.stringify(value)), { at: 0 });
+        writeAll(handle, new TextEncoder().encode(JSON.stringify(value)), 0);
         handle.flush();
     } finally {
         handle.close();
@@ -101,9 +112,9 @@ async function sentence(error) {
         let allows = "";
         try {
             const { quota } = await navigator.storage.estimate();
-            if (quota) allows = `: it allows this site ${(quota / 1e9).toFixed(1)} GB`;
+            if (quota) allows = `: this site may keep ${(quota / 1e9).toFixed(1)} GB here`;
         } catch (ignored) { /* no estimate */ }
-        return `this browser has no room left for it${allows}`;
+        return `no room left for it${allows}`;
     }
     return String(error && error.message || error).slice(0, 500);
 }
@@ -115,6 +126,9 @@ self.onmessage = async ({ data }) => {
     let hands = null;
     let access = null;
     let writable = null;
+    //: The site's folder for a copy that has not finished: dropped, so a copy
+    //: cut off by the quota does not keep holding the room it took.
+    let unfinished = null;
     try {
         hands = startHands(url, Math.max(1, workers), file);
         const [opened] = await hands.opened;
@@ -176,10 +190,11 @@ self.onmessage = async ({ data }) => {
                                timings: { ...result.timings, ms } });
             return;
         }
+        unfinished = key;
         access.truncate(0);
         const result = await build({
             geometry, dtype, channels, factors, tile, description, hands,
-            sink: { write: (bytes, at) => { access.write(bytes, { at }); } },
+            sink: { write: (bytes, at) => { writeAll(access, bytes, at); } },
             progress: (progress) => self.postMessage({ progress }),
         });
         access.flush();
@@ -188,11 +203,19 @@ self.onmessage = async ({ data }) => {
         const ms = Math.round(performance.now() - t0);
         await writeJson(dir, "manifest.json", { key, name, bytes: result.bytes, shape, dtype, factors, tile, ms });
         const copy = await (await dir.getFileHandle(name)).getFile();
+        unfinished = null;
         self.postMessage({ done: true, file: copy, bytes: result.bytes, timings: { ...result.timings, ms } });
     } catch (error) {
         self.postMessage({ error: await sentence(error) });
     } finally {
         if (access) try { access.close(); } catch (error) { /* closed */ }
+        if (unfinished) {
+            try {
+                const root = await navigator.storage.getDirectory();
+                const derived = await (await root.getDirectoryHandle("plexora")).getDirectoryHandle("derived");
+                await derived.removeEntry(unfinished, { recursive: true });
+            } catch (error) { /* gone already */ }
+        }
         // A copy that did not finish is dropped: abort() discards the
         // browser's temporary file and leaves the folder as it was.
         if (writable) try { await writable.abort(); } catch (error) { /* gone */ }

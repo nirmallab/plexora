@@ -168,8 +168,8 @@ try {
     // picked file again, a click that may open the browser's file dialog.)
     await page.goto(`${origin}/${out.project}?pydebug`);
     const reopened = Date.now();
+    const loader = await (await page.waitForSelector("#plexora-app", { timeout: 120000 })).contentFrame();
     if (!out.canWriteFolders) {
-        const loader = await (await page.waitForSelector("#plexora-app", { timeout: 120000 })).contentFrame();
         const locate = loader.locator(".plexora-boot-actions button", { hasText: "Locate file" });
         out.locateAsked = await locate.waitFor({ timeout: 30000 }).then(() => true, () => false);
         if (out.locateAsked) {
@@ -177,6 +177,14 @@ try {
             await locate.click();
             await (await chooser).setFiles(file);
         }
+    } else {
+        // The original was picked through <input type=file> (this driver
+        // hides the file picker), so no handle was kept and the loader asks
+        // for its folder ("Find them…", find_files.mjs's subject): skipped
+        // here, the pyramidized copy is what the viewer reads.
+        const skip = loader.locator(".plexora-boot-actions button", { hasText: "Skip" });
+        out.findAsked = await skip.waitFor({ timeout: 20000 }).then(() => true, () => false);
+        if (out.findAsked) await skip.click();
     }
     frame = await appFrame(page);
     await frame.waitForFunction(viewerDrawn, null, { timeout: 180000, polling: 250 })
