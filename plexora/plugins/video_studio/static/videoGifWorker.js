@@ -160,10 +160,11 @@ const BAYER = (() => {
             let v = 0;
             const q = x ^ y;
             for (let bit = 0; bit < 3; bit += 1) {
-                v |= ((y >> bit) & 1) << (5 - 2 * bit);
-                v |= ((q >> bit) & 1) << (4 - 2 * bit);
+                v |= ((q >> bit) & 1) << (5 - 2 * bit);
+                v |= ((y >> bit) & 1) << (4 - 2 * bit);
             }
-            // Bit-reversed interleave: the classic recursive Bayer order, 0..63.
+            // Bit-reversed interleave: the classic recursive Bayer order, 0..63
+            // (row 0: 0 32 8 40 2 34 10 42), as 8 offsets of one level each.
             out[y * 8 + x] = Math.floor(v / 8) - 4;
         }
     }

@@ -270,13 +270,23 @@ async function runArm(arm) {
         await viewerFull(frame);
         await frame.waitForFunction(() => window.PlexoraVideoStudio && window.PlexoraVideoStudio.ready(), null,
                                     { timeout: 90000, polling: 250 });
-        await frame.evaluate(async (seconds) => {
+        // The same scene in both arms: each app levels a channel's contrast
+        // on its own when the image opens (the website's page and the
+        // desktop's Python), so the video's channels get fixed windows --
+        // what the comparison measures is then the export, not the levels.
+        out.levels = await frame.evaluate(async ([seconds, window_]) => {
             const studio = window.PlexoraVideoStudio;
+            const controller = studio.controller;
+            const seen = (controller.baseScene.channels || []).map((c) => ({ key: c.key, window: c.window,
+                                                                         visible: c.visible }));
+            controller.baseScene = { ...controller.baseScene,
+                                     channels: controller.baseScene.channels.map((c) => ({ ...c, window: window_ })) };
             if (studio.state().preset !== "zoom") await studio.choosePreset("zoom");
             await studio.setParams({ duration_s: seconds, hold_end_s: 0, factor: 2 });
-            studio.controller.preview.pause();
-            await studio.controller.preview.end();
-        }, duration);
+            controller.preview.pause();
+            await controller.preview.end();
+            return seen;
+        }, [duration, [0, 60000]]);
         await frame.waitForTimeout(500);
         out.crossOriginIsolated = await frame.evaluate(() => Boolean(window.crossOriginIsolated));
         // What the video was made from: the image's facts and the scene's view.
