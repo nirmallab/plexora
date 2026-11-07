@@ -1,0 +1,173 @@
+{
+ "what": "The viewer's reopen with the contrast fits stored beside the project (kept) against the same reopen with them deleted first (forgot: as before the store). Branch web/contrast.",
+ "date": "2026-11-07",
+ "smoke_both_apps": {
+  "how": "node tests/browser/contrast.mjs --reopen 2 --before: smoke_fixture.py's image (2 uint16 channels, 1024 x 768) imported twice (A, B); each reopen opens B then A again in the same session (A's in-memory fits dropped by the load), timed from the viewer's navigation to every enabled channel's fit on screen; rounds ABBA.",
+  "arms": {
+   "website": [
+    {
+     "round": 0,
+     "mode": "kept",
+     "landedAt": 660,
+     "fitMs": [
+      26,
+      28
+     ]
+    },
+    {
+     "round": 0,
+     "mode": "forgot",
+     "landedAt": 9341,
+     "fitMs": [
+      31,
+      4531
+     ]
+    },
+    {
+     "round": 1,
+     "mode": "forgot",
+     "landedAt": 9319,
+     "fitMs": [
+      4450,
+      8794
+     ]
+    },
+    {
+     "round": 1,
+     "mode": "kept",
+     "landedAt": 591,
+     "fitMs": [
+      36,
+      35
+     ]
+    }
+   ],
+   "desktop": [
+    {
+     "round": 0,
+     "mode": "kept",
+     "landedAt": 396,
+     "fitMs": [
+      11,
+      11
+     ]
+    },
+    {
+     "round": 0,
+     "mode": "forgot",
+     "landedAt": 7336,
+     "fitMs": [
+      6991,
+      6982
+     ]
+    },
+    {
+     "round": 1,
+     "mode": "forgot",
+     "landedAt": 7541,
+     "fitMs": [
+      7078,
+      7088
+     ]
+    },
+    {
+     "round": 1,
+     "mode": "kept",
+     "landedAt": 407,
+     "fitMs": [
+      7,
+      7
+     ]
+    }
+   ]
+  }
+ },
+ "lsp11385_desktop_python": {
+  "how": "scratch contrast_lsp_reopen.py: CPython, LSP11385.ome.tif (40 channels, overview 276 x 237 float64), load_datasource(reload=True) then get_channel_gmm for its first 6 channels, kept vs forgot, ABAB x3; the store's key (blake2b of the overview plane) timed apart.",
+  "key_ms_per_channel": 0.541,
+  "median_total_ms_6_channels": {
+   "kept": 27.5,
+   "forgot": 4097.2
+  },
+  "rows": [
+   {
+    "round": 0,
+    "mode": "kept",
+    "ms": [
+     6.3,
+     3.1,
+     2.8,
+     5.8,
+     3.7,
+     3.9
+    ],
+    "total_ms": 25.6
+   },
+   {
+    "round": 0,
+    "mode": "forgot",
+    "ms": [
+     347.7,
+     740.9,
+     881.6,
+     541.4,
+     888.5,
+     697.1
+    ],
+    "total_ms": 4097.2
+   },
+   {
+    "round": 1,
+    "mode": "forgot",
+    "ms": [
+     289.1,
+     786.8,
+     829.1,
+     516.9,
+     853.8,
+     746.7
+    ],
+    "total_ms": 4022.4
+   },
+   {
+    "round": 1,
+    "mode": "kept",
+    "ms": [
+     15.6,
+     9.6,
+     4.6,
+     4.4,
+     4.3,
+     5.0
+    ],
+    "total_ms": 43.5
+   },
+   {
+    "round": 2,
+    "mode": "kept",
+    "ms": [
+     6.9,
+     4.0,
+     4.6,
+     4.1,
+     4.1,
+     3.8
+    ],
+    "total_ms": 27.5
+   },
+   {
+    "round": 2,
+    "mode": "forgot",
+    "ms": [
+     332.9,
+     851.3,
+     875.9,
+     554.0,
+     901.2,
+     793.0
+    ],
+    "total_ms": 4308.3
+   }
+  ]
+ }
+}
