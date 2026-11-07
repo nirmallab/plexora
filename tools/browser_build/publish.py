@@ -3,6 +3,7 @@
     python tools/browser_build/publish.py assets --bundle DIR --prefix py/<v>/ [--dev]
     python tools/browser_build/publish.py verify --bundle DIR --base URL
     python tools/browser_build/publish.py site --dir DIR --project NAME [--branch B]
+    python tools/browser_build/publish.py prune --prefix py/dev/<sha>/
 
 Everything goes through wrangler (`--wrangler`, default `wrangler` on PATH;
 `PLEXORA_WRANGLER` may name its `bin/wrangler.js`, run with node), logged in
@@ -14,8 +15,10 @@ bucket under `--prefix`, one object per file. A file with a `.br` beside it is
 stored as those brotli bytes under its own name with `Content-Encoding: br`, so
 the browser inflates it natively; every object is `immutable` for a year, since
 a prefix is never rewritten. A release prefix (`py/<X.Y.Z>/`) that already
-holds a manifest is refused; `--dev` prefixes (`py/dev/<sha>/`) are not, and
-are pruned by hand.
+holds a manifest is refused; `--dev` prefixes (`py/dev/<sha>/`) are not.
+
+`prune` deletes a development prefix: every object its own manifest lists.
+A release prefix is never deleted here.
 
 `verify` reads every file of the bundle back from the public address with an
 `Origin` and `Accept-Encoding: br`, and checks the bytes against the manifest,
@@ -175,6 +178,30 @@ def site(args) -> int:
     return done.returncode
 
 
+def prune(args) -> int:
+    prefix = args.prefix if args.prefix.endswith("/") else args.prefix + "/"
+    if not prefix.startswith("py/dev/") or prefix.count("/") != 3:
+        raise SystemExit(f"{prefix}: only a development prefix (py/dev/<sha>/) is pruned")
+    command = wrangler(args.wrangler)
+    held = run(command + ["r2", "object", "get", f"{args.bucket}/{prefix}manifest.json", "--pipe"])
+    try:
+        files = json.loads(held.stdout)["files"]
+    except (ValueError, KeyError):
+        raise SystemExit(f"{prefix}: no manifest there ({(held.stderr or '')[-200:]})")
+    keys = sorted({name[:-3] if name.endswith(".br") else name for name in files} - {"manifest.json"})
+    keys.append("manifest.json")  # last: a prune that stops can be run again
+
+    def delete(key):
+        return key, run(command + ["r2", "object", "delete", f"{args.bucket}/{prefix}{key}"]).returncode
+
+    with ThreadPoolExecutor(max_workers=args.jobs) as pool:
+        failed = [key for key, code in pool.map(delete, keys[:-1]) if code]
+    if not failed:
+        failed = [key for key, code in [delete(keys[-1])] if code]
+    print(json.dumps({"prefix": prefix, "deleted": len(keys) - len(failed), "failed": failed}, indent=1))
+    return 1 if failed else 0
+
+
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     parser.add_argument("--wrangler", default=None, help="wrangler, or its bin/wrangler.js")
@@ -195,6 +222,11 @@ def main(argv=None) -> int:
     pages.add_argument("--project", required=True)
     pages.add_argument("--branch", default="main")
     pages.set_defaults(fn=site)
+    drop = commands.add_parser("prune", help="delete a development prefix from the bucket")
+    drop.add_argument("--prefix", required=True)
+    drop.add_argument("--bucket", default=BUCKET)
+    drop.add_argument("--jobs", type=int, default=6)
+    drop.set_defaults(fn=prune)
     args = parser.parse_args(argv)
     return args.fn(args)
 

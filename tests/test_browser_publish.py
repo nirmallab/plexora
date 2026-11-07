@@ -82,3 +82,17 @@ def test_anything_else_must_say_it_is_development(bundle, monkeypatch):
     with pytest.raises(SystemExit, match="--dev"):
         publish.assets(_args(bundle, "py/dev/abc/"))
     assert publish.assets(_args(bundle, "py/dev/abc/", dev=True)) == 0
+
+
+def test_only_a_development_prefix_is_pruned(monkeypatch):
+    stub = _Wrangler(held=json.dumps({"files": {"manifest.json": {}, "a.whl": {}, "a.whl.br": {},
+                                                "stages.json": {}}}).encode())
+    monkeypatch.setattr(publish, "run", stub)
+    args = type("Args", (), {"prefix": "py/9.9.9/", "bucket": "b", "jobs": 2, "wrangler": "wrangler.js"})()
+    with pytest.raises(SystemExit, match="only a development prefix"):
+        publish.prune(args)
+    args.prefix = "py/dev/abc/"
+    assert publish.prune(args) == 0
+    deleted = [call[5] for call in stub.calls if call[2:5] == ["r2", "object", "delete"]]
+    assert sorted(deleted[:-1]) == ["b/py/dev/abc/a.whl", "b/py/dev/abc/stages.json"]
+    assert deleted[-1] == "b/py/dev/abc/manifest.json"  # last, so a stopped prune can run again
