@@ -38,10 +38,13 @@ from __future__ import annotations
 
 import contextlib
 import hashlib
+import logging
 import os
 import shutil
 import tempfile
 from pathlib import Path
+
+log = logging.getLogger(__name__)
 
 #: Where the page mounts what the user picked (services/pickedFiles.js ROOT).
 PAGE_ROOT = "/picked/"
@@ -179,6 +182,7 @@ def writable(path, *, copy: bool = True):
     source = _key(path)
     if not is_picked(source):
         yield path
+        _wrote(path)
         return
     staged = _staged.get(source)
     if staged is None:
@@ -242,3 +246,27 @@ def _send(sources) -> None:
             shutil.rmtree(os.path.dirname(staged), ignore_errors=True)
         delivered.append(record)
         del delivered[:-_KEEP]
+        if record["outcome"]:
+            # The worker swapped the saved bytes in for the picked file.
+            _wrote(source)
+
+
+def _wrote(path) -> None:
+    """The projects that name `path` learn the file it is now
+    (server/models/sources.py `refresh`): either app finds a project's files
+    by that record, and would refuse the saved file as another. The save is
+    made whatever happens here."""
+    try:
+        from plexora import paths
+        from plexora.server.models import project, sources
+
+        for root in paths.owned_roots():
+            config_path = paths.config_path(root)
+            if not config_path.is_file():
+                continue
+            with project.config_transaction():
+                config = project.read_config(config_path)
+                if sources.refresh(config, str(path)):
+                    project.write_config(config_path, config)
+    except Exception:  # noqa: BLE001 -- the record is a convenience; the save stands
+        log.warning("could not record the saved file %s again", path, exc_info=True)

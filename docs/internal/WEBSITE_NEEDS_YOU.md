@@ -48,7 +48,9 @@ Last updated: 2026-11-07 (web/phase0 at 82deda52 and later).
   the DNS for plexoraapp.com / www (refused here as a new public surface).
 - **At GA**: attach viewer.plexoraapp.com, then
   `python tools/browser_build/publish.py flags --viewer on` (it says
-  `preview` now: the preview shows a "Preview" mark).
+  `preview` now: the preview shows a "Preview" mark). The same switch shows
+  the desktop app's **File > Open on the Website** (it reads that file; no
+  desktop release needed), and `--viewer desktop-only` hides it again.
 
 ## 3. Google (for Google Cloud on the website, plan L9)
 
@@ -96,6 +98,12 @@ Last updated: 2026-11-07 (web/phase0 at 82deda52 and later).
 - **Emscripten** in WSL Ubuntu + the FFmpeg source download (refused by the
   permission check here): needed for ProRes on the website; otherwise ProRes
   stays a "use the desktop app" notice.
+- **ROI/QC columns on a CSV or Parquet project.** The desktop copies the
+  table into the project at import and writes the columns there; the website
+  writes them into the user's own CSV (with "Save into your files" on) and
+  refuses without it. Recommended: the website copies the table into the
+  project as the desktop does, so both behave alike and the setting is only
+  for .h5ad/SpatialData. Say so and it gets built.
 
 ## 6. Git
 
@@ -112,6 +120,7 @@ Safe to delete (scratch copies; nothing reads them):
 `C:\plexora-bench-{ai,ci,conn,desk,desk2,ff,gcp,h5,kern-nok,lic,mask,sam,telemetry,vol}`,
 `C:\pxstage`, `C:\pxai` (empty), `C:\pxdesk-target` (cargo cache, several GB),
 `C:\pxff-pw`, `C:\pxff-runs`, `C:\pxff-shots`, `C:\pxff-data`, `C:\pxff-swtest`,
+`C:\plexora-bench-con` and `C:\plexora-bench-wb` (0.5 GB each, merged work),
 `C:\pxweb\website\node_modules`, and the stray locked worktree
 `plexora\.claude\worktrees\agent-a04461bf5800bad41`.
 
@@ -129,3 +138,7 @@ the kernels' Pyodide wheel), `C:\pxplat` (until web/cors is merged).
   records (plan Phase 5).
 - Chrome's local-network prompt when pairing a node (headless Chrome cannot
   show it).
+- Chrome's write prompt when the website saves into your file (Settings >
+  Data > "Save into your files", then Save gates on an .h5ad): it should ask
+  once per file; and what "Allow on every visit" does. The test stands the
+  prompt in.

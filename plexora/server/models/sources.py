@@ -175,6 +175,44 @@ def file_identity(path) -> Optional[dict]:
             "head": head, "tail": tail}
 
 
+#: What `refresh` makes again: the facts a file's contents change.
+_CONTENT_FACTS = ("size", "mtime_ms", "head", "tail")
+
+
+def _same_path(recorded: str, path: str) -> bool:
+    """One file's path either way it is spelled here (`D:\\a` and `d:/a` on
+    Windows); a page file's path as it is."""
+    if recorded == path:
+        return True
+    if recorded.startswith(PAGE_ROOTS) or path.startswith(PAGE_ROOTS):
+        return False
+    return os.path.normcase(os.path.normpath(recorded)) == os.path.normcase(os.path.normpath(path))
+
+
+def refresh(config: dict, path: str, me: Optional[str] = None, *,
+            identify: Callable = file_identity) -> bool:
+    """After this app saved into `path` (server/utils/source_writes.py): its
+    identity made again in every entry of `config` whose `sources` names it --
+    as recorded, or as this app's own path for it -- so the other app still
+    takes the updated file for the same one. In place; whether anything changed."""
+    me = me or app_key()
+    path = str(path)
+    facts = None
+    changed = False
+    for entry in (config or {}).values():
+        for recorded, info in ((entry or {}).get(SOURCES) or {}).items() if isinstance(entry, dict) else ():
+            if not isinstance(info, dict) or not _same_path((info.get("at") or {}).get(me) or recorded, path):
+                continue
+            facts = facts or identify(path)
+            if not facts:
+                return changed
+            for key in _CONTENT_FACTS:
+                if info.get(key) != facts.get(key):
+                    info[key] = facts.get(key)
+                    changed = True
+    return changed
+
+
 def identity(path: str) -> Optional[dict]:
     """A page file's identity, and for a pyramid the page built, what it was
     built from (its OME description) and its key (its folder's name)."""
