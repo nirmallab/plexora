@@ -32,6 +32,7 @@
  *   useFolder(startIn)  -> from a click: confirm the place, move the store there now
  *   useBrowser()        -> remember the browser's storage as the choice
  *   switchTo(kind)      -> from Settings: change, bring the projects along, reload
+ *   (both moves merge: a project of the same name already there is kept)
  *
  * Classic script, `window.PlexoraStore`; needs PlexoraPython.
  */
@@ -91,6 +92,57 @@
 
     async function isEmpty(directory) {
         return (await directory.keys().next()).done;
+    }
+
+    async function readJson(dir, name) {
+        try {
+            return JSON.parse(await (await (await dir.getFileHandle(name)).getFile()).text()) || {};
+        } catch (error) {
+            return {};
+        }
+    }
+
+    /**
+     * The projects in `from` that `to` does not hold, copied into it with
+     * their registry entries; a project of the same name in `to` is kept as
+     * it is. The other top-level files and folders are copied where `to` has
+     * none. Returns {moved, kept}: the names copied, and those left alone.
+     */
+    async function merge(from, to) {
+        const theirs = await readJson(from, "config.json");
+        const ours = await readJson(to, "config.json");
+        const moved = [];
+        const kept = [];
+        for (const [name, entry] of Object.entries(theirs)) {
+            if (name in ours) { kept.push(name); continue; }
+            try {
+                const source = await from.getDirectoryHandle(name);
+                await copyTree(source, await to.getDirectoryHandle(name, { create: true }));
+            } catch (error) {
+                // A project with no folder yet: its entry is all there is.
+            }
+            ours[name] = entry;
+            moved.push(name);
+        }
+        for await (const [name, handle] of from.entries()) {
+            if (name === "config.json" || name in theirs) continue;
+            const there = await (handle.kind === "directory" ? to.getDirectoryHandle(name) : to.getFileHandle(name))
+                .catch(() => null);
+            if (there) continue;
+            if (handle.kind === "directory") {
+                await copyTree(handle, await to.getDirectoryHandle(name, { create: true }));
+            } else {
+                const writable = await (await to.getFileHandle(name, { create: true })).createWritable();
+                await writable.write(await handle.getFile());
+                await writable.close();
+            }
+        }
+        if (moved.length) {
+            const writable = await (await to.getFileHandle("config.json", { create: true })).createWritable();
+            await writable.write(JSON.stringify(ours, null, 4));
+            await writable.close();
+        }
+        return { moved, kept };
     }
 
     //: Every file under `from` written under `to`, folders made as needed.
@@ -156,16 +208,16 @@
 
     /**
      * From the user's click: keep the projects in Plexora's folder from now
-     * on. What this browser holds is copied there first when the folder holds
-     * no projects; one that already does (from another browser, say) is used
-     * as it is. Null when cancelled.
+     * on. What this browser holds is merged in first (`merge`: a project the
+     * folder already has, from the desktop app or another browser, is kept as
+     * it is there). Null when cancelled.
      */
     async function useFolder(startIn) {
         const chosen = await chooseHome(startIn);
         if (!chosen) return null;
         await global.PlexoraPython.flush();
         const next = await parts(chosen.home);
-        if (await isEmpty(next.projects)) await copyTree(await browserState(), next.projects);
+        await merge(await browserState(), next.projects);
         await global.PlexoraPython.useStore(next.projects);
         opened = next;
         await remember(chosen);
@@ -190,13 +242,10 @@
             const chosen = await chooseHome(startIn);
             if (!chosen) return null;
             const next = await parts(chosen.home);
-            if (await isEmpty(next.projects)) {
-                await copyTree(opened ? opened.projects : await browserState(), next.projects);
-            }
+            await merge(opened ? opened.projects : await browserState(), next.projects);
             await remember(chosen);
         } else {
-            const to = await browserState();
-            if (opened && await isEmpty(to)) await copyTree(opened.projects, to);
+            if (opened) await merge(opened.projects, await browserState());
             await write({ kind: "browser" });
         }
         global.location.reload();

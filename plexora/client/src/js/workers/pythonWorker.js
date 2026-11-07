@@ -31,6 +31,8 @@
 // never held behind a job. While Python sleeps inside a job waiting on the
 // user (`idle`, through JSPI), requests are answered in the gap.
 
+import { createStore } from "./storeSync.js";
+
 let py = null;
 let base = "";
 let origin = "";
@@ -42,7 +44,11 @@ const queue = [];
 let busy = false;
 let idling = 0;
 let syncPending = false;
-let nativeFs = null;
+//: The project store at /data (workers/storeSync.js), once mounted.
+let store = null;
+//: When the store last read in another app's changes (performance.now()).
+let lastPull = 0;
+const PULL_MS = 2000;
 let debug = false;
 //: The message being handled, for `state`.
 let current = null;
@@ -130,38 +136,41 @@ function cancelled(jobId) {
 
 async function mountState(folder) {
     // The project store: a folder the user granted (services/browserStore.js),
-    // or OPFS plexora/state, mounted where the app keeps its data root.
-    // Written back after every request that may have changed it.
+    // or OPFS plexora/state, read into /data where the app keeps its data
+    // root, and kept in step with it (workers/storeSync.js) -- never mirrored:
+    // the desktop app may write the same folder.
+    store = createStore(py.FS, "/data", (line) => self.postMessage({ log: line }));
     try {
-        if (folder) {
-            nativeFs = await py.mountNativeFS("/data", folder);
-            return "folder";
+        let handle = folder;
+        if (!handle) {
+            const root = await navigator.storage.getDirectory();
+            const plexora = await root.getDirectoryHandle("plexora", { create: true });
+            handle = await plexora.getDirectoryHandle("state", { create: true });
         }
-        const root = await navigator.storage.getDirectory();
-        const plexora = await root.getDirectoryHandle("plexora", { create: true });
-        const state = await plexora.getDirectoryHandle("state", { create: true });
-        nativeFs = await py.mountNativeFS("/data", state);
-        return "opfs";
+        await store.open(handle);
+        lastPull = performance.now();
+        return folder ? "folder" : "opfs";
     } catch (error) {
+        store = null;
         py.FS.mkdirTree("/data");
         return `memory (${error?.message || error})`;
     }
 }
 
 // One write back at a time, and at most one more queued behind it, a moment
-// after it was asked for: a burst of requests is one more sync, never several
-// at once (NativeFS warns, and does the work twice). Asked after every
-// request and every background step: a GET writes too (a project's first
-// load makes its database), and a sync with nothing new costs 2-3 ms (S-3).
+// after it was asked for: a burst of requests is one more write-back, never
+// several at once. Asked after every request and every background step: a
+// GET writes too (a project's first load makes its database), and one with
+// nothing new only looks.
 const SYNC_DELAY_MS = 250;
 let syncing = Promise.resolve();
 function scheduleSync() {
-    if (!nativeFs || syncPending) return;
+    if (!store || syncPending) return;
     syncPending = true;
     syncing = syncing.then(async () => {
         await new Promise((resolve) => setTimeout(resolve, SYNC_DELAY_MS));
         syncPending = false;
-        try { await nativeFs.syncfs(); } catch (error) { self.postMessage({ log: `syncfs: ${error}` }); }
+        try { await store.push(); } catch (error) { self.postMessage({ log: `store: ${error}` }); }
     });
 }
 
@@ -404,24 +413,27 @@ const OPS = {
     //: The project store written back now (before the page copies it).
     flush: async () => {
         await syncing;
-        if (nativeFs) await nativeFs.syncfs();
+        if (store) await store.push();
         return true;
     },
     //: Keep the projects in `folder` from now on (services/browserStore.js
-    //: has copied them there): the store written back, /data mounted from it.
+    //: has copied them there): the store written back, /data read from it.
     useStore: async ({ folder }) => {
         await syncing;
-        if (nativeFs) await nativeFs.syncfs();
-        py.FS.unmount("/data");
-        nativeFs = await py.mountNativeFS("/data", folder);
+        if (store) await store.push();
+        else store = createStore(py.FS, "/data", (line) => self.postMessage({ log: line }));
+        await store.open(folder);
+        lastPull = performance.now();
         return "folder";
     },
     sync: async () => {
         if (!debug) throw new Error("sync is for tests: boot with debug: true");
         const started = performance.now();
-        if (nativeFs) await nativeFs.syncfs();
+        if (store) await store.push();
         return performance.now() - started;
     },
+    //: Tests: what another app changed in the store, read in now.
+    pull: async () => (store ? store.pull() : null),
     trace: () => (debug ? traced.splice(0) : null),
     //: What the worker is doing, for the status chip and diagnostics.
     state: () => ({ busy, idling, queued: queue.map((m) => m.op === "request" ? m.args.path : m.op),
@@ -438,6 +450,15 @@ const OPS = {
 // waiting on the user, when the next request is answered in the gap.
 async function drain() {
     while (queue.length && (!busy || idling > 0)) {
+        // Between requests, now and then: what another app (the desktop app
+        // sharing the projects folder) changed, read in before Python looks.
+        if (!busy && store && queue[0].op === "request" && performance.now() - lastPull > PULL_MS) {
+            lastPull = performance.now();
+            busy = true;
+            try { await store.pull(); } catch (error) { self.postMessage({ log: `store: ${error}` }); }
+            busy = false;
+            continue;
+        }
         const { id, op, args, arrived } = queue.shift();
         const began = performance.now();
         const outer = current;

@@ -24,6 +24,8 @@
  *   handleFor(path)        -> its File System Access handle, where the browser gave one
  *   canWriteFolders()      -> whether this browser lets the page write into a
  *                             folder the user grants (Chromium's File System Access)
+ *   find(missing)          -> from a click: a project's files found in a folder the
+ *                             user chooses, mounted like a pick: {recorded: path}
  *
  * Classic script, `window.PlexoraPicks`. Needs `window.PlexoraPython`.
  */
@@ -78,7 +80,7 @@
         const found = [];
         for await (const [name, child] of directory.entries()) {
             if (child.kind === "directory") found.push(...await walk(child, `${prefix}${name}/`));
-            else found.push({ path: `${prefix}${name}`, file: await child.getFile() });
+            else found.push({ path: `${prefix}${name}`, file: await child.getFile(), handle: child });
         }
         return found;
     }
@@ -159,6 +161,66 @@
         }
     }
 
+    async function sha256(blob) {
+        const digest = await global.crypto.subtle.digest("SHA-256", await blob.arrayBuffer());
+        return Array.from(new Uint8Array(digest), (b) => b.toString(16).padStart(2, "0")).join("");
+    }
+
+    //: Whether `file` is the one a project recorded (server/models/sources.py
+    //: `same_file`): the same size, and the same time to the millisecond or
+    //: the same bytes at both ends.
+    async function sameFile(file, facts) {
+        if (file.size !== facts.size) return false;
+        if (facts.mtime_ms != null && Math.abs(file.lastModified - facts.mtime_ms) <= 1) return true;
+        if (!facts.head || !facts.tail) return false;
+        const end = 1 << 20;
+        return await sha256(file.slice(0, end)) === facts.head
+            && await sha256(file.slice(Math.max(0, file.size - end))) === facts.tail;
+    }
+
+    /**
+     * From a click: a project's files that this page has no path for
+     * ([{recorded, name, size, mtime_ms, head, tail}], from Python's
+     * /project/<name>/files_here), looked for in a folder the user chooses
+     * (and its subfolders), each by name and then by `sameFile`. The ones
+     * found are mounted like a pick and remembered; {recorded: path here}.
+     */
+    async function find(missing) {
+        let entries;
+        try {
+            if (global.showDirectoryPicker) {
+                entries = await walk(await global.showDirectoryPicker({ id: "plexora-find", mode: "read" }));
+            } else {
+                entries = (await chooseWithInput({ directory: true }))
+                    .map((file) => ({ path: file.webkitRelativePath || file.name, file, handle: null }));
+            }
+        } catch (error) {
+            if (error && error.name === "AbortError") return {};
+            throw error;
+        }
+        const byName = new Map();
+        for (const entry of entries) {
+            if (!byName.has(entry.file.name)) byName.set(entry.file.name, []);
+            byName.get(entry.file.name).push(entry);
+        }
+        const out = {};
+        for (const item of missing) {
+            let hit = null;
+            for (const entry of byName.get(item.name) || []) {
+                if (await sameFile(entry.file, item)) { hit = entry; break; }
+            }
+            if (!hit) continue;
+            // One mount per name: two found files may share one.
+            const id = newId();
+            const handles = hit.handle ? [hit.handle] : null;
+            const [path] = await mountFiles(id, [hit.file], handles);
+            await remember({ id, kind: "files", handles, picked: Date.now(),
+                             files: [{ name: hit.file.name, size: hit.file.size, modified: hit.file.lastModified }] });
+            out[item.recorded] = path;
+        }
+        return out;
+    }
+
     async function granted(handle, ask) {
         const options = { mode: "read" };
         if (await handle.queryPermission(options) === "granted") return true;
@@ -213,6 +275,7 @@
                                           fileFor: (path) => mounted.get(path) || null,
                                           handleFor: (path) => handles.get(path) || null,
                                           canWriteFolders: () => typeof global.showDirectoryPicker === "function",
+                                          find,
                                           //: A file mounted by other means (a test, a drop).
                                           adopt: (path, file) => mounted.set(path, file) });
 })(window);

@@ -41,11 +41,14 @@ STAGES = {
         "modules": ["cv2", "skimage", "shapely"],
     },
     "h5ad": {
-        # Pyodide's h5py decodes gzip and lzf itself (spike S-4). anndata
-        # imports scverse-misc's Settings, which needs its `settings` extra.
+        # Pyodide's h5py decodes gzip and lzf itself (spike S-4).
         "pyodide": ["h5py", "pandas"],
+        # anndata asks for scverse-misc[settings]: without pydantic-settings
+        # and python-dotenv, `scverse_misc.Settings` is missing and anndata
+        # fails at import (found by tests/browser/import_check.mjs).
+        # session-info2 is scverse-misc's own requirement (build.py `unmet`).
         "wheels": ["anndata", "array-api-compat", "legacy-api-wrap", "natsort", "scverse-misc",
-                   "session-info2", "pydantic-settings", "python-dotenv"],
+                   "pydantic-settings", "python-dotenv", "session-info2"],
         "modules": ["h5py", "anndata", "pandas"],
     },
     "parquet": {

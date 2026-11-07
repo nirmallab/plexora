@@ -1492,6 +1492,18 @@ def load_config(datasource_name):
     # only the write re-takes it, against a fresh copy of the file.
     config = Project.load_all()
     entry = config[datasource_name]
+    # A project the website made names its files the way a web page knows
+    # them: found on this computer before anything is opened, and recorded, so
+    # the entry is read again with this app's paths (server/utils/relink.py).
+    if (entry or {}).get("sources"):
+        try:
+            from plexora.server.utils import relink
+
+            if relink.ensure(datasource_name):
+                config = Project.load_all()
+                entry = config[datasource_name]
+        except Exception:  # noqa: BLE001 -- a file not found is reported as missing, as ever
+            _log.exception("Could not look for %s's files on this computer", datasource_name)
     updated = False
     # Update the feature-table path -- skipped entirely for an image-only
     # datasource, which has no source file to fix up.

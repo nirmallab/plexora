@@ -39,6 +39,16 @@ export PLEXORA_SHARED_PATH=/lab/shared/plexora
 
 </Param>
 
+<Param name={"PLEXORA_LIBRARY_PATH"} default={"<Documents>/Plexora/projects, when it holds projects"}>
+
+Folders of projects that are your own besides your data directory, read and written in place, separated by `:` (macOS, Linux) or `;` (Windows); empty for none. By default, the folder the Plexora website keeps its projects in on this computer (Documents/Plexora/projects), when it exists -- so a project made on the website opens in the desktop app with nothing to import.
+
+```bash
+export PLEXORA_LIBRARY_PATH=D:/Plexora/projects
+```
+
+</Param>
+
 <Param name={"PLEXORA_VOCABULARY_PATH"} default={"<config directory>/biocognia/markers/overlay.json"}>
 
 Where the markers Plexora learned are kept -- what a model or you said about markers the BioCognia marker graph does not let it gate, so they are not asked about again -- as the graph's overlay (`overlay.json` in this folder), which SCIMAP Pro reads too. Point several installs at one shared folder and they learn together. `BIOCOGNIA_MARKER_GRAPH`, the variable both products read, wins over it. A `learned_markers.yaml` from before the graph, here or under the data directory, moves into the overlay the first time Plexora reads it and is kept as `learned_markers.yaml.migrated`. `plexora ai vocabulary` lists and forgets them.

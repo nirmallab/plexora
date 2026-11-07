@@ -92,7 +92,7 @@ def _project_card(name, entry, homes, holders, own):
         'title': project.title,
         'displayName': project.display_name,
         'thumbnailUrl': f'/project_thumbnail/{name}',
-        'shared': home_root is not None and home_root != own,
+        'shared': home_root is not None and home_root not in paths.owned_roots(),
         # The folder this project is in, or null for one at the top level.
         # Name as well as id, so a card in a flattened search result can say
         # where it lives without a second lookup.
@@ -1068,3 +1068,43 @@ def delete_project(name):
     # files themselves are never touched.
     released = remote_sources.release(project, all_projects())
     return jsonify(success=True, released=released)
+
+
+# -- a project's files, as this app finds them ------------------------------
+#
+# A project made in the other app (the website or the desktop app, sharing
+# Documents/Plexora/projects) names its files as that app knows them. The
+# desktop finds them itself (server/utils/relink.py, when the project loads);
+# the website cannot look at a disk, so its page asks the user to choose the
+# folder that holds them and tells Python what it found there.
+
+
+@app.route('/project/<string:name>/files_here')
+def project_files_here(name):
+    """{missing: [{recorded, name, size, mtime_ms}]}: what this app has no
+    path for yet."""
+    from plexora.server.utils import relink
+
+    return jsonify(missing=relink.missing_here(name))
+
+
+@app.route('/project/<string:name>/files_here', methods=['POST'])
+def project_files_found(name):
+    """Record where this app found files ({found: {recorded: path}}); each
+    only if it is the file the project recorded."""
+    from plexora.server.utils import relink
+
+    found = (request.get_json(silent=True) or {}).get('found') or {}
+    if not isinstance(found, dict):
+        return jsonify(error="`found` maps a recorded path to a path here."), 400
+    return jsonify(recorded=relink.record_found(name, found), missing=relink.missing_here(name))
+
+
+@app.route('/project/<string:name>/open_elsewhere')
+def project_open_elsewhere(name):
+    """{open: [{app, where, beat}]}: the other apps with this project open now
+    (server/models/open_marks.py). Asking is also this app's own mark."""
+    from plexora.server.models import open_marks
+
+    open_marks.beat(name)
+    return jsonify(open=open_marks.others(name))

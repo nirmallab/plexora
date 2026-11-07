@@ -298,6 +298,9 @@
         //: (services/browserStore.js).
         flush: () => ready.then(() => call("flush", {})),
         useStore: (folder) => ready.then(() => call("useStore", { folder })),
+        //: What another app changed in the store, read in now (tests; the
+        //: worker also does it between requests).
+        pull: () => ready.then(() => call("pull", {})),
         trace: () => ready.then(() => call("trace", {})),
         //: The worker's own account (busy, queued, current), and the calls
         //: this page is still waiting on; null if it does not answer in 2 s.

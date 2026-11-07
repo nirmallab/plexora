@@ -33,6 +33,9 @@ def plexora_data_root(tmp_path, monkeypatch):
     # it is what every test meant when it set `data_path` to tmp_path by hand.
     monkeypatch.setenv("PLEXORA_DATA_PATH", str(tmp_path))
     monkeypatch.delenv("PLEXORA_SHARED_PATH", raising=False)
+    # The website's projects on the developer's own computer
+    # (Documents/Plexora/projects) are never a test's second library.
+    monkeypatch.setenv("PLEXORA_LIBRARY_PATH", "")
     # What Plexora learns about markers goes to the marker graph's overlay,
     # which is the user's own (shared with SCIMAP Pro) unless this names
     # another -- every test gets one of its own, and a lab's shared folder from

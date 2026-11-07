@@ -148,6 +148,7 @@
         await script("/client/src/js/services/browserTable.js");
         await script("/client/src/js/services/browserPyramid.js");
         await script("/client/src/js/services/browserStore.js");
+        await script("/client/src/js/services/desktopHandoff.js");
         await controlled();
         // Where the projects are kept: a folder the user granted, opened again
         // (after one click when the browser asks), or this browser's storage.
@@ -223,6 +224,31 @@
         }
     }
 
+    //: A project made in the desktop app names its files as that app knows
+    //: them: asked once, in the loader, for the folder that holds them
+    //: (PlexoraPicks.find), and what is found is recorded for Python. True
+    //: when something was found (the page is then asked for again).
+    async function findFiles(project) {
+        const route = `/project/${encodeURIComponent(project)}/files_here`;
+        let missing = [];
+        try {
+            missing = (await (await global.PlexoraPython.fetch(route)).json()).missing || [];
+        } catch (error) {
+            return false;
+        }
+        if (!missing.length || !global.PlexoraPicks || !global.PlexoraPicks.find) return false;
+        const go = await askInLoader(
+            missing.length === 1 ? "This project's image is on this computer." : "This project's files are on this computer.",
+            [{ value: false, label: "Skip" }, { value: true, label: "Find them…", primary: true }]);
+        if (!go) return false;
+        status("Looking for the files");
+        const found = await global.PlexoraPicks.find(missing).catch(() => ({}));
+        if (!Object.keys(found).length) return false;
+        await global.PlexoraPython.fetch(route, { method: "POST", headers: { "Content-Type": "application/json" },
+                                                  body: JSON.stringify({ found }) });
+        return true;
+    }
+
     async function frameBoot() {
         browserVariables();
         // The host's Python and picks, not a second worker.
@@ -235,15 +261,27 @@
         await script("/client/src/js/services/backend.js");
         const response = await global.PlexoraPython.fetch(
             here(global.location), { headers: { Accept: "text/html" } });
-        const html = await response.text();
+        let html = await response.text();
+        const project = projectOf(html);
+        if (project && await findFiles(project)) {
+            html = await (await global.PlexoraPython.fetch(
+                here(global.location), { headers: { Accept: "text/html" } })).text();
+        }
         // A project's page: the browser node asks Python what it may serve
         // now, ahead of the page's own requests, so its first tile does not
         // wait behind them (or behind the work opening the project queues).
-        const project = projectOf(html);
         if (project && global.PlexoraNode) global.PlexoraNode.project(project);
         doc.open();
         doc.write(html);
         doc.close();
+        doc.documentElement.classList.add("is-website");
+        // On the document, not the button: the app's router swaps pages in
+        // place, so the project is the one shown when the item is clicked.
+        doc.addEventListener("click", (event) => {
+            const item = event.target.closest && event.target.closest("#nav_open_desktop");
+            const shown = global.flaskVariables && global.flaskVariables.datasource;
+            if (item && shown && host.PlexoraHandoff) host.PlexoraHandoff.open(shown, global);
+        });
         mirror();
     }
 
