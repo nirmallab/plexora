@@ -23,7 +23,7 @@ from flask import Blueprint, Response, jsonify, request, send_file
 
 from plexora import api
 from plexora.plugins.video_studio.server import (
-    encode_jobs, encoders, facts as facts_mod, manifest, presets, repository, schema)
+    encode_jobs, facts as facts_mod, manifest, presets, repository, schema)
 from plexora.plugins.video_studio.server.repository import ConflictError, UnknownVideo
 
 video_studio_bp = Blueprint(
@@ -98,7 +98,7 @@ def state():
         "presets": presets.describe_all(facts),
         "groups": [{"name": n, "label": label} for n, label in presets.GROUPS],
         "default_preset": presets.default_preset(facts),
-        "encoders": encoders.report(),
+        "encoders": encode_jobs.encoder().report(),
         "videos": repository.list_videos(datasource or None),
         "limits": {"max_side": schema.MAX_OUTPUT_SIDE, "max_duration_s": schema.MAX_DURATION_S,
                    "fps": list(schema.FPS_CHOICES), "formats": list(schema.FORMATS),
@@ -108,8 +108,8 @@ def state():
 
 @video_studio_bp.route("/api/encoders", methods=["GET"])
 def encoder_report():
-    return api.json_response({"success": True,
-                              **encoders.report(refresh=request.args.get("refresh") == "1")})
+    return api.json_response({"success": True, **encode_jobs.encoder().report(
+        refresh=request.args.get("refresh") == "1")})
 
 
 @video_studio_bp.route("/api/facts/<datasource>", methods=["GET"])

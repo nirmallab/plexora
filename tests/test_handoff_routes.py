@@ -57,9 +57,10 @@ def test_the_handoff_set_is_exactly_the_ssh_cli_and_desktop_bound_routes():
         f"missing: {sorted(EXPECTED - set(routes.HANDOFF))}")
 
 
-@pytest.mark.parametrize("endpoint", sorted(EXPECTED))
+@pytest.mark.parametrize("endpoint", sorted(EXPECTED) + sorted(routes.FEATURES))
 def test_every_notice_is_a_short_title_and_one_line(endpoint):
-    notice = routes.HANDOFF[endpoint]
+    # A route's notice, or a feature's inside a route (FEATURES): the same rules.
+    notice = routes.HANDOFF.get(endpoint) or routes.FEATURES[endpoint]
     assert notice.to in ("desktop", "none")
     # A few words, not a sentence: the user reads the choice, not an essay.
     assert 4 <= len(notice.title) <= 40 and not notice.title.endswith("."), notice.title
@@ -71,9 +72,9 @@ def test_every_notice_is_a_short_title_and_one_line(endpoint):
         assert word not in notice.why.lower() and word not in notice.title.lower(), (endpoint, word)
 
 
-@pytest.mark.parametrize("endpoint", sorted(EXPECTED))
+@pytest.mark.parametrize("endpoint", sorted(EXPECTED) + sorted(routes.FEATURES))
 def test_every_notice_offers_only_known_actions(endpoint):
-    notice = routes.HANDOFF[endpoint]
+    notice = routes.HANDOFF.get(endpoint) or routes.FEATURES[endpoint]
     assert isinstance(notice.actions, tuple)
     assert len(set(notice.actions)) == len(notice.actions)
     assert set(notice.actions) <= set(routes.ACTIONS)

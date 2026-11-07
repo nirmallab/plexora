@@ -20,6 +20,13 @@ with the reason, never hidden.
 
 ffmpeg is only ever run as a separate process. It is never imported, linked or
 loaded into Plexora.
+
+**The website** (`page_report`): Plexora's Python runs in the page, where no
+process can start, so nothing is probed. It writes PNG frames and Pillow's
+GIF; MP4 and WebM are the browser's own (WebCodecs); ProRes is the desktop
+app's, and its row carries the website's hand-off notice (plexora/browser/
+routes.py `FEATURES`) for the dialog to show. Which report a Plexora gives is
+`encode_jobs.encoder()`'s choice.
 """
 
 from __future__ import annotations
@@ -124,15 +131,32 @@ def report(*, refresh: bool = False) -> dict:
         return _CACHE["report"]
 
 
+def _row(rows, fmt, writer, label, *, available, reason="", alpha=False, codec="", handoff=None,
+         limits=None):
+    entry = {"format": fmt, "writer": writer, "label": label, "available": available,
+             "reason": "" if available else reason, "alpha": alpha, "codec": codec, "side": "server"}
+    if handoff:
+        entry["handoff"] = handoff
+    if limits:
+        # What the writer refuses (writers.py): the dialog says so before the
+        # render starts, not at frame 301.
+        entry["limits"] = limits
+    rows.append(entry)
+
+
+def _pillow_limits() -> dict:
+    from plexora.plugins.video_studio.server import writers  # noqa: PLC0415
+
+    return {"max_frames": writers.PILLOW_GIF_MAX_FRAMES, "max_side": writers.PILLOW_GIF_MAX_SIDE}
+
+
 def _formats(ffmpeg: dict, cv2: dict) -> list[dict]:
     """One row per (format, writer), best first within a format."""
     have = set(ffmpeg.get("encoders") or [])
     rows = []
 
-    def row(fmt, writer, label, *, available, reason="", alpha=False, codec=""):
-        rows.append({"format": fmt, "writer": writer, "label": label, "available": available,
-                     "reason": "" if available else reason, "alpha": alpha, "codec": codec,
-                     "side": "server"})
+    def row(fmt, writer, label, **kwargs):
+        _row(rows, fmt, writer, label, **kwargs)
 
     need = "Needs ffmpeg on the server (pip install 'plexora[video]')."
     h264 = "libx264" in have or "h264_videotoolbox" in have
@@ -146,17 +170,40 @@ def _formats(ffmpeg: dict, cv2: dict) -> list[dict]:
     row("gif", "ffmpeg", "GIF", available="gif" in have, codec="GIF", reason=need)
     row("mp4", "cv2", "MP4 (basic)", available=bool(cv2.get("available")),
         codec=cv2.get("codec", ""), reason=cv2.get("reason", ""))
-    row("gif", "pillow", "GIF (short clips)", available=True, codec="GIF")
+    row("gif", "pillow", "GIF (short clips)", available=True, codec="GIF", limits=_pillow_limits())
     row("png", "pngzip", "PNG frames (zip)", available=True, alpha=True, codec="PNG")
     return rows
 
 
-def pick(fmt: str, writer: str | None = None) -> dict | None:
-    """The best available server writer for `fmt` (or exactly `writer`)."""
-    for entry in report()["formats"]:
+def pick(fmt: str, writer: str | None = None, *, rows: list | None = None) -> dict | None:
+    """The best available server writer for `fmt` (or exactly `writer`), from
+    `rows` (default: this server's report)."""
+    for entry in report()["formats"] if rows is None else rows:
         if entry["format"] == fmt and entry["available"] and writer in (None, entry["writer"]):
             return entry
     return None
+
+
+#: The website's writers: what its in-page Python can run.
+PAGE_WRITERS = ("pillow", "pngzip")
+
+
+def page_report() -> dict:
+    """What the website's Python writes: no process can start in a web page,
+    so FFmpeg and OpenCV are not looked for. MP4 and WebM are the page's own
+    (WebCodecs, probed by the client); ProRes is the desktop app's."""
+    from plexora.browser.routes import feature  # noqa: PLC0415 - the website's notices
+
+    prores = feature("video_studio.prores")
+    none = {"available": False, "encoders": [], "reason": "A web page cannot run FFmpeg."}
+    rows = []
+    _row(rows, "mov", "ffmpeg", "ProRes (MOV)", available=False, alpha=True,
+         codec="ProRes 422 HQ / 4444", reason=prores["why"], handoff=prores)
+    _row(rows, "gif", "pillow", "GIF (short clips)", available=True, codec="GIF",
+         limits=_pillow_limits())
+    _row(rows, "png", "pngzip", "PNG frames (zip)", available=True, alpha=True, codec="PNG")
+    return {"ffmpeg": none, "cv2": {"available": False, "reason": "Not on the website."},
+            "formats": rows, "encoder": "page"}
 
 
 def reset_for_tests():

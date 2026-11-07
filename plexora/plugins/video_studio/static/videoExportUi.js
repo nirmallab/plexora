@@ -8,7 +8,9 @@
  *               hundredths of a second, which 30 fps cannot be)
  *   Format      every format, each with how it would be written ("in this
  *               browser", "on the server") and, when no route can write it,
- *               why not -- shown disabled, never hidden
+ *               why not -- shown disabled, never hidden; a format only the
+ *               desktop app writes (ProRes on the website) shows the website's
+ *               hand-off notice when chosen (services/handoff.js)
  *   Quality     draft / good / high / max
  *   Transparent only where the format keeps alpha and the frame is 2-D
  *   Overlays    scale bar, plane/time label, dataset name, legend, axes,
@@ -173,7 +175,9 @@
             const formatList = el("div", "vs-format-list");
             formatList.setAttribute("role", "radiogroup");
             formatList.setAttribute("aria-label", "Format");
-            formatBody.appendChild(formatList);
+            const handoffSlot = el("div", "vs-format-handoff");
+            handoffSlot.hidden = true;
+            formatBody.append(formatList, handoffSlot);
 
             // Quality
             const qualityBody = section("Quality");
@@ -247,18 +251,30 @@
                 }
                 for (const [format, routes] of byFormat) {
                     const best = routes.find((r) => r.available) || routes[0];
+                    // Written only by the desktop app: chosen, it says so.
+                    const handoff = !best.available ? routes.find((r) => r.handoff)?.handoff : null;
                     const option = el("button", "vs-format");
                     option.type = "button";
                     option.setAttribute("role", "radio");
                     option.dataset.format = format;
-                    option.disabled = !best.available;
+                    option.disabled = !best.available && !handoff;
+                    if (handoff) option.dataset.handoff = "1";
                     option.setAttribute("aria-checked", String(settings.format === format && best.available));
                     option.appendChild(el("span", "vs-format-name", Encoders.LABELS[format] || best.label));
+                    // On the website "the server" is the page's own Python.
+                    const where = (route) => (route === "server" && Encoders.inPage?.()
+                        ? ROUTE_WORDS.browser : ROUTE_WORDS[route]);
                     const how = best.route === "server" && best.writer !== "ffmpeg"
-                        ? `${ROUTE_WORDS.server} · ${best.label}` : ROUTE_WORDS[best.route];
+                        ? `${where("server")} · ${best.label}` : where(best.route);
                     option.appendChild(el("span", "vs-format-how",
-                                          best.available ? how : best.reason || "Not available here"));
+                                          best.available ? how : handoff ? handoff.title
+                                              : best.reason || "Not available here"));
                     option.addEventListener("click", () => {
+                        if (handoff) {
+                            showHandoff(handoff);
+                            return;
+                        }
+                        showHandoff(null);
                         settings.format = format;
                         drawFps();
                         refresh();
@@ -267,8 +283,22 @@
                 }
             }
 
+            /** The website's notice under the formats, or none. */
+            function showHandoff(handoff) {
+                const notices = global.PlexoraWebHandoff;
+                handoffSlot.hidden = !handoff;
+                if (!handoff) {
+                    handoffSlot.replaceChildren();
+                    return;
+                }
+                if (notices) notices.render(handoffSlot, handoff, { before: () => dialog.close("cancel") });
+                else handoffSlot.replaceChildren(el("p", "vs-note", `${handoff.title}. ${handoff.why}`));
+            }
+
             async function refresh() {
-                rows = await Encoders.available(settings, report, { prefer });
+                // With the frame count, so a writer's limits are known now.
+                const frames = global.PlexoraVideoExportLoop.estimate(project, settings).frames;
+                rows = await Encoders.available({ ...settings, frames }, report, { prefer });
                 const forFormat = rows.filter((r) => r.format === settings.format && r.available);
                 route = forFormat[0] || null;
                 if (!route) {

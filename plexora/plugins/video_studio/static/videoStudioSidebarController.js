@@ -224,6 +224,10 @@
                 }
                 return;
             }
+            // The starting scene is the viewer's view: wait for the image to be
+            // open (a panel opened with the page, `?tool=`, can be up first --
+            // on the website Python answers before the viewer has its image).
+            await this.whenImageOpen();
             this.facts = { ...this.state.facts, ...this.liveFacts() };
             this.baseScene = global.PlexoraVideoSceneState.capture(this.env);
             const note = global.PlexoraVideoFigureBridge.takeAnimateNote(this.env.datasource);
@@ -237,6 +241,17 @@
             this.showPreset();
             await this.rebuild({ play: false });
             this.ready = true;
+        }
+
+        /** Resolves once the 2-D viewer has its image (or a 3-D view is up),
+         *  or after `ms`: whatever is on screen then is the starting scene. */
+        async whenImageOpen(ms = 15000) {
+            const scene = global.PlexoraViewerScene;
+            const open = () => Boolean(this.env.renderer || scene?.referenceItem?.(this.env.iv));
+            const until = Date.now() + ms;
+            while (!open() && Date.now() < until) {
+                await new Promise((resolve) => setTimeout(resolve, 100));
+            }
         }
 
         liveFacts() {
@@ -653,6 +668,9 @@
         // -- export ---------------------------------------------------------------------------
 
         isRemote() {
+            // The website's server is the page's own Python: frames go to it
+            // as they are, never as PNG over a network.
+            if (global.PlexoraVideoEncoders?.inPage?.()) return false;
             const host = global.location?.hostname || "";
             return !(host === "127.0.0.1" || host === "localhost" || host === "::1" || host === "");
         }
@@ -818,8 +836,14 @@
             } catch (error) {
                 // the cached report will do
             }
-            const rows = await global.PlexoraVideoEncoders.available(settings, report, { prefer });
-            const route = rows.find((r) => r.format === settings.format && r.available)
+            const frames = global.PlexoraVideoExportLoop.estimate(this.project, settings).frames;
+            const rows = await global.PlexoraVideoEncoders.available({ ...settings, frames }, report, { prefer });
+            const asked = rows.filter((r) => r.format === settings.format);
+            // A format only the desktop app writes (ProRes on the website) is
+            // refused with its notice, not quietly swapped for another.
+            const handoff = !asked.some((r) => r.available) && asked.find((r) => r.handoff)?.handoff;
+            if (handoff) throw new Error(`${handoff.title}: ${handoff.why}`);
+            const route = asked.find((r) => r.available)
                 || global.PlexoraVideoEncoders.defaultRoute(rows);
             if (!route) throw new Error("no encoder can write this format here");
             settings.format = route.format;

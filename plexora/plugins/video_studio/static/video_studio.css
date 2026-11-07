@@ -621,6 +621,16 @@
     opacity: 0.55;
 }
 
+/* Written only by the desktop app (the website): muted like a disabled
+   format, but it can be chosen -- it answers with the notice. */
+.vs-format[data-handoff="1"] {
+    opacity: 0.75;
+}
+
+.vs-format-handoff {
+    margin-top: 8px;
+}
+
 .vs-format-name {
     font-size: 12.5px;
     font-weight: 600;

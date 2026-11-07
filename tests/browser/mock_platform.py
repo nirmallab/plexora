@@ -75,7 +75,12 @@ def main(argv=None) -> int:
     parser.add_argument("--pending", type=int, default=1, help="polls answered pending before approval")
     parser.add_argument("--home", default=None,
                         help="a folder of the caller's for the issuer's own files (it removes it); else a temp one")
+    parser.add_argument("--roots", default=None,
+                        help="what the certificates grant, comma-separated (default: ai,volume); "
+                             "e.g. ai,volume,plugin:video_studio")
     args = parser.parse_args(argv)
+    if args.roots:
+        PRODUCT.roots = tuple(root.strip() for root in args.roots.split(",") if root.strip())
     # The issuer makes a device secret of its own when it builds a payload:
     # somewhere of this process's own, never the user's licence directory.
     os.environ["BIOCOGNIA_DIR"] = args.home or tempfile.mkdtemp(prefix="mock-platform-")
