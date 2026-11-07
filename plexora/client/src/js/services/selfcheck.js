@@ -270,19 +270,11 @@
         } catch (error) { /* never made, or gone */ }
     }
 
-    async function pyramid(limits, found) {
-        const [channels, height, width] = [2, 8192, 8192];
-        const raw = channels * height * width * 2;
-        const image = limits.image || {};
-        const perWorker = Number(image.build_bytes_per_second_per_worker) || 29e6;
-        const limitS = Number(image.build_limit_s) || 120;
-        const estimate = { workers: WORKERS, bytes_per_second: perWorker * WORKERS,
-                           flat_limit_bytes: perWorker * WORKERS * limitS };
-        const file = await flatImage(channels, height, width);
-        const key = `selfcheck-${Date.now().toString(36)}`;
-        const tile = 1024;
-        const t0 = performance.now();
-        const done = await new Promise((resolve, reject) => {
+    //: `file`'s pyramid built by the website's builder into the site's
+    //: storage, then deleted: the builder's answer ({bytes, timings}).
+    function buildOnce(file, shape, tile) {
+        const key = `selfcheck-${Date.now().toString(36)}-${shape[2]}`;
+        return new Promise((resolve, reject) => {
             const worker = new Worker(PYRAMID_WORKER, { type: "module" });
             let watchdog = null;
             const stop = (fn, value) => {
@@ -303,10 +295,28 @@
             };
             worker.onerror = (event) => stop(reject, new Error(event.message || "the pyramid worker failed"));
             worker.postMessage({ op: "build", file, key, name: "selfcheck.ome.tif", kind: "image",
-                                 shape: [channels, height, width], dtype: "uint16",
-                                 factors: factorsFor(height, width, tile), tile,
+                                 shape, dtype: "uint16", factors: factorsFor(shape[1], shape[2], tile), tile,
                                  description: "Plexora self-check", hands: HANDS, workers: WORKERS, folder: null });
         }).finally(() => removeCopy(key));
+    }
+
+    async function pyramid(limits, found) {
+        const [channels, height, width] = [2, 8192, 8192];
+        const raw = channels * height * width * 2;
+        const image = limits.image || {};
+        const perWorker = Number(image.build_bytes_per_second_per_worker) || 29e6;
+        const limitS = Number(image.build_limit_s) || 120;
+        const estimate = { workers: WORKERS, bytes_per_second: perWorker * WORKERS,
+                           flat_limit_bytes: perWorker * WORKERS * limitS };
+        const tile = 1024;
+        // A small build first, not timed: the builder's scripts reach this
+        // browser (from the site, on a first visit) and compile, so the timed
+        // build measures building.
+        const small = await flatImage(1, 2048, 2048);
+        await buildOnce(small, [1, 2048, 2048], tile);
+        const file = await flatImage(channels, height, width);
+        const t0 = performance.now();
+        const done = await buildOnce(file, [channels, height, width], tile);
         const ms = performance.now() - t0;
         const rate = raw / (ms / 1000);
         // The reference computer's own run of this check (envelope.json

@@ -14,7 +14,7 @@ computer against them.
 | batch | `limit_s` 600, `per_image_s` {"gating.apply_to_dataset": 0.75} | 2026-11-07: apply_gate_to_dataset on CPython, this i9, 4 images of 99,856 cells each: 2.44 s, 0.61 s an image; x 1.22, P9's slowest Pyodide/CPython ratio. A job's own pace replaces it once the job has done a step. |
 | model | `wasm_click_s` 0.95 | 2026-11-07: MobileSAM's encoder on onnxruntime-web's WebAssembly EP in Chrome, this i9 (WebGPU 0.04-0.07 s; the desktop's CPU 0.38-0.41 s) |
 | stall | `tiles` 50, `skip` 50, `p95_ms` 150, `node_p95_ms` 35 | 2026-11-07, the envelope's media row: tiles from NVMe p95 35 ms; T_read_p95 150 ms (a slow share). The first 50 tiles of a page are the open's own, not counted. |
-| selfcheck | `pyramid_bytes_per_second` 227000000 | 2026-11-07: the self-check page (/selfcheck) on the reference computer (the i9 of P7, 24 threads, 12 band workers, Chrome 156, quiet): its 2 x 8192 x 8192 uint16 image built in 1.17-1.24 s, median 227 MB/s over 3 runs. Another computer's build rate on a real image is P7's 348 MB/s scaled by its own self-check rate over this one. |
+| selfcheck | `pyramid_bytes_per_second` 194000000 | 2026-11-07: the self-check page (/selfcheck) on the reference computer (the i9 of P7, 24 threads, 12 band workers, Chrome 156, quiet): its 2 x 8192 x 8192 uint16 image, after an untimed 2048 x 2048 warm-up, built at 191-197 MB/s run from the preview through Cloudflare as a user runs it (194 kept; 239-261 MB/s served from this computer: each build revalidates the builder's scripts with Pages). Another computer's build rate on a real image is P7's 348 MB/s scaled by its own self-check rate over this one. |
 
 ## Computers (self-check records)
 
@@ -25,4 +25,4 @@ the device's memory).
 
 | Record | Browser | Platform | Cores / GB | Download MB/s | Python ready s | Pyramid MB/s | Flat limit GB (estimate, ×) | Wasm GB | Tables | WebGPU | |
 |---|---|---|---|---|---|---|---|---|---|---|---|
-| (none yet) | | | | | | | | | | | |
+| 2026-11-07-reference-i9-chrome-cdn | Google Chrome 156 | Windows | 24 / 8+ | 19.6 | 6.5 | 187 | 40 (42, ×0.96) | 4.3 | 40 M | yes |  |
