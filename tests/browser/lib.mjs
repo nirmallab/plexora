@@ -1,9 +1,10 @@
 // What the browser tests share: the dev server (tools/browser_build/serve.py)
-// and a Chrome to open its pages in. Chrome is the system's (Playwright's own
-// Chromium is not installed here); playwright-core comes from
-// tools/poc_browser_node (`npm ci` there).
+// and a Chrome to open its pages in. Chrome is the system's where there is
+// one (`PLEXORA_BENCH_CHROME` names another), else Playwright's own Chromium
+// (CI: `playwright-core install chromium`); playwright-core comes from
+// tools/poc_browser_node (`npm ci` there). `PLEXORA_PYTHON` runs serve.py.
 import { spawn } from "node:child_process";
-import { mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -36,13 +37,20 @@ export function startServer(extra = []) {
     });
 }
 
-export async function launch({ headed = false } = {}) {
+//: The software GPU a CI runner draws WebGL with (it has no GPU): headless
+//: Chromium falls back to SwiftShader only when told it may.
+export const SWIFTSHADER = ["--use-gl=angle", "--use-angle=swiftshader", "--enable-unsafe-swiftshader"];
+
+export async function launch({ headed = false, args = [] } = {}) {
     const { chromium } = await playwright();
     const profile = mkdtempSync(path.join(tmpdir(), "pxweb-chrome-"));
+    // The system Chrome where there is one (this machine); elsewhere (CI)
+    // the Chromium `playwright-core install chromium` put in its cache.
+    const executablePath = (process.env.PLEXORA_BENCH_CHROME || existsSync(CHROME)) ? CHROME : undefined;
     const context = await chromium.launchPersistentContext(profile, {
-        executablePath: CHROME, headless: !headed,
+        executablePath, headless: !headed,
         args: ["--no-first-run", "--no-default-browser-check", "--disable-background-timer-throttling",
-               "--disable-renderer-backgrounding"],
+               "--disable-renderer-backgrounding", ...args],
     });
     return {
         context,
