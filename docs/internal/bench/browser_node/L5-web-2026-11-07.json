@@ -1,0 +1,532 @@
+{
+ "record": "L5",
+ "date": "2026-11-07",
+ "side": "website",
+ "machine": "the same machine; Chrome 156.0.8078.76 (system, headless) via tests/browser/kernels.mjs on tools/browser_build/serve.py; Pyodide 314.0.7 (Python 3.14.2, numpy 2.4.6) in the website's worker",
+ "package": {
+  "wheel": "plexora_kernels-0.1.0-cp314-cp314-pyemscripten_2026_0_wasm32.whl",
+  "build": "pyodide-build 0.39.3, emsdk 5.0.3, [tool.pyodide.build] -O3",
+  "bytes": 134442,
+  "bundle_br_bytes": 97896
+ },
+ "inputs": "tests/kernel_cases.py build --size bench (seed 7), built in the worker; the same bits as on the desktop",
+ "method": "best of 5 calls (compiled) or 1 (python: every module's kernels swapped to their py_func); digests of every output",
+ "boot": {
+  "ready_ms": 7949
+ },
+ "loaded_at_boot": {
+  "at_boot": true,
+  "import_ms": null
+ },
+ "heap_bytes": 1504509952,
+ "fallbacks": {},
+ "cases": {
+  "label_kernels._boundary": {
+   "compiled": {
+    "impl": "compiled",
+    "first_ms": 8.24,
+    "best_ms": 3.4,
+    "calls": 5,
+    "digest": "0a24085953c75ff8fffaf060"
+   },
+   "python": {
+    "impl": "python",
+    "first_ms": 965.63,
+    "best_ms": 965.63,
+    "calls": 1,
+    "digest": "0a24085953c75ff8fffaf060"
+   }
+  },
+  "label_kernels._boundary/r2-int32": {
+   "compiled": {
+    "impl": "compiled",
+    "first_ms": 10.31,
+    "best_ms": 5.705,
+    "calls": 5,
+    "digest": "3615c0f46f0786a05a96824b"
+   },
+   "python": {
+    "impl": "python",
+    "first_ms": 1383.725,
+    "best_ms": 1383.725,
+    "calls": 1,
+    "digest": "3615c0f46f0786a05a96824b"
+   }
+  },
+  "label_kernels._bboxes": {
+   "compiled": {
+    "impl": "compiled",
+    "first_ms": 23.26,
+    "best_ms": 11.16,
+    "calls": 5,
+    "digest": "1279a1e6e9481d4f51cc325c"
+   },
+   "python": {
+    "impl": "python",
+    "first_ms": 1877.695,
+    "best_ms": 1877.695,
+    "calls": 1,
+    "digest": "1279a1e6e9481d4f51cc325c"
+   }
+  },
+  "label_kernels._bboxes/u16": {
+   "compiled": {
+    "impl": "compiled",
+    "first_ms": 20.4,
+    "best_ms": 10.91,
+    "calls": 5,
+    "digest": "2cf5452e23adbdfb6cab2205"
+   },
+   "python": {
+    "impl": "python",
+    "first_ms": 1729.58,
+    "best_ms": 1729.58,
+    "calls": 1,
+    "digest": "2cf5452e23adbdfb6cab2205"
+   }
+  },
+  "measure._bbox_kernel": {
+   "compiled": {
+    "impl": "compiled",
+    "first_ms": 5.47,
+    "best_ms": 2.865,
+    "calls": 5,
+    "digest": "5bd0359718fcc4a452966b81"
+   },
+   "python": {
+    "impl": "python",
+    "first_ms": 576.505,
+    "best_ms": 576.505,
+    "calls": 1,
+    "digest": "5bd0359718fcc4a452966b81"
+   }
+  },
+  "cell_features._background_blocks": {
+   "compiled": {
+    "impl": "compiled",
+    "first_ms": 4.04,
+    "best_ms": 1.915,
+    "calls": 5,
+    "digest": "d03944b1c0ab875da08e68fd"
+   },
+   "python": {
+    "impl": "python",
+    "first_ms": 343.8,
+    "best_ms": 343.8,
+    "calls": 1,
+    "digest": "d03944b1c0ab875da08e68fd"
+   }
+  },
+  "cell_features._tile_kernel": {
+   "compiled": {
+    "impl": "compiled",
+    "first_ms": 11.505,
+    "best_ms": 9.12,
+    "calls": 5,
+    "digest": "2bf89ea971914b2882bd10fd"
+   },
+   "python": {
+    "impl": "python",
+    "first_ms": 3096.875,
+    "best_ms": 3096.875,
+    "calls": 1,
+    "digest": "2bf89ea971914b2882bd10fd"
+   }
+  },
+  "cell_features._tile_kernel/no-dna": {
+   "compiled": {
+    "impl": "compiled",
+    "first_ms": 9.165,
+    "best_ms": 5.925,
+    "calls": 5,
+    "digest": "df4835f49d498e29ebbe5079"
+   },
+   "python": {
+    "impl": "python",
+    "first_ms": 2504.56,
+    "best_ms": 2504.56,
+    "calls": 1,
+    "digest": "df4835f49d498e29ebbe5079"
+   }
+  },
+  "cell_features._run_labels": {
+   "compiled": {
+    "impl": "compiled",
+    "first_ms": 1.86,
+    "best_ms": 1.115,
+    "calls": 5,
+    "digest": "3ad4b69f9e4af0389a6fc9f0"
+   },
+   "python": {
+    "impl": "python",
+    "first_ms": 139.335,
+    "best_ms": 139.335,
+    "calls": 1,
+    "digest": "3ad4b69f9e4af0389a6fc9f0"
+   }
+  },
+  "segqc.label_stats": {
+   "compiled": {
+    "impl": "compiled",
+    "first_ms": 13.415,
+    "best_ms": 8.77,
+    "calls": 5,
+    "digest": "e6f1253e59f68a4c0c89fc06"
+   },
+   "python": {
+    "impl": "python",
+    "first_ms": 1398.13,
+    "best_ms": 1398.13,
+    "calls": 1,
+    "digest": "af0e007db664eaf581fb3eba"
+   }
+  },
+  "segqc.count_pairs": {
+   "compiled": {
+    "impl": "compiled",
+    "first_ms": 2.135,
+    "best_ms": 1.97,
+    "calls": 5,
+    "digest": "1c1d72f1d019f24857f55f27"
+   },
+   "python": {
+    "impl": "python",
+    "first_ms": 305.605,
+    "best_ms": 305.605,
+    "calls": 1,
+    "digest": "1c1d72f1d019f24857f55f27"
+   }
+  },
+  "segqc.fill_pairs": {
+   "compiled": {
+    "impl": "compiled",
+    "first_ms": 5.385,
+    "best_ms": 2.52,
+    "calls": 5,
+    "digest": "ab0333a5c188ebf204350b52"
+   },
+   "python": {
+    "impl": "python",
+    "first_ms": 459.395,
+    "best_ms": 459.395,
+    "calls": 1,
+    "digest": "ab0333a5c188ebf204350b52"
+   }
+  },
+  "autogate._count": {
+   "compiled": {
+    "impl": "compiled",
+    "first_ms": 157.53,
+    "best_ms": 143.29,
+    "calls": 5,
+    "digest": "edd6773c37401d563a86a87e"
+   },
+   "python": {
+    "impl": "python",
+    "first_ms": 13869.76,
+    "best_ms": 13869.76,
+    "calls": 1,
+    "digest": "edd6773c37401d563a86a87e"
+   }
+  },
+  "nets._pool_runs": {
+   "compiled": {
+    "impl": "compiled",
+    "first_ms": 6.01,
+    "best_ms": 1.455,
+    "calls": 5,
+    "digest": "70dda741771fecc4e227ea9d"
+   },
+   "python": {
+    "impl": "python",
+    "first_ms": 680.215,
+    "best_ms": 680.215,
+    "calls": 1,
+    "digest": "70dda741771fecc4e227ea9d"
+   }
+  },
+  "nets._count": {
+   "compiled": {
+    "impl": "compiled",
+    "first_ms": 5.485,
+    "best_ms": 4.965,
+    "calls": 5,
+    "digest": "39309ea1288dd83a16736779"
+   },
+   "python": {
+    "impl": "python",
+    "first_ms": 6728.77,
+    "best_ms": 6728.77,
+    "calls": 1,
+    "digest": "39309ea1288dd83a16736779"
+   }
+  },
+  "nets._count/skip": {
+   "compiled": {
+    "impl": "compiled",
+    "first_ms": 4.065,
+    "best_ms": 4.04,
+    "calls": 5,
+    "digest": "c689d2c73bdff7b28aa3f8fe"
+   },
+   "python": {
+    "impl": "python",
+    "first_ms": 5637.76,
+    "best_ms": 5637.76,
+    "calls": 1,
+    "digest": "c689d2c73bdff7b28aa3f8fe"
+   }
+  },
+  "nets._fill": {
+   "compiled": {
+    "impl": "compiled",
+    "first_ms": 10.035,
+    "best_ms": 9.705,
+    "calls": 5,
+    "digest": "0f8b5be503d8b2984ae95ce9"
+   },
+   "python": {
+    "impl": "python",
+    "first_ms": 12721.39,
+    "best_ms": 12721.39,
+    "calls": 1,
+    "digest": "0f8b5be503d8b2984ae95ce9"
+   }
+  },
+  "nets._triangulate": {
+   "compiled": {
+    "impl": "compiled",
+    "first_ms": 11.5,
+    "best_ms": 6.015,
+    "calls": 5,
+    "digest": "b45a771b34afe6c1d5614128"
+   },
+   "python": {
+    "impl": "python",
+    "first_ms": 2506.92,
+    "best_ms": 2506.92,
+    "calls": 1,
+    "digest": "b45a771b34afe6c1d5614128"
+   }
+  },
+  "nets._corners": {
+   "compiled": {
+    "impl": "compiled",
+    "first_ms": 0.415,
+    "best_ms": 0.005,
+    "calls": 5,
+    "digest": "127f33217bd949a1e6da215e"
+   },
+   "python": {
+    "impl": "python",
+    "first_ms": 0.03,
+    "best_ms": 0.03,
+    "calls": 1,
+    "digest": "127f33217bd949a1e6da215e"
+   }
+  },
+  "nets._distinct": {
+   "compiled": {
+    "impl": "compiled",
+    "first_ms": 0.29,
+    "best_ms": 0,
+    "calls": 5,
+    "digest": "f584665bd7638d852cc21ae7"
+   },
+   "python": {
+    "impl": "python",
+    "first_ms": 0.01,
+    "best_ms": 0.01,
+    "calls": 1,
+    "digest": "f584665bd7638d852cc21ae7"
+   }
+  },
+  "mesh._face_normals_into": {
+   "compiled": {
+    "impl": "compiled",
+    "first_ms": 25.1,
+    "best_ms": 5.64,
+    "calls": 5,
+    "digest": "f39aeadb225f372e3eaa5e29"
+   },
+   "python": {
+    "impl": "python",
+    "first_ms": 5756.92,
+    "best_ms": 5756.92,
+    "calls": 1,
+    "digest": "f39aeadb225f372e3eaa5e29"
+   }
+  },
+  "mesh._adjacency": {
+   "compiled": {
+    "impl": "compiled",
+    "first_ms": 105.235,
+    "best_ms": 29.99,
+    "calls": 5,
+    "digest": "a6ff947da4ae0590d9fc2a83"
+   },
+   "python": {
+    "impl": "python",
+    "first_ms": 15551.67,
+    "best_ms": 15551.67,
+    "calls": 1,
+    "digest": "a6ff947da4ae0590d9fc2a83"
+   }
+  },
+  "mesh._umbrella_step": {
+   "compiled": {
+    "impl": "compiled",
+    "first_ms": 7.955,
+    "best_ms": 5.685,
+    "calls": 5,
+    "digest": "c86f2a05536143b6c507938e"
+   },
+   "python": {
+    "impl": "python",
+    "first_ms": 4542.115,
+    "best_ms": 4542.115,
+    "calls": 1,
+    "digest": "c86f2a05536143b6c507938e"
+   }
+  },
+  "mesh._signed_volumes": {
+   "compiled": {
+    "impl": "compiled",
+    "first_ms": 7.01,
+    "best_ms": 3.865,
+    "calls": 5,
+    "digest": "e1f7d087817165d298da7662"
+   },
+   "python": {
+    "impl": "python",
+    "first_ms": 3077.305,
+    "best_ms": 3077.305,
+    "calls": 1,
+    "digest": "e1f7d087817165d298da7662"
+   }
+  },
+  "mesh._object_sums": {
+   "compiled": {
+    "impl": "compiled",
+    "first_ms": 21.77,
+    "best_ms": 12.035,
+    "calls": 5,
+    "digest": "aac5a72d6975e8c41f45b4c2"
+   },
+   "python": {
+    "impl": "python",
+    "first_ms": 13001.715,
+    "best_ms": 13001.715,
+    "calls": 1,
+    "digest": "aac5a72d6975e8c41f45b4c2"
+   }
+  },
+  "mesh._object_moments": {
+   "compiled": {
+    "impl": "compiled",
+    "first_ms": 11.54,
+    "best_ms": 8.665,
+    "calls": 5,
+    "digest": "0f85b72b809a0af4ab0d1d31"
+   },
+   "python": {
+    "impl": "python",
+    "first_ms": 6784.045,
+    "best_ms": 6784.045,
+    "calls": 1,
+    "digest": "0f85b72b809a0af4ab0d1d31"
+   }
+  },
+  "lzw_decode": {
+   "compiled": {
+    "impl": "compiled",
+    "first_ms": 18.315,
+    "best_ms": 10.145,
+    "calls": 5,
+    "digest": "ed69dc59c17ea037efa41497"
+   },
+   "python": {
+    "impl": "python",
+    "first_ms": 1199.775,
+    "best_ms": 1199.775,
+    "calls": 1,
+    "digest": "ed69dc59c17ea037efa41497"
+   }
+  }
+ },
+ "product": {
+  "compiled": {
+   "surfaces": {
+    "s": 0.222,
+    "cells": 300,
+    "triangles": 318076,
+    "digest": "131536c60b65eea5f1d810c5"
+   },
+   "cell_features": {
+    "s": 0.02,
+    "cells": 2926,
+    "kernel": "compiled"
+   },
+   "segqc": {
+    "s": 0.011,
+    "pairs": 32472,
+    "digest": "0207ea316dea59b5c8db032d"
+   },
+   "neighbours": {
+    "s": 0.146,
+    "digest": "32b3ea9fca915304b4f1f471"
+   }
+  },
+  "python": {
+   "surfaces": {
+    "s": 47.72,
+    "cells": 300,
+    "triangles": 318076,
+    "digest": "131536c60b65eea5f1d810c5"
+   },
+   "cell_features": {
+    "s": 0.08,
+    "cells": 2926,
+    "kernel": "python"
+   },
+   "segqc": {
+    "s": 2.571,
+    "pairs": 32472,
+    "digest": "0207ea316dea59b5c8db032d"
+   },
+   "neighbours": {
+    "s": 11.607,
+    "digest": "32b3ea9fca915304b4f1f471"
+   }
+  }
+ },
+ "link_Oz_compiled_best_ms": {
+  "label_kernels._boundary": 3.605,
+  "label_kernels._boundary/r2-int32": 4.685,
+  "label_kernels._bboxes": 11.34,
+  "label_kernels._bboxes/u16": 10.805,
+  "measure._bbox_kernel": 3.735,
+  "cell_features._background_blocks": 2.35,
+  "cell_features._tile_kernel": 7.26,
+  "cell_features._tile_kernel/no-dna": 6.23,
+  "cell_features._run_labels": 1.615,
+  "segqc.label_stats": 9.105,
+  "segqc.count_pairs": 1.245,
+  "segqc.fill_pairs": 2.16,
+  "autogate._count": 128.68,
+  "nets._pool_runs": 2.155,
+  "nets._count": 12.745,
+  "nets._count/skip": 10.185,
+  "nets._fill": 13.59,
+  "nets._triangulate": 7.17,
+  "nets._corners": 0.005,
+  "nets._distinct": 0,
+  "mesh._face_normals_into": 6.71,
+  "mesh._adjacency": 32.245,
+  "mesh._umbrella_step": 4.6,
+  "mesh._signed_volumes": 4.03,
+  "mesh._object_sums": 17.83,
+  "mesh._object_moments": 8.38,
+  "lzw_decode": 10.985
+ }
+}
