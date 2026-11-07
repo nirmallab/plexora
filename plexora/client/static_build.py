@@ -1,6 +1,6 @@
 """Build the website's static files: what viewer.plexoraapp.com serves.
 
-    python -m plexora.client.static_build [--out DIR] [--py URL] [--noindex]
+    python -m plexora.client.static_build [--out DIR] [--py URL] [--models URL] [--noindex]
 
 Plexora's pages are rendered on the website by Plexora's own Python in a
 worker beside the page (plexora/browser), so what the site serves as files is
@@ -13,9 +13,13 @@ Writes `--out` (default `plexora/client/dist/static/`):
 
 - `index.html`: the loader;
 - `client/{src,dist,external}/...` and `plugins/<name>/static/...`;
-- `client/shell.json`: `{version, py}`, `py` the base the Python bundle is
-  served from (`tools/browser_build/build.py`; the assets bucket on the site,
-  `/py/<version>/` in development);
+- `client/shell.json`: `{version, py, models}`, `py` the base the Python
+  bundle is served from (`tools/browser_build/build.py`; the assets bucket on
+  the site, `/py/<version>/` in development; onnxruntime-web is its `ort/`),
+  `models` the base magic select's model files are under
+  (`vision/sam_weights.py` `WEB_DIR` below it: the assets bucket's /models/ on
+  the site, `/models/` in development, where `tools/browser_build/serve.py
+  --tree` serves a folder holding them);
 - `_headers` and `_redirects` for Cloudflare Pages: every response
   cross-origin isolated (the site needs SharedArrayBuffer), the service worker
   allowed the whole site, and every path that is not a file answered with the
@@ -95,10 +99,12 @@ def _copy(source: Path, target: Path) -> int:
     return count
 
 
-def build(out: Path = DEFAULT_OUT, py: str | None = None, noindex: bool = False) -> dict:
+def build(out: Path = DEFAULT_OUT, py: str | None = None, noindex: bool = False,
+          models: str | None = None) -> dict:
     from plexora import __version__
 
     py = py or f"/py/{__version__}/"
+    models = models or "/models/"
     if out.exists():
         shutil.rmtree(out)
     out.mkdir(parents=True)
@@ -112,20 +118,23 @@ def build(out: Path = DEFAULT_OUT, py: str | None = None, noindex: bool = False)
         plugins.append(static.parent.name)
     (out / "index.html").write_bytes(LOADER.encode("utf-8"))
     (out / "client" / "shell.json").write_bytes(
-        json.dumps({"version": __version__, "py": py}, indent=1).encode("utf-8"))
+        json.dumps({"version": __version__, "py": py, "models": models}, indent=1).encode("utf-8"))
     headers = HEADERS.replace("/*\n", "/*\n  X-Robots-Tag: noindex\n", 1) if noindex else HEADERS
     (out / "_headers").write_bytes(headers.encode("utf-8"))
     (out / "_redirects").write_bytes(REDIRECTS.encode("utf-8"))
-    return {"out": str(out), "files": files + 4, "plugins": plugins, "version": __version__, "py": py}
+    return {"out": str(out), "files": files + 4, "plugins": plugins, "version": __version__, "py": py,
+            "models": models}
 
 
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     parser.add_argument("--out", default=str(DEFAULT_OUT))
     parser.add_argument("--py", default=None, help="where the Python bundle is served from")
+    parser.add_argument("--models", default=None,
+                        help="where magic select's model files are served from (default /models/)")
     parser.add_argument("--noindex", action="store_true", help="ask search engines not to index it")
     args = parser.parse_args(argv)
-    print(json.dumps(build(Path(args.out), args.py, args.noindex), indent=1))
+    print(json.dumps(build(Path(args.out), args.py, args.noindex, args.models), indent=1))
     return 0
 
 

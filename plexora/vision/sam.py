@@ -19,6 +19,12 @@ Three rules the callers depend on:
 `PLEXORA_SEGMENT=0` makes every caller see "not available" (the bench and
 locked-down machines use it): `available()` is False, setup refuses, and the
 QC tracer uses its classical methods.
+
+Where ONNX Runtime is not Python's to load -- the website, whose Python runs
+in Pyodide -- an `sam_backend.Executor` stands in for the runtime, the files
+and the download thread (`sam_backend.set_executor`): status, setup and the
+session are asked of it, with the same states, and everything else here is
+unchanged.
 """
 
 from __future__ import annotations
@@ -122,6 +128,9 @@ class Status:
 
 
 def status() -> Status:
+    made = sam_backend.executor()
+    if made is not None:
+        return _executor_status(made)
     directory, source = sam_weights.model_dir(), sam_weights.model_dir_source()
     files = sam_weights.file_status(directory)
     missing = [name for name, row in files.items() if not row["ok"]]
@@ -163,6 +172,42 @@ def status() -> Status:
     )
 
 
+def _executor_status(made) -> Status:
+    """`status()` where an `Executor` runs the model (the website's page): the
+    same states, from what it says about its runtime, files and download."""
+    try:
+        said = dict(made.status() or {})
+    except Exception as exc:  # noqa: BLE001 -- a page that cannot say is not ready
+        said = {"runtime": {"installed": False}, "hint": _readable(exc)}
+    runtime = {"installed": False, "version": None, "install": None, **(said.get("runtime") or {})}
+    weights = {"dir": None, "source": "executor", "files": {}, "missing": [],
+               **(said.get("weights") or {})}
+    download = said.get("download") or None
+    running = bool(download and download.get("running"))
+    failed = (download or {}).get("error") if not running else None
+    backend = _OVERRIDE or _BACKEND
+    if not enabled():
+        state, hint = "disabled", f"{ENV_SWITCH}=0 switches magic select off."
+    elif not runtime["installed"] and _OVERRIDE is None:
+        state, hint = "not_installed_runtime", said.get("hint") or runtime.get("install")
+    elif running:
+        state, hint = "downloading", None
+    elif weights["missing"] and _OVERRIDE is None:
+        state, hint = ("error", failed) if failed else ("weights_missing", said.get("hint"))
+    elif (_SESSION_ERROR or said.get("error")) and backend is None:
+        # Python's session failed, or the executor's own (the page made its
+        # sessions after the download, as the desktop warms one).
+        state, hint = "error", _SESSION_ERROR or said.get("error")
+    else:
+        state, hint = "ready", None
+    device = backend.device if backend is not None else said.get("device")
+    return Status(
+        state=state, runtime=runtime, weights=weights, download=download,
+        model={"name": sam_weights.MODEL_NAME, "version": sam_weights.MODEL_VERSION,
+               "license": sam_weights.MODEL_LICENSE},
+        device=dict(device) if device else None, hint=hint)
+
+
 def available() -> bool:
     """Ready to segment now (or a test backend is installed)."""
     if not enabled():
@@ -177,8 +222,15 @@ def available() -> bool:
 
 def start_install() -> Status:
     """Begin the one-time download on a daemon thread; idempotent."""
-    global _DOWNLOAD_THREAD
+    global _DOWNLOAD_THREAD, _SESSION_ERROR
     if not enabled():
+        return status()
+    made = sam_backend.executor()
+    if made is not None:
+        # The executor fetches (the website's page, in its own time); a
+        # session that failed on the files it had is tried afresh after.
+        _SESSION_ERROR = None
+        made.install()
         return status()
     with _DOWNLOAD_LOCK:
         running = _DOWNLOAD.running
@@ -234,6 +286,10 @@ def _readable(exc) -> str:
 
 
 def cancel_install() -> Status:
+    made = sam_backend.executor()
+    if made is not None:
+        made.cancel()
+        return status()
     with _DOWNLOAD_LOCK:
         if _DOWNLOAD.running:
             _DOWNLOAD.cancel.set()
@@ -254,6 +310,9 @@ def remove() -> list[str]:
     global _BACKEND
     with _SESSION_LOCK:
         _BACKEND = None
+    made = sam_backend.executor()
+    if made is not None:
+        return list(made.remove() or [])
     return sam_weights.remove()
 
 
@@ -263,7 +322,7 @@ def remove() -> list[str]:
 def _build_backend():
     made = sam_backend.executor()
     if made is not None:
-        return made()
+        return made.backend()
     sam_backend.import_runtime()
     directory = sam_weights.model_dir()
     missing = sam_weights.missing(directory, deep=True)
@@ -301,6 +360,8 @@ def warm_async():
     global _WARMING
     if not enabled() or _BACKEND is not None or _OVERRIDE is not None:
         return None
+    if sam_backend.executor() is not None:
+        return None  # the executor warms its own sessions (the page, after its download)
     if _WARMING is not None and _WARMING.is_alive():
         return _WARMING
 

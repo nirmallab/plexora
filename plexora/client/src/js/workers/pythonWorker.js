@@ -23,8 +23,8 @@
 // record is written, {event: {kind: "wakeup"}} when a held poll should ask
 // again, {event: {kind: "stage", stage, ms}} as a stage arrives,
 // {event: {kind: "ask", ask, id, args}} when Python needs what only the page
-// knows (a picked table's columns, a picked image's maximum; the page answers
-// with `answer`), {mark, at}.
+// knows (a picked table's columns, a picked image's maximum, magic select's
+// model run; the page answers with `answer`), {mark, at}.
 //
 // Background work (jobs, builds) is queued by Python and run here, a slice at
 // a time (cooperative.step), only while no request is waiting: a request is
@@ -227,8 +227,19 @@ def _absent(value):
     return value is None or value is jsnull
 
 def _ask(kind, args):
-    # A question only the page can answer; None when it cannot.
-    value = run_sync(js.plexoraAsk(kind, js.JSON.parse(json.dumps(args))))
+    # A question only the page can answer; None when it cannot. numpy arrays
+    # at the top level of args cross as {dtype, shape, data}, their bytes in a
+    # typed array (magic select's image and embedding: plexora/browser/sam_page.py).
+    import numpy as np
+    from pyodide.ffi import to_js
+    arrays = {key: value for key, value in args.items() if isinstance(value, np.ndarray)}
+    message = js.JSON.parse(json.dumps({key: value for key, value in args.items() if key not in arrays}))
+    for key, value in arrays.items():
+        value = np.ascontiguousarray(value)
+        entry = js.JSON.parse(json.dumps({"dtype": str(value.dtype), "shape": list(value.shape)}))
+        entry.data = to_js(memoryview(value).cast("B"))
+        setattr(message, key, entry)
+    value = run_sync(js.plexoraAsk(kind, message))
     return None if _absent(value) else value
 
 def _ask_columns(src, kinds):
@@ -287,10 +298,20 @@ self.plexoraIdle = (delta) => {
 // promise (run_sync). The page answers with `answer`, which is never queued:
 // Python is suspended until it arrives.
 function ask(kind, args) {
+    // An array's bytes (`{dtype, shape, data}`, made by `_ask`) are a copy
+    // Python no longer needs: moved to the page, not copied again -- never a
+    // view of Python's own memory, which moving would take from it.
+    const heap = py && py._module && py._module.HEAP8 ? py._module.HEAP8.buffer : null;
+    const transfer = [];
+    for (const value of Object.values(args || {})) {
+        const data = value && value.data;
+        if (ArrayBuffer.isView(data) && data.buffer instanceof ArrayBuffer && data.buffer !== heap
+            && !transfer.includes(data.buffer)) transfer.push(data.buffer);
+    }
     return new Promise((resolve) => {
         const id = nextAsk++;
         asks.set(id, resolve);
-        self.postMessage({ event: { kind: "ask", ask: kind, id, args } });
+        self.postMessage({ event: { kind: "ask", ask: kind, id, args } }, transfer);
     });
 }
 

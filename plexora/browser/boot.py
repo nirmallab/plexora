@@ -13,14 +13,16 @@ arrive as callables -- so the same boot runs under CPython in the tests
 - `columns(spec)`: a picked table's frame, its columns parsed by the page
   (plexora/browser/columns.py);
 - `ask(kind, args)`: a question only the page can answer -- a picked image's
-  full-resolution maximum (providers/browser.py `page_window`) -- or None.
+  full-resolution maximum (providers/browser.py `page_window`), magic
+  select's model run (plexora/browser/sam_page.py) -- or None. numpy arrays
+  at the top level of `args` cross as `{dtype, shape, data}`.
 
 What it does, in order: the environment the app reads at build; the
 `imagecodecs` stand-in, before anything imports tifffile; HTTP through the
 browser's fetch for the standard library's urllib (`pyodide_http`), until the
 packages that call out move to urllib3's Emscripten backend; cooperative
-work; the wakeup, the column source and the page's answers; and the app
-itself, built once.
+work; the wakeup, the column source and the page's answers (magic select's
+model among them); and the app itself, built once.
 
 Nothing here monkeypatches Plexora: every substitution the first proof needed
 (P9's eight) is now a seam in the product, and each remaining one is a
@@ -95,6 +97,9 @@ def start(origin: str, *, post=None, cancelled=None, idle=None, waiting=None, co
         viewer_sessions.set_wakeup(lambda: post({"kind": "wakeup"}))
     browser_provider.set_column_source(columns)
     browser_provider.set_asker(ask)
+    from plexora.browser import sam_page
+
+    sam_page.install(ask)
 
     import plexora
 

@@ -20,7 +20,8 @@ PAGES_FILE_LIMIT = 25 << 20
 @pytest.fixture(scope="module")
 def built(tmp_path_factory):
     out = tmp_path_factory.mktemp("static")
-    record = static_build.build(out, py="https://assets.example/py/dev/abc/", noindex=True)
+    record = static_build.build(out, py="https://assets.example/py/dev/abc/", noindex=True,
+                                models="https://assets.example/models/")
     return out, record
 
 
@@ -44,13 +45,15 @@ def test_every_path_is_cross_origin_isolated(built):
 def test_shell_names_the_python_bundle(built):
     out, record = built
     shell = json.loads((out / "client" / "shell.json").read_text(encoding="utf-8"))
-    assert shell == {"version": record["version"], "py": "https://assets.example/py/dev/abc/"}
+    assert shell == {"version": record["version"], "py": "https://assets.example/py/dev/abc/",
+                     "models": "https://assets.example/models/"}
 
 
 def test_a_release_build_may_be_indexed(tmp_path):
     static_build.build(tmp_path)
     assert "X-Robots-Tag" not in (tmp_path / "_headers").read_text(encoding="utf-8")
-    assert json.loads((tmp_path / "client" / "shell.json").read_text(encoding="utf-8"))["py"].startswith("/py/")
+    shell = json.loads((tmp_path / "client" / "shell.json").read_text(encoding="utf-8"))
+    assert shell["py"].startswith("/py/") and shell["models"] == "/models/"
 
 
 def test_what_pages_takes(built):

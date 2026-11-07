@@ -25,8 +25,20 @@ sys.meta_path.insert(0, Absent())
 
 from plexora.browser import boot, bridge, cooperative
 posted = []
+asked = []
+
+def page(kind, args):
+    # The page's answers (services/onnxExecutor.js for "sam"): its runtime is
+    # there, the model's files are not yet.
+    asked.append((kind, args.get("op")))
+    if kind == "sam" and args.get("op") == "status":
+        names = [f["name"] for f in args["model"]["files"]]
+        return {"runtime": {"installed": True, "version": "onnxruntime-web"},
+                "weights": {"files": {n: {"present": False, "ok": False} for n in names}, "missing": names}}
+    return None
+
 info = boot.start("https://viewer.plexoraapp.com", post=posted.append,
-                  data_root=sys.argv[1], licence_dir=sys.argv[2])
+                  data_root=sys.argv[1], licence_dir=sys.argv[2], ask=page)
 import plexora
 from plexora import _work
 app = plexora.app
@@ -55,6 +67,10 @@ out["step"] = cooperative.step(1000)
 out["after_step"] = list(ran)
 import tifffile
 out["tifffile_codecs"] = tifffile.tifffile.imagecodecs.__name__
+# Magic select's model is the page's (plexora/browser/sam_page.py): its status
+# is asked of the page, in the desktop's states.
+out["segment_status"] = ask("GET", "/segment/v1/status")[1]["state"]
+out["segment_asked"] = [entry for entry in asked if entry[0] == "sam"]
 print(json.dumps(out))
 """
 
@@ -78,3 +94,5 @@ def test_the_worker_boots_and_answers_through_the_bridge(tmp_path):
     assert out["before_step"] == [] and out["after_step"] == ["job"]
     assert out["step"]["ran"] == 1 and out["step"]["pending"] == 0
     assert out["tifffile_codecs"] == "plexora.browser.imagecodecs_shim"  # tifffile took the stand-in
+    assert out["segment_status"] == "weights_missing"
+    assert out["segment_asked"] == [["sam", "status"]]

@@ -90,6 +90,34 @@ def test_precompiling_keeps_the_sources_a_package_reads_by_path(tmp_path):
     assert "cv2/__init__.py" not in names and "cv2/__init__.pyc" in names and "cv2/version.pyc" in names
 
 
+def test_an_onnxruntime_web_package_that_is_not_the_pinned_one_is_never_unpacked(tmp_path, monkeypatch):
+    monkeypatch.setattr(build, "CACHE", tmp_path / "pyodide")
+    cache = tmp_path / "onnxruntime-web" / build.ORT_WEB
+    cache.mkdir(parents=True)
+    (cache / f"onnxruntime-web-{build.ORT_WEB}.tgz").write_bytes(b"not onnxruntime-web")
+    with pytest.raises(SystemExit, match="sha256"):
+        build.ort_release()
+    assert not (cache / "dist").exists()
+
+
+def test_the_runtime_in_a_bundle_is_kept_when_it_is_this_release(tmp_path, monkeypatch):
+    target = tmp_path / "ort"
+    for name in (*build.ORT_FILES, *build.ORT_NOTICES):
+        _write(target / name, 3)
+    (target / "ort.json").write_text(json.dumps({"version": build.ORT_WEB,
+                                                 "files": [*build.ORT_FILES, *build.ORT_NOTICES]}))
+    monkeypatch.setattr(build, "ort_release", lambda: pytest.fail("fetched again"))
+    assert build.ort(tmp_path, None) == target
+
+    def again():
+        raise RuntimeError("made again")
+
+    # Asked for the brotli copies it has not got: made again.
+    monkeypatch.setattr(build, "ort_release", again)
+    with pytest.raises(RuntimeError, match="made again"):
+        build.ort(tmp_path, "brotli")
+
+
 def test_a_pyodide_release_that_is_not_the_pinned_one_is_never_unpacked(tmp_path, monkeypatch):
     monkeypatch.setattr(build, "CACHE", tmp_path)
     archive = tmp_path / f"pyodide-{build.PYODIDE}.tar.bz2"
