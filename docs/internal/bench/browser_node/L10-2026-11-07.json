@@ -1,0 +1,1637 @@
+{
+ "date": "2026-11-07",
+ "machine": "i9-12900K, 128 GB, RTX 3080, Windows 11",
+ "desktop_ffmpeg": "7.1-essentials_build-www.gyan.dev (imageio-ffmpeg 0.6.0)",
+ "runs": {
+  "1280x720-4s": {
+   "record": {
+    "size": [
+     1280,
+     720
+    ],
+    "fps": 30,
+    "duration_s": 4,
+    "fixture": "smoke.ome.tif",
+    "arms": {
+     "website": {
+      "exports": {
+       "mp4": {
+        "format": "mp4",
+        "routes": [
+         {
+          "route": "browser",
+          "writer": "webcodecs",
+          "available": true,
+          "reason": ""
+         }
+        ],
+        "route": {
+         "route": "browser",
+         "writer": "webcodecs",
+         "label": "MP4 (H.264)"
+        },
+        "renderMs": 2830,
+        "ok": true,
+        "kind": "blob",
+        "bytes": 1068224,
+        "name": "Zoom-InOut-2026-11-07-1280x720-30fps.mp4",
+        "encoder": {
+         "encoder": "browser (WebCodecs)",
+         "codec": "avc",
+         "muxer": "mediabunny 1.60.0",
+         "bitrate": 3555556
+        },
+        "ms": 3017,
+        "file": "website-mp4.mp4",
+        "suggested": "Zoom-InOut-2026-11-07-1280x720-30fps.mp4"
+       },
+       "webm": {
+        "format": "webm",
+        "routes": [
+         {
+          "route": "browser",
+          "writer": "webcodecs",
+          "available": true,
+          "reason": ""
+         }
+        ],
+        "route": {
+         "route": "browser",
+         "writer": "webcodecs",
+         "label": "WebM (VP9)"
+        },
+        "renderMs": 2518,
+        "ok": true,
+        "kind": "blob",
+        "bytes": 1899204,
+        "name": "Zoom-InOut-2026-11-07-1280x720-30fps.webm",
+        "encoder": {
+         "encoder": "browser (WebCodecs)",
+         "codec": "vp9",
+         "muxer": "mediabunny 1.60.0",
+         "bitrate": 3555556
+        },
+        "ms": 2620,
+        "file": "website-webm.webm",
+        "suggested": "Zoom-InOut-2026-11-07-1280x720-30fps.webm"
+       },
+       "mov": {
+        "format": "mov",
+        "routes": [
+         {
+          "route": "server",
+          "writer": "ffmpeg",
+          "available": false,
+          "reason": "A web page cannot run FFmpeg, ProRes's encoder."
+         }
+        ],
+        "ok": false,
+        "unavailable": true,
+        "reason": "A web page cannot run FFmpeg, ProRes's encoder."
+       },
+       "gif": {
+        "format": "gif",
+        "routes": [
+         {
+          "route": "browser",
+          "writer": "gif",
+          "available": true,
+          "reason": ""
+         },
+         {
+          "route": "server",
+          "writer": "pillow",
+          "available": false,
+          "reason": "At most 960 px on the longer side here."
+         }
+        ],
+        "route": {
+         "route": "browser",
+         "writer": "gif",
+         "label": "GIF"
+        },
+        "renderMs": 2090,
+        "ok": true,
+        "kind": "blob",
+        "bytes": 17715835,
+        "name": "Zoom-InOut-2026-11-07-1280x720-15fps.gif",
+        "encoder": {
+         "encoder": "browser (GIF)",
+         "codec": "GIF",
+         "palette": "median cut per frame, 8x8 ordered dither"
+        },
+        "ms": 2218,
+        "file": "website-gif.gif",
+        "suggested": "Zoom-InOut-2026-11-07-1280x720-15fps.gif"
+       },
+       "png": {
+        "format": "png",
+        "routes": [
+         {
+          "route": "server",
+          "writer": "pngzip",
+          "available": true,
+          "reason": ""
+         }
+        ],
+        "route": {
+         "route": "server",
+         "writer": "pngzip",
+         "label": "PNG frames (zip)"
+        },
+        "renderMs": 21707,
+        "ok": true,
+        "kind": "blob",
+        "bytes": 75555821,
+        "name": "Zoom-In-Out-2026-11-07-1280x720-30fps.zip",
+        "encoder": {
+         "encoder": "server",
+         "writer": "pngzip",
+         "label": "PNG frames (zip)"
+        },
+        "ms": 21930,
+        "file": "website-png.zip",
+        "suggested": "Zoom-In-Out-2026-11-07-1280x720-30fps.zip"
+       }
+      },
+      "project": "smoke",
+      "levels": [
+       {
+        "key": "smoke_0",
+        "window": [
+         0,
+         65536
+        ],
+        "visible": true
+       },
+       {
+        "key": "smoke_1",
+        "window": [
+         0,
+         65536
+        ],
+        "visible": false
+       }
+      ],
+      "crossOriginIsolated": true,
+      "scene": {
+       "viewport": {
+        "cx": 512,
+        "cy": 384,
+        "w": 952.140350877193,
+        "degrees": 0,
+        "flip_h": false,
+        "flip_v": false
+       },
+       "mode": "plane",
+       "pixel_size": 0.5,
+       "image_size": [
+        1024,
+        768
+       ],
+       "contentSize": [
+        1024,
+        768
+       ],
+       "bounds": {
+        "x": 0.03508771929824561,
+        "y": 0,
+        "width": 0.9298245614035088,
+        "height": 0.75,
+        "degrees": 0
+       }
+      },
+      "dialog": {
+       "rows": [
+        {
+         "format": "mp4",
+         "disabled": false,
+         "handoff": false,
+         "name": "MP4 (H.264)",
+         "how": "in this browser"
+        },
+        {
+         "format": "webm",
+         "disabled": false,
+         "handoff": false,
+         "name": "WebM (VP9)",
+         "how": "in this browser"
+        },
+        {
+         "format": "mov",
+         "disabled": false,
+         "handoff": true,
+         "name": "ProRes (MOV)",
+         "how": "ProRes is in the desktop app"
+        },
+        {
+         "format": "gif",
+         "disabled": false,
+         "handoff": false,
+         "name": "GIF",
+         "how": "in this browser"
+        },
+        {
+         "format": "png",
+         "disabled": false,
+         "handoff": false,
+         "name": "PNG frames (zip)",
+         "how": "in this browser \u00c2\u00b7 PNG frames (zip)"
+        }
+       ],
+       "notice": {
+        "title": "ProRes is in the desktop app",
+        "why": "A web page cannot run FFmpeg, ProRes's encoder.",
+        "actions": [
+         "open_desktop",
+         "get_desktop"
+        ],
+        "exportDisabled": false
+       }
+      },
+      "videos": {
+       "id": "vid_68524f1e12fd",
+       "count": 1
+      }
+     },
+     "desktop": {
+      "exports": {
+       "mp4": {
+        "format": "mp4",
+        "routes": [
+         {
+          "route": "browser",
+          "writer": "webcodecs",
+          "available": true,
+          "reason": ""
+         },
+         {
+          "route": "server",
+          "writer": "ffmpeg",
+          "available": true,
+          "reason": ""
+         },
+         {
+          "route": "server",
+          "writer": "cv2",
+          "available": true,
+          "reason": ""
+         }
+        ],
+        "route": {
+         "route": "browser",
+         "writer": "webcodecs",
+         "label": "MP4 (H.264)"
+        },
+        "renderMs": 6093,
+        "ok": true,
+        "kind": "blob",
+        "bytes": 1068224,
+        "name": "Zoom-InOut-2026-11-07-1280x720-30fps.mp4",
+        "encoder": {
+         "encoder": "browser (WebCodecs)",
+         "codec": "avc",
+         "muxer": "mediabunny 1.60.0",
+         "bitrate": 3555556
+        },
+        "ms": 6256,
+        "file": "desktop-mp4.mp4",
+        "suggested": "Zoom-InOut-2026-11-07-1280x720-30fps.mp4"
+       },
+       "webm": {
+        "format": "webm",
+        "routes": [
+         {
+          "route": "browser",
+          "writer": "webcodecs",
+          "available": true,
+          "reason": ""
+         },
+         {
+          "route": "server",
+          "writer": "ffmpeg",
+          "available": true,
+          "reason": ""
+         }
+        ],
+        "route": {
+         "route": "browser",
+         "writer": "webcodecs",
+         "label": "WebM (VP9)"
+        },
+        "renderMs": 2472,
+        "ok": true,
+        "kind": "blob",
+        "bytes": 1899204,
+        "name": "Zoom-InOut-2026-11-07-1280x720-30fps.webm",
+        "encoder": {
+         "encoder": "browser (WebCodecs)",
+         "codec": "vp9",
+         "muxer": "mediabunny 1.60.0",
+         "bitrate": 3555556
+        },
+        "ms": 2561,
+        "file": "desktop-webm.webm",
+        "suggested": "Zoom-InOut-2026-11-07-1280x720-30fps.webm"
+       },
+       "mov": {
+        "format": "mov",
+        "routes": [
+         {
+          "route": "server",
+          "writer": "ffmpeg",
+          "available": true,
+          "reason": ""
+         }
+        ],
+        "route": {
+         "route": "server",
+         "writer": "ffmpeg",
+         "label": "ProRes (MOV)"
+        },
+        "renderMs": 18655,
+        "ok": true,
+        "kind": "download",
+        "bytes": 361616699,
+        "name": "Zoom-In-Out-2026-11-07-1280x720-30fps.mov",
+        "encoder": {
+         "encoder": "server",
+         "writer": "ffmpeg",
+         "label": "ProRes (MOV)"
+        },
+        "ms": 19185,
+        "file": "desktop-mov.mov",
+        "suggested": "Zoom-In-Out-2026-11-07-1280x720-30fps.mov"
+       },
+       "gif": {
+        "format": "gif",
+        "routes": [
+         {
+          "route": "server",
+          "writer": "ffmpeg",
+          "available": true,
+          "reason": ""
+         },
+         {
+          "route": "server",
+          "writer": "pillow",
+          "available": false,
+          "reason": "At most 960 px on the longer side here."
+         }
+        ],
+        "route": {
+         "route": "server",
+         "writer": "ffmpeg",
+         "label": "GIF"
+        },
+        "renderMs": 9471,
+        "ok": true,
+        "kind": "download",
+        "bytes": 40160681,
+        "name": "Zoom-In-Out-2026-11-07-1280x720-15fps.gif",
+        "encoder": {
+         "encoder": "server",
+         "writer": "ffmpeg",
+         "label": "GIF"
+        },
+        "ms": 9747,
+        "file": "desktop-gif.gif",
+        "suggested": "Zoom-In-Out-2026-11-07-1280x720-15fps.gif"
+       },
+       "png": {
+        "format": "png",
+        "routes": [
+         {
+          "route": "server",
+          "writer": "pngzip",
+          "available": true,
+          "reason": ""
+         }
+        ],
+        "route": {
+         "route": "server",
+         "writer": "pngzip",
+         "label": "PNG frames (zip)"
+        },
+        "renderMs": 14748,
+        "ok": true,
+        "kind": "download",
+        "bytes": 116278999,
+        "name": "Zoom-In-Out-2026-11-07-1280x720-30fps.zip",
+        "encoder": {
+         "encoder": "server",
+         "writer": "pngzip",
+         "label": "PNG frames (zip)"
+        },
+        "ms": 14936,
+        "file": "desktop-png.zip",
+        "suggested": "Zoom-In-Out-2026-11-07-1280x720-30fps.zip"
+       }
+      },
+      "project": "smoke",
+      "levels": [
+       {
+        "key": "smoke_0",
+        "window": [
+         30113,
+         59995
+        ],
+        "visible": true
+       },
+       {
+        "key": "smoke_1",
+        "window": [
+         0,
+         65536
+        ],
+        "visible": false
+       }
+      ],
+      "crossOriginIsolated": false,
+      "scene": {
+       "viewport": {
+        "cx": 512,
+        "cy": 384,
+        "w": 952.140350877193,
+        "degrees": 0,
+        "flip_h": false,
+        "flip_v": false
+       },
+       "mode": "plane",
+       "pixel_size": 0.5,
+       "image_size": [
+        1024,
+        768
+       ],
+       "contentSize": [
+        1024,
+        768
+       ],
+       "bounds": {
+        "x": 0.03508771929824561,
+        "y": 0,
+        "width": 0.9298245614035088,
+        "height": 0.75,
+        "degrees": 0
+       }
+      },
+      "dialog": {
+       "rows": [
+        {
+         "format": "mp4",
+         "disabled": false,
+         "handoff": false,
+         "name": "MP4 (H.264)",
+         "how": "in this browser"
+        },
+        {
+         "format": "webm",
+         "disabled": false,
+         "handoff": false,
+         "name": "WebM (VP9)",
+         "how": "in this browser"
+        },
+        {
+         "format": "mov",
+         "disabled": false,
+         "handoff": false,
+         "name": "ProRes (MOV)",
+         "how": "on the server"
+        },
+        {
+         "format": "gif",
+         "disabled": false,
+         "handoff": false,
+         "name": "GIF",
+         "how": "on the server"
+        },
+        {
+         "format": "png",
+         "disabled": false,
+         "handoff": false,
+         "name": "PNG frames (zip)",
+         "how": "on the server \u00c2\u00b7 PNG frames (zip)"
+        }
+       ],
+       "notice": null
+      },
+      "videos": {
+       "id": "vid_9dbfea2c8af2",
+       "count": 1
+      }
+     }
+    }
+   },
+   "check": {
+    "ffmpeg": true,
+    "files": {
+     "website-mp4": {
+      "bytes": 1068224,
+      "magic": "0000001c6674",
+      "container": "mov,mp4,m4a,3gp,3g2,mj2",
+      "codec": "h264",
+      "profile": "High",
+      "pix_fmt": "yuv420p",
+      "size": [
+       1280,
+       720
+      ],
+      "frames": 120,
+      "frame_size": [
+       1280,
+       720
+      ],
+      "alpha": {
+       "min": 255,
+       "max": 255,
+       "transparent_share": 0.0
+      }
+     },
+     "website-webm": {
+      "bytes": 1899204,
+      "magic": "1a45dfa31000",
+      "container": "matroska,webm",
+      "codec": "vp9",
+      "profile": "Profile 0",
+      "pix_fmt": "yuv420p",
+      "size": [
+       1280,
+       720
+      ],
+      "frames": 120,
+      "frame_size": [
+       1280,
+       720
+      ],
+      "alpha": {
+       "min": 255,
+       "max": 255,
+       "transparent_share": 0.0
+      }
+     },
+     "website-gif": {
+      "bytes": 17715835,
+      "magic": "474946383961",
+      "gif": "GIF89a",
+      "loop": 0,
+      "version": "GIF89a",
+      "duration_ms": 4000,
+      "frames": 60,
+      "frame_size": [
+       1280,
+       720
+      ],
+      "alpha": {
+       "min": 255,
+       "max": 255,
+       "transparent_share": 0.0
+      }
+     },
+     "website-png": {
+      "bytes": 75555821,
+      "magic": "504b03041400",
+      "zip": true,
+      "frames": 120,
+      "frame_size": [
+       1280,
+       720
+      ],
+      "alpha": {
+       "min": 255,
+       "max": 255,
+       "transparent_share": 0.0
+      }
+     },
+     "desktop-mp4": {
+      "bytes": 1068224,
+      "magic": "0000001c6674",
+      "container": "mov,mp4,m4a,3gp,3g2,mj2",
+      "codec": "h264",
+      "profile": "High",
+      "pix_fmt": "yuv420p",
+      "size": [
+       1280,
+       720
+      ],
+      "frames": 120,
+      "frame_size": [
+       1280,
+       720
+      ],
+      "alpha": {
+       "min": 255,
+       "max": 255,
+       "transparent_share": 0.0
+      }
+     },
+     "desktop-webm": {
+      "bytes": 1899204,
+      "magic": "1a45dfa31000",
+      "container": "matroska,webm",
+      "codec": "vp9",
+      "profile": "Profile 0",
+      "pix_fmt": "yuv420p",
+      "size": [
+       1280,
+       720
+      ],
+      "frames": 120,
+      "frame_size": [
+       1280,
+       720
+      ],
+      "alpha": {
+       "min": 255,
+       "max": 255,
+       "transparent_share": 0.0
+      }
+     },
+     "desktop-mov": {
+      "bytes": 361616699,
+      "magic": "000000146674",
+      "container": "mov,mp4,m4a,3gp,3g2,mj2",
+      "codec": "prores",
+      "profile": "4444",
+      "pix_fmt": "yuva444p12le",
+      "size": [
+       1280,
+       720
+      ],
+      "frames": 120,
+      "frame_size": [
+       1280,
+       720
+      ],
+      "alpha": {
+       "min": 0,
+       "max": 255,
+       "transparent_share": 0.9519
+      }
+     },
+     "desktop-gif": {
+      "bytes": 40160681,
+      "magic": "474946383961",
+      "gif": "GIF89a",
+      "loop": 0,
+      "version": "GIF89a",
+      "duration_ms": 4000,
+      "frames": 60,
+      "frame_size": [
+       1280,
+       720
+      ],
+      "alpha": {
+       "min": 255,
+       "max": 255,
+       "transparent_share": 0.0
+      }
+     },
+     "desktop-png": {
+      "bytes": 116278999,
+      "magic": "504b03041400",
+      "zip": true,
+      "frames": 120,
+      "frame_size": [
+       1280,
+       720
+      ],
+      "alpha": {
+       "min": 255,
+       "max": 255,
+       "transparent_share": 0.0
+      }
+     }
+    },
+    "fidelity": {
+     "website-mp4": {
+      "frames": [
+       120,
+       120
+      ],
+      "step": 1,
+      "mean_abs": 1.302,
+      "max_frame_mean_abs": 1.41,
+      "psnr_db": 43.3
+     },
+     "website-webm": {
+      "frames": [
+       120,
+       120
+      ],
+      "step": 1,
+      "mean_abs": 1.371,
+      "max_frame_mean_abs": 1.724,
+      "psnr_db": 42.78
+     },
+     "website-gif": {
+      "frames": [
+       60,
+       60
+      ],
+      "step": 2,
+      "mean_abs": 1.965,
+      "max_frame_mean_abs": 2.447,
+      "psnr_db": 38.52
+     },
+     "desktop-mp4": {
+      "frames": [
+       120,
+       120
+      ],
+      "step": 1,
+      "mean_abs": 1.302,
+      "max_frame_mean_abs": 1.41,
+      "psnr_db": 43.3
+     },
+     "desktop-webm": {
+      "frames": [
+       120,
+       120
+      ],
+      "step": 1,
+      "mean_abs": 1.371,
+      "max_frame_mean_abs": 1.724,
+      "psnr_db": 42.78
+     },
+     "desktop-mov": {
+      "frames": [
+       120,
+       120
+      ],
+      "step": 1,
+      "mean_abs": 0.341,
+      "max_frame_mean_abs": 0.371,
+      "psnr_db": 49.48
+     },
+     "desktop-gif": {
+      "frames": [
+       60,
+       60
+      ],
+      "step": 2,
+      "mean_abs": 1.435,
+      "max_frame_mean_abs": 2.115,
+      "psnr_db": 40.81
+     }
+    },
+    "parity": {
+     "mp4": {
+      "frames": [
+       120,
+       120
+      ],
+      "step": 1,
+      "mean_abs": 0.0,
+      "max_frame_mean_abs": 0.0,
+      "psnr_db": null
+     },
+     "webm": {
+      "frames": [
+       120,
+       120
+      ],
+      "step": 1,
+      "mean_abs": 0.0,
+      "max_frame_mean_abs": 0.0,
+      "psnr_db": null
+     },
+     "gif": {
+      "frames": [
+       60,
+       60
+      ],
+      "step": 1,
+      "mean_abs": 1.273,
+      "max_frame_mean_abs": 1.295,
+      "psnr_db": 42.54
+     },
+     "png": {
+      "frames": [
+       120,
+       120
+      ],
+      "step": 1,
+      "mean_abs": 0.0,
+      "max_frame_mean_abs": 0.0,
+      "psnr_db": null
+     }
+    }
+   }
+  },
+  "320x180-1s": {
+   "record": {
+    "size": [
+     320,
+     180
+    ],
+    "fps": 30,
+    "duration_s": 1,
+    "fixture": "smoke.ome.tif",
+    "arms": {
+     "website": {
+      "exports": {
+       "mp4": {
+        "format": "mp4",
+        "routes": [
+         {
+          "route": "browser",
+          "writer": "webcodecs",
+          "available": true,
+          "reason": ""
+         }
+        ],
+        "route": {
+         "route": "browser",
+         "writer": "webcodecs",
+         "label": "MP4 (H.264)"
+        },
+        "renderMs": 862,
+        "ok": true,
+        "kind": "blob",
+        "bytes": 26820,
+        "name": "Zoom-InOut-2026-11-07-320x180-30fps.mp4",
+        "encoder": {
+         "encoder": "browser (WebCodecs)",
+         "codec": "avc",
+         "muxer": "mediabunny 1.60.0",
+         "bitrate": 222222
+        },
+        "ms": 1026,
+        "file": "website-mp4.mp4",
+        "suggested": "Zoom-InOut-2026-11-07-320x180-30fps.mp4"
+       },
+       "webm": {
+        "format": "webm",
+        "routes": [
+         {
+          "route": "browser",
+          "writer": "webcodecs",
+          "available": true,
+          "reason": ""
+         }
+        ],
+        "route": {
+         "route": "browser",
+         "writer": "webcodecs",
+         "label": "WebM (VP9)"
+        },
+        "renderMs": 737,
+        "ok": true,
+        "kind": "blob",
+        "bytes": 24724,
+        "name": "Zoom-InOut-2026-11-07-320x180-30fps.webm",
+        "encoder": {
+         "encoder": "browser (WebCodecs)",
+         "codec": "vp9",
+         "muxer": "mediabunny 1.60.0",
+         "bitrate": 222222
+        },
+        "ms": 937,
+        "file": "website-webm.webm",
+        "suggested": "Zoom-InOut-2026-11-07-320x180-30fps.webm"
+       },
+       "mov": {
+        "format": "mov",
+        "routes": [
+         {
+          "route": "server",
+          "writer": "ffmpeg",
+          "available": false,
+          "reason": "A web page cannot run FFmpeg, ProRes's encoder."
+         }
+        ],
+        "ok": false,
+        "unavailable": true,
+        "reason": "A web page cannot run FFmpeg, ProRes's encoder."
+       },
+       "gif": {
+        "format": "gif",
+        "routes": [
+         {
+          "route": "browser",
+          "writer": "gif",
+          "available": true,
+          "reason": ""
+         },
+         {
+          "route": "server",
+          "writer": "pillow",
+          "available": true,
+          "reason": ""
+         }
+        ],
+        "route": {
+         "route": "browser",
+         "writer": "gif",
+         "label": "GIF"
+        },
+        "renderMs": 403,
+        "ok": true,
+        "kind": "blob",
+        "bytes": 349912,
+        "name": "Zoom-InOut-2026-11-07-320x180-15fps.gif",
+        "encoder": {
+         "encoder": "browser (GIF)",
+         "codec": "GIF",
+         "palette": "median cut per frame, 8x8 ordered dither"
+        },
+        "ms": 490,
+        "file": "website-gif.gif",
+        "suggested": "Zoom-InOut-2026-11-07-320x180-15fps.gif"
+       },
+       "png": {
+        "format": "png",
+        "routes": [
+         {
+          "route": "server",
+          "writer": "pngzip",
+          "available": true,
+          "reason": ""
+         }
+        ],
+        "route": {
+         "route": "server",
+         "writer": "pngzip",
+         "label": "PNG frames (zip)"
+        },
+        "renderMs": 1722,
+        "ok": true,
+        "kind": "blob",
+        "bytes": 1876022,
+        "name": "Zoom-In-Out-2026-11-07-320x180-30fps.zip",
+        "encoder": {
+         "encoder": "server",
+         "writer": "pngzip",
+         "label": "PNG frames (zip)"
+        },
+        "ms": 1826,
+        "file": "website-png.zip",
+        "suggested": "Zoom-In-Out-2026-11-07-320x180-30fps.zip"
+       }
+      },
+      "project": "smoke",
+      "levels": [
+       {
+        "key": "smoke_0",
+        "window": [
+         0,
+         65536
+        ],
+        "visible": true
+       },
+       {
+        "key": "smoke_1",
+        "window": [
+         0,
+         65536
+        ],
+        "visible": false
+       }
+      ],
+      "crossOriginIsolated": true,
+      "scene": {
+       "viewport": {
+        "cx": 512,
+        "cy": 384,
+        "w": 952.140350877193,
+        "degrees": 0,
+        "flip_h": false,
+        "flip_v": false
+       },
+       "mode": "plane",
+       "pixel_size": 0.5,
+       "image_size": [
+        1024,
+        768
+       ],
+       "contentSize": [
+        1024,
+        768
+       ],
+       "bounds": {
+        "x": 0.03508771929824561,
+        "y": 0,
+        "width": 0.9298245614035088,
+        "height": 0.75,
+        "degrees": 0
+       }
+      },
+      "dialog": {
+       "rows": [
+        {
+         "format": "mp4",
+         "disabled": false,
+         "handoff": false,
+         "name": "MP4 (H.264)",
+         "how": "in this browser"
+        },
+        {
+         "format": "webm",
+         "disabled": false,
+         "handoff": false,
+         "name": "WebM (VP9)",
+         "how": "in this browser"
+        },
+        {
+         "format": "mov",
+         "disabled": false,
+         "handoff": true,
+         "name": "ProRes (MOV)",
+         "how": "ProRes is in the desktop app"
+        },
+        {
+         "format": "gif",
+         "disabled": false,
+         "handoff": false,
+         "name": "GIF",
+         "how": "in this browser"
+        },
+        {
+         "format": "png",
+         "disabled": false,
+         "handoff": false,
+         "name": "PNG frames (zip)",
+         "how": "in this browser \u00c2\u00b7 PNG frames (zip)"
+        }
+       ],
+       "notice": {
+        "title": "ProRes is in the desktop app",
+        "why": "A web page cannot run FFmpeg, ProRes's encoder.",
+        "actions": [
+         "open_desktop",
+         "get_desktop"
+        ],
+        "exportDisabled": false
+       }
+      },
+      "videos": {
+       "id": "vid_06d2371c5d37",
+       "count": 1
+      }
+     },
+     "desktop": {
+      "exports": {
+       "mp4": {
+        "format": "mp4",
+        "routes": [
+         {
+          "route": "browser",
+          "writer": "webcodecs",
+          "available": true,
+          "reason": ""
+         },
+         {
+          "route": "server",
+          "writer": "ffmpeg",
+          "available": true,
+          "reason": ""
+         },
+         {
+          "route": "server",
+          "writer": "cv2",
+          "available": true,
+          "reason": ""
+         }
+        ],
+        "route": {
+         "route": "browser",
+         "writer": "webcodecs",
+         "label": "MP4 (H.264)"
+        },
+        "renderMs": 2947,
+        "ok": true,
+        "kind": "blob",
+        "bytes": 26820,
+        "name": "Zoom-InOut-2026-11-07-320x180-30fps.mp4",
+        "encoder": {
+         "encoder": "browser (WebCodecs)",
+         "codec": "avc",
+         "muxer": "mediabunny 1.60.0",
+         "bitrate": 222222
+        },
+        "ms": 3139,
+        "file": "desktop-mp4.mp4",
+        "suggested": "Zoom-InOut-2026-11-07-320x180-30fps.mp4"
+       },
+       "webm": {
+        "format": "webm",
+        "routes": [
+         {
+          "route": "browser",
+          "writer": "webcodecs",
+          "available": true,
+          "reason": ""
+         },
+         {
+          "route": "server",
+          "writer": "ffmpeg",
+          "available": true,
+          "reason": ""
+         }
+        ],
+        "route": {
+         "route": "browser",
+         "writer": "webcodecs",
+         "label": "WebM (VP9)"
+        },
+        "renderMs": 746,
+        "ok": true,
+        "kind": "blob",
+        "bytes": 24724,
+        "name": "Zoom-InOut-2026-11-07-320x180-30fps.webm",
+        "encoder": {
+         "encoder": "browser (WebCodecs)",
+         "codec": "vp9",
+         "muxer": "mediabunny 1.60.0",
+         "bitrate": 222222
+        },
+        "ms": 827,
+        "file": "desktop-webm.webm",
+        "suggested": "Zoom-InOut-2026-11-07-320x180-30fps.webm"
+       },
+       "mov": {
+        "format": "mov",
+        "routes": [
+         {
+          "route": "server",
+          "writer": "ffmpeg",
+          "available": true,
+          "reason": ""
+         }
+        ],
+        "route": {
+         "route": "server",
+         "writer": "ffmpeg",
+         "label": "ProRes (MOV)"
+        },
+        "renderMs": 1828,
+        "ok": true,
+        "kind": "download",
+        "bytes": 7176801,
+        "name": "Zoom-In-Out-2026-11-07-320x180-30fps.mov",
+        "encoder": {
+         "encoder": "server",
+         "writer": "ffmpeg",
+         "label": "ProRes (MOV)"
+        },
+        "ms": 1962,
+        "file": "desktop-mov.mov",
+        "suggested": "Zoom-In-Out-2026-11-07-320x180-30fps.mov"
+       },
+       "gif": {
+        "format": "gif",
+        "routes": [
+         {
+          "route": "server",
+          "writer": "ffmpeg",
+          "available": true,
+          "reason": ""
+         },
+         {
+          "route": "server",
+          "writer": "pillow",
+          "available": true,
+          "reason": ""
+         }
+        ],
+        "route": {
+         "route": "server",
+         "writer": "ffmpeg",
+         "label": "GIF"
+        },
+        "renderMs": 1308,
+        "ok": true,
+        "kind": "download",
+        "bytes": 712889,
+        "name": "Zoom-In-Out-2026-11-07-320x180-15fps.gif",
+        "encoder": {
+         "encoder": "server",
+         "writer": "ffmpeg",
+         "label": "GIF"
+        },
+        "ms": 1429,
+        "file": "desktop-gif.gif",
+        "suggested": "Zoom-In-Out-2026-11-07-320x180-15fps.gif"
+       },
+       "png": {
+        "format": "png",
+        "routes": [
+         {
+          "route": "server",
+          "writer": "pngzip",
+          "available": true,
+          "reason": ""
+         }
+        ],
+        "route": {
+         "route": "server",
+         "writer": "pngzip",
+         "label": "PNG frames (zip)"
+        },
+        "renderMs": 1573,
+        "ok": true,
+        "kind": "download",
+        "bytes": 2697958,
+        "name": "Zoom-In-Out-2026-11-07-320x180-30fps.zip",
+        "encoder": {
+         "encoder": "server",
+         "writer": "pngzip",
+         "label": "PNG frames (zip)"
+        },
+        "ms": 1706,
+        "file": "desktop-png.zip",
+        "suggested": "Zoom-In-Out-2026-11-07-320x180-30fps.zip"
+       }
+      },
+      "project": "smoke",
+      "levels": [
+       {
+        "key": "smoke_0",
+        "window": [
+         30113,
+         59995
+        ],
+        "visible": true
+       },
+       {
+        "key": "smoke_1",
+        "window": [
+         0,
+         65536
+        ],
+        "visible": false
+       }
+      ],
+      "crossOriginIsolated": false,
+      "scene": {
+       "viewport": {
+        "cx": 512,
+        "cy": 384,
+        "w": 952.140350877193,
+        "degrees": 0,
+        "flip_h": false,
+        "flip_v": false
+       },
+       "mode": "plane",
+       "pixel_size": 0.5,
+       "image_size": [
+        1024,
+        768
+       ],
+       "contentSize": [
+        1024,
+        768
+       ],
+       "bounds": {
+        "x": 0.03508771929824561,
+        "y": 0,
+        "width": 0.9298245614035088,
+        "height": 0.75,
+        "degrees": 0
+       }
+      },
+      "dialog": {
+       "rows": [
+        {
+         "format": "mp4",
+         "disabled": false,
+         "handoff": false,
+         "name": "MP4 (H.264)",
+         "how": "in this browser"
+        },
+        {
+         "format": "webm",
+         "disabled": false,
+         "handoff": false,
+         "name": "WebM (VP9)",
+         "how": "in this browser"
+        },
+        {
+         "format": "mov",
+         "disabled": false,
+         "handoff": false,
+         "name": "ProRes (MOV)",
+         "how": "on the server"
+        },
+        {
+         "format": "gif",
+         "disabled": false,
+         "handoff": false,
+         "name": "GIF",
+         "how": "on the server"
+        },
+        {
+         "format": "png",
+         "disabled": false,
+         "handoff": false,
+         "name": "PNG frames (zip)",
+         "how": "on the server \u00c2\u00b7 PNG frames (zip)"
+        }
+       ],
+       "notice": null
+      },
+      "videos": {
+       "id": "vid_7904338b2105",
+       "count": 1
+      }
+     }
+    }
+   },
+   "check": {
+    "ffmpeg": true,
+    "files": {
+     "website-mp4": {
+      "bytes": 26820,
+      "magic": "0000001c6674",
+      "container": "mov,mp4,m4a,3gp,3g2,mj2",
+      "codec": "h264",
+      "profile": "High",
+      "pix_fmt": "yuv420p",
+      "size": [
+       320,
+       180
+      ],
+      "frames": 30,
+      "frame_size": [
+       320,
+       180
+      ],
+      "alpha": {
+       "min": 255,
+       "max": 255,
+       "transparent_share": 0.0
+      }
+     },
+     "website-webm": {
+      "bytes": 24724,
+      "magic": "1a45dfa31000",
+      "container": "matroska,webm",
+      "codec": "vp9",
+      "profile": "Profile 0",
+      "pix_fmt": "yuv420p",
+      "size": [
+       320,
+       180
+      ],
+      "frames": 30,
+      "frame_size": [
+       320,
+       180
+      ],
+      "alpha": {
+       "min": 255,
+       "max": 255,
+       "transparent_share": 0.0
+      }
+     },
+     "website-gif": {
+      "bytes": 349912,
+      "magic": "474946383961",
+      "gif": "GIF89a",
+      "loop": 0,
+      "version": "GIF89a",
+      "duration_ms": 1000,
+      "frames": 15,
+      "frame_size": [
+       320,
+       180
+      ],
+      "alpha": {
+       "min": 255,
+       "max": 255,
+       "transparent_share": 0.0
+      }
+     },
+     "website-png": {
+      "bytes": 1876022,
+      "magic": "504b03041400",
+      "zip": true,
+      "frames": 30,
+      "frame_size": [
+       320,
+       180
+      ],
+      "alpha": {
+       "min": 255,
+       "max": 255,
+       "transparent_share": 0.0
+      }
+     },
+     "desktop-mp4": {
+      "bytes": 26820,
+      "magic": "0000001c6674",
+      "container": "mov,mp4,m4a,3gp,3g2,mj2",
+      "codec": "h264",
+      "profile": "High",
+      "pix_fmt": "yuv420p",
+      "size": [
+       320,
+       180
+      ],
+      "frames": 30,
+      "frame_size": [
+       320,
+       180
+      ],
+      "alpha": {
+       "min": 255,
+       "max": 255,
+       "transparent_share": 0.0
+      }
+     },
+     "desktop-webm": {
+      "bytes": 24724,
+      "magic": "1a45dfa31000",
+      "container": "matroska,webm",
+      "codec": "vp9",
+      "profile": "Profile 0",
+      "pix_fmt": "yuv420p",
+      "size": [
+       320,
+       180
+      ],
+      "frames": 30,
+      "frame_size": [
+       320,
+       180
+      ],
+      "alpha": {
+       "min": 255,
+       "max": 255,
+       "transparent_share": 0.0
+      }
+     },
+     "desktop-mov": {
+      "bytes": 7176801,
+      "magic": "000000146674",
+      "container": "mov,mp4,m4a,3gp,3g2,mj2",
+      "codec": "prores",
+      "profile": "4444",
+      "pix_fmt": "yuva444p12le",
+      "size": [
+       320,
+       180
+      ],
+      "frames": 30,
+      "frame_size": [
+       320,
+       180
+      ],
+      "alpha": {
+       "min": 0,
+       "max": 255,
+       "transparent_share": 0.9523
+      }
+     },
+     "desktop-gif": {
+      "bytes": 712889,
+      "magic": "474946383961",
+      "gif": "GIF89a",
+      "loop": 0,
+      "version": "GIF89a",
+      "duration_ms": 1000,
+      "frames": 15,
+      "frame_size": [
+       320,
+       180
+      ],
+      "alpha": {
+       "min": 255,
+       "max": 255,
+       "transparent_share": 0.0
+      }
+     },
+     "desktop-png": {
+      "bytes": 2697958,
+      "magic": "504b03041400",
+      "zip": true,
+      "frames": 30,
+      "frame_size": [
+       320,
+       180
+      ],
+      "alpha": {
+       "min": 255,
+       "max": 255,
+       "transparent_share": 0.0
+      }
+     }
+    },
+    "fidelity": {
+     "website-mp4": {
+      "frames": [
+       30,
+       30
+      ],
+      "step": 1,
+      "mean_abs": 2.066,
+      "max_frame_mean_abs": 2.526,
+      "psnr_db": 38.17
+     },
+     "website-webm": {
+      "frames": [
+       30,
+       30
+      ],
+      "step": 1,
+      "mean_abs": 2.603,
+      "max_frame_mean_abs": 2.821,
+      "psnr_db": 36.47
+     },
+     "website-gif": {
+      "frames": [
+       15,
+       15
+      ],
+      "step": 2,
+      "mean_abs": 4.751,
+      "max_frame_mean_abs": 7.988,
+      "psnr_db": 30.25
+     },
+     "desktop-mp4": {
+      "frames": [
+       30,
+       30
+      ],
+      "step": 1,
+      "mean_abs": 2.066,
+      "max_frame_mean_abs": 2.526,
+      "psnr_db": 38.17
+     },
+     "desktop-webm": {
+      "frames": [
+       30,
+       30
+      ],
+      "step": 1,
+      "mean_abs": 2.603,
+      "max_frame_mean_abs": 2.821,
+      "psnr_db": 36.47
+     },
+     "desktop-mov": {
+      "frames": [
+       30,
+       30
+      ],
+      "step": 1,
+      "mean_abs": 0.383,
+      "max_frame_mean_abs": 0.409,
+      "psnr_db": 43.01
+     },
+     "desktop-gif": {
+      "frames": [
+       15,
+       15
+      ],
+      "step": 2,
+      "mean_abs": 4.513,
+      "max_frame_mean_abs": 7.97,
+      "psnr_db": 30.52
+     }
+    },
+    "parity": {
+     "mp4": {
+      "frames": [
+       30,
+       30
+      ],
+      "step": 1,
+      "mean_abs": 0.0,
+      "max_frame_mean_abs": 0.0,
+      "psnr_db": null
+     },
+     "webm": {
+      "frames": [
+       30,
+       30
+      ],
+      "step": 1,
+      "mean_abs": 0.0,
+      "max_frame_mean_abs": 0.0,
+      "psnr_db": null
+     },
+     "gif": {
+      "frames": [
+       15,
+       15
+      ],
+      "step": 1,
+      "mean_abs": 1.599,
+      "max_frame_mean_abs": 1.617,
+      "psnr_db": 40.68
+     },
+     "png": {
+      "frames": [
+       30,
+       30
+      ],
+      "step": 1,
+      "mean_abs": 0.0,
+      "max_frame_mean_abs": 0.0,
+      "psnr_db": null
+     }
+    }
+   }
+  }
+ }
+}
