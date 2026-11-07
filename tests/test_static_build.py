@@ -54,6 +54,13 @@ def test_a_release_build_may_be_indexed(tmp_path):
     assert "X-Robots-Tag" not in (tmp_path / "_headers").read_text(encoding="utf-8")
     shell = json.loads((tmp_path / "client" / "shell.json").read_text(encoding="utf-8"))
     assert shell["py"].startswith("/py/") and shell["models"] == "/models/"
+    assert "flags" not in shell  # a development build reads no switches
+
+
+def test_the_shell_names_the_sites_switches_when_told(tmp_path):
+    record = static_build.build(tmp_path, flags="https://assets.example/flags.json")
+    shell = json.loads((tmp_path / "client" / "shell.json").read_text(encoding="utf-8"))
+    assert shell["flags"] == record["flags"] == "https://assets.example/flags.json"
 
 
 def test_what_pages_takes(built):

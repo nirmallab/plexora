@@ -18,11 +18,13 @@
  * progress, so the viewer's one-time setup (services/segmentService.js) is
  * the desktop's, unchanged.
  *
- *   configure({ort, models, device})  where onnxruntime-web is served (the
- *                         Python bundle's ort/), where the model files are
- *                         (the assets' /models/), and a device to force:
+ *   configure({ort, models, device, disabled})  where onnxruntime-web is
+ *                         served (the Python bundle's ort/), where the model
+ *                         files are (the assets' /models/), a device to force:
  *                         "webgpu" | "wasm" (`?segment_device=` on the
- *                         address does the same)
+ *                         address does the same), and `disabled`, the
+ *                         sentence said instead when the site's flags switch
+ *                         the model off
  *   call(op, args)        the worker directly (diagnostics, tests)
  *   reset({device})       sessions (and the run log) dropped; the next run on `device`
  *   times()               the latest runs: [{op, ep, ms}]
@@ -34,7 +36,9 @@
 
     // Under the site's base path (services/shell.js `BASE`; "" at its root).
     const WORKER = (globalThis.PLEXORA_SITE_BASE || "") + "/client/src/js/workers/onnxWorker.js";
-    const config = { ort: null, models: null, device: null };
+    //: `disabled`: the sentence Python says instead of running the model (the
+    //: site's flags switched it off: services/shell.js `readFlags`).
+    const config = { ort: null, models: null, device: null, disabled: null };
     let worker = null;
     let nextId = 1;
     const waiting = new Map();
@@ -89,6 +93,11 @@
     //: Python's "sam" questions. A failure is answered, not thrown: Python
     //: reads `{error}` and says it in the request's answer.
     async function answer(args) {
+        if (config.disabled) {
+            return { value: args.op === "status"
+                ? { runtime: { installed: false, install: null }, hint: config.disabled }
+                : { error: config.disabled } };
+        }
         try {
             const result = await call(args.op, args, transfersOf(args));
             return { value: result, transfer: transfersOf(result) };

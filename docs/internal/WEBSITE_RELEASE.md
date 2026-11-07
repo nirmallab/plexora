@@ -101,9 +101,20 @@ nothing.
 - **A bad bundle** is never patched in place: roll the shell back, fix, and
   release a new version.
 - **The preview:** re-run an older main commit's `web.yml` run.
-- **A kill switch** (`flags.json` on the bucket, `{"viewer": "desktop-only"}`,
-  effective in five minutes; plan Phase 5 "Operations") is **future work**:
-  nothing writes or reads `flags.json` yet.
+- **The kill switch** (plan Phase 5 "Operations"): `flags.json` at the
+  bucket's root, which the loader reads before anything else and keeps for
+  five minutes. Pause the website for everyone (it says so, offers the
+  desktop app, and loads no Python):
+
+      python tools/browser_build/publish.py flags --viewer desktop-only [--message "Back at noon."]
+
+  and back: `--viewer on` (the preview's state is `--viewer preview`, which
+  marks it). Finer: `--min-site-version X.Y.Z` stops any site older than it
+  (`""` drops it); `--model mobilesam=off` switches magic select off;
+  `--show` prints the current file. It reaches every visitor within five
+  minutes; a missing or broken file changes nothing (tests/test_browser_flags.py).
+  The shells read it because their builds pass `--flags` (web.yml's preview,
+  release.yml's release).
 
 ## Running the checks here
 

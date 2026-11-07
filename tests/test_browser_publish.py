@@ -265,3 +265,59 @@ def test_a_different_file_already_in_the_bucket_is_never_replaced(tmp_path, monk
     with pytest.raises(SystemExit, match="look before replacing"):
         publish.models(args)
     assert not stub.calls
+
+
+def test_the_flags_change_only_what_is_asked():
+    current = {"viewer": "on", "models": {"mobilesam": {"enabled": True}}}
+    paused = publish.changed_flags(current, viewer="desktop-only", message="Back at noon.")
+    assert paused == {"viewer": "desktop-only", "message": "Back at noon.",
+                      "models": {"mobilesam": {"enabled": True}}}
+    assert current == {"viewer": "on", "models": {"mobilesam": {"enabled": True}}}  # not changed in place
+    assert publish.changed_flags(paused, message="", min_site_version="0.0.37") == {
+        "viewer": "desktop-only", "min_site_version": "0.0.37", "models": {"mobilesam": {"enabled": True}}}
+    assert publish.changed_flags({}, models=["mobilesam=off"]) == {"models": {"mobilesam": {"enabled": False}}}
+    for wrong in ({"viewer": "maybe"}, {"min_site_version": "1.2"}, {"models": ["mobilesam=no"]}):
+        with pytest.raises(SystemExit):
+            publish.changed_flags({}, **wrong)
+
+
+def _flag_args(**kwargs):
+    base = {"viewer": None, "min_site_version": None, "message": None, "model": [], "show": False,
+            "bucket": "b", "base": "https://assets.example", "wrangler": "wrangler.js"}
+    return type("Args", (), {**base, **kwargs})()
+
+
+def test_the_kill_switch_is_written_for_five_minutes_and_read_back(monkeypatch, capsys):
+    stored = {}
+
+    def public(url, method="GET"):
+        assert url == "https://assets.example/flags.json"
+        if "body" not in stored:
+            return 404, {}, b""
+        return 200, {"Cache-Control": publish.FLAGS_CACHE}, stored["body"]
+
+    stub = _Wrangler()
+    real = stub.__call__
+
+    def put(command, **kwargs):
+        if _op(command) == ["r2", "object", "put"]:
+            stored["body"] = Path(command[command.index("--file") + 1]).read_bytes()
+        return real(command, **kwargs)
+
+    monkeypatch.setattr(publish, "_public", public)
+    monkeypatch.setattr(publish, "run", put)
+    assert publish.flags(_flag_args(viewer="desktop-only")) == 0
+    report = json.loads(capsys.readouterr().out)
+    assert report["flags"] == {"viewer": "desktop-only"} and report["read_back"] is True
+    call = stub.calls[0]
+    assert _key(call) == "b/flags.json"
+    assert call[call.index("--cache-control") + 1] == "public, max-age=300"
+    assert publish.flags(_flag_args(viewer="desktop-only")) == 0  # nothing to change: nothing written
+    assert len(stub.calls) == 1
+
+
+def test_flags_that_cannot_be_read_are_never_overwritten(monkeypatch):
+    monkeypatch.setattr(publish, "_public", lambda url, method="GET": (500, {}, b""))
+    monkeypatch.setattr(publish, "run", _Wrangler())
+    with pytest.raises(SystemExit, match="could not read"):
+        publish.flags(_flag_args(viewer="on"))

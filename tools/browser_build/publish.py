@@ -6,6 +6,8 @@
     python tools/browser_build/publish.py prune --prefix py/dev/<sha>/
     python tools/browser_build/publish.py current [--set py/dev/<sha>/]
     python tools/browser_build/publish.py models --dir DIR
+    python tools/browser_build/publish.py flags [--viewer on|preview|desktop-only]
+        [--min-site-version X.Y.Z] [--message TEXT] [--model NAME=on|off] [--show]
 
 Everything goes through wrangler, logged in as the account that holds the
 zone, or with `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID` in CI. No
@@ -44,6 +46,17 @@ into the bucket at `models/<WEB_DIR>`, the page's `--models` base: each file
 checked against its pinned sha256 first, an object already there with the
 pinned size left alone (a release tag's files never change), each one read
 back from the public address and checked again.
+
+`flags` sets the site's switches, `flags.json` at the bucket's root, which
+the loader reads before anything else (services/shell.js `readFlags`;
+`static_build --flags`): `viewer` "desktop-only" is the kill switch (the
+website says it is paused and offers the desktop app; Python never loads),
+"preview" marks the site, "on" is the normal state; `min_site_version` stops a
+site older than it; `models.<name>.enabled` false switches a model off; an
+optional `message` replaces the paused sentence. It reads the current file,
+changes only what it is told, and stores it for five minutes
+(`max-age=300`), so a switch reaches every visitor within five minutes.
+`--show` prints the file and changes nothing.
 
 `current` prints the development prefix the preview site loads (recorded in
 the bucket at `py/dev/current.json`), or nothing; `--set` records a new one.
@@ -328,8 +341,14 @@ def current(args) -> int:
     return 0
 
 
-#: The bucket's public address (`models` reads back through it).
+#: The bucket's public address (`models` and `flags` read back through it).
 PUBLIC = "https://assets.plexoraapp.com/"
+#: The site's switches (`flags`): their key, how long a browser keeps them,
+#: and what `viewer` may say.
+FLAGS = "flags.json"
+FLAGS_CACHE = "public, max-age=300"
+VIEWER = ("on", "preview", "desktop-only")
+VERSION = re.compile(r"^\d+\.\d+\.\d+$")
 
 
 def _model_pins() -> tuple:
@@ -389,6 +408,71 @@ def models(args) -> int:
     return 1 if problems else 0
 
 
+def changed_flags(current: dict, viewer=None, min_site_version=None, message=None, models=()) -> dict:
+    """`current` with what was asked changed: `viewer` one of VIEWER;
+    `min_site_version` X.Y.Z, or "" to drop it; `message` a sentence, or "" to
+    drop it; `models` NAME=on|off."""
+    out = json.loads(json.dumps(current))
+    if viewer is not None:
+        if viewer not in VIEWER:
+            raise SystemExit(f"--viewer is one of {', '.join(VIEWER)}, not {viewer!r}")
+        out["viewer"] = viewer
+    if min_site_version is not None:
+        if min_site_version == "":
+            out.pop("min_site_version", None)
+        elif not VERSION.match(min_site_version):
+            raise SystemExit(f"--min-site-version is X.Y.Z, not {min_site_version!r}")
+        else:
+            out["min_site_version"] = min_site_version
+    if message is not None:
+        if message == "":
+            out.pop("message", None)
+        else:
+            out["message"] = message
+    for spec in models or ():
+        name, _, state = str(spec).partition("=")
+        if not name or state not in ("on", "off"):
+            raise SystemExit(f"--model is NAME=on|off, not {spec!r}")
+        out.setdefault("models", {})[name] = {"enabled": state == "on"}
+    return out
+
+
+def flags(args) -> int:
+    url = (args.base if args.base.endswith("/") else args.base + "/") + FLAGS
+    status, _, body = _public(url)
+    if status == 200:
+        try:
+            current = json.loads(body)
+        except ValueError:
+            raise SystemExit(f"{url} is there but is not JSON: {body[:200]!r}")
+        if not isinstance(current, dict):
+            raise SystemExit(f"{url} is not an object: {body[:200]!r}")
+    elif status in (403, 404):
+        current = {}
+    else:
+        raise SystemExit(f"could not read {url}: {status}")
+    if args.show:
+        print(json.dumps(current, indent=1))
+        return 0
+    wanted = changed_flags(current, args.viewer, args.min_site_version, args.message, args.model)
+    if wanted == current:
+        print(json.dumps({"flags": current, "changed": False}, indent=1))
+        return 0
+    command = wrangler(args.wrangler)
+    with tempfile.TemporaryDirectory(prefix="plexora-flags-") as scratch:
+        record = Path(scratch) / FLAGS
+        record.write_bytes(json.dumps(wanted, indent=1).encode("utf-8"))
+        done = run(command + ["r2", "object", "put", f"{args.bucket}/{FLAGS}", "--file", str(record),
+                              "--content-type", "application/json", "--cache-control", FLAGS_CACHE])
+    if done.returncode:
+        raise SystemExit(f"{FLAGS}: {(done.stderr or done.stdout)[-400:]}")
+    status, headers, body = _public(url)
+    read = json.loads(body) if status == 200 else None
+    print(json.dumps({"flags": wanted, "changed": True, "read_back": read == wanted,
+                      "cache": headers.get("Cache-Control") if status == 200 else None}, indent=1))
+    return 0 if read == wanted else 1
+
+
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     parser.add_argument("--wrangler", default=None, help="wrangler, or its bin/wrangler.js")
@@ -423,6 +507,15 @@ def main(argv=None) -> int:
     weights.add_argument("--bucket", default=BUCKET)
     weights.add_argument("--base", default=PUBLIC, help="the bucket's public address")
     weights.set_defaults(fn=models)
+    switches = commands.add_parser("flags", help="the site's switches (the kill switch)")
+    switches.add_argument("--viewer", default=None, choices=VIEWER)
+    switches.add_argument("--min-site-version", default=None, help="X.Y.Z, or '' to drop it")
+    switches.add_argument("--message", default=None, help="the paused sentence, or '' to drop it")
+    switches.add_argument("--model", action="append", default=[], metavar="NAME=on|off")
+    switches.add_argument("--show", action="store_true", help="print the flags, change nothing")
+    switches.add_argument("--bucket", default=BUCKET)
+    switches.add_argument("--base", default=PUBLIC, help="the bucket's public address")
+    switches.set_defaults(fn=flags)
     args = parser.parse_args(argv)
     return args.fn(args)
 
