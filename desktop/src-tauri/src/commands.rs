@@ -415,16 +415,20 @@ pub struct LocalFile {
     kind: String,
     /// The path as the server names it: what the page matches its spec by.
     path: String,
-    /// Where the page reads it: `<scheme base>/<grant id>`.
+    /// Where the page reads it: `<scheme base>/<grant id>` (a store's files
+    /// under it, `<url>/<key>`).
     url: Option<String>,
     size: Option<u64>,
+    /// An OME-Zarr store (a folder), not one file.
+    store: bool,
     error: Option<String>,
 }
 
 /// The files `/resource_routing`'s `local` names as the page's to read --
-/// the image and the mask, each only where the server serves it -- or why
-/// none are (the setting is off, or this is not the desktop app's server).
-pub fn local_files_named(answer: &serde_json::Value) -> Result<Vec<(String, String)>, String> {
+/// the image and the mask, each only where the server serves it, as `(kind,
+/// path, store)`, `store` for an OME-Zarr store (a folder) -- or why none are
+/// (the setting is off, or this is not the desktop app's server).
+pub fn local_files_named(answer: &serde_json::Value) -> Result<Vec<(String, String, bool)>, String> {
     let off = || "Browser rendering is off (Settings > Advanced)".to_string();
     let local = answer.get("local").ok_or_else(off)?;
     if local.get("setting").and_then(|v| v.as_str()) != Some("auto") {
@@ -437,7 +441,8 @@ pub fn local_files_named(answer: &serde_json::Value) -> Result<Vec<(String, Stri
             continue;
         }
         if let Some(path) = part.get("path").and_then(|v| v.as_str()).filter(|p| !p.is_empty()) {
-            named.push((kind.to_string(), path.to_string()));
+            let store = part.get("format").and_then(|v| v.as_str()) == Some("ome-zarr");
+            named.push((kind.to_string(), path.to_string(), store));
         }
     }
     Ok(named)
@@ -450,8 +455,9 @@ pub fn local_files_named(answer: &serde_json::Value) -> Result<Vec<(String, Stri
 /// The page names a PROJECT, never a path. Which files that project reads is
 /// asked of this launch's server, with the launch token, exactly as the page
 /// asked it (`/resource_routing`); the server names them only when the setting
-/// is on, and only regular files on this computer's own disks. Each is granted
-/// under an unguessable id; nothing else on this computer becomes readable.
+/// is on, and only regular files (or an OME-Zarr store's folder) on this
+/// computer's own disks. Each is granted under an unguessable id; nothing else
+/// on this computer becomes readable.
 #[tauri::command]
 pub async fn grant_local_files(app: AppHandle, datasource: String) -> Result<Vec<LocalFile>, String> {
     let ready = app.state::<ServerState>().0.ready().ok_or("the server is not running")?;
@@ -474,9 +480,16 @@ pub async fn grant_local_files(app: AppHandle, datasource: String) -> Result<Vec
     let base = crate::localfiles::page_base();
     Ok(local_files_named(&answer)?
         .into_iter()
-        .map(|(kind, path)| match grants.grant(Path::new(&path)) {
-            Ok((id, size)) => LocalFile { kind, path, url: Some(format!("{base}/{id}")), size: Some(size), error: None },
-            Err(error) => LocalFile { kind, path, url: None, size: None, error: Some(error) },
+        .map(|(kind, path, store)| {
+            let granted = if store {
+                grants.grant_store(Path::new(&path)).map(|id| (id, None))
+            } else {
+                grants.grant(Path::new(&path)).map(|(id, size)| (id, Some(size)))
+            };
+            match granted {
+                Ok((id, size)) => LocalFile { kind, path, url: Some(format!("{base}/{id}")), size, store, error: None },
+                Err(error) => LocalFile { kind, path, url: None, size: None, store, error: Some(error) },
+            }
         })
         .collect())
 }
@@ -613,8 +626,12 @@ mod tests {
         // On: the image and the mask, each only where it is served.
         let both = named(r#"{"routes": {}, "local": {"setting": "auto", "served": true, "path": "C:/a.ome.tif",
             "labels": {"served": true, "path": "C:/m.tif"}}}"#).unwrap();
-        assert_eq!(both, vec![("image".to_string(), "C:/a.ome.tif".to_string()),
-                              ("labels".to_string(), "C:/m.tif".to_string())]);
+        assert_eq!(both, vec![("image".to_string(), "C:/a.ome.tif".to_string(), false),
+                              ("labels".to_string(), "C:/m.tif".to_string(), false)]);
+        // An OME-Zarr image is a store (a folder), granted as one.
+        let store = named(r#"{"local": {"setting": "auto", "served": true, "path": "C:/a.ome.zarr",
+            "format": "ome-zarr", "labels": {"served": false}}}"#).unwrap();
+        assert_eq!(store, vec![("image".to_string(), "C:/a.ome.zarr".to_string(), true)]);
         let image_only = named(r#"{"local": {"setting": "auto", "served": true, "path": "C:/a.tif",
             "labels": {"served": false, "reason": "no mask"}}}"#).unwrap();
         assert_eq!(image_only.len(), 1);

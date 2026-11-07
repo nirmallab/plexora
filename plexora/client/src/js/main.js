@@ -417,6 +417,15 @@ async function init(config, savedViewTransform = null) {
     // node directly -- see services/resourceRouting.js. `let`, because a
     // reconnect mid-session replaces it -- see repairRouting below.
     let routing = await PlexoraRouting.load(datasource);
+    // The desktop app's Browser rendering (Settings > Advanced; the
+    // `local-browser` routing of services/resourceRouting.js): this page reads
+    // the project's own image and mask tiles itself. Its reader is loaded, and
+    // the files granted and opened, while the channels and metadata load
+    // below; the viewer takes it on before its first channel. Absent
+    // everywhere else, and then nothing here runs.
+    const localRoute = PlexoraRouting.localRoute ? PlexoraRouting.localRoute(routing) : null;
+    const attachingLocal = localRoute ? PlexoraRouting.attachLocal(datasource, localRoute) : null;
+    if (attachingLocal) attachingLocal.catch(() => {});  // reported where it is awaited
 
     // A layer that could not be loaded at all is already absent from `config`
     // by this point, so nothing below would ever mention it. Not awaited: the
@@ -541,15 +550,12 @@ async function init(config, savedViewTransform = null) {
     const imageArgs = [imgMetadata, numericData, eventHandler];
     const seaDragonViewer = new ImageViewer(config, dataLayer, ...imageArgs);
     __plexora.seaDragonViewer = seaDragonViewer;
-    // The desktop app's Browser rendering (Settings > Advanced; the
-    // `local-browser` routing of services/resourceRouting.js): this page reads
-    // the project's own image and mask tiles itself, the server everything
-    // else. Before any channel is added, so the first tiles are the page's.
-    // Absent everywhere else, and then nothing here runs.
-    const localRoute = PlexoraRouting.localRoute ? PlexoraRouting.localRoute(routing) : null;
-    if (localRoute && seaDragonViewer.tileFetch) {
+    // Browser rendering (attached above, as the routing came): the page's
+    // reader answers the image and mask tiles, the server everything else.
+    // Before any channel is added, so the first tiles are the page's.
+    if (attachingLocal && seaDragonViewer.tileFetch) {
         try {
-            const node = await PlexoraRouting.attachLocal(datasource, localRoute);
+            const node = await attachingLocal;
             seaDragonViewer.tileFetch.local = (request) => node.decoded(request.url, { raster: request.raster });
             seaDragonViewer.localTiles = Boolean(localRoute.image);
         } catch (error) {

@@ -1,0 +1,22 @@
+numcodecs.js 0.3.2 (npm "numcodecs", MIT, Trevor Manz), three files of its dist/ as published:
+
+  https://registry.npmjs.org/numcodecs/-/numcodecs-0.3.2.tgz
+  sha256 7edfa5a4358a028eb4e339d46ffbf8d8d7ce30e89e410f5ede1b0eadb556a15a
+
+  blosc.js            Blosc codec: c-blosc v1.18.1 compiled to WebAssembly (inline), with the
+                      compressors c-blosc bundles (BloscLZ, LZ4 1.9.2, Snappy 1.1.1, zlib 1.2.8,
+                      Zstandard 1.4.4) and its shuffle and bitshuffle filters
+  lz4.js              LZ4 codec (numcodecs' LZ4 framing: a 4-byte little-endian size, then a block)
+  chunk-INHXZS53.js   the base64 helper both import
+
+Source: https://github.com/manzt/numcodecs.js/tree/v0.3.2 (codecs/blosc/build.sh downloads and
+builds c-blosc v1.18.1, https://github.com/Blosc/c-blosc/tree/v1.18.1).
+
+Licences: LICENSE (numcodecs.js, MIT); LICENSES/ c-blosc's own (BLOSC.txt, BSD-3-Clause) and
+those of what it bundles: BITSHUFFLE.txt (MIT), FASTLZ.txt (MIT, BloscLZ's origin), LZ4.txt
+(BSD-2-Clause), SNAPPY.txt (BSD-3-Clause), ZLIB.txt (zlib), STDINT.txt (BSD-3-Clause),
+ZSTD.txt (Zstandard 1.4.4, BSD-3-Clause).
+
+Used by node/zarrReader.js (the browser node's OME-Zarr reader), loaded on the first chunk that
+needs it. Zstandard alone is zstddec (geotiff.js's dependency, already in the worker bundle);
+gzip and zlib are the browser's DecompressionStream.

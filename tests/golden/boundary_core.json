@@ -101,7 +101,7 @@
         "/client/src/js/services/appStatus.js?v=20260926_help_menu",
         "/client/src/js/services/telemetry.js?v=20260928_qc_owner",
         "/client/src/js/services/errors.js?v=20260927_telemetry",
-        "/client/src/js/services/resourceRouting.js?v=20261107_local_browser",
+        "/client/src/js/services/resourceRouting.js?v=20261107_zarr",
         "/client/src/js/services/resourceStatus.js?v=20261020_sftp_files",
         "/client/src/js/services/performanceTelemetry.js?v=20260927_telemetry",
         "/client/dist/vendor_bundle.js?v=20261106_client_seams",
@@ -319,7 +319,7 @@
         "/client/src/js/services/appStatus.js?v=20260926_help_menu",
         "/client/src/js/services/telemetry.js?v=20260928_qc_owner",
         "/client/src/js/services/errors.js?v=20260927_telemetry",
-        "/client/src/js/services/resourceRouting.js?v=20261107_local_browser",
+        "/client/src/js/services/resourceRouting.js?v=20261107_zarr",
         "/client/src/js/services/resourceStatus.js?v=20261020_sftp_files",
         "/client/src/js/services/performanceTelemetry.js?v=20260927_telemetry",
         "/client/dist/vendor_bundle.js?v=20261106_client_seams",
@@ -462,7 +462,7 @@
         "/client/src/js/views/chatPanel.js?v=20261012_merge_main",
         "/client/src/js/services/agentBridge.js?v=20261105_gating_v4",
         "/client/src/js/services/launchContext.js?v=20261005_bridge",
-        "/client/src/js/main.js?v=20261107_local_browser"
+        "/client/src/js/main.js?v=20261107_local_open"
       ],
       "status": 200,
       "styles": [
@@ -605,7 +605,7 @@
         "/client/src/js/services/appStatus.js?v=20260926_help_menu",
         "/client/src/js/services/telemetry.js?v=20260928_qc_owner",
         "/client/src/js/services/errors.js?v=20260927_telemetry",
-        "/client/src/js/services/resourceRouting.js?v=20261107_local_browser",
+        "/client/src/js/services/resourceRouting.js?v=20261107_zarr",
         "/client/src/js/services/resourceStatus.js?v=20261020_sftp_files",
         "/client/src/js/services/performanceTelemetry.js?v=20260927_telemetry",
         "/client/dist/vendor_bundle.js?v=20261106_client_seams",
@@ -748,7 +748,7 @@
         "/client/src/js/views/chatPanel.js?v=20261012_merge_main",
         "/client/src/js/services/agentBridge.js?v=20261105_gating_v4",
         "/client/src/js/services/launchContext.js?v=20261005_bridge",
-        "/client/src/js/main.js?v=20261107_local_browser"
+        "/client/src/js/main.js?v=20261107_local_open"
       ],
       "status": 200,
       "styles": [

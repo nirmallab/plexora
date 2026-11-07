@@ -159,9 +159,28 @@ try {
         const record = { files };
         out[name] = record;
         const where = await page.evaluate(async ([n, fs]) => {
+            const root = `/picked/np-${n}`;
+            const stores = fs.filter((f) => f.endsWith(".zarr"));
+            if (stores.length) {
+                // An OME-Zarr store, picked as a folder (node_fixtures.py
+                // lists its files beside it): mounted as a tree, every file
+                // the page's own as a folder pick makes it.
+                const out = [];
+                for (const store of stores) {
+                    const list = await (await fetch(`/fixture/${store}.files.json`)).json();
+                    const blobs = await Promise.all(list.map(async (rel) => ({
+                        name: `${store}/${rel}`,
+                        data: new File([await (await fetch(`/fixture/${store}/${rel}`)).blob()], rel.split("/").pop()),
+                    })));
+                    await window.PlexoraPython.mountTree(root, blobs);
+                    blobs.forEach((b) => window.PlexoraPicks.adopt(`${root}/${b.name}`, b.data));
+                    out.push(`${root}/${store}`);
+                }
+                return out;
+            }
             const picked = await Promise.all(fs.map(async (f) => new File(
                 [await (await fetch(`/fixture/${f}`)).blob()], f)));
-            const mounted = await window.PlexoraPython.mount(`/picked/np-${n}`, picked);
+            const mounted = await window.PlexoraPython.mount(root, picked);
             mounted.forEach((p, i) => window.PlexoraPicks.adopt(p, picked[i]));
             return mounted;
         }, [name, files]);

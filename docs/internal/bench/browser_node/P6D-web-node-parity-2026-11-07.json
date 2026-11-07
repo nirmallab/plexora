@@ -1,0 +1,554 @@
+{
+ "pyr16_zlib": {
+  "files": [
+   "pyr16_zlib.ome.tif"
+  ],
+  "project": "pyr16_zlib",
+  "mask": "ready",
+  "maskMs": 6,
+  "openMs": 156,
+  "image": {
+   "levels": [
+    [
+     3,
+     2200,
+     3000
+    ],
+    [
+     3,
+     1100,
+     1500
+    ],
+    [
+     3,
+     550,
+     750
+    ]
+   ],
+   "tiles": 42,
+   "compared": 42,
+   "mismatchCount": 0,
+   "mismatches": [],
+   "maxDiff": 0,
+   "ms": {
+    "python": {
+     "p50": 26.7,
+     "p95": 42.2
+    },
+    "browser": {
+     "p50": 34.9,
+     "p95": 44.4
+    }
+   },
+   "ok": true
+  },
+  "labels": null,
+  "ok": true
+ },
+ "pyr8_lzw": {
+  "files": [
+   "pyr8_lzw.ome.tif"
+  ],
+  "project": "pyr8_lzw",
+  "mask": "ready",
+  "maskMs": 3,
+  "openMs": 80,
+  "image": {
+   "levels": [
+    [
+     2,
+     1500,
+     2100
+    ],
+    [
+     2,
+     750,
+     1050
+    ]
+   ],
+   "tiles": 16,
+   "compared": 16,
+   "mismatchCount": 0,
+   "mismatches": [],
+   "maxDiff": 0,
+   "ms": {
+    "python": {
+     "p50": 14.7,
+     "p95": 29.5
+    },
+    "browser": {
+     "p50": 21.5,
+     "p95": 56.2
+    }
+   },
+   "ok": true
+  },
+  "labels": null,
+  "ok": true
+ },
+ "pyr16_raw": {
+  "files": [
+   "pyr16_raw.ome.tif"
+  ],
+  "project": "pyr16_raw",
+  "mask": "ready",
+  "maskMs": 4,
+  "openMs": 56,
+  "image": {
+   "levels": [
+    [
+     1,
+     1100,
+     1300
+    ],
+    [
+     1,
+     550,
+     650
+    ]
+   ],
+   "tiles": 5,
+   "compared": 5,
+   "mismatchCount": 0,
+   "mismatches": [],
+   "maxDiff": 0,
+   "ms": {
+    "python": {
+     "p50": 8.2,
+     "p95": 21
+    },
+    "browser": {
+     "p50": 11.7,
+     "p95": 33.2
+    }
+   },
+   "ok": true
+  },
+  "labels": null,
+  "ok": true
+ },
+ "pyr8_jpeg": {
+  "files": [
+   "pyr8_jpeg.ome.tif"
+  ],
+  "project": "pyr8_jpeg",
+  "mask": "ready",
+  "maskMs": 3,
+  "openMs": 61,
+  "image": {
+   "refused": "the page reads it differently: compression 7",
+   "fallback": {
+    "status": 200,
+    "by": null
+   },
+   "ok": true
+  },
+  "labels": null,
+  "ok": true
+ },
+ "pyr16_zstd": {
+  "files": [
+   "pyr16_zstd.ome.tif"
+  ],
+  "project": "pyr16_zstd",
+  "mask": "ready",
+  "maskMs": 2,
+  "openMs": 60,
+  "image": {
+   "levels": [
+    [
+     2,
+     1300,
+     1700
+    ],
+    [
+     2,
+     650,
+     850
+    ]
+   ],
+   "tiles": 10,
+   "compared": 10,
+   "mismatchCount": 0,
+   "mismatches": [],
+   "maxDiff": 0,
+   "ms": {
+    "python": {
+     "p50": 12.4,
+     "p95": 23
+    },
+    "browser": {
+     "p50": 21.7,
+     "p95": 39.6
+    }
+   },
+   "ok": true
+  },
+  "labels": null,
+  "ok": true
+ },
+ "pyr8_packbits": {
+  "files": [
+   "pyr8_packbits.ome.tif"
+  ],
+  "project": "pyr8_packbits",
+  "mask": "ready",
+  "maskMs": 4,
+  "openMs": 77,
+  "image": {
+   "levels": [
+    [
+     1,
+     1100,
+     1500
+    ],
+    [
+     1,
+     550,
+     750
+    ]
+   ],
+   "tiles": 5,
+   "compared": 5,
+   "mismatchCount": 0,
+   "mismatches": [],
+   "maxDiff": 0,
+   "ms": {
+    "python": {
+     "p50": 18.6,
+     "p95": 33.5
+    },
+    "browser": {
+     "p50": 16.6,
+     "p95": 39.7
+    }
+   },
+   "ok": true
+  },
+  "labels": null,
+  "ok": true
+ },
+ "flat16": {
+  "files": [
+   "flat16.tif"
+  ],
+  "project": "flat16",
+  "mask": "ready",
+  "maskMs": 4,
+  "openMs": 49,
+  "image": {
+   "refused": "one level only: Python serves the coarser ones",
+   "fallback": {
+    "status": 200,
+    "by": null
+   },
+   "ok": true
+  },
+  "labels": null,
+  "ok": true
+ },
+ "labels32": {
+  "files": [
+   "labels32_image.ome.tif",
+   "labels32_mask.tif"
+  ],
+  "project": "labels32_image",
+  "mask": "ready",
+  "maskMs": 509,
+  "openMs": 86,
+  "image": {
+   "levels": [
+    [
+     1,
+     1100,
+     1300
+    ],
+    [
+     1,
+     550,
+     650
+    ]
+   ],
+   "tiles": 5,
+   "compared": 5,
+   "mismatchCount": 0,
+   "mismatches": [],
+   "maxDiff": 0,
+   "ms": {
+    "python": {
+     "p50": 7.6,
+     "p95": 20.9
+    },
+    "browser": {
+     "p50": 9.9,
+     "p95": 32.3
+    }
+   },
+   "ok": true
+  },
+  "labels": {
+   "levels": [
+    [
+     0,
+     1100,
+     1300
+    ],
+    [
+     1,
+     550,
+     650
+    ]
+   ],
+   "dtype": "uint32",
+   "tiles": 5,
+   "compared": 5,
+   "mismatchCount": 0,
+   "mismatches": [],
+   "maxDiff": 0,
+   "ms": {
+    "python": {
+     "p50": 14.8,
+     "p95": 37.5
+    },
+    "browser": {
+     "p50": 19.5,
+     "p95": 52.4
+    }
+   },
+   "ok": true
+  },
+  "ok": true
+ },
+ "labels16": {
+  "files": [
+   "labels16_image.ome.tif",
+   "labels16_mask.tif"
+  ],
+  "project": "labels16_image",
+  "mask": "ready",
+  "maskMs": 515,
+  "openMs": 91,
+  "image": {
+   "levels": [
+    [
+     1,
+     1100,
+     1300
+    ],
+    [
+     1,
+     550,
+     650
+    ]
+   ],
+   "tiles": 5,
+   "compared": 5,
+   "mismatchCount": 0,
+   "mismatches": [],
+   "maxDiff": 0,
+   "ms": {
+    "python": {
+     "p50": 8.4,
+     "p95": 22.1
+    },
+    "browser": {
+     "p50": 12.4,
+     "p95": 33.1
+    }
+   },
+   "ok": true
+  },
+  "labels": {
+   "levels": [
+    [
+     0,
+     1100,
+     1300
+    ],
+    [
+     1,
+     550,
+     650
+    ]
+   ],
+   "dtype": "uint16",
+   "tiles": 5,
+   "compared": 5,
+   "mismatchCount": 0,
+   "mismatches": [],
+   "maxDiff": 0,
+   "ms": {
+    "python": {
+     "p50": 14.7,
+     "p95": 46
+    },
+    "browser": {
+     "p50": 20.4,
+     "p95": 59.4
+    }
+   },
+   "ok": true
+  },
+  "ok": true
+ },
+ "labels_flat": {
+  "files": [
+   "labels_flat_image.ome.tif",
+   "labels_flat_mask.tif"
+  ],
+  "project": "labels_flat_image",
+  "mask": "ready",
+  "maskMs": 546,
+  "openMs": 73,
+  "image": {
+   "levels": [
+    [
+     1,
+     1100,
+     1300
+    ],
+    [
+     1,
+     550,
+     650
+    ]
+   ],
+   "tiles": 5,
+   "compared": 5,
+   "mismatchCount": 0,
+   "mismatches": [],
+   "maxDiff": 0,
+   "ms": {
+    "python": {
+     "p50": 7.5,
+     "p95": 22.4
+    },
+    "browser": {
+     "p50": 10.4,
+     "p95": 32.7
+    }
+   },
+   "ok": true
+  },
+  "labels": {
+   "levels": [
+    [
+     0,
+     1100,
+     1300
+    ],
+    [
+     1,
+     550,
+     650
+    ]
+   ],
+   "dtype": "uint32",
+   "tiles": 5,
+   "compared": 5,
+   "mismatchCount": 0,
+   "mismatches": [],
+   "maxDiff": 0,
+   "ms": {
+    "python": {
+     "p50": 15.3,
+     "p95": 30.8
+    },
+    "browser": {
+     "p50": 19.4,
+     "p95": 50.4
+    }
+   },
+   "ok": true
+  },
+  "ok": true
+ },
+ "zarr_v2_blosc": {
+  "files": [
+   "zarr_v2_blosc.ome.zarr"
+  ],
+  "project": "zarr_v2_blosc",
+  "mask": "ready",
+  "maskMs": 3,
+  "openMs": 84,
+  "image": {
+   "levels": [
+    [
+     3,
+     2200,
+     3000
+    ],
+    [
+     3,
+     1100,
+     1500
+    ],
+    [
+     3,
+     550,
+     750
+    ]
+   ],
+   "tiles": 42,
+   "compared": 42,
+   "mismatchCount": 0,
+   "mismatches": [],
+   "maxDiff": 0,
+   "ms": {
+    "python": {
+     "p50": 19.7,
+     "p95": 28
+    },
+    "browser": {
+     "p50": 23.1,
+     "p95": 31.4
+    }
+   },
+   "ok": true
+  },
+  "labels": null,
+  "ok": true
+ },
+ "zarr_v3_sharded": {
+  "files": [
+   "zarr_v3_sharded.ome.zarr"
+  ],
+  "project": "zarr_v3_sharded",
+  "mask": "ready",
+  "maskMs": 4,
+  "openMs": 79,
+  "image": {
+   "levels": [
+    [
+     2,
+     1500,
+     2100
+    ],
+    [
+     2,
+     750,
+     1050
+    ]
+   ],
+   "tiles": 16,
+   "compared": 16,
+   "mismatchCount": 0,
+   "mismatches": [],
+   "maxDiff": 0,
+   "ms": {
+    "python": {
+     "p50": 12.5,
+     "p95": 25.4
+    },
+    "browser": {
+     "p50": 10.6,
+     "p95": 34.6
+    }
+   },
+   "ok": true
+  },
+  "labels": null,
+  "ok": true
+ },
+ "errors": []
+}

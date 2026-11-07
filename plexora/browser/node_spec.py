@@ -32,6 +32,7 @@ becomes "a regular file on a local disk"; every other refusal is the website's.
 from __future__ import annotations
 
 import os
+import struct
 
 _TIFF = (".tif", ".tiff")
 
@@ -59,13 +60,88 @@ def is_local_file(path: str) -> bool:
     return os.path.isabs(path) and os.path.isfile(path)
 
 
+def is_local_store(path: str) -> bool:
+    """An OME-Zarr store on this computer's own disks: a folder with zarr
+    metadata (v2 or v3), not a URL, a node's address or a network share."""
+    if not path or "://" in path or path.startswith(("\\\\", "//")):
+        return False
+    if not (os.path.isabs(path) and os.path.isdir(path)):
+        return False
+    return any(os.path.isfile(os.path.join(path, marker)) for marker in (".zattrs", ".zgroup", "zarr.json"))
+
+
+#: path -> ((size, mtime_ns), offsets): `main_ifds`'s answers, until the file changes.
+_IFDS: dict[str, tuple[tuple[int, int], list[int] | None]] = {}
+#: More main IFDs than the page's reader opens (node/tiffReader.js).
+_MAX_IFDS = 4096
+
+
+def main_ifds(path: str) -> list[int] | None:
+    """The offsets of a TIFF's main IFDs, in the order the file chains them,
+    or None. The page's reader walks that chain one read after another -- forty
+    reads through the desktop shell's scheme for a forty-channel OME-TIFF whose
+    IFDs sit beside each plane's gigabytes -- and with these it reads them all
+    at once (node/tiffReader.js `mainIfdsAt`, which takes them only when they
+    ARE the chain it finds). Kept per file until its size or time changes."""
+    try:
+        stat = os.stat(path)
+    except OSError:
+        return None
+    stamp = (stat.st_size, stat.st_mtime_ns)
+    held = _IFDS.get(path)
+    if held is not None and held[0] == stamp:
+        return held[1]
+    try:
+        with open(path, "rb") as fh:
+            offsets = _walk_ifds(fh)
+    except (OSError, struct.error):  # only a hint: the page walks the chain itself
+        offsets = None
+    if len(_IFDS) >= 64:
+        _IFDS.clear()
+    _IFDS[path] = (stamp, offsets)
+    return offsets
+
+
+def _walk_ifds(fh) -> list[int] | None:
+    """The main IFD chain of an open TIFF, as a reader walks it: the header's
+    first offset, then each IFD's next, until 0. None for anything that is not
+    a classic or Big TIFF, a chain that loops, or one longer than the page's
+    reader opens."""
+    head = fh.read(16)
+    order = {b"II": "<", b"MM": ">"}.get(head[:2])
+    if order is None or len(head) < 8:
+        return None
+    version = struct.unpack(order + "H", head[2:4])[0]
+    if version == 42:
+        at = struct.unpack(order + "I", head[4:8])[0]
+        count, entry, offset = "H", 12, "I"
+    elif version == 43 and len(head) == 16:
+        at = struct.unpack(order + "Q", head[8:16])[0]
+        count, entry, offset = "Q", 20, "Q"
+    else:
+        return None
+    count_size = struct.calcsize(count)
+    out = []
+    seen = set()
+    while at:
+        if at in seen or len(out) >= _MAX_IFDS:
+            return None
+        seen.add(at)
+        out.append(int(at))
+        fh.seek(at)
+        entries = struct.unpack(order + count, fh.read(count_size))[0]
+        fh.seek(at + count_size + entries * entry)
+        at = struct.unpack(order + offset, fh.read(struct.calcsize(offset)))[0]
+    return out or None
+
+
 def describe(name: str, local: bool = False) -> dict:
     """For project `name`, loading it if need be: the image as `{served,
     reason?, path, format, levels: [[c, h, w], ...], dtype, channels: [name,
     ...]}`, with `tile: [w, h]` (the grid of every tile route), `generation`
     and `labels` (the mask, `_labels`) beside it. `local`: the desktop app's
     question -- a file on this computer instead of one the website's page
-    holds."""
+    holds -- whose served image and mask also carry `ifds` (`main_ifds`)."""
     from plexora.server.models import data_model
     from plexora.server.models.project import IMAGE_TYPE_BRIGHTFIELD, Project
     from plexora.server.providers.browser import PAGE_ROOTS
@@ -90,8 +166,14 @@ def describe(name: str, local: bool = False) -> dict:
     path = getattr(provider, "_path", None) or ""
     out["path"] = path
     out["format"] = format_of(path)
+    from plexora.server.utils.ome_zarr import NgffPyramid
+
+    if isinstance(data_model.channels, NgffPyramid):
+        out["format"] = "ome-zarr"  # whatever the store's folder is called
     if local:
-        if not is_local_file(path):
+        # An OME-Zarr store is a folder; anything else one regular file.
+        here = is_local_store(path) if out["format"] == "ome-zarr" else is_local_file(path)
+        if not here:
             return refuse("not a file on this computer's own disks")
     elif not path.startswith(PAGE_ROOTS):
         return refuse("the file is not one the page holds")
@@ -109,6 +191,8 @@ def describe(name: str, local: bool = False) -> dict:
                    levels=[[3, level["height"], level["width"]] for level in slide["levels"]],
                    channels=[brightfield.RGB_CHANNEL_KEY])
         return out
+    if out["format"] == "ome-zarr":
+        return _zarr_image(out, data_model.channels, path, config, refuse)
     if not path.lower().endswith(_TIFF) or os.path.isdir(path):
         return refuse("not a TIFF file")
     group = data_model.channels
@@ -124,6 +208,47 @@ def describe(name: str, local: bool = False) -> dict:
         return refuse(f"{dtype} samples in {len(levels[0])} dimensions")
     out.update(served=True, levels=levels, dtype=dtype,
                channels=[c.get("fullname") or c.get("name") for c in config["imageData"]])
+    if local:
+        out["ifds"] = main_ifds(path)
+    return out
+
+
+def _zarr_image(out: dict, pyramid, path: str, config: dict, refuse) -> dict:
+    """An OME-Zarr image as the page's reader takes it (node/zarrReader.js):
+    `levels` every level Python serves, `zarr` the store's own -- those that
+    halve from level 0, `ome_zarr.open_image`'s `base_levels` -- as `{axes,
+    t, z, arrays: [{path, shape, format}]}`, each array's path in the store,
+    its full shape and zarr format. The page reads each array's metadata
+    itself and refuses what it would read differently; the levels Python
+    derived into the project (`build_extension`) stay Python's."""
+    from plexora.server.utils import ome_zarr
+
+    if not isinstance(pyramid, ome_zarr.NgffPyramid):
+        return refuse("the store is not read as an OME-Zarr pyramid")
+    if not pyramid.path or os.path.normpath(str(pyramid.path)) != os.path.normpath(path):
+        return refuse("the pyramid is not the store's")
+    try:
+        names = ome_zarr._dataset_paths(pyramid.multiscale)[:pyramid.base_levels]
+        levels = [[int(side) for side in pyramid[str(i)].shape] for i in range(len(pyramid))]
+        arrays, pins = [], {"t": 0, "z": 0}
+        for index, name in enumerate(names):
+            level = pyramid[str(index)]
+            array = getattr(level, "_array", level)
+            if index == 0:
+                pins = dict(getattr(level, "_pins", pins))
+            arrays.append({"path": name, "shape": [int(side) for side in array.shape],
+                           "format": int(array.metadata.zarr_format)})
+        dtype = str(pyramid["0"].dtype)
+    except Exception as exc:  # noqa: BLE001 -- not the shape this reads
+        return refuse(f"the store is not read as levels ({exc})")
+    if not arrays:
+        return refuse("no level of the store halves from the first")
+    if dtype not in ("uint8", "uint16") or any(len(shape) != 3 for shape in levels):
+        return refuse(f"{dtype} samples")
+    out.update(served=True, levels=levels, dtype=dtype,
+               channels=[c.get("fullname") or c.get("name") for c in config["imageData"]],
+               zarr={"axes": list(pyramid.axes), "t": int(pins.get("t", 0)), "z": int(pins.get("z", 0)),
+                     "arrays": arrays})
     return out
 
 
@@ -179,6 +304,8 @@ def _labels(data_model, config, local: bool = False) -> dict:
     if dtype not in ("uint8", "uint16", "uint32", "int32") or any(len(level) != 3 for level in levels):
         return refuse(f"{dtype} labels in {len(levels[0]) - 1} dimensions")
     out.update(served=True, levels=levels, dtype=dtype)
+    if local:
+        out["ifds"] = main_ifds(path)
     return out
 
 

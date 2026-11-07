@@ -12,7 +12,8 @@
  *   image's and the mask's files, every level's shape, the channels, the tile
  *   grid), or why the page must not answer;
  * - the page opens the same files in pools of workers (workers/tiffWorker.js,
- *   node/tiffReader.js) and checks every level's shape, the channel count, the
+ *   node/tiffReader.js; an OME-Zarr store's levels with node/zarrReader.js,
+ *   the store's own levels only) and checks every level's shape, the channel count, the
  *   sample size and the compression against Python's before it answers a
  *   single tile;
  * - a tile is the window `data_model.read_tile` reads, as `encode_tile_array`
@@ -58,6 +59,8 @@
     // Under the site's base path (services/shell.js `BASE`; "" at its root).
     const WORKER = (globalThis.PLEXORA_SITE_BASE || "") + "/client/dist/tiffWorker_bundle.js";
     const WORKERS = Math.min(6, Math.max(2, Math.floor((global.navigator.hardwareConcurrency || 4) / 2)));
+    //: A mask's pool: its tiles are fewer (one plane).
+    const LABEL_WORKERS = Math.max(2, Math.floor(WORKERS / 2));
     //: Workers for a whole-plane scan (`windowOf`), which nothing else waits beside.
     const SCAN_WORKERS = Math.min(16, Math.max(2, (global.navigator.hardwareConcurrency || 4) - 2));
     const TILE = /^\/generated\/data\/([^/]+)\/([^/]+)\/(\d+)\/(\d+)_(\d+)\.png$/;
@@ -161,6 +164,13 @@
                 const worker = new Worker(WORKER);
                 worker.inflight = 0;
                 worker.onmessage = ({ data }) => {
+                    if (data && data.ask !== undefined) {
+                        // A picked OME-Zarr folder's file, asked by the
+                        // worker's reader (workers/tiffWorker.js): only
+                        // inside the store this pool opened.
+                        worker.postMessage({ answer: data.ask, file: this.fileInStore(data.path) });
+                        return;
+                    }
                     const entry = this.pending.get(data.id);
                     if (!entry) return;
                     this.pending.delete(data.id);
@@ -181,12 +191,34 @@
             });
         }
 
-        /** Open `found` in every worker: `{file}` (a File the user picked) or
+        /** Open `found` in every worker: `{file}` (a File the user picked),
          *  `{url, size}` (a file read by byte range: the desktop's
-         *  `plexora-file` scheme). */
-        async open(found) {
-            const results = await Promise.all(this.workers.map((w) => this.call(w, { op: "open", ...found })));
-            return results[0].geometry;
+         *  `plexora-file` scheme), or an OME-Zarr store, `{store: {page} |
+         *  {base}, zarr}` (node/zarrReader.js). One worker reads the header and IFDs from
+         *  the file -- a chain of small reads, one after another, scattered
+         *  over the file, or all at once at `ifds` (the main IFDs' offsets,
+         *  from the desktop's spec, checked there against the chain) -- and
+         *  records them; the others open from what it read (node/
+         *  tiffReader.js `seed`), with no read of their own. */
+        /** A picked file under the store this pool opened (`store.page`),
+         *  or null: never a path outside it. */
+        fileInStore(path) {
+            const root = this.storeRoot;
+            if (!root || typeof path !== "string" || !path.startsWith(`${root}/`)
+                || path.split("/").some((part) => part === "..")) return null;
+            return global.PlexoraPicks ? global.PlexoraPicks.fileFor(path) : null;
+        }
+
+        async open(found, ifds = null) {
+            this.storeRoot = found.store && found.store.page ? found.store.page : null;
+            const t0 = performance.now();
+            const [first, ...rest] = this.workers;
+            const opened = await this.call(first, { op: "open", ...found, record: true, ifds });
+            const tFirst = performance.now();
+            const seed = opened.seed || null;
+            await Promise.all(rest.map((w) => this.call(w, { op: "open", ...found, seed })));
+            this.timing = { ...opened.timing, firstMs: tFirst - t0, allMs: performance.now() - t0 };
+            return opened.geometry;
         }
 
         least() {
@@ -257,9 +289,15 @@
     }
 
     function imageDiffers(spec, geometry) {
-        if (!EXACT.has(geometry.compression)) return `compression ${geometry.compression}`;
+        // An OME-Zarr store: its codecs were checked as it opened, and its
+        // levels are the store's own (`spec.zarr.arrays`); a level past them
+        // is one Python derived into the project, and Python's.
+        const zarr = geometry.layout === "zarr";
+        if (!zarr && !EXACT.has(geometry.compression)) return `compression ${geometry.compression}`;
         if (geometry.numChannels !== spec.levels[0][0]) return "a different channel count";
-        for (let i = 0; i < spec.levels.length; i += 1) {
+        const levels = zarr ? geometry.levels.length : spec.levels.length;
+        if (zarr && (!levels || levels > spec.levels.length)) return `${levels} levels`;
+        for (let i = 0; i < levels; i += 1) {
             const [, height, width] = spec.levels[i];
             const differs = levelDiffers(geometry, i, height, width);
             if (differs) return differs;
@@ -292,8 +330,14 @@
     let source = {
         spec: (name) => global.PlexoraPython.nodeSpec(name),
         files: async () => (path) => {
-            const file = global.PlexoraPicks ? global.PlexoraPicks.fileFor(path) : null;
-            return file ? { file } : null;
+            const picks = global.PlexoraPicks;
+            const file = picks ? picks.fileFor(path) : null;
+            if (file) return { file };
+            // A picked OME-Zarr folder: its files are asked for one by one
+            // (TiffPool.fileInStore), so the store is its path.
+            const folder = picks && picks.filesUnder && typeof path === "string" && path
+                && picks.filesUnder(path).length;
+            return folder ? { store: { page: path } } : null;
         },
     };
 
@@ -310,24 +354,35 @@
     }
 
     //: What a part holds open, to tell whether a new check names the same file.
-    const handleOf = (found) => (found ? found.file || found.url || null : null);
+    const handleOf = (found) => (found
+        ? found.file || found.url || (found.store && (found.store.page || found.store.base)) || null : null);
 
     //: One file's part of a project: its pool, once the page reads it as
-    //: Python does.
-    async function openPart(part, size, differs, files) {
-        if (!part || !part.served) return { refused: part ? part.reason : "nothing to serve" };
+    //: Python does. `warm`: a pool already started for it (`check`), taken
+    //: or closed here.
+    async function openPart(part, size, differs, files, warm = null) {
+        const refuse = (refused) => {
+            if (warm) warm.close();
+            return { refused };
+        };
+        if (!part || !part.served) return refuse(part ? part.reason : "nothing to serve");
         const found = files(part.path);
         const file = handleOf(found);
-        if (!file) return { refused: "the page does not hold that file now" };
-        const pool = new TiffPool(size);
+        if (!file) return refuse("the page does not hold that file now");
+        // An OME-Zarr store opens with what Python reads of it (`zarr`); a
+        // TIFF with its main IFDs' offsets where the spec has them.
+        if (found.store && !part.zarr) return refuse("a folder, but not an OME-Zarr Python reads");
+        const pool = warm || new TiffPool(size);
         try {
-            const geometry = await pool.open(found);
+            const geometry = await pool.open(part.zarr ? { ...found, zarr: part.zarr } : found,
+                                             Array.isArray(part.ifds) ? part.ifds : null);
             const why = differs(part, geometry);
             if (why) {
                 pool.close();
                 return { file, geometry, refused: `the page reads it differently: ${why}` };
             }
-            return { file, geometry, pool };
+            // `opening`: the first worker's open, read from the file (reads, ms).
+            return { file, geometry, pool, opening: pool.timing };
         } catch (error) {
             pool.close();
             return { file, refused: String(error && error.message || error).split(" | ")[0] };
@@ -341,12 +396,29 @@
         const spec = await source.spec(name);
         const answered = performance.now();
         const served = Boolean(spec && (spec.served || (spec.labels && spec.labels.served)));
-        const files = served ? await source.files(name, spec) : () => null;
+        // A project's first check: its workers start now and load their
+        // script while the files are found (on the desktop app, granted by
+        // the shell after a round trip to the server).
+        const slide = spec && spec.kind === "slide";
+        const warm = served && !held.has(name) ? {
+            image: !slide && spec.served ? new TiffPool(WORKERS) : null,
+            labels: spec.labels && spec.labels.served ? new TiffPool(LABEL_WORKERS) : null,
+        } : { image: null, labels: null };
+        const unwarm = () => [warm.image, warm.labels].forEach((pool) => pool && pool.close());
+        let files;
+        try {
+            files = served ? await source.files(name, spec) : () => null;
+        } catch (error) {
+            unwarm();
+            throw error;
+        }
+        const granted = performance.now();
         const before = held.get(name);
         // The same load of the same files: what is open stays open.
         if (before && JSON.stringify(before.spec) === JSON.stringify(spec)
             && (!before.image.pool || sameFile(before.image, spec.path, files))
             && (!before.labels.pool || sameFile(before.labels, spec.labels && spec.labels.path, files))) {
+            unwarm();
             return before;
         }
         if (before) close(before);
@@ -354,14 +426,14 @@
         const [image, labels] = await Promise.all([
             // A whole-slide image the page reads with openslide-js
             // (services/browserSlides.js): no TIFF pool, its tiles are cut there.
-            spec.kind === "slide" ? Promise.resolve(spec.served ? { slide: spec.slide } : { refused: spec.reason })
-                : openPart(spec, WORKERS, imageDiffers, files),
-            openPart(spec.labels, Math.max(2, Math.floor(WORKERS / 2)), labelsDiffer, files),
+            slide ? Promise.resolve(spec.served ? { slide: spec.slide } : { refused: spec.reason })
+                : openPart(spec, WORKERS, imageDiffers, files, warm.image),
+            openPart(spec.labels, LABEL_WORKERS, labelsDiffer, files, warm.labels),
         ]);
-        //: When the check was asked and answered, and when the files were
-        //: open (performance.now), for the diagnostics.
+        //: When the check was asked and answered, the files granted (or
+        //: found), and the files open (performance.now), for the diagnostics.
         const entry = { spec, image, labels, checkedAt: Date.now(),
-                        timing: { asked, answered, opened: performance.now() } };
+                        timing: { asked, answered, granted, opened: performance.now() } };
         held.set(name, entry);
         return entry;
     }
@@ -467,6 +539,8 @@
         const channelNum = Number(index);
         if (!part.pool) return null;
         if (channelNum >= entry.spec.levels[0][0] || levelNum >= entry.spec.levels.length) return null;
+        // A level the file does not hold (an OME-Zarr's derived ones): Python's.
+        if (levelNum >= part.geometry.levels.length) return null;
         const tile = await part.pool.tile(channelNum, levelNum, Number(tx), Number(ty), tw, th);
         if (!tile.width || !tile.height) return null;
         return { label: false, tile };

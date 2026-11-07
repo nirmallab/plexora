@@ -51,10 +51,15 @@ function parseArgs(argv) {
 const BLOCKED = [/\/save_channel_list\b/, /\/view_state\//, /\/viewer_prefs\b/];
 
 async function blockWrites(browser, base = null) {
-    // Only the server's own requests: a desktop window's reads of its files
-    // (the `plexora-file` scheme) are not the tour's to hold up.
-    const urlPattern = base ? `${base.replace(/\/$/, "")}/*` : "*";
-    await browser.send("Fetch.enable", { patterns: [{ urlPattern, requestStage: "Request" }] });
+    // Only the routes that write, on the server's own origin: a request paused
+    // here waits for this process's answer over CDP, so pausing every request
+    // (as this did until 2026-11-07) added that round trip to each tile the
+    // server answers and to none the page reads itself (the desktop app's
+    // `plexora-file` scheme), which favoured the page's arm.
+    const prefix = base ? `${base.replace(/\/$/, "")}/` : "";
+    const patterns = ["*save_channel_list*", "*view_state/*", "*viewer_prefs*"]
+        .map((route) => ({ urlPattern: `${prefix}${route}`, requestStage: "Request" }));
+    await browser.send("Fetch.enable", { patterns });
     browser.ws.addEventListener("message", async (event) => {
         const msg = JSON.parse(event.data);
         if (msg.method !== "Fetch.requestPaused") return;
