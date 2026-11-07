@@ -602,25 +602,26 @@ def _write_flat_columns(dataset, kind, labels, names, category_column,
     if source is None or not source.path:
         raise ValueError("no table file is recorded for this project")
 
-    frame = read_flat_table(source_writes.current(source.path), kind)
-    taken = [c for c in (category_column, name_column) if c in frame.columns]
-    if taken and not replace:
-        raise ColumnExists(sorted(frame.columns),
-                           _suggest_prefix(category_column, frame.columns))
-    if frame.height != len(labels):
-        raise ValueError(
-            f"this project's table has {len(labels)} cells but the file now has "
-            f"{frame.height} rows; reopen the project and try again"
-        )
+    # On the website a picked file is written as a staged copy the page saves
+    # over the original (server/utils/source_writes.py), and read from it:
+    # Pyodide's polars cannot read the page's read-only mount.
+    with source_writes.writable(source.path) as target:
+        frame = read_flat_table(target, kind)
+        taken = [c for c in (category_column, name_column) if c in frame.columns]
+        if taken and not replace:
+            raise ColumnExists(sorted(frame.columns),
+                               _suggest_prefix(category_column, frame.columns))
+        if frame.height != len(labels):
+            raise ValueError(
+                f"this project's table has {len(labels)} cells but the file now has "
+                f"{frame.height} rows; reopen the project and try again"
+            )
 
-    frame = frame.with_columns([
-        pl.Series(category_column, labels, dtype=pl.Utf8),
-        pl.Series(name_column, names, dtype=pl.Utf8),
-    ])
+        frame = frame.with_columns([
+            pl.Series(category_column, labels, dtype=pl.Utf8),
+            pl.Series(name_column, names, dtype=pl.Utf8),
+        ])
 
-    # On the website, a picked file's staged copy: the page saves it over the
-    # original (server/utils/source_writes.py).
-    with source_writes.writable(source.path, copy=False) as target:
         directory = os.path.dirname(os.path.abspath(target)) or "."
         handle, temporary = tempfile.mkstemp(suffix=Path(target).suffix,
                                              dir=directory)

@@ -385,29 +385,29 @@ def _write_flat(dataset, kind, qc, seg, replace):
     from plexora.server.utils import source_writes
 
     source = dataset.table.source
-    frame = read_flat_table(source_writes.current(source.path), kind)
-    added = []
-    if qc is not None:
-        added += [_flat_series(name, qc[0][name]) for name in qc[0].columns]
-    if seg is not None:
-        added += [seg[0][name] for name in seg[0].columns]
-    written = [s.name for s in added]
-    taken = [c for c in written if c in frame.columns]
-    if taken and not replace:
-        raise Exists(taken)
-    if frame.height != (added[0].len() if added else frame.height):
-        raise ValueError(f"this project's table has {added[0].len()} cells but the file now "
-                         f"has {frame.height} rows; reopen the project and try again")
-    # On the website, a picked file's staged copy, which the page saves over
-    # the original (server/utils/source_writes.py); refused there, before the
-    # backup, unless the user allowed it.
-    with source_writes.writable(source.path, copy=False) as target:
+    # On the website a picked file is written as a staged copy the page saves
+    # over the original (server/utils/source_writes.py), read from it (Pyodide's
+    # polars cannot read the page's read-only mount), and refused there before
+    # anything -- the backup included -- unless the user allowed it.
+    with source_writes.writable(source.path) as target:
+        frame = read_flat_table(target, kind)
+        added = []
+        if qc is not None:
+            added += [_flat_series(name, qc[0][name]) for name in qc[0].columns]
+        if seg is not None:
+            added += [seg[0][name] for name in seg[0].columns]
+        written = [s.name for s in added]
+        taken = [c for c in written if c in frame.columns]
+        if taken and not replace:
+            raise Exists(taken)
+        if frame.height != (added[0].len() if added else frame.height):
+            raise ValueError(f"this project's table has {added[0].len()} cells but the file now "
+                             f"has {frame.height} rows; reopen the project and try again")
         folder = _backup_folder(dataset)
         backup = None
         if folder is not None:
             backup = str(folder / Path(source.path).name)
-            # What the file holds now: the staged copy once a write made one.
-            shutil.copy2(target if os.path.exists(target) else source.path, backup)
+            shutil.copy2(target, backup)
         frame = frame.with_columns(added)
         directory = os.path.dirname(os.path.abspath(target)) or "."
         handle, temporary = tempfile.mkstemp(suffix=Path(target).suffix, dir=directory)
