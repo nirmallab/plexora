@@ -11,6 +11,11 @@ Writes `<out>/py/<plexora version>/`:
   serves `client/` and every plugin's `static/` itself; templates stay, since
   the app renders pages and panels), and the pure-Python wheels Pyodide does
   not ship, at the versions this checkout's uv.lock pins;
+- `ort/`: onnxruntime-web (`ORT_WEB`, MIT), what magic select's model runs on
+  in the page (client workers/onnxWorker.js): the WebGPU build and the
+  WebAssembly-only one, their licence and third-party notices, and `ort.json`
+  naming the version -- here, not in the static site, because the WebGPU
+  build's wasm is over Pages' 25 MiB per file;
 - `stages.json`: per stage, the lockfile packages to `loadPackage` and the
   wheel files to unpack, with their bytes;
 - `manifest.json`: every file with its size and sha256, the Pyodide and Python
@@ -25,12 +30,15 @@ and the browser inflates natively rather than Python's zipfile in wasm (P9:
 46 MB instead of 88).
 
 The Pyodide release (~320 MB) is downloaded once into
-`$PLEXORA_BENCH_HOME/browser_node/pyodide/<V>/` (P9's cache).
+`$PLEXORA_BENCH_HOME/browser_node/pyodide/<V>/` (P9's cache), and
+onnxruntime-web's npm package (~38 MB) into `.../onnxruntime-web/<V>/`; each
+is checked against its pinned sha256 before anything is taken from it.
 """
 
 from __future__ import annotations
 
 import argparse
+import fnmatch
 import hashlib
 import json
 import os
@@ -53,6 +61,27 @@ URL = f"https://github.com/pyodide/pyodide/releases/download/{PYODIDE}/pyodide-{
 PYODIDE_SHA256 = "192b5864e6e6d30ab074861af800cb8b4acb0998ef0f9342c3367448aeb86645"
 REPO = Path(__file__).resolve().parents[2]
 CACHE = Path(os.environ.get("PLEXORA_BENCH_HOME") or "C:/plexora-bench") / "browser_node" / "pyodide"
+
+#: onnxruntime-web, magic select's runtime in the page: the release the
+#: desktop's onnxruntime is (1.30.0), so both run the same kernels' sources.
+ORT_WEB = "1.30.0"
+ORT_URL = f"https://registry.npmjs.org/onnxruntime-web/-/onnxruntime-web-{ORT_WEB}.tgz"
+#: The npm tarball's sha256 (npm's own integrity is sha512-q0y+JrrtukXS...).
+ORT_SHA256 = "d2228df7e4616bc3348bf504ee888f3bec43789a273f0a63f3e68d203ce3bf71"
+#: The licence texts, which the npm package does not carry, from the release's tag.
+ORT_NOTICES = {
+    "LICENSE.txt": (f"https://raw.githubusercontent.com/microsoft/onnxruntime/v{ORT_WEB}/LICENSE",
+                    "2f07c72751aed99790b8a4869cf2311df85a860b22ded05fa22803587a48922c"),
+    "ThirdPartyNotices.txt": (
+        f"https://raw.githubusercontent.com/microsoft/onnxruntime/v{ORT_WEB}/ThirdPartyNotices.txt",
+        "143764b952fdb1a7c69ce653bfba74a7744d6a8a573bfb73e235fba356c83de3"),
+}
+#: What the page loads: the WebGPU build (its WebGPU and WebAssembly execution
+#: providers in one module) and the WebAssembly-only build for a browser with
+#: no GPU adapter (half the size), each a loader, its glue and its wasm.
+ORT_FILES = ("ort.webgpu.min.mjs", "ort-wasm-simd-threaded.asyncify.mjs",
+             "ort-wasm-simd-threaded.asyncify.wasm", "ort.wasm.min.mjs",
+             "ort-wasm-simd-threaded.mjs", "ort-wasm-simd-threaded.wasm")
 SITE = "/lib/python3.14/site-packages"
 CORE = ("pyodide.js", "pyodide.mjs", "pyodide.asm.mjs", "pyodide.asm.wasm", "python_stdlib.zip",
         "package.json")
@@ -89,6 +118,74 @@ def release() -> Path:
     with tarfile.open(archive, "r:bz2") as tar:
         tar.extractall(CACHE / PYODIDE, filter="data")
     return dist
+
+
+def _fetch(url: str, target: Path) -> None:
+    part = target.with_name(target.name + ".part")
+    print(f"downloading {url}", flush=True)
+    with urllib.request.urlopen(url) as response, part.open("wb") as out:
+        shutil.copyfileobj(response, out, 1 << 20)
+    part.replace(target)
+
+
+def ort_release() -> Path:
+    """onnxruntime-web's files (`ORT_FILES` and the notices), downloaded once,
+    checked against their pins, in the cache."""
+    cache = CACHE.parent / "onnxruntime-web" / ORT_WEB
+    dist = cache / "dist"
+    if all((dist / name).exists() for name in (*ORT_FILES, *ORT_NOTICES)):
+        return dist
+    cache.mkdir(parents=True, exist_ok=True)
+    archive = cache / f"onnxruntime-web-{ORT_WEB}.tgz"
+    if not archive.exists():
+        _fetch(ORT_URL, archive)
+    found = sha256(archive)
+    if found != ORT_SHA256:
+        raise SystemExit(f"{archive}: sha256 {found}, not onnxruntime-web {ORT_WEB}'s {ORT_SHA256}; "
+                         "delete it to download it again")
+    notices = {}
+    for name, (url, pinned) in ORT_NOTICES.items():
+        target = cache / name
+        if not target.exists():
+            _fetch(url, target)
+        if sha256(target) != pinned:
+            raise SystemExit(f"{target}: not onnxruntime {ORT_WEB}'s {name}; delete it to download it again")
+        notices[name] = target
+    dist.mkdir(exist_ok=True)
+    with tarfile.open(archive, "r:gz") as tar:
+        for name in ORT_FILES:
+            with tar.extractfile(tar.getmember(f"package/dist/{name}")) as source, \
+                    (dist / name).open("wb") as out:
+                shutil.copyfileobj(source, out, 1 << 20)
+    for name, source in notices.items():
+        shutil.copy2(source, dist / name)
+    return dist
+
+
+def ort(out: Path, encoder: str | None) -> Path:
+    """onnxruntime-web into the bundle's `ort/` (kept when it is already this
+    release, compressed as asked): the files the page loads, a `.br` beside
+    each module and wasm when `encoder`, the notices, and `ort.json`
+    (`{version, source, files}`), which the page reads first."""
+    target = out / "ort"
+    record = target / "ort.json"
+    if record.exists():
+        held = json.loads(record.read_text(encoding="utf-8"))
+        if (held.get("version") == ORT_WEB
+                and all((target / name).exists() for name in held.get("files", ()))
+                and all((target / f"{name}.br").exists() == bool(encoder) for name in ORT_FILES)):
+            return target
+    dist = ort_release()
+    if target.exists():
+        shutil.rmtree(target)
+    target.mkdir(parents=True)
+    for name in (*ORT_FILES, *ORT_NOTICES):
+        shutil.copy2(dist / name, target / name)
+        if encoder and name in ORT_FILES:
+            brotli(target / name, encoder)
+    record.write_text(json.dumps({"version": ORT_WEB, "source": ORT_URL,
+                                  "files": [*ORT_FILES, *ORT_NOTICES]}, indent=1), encoding="utf-8")
+    return target
 
 
 #: What the website's plexora wheel leaves out: what the page serves itself.
@@ -256,6 +353,17 @@ for source in root.rglob("*.py"):
                        invalidation_mode=py_compile.PycInvalidationMode.UNCHECKED_HASH)
 '''
 
+#: Sources a package reads as files rather than imports, kept beside their
+#: bytecode: OpenCV's loader (cv2/__init__.py) execs cv2/config.py and
+#: cv2/config-3.py by path and refuses to import without them ("OpenCV
+#: loader: missing configuration file"), which took magic select's
+#: preprocessing, and every QC check that uses cv2, off the website.
+KEEP_SOURCES = ("cv2/config.py", "cv2/config-*.py")
+
+
+def kept_source(relative: str) -> bool:
+    return any(fnmatch.fnmatch(relative, pattern) for pattern in KEEP_SOURCES)
+
 
 def precompile(wheel: Path, out: Path, python314: str | None, stored: bool) -> None:
     """`wheel` into `out`: modules as sourceless bytecode when `python314`
@@ -272,7 +380,7 @@ def precompile(wheel: Path, out: Path, python314: str | None, stored: bool) -> N
             src.extractall(root)
         subprocess.run([python314, "-I", "-c", COMPILE, str(root), SITE], check=True)
         for source in root.rglob("*.py"):
-            if source.with_suffix(".pyc").exists():
+            if source.with_suffix(".pyc").exists() and not kept_source(source.relative_to(root).as_posix()):
                 source.unlink()
         with zipfile.ZipFile(out, "w", compression) as dst:
             for path in sorted(root.rglob("*")):
@@ -299,6 +407,7 @@ def build(out_root: Path, python314: str | None, encoder: str | None) -> Path:
         shutil.copy2(dist / name, out / "pyodide" / name)
         if encoder and name.endswith((".wasm", ".mjs", ".js")):
             brotli(out / "pyodide" / name, encoder)
+    ort(out, encoder)
 
     stored = encoder is not None
     base = closure(lock, STAGES["base"]["pyodide"])
@@ -398,6 +507,8 @@ def plexora_only(out_root: Path, python314: str | None, encoder: str | None) -> 
     for stage in stages.values():
         stage["wheels"] = [wheel.name if name.startswith("plexora-") else name
                            for name in stage["wheels"]]
+    # A bundle built before the page ran magic select's model gains it here.
+    ort(out, encoder)
     lock = json.loads((out / "pyodide" / "pyodide-lock.json").read_text(encoding="utf-8"))
     core_bytes = account(out, lock, stages)
     (out / "stages.json").write_text(json.dumps(stages, indent=1), encoding="utf-8")

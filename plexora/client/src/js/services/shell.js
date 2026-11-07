@@ -198,6 +198,10 @@
         // An ES module, fetched while Python starts.
         const licenceModule = import("/client/src/js/services/licenseClient.js");
         licenceModule.catch(() => null);
+        // Magic select's model: onnxruntime-web from the Python bundle, the
+        // model files from the assets' models folder (services/onnxExecutor.js).
+        await script("/client/src/js/services/onnxExecutor.js");
+        global.PlexoraOnnx.configure({ ort: shell.ort || `${shell.py}ort/`, models: shell.models || "/models/" });
         await controlled();
         // Where the projects are kept: a folder the user granted, opened again
         // (after one click when the browser asks), or this browser's storage.

@@ -82,22 +82,52 @@ class SamBackend(Protocol):
                mask_input: np.ndarray, has_mask: np.ndarray): ...
 
 
-#: How a session is made where ONNX Runtime is not Python's to load: the
-#: website installs one that runs the same model files in the page
-#: (onnxruntime-web), with this module's pre- and post-processing unchanged.
-#: None: `OnnxSamBackend` over the files on disk.
+class Executor(Protocol):
+    """Where the model runs when ONNX Runtime is not Python's to load.
+
+    The website installs one (plexora/browser/sam_page.py) that runs the same
+    two model files in the page, on onnxruntime-web, keeps them in the
+    browser's storage and fetches them itself. `plexora.vision.sam` asks it
+    everything the files on disk and the download thread answer elsewhere;
+    the pre- and post-processing (`sam.preprocess_into`, `sam.predict_batch`,
+    `segment.outline`) stay Python's, so only the two inference calls cross.
+
+    status() is cheap (a downloading page polls it once a second):
+    `{"runtime": {"installed", "version", "install"}, "weights": {"dir",
+    "source", "files", "missing"}, "download": {running, done, total, file,
+    error, fraction, started_at, finished_at} | None, "device": dict | None,
+    "error": str | None (its own session could not be made), "hint": str |
+    None}`; any part may be left out.
+    """
+
+    def status(self) -> dict: ...
+
+    def install(self) -> None:
+        """Start fetching what is missing and return at once (idempotent)."""
+
+    def cancel(self) -> None: ...
+
+    def backend(self) -> SamBackend:
+        """The session (`sam.session()` builds it once). Raises
+        `sam_weights.SamWeightsMissing` when the files are not there."""
+
+    def remove(self) -> list: ...
+
+
+#: The `Executor` in use where ONNX Runtime is not Python's to load. None:
+#: `OnnxSamBackend` over the files on disk.
 _EXECUTOR = None
 
 
-def set_executor(factory) -> None:
-    """`factory()` -> a `SamBackend`, used in place of ONNX Runtime (None: back
-    to it)."""
+def set_executor(executor) -> None:
+    """Use `executor` (an `Executor`) in place of ONNX Runtime and the files on
+    disk (None: back to them)."""
     global _EXECUTOR
-    _EXECUTOR = factory
+    _EXECUTOR = executor
 
 
 def executor():
-    """The installed factory, or None."""
+    """The installed `Executor`, or None."""
     return _EXECUTOR
 
 

@@ -41,8 +41,12 @@ MODEL_LAYOUT = "sam_lowres_v1"
 #: own, because the code repository is private and its releases need a login.
 #: The environment variable is for a mirror inside a firewalled site; the
 #: files are verified either way.
-RELEASE_BASE = "https://github.com/nirmallab/plexora-models/releases/download/segment-model-v1/"
+RELEASE_TAG = "segment-model-v1"
+RELEASE_BASE = f"https://github.com/nirmallab/plexora-models/releases/download/{RELEASE_TAG}/"
 ENV_MODEL_URL = "PLEXORA_SEGMENT_MODEL_URL"
+#: Where the website's page fetches the same files, below the models base its
+#: shell names (`client/shell.json` `models`: the assets bucket's /models/).
+WEB_DIR = f"mobilesam/{RELEASE_TAG}/"
 
 MODEL_FILES = {
     "mobile_sam_encoder.onnx": {

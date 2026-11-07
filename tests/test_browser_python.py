@@ -19,7 +19,9 @@ ROOT = Path(__file__).resolve().parents[1]
 CHROME = Path(os.environ.get("PLEXORA_BENCH_CHROME")
               or r"C:\Program Files\Google\Chrome\Application\chrome.exe")
 BUILD = Path(os.environ.get("PLEXORA_BENCH_HOME") or "C:/plexora-bench") / "browser_node" / "web" / "py"
-PLAYWRIGHT = ROOT / "tools" / "poc_browser_node" / "node_modules" / "playwright-core"
+#: tests/browser/lib.mjs reads it from here, or from PLEXORA_PLAYWRIGHT_MODULES.
+PLAYWRIGHT = Path(os.environ.get("PLEXORA_PLAYWRIGHT_MODULES")
+                  or ROOT / "tools" / "poc_browser_node" / "node_modules") / "playwright-core"
 
 
 def _version():

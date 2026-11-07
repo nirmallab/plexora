@@ -1,6 +1,6 @@
 """Build the website's static files: what viewer.plexoraapp.com serves.
 
-    python -m plexora.client.static_build [--out DIR] [--py URL] [--noindex]
+    python -m plexora.client.static_build [--out DIR] [--py URL] [--models URL] [--noindex]
         [--licence-api URL] [--licence-portal URL] [--licence-test-key KID=KEY]
 
 Plexora's pages are rendered on the website by Plexora's own Python in a
@@ -14,10 +14,14 @@ Writes `--out` (default `plexora/client/dist/static/`):
 
 - `index.html`: the loader;
 - `client/{src,dist,external}/...` and `plugins/<name>/static/...`;
-- `client/shell.json`: `{version, py, licence?}`, `py` the base the Python
-  bundle is served from (`tools/browser_build/build.py`; the assets bucket on
-  the site, `/py/<version>/` in development); `licence` only when an option
-  below moves it off the defaults (services/licenseClient.js): `api`, the
+- `client/shell.json`: `{version, py, models, licence?}`, `py` the base the
+  Python bundle is served from (`tools/browser_build/build.py`; the assets
+  bucket on the site, `/py/<version>/` in development; onnxruntime-web is its
+  `ort/`), `models` the base magic select's model files are under
+  (`vision/sam_weights.py` `WEB_DIR` below it: the assets bucket's /models/ on
+  the site, `/models/` in development, where `tools/browser_build/serve.py
+  --tree` serves a folder holding them); `licence` only when an option below
+  moves it off the defaults (services/licenseClient.js): `api`, the
   BioCognia platform's product API (default https://api.biocognia.com/v1),
   `portal`, and `test_keys`, throwaway `bct*` keys a TEST build trusts
   (tests/browser/license.mjs). `tools/browser_build/publish.py site` refuses
@@ -122,10 +126,11 @@ def licence_config(api: str | None = None, portal: str | None = None, test_keys=
 
 
 def build(out: Path = DEFAULT_OUT, py: str | None = None, noindex: bool = False,
-          licence: dict | None = None) -> dict:
+          licence: dict | None = None, models: str | None = None) -> dict:
     from plexora import __version__
 
     py = py or f"/py/{__version__}/"
+    models = models or "/models/"
     if out.exists():
         shutil.rmtree(out)
     out.mkdir(parents=True)
@@ -138,7 +143,7 @@ def build(out: Path = DEFAULT_OUT, py: str | None = None, noindex: bool = False,
         files += _copy(static, out / "plugins" / static.parent.name / "static")
         plugins.append(static.parent.name)
     (out / "index.html").write_bytes(LOADER.encode("utf-8"))
-    shell = {"version": __version__, "py": py}
+    shell = {"version": __version__, "py": py, "models": models}
     if licence:
         shell["licence"] = licence
     (out / "client" / "shell.json").write_bytes(json.dumps(shell, indent=1).encode("utf-8"))
@@ -146,6 +151,7 @@ def build(out: Path = DEFAULT_OUT, py: str | None = None, noindex: bool = False,
     (out / "_headers").write_bytes(headers.encode("utf-8"))
     (out / "_redirects").write_bytes(REDIRECTS.encode("utf-8"))
     return {"out": str(out), "files": files + 4, "plugins": plugins, "version": __version__, "py": py,
+            "models": models,
             "licence": {k: (sorted(v) if k == "test_keys" else v) for k, v in (licence or {}).items()}}
 
 
@@ -153,6 +159,8 @@ def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     parser.add_argument("--out", default=str(DEFAULT_OUT))
     parser.add_argument("--py", default=None, help="where the Python bundle is served from")
+    parser.add_argument("--models", default=None,
+                        help="where magic select's model files are served from (default /models/)")
     parser.add_argument("--noindex", action="store_true", help="ask search engines not to index it")
     parser.add_argument("--licence-api", default=None,
                         help="the BioCognia platform's product API (default https://api.biocognia.com/v1)")
@@ -161,7 +169,7 @@ def main(argv=None) -> int:
                         help="a throwaway key a TEST build trusts (never published)")
     args = parser.parse_args(argv)
     licence = licence_config(args.licence_api, args.licence_portal, args.licence_test_key)
-    print(json.dumps(build(Path(args.out), args.py, args.noindex, licence), indent=1))
+    print(json.dumps(build(Path(args.out), args.py, args.noindex, licence, args.models), indent=1))
     return 0
 
 
