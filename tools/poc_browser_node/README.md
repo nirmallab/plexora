@@ -38,6 +38,7 @@ Requirements:
 | P7 | `P7` | A flat multichannel image (zlib strips, uncompressed, tiles) made into a pyramid by the same band workers, compared with Python's `pyramidize_image`, then reopened after a relaunch. |
 | P8 | `P8` | The S features (P0, P1, P2b, P7, P3, P4) in Playwright's Firefox and WebKit, and the picture against Chrome's. |
 | P9 | `P9` (`bench/p9.mjs`) | Plexora's AI layer in the browser: the gating session's Python, as it ships, in Pyodide in a worker beside the viewer (`page/src/workers/pyWorker.js`, `page/py/`), against CPython on the same synthetic project (`bench/truth_p9.py`, `bench/compare_p9.py`): startup cold, return and over a 50 Mbps / 20 ms link, the viewer with and without the worker booting, the oracle session's packets, gates and time, and a 1.26 M-cell table handed to Python. Not in `campaign.sh`'s default run. |
+| L2 | `bench/l2.mjs` (page `bench/l2_page/`) | openslide-js (OpenSlide 4.0.0 in WebAssembly) against openslide-python on OpenSlide's public test slides (MRXS, NDPI, SVS, BIF, DICOM): opens, every property, read_region bytes (`bench/truth_l2.py`, `bench/compare_l2.py`), viewer-sized tile timing one at a time and over several opens; `--browser firefox|webkit` for function; `bench/desktop_vs_openslide_l2.py` holds the desktop's tifffile reader to OpenSlide. Record: `L2.md`. Not in `campaign.sh`. |
 
 ## Layout
 
