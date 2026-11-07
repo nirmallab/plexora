@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "main",
-  "description": "The Plexora page, served by the app's own server on loopback. Only this app's commands and core events: no plugin's JavaScript API is exposed, so the whole native surface the page can reach is src/commands.rs.",
+  "description": "The Plexora page, served by the app's own server on loopback. Only this app's commands and core events: no plugin's JavaScript API is exposed, so the whole native surface the page can reach is src/commands.rs, and the plexora-file scheme (src/localfiles.rs), which serves only the files grant_local_files granted.",
   "windows": ["main", "main-*"],
   "remote": {
     "urls": ["http://127.0.0.1:*/*", "http://127.0.0.1:*", "http://localhost:*/*"]
@@ -28,6 +28,7 @@
     "allow-is-fullscreen",
     "allow-shell-action",
     "allow-report-capabilities",
+    "allow-grant-local-files",
     "allow-check-update",
     "allow-install-update"
   ]

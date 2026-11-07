@@ -541,6 +541,21 @@ async function init(config, savedViewTransform = null) {
     const imageArgs = [imgMetadata, numericData, eventHandler];
     const seaDragonViewer = new ImageViewer(config, dataLayer, ...imageArgs);
     __plexora.seaDragonViewer = seaDragonViewer;
+    // The desktop app's Browser rendering (Settings > Advanced; the
+    // `local-browser` routing of services/resourceRouting.js): this page reads
+    // the project's own image and mask tiles itself, the server everything
+    // else. Before any channel is added, so the first tiles are the page's.
+    // Absent everywhere else, and then nothing here runs.
+    const localRoute = PlexoraRouting.localRoute ? PlexoraRouting.localRoute(routing) : null;
+    if (localRoute && seaDragonViewer.tileFetch) {
+        try {
+            const node = await PlexoraRouting.attachLocal(datasource, localRoute);
+            seaDragonViewer.tileFetch.local = (request) => node.decoded(request.url, { raster: request.raster });
+            seaDragonViewer.localTiles = Boolean(localRoute.image);
+        } catch (error) {
+            console.warn("main: browser rendering is unavailable, the server reads every tile:", error);
+        }
+    }
     // Before init() adds a single channel, so the first tile is drawn turned.
     // `adopt` applies without saving: this IS what was saved.
     if (savedViewTransform) seaDragonViewer.viewTransform?.adopt(savedViewTransform);

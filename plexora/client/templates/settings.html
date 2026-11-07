@@ -899,11 +899,49 @@
                     </span>
                 </p>
             </section>
+
+            {# Advanced, the desktop app's own (settings_routes.DESKTOP_SECTIONS):
+               "Browser rendering" (plexora/browser_rendering.py). Off until the
+               website's GA; with it on, the window reads a project's image and
+               mask itself, through the app's own file scheme. #}
+            {% if desktop %}
+            <section class="settings-panel" id="settings_panel_advanced"
+                     data-section="advanced" aria-label="Advanced">
+
+                <h2 class="settings-panel-title">Advanced</h2>
+                <p class="settings-panel-lead">
+                    How this window reads your images.
+                </p>
+
+                <div class="settings-card">
+                    <fieldset class="settings-choice" id="settings_rendering_choice">
+                        <legend class="settings-field-label">Browser rendering</legend>
+                        <label class="settings-radio">
+                            <input type="radio" name="settings_rendering" value="auto">
+                            <span>
+                                <strong>Auto</strong>
+                                <small>The window reads image and mask tiles from your files itself, where it reads them exactly as Plexora does.</small>
+                            </span>
+                        </label>
+                        <label class="settings-radio">
+                            <input type="radio" name="settings_rendering" value="off">
+                            <span>
+                                <strong>Off</strong>
+                                <small>Plexora reads every tile.</small>
+                            </span>
+                        </label>
+                    </fieldset>
+                    <p class="settings-hint" id="settings_rendering_note">
+                        Applies to projects opened after the change.
+                    </p>
+                </div>
+            </section>
+            {% endif %}
         </div>
     </div>
 </div>
 {# remoteState.js is loaded by base.html, above and deferred, so it is parsed
    before this file runs -- the Remote servers section is one of its
    subscribers rather than a poller of its own. #}
-<script src="{{ data.base_url }}/client/src/js/views/settingsPage.js?v=20261107_website_licence" defer></script>
+<script src="{{ data.base_url }}/client/src/js/views/settingsPage.js?v=20261107_advanced" defer></script>
 {% endblock %}

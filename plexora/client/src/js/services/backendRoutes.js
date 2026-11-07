@@ -179,6 +179,8 @@
   {"class": "python", "endpoint": "reload_datasource", "methods": ["POST"], "pattern": "^\\/reload_datasource$"},
   {"class": "python", "endpoint": "save_channel_list", "methods": ["POST"], "pattern": "^\\/save_channel_list$"},
   {"class": "python", "endpoint": "segment_v1.status", "methods": ["GET"], "pattern": "^\\/segment\\/v1\\/status$"},
+  {"class": "handoff", "endpoint": "settings_advanced", "handoff": {"actions": [], "to": "none", "why": "On the website the page always reads your images itself; Browser rendering is a setting of the desktop app."}, "methods": ["GET"], "pattern": "^\\/settings\\/advanced$"},
+  {"class": "handoff", "endpoint": "settings_advanced_set", "handoff": {"actions": [], "to": "none", "why": "On the website the page always reads your images itself; Browser rendering is a setting of the desktop app."}, "methods": ["POST"], "pattern": "^\\/settings\\/advanced$"},
   {"class": "python", "endpoint": "telemetry_preview", "methods": ["GET"], "pattern": "^\\/telemetry\\/preview$"},
   {"class": "python", "endpoint": "get_display_contrast", "methods": ["GET"], "pattern": "^\\/display_contrast$"},
   {"class": "js", "endpoint": "get_nearest_cell", "methods": ["GET"], "pattern": "^\\/get_nearest_cell$"},

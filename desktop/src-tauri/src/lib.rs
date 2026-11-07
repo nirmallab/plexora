@@ -5,11 +5,14 @@
 //! What lives here is what only a native process can do -- start and stop the
 //! server, own the macOS menu bar, show native dialogs and notifications, accept
 //! dropped and opened files -- plus the small bridge the page reaches it
-//! through (`plexora/client/src/js/services/desktopBridge.js`).
+//! through (`plexora/client/src/js/services/desktopBridge.js`), and the
+//! `plexora-file` scheme through which the page reads an opened project's own
+//! image and mask when Browser rendering is on (localfiles.rs).
 
 mod commands;
 mod downloads;
 mod lifecycle;
+mod localfiles;
 mod menu;
 mod opens;
 pub mod server;
@@ -64,6 +67,15 @@ pub fn run() {
         .manage(downloads::Downloads::default())
         .manage(updates::PendingUpdate::default())
         .manage(commands::HandedPaths::default())
+        .manage(localfiles::Grants::default())
+        // The files an opened project reads, by byte range, for the page's own
+        // TIFF reader when Settings > Advanced > Browser rendering is on
+        // (localfiles.rs). Nothing is readable through it until the shell
+        // grants a file (`grant_local_files`), and with the setting off it
+        // never does.
+        .register_asynchronous_uri_scheme_protocol(localfiles::SCHEME, |ctx, request, responder| {
+            localfiles::handle(ctx, request, responder)
+        })
         .on_menu_event(menu::on_event)
         // A file dropped on a window is one the page may read (`read_file`).
         // Recorded here, before the page can hear of the drop: the page's
@@ -109,6 +121,7 @@ fn handler(invoke: tauri::ipc::Invoke<tauri::Wry>) -> bool {
         commands::is_fullscreen,
         commands::shell_action,
         commands::report_capabilities,
+        commands::grant_local_files,
         updates::check_update,
         updates::install_update,
     ];

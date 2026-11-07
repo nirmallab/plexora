@@ -30,8 +30,9 @@ const source = await readFile(
  *  the module must not be able to tell which node it is asking about from
  *  anything other than the address it was given.
  */
-function load({ routes = {}, probeOk = false, storage = {} } = {}) {
-    const calls = { fetched: [], stored: [] };
+function load({ routes = {}, probeOk = false, storage = {}, local = undefined,
+                desktop = null, node = null } = {}) {
+    const calls = { fetched: [], stored: [], granted: [], scripts: [] };
     const store = Object.assign({}, storage);
 
     const fakeWindow = {
@@ -42,16 +43,29 @@ function load({ routes = {}, probeOk = false, storage = {} } = {}) {
             setItem: (key, value) => { store[key] = value; calls.stored.push(key); },
             removeItem: (key) => { delete store[key]; },
         },
+        // The desktop app's bridge (services/desktopBridge.js), or null as in
+        // a browser tab -- including a tab of the desktop's own server.
+        PlexoraDesktop: desktop,
+        PlexoraNode: node,
     };
+    if (desktop && typeof desktop.grantLocalFiles === "function") {
+        const grant = desktop.grantLocalFiles;
+        desktop.grantLocalFiles = (...args) => { calls.granted.push(args); return grant(...args); };
+    }
 
     const context = createContext({
         window: fakeWindow,
+        document: {
+            head: { appendChild: (tag) => calls.scripts.push(tag.src) },
+            createElement: () => ({}),
+        },
         AbortController: class { constructor() { this.signal = null; } abort() {} },
         plexoraUrl: (p) => `/${p}`,
         fetch: (url) => {
             calls.fetched.push(url);
             if (url.startsWith("/resource_routing")) {
-                return Promise.resolve({ ok: true, json: () => Promise.resolve({ routes }) });
+                const body = local === undefined ? { routes } : { routes, local };
+                return Promise.resolve({ ok: true, json: () => Promise.resolve(body) });
             }
             // A node health probe.
             return probeOk
@@ -222,6 +236,138 @@ const NODE_ROUTE = {
     const resolved = await routing.load("");
     assert.equal(Object.keys(resolved.routes).length, 0,
         "no datasource resolves to 'everything local' rather than throwing");
+}
+
+// -- local-browser: the desktop app's page reads the files itself --------
+//
+// The third routing (plan Phase 6, Settings > Advanced > Browser rendering).
+// The guard worth having is the negative one again: without the setting the
+// page must come out exactly as it always did -- one request, nothing probed,
+// nothing stored, no `local` -- whatever else is true of the page.
+
+/** What the desktop app's server answers with the setting on. */
+const LOCAL_ON = Object.freeze({
+    setting: "auto", served: true, name: "tonsil", path: "C:\\data\\tonsil.ome.tif",
+    format: "ome-tiff", levels: [[3, 4096, 4096], [3, 2048, 2048]], dtype: "uint16",
+    tile: [1024, 1024],
+    labels: { served: true, path: "C:\\data\\mask.tif", format: "tiff",
+              levels: [[0, 4096, 4096]], dtype: "uint32" },
+});
+
+/** A desktop bridge with a shell that grants files (desktopBridge.js). */
+function desktopShell(granted = []) {
+    return {
+        localFiles: "http://plexora-file.localhost",
+        grantLocalFiles: async () => granted,
+    };
+}
+
+function assertPlain(resolved, calls, why) {
+    assert.equal(Object.keys(resolved.routes).length, 0, why);
+    assert.equal(resolved.local, undefined, `${why}: no local`);
+    assert.equal(calls.fetched.length, 1, `${why}: the routing question only`);
+    assert.equal(calls.stored.length, 0, `${why}: nothing stored`);
+    assert.equal(calls.granted.length, 0, `${why}: nothing granted`);
+}
+
+{
+    // The setting off: the server says nothing about it -- even to the app.
+    const { routing, calls } = load({ routes: {}, desktop: desktopShell() });
+    const resolved = await routing.load("tonsil");
+    assertPlain(resolved, calls, "the setting off");
+    assert.equal(routing.localRoute(resolved), null, "local-browser is not chosen");
+}
+
+{
+    // A `local` that does not say the setting is on is not one (a server
+    // that got it wrong must still not move the page's tiles).
+    for (const setting of [undefined, "off", "on", true]) {
+        const { routing, calls } = load({ routes: {}, desktop: desktopShell(),
+                                          local: { ...LOCAL_ON, setting } });
+        const resolved = await routing.load("tonsil");
+        assertPlain(resolved, calls, `setting ${String(setting)}`);
+        assert.equal(routing.localRoute(resolved), null);
+    }
+}
+
+{
+    // On, but not in the app's window: a browser tab of the desktop's own
+    // server ("Open in Browser") has no shell to read the files through.
+    const { routing, calls } = load({ routes: {}, local: LOCAL_ON, desktop: null });
+    const resolved = await routing.load("tonsil");
+    assertPlain(resolved, calls, "no desktop bridge");
+    // ...nor in a window whose shell does not grant files (an older app).
+    const old = load({ routes: {}, local: LOCAL_ON,
+                       desktop: { localFiles: null, grantLocalFiles: async () => [] } });
+    assertPlain(await old.routing.load("tonsil"), old.calls, "a shell without the scheme");
+}
+
+{
+    // On, in the app, but nothing the page's reader takes: OME-Zarr, a
+    // refused image and no mask.
+    const zarr = load({ routes: {}, desktop: desktopShell(), local: {
+        ...LOCAL_ON, format: "ome-zarr", path: "C:\\data\\tonsil.zarr",
+        labels: { served: false, reason: "no mask" } } });
+    assertPlain(await zarr.routing.load("tonsil"), zarr.calls, "an OME-Zarr image, no mask");
+    const refused = load({ routes: {}, desktop: desktopShell(), local: {
+        ...LOCAL_ON, served: false, reason: "not a TIFF file",
+        labels: { served: false, reason: "no mask" } } });
+    assertPlain(await refused.routing.load("tonsil"), refused.calls, "nothing served");
+}
+
+{
+    // All three hold: local-browser is chosen, and it is all that changes --
+    // still one request, nothing probed or stored, no node route, and the
+    // tile addresses stay the server's (the scheduler asks the page first).
+    const { routing, calls } = load({ routes: {}, local: LOCAL_ON, desktop: desktopShell() });
+    const resolved = await routing.load("tonsil");
+    const chosen = routing.localRoute(resolved);
+    assert.equal(chosen.mode, "local-browser");
+    assert.equal(chosen.mode, routing.LOCAL_BROWSER);
+    assert.equal(chosen.image, true);
+    assert.equal(chosen.labels, true);
+    assert.equal(chosen.spec.path, LOCAL_ON.path);
+    assert.equal(Object.keys(resolved.routes).length, 0, "local-browser is not a node route");
+    assert.equal(routing.tileSource(resolved, "image"), null, "tile URLs stay the server's");
+    assert.equal(routing.unreachable(resolved).length, 0, "and no node is unreachable");
+    assert.equal(calls.fetched.length, 1);
+    assert.equal(calls.stored.length, 0);
+    assert.equal(calls.granted.length, 0, "loading the routing grants nothing by itself");
+
+    // Only the mask readable: chosen for the mask alone.
+    const maskOnly = load({ routes: {}, desktop: desktopShell(), local: {
+        ...LOCAL_ON, served: false, reason: "a z-stack" } });
+    const own = maskOnly.routing.localRoute(await maskOnly.routing.load("tonsil"));
+    assert.equal(own.image, false);
+    assert.equal(own.labels, true);
+}
+
+{
+    // attachLocal points the page's browser node at the shell: its spec is
+    // the server's `local` (the answer in hand first), and its files are what
+    // the shell grants FOR THE PROJECT -- the page names a project, never a
+    // path.
+    const used = [];
+    const node = { decoded: () => null, use: (source) => used.push(source) };
+    const granted = [
+        { kind: "image", path: LOCAL_ON.path, url: "http://plexora-file.localhost/ab", size: 9 },
+        { kind: "labels", path: LOCAL_ON.labels.path, url: null, size: null, error: "on the network" },
+    ];
+    const { routing, calls } = load({ routes: {}, local: LOCAL_ON, desktop: desktopShell(granted), node });
+    const route = routing.localRoute(await routing.load("tonsil"));
+    const attached = await routing.attachLocal("tonsil", route);
+    assert.equal(attached, node, "the node already on the page is used, not loaded again");
+    assert.equal(calls.scripts.length, 0);
+    assert.equal(used.length, 1);
+    const spec = await used[0].spec("tonsil");
+    assert.equal(spec.path, LOCAL_ON.path, "the first check takes the answer in hand");
+    const files = await used[0].files("tonsil", spec);
+    assert.deepEqual(calls.granted, [["tonsil"]], "the shell is asked about the project by name");
+    assert.equal(files(LOCAL_ON.path).url, "http://plexora-file.localhost/ab");
+    assert.equal(files(LOCAL_ON.path).size, 9);
+    assert.equal(files(LOCAL_ON.labels.path), null, "a file the shell refused is not read");
+    assert.equal(files("C:\\Windows\\win.ini"), null, "nor anything else");
+    await assert.rejects(routing.attachLocal("tonsil", null), /not a local-browser/);
 }
 
 console.log("resource routing probe OK");

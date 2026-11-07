@@ -18,6 +18,12 @@ planes go through the volume layer), OME-Zarr, DICOM, a brightfield RGB slide,
 a Xenium focus folder, a pyramid Python drew into the project store, a mask
 level Python draws from a finer one, a file on a node -- is Python's until its
 own check exists.
+
+The desktop app asks the same question (`describe(name, local=True)`, from
+`/resource_routing` when its "Browser rendering" setting is on: plexora/
+browser_rendering.py). There the page reads the project's own files on this
+computer through the shell's `plexora-file` scheme, so "a file the page holds"
+becomes "a regular file on a local disk"; every other refusal is the website's.
 """
 
 from __future__ import annotations
@@ -27,11 +33,36 @@ import os
 _TIFF = (".tif", ".tiff")
 
 
-def describe(name: str) -> dict:
+def format_of(path: str) -> str:
+    """A word for the source's format, from its name: what the page's readers
+    are chosen by (the TIFF reader takes "ome-tiff" and "tiff")."""
+    lowered = (path or "").lower().rstrip("/\\")
+    if lowered.endswith((".ome.tif", ".ome.tiff")):
+        return "ome-tiff"
+    if lowered.endswith(_TIFF):
+        return "tiff"
+    if lowered.endswith(".zarr") or ".zarr/" in lowered.replace("\\", "/"):
+        return "ome-zarr"
+    ext = os.path.splitext(lowered)[1].lstrip(".")
+    return ext or "unknown"
+
+
+def is_local_file(path: str) -> bool:
+    """A regular file on this computer's own disks: not a URL, not a node's
+    address, not a network share (`\\\\server\\share`, `//server/share`), not a
+    folder."""
+    if not path or "://" in path or path.startswith(("\\\\", "//")):
+        return False
+    return os.path.isabs(path) and os.path.isfile(path)
+
+
+def describe(name: str, local: bool = False) -> dict:
     """For project `name`, loading it if need be: the image as `{served,
-    reason?, path, levels: [[c, h, w], ...], dtype, channels: [name, ...]}`,
-    with `tile: [w, h]` (the grid of every tile route), `generation` and
-    `labels` (the mask, `_labels`) beside it."""
+    reason?, path, format, levels: [[c, h, w], ...], dtype, channels: [name,
+    ...]}`, with `tile: [w, h]` (the grid of every tile route), `generation`
+    and `labels` (the mask, `_labels`) beside it. `local`: the desktop app's
+    question -- a file on this computer instead of one the website's page
+    holds."""
     from plexora.server.models import data_model
     from plexora.server.models.project import IMAGE_TYPE_BRIGHTFIELD, Project
     from plexora.server.providers.browser import PAGE_ROOTS
@@ -45,7 +76,7 @@ def describe(name: str) -> dict:
     # belong to: a reload (a new generation) is a new spec for the page.
     out = {"served": False, "name": name, "generation": data_model.load_generation,
            "tile": [int(config["tileWidth"]), int(config["tileHeight"])],
-           "labels": _labels(data_model, config)}
+           "labels": _labels(data_model, config, local)}
 
     def refuse(reason):
         out["reason"] = reason
@@ -55,7 +86,11 @@ def describe(name: str) -> dict:
         return refuse("the image is not a local file")
     path = getattr(provider, "_path", None) or ""
     out["path"] = path
-    if not path.startswith(PAGE_ROOTS):
+    out["format"] = format_of(path)
+    if local:
+        if not is_local_file(path):
+            return refuse("not a file on this computer's own disks")
+    elif not path.startswith(PAGE_ROOTS):
         return refuse("the file is not one the page holds")
     if getattr(provider, "volume_source", None) is not None or data_model.volume_source is not None:
         return refuse("a z-stack or time series is served through the volume layer")
@@ -79,10 +114,11 @@ def describe(name: str) -> dict:
     return out
 
 
-def _labels(data_model, config) -> dict:
-    """The mask as `{served, reason?, pending?, path, levels: [[level, h, w],
-    ...], dtype}`: the levels the file holds, which `label_region` reads as they
-    are (a level it draws from a finer one stays Python's)."""
+def _labels(data_model, config, local: bool = False) -> dict:
+    """The mask as `{served, reason?, pending?, path, format, levels: [[level,
+    h, w], ...], dtype}`: the levels the file holds, which `label_region` reads
+    as they are (a level it draws from a finer one stays Python's). `local` as
+    in `describe`."""
     from plexora.server.providers.local import LocalSegmentationProvider
 
     out = {"served": False}
@@ -106,7 +142,11 @@ def _labels(data_model, config) -> dict:
 
     path = provider.path
     out["path"] = path
-    if not path.startswith(PAGE_ROOTS):
+    out["format"] = format_of(path)
+    if local:
+        if not is_local_file(path):
+            return refuse("not a file on this computer's own disks")
+    elif not path.startswith(PAGE_ROOTS):
         return refuse("the mask is not a file the page holds (Python drew its pyramid)")
     if not path.lower().endswith(_TIFF) or os.path.isdir(path):
         return refuse("not a TIFF file")

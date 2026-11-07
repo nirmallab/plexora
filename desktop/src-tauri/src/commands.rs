@@ -407,6 +407,80 @@ pub fn shell_action(app: AppHandle, window: WebviewWindow, id: String) -> Result
     Ok(())
 }
 
+/// One file a project reads, granted to the page's `plexora-file` scheme
+/// (localfiles.rs) -- or why it was not.
+#[derive(Serialize, Debug, PartialEq)]
+pub struct LocalFile {
+    /// "image" or "labels".
+    kind: String,
+    /// The path as the server names it: what the page matches its spec by.
+    path: String,
+    /// Where the page reads it: `<scheme base>/<grant id>`.
+    url: Option<String>,
+    size: Option<u64>,
+    error: Option<String>,
+}
+
+/// The files `/resource_routing`'s `local` names as the page's to read --
+/// the image and the mask, each only where the server serves it -- or why
+/// none are (the setting is off, or this is not the desktop app's server).
+pub fn local_files_named(answer: &serde_json::Value) -> Result<Vec<(String, String)>, String> {
+    let off = || "Browser rendering is off (Settings > Advanced)".to_string();
+    let local = answer.get("local").ok_or_else(off)?;
+    if local.get("setting").and_then(|v| v.as_str()) != Some("auto") {
+        return Err(off());
+    }
+    let mut named = Vec::new();
+    for (kind, part) in [("image", Some(local)), ("labels", local.get("labels"))] {
+        let Some(part) = part else { continue };
+        if part.get("served").and_then(|v| v.as_bool()) != Some(true) {
+            continue;
+        }
+        if let Some(path) = part.get("path").and_then(|v| v.as_str()).filter(|p| !p.is_empty()) {
+            named.push((kind.to_string(), path.to_string()));
+        }
+    }
+    Ok(named)
+}
+
+/// Let the page read project `datasource`'s own image and mask itself, through
+/// the `plexora-file` scheme (localfiles.rs): the desktop's "Browser
+/// rendering" (Settings > Advanced; plexora/browser_rendering.py).
+///
+/// The page names a PROJECT, never a path. Which files that project reads is
+/// asked of this launch's server, with the launch token, exactly as the page
+/// asked it (`/resource_routing`); the server names them only when the setting
+/// is on, and only regular files on this computer's own disks. Each is granted
+/// under an unguessable id; nothing else on this computer becomes readable.
+#[tauri::command]
+pub async fn grant_local_files(app: AppHandle, datasource: String) -> Result<Vec<LocalFile>, String> {
+    let ready = app.state::<ServerState>().0.ready().ok_or("the server is not running")?;
+    if datasource.is_empty() || datasource.len() > 1024 {
+        return Err("no project named".into());
+    }
+    let query: String = url::form_urlencoded::byte_serialize(datasource.as_bytes()).collect();
+    let path = format!("/resource_routing?datasource={query}");
+    let (origin, token) = (ready.origin.clone(), ready.token.clone());
+    let (status, body) = tauri::async_runtime::spawn_blocking(move || {
+        crate::server::http_get_as(&origin, &path, Some(&token), std::time::Duration::from_secs(120))
+    })
+    .await
+    .map_err(|e| e.to_string())??;
+    if status != 200 {
+        return Err(format!("the server answered {status} about {datasource}"));
+    }
+    let answer: serde_json::Value = serde_json::from_str(&body).map_err(|e| e.to_string())?;
+    let grants = app.state::<crate::localfiles::Grants>();
+    let base = crate::localfiles::page_base();
+    Ok(local_files_named(&answer)?
+        .into_iter()
+        .map(|(kind, path)| match grants.grant(Path::new(&path)) {
+            Ok((id, size)) => LocalFile { kind, path, url: Some(format!("{base}/{id}")), size: Some(size), error: None },
+            Err(error) => LocalFile { kind, path, url: None, size: None, error: Some(error) },
+        })
+        .collect())
+}
+
 /// What the WebView turned out to support. The viewer needs WebGL2; a
 /// WebKitGTK without GPU WebGL cannot draw, and the browser can.
 #[tauri::command]
@@ -528,6 +602,25 @@ mod tests {
             assert!(!error.contains("network"), "{error}");
         }
         std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn only_files_the_server_serves_with_the_setting_on_are_named() {
+        let named = |text: &str| local_files_named(&serde_json::from_str(text).unwrap());
+        // The setting off: no `local` at all, which is the server's answer off.
+        assert!(named(r#"{"routes": {}}"#).unwrap_err().contains("off"));
+        assert!(named(r#"{"routes": {}, "local": {"setting": "off", "served": true, "path": "C:/a.tif"}}"#).is_err());
+        // On: the image and the mask, each only where it is served.
+        let both = named(r#"{"routes": {}, "local": {"setting": "auto", "served": true, "path": "C:/a.ome.tif",
+            "labels": {"served": true, "path": "C:/m.tif"}}}"#).unwrap();
+        assert_eq!(both, vec![("image".to_string(), "C:/a.ome.tif".to_string()),
+                              ("labels".to_string(), "C:/m.tif".to_string())]);
+        let image_only = named(r#"{"local": {"setting": "auto", "served": true, "path": "C:/a.tif",
+            "labels": {"served": false, "reason": "no mask"}}}"#).unwrap();
+        assert_eq!(image_only.len(), 1);
+        let refused = named(r#"{"local": {"setting": "auto", "served": false, "path": "C:/a.zarr",
+            "reason": "not a TIFF file", "labels": {"served": false}}}"#).unwrap();
+        assert!(refused.is_empty());
     }
 
     #[test]

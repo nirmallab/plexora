@@ -111,6 +111,10 @@ HANDOFF = {
     "settings_data_migration": ("desktop", "Moving a data folder is done by the desktop app.", ("open_desktop",)),
     # The desktop app's own window.
     "desktop_info": ("none", "This is the website, not the desktop app.", ("get_desktop",)),
+    # Browser rendering (plexora/browser_rendering.py): the website's page
+    # always reads the files itself; the switch is the desktop app's.
+    "settings_advanced": ("none", "On the website the page always reads your images itself; Browser rendering is a setting of the desktop app.", ()),
+    "settings_advanced_set": ("none", "On the website the page always reads your images itself; Browser rendering is a setting of the desktop app.", ()),
     "desktop_open": ("desktop", "Opening a project in the desktop app is the notice's \"Open in Plexora desktop\".", ("open_desktop", "get_desktop")),
     # A benchmark's cache flush, for the bench harness against a real server.
     "bench_flush": ("none", "A benchmark route of the server; the website has no server caches to flush.", ()),

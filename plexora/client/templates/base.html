@@ -39,7 +39,7 @@
          window, null in any browser. Early and not deferred, so its
          subscriptions to the shell exist before a menu or a drop can arrive,
          and so every later script can feature-test it synchronously. -->
-    <script src="{{ data.base_url }}/client/src/js/services/desktopBridge.js?v=20261103_reload" type="text/javascript"></script>
+    <script src="{{ data.base_url }}/client/src/js/services/desktopBridge.js?v=20261107_local_files" type="text/javascript"></script>
     <!-- Who answers this page's requests: window.PlexoraBackend. Here the
          Plexora that served it, and the file is a pass-through (its fetch is
          window.fetch). Before appStatus.js and not deferred, so a static
@@ -62,7 +62,7 @@
          awaits it before it builds a single tile source, and every page that
          can open a viewer loads it. Costs one request that answers "{}" for a
          project with nothing on a node. -->
-    <script src="{{ data.base_url }}/client/src/js/services/resourceRouting.js?v=20261009_volume" type="text/javascript"></script>
+    <script src="{{ data.base_url }}/client/src/js/services/resourceRouting.js?v=20261107_local_browser" type="text/javascript"></script>
     <!-- Why a layer is missing, when one is. Asks /resource_status once per
          project load and says nothing at all for a project with everything on
          this machine, which is every ordinary one. -->
@@ -93,7 +93,7 @@
     <script src="{{ data.base_url }}/client/src/js/views/glInit.js?v=20261015_display_contrast"></script>
     <script src="{{ data.base_url }}/client/src/js/views/tileColorize.js?v=20261015_display_contrast"></script>
     <script src="{{ data.base_url }}/client/src/js/views/tileDecode.js?v=20261010_nav3d"></script>
-    <script src="{{ data.base_url }}/client/src/js/views/tileFetch.js?v=20261106_browser_node"></script>
+    <script src="{{ data.base_url }}/client/src/js/views/tileFetch.js?v=20261107_local_browser"></script>
     <script src="{{ data.base_url }}/client/src/js/views/labelTile.js?v=20261012_main_merge"></script>
     <script src="{{ data.base_url }}/client/src/js/views/labelGpu.js?v=20261012_no_cell_model"></script>
     <script src="{{ data.base_url }}/client/src/js/services/viewTransform.js?v=20260925_view_transform"></script>

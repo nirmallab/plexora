@@ -31,6 +31,26 @@
  * tab's network position: it does not change while the tab is open, and asking
  * again on every navigation inside the app would put a 1.5-second timeout in
  * front of a page that is otherwise instant.
+ *
+ * A third routing, `local-browser`, is the desktop app's (plan Phase 6,
+ * Settings > Advanced > Browser rendering; off until the website's GA): the
+ * page reads the project's own image and mask itself, as the website's
+ * browser node reads a picked file -- in workers, by byte range, through the
+ * shell's `plexora-file` scheme -- instead of asking the server for each
+ * tile. The server offers it (`local` beside `routes`) only from the desktop
+ * app with the setting on; it is chosen only when all of these hold:
+ *
+ *   - the answer's `local.setting` is "auto" (the setting is on);
+ *   - this page is in the desktop app's window, with a shell that grants files
+ *     (`PlexoraDesktop.grantLocalFiles` and `.localFiles`);
+ *   - the image or the mask is served and in a format the page's reader takes
+ *     (`LOCAL_FORMATS`: OME-TIFF and TIFF).
+ *
+ * It is kept apart from `routes` (`resolved.local`, `localRoute`), which are a
+ * node's routes everywhere they are read; nothing is probed or stored for it.
+ * `attachLocal` loads the browser node into the page and points it at the
+ * shell; the viewer's tile scheduler then asks it first (views/tileFetch.js
+ * `local`), and the server answers whatever it declines.
  */
 window.PlexoraRouting = (function () {
     "use strict";
@@ -60,6 +80,45 @@ window.PlexoraRouting = (function () {
     //: every lookup against it returns "local", which is what every call site
     //: already assumed.
     const NOTHING_REMOTE = Object.freeze({ routes: Object.freeze({}) });
+
+    //: The third routing's name (see the header).
+    const LOCAL_BROWSER = "local-browser";
+    //: The formats the page's own reader takes (services/browserNode.js,
+    //: node/tiffReader.js), as plexora/browser/node_spec.py `format_of` names
+    //: them. OME-Zarr and the slide formats are the server's until the page
+    //: has a reader for them.
+    const LOCAL_FORMATS = Object.freeze(["ome-tiff", "tiff"]);
+
+    /**
+     * The `local-browser` routing for the server's `local` answer, or null:
+     * the setting on, this page in the desktop app's window with a shell that
+     * grants files, and the image or the mask served in a format the page
+     * reads. Each of the three is a reason on its own to stay with the server.
+     */
+    function chooseLocal(local) {
+        if (!local || typeof local !== "object" || local.setting !== "auto") return null;
+        const desktop = window.PlexoraDesktop;
+        if (!desktop || typeof desktop.grantLocalFiles !== "function" || !desktop.localFiles) return null;
+        const readable = (part) => Boolean(part && part.served === true && typeof part.path === "string"
+            && LOCAL_FORMATS.indexOf(part.format) >= 0);
+        const image = readable(local);
+        const labels = readable(local.labels);
+        if (!image && !labels) return null;
+        return Object.freeze({ mode: LOCAL_BROWSER, image: image, labels: labels, spec: local });
+    }
+
+    /** `resolved` with the `local-browser` routing beside its routes, when
+     *  `local` is chosen; `resolved` itself otherwise. */
+    function withLocal(resolved, local) {
+        const chosen = chooseLocal(local);
+        if (!chosen) return resolved;
+        return Object.freeze({ routes: resolved.routes, local: chosen });
+    }
+
+    /** The `local-browser` routing of a resolved table, or null. */
+    function localRoute(resolved) {
+        return (resolved && resolved.local && resolved.local.mode === LOCAL_BROWSER) ? resolved.local : null;
+    }
 
     function storageKey(datasource) {
         return STORAGE_PREFIX + datasource;
@@ -117,7 +176,9 @@ window.PlexoraRouting = (function () {
      * Resolves to `{ routes: { <kind>: {mode, base, query} } }` where `mode` is
      * "direct" or "proxy". A kind that is absent is local, and callers treat
      * absence and "proxy" identically -- both mean "ask this server", which is
-     * the URL they would have built anyway.
+     * the URL they would have built anyway. With `local` beside `routes` when
+     * the desktop app's page reads the project's files itself
+     * (`local-browser`, see the header and `localRoute`).
      */
     function load(datasource) {
         if (!datasource) return Promise.resolve(NOTHING_REMOTE);
@@ -126,7 +187,8 @@ window.PlexoraRouting = (function () {
         const promise = fetch(plexoraUrl("resource_routing")
                               + "?datasource=" + encodeURIComponent(datasource))
             .then((response) => (response.ok ? response.json() : { routes: {} }))
-            .then((body) => decide(datasource, body.routes || {}))
+            .then((body) => Promise.resolve(decide(datasource, body.routes || {}))
+                .then((resolved) => withLocal(resolved, body.local)))
             .catch(() => NOTHING_REMOTE)
             .then((resolved) => {
                 settled.set(datasource, resolved);
@@ -267,6 +329,74 @@ window.PlexoraRouting = (function () {
         return false;
     }
 
+    // -- local-browser: the desktop app's page reads the files itself ---------
+
+    //: The browser node's script and its tag, loaded once into a page that
+    //: chose `local-browser` -- nowhere else (the website's shell loads its own).
+    const NODE_SCRIPT = "client/src/js/services/browserNode.js";
+    const NODE_SCRIPT_TAG = "20261107_desktop";
+    let nodeScript = null;
+
+    function loadNode() {
+        const ready = window.PlexoraNode;
+        if (ready && typeof ready.decoded === "function") return Promise.resolve(ready);
+        if (!nodeScript) {
+            nodeScript = new Promise((resolve, reject) => {
+                const tag = document.createElement("script");
+                tag.src = plexoraUrl(NODE_SCRIPT) + "?v=" + NODE_SCRIPT_TAG;
+                tag.async = true;
+                tag.onload = () => (window.PlexoraNode && typeof window.PlexoraNode.decoded === "function"
+                    ? resolve(window.PlexoraNode) : reject(new Error("the browser node did not load")));
+                tag.onerror = () => reject(new Error("the browser node did not load"));
+                document.head.appendChild(tag);
+            }).catch((error) => {
+                nodeScript = null;
+                throw error;
+            });
+        }
+        return nodeScript;
+    }
+
+    /**
+     * Point the page's browser node at `datasource`'s own files (`route`, a
+     * `local-browser` routing) and resolve the node, whose `decoded` the
+     * viewer's tile scheduler then asks before the server (views/tileFetch.js
+     * `local`). The node's spec is the server's `local` answer -- the one in
+     * hand first, `/resource_routing` again when the node re-checks -- and its
+     * files are the ones the shell grants for the project (the page names the
+     * project, never a path). Rejects when the node cannot be loaded; the
+     * caller then leaves every tile to the server.
+     */
+    async function attachLocal(datasource, route) {
+        if (!route || route.mode !== LOCAL_BROWSER) throw new Error("not a local-browser routing");
+        const node = await loadNode();
+        const desktop = window.PlexoraDesktop;
+        let first = route.spec;
+        node.use({
+            spec: async (name) => {
+                if (first && name === datasource) {
+                    const spec = first;
+                    first = null;
+                    return spec;
+                }
+                const response = await fetch(plexoraUrl("resource_routing")
+                                             + "?datasource=" + encodeURIComponent(name));
+                const body = response.ok ? await response.json() : {};
+                if (!body.local || body.local.setting !== "auto") throw new Error("browser rendering is off");
+                return body.local;
+            },
+            files: async (name) => {
+                const granted = await desktop.grantLocalFiles(name);
+                const byPath = new Map();
+                (granted || []).forEach((file) => {
+                    if (file && file.url && file.path) byPath.set(file.path, { url: file.url, size: file.size });
+                });
+                return (path) => byPath.get(path) || null;
+            },
+        });
+        return node;
+    }
+
     return { load, tileSource, unreachable, forget, held, refresh, isDirectOrigin,
-             PROBE_TIMEOUT_MS };
+             localRoute, attachLocal, LOCAL_BROWSER, LOCAL_FORMATS, PROBE_TIMEOUT_MS };
 })();

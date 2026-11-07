@@ -98,12 +98,12 @@
       ],
       "scripts": [
         "/client/src/js/services/passVariablesToFrontend.js?v=20260910_unreachable_message",
-        "/client/src/js/services/desktopBridge.js?v=20261103_reload",
+        "/client/src/js/services/desktopBridge.js?v=20261107_local_files",
         "/client/src/js/services/backend.js?v=20261107_licence",
         "/client/src/js/services/appStatus.js?v=20260926_help_menu",
         "/client/src/js/services/telemetry.js?v=20260928_qc_owner",
         "/client/src/js/services/errors.js?v=20260927_telemetry",
-        "/client/src/js/services/resourceRouting.js?v=20261009_volume",
+        "/client/src/js/services/resourceRouting.js?v=20261107_local_browser",
         "/client/src/js/services/resourceStatus.js?v=20261020_sftp_files",
         "/client/src/js/services/performanceTelemetry.js?v=20260927_telemetry",
         "/client/dist/vendor_bundle.js?v=20261106_client_seams",
@@ -121,7 +121,7 @@
         "/client/src/js/views/glInit.js?v=20261015_display_contrast",
         "/client/src/js/views/tileColorize.js?v=20261015_display_contrast",
         "/client/src/js/views/tileDecode.js?v=20261010_nav3d",
-        "/client/src/js/views/tileFetch.js?v=20261106_browser_node",
+        "/client/src/js/views/tileFetch.js?v=20261107_local_browser",
         "/client/src/js/views/labelTile.js?v=20261012_main_merge",
         "/client/src/js/views/labelGpu.js?v=20261012_no_cell_model",
         "/client/src/js/services/viewTransform.js?v=20260925_view_transform",
@@ -315,12 +315,12 @@
       ],
       "scripts": [
         "/client/src/js/services/passVariablesToFrontend.js?v=20260910_unreachable_message",
-        "/client/src/js/services/desktopBridge.js?v=20261103_reload",
+        "/client/src/js/services/desktopBridge.js?v=20261107_local_files",
         "/client/src/js/services/backend.js?v=20261107_licence",
         "/client/src/js/services/appStatus.js?v=20260926_help_menu",
         "/client/src/js/services/telemetry.js?v=20260928_qc_owner",
         "/client/src/js/services/errors.js?v=20260927_telemetry",
-        "/client/src/js/services/resourceRouting.js?v=20261009_volume",
+        "/client/src/js/services/resourceRouting.js?v=20261107_local_browser",
         "/client/src/js/services/resourceStatus.js?v=20261020_sftp_files",
         "/client/src/js/services/performanceTelemetry.js?v=20260927_telemetry",
         "/client/dist/vendor_bundle.js?v=20261106_client_seams",
@@ -338,7 +338,7 @@
         "/client/src/js/views/glInit.js?v=20261015_display_contrast",
         "/client/src/js/views/tileColorize.js?v=20261015_display_contrast",
         "/client/src/js/views/tileDecode.js?v=20261010_nav3d",
-        "/client/src/js/views/tileFetch.js?v=20261106_browser_node",
+        "/client/src/js/views/tileFetch.js?v=20261107_local_browser",
         "/client/src/js/views/labelTile.js?v=20261012_main_merge",
         "/client/src/js/views/labelGpu.js?v=20261012_no_cell_model",
         "/client/src/js/services/viewTransform.js?v=20260925_view_transform",
@@ -462,7 +462,7 @@
         "/client/src/js/views/chatPanel.js?v=20261012_merge_main",
         "/client/src/js/services/agentBridge.js?v=20261105_gating_v4",
         "/client/src/js/services/launchContext.js?v=20261005_bridge",
-        "/client/src/js/main.js?v=20261107_open_elsewhere"
+        "/client/src/js/main.js?v=20261107_local_browser"
       ],
       "status": 200,
       "styles": [
@@ -600,12 +600,12 @@
       ],
       "scripts": [
         "/client/src/js/services/passVariablesToFrontend.js?v=20260910_unreachable_message",
-        "/client/src/js/services/desktopBridge.js?v=20261103_reload",
+        "/client/src/js/services/desktopBridge.js?v=20261107_local_files",
         "/client/src/js/services/backend.js?v=20261107_licence",
         "/client/src/js/services/appStatus.js?v=20260926_help_menu",
         "/client/src/js/services/telemetry.js?v=20260928_qc_owner",
         "/client/src/js/services/errors.js?v=20260927_telemetry",
-        "/client/src/js/services/resourceRouting.js?v=20261009_volume",
+        "/client/src/js/services/resourceRouting.js?v=20261107_local_browser",
         "/client/src/js/services/resourceStatus.js?v=20261020_sftp_files",
         "/client/src/js/services/performanceTelemetry.js?v=20260927_telemetry",
         "/client/dist/vendor_bundle.js?v=20261106_client_seams",
@@ -623,7 +623,7 @@
         "/client/src/js/views/glInit.js?v=20261015_display_contrast",
         "/client/src/js/views/tileColorize.js?v=20261015_display_contrast",
         "/client/src/js/views/tileDecode.js?v=20261010_nav3d",
-        "/client/src/js/views/tileFetch.js?v=20261106_browser_node",
+        "/client/src/js/views/tileFetch.js?v=20261107_local_browser",
         "/client/src/js/views/labelTile.js?v=20261012_main_merge",
         "/client/src/js/views/labelGpu.js?v=20261012_no_cell_model",
         "/client/src/js/services/viewTransform.js?v=20260925_view_transform",
@@ -747,7 +747,7 @@
         "/client/src/js/views/chatPanel.js?v=20261012_merge_main",
         "/client/src/js/services/agentBridge.js?v=20261105_gating_v4",
         "/client/src/js/services/launchContext.js?v=20261005_bridge",
-        "/client/src/js/main.js?v=20261107_open_elsewhere"
+        "/client/src/js/main.js?v=20261107_local_browser"
       ],
       "status": 200,
       "styles": [
@@ -771,7 +771,7 @@
       ]
     }
   },
-  "route_count": 267,
+  "route_count": 269,
   "routes": [
     "DELETE /nodes/<name>/resources/<resource_id>",
     "DELETE /plugins/video_studio/api/videos/<video_id>",
@@ -867,6 +867,7 @@
     "GET /resource_status",
     "GET /segment/v1/status",
     "GET /settings",
+    "GET /settings/advanced",
     "GET /settings/data",
     "GET /settings/data/migration",
     "GET /settings/gcloud/bucket",
@@ -986,6 +987,7 @@
     "POST /segment/v1/install/cancel",
     "POST /segment/v1/segment",
     "POST /set_pixel_size",
+    "POST /settings/advanced",
     "POST /settings/data",
     "POST /settings/data/check",
     "POST /settings/gcloud/auth",

@@ -182,7 +182,23 @@ def desktop_info():
         plugins=[plugin.name for plugin in plugin_registry.installed(app)],
         tools=_tools(),
         plan=_plan(),
+        **_rendering(),
     )
+
+
+def _rendering():
+    """The "Browser rendering" setting (plexora/browser_rendering.py), and
+    with it on, which path each kind of data takes (`paths`). Only the desktop
+    app has the setting; a terminal `plexora` says nothing about it."""
+    from plexora import browser_rendering
+
+    if not browser_rendering.is_desktop(app):
+        return {}
+    out = {'browser_rendering': browser_rendering.mode()}
+    paths_in_use = browser_rendering.paths_in_use(app)
+    if paths_in_use:
+        out['paths'] = paths_in_use
+    return out
 
 
 def _plan():

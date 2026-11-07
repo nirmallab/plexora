@@ -366,8 +366,13 @@ def resource_routing():
     """
     datasource = request.args.get('datasource')
     project = Project.find(datasource)
+    # The desktop app's page may read this project's own files itself
+    # (plexora/browser_rendering.py; Settings > Advanced, off until the
+    # website's GA). Only with the setting on, so that off the answer is what
+    # it always was, key for key.
+    local = _local_route(datasource) if project is not None else None
     if project is None or not project.resources:
-        return jsonify(routes={})
+        return jsonify(routes={}, **({'local': local} if local else {}))
 
     from plexora.server.models import nodes as node_registry
 
@@ -426,7 +431,17 @@ def resource_routing():
                 {key: value for key, value in (("zs", project.image.z_semantics),
                                                ("ts", project.image.t_semantics))
                  if value})
-    return jsonify(routes=routes)
+    return jsonify(routes=routes, **({'local': local} if local else {}))
+
+
+def _local_route(datasource):
+    """`local` for `/resource_routing`: the image and mask as the desktop
+    app's page may read them, or None (not the desktop app, or the setting
+    off). `services/resourceRouting.js` chooses the `local-browser` routing
+    from it, and the shell grants the files it names (`grant_local_files`)."""
+    from plexora import browser_rendering
+
+    return browser_rendering.local_route(app, datasource)
 
 
 @app.route('/resource_status', methods=['GET'])

@@ -1468,8 +1468,12 @@ export class ViewerManager {
         };
         // A volume's tiles go through the one scheduler (views/tileFetch.js):
         // fetched once, decoded once, in order of need -- a prefetched plane
-        // last. A planar image's take OSD's own path, as they always have.
-        if (builtAt && this.imageViewer.tileFetch) {
+        // last. A planar image's take OSD's own path, as they always have --
+        // except an HD source whose tiles this page reads itself (the desktop
+        // app's Browser rendering, `localTiles`: services/resourceRouting.js),
+        // which the scheduler's `local` answerer serves.
+        const readHere = Boolean(this.imageViewer.localTiles && tileSource.hd);
+        if ((builtAt || readHere) && this.imageViewer.tileFetch) {
             this.imageViewer.tileFetch.attach(tileSource, { owner: "main", standby: Boolean(standby) });
         }
 
