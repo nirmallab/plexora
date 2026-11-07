@@ -1,9 +1,12 @@
 name: Release
 
-# Every artifact of one Plexora version: the wheel and sdist, and a desktop
-# installer per platform. `python scripts/release.py ci --bump patch` pushes the
-# tag that starts this and downloads what it produces; a manual run (no tag)
-# builds dev-named installers without publishing anything.
+# Every artifact of one Plexora version: the wheel and sdist, a desktop
+# installer per platform, and the website (its Python bundle on the assets
+# bucket, its shell on Cloudflare Pages: the `web` and `web_deploy` jobs,
+# docs/internal/WEBSITE_RELEASE.md). `python scripts/release.py ci --bump
+# patch` pushes the tag that starts this and downloads what it produces; a
+# manual run (no tag) builds dev-named installers and the website's bundle
+# and shell without publishing anything.
 #
 # A tag builds only once a full-suite run (weekly.yml or monthly.yml) has
 # passed on its commit; the preflight checks, and `scripts/release.py ci`
@@ -193,9 +196,148 @@ jobs:
             release/*/*.sig
           retention-days: 7
 
+  # The website's half of a release (docs/internal/WEBSITE_RELEASE.md): its
+  # Python bundle and its shell, built from the tagged tree beside the
+  # installers, with no cache (as the installers: a release reads nothing
+  # another run could have written). Nothing here holds a credential.
+  web:
+    name: Website bundle and shell
+    needs: preflight
+    runs-on: ubuntu-22.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: "3.13"
+      - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6.8.0
+        with:
+          enable-cache: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          package-manager-cache: false
+          node-version: "22"
+      - name: What the build runs
+        env:
+          UV_PYTHON: "3.13"
+        run: |
+          echo "PLEXORA_BENCH_HOME=$RUNNER_TEMP/plexora-web" >> "$GITHUB_ENV"
+          echo "PLEXORA_DATA_PATH=$RUNNER_TEMP/plexora-data" >> "$GITHUB_ENV"
+          uv sync --locked
+          uv pip install --python .venv/bin/python pip "setuptools>=77" wheel
+          uv python install 3.14
+          echo "PLEXORA_PYTHON314=$(uv python find 3.14)" >> "$GITHUB_ENV"
+          sudo apt-get update -q
+          sudo apt-get install -y -q brotli
+          echo "PLEXORA_BROTLI=$(command -v brotli)" >> "$GITHUB_ENV"
+      - name: The Python bundle (Pyodide's archive sha256-checked), into web/py/<version>/
+        run: uv run --no-sync python tools/browser_build/build.py --out "$RUNNER_TEMP/web"
+      - name: The shell, loading this version's bundle from the assets bucket
+        env:
+          VERSION: ${{ needs.preflight.outputs.version }}
+        run: |
+          uv run --no-sync python -m plexora.client.static_build --out "$RUNNER_TEMP/web/static" \
+            --py "https://assets.plexoraapp.com/py/$VERSION/"
+      - name: Under every bar, and every part says this version
+        env:
+          VERSION: ${{ needs.preflight.outputs.version }}
+        run: |
+          python tools/browser_build/budget.py --bundle "$RUNNER_TEMP/web/py/$VERSION" --site "$RUNNER_TEMP/web/static"
+          tag=()
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then tag=(--tag "$GITHUB_REF"); fi
+          python scripts/release.py propagate --check --bundle "$RUNNER_TEMP/web/py/$VERSION" \
+            --site "$RUNNER_TEMP/web/static" "${tag[@]}"
+      - name: The bundle boots in Node
+        env:
+          VERSION: ${{ needs.preflight.outputs.version }}
+        run: node tests/browser/import_check.mjs --bundle "$RUNNER_TEMP/web/py/$VERSION"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: web-release
+          path: ${{ runner.temp }}/web
+          compression-level: 1
+          retention-days: 7
+
+  # Once every installer built: the bundle to py/<version>/ on the assets
+  # bucket (a released prefix is never rewritten; this same bundle found there
+  # is a re-run, and passes), read back from https://assets.plexoraapp.com,
+  # then the shell to the Pages project plexora-viewer, production branch
+  # `release`. Before GA that is plexora-viewer.pages.dev; GA attaches
+  # viewer.plexoraapp.com to the project (plan Phase 7).
+  web_deploy:
+    name: Website deploy
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [preflight, build, web]
+    runs-on: ubuntu-22.04
+    timeout-minutes: 30
+    environment: website-production
+    env:
+      PLEXORA_WRANGLER: npx --yes wrangler@3.114.17
+    steps:
+      # Without the secrets the release goes on and the website stays where it
+      # was, with a warning, unless the repository variable
+      # PLEXORA_WEB_RELEASE is `required` (set it at GA).
+      - id: gate
+        name: Cloudflare credentials
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          REQUIRED: ${{ vars.PLEXORA_WEB_RELEASE }}
+        run: |
+          if [ -n "$CLOUDFLARE_API_TOKEN" ] && [ -n "$CLOUDFLARE_ACCOUNT_ID" ]; then
+            echo "deploy=true" >> "$GITHUB_OUTPUT"
+          elif [ "$REQUIRED" = "required" ]; then
+            echo "::error::CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID are not set and PLEXORA_WEB_RELEASE is required."
+            exit 1
+          else
+            echo "::warning::CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID are not set: this release does not reach the website (docs/internal/WEBSITE_RELEASE.md)."
+            echo "deploy=false" >> "$GITHUB_OUTPUT"
+          fi
+      - if: steps.gate.outputs.deploy == 'true'
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      # publish.py is the standard library and wrangler; nothing of the
+      # project's runs beside the token.
+      - if: steps.gate.outputs.deploy == 'true'
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: "3.13"
+      - if: steps.gate.outputs.deploy == 'true'
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          package-manager-cache: false
+          node-version: "22"
+      - if: steps.gate.outputs.deploy == 'true'
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: web-release
+          path: ${{ runner.temp }}/web
+      # Fetched once, without the token in the environment, before the
+      # uploads run it six at a time.
+      - if: steps.gate.outputs.deploy == 'true'
+        name: Wrangler
+        run: $PLEXORA_WRANGLER --version
+      - if: steps.gate.outputs.deploy == 'true'
+        name: Bundle to py/<version>/, read back, shell to plexora-viewer
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          VERSION: ${{ needs.preflight.outputs.version }}
+        run: |
+          set -euo pipefail
+          bundle="$RUNNER_TEMP/web/py/$VERSION"
+          python tools/browser_build/publish.py assets --bundle "$bundle" --prefix "py/$VERSION/"
+          python tools/browser_build/publish.py verify --bundle "$bundle" \
+            --base "https://assets.plexoraapp.com/py/$VERSION/"
+          python tools/browser_build/publish.py site --dir "$RUNNER_TEMP/web/static" \
+            --project plexora-viewer --branch release
+
   publish:
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: [preflight, build]
+    needs: [preflight, build, web_deploy]
     runs-on: ubuntu-22.04
     timeout-minutes: 10
     permissions:
