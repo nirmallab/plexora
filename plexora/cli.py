@@ -3364,6 +3364,10 @@ def _run_desktop(args):
     announce.flush()
     print(f"Serving Plexora for the desktop app on {host}:{port}",
           file=sys.stderr, flush=True)
+    # After the announce, so the splash is not held for it, and once the
+    # window's first page has loaded: what a first project open would
+    # otherwise import (data_model.warm_after_ready).
+    data_model.warm_after_ready(busy=_waitress_busy(server))
 
     install_signal_handlers()
     watch_stdin(lambda: request_shutdown(
@@ -3386,6 +3390,17 @@ def _run_desktop(args):
             pass
         flush_std()
     return 0
+
+
+def _waitress_busy(server):
+    """`() -> bool`: whether `server` (a waitress server) has a request in
+    hand -- a worker thread on one, or one queued -- for
+    `data_model.warm_after_ready`'s wait. None when this waitress does not
+    keep those counts where 3.x does; the warm-up then starts at once."""
+    dispatcher = getattr(server, "task_dispatcher", None)
+    if not (hasattr(dispatcher, "active_count") and hasattr(dispatcher, "queue")):
+        return None
+    return lambda: dispatcher.active_count > 0 or len(dispatcher.queue) > 0
 
 
 def _is_loopback(host):

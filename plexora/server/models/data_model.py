@@ -4364,6 +4364,74 @@ def prime_hot_code(log=None):
         sam.prime(log=log)
     step("the segmentation runtime", segmentation)
 
+    def ome_model_core():
+        # The one native library `ome_types` brings (pydantic's core, ~25 ms),
+        # dlopened here like every other, so that `warm_after_ready` -- which
+        # imports the rest of ome_types on a thread beside live requests --
+        # loads only Python and never meets the loader lock.
+        import pydantic_core  # noqa: F401
+    step("the OME-XML model's native core", ome_model_core)
+
+
+def warm_after_ready(busy=None, log=None, *, quiet=0.4, cap=10.0, poll=0.05):
+    """Imports a project's first open needs, paid once the window has loaded.
+
+    `ome_types` reads an OME-TIFF's metadata on the first open of any project
+    (`pixel_scale._local_metadata`, `LocalImageProvider.open`), and its first
+    import is 0.6-0.8 s of pure Python (some 270 modules: its generated
+    model, xsdata, pydantic). Not in `prime_hot_code`: that runs before the
+    announce, and there it held the desktop app's splash about 0.7 s longer
+    (P6D.md). Here, on a background thread started after the announce.
+
+    `busy`, when given, says whether the server is answering a request right
+    now. The import then waits for the window's first page to have loaded --
+    busy seen, then `quiet` seconds without (`_wait_for_quiet`) -- because
+    started at the announce it shared the GIL with that page's requests and
+    lengthened its load by about 60 ms. A project opened before the import
+    starts imports ome_types itself, as it always did; one opened while it
+    runs waits for it instead of starting its own. Its native part is
+    already loaded (`prime_hot_code`'s last step), so nothing here dlopens
+    beside a request.
+
+    Returns the thread, or None when there is nothing left to import.
+    """
+    if "ome_types" in sys.modules:
+        return None
+
+    def run():
+        if busy is not None:
+            _wait_for_quiet(busy, quiet=quiet, cap=cap, poll=poll)
+        try:
+            from ome_types import from_xml  # noqa: F401
+        except Exception as exc:  # noqa: BLE001 -- a warm-up never fails the server
+            if log:
+                log(f"  could not pre-load the OME-XML model: {exc}")
+
+    thread = threading.Thread(target=run, name="plexora-warm-after-ready", daemon=True)
+    thread.start()
+    return thread
+
+
+def _wait_for_quiet(busy, *, quiet, cap, poll):
+    """Return once `busy()` has been true and then false for `quiet` seconds,
+    or after `cap` seconds whatever it said (a window that never asks, a
+    server that is never idle). A `busy` that raises ends the wait."""
+    deadline = time.monotonic() + cap
+    seen = False
+    quiet_since = None
+    while time.monotonic() < deadline:
+        try:
+            serving = bool(busy())
+        except Exception:  # noqa: BLE001 -- the wait is advisory
+            return
+        if serving:
+            seen, quiet_since = True, None
+        elif seen:
+            quiet_since = quiet_since or time.monotonic()
+            if time.monotonic() - quiet_since >= quiet:
+                return
+        time.sleep(poll)
+
 
 #: The largest coarse level a thumbnail will pull across a network, in pixels.
 #:

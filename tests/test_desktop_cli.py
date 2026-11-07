@@ -54,16 +54,23 @@ class FakeServer:
 
 
 @pytest.fixture
-def rig(monkeypatch, tmp_path):
+def rig(tmp_path):
     """Fake Waitress, a fake package and captured streams.
 
     The environment is restored wholesale afterwards: `main()` writes
     PLEXORA_AUTH_TOKEN, PLEXORA_PLUGINS and friends straight into os.environ,
     and monkeypatch only undoes what it set itself -- a leaked token turns
     every later page test into a 403.
+
+    The fakes are patched in a monkeypatch of the rig's own and undone when
+    the rig is, not by the test's `monkeypatch`: that one is torn down after
+    conftest's autouse teardowns, which import real `plexora` submodules
+    (`_work`, `layer_jobs`) and failed, now and then, on the fake package
+    still standing in sys.modules.
     """
     saved_environ = dict(os.environ)
-    yield from _rig(monkeypatch, tmp_path)
+    with pytest.MonkeyPatch.context() as patch:
+        yield from _rig(patch, tmp_path)
     os.environ.clear()
     os.environ.update(saved_environ)
 
@@ -105,7 +112,10 @@ def _rig(monkeypatch, tmp_path):
     package = types.SimpleNamespace(app=app, paths=fake_paths, _logging=logging_)
     models = types.ModuleType("plexora.server.models")
     models.data_model = types.SimpleNamespace(
-        prime_hot_code=lambda: rig.events.append("prime"))
+        prime_hot_code=lambda: rig.events.append("prime"),
+        # Which side of the ready line the warm-up started on.
+        warm_after_ready=lambda busy=None, log=None: rig.events.append(
+            "warm" if rig.stdout.getvalue() else "warm before the announce"))
 
     monkeypatch.setitem(sys.modules, "waitress", types.SimpleNamespace())
     monkeypatch.setitem(sys.modules, "waitress.server",
@@ -169,6 +179,16 @@ def test_the_ready_line_is_the_only_stdout_and_has_exactly_the_documented_keys(r
 def test_the_announce_comes_after_the_bind_and_before_serving(rig):
     run(rig, ["--desktop", "--port", "0"])
     assert rig.events.index("prime") < rig.events.index("bind") < rig.events.index("run")
+
+
+def test_the_first_open_warm_up_starts_after_the_ready_line(rig):
+    """`ome_types` and friends (data_model.warm_after_ready) are what a
+    project's first open would import: started once the shell has its ready
+    line, so the splash never waits for them, and before serving, so they
+    are under way by the time the window asks for a project."""
+    run(rig, ["--desktop", "--port", "0"])
+    assert "warm before the announce" not in rig.events
+    assert rig.events.index("bind") < rig.events.index("warm") < rig.events.index("run")
 
 
 def test_the_token_is_per_launch_and_reaches_the_app(rig):

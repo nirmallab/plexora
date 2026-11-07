@@ -2128,6 +2128,14 @@ One authoritative database; nodes are data services with no project state.
   and impossible on macOS, which has no `dl_iterate_phdr`; that asymmetry is
   why "local works, remote doesn't" pointed here. Order is tested in
   `tests/test_prime_hot_code.py` (prime < announce < warm < serve).
+  A slow pure-Python import that only a project's first open needs goes in
+  `data_model.warm_after_ready()` instead (the desktop server starts it after
+  its ready line, and it waits for the window's first page: waitress busy,
+  then 0.4 s quiet, via `cli._waitress_busy`; today `ome_types`, 0.6-0.8 s,
+  which in the prime held the splash ~0.7 s longer and started at the
+  announce slowed the first page ~60 ms): a background thread, so its native
+  part must already be loaded by the prime (`pydantic_core`), and
+  `tests/test_prime_hot_code.py` checks the thread dlopens nothing.
   `--manifest PATH` persists
   the resulting resource set (kinds, ids, paths -- never a project, a role or
   a read spec) so it is re-served identically at the next startup.

@@ -44,6 +44,160 @@ def test_priming_leaves_nothing_lazy(capsys):
         assert "onnxruntime" in sys.modules
 
 
+_WARM_PROBE = r"""
+import json
+import sys
+
+from plexora.server.models import data_model
+
+
+def native():
+    return {name for name, module in list(sys.modules.items())
+            if str(getattr(module, "__file__", "") or "").endswith((".pyd", ".so"))}
+
+
+data_model.prime_hot_code()
+primed = "ome_types" in sys.modules
+core = "pydantic_core" in sys.modules
+before = native()
+thread = data_model.warm_after_ready()
+started = thread is not None and thread.daemon
+thread.join(120)
+print(json.dumps({"primed": primed, "core": core, "started": started,
+                  "warmed": "ome_types.model" in sys.modules,
+                  "new_native": sorted(native() - before),
+                  "again": data_model.warm_after_ready() is None}))
+"""
+
+
+def test_the_ome_xml_model_is_warmed_after_the_announce_off_the_splash():
+    """`ome_types` (0.6-0.8 s of imports, needed by every project's first
+    open) is not paid in the prime, which holds the desktop app's splash, but
+    on a background thread the desktop server starts after its ready line.
+
+    That thread runs beside live requests, so the prime's rule still holds
+    for it: it may dlopen nothing. The prime loads ome_types' one native
+    library, and this checks the warm-up adds no other -- a new ome_types
+    that brought one (lxml, say) would have to be added to the prime.
+
+    In a new interpreter, because this suite has imported ome_types long
+    before this test runs.
+    """
+    import json
+    import subprocess
+    from pathlib import Path
+
+    result = subprocess.run([sys.executable, "-c", _WARM_PROBE],
+                            cwd=Path(__file__).resolve().parents[1],
+                            capture_output=True, text=True, timeout=600)
+    assert result.returncode == 0, result.stderr[-2000:]
+    found = json.loads(result.stdout.strip().splitlines()[-1])
+    assert found == {"primed": False, "core": True, "started": True, "warmed": True,
+                     "new_native": [], "again": True}
+
+
+def test_the_warm_up_waits_for_the_windows_first_page_to_finish():
+    """Started at the announce, the import shared the GIL with the window's
+    first page and lengthened its load by about 60 ms; so it waits for the
+    server to have been busy and then quiet. Never forever: a window that
+    never asks, or a server never idle, gets it at the cap."""
+    import time
+
+    from plexora.server.models.data_model import _wait_for_quiet
+
+    states = iter([False] * 20 + [True, True, False, True] + [False] * 1000)
+    asked = []
+
+    def busy():
+        asked.append(time.monotonic())
+        return next(states)
+
+    started = time.monotonic()
+    _wait_for_quiet(busy, quiet=0.05, cap=5.0, poll=0.01)
+    # Quiet before the first request does not count (0.2 s of it here), and
+    # a request after a short gap restarts the quiet period: 24 readings,
+    # then >= 0.05 s idle.
+    assert len(asked) >= 24 + 5
+    assert asked[-1] - asked[23] >= 0.05
+    assert time.monotonic() - started < 5.0
+
+    started = time.monotonic()
+    _wait_for_quiet(lambda: False, quiet=0.01, cap=0.2, poll=0.01)
+    assert 0.2 <= time.monotonic() - started < 2.0
+
+    started = time.monotonic()
+    _wait_for_quiet(lambda: True, quiet=0.01, cap=0.2, poll=0.01)
+    assert 0.2 <= time.monotonic() - started < 2.0
+
+    def broken():
+        raise RuntimeError("no counts")
+
+    started = time.monotonic()
+    _wait_for_quiet(broken, quiet=0.01, cap=5.0, poll=0.01)
+    assert time.monotonic() - started < 1.0
+
+
+def test_the_desktop_server_reads_waitress_for_busy():
+    """cli._waitress_busy against a real waitress 3 server: idle once it has
+    started, busy while a request is in hand, idle after."""
+    import threading
+    import time
+    import urllib.request
+
+    from waitress.server import create_server
+
+    from plexora import cli
+
+    release = threading.Event()
+
+    def app(environ, start_response):
+        release.wait(10)
+        start_response("200 OK", [("Content-Type", "text/plain")])
+        return [b"ok"]
+
+    server = create_server(app, host="127.0.0.1", port=0, threads=2)
+    busy = cli._waitress_busy(server)
+    assert busy is not None
+    stopping = threading.Event()
+
+    def serve():
+        # Closing the sockets under a running loop can make its select()
+        # raise; that is the test stopping it, not a failure.
+        try:
+            server.run()
+        except Exception:
+            if not stopping.is_set():
+                raise
+
+    runner = threading.Thread(target=serve, daemon=True)
+    runner.start()
+    try:
+        deadline = time.monotonic() + 5
+        while busy() and time.monotonic() < deadline:
+            time.sleep(0.01)
+        assert not busy()
+        asking = threading.Thread(target=lambda: urllib.request.urlopen(
+            f"http://127.0.0.1:{server.effective_port}/", timeout=10).read())
+        asking.start()
+        deadline = time.monotonic() + 5
+        while not busy() and time.monotonic() < deadline:
+            time.sleep(0.01)
+        assert busy()
+        release.set()
+        asking.join(10)
+        deadline = time.monotonic() + 5
+        while busy() and time.monotonic() < deadline:
+            time.sleep(0.01)
+        assert not busy()
+    finally:
+        release.set()
+        stopping.set()
+        server.close()
+        runner.join(5)
+
+    assert cli._waitress_busy(object()) is None
+
+
 def test_priming_is_idempotent_and_quick_the_second_time():
     import time
 
