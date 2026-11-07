@@ -33,9 +33,22 @@ _column_source = None
 #: reads both itself (services/pickedFiles.js `fileFor`).
 PAGE_ROOTS = ("/picked/", "/derived/")
 
-#: How often an import waiting on the page's pyramid looks again; each look
-#: lets the requests that arrived meanwhile be answered (`_work.wait`).
+#: How often an import waiting on the page's pyramid looks again; between
+#: looks the requests that arrived meanwhile are answered (`_work.pause`). A
+#: background job's one look waits as long for the build to end.
 _POLL_S = 0.25
+
+
+class PageBuilding(Exception):
+    """The page is still building the pyramid a background job needs
+    (`page_pyramid(hold=False)`): the job gives the worker back and looks again
+    later. `tiles` of `total` are written."""
+
+    def __init__(self, tiles: int = 0, total: int = 0):
+        super().__init__(f"the page is building a pyramid ({tiles} of {total} tiles)")
+        self.tiles = tiles
+        self.total = total
+
 
 _asker = None
 
@@ -83,25 +96,41 @@ def _plain(value):
     return to_py() if callable(to_py) else value
 
 
-def page_pyramid(source, *, name, spec, progress=None, stage=None):
-    """The pyramidized copy of the picked flat TIFF `source`, built by the page
-    (services/browserPyramid.js; the copy `image_pyramid.pyramidize_image`
-    writes, tests/test_tiff_writer.py): its path in Python's files,
-    /derived/<key>/<name>. None when the page does not build it -- not the
-    website, not a picked TIFF, or `spec()` (`image_pyramid.page_build`) None
-    because the page would not read the stack Python reads -- and Python then
-    builds it itself. A build the page began and could not finish raises
-    `PyramidError` with the page's reason.
+def page_pyramid(source, *, name, spec, progress=None, stage=None, adoptable=None, hold=True):
+    """The pyramid of the picked flat TIFF `source`, built by the page
+    (services/browserPyramid.js; tests/test_tiff_writer.py holds it to
+    Python's file): its path in Python's files, /derived/<key>/<name>. Two
+    kinds, as `spec()` says: an image's pyramidized copy
+    (`image_pyramid.page_build`, the copy `pyramidize_image` writes) and a
+    mask's filled label pyramid (`segmentation_pyramid.page_build`, the file
+    `pyramidize_segmentation_mask` writes). None when the page does not build
+    it -- not the website, not a picked TIFF, or `spec()` None because the
+    page would not read what Python reads -- and Python then builds it
+    itself. A build the page began and could not finish raises `PyramidError`
+    with the page's reason.
 
-    The import waits for it a look at a time (`_work.wait`): the page's
-    progress reaches the import's bar, and other requests are answered between
-    looks.
+    An import (a request) waits for it a look at a time (`_work.pause`): the
+    page's progress reaches the import's bar, and other requests are answered
+    between looks. Never `_work.wait`, which runs Python's queued work in the
+    gap.
 
-    Where the user chose to save it beside the original and a file of that
-    name is already there, the page hands that file back unread (`existing`):
-    it is used when it is a finished copy of this image as it is now
-    (`image_pyramid.is_adoptable_image`), and otherwise the copy is built in
-    the browser instead -- a user's file is never written over."""
+    A background job passes `hold=False` (a mask's conversion,
+    `data_model.start_segmentation_job`): it looks once -- the page answers
+    when the build ends or after `_POLL_S` -- and raises `PageBuilding` while
+    the page is still at it, and the job is queued again. A job must not hold
+    the worker for the build: polled with `_work.wait`, the viewer's own
+    requests waited behind the warm-up it ran (10 s on a 2.4-gigapixel mask);
+    with `_work.pause`, they were answered inside the job, on top of its
+    suspended frames, and the worker stopped answering for good (not traced
+    further: `_work.checkpoint` says why answering requests inside a task was
+    taken out once already).
+
+    Where the copy was to be saved in a folder and a file of that name is
+    already there, the page hands that file back unread (`existing`): it is
+    used when `adoptable(path)` says it is a finished copy of this source as
+    it is now (`image_pyramid.is_adoptable_image` by default), and otherwise
+    the copy is built in the browser instead -- a user's file is never
+    written over."""
     if _asker is None or os.environ.get("PLEXORA_BACKEND") != "browser":
         return None
     path = str(source)
@@ -114,9 +143,16 @@ def page_pyramid(source, *, name, spec, progress=None, stage=None):
     from plexora.server.utils import image_pyramid
     from plexora.server.utils.segmentation_pyramid import PyramidError
 
-    # One copy per source file as it is now, whichever pick it came through.
-    key = hashlib.sha256(f"{PurePosixPath(path).name}|{wanted['fingerprint']}".encode()).hexdigest()[:24]
-    asked = {"path": path, "key": key, "name": name,
+    if adoptable is None:
+        adoptable = lambda found: image_pyramid.is_adoptable_image(found, source)  # noqa: E731
+    kind = wanted.get("kind") or "image"
+    # One copy per source file as it is now, whichever pick it came through;
+    # a mask's apart from an image's of the same file.
+    seed = f"{PurePosixPath(path).name}|{wanted['fingerprint']}"
+    if kind != "image":
+        seed = f"{kind}|{seed}"
+    key = hashlib.sha256(seed.encode()).hexdigest()[:24]
+    asked = {"path": path, "key": key, "name": name, "kind": kind,
              **{field: wanted[field] for field in ("shape", "dtype", "factors", "tile", "description")}}
     started = _plain(_asker("pyramid", asked))
     if not started or started.get("id") is None:
@@ -124,11 +160,12 @@ def page_pyramid(source, *, name, spec, progress=None, stage=None):
     if stage is not None:
         stage("building", None)
     while True:
-        state = _plain(_asker("pyramid_status", {"id": started["id"]})) or {}
+        state = _plain(_asker("pyramid_status", {"id": started["id"],
+                                                 "wait": 0 if hold else int(_POLL_S * 1000)})) or {}
         if progress is not None and state.get("total"):
             progress(int(state.get("tiles") or 0), int(state["total"]))
         if state.get("state") == "done" and state.get("existing"):
-            if image_pyramid.is_adoptable_image(state["path"], source):
+            if adoptable(state["path"]):
                 return str(state["path"])
             started = _plain(_asker("pyramid", {**asked, "browser": True}))
             if not started or started.get("id") is None:
@@ -140,9 +177,12 @@ def page_pyramid(source, *, name, spec, progress=None, stage=None):
             return str(state["path"])
         if state.get("state") != "building":
             raise PyramidError(
-                f"{PurePosixPath(path).name}: this browser could not build the image's pyramid "
+                f"{PurePosixPath(path).name}: this browser could not build the "
+                f"{'mask' if kind == 'labels' else 'image'}'s pyramid "
                 f"({state.get('error') or 'no reason given'}), so no copy was made.")
-        _work.wait(_POLL_S)
+        if not hold:
+            raise PageBuilding(int(state.get("tiles") or 0), int(state.get("total") or 0))
+        _work.pause(_POLL_S)
 
 
 def set_column_source(source) -> None:

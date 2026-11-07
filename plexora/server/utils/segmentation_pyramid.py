@@ -211,6 +211,15 @@ def _is_adoptable(derived: Path, source: Path, mode: str) -> bool:
     return True
 
 
+def is_adoptable_mask(derived, source, mode: str = MODE_FILLED) -> bool:
+    """Whether the pyramid at `derived` can be served for the mask `source`
+    without rebuilding it (`_is_adoptable`), for a caller that found it
+    somewhere this module does not look: the website's page hands back a
+    file already under the pyramid's name in the folder it was to write to
+    (providers/browser.py `page_pyramid`)."""
+    return _is_adoptable(Path(derived), source if _is_remote(source) else Path(source), mode)
+
+
 def is_polygon_source(path) -> bool:
     """Whether `path` is cell polygons (`boundary_mask`), not a raster mask."""
     if _is_remote(path):
@@ -1231,6 +1240,13 @@ def write_tiled_pyramid(
     return str(destination)
 
 
+def _label_metadata(marker: str = FILLED_MARKER, scale: Optional[int] = None) -> dict:
+    """The level-0 OME metadata of a label pyramid this module writes: one
+    YX plane, the marker (and the scale stamp) as the Image Name."""
+    name = marker if scale is None else f"{marker} scale={int(scale)}"
+    return {"axes": "YX", "Channel": {"Name": "cell"}, "Name": name}
+
+
 def write_label_pyramid(
     destination,
     *,
@@ -1262,14 +1278,13 @@ def write_label_pyramid(
     `scale`, when given, is stamped after the marker (`generated_mask_scale`):
     how many of this file's pixels span one of the reference image's.
     """
-    name = marker if scale is None else f"{marker} scale={int(scale)}"
     return write_tiled_pyramid(
         destination,
         height=height,
         width=width,
         dtype=dtype,
         block=lambda _channel, *rest: block(*rest),
-        metadata={"axes": "YX", "Channel": {"Name": "cell"}, "Name": name},
+        metadata=_label_metadata(marker, scale),
         tile_size=tile_size,
         compression=compression,
         max_workers=max_workers,
@@ -1530,6 +1545,54 @@ def pyramidize_segmentation_mask(
     return str(destination)
 
 
+#: Samples the page's builder writes (client src/js/node/tiffWriter.js) that a
+#: mask keeps as they are: integers of up to 32 bits. Python narrows a 64-bit
+#: mask to uint32 and refuses a float one; both stay Python's.
+_PAGE_DTYPES = ("uint8", "uint16", "uint32", "int8", "int16", "int32")
+
+
+def page_build(source, *, tile_size: int = 1024) -> Optional[dict]:
+    """What the website's page needs to build `source`'s filled label pyramid
+    itself (client src/js/node/pyramid.js, kind "labels": level L's pixel
+    (y, x) is level 0's (y * 2^L, x * 2^L)), the file
+    `pyramidize_segmentation_mask(outline=False)` writes: `{kind, shape:
+    [1, H, W], dtype, factors, tile, description, fingerprint}`, the
+    description being the OME-XML tifffile writes for `_label_metadata()`.
+
+    None when the page would not read the plane Python reads -- not a TIFF
+    here, or its first series' full-resolution level is not IFD 0 alone with
+    one sample per pixel -- or would not write its samples as they are; the
+    import then goes on as before (Python converts it, or says why not)."""
+    if _is_remote(source) or not can_serve_in_place(source) or ome_zarr.is_zarr_image_path(source):
+        return None
+    try:
+        with tf.TiffFile(str(source), is_ome=False) as reader:
+            series = reader.series[0]
+            level = series.levels[0] if getattr(series, "levels", None) else series
+            pages = list(level.pages)
+            shape = tuple(int(side) for side in level.shape)
+            dtype = np.dtype(level.dtype)
+            plain = (len(shape) == 2 and len(pages) == 1
+                     and getattr(pages[0], "index", None) == 0
+                     and int(getattr(pages[0], "samplesperpixel", 1)) == 1)
+    except Exception:  # noqa: BLE001 -- the conversion says why, in a sentence
+        return None
+    if not plain or dtype.name not in _PAGE_DTYPES or min(shape) <= 0:
+        return None
+    height, width = shape
+    factors = pyramid_factors(height, width, tile_size)
+    if factors[-1] > tile_size:
+        return None  # the page cuts level 0 into bands no wider than a tile
+    metadata = _label_metadata()
+    # As tf.TiffWriter(ome=True) makes it for write_tiled_pyramid's level 0.
+    ome = tf.OmeXml(**metadata)
+    ome.addimage(dtype, shape, (1, 1, 1, height, width, 1), **metadata)
+    return {"kind": "labels", "shape": [1, height, width], "dtype": dtype.name,
+            "factors": [int(f) for f in factors], "tile": int(tile_size),
+            "description": ome.tostring(declaration=True),
+            "fingerprint": source_fingerprint(source)}
+
+
 __all__ = [
     "FILLED_MARKER",
     "FILLED_SUFFIX",
@@ -1540,12 +1603,14 @@ __all__ = [
     "DerivedMask",
     "derived_output_path",
     "generated_mask_kind",
+    "is_adoptable_mask",
     "is_generated_outline_mask",
     "is_servable_label_pyramid",
     "label_pyramid_gaps",
     "looks_like_outline_mask",
     "open_remote_labels",
     "outline_output_path",
+    "page_build",
     "pyramid_factors",
     "pyramidize_segmentation_mask",
     "resolve_derived_mask",

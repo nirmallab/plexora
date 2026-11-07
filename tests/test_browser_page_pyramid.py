@@ -30,7 +30,7 @@ class Page:
         self.asked.append((kind, args))
         if kind == "pyramid":
             return {"id": 7} if self.start else None
-        assert kind == "pyramid_status" and args == {"id": 7}
+        assert kind == "pyramid_status" and args["id"] == 7
         self.looks -= 1
         if self.looks > 0:
             return {"state": "building", "tiles": 10, "total": 40}
@@ -43,7 +43,9 @@ class Page:
 def website(monkeypatch):
     monkeypatch.setenv("PLEXORA_BACKEND", "browser")
     waits = []
-    monkeypatch.setattr(_work, "wait", lambda seconds: waits.append(seconds))
+    monkeypatch.setattr(_work, "pause", lambda seconds: waits.append(seconds))
+    # Nothing queued in Python is what the page's build waits on.
+    monkeypatch.setattr(_work, "wait", lambda seconds: pytest.fail("ran queued work while waiting on the page"))
     yield waits
     browser.set_asker(None)
 
@@ -130,3 +132,216 @@ def test_off_the_website_it_never_asks(monkeypatch):
         assert _build(spec=lambda: pytest.fail("built a spec"))[0] is None
     finally:
         browser.set_asker(None)
+
+
+# -- a picked flat mask's label pyramid ---------------------------------------
+#
+# `data_model.resolve_outline_segmentation` asks the page the same way for a
+# flat mask's filled label pyramid (`segmentation_pyramid.page_build`, the
+# file `pyramidize_segmentation_mask` writes; tests/test_tiff_writer.py holds
+# the page's file to it). Outline mode, anything off the website and anything
+# the page would read differently stay Python's.
+
+LABELS = {"kind": "labels", "shape": [1, 4000, 5000], "dtype": "uint32", "factors": [1, 2, 4, 8],
+          "tile": 1024, "description": "<?xml ...?><OME/>", "fingerprint": "123-456"}
+
+
+def test_a_mask_is_asked_for_as_labels_and_kept_apart_from_an_image(website):
+    asked = {}
+    for kind, spec in (("image", SPEC), ("labels", LABELS)):
+        page = Page(looks=1)
+        browser.set_asker(page)
+        _build(spec=lambda s=spec: dict(s))
+        asked[kind] = page.asked[0][1]
+    assert asked["image"]["kind"] == "image" and asked["labels"]["kind"] == "labels"
+    assert asked["labels"]["shape"] == [1, 4000, 5000]
+    # The same file, the same moment: two pyramids, two places.
+    assert asked["image"]["key"] != asked["labels"]["key"]
+
+
+@pytest.mark.parametrize("judged, built_in_browser", [(True, False), (False, True)])
+def test_a_file_already_there_is_judged_by_the_callers_rule(website, judged, built_in_browser):
+    """The page hands back a file already under the pyramid's name; the
+    caller's `adoptable` (a mask's own rule, not an image's) decides."""
+    answers = iter([{"id": 7}, {"state": "done", "existing": True, "path": "/derived/k/m.labels.pyramid.ome.tiff"},
+                    {"id": 8}, {"state": "done", "path": "/derived/k/m.labels.pyramid.ome.tiff"}])
+    asked = []
+
+    def page(kind, args):
+        asked.append((kind, args))
+        return next(answers)
+
+    browser.set_asker(page)
+    judged_paths = []
+    path = browser.page_pyramid(
+        "/picked/ab/m.tif", name="m.labels.pyramid.ome.tiff", spec=lambda: dict(LABELS),
+        adoptable=lambda found: judged_paths.append(found) or judged)
+    assert path == "/derived/k/m.labels.pyramid.ome.tiff"
+    assert judged_paths == ["/derived/k/m.labels.pyramid.ome.tiff"]
+    rebuilt = [args for kind, args in asked if kind == "pyramid" and args.get("browser")]
+    assert bool(rebuilt) is built_in_browser
+
+
+def test_a_mask_the_page_cannot_finish_says_so(website):
+    browser.set_asker(Page(looks=1, end="failed"))
+    with pytest.raises(PyramidError, match="could not build the mask's pyramid"):
+        _build(spec=lambda: dict(LABELS))
+
+
+@pytest.fixture
+def conversion(monkeypatch):
+    """`resolve_outline_segmentation` up to its two ways of making the
+    pyramid: the page's, and Python's (`pyramidize_segmentation_mask`, here a
+    stand-in that says it ran)."""
+    from plexora.server.models import data_model
+    from plexora.server.utils import segmentation_pyramid
+
+    ran = {"python": [], "specs": [], "judged": []}
+    monkeypatch.setattr(data_model, "_resolve_label_volume", lambda *a, **k: None)
+    monkeypatch.setattr(data_model, "_servable_as_is", lambda *a, **k: False)
+    monkeypatch.setattr(segmentation_pyramid, "page_build",
+                        lambda source, **k: ran["specs"].append(source) or dict(LABELS))
+    monkeypatch.setattr(segmentation_pyramid, "resolve_derived_mask",
+                        lambda source, directory, mode: segmentation_pyramid.DerivedMask(
+                            None, segmentation_pyramid.derived_output_path(source, directory, mode=mode), True))
+    monkeypatch.setattr(segmentation_pyramid, "pyramidize_segmentation_mask",
+                        lambda source, target, **k: ran["python"].append((source, k["outline"])) or str(target))
+    monkeypatch.setattr(segmentation_pyramid, "is_adoptable_mask",
+                        lambda found, source, mode: ran["judged"].append((found, source, mode)) or True)
+    return data_model, segmentation_pyramid, ran
+
+
+def test_the_import_asks_the_page_for_a_picked_flat_mask(website, conversion):
+    data_model, segmentation_pyramid, ran = conversion
+    page = Page(looks=2)
+    browser.set_asker(page)
+    progress, stages = [], []
+    path = data_model.resolve_outline_segmentation(
+        "/picked/ab/cells.ome.tif", "/data/derived/s",
+        progress_callback=lambda done, total: progress.append((done, total)),
+        mode=segmentation_pyramid.MODE_FILLED,
+        # A mask's stage callback takes the key alone.
+        stage_callback=lambda key: stages.append(key))
+    assert path == "/derived/k/s.pyramid.ome.tiff"  # what the page answered
+    kind, args = page.asked[0]
+    assert kind == "pyramid" and args["kind"] == "labels"
+    assert args["path"] == "/picked/ab/cells.ome.tif"
+    assert args["name"] == "cells" + segmentation_pyramid.FILLED_SUFFIX
+    assert ran["specs"] == ["/picked/ab/cells.ome.tif"] and ran["python"] == []
+    assert progress == [(10, 40), (40, 40)]
+    assert stages == ["inspecting", "building", "writing"]
+
+
+def test_a_mask_file_already_there_is_judged_as_a_mask(website, conversion):
+    data_model, segmentation_pyramid, ran = conversion
+    answers = iter([{"id": 7}, {"state": "done", "existing": True, "path": "/derived/k/c.labels.pyramid.ome.tiff"}])
+    browser.set_asker(lambda kind, args: next(answers))
+    path = data_model.resolve_outline_segmentation("/picked/ab/c.tif", "/data/derived/s",
+                                                   mode=segmentation_pyramid.MODE_FILLED)
+    assert path == "/derived/k/c.labels.pyramid.ome.tiff"
+    assert ran["judged"] == [("/derived/k/c.labels.pyramid.ome.tiff", "/picked/ab/c.tif",
+                              segmentation_pyramid.MODE_FILLED)]
+
+
+def test_outlines_are_left_to_python(website, conversion):
+    data_model, segmentation_pyramid, ran = conversion
+    browser.set_asker(lambda kind, args: pytest.fail("asked the page"))
+    data_model.resolve_outline_segmentation("/picked/ab/c.tif", "/data/derived/s",
+                                            mode=segmentation_pyramid.MODE_OUTLINES)
+    assert ran["python"] == [("/picked/ab/c.tif", True)]
+
+
+def test_a_mask_the_page_would_read_differently_is_left_to_python(website, conversion, monkeypatch):
+    data_model, segmentation_pyramid, ran = conversion
+    monkeypatch.setattr(segmentation_pyramid, "page_build", lambda source, **k: None)
+    page = Page()
+    browser.set_asker(page)
+    data_model.resolve_outline_segmentation("/picked/ab/c.tif", "/data/derived/s",
+                                            mode=segmentation_pyramid.MODE_FILLED)
+    assert page.asked == []
+    assert ran["python"] == [("/picked/ab/c.tif", False)]
+
+
+def test_a_mask_off_the_website_is_pythons(monkeypatch, conversion):
+    data_model, segmentation_pyramid, ran = conversion
+    monkeypatch.delenv("PLEXORA_BACKEND", raising=False)
+    browser.set_asker(lambda kind, args: pytest.fail("asked the page"))
+    try:
+        data_model.resolve_outline_segmentation("C:/data/c.tif", "C:/data/derived/s",
+                                                mode=segmentation_pyramid.MODE_FILLED)
+    finally:
+        browser.set_asker(None)
+    assert ran["specs"] == [] and ran["python"] == [("C:/data/c.tif", False)]
+
+
+@pytest.fixture
+def mask_job(monkeypatch, tmp_path):
+    """`start_segmentation_job` with the conversion stood in: it raises
+    `PageBuilding` for its first `building` runs, as `page_pyramid(hold=False)`
+    does while the page is at it, then answers the page's path."""
+    from plexora.server.models import data_model
+
+    seen = {"holds": [], "patched": []}
+
+    def use(building):
+        def convert(label_file, **kwargs):
+            seen["holds"].append(data_model._page_holds.get())
+            if len(seen["holds"]) <= building:
+                kwargs["progress_callback"](len(seen["holds"]), building + 1)
+                raise browser.PageBuilding(len(seen["holds"]), building + 1)
+            return {"segmentation": "/derived/k/cells.labels.pyramid.ome.tiff"}
+
+        monkeypatch.setattr(data_model, "convertOmeTiff", convert)
+        return seen
+
+    monkeypatch.setattr(data_model, "_label_geometry_for", lambda *a: None)
+    monkeypatch.setattr(data_model, "_image_levels_for", lambda *a: None)
+    monkeypatch.setattr(data_model, "describe_segmentation_work", lambda *a: "Building")
+    monkeypatch.setattr(data_model, "_attached_mask",
+                        lambda name, config_file: ("/picked/ab/cells.tif", "pending", "filled"))
+    monkeypatch.setattr(data_model, "_patch_config_segmentation",
+                        lambda name, path, status, **k: seen["patched"].append((path, status)) or True)
+    monkeypatch.setattr(data_model.Project, "config_path_for", lambda name: tmp_path / "config.json")
+    yield use
+    data_model._segmentation_jobs.pop("s", None)
+    _work._reset_for_tests()
+
+
+def test_a_mask_job_gives_the_worker_back_while_the_page_builds(monkeypatch, mask_job):
+    """Without threads, each look at the page's build is a task of its own,
+    and requests are answered between them; the job holds its lock (no second
+    job starts) until the pyramid is there."""
+    from plexora.server.models import data_model
+
+    monkeypatch.setenv("PLEXORA_WORK", "inline")
+    _work._reset_for_tests()
+    seen = mask_job(building=2)
+    data_model.start_segmentation_job("s", "/picked/ab/cells.tif", "/data/derived/s")
+    ran = []
+    while _work.run_pending(budget_s=0, ran=ran):
+        if len(ran) < 3:
+            assert data_model._segmentation_jobs["s"]["status"] == "pending"
+            assert not data_model._segmentation_job_lock_for("s").acquire(blocking=False)
+    assert ran == ["segmentation-s"] * 3
+    assert seen["holds"] == [False] * 3  # never waits inside a run
+    assert seen["patched"] == [("/derived/k/cells.labels.pyramid.ome.tiff", "ready")]
+    record = data_model._segmentation_jobs["s"]
+    assert record["status"] == "ready" and record["segmentation"].startswith("/derived/")
+    lock = data_model._segmentation_job_lock_for("s")
+    assert lock.acquire(blocking=False)
+    lock.release()
+
+
+def test_on_threads_a_mask_job_waits_where_it_is(monkeypatch, mask_job):
+    import threading
+
+    from plexora.server.models import data_model
+
+    monkeypatch.setenv("PLEXORA_WORK", "threads")
+    seen = mask_job(building=0)
+    data_model.start_segmentation_job("s", "/picked/ab/cells.tif", "/data/derived/s")
+    for thread in threading.enumerate():
+        if thread.name == "segmentation-s":
+            thread.join(10)
+    assert seen["holds"] == [True]
+    assert data_model._segmentation_jobs["s"]["status"] == "ready"

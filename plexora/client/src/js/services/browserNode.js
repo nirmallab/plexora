@@ -369,17 +369,19 @@
         // the mask (whose tiles ignore `q`).
         const index = (/_(\d+)$/.exec(channel) || [])[1];
         if (index !== undefined && url.searchParams.get("q") !== "hd") return null;
-        const entry = await project(name);
+        let entry = await project(name);
         if (!entry.spec) return null;
         const levelNum = Number(level);
         const [tw, th] = entry.spec.tile;
         if (index === undefined) {
-            const part = entry.labels;
-            if (!part.pool && entry.spec.labels.pending && Date.now() - entry.checkedAt > RECHECK_MS) {
+            if (!entry.labels.pool && entry.spec.labels.pending && Date.now() - entry.checkedAt > RECHECK_MS) {
                 // The mask was being prepared; the viewer takes it on in
-                // place, so ask Python again before a later tile.
+                // place, so ask Python again, for this tile too.
                 checks.delete(name);
+                entry = await project(name);
+                if (!entry.spec) return null;
             }
+            const part = entry.labels;
             if (!part.pool || !entry.spec.labels.levels.some(([l]) => l === levelNum)) return null;
             const tile = await part.pool.tile(0, levelNum, Number(tx), Number(ty), tw, th, true);
             if (!tile.width || !tile.height) return null;

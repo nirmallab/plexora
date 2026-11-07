@@ -114,3 +114,46 @@ def test_a_project_with_no_node_mask_asks_nothing(node_api):
     assert data_routes._node_mask_report(
         types.SimpleNamespace(resources={})) == []
     assert node_api.calls["status"] == []
+
+
+# -- a mask on this machine --------------------------------------------------
+#
+# `_local_mask_report` says one thing: that a mask's pyramid is not beside it
+# because its folder could not be written. It raised NameError on every
+# project whose pyramid is anywhere but its source (is_addressed was never
+# imported), so /resource_status answered 500 -- found on the website, whose
+# masks' pyramids are built under /derived/ beside nothing.
+
+@pytest.fixture
+def local_mask(monkeypatch):
+    from pathlib import Path
+
+    from plexora import paths
+
+    entries = {}
+    writable = {}
+    monkeypatch.setattr(data_routes, "get_config", lambda: entries)
+    monkeypatch.setattr(paths, "mask_output_preference", lambda: "beside")
+    monkeypatch.setattr(paths, "is_writable", lambda root: writable.get(Path(root), True))
+
+    def use(served, source, source_writable=True):
+        entries["s"] = {"segmentation": served, "segmentationSource": source}
+        writable[Path(source).parent] = source_writable
+        return data_routes._local_mask_report("s")
+    return use
+
+
+def test_a_pyramid_kept_elsewhere_because_the_folder_is_read_only_says_so(local_mask):
+    report = local_mask("/home/me/derived/s/cells.labels.pyramid.ome.tiff", "/shared/seg/cells.tif",
+                        source_writable=False)
+    assert len(report) == 1 and "read-only for this account" in report[0]["warning"]
+
+
+@pytest.mark.parametrize("served, source", [
+    ("/derived/0123/cells.labels.pyramid.ome.tiff", "/picked/ab/cells.tif"),   # the website
+    ("/shared/seg/cells.labels.pyramid.ome.tiff", "/shared/seg/cells.tif"),   # beside it
+    ("/home/me/derived/s/cells.labels.pyramid.ome.tiff", "https://host/cells.tif"),  # a web address
+])
+def test_anything_else_says_nothing(local_mask, served, source):
+    assert local_mask(served, source) == []
+

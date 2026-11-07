@@ -29,6 +29,7 @@ import tifffile as tf
 import re
 import collections
 import contextlib
+import contextvars
 import heapq
 import itertools
 import sys
@@ -312,6 +313,10 @@ def resolve_outline_segmentation(segmentation_path, dataDirectory=None, progress
         return label_volume
     if _servable_as_is(segmentation_path, mode):
         return str(segmentation_path)
+    if mode == segmentation_pyramid.MODE_FILLED:
+        built = _page_label_pyramid(segmentation_path, progress_callback, stage_callback)
+        if built is not None:
+            return built
     location = segmentation_pyramid.resolve_derived_mask(
         segmentation_path, dataDirectory, mode=mode
     )
@@ -324,6 +329,37 @@ def resolve_outline_segmentation(segmentation_path, dataDirectory=None, progress
         outline=mode != segmentation_pyramid.MODE_FILLED,
         progress_callback=progress_callback,
         stage_callback=stage_callback,
+    )
+
+
+#: False inside a mask's conversion job on the website: there the page's build
+#: is looked at once per run of the job and never waited for, and the job is
+#: queued again while it lasts (providers/browser.py `PageBuilding`). Per
+#: task: each queued task runs in a context of its own.
+_page_holds = contextvars.ContextVar("plexora_page_holds", default=True)
+
+
+def _page_label_pyramid(segmentation_path, progress_callback=None, stage_callback=None):
+    """On the website, a picked flat mask's filled label pyramid built by the
+    page with its own workers, into the browser's storage or Plexora's folder
+    (providers/browser.py `page_pyramid`): the file
+    `pyramidize_segmentation_mask` writes, which Python in the page would
+    otherwise write into /data, held in memory. None anywhere else, and for
+    anything the page would not read as Python does: Python converts it.
+    Raises `PageBuilding` in a conversion job while the page is at it."""
+    from plexora.server.providers import browser as browser_provider
+
+    return browser_provider.page_pyramid(
+        segmentation_path,
+        name=segmentation_pyramid.derived_output_path(
+            segmentation_path, None, mode=segmentation_pyramid.MODE_FILLED).name,
+        spec=lambda: segmentation_pyramid.page_build(segmentation_path),
+        progress=progress_callback,
+        # A mask's stages take the key alone (pyramidize_segmentation_mask).
+        stage=(lambda key, _detail=None: stage_callback(key)) if stage_callback else None,
+        adoptable=lambda found: segmentation_pyramid.is_adoptable_mask(
+            found, segmentation_path, segmentation_pyramid.MODE_FILLED),
+        hold=_page_holds.get(),
     )
 
 
@@ -5819,30 +5855,56 @@ def start_segmentation_job(datasource_name, label_file, data_directory,
             follow_up.append(attached)
         return True
 
+    def on_change(percent, key, message):
+        record = _segmentation_jobs.get(datasource_name)
+        if record is None:
+            return
+        record["progress"] = percent
+        record["stage"] = key
+        record["stage_label"] = SEGMENTATION_STAGES.get(key, (0, 0, key))[2]
+        record["message"] = message
+
+    # One bar for every run of the job: on the website it runs again each
+    # time it looks in on the page's build (below).
+    stage, report = _staged_reporter(SEGMENTATION_STAGES, on_change)
+    runs = 0
+
     def _run():
-        def on_change(percent, key, message):
-            record = _segmentation_jobs.get(datasource_name)
-            if record is None:
-                return
-            record["progress"] = percent
-            record["stage"] = key
-            record["stage_label"] = SEGMENTATION_STAGES.get(key, (0, 0, key))[2]
-            record["message"] = message
+        from plexora.server.providers.browser import PageBuilding
 
-        stage, report = _staged_reporter(SEGMENTATION_STAGES, on_change)
-
+        nonlocal runs
+        runs += 1
+        # Without threads the job gives the worker back while the page builds
+        # the mask's pyramid, rather than wait inside it (`_page_holds`).
+        if not _work.threaded():
+            _page_holds.set(False)
+        # A run looking in again says only how far the build is.
+        again = runs > 1
+        quiet_stage = (lambda key, *rest, **named: None if key in ("loading", "inspecting")
+                       else stage(key, *rest, **named)) if again else stage
+        queued_again = False
         try:
-            stage("loading")
-            result = convertOmeTiff(
-                label_file,
-                dataDirectory=data_directory,
-                isLabelImg=True,
-                progress_callback=report,
-                stage_callback=stage,
-                segmentation_mode_=mode,
-                label_geometry=label_geometry,
-                image_levels=image_levels,
-            )
+            quiet_stage("loading")
+            try:
+                result = convertOmeTiff(
+                    label_file,
+                    dataDirectory=data_directory,
+                    isLabelImg=True,
+                    progress_callback=report,
+                    stage_callback=quiet_stage,
+                    segmentation_mode_=mode,
+                    label_geometry=label_geometry,
+                    image_levels=image_levels,
+                )
+            except PageBuilding:
+                if _stale():
+                    _segmentation_jobs.pop(datasource_name, None)
+                    return
+                # Requests are answered before it runs again; the page's
+                # answer to its next look waits for the build to end.
+                _work.spawn(_run, name=f"segmentation-{datasource_name}")
+                queued_again = True
+                return
             # The record first, then the job's own "ready": a mask removed or
             # replaced between the check and the write keeps the patch from
             # landing (it compares the record's source), and a "ready" written
@@ -5907,13 +5969,14 @@ def start_segmentation_job(datasource_name, label_file, data_directory,
                 config_file=config_file,
             )
         finally:
-            lock.release()
-            # Not `source`: that is the module's loaded-project global, which
-            # the completion handler above compares against, and a loop
-            # variable of the same name would make it a local of `_run`.
-            for replacement, _status, wanted_mode in follow_up:
-                start_segmentation_job(datasource_name, replacement,
-                                       data_directory, wanted_mode)
+            if not queued_again:
+                lock.release()
+                # Not `source`: that is the module's loaded-project global, which
+                # the completion handler above compares against, and a loop
+                # variable of the same name would make it a local of `_run`.
+                for replacement, _status, wanted_mode in follow_up:
+                    start_segmentation_job(datasource_name, replacement,
+                                           data_directory, wanted_mode)
 
     # Named so a test teardown (conftest `_finish_layer_builds`) can find and
     # join it while PLEXORA_DATA_PATH still points at that test's root.
