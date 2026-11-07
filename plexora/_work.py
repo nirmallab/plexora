@@ -58,12 +58,13 @@ class Task:
     """Queued work standing in for a `threading.Thread`: `join`, `is_alive`,
     `name` and `daemon` mean what they mean there."""
 
-    def __init__(self, target, args=(), kwargs=None, name=None, daemon=True):
+    def __init__(self, target, args=(), kwargs=None, name=None, daemon=True, background=False):
         self._target = target
         self._args = tuple(args)
         self._kwargs = dict(kwargs or {})
         self.name = name or getattr(target, "__name__", "task")
         self.daemon = daemon
+        self.background = background
         self.state = "queued"
 
     def run(self):
@@ -106,39 +107,50 @@ _queue_lock = threading.Lock()
 _depth = 0
 
 
-def spawn(target, *args, name=None, daemon=True, **kwargs):
+def spawn(target, *args, name=None, daemon=True, background=False, **kwargs):
     """Start `target(*args, **kwargs)` in the background and return its handle:
-    a started `threading.Thread`, or a queued `Task`."""
+    a started `threading.Thread`, or a queued `Task`.
+
+    `background` marks work nobody is waiting for (a cache warmed ahead of
+    being asked): queued, it runs only when the runner says requests have been
+    quiet (`run_pending(background=...)`), so a page that is opening is not
+    held behind it. On threads it is an ordinary thread."""
     if threaded():
         thread = threading.Thread(target=target, args=args, kwargs=kwargs,
                                   name=name, daemon=daemon)
         thread.start()
         return thread
-    task = Task(target, args, kwargs, name=name, daemon=daemon)
+    task = Task(target, args, kwargs, name=name, daemon=daemon, background=background)
     with _queue_lock:
         _queue.append(task)
     return task
 
 
-def pending() -> int:
-    """How many queued tasks have not started."""
+def pending(background: bool | None = None) -> int:
+    """How many queued tasks have not started: all of them, or only the
+    `background` ones (True) or only the others (False)."""
     with _queue_lock:
-        return len(_queue)
+        if background is None:
+            return len(_queue)
+        return sum(1 for task in _queue if task.background == background)
 
 
-def run_pending(budget_s: float | None = None, ran: list | None = None) -> int:
+def run_pending(budget_s: float | None = None, ran: list | None = None,
+                background: bool = True) -> int:
     """Run queued tasks in the order they were queued, and those they queue in
     turn, until none is left or `budget_s` has passed; returns how many ran
     (and appends their names to `ran`, when given). A task is never cut short:
-    the budget is checked between tasks."""
+    the budget is checked between tasks. `background=False` leaves background
+    tasks queued, in their order."""
     names = ran
     started = time.monotonic()
     ran = 0
     while True:
         with _queue_lock:
-            if not _queue:
+            task = next((t for t in _queue if background or not t.background), None)
+            if task is None:
                 return ran
-            task = _queue.pop(0)
+            _queue.remove(task)
         task.run()
         ran += 1
         if names is not None:

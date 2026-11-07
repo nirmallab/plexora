@@ -252,7 +252,9 @@
         && global.PlexoraPicks.fileFor(path) === part.file);
 
     async function check(name) {
+        const asked = performance.now();
         const spec = await global.PlexoraPython.nodeSpec(name);
+        const answered = performance.now();
         const before = held.get(name);
         // The same load of the same files: what is open stays open.
         if (before && JSON.stringify(before.spec) === JSON.stringify(spec)
@@ -266,7 +268,10 @@
             openPart(spec, WORKERS, imageDiffers),
             openPart(spec.labels, Math.max(2, Math.floor(WORKERS / 2)), labelsDiffer),
         ]);
-        const entry = { spec, image, labels, checkedAt: Date.now() };
+        //: When the check was asked and answered, and when the files were
+        //: open (performance.now), for the diagnostics.
+        const entry = { spec, image, labels, checkedAt: Date.now(),
+                        timing: { asked, answered, opened: performance.now() } };
         held.set(name, entry);
         return entry;
     }

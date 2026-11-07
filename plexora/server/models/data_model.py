@@ -1141,7 +1141,7 @@ def load_datasource(datasource_name, reload=False, wait_for_table=False):
 
     # Warm the description/GMM caches in the background so the first real
     # request after this load doesn't pay for them synchronously.
-    _work.spawn(_warm_datasource_caches, datasource_name)
+    _work.spawn(_warm_datasource_caches, datasource_name, background=True)
     _warm_remote_image(datasource_name)
 
 
@@ -1937,7 +1937,7 @@ def _warm_datasource_caches(datasource_name):
                 # seconds by work nobody is waiting on).
                 for step in (get_image_channel_stats, get_channel_gmm):
                     for fullname in to_warm:
-                        _work.spawn(warm, step, fullname,
+                        _work.spawn(warm, step, fullname, background=True,
                                     name=f"warm-{step.__name__}-{fullname}")
                 return
             # Pass 1 -- everything the first paint blocks on.

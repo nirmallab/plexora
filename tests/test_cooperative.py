@@ -53,9 +53,12 @@ def test_a_job_runs_after_the_call_that_queued_it(session):
     stepped = cooperative.step(budget_ms=10_000)
     assert stepped["ran"] == 1 and stepped["pending"] == 0
     assert stepped["names"] == [f"agent-job-{job_id}"]
-    mine = [message["job"] for message in posted if message["job"]["job_id"] == job_id]
+    mine = [message["job"] for message in posted
+            if message["kind"] == "job" and message["job"]["job_id"] == job_id]
     assert mine[0]["status"] == "queued" and mine[-1]["status"] == "done"
-    assert all(message["kind"] == "job" for message in posted)
+    # Beside the job's own records, the task that ran it says it started.
+    assert {message["kind"] for message in posted} == {"job", "task"}
+    assert [m["name"] for m in posted if m["kind"] == "task"] == [f"agent-job-{job_id}"]
     assert not any(key.startswith("_") for record in mine for key in record)
 
 
@@ -87,3 +90,20 @@ def test_a_poll_waiting_on_the_user_sleeps_through_the_page(session):
     cooperative.install(idle=slept.append)
     _work.wait(0.5)
     assert slept == [0.5]
+
+
+def test_background_work_waits_for_a_quiet_moment(monkeypatch):
+    """Work nobody waits on (a cache warmed ahead) is left queued while the
+    worker says requests are not quiet, and counted apart."""
+    monkeypatch.setenv("PLEXORA_WORK", "cooperative")
+    ran = []
+    _work.spawn(ran.append, "warm", background=True, name="warm")
+    _work.spawn(ran.append, "job", name="job")
+    try:
+        busy = cooperative.step(budget_ms=10_000, background=False)
+        assert ran == ["job"] and busy["names"] == ["job"]
+        assert busy["pending"] == 0 and busy["background"] == 1
+        quiet = cooperative.step(budget_ms=10_000)
+        assert ran == ["job", "warm"] and quiet["background"] == 0
+    finally:
+        _work._reset_for_tests()

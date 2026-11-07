@@ -341,6 +341,8 @@ async function drain() {
         } finally {
             busy = nested;
             current = outer;
+            // It may have queued work: the next step finds out.
+            pendingWork = Math.max(pendingWork, 1);
         }
     }
     if (!busy && !queue.length) step();
@@ -351,27 +353,38 @@ async function drain() {
 // in bursts, and a job started between two of them holds the next), but never
 // later than MAX_DEFER_MS after the last slice: a page that polls steadily
 // must not starve its jobs.
+// Work nobody is waiting for (`_work.spawn(background=True)`: a cache warmed
+// ahead of being asked) waits for BACKGROUND_QUIET_MS without a request, and
+// MAX_DEFER_MS never hurries it: a page opening asks one thing after another,
+// and a GMM fit started in a gap holds the next for a second.
 const QUIET_MS = 150;
 const MAX_DEFER_MS = 500;
+const BACKGROUND_QUIET_MS = 600;
 let lastRequest = 0;
 let lastStep = 0;
 let stepping = false;
+//: What the last step left queued: work someone waits on, and background.
+let pendingWork = 0;
+let pendingBackground = 0;
 function step() {
     if (!py || stepping || busy || queue.length) return;
     stepping = true;
     const now = performance.now();
-    const wait = now - lastStep >= MAX_DEFER_MS ? 0 : Math.max(0, QUIET_MS - (now - lastRequest));
+    const onlyBackground = pendingBackground > 0 && pendingWork === 0;
+    const wait = onlyBackground ? Math.max(0, BACKGROUND_QUIET_MS - (now - lastRequest))
+        : now - lastStep >= MAX_DEFER_MS ? 0 : Math.max(0, QUIET_MS - (now - lastRequest));
     setTimeout(async () => {
         stepping = false;
         if (busy || queue.length) return;
         busy = true;
         lastStep = performance.now();
-        let pending = 0;
         try {
             const cooperative = py.pyimport("plexora.browser.cooperative");
             const began = performance.now();
-            const outcome = await call(cooperative.step, 50);
-            pending = outcome.get("pending");
+            const quiet = began - lastRequest >= BACKGROUND_QUIET_MS;
+            const outcome = await call(cooperative.step, 50, quiet);
+            pendingWork = outcome.get("pending");
+            pendingBackground = outcome.get("background");
             const ms = Math.round(performance.now() - began);
             if (outcome.get("ran")) {
                 self.postMessage({ event: { kind: "step", ms, names: outcome.get("names").toJs() } });
@@ -383,7 +396,7 @@ function step() {
             busy = false;
         }
         if (queue.length) drain();
-        else if (pending) step();
+        else if (pendingWork || pendingBackground) step();
     }, wait);
 }
 

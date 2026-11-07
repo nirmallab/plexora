@@ -134,6 +134,18 @@
         sync();
     }
 
+    //: The project a page Python rendered is for (its variables block's
+    //: `datasource`), or "".
+    function projectOf(html) {
+        const found = /<script type="application\/json" id="plexora-variables">([\s\S]*?)<\/script>/.exec(html);
+        if (!found) return "";
+        try {
+            return JSON.parse(found[1]).datasource || "";
+        } catch (error) {
+            return "";
+        }
+    }
+
     async function frameBoot() {
         browserVariables();
         // The host's Python and picks, not a second worker.
@@ -147,6 +159,11 @@
         const response = await global.PlexoraPython.fetch(
             here(global.location), { headers: { Accept: "text/html" } });
         const html = await response.text();
+        // A project's page: the browser node asks Python what it may serve
+        // now, ahead of the page's own requests, so its first tile does not
+        // wait behind them (or behind the work opening the project queues).
+        const project = projectOf(html);
+        if (project && global.PlexoraNode) global.PlexoraNode.project(project);
         doc.open();
         doc.write(html);
         doc.close();
