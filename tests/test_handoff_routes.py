@@ -32,11 +32,8 @@ SSH = {  # a web page cannot open an SSH connection
     "settings_remotes_connect", "settings_remotes_answer", "settings_remotes_disconnect",
     "settings_remotes_status", "settings_remotes_askpass_prompt", "settings_remotes_askpass_answer",
 }
-GCLOUD_CLI = {  # the Google Cloud CLI runs on a computer, until plan L9
-    "gcloud_auth", "gcloud_status", "gcloud_projects", "gcloud_buckets", "gcloud_bucket",
-    "gcloud_zones", "gcloud_instances", "gcloud_vm_status", "gcloud_vm_start",
-    "gcloud_vm_stop", "gcloud_vm_delete", "gcloud_vm_standard",
-}
+# Google Cloud is not here: since plan L9 the website answers it over Google's
+# JSON APIs with the page's sign-in (plexora/gcloud_rest.py).
 INSTALLED_PROGRAM = {  # updating or stopping an installed Plexora
     "update_check", "update_install", "update_install_status", "update_prefs",
     "update_restart", "shutdown",
@@ -47,7 +44,7 @@ DATA_FOLDER = {  # a data folder on a disk, and moving one
 DESKTOP_WINDOW = {"desktop_info", "desktop_open"}  # the desktop app's own window
 BENCH = {"bench_flush"}  # a server cache flush for the bench harness
 
-EXPECTED = SSH | GCLOUD_CLI | INSTALLED_PROGRAM | DATA_FOLDER | DESKTOP_WINDOW | BENCH
+EXPECTED = SSH | INSTALLED_PROGRAM | DATA_FOLDER | DESKTOP_WINDOW | BENCH
 
 
 def test_the_handoff_set_is_exactly_the_ssh_cli_and_desktop_bound_routes():

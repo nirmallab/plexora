@@ -29,7 +29,7 @@ when the record is wrong.
 
 import dataclasses
 
-from flask import jsonify, request
+from flask import g, jsonify, request
 
 from plexora import app
 
@@ -41,6 +41,43 @@ def _gcloud():
     return gcloud
 
 
+def _api():
+    """The backend answering this request (`gcloud.backend()`): the CLI on a
+    desktop that has it, Google's JSON APIs with the page's token otherwise."""
+    return _gcloud().backend()
+
+
+@app.before_request
+def _bind_google_token():
+    """The page's Google access token, bound for this request and no longer.
+
+    The website's page holds the token (services/googleAuth.js) and sends it
+    with each request in `gcloud_rest.TOKEN_HEADER`; this binds it so the
+    REST backend can send it on to Google, and `_unbind_google_token` drops it
+    when the request ends. Nothing stores it. A request without the header --
+    every request on a desktop with the CLI -- binds nothing.
+    """
+    from plexora import gcloud_rest
+
+    value = request.headers.get(gcloud_rest.TOKEN_HEADER)
+    if value:
+        g._plexora_google_token = gcloud_rest.bind(value)
+
+
+@app.teardown_request
+def _unbind_google_token(_exc=None):
+    handle = g.pop("_plexora_google_token", None)
+    if handle is None:
+        return
+    from plexora import gcloud_rest
+
+    try:
+        gcloud_rest.unbind(handle)
+    except ValueError:
+        # Torn down in another context than it was bound in: drop it there.
+        gcloud_rest.bind("")
+
+
 def _failed(exc, status=400):
     """One GcloudError, as the sentence and the status a form can act on.
 
@@ -48,8 +85,10 @@ def _failed(exc, status=400):
     can put the Sign in button back rather than show a red box about
     projects or buckets whose real cause is the credential.
     """
+    reauth = exc.reauth if getattr(exc, "reauth", None) is not None         else _api().needs_login(exc.detail)
     return jsonify(error=str(exc.message or exc), detail=exc.detail,
-                   reauth=_gcloud().needs_login(exc.detail)), status
+                   recovery=getattr(exc, "recovery", "") or "",
+                   reauth=bool(reauth)), status
 
 
 @app.route('/settings/gcloud/status')
@@ -65,7 +104,7 @@ def gcloud_status():
     fourth: an account gcloud still names whose credential Google no longer
     accepts, which needs the button again.
     """
-    return jsonify(_gcloud().health())
+    return jsonify(_api().health())
 
 
 @app.route('/settings/gcloud/auth', methods=['POST'])
@@ -78,7 +117,7 @@ def gcloud_auth():
     """
     gcloud = _gcloud()
     try:
-        gcloud.begin_login()
+        _api().begin_login()
     except gcloud.GcloudError as exc:
         return _failed(exc)
     return jsonify(started=True), 202
@@ -88,7 +127,7 @@ def gcloud_auth():
 def gcloud_projects():
     gcloud = _gcloud()
     try:
-        return jsonify(projects=gcloud.projects())
+        return jsonify(projects=_api().projects())
     except gcloud.GcloudError as exc:
         return _failed(exc)
 
@@ -108,7 +147,7 @@ def gcloud_buckets():
     if not project:
         return jsonify(error="Choose a project first."), 400
     try:
-        return jsonify(buckets=gcloud.buckets(project))
+        return jsonify(buckets=_api().buckets(project))
     except gcloud.GcloudError as exc:
         return _failed(exc)
 
@@ -127,7 +166,7 @@ def gcloud_bucket():
     if not project or not name:
         return jsonify(error="Choose a project and name a bucket."), 400
     try:
-        return jsonify(bucket=gcloud.bucket(project, name))
+        return jsonify(bucket=_api().bucket(project, name))
     except gcloud.GcloudError as exc:
         return _failed(exc, 404)
 
@@ -149,7 +188,7 @@ def gcloud_instances():
     if zone and not gcloud.valid_zone(zone):
         return jsonify(error=f"“{zone}” is not a Google Cloud zone."), 400
     try:
-        return jsonify(instances=gcloud.instances(project, zone))
+        return jsonify(instances=_api().instances(project, zone))
     except gcloud.GcloudError as exc:
         return _failed(exc)
 
@@ -162,7 +201,7 @@ def gcloud_zones():
     if not project or not gcloud.valid_region(region):
         return jsonify(error="Choose a project and a region."), 400
     try:
-        found = gcloud.zones(project, region)
+        found = _api().zones(project, region)
     except gcloud.GcloudError as exc:
         return _failed(exc)
     return jsonify(zones=found, pick=(found[0] if found else ""))
@@ -208,8 +247,10 @@ def gcloud_vm_status(name):
     if refusal:
         return refusal
     try:
-        found = gcloud.instance(record.get("project"), record.get("zone"),
-                                record.get("vm_name"))
+        api = _api()
+        found = api.instance(record.get("project"), record.get("zone"),
+                             record.get("vm_name"))
+        node = api.node_status(record) if hasattr(api, "node_status") else None
     except gcloud.GcloudError as exc:
         return _failed(exc)
     return jsonify(vm=record.get("vm_name"),
@@ -223,7 +264,11 @@ def gcloud_vm_status(name):
                    # "missing" rather than an error: a profile whose VM has
                    # been deleted is a perfectly good profile, and connecting
                    # it again simply creates another one.
-                   status=(found or {}).get("status") or "missing")
+                   status=(found or {}).get("status") or "missing",
+                   # The website's node on this VM (gcloud_rest.node_status):
+                   # its startup state, address and hand-over link. None on
+                   # the desktop, whose session is an SSH connection instead.
+                   node=node)
 
 
 def _end_sessions(name):
@@ -255,7 +300,7 @@ def gcloud_vm_start(name):
     if refusal:
         return refusal
     try:
-        gcloud.start_instance(record, block=False)
+        _api().start_instance(record, block=False)
     except gcloud.GcloudError as exc:
         return _failed(exc)
     return jsonify(ok=True, status="STAGING", message=(
@@ -327,7 +372,7 @@ def gcloud_vm_stop(name):
         # Not waited on: Google has the instruction by the time this returns,
         # and the page has a status it can re-read rather than a spinner it
         # would have to hold a worker for.
-        gcloud.stop_instance(record, block=False)
+        _api().stop_instance(record, block=False)
     except gcloud.GcloudError as exc:
         return _failed(exc)
     return jsonify(ok=True, status="STOPPING", message=(
@@ -361,8 +406,92 @@ def gcloud_vm_delete(name):
             f"here, or remove it in the Google Cloud console.")), 400
     _end_sessions(name)
     try:
-        gcloud.delete_instance(record)
+        _api().delete_instance(record)
     except gcloud.GcloudError as exc:
         return _failed(exc)
     return jsonify(ok=True, status="missing", message=(
         f"Deleted {record.get('vm_name')}. {BUCKET_UNTOUCHED}"))
+
+
+@app.route('/settings/gcloud/objects')
+def gcloud_objects():
+    """One folder level of a bucket: its sub-folders and files, one page.
+
+    For finding the image in a bucket before a machine is rented to read it:
+    `prefix` is the folder (ending in "/"), `page` the token for more. A
+    listing, never a read of any object's bytes.
+    """
+    gcloud = _gcloud()
+    project = (request.args.get("project") or "").strip()
+    name = (request.args.get("bucket") or "").strip()
+    if not name:
+        return jsonify(error="Name a bucket."), 400
+    try:
+        return jsonify(_api().objects(project, name,
+                                      request.args.get("prefix") or "",
+                                      request.args.get("page") or ""))
+    except gcloud.GcloudError as exc:
+        return _failed(exc, 404 if "no bucket" in str(exc.message).lower() else 400)
+
+
+@app.route('/settings/remotes/<name>/vm/resize', methods=['POST'])
+def gcloud_vm_resize(name):
+    """Give this profile's stopped VM another machine type, and remember it.
+
+    The saved profile changes with the machine, for the reason `vm/standard`
+    gives: a record describing a machine that does not exist is wrong on every
+    surface that reads it. Only a stopped machine can be resized, and only one
+    Plexora rents -- somebody's own server is sized by them.
+    """
+    gcloud = _gcloud()
+    from plexora.server.models import remotes as remote_store
+
+    remote, record, refusal = _profile(name)
+    if refusal:
+        return refusal
+    if record.get("vm_source") == gcloud.VM_EXISTING:
+        return jsonify(error=(
+            f"“{name}” connects to a VM you already run, so Plexora does not "
+            f"change its size.")), 400
+    machine_type = str((request.get_json(silent=True) or {}).get("machine_type") or "").strip()
+    if not gcloud.valid_machine_type(machine_type):
+        return jsonify(error="Choose a machine type, like e2-highmem-16."), 400
+    try:
+        _api().set_machine_type(record, machine_type)
+    except gcloud.GcloudError as exc:
+        return _failed(exc)
+    extra = dict(remote.extra or {})
+    extra["gcloud"] = dict(record, machine_type=machine_type)
+    remote_store.save(dataclasses.replace(remote, extra=extra))
+    return jsonify(ok=True, machine_type=machine_type, message=(
+        f"{record.get('vm_name')} is now {gcloud.machine_type_label(machine_type)}. "
+        f"It starts at that size next time."))
+
+
+@app.route('/settings/remotes/<name>/vm/node', methods=['POST'])
+def gcloud_vm_node(name):
+    """Have this profile's VM running a Plexora node the browser can open.
+
+    The website's way to connect (plan L9): no SSH, so the VM's startup script
+    installs Plexora and runs `plexora node serve --app --tls self-signed`,
+    and the page hands the user to the node's own `/app/` once
+    `/settings/remotes/<name>/vm` says it is ready. Answers at once (202): the
+    machine is created or started, not waited for. The desktop connects the
+    same profile over SSH instead, so there this is a sentence saying so.
+    """
+    gcloud = _gcloud()
+    from plexora import gcloud_rest
+
+    _remote, record, refusal = _profile(name)
+    if refusal:
+        return refusal
+    api = _api()
+    if api is not gcloud_rest:
+        return jsonify(error=(
+            "The desktop app connects to this VM over SSH: press Connect.")), 400
+    try:
+        done = api.ensure_node(record)
+        status = api.node_status(record)
+    except gcloud.GcloudError as exc:
+        return _failed(exc)
+    return jsonify(ok=True, **done, node=status), 202

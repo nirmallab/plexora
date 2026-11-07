@@ -1200,7 +1200,7 @@ def test_the_form_is_told_plainly_that_nobody_is_signed_in(client, runner):
     runner.answers = [("auth list", (0, "[]", ""))]
     body = client.get("/settings/gcloud/status").get_json()
     assert body == {"installed": True, "account": None, "problem": None,
-                    "expired": False}
+                    "expired": False, "backend": "cli"}
 
 
 def test_the_form_is_told_who_is_signed_in(client, runner):
@@ -1208,7 +1208,7 @@ def test_the_form_is_told_who_is_signed_in(client, runner):
         [{"account": "aj@example.com"}]), ""))]
     body = client.get("/settings/gcloud/status").get_json()
     assert body == {"installed": True, "account": "aj@example.com",
-                    "problem": None, "expired": False}
+                    "problem": None, "expired": False, "backend": "cli"}
 
 
 REVOKED = ("ERROR: (gcloud.auth.print-access-token) There was a problem "
@@ -1257,7 +1257,7 @@ def test_no_cli_on_this_machine_is_reported_rather_than_raised(client,
     monkeypatch.setattr(gcloud, "_adopt_install", lambda: False)
     body = client.get("/settings/gcloud/status").get_json()
     assert body == {"installed": False, "account": None, "problem": None,
-                    "expired": False}
+                    "expired": False, "backend": "cli"}
 
 
 def test_a_cli_that_will_not_run_is_not_mistaken_for_nobody_signed_in(

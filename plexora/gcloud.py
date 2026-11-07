@@ -84,11 +84,38 @@ class GcloudError(RuntimeError):
     browser tries to interpret.
     """
 
-    def __init__(self, message, detail="", recovery=""):
+    def __init__(self, message, detail="", recovery="", reauth=None):
         super().__init__(message if not detail else f"{message}\n{detail}")
         self.message = message
         self.detail = detail
         self.recovery = str(recovery or "")
+        #: True or False when the backend that raised this knows whether the
+        #: sign-in lapsed (the REST backend reads a 401); None leaves it to
+        #: `needs_login` on the detail, which is how gcloud's text is read.
+        self.reauth = reauth
+
+
+# -- which backend answers ----------------------------------------------------
+
+
+def backend():
+    """The module that answers Google Cloud's questions for this request.
+
+    Two backends with the same verbs: this module, over the `gcloud` CLI (the
+    desktop's, unchanged), and `plexora.gcloud_rest`, over the Compute Engine,
+    Cloud Storage and Resource Manager JSON APIs with an access token the page
+    holds (the website's: a web page cannot start a CLI). The REST one answers
+    when the request carries such a token, and always where there is no
+    process to start (Pyodide); otherwise the CLI does, so a desktop with
+    gcloud installed behaves exactly as it did.
+    """
+    from plexora import gcloud_rest
+
+    if gcloud_rest.token() or gcloud_rest.in_browser():
+        return gcloud_rest
+    import sys
+
+    return sys.modules[__name__]
 
 
 # -- the one subprocess seam ------------------------------------------------
@@ -338,7 +365,7 @@ def health():
     is actually wrong. The token itself is read and dropped.
     """
     out = {"installed": False, "account": None, "problem": None,
-           "expired": False}
+           "expired": False, "backend": "cli"}
     if not available():
         return out
     out["installed"] = True
@@ -628,6 +655,41 @@ def _readable_anyway(project, name):
     return _HTTP_STATUS(url, token.strip(), OBJECT_PROBE_TIMEOUT) == 200
 
 
+def objects(project, name, prefix="", page_token=""):
+    """One folder level of a bucket, as `gcloud_rest.objects` lists it.
+
+    Through the JSON API with this account's own token from gcloud, for the
+    reason `_readable_anyway` gives: gcloud's own listing applies its limits
+    after listing everything. The token is read, used for this one call, and
+    dropped."""
+    code, token, err = _run(["auth", "print-access-token", "--quiet"])
+    if code != 0 or not token.strip():
+        raise GcloudError("Could not get a Google access token from gcloud.", _tail(err))
+    from plexora import gcloud_rest
+
+    with gcloud_rest.signed_in(token.strip()):
+        return gcloud_rest.objects(project, name, prefix, page_token)
+
+
+def set_machine_type(cfg, machine_type):
+    """Resize a stopped VM (`gcloud compute instances set-machine-type`)."""
+    name = _cfg(cfg, "vm_name")
+    if not valid_machine_type(machine_type):
+        raise GcloudError(f"“{machine_type}” is not a Compute Engine machine type.")
+    found = instance(_cfg(cfg, "project"), _cfg(cfg, "zone"), name)
+    if found is None:
+        raise GcloudError(f"There is no VM called “{name}” in {_cfg(cfg, 'zone')}.")
+    if found["status"] not in ("TERMINATED", "STOPPED"):
+        raise GcloudError(f"Stop “{name}” before changing its size: Compute Engine only "
+                          "resizes a machine that is not running.")
+    code, _out, err = _run(["compute", "instances", "set-machine-type", name,
+                            "--project", _cfg(cfg, "project"), "--zone", _cfg(cfg, "zone"),
+                            "--machine-type", machine_type, "--quiet"])
+    if code != 0:
+        raise GcloudError(f"Could not change “{name}” to {machine_type}.", _tail(err))
+    return True
+
+
 #: Cloud Storage's JSON API, for the one question gcloud answers too slowly.
 STORAGE_API = "https://storage.googleapis.com/storage/v1"
 #: One page of one object. Anything slower than this is not an answer.
@@ -769,26 +831,37 @@ def pick_zone(project, region):
     try:
         found = zones(project, region)
     except GcloudError as exc:
-        # A project that cannot run VMs at all is not a region with no zone
-        # in it, and saying the second sent people to Advanced to pick from
-        # a list Google had refused to give.
-        lowered = (exc.detail or "").lower()
-        if ("compute.googleapis.com" in lowered
-                or "service_disabled" in lowered
-                or "api has not been used" in lowered):
-            raise GcloudError(
-                f"The Compute Engine API is not enabled on “{project}”, so "
-                "Google will not start a VM in it. Enable it once at "
-                "console.cloud.google.com/apis/library/compute.googleapis.com "
-                f"?project={project}, or run:\n"
-                f"    gcloud services enable compute.googleapis.com "
-                f"--project {project}", exc.detail) from None
-        if "billing" in lowered:
-            raise GcloudError(
-                f"“{project}” has no billing account attached, so Compute "
-                "Engine will not start a VM in it.", exc.detail) from None
+        refusal = zone_refusal(project, exc)
+        if refusal is not None:
+            raise refusal from None
         return ""
     return found[0] if found else ""
+
+
+def zone_refusal(project, exc):
+    """The sentence for a zone lookup that failed because the project cannot
+    run VMs at all, or None. Shared by both backends' `pick_zone`.
+
+    A project that cannot run VMs at all is not a region with no zone in it,
+    and saying the second sent people to Advanced to pick from a list Google
+    had refused to give.
+    """
+    lowered = (exc.detail or "").lower()
+    if ("compute.googleapis.com" in lowered
+            or "service_disabled" in lowered
+            or "api has not been used" in lowered):
+        return GcloudError(
+            f"The Compute Engine API is not enabled on “{project}”, so "
+            "Google will not start a VM in it. Enable it once at "
+            "console.cloud.google.com/apis/library/compute.googleapis.com "
+            f"?project={project}, or run:\n"
+            f"    gcloud services enable compute.googleapis.com "
+            f"--project {project}", exc.detail)
+    if "billing" in lowered:
+        return GcloudError(
+            f"“{project}” has no billing account attached, so Compute "
+            "Engine will not start a VM in it.", exc.detail)
+    return None
 
 
 # -- what to ask for --------------------------------------------------------

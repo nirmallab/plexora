@@ -946,7 +946,7 @@
       ]
     }
   },
-  "route_count": 310,
+  "route_count": 313,
   "routes": [
     "DELETE /nodes/<name>/resources/<resource_id>",
     "DELETE /project/<string:name>/layers/<path:layer_id>",
@@ -1060,6 +1060,7 @@
     "GET /settings/gcloud/bucket",
     "GET /settings/gcloud/buckets",
     "GET /settings/gcloud/instances",
+    "GET /settings/gcloud/objects",
     "GET /settings/gcloud/projects",
     "GET /settings/gcloud/status",
     "GET /settings/gcloud/zones",
@@ -1223,6 +1224,8 @@
     "POST /settings/remotes/<name>/connect",
     "POST /settings/remotes/<name>/disconnect",
     "POST /settings/remotes/<name>/vm/delete",
+    "POST /settings/remotes/<name>/vm/node",
+    "POST /settings/remotes/<name>/vm/resize",
     "POST /settings/remotes/<name>/vm/standard",
     "POST /settings/remotes/<name>/vm/start",
     "POST /settings/remotes/<name>/vm/stop",
