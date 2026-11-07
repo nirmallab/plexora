@@ -10,7 +10,9 @@ and costs nothing for a session that never needs it.
 
 `pyodide` names packages in Pyodide's lockfile (their dependencies follow,
 less `DROP_DEPENDS`); `wheels` names pure-Python wheels the build fetches at
-the versions this checkout's lock pins. Those are fetched without their
+the versions this checkout's lock pins; `platform` names WebAssembly wheels
+Plexora builds itself and the build is handed (plexora-kernels: kernels/, the
+compiled kernels, `build.py --kernels-wheel`). Those are fetched without their
 dependencies, so each one's own must be listed too: the build refuses a stage
 whose wheels need a package neither it nor the base ships (`build.py`
 `unmet`). `tools/browser_build/build.py` turns this into the site's
@@ -33,6 +35,10 @@ STAGES = {
                    "universal-pathlib", "pathlib-abc", "biocognia", "biocognia-markers",
                    "spatialagents", "spatialbridge", "ome-types", "xsdata",
                    "pydantic-extra-types"],
+        # Every kernel numba would compile on the desktop, as WebAssembly
+        # (plan L5): 105 kB, loaded with the app, not when a kernel is first
+        # called -- a stage arriving mid-request would cost more than it saves.
+        "platform": ["plexora-kernels"],
         "modules": [],
     },
     "qc": {

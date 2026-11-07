@@ -3334,7 +3334,17 @@ deliberately left out and what should be built next.
   kernels, so tests that build one stay fast. Every kernel
   has a plain-Python/numpy fallback, so `PLEXORA_NO_NUMBA=1` (or numba simply
   absent) makes it slower, never wrong; no kernel is ever compiled with
-  `parallel=True`.
+  `parallel=True`. `jit.njit` hands out **plexora-kernels**' Cython port of a
+  kernel first (`kernels/`, its own distribution, import `plexora_kernels`;
+  the website's base stage ships its Pyodide wheel), then numba, then the
+  Python: a module's kernels come from the package only while every one of
+  them matches the source fingerprint the package recorded
+  (`kernels/tools/fingerprints.py`), so **changing an `@njit` kernel means
+  changing its port in `kernels/src/plexora_kernels/*.pxi` and re-recording**
+  -- `tests/test_kernels_package.py` holds every port to numba (bit for bit)
+  and to the Python on `tests/kernel_cases.py`'s inputs, and fails on a stale
+  fingerprint. `PLEXORA_KERNELS=0` switches the package off. Record:
+  `docs/internal/bench/browser_node/L5.md`.
 - `plexora/plugins/gating/server/autogate/` — the automatic-gating engine
   (see `docs/internal/AUTOMATIC_GATING.md` for the full design): a server-driven
   session hands an agent one small decision packet at a time instead of
@@ -10456,8 +10466,8 @@ in **5.6 s**.
 - **No compiled kernel (`server/utils/jit.py`, `label_kernels.py`,
   `autogate/kernels.py`) is ever run with `parallel=True`, and every one has
   an identity/numpy fallback** — `PLEXORA_NO_NUMBA=1` disables numba
-  entirely, trading speed, never correctness, for a machine where it will
-  not build. `jit.prime()` runs before both `prime_hot_code`'s announce and
+  entirely (and `PLEXORA_KERNELS=0` the compiled ports of plexora-kernels),
+  trading speed, never correctness, for a machine where it will not build. `jit.prime()` runs before both `prime_hot_code`'s announce and
   the MCP server's start, the same first-call-off-the-request-thread rule
   the PIL/threadpoolctl deadlock (`prime_hot_code`, above) already forced on
   GMM fitting.

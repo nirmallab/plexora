@@ -2,7 +2,10 @@
 
 One case per kernel (plexora/server/utils/jit.py), built from numpy only so the
 same inputs can be made anywhere -- this interpreter, a subprocess with numba
-switched off, or Pyodide in the website's worker. Two sizes: `test` (small
+switched off, or Pyodide in the website's worker -- and bit for bit the same
+there: only uniform draws and + - * / sqrt (correctly rounded everywhere), no
+sin, log or normal draws, whose last bits differ between C libraries and
+numpy's SIMD paths. Two sizes: `test` (small
 enough for the plain-Python form to take milliseconds; the agreement tests)
 and `bench` (what one real call sees: a 1024 x 1024 tile, a 32 x 256 x 256
 label block, a million-triangle mesh, 200,000 cells; the cost table in
@@ -10,6 +13,7 @@ docs/internal/bench/browser_node/L5.md).
 
     python -m tests.kernel_cases build --size bench --out inputs.pkl
     python -m tests.kernel_cases run --inputs inputs.pkl --out outputs.pkl [--repeat 3]
+    python -m tests.kernel_cases product [--repeat 1]
 
 `run` calls each kernel as the process has it -- the compiled port
 (plexora-kernels), numba, or the Python it is written in, as jit.py chose from
@@ -21,6 +25,7 @@ from __future__ import annotations
 
 import argparse
 import copy
+import hashlib
 import importlib
 import json
 import pickle
@@ -64,15 +69,23 @@ def cells_3d(depth, height, width, n, rng):
     return labels
 
 
+def _circle(t):
+    """(cos, sin) of 2 atan(t), rationally: the same bits on every platform."""
+    t = np.asarray(t, dtype=np.float64)
+    return (1 - t * t) / (1 + t * t), 2 * t / (1 + t * t)
+
+
 def sphere_meshes(k, rng, lat=12, lon=24):
     """`k` closed latitude-longitude spheres: positions (N, 3) float64,
-    triangles (M, 3) int64 grouped by object, and `objects` [id, first, count]."""
-    ring = np.linspace(0, np.pi, lat + 1)[1:-1]
-    turn = np.linspace(0, 2 * np.pi, lon, endpoint=False)
+    triangles (M, 3) int64 grouped by object, and `objects` [id, first, count].
+    Rings and meridians are spaced by the circle's rational parametrisation
+    (unevenly, but in order), not by sin and cos."""
+    ring_cos, ring_sin = _circle(np.arange(1, lat) / (lat / 2.0))            # 0 < angle < pi
+    turn_cos, turn_sin = _circle((np.arange(lon) - lon / 2.0) / (lon / 8.0))  # around, in order
     unit = np.concatenate([[[0, 0, 1]],
-                           np.stack([np.outer(np.sin(ring), np.cos(turn)).ravel(),
-                                     np.outer(np.sin(ring), np.sin(turn)).ravel(),
-                                     np.repeat(np.cos(ring), lon)], axis=1),
+                           np.stack([np.outer(ring_sin, turn_cos).ravel(),
+                                     np.outer(ring_sin, turn_sin).ravel(),
+                                     np.repeat(ring_cos, lon)], axis=1),
                            [[0, 0, -1]]])
     nv = len(unit)
     tris = []
@@ -90,7 +103,7 @@ def sphere_meshes(k, rng, lat=12, lon=24):
     for o in range(k):
         centre = rng.uniform(0, 1000, 3)
         radius = rng.uniform([3, 3, 1.5], [8, 8, 4])
-        positions.append(centre + unit * radius + rng.normal(0, 0.05, unit.shape))
+        positions.append(centre + unit * radius + rng.uniform(-0.05, 0.05, unit.shape))
         triangles.append(tris + o * nv)
         objects.append([o + 1, o * len(tris), len(tris)])
     return (np.concatenate(positions), np.concatenate(triangles),
@@ -238,16 +251,16 @@ def build(size: str = "test", seed: int = 7) -> dict:
 
     # cell_features: a tile with a 1 px halo, as _tile_sums_compiled hands it over.
     labels_h = np.pad(labels, 1)
-    marker_h = (rng.gamma(2.0, 300.0, labels_h.shape) + 50 * (labels_h > 0)).astype(np.float32)
+    marker_h = (rng.uniform(0, 1200, labels_h.shape) + 50 * (labels_h > 0)).astype(np.float32)
     marker_h[rng.random(labels_h.shape) < 0.001] = np.nan
-    dna_h = (rng.normal(100, 40, labels_h.shape)).astype(np.float32)
+    dna_h = rng.uniform(-20, 220, labels_h.shape).astype(np.float32)
     core = np.ascontiguousarray(labels_h[1:-1, 1:-1])
     step = 128 if size == "bench" else 16
     cases["cell_features._background_blocks"] = (
         np.ascontiguousarray(marker_h[1:-1, 1:-1]), core, step, 20.0, 64 if size == "bench" else 8)
     uniq = np.unique(core[core > 0])
     rows, cols = -(-core.shape[0] // step), -(-core.shape[1] // step)
-    background = rng.normal(10, 2, (rows, cols))
+    background = rng.uniform(6, 14, (rows, cols))
     background[rng.random((rows, cols)) < 0.2] = np.nan
     marker_ok = np.nan_to_num(marker_h).astype(np.float32)
     cases["cell_features._tile_kernel"] = (labels_h, marker_ok, dna_h, True, background, step, uniq,
@@ -257,8 +270,8 @@ def build(size: str = "test", seed: int = 7) -> dict:
         np.zeros((uniq.size, 10)), np.full(uniq.size, -np.inf))
     cases["cell_features._run_labels"] = (core,)
 
-    # segmentation QC: smoothed log DNA, a window inside a halo.
-    dna = np.log1p(np.abs(dna_h[1:-1, 1:-1])).astype(np.float32)
+    # segmentation QC: the smoothed log DNA's range (1 to 5), a window inside a halo.
+    dna = (np.sqrt(np.abs(dna_h[1:-1, 1:-1]).astype(np.float64) + 1.0) / 3.0).astype(np.float32)
     window = (4, h - 4, 6, w - 6)
     stats = tuple(np.zeros(n) for _ in range(7))
     cases["segqc.label_stats"] = (labels, dna, 100, 200, *window, 3.5, *stats)
@@ -391,6 +404,85 @@ def run(cases: dict, repeat: int = 1, only=None, budget_s: float = 60.0) -> dict
     return out
 
 
+def digest(values) -> str:
+    """A short hash of a kernel's outputs, the same for the same values on
+    any platform (a Python int is hashed by value: numpy makes it int32 on
+    wasm32 and int64 here)."""
+    h = hashlib.sha256()
+    for v in values:
+        if isinstance(v, (bytes, bytearray)):
+            h.update(bytes(v))
+        elif isinstance(v, (bool, np.bool_)):
+            h.update(b"bool" + bytes([bool(v)]))
+        elif isinstance(v, (int, np.integer)):
+            h.update(b"int" + str(int(v)).encode())
+        else:
+            a = np.ascontiguousarray(np.asarray(v))
+            h.update(str(a.dtype).encode() + str(a.shape).encode())
+            h.update(a.tobytes())
+    return h.hexdigest()[:24]
+
+
+def outputs(entry) -> list:
+    """What a `run` entry computed: its result(s), then every array argument."""
+    r = entry["result"]
+    values = list(r) if isinstance(r, tuple) else ([] if r is None else [r])
+    return values + entry["arrays"]
+
+
+def product(seed: int = 11) -> dict:
+    """Four whole product operations through their public functions, timed:
+    a 32 x 256 x 256 block's cell surfaces (surface nets, light smoothing,
+    normals, per-cell measures), a 1024 x 1024 tile's classifier pixel
+    features, its segmentation-QC sums and touching pairs, and 200,000 cells'
+    neighbour counts (automatic gating's density). Seconds and output hashes."""
+    from plexora.plugins.gating.server.autogate import kernels as autogate
+    from plexora.plugins.qc.server.segqc import kernels as segqc
+    from plexora.server.surface import mesh, nets
+    from plexora.server.utils import cell_features, jit
+
+    rng = np.random.default_rng(seed)
+    out = {}
+    volume = cells_3d(32, 256, 256, 300, rng)
+    t = time.perf_counter()
+    cube_shape = tuple(int(v) + 1 for v in volume.shape)
+    piece = nets.block_surface(np.pad(volume, 1), (0, 0, 0), cube_shape)
+    positions, triangles, ids = nets.assemble([piece], cube_shape)
+    m = mesh.sort_by_object(mesh.Mesh(positions=positions.astype(np.float32),
+                                      triangles=triangles.astype(np.uint32), object_id=ids))
+    smoothed, _ = mesh.taubin(m.positions, m.triangles, mesh.Smoothing.preset("light"))
+    normals = mesh.vertex_normals(smoothed, m.triangles)
+    table = mesh.measure(m)
+    out["surfaces"] = {"s": round(time.perf_counter() - t, 3), "cells": int(len(table["object"])),
+                       "triangles": int(len(triangles)),
+                       "digest": digest([positions, triangles, smoothed, normals])}
+    labels = cells_2d(1024, 1024, 3000, rng)
+    marker = rng.uniform(0, 1000, labels.shape).astype(np.float32)
+
+    def reader(a):
+        held = np.pad(a, 2)
+        return lambda box: held[box[1] + 2:box[3] + 2, box[0] + 2:box[2] + 2]
+
+    t = time.perf_counter()
+    got, _features = cell_features.accumulate(reader(marker), reader(labels), width=1024,
+                                              height=1024, read_dna=reader(marker))
+    out["cell_features"] = {"s": round(time.perf_counter() - t, 3), "cells": int(len(got)),
+                            "kernel": jit.implementation(cell_features._tile_kernel)}
+    dna = (marker / 250 + 1).astype(np.float32)
+    arrays = [np.zeros(int(labels.max()) + 1) for _ in range(7)]
+    t = time.perf_counter()
+    segqc.label_stats(labels, dna, 0, 0, 0, 1024, 0, 1024, 0.5, *arrays)
+    pairs = segqc.pairs(labels, dna, 0, 0, (0, 1024, 0, 1024))
+    out["segqc"] = {"s": round(time.perf_counter() - t, 3), "pairs": int(len(pairs[0])),
+                    "digest": digest(arrays[:6] + list(pairs[:2]))}
+    xs, ys = rng.uniform(0, 5000, 200_000), rng.uniform(0, 5000, 200_000)
+    t = time.perf_counter()
+    grid = autogate.Grid(xs, ys, 30.0)
+    n, f = autogate.neighbour_counts(grid, flags=xs > 2500)
+    out["neighbours"] = {"s": round(time.perf_counter() - t, 3), "digest": digest([n, f])}
+    return out
+
+
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     sub = parser.add_subparsers(dest="command", required=True)
@@ -403,7 +495,15 @@ def main(argv=None) -> int:
     r.add_argument("--repeat", type=int, default=1)
     r.add_argument("--only", default="")
     r.add_argument("--budget", type=float, default=60.0)
+    pr = sub.add_parser("product")
+    pr.add_argument("--repeat", type=int, default=1)
     args = parser.parse_args(argv)
+    if args.command == "product":
+        runs = [product() for _ in range(max(1, args.repeat))]
+        best = {name: dict(runs[0][name], s=min(r[name]["s"] for r in runs),
+                           first_s=runs[0][name]["s"]) for name in runs[0]}
+        print(json.dumps(best))
+        return 0
     if args.command == "build":
         with open(args.out, "wb") as handle:
             pickle.dump(build(args.size), handle)

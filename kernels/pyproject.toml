@@ -25,6 +25,14 @@ classifiers = [
 [tool.setuptools.packages.find]
 where = ["src"]
 
+# `pyodide build` (and cibuildwheel --platform pyodide), run from this
+# directory: the kernels are loops, built for speed (-O3, compiler and wasm-opt)
+# rather than Pyodide's default size (-Oz). Measured in
+# docs/internal/bench/browser_node/L5.md.
+[tool.pyodide.build]
+cflags = "$(CFLAGS_BASE) -I$(PYTHONINCLUDE) -O3"
+ldflags = "$(LDFLAGS_BASE) -s SIDE_MODULE=1 -O3"
+
 [tool.setuptools.exclude-package-data]
 plexora_kernels = ["*.c", "*.pyx", "*.pxi"]
 

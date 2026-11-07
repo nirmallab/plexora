@@ -4,7 +4,9 @@ Built for speed (-O3) with floating-point contraction off: a compiler that
 fuses `a * b + c` into one FMA rounds once where numba's LLVM rounds twice,
 and the ports are held to numba's results bit for bit (the agreement tests in
 Plexora's tests/test_kernels_package.py). numba does not contract without
-fastmath, and WebAssembly has no FMA to contract into.
+fastmath, and WebAssembly has no FMA to contract into. For Pyodide, the
+optimisation level comes from pyproject.toml's [tool.pyodide.build] (-O3 for
+compiling and for wasm-opt at the link, where Pyodide's default is -Oz).
 """
 
 import os
