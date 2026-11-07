@@ -70,7 +70,8 @@ def test_the_preview_is_mains_noindexed_and_on_a_development_prefix(web):
     assert "refs/heads/main" in preview["if"] and "push" in preview["if"]
     assert {"import_check", "smoke"} <= set(preview["needs"])
     built = _runs(web["jobs"]["static"])
-    assert re.search(r'--out "\$out/preview" \\\s+--py "\$ASSETS/py/dev/\$\{SHA::12\}/" --models "\$ASSETS/models/" --noindex', built)
+    assert re.search(r'--out "\$out/preview" \\\s+--py "\$ASSETS/py/dev/\$\{SHA::12\}/" --models "\$ASSETS/models/" '
+                     r'--flags "\$ASSETS/flags.json" --noindex', built)
     deploy = _runs(preview)
     assert 'prefix="py/dev/${SHA::12}/"' in deploy
     assert '--prefix "$prefix" --dev' in deploy
@@ -86,6 +87,7 @@ def test_a_release_deploys_production_only_once_every_installer_built(release):
     built = _runs(jobs["web"])
     assert '--py "https://assets.plexoraapp.com/py/$VERSION/"' in built
     assert '--models "https://assets.plexoraapp.com/models/"' in built
+    assert '--flags "https://assets.plexoraapp.com/flags.json"' in built  # the kill switch
     assert "--noindex" not in built
     assert "propagate --check --bundle" in built and "import_check.mjs" in built
     assert "actions/cache" not in " ".join(_uses(jobs["web"]))  # a release reads no cache

@@ -1,7 +1,7 @@
 """Build the website's static files: what viewer.plexoraapp.com serves.
 
     python -m plexora.client.static_build [--out DIR] [--py URL] [--models URL] [--noindex]
-        [--licence-api URL] [--licence-portal URL] [--licence-test-key KID=KEY]
+        [--flags URL] [--licence-api URL] [--licence-portal URL] [--licence-test-key KID=KEY]
         [--telemetry URL]
 
 Plexora's pages are rendered on the website by Plexora's own Python in a
@@ -15,13 +15,16 @@ Writes `--out` (default `plexora/client/dist/static/`):
 
 - `index.html`: the loader;
 - `client/{src,dist,external}/...` and `plugins/<name>/static/...`;
-- `client/shell.json`: `{version, py, models, licence?, telemetry?}`, `py` the base the
+- `client/shell.json`: `{version, py, models, flags?, licence?, telemetry?}`, `py` the base the
   Python bundle is served from (`tools/browser_build/build.py`; the assets
   bucket on the site, `/py/<version>/` in development; onnxruntime-web is its
   `ort/`), `models` the base magic select's model files are under
   (`vision/sam_weights.py` `WEB_DIR` below it: the assets bucket's /models/ on
   the site, `/models/` in development, where `tools/browser_build/serve.py
-  --tree` serves a folder holding them); `licence` only when an option below
+  --tree` serves a folder holding them); `flags` the site's switches
+  (`--flags`: the assets bucket's flags.json, `publish.py flags`; the loader
+  reads it first -- the kill switch, a minimum version, a model switched off;
+  none without it); `licence` only when an option below
   moves it off the defaults (services/licenseClient.js): `api`, the
   BioCognia platform's product API (default https://api.biocognia.com/v1),
   `portal`, and `test_keys`, throwaway `bct*` keys a TEST build trusts
@@ -79,14 +82,43 @@ LOADER = """<!doctype html>
 </html>
 """
 
+#: This computer's loopback, where a paired node or the desktop app answers.
+#: (A CSP host source cannot name an IPv6 address: `[::1]` is refused.)
+_LOOPBACK = "http://127.0.0.1:* http://localhost:*"
+
+#: The site's Content-Security-Policy (plan Phase 5). Scripts only from the
+#: site and the assets bucket -- no inline script: the website's pages carry
+#: their variables as JSON (base.html) -- and WebAssembly compiled; workers
+#: from the site (blob: for a library that starts its own); requests anywhere
+#: over https and to the loopback; images also from the loopback (a node's
+#: tiles); inline styles allowed (the app sets them everywhere); no plugins;
+#: the site framed by nobody but itself.
+CSP = "; ".join((
+    "default-src 'self'",
+    "script-src 'self' 'wasm-unsafe-eval' https://assets.plexoraapp.com blob:",
+    "worker-src 'self' blob:",
+    f"connect-src 'self' https: {_LOOPBACK} blob: data:",
+    f"img-src 'self' data: blob: https: {_LOOPBACK}",
+    "media-src 'self' blob: data:",
+    "style-src 'self' 'unsafe-inline'",
+    "font-src 'self' data:",
+    "frame-src 'self' blob:",
+    "frame-ancestors 'self'",
+    "object-src 'none'",
+    "base-uri 'self'",
+    "form-action 'self'",
+))
+
 #: Cloudflare Pages' `_headers`: the site is cross-origin isolated everywhere
-#: (plan D5); its service worker may control every path.
-HEADERS = """/*
+#: (plan D5) and under its Content-Security-Policy; its service worker may
+#: control every path.
+HEADERS = f"""/*
   Cross-Origin-Opener-Policy: same-origin
   Cross-Origin-Embedder-Policy: require-corp
   Cross-Origin-Resource-Policy: same-origin
   X-Content-Type-Options: nosniff
   Referrer-Policy: same-origin
+  Content-Security-Policy: {CSP}
 
 /client/src/js/workers/backendRelay.js
   Service-Worker-Allowed: /
@@ -147,7 +179,7 @@ TELEMETRY_ENDPOINT = "https://analytics.plexoraapp.com"
 
 def build(out: Path = DEFAULT_OUT, py: str | None = None, noindex: bool = False,
           licence: dict | None = None, models: str | None = None,
-          telemetry: str | None = None) -> dict:
+          flags: str | None = None, telemetry: str | None = None) -> dict:
     from plexora import __version__
 
     py = py or f"/py/{__version__}/"
@@ -165,6 +197,8 @@ def build(out: Path = DEFAULT_OUT, py: str | None = None, noindex: bool = False,
         plugins.append(static.parent.name)
     (out / "index.html").write_bytes(LOADER.encode("utf-8"))
     shell = {"version": __version__, "py": py, "models": models}
+    if flags:
+        shell["flags"] = flags
     if licence:
         shell["licence"] = licence
     if telemetry:
@@ -174,7 +208,7 @@ def build(out: Path = DEFAULT_OUT, py: str | None = None, noindex: bool = False,
     (out / "_headers").write_bytes(headers.encode("utf-8"))
     (out / "_redirects").write_bytes(REDIRECTS.encode("utf-8"))
     return {"out": str(out), "files": files + 4, "plugins": plugins, "version": __version__, "py": py,
-            "models": models, "telemetry": shell.get("telemetry"),
+            "models": models, "flags": flags, "telemetry": shell.get("telemetry"),
             "licence": {k: (sorted(v) if k == "test_keys" else v) for k, v in (licence or {}).items()}}
 
 
@@ -185,6 +219,8 @@ def main(argv=None) -> int:
     parser.add_argument("--models", default=None,
                         help="where magic select's model files are served from (default /models/)")
     parser.add_argument("--noindex", action="store_true", help="ask search engines not to index it")
+    parser.add_argument("--flags", default=None,
+                        help="the site's flags.json (the kill switch); none when not given")
     parser.add_argument("--licence-api", default=None,
                         help="the BioCognia platform's product API (default https://api.biocognia.com/v1)")
     parser.add_argument("--licence-portal", default=None, help="the portal a person approves a code at")
@@ -195,7 +231,7 @@ def main(argv=None) -> int:
                              f"(the site's builds: {TELEMETRY_ENDPOINT}); none: nothing is sent")
     args = parser.parse_args(argv)
     licence = licence_config(args.licence_api, args.licence_portal, args.licence_test_key)
-    print(json.dumps(build(Path(args.out), args.py, args.noindex, licence, args.models,
+    print(json.dumps(build(Path(args.out), args.py, args.noindex, licence, args.models, args.flags,
                            args.telemetry), indent=1))
     return 0
 

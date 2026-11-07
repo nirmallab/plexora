@@ -423,16 +423,8 @@
    import pages that used to overlay a progress card over a form are gone --
    the import dialog reports progress inline and opens the sample as soon as
    its record exists. #}
-<script src="{{ data.base_url }}/client/src/js/views/projectEdit.js?v=20261027_machine_chip" defer></script>
-{# `alwaysShow`, unlike the viewer's: this page is where a physical size the
-   FILE states is meant to be correctable. No viewer to tell -- the scale bar
-   is on the other page, and it re-reads the endpoint when it loads. Deferred
-   so the class (loaded in base.html, not deferred) is already defined. #}
-<script defer>
-    document.addEventListener("DOMContentLoaded", () => {
-        if (typeof ScaleCalibration !== "function") return;
-        new ScaleCalibration({{ data.datasetName|tojson }}, null,
-                             { alwaysShow: true }).init();
-    });
-</script>
+{# projectEdit.js also starts the page's pixel-size control (ScaleCalibration,
+   loaded in base.html, not deferred). No inline script: the website's
+   Content-Security-Policy runs none. #}
+<script src="{{ data.base_url }}/client/src/js/views/projectEdit.js?v=20261107_no_inline" defer></script>
 {% endblock %}

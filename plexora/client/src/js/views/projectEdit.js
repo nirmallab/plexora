@@ -712,3 +712,18 @@
         });
     });
 })();
+
+/* The pixel-size control, `alwaysShow`, unlike the viewer's: this page is
+   where a physical size the FILE states is meant to be correctable. No viewer
+   to tell -- the scale bar is on the other page, and it re-reads the endpoint
+   when it loads. Here rather than inline in project_edit.html: the website's
+   Content-Security-Policy runs no inline script. */
+(function () {
+    const start = () => {
+        const name = window.flaskVariables && window.flaskVariables.datasetName;
+        if (typeof ScaleCalibration !== "function" || !name) return;
+        new ScaleCalibration(name, null, { alwaysShow: true }).init();
+    };
+    if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", start);
+    else start();
+})();

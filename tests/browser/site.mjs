@@ -32,9 +32,18 @@ try {
     page.on("response", (response) => {
         if (response.status() >= 400) failed.push(`${response.status()} ${response.url()}`);
     });
+    // What the site's Content-Security-Policy refused (or would refuse, while
+    // it is report-only), from the page, its frames and its workers.
+    let csp = [];
+    const refused = (where) => (message) => {
+        if (/Content Security Policy/i.test(message.text())) csp.push(`${where}${message.text().slice(0, 300)}`);
+    };
+    page.on("console", refused(""));
+    page.on("worker", (worker) => worker.on("console", refused("worker: ")));
     for (const [visit, address] of paths.entries()) {
         errors = [];
         failed = [];
+        csp = [];
         const started = Date.now();
         await page.goto(`${origin}${address}`);
         const failedBoot = await page.waitForSelector(".plexora-boot-failed", { timeout: 1500 })
@@ -61,7 +70,7 @@ try {
         }
         const key = paths.indexOf(address) === visit ? address : `${address} (visit ${visit + 1})`;
         out.pages[key] = { writtenMs: written, ready, tab, ...state, errors: errors.slice(0, 15),
-                           failed: failed.slice(0, 15) };
+                           failed: failed.slice(0, 15), csp: csp.slice(0, 15) };
     }
 } finally {
     await browser.close();

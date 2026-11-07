@@ -27,6 +27,15 @@ try {
     page.on("response", (response) => { if (response.status() >= 400) failed.push(`${response.status()} ${response.url()}`); });
     const requests = [];
     page.on("request", (request) => requests.push(`${request.method()} ${request.url().replace(/^https?:\/\/[^/]+/, "")}`));
+    // What the site's Content-Security-Policy refused (or would refuse, while
+    // it is report-only), from the page, its frames and its workers.
+    const csp = [];
+    const refused = (where) => (message) => {
+        if (/Content Security Policy/i.test(message.text())) csp.push(`${where}${message.text().slice(0, 300)}`);
+    };
+    page.on("console", refused(""));
+    page.on("worker", (worker) => worker.on("console", refused("worker: ")));
+    out.csp = csp;
     const started = Date.now();
     if (args.includes("--verbose")) {
         // Every console line of the page and its workers, timed, on stderr.

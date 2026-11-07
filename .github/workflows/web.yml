@@ -88,7 +88,7 @@ jobs:
           out="$RUNNER_TEMP/web"
           uv run --no-sync python -m plexora.client.static_build --out "$out/static"
           uv run --no-sync python -m plexora.client.static_build --out "$out/preview" \
-            --py "$ASSETS/py/dev/${SHA::12}/" --models "$ASSETS/models/" --noindex \
+            --py "$ASSETS/py/dev/${SHA::12}/" --models "$ASSETS/models/" --flags "$ASSETS/flags.json" --noindex \
             --telemetry https://analytics.plexoraapp.com
           uv run --no-sync python tests/browser/smoke_fixture.py "$out/fixture"
       - name: What Pages takes

@@ -79,3 +79,21 @@ html, body {
     border: 0;
     background: transparent;
 }
+
+/* The preview's mark (the site's flags say `viewer: "preview"`): above the
+   app's frame, never in the way of a click. */
+#plexora-preview-mark {
+    position: fixed;
+    left: 8px;
+    bottom: 8px;
+    z-index: 2147483000;
+    pointer-events: none;
+    font-size: 11px;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    padding: 2px 8px;
+    border-radius: 999px;
+    background: var(--accent-channel, #2f80ed);
+    color: #fff;
+    opacity: 0.85;
+}

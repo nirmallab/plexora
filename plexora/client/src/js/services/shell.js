@@ -316,11 +316,75 @@
         return { endpoint: String(endpoint), dnt, context };
     }
 
+    //: The desktop app's download page (services/desktopHandoff.js's too).
+    const DOWNLOAD = "https://github.com/nirmallab/plexora/releases/latest";
+
+    //: The site's switches (plan Phase 5): `flags.json` on the assets bucket,
+    //: cached five minutes (`tools/browser_build/publish.py flags`). `viewer`
+    //: "desktop-only" pauses the website (the kill switch) and "preview" marks
+    //: it; `min_site_version` stops a site older than it; `models.<name>.enabled`
+    //: false switches a model off. Unreachable, slow or malformed: no flags --
+    //: a missing file never locks anyone out.
+    async function readFlags(shell) {
+        if (!shell.flags) return {};
+        try {
+            const where = new URL(shell.flags, new URL(at("/"), global.location.origin)).href;
+            const response = await Promise.race([global.fetch(where, { mode: "cors" }),
+                                                 wait(3000).then(() => null)]);
+            if (!response || !response.ok) return {};
+            const flags = await response.json();
+            return flags && typeof flags === "object" && !Array.isArray(flags) ? flags : {};
+        } catch (error) {
+            return {};
+        }
+    }
+
+    //: Whether dotted version `version` is older than `minimum`, part by part
+    //: (a part that is not a number counts as 0).
+    function older(version, minimum) {
+        const parts = (text) => String(text || "").split(/[.+-]/).map((part) => parseInt(part, 10) || 0);
+        const [a, b] = [parts(version), parts(minimum)];
+        for (let i = 0; i < Math.max(a.length, b.length); i += 1) {
+            if ((a[i] || 0) !== (b[i] || 0)) return (a[i] || 0) < (b[i] || 0);
+        }
+        return false;
+    }
+
+    //: The loader's last word when the site does not start: one line and one
+    //: button. Python never loads.
+    function stop(text, label, act) {
+        status(text);
+        const row = doc.createElement("div");
+        row.className = "plexora-boot-actions";
+        const button = doc.createElement("button");
+        button.type = "button";
+        button.className = "is-primary";
+        button.textContent = label;
+        button.addEventListener("click", act);
+        row.appendChild(button);
+        doc.getElementById("plexora-boot").appendChild(row);
+    }
+
     async function hostBoot() {
         global.PlexoraShellHost = true;
         const pairing = takePairingLink();
         browserVariables();
         const shell = await (await global.fetch(at("/client/shell.json"), { cache: "no-cache" })).json();
+        const flags = await readFlags(shell);
+        global.PlexoraFlags = Object.freeze(flags);
+        if (flags.viewer === "desktop-only") {
+            return stop(flags.message || "The website is paused for now. The desktop app works as usual.",
+                        "Get the desktop app", () => global.open(DOWNLOAD, "_blank", "noopener"));
+        }
+        if (flags.min_site_version && older(shell.version, flags.min_site_version)) {
+            return stop("This copy of Plexora is out of date.", "Reload", () => global.location.reload());
+        }
+        if (flags.viewer === "preview") {
+            const mark = doc.createElement("div");
+            mark.id = "plexora-preview-mark";
+            mark.textContent = "Preview";
+            doc.body.appendChild(mark);
+        }
         // The bundle's address, absolute or from the site's root.
         const py = new URL(shell.py, new URL(at("/"), global.location.origin)).href;
         await script(at("/client/src/js/services/backendRoutes.js"));
@@ -342,7 +406,9 @@
         // model files from the assets' models folder (services/onnxExecutor.js).
         await script(at("/client/src/js/services/onnxExecutor.js"));
         const models = new URL(shell.models || "/models/", new URL(at("/"), global.location.origin)).href;
-        global.PlexoraOnnx.configure({ ort: shell.ort || `${py}ort/`, models });
+        const sam = ((flags.models || {}).mobilesam || {}).enabled === false;
+        global.PlexoraOnnx.configure({ ort: shell.ort || `${py}ort/`, models,
+                                       disabled: sam ? "Magic select is switched off on the website for now." : null });
         await controlled();
         // Where the projects are kept: a folder the user granted, opened again
         // (after one click when the browser asks), or this browser's storage.
