@@ -8,6 +8,7 @@ shares with the website: registered there, so its file's identity is recorded
 """
 
 import json
+import os
 import shutil
 import subprocess
 from pathlib import Path
@@ -21,7 +22,9 @@ from plexora import paths
 ROOT = Path(__file__).resolve().parents[1]
 DRIVER = ROOT / "tests" / "browser" / "find_files.mjs"
 SITE = ROOT / "plexora" / "client" / "dist" / "static" / "index.html"
-PLAYWRIGHT = ROOT / "tools" / "poc_browser_node" / "node_modules" / "playwright-core"
+#: tests/browser/lib.mjs reads it from here, or from PLEXORA_PLAYWRIGHT_MODULES.
+PLAYWRIGHT = Path(os.environ.get("PLEXORA_PLAYWRIGHT_MODULES")
+                  or ROOT / "tools" / "poc_browser_node" / "node_modules") / "playwright-core"
 
 pytestmark = pytest.mark.skipif(
     not shutil.which("node") or not SITE.is_file() or not PLAYWRIGHT.is_dir(),
