@@ -5,17 +5,25 @@
     python tools/browser_build/publish.py site --dir DIR --project NAME [--branch B]
     python tools/browser_build/publish.py prune --prefix py/dev/<sha>/
 
-Everything goes through wrangler (`--wrangler`, default `wrangler` on PATH;
-`PLEXORA_WRANGLER` may name its `bin/wrangler.js`, run with node), logged in
-as the account that holds the zone, or with `CLOUDFLARE_API_TOKEN` in CI. No
-token is read or passed here.
+Everything goes through wrangler, logged in as the account that holds the
+zone, or with `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID` in CI. No
+token is read or passed here. `--wrangler` (or `PLEXORA_WRANGLER`) says which:
+its `bin/wrangler.js` (run with node), a command line that fetches it --
+`npx --yes wrangler@3.114.17`, which must name an exact version, never
+`latest` or a range -- or an executable; `wrangler` on PATH when neither is
+given. Wrangler 3 is assumed: wrangler 4's `r2 object` commands write to local
+storage unless told `--remote`, which 3 does not accept (`verify` would fail).
 
 `assets` uploads a bundle that `build.py` wrote (`<out>/py/<version>/`) to the
 bucket under `--prefix`, one object per file. A file with a `.br` beside it is
 stored as those brotli bytes under its own name with `Content-Encoding: br`, so
 the browser inflates it natively; every object is `immutable` for a year, since
-a prefix is never rewritten. A release prefix (`py/<X.Y.Z>/`) that already
-holds a manifest is refused; `--dev` prefixes (`py/dev/<sha>/`) are not.
+a prefix is never rewritten. `manifest.json` goes last, once every other object
+is in: a prefix that holds a manifest holds the whole bundle, and an upload
+that stopped can run again. A release prefix (`py/<X.Y.Z>/`) that already
+holds a manifest is refused -- unless it is this very bundle's manifest, when
+there is nothing to do (a release job run again); `--dev` prefixes
+(`py/dev/<sha>/`) are not.
 
 `prune` deletes a development prefix: every object its own manifest lists.
 A release prefix is never deleted here.
@@ -36,6 +44,7 @@ import hashlib
 import json
 import os
 import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -52,16 +61,48 @@ TYPES = {".whl": "application/zip", ".zip": "application/zip", ".json": "applica
 RELEASE = re.compile(r"^py/\d+\.\d+\.\d+/$")
 #: The origin `verify` asks with (any origin is answered: the bucket's CORS is `*`).
 ORIGIN = "https://viewer.plexoraapp.com"
+#: What a runner that fetches wrangler (`npx`) must be told to fetch: one version.
+PINNED = re.compile(r"^wrangler@\d+\.\d+\.\d+$")
+#: What wrangler says when an object is not there (and nothing else went wrong).
+ABSENT = "The specified key does not exist"
 
 
-def wrangler(path: str | None) -> list:
-    path = path or os.environ.get("PLEXORA_WRANGLER")
-    if path and path.endswith(".js"):
-        return [shutil.which("node") or "node", path]
-    found = shutil.which(path or "wrangler")
+def wrangler(spec: str | None) -> list:
+    """The command that runs wrangler: `[node, wrangler.js]`, a runner's
+    command line (`npx --yes wrangler@X.Y.Z`), or an executable."""
+    spec = (spec or os.environ.get("PLEXORA_WRANGLER") or "wrangler").strip()
+    if spec.endswith(".js") and (" " not in spec or Path(spec).is_file()):
+        return [shutil.which("node") or "node", spec]
+    if " " in spec and not Path(spec).exists():
+        words = [word.strip('"') for word in shlex.split(spec, posix=os.name != "nt")]
+    else:
+        words = [spec]
+    found = shutil.which(words[0])
     if not found:
-        raise SystemExit("wrangler not found: pass --wrangler (its bin/wrangler.js) or put it on PATH")
-    return [found]
+        raise SystemExit(f"{words[0]} not found: pass --wrangler (its bin/wrangler.js, or "
+                         f"`npx --yes wrangler@X.Y.Z`) or put wrangler on PATH")
+    if Path(words[0]).stem.lower() == "npx":
+        named = [word for word in words[1:] if word.startswith("wrangler")]
+        if len(named) != 1 or not PINNED.match(named[0]):
+            raise SystemExit(f"{spec!r}: npx must fetch one exact version (wrangler@X.Y.Z), "
+                             "never `latest` or a range")
+    return [found, *words[1:]]
+
+
+def held_manifest(command: list, bucket: str, prefix: str) -> dict | None:
+    """The manifest a prefix of the bucket holds, or None when it holds none.
+    Anything else wrangler says (no login, no network) stops here: an upload
+    must never take "could not ask" for "not there"."""
+    held = run(command + ["r2", "object", "get", f"{bucket}/{prefix}manifest.json", "--pipe"])
+    said = f"{held.stdout or ''}{held.stderr or ''}"
+    if held.returncode != 0:
+        if ABSENT in said:
+            return None
+        raise SystemExit(f"could not tell whether {prefix} holds a bundle: {said[-400:]}")
+    try:
+        return json.loads(held.stdout)
+    except ValueError:
+        raise SystemExit(f"{prefix}manifest.json is there but is not JSON: {held.stdout[:200]!r}")
 
 
 def run(command: list, **kwargs) -> subprocess.CompletedProcess:
@@ -89,8 +130,13 @@ def assets(args) -> int:
         raise SystemExit(f"{bundle}: no manifest.json (build it with build.py)")
     command = wrangler(args.wrangler)
     if RELEASE.match(prefix):
-        held = run(command + ["r2", "object", "get", f"{args.bucket}/{prefix}manifest.json", "--pipe"])
-        if held.returncode == 0 and held.stdout.strip():
+        held = held_manifest(command, args.bucket, prefix)
+        if held is not None:
+            ours = json.loads((bundle / "manifest.json").read_text(encoding="utf-8"))
+            if held == ours:
+                print(json.dumps({"bucket": args.bucket, "prefix": prefix, "objects": 0,
+                                  "already": "this bundle is published there; nothing to do"}))
+                return 0
             raise SystemExit(f"{prefix} is a released prefix and already holds a bundle: never rewritten")
     elif not args.dev:
         raise SystemExit(f"{prefix} is not py/<X.Y.Z>/: pass --dev for a development prefix")
@@ -108,14 +154,27 @@ def assets(args) -> int:
     items = objects(bundle)
     failed = []
     total = 0
+
+    def record(key, size, code, said):
+        nonlocal total
+        total += size
+        if code:
+            failed.append({"key": key, "said": said})
+        print(f"{'FAILED' if code else 'ok'} {key} {size}", flush=True)
+
+    # The manifest last, and only once everything else is in: it is what
+    # says the prefix holds a bundle.
     with ThreadPoolExecutor(max_workers=args.jobs) as pool:
-        for key, size, code, said in pool.map(put, items):
-            total += size
-            if code:
-                failed.append({"key": key, "said": said})
-            print(f"{'FAILED' if code else 'ok'} {key} {size}", flush=True)
+        for done in pool.map(put, [item for item in items if item[0] != "manifest.json"]):
+            record(*done)
+    manifest = "not uploaded: an object failed (run again)"
+    if not failed:
+        for item in items:
+            if item[0] == "manifest.json":
+                record(*put(item))
+        manifest = "uploaded" if not failed else "failed (run again)"
     print(json.dumps({"bucket": args.bucket, "prefix": prefix, "objects": len(items),
-                      "bytes": total, "failed": failed}, indent=1))
+                      "bytes": total, "failed": failed, "manifest": manifest}, indent=1))
     return 1 if failed else 0
 
 
@@ -186,11 +245,10 @@ def prune(args) -> int:
     if not prefix.startswith("py/dev/") or prefix.count("/") != 3:
         raise SystemExit(f"{prefix}: only a development prefix (py/dev/<sha>/) is pruned")
     command = wrangler(args.wrangler)
-    held = run(command + ["r2", "object", "get", f"{args.bucket}/{prefix}manifest.json", "--pipe"])
-    try:
-        files = json.loads(held.stdout)["files"]
-    except (ValueError, KeyError):
-        raise SystemExit(f"{prefix}: no manifest there ({(held.stderr or '')[-200:]})")
+    held = held_manifest(command, args.bucket, prefix)
+    if not held or "files" not in held:
+        raise SystemExit(f"{prefix}: no manifest there")
+    files = held["files"]
     keys = sorted({name[:-3] if name.endswith(".br") else name for name in files} - {"manifest.json"})
     keys.append("manifest.json")  # last: a prune that stops can be run again
 
