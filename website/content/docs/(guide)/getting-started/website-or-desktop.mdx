@@ -1,0 +1,28 @@
+---
+title: "Website or desktop app"
+description: "What the Plexora website handles well, where the desktop app or a node beside the data is the better place, and the measured numbers behind each."
+aliases: ["website", "browser", "viewer.plexoraapp.com", "desktop or website", "limits", "node", "slow", "webgpu", "large table"]
+---
+
+The website ([viewer.plexoraapp.com](https://viewer.plexoraapp.com)) and the desktop app are the same Plexora: the same tools, the same project files. The website runs everything inside your browser tab, so a few things are bounded by what one tab can hold or do. Within those bounds there is nothing to choose; beyond them the website says so, once per project, and offers the better place.
+
+The numbers below are the website's benchmark records as of 2026-11-07 (a 12-core desktop with an NVMe disk and an RTX 3080, in Chrome; an 8 GB laptop where it differs). The website decides with the same numbers.
+
+| Situation | Website | Desktop app | A node beside the data |
+| --- | --- | --- | --- |
+| A pyramidal image (OME-TIFF, SVS, OME-Zarr) | Opens as on the desktop; tested to 73 GB | Opens | Opens where the file lives |
+| A flat (non-pyramidal) TIFF | Builds the pyramid in the browser: about 2 minutes up to about 40 GB of pixels (about 14 GB on an 8 GB laptop; 10 GB in Firefox) | Any size | Any size, without copying the file |
+| A cell table | Up to about 40 million values (cells × columns) for gating and analysis, e.g. 1.26 M cells × 29 columns; less on a device with under 8 GB of memory | No browser limit | No browser limit |
+| A job over a dataset (apply a gate to every image, a QC run) | One image at a time, with the tab open; applying a gate takes about 0.75 s an image of 100 k cells (0.61 s on the desktop), so the website suggests another place once a job would take over 10 minutes | Runs with no browser open | Runs beside the data |
+| Magic select | With WebGPU: 0.04–0.07 s a click. Without WebGPU: about 1 s a click (0.95 s) | 0.38–0.41 s a click on the processor | On the node's own hardware |
+| An image on a slow network share | Says so when the last 50 tiles take over 150 ms (95th percentile) | Reads the same share at the same speed | About 35 ms a tile (95th percentile) from local disk |
+| An image in a cloud bucket (S3, Google Cloud Storage) | Opens in about 7 s | Opens in 21–25 s | Opens where the bucket is |
+| The first visit | About 14 s at 50 Mbps; later visits are faster | Installed once | — |
+
+## What the website tells you
+
+When something is beyond these bounds, a short notice appears in the corner with the measured reason and what to do about it: **Desktop app** opens the project in the desktop app (or offers it, if you do not have it), **Connect a node** pairs a Plexora node running beside your data, and **Continue here** carries on in the browser. A notice appears once per project in a tab; closing it or choosing **Continue here** keeps it away for 30 days. The desktop app shows no notices.
+
+## A node beside the data
+
+A node is Plexora running on the computer that holds the files (a lab server, a cluster job) and serving them to your browser. Start one with `plexora node serve --dynamic --pair` and open the link it prints (**Settings › Data nodes › Pair a Node** shows the same command); see [Install with pip](/docs/getting-started/install-python) for installing Plexora on a server.

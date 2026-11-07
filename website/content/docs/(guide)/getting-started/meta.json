@@ -4,6 +4,7 @@
   "defaultOpen": true,
   "pages": [
     "installation",
+    "website-or-desktop",
     "install-windows",
     "install-python",
     "first-image",

@@ -98,6 +98,11 @@
                 ? { runtime: { installed: false, install: null }, hint: config.disabled }
                 : { error: config.disabled } };
         }
+        // The model about to load: where there is no WebGPU, the page says
+        // what a click costs here (services/handoffNotice.js), and goes on.
+        if (args.op === "load" && global.PlexoraEnvelope && global.PlexoraEnvelope.beforeModel) {
+            global.PlexoraEnvelope.beforeModel().catch(() => null);
+        }
         try {
             const result = await call(args.op, args, transfersOf(args));
             return { value: result, transfer: transfersOf(result) };
