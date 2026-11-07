@@ -18,6 +18,11 @@ The settings block holds only what the user decided: the mode, the install
 id, and whether the notice was shown. What the uploader learns from the
 server (token, backoff, ceiling) lives in the queue's `state` table, so a
 routine upload never rewrites the user's settings file.
+
+On the website the settings file is in the worker's memory and goes with the
+tab, so the block is a file of its own there (`set_prefs_file`), which the
+worker keeps in the site's IndexedDB with the queue (plexora/browser/
+telemetry.py): the install id is the browser's, kept across visits.
 """
 
 from __future__ import annotations
@@ -52,6 +57,19 @@ _ON_WORDS = {"1", "true", "yes", "on", "enable", "enabled"}
 #: Set by the test fixture that exercises telemetry end to end, and by
 #: nothing else: the whole suite otherwise runs with telemetry pinned off.
 _testing_override: bool | None = None
+
+#: Where the block is kept when it is not settings.json's (the website's
+#: `prefs.json`, plexora/browser/telemetry.py), or None.
+_prefs_file = None
+
+
+def set_prefs_file(path) -> None:
+    """Keep the block in `path` (a JSON object of its own) instead of in
+    settings.json; None goes back to settings.json."""
+    global _prefs_file
+    from pathlib import Path
+
+    _prefs_file = Path(path) if path else None
 
 
 class Resolved(NamedTuple):
@@ -149,6 +167,14 @@ def _resolve(env, prefs, server, testing, now):
 
 def read_prefs() -> dict:
     """The `telemetry` block of settings.json, or {} -- never raises."""
+    if _prefs_file is not None:
+        try:
+            import json
+
+            block = json.loads(_prefs_file.read_text(encoding="utf-8"))
+        except Exception:
+            return {}
+        return dict(block) if isinstance(block, dict) else {}
     try:
         from plexora import paths
 
@@ -161,6 +187,22 @@ def read_prefs() -> dict:
 def write_prefs(**changes) -> dict | None:
     """Merge `changes` into the block (None removes a key). Returns the new
     block, or None when the file could not be written. Never raises."""
+    if _prefs_file is not None:
+        try:
+            import json
+
+            block = read_prefs()
+            for key, value in changes.items():
+                if value is None:
+                    block.pop(key, None)
+                else:
+                    block[key] = value
+            _prefs_file.parent.mkdir(parents=True, exist_ok=True)
+            _prefs_file.write_text(json.dumps(block, indent=1, sort_keys=True), encoding="utf-8",
+                                   newline="\n")
+            return block
+        except Exception:
+            return None
     try:
         from plexora import paths
 

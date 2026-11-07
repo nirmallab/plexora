@@ -303,7 +303,7 @@ export function FeaturesPage(props: { d: R<typeof features>; who: string }) {
 // -- performance ---------------------------------------------------------------
 
 const AXIS_LABELS: Record<string, string> = {
-  none: 'No split', path: 'Tile path', label_renderer: 'Label renderer', browser: 'Browser', gpu: 'GPU',
+  none: 'No split', runtime: 'Website or desktop', path: 'Tile path', label_renderer: 'Label renderer', browser: 'Browser', gpu: 'GPU',
   route: 'Route', family: 'Endpoint family', kind: 'Kind', source: 'Source', modality: 'Modality', tool: 'Tool',
   status: 'Status',
 };

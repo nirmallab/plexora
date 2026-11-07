@@ -8,9 +8,17 @@
  *
  * Checks run cheapest first, and the body is not read until the token, the
  * content type, the declared length and the budget have all said yes.
+ *
+ * Plexora's website calls the three from its page (its Python, in a worker,
+ * through the page's fetch): each route admits the site's origins by exact
+ * match (../cors.ts), and a preflight ends there, before any D1 read. A
+ * website install registers like any other -- its random install id is the
+ * browser's, kept in the site's IndexedDB -- so the per-address register quota
+ * (REGISTER_LIMIT_PER_DAY) covers a lab of browsers behind one address too.
  */
 import { Hono } from 'hono';
 
+import { cors } from '../cors';
 import { dayOf, ipPepper, knob, nowSeconds, secondsToMidnight, tokenSecret } from '../env';
 import { type AppEnv, countryOf, NO_STORE } from '../http';
 import {
@@ -42,6 +50,11 @@ import {
 import { bearer, hmacHex, mintToken, verifyToken } from './tokens';
 
 export const telemetry = new Hono<AppEnv>();
+
+// The website's page: exact-origin CORS, before each route's own checks.
+telemetry.use('/register', cors({ methods: ['POST'] }));
+telemetry.use('/events', cors({ methods: ['POST'] }));
+telemetry.use('/config', cors({ methods: ['GET'] }));
 
 const REGISTER_MAX_BYTES = 4096;
 

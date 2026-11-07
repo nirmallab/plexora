@@ -20,6 +20,8 @@ export interface Env {
   PUBLIC_BASE_URL?: string;
   ACCESS_TEAM_DOMAIN?: string;
   ACCESS_AUD?: string;
+  /** Web pages admitted by CORS besides cors.ts WEB_ORIGINS (staging, development): exact origins. */
+  TELEMETRY_WEB_ORIGINS?: string;
 
   [knob: string]: unknown;
 }
@@ -41,7 +43,7 @@ export const DEFAULTS = {
   MAX_DECOMPRESSED_BYTES: 524288,
   MAX_CLEAN_BYTES: 131072,
   MAX_EVENTS: 200,
-  REGISTER_LIMIT_PER_DAY: 200,
+  REGISTER_LIMIT_PER_DAY: 1000,
   LOGIN_LIMIT_PER_HOUR: 10,
   LOGIN_GLOBAL_LIMIT_PER_HOUR: 30,
   EVENTS_PER_INSTALL_PER_HOUR: 12,

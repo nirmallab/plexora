@@ -46,6 +46,33 @@ async function one(sql: string, ...binds: unknown[]) {
 }
 
 describe('the fold', () => {
+  it('splits every performance metric website vs desktop, by the batch', async () => {
+    const today = dayOf(seconds());
+    await env.TELEMETRY_DB.prepare('DELETE FROM batches').run();
+    await env.TELEMETRY_DB.prepare('DELETE FROM maintenance_log').run();
+    const web = hexId('we');
+    const batch = sampleBatch(web);
+    batch.client = { ...batch.client, deployment: 'web', launch_mode: 'web', install_kind: 'web', runtime: 'web' };
+    expect((await upload(batch, await tokenFor(web))).status).toBe(202);
+    const desktop = hexId('de');
+    expect((await upload(sampleBatch(desktop), await tokenFor(desktop))).status).toBe(202);
+    await foldToDone(env, today, seconds() + DAY);
+    const tiles = (await env.TELEMETRY_DB.prepare(
+      `SELECT dims_key, n FROM performance_rollups WHERE day = ? AND metric = 'render.summary.tile_ms' ORDER BY dims_key`,
+    ).bind(today).all()).results;
+    expect(tiles).toEqual([
+      { dims_key: 'path=proxy;label_renderer=cpu;browser=firefox;runtime=desktop', n: 12 },
+      { dims_key: 'path=proxy;label_renderer=cpu;browser=firefox;runtime=web', n: 12 },
+    ]);
+    expect(await one(`SELECT * FROM performance_rollups WHERE day = ? AND metric = 'project.load.total_ms' AND dims_key LIKE '%runtime=web'`, today))
+      .toMatchObject({ dims_key: 'modality=he;runtime=web', n: 1 });
+    expect(await one(`SELECT * FROM daily_usage WHERE day = ? AND deployment = 'web'`, today))
+      .toMatchObject({ launch_mode: 'web', installs: 1 });
+    await env.TELEMETRY_DB.prepare('DELETE FROM batches').run();
+    await env.TELEMETRY_DB.prepare('DELETE FROM maintenance_log').run();
+    for (const table of ROLLUP_TABLES) await env.TELEMETRY_DB.prepare(`DELETE FROM ${table}`).run();
+  });
+
   it('fills every rollup table from the fixture, per the vectors mapping', async () => {
     const today = dayOf(seconds());
     await seed(2);
@@ -77,22 +104,22 @@ describe('the fold', () => {
     expect(scale.every((row) => row.band === '1' && row.n === 2)).toBe(true);
 
     expect(await one(`SELECT * FROM performance_rollups WHERE day = ? AND metric = 'server.summary.route_ms'`, today)).toMatchObject({
-      dims_key: 'route=generate_png', n: 24, ok: 24, err: 0, sum: 2 * 9876.5, max: 6012, b0: 6,
+      dims_key: 'route=generate_png;runtime=desktop', n: 24, ok: 24, err: 0, sum: 2 * 9876.5, max: 6012, b0: 6,
     });
     expect(await one(`SELECT * FROM performance_rollups WHERE day = ? AND metric = 'render.summary.tile_ms'`, today)).toMatchObject({
-      dims_key: 'path=proxy;label_renderer=cpu;browser=firefox;gpu=amd', n: 24,
+      dims_key: 'path=proxy;label_renderer=cpu;browser=firefox;runtime=desktop', n: 24,
     });
     expect(await one(`SELECT * FROM performance_rollups WHERE day = ? AND metric = 'capability.summary.job_ms'`, today)).toMatchObject({
-      dims_key: 'name=gating.auto;status=failed', err: 24, ok: 0,
+      dims_key: 'name=gating.auto;status=failed;runtime=desktop', err: 24, ok: 0,
     });
     expect(await one(`SELECT * FROM performance_rollups WHERE day = ? AND metric = 'node.summary.tile_total_ms'`, today)).toMatchObject({ dims_key: '', n: 24 });
-    expect(await one(`SELECT * FROM performance_rollups WHERE day = ? AND metric = 'tool.summary.load_ms'`, today)).toMatchObject({ dims_key: 'tool=gating' });
+    expect(await one(`SELECT * FROM performance_rollups WHERE day = ? AND metric = 'tool.summary.load_ms'`, today)).toMatchObject({ dims_key: 'tool=gating;runtime=desktop' });
     // Record band props: project.load outcome 'missing' is a failure; 16-50 is bin 1.
     expect(await one(`SELECT * FROM performance_rollups WHERE day = ? AND metric = 'project.load.total_ms'`, today)).toMatchObject({
-      dims_key: 'modality=he', n: 2, ok: 0, err: 2, b1: 2, b0: 0,
+      dims_key: 'modality=he;runtime=desktop', n: 2, ok: 0, err: 2, b1: 2, b0: 0,
     });
     expect(await one(`SELECT * FROM performance_rollups WHERE day = ? AND metric = 'remote.connect.connect_ms'`, today)).toMatchObject({
-      dims_key: 'kind=server', n: 2, err: 2,
+      dims_key: 'kind=server;runtime=desktop', n: 2, err: 2,
     });
 
     expect(await one(`SELECT * FROM error_daily WHERE day = ?`, today)).toMatchObject({ fp: '0123456789abcdef', n: 24, installs: 2 });

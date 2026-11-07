@@ -17,6 +17,7 @@
    }
   ],
   "python": "3.11",
+  "runtime": "web",
   "scheduler": "pbs",
   "session_id": "11111111111111111111111111111111"
  },

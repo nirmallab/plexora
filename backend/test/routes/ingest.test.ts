@@ -67,7 +67,7 @@ describe('register', () => {
     // Pre-fill the quota row for this address to the limit.
     const first = await register(hexId(), {}, '198.51.100.9');
     expect(first.status).toBe(200);
-    await env.TELEMETRY_DB.prepare('UPDATE register_quota SET n = 200').run();
+    await env.TELEMETRY_DB.prepare('UPDATE register_quota SET n = 1000').run();
     const refused = await register(hexId(), {}, '198.51.100.9');
     expect(refused.status).toBe(429);
     expect(Number(refused.headers.get('Retry-After'))).toBeGreaterThan(0);

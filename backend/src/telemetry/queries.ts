@@ -183,7 +183,7 @@ export async function features(meter: Meter, f: Filters) {
 }
 
 /** Axes the performance page can re-aggregate by: keys that appear in dims_key. */
-export const PERF_AXES = ['none', 'path', 'label_renderer', 'browser', 'gpu', 'route', 'family', 'kind', 'source', 'modality', 'tool', 'status'];
+export const PERF_AXES = ['none', 'runtime', 'path', 'label_renderer', 'browser', 'gpu', 'route', 'family', 'kind', 'source', 'modality', 'tool', 'status'];
 
 export async function performance(meter: Meter, f: Filters, axis: string) {
   const w = where(f, ['version'], 3);

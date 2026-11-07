@@ -149,8 +149,51 @@ def plugins(app) -> list:
     return found[:64]
 
 
+def on_website() -> bool:
+    """Whether this is the website's Python (Pyodide in a worker beside the
+    page, plexora/browser/boot.py), not a CPython process."""
+    return os.environ.get("PLEXORA_BACKEND") == "browser"
+
+
+def runtime() -> str:
+    """`web` on the website, `desktop` for every CPython process."""
+    return "web" if on_website() else "desktop"
+
+
+def website(app=None, context=None) -> dict:
+    """`describe` on the website. The worker has no machine to ask: the page
+    says what the browser reports (`context`: `os` as a family, `cpus` and
+    `memory_gb` as numbers, banded here), and the rest is the website's by
+    definition -- launched, deployed and installed as `web`, no scheduler,
+    no container."""
+    context = dict(context or {})
+    family = context.get("os")
+    facts = {
+        "plexora_version": plexora_version(),
+        "python": python_minor(),
+        "os": family if schema.OS_FAMILY.check(family) else "other",
+        "arch": "other",
+        "launch_mode": "web",
+        "deployment": "web",
+        "scheduler": "none",
+        "install_kind": "web",
+        "runtime": "web",
+        "plugins": plugins(app),
+        "detected": "none",
+        "container": False,
+        "remote_env": False,
+        "server_is_remote": False,
+    }
+    for key in ("cpus", "memory_gb"):
+        if isinstance(context.get(key), (int, float)) and not isinstance(context.get(key), bool):
+            facts[key] = schema.band_pow2(int(context[key]))
+    return facts
+
+
 def describe(app=None, serve_mode="terminal", context=None) -> dict:
     """Everything the client block and session summary need about this run."""
+    if on_website():
+        return website(app, context)
     context = dict(context or {})
     detected = context.get("detected") or "none"
     if not schema.DETECTED.check(detected):
@@ -169,6 +212,7 @@ def describe(app=None, serve_mode="terminal", context=None) -> dict:
         "deployment": deployment(detected, sched, container, remote or server_is_remote),
         "scheduler": sched,
         "install_kind": install_kind(),
+        "runtime": "desktop",
         "plugins": plugins(app),
         "detected": detected,
         "container": container,
@@ -179,4 +223,4 @@ def describe(app=None, serve_mode="terminal", context=None) -> dict:
 
 
 CLIENT_KEYS = ("plexora_version", "python", "os", "arch", "launch_mode", "deployment",
-               "scheduler", "install_kind", "plugins")
+               "scheduler", "install_kind", "runtime", "plugins")

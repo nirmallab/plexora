@@ -66,7 +66,12 @@ MAX_COMPRESSED_BYTES = "65536"
 MAX_DECOMPRESSED_BYTES = "524288"
 MAX_CLEAN_BYTES = "131072"
 MAX_EVENTS = "200"
-REGISTER_LIMIT_PER_DAY = "200"
+# Registrations per (peppered) address per day. 1000 since the website: each
+# browser is an install, and a lab's browsers often share one address.
+REGISTER_LIMIT_PER_DAY = "1000"
+# Extra web origins admitted by CORS beside src/cors.ts WEB_ORIGINS (the
+# website and its preview): exact origins, spaces or commas. None in production.
+TELEMETRY_WEB_ORIGINS = ""
 # Admin token sign-in attempts per hour: per address, and all addresses together.
 LOGIN_LIMIT_PER_HOUR = "10"
 LOGIN_GLOBAL_LIMIT_PER_HOUR = "30"

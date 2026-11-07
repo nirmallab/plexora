@@ -272,6 +272,7 @@ ignore:
   PLEXORA_QC_CHANGED: JavaScript constant (services/numericData.js).
   PLEXORA_SERVER_CONCURRENCY: JavaScript global set by the page template.
   PLEXORA_SERVING: Flask config key.
+  PLEXORA_SITE_BASE: JavaScript global, the website's base path (services/shell.js).
   PLEXORA_SSH_OK: Marker string printed over SSH.
   PLEXORA_TIMER: Shell heredoc marker in plexora/gcloud.py.
   PLEXORA_UNIT: Shell heredoc marker in plexora/gcloud.py.

@@ -23,7 +23,8 @@ app.use('*', async (_c, next) => {
   await next();
 });
 
-// No CORS on /v1: the only caller is the Plexora server process, never a page.
+// /v1 answers Plexora processes (no Origin) and Plexora's website, whose
+// Python sends from the page: exact-origin CORS on each route (cors.ts).
 app.route('/v1/telemetry', telemetry);
 
 /**

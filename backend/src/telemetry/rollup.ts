@@ -53,19 +53,31 @@ export const SCALE_DIMS = [
 ];
 
 /**
- * The per-event subset of row dims that forms `dims_key` (at most four, in
- * this order). Dims outside the subset are summed over.
+ * The per-event subset of row dims that forms `dims_key` (in this order). Dims
+ * outside the subset are summed over. `runtime` is not a row dim but the
+ * batch's: `web` for Plexora's website (Python in Pyodide beside the page),
+ * `desktop` for every CPython process, read from `deployment` (RUNTIME), so
+ * every metric can be split website vs desktop -- the comparison the
+ * website's envelope is set and moved by -- with no column added to D1.
+ * Nodes are always CPython: node.summary has none.
  */
 export const PERF_DIMS: Record<string, string[]> = {
-  'render.summary': ['path', 'label_renderer', 'browser', 'gpu'],
-  'server.summary': ['route', 'family', 'kind', 'source'],
+  'render.summary': ['path', 'label_renderer', 'browser', 'runtime'],
+  'server.summary': ['route', 'family', 'kind', 'source', 'runtime'],
   'node.summary': [],
-  'capability.summary': ['name', 'status'],
-  'tool.summary': ['tool'],
+  'capability.summary': ['name', 'status', 'runtime'],
+  'tool.summary': ['tool', 'runtime'],
 };
 
 /** Record props with this dim subset, for band-valued (ms_labels) props. */
-const RECORD_PERF_DIMS = ['kind', 'modality'];
+const RECORD_PERF_DIMS = ['kind', 'modality', 'runtime'];
+
+/**
+ * A batch's runtime: the client block's `runtime` is archived (R2) but not a
+ * D1 column, and `deployment` says the same (`web` only on the website), for
+ * clients from before `runtime` too.
+ */
+export const RUNTIME = "(CASE WHEN b.deployment = 'web' THEN 'web' ELSE 'desktop' END)";
 
 /** Record outcomes that count as success for the performance ok/err split. */
 const RECORD_OK_OUTCOMES = ['ready', 'connected', 'registered'];
@@ -81,6 +93,8 @@ const TYPE = (type: string) => `json_extract(e.value, '$.type') = '${type}'`;
 const K = "json_extract(r.value, '$.k')";
 const N = "json_extract(r.value, '$.n')";
 const DIM = (name: string) => `json_extract(r.value, '$.d.${name}')`;
+/** A perf dim's value: the row's, or the batch's runtime. */
+const PERF_DIM = (name: string) => (name === 'runtime' ? RUNTIME : DIM(name));
 const PROP = (name: string) => `json_extract(e.value, '$.props.${name}')`;
 const VERSION = "COALESCE(b.version, '')";
 
@@ -136,7 +150,7 @@ function perfCounterStatement(type: string): Folded {
   const err = `SUM(CASE WHEN ${DIM('status')} IN ('5xx', 'failed') THEN ${N} ELSE 0 END)`;
   return {
     sql: `INSERT INTO performance_rollups (day, version, metric, dims_key, n, ok, err, sum, max, ${BIN_COLS})
-      SELECT ?1, ${VERSION}, '${type}.' || ${K}, ${dimsKey(dims, DIM)},
+      SELECT ?1, ${VERSION}, '${type}.' || ${K}, ${dimsKey(dims, PERF_DIM)},
         SUM(${N}), SUM(${N}) - ${err}, ${err},
         SUM(json_extract(r.value, '$.s')), MAX(json_extract(r.value, '$.mx')), ${binsOf(keys)}
       ${ROWS}
@@ -159,7 +173,8 @@ function perfRecordStatement(): Folded {
           json_extract(e.value, '$.type') AS type,
           json_extract(m.value, '$.p') AS prop,
           json_extract(e.value, '$.props.' || json_extract(m.value, '$.p')) AS band,
-          ${PROP('outcome')} AS outcome, ${PROP('kind')} AS kind, ${PROP('modality')} AS modality
+          ${PROP('outcome')} AS outcome, ${PROP('kind')} AS kind, ${PROP('modality')} AS modality,
+          ${RUNTIME} AS runtime
         ${RECORDS}, json_each(?4) m
         WHERE ${SLICE} AND json_extract(e.value, '$.type') = json_extract(m.value, '$.e')
       ) x
