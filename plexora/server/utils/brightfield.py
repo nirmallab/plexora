@@ -82,6 +82,14 @@ BRIGHTFIELD_ONLY_SUFFIXES = (".svs", ".ndpi", ".scn", ".mrxs", ".bif", ".svslide
 #: TIFF underneath and tifffile reads it directly.
 OPENSLIDE_ONLY_SUFFIXES = (".mrxs", ".svslide")
 
+#: What the website's page reads with openslide-js (OpenSlide in WebAssembly;
+#: plan L2, docs/internal/bench/browser_node/L2.md): the two formats only
+#: OpenSlide opens, and the TIFF-based slides whose tiles tifffile decodes in
+#: the page's Python one at a time (NDPI, SVS), which OpenSlide reads in
+#: workers at native speed. Only on the website (`_page_slide`); the desktop
+#: reads every one of them as before.
+PAGE_SLIDE_SUFFIXES = (".mrxs", ".svslide", ".ndpi", ".svs")
+
 #: Suffixes quick view and the import wizard accept as "an image, let the
 #: conversion decide which kind". Kept here rather than in `datasource.py` so
 #: the sniffer and the reader cannot drift apart.
@@ -215,6 +223,27 @@ def _is_remote(path) -> bool:
 
 def is_openslide_format(path) -> bool:
     return _suffix(path) in OPENSLIDE_ONLY_SUFFIXES
+
+
+def _page_slide(path):
+    """The slide at `path` as the website's page reads it (openslide-js,
+    `providers.browser.PageSlide`), or None: not the website, not one of the
+    page's files, or a format the page leaves to tifffile.
+
+    A TIFF-based slide the page cannot open (OpenSlide refuses some files
+    tifffile reads) falls back to tifffile, as on the desktop; an MRXS or
+    Sakura slide has nothing to fall back to, and the page's reason is raised
+    (`PageSlideError`): an MRXS picked without its folder says so."""
+    if _is_remote(path) or _suffix(path) not in PAGE_SLIDE_SUFFIXES:
+        return None
+    from plexora.server.providers import browser
+
+    try:
+        return browser.page_slide(path)
+    except browser.PageSlideError:
+        if is_openslide_format(path):
+            raise
+        return None
 
 
 def is_wsi_path(path) -> bool:
@@ -960,7 +989,15 @@ def _native_sources(path):
     `handle` is returned rather than closed because every source above reads
     lazily from it -- closing it here would give back a pyramid whose every
     tile raises.
+
+    On the website, the formats the page reads with openslide-js come from
+    the page (`_page_slide`) through the same `_OpenSlideSource`: the same
+    levels, the same level-0 origins, the same compositing over white.
     """
+    page = _page_slide(path)
+    if page is not None:
+        return [_OpenSlideSource(page, index) for index in range(page.level_count)], page
+
     if is_openslide_format(path):
         slide = _openslide().OpenSlide(str(path))
         return [_OpenSlideSource(slide, index)
@@ -1067,6 +1104,36 @@ def open_rgb(path, extension=None) -> RgbPyramid:
 
     return RgbPyramid(levels, path=path, extension=extension,
                       base_levels=base_levels, handle=handle)
+
+
+def page_tile_layout(pyramid) -> Optional[dict]:
+    """How the website's page can draw this pyramid's tiles itself, or None.
+
+    For a slide the page reads (`_page_slide`): its path and, per level the
+    file serves (not the derived ones), the native level it reads from and
+    the arithmetic `_Level.read_rgb` does -- the scale per axis and the
+    native level's downsample -- so the page's browser node computes the
+    same source rectangle and the same level-0 origin from the same doubles
+    (client services/browserSlides.js `tileWindow`). A tile whose rectangle
+    `read_rgb` would resample is left to Python."""
+    handle = getattr(pyramid, "_handle", None)
+    if not isinstance(pyramid, RgbPyramid) or handle is None:
+        return None
+    from plexora.server.providers.browser import PageSlide
+
+    if not isinstance(handle, PageSlide):
+        return None
+    levels = []
+    for index in range(pyramid.base_levels):
+        level = pyramid[index]
+        source = getattr(level, "_source", None)
+        if not isinstance(source, _OpenSlideSource):
+            return None
+        levels.append({"height": int(level.shape[1]), "width": int(level.shape[2]),
+                       "native": int(source._level), "downsample": float(source._downsample),
+                       "sourceHeight": int(source.height), "sourceWidth": int(source.width),
+                       "scaleY": float(level.scale_y), "scaleX": float(level.scale_x)})
+    return {"path": handle.path, "background": _BACKGROUND, "levels": levels}
 
 
 def rgb_region(level, rows, cols) -> np.ndarray:
@@ -1214,7 +1281,7 @@ def physical_metadata(path) -> dict:
 
     if is_openslide_format(path):
         try:
-            slide = _openslide().OpenSlide(str(path))
+            slide = _page_slide(path) or _openslide().OpenSlide(str(path))
             x = _ratio(slide.properties.get("openslide.mpp-x"))
             y = _ratio(slide.properties.get("openslide.mpp-y")) or x
             slide.close()
@@ -1302,6 +1369,7 @@ __all__ = [
     "needs_extension",
     "open_rgb",
     "overview_plane",
+    "page_tile_layout",
     "physical_metadata",
     "plane_count",
     "rgb_region",

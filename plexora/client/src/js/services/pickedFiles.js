@@ -16,11 +16,16 @@
  *   silently where the browser still grants access, after one "Reconnect"
  *   where it asks again, by picking it again where it keeps no handle.
  *
- *   pick({mode, multiple}) -> a path, an array of them, or null (cancelled)
+ *   pick({mode, multiple, ask}) -> a path, an array of them, or null (cancelled);
+ *                             an MRXS slide brings the folder beside it, chosen
+ *                             after `ask(text)` (the caller's one-button question)
+ *                             and mounted with it (/picked/<id>/<name>.mrxs and
+ *                             /picked/<id>/<name>/...)
  *   restore()              -> {mounted: [id], waiting: [pick]} at boot
  *   reconnect()            -> mounts every waiting pick (call from a click)
  *   list()                 -> every remembered pick
  *   fileFor(path)          -> the File behind a mounted path, or null
+ *   filesUnder(prefix)     -> [{path, file}] mounted under a folder (an MRXS's)
  *   handleFor(path)        -> its File System Access handle, where the browser gave one
  *   canWriteFolders()      -> whether this browser lets the page write into a
  *                             folder the user grants (Chromium's File System Access)
@@ -127,7 +132,72 @@
         return `${ROOT}/${id}/${name}`;
     }
 
-    async function pick({ mode = "file", multiple = false } = {}) {
+    //: An MRXS slide is its .mrxs and the folder of the same name beside it,
+    //: where the pixels are (OpenSlide's MIRAX layout).
+    const MRXS = /\.mrxs$/i;
+
+    /**
+     * The folder an MRXS's pixels are in, from the user: the folder named
+     * after the slide, or the one holding both (the folder of that name is
+     * then taken from inside it). `ask(text)` is the caller's one-button
+     * question (a click on it is the gesture the folder picker needs); with
+     * none, the picker is opened straight away, which a browser may refuse.
+     * -> {name, entries: [{path inside the slide's folder, file, handle}], handle} or null.
+     */
+    async function slideFolder(file, fileHandle, ask) {
+        const stem = file.name.replace(MRXS, "");
+        if (ask && !await ask(`Choose the folder "${stem}" that sits beside ${file.name}.`)) return null;
+        let entries;
+        let handle = null;
+        if (global.showDirectoryPicker) {
+            const options = { id: "plexora-slide", mode: "read" };
+            if (fileHandle) options.startIn = fileHandle;
+            handle = await global.showDirectoryPicker(options);
+            entries = await walkNamed(handle);
+        } else {
+            const files = await chooseWithInput({ directory: true });
+            if (!files.length) return null;
+            entries = files.map((f) => ({ path: f.webkitRelativePath || f.name, file: f, handle: null }));
+        }
+        const inside = slideEntries(stem, entries);
+        if (!inside) {
+            throw new Error(`${file.name}: that folder has no Slidedat.ini; choose the folder "${stem}" `
+                            + "the scanner wrote beside the .mrxs");
+        }
+        return { name: stem, entries: inside, handle };
+    }
+
+    //: A folder's files as "<folder>/<path>", as `<input webkitdirectory>` names them.
+    async function walkNamed(handle) {
+        return (await walk(handle)).map((entry) => ({ ...entry, path: `${handle.name}/${entry.path}` }));
+    }
+
+    /**
+     * An MRXS's files out of a chosen folder's ("<chosen>/<path>" each): the
+     * folder itself, or the folder named `stem` inside it -- with paths inside
+     * that folder; null when neither holds a Slidedat.ini.
+     */
+    function slideEntries(stem, entries) {
+        const lower = stem.toLowerCase();
+        const split = (path) => path.split("/");
+        const hasIndex = (list) => list.some((e) => /^slidedat\.ini$/i.test(e.path));
+        const nested = entries.filter((e) => split(e.path).length > 2 && split(e.path)[1].toLowerCase() === lower)
+            .map((e) => ({ ...e, path: split(e.path).slice(2).join("/") }));
+        if (hasIndex(nested)) return nested;
+        const itself = entries.map((e) => ({ ...e, path: split(e.path).slice(1).join("/") }));
+        return hasIndex(itself) ? itself : null;
+    }
+
+    //: The .mrxs at /picked/<id>/<name>.mrxs and its folder at /picked/<id>/<stem>/.
+    async function mountSlide(id, file, folder) {
+        const blobs = [{ name: file.name, data: file },
+                       ...folder.entries.map(({ path, file: f }) => ({ name: `${folder.name}/${path}`, data: f }))];
+        await global.PlexoraPython.mountTree(`${ROOT}/${id}`, blobs);
+        for (const { name, data } of blobs) mounted.set(`${ROOT}/${id}/${name}`, data);
+        return `${ROOT}/${id}/${file.name}`;
+    }
+
+    async function pick({ mode = "file", multiple = false, ask = null } = {}) {
         const id = newId();
         try {
             if (mode === "directory") {
@@ -158,6 +228,17 @@
                 files = await chooseWithInput({ multiple });
             }
             if (!files.length) return null;
+            if (files.length === 1 && MRXS.test(files[0].name)) {
+                // An MRXS: its folder too, mounted beside it.
+                const folder = await slideFolder(files[0], handles && handles[0], ask);
+                if (!folder) return null;
+                const path = await mountSlide(id, files[0], folder);
+                await remember({ id, kind: "slide", handles, folder: folder.handle, name: folder.name,
+                                 picked: Date.now(), count: folder.entries.length,
+                                 files: [{ name: files[0].name, size: files[0].size,
+                                           modified: files[0].lastModified }] });
+                return multiple ? [path] : path;
+            }
             const paths = await mountFiles(id, files, handles);
             await remember({ id, kind: "files", handles, picked: Date.now(),
                              files: files.map((file) => ({ name: file.name, size: file.size,
@@ -239,6 +320,13 @@
     }
 
     async function mountRecord(record, ask) {
+        if (record.kind === "slide" && record.handles && record.folder) {
+            if (!await granted(record.handles[0], ask) || !await granted(record.folder, ask)) return false;
+            const entries = slideEntries(record.name, await walkNamed(record.folder));
+            if (!entries) return false;
+            await mountSlide(record.id, await record.handles[0].getFile(), { name: record.name, entries });
+            return true;
+        }
         if (record.kind === "directory" && record.handle) {
             if (!await granted(record.handle, ask)) return false;
             await mountTree(record.id, record.name, await walk(record.handle));
@@ -284,6 +372,11 @@
     global.PlexoraPicks = Object.freeze({ pick, restore, reconnect, list,
                                           waiting: () => waiting.slice(),
                                           fileFor: (path) => mounted.get(path) || null,
+                                          //: Every mounted file under the folder `prefix`
+                                          //: ("/picked/<id>/<folder>/"): [{path, file}].
+                                          filesUnder: (prefix) => [...mounted.entries()]
+                                              .filter(([path]) => path.startsWith(prefix))
+                                              .map(([path, file]) => ({ path, file })),
                                           handleFor: (path) => handles.get(path) || null,
                                           canWriteFolders: () => typeof global.showDirectoryPicker === "function",
                                           find,

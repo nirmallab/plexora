@@ -1,0 +1,40 @@
+openslide-js-1.0.0-beta.5: the browser build of @computationalpathologygroup/openslide-js
+1.0.0-beta.5 (npm, dist-tag "beta", published 2026-07-02 with an npm provenance attestation),
+OpenSlide 4.0.0 compiled to WebAssembly. The website's page reads whole-slide images with it
+(MRXS, NDPI, SVS, Sakura; client/src/js/node/slideReader.js); the desktop app never loads it.
+
+These files are the package's dist/esm runtime, unchanged, byte for byte: the ES module wrapper,
+its worker (worker.js, bundled by the package), the Emscripten glue (wasm/openslide.js) and the
+WebAssembly binary (wasm/openslide.wasm). The package's source maps, TypeScript declarations,
+CommonJS build, single-file variant and bundler helpers are left out. The wasm is loaded at run
+time as its own file; nothing of it is linked into Plexora's code.
+
+Licence: LGPL-2.1-only (LICENSE, the package's own; NOTICE lists every component statically linked
+into openslide.wasm and its licence: OpenSlide, GLib, Cairo and gdk-pixbuf under the LGPL; the rest
+MIT, BSD, zlib, libpng, IJG, FTL or public domain).
+
+Corresponding source (LGPL-2.1 section 6): https://github.com/computationalpathologygroup/openslide-js,
+at the commit 1.0.0-beta.5 was built from (npm gitHead dff6ab5cf7fc0d55e0c5732a227e221c203ab26a),
+whose wasm/ directory
+holds the Dockerfile, the pinned fetch script for every bundled project and every patch applied.
+The package tarball: https://registry.npmjs.org/@computationalpathologygroup/openslide-js/-/openslide-js-1.0.0-beta.5.tgz
+(sha256 2cb71f0a700871c29dee76ceb0c0244934c445b1488d0c659e7dc58a410a68ce).
+
+sha256 of the files here:
+  81fe2bbff9aa3c0e3d9eca765eb43f9983bbb0707e7330c5176afd027c02b887  deep-zoom.js
+  25f6a988d198d65a16d0709372f5274e625f2fae3a8a0d2ee5c45bcced4ea53e  errors.js
+  fc41244545eb8790b2e3a93aa201fae7a0aafb2b4884f29a580ed0c5a6a8fe75  index.js
+  d80be8031c0740d2f8a8bbb0965ed28c5ffc204400257e048e64a952cc387cc1  io/block-cache.js
+  e65e2fcbbde6e8b99bdf161bf4de26ec415307075bbc1f729cf2006f35f3c8b2  io/broker.js
+  0be3d2b3c75b4ff1f1aa6866b2e94437d259d4ea5dc2bf1e37368fbc522059ff  io/fs-mount.js
+  b4f97f543a1b55215c2c1a2d410a96c1dc5aac34bc8f00f24fd57d4bccaf48e0  io/protocol.js
+  82e0adc42b7b88e03cd52c58e73748f8b9ccae3780a108a4a8d7edb215713824  io/sync-client.js
+  d79047af4c512a165a61046c5db7590920a092bd32a2d5e04e505074f97d9514  openslide.js
+  914c19ed58d25024c879c848ca4ebcc4d7e1f9712a00eb7f0870359ef8d0a44b  pixel-convert.js
+  eee5fd68a467f013e257cc9017b9432e6a8c8be2eaea6ece7b5af20a0ac2b56c  read-queue.js
+  9fab87e9788bcf889aef18391287b06f22f2b6d72ff0f6c5dcbeeafe2d7c3eb5  slide.js
+  01ae2a5b120382f9a648ced7ee8507493a134f216d100fc61600c6c9738235d2  types.js
+  a7c7f5eddf08b5355a716dcaabcf62c9028d70dfab35a1fd31606804cf6f7300  wasm/openslide.js
+  a57b1327a1ff258372958771924a7d8ce47d7fe729b3d7faad07e4017583ad8d  wasm/openslide.wasm
+  39dcac0b340d25d385e182c57764a8ea56749f1e74a1d956e53be1609f281393  worker-api.js
+  80cde639923eb54102941694c9ce5efa1121e133dac4b698a39d7c15a3ea668f  worker.js

@@ -16,7 +16,9 @@ the website's Python already has:
   JPEG's colour space handled as libjpeg-turbo would (`jpeg_decode`);
 - HDF5's LZ4 framing (Imaris) through the `lz4` package;
 - JPEG 2000 through a decoder the page provides (OpenJPEG in WebAssembly,
-  `set_jpeg2k`), or a NotImplementedError saying so.
+  `set_jpeg2k`), or a NotImplementedError saying so;
+- the codec names wsidicom imports for a DICOM slide's frames (`JPEG8`,
+  `JPEG2K`, ... with `.available`), so it decodes them here too.
 
 A codec missing here raises NotImplementedError, which tifffile reports as
 "cannot decode", the same as a missing codec on the desktop. Every function is
@@ -173,6 +175,9 @@ def jpeg_decode(data, bitspersample=None, tables=None, header=None, colorspace=N
     if bitspersample not in (None, 8):
         raise NotImplementedError(f"{bitspersample}-bit JPEG is not supported in the browser")
     stream = _merge_tables(tables, bytes(header or b"") + bytes(data))
+    if isinstance(colorspace, str):
+        # wsidicom names it ("RGB" for a DICOM frame whose metadata says RGB).
+        colorspace = {"RGB": 2, "YCBCR": 3, "GRAYSCALE": 1}.get(colorspace.upper(), colorspace)
     if colorspace == 2 and _components(stream) == 3 and b"Adobe" not in stream[:512]:
         stream = stream[:2] + _ADOBE_RGB + stream[2:]
     image = Image.open(io.BytesIO(stream))
@@ -266,6 +271,39 @@ def _have_zstd():
 
 #: tifffile uses this module's zstd only when it says it has one.
 ZSTD = _Available(_have_zstd)
+
+#: wsidicom imports these together with their functions (wsidicom/codec/
+#: optionals.py) and takes imagecodecs for DICOM frames only when every name
+#: imports; each codec then says whether it is really here. JPEG is Pillow's
+#: (`jpeg_decode`), JPEG 2000 the page's OpenJPEG once it is set; JPEG-LS and
+#: JPEG XL are not in the browser, and a frame in either is refused as on a
+#: desktop without them.
+JPEG8 = _Available(lambda: True)
+#: libjpeg's colour spaces, as imagecodecs names them: wsidicom builds an
+#: encoder (never used to read) to decide a transfer syntax is supported.
+JPEG8.CS = types.SimpleNamespace(UNKNOWN=0, GRAYSCALE=1, RGB=2, YCbCr=3, CMYK=4, YCCK=5)
+JPEG2K = _Available(lambda: _jpeg2k is not None)
+JPEGLS = _Available(lambda: False)
+JPEGXL = _Available(lambda: False)
+
+
+def _absent(name):
+    def refuse(*args, **kwargs):
+        raise NotImplementedError(f"{name} is not available in the browser")
+
+    refuse.__name__ = name
+    return refuse
+
+
+jpegls_decode = _absent("jpegls_decode")
+jpegxl_decode = _absent("jpegxl_decode")
+dicomrle_decode = _absent("dicomrle_decode")
+#: Encoders Plexora never calls in the browser (wsidicom imports them).
+jpeg8_encode = _absent("jpeg8_encode")
+jpeg2k_encode = _absent("jpeg2k_encode")
+jpegls_encode = _absent("jpegls_encode")
+jpegxl_encode = _absent("jpegxl_encode")
+packbits_encode = _absent("packbits_encode")
 
 
 def lz4h5_decode(data, out=None):
