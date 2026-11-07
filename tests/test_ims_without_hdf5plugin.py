@@ -14,7 +14,6 @@ really cannot read those files there, so the reads went through ims.py's
 own decode.
 """
 
-import hashlib
 import json
 import subprocess
 import sys
@@ -28,11 +27,6 @@ from tests import volume_fixtures as vf
 
 hdf5plugin = pytest.importorskip("hdf5plugin")
 ROOT = Path(__file__).resolve().parents[1]
-
-
-def _sha(array) -> str:
-    array = np.ascontiguousarray(array)
-    return f"{array.dtype}:{array.shape}:" + hashlib.sha256(array.tobytes()).hexdigest()
 
 
 def _write_mask(path, compression):
