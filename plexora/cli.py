@@ -1320,6 +1320,16 @@ def _build_node_parser():
              "needs it.",
     )
     serve.add_argument(
+        "--tls",
+        choices=("self-signed",),
+        default=None,
+        help="Serve HTTPS with a certificate this node makes once and keeps "
+             "(in the data root's node-tls folder), for a browser that opens "
+             "the node at its own address -- a cloud VM the website started. "
+             "The browser warns once; the certificate's SHA-256 fingerprint "
+             "is printed to check the warning against.",
+    )
+    serve.add_argument(
         "--url-prefix",
         default=None,
         metavar="PATH",
@@ -1509,6 +1519,7 @@ def _run_node(args):
             browser_endpoint=args.browser_endpoint,
             serve_app=args.app,
             url_prefix=args.url_prefix,
+            tls=getattr(args, "tls", None),
         )
     except NodeStartupError as exc:
         raise SystemExit(str(exc))
