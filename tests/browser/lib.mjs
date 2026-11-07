@@ -46,6 +46,7 @@ export async function launch({ headed = false } = {}) {
     });
     return {
         context,
+        profile,
         close: async () => {
             await context.close();
             try { rmSync(profile, { recursive: true, force: true }); } catch { /* Windows may hold it */ }

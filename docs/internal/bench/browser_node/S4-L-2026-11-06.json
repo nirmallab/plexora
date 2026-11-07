@@ -1,0 +1,1244 @@
+{
+ "spike": "S-4",
+ "fixture": "L",
+ "date": "2026-11-06",
+ "commit": "5b841785",
+ "question": "h5py in Pyodide (the website's worker, the picked file on WORKERFS) against h5wasm in the page: the same reads of every p4 fixture, hashed against CPython's h5py",
+ "machine": {
+  "cpuPercentBefore": [
+   14.6,
+   19.8,
+   24.9
+  ],
+  "platform": "win32 10.0.26200",
+  "cpu": "12th Gen Intel(R) Core(TM) i9-12900K",
+  "cores": 24,
+  "memoryGB": 128,
+  "load": [
+   0,
+   0,
+   0
+  ],
+  "hostname": "ajit"
+ },
+ "pyodide": {
+  "dir": "C:/plexora-bench/browser_node/fixtures/p4-l",
+  "files": [
+   "cells-csr-gzip.h5ad",
+   "cells-csr-lzf.h5ad",
+   "cells-csr-none.h5ad",
+   "cells-dense-gzip.h5ad",
+   "cells-dense-lzf.h5ad",
+   "cells-dense-none.h5ad"
+  ],
+  "repeat": 3,
+  "cpython": {
+   "python": "3.13.15",
+   "platform": "win32",
+   "h5py": "3.16.0",
+   "hdf5": "2.0.0",
+   "filters": {
+    "gzip": true,
+    "lzf": true,
+    "szip": false,
+    "shuffle": true
+   }
+  },
+  "readyMs": 6641,
+  "mounted": [
+   "/picked/s4/cells-csr-gzip.h5ad",
+   "/picked/s4/cells-csr-lzf.h5ad",
+   "/picked/s4/cells-csr-none.h5ad",
+   "/picked/s4/cells-dense-gzip.h5ad",
+   "/picked/s4/cells-dense-lzf.h5ad",
+   "/picked/s4/cells-dense-none.h5ad"
+  ],
+  "heapBoot": 335282176,
+  "pyodide": {
+   "python": "3.14.2",
+   "platform": "emscripten",
+   "h5py": "3.13.0",
+   "hdf5": "1.12.1",
+   "filters": {
+    "gzip": true,
+    "lzf": true,
+    "szip": false,
+    "shuffle": true
+   }
+  },
+  "firstImportMs": 949,
+  "stages": [
+   {
+    "kind": "stage",
+    "stage": "h5ad",
+    "importer": "spike_h5ad",
+    "ms": 845
+   }
+  ],
+  "heapStage": 402391040,
+  "rows": [
+   {
+    "file": "cells-csr-gzip.h5ad",
+    "layout": "csr",
+    "codec": "gzip",
+    "op": "obs_names",
+    "state": "ok",
+    "ms": 418.9,
+    "cpythonMs": 453,
+    "ratio": 0.9
+   },
+   {
+    "file": "cells-csr-gzip.h5ad",
+    "layout": "csr",
+    "codec": "gzip",
+    "op": "obs_numeric",
+    "state": "ok",
+    "ms": 48.8,
+    "cpythonMs": 53.8,
+    "ratio": 0.9
+   },
+   {
+    "file": "cells-csr-gzip.h5ad",
+    "layout": "csr",
+    "codec": "gzip",
+    "op": "obs_categorical",
+    "state": "ok",
+    "ms": 6.8,
+    "cpythonMs": 6.9,
+    "ratio": 1
+   },
+   {
+    "file": "cells-csr-gzip.h5ad",
+    "layout": "csr",
+    "codec": "gzip",
+    "op": "obsm_spatial",
+    "state": "ok",
+    "ms": 104.7,
+    "cpythonMs": 84.2,
+    "ratio": 1.2
+   },
+   {
+    "file": "cells-csr-gzip.h5ad",
+    "layout": "csr",
+    "codec": "gzip",
+    "op": "var_names",
+    "state": "ok",
+    "ms": 0.6,
+    "cpythonMs": 0.3,
+    "ratio": 2.2
+   },
+   {
+    "file": "cells-csr-gzip.h5ad",
+    "layout": "csr",
+    "codec": "gzip",
+    "op": "x_rows",
+    "state": "ok",
+    "ms": 196.3,
+    "cpythonMs": 164.4,
+    "ratio": 1.2
+   },
+   {
+    "file": "cells-csr-gzip.h5ad",
+    "layout": "csr",
+    "codec": "gzip",
+    "op": "x_column",
+    "state": "ok",
+    "ms": 1513.6,
+    "cpythonMs": 979,
+    "ratio": 1.5
+   },
+   {
+    "file": "cells-csr-gzip.h5ad",
+    "layout": "csr",
+    "codec": "gzip",
+    "op": "x_all",
+    "state": "ok",
+    "ms": 1702.5,
+    "cpythonMs": 1251,
+    "ratio": 1.4
+   },
+   {
+    "file": "cells-csr-lzf.h5ad",
+    "layout": "csr",
+    "codec": "lzf",
+    "op": "obs_names",
+    "state": "ok",
+    "ms": 396.3,
+    "cpythonMs": 409.1,
+    "ratio": 1
+   },
+   {
+    "file": "cells-csr-lzf.h5ad",
+    "layout": "csr",
+    "codec": "lzf",
+    "op": "obs_numeric",
+    "state": "ok",
+    "ms": 8.8,
+    "cpythonMs": 14.2,
+    "ratio": 0.6
+   },
+   {
+    "file": "cells-csr-lzf.h5ad",
+    "layout": "csr",
+    "codec": "lzf",
+    "op": "obs_categorical",
+    "state": "ok",
+    "ms": 2.4,
+    "cpythonMs": 2.6,
+    "ratio": 0.9
+   },
+   {
+    "file": "cells-csr-lzf.h5ad",
+    "layout": "csr",
+    "codec": "lzf",
+    "op": "obsm_spatial",
+    "state": "ok",
+    "ms": 28.9,
+    "cpythonMs": 35.3,
+    "ratio": 0.8
+   },
+   {
+    "file": "cells-csr-lzf.h5ad",
+    "layout": "csr",
+    "codec": "lzf",
+    "op": "var_names",
+    "state": "ok",
+    "ms": 0.5,
+    "cpythonMs": 0.4,
+    "ratio": 1.2
+   },
+   {
+    "file": "cells-csr-lzf.h5ad",
+    "layout": "csr",
+    "codec": "lzf",
+    "op": "x_rows",
+    "state": "ok",
+    "ms": 76.5,
+    "cpythonMs": 75.6,
+    "ratio": 1
+   },
+   {
+    "file": "cells-csr-lzf.h5ad",
+    "layout": "csr",
+    "codec": "lzf",
+    "op": "x_column",
+    "state": "ok",
+    "ms": 666.5,
+    "cpythonMs": 347.4,
+    "ratio": 1.9
+   },
+   {
+    "file": "cells-csr-lzf.h5ad",
+    "layout": "csr",
+    "codec": "lzf",
+    "op": "x_all",
+    "state": "ok",
+    "ms": 933.8,
+    "cpythonMs": 575.1,
+    "ratio": 1.6
+   },
+   {
+    "file": "cells-csr-none.h5ad",
+    "layout": "csr",
+    "codec": "none",
+    "op": "obs_names",
+    "state": "ok",
+    "ms": 384.6,
+    "cpythonMs": 370.8,
+    "ratio": 1
+   },
+   {
+    "file": "cells-csr-none.h5ad",
+    "layout": "csr",
+    "codec": "none",
+    "op": "obs_numeric",
+    "state": "ok",
+    "ms": 11.4,
+    "cpythonMs": 5.3,
+    "ratio": 2.2
+   },
+   {
+    "file": "cells-csr-none.h5ad",
+    "layout": "csr",
+    "codec": "none",
+    "op": "obs_categorical",
+    "state": "ok",
+    "ms": 0.7,
+    "cpythonMs": 0.8,
+    "ratio": 0.9
+   },
+   {
+    "file": "cells-csr-none.h5ad",
+    "layout": "csr",
+    "codec": "none",
+    "op": "obsm_spatial",
+    "state": "ok",
+    "ms": 18.3,
+    "cpythonMs": 10,
+    "ratio": 1.8
+   },
+   {
+    "file": "cells-csr-none.h5ad",
+    "layout": "csr",
+    "codec": "none",
+    "op": "var_names",
+    "state": "ok",
+    "ms": 0.5,
+    "cpythonMs": 0.2,
+    "ratio": 2.4
+   },
+   {
+    "file": "cells-csr-none.h5ad",
+    "layout": "csr",
+    "codec": "none",
+    "op": "x_rows",
+    "state": "ok",
+    "ms": 97.5,
+    "cpythonMs": 63.8,
+    "ratio": 1.5
+   },
+   {
+    "file": "cells-csr-none.h5ad",
+    "layout": "csr",
+    "codec": "none",
+    "op": "x_column",
+    "state": "ok",
+    "ms": 843.5,
+    "cpythonMs": 279.8,
+    "ratio": 3
+   },
+   {
+    "file": "cells-csr-none.h5ad",
+    "layout": "csr",
+    "codec": "none",
+    "op": "x_all",
+    "state": "ok",
+    "ms": 1172.3,
+    "cpythonMs": 515.4,
+    "ratio": 2.3
+   },
+   {
+    "file": "cells-dense-gzip.h5ad",
+    "layout": "dense",
+    "codec": "gzip",
+    "op": "obs_names",
+    "state": "ok",
+    "ms": 415.2,
+    "cpythonMs": 427.5,
+    "ratio": 1
+   },
+   {
+    "file": "cells-dense-gzip.h5ad",
+    "layout": "dense",
+    "codec": "gzip",
+    "op": "obs_numeric",
+    "state": "ok",
+    "ms": 44.3,
+    "cpythonMs": 39.2,
+    "ratio": 1.1
+   },
+   {
+    "file": "cells-dense-gzip.h5ad",
+    "layout": "dense",
+    "codec": "gzip",
+    "op": "obs_categorical",
+    "state": "ok",
+    "ms": 5.9,
+    "cpythonMs": 4.9,
+    "ratio": 1.2
+   },
+   {
+    "file": "cells-dense-gzip.h5ad",
+    "layout": "dense",
+    "codec": "gzip",
+    "op": "obsm_spatial",
+    "state": "ok",
+    "ms": 97.2,
+    "cpythonMs": 80,
+    "ratio": 1.2
+   },
+   {
+    "file": "cells-dense-gzip.h5ad",
+    "layout": "dense",
+    "codec": "gzip",
+    "op": "var_names",
+    "state": "ok",
+    "ms": 0.5,
+    "cpythonMs": 0.2,
+    "ratio": 2.2
+   },
+   {
+    "file": "cells-dense-gzip.h5ad",
+    "layout": "dense",
+    "codec": "gzip",
+    "op": "x_rows",
+    "state": "ok",
+    "ms": 372.1,
+    "cpythonMs": 289.8,
+    "ratio": 1.3
+   },
+   {
+    "file": "cells-dense-gzip.h5ad",
+    "layout": "dense",
+    "codec": "gzip",
+    "op": "x_column",
+    "state": "ok",
+    "ms": 331.9,
+    "cpythonMs": 40,
+    "ratio": 8.3
+   },
+   {
+    "file": "cells-dense-gzip.h5ad",
+    "layout": "dense",
+    "codec": "gzip",
+    "op": "x_all",
+    "state": "ok",
+    "ms": 3658,
+    "cpythonMs": 2318.9,
+    "ratio": 1.6
+   },
+   {
+    "file": "cells-dense-lzf.h5ad",
+    "layout": "dense",
+    "codec": "lzf",
+    "op": "obs_names",
+    "state": "ok",
+    "ms": 417.7,
+    "cpythonMs": 414,
+    "ratio": 1
+   },
+   {
+    "file": "cells-dense-lzf.h5ad",
+    "layout": "dense",
+    "codec": "lzf",
+    "op": "obs_numeric",
+    "state": "ok",
+    "ms": 9.6,
+    "cpythonMs": 13.6,
+    "ratio": 0.7
+   },
+   {
+    "file": "cells-dense-lzf.h5ad",
+    "layout": "dense",
+    "codec": "lzf",
+    "op": "obs_categorical",
+    "state": "ok",
+    "ms": 2.7,
+    "cpythonMs": 2.6,
+    "ratio": 1
+   },
+   {
+    "file": "cells-dense-lzf.h5ad",
+    "layout": "dense",
+    "codec": "lzf",
+    "op": "obsm_spatial",
+    "state": "ok",
+    "ms": 29.7,
+    "cpythonMs": 32.9,
+    "ratio": 0.9
+   },
+   {
+    "file": "cells-dense-lzf.h5ad",
+    "layout": "dense",
+    "codec": "lzf",
+    "op": "var_names",
+    "state": "ok",
+    "ms": 0.5,
+    "cpythonMs": 0.3,
+    "ratio": 2
+   },
+   {
+    "file": "cells-dense-lzf.h5ad",
+    "layout": "dense",
+    "codec": "lzf",
+    "op": "x_rows",
+    "state": "ok",
+    "ms": 221.2,
+    "cpythonMs": 76.4,
+    "ratio": 2.9
+   },
+   {
+    "file": "cells-dense-lzf.h5ad",
+    "layout": "dense",
+    "codec": "lzf",
+    "op": "x_column",
+    "state": "ok",
+    "ms": 310.4,
+    "cpythonMs": 12.1,
+    "ratio": 25.8
+   },
+   {
+    "file": "cells-dense-lzf.h5ad",
+    "layout": "dense",
+    "codec": "lzf",
+    "op": "x_all",
+    "state": "ok",
+    "ms": 1835.1,
+    "cpythonMs": 845.9,
+    "ratio": 2.2
+   },
+   {
+    "file": "cells-dense-none.h5ad",
+    "layout": "dense",
+    "codec": "none",
+    "op": "obs_names",
+    "state": "ok",
+    "ms": 404.1,
+    "cpythonMs": 365.3,
+    "ratio": 1.1
+   },
+   {
+    "file": "cells-dense-none.h5ad",
+    "layout": "dense",
+    "codec": "none",
+    "op": "obs_numeric",
+    "state": "ok",
+    "ms": 12,
+    "cpythonMs": 5.3,
+    "ratio": 2.2
+   },
+   {
+    "file": "cells-dense-none.h5ad",
+    "layout": "dense",
+    "codec": "none",
+    "op": "obs_categorical",
+    "state": "ok",
+    "ms": 0.8,
+    "cpythonMs": 0.6,
+    "ratio": 1.4
+   },
+   {
+    "file": "cells-dense-none.h5ad",
+    "layout": "dense",
+    "codec": "none",
+    "op": "obsm_spatial",
+    "state": "ok",
+    "ms": 22.2,
+    "cpythonMs": 9.5,
+    "ratio": 2.3
+   },
+   {
+    "file": "cells-dense-none.h5ad",
+    "layout": "dense",
+    "codec": "none",
+    "op": "var_names",
+    "state": "ok",
+    "ms": 0.7,
+    "cpythonMs": 0.2,
+    "ratio": 3.4
+   },
+   {
+    "file": "cells-dense-none.h5ad",
+    "layout": "dense",
+    "codec": "none",
+    "op": "x_rows",
+    "state": "ok",
+    "ms": 66.5,
+    "cpythonMs": 32.7,
+    "ratio": 2
+   },
+   {
+    "file": "cells-dense-none.h5ad",
+    "layout": "dense",
+    "codec": "none",
+    "op": "x_column",
+    "state": "ok",
+    "ms": 1088.6,
+    "cpythonMs": 75.5,
+    "ratio": 14.4
+   },
+   {
+    "file": "cells-dense-none.h5ad",
+    "layout": "dense",
+    "codec": "none",
+    "op": "x_all",
+    "state": "ok",
+    "ms": 874.8,
+    "cpythonMs": 487.9,
+    "ratio": 1.8
+   }
+  ],
+  "adapter": [
+   {
+    "file": "cells-csr-gzip.h5ad",
+    "state": "ok",
+    "ms": 2658,
+    "cpythonMs": 2214,
+    "ratio": 1.2,
+    "rows": 1260592,
+    "features": 90
+   },
+   {
+    "file": "cells-csr-lzf.h5ad",
+    "state": "ok",
+    "ms": 1849,
+    "cpythonMs": 1529,
+    "ratio": 1.2,
+    "rows": 1260592,
+    "features": 90
+   },
+   {
+    "file": "cells-csr-none.h5ad",
+    "state": "ok",
+    "ms": 1990,
+    "cpythonMs": 1301,
+    "ratio": 1.5,
+    "rows": 1260592,
+    "features": 90
+   },
+   {
+    "file": "cells-dense-gzip.h5ad",
+    "state": "ok",
+    "ms": 4921,
+    "cpythonMs": 3027,
+    "ratio": 1.6,
+    "rows": 1260592,
+    "features": 90
+   },
+   {
+    "file": "cells-dense-lzf.h5ad",
+    "state": "ok",
+    "ms": 2991,
+    "cpythonMs": 1497,
+    "ratio": 2,
+    "rows": 1260592,
+    "features": 90
+   },
+   {
+    "file": "cells-dense-none.h5ad",
+    "state": "ok",
+    "ms": 1386,
+    "cpythonMs": 1120,
+    "ratio": 1.2,
+    "rows": 1260592,
+    "features": 90
+   }
+  ],
+  "peakWorkingSet": {
+   "browser": 154374144,
+   "crashpad-handler": 11051008,
+   "gpu-process": 90222592,
+   "utility": 100478976,
+   "renderer": 5516288000
+  },
+  "errors": [],
+  "summary": {
+   "reads": 48,
+   "ok": 48,
+   "notOk": [],
+   "adapterOk": 6
+  }
+ },
+ "pyodideHeapAfter": {
+  "cells-csr-gzip.h5ad": 1783693312,
+  "cells-csr-lzf.h5ad": 2039545856,
+  "cells-csr-none.h5ad": 2811297792,
+  "cells-dense-gzip.h5ad": 3100704768,
+  "cells-dense-lzf.h5ad": 3390111744,
+  "cells-dense-none.h5ad": 3527475200
+ },
+ "h5wasm": {
+  "reader": "h5wasm 0.10.3 + h5wasm-plugins 0.3.0 in a worker (tools/poc_browser_node P4, rerun)",
+  "browser": {
+   "userAgent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/156.0.0.0 Safari/537.36",
+   "hardwareConcurrency": 24,
+   "deviceMemory": 32,
+   "webgl2": true,
+   "gpu": "ANGLE (NVIDIA, NVIDIA GeForce RTX 3080 (0x00002216) Direct3D11 vs_5_0 ps_5_0, D3D11)",
+   "crossOriginIsolated": false,
+   "isSecureContext": true,
+   "origin": "http://127.0.0.1:51841",
+   "storage": {
+    "quota": 10737418240,
+    "usage": 0
+   },
+   "hasShowOpenFilePicker": true,
+   "hasOPFS": true,
+   "jsHeap": 17216530
+  },
+  "initMs": 362.9,
+  "peakWorkingSet": {
+   "browser": 218218496,
+   "crashpad-handler": 11051008,
+   "gpu-process": 93233152,
+   "utility": 48230400,
+   "renderer": 3423948800
+  },
+  "ok": 42,
+  "reads": 48,
+  "rows": [
+   {
+    "file": "cells-dense-none.h5ad",
+    "layout": "dense",
+    "codec": "none",
+    "op": "obs_names",
+    "state": "ok",
+    "error": null,
+    "ms": 1424.6,
+    "pythonMs": 396.1,
+    "ratio": 3.6
+   },
+   {
+    "file": "cells-dense-none.h5ad",
+    "layout": "dense",
+    "codec": "none",
+    "op": "obs_numeric",
+    "state": "ok",
+    "error": null,
+    "ms": 23.8,
+    "pythonMs": 5.6,
+    "ratio": 4.3
+   },
+   {
+    "file": "cells-dense-none.h5ad",
+    "layout": "dense",
+    "codec": "none",
+    "op": "obs_categorical",
+    "state": "ok",
+    "error": null,
+    "ms": 11.1,
+    "pythonMs": 0.7,
+    "ratio": 15.7
+   },
+   {
+    "file": "cells-dense-none.h5ad",
+    "layout": "dense",
+    "codec": "none",
+    "op": "obsm_spatial",
+    "state": "ok",
+    "error": null,
+    "ms": 47.3,
+    "pythonMs": 9.6,
+    "ratio": 4.9
+   },
+   {
+    "file": "cells-dense-none.h5ad",
+    "layout": "dense",
+    "codec": "none",
+    "op": "var_names",
+    "state": "ok",
+    "error": null,
+    "ms": 2.6,
+    "pythonMs": 0.2,
+    "ratio": 11.3
+   },
+   {
+    "file": "cells-dense-none.h5ad",
+    "layout": "dense",
+    "codec": "none",
+    "op": "x_rows",
+    "state": "ok",
+    "error": null,
+    "ms": 166.7,
+    "pythonMs": 31.2,
+    "ratio": 5.3
+   },
+   {
+    "file": "cells-dense-none.h5ad",
+    "layout": "dense",
+    "codec": "none",
+    "op": "x_column",
+    "state": "ok",
+    "error": null,
+    "ms": 7312.4,
+    "pythonMs": 76.0,
+    "ratio": 96.2
+   },
+   {
+    "file": "cells-dense-none.h5ad",
+    "layout": "dense",
+    "codec": "none",
+    "op": "x_all",
+    "state": "ok",
+    "error": null,
+    "ms": 1004.9,
+    "pythonMs": 520.1,
+    "ratio": 1.9
+   },
+   {
+    "file": "cells-dense-gzip.h5ad",
+    "layout": "dense",
+    "codec": "gzip",
+    "op": "obs_names",
+    "state": "ok",
+    "error": null,
+    "ms": 1986.7,
+    "pythonMs": 437.7,
+    "ratio": 4.5
+   },
+   {
+    "file": "cells-dense-gzip.h5ad",
+    "layout": "dense",
+    "codec": "gzip",
+    "op": "obs_numeric",
+    "state": "ok",
+    "error": null,
+    "ms": 287.7,
+    "pythonMs": 42.4,
+    "ratio": 6.8
+   },
+   {
+    "file": "cells-dense-gzip.h5ad",
+    "layout": "dense",
+    "codec": "gzip",
+    "op": "obs_categorical",
+    "state": "ok",
+    "error": null,
+    "ms": 81.4,
+    "pythonMs": 5.1,
+    "ratio": 15.9
+   },
+   {
+    "file": "cells-dense-gzip.h5ad",
+    "layout": "dense",
+    "codec": "gzip",
+    "op": "obsm_spatial",
+    "state": "ok",
+    "error": null,
+    "ms": 729.8,
+    "pythonMs": 89.0,
+    "ratio": 8.2
+   },
+   {
+    "file": "cells-dense-gzip.h5ad",
+    "layout": "dense",
+    "codec": "gzip",
+    "op": "var_names",
+    "state": "ok",
+    "error": null,
+    "ms": 3.3,
+    "pythonMs": 0.4,
+    "ratio": 8.1
+   },
+   {
+    "file": "cells-dense-gzip.h5ad",
+    "layout": "dense",
+    "codec": "gzip",
+    "op": "x_rows",
+    "state": "ok",
+    "error": null,
+    "ms": 1488.6,
+    "pythonMs": 314.2,
+    "ratio": 4.7
+   },
+   {
+    "file": "cells-dense-gzip.h5ad",
+    "layout": "dense",
+    "codec": "gzip",
+    "op": "x_column",
+    "state": "ok",
+    "error": null,
+    "ms": 241.8,
+    "pythonMs": 45.9,
+    "ratio": 5.3
+   },
+   {
+    "file": "cells-dense-gzip.h5ad",
+    "layout": "dense",
+    "codec": "gzip",
+    "op": "x_all",
+    "state": "ok",
+    "error": null,
+    "ms": 9419.2,
+    "pythonMs": 2414.8,
+    "ratio": 3.9
+   },
+   {
+    "file": "cells-dense-lzf.h5ad",
+    "layout": "dense",
+    "codec": "lzf",
+    "op": "obs_names",
+    "state": "unsupported",
+    "error": "RuntimeError: memory access out of bounds | RuntimeError: memory access out of bounds",
+    "ms": null,
+    "pythonMs": 435.2,
+    "ratio": null
+   },
+   {
+    "file": "cells-dense-lzf.h5ad",
+    "layout": "dense",
+    "codec": "lzf",
+    "op": "obs_numeric",
+    "state": "ok",
+    "error": null,
+    "ms": 370.6,
+    "pythonMs": 15.0,
+    "ratio": 24.8
+   },
+   {
+    "file": "cells-dense-lzf.h5ad",
+    "layout": "dense",
+    "codec": "lzf",
+    "op": "obs_categorical",
+    "state": "unsupported",
+    "error": "TypeError: resolved is not a function | TypeError: resolved is not a function",
+    "ms": null,
+    "pythonMs": 2.4,
+    "ratio": null
+   },
+   {
+    "file": "cells-dense-lzf.h5ad",
+    "layout": "dense",
+    "codec": "lzf",
+    "op": "obsm_spatial",
+    "state": "ok",
+    "error": null,
+    "ms": 634.8,
+    "pythonMs": 31.2,
+    "ratio": 20.3
+   },
+   {
+    "file": "cells-dense-lzf.h5ad",
+    "layout": "dense",
+    "codec": "lzf",
+    "op": "var_names",
+    "state": "unsupported",
+    "error": "RuntimeError: memory access out of bounds | RuntimeError: memory access out of bounds",
+    "ms": null,
+    "pythonMs": 0.3,
+    "ratio": null
+   },
+   {
+    "file": "cells-dense-lzf.h5ad",
+    "layout": "dense",
+    "codec": "lzf",
+    "op": "x_rows",
+    "state": "ok",
+    "error": null,
+    "ms": 1016.1,
+    "pythonMs": 80.0,
+    "ratio": 12.7
+   },
+   {
+    "file": "cells-dense-lzf.h5ad",
+    "layout": "dense",
+    "codec": "lzf",
+    "op": "x_column",
+    "state": "ok",
+    "error": null,
+    "ms": 147.5,
+    "pythonMs": 13.6,
+    "ratio": 10.8
+   },
+   {
+    "file": "cells-dense-lzf.h5ad",
+    "layout": "dense",
+    "codec": "lzf",
+    "op": "x_all",
+    "state": "ok",
+    "error": null,
+    "ms": 7265.2,
+    "pythonMs": 892.3,
+    "ratio": 8.1
+   },
+   {
+    "file": "cells-csr-none.h5ad",
+    "layout": "csr",
+    "codec": "none",
+    "op": "obs_names",
+    "state": "ok",
+    "error": null,
+    "ms": 1192.6,
+    "pythonMs": 412.7,
+    "ratio": 2.9
+   },
+   {
+    "file": "cells-csr-none.h5ad",
+    "layout": "csr",
+    "codec": "none",
+    "op": "obs_numeric",
+    "state": "ok",
+    "error": null,
+    "ms": 15.7,
+    "pythonMs": 5.2,
+    "ratio": 3.0
+   },
+   {
+    "file": "cells-csr-none.h5ad",
+    "layout": "csr",
+    "codec": "none",
+    "op": "obs_categorical",
+    "state": "ok",
+    "error": null,
+    "ms": 4.7,
+    "pythonMs": 0.7,
+    "ratio": 6.9
+   },
+   {
+    "file": "cells-csr-none.h5ad",
+    "layout": "csr",
+    "codec": "none",
+    "op": "obsm_spatial",
+    "state": "ok",
+    "error": null,
+    "ms": 30,
+    "pythonMs": 9.6,
+    "ratio": 3.1
+   },
+   {
+    "file": "cells-csr-none.h5ad",
+    "layout": "csr",
+    "codec": "none",
+    "op": "var_names",
+    "state": "ok",
+    "error": null,
+    "ms": 1.3,
+    "pythonMs": 0.2,
+    "ratio": 5.4
+   },
+   {
+    "file": "cells-csr-none.h5ad",
+    "layout": "csr",
+    "codec": "none",
+    "op": "x_rows",
+    "state": "ok",
+    "error": null,
+    "ms": 695.9,
+    "pythonMs": 66.1,
+    "ratio": 10.5
+   },
+   {
+    "file": "cells-csr-none.h5ad",
+    "layout": "csr",
+    "codec": "none",
+    "op": "x_column",
+    "state": "ok",
+    "error": null,
+    "ms": 3803.8,
+    "pythonMs": 282.3,
+    "ratio": 13.5
+   },
+   {
+    "file": "cells-csr-none.h5ad",
+    "layout": "csr",
+    "codec": "none",
+    "op": "x_all",
+    "state": "ok",
+    "error": null,
+    "ms": 4155,
+    "pythonMs": 569.1,
+    "ratio": 7.3
+   },
+   {
+    "file": "cells-csr-gzip.h5ad",
+    "layout": "csr",
+    "codec": "gzip",
+    "op": "obs_names",
+    "state": "ok",
+    "error": null,
+    "ms": 1419.7,
+    "pythonMs": 391.1,
+    "ratio": 3.6
+   },
+   {
+    "file": "cells-csr-gzip.h5ad",
+    "layout": "csr",
+    "codec": "gzip",
+    "op": "obs_numeric",
+    "state": "ok",
+    "error": null,
+    "ms": 231.2,
+    "pythonMs": 40.0,
+    "ratio": 5.8
+   },
+   {
+    "file": "cells-csr-gzip.h5ad",
+    "layout": "csr",
+    "codec": "gzip",
+    "op": "obs_categorical",
+    "state": "ok",
+    "error": null,
+    "ms": 73.9,
+    "pythonMs": 5.2,
+    "ratio": 14.3
+   },
+   {
+    "file": "cells-csr-gzip.h5ad",
+    "layout": "csr",
+    "codec": "gzip",
+    "op": "obsm_spatial",
+    "state": "ok",
+    "error": null,
+    "ms": 519,
+    "pythonMs": 80.6,
+    "ratio": 6.4
+   },
+   {
+    "file": "cells-csr-gzip.h5ad",
+    "layout": "csr",
+    "codec": "gzip",
+    "op": "var_names",
+    "state": "ok",
+    "error": null,
+    "ms": 7.7,
+    "pythonMs": 0.3,
+    "ratio": 28.8
+   },
+   {
+    "file": "cells-csr-gzip.h5ad",
+    "layout": "csr",
+    "codec": "gzip",
+    "op": "x_rows",
+    "state": "ok",
+    "error": null,
+    "ms": 702.1,
+    "pythonMs": 149.3,
+    "ratio": 4.7
+   },
+   {
+    "file": "cells-csr-gzip.h5ad",
+    "layout": "csr",
+    "codec": "gzip",
+    "op": "x_column",
+    "state": "ok",
+    "error": null,
+    "ms": 4371.2,
+    "pythonMs": 1021.5,
+    "ratio": 4.3
+   },
+   {
+    "file": "cells-csr-gzip.h5ad",
+    "layout": "csr",
+    "codec": "gzip",
+    "op": "x_all",
+    "state": "ok",
+    "error": null,
+    "ms": 7211.4,
+    "pythonMs": 1199.7,
+    "ratio": 6.0
+   },
+   {
+    "file": "cells-csr-lzf.h5ad",
+    "layout": "csr",
+    "codec": "lzf",
+    "op": "obs_names",
+    "state": "unsupported",
+    "error": "RuntimeError: memory access out of bounds | RuntimeError: memory access out of bounds",
+    "ms": null,
+    "pythonMs": 567.0,
+    "ratio": null
+   },
+   {
+    "file": "cells-csr-lzf.h5ad",
+    "layout": "csr",
+    "codec": "lzf",
+    "op": "obs_numeric",
+    "state": "ok",
+    "error": null,
+    "ms": 259.2,
+    "pythonMs": 15.6,
+    "ratio": 16.6
+   },
+   {
+    "file": "cells-csr-lzf.h5ad",
+    "layout": "csr",
+    "codec": "lzf",
+    "op": "obs_categorical",
+    "state": "unsupported",
+    "error": "RuntimeError: memory access out of bounds | RuntimeError: memory access out of bounds",
+    "ms": null,
+    "pythonMs": 3.2,
+    "ratio": null
+   },
+   {
+    "file": "cells-csr-lzf.h5ad",
+    "layout": "csr",
+    "codec": "lzf",
+    "op": "obsm_spatial",
+    "state": "ok",
+    "error": null,
+    "ms": 481.2,
+    "pythonMs": 37.7,
+    "ratio": 12.8
+   },
+   {
+    "file": "cells-csr-lzf.h5ad",
+    "layout": "csr",
+    "codec": "lzf",
+    "op": "var_names",
+    "state": "unsupported",
+    "error": "RuntimeError: memory access out of bounds | RuntimeError: memory access out of bounds",
+    "ms": null,
+    "pythonMs": 0.3,
+    "ratio": null
+   },
+   {
+    "file": "cells-csr-lzf.h5ad",
+    "layout": "csr",
+    "codec": "lzf",
+    "op": "x_rows",
+    "state": "ok",
+    "error": null,
+    "ms": 929.5,
+    "pythonMs": 77.7,
+    "ratio": 12.0
+   },
+   {
+    "file": "cells-csr-lzf.h5ad",
+    "layout": "csr",
+    "codec": "lzf",
+    "op": "x_column",
+    "state": "ok",
+    "error": null,
+    "ms": 4821.3,
+    "pythonMs": 368.9,
+    "ratio": 13.1
+   },
+   {
+    "file": "cells-csr-lzf.h5ad",
+    "layout": "csr",
+    "codec": "lzf",
+    "op": "x_all",
+    "state": "ok",
+    "error": null,
+    "ms": 5546.2,
+    "pythonMs": 668.2,
+    "ratio": 8.3
+   }
+  ]
+ },
+ "oneTable": {
+  "cells-dense-gzip.h5ad": {
+   "heapBoot": 335020032,
+   "heapStage": 402063360,
+   "heapAfter": 1090453504,
+   "adapter": {
+    "file": "cells-dense-gzip.h5ad",
+    "state": "ok",
+    "ms": 5300,
+    "cpythonMs": 4537,
+    "ratio": 1.2,
+    "rows": 1260592,
+    "features": 90
+   },
+   "peakWorkingSet": {
+    "browser": 149069824,
+    "crashpad-handler": 11059200,
+    "gpu-process": 91443200,
+    "utility": 103718912,
+    "renderer": 2137149440
+   }
+  },
+  "cells-csr-lzf.h5ad": {
+   "heapBoot": 335413248,
+   "heapStage": 402522112,
+   "heapAfter": 1107427328,
+   "adapter": {
+    "file": "cells-csr-lzf.h5ad",
+    "state": "ok",
+    "ms": 2473,
+    "cpythonMs": 3099,
+    "ratio": 0.8,
+    "rows": 1260592,
+    "features": 90
+   },
+   "peakWorkingSet": {
+    "browser": 147243008,
+    "crashpad-handler": 11051008,
+    "gpu-process": 90312704,
+    "utility": 104255488,
+    "renderer": 2159980544
+   }
+  }
+ }
+}
