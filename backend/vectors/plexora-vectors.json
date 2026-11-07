@@ -45,6 +45,7 @@
     "colab",
     "container",
     "remote",
+    "web",
     "other"
    ]
   },
@@ -64,6 +65,7 @@
     "container",
     "no_pip",
     "pip",
+    "web",
     "unknown"
    ]
   },
@@ -76,6 +78,7 @@
     "notebook",
     "sidecar",
     "cli",
+    "web",
     "other"
    ]
   },
@@ -160,6 +163,14 @@
     "3.13",
     "3.14",
     "other"
+   ]
+  },
+  "runtime": {
+   "m": "anonymous",
+   "t": "enum",
+   "v": [
+    "desktop",
+    "web"
    ]
   },
   "scheduler": {
@@ -2873,7 +2884,7 @@
   "rotate",
   "flip"
  ],
- "fingerprint": "408e3926c7614e1a",
+ "fingerprint": "68c8d195594ac126",
  "first_party": [
   "core",
   "cell_explorer",

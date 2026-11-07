@@ -25,17 +25,27 @@ Outcomes:
 No secret ships with the client. `POST /v1/telemetry/register` exchanges the
 random install id for an HMAC install token bound to it; that token is what
 every upload carries, and it is not a licence of any kind.
+
+On the website (`PLEXORA_BACKEND=browser`) there is no thread and no socket:
+the worker calls `upload_once` through `Telemetry.pump` (plexora/browser/
+telemetry.py), and `_post` goes through `urllib.request`, which the website
+answers with the page's `fetch` (plexora/browser/fetch.py) -- a CORS request
+from the site's origin, which the Worker admits by exact origin
+(backend/src/cors.ts). Everything else here, the batches, the token, the
+backoff and the server's config, is the same code on both.
 """
 
 from __future__ import annotations
 
 import json
+import os
 import random
 import threading
 import time
 import urllib.parse
 import urllib.request
 
+from plexora import _work
 from plexora.telemetry import batch, config, identity, redact, schema
 
 REGISTER_PATH = "/v1/telemetry/register"
@@ -63,7 +73,9 @@ _stopping = threading.Event()
 def start(telemetry) -> bool:
     """Start the uploader for a serving process. Idempotent."""
     global _thread
-    if not config.endpoint() or config.under_pytest():
+    if not config.endpoint() or config.under_pytest() or not _work.threaded():
+        # No threads (the website): whoever drives the process calls
+        # `upload_once` itself (Telemetry.pump).
         return False
     queue = telemetry.queue
     if queue is None:
@@ -408,6 +420,8 @@ def _post(url, body, *, token=None, gzip=False):
         headers["Content-Encoding"] = "gzip"
     if token:
         headers["Authorization"] = f"Bearer {token}"
+    if os.environ.get("PLEXORA_BACKEND") == "browser":
+        return _post_urllib(url, body, headers)
     try:
         response = _pool(url).request("POST", url, body=body, headers=headers,
                                       redirect=False, preload_content=True)
@@ -422,6 +436,33 @@ def _post(url, body, *, token=None, gzip=False):
         answer = None
     lowered = {k.lower(): v for k, v in response.headers.items()}
     return response.status, answer, lowered
+
+
+def _post_urllib(url, body, headers):
+    """`_post` through `urllib.request`: the website's, where urllib is the
+    page's `fetch` (plexora/browser/fetch.py drops the User-Agent, which a
+    page may not set). The same three values, the same timeouts."""
+    import urllib.error
+
+    request = urllib.request.Request(url, data=body, headers=headers, method="POST")
+    try:
+        with urllib.request.urlopen(request, timeout=CONNECT_TIMEOUT + READ_TIMEOUT) as response:
+            status, data, raw_headers = response.status, response.read(65536), response.headers
+    except urllib.error.HTTPError as error:
+        status, raw_headers = error.code, error.headers
+        try:
+            data = error.read(65536)
+        except Exception:
+            data = b""
+    except Exception as exc:  # offline is the normal case, not an error
+        config.debug(f"POST failed: {type(exc).__name__}")
+        return None, None, {}
+    try:
+        answer = json.loads(data.decode("utf-8")) if data else None
+    except Exception:
+        answer = None
+    lowered = {k.lower(): v for k, v in (raw_headers.items() if raw_headers is not None else ())}
+    return status, answer, lowered
 
 
 # -- status ---------------------------------------------------------------------

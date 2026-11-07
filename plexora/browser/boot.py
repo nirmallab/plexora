@@ -42,17 +42,19 @@ import time
 
 
 def environment(origin: str, *, base_url: str = "", data_root: str = "/data",
-                licence_dir: str = "/bioc") -> None:
+                licence_dir: str = "/bioc", telemetry: dict | None = None) -> None:
     """What the app reads from the environment as it builds (create_app) and
-    as it runs: where projects live, that telemetry is the page's business,
-    where the licence the page verified is, that the page's own origin may
-    write, and the path the site is served under (`base_url`: "" at a site's
-    root; `/rnode/<host>/<port>/app` when a node serves the app behind a
-    portal), which every page's links carry."""
+    as it runs: where projects live, where the licence the page verified is,
+    that the page's own origin may write, the path the site is served under
+    (`base_url`: "" at a site's root; `/rnode/<host>/<port>/app` when a node
+    serves the app behind a portal), which every page's links carry, and
+    telemetry's endpoint and Do Not Track (`telemetry`: `{endpoint, dnt}`
+    from the page, plexora/browser/telemetry.py; None or no endpoint: off)."""
+    telemetry = telemetry if isinstance(telemetry, dict) else {}
+    endpoint = str(telemetry.get("endpoint") or "").strip()
     os.environ.update({
         "PLEXORA_BASE_URL": base_url or "",
         "PLEXORA_DATA_PATH": data_root,
-        "PLEXORA_TELEMETRY": "off",
         "PLEXORA_ALLOWED_ORIGINS": origin,
         "PLEXORA_WORK": "cooperative",
         "PLEXORA_BACKEND": "browser",
@@ -61,8 +63,16 @@ def environment(origin: str, *, base_url: str = "", data_root: str = "/data",
         "BIOCOGNIA_NO_HEARTBEAT": "1",
     })
     for name in ("PLEXORA_SHARED_PATH", "PLEXORA_AUTH_TOKEN", "PLEXORA_TRUSTED_HOSTS",
-                 "PLEXORA_PLUGINS"):
+                 "PLEXORA_PLUGINS", "PLEXORA_TELEMETRY", "PLEXORA_TELEMETRY_ENDPOINT",
+                 "DO_NOT_TRACK"):
         os.environ.pop(name, None)
+    if endpoint:
+        os.environ["PLEXORA_TELEMETRY_ENDPOINT"] = endpoint
+    else:
+        # A build that names no endpoint (a test's) sends nothing, as before.
+        os.environ["PLEXORA_TELEMETRY"] = "off"
+    if telemetry.get("dnt"):
+        os.environ["DO_NOT_TRACK"] = "1"
 
 
 def codecs() -> bool:
@@ -250,12 +260,13 @@ def without_jspi(sleep=time.sleep) -> bool:
 def start(origin: str, *, base_url: str = "", post=None, cancelled=None, idle=None, waiting=None,
           columns=None, ask=None, wait_on=None, jspi: bool = True, sleep=None,
           data_root: str = "/data",
-          licence_dir: str = "/bioc") -> dict:
+          licence_dir: str = "/bioc", telemetry: dict | None = None) -> dict:
     """Boot once; returns what the page shows in its status chip and records:
     `{version, rules, seconds, shims}`. `jspi` False: the browser has no JSPI,
     and `sleep(seconds)` blocks (the worker's Atomics.wait)."""
     started = time.perf_counter()
-    environment(origin, base_url=base_url, data_root=data_root, licence_dir=licence_dir)
+    environment(origin, base_url=base_url, data_root=data_root, licence_dir=licence_dir,
+                telemetry=telemetry)
     shims = {"imagecodecs": codecs(), "fetch": http(wait_on), "parquet": parquet()}
     if not jspi:
         shims["sync_loop"] = without_jspi(sleep or time.sleep)

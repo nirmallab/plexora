@@ -7,6 +7,12 @@ in-memory aggregate out every thirty seconds, validates it against the
 schema and upserts it into the queue; a separate uploader thread
 (`uploader.py`) is the only thing that ever opens a socket.
 
+Where there are no threads (`_work.threaded()` is False: the website's
+Python in Pyodide, or `PLEXORA_WORK=inline` in a test) nothing is started:
+the writer's setup runs inside `start`, and whoever drives the process calls
+`pump()` for what the two threads would have done -- the website's worker
+does, every minute and when its tab is hidden (plexora/browser/telemetry.py).
+
 `enabled` is one plain bool, False under pytest, in `off`, before `start()`
 and after three internal failures, so the disabled cost of every hook is an
 attribute read. Nothing here raises to a caller and nothing prints unless
@@ -22,6 +28,7 @@ import json
 import threading
 import time
 
+from plexora import _work
 from plexora.telemetry import config, environment, identity, schema
 from plexora.telemetry.queue import Queue, window_of
 
@@ -253,6 +260,9 @@ class Telemetry:
                 if not self.enabled:
                     return False
                 self._started_at = time.time()
+                if not _work.threaded():
+                    self._start_threadless()
+                    return self.enabled
                 self._writer = threading.Thread(target=self._run_writer,
                                                 name="plexora-telemetry-writer", daemon=True)
                 self._writer.start()
@@ -263,6 +273,33 @@ class Telemetry:
         except Exception:
             self._fail()
             return False
+
+    def _start_threadless(self):
+        """The writer's setup, here and now: no thread to run it on."""
+        try:
+            self._setup_writer()
+        except Exception:
+            self._fail()
+        finally:
+            self._ready.set()
+
+    def pump(self, *, upload=True, include_open=False) -> str:
+        """What the writer and uploader threads do, once, for a process that
+        has neither: the aggregate into the queue, then (with `upload`) one
+        upload attempt that keeps the backoff. Returns the uploader's word,
+        or `off` / `flushed`. Never raises."""
+        try:
+            if not self.enabled or self._queue is None:
+                return "off"
+            self.flush()
+            if not upload or not config.endpoint():
+                return "flushed"
+            from plexora.telemetry import uploader
+
+            return uploader.upload_once(self, include_open=include_open)
+        except Exception:
+            self._fail()
+            return "failed"
 
     def ensure_library(self):
         """Start in library mode (writer only, no uploader) the first time a
@@ -296,6 +333,10 @@ class Telemetry:
                     if self._queue is not None and self.resolved.source != "server":
                         self._queue.clear()
                     self._wake.set()
+                elif self.enabled and self._started and not _work.threaded():
+                    if self._queue is None or self._env is None:
+                        self._ready.clear()
+                        self._start_threadless()
                 elif self.enabled and self._started and (
                         self._writer is None or not self._writer.is_alive()):
                     self._stop.clear()

@@ -277,11 +277,15 @@ TILE_PATH = Enum("local", "proxy", "direct")
 TILE_KIND = Enum("channel", "hd", "label", "points", "rgb", "other")
 CACHE = Enum("hit", "miss")
 YESNO = Enum("yes", "no")
-SERVE_MODE = Enum("terminal", "desktop", "notebook", "sidecar", "cli", "other")
+#: How Plexora was launched. `web`: the website (viewer.plexoraapp.com), where
+#: Plexora's Python runs in Pyodide in a worker beside the page.
+SERVE_MODE = Enum("terminal", "desktop", "notebook", "sidecar", "cli", "web", "other")
 SCHEDULER = Enum("slurm", "pbs", "lsf", "sge", "ssh", "none")
 DETECTED = Enum("ood", "proxy", "colab", "origin", "remote", "none")
-INSTALL_KIND = Enum("desktop", "editable", "readonly", "container", "no_pip", "pip", "unknown")
+INSTALL_KIND = Enum("desktop", "editable", "readonly", "container", "no_pip", "pip", "web", "unknown")
 WHERE = Enum("server", "browser", "agent", "node")
+RUNTIMES = ("desktop", "web")
+RUNTIME = Enum(*RUNTIMES)
 
 #: The front-end components an error can be attributed to. The browser maps
 #: anything else to `other` before it leaves the tab.
@@ -575,7 +579,13 @@ CLIENT_BLOCK = {
     "arch": F(Enum("x86_64", "arm64", "other")),
     "launch_mode": F(SERVE_MODE),
     "deployment": F(Enum("local", "hpc", "ood", "jupyterhub", "colab", "container",
-                         "remote", "other")),
+                         "remote", "web", "other")),
+    # Where Plexora's Python runs: `desktop` is CPython (the desktop app, a pip
+    # install, a server or node), `web` is Pyodide on the website. The one
+    # dimension the envelope's bands are compared on (website vs desktop
+    # p50/p95 per size band); the Worker derives the same split from
+    # `deployment` for batches from clients that predate it.
+    "runtime": F(RUNTIME),
     "scheduler": F(SCHEDULER),
     "install_kind": F(INSTALL_KIND),
     "mode": F(Enum(ANONYMOUS, DIAGNOSTICS)),
