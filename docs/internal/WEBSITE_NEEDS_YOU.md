@@ -26,7 +26,9 @@ Last updated: 2026-11-07 (web/phase0 at 82deda52 and later).
    the vectors differ; waits for `/healthz` to report `68c8d195594ac126`).
    **Before** any website or desktop release that sends the new `web` /
    `runtime` values, or the old Worker drops them and the website's uploads
-   fail CORS (they wait in the queue; nothing is lost).
+   fail CORS (they wait in the queue; nothing is lost). Until then the preview
+   deployed by hand is built without `--telemetry` (it sends nothing); CI's
+   preview passes it.
 3. **Sibling releases** (no rush; shims cover them until then):
    - spatialagents: a runtime hook and `"web"` in `ORIGINS` (until then the
      website's AI calls are filed as `app`).
