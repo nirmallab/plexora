@@ -112,12 +112,31 @@ def stage(name: str) -> None:
         # polars decided at its own import that pyarrow and pandas were absent
         # (they were); it is told otherwise now they are here.
         _tell_polars()
+    if name == "dicom":
+        _venv_stand_in()
     if name == "spatialdata":
         _numba_stand_in()
         import dask
 
         # One thread: dask's default scheduler starts a pool.
         dask.config.set(scheduler="synchronous")
+
+
+def _venv_stand_in() -> None:
+    """wsidicom 0.35 imports `logger` from the stdlib's `venv` (wsidicom/file/
+    io/frame_index/extended.py, a stray auto-import), and Pyodide's standard
+    library has no `venv`: `import wsidicom` failed on the website. A module
+    with a logger of that name is all it uses."""
+    try:
+        import venv  # noqa: F401
+    except ImportError:
+        import logging
+        import sys
+        import types
+
+        stand_in = types.ModuleType("venv")
+        stand_in.logger = logging.getLogger("venv")
+        sys.modules["venv"] = stand_in
 
 
 def _tell_polars() -> None:

@@ -51,6 +51,18 @@ STAGES = {
                    "pydantic-settings", "python-dotenv", "session-info2"],
         "modules": ["h5py", "anndata", "pandas"],
     },
+    "dicom": {
+        # A DICOM whole-slide image, read as the desktop reads it
+        # (server/utils/dicom_wsi.py: pydicom for headers, wsidicom for the
+        # slide; plan L3), brightfield and fluorescence alike. Frames decode
+        # through imagecodecs_shim: JPEG by Pillow, JPEG 2000 by the page's
+        # OpenJPEG. wsidicom imports its DICOMweb source (dicomweb-client,
+        # requests, retrying) at its own import, so those come too; cachetools
+        # as uv.lock pins it (wsidicom asks for 7.1.3 or later, Pyodide has 7.0.5).
+        "pyodide": ["requests", "retrying"],
+        "wheels": ["pydicom", "wsidicom", "dicomweb-client", "marshmallow", "cachetools"],
+        "modules": ["pydicom", "wsidicom"],
+    },
     "parquet": {
         "pyodide": ["pyarrow"],
         "wheels": [],

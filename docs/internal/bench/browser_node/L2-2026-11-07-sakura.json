@@ -1,0 +1,19 @@
+{
+ "openslide_python": "1.4.7",
+ "openslide_native": "4.0.0",
+ "openslide_js": "4.0.0",
+ "chrome": "156.0.8078.76",
+ "init": {
+  "ms": 150.9099998474121,
+  "version": "4.0.0",
+  "isolated": true
+ },
+ "slides": {
+  "sakura": {
+   "path": "Sakura/synthetic-1.svslide",
+   "native_error": null,
+   "js_error": "page.evaluate: OpenSlideError: function signature mismatch",
+   "status": "one fails"
+  }
+ }
+}

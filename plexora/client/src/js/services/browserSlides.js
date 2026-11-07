@@ -74,6 +74,12 @@
             return { value: await open(path) };
         } catch (error) {
             const message = String(error && error.message || error);
+            if (/\.svslide$/i.test(path) && /signature mismatch|RuntimeError|unreachable/i.test(message)) {
+                // openslide-js 1.0.0-beta.5 stops inside OpenSlide on a Sakura
+                // slide native OpenSlide opens (L2.md): say so, not the trap.
+                return { value: { error: "Sakura slides do not open on the website yet (its OpenSlide build "
+                                         + "stops on them); open this one in the Plexora desktop app" } };
+            }
             return { value: { error: message.replace(/^OpenSlideError:\s*/, "").split("\n")[0].slice(0, 400) } };
         }
     }

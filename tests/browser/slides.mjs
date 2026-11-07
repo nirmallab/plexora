@@ -9,9 +9,12 @@
 //   node tests/browser/slides.mjs --slides name=PATH[,name=PATH] [--shots DIR] [--tiles N]
 //
 // PATH is the slide's file (an MRXS's .mrxs: its folder of the same name is
-// picked from beside it). The File System Access pickers are native dialogs
+// picked from beside it), or a folder (a DICOM slide's instances), picked with
+// the landing's Folder. Tiles are every layer's, by the viewer's own tile
+// addresses, at `q=hd`. The File System Access pickers are native dialogs
 // no driver can answer, so the page's other path (<input type=file>, and
 // <input webkitdirectory> for the folder) is taken by hiding them.
+import { statSync } from "node:fs";
 import path from "node:path";
 import { REPO, appFrame, launch, startServer } from "./lib.mjs";
 
@@ -20,6 +23,7 @@ const opt = (name, fallback) => (args.includes(name) ? args[args.indexOf(name) +
 const slides = opt("--slides", "").split(",").filter(Boolean).map((s) => s.split("="));
 const shots = opt("--shots", null);
 const perLevel = Number(opt("--tiles", "3"));
+const channels = Number(opt("--channels", "0"));
 const site = opt("--site", path.join(REPO, "plexora", "client", "dist", "static"));
 if (!slides.length) throw new Error("--slides name=PATH,...");
 
@@ -66,6 +70,9 @@ try {
         const row = { file };
         out.slides[name] = row;
         const frame = await home(page);
+        // A folder (a DICOM slide's instances): the landing's Folder, then Browse.
+        const folder = statSync(file).isDirectory();
+        if (folder) await frame.click('[data-kind="directory"]');
         const chooser = page.waitForEvent("filechooser", { timeout: 30000 });
         await frame.click("#quick_view_go");
         const picked = Date.now();
@@ -106,12 +113,22 @@ try {
         row.viewerUp = await viewerUp(frame);
         row.viewerMs = Date.now() - picked;
         if (shots) await page.screenshot({ path: path.join(shots, `slides-${name}.png`) });
-        // The project's name and its tile grid, from the viewer's own source.
-        const source = await frame.evaluate(() => {
-            const item = window.__plexora.seaDragonViewer.viewer.world.getItemAt(0);
-            return { url: item.source.getTileUrl(item.source.maxLevel, 0, 0) };
+        // Every layer the viewer draws: its tile address at each of the
+        // image's own levels (OpenSeadragon's level `maxLevel - extra - L` is
+        // level L), and its size.
+        const layers = await frame.evaluate(() => {
+            const world = window.__plexora.seaDragonViewer.viewer.world;
+            const out = [];
+            for (let i = 0; i < world.getItemCount(); i += 1) {
+                const source = world.getItemAt(i).source;
+                const top = source.maxLevel - (source.extraZoomLevels || 0);
+                out.push({ width: source.dimensions.x, height: source.dimensions.y,
+                           tile: source.getTileWidth(top), top,
+                           urls: Array.from({ length: top + 1 }, (_, level) => source.getTileUrl(top - level, 0, 0)) });
+            }
+            return out;
         });
-        const project = decodeURIComponent(source.url.split("/generated/data/")[1].split("/")[0]);
+        const project = decodeURIComponent(layers[0].urls[0].split("/generated/data/")[1].split("/")[0]);
         row.project = project;
         row.spec = await page.evaluate((p) => window.PlexoraPython.nodeSpec(p), project);
         // The picture the user sees, by pixels: how much of the canvas is not
@@ -132,18 +149,39 @@ try {
             }
             return { tintedFraction: tinted / (data.length / 4) };
         });
-        // Tiles: on every level the node serves, the corner, the middle and the
-        // last, from the browser node and from Python.
-        const levels = row.spec.served && row.spec.kind === "slide" ? row.spec.slide.levels : [];
+        // Tiles: of every layer, on every level, the corner, the middle and the
+        // last, from the browser node and from Python, at full precision.
         const [tw, th] = row.spec.tile || [1024, 1024];
         const wanted = [];
-        levels.forEach((level, index) => {
-            const nx = Math.ceil(level.width / tw);
-            const ny = Math.ceil(level.height / th);
-            const picks = [[0, 0], [Math.floor(nx / 2), Math.floor(ny / 2)], [nx - 1, ny - 1]].slice(0, perLevel);
-            for (const [tx, ty] of picks) wanted.push({ level: index, tx, ty });
-        });
-        row.tiles = await page.evaluate(async ({ project: p, wanted: list }) => {
+        row.layers = layers.map((layer) => ({ ...layer, urls: undefined }));
+        for (const layer of layers) {
+            let height = layer.height;
+            let width = layer.width;
+            layer.urls.forEach((template, level) => {
+                const nx = Math.ceil(width / tw);
+                const ny = Math.ceil(height / th);
+                const picks = [[0, 0], [Math.floor(nx / 2), Math.floor(ny / 2)], [nx - 1, ny - 1]].slice(0, perLevel);
+                for (const [tx, ty] of picks) {
+                    const address = template.replace(/^https?:\/\/[^/]+/, "").split("?")[0]
+                        .replace(/\/(\d+)\/(\d+)_(\d+)\.png$/, `/${level}/${tx}_${ty}.png`);
+                    const key = address.split("/")[4];
+                    // A channel layer (`<name>_<n>`): the image's other channels
+                    // too (`--channels N`), which the viewer may not be drawing.
+                    const numbered = /^(.*)_(\d+)$/.exec(decodeURIComponent(key));
+                    const keys = numbered && channels > 1
+                        ? Array.from({ length: channels }, (_, n) => encodeURIComponent(`${numbered[1]}_${n}`)) : [key];
+                    for (const each of keys) {
+                        const url = `${address.replace(`/${key}/`, `/${each}/`)}?q=hd`;
+                        if (!wanted.some((w) => w.url === url)) {
+                            wanted.push({ url, channel: decodeURIComponent(each), level, tx, ty });
+                        }
+                    }
+                }
+                height = Math.ceil(height / 2);
+                width = Math.ceil(width / 2);
+            });
+        }
+        row.tiles = await page.evaluate(async ({ wanted: list }) => {
             const b64 = (buffer) => {
                 const bytes = new Uint8Array(buffer);
                 let text = "";
@@ -151,22 +189,21 @@ try {
                 return btoa(text);
             };
             const found = [];
-            for (const { level, tx, ty } of list) {
-                const url = `/generated/data/${encodeURIComponent(p)}/rgb/${level}/${tx}_${ty}.png?q=hd`;
+            for (const { url, channel, level, tx, ty } of list) {
                 const t0 = performance.now();
                 const node = await window.PlexoraNode.answer(new Request(new URL(url, location.origin)));
                 const nodeMs = performance.now() - t0;
                 const t1 = performance.now();
                 const python = await window.PlexoraPython.fetch(url);
                 const pythonMs = performance.now() - t1;
-                found.push({ level, tx, ty, nodeMs, pythonMs,
+                found.push({ channel, level, tx, ty, nodeMs, pythonMs,
                              node: node ? b64(await node.arrayBuffer()) : null,
                              python: python.ok ? b64(await python.arrayBuffer()) : null,
                              pythonStatus: python.status,
                              pythonType: python.headers.get("Content-Type") });
             }
             return found;
-        }, { project, wanted });
+        }, { wanted });
         row.errors = errors.splice(0);
     }
 } catch (error) {
