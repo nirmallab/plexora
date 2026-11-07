@@ -178,6 +178,17 @@
         async copyImagePng(blob) {
             return invoke("copy_image", new Uint8Array(await blob.arrayBuffer()));
         },
+        /** Where the page reads a granted file: the shell's `plexora-file`
+         *  scheme as this WebView serves it (desktop/src-tauri/src/
+         *  localfiles.rs), or null for a shell without it. */
+        localFiles: typeof shell.localFiles === "string" ? shell.localFiles : null,
+        /** Browser rendering (Settings > Advanced): let this page read
+         *  project `datasource`'s own image and mask through `localFiles`.
+         *  The shell asks the server which files that project reads -- the
+         *  page names a project, never a path -- and resolves
+         *  [{kind: "image"|"labels", path, url, size, error}]; it rejects
+         *  when the setting is off. */
+        grantLocalFiles: (datasource) => invoke("grant_local_files", {datasource: String(datasource || "")}),
     };
 
     // -- menus -------------------------------------------------------------------

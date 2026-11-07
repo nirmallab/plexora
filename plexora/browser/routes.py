@@ -204,6 +204,9 @@ PYTHON = (
     "export_surface", "surface_manifest", "surface_mesh", "surface_neighbours", "surface_objects",
     "refine_surface", "surface_sections", "estimate_surface", "import_surface", "preview_surface",
     "suggest_threshold", "track_objects_route", "volume_window",
+    # The desktop app's Advanced settings (plexora/browser_rendering.py): off
+    # the desktop app Python says there is nothing to set.
+    "settings_advanced", "settings_advanced_set",
 )
 
 

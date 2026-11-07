@@ -252,6 +252,15 @@ const tick = () => new Promise((resolve) => setTimeout(resolve, 0));
     check("and says where the file went", saved === "C:\\out\\view.png"
           && world.toasts.some((t) => /Saved café view\.png/.test(t.title)));
 
+    // Browser rendering (resourceRouting.js `local-browser`): the page names
+    // a project, never a path, and learns where granted files are read.
+    await api.grantLocalFiles("tonsil");
+    const grant = world.invoked.find((c) => c.command === "grant_local_files");
+    check("grantLocalFiles asks the shell about a project by name, and nothing else",
+          grant && JSON.stringify(grant.args) === JSON.stringify({ datasource: "tonsil" }));
+    check("a shell that does not name its file scheme leaves localFiles null (an older app)",
+          api.localFiles === null);
+
     const row = (action) => ({
         disabled: false,
         getAttribute: (name) => (name === "data-desktop-action" ? action : null),

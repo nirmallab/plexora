@@ -20,6 +20,7 @@ const COMMANDS: &[&str] = &[
     "is_fullscreen",
     "shell_action",
     "report_capabilities",
+    "grant_local_files",
     "check_update",
     "install_update",
 ];

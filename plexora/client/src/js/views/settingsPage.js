@@ -2750,8 +2750,42 @@
         show(topUp, Boolean(safe));
     };
 
+    // -- Advanced (the desktop app's) -------------------------------------
+    //
+    // "Browser rendering" (plexora/browser_rendering.py), from
+    // /settings/advanced: auto or off, off until the website's GA. A radio
+    // writes it; a project already open keeps the path its tiles came by.
+    function AdvancedSection() {}
+
+    AdvancedSection.prototype.start = function () {
+        for (const radio of document.querySelectorAll('input[name="settings_rendering"]')) {
+            radio.addEventListener("change", async () => {
+                if (!radio.checked) return;
+                this.draw(await postJson("settings/advanced", { browser_rendering: radio.value }));
+            });
+        }
+        getJson("settings/advanced").then((state) => this.draw(state));
+    };
+
+    AdvancedSection.prototype.draw = function (state) {
+        if (!state || !state.browser_rendering) {
+            text(el("settings_rendering_note"), (state && state.error) || "");
+            return;
+        }
+        for (const radio of document.querySelectorAll('input[name="settings_rendering"]')) {
+            radio.checked = radio.value === state.browser_rendering;
+        }
+        const paths = state.paths || {};
+        const taken = Object.keys(paths).filter((kind) => paths[kind] === "browser")
+            .map((kind) => kind.replace(/_/g, " "));
+        text(el("settings_rendering_note"), taken.length
+            ? `Read by this window: ${taken.join(", ")}. Applies to projects opened after the change.`
+            : "Applies to projects opened after the change.");
+    };
+
     PlexoraPage.register(() => {
         const unwireRail = wireRail();
+        if (el("settings_panel_advanced")) new AdvancedSection().start();
         if (!el("settings_panel_data")) return unwireRail || null;
         if (el("settings_panel_nodes")) new NodesSection().start();
         let remotes = null;

@@ -555,10 +555,18 @@ pub fn parse_ready(line: &str) -> Result<Ready, StartError> {
 
 // -- a very small HTTP client ------------------------------------------------
 //
-// Two requests, both to our own loopback server: `/health` and
-// `/desktop/info`. Not worth an HTTP stack.
+// A few requests, all to our own loopback server: `/health`, `/desktop/info`
+// and `/resource_routing` (which files a project reads, for
+// `grant_local_files`). Not worth an HTTP stack.
 
 pub fn http_get(origin: &str, path: &str, timeout: Duration) -> Result<(u16, String), String> {
+    http_get_as(origin, path, None, timeout)
+}
+
+/// `http_get` with the launch token in the server's token header
+/// (`X-Plexora-Token`), never in the URL: a tokened URL is traded for a
+/// cookie, which is the page's business, not the shell's.
+pub fn http_get_as(origin: &str, path: &str, token: Option<&str>, timeout: Duration) -> Result<(u16, String), String> {
     let url = url::Url::parse(origin).map_err(|e| e.to_string())?;
     let host = url.host_str().ok_or("no host")?.to_string();
     let port = url.port_or_known_default().ok_or("no port")?;
@@ -570,9 +578,13 @@ pub fn http_get(origin: &str, path: &str, timeout: Duration) -> Result<(u16, Str
     let mut stream = TcpStream::connect_timeout(&addr, timeout).map_err(|e| e.to_string())?;
     stream.set_read_timeout(Some(timeout)).ok();
     stream.set_write_timeout(Some(timeout)).ok();
+    let token_line = token
+        .filter(|t| !t.is_empty() && !t.contains(['\r', '\n']))
+        .map(|t| format!("X-Plexora-Token: {t}\r\n"))
+        .unwrap_or_default();
     write!(
         stream,
-        "GET {path} HTTP/1.1\r\nHost: {host}:{port}\r\nConnection: close\r\nAccept: application/json\r\n\r\n"
+        "GET {path} HTTP/1.1\r\nHost: {host}:{port}\r\nConnection: close\r\nAccept: application/json\r\n{token_line}\r\n"
     )
     .map_err(|e| e.to_string())?;
     let mut raw = Vec::new();

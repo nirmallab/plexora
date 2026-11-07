@@ -48,6 +48,9 @@ function parseArgs(argv) {
 }
 
 export function kindOf(address) {
+    // A byte range the desktop app's page read itself, through the shell's
+    // `plexora-file` scheme (desktop/src-tauri/src/localfiles.rs).
+    if (/^(https?:\/\/plexora-file\.localhost|plexora-file:)/.test(address)) return "file";
     if (/\/volume\/[^/]+\/level/.test(address)) return "level";
     if (/\/volume\/[^/]+\/bricks?\b/.test(address)) return "brick";
     if (/view=(t\d+)?(xzy|yzx)/.test(address)) return "section";
@@ -129,6 +132,32 @@ export class Browser {
             if (!ws) await sleep(200);
         }
         if (!ws) throw new Error("Chrome did not start");
+        return this.connect(ws);
+    }
+
+    /**
+     * Drive a browser something else started, through its DevTools endpoint
+     * (`http://127.0.0.1:9333`): the Plexora desktop app's own window, run
+     * with WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS=--remote-debugging-port=9333.
+     * The first page target whose URL starts with `prefix` is taken.
+     * `close()` then leaves that browser running: it is not ours to end.
+     */
+    async attach(endpoint, { prefix = "http" } = {}) {
+        let ws = null;
+        for (let i = 0; i < 150 && !ws; i += 1) {
+            try {
+                const list = await (await fetch(`${endpoint.replace(/\/$/, "")}/json`)).json();
+                const page = list.find((target) => target.type === "page" && target.url.startsWith(prefix));
+                if (page) ws = new WebSocket(page.webSocketDebuggerUrl);
+            } catch (error) { /* not up yet */ }
+            if (!ws) await sleep(200);
+        }
+        if (!ws) throw new Error(`no page at ${endpoint} starting ${prefix}`);
+        this.attached = true;
+        return this.connect(ws, { emulate: false });
+    }
+
+    async connect(ws, { emulate = true } = {}) {
         await new Promise((resolve) => ws.addEventListener("open", resolve));
         this.ws = ws;
         ws.addEventListener("message", (event) => this.onMessage(JSON.parse(event.data)));
@@ -136,8 +165,11 @@ export class Browser {
         await this.send("Page.enable");
         await this.send("Network.enable", { maxTotalBufferSize: 0, maxResourceBufferSize: 0 });
         await this.send("Performance.enable");
-        await this.send("Emulation.setDeviceMetricsOverride",
-                        { width: 1440, height: 900, deviceScaleFactor: 1, mobile: false });
+        // A window of its own size (the desktop app's) is measured as it is.
+        if (emulate) {
+            await this.send("Emulation.setDeviceMetricsOverride",
+                            { width: 1440, height: 900, deviceScaleFactor: 1, mobile: false });
+        }
         for (const name of ["probes.js", "pagekit.js"]) {
             const source = readFileSync(path.join(HERE, name), "utf8");
             await this.send("Page.addScriptToEvaluateOnNewDocument", { source });

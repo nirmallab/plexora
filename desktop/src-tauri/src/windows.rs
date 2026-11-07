@@ -7,7 +7,7 @@ use std::sync::Mutex;
 use tauri::{AppHandle, Manager, WebviewUrl, WebviewWindow, WebviewWindowBuilder};
 use tauri_plugin_opener::OpenerExt;
 
-use crate::{downloads, ServerState};
+use crate::{downloads, localfiles, ServerState};
 
 /// Per-window zoom, since a WebView cannot be asked for its own.
 #[derive(Default)]
@@ -59,6 +59,9 @@ fn init_script(app: &AppHandle, origin: &str) -> String {
         "arch": std::env::consts::ARCH,
         "webview": webview,
         "serverOrigin": origin,
+        // Where the page reads a granted file (localfiles.rs): the
+        // `plexora-file` scheme as this platform's WebView serves it.
+        "localFiles": localfiles::page_base(),
     });
     format!(
         "Object.defineProperty(window, '__PLEXORA_DESKTOP__', {{ value: Object.freeze({info}), writable: false }});"

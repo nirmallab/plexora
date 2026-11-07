@@ -61,6 +61,14 @@
  *   request a page can route or declare an address space for
  *   (`addressSpace`), which OSD's XHR loader is not.
  *
+ * - ANSWERED IN THE PAGE FIRST, where a `local` answerer is set (the desktop
+ *   app's Browser rendering: services/resourceRouting.js `attachLocal`, the
+ *   page's browser node reading the project's own files). It is asked before
+ *   the network for every request and gives a channel tile's decoded pixels
+ *   (no fetch, no PNG, no decode) or a raster tile's bytes; null sends the
+ *   request on to the server as before. Unset -- everywhere else -- nothing
+ *   here changes.
+ *
  * Classic script, `window.PlexoraTileFetch`; loaded before imageViewer.js.
  */
 (function (global) {
@@ -147,6 +155,11 @@
             //: own server serves, whose tiles come from that server or a node
             //: it routes to -- every request there is exactly what it was.
             this.addressSpace = addressSpace;
+            //: The page's own answer to a request, asked before the network:
+            //: `(request) => Promise<decoded | {raster, status} | null>`
+            //: (request: {url, raster}). Null everywhere but the desktop app
+            //: with Browser rendering on (services/resourceRouting.js).
+            this.local = null;
             this.maxInFlight = maxInFlight;
             this.decodeInline = decodeInline;
             this._makeContext = makeContext;
@@ -467,7 +480,7 @@
             }
             request.jobs.add(job);
             job.userData.plexoraRequest = request;
-            if (request.link?.batching && this.batching) {
+            if (request.link?.batching && this.batching && !this.local) {
                 // OSD starts a frame's tiles one call at a time: on a batched
                 // link, line them all up before any batch is cut.
                 if (!this._pumpSoon) {
@@ -595,7 +608,9 @@
                     this.drop(request);
                     continue;
                 }
-                if (this.batching && request.link?.batching && !request.link.unbatchable) {
+                // Never with a `local` answerer: a batch would take the tiles
+                // the page reads itself past it, to the server.
+                if (this.batching && !this.local && request.link?.batching && !request.link.unbatchable) {
                     // The next queued tiles from the same server, in the same
                     // tier, ride along (the queue is in order of need); a
                     // held one waits for the hand to stop.
@@ -724,6 +739,17 @@
             let decoded = null;
             let error = null;
             try {
+                const answered = this.local ? await this.answerLocally(request) : null;
+                if (answered) {
+                    // The page read it (`local`): decoded pixels, or a raster
+                    // tile's bytes, with nothing on the wire.
+                    if (request.state === "dropped") return;
+                    decoded = answered;
+                    this.stats.local = (this.stats.local || 0) + 1;
+                    if (answered.raster) this.stats.raster = (this.stats.raster || 0) + 1;
+                    else this.stats.decoded += 1;
+                    return;
+                }
                 const sentAt = now();
                 const response = await this._fetch(request.url, this.requestInit(request.url, {
                     signal: controller?.signal,
@@ -758,6 +784,22 @@
                 this.settle(request, decoded, error);
                 this.pump();
             }
+        }
+
+        /** `local`'s answer for a request, or null (the network's): a raster
+         *  request takes only `{raster}`, any other only decoded pixels; a
+         *  failure is the network's to answer too. */
+        async answerLocally(request) {
+            let answered = null;
+            try {
+                answered = await this.local({ url: request.url, raster: Boolean(request.raster) });
+            } catch (error) {
+                this.stats.localFailed = (this.stats.localFailed || 0) + 1;
+                return null;
+            }
+            if (!answered) return null;
+            if (request.raster) return answered.raster ? answered : null;
+            return answered.array && answered.width && answered.height ? answered : null;
         }
 
         async decode(buffer) {

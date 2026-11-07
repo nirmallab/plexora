@@ -47,6 +47,14 @@ SECTIONS = (
      "blurb": "Who you are signed in as, your plan and your AI credits."},
 )
 
+#: The desktop app's own section, last: settings of the app's window that a
+#: browser tab of a terminal `plexora` does not have (plexora/
+#: browser_rendering.py).
+DESKTOP_SECTIONS = (
+    {"id": "advanced", "label": "Advanced", "icon": "fa-sliders",
+     "blurb": "How this app's window reads your images."},
+)
+
 #: The website's blurbs where a section means something else there: projects
 #: live in the browser's storage, and the site is always the current version.
 WEBSITE_BLURBS = {
@@ -76,14 +84,48 @@ def settings_page():
     website = _on_the_website()
     sections = tuple({**s, "blurb": WEBSITE_BLURBS.get(s["id"], s["blurb"])} for s in SECTIONS) \
         if website else SECTIONS
-    from plexora import __version__
+    from plexora import __version__, browser_rendering
     from plexora.browser.routes import HANDOFF
 
+    desktop = not website and browser_rendering.is_desktop(app)
+    if desktop:
+        sections = sections + DESKTOP_SECTIONS
     # The website's Remote servers panel is the notice that a web page cannot
     # open an SSH connection (services/handoff.js gives it its buttons).
     return render_template('settings.html', data=template_data(), sections=sections,
-                           website=website, version=__version__,
+                           website=website, desktop=desktop, version=__version__,
                            remotes_handoff=HANDOFF["settings_remotes_connect"])
+
+
+@app.route('/settings/advanced')
+def settings_advanced():
+    """The desktop app's Advanced settings: `{desktop, browser_rendering,
+    modes, paths}` (plexora/browser_rendering.py). Off the desktop app there
+    is nothing to set, and `desktop` says so."""
+    from plexora import browser_rendering
+
+    return jsonify(desktop=browser_rendering.is_desktop(app),
+                   browser_rendering=browser_rendering.mode(),
+                   modes=list(browser_rendering.MODES),
+                   default=browser_rendering.DEFAULT,
+                   paths=browser_rendering.paths_in_use(app))
+
+
+@app.route('/settings/advanced', methods=['POST'])
+def settings_advanced_set():
+    """`{browser_rendering: "auto"|"off"}`, stored in the settings file. Takes
+    effect when a project is next opened: a viewer already open keeps the
+    path its tiles came by."""
+    from plexora import browser_rendering
+
+    if not browser_rendering.is_desktop(app):
+        return jsonify(error="Browser rendering is a setting of the Plexora desktop app."), 409
+    payload = request.get_json(silent=True) or {}
+    try:
+        browser_rendering.set_mode(payload.get('browser_rendering'))
+    except ValueError as exc:
+        return jsonify(error=str(exc)), 400
+    return settings_advanced()
 
 
 def _resolve(raw):

@@ -1,0 +1,162 @@
+# P6D: the desktop app adopts the browser node (plan Phase 6, step 1)
+
+Date: 2026-11-07. Records: `P6D-M-2026-11-07.json` (the tour, ABBA), `P6D-parity-M-2026-11-07.json`
+(tile parity). Branch `web/desktop`.
+
+Status: **step 1 built and switched off.** Tile parity holds in the real window; the timings
+below were taken while other agents loaded the machine (CPU 27–66 % before each block) on a
+**debug** shell build, so they are provisional, not the desktop's final rows.
+
+## What is adopted
+
+The desktop app's page reads an opened project's **image tiles** (a local pyramidal OME-TIFF or
+TIFF, 8- or 16-bit, lossless compression) and **mask tiles** (a TIFF label pyramid, at the levels
+the file holds) itself, in workers, by byte range, with the same reader the website uses for a
+picked file (`node/tiffReader.js` in `workers/tiffWorker.js`, pools in `services/browserNode.js`).
+Python answers everything the page declines and everything else it always answered. Pyodide never
+loads; `services/backend.js` keeps target `"server"`.
+
+How a tile gets there:
+
+1. `/resource_routing` (desktop app, setting on) adds `local` beside `routes`: Python's own
+   description of what it reads (`browser/node_spec.describe(name, local=True)`: path, `format`,
+   every level's shape, dtype, the tile grid, the mask's levels), or why the page must not.
+2. `services/resourceRouting.js` chooses the third routing, **`local-browser`**, only when the
+   answer says `setting: "auto"`, the page is in the app's window with a shell that grants files
+   (`PlexoraDesktop.grantLocalFiles`, `.localFiles`), and the image or mask is served as OME-TIFF
+   or TIFF. It is kept apart from the node `routes` (`resolved.local`), so node routing, the
+   globe and the resource-status report read exactly what they did.
+3. `attachLocal` loads `browserNode.js` into the page and `use`s the desktop's source: the spec
+   from `/resource_routing`, the files from `grant_local_files`. The page checks every level's
+   shape, the channel count, sample size and compression against Python's before its first tile.
+4. `views/tileFetch.js` asks the page (`local`) before the network. A channel tile comes back as
+   the decoded pixels the HD PNG decodes to (16-bit big-endian; 8-bit widened as Python's
+   `astype("uint16")`), with no PNG made or decoded and nothing on the wire; a mask tile as the
+   RGBA PNG OpenSeadragon's raster path takes. `viewerManager.js` attaches a planar HD channel
+   source to the scheduler when the page reads it. Never batched past the page.
+
+Not adopted yet (steps of the plan's order still open): OME-Zarr (no JS zarr reader in the node;
+the website does not serve it from the page either), 8-bit "fast" tiles (HD only — the desktop
+starts in HD), volumes, brightfield/RGB slides, a pyramid whose coarse levels are a project-store
+extension, masks Python draws at a finer scale; step 2 tables via the column store; step 3
+contrast windows / GMM in JS; steps 4–7.
+
+## The setting
+
+Settings › **Advanced** › **Browser rendering: Auto | Off** (desktop app only; the section is not
+rendered in a browser tab or on the website). Stored as `"browser_rendering"` in the settings
+file; **default `off`** until the website's GA (`plexora/browser_rendering.py DEFAULT`). It takes
+effect for projects opened after the change. `/desktop/info` reports `browser_rendering` and,
+when on, `paths` (`image_tiles`/`label_tiles`: `browser`; `tables`/`contrast`: `server`).
+`/settings/advanced` GET/POST (409 off the desktop app). Off, `/resource_routing` answers
+`{"routes": {}}` exactly as before, the shell grants nothing, and its scheme answers 404.
+
+## The scheme's security: what it can and cannot read
+
+`plexora-file` (`desktop/src-tauri/src/localfiles.rs`, registered in `lib.rs`; the page reaches it
+at `http://plexora-file.localhost/<id>` on WebView2, `plexora-file://localhost/<id>` elsewhere —
+the base is in the init script `windows.rs` builds).
+
+- **Only granted files.** A grant is made only by `grant_local_files(datasource)` (commands.rs):
+  behind `check_caller` (this launch's server page only) and its own capability permission. The
+  page names a **project**, never a path. The shell asks this launch's server over loopback, with
+  the launch token in `X-Plexora-Token` (never in a URL), which files that project reads — the
+  same `/resource_routing` answer — and grants those. The server names files only with the
+  setting on, and only regular files on this computer's own disks (`node_spec.is_local_file`:
+  no URL, no `node://`, no `\\server\share`, no folder).
+- **A grant is one canonical regular file** under a 128-bit random id; never a folder, never a
+  network path (`\\?\UNC\` refused after canonicalisation); at most 256 per run, in memory only.
+  The URL carries the id alone: no path to traverse, nothing to list, no encoding to abuse.
+- **Requests:** GET and HEAD (and the CORS preflight) only; only from the app's `main` windows;
+  only with an `Origin` equal to this launch's server origin (a request without one, or from
+  another loopback port, is 403); a GET reads one byte range of at most 64 MiB (a whole file only
+  when it is that small). Responses are `no-store`, `nosniff`, with
+  `Access-Control-Allow-Origin` set to the server origin alone.
+- **Cannot:** read any file the server did not name for a project the page asked about; read
+  anything with the setting off; write, list or stat anything; be reached from another page or
+  origin. Tests: `cargo test` (`localfiles::tests`: ranges, caller, grant/read/refuse,
+  folders/shares, the grant limit; `commands::tests::only_files_the_server_serves_with_the_setting_on_are_named`).
+
+## Results (Measured)
+
+### Tile parity (real window, setting on)
+
+`tools/bench_remote/desktop_parity.mjs` in the desktop app's own window over CDP: for channels
+0, 1, 2, 10, 39 at every level (first, middle and last tile) and the mask at every level, the
+page's tile (`PlexoraNode.decoded`) against the server's answer for the same URL (`fetch`,
+decoded as the viewer decodes it), sample for sample and by FNV-1a hash.
+
+| | tiles | identical | different |
+|---|---|---|---|
+| channel (uint16, 7 levels) | 90 | 90 | 0 |
+| mask (uint32 labels, 7 levels) | 18 | 18 | 0 |
+
+### The tour, off against on (provisional: machine under load, debug shell)
+
+`tools/bench_remote/desktop_campaign.mjs` drives `tour.mjs --cdp` in the app's window: LSP11385
+(52923 × 45381, 40 channels, deflate SubIFD pyramid; its label pyramid; 202,049 cells), channels
+0–2, P6's waypoints, HD; four blocks off, on, on, off, each a fresh app (new server, WebView2
+profile of its own, C1 with the HTTP cache emptied, C2 warm). The OS file cache is not dropped.
+Time to full per step, ms, mean of the two blocks of each arm:
+
+| Step | C1 off | C1 on | on/off | C2 off | C2 on | on/off |
+|---|---|---|---|---|---|---|
+| open | 2496 | 2752 | 1.10 | 1024 | 1185 | 1.16 |
+| zoom to 1:4 at a | 1861 | 1082 | 0.58 | 1736 | 1096 | 0.63 |
+| zoom to 1:1 at a | 562 | 283 | 0.50 | 506 | 317 | 0.63 |
+| pan to b at 1:1 | 1195 | 643 | 0.54 | 1227 | 628 | 0.51 |
+| home | 209 | 26 | 0.13 | 191 | 24 | 0.12 |
+| revisit a at 1:1 | 26 | 32 | 1.24 | 23 | 25 | 1.13 |
+| jump to c at 1:1 | 849 | 527 | 0.62 | 927 | 553 | 0.60 |
+| animated zoom to 1:4 at b | 1338 | 1192 | 0.89 | 1317 | 1191 | 0.90 |
+| animated pan to c | 1204 | 1192 | 0.99 | 1194 | 1193 | 1.00 |
+| **geometric mean, the four tile steps** | | | **0.56** | | | **0.59** |
+| geometric mean, every step after open | | | 0.58 | | | 0.59 |
+
+| | off | on |
+|---|---|---|
+| WebView2 renderer peak working set (GB), two blocks | 1.91, 1.90 | 1.35, 1.39 |
+| tile requests to the server over both passes (block 0 / 1) | 1105 | 0 |
+| every step reached full | yes | yes |
+
+Reading it:
+
+- **Every step that needs new tiles takes 0.50–0.63 of the Python route's time**, and the
+  renderer peaks 0.5 GB lower (no PNG bodies or WebP decodes in it). P6 measured 0.30–0.41 for
+  the same steps in Chrome with the POC's viewer; the gap here is not yet attributed: the machine
+  was loaded, the shell was a debug build, every range read crosses WebView2's
+  WebResourceRequested on the window's thread, and the scheduler keeps its network cap of six in
+  flight for the page's reads.
+- **Open is 10–16 % slower with it on.** The page opens the 40-channel file in nine workers (six
+  for the image, three for the mask) through the scheme before its first tile, after a grant
+  round trip to the server. P6's open (0.30) counted a static page's boot, not the product page's.
+- Steps that need no new tiles are the same (revisit, the animated springs).
+
+## What is left
+
+- Rerun the campaign on an idle machine with a **release** shell (and P6's ABBA count) before the
+  numbers enter the measured map; until then these are the desktop's provisional rows.
+- Open: share one file open (geometry and IFD offsets) across a pool, or fewer workers at open;
+  overlap the grant with the page boot. Steps: a separate in-flight cap for the page's reads;
+  measure the scheme's raw range throughput from a worker (a micro-benchmark was written, not run)
+  against the read path's decode time.
+- OME-Zarr in the node (a JS zarr reader with blosc/zstd), 8-bit tiles in the page, volumes.
+- Step 2 (tables via the column store, the Arrow sidecar), step 3 (contrast windows/GMM in JS),
+  steps 4–7 as the plan orders them.
+- macOS/Linux: the scheme is served as `plexora-file://localhost`; whether WKWebView/WebKitGTK
+  route worker fetches of a custom scheme with CORS is untested here.
+
+## How to rerun
+
+```
+# build the shell (no MSVC here: _cargo_env's gnullvm variables), libunwind.dll beside the exe
+node tools/bench_remote/desktop_campaign.mjs --exe <plexora-desktop.exe> --home C:\plexora-bench-desk \
+     --dataset lsp11385 --order off,on,on,off --out <dir>\campaign.json \
+     --params '{"passes": ["C1","C2"], "channels": [0,1,2], "waypoints": {...}}'
+node tools/bench_remote/desktop_parity.mjs --dataset lsp11385 --out parity.json   # app open, setting on
+```
+
+The bench home holds the data root, a settings file of its own (`WIN_PD_OVERRIDE_LOCAL_APPDATA`)
+and the WebView2 profile (`WEBVIEW2_USER_DATA_FOLDER`); the user's settings file is never written.
+A debug shell re-registers `HKCU\Software\Classes\plexora` to itself on every start: export the
+key first and import it back afterwards.

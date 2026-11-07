@@ -21,7 +21,7 @@
  *
  * createTiffReader() -> {open, tile, level, region}; workers/tiffWorker.js puts
  * it behind messages.
- *   open({file|url, decoder: "native"|"native-blob"|"pako", prefetchOffsets})
+ *   open({file|url, size, decoder: "native"|"native-blob"|"pako", prefetchOffsets})
  *   tile({channel, level, tx, ty, tw, th, raw})  -- `timing` says where it went
  *   region({channel, level, x0, y0, x1, y1})     -- a window as native values
  *   level({channel, level})                      -- a whole (small) level, raw
@@ -138,14 +138,18 @@ class CountingBlobSource {
     }
 }
 
-/** The same counters over HTTP range requests (a bucket with CORS). */
+/**
+ * The same counters over HTTP range requests: a bucket with CORS, or the
+ * desktop app's `plexora-file` scheme (desktop/src-tauri/src/localfiles.rs),
+ * which says the file's size when the shell grants it (`size`).
+ */
 class CountingUrlSource {
-    constructor(url) {
+    constructor(url, size = null) {
         this.url = url;
         this.bytes = 0;
         this.reads = 0;
         this.readMs = 0;
-        this.size = null;
+        this.size = Number.isFinite(size) && size > 0 ? size : null;
     }
 
     get fileSize() {
@@ -207,14 +211,14 @@ export function createTiffReader() {
      *  - FLAT: one level, channels as main IFDs of the same size.
      * Only the main IFDs are parsed here; a level's IFD is parsed on first use.
      */
-    async function open({ file, url, source: given, decoder = "native", prefetchOffsets = true }) {
+    async function open({ file, url, size = null, source: given, decoder = "native", prefetchOffsets = true }) {
         useDecoder(decoder);
         decodeClock.ms = 0;
         decodeClock.calls = 0;
         const t0 = now();
         // `given` is any {fetch(slices), fileSize} with the same counters (Node tests
         // read through a file handle: fs.openAsBlob truncates sizes past 4 GiB).
-        const source = given || (file ? new CountingBlobSource(file) : new CountingUrlSource(url));
+        const source = given || (file ? new CountingBlobSource(file) : new CountingUrlSource(url, size));
         const tiff = await GeoTIFF.fromSource(source);
         const tHeader = now();
         const main = [];

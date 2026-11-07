@@ -22,16 +22,32 @@
  *   a finer one, a tile past the edge -- returns null, and Python answers it.
  *
  *   answer(request) -> a promise of a Response, or of null (Python's to answer)
+ *   decoded(url, {raster}) -> the same tile as the viewer's tile scheduler
+ *                      takes it (views/tileFetch.js `local`): a channel's
+ *                      {array, width, height, format: "u16"} -- the pixels
+ *                      the HD PNG decodes to, with no PNG between -- or, for
+ *                      a mask's raster tile, {raster: PNG bytes, status}; or
+ *                      null (Python's to answer)
  *   project(name)   -> a promise of {spec, image, labels}, each part {file,
  *                      geometry, pool} once checked or {refused} saying why
  *                      Python answers instead
  *   revalidate()    -> check each project with Python again before its next
  *                      tile (services/shell.js, on every page of the app)
  *   forget(name)    -> drop what is held for a project (it changed)
+ *   use({spec, files}) -> where specs and files come from (`source` below):
+ *                      the desktop app's page sets its own
  *   windowOf({path, channel, shape, dtype}) -> {value}: a channel's largest
  *                      full-resolution sample, for Python ("window" question)
  *
- * Classic script, `window.PlexoraNode`; needs PlexoraPython and PlexoraPicks.
+ * The desktop app reads the same way (plan Phase 6, Settings > Advanced >
+ * Browser rendering): services/resourceRouting.js's `local-browser` routing
+ * loads this file into the app's window and `use`s the desktop's source --
+ * the spec from `/resource_routing` (Python's own answer, as on the website)
+ * and the files granted by the shell's `plexora-file` scheme, read by byte
+ * range -- and the tile scheduler asks `decoded` before the server.
+ *
+ * Classic script, `window.PlexoraNode`; on the website it needs PlexoraPython
+ * and PlexoraPicks.
  */
 (function (global) {
     "use strict";
@@ -162,8 +178,11 @@
             });
         }
 
-        async open(file) {
-            const results = await Promise.all(this.workers.map((w) => this.call(w, { op: "open", file })));
+        /** Open `found` in every worker: `{file}` (a File the user picked) or
+         *  `{url, size}` (a file read by byte range: the desktop's
+         *  `plexora-file` scheme). */
+        async open(found) {
+            const results = await Promise.all(this.workers.map((w) => this.call(w, { op: "open", ...found })));
             return results[0].geometry;
         }
 
@@ -258,15 +277,48 @@
         return null;
     }
 
+    //: Where a project's spec and files come from. The website's: Python in
+    //: the page's worker says what it reads (plexora/browser/node_spec.py),
+    //: and a file is the user's pick of that path. `use` replaces it -- the
+    //: desktop app's page reads the spec from `/resource_routing` and the
+    //: files through the shell's `plexora-file` scheme (services/
+    //: resourceRouting.js `attachLocal`).
+    //:   spec(name)        -> a promise of the spec
+    //:   files(name, spec) -> a promise of `(path) => found | null`, `found`
+    //:                        what a pool opens: {file} or {url, size}
+    let source = {
+        spec: (name) => global.PlexoraPython.nodeSpec(name),
+        files: async () => (path) => {
+            const file = global.PlexoraPicks ? global.PlexoraPicks.fileFor(path) : null;
+            return file ? { file } : null;
+        },
+    };
+
+    //: A new source: what was opened by the old one is let go (its workers
+    //: closed), and every project is checked again before its next tile.
+    function use(next) {
+        if (!next || typeof next.spec !== "function" || typeof next.files !== "function") {
+            throw new Error("PlexoraNode.use needs spec(name) and files(name, spec)");
+        }
+        source = next;
+        checks.clear();
+        for (const entry of held.values()) close(entry);
+        held.clear();
+    }
+
+    //: What a part holds open, to tell whether a new check names the same file.
+    const handleOf = (found) => (found ? found.file || found.url || null : null);
+
     //: One file's part of a project: its pool, once the page reads it as
     //: Python does.
-    async function openPart(part, size, differs) {
+    async function openPart(part, size, differs, files) {
         if (!part || !part.served) return { refused: part ? part.reason : "nothing to serve" };
-        const file = global.PlexoraPicks ? global.PlexoraPicks.fileFor(part.path) : null;
+        const found = files(part.path);
+        const file = handleOf(found);
         if (!file) return { refused: "the page does not hold that file now" };
         const pool = new TiffPool(size);
         try {
-            const geometry = await pool.open(file);
+            const geometry = await pool.open(found);
             const why = differs(part, geometry);
             if (why) {
                 pool.close();
@@ -279,25 +331,26 @@
         }
     }
 
-    const sameFile = (part, path) => Boolean(part && part.file && global.PlexoraPicks
-        && global.PlexoraPicks.fileFor(path) === part.file);
+    const sameFile = (part, path, files) => Boolean(part && part.file && handleOf(files(path)) === part.file);
 
     async function check(name) {
         const asked = performance.now();
-        const spec = await global.PlexoraPython.nodeSpec(name);
+        const spec = await source.spec(name);
         const answered = performance.now();
+        const served = Boolean(spec && (spec.served || (spec.labels && spec.labels.served)));
+        const files = served ? await source.files(name, spec) : () => null;
         const before = held.get(name);
         // The same load of the same files: what is open stays open.
         if (before && JSON.stringify(before.spec) === JSON.stringify(spec)
-            && (!before.image.pool || sameFile(before.image, spec.path))
-            && (!before.labels.pool || sameFile(before.labels, spec.labels && spec.labels.path))) {
+            && (!before.image.pool || sameFile(before.image, spec.path, files))
+            && (!before.labels.pool || sameFile(before.labels, spec.labels && spec.labels.path, files))) {
             return before;
         }
         if (before) close(before);
         held.delete(name);
         const [image, labels] = await Promise.all([
-            openPart(spec, WORKERS, imageDiffers),
-            openPart(spec.labels, Math.max(2, Math.floor(WORKERS / 2)), labelsDiffer),
+            openPart(spec, WORKERS, imageDiffers, files),
+            openPart(spec.labels, Math.max(2, Math.floor(WORKERS / 2)), labelsDiffer, files),
         ]);
         //: When the check was asked and answered, and when the files were
         //: open (performance.now), for the diagnostics.
@@ -361,10 +414,15 @@
                    "X-Plexora-Served-By": "browser" },
     });
 
-    async function answer(request) {
-        const url = new URL(request.url);
+    /**
+     * The tile `href` asks for, read from the file: `{label: false, tile}` for
+     * a channel's HD tile, `{label: true, tile, bits}` for a mask's, or null
+     * for anything Python answers (see the header).
+     */
+    async function read(href, method = "GET") {
+        const url = new URL(href, global.location.href);
         const match = url.pathname.match(TILE);
-        if (!match || request.method !== "GET" || url.searchParams.get("view")) return null;
+        if (!match || method !== "GET" || url.searchParams.get("view")) return null;
         const [, name, channel, level, tx, ty] = match.map((part) => decodeURIComponent(part));
         // `_parse_channel`: a name ending `_<n>` is channel n, anything else
         // the mask (whose tiles ignore `q`).
@@ -386,7 +444,7 @@
             if (!part.pool || !entry.spec.labels.levels.some(([l]) => l === levelNum)) return null;
             const tile = await part.pool.tile(0, levelNum, Number(tx), Number(ty), tw, th, true);
             if (!tile.width || !tile.height) return null;
-            return respond(labelPng(tile, BITS[entry.spec.labels.dtype]));
+            return { label: true, tile, bits: BITS[entry.spec.labels.dtype] };
         }
         const part = entry.image;
         const channelNum = Number(index);
@@ -394,7 +452,31 @@
         if (channelNum >= entry.spec.levels[0][0] || levelNum >= entry.spec.levels.length) return null;
         const tile = await part.pool.tile(channelNum, levelNum, Number(tx), Number(ty), tw, th);
         if (!tile.width || !tile.height) return null;
-        return respond(png16(tile));
+        return { label: false, tile };
+    }
+
+    async function answer(request) {
+        const got = await read(request.url, request.method);
+        if (!got) return null;
+        return respond(got.label ? labelPng(got.tile, got.bits) : png16(got.tile));
+    }
+
+    /**
+     * A tile as the viewer's tile scheduler delivers it (views/tileFetch.js
+     * `local`), for the desktop app's page: a channel's pixels exactly as the
+     * HD PNG decodes to them -- 16-bit big-endian, 8-bit samples widened as
+     * Python's `astype("uint16")` widens them -- with no PNG made or decoded;
+     * a mask's tile as the RGBA PNG OpenSeadragon is handed as a raster (its
+     * label ids read from it as from Python's). Null for anything Python
+     * answers, and for a raster ask that is not a mask's (or the reverse).
+     */
+    async function decoded(href, { raster = false } = {}) {
+        const got = await read(href, "GET");
+        if (!got || got.label !== Boolean(raster)) return null;
+        if (got.label) return { raster: labelPng(got.tile, got.bits).buffer, status: 200 };
+        const { tile } = got;
+        return { array: tile.format === "u16" ? tile.array : widen(tile.array),
+                 width: tile.width, height: tile.height, format: "u16" };
     }
 
     // -- the window ------------------------------------------------------------
@@ -413,7 +495,7 @@
         // and Python waits for the answer.
         const pool = new TiffPool(SCAN_WORKERS);
         try {
-            const geometry = await pool.open(file);
+            const geometry = await pool.open({ file });
             const why = imageDiffers({ levels: [shape], dtype }, geometry);
             if (why) throw new Error(`the page reads it differently: ${why}`);
             const top = await pool.max(channel, 0, geometry.levels[0], geometry.fileTile);
@@ -425,5 +507,5 @@
 
     if (global.PlexoraPython && global.PlexoraPython.answers) global.PlexoraPython.answers("window", windowOf);
 
-    global.PlexoraNode = Object.freeze({ answer, project, revalidate, forget, png, windowOf });
+    global.PlexoraNode = Object.freeze({ answer, decoded, project, revalidate, forget, use, png, windowOf });
 })(window);

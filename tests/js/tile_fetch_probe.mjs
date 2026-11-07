@@ -807,6 +807,90 @@ function rasterItem(s, { standby = false, opacity = 1 } = {}) {
           !("targetAddressSpace" in net.calls[1].options));
 }
 
+// -- answered in the page first: the desktop's Browser rendering (`local`) -------------------
+
+{
+    const { s, net, decoder } = scheduler();
+    check("no local answerer unless one is set (every page but the desktop with the setting on)",
+          s.local === null);
+    const plane = { array: new Uint8Array(8), width: 2, height: 2, format: "u16" };
+    const asked = [];
+    s.local = async (request) => {
+        asked.push(request);
+        return request.url.includes("/pythons/") ? null : plane;
+    };
+    const a = job("/generated/data/ds/ds_0/3/0_0.png?q=hd", item());
+    const b = job("/generated/data/ds/ds_0/3/0_0.png?q=hd", item());
+    s.start(a);
+    s.start(b);
+    await tick(); await tick();
+    check("a tile the page reads is never fetched nor decoded here",
+          net.calls.length === 0 && decoder.seen.length === 0, JSON.stringify(net.calls.map((c) => c.url)));
+    check("...asked once per address, with its URL and that it is not a raster",
+          asked.length === 1 && asked[0].url === a.src && asked[0].raster === false);
+    check("...and both jobs get the page's plane, as a decoded tile",
+          a.tile._array === plane.array && b.tile._array === plane.array && a.tile._format === "u16"
+          && a.finished?.dataType === "context2d" && a.finished.data.canvas.width === 2);
+    check("...counted as the page's", s.stats.local === 1 && s.stats.requests === 1);
+
+    const declined = job("/generated/data/pythons/p_0/3/0_0.png?q=hd", item());
+    s.start(declined);
+    await tick(); await tick();
+    check("a tile it declines goes to the server as before",
+          net.calls.length === 1 && net.calls[0].url === declined.src);
+    net.calls[0].respond(png());
+    await tick(); await tick();
+    check("...and is decoded as before", decoder.seen.length === 1 && declined.tile._format === "u16");
+}
+
+{
+    const { s, net } = scheduler();
+    s.local = async () => { throw new Error("the file went away"); };
+    const a = job("/generated/data/ds/ds_0/3/0_0.png?q=hd", item());
+    s.start(a);
+    await tick(); await tick();
+    check("a page that fails to read a tile hands it to the server",
+          net.calls.length === 1 && s.stats.localFailed === 1);
+}
+
+{
+    const { s, net } = scheduler();
+    const label = rasterItem(s);
+    const bytes = png();
+    s.local = async (request) => (request.raster ? { raster: bytes, status: 200 }
+        : { array: new Uint8Array(4), width: 1, height: 1, format: "u16" });
+    const a = job("/generated/data/ds/ds_label/2/0_1.png?v=2", label);
+    s.start(a);
+    await tick(); await tick();
+    check("a mask's raster tile the page reads reaches OSD as its loader hands one over",
+          net.calls.length === 0 && a.finished?.dataType === "rasterBlob"
+          && a.finished.request?.response === bytes && !a.tile._array);
+    // The answerer's shapes are kept apart: decoded pixels never stand in for
+    // a raster's bytes, nor the reverse.
+    const other = scheduler();
+    other.s.local = async () => ({ array: new Uint8Array(4), width: 1, height: 1, format: "u16" });
+    other.s.start(job("/generated/data/ds/ds_label/2/0_0.png?v=2", rasterItem(other.s)));
+    await tick(); await tick();
+    check("...and decoded pixels offered for a raster are refused (the server's)",
+          other.net.calls.length === 1);
+}
+
+{
+    // A batched link never takes the page's tiles past it to the server.
+    const net = slowFetch(BATCH.ENTER_MS + 40, 0);
+    const s = new TileFetchScheduler({ decoderPool: pool(), fetchImpl: net.fetchImpl,
+                                       makeContext: () => ({ canvas: {} }) });
+    await warm(s, "/generated/data/ds/ds_9");
+    const link = s.linkOf("/generated/data/ds/ds_9/0/0_0.png").link;
+    const batchedBefore = s.stats.batches;
+    s.local = async () => null;
+    for (let i = 0; i < 4; i += 1) s.start(job(`/generated/data/ds/ds_9/3/${i}_9.png`, item()));
+    await sleep(BATCH.ENTER_MS + 120);
+    check("with a local answerer nothing is batched, even on a link that would be",
+          link.batching === true && s.stats.batches === batchedBefore,
+          JSON.stringify({ batching: link.batching, stats: s.stats }));
+}
+
 if (failures.length) {
     console.log(`\n${failures.length} of ${checks} checks FAILED:`);
     for (const failure of failures) console.log(`  - ${failure}`);
