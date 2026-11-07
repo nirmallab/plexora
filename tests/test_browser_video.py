@@ -145,10 +145,16 @@ def test_every_export_keeps_the_rendered_frames(run, arm):
 
 #: Website against desktop, the same scene: PNG frames and the WebCodecs
 #: movies are the same pipeline on both (the frames render alike, the
-#: browser encodes them: measured identical, the WebM byte for byte); the GIF
-#: is FFmpeg's palettegen/paletteuse on the desktop and the browser's own on
-#: the website, two quantisers (measured 1.6 apart).
-PARITY = {"png": 0.5, "mp4": 1.0, "webm": 1.0, "gif": 4.0}
+#: browser encodes them: measured identical, the WebM byte for byte, on an
+#: idle machine); the GIF is FFmpeg's palettegen/paletteuse on the desktop and
+#: the browser's own on the website, two quantisers (measured 1.6 apart).
+#: The movies' bar is not "identical", though: two encodes, each within its
+#: FIDELITY of the frames it was given, may differ by both losses, and Chrome's
+#: H.264 encoder (hardware, when the GPU has one free) does not repeat itself
+#: under load -- a full run of the browser tests measured MP4 1.55 apart while
+#: the PNG frames still matched. The frames' 0.5 is what says the picture is
+#: the same; 2.5 says neither encode went further from it than an encoder does.
+PARITY = {"png": 0.5, "mp4": 2.5, "webm": 2.5, "gif": 4.0}
 
 
 def test_the_website_exports_what_the_desktop_exports(run):
