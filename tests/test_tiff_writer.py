@@ -69,7 +69,7 @@ def _write_source(path, dtype, shape, options, seed):
 def _page_copy(source, spec, out, job_bytes):
     request = {"source": str(source), "out": str(out), "dtype": spec["dtype"], "channels": spec["shape"][0],
                "factors": spec["factors"], "tile": spec["tile"], "description": spec["description"],
-               "jobBytes": job_bytes}
+               "kind": spec.get("kind", "image"), "jobBytes": job_bytes}
     spec_file = out.with_suffix(".json")
     spec_file.write_text(json.dumps(request), encoding="utf-8")
     done = subprocess.run([NODE, str(PROBE), str(spec_file)], capture_output=True, text=True,
@@ -152,6 +152,147 @@ def test_what_the_page_would_read_differently_is_left_to_python(tmp_path, make, 
     source = tmp_path / "s.tif"
     make(source)
     assert image_pyramid.page_build(source) is None, why
+
+
+# -- a flat segmentation mask's label pyramid ---------------------------------
+#
+# The same builder with `kind: "labels"`: one plane, each level sampled from
+# level 0 (segmentation_pyramid's FILLED mode), the samples written as they
+# are. Held to `pyramidize_segmentation_mask(outline=False)` the same way, and
+# to what `_is_adoptable`, `generated_mask_kind` and `generated_mask_scale`
+# read back, since a later load finds the pyramid by those alone.
+
+def _labels(dtype, shape, seed):
+    """Cells as blocks of one id over noise of single-pixel ids: sampling at
+    the wrong pixel shows in the noise, a wrong block edge in the blocks."""
+    rng = np.random.default_rng(seed)
+    dtype = np.dtype(dtype)
+    info = np.iinfo(dtype)
+    low = max(int(info.min), -(2 ** 31))
+    out = rng.integers(low, int(info.max), size=shape, endpoint=True, dtype=np.int64)
+    height, width = shape
+    for _ in range(60):
+        y, x = int(rng.integers(0, height)), int(rng.integers(0, width))
+        h, w = int(rng.integers(3, 90)), int(rng.integers(3, 90))
+        out[y:y + h, x:x + w] = int(rng.integers(low, int(info.max), endpoint=True))
+    out[rng.random(shape) < 0.25] = 0  # background
+    if dtype.kind == "u" and dtype.itemsize == 4:
+        out[0, 0] = info.max  # the largest id a mask can hold
+        out[-1, -1] = 2 ** 24 + 1  # past float32's whole numbers
+    return out.astype(dtype)
+
+
+MASKS = {
+    # name: (dtype, (H, W), tifffile write options)
+    "uint32_tiled_zlib": ("uint32", (1037, 1529), {"compression": "zlib", "tile": (128, 128)}),
+    "uint32_one_strip_raw": ("uint32", (700, 1100), {"rowsperstrip": 700}),
+    "uint16_lzw_strips": ("uint16", (777, 601), {"compression": "lzw", "rowsperstrip": 37}),
+    "uint16_zlib_predictor": ("uint16", (530, 610), {"compression": "zlib", "predictor": True,
+                                                     "rowsperstrip": 64}),
+    "int32_tiled_raw": ("int32", (513, 769), {"tile": (64, 64)}),
+    "uint8_packbits_strips": ("uint8", (300, 1301), {"compression": "packbits", "rowsperstrip": 16}),
+    "int16_raw_strips": ("int16", (257, 255), {}),
+}
+
+
+def _write_mask(path, dtype, shape, options, seed):
+    data = _labels(dtype, shape, seed)
+    tifffile.imwrite(path, data, photometric="minisblack", **options)
+    return data
+
+
+def _mask_copies(tmp_path, name, job_bytes=96 * 1024):
+    from plexora.server.utils import segmentation_pyramid
+
+    dtype, shape, options = MASKS[name]
+    source = tmp_path / f"{name}.tif"
+    data = _write_mask(source, dtype, shape, options, seed=len(name))
+    python_copy = tmp_path / "python.labels.pyramid.ome.tiff"
+    segmentation_pyramid.pyramidize_segmentation_mask(source, python_copy, tile_size=TILE,
+                                                      outline=False, overwrite=True)
+    spec = segmentation_pyramid.page_build(source, tile_size=TILE)
+    assert spec is not None and spec["kind"] == "labels"
+    assert spec["shape"] == [1, *shape] and spec["dtype"] == dtype
+    page_copy = tmp_path / "page.labels.pyramid.ome.tiff"
+    record = _page_copy(source, spec, page_copy, job_bytes=job_bytes)
+    return source, data, python_copy, page_copy, spec, record
+
+
+@pytest.mark.parametrize("name", sorted(MASKS))
+def test_the_page_writes_the_label_pyramid_python_writes(tmp_path, name):
+    from plexora.server.utils import segmentation_pyramid as sp
+
+    source, data, python_copy, page_copy, spec, record = _mask_copies(tmp_path, name)
+    want, want_axes = _levels(python_copy)
+    got, got_axes = _levels(page_copy)
+    assert got_axes == want_axes == "YX"
+    assert len(got) == len(want) == len(spec["factors"]) > 1
+    for level, (a, b) in enumerate(zip(want, got)):
+        assert b.dtype == a.dtype == data.dtype and b.shape == a.shape, level
+        assert np.array_equal(a, b), f"level {level}: {int((a != b).sum())} pixels differ"
+        # Every id at a level is an id of level 0's, at the sampled pixel.
+        factor = spec["factors"][level]
+        assert np.array_equal(b, data[::factor, ::factor]), level
+    assert _ome(page_copy) == _ome(python_copy)
+    # What a later load reads back to find it, adopt it and draw it.
+    assert sp.generated_mask_kind(page_copy) == sp.generated_mask_kind(python_copy) == sp.MODE_FILLED
+    assert sp.generated_mask_scale(page_copy) is sp.generated_mask_scale(python_copy) is None
+    assert sp.plane_size(page_copy) == sp.plane_size(python_copy) == (data.shape[1], data.shape[0])
+    for copy in (page_copy, python_copy):
+        assert sp._is_adoptable(copy, source, sp.MODE_FILLED)
+        assert sp.is_adoptable_mask(copy, source)
+        assert not sp._is_adoptable(copy, source, sp.MODE_OUTLINES)
+        assert sp.is_servable_label_pyramid(copy)
+    assert record["tiles"] > 0
+
+
+def test_the_label_tiles_are_the_layout_python_writes(tmp_path):
+    """One plane, square deflated tiles, its levels as SubIFDs, the samples'
+    own format: what node/tiffReader.js and the browser node's labels expect."""
+    source, data, python_copy, page_copy, spec, _ = _mask_copies(tmp_path, "int32_tiled_raw",
+                                                                 job_bytes=16 << 20)
+    with tifffile.TiffFile(page_copy) as page, tifffile.TiffFile(python_copy) as python:
+        assert page.is_bigtiff and page.byteorder == "<"
+        assert len(page.pages) == len(python.pages) == 1
+        mine, theirs = page.pages[0], python.pages[0]
+        assert mine.is_tiled and (mine.tilewidth, mine.tilelength) == (TILE, TILE)
+        assert mine.compression == 8 and mine.photometric == 1
+        assert (mine.sampleformat, mine.bitspersample) == (theirs.sampleformat, theirs.bitspersample)
+        assert len(mine.subifds) == len(theirs.subifds) == len(spec["factors"]) - 1
+
+
+@pytest.mark.parametrize("make, why", [
+    (lambda p: tifffile.imwrite(p, np.zeros((40, 50), np.float32)), "float labels: Python refuses them"),
+    (lambda p: tifffile.imwrite(p, np.zeros((40, 50), np.uint64)), "64-bit ids: Python narrows them"),
+    (lambda p: tifffile.imwrite(p, np.zeros((40, 50, 3), np.uint8), photometric="rgb"), "a colour picture"),
+    (lambda p: tifffile.imwrite(p, np.zeros((2, 40, 50), np.uint16)), "two planes: Python refuses them"),
+    (lambda p: p.write_bytes(b"not a tiff"), "not a TIFF at all"),
+])
+def test_a_mask_the_page_would_read_differently_is_left_to_python(tmp_path, make, why):
+    from plexora.server.utils import segmentation_pyramid
+
+    source = tmp_path / "m.tif"
+    make(source)
+    assert segmentation_pyramid.page_build(source) is None, why
+
+
+def test_a_label_pyramid_is_described_as_tifffile_describes_it(tmp_path):
+    """The page writes the OME-XML Python's writer would: only the UUID that
+    tifffile makes afresh for every file differs."""
+    import re
+
+    from plexora.server.utils import segmentation_pyramid
+
+    source = tmp_path / "m.tif"
+    _write_mask(source, "uint32", (600, 700), {}, seed=1)
+    python_copy = tmp_path / "python.labels.pyramid.ome.tiff"
+    segmentation_pyramid.pyramidize_segmentation_mask(source, python_copy, tile_size=TILE,
+                                                      outline=False, overwrite=True)
+    with tifffile.TiffFile(python_copy) as tiff:
+        written = tiff.pages[0].description
+    spec = segmentation_pyramid.page_build(source, tile_size=TILE)
+    drop = re.compile(r' UUID="[^"]*"')
+    assert drop.sub("", spec["description"]) == drop.sub("", written)
 
 
 @pytest.mark.parametrize("recorded, current, same", [

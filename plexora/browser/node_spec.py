@@ -9,12 +9,15 @@ the file and checks every level's shape against these before it answers a
 single tile.
 
 Served today: a plain (OME-)TIFF the user picked, read as a channel series,
-with 8- or 16-bit samples; and a label mask the user picked that Python serves
-as it is (a tiled label pyramid), at the levels the file holds. Everything
-else -- a z-stack or time series (its planes go through the volume layer),
-OME-Zarr, DICOM, a brightfield RGB slide, a Xenium focus folder, a pyramid
-Plexora built into its own store, a mask level Python draws from a finer one,
-a file on a node -- is Python's until its own check exists.
+with 8- or 16-bit samples, or the pyramidized copy the page built of one; and
+a label mask the user picked that Python serves as it is (a tiled label
+pyramid), or the label pyramid the page built of a flat one, at the levels the
+file holds. Both copies are the page's files, under /derived/ (providers/
+browser.py `page_pyramid`). Everything else -- a z-stack or time series (its
+planes go through the volume layer), OME-Zarr, DICOM, a brightfield RGB slide,
+a Xenium focus folder, a pyramid Python drew into the project store, a mask
+level Python draws from a finer one, a file on a node -- is Python's until its
+own check exists.
 """
 
 from __future__ import annotations

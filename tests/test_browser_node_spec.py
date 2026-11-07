@@ -81,6 +81,27 @@ def test_a_picked_label_pyramid_is_described_level_by_level(info, monkeypatch):
     assert labels["dtype"] == dtype
 
 
+def test_a_label_pyramid_the_page_built_is_served_too(info, monkeypatch):
+    """A flat mask's label pyramid built by the page is the page's file, under
+    /derived/ (providers/browser.py `page_pyramid`): its tiles are the page's
+    to answer, as a picked pyramid's are. One Python drew into the project
+    store is not a file the page holds."""
+    from plexora.browser import node_spec
+    from plexora.server.models import data_model
+
+    data_model.ensure_loaded(info["name"])
+    built = "/derived/0123456789abcdef01234567/mask.labels.pyramid.ome.tiff"
+    monkeypatch.setattr(data_model._providers.segmentation, "_path", built)
+    labels = node_spec.describe(info["name"])["labels"]
+    assert labels["served"] is True, labels
+    assert labels["path"] == built
+    monkeypatch.setattr(data_model._providers.segmentation, "_path",
+                        "/data/derived/sample/mask.labels.pyramid.ome.tiff")
+    labels = node_spec.describe(info["name"])["labels"]
+    assert labels["served"] is False
+    assert labels["reason"].startswith("the mask is not a file the page holds")
+
+
 def test_a_project_without_a_mask_says_so(tmp_path):
     from plexora.browser import node_spec
 

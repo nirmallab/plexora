@@ -240,6 +240,16 @@ def wait(seconds: float) -> None:
     _pause(seconds)
 
 
+def pause(seconds: float) -> None:
+    """A poll's sleep when what it waits for is never in the queue -- the
+    website's page building a pyramid, say. Unlike `wait`, nothing queued runs
+    here: a queued task run inside the poll (background warm-up that should
+    wait for quiet, a whole job) holds the worker, and the requests the pause
+    is there to let in wait behind it. On threads a sleep; in the browser a
+    sleep that answers the requests arriving meanwhile."""
+    _pause(seconds)
+
+
 def wait_event(event: threading.Event, timeout: float | None = None) -> bool:
     """`event.wait(timeout)`. Queued: run what is pending first, since that is
     usually what sets it. If it is still not set, whatever sets it is outside

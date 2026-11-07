@@ -1,13 +1,15 @@
 /**
  * A pyramid build on the website (services/browserPyramid.js starts one per
- * flat image Python asks for): node/pyramid.js over the browser node's tiff
- * workers as its hands, writing the copy image_pyramid.pyramidize_image would
- * write into the site's own storage (OPFS), where Python then reads it.
+ * flat image or mask Python asks for): node/pyramid.js over the browser node's
+ * tiff workers as its hands, writing the copy image_pyramid.pyramidize_image
+ * would write -- or, `kind: "labels"`, the label pyramid
+ * segmentation_pyramid.pyramidize_segmentation_mask would -- into the site's
+ * own storage (OPFS), where Python then reads it.
  *
  * This worker owns the file: a sync access handle exists only in a dedicated
  * worker. Output, under OPFS plexora/derived/<key>/: the copy under its own
- * name, then `manifest.json` {key, name, bytes, shape, dtype, factors, tile,
- * ms} -- written last, so a build that stopped part way is never taken for a
+ * name, then `manifest.json` {key, name, kind, bytes, shape, dtype, factors,
+ * tile, ms} -- written last, so a build that stopped part way is never taken for a
  * finished one (it is built again).
  *
  * Or, given `folder` (a directory the user granted, beside the original), the
@@ -16,7 +18,7 @@
  * name never holds half a copy. A file already under that name is never
  * written over: it is handed back (`exists`) for Python to judge.
  *
- * {op: "build", file, key, name, shape: [C, H, W], dtype, factors, tile,
+ * {op: "build", file, key, name, kind?, shape: [C, H, W], dtype, factors, tile,
  *  description, hands: <tiff worker URL>, workers, folder?}
  *  -> {progress: {tiles, total, bands, bandsTotal}}..., then
  *     {done, file, bytes, timings}, {exists, file} or {error}
@@ -80,7 +82,8 @@ async function writeJson(dir, name, value) {
 
 self.onmessage = async ({ data }) => {
     if (data.op !== "build") return;
-    const { file, key, name, shape, dtype, factors, tile, description, hands: url, workers, folder } = data;
+    const { file, key, name, kind = "image", shape, dtype, factors, tile, description, hands: url, workers,
+            folder } = data;
     const t0 = performance.now();
     let hands = null;
     let access = null;
@@ -109,7 +112,7 @@ self.onmessage = async ({ data }) => {
             // two at once.
             let queue = Promise.resolve();
             const result = await build({
-                geometry, dtype, channels, factors, tile, description, hands,
+                geometry, dtype, channels, factors, tile, description, kind, hands,
                 sink: { write: (bytes, at) => (queue = queue.then(
                     () => writable.write({ type: "write", position: at, data: bytes }))) },
                 progress: (progress) => self.postMessage({ progress }),
@@ -126,7 +129,7 @@ self.onmessage = async ({ data }) => {
         access = await (await dir.getFileHandle(name, { create: true })).createSyncAccessHandle();
         access.truncate(0);
         const result = await build({
-            geometry, dtype, channels, factors, tile, description, hands,
+            geometry, dtype, channels, factors, tile, description, kind, hands,
             sink: { write: (bytes, at) => { access.write(bytes, { at }); } },
             progress: (progress) => self.postMessage({ progress }),
         });
@@ -134,7 +137,7 @@ self.onmessage = async ({ data }) => {
         access.close();
         access = null;
         const ms = Math.round(performance.now() - t0);
-        await writeJson(dir, "manifest.json", { key, name, bytes: result.bytes, shape, dtype, factors, tile, ms });
+        await writeJson(dir, "manifest.json", { key, name, kind, bytes: result.bytes, shape, dtype, factors, tile, ms });
         const copy = await (await dir.getFileHandle(name)).getFile();
         self.postMessage({ done: true, file: copy, bytes: result.bytes, timings: { ...result.timings, ms } });
     } catch (error) {

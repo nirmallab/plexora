@@ -18,8 +18,8 @@ and three projects with a mask, each an 8-bit image and its labels:
 - labels32             uint32 ids up to 2^25 (the high byte Python drops),
                        tiled 256, deflate, one sub-resolution
 - labels16             uint16 ids, tiled 256, LZW, one sub-resolution
-- labels_flat          uint32, one level (Python draws the rest: its mask is
-                       Python's, its image the page's)
+- labels_flat          uint32, one level: the page builds its label pyramid
+                       (tests/test_tiff_writer.py), and the node serves it
 Prints {name: [path, ...]} as JSON: the files to import together.
 """
 

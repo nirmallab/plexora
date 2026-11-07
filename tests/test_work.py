@@ -167,6 +167,20 @@ def test_the_cooperative_runtime_sleeps_through_its_idle_hook(mode):
     assert slept == [0.25]
 
 
+def test_a_pause_never_runs_queued_work(mode):
+    """What a pause waits on is outside the queue (the website's page): work
+    queued meanwhile waits for its own turn, and the time passes as a sleep
+    that answers requests."""
+    mode("cooperative")
+    slept, ran = [], []
+    _work.set_idle(slept.append)
+    _work.spawn(ran.append, "warm-up", background=True)
+    _work.spawn(ran.append, "job")
+    _work.pause(0.25)
+    assert slept == [0.25] and ran == []
+    assert _work.pending() == 2
+
+
 def test_a_condition_wait_returns_at_once_when_work_ran(mode):
     mode("inline")
     condition = threading.Condition()

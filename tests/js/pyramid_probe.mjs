@@ -2,10 +2,11 @@
  * The page's pyramid builder (client src/js/node/pyramid.js, tiffWriter.js,
  * reduce.js) run in Node with one in-process hand: tests/test_tiff_writer.py
  * hands it a flat TIFF and what Python would ask the page for, and compares
- * the file it writes with image_pyramid.pyramidize_image's.
+ * the file it writes with image_pyramid.pyramidize_image's (kind "image") or
+ * segmentation_pyramid.pyramidize_segmentation_mask's (kind "labels").
  *
  * Run:  node tests/js/pyramid_probe.mjs SPEC.json
- *   SPEC: {source, out, dtype, channels, factors, tile, description, jobBytes?}
+ *   SPEC: {source, out, dtype, channels, factors, tile, description, kind?, jobBytes?}
  * Prints {bytes, tiles, geometry, timings} as JSON.
  */
 
@@ -53,7 +54,7 @@ const out = openSync(spec.out, "w");
 try {
     const result = await build({
         geometry, dtype: spec.dtype, channels: spec.channels, factors: spec.factors, tile: spec.tile,
-        description: spec.description, jobBytes: spec.jobBytes || 16 << 20,
+        description: spec.description, kind: spec.kind || "image", jobBytes: spec.jobBytes || 16 << 20,
         hands: {
             count: 1,
             block: (i, job) => bandParts(reader, job),

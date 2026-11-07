@@ -1,16 +1,17 @@
 /**
- * PlexoraPyramid -- the website's builder of a flat image's pyramid.
+ * PlexoraPyramid -- the website's builder of a flat image's or mask's pyramid.
  *
  * An image that is one big plane needs a pyramidized copy before the viewer
- * can show it (image_pyramid.pyramidize_image). On the website Python has one
- * thread and a 32-bit heap, and a copy it wrote would sit in the browser's
- * memory; so when Python's import reaches that step for a picked TIFF it asks
- * the page (providers/browser.py `page_pyramid`), and the page builds the
- * same copy with its own workers (workers/pyramidWorker.js over node/
- * pyramid.js).
+ * can show it (image_pyramid.pyramidize_image), and a flat segmentation mask a
+ * label pyramid (segmentation_pyramid.pyramidize_segmentation_mask). On the
+ * website Python has one thread and a 32-bit heap, and a copy it wrote would
+ * sit in the browser's memory; so when Python's import reaches that step for a
+ * picked TIFF it asks the page (providers/browser.py `page_pyramid`), and the
+ * page builds the same file with its own workers (workers/pyramidWorker.js
+ * over node/pyramid.js).
  *
  * Where the copy goes is the user's choice, made in the import's question
- * (views/importSample.js): beside the original, in a folder they grant
+ * for an image (views/importSample.js): beside the original, in a folder they grant
  * (`chooseFolder`, Chromium only: a page may write into a folder only when
  * the user picks it and allows editing); otherwise in Plexora's own folder
  * when the projects are kept there (services/browserStore.js: Documents/
@@ -20,12 +21,16 @@
  * folder is never written over: Python judges whether it is a finished copy of
  * this image (`exists`), and if not the copy goes to the browser.
  *
- *   "pyramid" {path, key, name, shape, dtype, factors, tile, description, browser?}
- *       -> {id}: a build started, or a finished copy of the same source found
- *   "pyramid_status" {id}
+ *   "pyramid" {path, key, name, kind, shape, dtype, factors, tile, description, browser?}
+ *       -> {id}: a build started, the same build still running (asked again by
+ *          a background job looking in, providers/browser.py), or a finished
+ *          copy of the same source found
+ *   "pyramid_status" {id, wait?}
  *       -> {state: "building"|"done"|"failed", tiles, total, path, where,
  *           existing, note, error}; the first "done" carries `mount`, which the
- *          worker mounts for Python at /derived/<key>/ before Python sees it
+ *          worker mounts for Python at /derived/<key>/ before Python sees it.
+ *          `wait` (ms): a build still running is answered when it ends or
+ *          when that much time has passed, whichever is first
  *
  * Finished copies are the page's files like the user's picks: registered
  * with PlexoraPicks under their path (so the browser node serves their tiles)
@@ -137,6 +142,14 @@
         targets.delete(path);
     }
 
+    //: A build has ended (done, or failed for good): the looks waiting on it
+    //: are answered now.
+    function settle(build) {
+        const waiting = build.waiters || [];
+        build.waiters = [];
+        waiting.forEach((wake) => wake());
+    }
+
     function run(build, message) {
         const worker = new Worker(WORKER, { type: "module" });
         const stop = () => worker.terminate();
@@ -149,6 +162,7 @@
                 Object.assign(build, { state: "done", file: data.file, timings: data.timings,
                                        ms: Math.round(performance.now() - build.began) });
                 adopt(build.path, build.file);
+                settle(build);
                 if (message.folder) {
                     transact("readwrite", (store) => store.put({
                         path: build.path, key: build.key, name: build.name, folder: message.folder,
@@ -158,6 +172,7 @@
                 stop();
                 Object.assign(build, { state: "done", file: data.file, existing: true });
                 adopt(build.path, build.file);
+                settle(build);
             } else if (data.error) {
                 stop();
                 failed(build, message, data.error);
@@ -175,6 +190,7 @@
     function failed(build, message, error) {
         if (!message.folder) {
             Object.assign(build, { state: "failed", error });
+            settle(build);
             return;
         }
         build.note = `It could not be saved in ${build.place} (${error}); it is kept in this browser instead.`;
@@ -195,18 +211,29 @@
         }
     }
 
-    async function start({ path, key, name, shape, dtype, factors, tile, description, browser = false }) {
+    async function start({ path, key, name, kind = "image", shape, dtype, factors, tile, description,
+                           browser = false }) {
+        // The same pyramid, building or built in this visit: a background job
+        // asks again each time it looks in (it gives the worker back between
+        // looks), and may ask once more after the build has ended.
+        // Not when the user has just chosen a folder for this one.
+        const same = !targets.has(path) && [...builds.values()].find((b) => b.key === key && b.name === name
+            && b.state !== "failed" && (!browser || b.where === "browser"));
+        if (same) return { value: { id: same.id } };
         const id = nextId++;
         const chosen = browser ? null : targets.get(path) || null;
         const folder = chosen || (browser ? null : await homeFolder(key));
         targets.delete(path);
-        const build = { id, key, name, state: "building", tiles: 0, total: 0, path: `${ROOT}/${key}/${name}`,
+        const build = { id, key, name, kind, state: "building", tiles: 0, total: 0, path: `${ROOT}/${key}/${name}`,
                         dir: `${ROOT}/${key}`, where: chosen ? "beside" : folder ? "plexora" : "browser",
                         place: chosen ? `“${chosen.name}”` : folder ? global.PlexoraStore.current().label
                             : "this browser",
                         file: null, error: null,
-                        note: browser ? "A file of that name beside the original is not a copy of this image; "
-                                         + "this copy is kept in this browser." : null,
+                        note: !browser ? null : kind === "labels"
+                            ? "A file of that name in Plexora's folder is not this mask's pyramid; "
+                              + "this one is kept in this browser."
+                            : "A file of that name beside the original is not a copy of this image; "
+                              + "this copy is kept in this browser.",
                         began: performance.now() };
         builds.set(id, build);
         if (!folder) {
@@ -219,14 +246,20 @@
         }
         const file = global.PlexoraPicks ? global.PlexoraPicks.fileFor(path) : null;
         if (!file) throw new Error("the page does not hold that file now");
-        run(build, { op: "build", file, key, name, shape, dtype, factors, tile, description,
+        run(build, { op: "build", file, key, name, kind, shape, dtype, factors, tile, description,
                      hands: HANDS, workers: WORKERS, folder });
         return { value: { id } };
     }
 
-    async function status({ id }) {
+    async function status({ id, wait = 0 }) {
         const build = builds.get(id);
         if (!build) return { value: { state: "failed", error: "no such build in this page" } };
+        if (build.state === "building" && wait > 0) {
+            await new Promise((resolve) => {
+                const timer = setTimeout(resolve, Math.min(Number(wait), 5000));
+                (build.waiters ||= []).push(() => { clearTimeout(timer); resolve(); });
+            });
+        }
         const value = { state: build.state, tiles: build.tiles, total: build.total, path: build.path,
                         where: build.where, existing: Boolean(build.existing), note: build.note,
                         error: build.error };
@@ -306,6 +339,6 @@
         forgetFolder,
         canWriteFolders,
         waiting: () => waiting.map((record) => ({ path: record.path, folder: record.folder.name })),
-        builds: () => [...builds.values()].map(({ file, ...rest }) => ({ ...rest, bytes: file ? file.size : null })),
+        builds: () => [...builds.values()].map(({ file, waiters, ...rest }) => ({ ...rest, bytes: file ? file.size : null })),
     });
 })(window);

@@ -2,7 +2,10 @@
  * A flat image made into Plexora's pyramid by the page: the file
  * image_pyramid.pyramidize_image writes (node/tiffWriter.js), with the levels
  * it computes (node/reduce.js), from the browser-native investigation's P7
- * (0.1-0.9x Python's time over 0.03-9.6 GB, tile-identical).
+ * (0.1-0.9x Python's time over 0.03-9.6 GB, tile-identical). `kind: "labels"`
+ * makes a flat segmentation mask's filled label pyramid instead, the file
+ * segmentation_pyramid.pyramidize_segmentation_mask writes: one plane, every
+ * level sampled from level 0 (nearest neighbour, so every cell id survives).
  *
  * Level 0 is cut into bands, per channel: a tiled source one tile row high and
  * a run of tiles across; a stripped one the full width (a strip spans every
@@ -15,8 +18,8 @@
  * (one tile row per level per channel) and the deflate backlog: while more
  * than `backlogBytes` wait, no band is read.
  *
- *   build({geometry, dtype, channels, factors, tile, description, hands, sink,
- *          progress, cancelled}) -> {bytes, tiles, timings}
+ *   build({geometry, dtype, channels, factors, tile, description, kind, hands,
+ *          sink, progress, cancelled}) -> {bytes, tiles, timings}
  *   bandParts(reader, job) -> {parts, timing}: a hand's job
  *
  * `hands` is {count, block(i, job) -> {parts, timing}, deflate(bytes) -> bytes}
@@ -39,9 +42,10 @@ export function dtypeOf({ bitsPerSample, sampleFormat }) {
 
 /**
  * A hand's job: one band of level 0 read through `reader` (node/tiffReader.js)
- * and every level's part of it, each part's own buffer (to transfer).
+ * and every level's part of it, each part's own buffer (to transfer): reduced
+ * for an image, sampled for labels (`kind`).
  */
-export async function bandParts(reader, { channel, y0, y1, x0, x1, factors }) {
+export async function bandParts(reader, { channel, y0, y1, x0, x1, factors, kind = "image" }) {
     const t0 = now();
     const { values, timing } = await reader.region({ channel, level: 0, x0, y0, x1, y1 });
     const height = y1 - y0;
@@ -49,7 +53,7 @@ export async function bandParts(reader, { channel, y0, y1, x0, x1, factors }) {
     const own = values.byteOffset === 0 && values.buffer.byteLength === values.byteLength ? values : values.slice();
     const t1 = now();
     const parts = [{ level: 0, row: y0, col: x0, height, width, buffer: own.buffer }];
-    for (const part of derive(own, height, width, factors)) {
+    for (const part of derive(own, height, width, factors, kind)) {
         parts.push({ level: part.level, row: y0 / factors[part.level], col: x0 / factors[part.level],
                      height: part.height, width: part.width, buffer: part.array.buffer });
     }
@@ -75,7 +79,7 @@ export function bands({ width, height, channels, factors, tile, bytesPer, tiled,
 }
 
 export async function build({ geometry, dtype: name, channels, factors, tile = 1024, description,
-                              hands, sink, progress = () => {}, cancelled = () => false,
+                              kind = "image", hands, sink, progress = () => {}, cancelled = () => false,
                               jobBytes = 16 << 20, backlogBytes = 128 << 20 }) {
     const t0 = now();
     const dtype = DTYPES[name];
@@ -182,7 +186,7 @@ export async function build({ geometry, dtype: name, channels, factors, tile = 1
             if (cancelled()) { failure ||= new Error("cancelled"); break; }
             const job = jobs[next++];
             try {
-                const answer = await hands.block(i, { ...job, factors });
+                const answer = await hands.block(i, { ...job, factors, kind });
                 handTime(answer.timing);
                 for (const part of answer.parts) paste(job.channel, part);
             } catch (error) {
