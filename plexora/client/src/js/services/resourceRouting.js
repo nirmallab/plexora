@@ -44,7 +44,7 @@
  *   - this page is in the desktop app's window, with a shell that grants files
  *     (`PlexoraDesktop.grantLocalFiles` and `.localFiles`);
  *   - the image or the mask is served and in a format the page's reader takes
- *     (`LOCAL_FORMATS`: OME-TIFF and TIFF).
+ *     (`LOCAL_FORMATS`: OME-TIFF, TIFF and OME-Zarr).
  *
  * It is kept apart from `routes` (`resolved.local`, `localRoute`), which are a
  * node's routes everywhere they are read; nothing is probed or stored for it.
@@ -83,11 +83,11 @@ window.PlexoraRouting = (function () {
 
     //: The third routing's name (see the header).
     const LOCAL_BROWSER = "local-browser";
-    //: The formats the page's own reader takes (services/browserNode.js,
-    //: node/tiffReader.js), as plexora/browser/node_spec.py `format_of` names
-    //: them. OME-Zarr and the slide formats are the server's until the page
-    //: has a reader for them.
-    const LOCAL_FORMATS = Object.freeze(["ome-tiff", "tiff"]);
+    //: The formats the page's own readers take (services/browserNode.js,
+    //: node/tiffReader.js and node/zarrReader.js), as plexora/browser/
+    //: node_spec.py names them. The slide formats are the server's until the
+    //: desktop's page reads them.
+    const LOCAL_FORMATS = Object.freeze(["ome-tiff", "tiff", "ome-zarr"]);
 
     /**
      * The `local-browser` routing for the server's `local` answer, or null:
@@ -334,7 +334,7 @@ window.PlexoraRouting = (function () {
     //: The browser node's script and its tag, loaded once into a page that
     //: chose `local-browser` -- nowhere else (the website's shell loads its own).
     const NODE_SCRIPT = "client/src/js/services/browserNode.js";
-    const NODE_SCRIPT_TAG = "20261107_local_open";
+    const NODE_SCRIPT_TAG = "20261107_zarr";
     let nodeScript = null;
 
     function loadNode() {
@@ -390,7 +390,11 @@ window.PlexoraRouting = (function () {
                 const granted = await desktop.grantLocalFiles(name);
                 const byPath = new Map();
                 (granted || []).forEach((file) => {
-                    if (file && file.url && file.path) byPath.set(file.path, { url: file.url, size: file.size });
+                    if (!file || !file.url || !file.path) return;
+                    // An OME-Zarr store's folder: its files are read by key
+                    // under the grant's URL (node/zarrReader.js `{base}`).
+                    byPath.set(file.path, file.store ? { store: { base: file.url } }
+                        : { url: file.url, size: file.size });
                 });
                 return (path) => byPath.get(path) || null;
             },

@@ -18,8 +18,13 @@
 //!   The page never names a path here: a URL is `<base>/<grant id>`, the id
 //!   128 random bits, so there is no path to traverse, no encoding to abuse
 //!   and no way to list anything.
-//! - Each grant is one canonical regular file, never a folder, never a network
-//!   share. Grants live in memory for this run only, at most `MAX_GRANTS`.
+//! - Each grant is one canonical regular file, never a network share -- or
+//!   one OME-Zarr store (a folder the server names as one, holding zarr
+//!   metadata), whose files are read as `<base>/<grant id>/<key>`: a key is
+//!   plain segments (`[A-Za-z0-9._-]`, never `.` or `..`), and the file it
+//!   names must resolve, after every link, to a regular file inside the
+//!   store's canonical folder. Grants live in memory for this run only, at
+//!   most `MAX_GRANTS`.
 //! - Only GET and HEAD (and the CORS preflight), only from the app's main
 //!   windows, only with the `Origin` of this launch's server, and a GET must
 //!   ask for a single byte range no longer than `MAX_RANGE`.
@@ -60,7 +65,16 @@ pub fn page_base() -> String {
 pub struct Grant {
     pub path: PathBuf,
     pub size: u64,
+    /// An OME-Zarr store's folder: its files are read by key.
+    pub store: bool,
 }
+
+/// Files whose presence makes a folder a zarr store (v2 and v3).
+const ZARR_MARKERS: [&str; 3] = [".zattrs", ".zgroup", "zarr.json"];
+
+/// The deepest key a store is read at (an NGFF plate's field's level's chunk
+/// of a five-dimensional array is about a dozen segments).
+const MAX_KEY_SEGMENTS: usize = 32;
 
 #[derive(Default)]
 struct Table {
@@ -82,33 +96,43 @@ impl Grants {
     /// local disk. Returns `(id, size)`; the same file granted again keeps its
     /// id.
     pub fn grant(&self, path: &Path) -> Result<(String, u64), String> {
-        if !path.is_absolute() || is_network(path) {
-            return Err(format!("{} is not a file on this computer's own disks", path.display()));
-        }
-        let real = std::fs::canonicalize(path).map_err(|e| format!("{}: {e}", path.display()))?;
-        // canonicalize spells a local drive \\?\C:\..., and a share \\?\UNC\...
-        if real.to_string_lossy().starts_with(r"\\?\UNC\") || is_network(&strip_verbatim(&real)) {
-            return Err(format!("{} is on the network", path.display()));
-        }
+        let real = local_canonical(path)?;
         let meta = std::fs::metadata(&real).map_err(|e| format!("{}: {e}", path.display()))?;
         if !meta.is_file() {
             return Err(format!("{} is not a file", path.display()));
         }
+        Ok((self.insert(Grant { path: real, size: meta.len(), store: false }), meta.len()))
+    }
+
+    /// Grant one OME-Zarr store: its canonical folder, on a local disk,
+    /// holding zarr metadata. Returns its id; the same store again keeps it.
+    pub fn grant_store(&self, path: &Path) -> Result<String, String> {
+        let real = local_canonical(path)?;
+        if !real.is_dir() {
+            return Err(format!("{} is not a folder", path.display()));
+        }
+        if !ZARR_MARKERS.iter().any(|marker| real.join(marker).is_file()) {
+            return Err(format!("{} is not a zarr store", path.display()));
+        }
+        Ok(self.insert(Grant { path: real, size: 0, store: true }))
+    }
+
+    fn insert(&self, grant: Grant) -> String {
         let mut table = self.0.lock().unwrap();
-        if let Some((id, _)) = table.by_id.iter().find(|(_, grant)| grant.path == real) {
+        if let Some((id, _)) = table.by_id.iter().find(|(_, held)| held.path == grant.path && held.store == grant.store) {
             let id = id.clone();
-            table.by_id.insert(id.clone(), Grant { path: real, size: meta.len() });
-            return Ok((id, meta.len()));
+            table.by_id.insert(id.clone(), grant);
+            return id;
         }
         let id = uuid::Uuid::new_v4().simple().to_string();
-        table.by_id.insert(id.clone(), Grant { path: real, size: meta.len() });
+        table.by_id.insert(id.clone(), grant);
         table.order.push_back(id.clone());
         while table.order.len() > MAX_GRANTS {
             if let Some(oldest) = table.order.pop_front() {
                 table.by_id.remove(&oldest);
             }
         }
-        Ok((id, meta.len()))
+        id
     }
 
     pub fn lookup(&self, id: &str) -> Option<Grant> {
@@ -119,6 +143,39 @@ impl Grants {
     pub fn len(&self) -> usize {
         self.0.lock().unwrap().by_id.len()
     }
+}
+
+/// `path`'s canonical form, when it is on this computer's own disks.
+fn local_canonical(path: &Path) -> Result<PathBuf, String> {
+    if !path.is_absolute() || is_network(path) {
+        return Err(format!("{} is not a file on this computer's own disks", path.display()));
+    }
+    let real = std::fs::canonicalize(path).map_err(|e| format!("{}: {e}", path.display()))?;
+    // canonicalize spells a local drive \\?\C:\..., and a share \\?\UNC\...
+    if real.to_string_lossy().starts_with(r"\\?\UNC\") || is_network(&strip_verbatim(&real)) {
+        return Err(format!("{} is on the network", path.display()));
+    }
+    Ok(real)
+}
+
+/// The file a store's `key` names: plain segments only, resolved (every link
+/// followed) to a regular file inside the store's canonical folder; None for
+/// anything else.
+pub fn store_file(root: &Path, key: &str) -> Option<PathBuf> {
+    let segments: Vec<&str> = key.split('/').collect();
+    if segments.is_empty() || segments.len() > MAX_KEY_SEGMENTS {
+        return None;
+    }
+    let plain = |segment: &&str| {
+        !segment.is_empty() && segment.len() <= 255 && *segment != "." && *segment != ".."
+            && segment.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'.' || b == b'_' || b == b'-')
+    };
+    if !segments.iter().all(plain) {
+        return None;
+    }
+    let joined = segments.iter().fold(root.to_path_buf(), |path, segment| path.join(segment));
+    let real = std::fs::canonicalize(&joined).ok()?;
+    (real.starts_with(root) && real.is_file()).then_some(real)
 }
 
 /// `\\?\C:\x` as `C:\x`, so the network test sees the path's own form.
@@ -248,15 +305,25 @@ pub fn answer(grants: &Grants, request: &Request<Vec<u8>>, server_origin: Option
     if method != "GET" && method != "HEAD" {
         return refuse(StatusCode::METHOD_NOT_ALLOWED, &echo, "files are only read");
     }
-    let id = request.uri().path().trim_matches('/');
+    let asked = request.uri().path().trim_matches('/');
+    let (id, key) = asked.split_once('/').unwrap_or((asked, ""));
     let Some(grant) = (!id.is_empty() && id.len() <= 64 && id.bytes().all(|b| b.is_ascii_hexdigit()))
         .then(|| grants.lookup(id))
         .flatten()
     else {
         return refuse(StatusCode::NOT_FOUND, &echo, "no such file was granted");
     };
+    // A store's file by its key; a file's grant takes no key.
+    let path = match (grant.store, key.is_empty()) {
+        (false, true) => grant.path.clone(),
+        (true, false) => match store_file(&grant.path, key) {
+            Some(path) => path,
+            None => return refuse(StatusCode::NOT_FOUND, &echo, "no such file in the store"),
+        },
+        _ => return refuse(StatusCode::NOT_FOUND, &echo, "no such file was granted"),
+    };
     // The size now, not at the grant: a file rewritten in place is read as it is.
-    let size = match std::fs::metadata(&grant.path) {
+    let size = match std::fs::metadata(&path) {
         Ok(meta) if meta.is_file() => meta.len(),
         _ => return refuse(StatusCode::NOT_FOUND, &echo, "the file has gone"),
     };
@@ -288,7 +355,7 @@ pub fn answer(grants: &Grants, request: &Request<Vec<u8>>, server_origin: Option
             )
         }
     };
-    match read_range(&grant.path, start, end) {
+    match read_range(&path, start, end) {
         Ok(bytes) => {
             let mut extra = vec![octets, (header::CONTENT_LENGTH, bytes.len().to_string())];
             if status == StatusCode::PARTIAL_CONTENT {
@@ -420,6 +487,75 @@ mod tests {
         assert!(grants.grant(Path::new("//fileserver/lab/image.tif")).is_err());
         assert!(grants.grant(&dir.join("missing.tif")).is_err());
         assert_eq!(grants.len(), 0);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn a_granted_store_is_read_by_key_inside_it_and_nowhere_else() {
+        let dir = scratch("store");
+        let store = dir.join("image.ome.zarr");
+        std::fs::create_dir_all(store.join("0").join("c").join("0")).unwrap();
+        std::fs::write(store.join("zarr.json"), b"{}").unwrap();
+        std::fs::write(store.join("0").join("c").join("0").join("1"), (0u8..100).collect::<Vec<_>>()).unwrap();
+        std::fs::write(dir.join("secret.txt"), b"key").unwrap();
+        let grants = Grants::default();
+        let id = grants.grant_store(&store).unwrap();
+        assert_eq!(grants.grant_store(&store.join(".")).unwrap(), id, "the same store keeps its id");
+
+        let read = |key: &str, range: Option<&str>| {
+            answer(&grants, &get(&format!("{id}/{key}"), range, Some(SERVER)), Some(SERVER), "main")
+        };
+        let whole = read("zarr.json", None);
+        assert_eq!(whole.status(), StatusCode::OK);
+        assert_eq!(whole.body(), b"{}");
+        let chunk = read("0/c/0/1", Some("bytes=-10"));
+        assert_eq!(chunk.status(), StatusCode::PARTIAL_CONTENT);
+        assert_eq!(chunk.body(), &(90u8..100).collect::<Vec<_>>());
+        // A chunk never written is a 404, as a store says "fill value".
+        assert_eq!(read("0/c/0/2", None).status(), StatusCode::NOT_FOUND);
+        // Nothing outside the store, however the key is spelled.
+        for key in ["../secret.txt", "..", "0/../../secret.txt", "./zarr.json", "0//c", "%2e%2e/secret.txt",
+                    "..%2Fsecret.txt", "C:/Windows/win.ini", "0%5C..%5C..%5Csecret.txt", "0"] {
+            assert_eq!(read(key, None).status(), StatusCode::NOT_FOUND, "{key}");
+        }
+        // The store itself is no file, and its id alone reads nothing.
+        let bare = answer(&grants, &get(&id, None, Some(SERVER)), Some(SERVER), "main");
+        assert_eq!(bare.status(), StatusCode::NOT_FOUND);
+        // From the wrong page, nothing.
+        let stranger = answer(&grants, &get(&format!("{id}/zarr.json"), None, Some("http://127.0.0.1:9999")),
+                              Some(SERVER), "main");
+        assert_eq!(stranger.status(), StatusCode::FORBIDDEN);
+        // A link inside the store pointing out of it is not followed out.
+        #[cfg(unix)]
+        {
+            std::os::unix::fs::symlink(dir.join("secret.txt"), store.join("leak")).unwrap();
+            assert_eq!(read("leak", None).status(), StatusCode::NOT_FOUND);
+        }
+        #[cfg(windows)]
+        if std::os::windows::fs::symlink_file(dir.join("secret.txt"), store.join("leak")).is_ok() {
+            assert_eq!(read("leak", None).status(), StatusCode::NOT_FOUND);
+        }
+        // A file's grant takes no key.
+        let (file, _) = grants.grant(&dir.join("secret.txt")).unwrap();
+        let keyed = answer(&grants, &get(&format!("{file}/zarr.json"), None, Some(SERVER)), Some(SERVER), "main");
+        assert_eq!(keyed.status(), StatusCode::NOT_FOUND);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn only_a_local_folder_holding_zarr_metadata_is_granted_as_a_store() {
+        let dir = scratch("stores");
+        let grants = Grants::default();
+        assert!(grants.grant_store(&dir).is_err(), "a folder without zarr metadata");
+        std::fs::write(dir.join("image.tif"), b"x").unwrap();
+        assert!(grants.grant_store(&dir.join("image.tif")).is_err(), "a file");
+        assert!(grants.grant_store(Path::new(r"\\fileserver\lab\image.zarr")).is_err());
+        assert!(grants.grant_store(Path::new("relative.zarr")).is_err());
+        let v2 = dir.join("v2.zarr");
+        std::fs::create_dir_all(&v2).unwrap();
+        std::fs::write(v2.join(".zattrs"), b"{}").unwrap();
+        assert!(grants.grant_store(&v2).is_ok());
+        assert!(store_file(&std::fs::canonicalize(&v2).unwrap(), ".zattrs").is_some());
         std::fs::remove_dir_all(&dir).unwrap();
     }
 

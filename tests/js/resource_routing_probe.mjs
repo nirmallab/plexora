@@ -303,12 +303,19 @@ function assertPlain(resolved, calls, why) {
 }
 
 {
-    // On, in the app, but nothing the page's reader takes: OME-Zarr, a
-    // refused image and no mask.
+    // On, in the app, but nothing the page's reader takes: a slide format,
+    // a refused image and no mask.
+    const slide = load({ routes: {}, desktop: desktopShell(), local: {
+        ...LOCAL_ON, format: "svs", path: "C:\\data\\tonsil.svs",
+        labels: { served: false, reason: "no mask" } } });
+    assertPlain(await slide.routing.load("tonsil"), slide.calls, "a slide, no mask");
+    // An OME-Zarr store the server serves is the page's to read (node/zarrReader.js).
     const zarr = load({ routes: {}, desktop: desktopShell(), local: {
         ...LOCAL_ON, format: "ome-zarr", path: "C:\\data\\tonsil.zarr",
         labels: { served: false, reason: "no mask" } } });
-    assertPlain(await zarr.routing.load("tonsil"), zarr.calls, "an OME-Zarr image, no mask");
+    const zarrRoute = zarr.routing.localRoute(await zarr.routing.load("tonsil"));
+    assert.ok(zarrRoute && zarrRoute.image === true && zarrRoute.labels === false, "an OME-Zarr image");
+    assert.equal(zarr.calls.granted.length, 0, "chosen, nothing granted yet");
     const refused = load({ routes: {}, desktop: desktopShell(), local: {
         ...LOCAL_ON, served: false, reason: "not a TIFF file",
         labels: { served: false, reason: "no mask" } } });
@@ -372,6 +379,21 @@ function assertPlain(resolved, calls, why) {
     assert.equal(files(LOCAL_ON.labels.path), null, "a file the shell refused is not read");
     assert.equal(files("C:\\Windows\\win.ini"), null, "nor anything else");
     await assert.rejects(routing.attachLocal("tonsil", null), /not a local-browser/);
+}
+
+{
+    // An OME-Zarr store the shell grants as one (`store`): read by key under
+    // the grant's URL, never as one file.
+    const used = [];
+    const node = { decoded: () => null, use: (source) => used.push(source), project: () => {} };
+    const local = { ...LOCAL_ON, format: "ome-zarr", path: "C:\\data\\tonsil.ome.zarr",
+                    labels: { served: false, reason: "no mask" } };
+    const granted = [{ kind: "image", path: local.path, url: "http://plexora-file.localhost/cd",
+                       size: null, store: true }];
+    const { routing } = load({ routes: {}, local, desktop: desktopShell(granted), node });
+    await routing.attachLocal("tonsil", routing.localRoute(await routing.load("tonsil")));
+    const files = await used[0].files("tonsil", await used[0].spec("tonsil"));
+    assert.equal(JSON.stringify(files(local.path)), JSON.stringify({ store: { base: "http://plexora-file.localhost/cd" } }));
 }
 
 console.log("resource routing probe OK");
