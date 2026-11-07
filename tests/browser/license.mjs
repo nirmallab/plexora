@@ -37,10 +37,10 @@ const shoot = async (page, name) => {
     await page.screenshot({ path: path.join(shots, `licence-${name}.png`) });
 };
 
-function startMock() {
+function startMock(home) {
     return new Promise((resolve, reject) => {
-        const child = spawn(PYTHON, [path.join(REPO, "tests", "browser", "mock_platform.py"), "--bind-version", "2"],
-                            { cwd: REPO, stdio: ["ignore", "pipe", "inherit"] });
+        const child = spawn(PYTHON, [path.join(REPO, "tests", "browser", "mock_platform.py"), "--bind-version", "2",
+                                     "--home", home], { cwd: REPO, stdio: ["ignore", "pipe", "inherit"] });
         let buffer = "";
         child.stdout.on("data", (chunk) => {
             buffer += chunk;
@@ -59,11 +59,11 @@ const check = (name, ok, detail = {}) => {
     console.error(`${ok ? "ok  " : "FAIL"} ${name}`);
 };
 
-const mock = await startMock();
-const api = `http://127.0.0.1:${mock.port}`;
-const mockRequests = async () => (await (await fetch(`${api}/_requests`)).json()).requests;
 const site = mkdtempSync(path.join(tmpdir(), "pxlic-site-"));
 const data = mkdtempSync(path.join(tmpdir(), "pxlic-data-"));
+const mock = await startMock(path.join(data, "mock-platform"));
+const api = `http://127.0.0.1:${mock.port}`;
+const mockRequests = async () => (await (await fetch(`${api}/_requests`)).json()).requests;
 execFileSync(PYTHON, ["-m", "plexora.client.static_build", "--out", site, "--licence-api", `${api}/v1`,
                       "--licence-test-key", `${mock.kid}=${mock.public_key}`],
              { cwd: REPO, env: { ...process.env, PYTHONPATH: REPO, PLEXORA_DATA_PATH: data },

@@ -1,6 +1,6 @@
 """A stand-in BioCognia platform for the website's browser tests.
 
-    python tests/browser/mock_platform.py [--port 0] [--bind-version 2] [--pending 1]
+    python tests/browser/mock_platform.py [--port 0] [--bind-version 2] [--pending 1] [--home DIR]
 
 The product API the website's page calls (`/v1/activate/start`,
 `/activate/poll`, `/activate`, `/refresh`, `/deactivate`, `/ai/token`,
@@ -50,10 +50,12 @@ def main(argv=None) -> int:
     parser.add_argument("--port", type=int, default=0)
     parser.add_argument("--bind-version", type=int, default=2, choices=(1, 2))
     parser.add_argument("--pending", type=int, default=1, help="polls answered pending before approval")
+    parser.add_argument("--home", default=None,
+                        help="a folder of the caller's for the issuer's own files (it removes it); else a temp one")
     args = parser.parse_args(argv)
     # The issuer makes a device secret of its own when it builds a payload:
     # somewhere of this process's own, never the user's licence directory.
-    os.environ["BIOCOGNIA_DIR"] = tempfile.mkdtemp(prefix="mock-platform-")
+    os.environ["BIOCOGNIA_DIR"] = args.home or tempfile.mkdtemp(prefix="mock-platform-")
     from biocognia.testing import FakeService, Issuer
 
     issuer = Issuer(_Patch, PRODUCT)
