@@ -31,6 +31,7 @@ The Pyodide release (~320 MB) is downloaded once into
 from __future__ import annotations
 
 import argparse
+import fnmatch
 import hashlib
 import json
 import os
@@ -201,6 +202,17 @@ for source in root.rglob("*.py"):
                        invalidation_mode=py_compile.PycInvalidationMode.UNCHECKED_HASH)
 '''
 
+#: Sources a package reads as files rather than imports, kept beside their
+#: bytecode: OpenCV's loader (cv2/__init__.py) execs cv2/config.py and
+#: cv2/config-3.py by path and refuses to import without them ("OpenCV
+#: loader: missing configuration file"), which took magic select's
+#: preprocessing, and every QC check that uses cv2, off the website.
+KEEP_SOURCES = ("cv2/config.py", "cv2/config-*.py")
+
+
+def kept_source(relative: str) -> bool:
+    return any(fnmatch.fnmatch(relative, pattern) for pattern in KEEP_SOURCES)
+
 
 def precompile(wheel: Path, out: Path, python314: str | None, stored: bool) -> None:
     """`wheel` into `out`: modules as sourceless bytecode when `python314`
@@ -217,7 +229,7 @@ def precompile(wheel: Path, out: Path, python314: str | None, stored: bool) -> N
             src.extractall(root)
         subprocess.run([python314, "-I", "-c", COMPILE, str(root), SITE], check=True)
         for source in root.rglob("*.py"):
-            if source.with_suffix(".pyc").exists():
+            if source.with_suffix(".pyc").exists() and not kept_source(source.relative_to(root).as_posix()):
                 source.unlink()
         with zipfile.ZipFile(out, "w", compression) as dst:
             for path in sorted(root.rglob("*")):

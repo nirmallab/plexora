@@ -74,6 +74,22 @@ def test_sizes_count_what_the_bucket_stores_and_the_listing_leaves_out_the_manif
     assert listed["pyodide/numpy.whl.br"] == {"bytes": 30, "sha256": hashlib.sha256(b"x" * 30).hexdigest()}
 
 
+def test_precompiling_keeps_the_sources_a_package_reads_by_path(tmp_path):
+    """OpenCV's loader execs cv2/config.py and cv2/config-3.py: compiled
+    away, `import cv2` fails on the website."""
+    import zipfile
+
+    wheel = tmp_path / "opencv_python-4-cp314-cp314-any.whl"
+    with zipfile.ZipFile(wheel, "w") as handle:
+        for name in ("cv2/__init__.py", "cv2/config.py", "cv2/config-3.py", "cv2/version.py"):
+            handle.writestr(name, "x = 1\n")
+    out = tmp_path / "out.whl"
+    build.precompile(wheel, out, sys.executable, stored=True)
+    names = set(zipfile.ZipFile(out).namelist())
+    assert {"cv2/config.py", "cv2/config-3.py"} <= names
+    assert "cv2/__init__.py" not in names and "cv2/__init__.pyc" in names and "cv2/version.pyc" in names
+
+
 def test_a_pyodide_release_that_is_not_the_pinned_one_is_never_unpacked(tmp_path, monkeypatch):
     monkeypatch.setattr(build, "CACHE", tmp_path)
     archive = tmp_path / f"pyodide-{build.PYODIDE}.tar.bz2"
