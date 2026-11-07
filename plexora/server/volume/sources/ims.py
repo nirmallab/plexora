@@ -148,7 +148,14 @@ def _open_file(path, **options):
     `RemoteFile` h5py reads when `path` is a web address, else None; close
     the file first and the stream after it (`_close_file`)."""
     import h5py
-    import hdf5plugin  # noqa: F401 -- registers LZ4 et al. (Imaris 10 writes LZ4)
+    try:
+        import hdf5plugin  # noqa: F401 -- registers LZ4 et al. (Imaris 10 writes LZ4)
+    except ImportError:
+        # The website's Python has none (it is C, with no WebAssembly build),
+        # nor may a desktop install: LZ4 and zstd chunks are then decoded
+        # here, from the bytes h5py hands over whatever the filter (WITHOUT
+        # HDF5PLUGIN, below).
+        pass
 
     if not is_remote_ims(path):
         return h5py.File(str(path), "r", **options), None
@@ -494,23 +501,14 @@ class ImsVolumeSource(VolumeSource):
         dtype = layout["dtype"]
         dataset = layout["dataset"]
         filters = layout["filters"]
-        codec = next((f for f in filters if f != _SHUFFLE), None)
-        keys = [(self.cache_id, int(level), int(t), int(channel), zc, yc, xc)
+        keys =[(self.cache_id, int(level), int(t), int(channel), zc, yc, xc)
                 for zc in chunk_cache.chunk_ranges(z0, z1 + 1, cz)
                 for yc in chunk_cache.chunk_ranges(rows.start, rows.stop, cy)
                 for xc in chunk_cache.chunk_ranges(cols.start, cols.stop, cx)]
         chunk_bytes = cz * cy * cx * dtype.itemsize
 
         def decode(raw, mask):
-            if raw is None:
-                return np.full((cz, cy, cx), layout["fill"] or 0, dtype=dtype)
-            data = raw
-            # A set bit in the mask is a filter this chunk skipped.
-            if codec is not None and not (mask >> filters.index(codec)) & 1:
-                data = _decoder(codec)(data)
-            if _SHUFFLE in filters and dtype.itemsize > 1 and not (mask >> filters.index(_SHUFFLE)) & 1:
-                data = np.frombuffer(data, np.uint8).reshape(dtype.itemsize, -1).T.tobytes()
-            return np.frombuffer(data, dtype=dtype, count=cz * cy * cx).reshape(cz, cy, cx)
+            return _decode_chunk(raw, mask, filters, dtype, (cz, cy, cx), layout["fill"])
 
         def origin_of(key):
             _, _, _, _, zc, yc, xc = key
@@ -682,21 +680,107 @@ class ImsVolumeSource(VolumeSource):
         _close_file(self._file, self._stream)
 
 
-#: HDF5 filter ids: byte shuffle, deflate, and LZ4 -- the registered id of
-#: hdf5plugin's LZ4 filter, which Imaris 10 can write.
-_SHUFFLE, _DEFLATE, _LZ4 = 2, 1, 32004
+# -- WITHOUT HDF5PLUGIN ----------------------------------------------------------
+#
+# LZ4 (filter 32004, which Imaris 10 can write) and zstd (32015) are not
+# HDF5's own filters: h5py decodes them only once hdf5plugin has registered
+# them. The website's Python has no hdf5plugin, and a desktop install may
+# lack it. Their chunks are readable all the same: h5py hands over a chunk's
+# stored bytes whatever its filters (`read_direct_chunk`), and they are
+# decoded here -- LZ4 through imagecodecs' `lz4h5_decode` (on the website,
+# imagecodecs_shim's, built on the `lz4` package), zstd through
+# `zstd_decode`, the byte shuffle in numpy. `_read_chunks` decodes LZ4 this
+# way on every install already; zstd only where h5py cannot (`_zstd_here`),
+# so a desktop with hdf5plugin reads zstd as it always did. What reads
+# through h5py itself -- an import's look at whether a channel holds ids,
+# a mask's planes -- goes through `_region`, which does the same where h5py
+# cannot decode the dataset's filters.
+
+#: HDF5 filter ids: byte shuffle, deflate, and hdf5plugin's registered ids of
+#: LZ4 and zstd.
+_SHUFFLE, _DEFLATE, _LZ4, _ZSTD = 2, 1, 32004, 32015
 
 
 def _readable(filters) -> bool:
     """Whether `_read_chunks` decodes a dataset with this filter pipeline
-    itself: nothing, shuffle, a codec, or shuffle then a codec."""
-    codecs = [_DEFLATE] + ([_LZ4] if _lz4_available() else [])
-    return filters in ([], [_SHUFFLE], *([c] for c in codecs), *([_SHUFFLE, c] for c in codecs))
+    itself: nothing, shuffle, a codec, or shuffle then a codec. A codec's
+    decoder is looked for only when a dataset uses it (on the website, the
+    LZ4 decoder's package arrives with the first file that needs it)."""
+    rest = list(filters[1:] if filters and filters[0] == _SHUFFLE else filters)
+    if not rest:
+        return True
+    if len(rest) != 1:
+        return False
+    codec = rest[0]
+    return (codec == _DEFLATE or (codec == _LZ4 and _lz4_available())
+            or (codec == _ZSTD and _zstd_here()))
 
 
 def _decoder(codec):
     """The function that decompresses a chunk written through `codec`."""
-    return _inflate if codec == _DEFLATE else _unlz4
+    if codec == _DEFLATE:
+        return _inflate
+    return _unzstd if codec == _ZSTD else _unlz4
+
+
+def _decode_chunk(raw, mask, filters, dtype, shape, fill) -> np.ndarray:
+    """One chunk's stored bytes (`read_direct_chunk`) as its voxels: the
+    dataset's codec undone, then its shuffle -- each unless the chunk's filter
+    mask says it was skipped. `raw` None is a chunk never written: `fill`."""
+    count = int(np.prod(shape))
+    if raw is None:
+        return np.full(shape, fill or 0, dtype=dtype)
+    data = raw
+    codec = next((f for f in filters if f != _SHUFFLE), None)
+    # A set bit in the mask is a filter this chunk skipped.
+    if codec is not None and not (mask >> filters.index(codec)) & 1:
+        data = _decoder(codec)(data)
+    if _SHUFFLE in filters and dtype.itemsize > 1 and not (mask >> filters.index(_SHUFFLE)) & 1:
+        data = np.frombuffer(data, np.uint8).reshape(dtype.itemsize, -1).T.tobytes()
+    return np.frombuffer(data, dtype=dtype, count=count).reshape(shape)
+
+
+def _filters(dataset) -> list:
+    plist = dataset.id.get_create_plist()
+    return [plist.get_filter(i)[0] for i in range(plist.get_nfilters())]
+
+
+def _h5py_decodes(filters) -> bool:
+    """Whether HDF5 here has every one of `filters` (hdf5plugin registers
+    LZ4 and zstd; without it they are missing)."""
+    import h5py
+
+    return all(h5py.h5z.filter_avail(f) for f in filters)
+
+
+def _region(dataset, z0: int, z1: int, rows: slice, cols: slice) -> np.ndarray:
+    """Planes z0..z1 (inclusive) of `[rows, cols]` of a chunked dataset:
+    h5py's own read where it decodes the dataset's filters, else chunk by
+    chunk here when `_readable` (WITHOUT HDF5PLUGIN). Anything else is h5py's
+    read, which says what it cannot decode."""
+    try:
+        filters = _filters(dataset)
+        chunks = dataset.chunks
+    except Exception:  # noqa: BLE001 -- h5py's own read decides
+        filters, chunks = [], None
+    if (not chunks or len(chunks) != 3 or _h5py_decodes(filters) or not _readable(filters)):
+        return np.asarray(dataset[int(z0):int(z1) + 1, rows, cols])
+    cz, cy, cx = (int(c) for c in chunks)
+    dtype = np.dtype(dataset.dtype)
+    fill = dataset.fillvalue
+    rows = _clip(rows, dataset.shape[1])
+    cols = _clip(cols, dataset.shape[2])
+    decoded = {}
+    for zc in chunk_cache.chunk_ranges(int(z0), int(z1) + 1, cz):
+        for yc in chunk_cache.chunk_ranges(rows.start, rows.stop, cy):
+            for xc in chunk_cache.chunk_ranges(cols.start, cols.stop, cx):
+                try:
+                    mask, raw = dataset.id.read_direct_chunk((zc * cz, yc * cy, xc * cx))
+                except Exception:  # noqa: BLE001 -- a chunk never written
+                    mask, raw = 0, None
+                decoded[(zc, yc, xc)] = _decode_chunk(raw, mask, filters, dtype, (cz, cy, cx), fill)
+    return chunk_cache.assemble(((int(z0), int(z1) + 1), (rows.start, rows.stop),
+                                 (cols.start, cols.stop)), (cz, cy, cx), decoded, dtype)
 
 
 @functools.cache
@@ -709,6 +793,26 @@ def _lz4_available() -> bool:
         return bool(imagecodecs.LZ4H5.available)
     except (ImportError, AttributeError):
         return False
+
+
+def _zstd_here() -> bool:
+    """Whether a zstd dataset's chunks are decoded here: only where HDF5 has
+    no zstd filter (no hdf5plugin) and imagecodecs decodes zstd."""
+    if _h5py_decodes([_ZSTD]):
+        return False
+    try:
+        import imagecodecs
+
+        return bool(imagecodecs.ZSTD.available)
+    except (ImportError, AttributeError):
+        return False
+
+
+def _unzstd(raw: bytes) -> bytes:
+    """A chunk through hdf5plugin's zstd filter, decompressed: one zstd frame."""
+    import imagecodecs
+
+    return imagecodecs.zstd_decode(raw)
 
 
 def _unlz4(raw: bytes) -> bytes:
@@ -933,7 +1037,7 @@ def _window_data(handle, channel: int):
 def _window(handle, channel: int, levels) -> np.ndarray:
     """The middle plane's central 512 x 512 of `channel`, frame 0, level 0."""
     z, rows, cols = _window_of(levels)
-    return np.asarray(_window_data(handle, channel)[z, rows, cols])
+    return _region(_window_data(handle, channel), z, z, rows, cols)[0]
 
 
 def looks_like_labels(window: np.ndarray) -> bool:
@@ -1098,7 +1202,7 @@ class ImsLabels:
         if not whole:
             data = self._data(t)
             self._warm(data, z, z, rows, cols)
-            return self._ids(np.asarray(data[int(z), rows, cols]))
+            return self._ids(_region(data, z, z, rows, cols)[0])
         data = self._data(t)
         depth = int((data.chunks or data.shape)[0])
         if depth > 1 and depth * self.height * self.width * data.dtype.itemsize <= SLAB_LIMIT:
@@ -1106,11 +1210,11 @@ class ImsLabels:
             if self._slab is None or self._slab[:2] != (int(t), z0):
                 z1 = min(self.depth, z0 + depth)
                 self._warm(data, z0, z1 - 1, rows, cols)
-                block = np.asarray(data[z0:z1, :self.height, :self.width])
+                block = _region(data, z0, z1 - 1, rows, cols)
                 self._slab = (int(t), z0, block)
             return self._ids(self._slab[2][int(z) - z0])
         self._warm(data, z, z, rows, cols)
-        return self._ids(np.asarray(data[int(z), :self.height, :self.width]))
+        return self._ids(_region(data, z, z, rows, cols)[0])
 
     def __getitem__(self, index):
         if self.frames > 1:

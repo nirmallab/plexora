@@ -213,13 +213,16 @@ def test_a_large_file_starts_one_builder_once(tmp_path, spawned, monkeypatch):
                                                      os.path.abspath(path)]
 
 
-@pytest.mark.parametrize("why", ["switched off", "built", "failed", "being built"])
+@pytest.mark.parametrize("why", ["switched off", "built", "failed", "being built", "a web page"])
 def test_no_builder_when(tmp_path, spawned, monkeypatch, why):
     monkeypatch.setattr(ims_index, "MIN_BYTES", 0)
     path, _ = vf.write_ims(tmp_path / "s.ims", channels=1)
     ident = ims_index.identity(path)
     if why == "switched off":
         monkeypatch.setenv(ims_index.ENV_SWITCH, "0")
+    elif why == "a web page":
+        # The website's Python (Pyodide) starts no process.
+        monkeypatch.setattr(ims_index.sys, "platform", "emscripten")
     elif why == "built":
         ims_index.build(path, workers=1)
     elif why == "failed":

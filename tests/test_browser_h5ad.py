@@ -91,8 +91,10 @@ def test_every_check_passes(run):
 
 
 def test_the_h5ad_stage_arrives_with_the_table_not_at_boot(run):
-    assert "h5ad" not in run["stagesAtBoot"]
-    assert [stage["stage"] for stage in run["stages"]] == ["h5ad"]
+    assert not {"hdf5", "h5ad"} & set(run["stagesAtBoot"])
+    # h5py first (the import's look inside the file: `hdf5`, which an .ims
+    # needs alone), then pandas and anndata (`h5ad`, h5py already in).
+    assert [stage["stage"] for stage in run["stages"]] == ["hdf5", "h5ad"]
 
 
 def test_the_table_is_read_where_it_was_picked(run):
