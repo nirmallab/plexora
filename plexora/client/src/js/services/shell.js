@@ -318,6 +318,8 @@
 
     //: The desktop app's download page (services/desktopHandoff.js's too).
     const DOWNLOAD = "https://github.com/nirmallab/plexora/releases/latest";
+    const UPDATE_CHROME = "https://support.google.com/chrome/answer/95414";
+    const UPDATE_EDGE = "https://support.microsoft.com/microsoft-edge/settings-update";
 
     //: The site's switches (plan Phase 5): `flags.json` on the assets bucket,
     //: cached five minutes (`tools/browser_build/publish.py flags`). `viewer`
@@ -352,16 +354,20 @@
 
     //: The loader's last word when the site does not start: one line and one
     //: button. Python never loads.
-    function stop(text, label, act) {
+    //: The loader's last word: `text`, and its buttons on one row (`more`:
+    //: [{label, act}] after the primary one).
+    function stop(text, label, act, more = []) {
         status(text);
         const row = doc.createElement("div");
         row.className = "plexora-boot-actions";
-        const button = doc.createElement("button");
-        button.type = "button";
-        button.className = "is-primary";
-        button.textContent = label;
-        button.addEventListener("click", act);
-        row.appendChild(button);
+        [{ label, act, primary: true }, ...more].forEach((action) => {
+            const button = doc.createElement("button");
+            button.type = "button";
+            if (action.primary) button.className = "is-primary";
+            button.textContent = action.label;
+            button.addEventListener("click", action.act);
+            row.appendChild(button);
+        });
         doc.getElementById("plexora-boot").appendChild(row);
     }
 
@@ -389,6 +395,15 @@
         const py = new URL(shell.py, new URL(at("/"), global.location.origin)).href;
         await script(at("/client/src/js/services/backendRoutes.js"));
         await script(at("/client/src/js/services/pythonClient.js"));
+        // A Chrome or Edge too old to run the website's Python (no JSPI)
+        // crashes or hangs trying: asked to update, before anything starts.
+        const old = global.PlexoraPython.unsupported();
+        if (old) {
+            return stop(`Update ${old.browser} to use Plexora here (version ${old.version}; it needs 137 or later).`,
+                        `How to update ${old.browser}`,
+                        () => global.open(old.browser === "Edge" ? UPDATE_EDGE : UPDATE_CHROME, "_blank", "noopener"),
+                        [{ label: "Get the desktop app", act: () => global.open(DOWNLOAD, "_blank", "noopener") }]);
+        }
         await script(at("/client/src/js/services/backend.js"));
         await script(at("/client/src/js/services/pickedFiles.js"));
         // Saving into a picked file Python wrote (Settings > Data, off by default).

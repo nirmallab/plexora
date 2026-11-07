@@ -25,4 +25,5 @@ the device's memory).
 
 | Record | Browser | Platform | Cores / GB | Download MB/s | Python ready s | Pyramid MB/s | Flat limit GB (estimate, ×) | Wasm GB | Tables | WebGPU | |
 |---|---|---|---|---|---|---|---|---|---|---|---|
+| 2026-11-07-mac-chrome131 | Google Chrome 131 | macOS | 10 / 8+ | 19.9 | — | 180 | 39 (28, ×1.39) | 4.3 | 40 M | yes | not every step |
 | 2026-11-07-reference-i9-chrome-cdn | Google Chrome 156 | Windows | 24 / 8+ | 19.6 | 6.5 | 187 | 40 (42, ×0.96) | 4.3 | 40 M | yes |  |

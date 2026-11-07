@@ -44,6 +44,8 @@
  *   flush()                 the project store written back now
  *   useStore(folder)        the project store moved to a granted folder
  *   job(id) / cancel(id) / on(kind, fn)
+ *   unsupported(nav?)       {browser, version} when this browser cannot run the
+ *                           website's Python, else null (start() is not to be called)
  *   saveWith(fn)            who saves a picked file Python wrote (services/
  *                           sourceWrites.js): `fn({source, file})` -> a promise;
  *                           a request's answer waits for the saves it started
@@ -533,6 +535,23 @@
         return true;
     }
 
+    //: Chrome or Edge older than 137 has no JSPI, and the website's Python
+    //: without it crashed Chrome 131 on macOS ("Error code: 5") and never
+    //: started on Windows, where every compiled module validates: such a
+    //: browser is asked to update instead. Firefox and Safari without JSPI
+    //: take the other path (shared memory, every stage at boot), which runs.
+    //: {browser, version} for a browser that cannot, else null.
+    function unsupported(nav = global.navigator || {}) {
+        if (typeof WebAssembly === "object" && typeof WebAssembly.Suspending === "function") return null;
+        const brands = (nav.userAgentData && nav.userAgentData.brands) || [];
+        const ua = String(nav.userAgent || "");
+        const chromium = brands.find((brand) => /^Chromium$/i.test(brand.brand));
+        const version = chromium ? Number(chromium.version) : Number((ua.match(/\bChrom(?:e|ium)\/(\d+)/) || [])[1]);
+        if (!version) return null;
+        const edge = brands.some((brand) => /Edge/i.test(brand.brand)) || /\bEdg\//.test(ua);
+        return { browser: edge ? "Edge" : "Chrome", version };
+    }
+
     function on(kind, fn) {
         if (!listeners.has(kind)) listeners.set(kind, new Set());
         listeners.get(kind).add(fn);
@@ -542,6 +561,7 @@
     global.PlexoraPython = Object.freeze({
         start,
         ready,
+        unsupported,
         fetch,
         mount: (dir, files) => ready.then(() => call("mount", { dir, files })),
         mountTree: (dir, blobs) => ready.then(() => call("mountTree", { dir, blobs })),

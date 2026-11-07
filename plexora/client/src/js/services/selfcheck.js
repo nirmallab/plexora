@@ -168,6 +168,12 @@
 
     async function python(shell) {
         if (!global.PlexoraPython) throw new Error("the Python client is not on this page");
+        // Not started where it would crash the page (the website says the same).
+        const old = global.PlexoraPython.unsupported && global.PlexoraPython.unsupported();
+        if (old) {
+            throw new Error(`${old.browser} ${old.version} cannot run the website's Python: `
+                + `update ${old.browser} (137 or later)`);
+        }
         const t0 = Date.now();
         const boot = await global.PlexoraPython.start({ base: shell.py, root: `${BASE}/`, siteBase: BASE, scratch: true });
         if (!boot || boot.error) throw new Error((boot && boot.error) || "Python did not start");

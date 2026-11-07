@@ -24,6 +24,13 @@ const CASES = [
     ["stale", { min_site_version: "99.0.0" }],
     ["preview", { viewer: "preview", models: { mobilesam: { enabled: false } } }],
     ["broken", "{not json"],
+    // A Chrome too old for the website's Python (no JSPI, before 137): this
+    // Chrome made to look like the Chrome 131 that crashed on a Mac.
+    ["oldChrome", null, () => {
+        delete WebAssembly.Suspending;
+        Object.defineProperty(Navigator.prototype, "userAgentData", { configurable: true, get: () => ({
+            brands: [{ brand: "Google Chrome", version: "131" }, { brand: "Chromium", version: "131" }] }) });
+    }],
 ];
 
 const SAM = [
@@ -36,7 +43,7 @@ const server = await startServer(["--site", site, "--tree", `fx=${dir}`]);
 const origin = `http://127.0.0.1:${server.port}`;
 const out = { cases: {} };
 try {
-    for (const [name, flags] of CASES) {
+    for (const [name, flags, pretend] of CASES) {
         const file = path.join(dir, "flags.json");
         if (flags === null) rmSync(file, { force: true });
         else writeFileSync(file, typeof flags === "string" ? flags : JSON.stringify(flags));
@@ -44,6 +51,7 @@ try {
         const row = {};
         try {
             const page = await browser.context.newPage();
+            if (pretend) await page.addInitScript(pretend);
             let python = 0;
             page.on("request", (request) => { if (new URL(request.url()).pathname.startsWith("/py/")) python += 1; });
             await page.goto(`${origin}/?pydebug`);
@@ -52,6 +60,7 @@ try {
             if (stopped) {
                 row.said = await page.textContent("#plexora-boot-status");
                 row.button = await page.textContent(".plexora-boot-actions button");
+                row.buttons = await page.$$eval(".plexora-boot-actions button", (nodes) => nodes.map((n) => n.textContent));
                 await page.waitForTimeout(1500);
                 row.app = Boolean(await page.$("#plexora-app"));
             } else {

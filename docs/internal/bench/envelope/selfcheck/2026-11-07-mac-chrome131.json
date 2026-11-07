@@ -1,0 +1,139 @@
+{
+ "selfcheck": 1,
+ "date": "2026-11-07T16:27:29.975Z",
+ "version": "0.0.36",
+ "python_bundle": "0.0.36",
+ "envelope": 2,
+ "steps": {
+  "browser": {
+   "key": "browser",
+   "ok": true,
+   "label": "Browser",
+   "value": "Google Chrome 131 · 10 cores · 8+ GB memory",
+   "detail": {
+    "engine": "Google Chrome 131",
+    "platform": "macOS",
+    "user_agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+    "cores": 10,
+    "memory_gb": 8,
+    "isolated": true,
+    "shared_memory": true,
+    "jspi": false,
+    "folders": true,
+    "opfs": true,
+    "webcodecs": true,
+    "quota_bytes": 1197130899456,
+    "usage_bytes": 67636,
+    "persisted": false
+   },
+   "here": "Without JSPI"
+  },
+  "storage": {
+   "key": "storage",
+   "ok": true,
+   "label": "Storage",
+   "value": "1197 GB free for the site",
+   "detail": {
+    "room_bytes": 1197130831820
+   },
+   "here": "The browser may clear it when space runs low"
+  },
+  "gpu": {
+   "key": "gpu",
+   "ok": true,
+   "label": "GPU",
+   "value": "WebGPU: apple common-3",
+   "detail": {
+    "webgpu": true,
+    "vendor": "apple",
+    "architecture": "common-3",
+    "description": null
+   },
+   "here": "Magic select runs on the GPU"
+  },
+  "memory": {
+   "key": "memory",
+   "ok": true,
+   "label": "Memory",
+   "value": "WebAssembly grows to 4.3 GB",
+   "detail": {
+    "wasm_bytes": 4294967296,
+    "stopped": null,
+    "ms": 62,
+    "table_values_here": 40000000
+   },
+   "here": "Tables up to about 40 M values (cells × columns)"
+  },
+  "download": {
+   "key": "download",
+   "ok": true,
+   "label": "Download",
+   "value": "19.9 MB/s",
+   "detail": {
+    "file": "wheels/plexora-0.0.36-py3-none-any.whl",
+    "bytes": 4700754,
+    "ms": 237,
+    "bytes_per_second": 19856608,
+    "first_visit_bytes": 46938273,
+    "first_visit_download_ms": 2364
+   },
+   "here": "A first visit downloads 47 MB: about 2.4 s"
+  },
+  "python": {
+   "key": "python",
+   "ok": false,
+   "label": "Python",
+   "value": "Stopped",
+   "here": "The browser closed the page during this step",
+   "detail": {
+    "crashed": true,
+    "memory_reached": 4294967296
+   }
+  },
+  "pyramid": {
+   "key": "pyramid",
+   "ok": true,
+   "label": "Pyramid",
+   "value": "0.3 GB in 1.5 s (180 MB/s, 8 workers)",
+   "detail": {
+    "shape": [
+     2,
+     8192,
+     8192
+    ],
+    "dtype": "uint16",
+    "bytes": 268435456,
+    "ms": 1492,
+    "bytes_per_second": 179886986,
+    "written_bytes": 259742408,
+    "timings": {
+     "pasteMs": 113.74999964237213,
+     "writeMs": 57.6350000500679,
+     "hand": {
+      "readMs": 1799.3799998760223,
+      "decodeMs": 0,
+      "deriveMs": 1003.6750001311302
+     },
+     "backlogPeak": 178257920,
+     "totalMs": 1187.2299999594688,
+     "bands": 16,
+     "ms": 1385
+    },
+    "estimate": {
+     "workers": 8,
+     "bytes_per_second": 232000000,
+     "flat_limit_bytes": 27840000000
+    },
+    "measured": {
+     "flat_limit_bytes": 38722064698,
+     "scaled_by_reference": true
+    }
+   },
+   "here": "Flat images up to about 39 GB build within 2 min (estimated 28 GB)"
+  }
+ },
+ "memory_reached": 4294967296,
+ "ok": false,
+ "crashed": "python",
+ "resumed": 1
+}

@@ -61,3 +61,12 @@ def test_a_missing_or_broken_flags_file_changes_nothing(cases, name):
     assert row.get("app") is True and row["mark"] is None, row
     assert row["python_requests"] > 0
     assert row["sam"].get("hint") != "Magic select is switched off on the website for now."
+
+
+def test_a_chrome_too_old_for_the_websites_python_is_asked_to_update(cases):
+    """Chrome 131 (no JSPI) crashed on a Mac starting the website's Python:
+    the loader says so before anything starts (pythonClient.js `unsupported`)."""
+    old = cases["oldChrome"]
+    assert old["said"] == "Update Chrome to use Plexora here (version 131; it needs 137 or later).", old
+    assert old["buttons"] == ["How to update Chrome", "Get the desktop app"], old
+    assert old["python_requests"] == 0 and old["app"] is False, old
