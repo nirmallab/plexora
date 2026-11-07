@@ -228,6 +228,13 @@
             // open (a panel opened with the page, `?tool=`, can be up first --
             // on the website Python answers before the viewer has its image).
             await this.whenImageOpen();
+            // And its contrast: an image opens at the full range, then the
+            // stats' hint, then the fit, each landing when its request does --
+            // on the website later than on the desktop -- so a scene captured
+            // as the image appeared held whichever window was on its way
+            // (the same image's DNA at 0-65536 on one app, 30113-59995 on
+            // the other). Bounded: past it, what is on screen is the start.
+            await this.env.sidebar?.whenContrastSettled?.({ timeoutMs: 20000 });
             this.facts = { ...this.state.facts, ...this.liveFacts() };
             this.baseScene = global.PlexoraVideoSceneState.capture(this.env);
             const note = global.PlexoraVideoFigureBridge.takeAnimateNote(this.env.datasource);

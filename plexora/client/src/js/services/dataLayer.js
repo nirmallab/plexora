@@ -312,28 +312,40 @@ class DataLayer {
         }
     }
 
+    /**
+     * A channel's contrast fit, or null when there is none to be had now (a
+     * failed request, or an answer that is not a fit): the caller may ask
+     * again, and must never keep an error body as if it were the fit.
+     */
     async getChannelGMM(channel) {
         try {
             let response = await fetch(plexoraUrl('get_channel_gmm') + '?' + new URLSearchParams({
                 channel: channel,
                 datasource: datasource
             }))
-            let packet_gmm = await response.json();
-            return packet_gmm;
+            if (!response.ok) return null;
+            const packet = await response.json();
+            return packet && Number.isFinite(Number(packet.vmin)) && Number.isFinite(Number(packet.vmax))
+                ? packet : null;
         } catch (e) {
             console.log("Error Getting Channel GMM", e);
+            return null;
         }
     }
 
+    /** A channel's statistics, or null as getChannelGMM. */
     async getImageChannelStats(channel, view = "") {
         try {
             const query = { channel: channel, datasource: datasource };
             // A projection's own brightness (a z-stack's `view=` token).
             if (view) query.view = view;
             let response = await fetch(plexoraUrl('get_image_channel_stats') + '?' + new URLSearchParams(query))
-            return await response.json();
+            if (!response.ok) return null;
+            const stats = await response.json();
+            return stats && Array.isArray(stats.image_histogram) ? stats : null;
         } catch (e) {
             console.log("Error Getting Image Channel Stats", e);
+            return null;
         }
     }
 

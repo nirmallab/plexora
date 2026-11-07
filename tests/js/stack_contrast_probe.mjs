@@ -63,7 +63,7 @@ function extractMethod(text, name) {
 const levels = Number(/ViewerSidebar\.MIN_DEFAULT_LEVELS = (\d+);/.exec(source)?.[1]);
 assert.ok(levels > 0, "ViewerSidebar.MIN_DEFAULT_LEVELS is gone");
 
-const METHODS = ["askForHdIfCoarse", "autoChannel"];
+const METHODS = ["askForHdIfCoarse", "autoChannel", "levelChannel", "askAgain", "showsWindow"];
 const body = METHODS.map((name) => extractMethod(source, name)).join(",\n");
 
 /** A sidebar on a page whose view state is `state` (null: a flat image). */
@@ -81,6 +81,8 @@ function page({ state = null, hd = false, scoped = false } = {}) {
         window: { __plexora: { viewState }, dispatchEvent: (event) => events.push(event) },
         CustomEvent: class { constructor(type, init) { this.type = type; this.detail = init?.detail; } },
         ViewerSidebar: { MIN_DEFAULT_LEVELS: levels },
+        LEVEL_RETRY_MS: [],
+        console,
         Promise,
     });
     const methods = runInContext(`({\n${body}\n})`, context);

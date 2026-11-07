@@ -75,6 +75,8 @@ class ChannelList {
         const fullName = this.dataLayer.getFullChannelName(name);
         if (this.databaseDescription[fullName]?.image_histogram) return;
         const stats = await this.dataLayer.getImageChannelStats(fullName);
+        // None to be had now: nothing is kept, so the next ask asks again.
+        if (!stats) throw new Error(`no statistics for ${fullName}`);
         this.databaseDescription[fullName] = { ...this.databaseDescription[fullName], ...stats };
         this.image_channels[name] = [stats.image_min, stats.image_max];
         const channelListWidth = document.getElementById("channel_list").getBoundingClientRect().width;
@@ -105,7 +107,7 @@ class ChannelList {
         }
 
         if (!(name in this.hasChannelGMM)) {
-            this.getAndDrawChannelGMM(name);
+            this.getAndDrawChannelGMM(name).catch(() => {});
         }
 
         // Update selections
@@ -566,7 +568,27 @@ class ChannelList {
         };
     }
 
-    async getAndDrawChannelGMM(name) {
+    /**
+     * A channel's contrast fit, fetched once and kept in `hasChannelGMM`.
+     * One request per channel at a time: every caller asking meanwhile (the
+     * sidebar's auto-level, a restore's prefetch) waits on the same one. A
+     * fit that could not be had is NOT kept -- it used to be, as the error
+     * body or `undefined`, and every later auto-level of that channel then
+     * found "a fit" and stopped, so its window never landed for the rest of
+     * the session. Rejects instead, and the next ask asks again.
+     */
+    getAndDrawChannelGMM(name) {
+        this.pendingGMM = this.pendingGMM || new Map();
+        const pending = this.pendingGMM.get(name);
+        if (pending) return pending;
+        const asked = this.fetchChannelGMM(name).finally(() => {
+            if (this.pendingGMM.get(name) === asked) this.pendingGMM.delete(name);
+        });
+        this.pendingGMM.set(name, asked);
+        return asked;
+    }
+
+    async fetchChannelGMM(name) {
         // drawChannelGMM() below draws onto the slider's SVG group, which
         // only exists once ensureChannelStats has run for this channel --
         // guard here (not just in selectChannel) since viewerSidebar.js also
@@ -575,11 +597,17 @@ class ChannelList {
         const fullName = this.dataLayer.getFullChannelName(name);
         const packet = await this.dataLayer.getChannelGMM(fullName);
         const channelID = this.channelIDs[name];
-        const autoBtn = document.getElementById(`auto-btn_${channelID}`);
-        autoBtn.classList.remove("auto-loading")
+        document.getElementById(`auto-btn_${channelID}`)?.classList.remove("auto-loading");
+        if (!packet) throw new Error(`no contrast fit for ${fullName}`);
         this.hasChannelGMM[name] = packet;
-
-        this.drawChannelGMM(name);
+        // The curves under the slider are a picture of the fit, not the fit:
+        // one that cannot be drawn (no slider for it here) leaves the fit kept.
+        try {
+            this.drawChannelGMM(name);
+        } catch (error) {
+            console.debug?.("contrast fit not drawn", name, error);
+        }
+        return packet;
     }
 
     drawChannelGMM(name) {
@@ -680,7 +708,9 @@ class ChannelList {
  * on window resize we re-initialize (this should be better handled with an update pattern)
  */
 window.addEventListener("resize", function () {
-    const { channelList } = __plexora;
+    // Not every page that loads this file is the viewer (main.js makes
+    // __plexora): a resize there was a ReferenceError.
+    const channelList = window.__plexora?.channelList;
     if (typeof channelList != "undefined" && channelList) {
         channelList.sliders.forEach((slider, name) => {
             let channelID = channelList.channelIDs[name]
