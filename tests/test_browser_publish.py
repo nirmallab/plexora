@@ -176,3 +176,31 @@ def test_an_upload_through_npx_puts_every_object(bundle, monkeypatch, which):
     puts = [call for call in stub.calls if _op(call) == ["r2", "object", "put"]]
     assert len(puts) == 5
     assert all(call[:3] == ["/usr/bin/npx", "--yes", "wrangler@3.114.17"] for call in puts)
+
+
+def _current(stub, monkeypatch, capsys, set_=None):
+    monkeypatch.setattr(publish, "run", stub)
+    args = type("Args", (), {"bucket": "b", "wrangler": "wrangler.js", "set": set_})()
+    code = publish.current(args)
+    return code, capsys.readouterr().out.strip()
+
+
+def test_the_preview_records_its_prefix_and_reads_it_back(monkeypatch, capsys):
+    stub = _Wrangler()
+    assert _current(stub, monkeypatch, capsys) == (0, "")  # none recorded yet
+    assert _current(stub, monkeypatch, capsys, set_="py/dev/abc123")[0] == 0
+    put = [call for call in stub.calls if _op(call) == ["r2", "object", "put"]][-1]
+    assert _key(put) == "b/py/dev/current.json"
+    assert put[put.index("--cache-control") + 1] == "no-store"
+    stub = _Wrangler(held=json.dumps({"prefix": "py/dev/abc123/"}).encode())
+    assert _current(stub, monkeypatch, capsys) == (0, "py/dev/abc123/")
+
+
+def test_the_preview_never_names_a_release_prefix(monkeypatch, capsys):
+    with pytest.raises(SystemExit, match="development prefix"):
+        _current(_Wrangler(), monkeypatch, capsys, set_="py/9.9.9/")
+    stub = _Wrangler(held=json.dumps({"prefix": "py/9.9.9/"}).encode())
+    with pytest.raises(SystemExit, match="never pruned"):
+        _current(stub, monkeypatch, capsys)
+    with pytest.raises(SystemExit, match="could not read"):
+        _current(_Wrangler(broken=True), monkeypatch, capsys)

@@ -4,6 +4,7 @@
     python tools/browser_build/publish.py verify --bundle DIR --base URL
     python tools/browser_build/publish.py site --dir DIR --project NAME [--branch B]
     python tools/browser_build/publish.py prune --prefix py/dev/<sha>/
+    python tools/browser_build/publish.py current [--set py/dev/<sha>/]
 
 Everything goes through wrangler, logged in as the account that holds the
 zone, or with `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID` in CI. No
@@ -35,6 +36,11 @@ the encoding, the cache header and CORS: what a page on another origin with
 
 `site` deploys a static build (`python -m plexora.client.static_build`) to a
 Pages project.
+
+`current` prints the development prefix the preview site loads (recorded in
+the bucket at `py/dev/current.json`), or nothing; `--set` records a new one.
+The preview deploy (web.yml) reads it first, deploys, records its own and
+prunes the one before, so the bucket holds one development bundle at a time.
 """
 
 from __future__ import annotations
@@ -48,6 +54,7 @@ import shlex
 import shutil
 import subprocess
 import sys
+import tempfile
 import urllib.error
 import urllib.request
 from concurrent.futures import ThreadPoolExecutor
@@ -65,6 +72,9 @@ ORIGIN = "https://viewer.plexoraapp.com"
 PINNED = re.compile(r"^wrangler@\d+\.\d+\.\d+$")
 #: What wrangler says when an object is not there (and nothing else went wrong).
 ABSENT = "The specified key does not exist"
+#: Where the preview records the development prefix it loads.
+CURRENT = "py/dev/current.json"
+DEV = re.compile(r"^py/dev/[A-Za-z0-9._-]+/$")
 
 
 def wrangler(spec: str | None) -> list:
@@ -263,6 +273,37 @@ def prune(args) -> int:
     return 1 if failed else 0
 
 
+def current(args) -> int:
+    """The preview's development prefix: printed, or recorded with --set."""
+    command = wrangler(args.wrangler)
+    key = f"{args.bucket}/{CURRENT}"
+    if args.set:
+        prefix = args.set if args.set.endswith("/") else args.set + "/"
+        if not DEV.match(prefix):
+            raise SystemExit(f"{prefix}: the preview loads a development prefix (py/dev/<sha>/)")
+        with tempfile.TemporaryDirectory(prefix="plexora-current-") as scratch:
+            record = Path(scratch) / "current.json"
+            record.write_text(json.dumps({"prefix": prefix}), encoding="utf-8")
+            done = run(command + ["r2", "object", "put", key, "--file", str(record),
+                                  "--content-type", "application/json", "--cache-control", "no-store"])
+        if done.returncode:
+            sys.stderr.write((done.stderr or done.stdout)[-400:])
+        return done.returncode
+    held = run(command + ["r2", "object", "get", key, "--pipe"])
+    if held.returncode != 0:
+        if ABSENT in f"{held.stdout or ''}{held.stderr or ''}":
+            return 0
+        raise SystemExit(f"could not read {CURRENT}: {(held.stderr or held.stdout)[-400:]}")
+    try:
+        prefix = json.loads(held.stdout).get("prefix") or ""
+    except (ValueError, AttributeError):
+        raise SystemExit(f"{CURRENT} is not what --set writes: {held.stdout[:200]!r}")
+    if prefix and not DEV.match(prefix):
+        raise SystemExit(f"{CURRENT} names {prefix!r}, not a development prefix: never pruned from here")
+    print(prefix)
+    return 0
+
+
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     parser.add_argument("--wrangler", default=None, help="wrangler, or its bin/wrangler.js")
@@ -288,6 +329,10 @@ def main(argv=None) -> int:
     drop.add_argument("--bucket", default=BUCKET)
     drop.add_argument("--jobs", type=int, default=6)
     drop.set_defaults(fn=prune)
+    here = commands.add_parser("current", help="the development prefix the preview loads")
+    here.add_argument("--set", default=None, metavar="PREFIX", help="record py/dev/<sha>/ as it")
+    here.add_argument("--bucket", default=BUCKET)
+    here.set_defaults(fn=current)
     args = parser.parse_args(argv)
     return args.fn(args)
 
