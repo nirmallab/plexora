@@ -190,6 +190,7 @@
         await script("/client/src/js/services/backend.js");
         await script("/client/src/js/services/pickedFiles.js");
         await script("/client/src/js/services/browserNode.js");
+        await script("/client/src/js/services/browserSlides.js");
         await script("/client/src/js/services/browserTable.js");
         await script("/client/src/js/services/browserPyramid.js");
         await script("/client/src/js/services/browserStore.js");

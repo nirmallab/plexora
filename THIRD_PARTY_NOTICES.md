@@ -28,6 +28,26 @@ Public License 2.0** (`plexora/plugins/video_studio/static/vendor/
 LICENSE-mediabunny`). Its source is the published npm package of that version;
 how the bundled file is built is in that directory's `README.md`.
 
+## OpenSlide, as @computationalpathologygroup/openslide-js 1.0.0-beta.5 (website)
+
+`plexora/client/external/openslide-js-1.0.0-beta.5/`, the whole-slide reader
+the website's page uses for MRXS, NDPI, SVS and Sakura slides
+(`client/src/js/node/slideReader.js`), is openslide-js
+(https://github.com/computationalpathologygroup/openslide-js): OpenSlide 4.0.0
+(https://openslide.org) and the libraries it links -- GLib, Cairo, gdk-pixbuf,
+fontconfig, pixman, FreeType, libtiff, libjpeg-turbo, OpenJPEG, libpng,
+libxml2, expat, zlib, zstd, libffi, SQLite -- compiled to WebAssembly, under
+the **GNU Lesser General Public License, version 2.1 only**. Its files are as
+published (the npm package's ES-module build, worker, glue and `.wasm`); the
+`.wasm` is a separate file the page loads at run time, never linked into
+Plexora's code, and the desktop app does not load it. The licence (`LICENSE`),
+every bundled component's own licence (`NOTICE`), and where the corresponding
+source is -- the openslide-js repository at the commit the package was built
+from, whose `wasm/` directory holds the build, the pinned sources and every
+patch -- are in that directory (`SOURCE`, with each file's sha256). **The
+LGPL's terms for this component are to be confirmed by counsel before the
+website's release.**
+
 ## OpenJPEG, as @cornerstonejs/codec-openjpeg 1.3.6 (website)
 
 `plexora/client/external/openjpeg-1.3.6/`, the JPEG 2000 decoder the website's

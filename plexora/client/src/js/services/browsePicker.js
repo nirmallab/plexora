@@ -357,7 +357,13 @@ async function browseForPath({mode = "file", filter = "any", node = null,
                 kind = anchorEl ? await chooseKind(anchorEl, examples || filter) : "file";
                 if (!kind) return;
             }
-            const picked = await window.PlexoraPicks.pick({ mode: kind, multiple: select === "many" });
+            // An MRXS slide needs the folder beside it too: asked here, where
+            // the click on the answer is the gesture the folder picker needs.
+            const ask = (body) => (window.PlexoraConfirm
+                ? window.PlexoraConfirm.ask({ title: "This slide has a folder", body,
+                                              confirm: "Choose folder", danger: false })
+                : Promise.resolve(true));
+            const picked = await window.PlexoraPicks.pick({ mode: kind, multiple: select === "many", ask });
             if (picked && onPicked) onPicked(picked);
             return;
         }

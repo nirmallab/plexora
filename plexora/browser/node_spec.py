@@ -9,13 +9,16 @@ the file and checks every level's shape against these before it answers a
 single tile.
 
 Served today: a plain (OME-)TIFF the user picked, read as a channel series,
-with 8- or 16-bit samples, or the pyramidized copy the page built of one; and
-a label mask the user picked that Python serves as it is (a tiled label
-pyramid), or the label pyramid the page built of a flat one, at the levels the
-file holds. Both copies are the page's files, under /derived/ (providers/
-browser.py `page_pyramid`). Everything else -- a z-stack or time series (its
-planes go through the volume layer), OME-Zarr, DICOM, a brightfield RGB slide,
-a Xenium focus folder, a pyramid Python drew into the project store, a mask
+with 8- or 16-bit samples, or the pyramidized copy the page built of one; a
+whole-slide image the page itself reads with openslide-js (`kind: "slide"`:
+MRXS, NDPI, SVS, Sakura; Python reads the same slide through the page, so the
+two agree byte for byte), at the tiles Python would not resample; and a label
+mask the user picked that Python serves as it is (a tiled label pyramid), or
+the label pyramid the page built of a flat one, at the levels the file holds.
+Both copies are the page's files, under /derived/ (providers/browser.py
+`page_pyramid`). Everything else -- a z-stack or time series (its planes go
+through the volume layer), OME-Zarr, DICOM, any other brightfield RGB image, a
+Xenium focus folder, a pyramid Python drew into the project store, a mask
 level Python draws from a finer one, a file on a node -- is Python's until its
 own check exists.
 """
@@ -60,7 +63,17 @@ def describe(name: str) -> dict:
     if getattr(provider, "volume_source", None) is not None or data_model.volume_source is not None:
         return refuse("a z-stack or time series is served through the volume layer")
     if project.image.kind == IMAGE_TYPE_BRIGHTFIELD:
-        return refuse("a brightfield slide's colour tiles are Python's")
+        from plexora.server.utils import brightfield
+
+        slide = brightfield.page_tile_layout(data_model.channels)
+        if slide is None:
+            return refuse("a brightfield slide's colour tiles are Python's")
+        # A slide the page reads with openslide-js (MRXS, NDPI, SVS, Sakura):
+        # the page draws a tile itself where `read_rgb` would not resample it.
+        out.update(served=True, kind="slide", slide=slide, dtype="uint8",
+                   levels=[[3, level["height"], level["width"]] for level in slide["levels"]],
+                   channels=[brightfield.RGB_CHANNEL_KEY])
+        return out
     if not path.lower().endswith(_TIFF) or os.path.isdir(path):
         return refuse("not a TIFF file")
     group = data_model.channels

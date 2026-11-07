@@ -9,6 +9,11 @@ the read -- normalisation, the corrections a project records, every frame
 computation -- is `LocalTableProvider`'s, unchanged. Every table provider asks
 here first (`page_adapter`), so no reader of a picked CSV goes round it.
 
+Whole-slide images the page reads with openslide-js (MRXS, Sakura, NDPI, SVS;
+plan L2) reach Python the same way: `page_slide` is the slide as the page
+holds it (`PageSlide`, which brightfield.py reads as it reads OpenSlide on the
+desktop), each region one question to the page.
+
 The page registers how to reach its columns (`set_column_source`) when the
 worker boots. Anywhere else -- the desktop app, a server, a node -- there is no
 page, and a picked path never occurs. A project whose table binding says
@@ -58,6 +63,7 @@ def set_asker(ask) -> None:
     website's worker at boot; None removes it."""
     global _asker
     _asker = ask
+    _slides.clear()
 
 
 def page_window(provider, pyramid, index):
@@ -183,6 +189,76 @@ def page_pyramid(source, *, name, spec, progress=None, stage=None, adoptable=Non
         if not hold:
             raise PageBuilding(int(state.get("tiles") or 0), int(state.get("total") or 0))
         _work.pause(_POLL_S)
+
+
+class PageSlideError(RuntimeError):
+    """The page tried to open a whole-slide image and could not; the message
+    is its reason (an MRXS picked without its folder, a file OpenSlide does
+    not read)."""
+
+
+class PageSlide:
+    """A whole-slide image the page reads with openslide-js (OpenSlide in
+    WebAssembly, client node/slideReader.js; plan L2), shaped as much like
+    `openslide.OpenSlide` as `brightfield._OpenSlideSource` uses it:
+    `level_count`, `level_dimensions`, `level_downsamples`, `properties`,
+    `read_region((x, y), level, (w, h))` -> (h, w, 4) uint8 straight RGBA, and
+    `close()`. The page holds the slide open; each region is one question to
+    it. Its pixels are native OpenSlide's byte for byte (L2.md)."""
+
+    def __init__(self, path, info: dict):
+        self.path = str(path)
+        self.level_count = int(info["levels"])
+        self.level_dimensions = tuple((int(w), int(h)) for w, h in info["dims"])
+        self.level_downsamples = tuple(float(d) for d in info["downsamples"])
+        self.properties = dict(info.get("properties") or {})
+        self.associated = tuple(info.get("associated") or ())
+        self.dimensions = self.level_dimensions[0]
+
+    def read_region(self, location, level, size):
+        import numpy as np
+
+        x, y = (int(v) for v in location)
+        w, h = (int(v) for v in size)
+        if _asker is None:
+            raise PageSlideError(f"{PurePosixPath(self.path).name}: the page that held this slide is gone")
+        found = _plain(_asker("slide_region", {"path": self.path, "level": int(level),
+                                               "x": x, "y": y, "w": w, "h": h}))
+        if not found or found.get("error"):
+            raise PageSlideError(f"{PurePosixPath(self.path).name}: "
+                                 f"{(found or {}).get('error') or 'the page could not read this region'}")
+        data = found["data"]
+        pixels = np.frombuffer(data if isinstance(data, (bytes, bytearray, memoryview)) else bytes(data),
+                               dtype=np.uint8)
+        return pixels.reshape(int(found["height"]), int(found["width"]), 4)
+
+    def close(self):
+        pass
+
+
+#: The slides the page opened, by path: one question per pick, not per reader.
+_slides: dict = {}
+
+
+def page_slide(path):
+    """The whole-slide image at `path` as the page reads it (`PageSlide`), or
+    None where the page does not read it: not the website, not one of the
+    page's files. Raises `PageSlideError` with the page's reason when it tried
+    and could not -- an MRXS picked without the folder beside it says so."""
+    if _asker is None or not is_page_file(path):
+        return None
+    key = str(path)
+    held = _slides.get(key)
+    if held is not None:
+        return held
+    info = _plain(_asker("slide", {"path": key}))
+    if not info:
+        raise PageSlideError(f"{PurePosixPath(key).name}: this browser could not open the slide")
+    if info.get("error"):
+        raise PageSlideError(f"{PurePosixPath(key).name}: {info['error']}")
+    slide = PageSlide(key, info)
+    _slides[key] = slide
+    return slide
 
 
 def set_column_source(source) -> None:

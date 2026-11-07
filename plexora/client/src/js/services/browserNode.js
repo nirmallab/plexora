@@ -17,9 +17,12 @@
  *   single tile;
  * - a tile is the window `data_model.read_tile` reads, as `encode_tile_array`
  *   makes it (stored, not deflated: the same pixels, fewer cycles): a channel's
- *   HD tile the 16-bit grey PNG, a mask's the RGBA PNG of its ids. Anything
- *   else -- the 8-bit preview, a volume's view, a mask level Python draws from
- *   a finer one, a tile past the edge -- returns null, and Python answers it.
+ *   HD tile the 16-bit grey PNG, a mask's the RGBA PNG of its ids, and a
+ *   whole-slide image's colour tile (`rgb`) the RGB PNG, cut by
+ *   services/browserSlides.js from the slide the page reads with
+ *   openslide-js. Anything else -- the 8-bit preview, a volume's view, a mask
+ *   level Python draws from a finer one, a slide tile Python resamples, a
+ *   tile past the edge -- returns null, and Python answers it.
  *
  *   answer(request) -> a promise of a Response, or of null (Python's to answer)
  *   project(name)   -> a promise of {spec, image, labels}, each part {file,
@@ -295,7 +298,10 @@
         if (before) close(before);
         held.delete(name);
         const [image, labels] = await Promise.all([
-            openPart(spec, WORKERS, imageDiffers),
+            // A whole-slide image the page reads with openslide-js
+            // (services/browserSlides.js): no TIFF pool, its tiles are cut there.
+            spec.kind === "slide" ? Promise.resolve(spec.served ? { slide: spec.slide } : { refused: spec.reason })
+                : openPart(spec, WORKERS, imageDiffers),
             openPart(spec.labels, Math.max(2, Math.floor(WORKERS / 2)), labelsDiffer),
         ]);
         //: When the check was asked and answered, and when the files were
@@ -365,6 +371,16 @@
         const match = url.pathname.match(TILE);
         if (!match || request.method !== "GET" || url.searchParams.get("view")) return null;
         const [, name, channel, level, tx, ty] = match.map((part) => decodeURIComponent(part));
+        if (channel === "rgb") {
+            // A brightfield slide's colour tile (`_parse_channel` tests the
+            // sentinel first): the page's own when it reads the slide.
+            const entry = await project(name);
+            if (!entry.spec || !entry.image || !entry.image.slide || !global.PlexoraSlides) return null;
+            const [tw, th] = entry.spec.tile;
+            const bytes = await global.PlexoraSlides.tile(entry.image.slide, Number(level),
+                                                          Number(tx), Number(ty), tw, th);
+            return bytes ? respond(bytes) : null;
+        }
         // `_parse_channel`: a name ending `_<n>` is channel n, anything else
         // the mask (whose tiles ignore `q`).
         const index = (/_(\d+)$/.exec(channel) || [])[1];
