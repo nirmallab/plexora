@@ -3074,7 +3074,11 @@ def get_channel_quantization_window(channel_name, datasource_name, window_class=
             # level-0 pixel over the network (see providers/remote.py).
             window = estimate(idx, channels)
         else:
-            window = quantization_window_of(channels, idx)
+            from plexora.server.providers import browser as page
+
+            # On the website the page's workers read a picked file's plane.
+            window = (page.page_window(_providers.image, channels, idx)
+                      or quantization_window_of(channels, idx))
         _gmm_cache[cache_key] = window
         _remember_quantization_window(datasource_name, channel_name, window)
         return window

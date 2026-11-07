@@ -10,14 +10,18 @@
 //   close {stream}                 the page stopped reading it
 //   mount {dir, files}             the user's picked files, read on demand (WORKERFS)
 //   mountTree {dir, blobs}         a picked folder: [{name: "<folder>/<path>", data: File}]
-//   columns {key, names, buffers}  a table's columns from the page's column store
+//   answer {id, value, failed}     the page's answer to Python's question `id`
+//                                  (handled at once, never queued: Python waits)
 //   nodeSpec {name}                what the browser node may serve for a project
 //   heap                           the wasm heap's bytes
 //   run {code}                     tests only (boot with debug: true): Python's
 //                                  last expression, as text
 // Events posted to the page, unasked: {event: {kind: "job", job}} as a job's
 // record is written, {event: {kind: "wakeup"}} when a held poll should ask
-// again, {event: {kind: "stage", stage, ms}} as a stage arrives, {mark, at}.
+// again, {event: {kind: "stage", stage, ms}} as a stage arrives,
+// {event: {kind: "ask", ask, id, args}} when Python needs what only the page
+// knows (a picked table's columns, a picked image's maximum; the page answers
+// with `answer`), {mark, at}.
 //
 // Background work (jobs, builds) is queued by Python and run here, a slice at
 // a time (cooperative.step), only while no request is waiting: a request is
@@ -28,7 +32,9 @@ let py = null;
 let base = "";
 let origin = "";
 let stagesInfo = null;
-const columnStore = new Map();
+//: Python's questions to the page still waiting, by id (`ask`).
+const asks = new Map();
+let nextAsk = 1;
 const queue = [];
 let busy = false;
 let idling = 0;
@@ -171,7 +177,7 @@ async function boot(args) {
     self.plexoraPost = (text) => self.postMessage({ event: JSON.parse(text) });
     self.plexoraCancelled = cancelled;
     self.plexoraLoadStage = loadStage;
-    self.plexoraColumns = (src) => columnStore.get(src) || null;
+    self.plexoraAsk = ask;
     self.plexoraWaiting = () => queue.length > 0 || (inFlight !== null && Atomics.load(inFlight, 0) > 0);
     py.globals.set("ORIGIN", origin);
     const info = JSON.parse(await py.runPythonAsync(`
@@ -193,19 +199,45 @@ def _idle(seconds):
     finally:
         js.self.plexoraIdle(-1)
 
-def _columns(spec):
-    held = js.plexoraColumns(str(spec.src))
+def _absent(value):
+    from pyodide.ffi import jsnull
+    return value is None or value is jsnull
+
+def _ask(kind, args):
+    # A question only the page can answer; None when it cannot.
+    value = run_sync(js.plexoraAsk(kind, js.JSON.parse(json.dumps(args))))
+    return None if _absent(value) else value
+
+def _ask_columns(src, kinds):
+    # The page parses the picked file and hands its columns back
+    # (services/browserTable.js); None when it cannot.
+    import numpy as np
+    absent = _absent
+    held = _ask("columns", {"key": src, "kinds": kinds})
     if held is None:
         return None
-    import numpy as np
-    import polars as pl
-    names = held.names.to_py()
-    return pl.DataFrame({name: np.frombuffer(held.buffers[i].to_py(), dtype="<f8")
-                         for i, name in enumerate(names)})
+    columns = []
+    for column in held.columns:
+        if absent(column):
+            columns.append(None)
+        elif column.kind == "num":
+            missing = column.missing
+            columns.append({"kind": "num", "values": np.frombuffer(column.values.to_py(), dtype="<f8"),
+                            "missing": None if absent(missing) else np.frombuffer(missing.to_py(), dtype=np.uint8),
+                            "bad": int(column.bad), "fractions": int(column.fractions)})
+        else:
+            columns.append({"kind": "str", "codes": np.frombuffer(column.codes.to_py(), dtype="<i4"),
+                            "dictionary": column.dictionary.to_py()})
+    return {"rows": int(held.rows), "columns": columns, "parts": int(held.parts), "ms": int(held.ms)}
+
+def _columns(spec):
+    from plexora.browser import columns as page_columns
+    return page_columns.from_page(spec, _ask_columns)
 
 _finder = stages.install(lambda name: run_sync(js.plexoraLoadStage(name, _finder.importers.get(name, "?"))))
 json.dumps(boot.start(ORIGIN, post=_post, cancelled=lambda job: bool(js.plexoraCancelled(job)),
-                      idle=_idle, waiting=lambda: bool(js.plexoraWaiting()), columns=_columns))
+                      idle=_idle, waiting=lambda: bool(js.plexoraWaiting()), columns=_columns,
+                      ask=_ask))
 `));
     phases.ready = at(); mark("ready");
     return { phases, info, store, stages: Object.fromEntries(
@@ -226,6 +258,26 @@ self.plexoraIdle = (delta) => {
     idling += delta;
     if (delta > 0) drain();
 };
+
+// What only the page can answer -- a picked table's columns, a picked
+// image's full-resolution maximum -- asked from Python, which waits on the
+// promise (run_sync). The page answers with `answer`, which is never queued:
+// Python is suspended until it arrives.
+function ask(kind, args) {
+    return new Promise((resolve) => {
+        const id = nextAsk++;
+        asks.set(id, resolve);
+        self.postMessage({ event: { kind: "ask", ask: kind, id, args } });
+    });
+}
+
+function answered({ id, value, failed }) {
+    if (failed) self.postMessage({ log: `the page could not answer: ${failed}` });
+    const resolve = asks.get(id);
+    asks.delete(id);
+    if (resolve) resolve(value === undefined ? null : value);
+    return Boolean(resolve);
+}
 
 function toBytes(proxy) {
     const bytes = proxy.toJs();
@@ -297,8 +349,6 @@ const OPS = {
             module.destroy();
         }
     },
-    columns: ({ key, names, buffers }) => { columnStore.set(key, { names, buffers }); return names.length; },
-    forget: ({ key }) => columnStore.delete(key),
     heap: () => (py ? py._module.HEAP8.length : null),
     sync: async () => {
         if (!debug) throw new Error("sync is for tests: boot with debug: true");
@@ -403,6 +453,12 @@ function step() {
 self.onmessage = ({ data }) => {
     if (inFlight !== null) Atomics.sub(inFlight, 0, 1);
     data.arrived = performance.now();
+    if (data.op === "answer") {
+        // Handled at once: Python is suspended waiting for it, and a queued
+        // message would wait for Python.
+        self.postMessage({ id: data.id, ok: true, result: answered(data.args) });
+        return;
+    }
     if (data.op === "state") {
         // Answered at once, whatever Python is doing: it reads only JS.
         self.postMessage({ id: data.id, ok: true, result: OPS.state() });

@@ -28,6 +28,8 @@
  *   revalidate()    -> check each project with Python again before its next
  *                      tile (services/shell.js, on every page of the app)
  *   forget(name)    -> drop what is held for a project (it changed)
+ *   windowOf({path, channel, shape, dtype}) -> {value}: a channel's largest
+ *                      full-resolution sample, for Python ("window" question)
  *
  * Classic script, `window.PlexoraNode`; needs PlexoraPython and PlexoraPicks.
  */
@@ -36,6 +38,8 @@
 
     const WORKER = "/client/dist/tiffWorker_bundle.js";
     const WORKERS = Math.min(6, Math.max(2, Math.floor((global.navigator.hardwareConcurrency || 4) / 2)));
+    //: Workers for a whole-plane scan (`windowOf`), which nothing else waits beside.
+    const SCAN_WORKERS = Math.min(16, Math.max(2, (global.navigator.hardwareConcurrency || 4) - 2));
     const TILE = /^\/generated\/data\/([^/]+)\/([^/]+)\/(\d+)\/(\d+)_(\d+)\.png$/;
 
     // -- the PNG ----------------------------------------------------------------
@@ -168,6 +172,32 @@
 
         tile(channel, level, tx, ty, tw, th, raw = false) {
             return this.call(this.least(), { op: "tile", channel, level, tx, ty, tw, th, raw });
+        }
+
+        /** The largest sample of a channel's level, its plane cut into
+         *  windows of whole file tiles (bands of a stripped file) shared out
+         *  among the workers. */
+        async max(channel, level, { width, height }, fileTile) {
+            const windows = [];
+            if (fileTile && fileTile.tiled) {
+                const step = (dim) => dim * Math.max(1, Math.round(4096 / dim));
+                const sx = step(fileTile.width);
+                const sy = step(fileTile.height);
+                for (let y = 0; y < height; y += sy) {
+                    for (let x = 0; x < width; x += sx) {
+                        windows.push([x, y, Math.min(width, x + sx), Math.min(height, y + sy)]);
+                    }
+                }
+            } else {
+                const rows = Math.max(1, Math.floor((16 << 20) / Math.max(1, width)));
+                for (let y = 0; y < height; y += rows) windows.push([0, y, width, Math.min(height, y + rows)]);
+            }
+            const shares = this.workers.map(() => []);
+            windows.forEach((window, i) => shares[i % shares.length].push(window));
+            const found = await Promise.all(shares.map((share, i) => (share.length
+                ? this.call(this.workers[i], { op: "max", channel, level, windows: share })
+                : { max: -Infinity })));
+            return found.reduce((top, part) => Math.max(top, part.max), -Infinity);
         }
 
         close() {
@@ -364,5 +394,33 @@
         return respond(png16(tile));
     }
 
-    global.PlexoraNode = Object.freeze({ answer, project, revalidate, forget, png });
+    // -- the window ------------------------------------------------------------
+
+    /**
+     * Python's "window" question: the largest full-resolution sample of a
+     * picked image's channel (`data_model.quantization_window_of`, which
+     * otherwise reads every pixel in Python, one at a time). Asked only of a
+     * file the page reads as Python does -- checked here against the shape
+     * and sample type Python reads -- by a pool opened for the question.
+     */
+    async function windowOf({ path, channel, shape, dtype }) {
+        const file = global.PlexoraPicks ? global.PlexoraPicks.fileFor(path) : null;
+        if (!file) throw new Error("the page does not hold that file now");
+        // A pool of its own, wider than a project's: every pixel is read once,
+        // and Python waits for the answer.
+        const pool = new TiffPool(SCAN_WORKERS);
+        try {
+            const geometry = await pool.open(file);
+            const why = imageDiffers({ levels: [shape], dtype }, geometry);
+            if (why) throw new Error(`the page reads it differently: ${why}`);
+            const top = await pool.max(channel, 0, geometry.levels[0], geometry.fileTile);
+            return { value: Number.isFinite(top) ? top : 0 };
+        } finally {
+            pool.close();
+        }
+    }
+
+    if (global.PlexoraPython && global.PlexoraPython.answers) global.PlexoraPython.answers("window", windowOf);
+
+    global.PlexoraNode = Object.freeze({ answer, project, revalidate, forget, png, windowOf });
 })(window);

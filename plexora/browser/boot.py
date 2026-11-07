@@ -10,13 +10,17 @@ arrive as callables -- so the same boot runs under CPython in the tests
 - `cancelled(job_id)`: the page's cancel flags (shared memory);
 - `idle(seconds)`: let time pass while the page is served;
 - `waiting()`: whether a request is waiting to be served;
-- `columns(spec)`: a table's columns from the page's column store.
+- `columns(spec)`: a picked table's frame, its columns parsed by the page
+  (plexora/browser/columns.py);
+- `ask(kind, args)`: a question only the page can answer -- a picked image's
+  full-resolution maximum (providers/browser.py `page_window`) -- or None.
 
 What it does, in order: the environment the app reads at build; the
 `imagecodecs` stand-in, before anything imports tifffile; HTTP through the
 browser's fetch for the standard library's urllib (`pyodide_http`), until the
 packages that call out move to urllib3's Emscripten backend; cooperative
-work; the wakeup and the column source; and the app itself, built once.
+work; the wakeup, the column source and the page's answers; and the app
+itself, built once.
 
 Nothing here monkeypatches Plexora: every substitution the first proof needed
 (P9's eight) is now a seam in the product, and each remaining one is a
@@ -75,7 +79,7 @@ def http() -> bool:
 
 
 def start(origin: str, *, post=None, cancelled=None, idle=None, waiting=None, columns=None,
-          data_root: str = "/data", licence_dir: str = "/bioc") -> dict:
+          ask=None, data_root: str = "/data", licence_dir: str = "/bioc") -> dict:
     """Boot once; returns what the page shows in its status chip and records:
     `{version, rules, seconds, shims}`."""
     started = time.perf_counter()
@@ -90,6 +94,7 @@ def start(origin: str, *, post=None, cancelled=None, idle=None, waiting=None, co
     if post is not None:
         viewer_sessions.set_wakeup(lambda: post({"kind": "wakeup"}))
     browser_provider.set_column_source(columns)
+    browser_provider.set_asker(ask)
 
     import plexora
 

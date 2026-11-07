@@ -72,3 +72,35 @@ def test_a_page_without_a_copy_reads_the_mounted_file(project):
     browser.set_column_source(lambda spec: None)
     loaded = providers.resolve_providers(bound).table.load()
     assert loaded.table.height > 0
+
+
+def test_on_the_website_every_reader_of_a_picked_csv_takes_the_pages_parse(project, monkeypatch):
+    """Not only the bound provider: an agent session's own LocalTableProvider
+    of a picked CSV reads through the page too (polars there panics on a large
+    file, and stays broken after)."""
+    _bound, made = project
+    record = Project.load(made["name"])
+    asked = []
+
+    def from_the_page(spec):
+        asked.append(spec.src)
+        return pl.read_csv(made["csv_path"])
+
+    monkeypatch.setenv("PLEXORA_BACKEND", "browser")
+    monkeypatch.setattr(browser, "picked", lambda spec: True)
+    browser.set_column_source(from_the_page)
+    first = LocalTableProvider(record.dataset, record.name).load()
+    second = LocalTableProvider(record.dataset, record.name).load()
+    expected = LocalTableProvider(record.dataset, record.name)
+    monkeypatch.delenv("PLEXORA_BACKEND")
+    assert asked == [record.dataset.src] * 2
+    assert first.table.equals(expected.load().table) and second.table.equals(first.table)
+
+
+def test_off_the_website_a_csv_is_never_the_pages(project, monkeypatch):
+    _bound, made = project
+    record = Project.load(made["name"])
+    browser.set_column_source(lambda spec: pytest.fail("asked the page"))
+    monkeypatch.delenv("PLEXORA_BACKEND", raising=False)
+    assert not browser.picked(record.dataset)
+    LocalTableProvider(record.dataset, record.name).load()

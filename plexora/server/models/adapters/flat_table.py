@@ -22,6 +22,7 @@ out of a 6 GB file without touching a row); a 4 MB cell table is just read.
 
 from __future__ import annotations
 
+import io
 from pathlib import Path
 
 import polars as pl
@@ -53,12 +54,61 @@ def read_flat_table(path, data_type="csv", *, n_rows=None) -> pl.DataFrame:
     """The file, as polars read it and before anything is done to it.
 
     `n_rows` reads a prefix -- enough to infer dtypes for the classification
-    screen, or one row for a schema -- and None reads all of it.
+    screen, or one row for a schema -- and None reads all of it. A CSV's
+    prefix is parsed from its first records' bytes alone (`csv_head`): the
+    same rows, read the same way, but polars handed the path maps the whole
+    file -- on the website, where it has no threads, a large table makes it
+    panic even for a prefix.
     """
     path = Path(path)
     if data_type == "parquet":
         return pl.read_parquet(path, n_rows=n_rows)
+    if n_rows is not None:
+        # At least the rows polars infers its dtypes from, so they are the
+        # rows a read of the path would have inferred them from.
+        head = csv_head(path, max(int(n_rows), _INFER_ROWS))
+        if head is not None:
+            return pl.read_csv(io.BytesIO(head), n_rows=n_rows)
     return pl.read_csv(path, n_rows=n_rows)
+
+
+#: The rows `pl.read_csv` infers a schema from (its `infer_schema_length`).
+_INFER_ROWS = 100
+
+#: How far into a CSV `csv_head` looks for its records.
+_HEAD_LIMIT = 64 << 20
+
+
+def csv_head(path, records: int) -> bytes | None:
+    """The header and the first `records` records of the CSV at `path` (a
+    record ends at a line break outside quotes), as bytes; the whole file if
+    it is shorter; None when they are not in its first 64 MB."""
+    found = 0
+    quoted = False
+    data = bytearray()
+    with open(path, "rb") as handle:
+        while len(data) < _HEAD_LIMIT:
+            chunk = handle.read(1 << 20)
+            if not chunk:
+                return bytes(data)
+            offset = len(data)
+            data += chunk
+            if not quoted and b'"' not in chunk:
+                at = chunk.find(b"\n")
+                while at >= 0:
+                    found += 1
+                    if found > records:
+                        return bytes(data[:offset + at + 1])
+                    at = chunk.find(b"\n", at + 1)
+                continue
+            for at, byte in enumerate(chunk):
+                if byte == 0x22:
+                    quoted = not quoted
+                elif byte == 0x0A and not quoted:
+                    found += 1
+                    if found > records:
+                        return bytes(data[:offset + at + 1])
+    return None
 
 
 def write_flat_table(frame: pl.DataFrame, path, data_type="csv") -> None:

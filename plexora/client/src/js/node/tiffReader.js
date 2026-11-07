@@ -25,6 +25,7 @@
  *   tile({channel, level, tx, ty, tw, th, raw})  -- `timing` says where it went
  *   region({channel, level, x0, y0, x1, y1})     -- a window as native values
  *   level({channel, level})                      -- a whole (small) level, raw
+ *   max({channel, level, windows})               -- the largest sample over windows
  */
 import { addDecoder, BaseDecoder, GeoTIFF, GeoTIFFImage } from "geotiff";
 import { inflate } from "pako";
@@ -554,5 +555,21 @@ export function createTiffReader() {
         };
     }
 
-    return { open, tile, level, region };
+    /**
+     * The largest sample of one channel's level over `windows` ([x0, y0, x1,
+     * y1] each, read one at a time): what `data_model.quantization_window_of`
+     * reads every full-resolution pixel for, a part of the plane per worker.
+     */
+    async function max({ channel, level: index = 0, windows }) {
+        const t0 = now();
+        let top = -Infinity;
+        for (const window of windows) {
+            const { values } = await region({ channel, level: index, x0: window[0], y0: window[1],
+                                              x1: window[2], y1: window[3] });
+            for (let i = 0; i < values.length; i += 1) if (values[i] > top) top = values[i];
+        }
+        return { max: top, windows: windows.length, timing: { totalMs: now() - t0 } };
+    }
+
+    return { open, tile, level, region, max };
 }

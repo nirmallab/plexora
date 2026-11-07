@@ -25,6 +25,7 @@ the columns screen asked the marker/metadata split up front, which is a
 
 import functools
 import logging
+import os
 import shutil
 import time
 import uuid
@@ -752,7 +753,8 @@ def replace_project_data(name, data_path_str, payload=None, spatial=None):
         # roles are predicted from has to be the header the adapter will
         # actually read -- a `cell_index` added afterwards is a column no role
         # can name, which is how the Xenium cell id stayed a string.
-        source = _copy_into_project(name, source)
+        if spatial or not _picked_on_the_website(source):
+            source = _copy_into_project(name, source)
         if spatial:
             from plexora.server.utils import xenium_cells
 
@@ -940,6 +942,14 @@ def _fetch_copied_table(url):
         raise
     layer_jobs.registration_progress(0, 0, "Reading the table")
     return copied
+
+
+def _picked_on_the_website(path) -> bool:
+    """A table the user picked on the website, referenced where the page
+    mounted it rather than copied: a project's folder there is the browser's
+    storage, held in memory while the page is open, and the page remembers
+    the pick itself (services/pickedFiles.js)."""
+    return os.environ.get("PLEXORA_BACKEND") == "browser" and str(path).startswith("/picked/")
 
 
 def _copy_into_project(name, table_path):

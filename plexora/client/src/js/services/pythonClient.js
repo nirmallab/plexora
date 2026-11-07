@@ -58,6 +58,23 @@
         });
     }
 
+    //: Python's questions to the page, answered by whoever registered for
+    //: their kind (`answers`); null and why when nobody can.
+    const answerers = new Map();
+    async function respond({ id, ask, args }) {
+        let value = null;
+        let failed = null;
+        let transfer = [];
+        try {
+            const fn = answerers.get(ask);
+            if (!fn) failed = `nothing in this page answers "${ask}"`;
+            else ({ value = null, transfer = [] } = (await fn(args)) || {});
+        } catch (error) {
+            failed = String(error && error.message || error).slice(0, 500);
+        }
+        await call("answer", { id, value, failed }, transfer);
+    }
+
     function emit(kind, payload) {
         for (const fn of listeners.get(kind) || []) {
             try { fn(payload); } catch (error) { console.error(error); }
@@ -84,6 +101,7 @@
                 steps.push({ ms: event.ms, names: event.names, at: Math.round(performance.now()) });
                 if (steps.length > RECENT) steps.shift();
             }
+            if (event.kind === "ask") respond(event);
             if (event.kind === "wakeup") {
                 const held = wakeups;
                 wakeups = [];
@@ -265,8 +283,10 @@
         mount: (dir, files) => ready.then(() => call("mount", { dir, files })),
         mountTree: (dir, blobs) => ready.then(() => call("mountTree", { dir, blobs })),
         nodeSpec: (name) => ready.then(() => call("nodeSpec", { name })),
-        columns: (key, names, buffers) => ready.then(() => call("columns", { key, names, buffers },
-                                                               buffers)),
+        //: Who answers Python's questions of kind `kind`: `fn(args)` -> a
+        //: promise of {value, transfer} (services/browserTable.js "columns",
+        //: services/browserNode.js "window").
+        answers: (kind, fn) => { answerers.set(kind, fn); },
         heap: () => ready.then(() => call("heap", {})),
         run: (code) => ready.then(() => call("run", { code })),
         sync: () => ready.then(() => call("sync", {})),

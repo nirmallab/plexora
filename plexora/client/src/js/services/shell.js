@@ -87,10 +87,14 @@
         await script("/client/src/js/services/backend.js");
         await script("/client/src/js/services/pickedFiles.js");
         await script("/client/src/js/services/browserNode.js");
+        await script("/client/src/js/services/browserTable.js");
         await controlled();
         status("Starting Python");
         global.PlexoraPython.on("mark", ({ mark }) => { if (LABELS[mark]) status(LABELS[mark]); });
-        const info = await global.PlexoraPython.start({ base: shell.py });
+        // `?pydebug` on the address: the worker's test hooks (`run`, `sync`,
+        // `trace`), for diagnosing the site in development.
+        const debug = new URLSearchParams(global.location.search).has("pydebug");
+        const info = await global.PlexoraPython.start({ base: shell.py, debug });
         if (info.error) throw new Error(info.error);
         // The files picked on earlier visits, mounted again where the browser
         // still grants access; the rest wait for a click (PlexoraPicks.reconnect).

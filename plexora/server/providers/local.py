@@ -17,6 +17,7 @@ module state -- see `plexora/server/models/data_model.py`.
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 from typing import Any, Mapping
 
@@ -92,9 +93,17 @@ class LocalTableProvider:
         return self._loaded
 
     def _open_adapter(self):
-        """What `load()` reads through: the adapter for the file's type."""
+        """What `load()` reads through: the adapter for the file's type -- or,
+        for a CSV picked on the website, over the page's parse of it
+        (providers/browser.py)."""
         from plexora.server.models.adapters import get_adapter
 
+        if os.environ.get("PLEXORA_BACKEND") == "browser":
+            from plexora.server.providers.browser import page_adapter
+
+            adapter = page_adapter(self._spec)
+            if adapter is not None:
+                return adapter
         return get_adapter(self._spec.type)(self._spec)
 
     @property
