@@ -73,3 +73,37 @@ def test_stats_packet_carries_both_the_pooled_and_full_resolution_ceilings():
     body = source[start:end]
     for key in ("'image_max'", "'qmax'"):
         assert key in body, f"{key} is no longer part of the stats packet"
+
+
+def test_a_channel_with_no_positive_pixel_still_has_a_stats_packet():
+    """A blank cycle (every overview pixel 0) used to raise in every
+    reduction -- a 500 from /get_image_channel_stats, and a channel list left
+    without stats. It answers with an empty histogram and a hint spanning the
+    window, in the packet's usual shape."""
+    import numpy as np
+
+    from plexora.server.models.data_model import channel_stats_of
+
+    blank = channel_stats_of(np.zeros((40, 50), dtype=np.uint16), 0.0, 1.0)
+    shaped = channel_stats_of(np.arange(1, 2001, dtype=np.uint16).reshape(40, 50), 0.0, 2000.0)
+    assert set(blank) == set(shaped)
+    assert len(blank["image_histogram"]) == len(shaped["image_histogram"]) == 50
+    assert all(b["y"] == 0.0 for b in blank["image_histogram"])
+    assert blank["image_min"] == blank["image_max"] == 0.0
+    assert (blank["vmin_hint"], blank["vmax_hint"]) == (0.0, 1.0)
+
+
+def test_a_channel_with_no_positive_pixel_still_has_a_gmm_packet():
+    """The mixture fit needs three samples; a blank channel used to raise in
+    GaussianMixture -- /get_channel_gmm a 500 and no auto-level. It answers
+    with the whole range as the window, in the packet's usual shape."""
+    import numpy as np
+
+    from plexora.server.models.data_model import channel_gmm_of
+
+    blank = channel_gmm_of(np.zeros((40, 50), dtype=np.uint16), 0.0, 1.0)
+    rng = np.random.default_rng(0)
+    real = channel_gmm_of(rng.lognormal(5, 1, (40, 50)).astype(np.uint16), 0.0, 4000.0)
+    assert set(blank) == set(real)
+    assert (blank["vmin"], blank["vmax"], blank["log_window"]) == (0.0, 1.0, None)
+    assert all(len(blank[k]) == 50 for k in ("image_gmm_1", "image_gmm_2", "image_gmm_3"))

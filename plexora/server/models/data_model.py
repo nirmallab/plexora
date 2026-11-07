@@ -3326,6 +3326,22 @@ def channel_gmm_of(image_data, qmin, qmax):
     packet_gmm = {}
 
     nonzero = image_data[image_data > 0]
+    if nonzero.size < 3:
+        # Nothing to fit three components to (a blank cycle, a plane not
+        # acquired): the window is the plane's whole range, no Log window, and
+        # flat curves in the packet's usual shape -- where the fit raised, and
+        # the channel's auto-level with it.
+        flat = [{'x': (i + 0.5) / 50, 'y': 0.0} for i in range(50)]
+        return {
+            'vmin': 0.0,
+            'vmax': float(np.rint(max(float(image_data.max()) if image_data.size else 0.0, 1.0))),
+            'log_window': None,
+            'qmin': qmin,
+            'qmax': qmax,
+            'image_gmm_1': flat,
+            'image_gmm_2': list(flat),
+            'image_gmm_3': list(flat),
+        }
     img_log = np.log(nonzero)
     gmm = GaussianMixture(3, max_iter=1000, tol=1e-6)
     gmm.fit(img_log.reshape((-1, 1)))
@@ -3532,6 +3548,22 @@ def channel_stats_of(image_data, qmin, qmax):
     window is not, and they must not be reconciled.
     """
     img_log = np.log(image_data[image_data > 0])
+    if not img_log.size:
+        # A channel with no positive pixel (a blank cycle of a CODEX panel, a
+        # plane not acquired): every reduction below is undefined, and a 500
+        # here left the viewer's channel list without stats. An empty
+        # histogram over [0, 1] in the log domain, nothing above zero, and a
+        # hint spanning the window.
+        dat = [{'x': (i + 0.5) / 50, 'y': 0.0} for i in range(50)]
+        return {
+            'image_histogram': dat,
+            'image_min': 0.0,
+            'image_max': 0.0,
+            'qmin': qmin,
+            'qmax': qmax,
+            'vmin_hint': float(qmin),
+            'vmax_hint': float(qmax),
+        }
     [hist, bin_edges] = np.histogram(img_log.flatten(), bins=50, density=True)
     midpoints = (bin_edges[1:] + bin_edges[:-1]) / 2
 
