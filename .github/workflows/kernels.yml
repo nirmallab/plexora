@@ -1,0 +1,147 @@
+name: kernels
+
+# plexora-kernels (kernels/; docs/internal/bench/browser_node/L5.md): Plexora's
+# numba kernels ported to Cython, built as wheels for every platform the
+# desktop app and a node run on, and for Pyodide, where the website's Python
+# runs. On a pull request or push that touches the ports or the kernels they
+# port, and by hand.
+#
+#   wheels     cibuildwheel v4.3.5 per platform: CPython 3.12-3.14 on Linux
+#              (x86_64, aarch64), macOS (arm64, x86_64) and Windows (AMD64);
+#              Pyodide 314.0.7 (cp314, pyemscripten_2026_0_wasm32). Each wheel
+#              runs kernels/tests in its own interpreter (Node for Pyodide).
+#   agreement  Linux and Windows: the wheel installed beside Plexora, and every
+#              port held to numba and to the Python it ports on the same inputs
+#              (tests/test_kernels_package.py), the fingerprints current
+#              (kernels/tools/fingerprints.py --check), the shim's LZW and the
+#              kernels' own tests.
+#   sdist      the source distribution.
+#
+# Nothing is published from here: releasing to PyPI is a separate decision
+# (L5.md, "Releasing"), and the website's bundle takes the Pyodide wheel from
+# this workflow's artifact or a local build (tools/browser_build/build.py
+# --kernels-wheel).
+
+on:
+  pull_request:
+    paths:
+      - "kernels/**"
+      - "plexora/server/utils/jit.py"
+      - "plexora/server/utils/label_kernels.py"
+      - "plexora/server/utils/cell_features.py"
+      - "plexora/server/volume/measure.py"
+      - "plexora/server/surface/nets.py"
+      - "plexora/server/surface/mesh.py"
+      - "plexora/plugins/qc/server/segqc/kernels.py"
+      - "plexora/plugins/gating/server/autogate/kernels.py"
+      - "plexora/browser/imagecodecs_shim.py"
+      - "tests/kernel_cases.py"
+      - "tests/test_kernels_package.py"
+      - ".github/workflows/kernels.yml"
+  push:
+    branches: [main]
+    paths:
+      - "kernels/**"
+      - "plexora/server/utils/jit.py"
+      - "plexora/server/surface/**"
+      - "plexora/plugins/qc/server/segqc/kernels.py"
+      - "plexora/plugins/gating/server/autogate/kernels.py"
+      - ".github/workflows/kernels.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: kernels-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  UV_LINK_MODE: copy
+
+jobs:
+  wheels:
+    name: wheels (${{ matrix.name }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { name: linux-x86_64, os: ubuntu-24.04, platform: linux, archs: x86_64 }
+          - { name: linux-aarch64, os: ubuntu-24.04-arm, platform: linux, archs: aarch64 }
+          - { name: macos-arm64, os: macos-15, platform: macos, archs: arm64 }
+          - { name: macos-x86_64, os: macos-15-intel, platform: macos, archs: x86_64 }
+          - { name: windows-amd64, os: windows-2025, platform: windows, archs: AMD64 }
+          - { name: pyodide, os: ubuntu-24.04, platform: pyodide, archs: wasm32 }
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: pypa/cibuildwheel@f9b966cfadf4109556cadc5bb39ddb72d0ce664e # v4.3.5
+        with:
+          package-dir: kernels
+          output-dir: wheelhouse
+        env:
+          CIBW_PLATFORM: ${{ matrix.platform }}
+          CIBW_ARCHS: ${{ matrix.archs }}
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: kernels-${{ matrix.name }}
+          path: wheelhouse/*.whl
+          if-no-files-found: error
+
+  agreement:
+    name: agreement (${{ matrix.os }})
+    needs: wheels
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: ubuntu-24.04, wheels: kernels-linux-x86_64 }
+          - { os: windows-2025, wheels: kernels-windows-amd64 }
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
+        with:
+          python-version: "3.13"
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: ${{ matrix.wheels }}
+          path: wheelhouse
+      - name: Plexora (numba is a core dependency) and the wheel for this Python
+        shell: bash
+        run: |
+          uv venv --python 3.13 .venv
+          py=.venv/bin/python; [ -x "$py" ] || py=.venv/Scripts/python.exe
+          echo "PY=$py" >> "$GITHUB_ENV"
+          uv pip install --python "$py" -e ".[dev]" imagecodecs
+          uv pip install --python "$py" --no-deps --find-links wheelhouse plexora-kernels
+      - name: The ports agree with numba and with the Python
+        shell: bash
+        run: |
+          "$PY" -m pytest -q -p no:cacheprovider tests/test_kernels_package.py             tests/test_imagecodecs_shim.py tests/test_autogate_units.py tests/test_cell_features.py             tests/test_surface_engine.py kernels/tests
+      - name: The fingerprints are this checkout's
+        shell: bash
+        run: '"$PY" kernels/tools/fingerprints.py --check'
+
+  sdist:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
+        with:
+          python-version: "3.13"
+      - run: uv build --sdist --out-dir dist kernels
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: kernels-sdist
+          path: dist/*.tar.gz
+          if-no-files-found: error

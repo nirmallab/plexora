@@ -10,7 +10,8 @@ the website's Python already has:
 - tifffile's own fallbacks (deflate, LZMA, zstd, PackBits, delta, bit order,
   packed integers, float24), re-exported as they are;
 - `zlibng_encode` from the stdlib's zlib -- the same stream format, slower;
-- LZW, decoded here in Python (`plexora-kernels` compiles it later; plan L5);
+- LZW from plexora-kernels (compiled C, WebAssembly on the website) when it
+  is there, else decoded here in Python (`lzw_decode_python`);
 - JPEG, PNG and WebP through Pillow, with a TIFF's JPEG tables and an RGB
   JPEG's colour space handled as libjpeg-turbo would (`jpeg_decode`);
 - HDF5's LZ4 framing (Imaris) through the `lz4` package;
@@ -92,9 +93,24 @@ def zstd_encode(data, level=None, out=None):
 _CLEAR, _EOI = 256, 257
 
 
+def _lzw():
+    """The LZW decoder this process has: plexora-kernels' (a port of the one
+    below, held to it and to imagecodecs by tests/test_imagecodecs_shim.py),
+    else the one below."""
+    from plexora.server.utils import jit
+
+    package = jit.kernels_module()
+    return package.lzw_decode if package is not None else lzw_decode_python
+
+
 def lzw_decode(data, buffersize=0, out=None):
     """TIFF's LZW. The pre-TIFF 6 variant (LSB-first) is refused, as by
     libtiff without its old-LZW support."""
+    return _lzw()(data, buffersize, out)
+
+
+def lzw_decode_python(data, buffersize=0, out=None):
+    """`lzw_decode` in Python: what runs without plexora-kernels."""
     data = bytes(data)
     if data[:2] == b"\x00\x01":
         raise NotImplementedError("old-style (pre-TIFF 6) LZW is not supported")

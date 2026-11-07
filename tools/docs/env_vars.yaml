@@ -114,7 +114,11 @@ public:
     default: "a sixteenth of the allocated memory, 128 to 2048"
   - name: PLEXORA_NO_NUMBA
     group: Performance
-    description: Set to `1` to skip the compiled numba kernels and use the pure-Python fallbacks. Slower; useful when numba fails to load.
+    description: Set to `1` to skip numba. The kernels then come from plexora-kernels when it is installed, else run as plain Python (slower); useful when numba fails to load.
+  - name: PLEXORA_KERNELS
+    group: Performance
+    description: Set to `0` to skip plexora-kernels, the package of kernels compiled ahead of time, even when it is installed; the kernels then run through numba, or as plain Python with `PLEXORA_NO_NUMBA=1`. For comparing the two, or ruling the package out.
+    default: "1 (used when installed)"
   - name: PLEXORA_SEGMENT_MODEL_DIR
     group: Magic select
     description: Directory magic select's model files are read from and downloaded to. For an offline machine, copy the two files here (or run `plexora ai segment install` once where there is a network) and nothing is fetched. The same as `plexora config set segment-model-dir`.

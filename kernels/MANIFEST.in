@@ -1,0 +1,5 @@
+# The sources the extension is built from, for the sdist.
+recursive-include src *.pyx *.pxi
+include LICENSE README.md
+recursive-include tests *.py
+global-exclude *.c *.so *.pyd

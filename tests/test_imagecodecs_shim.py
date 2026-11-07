@@ -31,8 +31,17 @@ ROOT = Path(__file__).resolve().parents[1]
     np.repeat(np.arange(60_000, dtype=np.uint16), 3).tobytes(),
 ], ids=["empty", "one", "ramp", "noise", "runs"])
 def test_lzw_decodes_what_imagecodecs_encodes(data):
-    """`noise` overflows the 4096-code table, so the Clear code is exercised."""
-    assert shim.lzw_decode(imagecodecs.lzw_encode(data)) == data
+    """`noise` overflows the 4096-code table, so the Clear code is exercised.
+    Both decoders: the Python one, and plexora-kernels' port of it (what
+    `lzw_decode` runs when that package is installed)."""
+    encoded = imagecodecs.lzw_encode(data)
+    assert shim.lzw_decode_python(encoded) == data
+    assert shim.lzw_decode(encoded) == data
+    try:
+        import plexora_kernels
+    except ImportError:
+        return
+    assert plexora_kernels.lzw_decode(encoded) == data
 
 
 def test_zlibng_is_a_deflate_stream():

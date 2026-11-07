@@ -231,7 +231,13 @@ Memory, in MB, the viewer's server keeps for image tiles it has already encoded,
 
 <Param name={"PLEXORA_NO_NUMBA"}>
 
-Set to `1` to skip the compiled numba kernels and use the pure-Python fallbacks. Slower; useful when numba fails to load.
+Set to `1` to skip numba. The kernels then come from plexora-kernels when it is installed, else run as plain Python (slower); useful when numba fails to load.
+
+</Param>
+
+<Param name={"PLEXORA_KERNELS"} default={"1 (used when installed)"}>
+
+Set to `0` to skip plexora-kernels, the package of kernels compiled ahead of time, even when it is installed; the kernels then run through numba, or as plain Python with `PLEXORA_NO_NUMBA=1`. For comparing the two, or ruling the package out.
 
 </Param>
 

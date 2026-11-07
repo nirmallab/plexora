@@ -1,0 +1,43 @@
+[build-system]
+requires = ["setuptools>=77", "Cython>=3.1"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "plexora-kernels"
+# Versioned on its own: a release follows a change to a port or to the kernels
+# it ports (src/plexora_kernels/_fingerprints.py), not Plexora's version.
+version = "0.1.0"
+description = "Plexora's compiled kernels: the loops numba compiles on the desktop, ported to Cython for every platform and for WebAssembly (Pyodide)."
+readme = "README.md"
+authors = [{ name = "BioCognia", email = "support@biocognia.com" }]
+requires-python = ">=3.12"
+license = "LicenseRef-Plexora-EULA-1.0"
+license-files = ["LICENSE"]
+dependencies = ["numpy>=1.26"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Cython",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.exclude-package-data]
+plexora_kernels = ["*.c", "*.pyx", "*.pxi"]
+
+# cibuildwheel (.github/workflows/kernels.yml; v4.3.5 knows Pyodide 314.0.7):
+# CPython 3.12-3.14 on Linux (manylinux x86_64, aarch64), macOS (arm64,
+# x86_64), Windows (AMD64), and Pyodide (`--platform pyodide`) for the Python
+# the website ships only (3.14, Pyodide 314.0.7: tag pyemscripten_2026_0_wasm32).
+[tool.cibuildwheel]
+build = "cp312-* cp313-* cp314-*"
+skip = "*-win32 *_i686 *-musllinux_* cp31?t-* cp312-pyodide* cp313-pyodide*"
+build-frontend = "build"
+test-requires = ["pytest", "numpy"]
+test-command = "pytest {project}/tests -q -p no:cacheprovider"
+
+[tool.cibuildwheel.pyodide]
+pyodide-version = "314.0.7"

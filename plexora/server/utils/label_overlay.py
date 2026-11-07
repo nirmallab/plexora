@@ -105,10 +105,11 @@ def boundary_mask(labels, radius=1):
     labels = np.asarray(labels)
     from plexora.server.utils import jit
 
-    if jit.enabled() and labels.ndim == 2 and labels.dtype.kind in "iu":
-        from plexora.server.utils.label_kernels import boundary_mask_kernel
+    if labels.ndim == 2 and labels.dtype.kind in "iu":
+        from plexora.server.utils import label_kernels
 
-        return boundary_mask_kernel(labels, radius)
+        if jit.is_compiled(label_kernels._boundary):
+            return label_kernels.boundary_mask_kernel(labels, radius)
     return boundary_mask_numpy(labels, radius)
 
 
