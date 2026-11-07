@@ -520,6 +520,7 @@ def _local_mask_report(datasource):
     for project-side output, since then it is where they put it.
     """
     from plexora import paths
+    from plexora.server.providers import is_addressed
 
     entry = (get_config() or {}).get(datasource) or {}
     served, source = entry.get('segmentation'), entry.get('segmentationSource')
