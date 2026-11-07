@@ -77,6 +77,8 @@ def test_a_tab_without_the_queue_sends_its_open_hour_when_hidden(website):
     t, fake, home, _env = website
     web.start(str(home), keep_queue=False)
     assert not (home / "queue.sqlite").exists()
+    # A queue of its own, new for this start: nothing left by anything before.
+    assert t.queue.path.parent.name.startswith("plexora-telemetry-")
     t.count("tool.summary", "open", tool="roi")
     assert web.tick(now=10.0)["outcome"] == "nothing"
     answer = web.tick(hidden=True, now=20.0)
