@@ -14,8 +14,10 @@ origin, with the headers they will send:
 - ``/tests/browser/...``: the browser tests' harness pages.
 
 Every response is cross-origin isolated (`COOP: same-origin`, `COEP:
-require-corp`, `CORP: same-origin`), as the site is (D5). Prints one JSON
-line ``{"port": N}`` when listening.
+require-corp`, `CORP: same-origin`), as the site is (D5). A static build's
+files (`--site`) also carry the headers its `_headers` gives every path (the
+`/*` block: its Content-Security-Policy, `X-Robots-Tag`), as Pages sends them.
+Prints one JSON line ``{"port": N}`` when listening.
 """
 
 from __future__ import annotations
@@ -40,6 +42,7 @@ TYPES = {".js": "text/javascript", ".mjs": "text/javascript", ".wasm": "applicat
 
 class Handler(BaseHTTPRequestHandler):
     trees: dict = {}
+    site_headers: tuple = ()
     #: The static build (`client/static_build.py`), served at / as Pages
     #: would: a file if there is one, else the loader (`_redirects`).
     site: Path | None = None
@@ -74,12 +77,12 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(403, b"forbidden")
             if not target.is_file():
                 target = self.site / "index.html"
-            return self._file(target, "no-cache", head)
+            return self._file(target, "no-cache", head, extra=self.site_headers)
         if path in ("/", ""):
             return self._redirect("/tests/browser/harness/index.html")
         return self._send(404, b"not found")
 
-    def _file(self, target: Path, cache: str, head: bool):
+    def _file(self, target: Path, cache: str, head: bool, extra=()):
         if not target.is_file():
             return self._send(404, b"not found")
         encoded = target.with_name(target.name + ".br")
@@ -96,6 +99,8 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Content-Length", str(use.stat().st_size))
         self.send_header("Cache-Control", cache)
         self._isolation()
+        for name, value in extra:
+            self.send_header(name, value)
         self.end_headers()
         if not head:
             self.wfile.write(body)
@@ -118,6 +123,27 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Location", where)
         self.send_header("Content-Length", "0")
         self.end_headers()
+
+
+#: Sent by `_isolation` on every response already.
+_SENT = {"cross-origin-opener-policy", "cross-origin-embedder-policy", "cross-origin-resource-policy"}
+
+
+def site_headers(site: Path) -> tuple:
+    """((name, value), ...) from a static build's `_headers`: the block for
+    every path (`/*`), less what `_isolation` sends."""
+    rules = site / "_headers"
+    if not rules.is_file():
+        return ()
+    block = rules.read_text(encoding="utf-8").split("\n\n")[0].splitlines()
+    if not block or block[0].strip() != "/*":
+        return ()
+    out = []
+    for line in block[1:]:
+        name, _, value = line.strip().partition(":")
+        if name and value and name.lower() not in _SENT:
+            out.append((name.strip(), value.strip()))
+    return tuple(out)
 
 
 class Server(ThreadingHTTPServer):
@@ -145,6 +171,7 @@ def main(argv=None) -> int:
     }
     if args.site:
         Handler.site = Path(args.site)
+        Handler.site_headers = site_headers(Handler.site)
     else:
         Handler.trees["/client/"] = (REPO / "plexora" / "client", "no-store")
     for tree in args.tree:

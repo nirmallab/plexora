@@ -77,14 +77,43 @@ LOADER = """<!doctype html>
 </html>
 """
 
+#: This computer's loopback, where a paired node or the desktop app answers.
+#: (A CSP host source cannot name an IPv6 address: `[::1]` is refused.)
+_LOOPBACK = "http://127.0.0.1:* http://localhost:*"
+
+#: The site's Content-Security-Policy (plan Phase 5). Scripts only from the
+#: site and the assets bucket -- no inline script: the website's pages carry
+#: their variables as JSON (base.html) -- and WebAssembly compiled; workers
+#: from the site (blob: for a library that starts its own); requests anywhere
+#: over https and to the loopback; images also from the loopback (a node's
+#: tiles); inline styles allowed (the app sets them everywhere); no plugins;
+#: the site framed by nobody but itself.
+CSP = "; ".join((
+    "default-src 'self'",
+    "script-src 'self' 'wasm-unsafe-eval' https://assets.plexoraapp.com blob:",
+    "worker-src 'self' blob:",
+    f"connect-src 'self' https: {_LOOPBACK} blob: data:",
+    f"img-src 'self' data: blob: https: {_LOOPBACK}",
+    "media-src 'self' blob: data:",
+    "style-src 'self' 'unsafe-inline'",
+    "font-src 'self' data:",
+    "frame-src 'self' blob:",
+    "frame-ancestors 'self'",
+    "object-src 'none'",
+    "base-uri 'self'",
+    "form-action 'self'",
+))
+
 #: Cloudflare Pages' `_headers`: the site is cross-origin isolated everywhere
-#: (plan D5); its service worker may control every path.
-HEADERS = """/*
+#: (plan D5) and under its Content-Security-Policy; its service worker may
+#: control every path.
+HEADERS = f"""/*
   Cross-Origin-Opener-Policy: same-origin
   Cross-Origin-Embedder-Policy: require-corp
   Cross-Origin-Resource-Policy: same-origin
   X-Content-Type-Options: nosniff
   Referrer-Policy: same-origin
+  Content-Security-Policy: {CSP}
 
 /client/src/js/workers/backendRelay.js
   Service-Worker-Allowed: /
