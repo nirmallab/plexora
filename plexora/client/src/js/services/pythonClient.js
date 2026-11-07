@@ -25,6 +25,7 @@
  *   mountTree(dir, blobs)   a picked folder: [{name: "<folder>/<path>", data: File}]
  *   answers(kind, fn)       who answers Python's questions of `kind` (the page's
  *                           table, window and pyramid readers)
+ *   licence(files)          the page's licence written into Python's /bioc
  *   flush()                 the project store written back now
  *   useStore(folder)        the project store moved to a granted folder
  *   job(id) / cancel(id) / on(kind, fn)
@@ -287,6 +288,9 @@
         mount: (dir, files) => ready.then(() => call("mount", { dir, files })),
         mountTree: (dir, blobs) => ready.then(() => call("mountTree", { dir, blobs })),
         nodeSpec: (name) => ready.then(() => call("nodeSpec", { name })),
+        //: The page's licence records written where Python's `biocognia`
+        //: reads them (services/licenseClient.js); resolves Python's status.
+        licence: (files) => ready.then(() => call("licence", { files })),
         //: Who answers Python's questions of kind `kind`: `fn(args)` -> a
         //: promise of {value, transfer} (services/browserTable.js "columns",
         //: services/browserNode.js "window").

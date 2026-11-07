@@ -16,6 +16,8 @@
 //                                  (handled at once, never queued: Python waits);
 //                                  a `mount` {dir, files} in it is mounted first
 //   nodeSpec {name}                what the browser node may serve for a project
+//   licence {files}                the page's licence records written into /bioc
+//                                  (plexora/browser/licence.py) -> the licence status
 //   heap                           the wasm heap's bytes
 //   run {code}                     tests only (boot with debug: true): Python's
 //                                  last expression, as text
@@ -451,6 +453,16 @@ const OPS = {
         const module = py.pyimport("plexora.browser.node_spec");
         try {
             return JSON.parse(await call(module.describe_json, name));
+        } finally {
+            module.destroy();
+        }
+    },
+    //: The licence the page holds (services/licenseClient.js), as the files
+    //: `biocognia` reads, and Python's status after reading them.
+    licence: async ({ files }) => {
+        const module = py.pyimport("plexora.browser.licence");
+        try {
+            return JSON.parse(await call(module.adopt_json, JSON.stringify(files || {})));
         } finally {
             module.destroy();
         }

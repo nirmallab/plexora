@@ -25,9 +25,17 @@
  *   PlexoraPro.startTrial() / goToLicense()
  *
  * Nothing here runs on a Free path. There are no banners, no nags and no
- * timers: the modal opens only when somebody asks for a Pro feature. The
- * licence itself never reaches the browser -- no certificate, key or token is
- * ever in this page or in its storage.
+ * timers: the modal opens only when somebody asks for a Pro feature.
+ *
+ * What the browser keeps of a licence. Served by a Plexora (the desktop app,
+ * a server), none of it: the licence lives with that Plexora, and this page
+ * is told plan, state and grants. On the website the browser IS the product
+ * process (services/licenseClient.js, plan D8), and the site's own storage
+ * on viewer.plexoraapp.com keeps the BIOC1 certificate, a random device
+ * secret (the platform is told only its hash) and an install id (IndexedDB),
+ * and, with the projects, the tokens of nodes paired with it. Never the
+ * licence key, an activation code, the person's email, or the AI token
+ * (memory only). Nothing here reads any of it.
  */
 window.PlexoraPro = (function () {
     "use strict";

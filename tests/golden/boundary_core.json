@@ -97,7 +97,7 @@
       "scripts": [
         "/client/src/js/services/passVariablesToFrontend.js?v=20260910_unreachable_message",
         "/client/src/js/services/desktopBridge.js?v=20261103_reload",
-        "/client/src/js/services/backend.js?v=20261106_browser_node",
+        "/client/src/js/services/backend.js?v=20261107_licence",
         "/client/src/js/services/appStatus.js?v=20260926_help_menu",
         "/client/src/js/services/telemetry.js?v=20260928_qc_owner",
         "/client/src/js/services/errors.js?v=20260927_telemetry",
@@ -314,7 +314,7 @@
       "scripts": [
         "/client/src/js/services/passVariablesToFrontend.js?v=20260910_unreachable_message",
         "/client/src/js/services/desktopBridge.js?v=20261103_reload",
-        "/client/src/js/services/backend.js?v=20261106_browser_node",
+        "/client/src/js/services/backend.js?v=20261107_licence",
         "/client/src/js/services/appStatus.js?v=20260926_help_menu",
         "/client/src/js/services/telemetry.js?v=20260928_qc_owner",
         "/client/src/js/services/errors.js?v=20260927_telemetry",
@@ -599,7 +599,7 @@
       "scripts": [
         "/client/src/js/services/passVariablesToFrontend.js?v=20260910_unreachable_message",
         "/client/src/js/services/desktopBridge.js?v=20261103_reload",
-        "/client/src/js/services/backend.js?v=20261106_browser_node",
+        "/client/src/js/services/backend.js?v=20261107_licence",
         "/client/src/js/services/appStatus.js?v=20260926_help_menu",
         "/client/src/js/services/telemetry.js?v=20260928_qc_owner",
         "/client/src/js/services/errors.js?v=20260927_telemetry",
@@ -769,7 +769,7 @@
       ]
     }
   },
-  "route_count": 243,
+  "route_count": 244,
   "routes": [
     "DELETE /nodes/<name>/resources/<resource_id>",
     "DELETE /project/<string:name>/layers/<path:layer_id>",
@@ -969,6 +969,7 @@
     "POST /settings/license/connect",
     "POST /settings/license/connect/poll",
     "POST /settings/license/deactivate",
+    "POST /settings/license/forget",
     "POST /settings/license/install",
     "POST /settings/license/refresh",
     "POST /settings/license/remove",

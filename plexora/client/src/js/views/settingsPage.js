@@ -2324,10 +2324,42 @@
             });
             if (go) this.act("settings/license/remove");
         });
+        // The website: the browser holds the licence (services/licenseClient.js).
+        el("settings_license_forget")?.addEventListener("click", () => this.forget());
+        // A change made elsewhere -- another tab, the background refresh --
+        // told by the site's host page (services/shell.js).
+        this.onExternal = (event) => { if (event && event.detail) this.draw(event.detail); };
+        if (typeof window.addEventListener === "function") {
+            window.addEventListener("plexora:license-external", this.onExternal);
+        }
         this.load();
     };
 
+    /** Forget this browser: release its device on the seat, then clear what
+     *  the browser keeps. A release that fails asks before forgetting anyway. */
+    LicenseSection.prototype.forget = async function () {
+        const go = await window.PlexoraConfirm.ask({
+            title: "Forget this browser?",
+            body: "Its device is released on your seat and the licence is cleared here. "
+                  + "Everything you have made stays as it is.",
+            confirm: "Forget",
+        });
+        if (!go) return;
+        const answer = await this.act("settings/license/forget");
+        if (answer.ok || !answer.release_failed) return;
+        const anyway = await window.PlexoraConfirm.ask({
+            title: "Forget it anyway?",
+            body: `${answer.error || "Its device could not be released."} `
+                  + "It stays on your seat until you sign it out at account.biocognia.com.",
+            confirm: "Forget Anyway",
+        });
+        if (anyway) await this.act("settings/license/forget", { force: true });
+    };
+
     LicenseSection.prototype.stop = function () {
+        if (this.onExternal && typeof window.removeEventListener === "function") {
+            window.removeEventListener("plexora:license-external", this.onExternal);
+        }
         if (!this.onReturn) return;
         if (typeof window.removeEventListener === "function") window.removeEventListener("focus", this.onReturn);
         if (typeof document.removeEventListener === "function") {
@@ -2493,9 +2525,10 @@
             facts.push(["Pro features stop", day(info.grace_until)]);
         }
         if (info.environment?.type) {
+            const browser = info.environment.type === "browser";
             const kind = info.environment.type === "cluster" ? "Cluster"
-                : ["job", "ci"].includes(info.environment.type) ? "Job" : "Device";
-            facts.push([kind, info.environment.name || "This machine"]);
+                : ["job", "ci"].includes(info.environment.type) ? "Job" : browser ? "Browser" : "Device";
+            facts.push([kind, info.environment.name || (browser ? "This browser" : "This machine")]);
         }
         if (info.use_class) {
             facts.push(["Licensed for", info.use_class.charAt(0).toUpperCase() + info.use_class.slice(1) + " use"]);
@@ -2568,6 +2601,7 @@
         show(el("settings_license_deactivate"), info.source === "cache" && info.service_configured
              && info.state !== "invalid");
         show(el("settings_license_remove"), info.source === "cache");
+        show(el("settings_license_forget"), info.source === "cache");
 
         this.info = info;
         this.account(info);
@@ -2583,7 +2617,7 @@
             return info.source === "file"
                 ? "This licence came from an offline file. Your account shows here on a device "
                   + "connected to account.biocognia.com."
-                : "Connect this device below to see your account here.";
+                : `Connect this ${window.PlexoraBackend?.kind === "browser" ? "browser" : "device"} below to see your account here.`;
         }
         if (["job", "ci"].includes(info.environment?.type)) return "A job's licence has no account of its own.";
         if (!info.service_configured || info.offline_only) {

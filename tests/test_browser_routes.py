@@ -68,8 +68,10 @@ def test_every_handoff_says_why_and_what_to_do():
 
 def test_the_page_answers_only_what_it_must():
     """A second implementation of a Python route, each one: the list grows
-    only by a decision, with conformance vectors for the new entry."""
-    assert len(routes.JS) == 44
+    only by a decision, with conformance vectors for the new entry. The
+    licence's nine (plan D8: the page holds the licence) are held by
+    tests/test_license_page.py and tests/js/license_client_probe.mjs."""
+    assert len(routes.JS) == 46
 
 
 def test_a_fixed_route_wins_over_a_variable_one(full_app):

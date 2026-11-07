@@ -233,10 +233,26 @@ def verify(args) -> int:
     return 1 if problems else 0
 
 
+def test_build(folder: Path) -> str:
+    """Why a static build must not be published, or "": a build that trusts a
+    throwaway licence key (static_build --licence-test-key) would let anyone
+    holding that key's private half sign a Pro licence for the site."""
+    try:
+        shell = json.loads((folder / "client" / "shell.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return "it has no readable client/shell.json"
+    if (shell.get("licence") or {}).get("test_keys"):
+        return "it trusts a test licence key"
+    return ""
+
+
 def site(args) -> int:
     folder = Path(args.dir)
     if not (folder / "index.html").is_file() or not (folder / "_headers").is_file():
         raise SystemExit(f"{folder}: not a static build (python -m plexora.client.static_build)")
+    refused = test_build(folder)
+    if refused:
+        raise SystemExit(f"{folder}: {refused}; build it again without --licence-test-key")
     command = wrangler(args.wrangler) + ["pages", "deploy", str(folder), "--project-name", args.project,
                                          "--branch", args.branch, "--commit-dirty=true"]
     head = subprocess.run(["git", "rev-parse", "HEAD"], capture_output=True, text=True,

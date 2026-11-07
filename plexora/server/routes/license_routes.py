@@ -22,6 +22,15 @@ modal ask, and the few things they can change.
 - `POST /settings/license/remove` -- remove the local licence (no network).
 - `GET  /settings/license/account` -- who this device is signed in as (email,
   name, organisation), asked of the platform each time for the Account page.
+- `POST /settings/license/forget` -- the website's "Forget this browser"
+  (release, then clear what the browser keeps). Answered by the page there;
+  anywhere else there is no browser to forget.
+
+On the website (`PLEXORA_BACKEND=browser`) the page holds the licence (client
+services/licenseClient.js, plan D8): it answers every change and the account
+itself (`PAGE_ENDPOINTS`, class "js" in plexora/browser/routes.py) and writes
+the files this process reads (plexora/browser/licence.py). Here those routes
+only say so: Python there never talks to the platform.
 
 Sign-in, seats and payment happen only at account.biocognia.com; Plexora
 holds no account and never sees a password. The person's own email is shown
@@ -40,11 +49,23 @@ Nothing here is needed for anything Free, and nothing Free calls it.
 from __future__ import annotations
 
 import ipaddress
+import os
 import re
 
 from flask import Blueprint, current_app, jsonify, request
 
 license_bp = Blueprint("license", __name__)
+
+#: What the page answers on the website: every change, and the account.
+PAGE_ENDPOINTS = frozenset({
+    "license.license_connect", "license.license_connect_poll", "license.license_activate",
+    "license.license_install", "license.license_refresh", "license.license_deactivate",
+    "license.license_remove", "license.license_forget", "license.license_account",
+})
+
+
+def _on_the_website() -> bool:
+    return os.environ.get("PLEXORA_BACKEND") == "browser"
 
 _CERTIFICATE = re.compile(r"BIOC1\.[A-Za-z0-9]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+")
 #: A device-flow or portal code as the platform prints it (`BIOC-7F3K-9Q2M`).
@@ -68,6 +89,12 @@ def _local_or_token():
 
 @license_bp.before_request
 def _guard():
+    if _on_the_website() and request.endpoint in PAGE_ENDPOINTS:
+        # The page answers these (backend.js, class "js"); one reaching Python
+        # means the page's licence client is not running.
+        return jsonify(success=False, code="page_licence",
+                       error="This page keeps the licence, and its licence client is not running. "
+                             "Reload the page."), 409
     if request.method != "GET" or request.endpoint == "license.license_account":
         return _local_or_token()
     return None
@@ -241,6 +268,14 @@ def license_remove():
 
     LICENSING.remove()
     return jsonify(success=True, license=status_payload())
+
+
+@license_bp.route("/settings/license/forget", methods=["POST"])
+def license_forget():
+    """Forget this browser: the website's (the page answers it there). A
+    desktop or a server has Release This Device and Remove Licence."""
+    return jsonify(success=False, code="website_only",
+                   error="Forget this browser is the website's. Here, use Release This Device."), 400
 
 
 @license_bp.route("/settings/license/account", methods=["GET"])
