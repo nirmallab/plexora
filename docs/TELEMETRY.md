@@ -11,7 +11,7 @@ know exactly what happens, and for developers adding a count.
 | Mode | What is sent |
 |---|---|
 | `off` | Nothing. The local queue is emptied. |
-| `anonymous` (default) | Counts and timing bands: features, plugins, capabilities, tile and render timings, error fingerprints, coarse dataset shape. |
+| `anonymous` (default) | Counts and timing bands: features, plugins, capabilities, tile and render timings, error fingerprints, coarse dataset shape; on the website, a browser it asked to update (below). |
 | `diagnostics` | The same, plus GPU family and exact channel counts. Still no content. |
 
 Resolved highest first: the test suite (`off`); `DO_NOT_TRACK` set to anything
@@ -79,6 +79,37 @@ data node ── cumulative counts on /node/v1/hello ──▶ primary folds the
 - **A refusal is visible.** If the service will not register an install,
   `plexora telemetry status`, `plexora telemetry send` and Settings › Usage
   data say so, with the service's status and reason, instead of "never sent".
+
+## A browser the website turns away
+
+The website asks a Chrome or Edge too old for its Python (no JSPI, before
+version 137) to update, and stops there: Python never starts, so the
+website's own telemetry (which runs in that Python) cannot count it. The
+loader sends that one count itself (`client/src/js/services/refusalCount.js`),
+to the same service, in the same format, after the message is on screen:
+
+- `POST /v1/telemetry/register` with a random install id that only this
+  count uses, then `POST /v1/telemetry/events` with one batch holding one
+  row: `site.summary` / `refused`, dims `browser` (`chrome` or `edge`),
+  `major` (the browser's major version, 0 to 999) and `os` (`mac`,
+  `windows`, `linux` or `other`), `n` 1. The client block says `runtime`,
+  `launch_mode`, `deployment` and `install_kind` `web`, `mode` `anonymous`,
+  `os`, and the site's version. Nothing else: no user agent string, no
+  address, no session.
+- At most once per browser per day (UTC), remembered in the site's
+  localStorage (`plexora-refused`: the day, the install id, and a pause the
+  service set). Where the site may keep nothing there, nothing is sent.
+- Sent only when the website's own telemetry would send: never from a build
+  without `--telemetry` (`plexora/client/static_build.py`; the hand-deployed
+  preview has none), never with Do Not Track or Global Privacy Control,
+  never while the service has paused uploads, never when "off" was chosen
+  in Settings › Usage data on an earlier visit (the site's IndexedDB
+  `plexora-telemetry`), and never when that choice cannot be read. Always
+  anonymous.
+- The self-check page (`/selfcheck`) sends nothing, as it says.
+
+The service folds it into `performance_rollups` as `site.summary.refused`
+(the admin Performance page, split by Browser, Browser version or OS).
 
 ## Adding a count
 

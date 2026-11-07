@@ -24,12 +24,16 @@ its bundle `py/dev/39a42309569f/`, with /selfcheck).
 2. **Plexora's telemetry Worker** (`backend/`, from Plexora `main` once
    `web/phase0` is merged): `cd backend && npm ci && npx tsc --noEmit && npx
    vitest run`, then `python scripts/release.py telemetry` (deploys because
-   the vectors differ; waits for `/healthz` to report `68c8d195594ac126`).
+   the vectors differ; waits for `/healthz` to report `bae44f6538cfbaff`,
+   the allowlist with the website's count of browsers it asks to update,
+   `site.summary`; it was `68c8d195594ac126` before that).
    **Before** any website or desktop release that sends the new `web` /
    `runtime` values, or the old Worker drops them and the website's uploads
    fail CORS (they wait in the queue; nothing is lost). Until then the preview
    deployed by hand is built without `--telemetry` (it sends nothing); CI's
-   preview passes it.
+   preview passes it. Once both are live, the admin Performance page shows
+   `site.summary.refused` (split by Browser version): how often visitors meet
+   "Update Chrome to use Plexora here".
 3. **Sibling releases** (no rush; shims cover them until then):
    - spatialagents: a runtime hook and `"web"` in `ORIGINS` (until then the
      website's AI calls are filed as `app`).
