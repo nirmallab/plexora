@@ -39,6 +39,25 @@
         <div class="settings-panels">
             <section class="settings-panel is-active" id="settings_panel_data"
                      data-section="data" aria-label="Data">
+                {% if website %}
+                {# The website keeps projects in this site's storage in the
+                   browser; settingsPage.js fills in how much they take. #}
+                <h2 class="settings-panel-title">Projects in this browser</h2>
+                <p class="settings-panel-lead">
+                    On the website, every project you import and every figure you
+                    build is kept in this browser's storage for this site. Your
+                    image and table files stay where they are on your computer;
+                    Plexora reads them when a project opens.
+                </p>
+                <div class="settings-card" id="settings_web_storage">
+                    <div class="settings-field-label">Storage used</div>
+                    <div class="settings-path" id="settings_web_storage_used">Loading&hellip;</div>
+                    <div class="settings-meta" id="settings_web_storage_meta"></div>
+                </div>
+                <p class="settings-hint">
+                    A data folder on a disk is a setting of the Plexora desktop app.
+                </p>
+                {% else %}
 
                 <h2 class="settings-panel-title">Data directory</h2>
                 <p class="settings-panel-lead">
@@ -188,6 +207,7 @@
                         <code>plexora config set shared-dirs</code>.
                     </p>
                 </div>
+                {% endif %}
             </section>
 
             {# Remote servers. The same job `plexora connect` does, with the ssh
@@ -517,6 +537,16 @@
                      data-section="updates" aria-label="Updates">
 
                 <h2 class="settings-panel-title">Updates</h2>
+                {% if website %}
+                <p class="settings-panel-lead">
+                    The website is always the current version of Plexora: there
+                    is nothing to install or restart.
+                </p>
+                <div class="settings-card">
+                    <div class="settings-field-label">Version</div>
+                    <div class="settings-path">Plexora {{ version }}</div>
+                </div>
+                {% else %}
                 <p class="settings-panel-lead">
                     Plexora looks for a newer release once a day and puts a dot
                     on the Help menu when there is one. It never installs
@@ -544,6 +574,7 @@
                                 id="settings_updates_unskip" hidden>Stop Skipping</button>
                     </div>
                 </div>
+                {% endif %}
             </section>
 
             {# Usage data: the telemetry mode (plexora/telemetry, `telemetry` in
@@ -843,5 +874,5 @@
 {# remoteState.js is loaded by base.html, above and deferred, so it is parsed
    before this file runs -- the Remote servers section is one of its
    subscribers rather than a poller of its own. #}
-<script src="{{ data.base_url }}/client/src/js/views/settingsPage.js?v=20261030_account" defer></script>
+<script src="{{ data.base_url }}/client/src/js/views/settingsPage.js?v=20261107_website" defer></script>
 {% endblock %}

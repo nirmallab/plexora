@@ -130,6 +130,25 @@
         return () => window.removeEventListener("hashchange", onHashChange);
     }
 
+    // -- the website's storage --------------------------------------------
+    //
+    // On the website projects live in this site's storage in the browser, so
+    // the Data panel says how much they take of what the browser allows, and
+    // whether the browser has agreed to keep it (navigator.storage.persist).
+    async function drawWebStorage() {
+        const used = el("settings_web_storage_used");
+        const meta = el("settings_web_storage_meta");
+        try {
+            const estimate = await navigator.storage.estimate();
+            const kept = navigator.storage.persisted ? await navigator.storage.persisted() : false;
+            text(used, `${humanBytes(estimate.usage || 0)} of the ${humanBytes(estimate.quota || 0)} this browser allows`);
+            text(meta, kept ? "The browser keeps it until you clear this site's data."
+                            : "The browser may clear it when the disk runs short of room.");
+        } catch (error) {
+            text(used, "Unknown");
+        }
+    }
+
     // -- the data section ------------------------------------------------
 
     function DataSection() {
@@ -2657,15 +2676,17 @@
             webdata = new WebDataSection();
             webdata.start();
         }
-        if (el("settings_panel_updates")) new UpdatesSection().start();
+        if (el("settings_updates_check")) new UpdatesSection().start();
         if (el("settings_panel_telemetry")) new TelemetrySection().start();
         let license = null;
         if (el("settings_panel_license")) {
             license = new LicenseSection();
             license.start();
         }
-        const section = new DataSection();
-        section.start();
+        // The website has no data folder: its panel says where projects are.
+        const section = el("settings_web_storage") ? null : new DataSection();
+        if (section) section.start();
+        else drawWebStorage();
         // The migration poll is the one thing here that outlives the markup: it
         // reschedules itself, so leaving the Settings page mid-migration would
         // otherwise keep asking the server about a job on behalf of a panel that
@@ -2683,7 +2704,7 @@
         // page (or just switching tabs) has already made it stop asking --
         // this only has to drop the timer that would otherwise fire once more.
         return () => {
-            window.clearTimeout(section.polling);
+            if (section) window.clearTimeout(section.polling);
             if (remotes) remotes.stop();
             if (webdata) webdata.stop();
             if (license) license.stop();

@@ -1,9 +1,11 @@
 // The website as a visitor gets it: the static build at the root, the loader,
 // Plexora's Python in the page, and the page the address asks for. Prints
 // JSON (what loaded, how long it took, every console error and failed
-// request); --shots DIR saves a screenshot of each address.
+// request); --shots DIR saves a screenshot of each address. --url drives a
+// deployed site instead of the local build; an address given twice is a
+// return visit (the same profile, so the HTTP cache is warm).
 //
-//   node tests/browser/site.mjs [--paths /,/settings] [--shots DIR] [--headed]
+//   node tests/browser/site.mjs [--paths /,/settings] [--url https://...] [--shots DIR] [--headed]
 import path from "node:path";
 import { REPO, appFrame, launch, startServer } from "./lib.mjs";
 
@@ -13,9 +15,11 @@ const paths = opt("--paths", "/,/settings,/open_project").split(",");
 const shots = opt("--shots", null);
 const site = opt("--site", path.join(REPO, "plexora", "client", "dist", "static"));
 
-const server = await startServer(["--site", site]);
+const remote = opt("--url", null);
+const server = remote ? null : await startServer(["--site", site]);
+const origin = remote ? remote.replace(/\/$/, "") : `http://127.0.0.1:${server.port}`;
 const browser = await launch({ headed: args.includes("--headed") });
-const out = { pages: {} };
+const out = { origin, pages: {} };
 try {
     const page = await browser.context.newPage();
     await page.setViewportSize({ width: 1440, height: 900 });
@@ -28,15 +32,19 @@ try {
     page.on("response", (response) => {
         if (response.status() >= 400) failed.push(`${response.status()} ${response.url()}`);
     });
-    for (const address of paths) {
+    for (const [visit, address] of paths.entries()) {
         errors = [];
         failed = [];
         const started = Date.now();
-        await page.goto(`http://127.0.0.1:${server.port}${address}`);
+        await page.goto(`${origin}${address}`);
         const failedBoot = await page.waitForSelector(".plexora-boot-failed", { timeout: 1500 })
             .then(() => true, () => false);
         const frame = failedBoot ? page.mainFrame() : await appFrame(page);
         const written = Date.now() - started;
+        const ready = await page.evaluate(() => window.PlexoraPython && window.PlexoraPython.ready
+            && window.PlexoraPython.ready.then((info) => ({ at: Math.round(performance.now()),
+                                                            stages: info && info.stages })))
+            .catch((error) => ({ failed: String(error) }));
         await page.waitForTimeout(2500);
         const tab = await page.evaluate(() => ({ address: location.pathname, title: document.title }));
         const state = await frame.evaluate(() => ({
@@ -51,11 +59,12 @@ try {
             const name = address === "/" ? "home" : address.replace(/[^a-z0-9]+/gi, "_");
             await page.screenshot({ path: path.join(shots, `site-${name}.png`) });
         }
-        out.pages[address] = { writtenMs: written, tab, ...state, errors: errors.slice(0, 15),
-                               failed: failed.slice(0, 15) };
+        const key = paths.indexOf(address) === visit ? address : `${address} (visit ${visit + 1})`;
+        out.pages[key] = { writtenMs: written, ready, tab, ...state, errors: errors.slice(0, 15),
+                           failed: failed.slice(0, 15) };
     }
 } finally {
     await browser.close();
-    server.stop();
+    if (server) server.stop();
 }
 console.log(JSON.stringify(out, null, 1));

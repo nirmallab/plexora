@@ -47,6 +47,17 @@ SECTIONS = (
      "blurb": "Who you are signed in as, your plan and your AI credits."},
 )
 
+#: The website's blurbs where a section means something else there: projects
+#: live in the browser's storage, and the site is always the current version.
+WEBSITE_BLURBS = {
+    "data": "Where this browser keeps your projects, and the room they take.",
+    "updates": "Which version this is.",
+}
+
+
+def _on_the_website() -> bool:
+    return os.environ.get("PLEXORA_BACKEND") == "browser"
+
 
 @app.route('/settings')
 def settings_page():
@@ -59,7 +70,15 @@ def settings_page():
     # memory boxes on this page's own "add a server" form. That form is gone --
     # the preset catalogue asks those three, and gets the same constants from
     # `/settings/recipes` with the rest of the recipe.
-    return render_template('settings.html', data=template_data(), sections=SECTIONS)
+    #
+    # On the website the Data and Updates panels say what applies there
+    # instead of reading a data folder or a release feed that do not exist.
+    website = _on_the_website()
+    sections = tuple({**s, "blurb": WEBSITE_BLURBS.get(s["id"], s["blurb"])} for s in SECTIONS) \
+        if website else SECTIONS
+    from plexora import __version__
+    return render_template('settings.html', data=template_data(), sections=sections,
+                           website=website, version=__version__)
 
 
 def _resolve(raw):

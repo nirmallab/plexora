@@ -1,6 +1,6 @@
 """Build the website's static files: what viewer.plexoraapp.com serves.
 
-    python -m plexora.client.static_build [--out DIR] [--py URL]
+    python -m plexora.client.static_build [--out DIR] [--py URL] [--noindex]
 
 Plexora's pages are rendered on the website by Plexora's own Python in a
 worker beside the page (plexora/browser), so what the site serves as files is
@@ -19,7 +19,7 @@ Writes `--out` (default `plexora/client/dist/static/`):
 - `_headers` and `_redirects` for Cloudflare Pages: every response
   cross-origin isolated (the site needs SharedArrayBuffer), the service worker
   allowed the whole site, and every path that is not a file answered with the
-  loader.
+  loader (`--noindex` adds `X-Robots-Tag: noindex` everywhere: a preview).
 """
 
 from __future__ import annotations
@@ -76,7 +76,8 @@ HEADERS = """/*
 #: Every path that is not a file is the loader (it reads the address itself).
 REDIRECTS = "/* /index.html 200\n"
 
-_SKIP = (".map",)
+#: Source maps, and the logo's Illustrator sources (4.5 MB no page loads).
+_SKIP = (".map", ".ai")
 
 
 def _copy(source: Path, target: Path) -> int:
@@ -94,7 +95,7 @@ def _copy(source: Path, target: Path) -> int:
     return count
 
 
-def build(out: Path = DEFAULT_OUT, py: str | None = None) -> dict:
+def build(out: Path = DEFAULT_OUT, py: str | None = None, noindex: bool = False) -> dict:
     from plexora import __version__
 
     py = py or f"/py/{__version__}/"
@@ -112,7 +113,8 @@ def build(out: Path = DEFAULT_OUT, py: str | None = None) -> dict:
     (out / "index.html").write_bytes(LOADER.encode("utf-8"))
     (out / "client" / "shell.json").write_bytes(
         json.dumps({"version": __version__, "py": py}, indent=1).encode("utf-8"))
-    (out / "_headers").write_bytes(HEADERS.encode("utf-8"))
+    headers = HEADERS.replace("/*\n", "/*\n  X-Robots-Tag: noindex\n", 1) if noindex else HEADERS
+    (out / "_headers").write_bytes(headers.encode("utf-8"))
     (out / "_redirects").write_bytes(REDIRECTS.encode("utf-8"))
     return {"out": str(out), "files": files + 4, "plugins": plugins, "version": __version__, "py": py}
 
@@ -121,8 +123,9 @@ def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     parser.add_argument("--out", default=str(DEFAULT_OUT))
     parser.add_argument("--py", default=None, help="where the Python bundle is served from")
+    parser.add_argument("--noindex", action="store_true", help="ask search engines not to index it")
     args = parser.parse_args(argv)
-    print(json.dumps(build(Path(args.out), args.py), indent=1))
+    print(json.dumps(build(Path(args.out), args.py, args.noindex), indent=1))
     return 0
 
 

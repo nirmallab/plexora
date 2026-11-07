@@ -106,6 +106,27 @@ def test_the_page_renders_a_rail_entry_for_every_declared_section(client):
         assert f'id="settings_panel_{section["id"]}"' in body
 
 
+def test_on_the_website_data_and_updates_say_what_applies_there(client, monkeypatch):
+    """The website keeps projects in the browser and is always current: its
+    Data panel has no folder to read or move and its Updates panel no check,
+    so neither asks a route that only the desktop answers (each was a 501
+    and a red "That did not work")."""
+    monkeypatch.setenv("PLEXORA_BACKEND", "browser")
+    body = client.get("/settings").get_data(as_text=True)
+    assert 'id="settings_web_storage"' in body
+    assert 'id="settings_current_path"' not in body and 'id="settings_new_path"' not in body
+    assert 'id="settings_updates_check"' not in body
+    assert f"Plexora {plexora.__version__}" in body
+    for section in settings_routes.SECTIONS:
+        assert f'id="settings_panel_{section["id"]}"' in body
+    assert settings_routes.WEBSITE_BLURBS["data"] in body
+
+    monkeypatch.delenv("PLEXORA_BACKEND")
+    body = client.get("/settings").get_data(as_text=True)
+    assert 'id="settings_web_storage"' not in body
+    assert 'id="settings_current_path"' in body and 'id="settings_updates_check"' in body
+
+
 def test_the_settings_link_is_on_every_page(client):
     """base.html's File menu, so the page is reachable from the viewer and the
     project picker alike rather than only by typing the URL."""
