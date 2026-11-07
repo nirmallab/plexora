@@ -3,6 +3,8 @@
   "pages": [
     "create",
     "show",
+    "export",
+    "import",
     "set"
   ]
 }

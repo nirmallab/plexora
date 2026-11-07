@@ -1307,7 +1307,7 @@ def _build_node_parser():
         default=None,
         metavar="URL",
         help="With --pair: the address the browser should use for this node, "
-             "when it is not this machine's own http://127.0.0.1:<port> -- a "
+             "when it is not this machine's own address and port (127.0.0.1) -- a "
              "lab gateway's hostname, or the local end of a tunnel on "
              "another port.",
     )
