@@ -501,7 +501,7 @@ class ImsVolumeSource(VolumeSource):
         dtype = layout["dtype"]
         dataset = layout["dataset"]
         filters = layout["filters"]
-        keys =[(self.cache_id, int(level), int(t), int(channel), zc, yc, xc)
+        keys = [(self.cache_id, int(level), int(t), int(channel), zc, yc, xc)
                 for zc in chunk_cache.chunk_ranges(z0, z1 + 1, cz)
                 for yc in chunk_cache.chunk_ranges(rows.start, rows.stop, cy)
                 for xc in chunk_cache.chunk_ranges(cols.start, cols.stop, cx)]

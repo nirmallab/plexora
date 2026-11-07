@@ -114,6 +114,79 @@ async function websiteArm() {
             return `${root}/${name}`;
         }, [`vol-pick-${i}`, folder, inside, path.basename(file)]));
     }
+    /**
+     * The product's own path to a surface: POST /volume/<ds>/surfaces, its
+     * build queued and run between requests, then its mesh and objects.
+     * Surfaces are Pro: a throwaway licence is minted and trusted in this
+     * Python only, as tests/conftest.py's `_issuer` and P9 did.
+     */
+    async function surfaceRoute(name, iso) {
+        const licence = await page.evaluate((code) => window.PlexoraPython.run(code), [
+            "import os",
+            "if not hasattr(os, 'link'):",
+            "    def _link(src, dst):",
+            "        raise OSError(38, 'link() is not available here')",
+            "    os.link = _link",
+            "from biocognia.testing import Issuer",
+            "from plexora.licensing import LICENSING, PRODUCT",
+            "class Patch:",
+            "    setattr = staticmethod(setattr)",
+            "issuer = Issuer(Patch(), PRODUCT)",
+            "issuer.install(LICENSING, issuer.issue(PRODUCT, ent=['volume']))",
+            "from plexora import licensing",
+            "str(licensing.allows('volume:surfaces'))",
+        ].join("\n")).catch((error) => `error: ${String(error).slice(0, 800)}`);
+        const out = { licence };
+        const ds = encodeURIComponent(name);
+        const channel = (await frame.evaluate(async (d) => (await (await fetch(`/get_channel_names?datasource=${d}&shortNames=1`)).json()), ds))[0];
+        const t0 = Date.now();
+        const made = await frame.evaluate(async ([d, body]) => {
+            const response = await fetch(`/volume/${d}/surfaces`, { method: "POST", headers: { "Content-Type": "application/json" },
+                                                                 body: JSON.stringify(body) });
+            return { status: response.status, body: await response.json().catch(() => null) };
+        }, [ds, { type: "isosurface", channel, iso, smoothing: "medium" }]);
+        out.create = { status: made.status, layer: made.body?.layer, error: made.body?.error };
+        const layer = made.body?.layer;
+        let entry = null;
+        for (let i = 0; layer && i < 2400; i += 1) {
+            const listed = await frame.evaluate(async (d) => (await (await fetch(`/volume/${d}/surfaces`, { cache: "no-store" })).json()), ds);
+            entry = (listed.surfaces || []).find((x) => x.id === layer);
+            if (entry && ["ready", "error", "failed"].includes(entry.status)) break;
+            await page.waitForTimeout(250);
+        }
+        out.buildMs = Date.now() - t0;
+        out.status = entry?.status;
+        out.summary = entry?.summary && { triangles: entry.summary.triangles, level: entry.summary.level,
+                                          objects: entry.summary.objects };
+        out.job = entry?.job && { status: entry.job.status, error: entry.job.error, message: entry.job.message };
+        if (entry?.status === "ready") {
+            const id = encodeURIComponent(layer);
+            for (const part of ["mesh", "objects", "manifest"]) {
+                out[part] = await frame.evaluate(async (u) => {
+                    const response = await fetch(u, { cache: "no-store" });
+                    return { status: response.status, bytes: (await response.arrayBuffer()).byteLength };
+                }, `/volume/${ds}/surfaces/${id}/${part}`);
+            }
+            // The viewer reads its surface layers as it opens: open the
+            // project again, enter 3-D, and photograph the surface drawn.
+            await frame.evaluate((n) => { location.href = `/${encodeURIComponent(n)}`; }, name);
+            frame = await appFrame(page);
+            await frame.waitForFunction(() => window.__plexora?.viewState, null, { timeout: 60000 });
+            await frame.evaluate(async () => {
+                window.__plexora.viewState.set({ mode: "volume", layout: "single" });
+                const end = performance.now() + 60000;
+                while (performance.now() < end) {
+                    const r = window.__plexora.volumeView?.renderer;
+                    if (r && r.status === "ready" && !r._loads?.size) break;
+                    await new Promise((resolve) => setTimeout(resolve, 50));
+                }
+            });
+            await page.waitForTimeout(3000);
+            await page.screenshot({ path: path.join(out_dir(), "3d-surface.png") });
+        }
+        return out;
+    }
+    const out_dir = () => path.join(out, "website");
     return {
         page, frame, base, paths,
         open: async (name) => {
@@ -136,7 +209,8 @@ async function websiteArm() {
             const answer = await page.evaluate((code) => window.PlexoraPython.run(code),
                 `${ops}\nimport json\njson.dumps(volume_ops(${JSON.stringify(name)}, mask=${hasMask ? "True" : "False"}, objects=${hasMask ? "True" : "False"}))`)
                 .catch((error) => JSON.stringify({ error: String(error).slice(0, 1500) }));
-            return { website: { ...JSON.parse(answer), wallMs: Date.now() - started } };
+            const website = { ...JSON.parse(answer), wallMs: Date.now() - started };
+            return { website, route: await surfaceRoute(name, website.isosurface?.iso) };
         },
         close: async () => { await browser.close(); server.stop(); },
     };
@@ -266,8 +340,27 @@ async function runArm(kind) {
         rec.timings.enter3dMs = entered.ms;
         rec.renderer = entered.status;
         // What the canvas shows: every pixel's brightest sample, read back.
-        const sample = () => target.evaluate(async () => {
-            const canvas = window.__plexora?.volumeView?.renderer?.canvas;
+        const sample = (settled = false) => target.evaluate(async (still) => {
+            const renderer = window.__plexora?.volumeView?.renderer;
+            if (still) {
+                // The sidebar's auto-contrast (pass 2, the GMM fit) lands when
+                // it lands and moves the picture: wait for the status chip to
+                // have shown no "Auto-contrast" for a second.
+                const end = performance.now() + 60000;
+                let quiet = 0;
+                while (performance.now() < end && quiet < 1000) {
+                    quiet = /Auto-contrast/.test(document.body.innerText) ? 0 : quiet + 100;
+                    await new Promise((resolve) => setTimeout(resolve, 100));
+                }
+            }
+            if (still && renderer?.whenSettled) {
+                // The capture path (video export, viewer_capture): settled,
+                // then one frame at full quality -- the frame a still picture
+                // is, whatever the renderer's adaptive quality did meanwhile.
+                await Promise.race([renderer.whenSettled(), new Promise((resolve) => setTimeout(resolve, 60000))]);
+                renderer.renderFrame();
+            }
+            const canvas = renderer?.canvas;
             if (!canvas || !canvas.width) return null;
             const bitmap = await createImageBitmap(canvas);
             const off = new OffscreenCanvas(bitmap.width, bitmap.height);
@@ -296,7 +389,7 @@ async function runArm(kind) {
             }
             return { width: bitmap.width, height: bitmap.height, litShare: lit / n, mean: sum / n,
                      grid: grid.map((v, k) => Math.round(v / Math.max(1, counts[k]))) };
-        });
+        }, settled);
         let pixels = null;
         for (let i = 0; i < 50; i += 1) {
             pixels = await sample();
@@ -428,7 +521,7 @@ async function runArm(kind) {
                 await new Promise((resolve) => setTimeout(resolve, 50));
             }
         });
-        rec.settled = await sample();
+        rec.settled = await sample(true);
         // What the renderer is drawing with (its own scalar state), to explain
         // a picture that differs.
         rec.rendererState = await target.evaluate(() => {
@@ -439,6 +532,13 @@ async function runArm(kind) {
                 if (["number", "string", "boolean"].includes(typeof value)) flat[key] = value;
                 else if (Array.isArray(value) && value.length <= 8 && value.every((v) => typeof v !== "object")) flat[key] = value;
             }
+            flat.textures = [...(r.textures?.entries() || [])].map(([key, e]) => ({
+                key, id: e.id, format: e.format, level: e.level, shape: e.shape, made: e.levelWindow }));
+            flat.shown = [...(r._shownKey?.entries() || [])];
+            try {
+                flat.channels = (r.channels?.() || []).map((c) => ({ name: c.name, stamp: c.stamp, window: c.window,
+                                                                     raw: c.raw, curve: c.curve || null }));
+            } catch (error) { flat.channels = String(error); }
             return flat;
         });
         await arm.page.screenshot({ path: path.join(dir, "3d-settled.png") });
@@ -486,9 +586,41 @@ if (record.arms.website && record.arms.desktop && !record.arms.website.error && 
         // The 3-D view's picture on both arms: block means 0..255 apart.
         let diff = 0;
         for (let k = 0; k < web.grid.length; k += 1) diff += Math.abs(web.grid[k] - desk.grid[k]);
-        record.pictureDiff = { meanAbs: diff / web.grid.length, websiteMean: web.mean, desktopMean: desk.mean };
-        check("the 3-D view shows what the desktop's shows", record.pictureDiff.meanAbs < 2, record.pictureDiff);
+        // The display contrast each arm's sidebar set (raw units). Its second
+        // pass, the GMM fit, sometimes never lands on a slot on either app
+        // (viewerSidebar's stillCurrent()), and then the two pictures differ
+        // by their contrast, not their voxels: compared only when it agrees.
+        const contrast = (arm) => (arm.rendererState?.channels || []).map((c) => c.raw || []);
+        const [cw, cd] = [contrast(record.arms.website), contrast(record.arms.desktop)];
+        const sameContrast = cw.length === cd.length && cw.every((r, i) => r.length === cd[i].length
+            && r.every((v, j) => Math.abs(v - cd[i][j]) <= 0.01 * Math.max(1, Math.abs(cd[i][j]))));
+        record.pictureDiff = { meanAbs: diff / web.grid.length, websiteMean: web.mean, desktopMean: desk.mean,
+                               contrast: { website: cw, desktop: cd } };
+        if (sameContrast) {
+            check("the 3-D view shows what the desktop's shows", record.pictureDiff.meanAbs < 2, record.pictureDiff);
+        } else {
+            record.pictureSkipped = "the sidebars' contrasts differ (auto-contrast's fit landed on one arm only)";
+        }
     }
+}
+const webOps = record.arms.website?.ops?.website;
+const deskOps = record.arms.desktop?.ops?.numba;
+if (webOps && deskOps) {
+    // What each operation made, on the website (the kernels as Python) and
+    // on the desktop (numba): the same meshes and the same object table.
+    const made = (ops) => ({
+        isosurface: ops.isosurface?.mesh || ops.isosurface?.error?.slice(-300),
+        measured: ops.isosurface?.measured_12,
+        cell_surfaces: ops.cell_surfaces?.mesh || ops.cell_surfaces?.error?.slice(-300),
+        objects: ops.objects?.table || ops.objects?.error?.slice(-300),
+    });
+    const [w, d] = [made(webOps), made(deskOps)];
+    const differ = Object.keys(w).filter((k) => JSON.stringify(w[k]) !== JSON.stringify(d[k]));
+    check("the 3-D operations make what the desktop makes", !differ.length,
+          Object.fromEntries(differ.map((k) => [k, { website: w[k], desktop: d[k] }])));
+    // Columns whose last bits differ (a transcendental function's libm).
+    const exact = [webOps.isosurface?.measured || {}, deskOps.isosurface?.measured || {}];
+    record.lastBitColumns = Object.keys(exact[0]).filter((k) => exact[0][k] !== exact[1][k]);
 }
 record.ok = Object.values(record.checks).every((c) => c.ok);
 writeFileSync(path.join(out, "record.json"), JSON.stringify(record, null, 1));

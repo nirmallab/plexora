@@ -35,8 +35,8 @@ ROOT = Path(__file__).resolve().parents[2]
 
 #: (channels, depth, height, width) per scale. Odd sizes throughout: no level
 #: divides evenly, and Imaris pads every dataset to its chunks.
-SIZES = {"test": (2, 19, 301, 257), "bench": (2, 64, 1023, 997)}
-IMS_CHUNKS = {"test": (8, 64, 64), "bench": (16, 128, 128)}
+SIZES = {"test": (2, 19, 301, 257), "mid": (2, 32, 511, 509), "bench": (2, 64, 1023, 997)}
+IMS_CHUNKS = {"test": (8, 64, 64), "mid": (16, 128, 128), "bench": (16, 128, 128)}
 
 
 def _attr(text):
@@ -267,9 +267,14 @@ def volume_ops(name, iso=None, mask=False, objects=False):
 
 def _volume_ops(out, name, iso, mask, objects, kernels, sha, mesh_sha):
     import time
+    import traceback
     import numpy as np
     from plexora.server.models.project import Project
     from plexora.server.surface import store, mesh as mesh_mod
+
+    def failed(key):
+        kernels()
+        out[key] = {"error": traceback.format_exc()[-1200:]}
 
     project = Project.find(name)
     channels = list(project.image.channel_names)
@@ -283,44 +288,60 @@ def _volume_ops(out, name, iso, mask, objects, kernels, sha, mesh_sha):
             block = source.read_block(coarse.index, 0, 0, 0, volume.depth - 1,
                                       slice(0, coarse.height), slice(0, coarse.width))
             iso = float(np.percentile(block, 99))
-        spec = store.SurfaceSpec.from_dict({"type": "isosurface", "channel": channels[0],
-                                            "iso": iso, "smoothing": "medium"})
-        t0 = time.perf_counter()
-        surface, level, info = store.extract_isosurface(spec, source, 0, **quiet)
-        t1 = time.perf_counter()
-        scale, physical = store._scale(volume)
-        columns = mesh_mod.measure(surface, scale=scale, physical=physical,
-                                   dims=(volume.width, volume.height, volume.depth))
-        t2 = time.perf_counter()
-        out["isosurface"] = {"iso": iso, "level": level, "triangles": int(surface.n_triangles),
-                             "extract_ms": round((t1 - t0) * 1000, 1),
-                             "measure_ms": round((t2 - t1) * 1000, 1),
-                             "mesh": mesh_sha(surface),
-                             "measured": sha(*[np.asarray(columns[k]) for k in sorted(columns)]),
-                             "kernels_ms": kernels()}
-        if mask:
-            spec = store.SurfaceSpec.from_dict({"type": "label_surfaces", "smoothing": "medium"})
+        try:
+            spec = store.SurfaceSpec.from_dict({"type": "isosurface", "channel": channels[0],
+                                                "iso": iso, "smoothing": "medium"})
             t0 = time.perf_counter()
-            surface, level, info = store._build_label_surfaces(project, spec, source, **quiet)
+            surface, level, info = store.extract_isosurface(spec, source, 0, **quiet)
             t1 = time.perf_counter()
-            out["cell_surfaces"] = {"level": level, "triangles": int(surface.n_triangles),
-                                    "objects": int(len(np.unique(surface.object_id))),
-                                    "extract_ms": round((t1 - t0) * 1000, 1),
-                                    "mesh": mesh_sha(surface), "kernels_ms": kernels()}
+            scale, physical = store._scale(volume)
+            columns = mesh_mod.measure(surface, scale=scale, physical=physical,
+                                       dims=(volume.width, volume.height, volume.depth))
+            t2 = time.perf_counter()
+            out["isosurface"] = {"iso": iso, "level": level, "triangles": int(surface.n_triangles),
+                                 "extract_ms": round((t1 - t0) * 1000, 1),
+                                 "measure_ms": round((t2 - t1) * 1000, 1),
+                                 "mesh": mesh_sha(surface),
+                                 # Per column, exactly and to 12 significant digits:
+                                 # a cube root's last bit is the platform's libm's.
+                                 "measured": {k: f"{np.asarray(columns[k]).dtype}:" + sha(
+                                     np.asarray(columns[k]).astype(np.float64))[:16]
+                                     for k in sorted(columns)},
+                                 "measured_12": sha(*[np.array([float(f"{v:.12g}") for v in
+                                                                np.asarray(columns[k], np.float64)])
+                                                      for k in sorted(columns)]),
+                                 "kernels_ms": kernels()}
+        except Exception:
+            failed("isosurface")
+        if mask:
+            try:
+                spec = store.SurfaceSpec.from_dict({"type": "label_surfaces", "smoothing": "medium"})
+                t0 = time.perf_counter()
+                surface, level, info = store._build_label_surfaces(project, spec, source, **quiet)
+                t1 = time.perf_counter()
+                out["cell_surfaces"] = {"level": level, "triangles": int(surface.n_triangles),
+                                        "objects": int(len(np.unique(surface.object_id))),
+                                        "extract_ms": round((t1 - t0) * 1000, 1),
+                                        "mesh": mesh_sha(surface), "kernels_ms": kernels()}
+            except Exception:
+                failed("cell_surfaces")
     finally:
         source.close()
     if objects:
-        from plexora.server.volume import objects as volume_objects
-        import polars as pl
+        try:
+            from plexora.server.volume import objects as volume_objects
+            import polars as pl
 
-        t0 = time.perf_counter()
-        summary = volume_objects.measure_project_objects(Project.load(name), units="voxel")
-        t1 = time.perf_counter()
-        table_path, _ = volume_objects.object_paths(Project.load(name))
-        frame = pl.read_parquet(table_path).sort("label")
-        out["objects"] = {"ms": round((t1 - t0) * 1000, 1), "rows": frame.height,
-                          "table": sha(*[frame[c].to_numpy() for c in sorted(frame.columns)]),
-                          "kernels_ms": kernels()}
+            t0 = time.perf_counter()
+            volume_objects.measure_project_objects(Project.load(name), units="voxel")
+            t1 = time.perf_counter()
+            table_path, _ = volume_objects.object_paths(Project.load(name))
+            frame = pl.read_parquet(table_path).sort("label")
+            out["objects"] = {"ms": round((t1 - t0) * 1000, 1), "rows": frame.height,
+                              "table": sha(*[frame[c].to_numpy() for c in sorted(frame.columns)]),
+                              "kernels_ms": kernels()}
+        except Exception:
+            failed("objects")
     return out
 '''
 

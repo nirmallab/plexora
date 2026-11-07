@@ -56,7 +56,11 @@ def fixtures(tmp_path_factory):
 def run(request, fixtures, tmp_path_factory):
     files = [fixtures[key] for key in CASES[request.param]]
     out = tmp_path_factory.mktemp(request.param)
-    done = subprocess.run(["node", str(DRIVER), "--files", ",".join(files), "--out", str(out)],
+    # The stack with its mask also runs the 3-D operations: an isosurface and
+    # cell surfaces (surface/store.py), the mask's objects (volume/objects.py),
+    # each against the desktop's, and a surface built through its route.
+    ops = ["--ops"] if request.param == "tiff_and_mask" else []
+    done = subprocess.run(["node", str(DRIVER), "--files", ",".join(files), "--out", str(out), *ops],
                           cwd=ROOT, capture_output=True, text=True, encoding="utf-8", timeout=1800,
                           env={**os.environ, "PYTHONPATH": str(ROOT)})
     try:
@@ -88,3 +92,14 @@ def test_an_ims_needs_only_the_hdf5_stage(run):
         assert "hdf5" in stages and "h5ad" not in stages, stages
     else:
         assert not {"hdf5", "h5ad"} & stages, stages
+
+
+def test_a_surface_is_built_through_its_route_on_the_website(run):
+    """POST /volume/<ds>/surfaces, built between requests, then its mesh,
+    objects and manifest served (a throwaway licence: surfaces are Pro)."""
+    case, record = run
+    if case != "tiff_and_mask":
+        pytest.skip("the operations run on the stack with its mask")
+    route = record["arms"]["website"]["ops"]["route"]
+    assert route["create"]["status"] == 202 and route["status"] == "ready", route
+    assert all(route[part]["status"] == 200 for part in ("mesh", "objects", "manifest")), route
