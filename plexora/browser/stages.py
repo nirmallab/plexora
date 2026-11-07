@@ -10,8 +10,11 @@ and costs nothing for a session that never needs it.
 
 `pyodide` names packages in Pyodide's lockfile (their dependencies follow,
 less `DROP_DEPENDS`); `wheels` names pure-Python wheels the build fetches at
-the versions this checkout's lock pins. `tools/browser_build/build.py` turns
-this into the site's `stages.json`, with every file and its size.
+the versions this checkout's lock pins. Those are fetched without their
+dependencies, so each one's own must be listed too: the build refuses a stage
+whose wheels need a package neither it nor the base ships (`build.py`
+`unmet`). `tools/browser_build/build.py` turns this into the site's
+`stages.json`, with every file and its size.
 """
 
 from __future__ import annotations
@@ -38,12 +41,14 @@ STAGES = {
         "modules": ["cv2", "skimage", "shapely"],
     },
     "h5ad": {
+        # Pyodide's h5py decodes gzip and lzf itself (spike S-4).
         "pyodide": ["h5py", "pandas"],
         # anndata asks for scverse-misc[settings]: without pydantic-settings
         # and python-dotenv, `scverse_misc.Settings` is missing and anndata
         # fails at import (found by tests/browser/import_check.mjs).
+        # session-info2 is scverse-misc's own requirement (build.py `unmet`).
         "wheels": ["anndata", "array-api-compat", "legacy-api-wrap", "natsort", "scverse-misc",
-                   "pydantic-settings", "python-dotenv"],
+                   "pydantic-settings", "python-dotenv", "session-info2"],
         "modules": ["h5py", "anndata", "pandas"],
     },
     "parquet": {
@@ -53,7 +58,7 @@ STAGES = {
     },
     "export": {
         "pyodide": [],
-        "wheels": ["reportlab"],
+        "wheels": ["reportlab", "charset-normalizer"],
         "modules": ["reportlab"],
     },
 }

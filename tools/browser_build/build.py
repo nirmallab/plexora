@@ -175,6 +175,61 @@ def _norm(name: str) -> str:
     return name.lower().replace("_", "-").replace(".", "-")
 
 
+def requires(wheel: Path) -> list:
+    """A wheel's `Requires-Dist` lines, from its own METADATA."""
+    import email.parser
+
+    with zipfile.ZipFile(wheel) as archive:
+        name = next(n for n in archive.namelist() if n.endswith(".dist-info/METADATA"))
+        message = email.parser.BytesParser().parsebytes(archive.read(name))
+    return message.get_all("Requires-Dist") or []
+
+
+def unmet(lock: dict, found: dict, stages: dict | None = None) -> dict:
+    """`{stage: {package: [wheels that need it]}}`: what a stage's wheels
+    require (in Pyodide, with the extras their dependents ask for) that neither
+    the stage nor the base ships. The wheels are fetched without dependencies,
+    so a requirement nobody listed is a module missing at its first import on
+    the website (anndata's scverse-misc[settings] was). The base's own wheels
+    are not held to it: plexora requires much that the website loads in a
+    later stage, or never."""
+    from packaging.requirements import Requirement
+
+    stages = STAGES if stages is None else stages
+    python = lock["info"]["python"]
+    markers = {"python_version": ".".join(python.split(".")[:2]), "python_full_version": python,
+               "sys_platform": "emscripten", "platform_system": "Emscripten", "os_name": "posix",
+               "implementation_name": "cpython", "platform_python_implementation": "CPython",
+               "platform_machine": "wasm32"}
+    base = set(closure(lock, stages["base"]["pyodide"])) | {_norm(w) for w in stages["base"]["wheels"]}
+    out = {}
+    for stage_name, stage in stages.items():
+        if stage_name == "base":
+            continue
+        have = base | set(closure(lock, stage["pyodide"])) | {_norm(w) for w in stage["wheels"]}
+        todo = [(_norm(w), ()) for w in stage["wheels"]]
+        seen, missing = set(), {}
+        while todo:
+            dist, extras = todo.pop()
+            if (dist, extras) in seen or dist not in found:
+                continue
+            seen.add((dist, extras))
+            for text in requires(found[dist]):
+                req = Requirement(text)
+                if req.marker is not None and not any(
+                        req.marker.evaluate({**markers, "extra": extra}) for extra in ("", *extras)):
+                    continue
+                name = _norm(req.name)
+                if name not in have:
+                    if dist not in missing.setdefault(name, []):
+                        missing[name].append(dist)
+                elif req.extras:
+                    todo.append((name, tuple(sorted(req.extras))))
+        if missing:
+            out[stage_name] = missing
+    return out
+
+
 def closure(lock: dict, names) -> list:
     """`names` and their lockfile dependencies, less `DROP_DEPENDS`."""
     out, todo = [], list(names)
@@ -271,6 +326,10 @@ def build(out_root: Path, python314: str | None, encoder: str | None) -> Path:
 
     with tempfile.TemporaryDirectory(prefix="pxweb-wheels-") as scratch:
         found = wheels(Path(scratch))
+        missing = unmet(lock, found)
+        if missing:
+            raise SystemExit(f"a stage's wheels need packages no stage ships: {missing} "
+                             "(list them in plexora/browser/stages.py)")
         for stage_name, stage in STAGES.items():
             for name in stage["wheels"]:
                 wheel = found[_norm(name)]

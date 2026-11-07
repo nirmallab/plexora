@@ -1,8 +1,9 @@
-# Website Phase 1 spikes: S-1, S-2, S-3
+# Website Phase 1 spikes: S-1 to S-4
 
 The programme plan's Phase 1 named four questions to answer before building on
-the Python worker. Three are answered here; S-4 (h5py in Pyodide over WORKERFS
-against h5wasm) belongs to the h5ad stage and is measured with it.
+the Python worker. S-1 to S-3 are answered first; S-4 (h5py in Pyodide over
+WORKERFS against h5wasm) was measured with the h5ad stage, in its own section
+below.
 
 Measured 2026-11-06 on this Windows machine (i9, NVMe), Chrome 156.0.8078.76
 headless, a fresh profile per run, served from this checkout by
@@ -44,3 +45,143 @@ bundle `tools/browser_build/build.py` wrote for plexora 0.0.36: Pyodide
 
 `tests/test_browser_python.py` asserts S-2's correctness half on every run that
 has Chrome, the build and playwright-core (`npm ci` in tools/poc_browser_node).
+
+## S-4: h5py in Pyodide against h5wasm
+
+Measured 2026-11-06 on the same machine and Chrome. The bundle is the 0.0.36
+one built at 5b841785, with the wheels its h5ad stage lacked (226ad50e). That
+stage holds h5py 3.13.0 on HDF5 1.12.1, anndata 0.13.2 and pandas 3.0.2.
+Records: `S4-S-2026-11-06.json`, `S4-L-2026-11-06.json`.
+
+**Question.** An .h5ad the user picked: does the website read it with h5py in
+the Python worker (the file mounted with WORKERFS like every pick, read in the
+worker's 1 MiB blocks), or with h5wasm in the page (P4)? The plan's rule:
+Python reads what it reads, unchanged, unless the page is needed for capacity
+or for a codec Pyodide lacks. P4 found h5wasm's lzf filter aborting on
+strings, so lzf could have decided it.
+
+**Set-up.** P4's fixtures: 11,201 (S) and 1,260,592 (L) cells x 90 float32
+features, written by anndata 0.13 as {dense, CSR} x {none, gzip, lzf}. Each
+file is read two ways in the worker and in CPython (h5py 3.16, HDF5 2.0; run
+first, so the OS cache is warm for both):
+
+- P4's eight reads (obs names, a numeric obs column, a categorical, obsm
+  spatial, var names, a 64 MB row block of X, one X column, all of X as
+  columns). Both Pythons run `truth_p4.py` from its own source, median of 3,
+  and every answer is SHA-256-hashed.
+- The table load the viewer runs, `AnnDataAdapter.load_table()`, with a digest
+  of every column.
+
+h5wasm is P4 rerun the same evening (`node bench/run.mjs --poc P4 --fixture
+S|L`): h5wasm 0.10.3 and h5wasm-plugins 0.3.0 in a worker, over plain WORKERFS.
+
+| | h5py in Pyodide | h5wasm in the page |
+|---|---|---|
+| Reads identical to CPython's | **96 of 96** (S and L), lzf strings included | 84 of 96: all 12 lzf string reads abort (`memory access out of bounds`) |
+| Time against CPython, L, reads CPython takes >= 5 ms | median 1.4x; 0.6-2.3x, except one X column on its own (8-26x) | median 6.8x; 1.9-96x |
+| All of X as columns, L | 0.9-3.7 s (CPython 0.5-2.3 s) | 1.0-9.4 s |
+| The viewer's table load, L | 1.4-4.9 s, 1.2-2.0x CPython; every column identical | (no Python path) |
+| Memory, one L table (113 M values) | worker heap 0.38 -> 1.04 GiB after the load (+0.66 GiB, ~6 B a value); renderer peak 2.0 GB | renderer peak 3.2 GB over its matrix |
+| Loading the reader | the h5ad stage, on the first import: 0.75-0.95 s from loopback | in the page bundle |
+
+Pyodide's h5py builds in the filters h5py ships (gzip, shuffle, lzf;
+`h5py.h5z.filter_avail`), so nothing needs a plugin.
+
+Time at L, ms: Pyodide / h5wasm / CPython (median of 3; - means it aborted):
+
+| Read | dense, none | dense, gzip | dense, lzf | CSR, none | CSR, gzip | CSR, lzf |
+|---|---|---|---|---|---|---|
+| obs names (1.26 M strings) | 404 / 1425 / 365 | 415 / 1987 / 428 | 418 / - / 414 | 385 / 1193 / 371 | 419 / 1420 / 453 | 396 / - / 409 |
+| a numeric obs column | 12 / 24 / 5 | 44 / 288 / 39 | 10 / 371 / 14 | 11 / 16 / 5 | 49 / 231 / 54 | 9 / 259 / 14 |
+| obsm["spatial"] | 22 / 47 / 10 | 97 / 730 / 80 | 30 / 635 / 33 | 18 / 30 / 10 | 105 / 519 / 84 | 29 / 481 / 35 |
+| X, a 64 MB row block | 66 / 167 / 33 | 372 / 1489 / 290 | 221 / 1016 / 76 | 98 / 696 / 64 | 196 / 702 / 164 | 76 / 930 / 76 |
+| X, one column alone | 1089 / 7312 / 76 | 332 / 242 / 40 | 310 / 148 / 12 | 844 / 3804 / 280 | 1514 / 4371 / 979 | 666 / 4821 / 347 |
+| X, all of it as columns | 875 / 1005 / 488 | 3658 / 9419 / 2319 | 1835 / 7265 / 846 | 1172 / 4155 / 515 | 1702 / 7211 / 1251 | 934 / 5546 / 575 |
+| the adapter's table load | 1386 / - / 1120 | 4921 / - / 3027 | 2991 / - / 1497 | 1990 / - / 1301 | 2658 / - / 2214 | 1849 / - / 1529 |
+
+**Decision: the website reads an .h5ad with h5py in the Python worker.**
+Plexora's own adapter reads it unchanged, and the page reads nothing of it.
+
+- **Codec.** lzf decides nothing: Pyodide's h5py reads it, strings included,
+  where h5wasm's plugin aborts. A filter neither side ships (hdf5plugin's
+  zstd, blosc and the rest) fails on the website as it does in the desktop
+  app, whose AnnData reader does not load hdf5plugin either: "Can't
+  synchronously read data (can't open directory)".
+- **Capacity.** The page is not needed. An L table takes 0.66 GiB of the
+  worker's heap, and the whole viewer on it 2.3 GiB (below). That is short of
+  the 3 GiB STOP, and better per value than a CSV (2.1 GiB at 36.6 M values).
+- **Speed.** At L, h5py in Pyodide is faster than h5wasm at every read but one:
+  a single column of chunked, compressed X, which the adapter never reads for a
+  panel (it reads row blocks). At S both take a few milliseconds, and h5wasm
+  reads uncompressed obs names 2-4 ms sooner. A likely part of the difference,
+  not measured on its own: the worker reads picked files in 1 MiB blocks (P9),
+  and h5wasm's plain WORKERFS does not. The table load is 1.2-2.0x CPython.
+- **h5wasm is not needed.** A later browser node that answers cell routes from
+  the page should take the columns from Python's frame, not read the file a
+  second way. The threshold table's h5ad row ("desktop reads 2-13x faster";
+  "lzf strings -> D/N") came from h5wasm and no longer holds for this path.
+
+### The import, end to end
+
+`tests/browser/h5ad.mjs` runs an import the way a user's would. An image, its
+mask and an .h5ad are picked as file-backed Files and mounted and adopted as
+the picker does. Then `/import/inspect`, `/import/sample`, the viewer, and its
+table up to `get_table_status` "ready". It then checks the features that read
+the table:
+
+- the marker list and a marker's statistics;
+- the cell nearest a point;
+- colouring by a marker (`get_all_cells`, every value decoded);
+- colouring by an obs column (Cell Explorer).
+
+Each answer is checked against anndata's reading of the file in CPython. The
+project record and Cell Explorer's requirements are checked against the
+desktop's import of the same files (this checkout's app in CPython, on a data
+root of its own).
+
+Measured 2026-11-07 against the merged branch (d422dbcc, its bundle rebuilt
+in full). Record: `S4-import-2026-11-07.json`. Every check passed in all four
+runs:
+
+| Table | Rows | Inspect | Import | Table ready (desktop) | Viewer drawn | Worker heap |
+|---|---|---|---|---|---|---|
+| p4-s cells-dense-lzf, on exemplar-001 with its mask | 11,201 | 1.5 s | 0.45 s | 0.32 s (0.16 s) | 1.2 s | 0.54 GiB |
+| scimapExampleData.h5ad (SCIMAP's own: no obsm, an older string index, a `log` layer), its ROI1 | 825 | 1.7 s | 0.44 s | 0.36 s (0.12 s) | 1.2 s | 0.45 GiB |
+| p4-l cells-dense-gzip, on Orion CRC02's mask | 1,260,592 | 2.0 s | 0.61 s | 5.8 s (3.7 s) | 12.3 s | 2.31 GiB |
+| p4-l cells-csr-lzf, the same | 1,260,592 | 1.9 s | 0.49 s | 3.0 s (2.2 s) | 8.5 s | 2.25 GiB |
+
+The columns, and what the table shows:
+
+- **Inspect** includes the h5ad stage arriving on its first import (0.8-1.0 s,
+  `import_proposal` importing h5py). No stage loads at boot.
+- **Table ready** is counted from the viewer's page being asked for. The
+  desktop's is from `init_database` to ready, in the same app on CPython.
+- **The project record** (dataset spec, roles, columns, obsm) equals the
+  desktop's field for field, and the table stays where it was picked
+  (`/picked/...`, not copied).
+- **The SCIMAP file** asks which image the table is (its `ROI` column reads as
+  an image identifier). It asks the same on the desktop, and without an answer
+  both leave the table unresolved. The run answers ROI1.
+- **The viewer on L** waits mostly on the image, not the table: the blank
+  image's full-resolution window scan takes `get_image_channel_stats` 7 s.
+  That cost is the image's, whatever the table.
+- **The first nearest-cell query at L** took 5.2 s and 2.5 s, against 3-6 ms
+  on the desktop. It builds the cell index then, where the desktop builds it
+  behind the load. The index is built from the loaded frame, so this is not
+  the h5ad's doing, and it is not fixed here.
+- **Cell Explorer** asks for a Cell ID column before it opens on these
+  projects. So does the desktop: its requirements are identical.
+
+`tests/test_browser_h5ad.py` runs the driver under pytest on a table written
+in the test (2,000 cells, lzf) when Chrome, the bundle and the static site are
+there.
+
+### Rerun S-4
+
+    node tests/browser/spike_h5ad.mjs [--dir <p4-s or p4-l>] [--repeat 3] [--out FILE]
+    node tests/browser/spike_h5ad.mjs --dir <p4-l> --files cells-dense-gzip.h5ad --adapter-only --repeat 1
+    cd tools/poc_browser_node && node build.mjs && node bench/run.mjs --poc P4 --fixture S|L --out DIR
+    node tests/browser/h5ad.mjs --image IMG --mask MASK --table T.h5ad --marker CD45 [--subset ROI=ROI1]
+
+Each needs `PLEXORA_BENCH_HOME` pointing at the bundle's home. The P4 fixtures
+are in `C:/plexora-bench/browser_node/fixtures/p4-{s,l}` (`bench/p4_fixtures.py`).
