@@ -36,6 +36,7 @@ from typing import Any, ClassVar, Iterable, Mapping
 
 from plexora import paths
 from plexora._transient_locks import past_transient_locks
+from plexora.server.models import sources
 
 #: Serializes read-modify-write of config.json within the process. Needed
 #: because the segmentation job patches the same file from a background thread
@@ -94,7 +95,9 @@ def read_config(path) -> dict:
     # treating it as {} loses nothing that is still on disk.
     if not text.strip():
         return {}
-    return json.loads(text) or {}
+    # Each project's files as this app finds them: the website and the
+    # desktop app may share one config.json (server/models/sources.py).
+    return sources.localize_config(json.loads(text) or {})
 
 
 def bump_config_generation() -> int:
@@ -116,6 +119,8 @@ def write_config(path, config) -> None:
     notebook sidecar and a CLI server can share one data directory).
     """
     path = Path(path)
+    # The paths as recorded, so the other app's survive (server/models/sources.py).
+    config = sources.record_config(config)
     with _CONFIG_LOCK:
         path.parent.mkdir(parents=True, exist_ok=True)
         tmp = path.with_name(f"{path.name}.{os.getpid()}.tmp")
@@ -2435,7 +2440,7 @@ class Project:
         figures -- is theirs and goes to their own root instead, which is what
         `paths.project_state_dir` is for.
         """
-        return self.home_root is not None and self.home_root != paths.data_root()
+        return self.home_root is not None and self.home_root not in paths.owned_roots()
 
     @property
     def read_dir(self) -> Path:

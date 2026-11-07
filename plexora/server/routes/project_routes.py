@@ -92,7 +92,7 @@ def _project_card(name, entry, homes, holders, own):
         'title': project.title,
         'displayName': project.display_name,
         'thumbnailUrl': f'/project_thumbnail/{name}',
-        'shared': home_root is not None and home_root != own,
+        'shared': home_root is not None and home_root not in paths.owned_roots(),
         # The folder this project is in, or null for one at the top level.
         # Name as well as id, so a card in a flattened search result can say
         # where it lives without a second lookup.

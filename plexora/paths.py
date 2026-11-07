@@ -64,6 +64,7 @@ ENV_DATA_PATH = "PLEXORA_DATA_PATH"
 ENV_DATA_PATH_DEFAULT = "PLEXORA_DATA_PATH_DEFAULT"
 
 ENV_SHARED_PATH = "PLEXORA_SHARED_PATH"
+ENV_LIBRARY_PATH = "PLEXORA_LIBRARY_PATH"
 ENV_MASK_OUTPUT = "PLEXORA_MASK_OUTPUT"
 
 CONFIG_FILENAME = "config.json"
@@ -76,6 +77,10 @@ SETTINGS_FILENAME = "settings.json"
 #: desktop app ships a real interpreter instead, so it shares this default
 #: with the CLI and notebooks.
 RULE_PLATFORM_DEFAULT = "platform default"
+
+#: The data root chosen because the website keeps its projects on this
+#: computer and this account had none of its own yet (`website_library`).
+RULE_WEBSITE_LIBRARY = "the website's projects on this computer"
 
 #: The first line of the two-used-directories refusal, fixed so that
 #: `plexora connect` can recognise it in a remote's dying output and relay the
@@ -331,8 +336,17 @@ def _candidate_data_root() -> Resolution:
         return Resolution(suggested,
                           f"{ENV_DATA_PATH_DEFAULT}, suggested by the connection")
 
-    return Resolution(Path(user_data_dir(APP_NAME, appauthor=False)).resolve(),
-                      RULE_PLATFORM_DEFAULT)
+    default = Path(user_data_dir(APP_NAME, appauthor=False)).resolve()
+    # The one rule that looks at the disk: when the website keeps its projects
+    # on this computer (Documents/Plexora/projects) and this account has none
+    # of its own yet, both apps use that one folder -- work started in either
+    # is simply there in the other, with nothing to import.
+    library = website_library()
+    if (os.environ.get(ENV_LIBRARY_PATH) is None and (library / CONFIG_FILENAME).exists()
+            and not (default / CONFIG_FILENAME).exists()):
+        return Resolution(library.resolve(), RULE_WEBSITE_LIBRARY)
+
+    return Resolution(default, RULE_PLATFORM_DEFAULT)
 
 
 def _stored_data_dir() -> Path | None:
@@ -615,6 +629,86 @@ def data_root_notices() -> list[str]:
     return lines
 
 
+# -- the website's projects on this computer -----------------------------
+
+
+def website_library() -> Path:
+    """Where the website keeps its projects on this computer when the user
+    lets it (client services/browserStore.js): Documents/Plexora/projects."""
+    try:
+        from platformdirs import user_documents_dir
+
+        documents = Path(user_documents_dir())
+    except Exception:  # noqa: BLE001 -- platformdirs is a dependency; home is the fallback
+        documents = Path.home() / "Documents"
+    return documents / "Plexora" / "projects"
+
+
+def library_root_resolutions() -> list[Resolution]:
+    """Roots the user owns besides their data root, read and written as their
+    own: the website's projects on this computer (`website_library`), when it
+    holds a project registry and is not already the data root. So a project
+    made on the website opens in the desktop app in place, and either app's
+    changes are the other's on its next load.
+
+    `PLEXORA_LIBRARY_PATH` names them instead (os.pathsep-separated; empty for
+    none). Cached like `shared_roots`.
+    """
+    with _cache_lock:
+        cached = _cache.get("library_roots")
+        if cached is not None:
+            return list(cached)  # type: ignore[arg-type]
+    from_env = os.environ.get(ENV_LIBRARY_PATH)
+    if from_env is not None:
+        candidates = [(Path(entry).expanduser(), f"{ENV_LIBRARY_PATH} environment variable")
+                      for entry in from_env.split(os.pathsep) if entry.strip()]
+    else:
+        candidates = [(website_library(), RULE_WEBSITE_LIBRARY)]
+    own = data_root()
+    resolved = []
+    for path, rule in candidates:
+        try:
+            path = path.resolve()
+        except OSError:
+            continue
+        if path != own and (path / CONFIG_FILENAME).exists():
+            resolved.append(Resolution(path, rule))
+    with _cache_lock:
+        _cache["library_roots"] = resolved
+    return list(resolved)
+
+
+def library_roots() -> list[Path]:
+    return [resolution.path for resolution in library_root_resolutions()]
+
+
+def owned_roots() -> list[Path]:
+    """The roots whose projects are the user's own: their data root first."""
+    return [data_root(), *library_roots()]
+
+
+_names_cache: dict = {}
+
+
+def _registered(root: Path) -> frozenset:
+    """The project names in `root`'s registry, re-read when the file changes."""
+    path = Path(root) / CONFIG_FILENAME
+    try:
+        stat = path.stat()
+    except OSError:
+        return frozenset()
+    stamp = (stat.st_mtime_ns, stat.st_size)
+    cached = _names_cache.get(path)
+    if cached is not None and cached[0] == stamp:
+        return cached[1]
+    try:
+        names = frozenset(json.loads(path.read_text(encoding="utf-8") or "{}"))
+    except (OSError, ValueError):
+        names = frozenset()
+    _names_cache[path] = (stamp, names)
+    return names
+
+
 # -- shared, read-mostly roots -------------------------------------------
 
 
@@ -660,8 +754,8 @@ def shared_root_resolutions() -> list[Resolution]:
     # The user's own root is never also a shared root, whatever the
     # configuration says: it is already first in roots(), and letting it appear
     # twice would make a project look shared to its own owner.
-    own = data_root()
-    resolved = [r for r in out if r.path != own]
+    owned = set(owned_roots())
+    resolved = [r for r in out if r.path not in owned]
     with _cache_lock:
         _cache["shared_roots"] = resolved
     return list(resolved)
@@ -678,7 +772,7 @@ def roots() -> list[Path]:
     to the user's copy. Somebody who has made their own version of a shared
     project means to open theirs.
     """
-    return [data_root(), *shared_roots()]
+    return [*owned_roots(), *shared_roots()]
 
 
 # -- paths within a root -------------------------------------------------
@@ -708,8 +802,16 @@ def project_state_dir(name) -> Path:
     merely visible: the gates, ROIs and plugin tables a user produces while
     looking at somebody else's data are theirs, and they have to land
     somewhere writable.
+
+    A project of the user's own second library (the website's projects on
+    this computer) keeps its state there, in place: it is theirs too, and the
+    website reads it from there.
     """
-    return data_root() / name
+    own = data_root()
+    for library in library_roots():
+        if name in _registered(library) and name not in _registered(own):
+            return library / name
+    return own / name
 
 
 def project_roots(name) -> list[Path]:
