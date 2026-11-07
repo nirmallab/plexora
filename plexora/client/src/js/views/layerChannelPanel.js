@@ -261,7 +261,13 @@
             if (!src) return Promise.resolve(null);
             const request = fetch(plexoraUrl(`${src}${what}`))
                 .then((response) => (response.ok ? response.json() : null))
-                .catch(() => null);
+                .catch(() => null)
+                .then((answer) => {
+                    // Nothing to be had now: the next ask asks again, as
+                    // the viewer's own channels do (channelList.js).
+                    if (!answer) pending.delete(key);
+                    return answer;
+                });
             pending.set(key, request);
             return request;
         }

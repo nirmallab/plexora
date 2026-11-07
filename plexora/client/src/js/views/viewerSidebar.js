@@ -88,6 +88,9 @@ const GATING_EASE_MS = 600;
 //: asked the server for (startGatingContrast), and its first poll.
 const GATING_POLL_LIMIT_MS = 60000;
 const GATING_POLL_FIRST_MS = 1500;
+//: An auto-contrast pass whose request failed is asked again after each of
+//: these (autoChannel's askAgain), while the channel is still the slot's.
+const LEVEL_RETRY_MS = [500, 1500, 4000];
 //: Where a slot's window came from (`slot.rangeSource`, saved as a row's
 //: `source`): the user's hand or an explicit Auto click, the viewer's own
 //: auto-levelling, a gating calibration, a default the project was seeded
@@ -154,6 +157,9 @@ class ViewerSidebar {
         this.markerSelects = new Map();
         this._saveChannelsTimer = null;
         this._restoring = false;
+        //: Resolves once init() has put the open's channels in their slots
+        //: (whenContrastSettled waits for it: before, there is nothing to level).
+        this._channelsOpened = new Promise((resolve) => { this._channelsOpenedResolve = resolve; });
         // Add-on modules (e.g. gating) that extend the sidebar without core needing to know
         // their concrete type -- see registerModule() and pluginRegistry.js.
         this.sidebarModules = [];
@@ -490,6 +496,7 @@ class ViewerSidebar {
                 }
             }));
         this._restoring = false;
+        this._channelsOpenedResolve?.();
         this.syncContrastBar();
 
         // Not persisted after a launch or a carried restore either. The default
@@ -2623,9 +2630,53 @@ class ViewerSidebar {
      * 3-D level may want the slider moved; that is the user's, not a fetch's.
      */
     async autoChannel(slotIndex, options = {}) {
+        try {
+            return await this.levelChannel(slotIndex, options);
+        } catch (error) {
+            // Neither pass could be had (each asked LEVEL_RETRY_MS.length + 1
+            // times): the slot stays unlevelled, so switching the channel on
+            // again, or Auto, asks afresh.
+            console.debug?.("auto-contrast did not land", error);
+            return false;
+        }
+    }
+
+    /**
+     * One ask of a levelling pass, again after each of LEVEL_RETRY_MS while
+     * this levelling is still the slot's (`current`): a request that failed
+     * -- the worker restarting, a project reloading under it -- used to end
+     * the levelling there, the slot left at the full range or the hint.
+     */
+    async askAgain(ask, current) {
+        for (let attempt = 0; ; attempt += 1) {
+            try {
+                return await ask();
+            } catch (error) {
+                if (attempt >= LEVEL_RETRY_MS.length || !current()) throw error;
+                await new Promise((resolve) => window.setTimeout(resolve, LEVEL_RETRY_MS[attempt]));
+            }
+        }
+    }
+
+    /** Whether a slot shows `raw` (raw units) with `curve` already. */
+    showsWindow(slot, raw, curve) {
+        const now = this.toRawRangeForSlot(slot);
+        const step = this.isHdMode() ? 0.5 : this.byteStep(slot) / 2;
+        const close = (a, b) => Math.abs(Number(a) - Number(b)) <= step;
+        const same = globalThis.PlexoraDisplayCurve?.same;
+        return close(now[0], raw[0]) && close(now[1], raw[1])
+            && (same ? same(slot.curve || null, curve || null) : !slot.curve === !curve);
+    }
+
+    /** autoChannel's work; throws when a pass cannot be had at all. */
+    async levelChannel(slotIndex, options = {}) {
         const slot = this.channelSlots[slotIndex];
         if (!slot || !slot.name) return;
-        if (!options.force && (slot.userRangeChanged || slot.autoLeveled || slot.autoLeveling)) {
+        // `refit`: a window restored from a saved "auto" row is on screen;
+        // only the fit is asked for, and put on only where it differs.
+        const refit = Boolean(options.refit) && !options.force;
+        if (!options.force && (slot.userRangeChanged || slot.autoLeveling
+                               || (slot.autoLeveled && !refit))) {
             return;
         }
         const markerName = slot.name;
@@ -2653,11 +2704,12 @@ class ViewerSidebar {
         const curves = globalThis.PlexoraDisplayCurve;
         slot.autoLeveling = true;
         try {
-            // Pass 1 -- provisional, so the channel is visible right away.
-            await this.channelList.ensureChannelStats(markerName);
+            // Pass 1 -- provisional, so the channel is visible right away. Not
+            // for a refit: a restored window is on screen already.
+            await this.askAgain(() => this.channelList.ensureChannelStats(markerName), stillCurrent);
             if (!stillCurrent()) return;
             const stats = this.quantWindow(markerName);
-            if (stats && stats.vmin_hint !== undefined) {
+            if (!refit && stats && stats.vmin_hint !== undefined) {
                 slot.rangeSource = source;
                 const hint = [stats.vmin_hint, stats.vmax_hint];
                 this.setSlotCurve?.(slotIndex, log ? (curves?.seeded?.(hint) || null) : null,
@@ -2671,7 +2723,7 @@ class ViewerSidebar {
             if (!(markerName in this.channelList.hasChannelGMM)) {
                 const task = window.PlexoraStatus?.begin("Auto-contrast");
                 try {
-                    await this.channelList.getAndDrawChannelGMM(markerName);
+                    await this.askAgain(() => this.channelList.getAndDrawChannelGMM(markerName), stillCurrent);
                 } finally {
                     task?.done();
                 }
@@ -2679,13 +2731,19 @@ class ViewerSidebar {
             if (!stillCurrent()) return;
             const packet = this.channelList.hasChannelGMM[markerName];
             if (!packet) return;
-            slot.rangeSource = source;
             const fitted = packet.log_window;
             const logWindow = log && fitted && Array.isArray(fitted.window) && fitted.cofactor > 0;
             const raw = logWindow ? fitted.window : [packet.vmin, packet.vmax];
-            this.setSlotCurve?.(slotIndex, !log ? null
+            const curve = !log ? null
                 : (logWindow ? { kind: "asinh", cofactor: Number(fitted.cofactor) }
-                   : (curves?.seeded?.(raw) || null)), { save: false, source: null });
+                   : (curves?.seeded?.(raw) || null));
+            if (refit && this.showsWindow(slot, raw, curve)) {
+                // The row was the fit: nothing moves, nothing is saved.
+                slot.autoLeveled = true;
+                return;
+            }
+            slot.rangeSource = source;
+            this.setSlotCurve?.(slotIndex, curve, { save: false, source: null });
             this.applyAutoRange(slotIndex, slot, raw, this.quantWindow(markerName) || packet);
             slot.autoLeveled = true;
             // The gating window, when it arrived while the fit ran, takes
@@ -3211,6 +3269,45 @@ class ViewerSidebar {
         return this._modulesApplied || Promise.resolve([]);
     }
 
+    /** Whether every channel on screen has the contrast it opened for: levelled
+     *  (both passes of autoChannel, or a restored or calibrated window), or set
+     *  by somebody, and not on its way anywhere. */
+    contrastSettled() {
+        return this.channelSlots.every((slot) => !slot || !slot.name || !slot.enabled
+            || (!slot.autoLeveling && !slot.rangeEase
+                && (slot.autoLeveled || slot.userRangeChanged || slot.rangeSource === "gating")));
+    }
+
+    /**
+     * Resolves true once the open's channels are in their slots and their
+     * automatic contrast has landed (`contrastSettled`), false after
+     * `timeoutMs`. For whatever captures the viewer as it opens -- Video
+     * Studio's starting scene -- so the capture is of the contrast the viewer
+     * settles on, not of a window on its way there (a first open shows the
+     * full range, then the stats' hint, then the fit).
+     */
+    async whenContrastSettled({ timeoutMs = 20000, quietMs = 150 } = {}) {
+        const until = Date.now() + timeoutMs;
+        const opened = await Promise.race([
+            this._channelsOpened.then(() => true),
+            new Promise((resolve) => window.setTimeout(() => resolve(false), timeoutMs)),
+        ]);
+        if (!opened) return false;
+        // Settled for `quietMs` on end: a channel switched on schedules its
+        // levelling on the next turn, and a fit's ease starts on the next frame.
+        let since = null;
+        while (Date.now() < until) {
+            if (this.contrastSettled()) {
+                since = since ?? Date.now();
+                if (Date.now() - since >= quietMs) return true;
+            } else {
+                since = null;
+            }
+            await new Promise((resolve) => window.setTimeout(resolve, 50));
+        }
+        return false;
+    }
+
     /**
      * The image's Log brightness for its saved rows: on when they were saved
      * on it, off when they were saved with it off, the default
@@ -3296,6 +3393,8 @@ class ViewerSidebar {
         // The ceiling comes from the server, so a big node still restores as wide
         // as it ever did.
         const restoredNames = activeRows.map((row) => row.channel);
+        //: Slots restored from an "auto" row, fitted again once on screen.
+        const refits = [];
         const restoreTask = window.PlexoraStatus?.begin("Restoring");
         try {
             await plexoraMapWithLimit(restoredNames, plexoraChannelConcurrency(), (name) =>
@@ -3340,7 +3439,20 @@ class ViewerSidebar {
                     range = this.rawToByteRange(range, packet);
                 }
             }
-            this.setSlotRange(slot.index, range, true);
+            // The viewer's own levelling, saved ("auto"): shown at once, and
+            // fitted again below. It is only the fit if it was saved after the
+            // fit landed -- a first open saves its rows at once (init), and a
+            // viewer left before its fit came back saved the full range or the
+            // stats' hint, which was then restored as levelled on every open
+            // after. The fit is deterministic and stored beside the project
+            // (data_model._stored_fit), so for a row that was the fit the
+            // refit finds it on screen already and changes nothing.
+            const levelled = row.source === "auto";
+            this.setSlotRange(slot.index, range, !levelled);
+            if (levelled) {
+                slot.userRangeChanged = false;
+                refits.push(slot.index);
+            }
             // Who set the window, as saved; a row saved before rows said is
             // the user's ("legacy") and is never replaced by a calibration.
             slot.rangeSource = ViewerSidebar.ROW_SOURCES?.has(row.source) ? row.source : "legacy";
@@ -3366,6 +3478,9 @@ class ViewerSidebar {
             (name) => !(name in this.channelList.hasChannelGMM));
         plexoraMapWithLimit(pendingGmm, plexoraChannelConcurrency(), (name) =>
             this.channelList.getAndDrawChannelGMM(name).catch(() => {}));
+        // The restored "auto" rows take their fit when it lands (the same
+        // single request per channel as the prefetch above).
+        refits.forEach((index) => this.autoChannel(index, { refit: true }));
 
         this.updateSelectedCount();
     }

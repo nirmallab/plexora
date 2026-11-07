@@ -30,6 +30,21 @@ class ChannelQuantization:
     __tablename__ = 'channelQuantization'
 
 
+class ChannelFit:
+    """Per-channel contrast mixture fits (`/get_channel_gmm`), kept across
+    sessions so a reopened project gets its windows at once.
+
+    A fit costs a GaussianMixture over the channel's overview (0.5-0.6 s per
+    channel on a whole slide, every open; seconds on the website). The stored
+    blob names what each fit was made from -- a digest of the overview plane,
+    the quantization window and the fitting code's version -- so a changed
+    file, setting or algorithm is a miss, never a stale fit
+    (data_model._fit_key).
+    """
+
+    __tablename__ = 'channelFit'
+
+
 class ViewTransform:
     """How the viewer shows this image: `{degrees, flipH, flipV}` as JSON.
 

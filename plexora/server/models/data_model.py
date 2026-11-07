@@ -3334,7 +3334,16 @@ def _compute_channel_gmm(channel_name, datasource_name, cache_key, slab=None):
         qmin, qmax = get_channel_quantization_window(channel_name, datasource_name,
                                                      slab.window_class())
         overview = _view_overview(datasource_name, slab)
-    packet_gmm = channel_gmm_of(overview[image_channelIdx], qmin, qmax)
+    plane = overview[image_channelIdx]
+    # The channel's own fit, stored beside the project by an earlier session
+    # (a slab's is its view's, and stays in memory): a reopened project's
+    # windows at once on the desktop and the website alike.
+    key = _fit_key(image_channelIdx, plane, qmin, qmax) if slab is None else None
+    packet_gmm = _stored_fit(datasource_name, channel_name, key) if key else None
+    if packet_gmm is None:
+        packet_gmm = channel_gmm_of(plane, qmin, qmax)
+        if key:
+            _remember_fit(datasource_name, channel_name, key, packet_gmm)
     _gmm_cache[cache_key] = packet_gmm
     return packet_gmm
 
@@ -3360,6 +3369,88 @@ def gmm_log_window(image_data, mean1, std1, top):
     # a cofactor the size of the window is that line, gently bent.
     cofactor = curve["cofactor"] if curve else float(white_gap)
     return {"window": [black, black + float(white_gap)], "cofactor": float(cofactor)}
+
+
+#: The mixture fit's k-means start (`channel_gmm_of`).
+_FIT_SEED = 0
+#: What a stored fit (`_stored_fit`) was made by. Bumped whenever
+#: `channel_gmm_of` or `gmm_log_window` would return something else for the
+#: same plane and window, so a fit stored by an earlier version is a miss.
+#: The overview itself is in the key as a digest, so how it is made
+#: (`_require_overview`, a provider's level choice) needs no bump.
+_FIT_VERSION = 1
+
+
+def _fit_code():
+    """The fitting code's identity: `_FIT_VERSION`, the seed, sklearn's
+    version and the Log window's two levels."""
+    import sklearn
+
+    from plexora.agent.evidence.calibration import NOISE_LEVEL, TITRE_LEVEL
+
+    return f"{_FIT_VERSION}:{_FIT_SEED}:{sklearn.__version__}:{NOISE_LEVEL}:{TITRE_LEVEL}"
+
+
+def _fit_key(index, plane, qmin, qmax):
+    """What a channel's fit is a pure function of: the overview plane (a
+    digest of its bytes, shape and type), the window and the code. Equal keys,
+    equal fits -- whatever changed the file, a setting or the overview's
+    making."""
+    import hashlib
+
+    data = np.ascontiguousarray(plane)
+    digest = hashlib.blake2b(data.view(np.uint8).reshape(-1), digest_size=16)
+    digest.update(f"{data.dtype.str}{data.shape}".encode())
+    return f"{_fit_code()}|{int(index)}|{float(qmin)!r}|{float(qmax)!r}|{digest.hexdigest()}"
+
+
+_fit_store_lock = threading.Lock()
+
+
+def _plain(value):
+    """A fit packet as JSON writes it: numpy scalars as floats."""
+    if isinstance(value, dict):
+        return {k: _plain(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_plain(v) for v in value]
+    if isinstance(value, np.generic):
+        return value.item()
+    return value
+
+
+def _stored_fits(datasource_name):
+    """{channel: {key, packet}} as stored beside the project, or {}. Best
+    effort: an unreadable row reads as nothing stored."""
+    try:
+        row = database_model.get(database_model.ChannelFit, datasource=datasource_name)
+        stored = json.loads(row.cells) if row is not None else {}
+    except Exception:
+        return {}
+    fits = stored.get("fits") if isinstance(stored, dict) else None
+    return fits if isinstance(fits, dict) else {}
+
+
+def _stored_fit(datasource_name, channel_name, key):
+    """The stored packet for `channel_name` made from exactly `key`, or None."""
+    entry = _stored_fits(datasource_name).get(channel_name)
+    if isinstance(entry, dict) and entry.get("key") == key and isinstance(entry.get("packet"), dict):
+        return entry["packet"]
+    return None
+
+
+def _remember_fit(datasource_name, channel_name, key, packet):
+    """Store one channel's fit beside the project, replacing the channel's
+    previous one (one entry per channel: a changed key is a new fit, not a
+    second one). Never fatal -- the fit is in memory either way."""
+    with _fit_store_lock:
+        fits = _stored_fits(datasource_name)
+        fits[channel_name] = {"key": key, "packet": _plain(packet)}
+        try:
+            database_model.save_list(database_model.ChannelFit, datasource=datasource_name,
+                                     cells=json.dumps({"fits": fits}).encode("utf-8"))
+        except Exception as exc:
+            _log.warning("Could not store the contrast fit of %s/%s: %s",
+                         datasource_name, channel_name, exc)
 
 
 def channel_gmm_of(image_data, qmin, qmax):
@@ -3390,8 +3481,20 @@ def channel_gmm_of(image_data, qmin, qmax):
             'image_gmm_2': list(flat),
             'image_gmm_3': list(flat),
         }
-    img_log = np.log(nonzero)
-    gmm = GaussianMixture(3, max_iter=1000, tol=1e-6)
+    # In float64 whatever the overview's type. A mean-pooled overview is
+    # float64 already; one that is the image itself (a small image, a
+    # z-stack's) is integer, and the log of uint16 is float32 -- in which the
+    # fit stops where float32 can no longer see its tolerance, a point that
+    # differs between builds: Pyodide's after 52 iterations at a window of
+    # 267.6, CPython's after 72 at 267.2, so the website and the desktop
+    # rounded one stack's DNA to 268 and 267. In float64 both take the same
+    # 120 iterations to the same 266.39.
+    img_log = np.log(nonzero.astype(np.float64, copy=False))
+    # Seeded: unseeded, k-means' random start put the same channel's window
+    # in one of two places from one fit to the next (a stack's DNA at 267 or
+    # 1593 one time in ten), so the website and the desktop -- or one app
+    # twice -- opened the same image at different levels.
+    gmm = GaussianMixture(3, max_iter=1000, tol=1e-6, random_state=_FIT_SEED)
     gmm.fit(img_log.reshape((-1, 1)))
 
     means = gmm.means_[:, 0]
