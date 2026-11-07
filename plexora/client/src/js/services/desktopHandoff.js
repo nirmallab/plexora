@@ -15,7 +15,9 @@
  * open it), and otherwise the download is offered.
  *
  *   open(project, app) -> from a click; `app` is the app's frame window (toasts)
+ *   openApp(app)       -> from a click: the app brought forward, no project
  *   openFile(app)      -> from a click: a `.plexora` project file opened here
+ *   DOWNLOAD           the desktop app's download page
  *
  * Where the browser cannot save into a folder (Firefox, Safari), the project
  * goes as one file instead (server/models/bundles.py): downloaded here, and
@@ -84,10 +86,23 @@
         return answered;
     }
 
+    //: The desktop app brought forward with nothing to open (a notice of
+    //: services/handoff.js on a page with no project): the download offered
+    //: when nothing answered.
+    async function openApp(app) {
+        const answered = await launch("plexora://open", app);
+        if (!answered) {
+            app?.PlexoraToast?.show({ title: "Get the desktop app", timeout: 0,
+                                      actions: [{ label: "Download", primary: true,
+                                                  onSelect: () => global.open(DOWNLOAD, "_blank", "noopener") }] });
+        }
+        return answered;
+    }
+
     //: The project's `.plexora` file, saved by the browser.
     function download(project, app) {
         const link = app.document.createElement("a");
-        link.href = `/project/${encodeURIComponent(project)}/bundle`;
+        link.href = `${global.PLEXORA_SITE_BASE || ""}/project/${encodeURIComponent(project)}/bundle`;
         link.download = `${project}.plexora`;
         app.document.body.appendChild(link);
         link.click();
@@ -105,18 +120,18 @@
             const file = input.files && input.files[0];
             input.remove();
             if (!file) return;
-            const answer = await app.fetch("/projects/bundle", { method: "POST", body: file,
+            const answer = await app.fetch(`${global.PLEXORA_SITE_BASE || ""}/projects/bundle`, { method: "POST", body: file,
                                                                 headers: { "Content-Type": "application/zip" } });
             const body = await answer.json().catch(() => ({}));
             if (!answer.ok || !body.project) {
                 app.PlexoraToast?.show({ title: "That file could not be opened", note: body.error || "" });
                 return;
             }
-            app.location.href = `/${encodeURIComponent(body.project)}`;
+            app.location.href = `${global.PLEXORA_SITE_BASE || ""}/${encodeURIComponent(body.project)}`;
         });
         app.document.body.appendChild(input);
         input.click();
     }
 
-    global.PlexoraHandoff = Object.freeze({ open, openFile, download });
+    global.PlexoraHandoff = Object.freeze({ open, openApp, openFile, download, DOWNLOAD });
 })(window);

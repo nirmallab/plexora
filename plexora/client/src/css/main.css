@@ -642,6 +642,87 @@ html:not(.is-desktop) .desktop-only {
 html:not(.is-website) .website-only {
     display: none;
 }
+html.is-website .not-website {
+    display: none !important;
+}
+
+/* What the website says where only the desktop app could act
+   (services/handoff.js): a short title, one line, every button on one row.
+   Drawn in place of the panel or form that would have failed. The buttons
+   move under the text together when the panel is narrow -- never one by
+   one: a primary on a line of its own reads as broken. */
+.plx-handoff {
+    align-items: center;
+    background: var(--surface-2);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-card);
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-2) var(--space-3);
+    padding: var(--space-3) var(--space-4);
+}
+
+.plx-handoff-icon {
+    color: var(--accent-channel);
+    font-size: 18px;
+}
+
+.plx-handoff-text {
+    display: flex;
+    flex: 1 1 260px;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 0;
+}
+
+.plx-handoff-title {
+    color: var(--text-primary);
+    font-size: 13.5px;
+    font-weight: 600;
+}
+
+.plx-handoff-why {
+    color: var(--text-muted);
+    font-size: 12.5px;
+}
+
+.plx-handoff-actions {
+    display: flex;
+    flex: 0 0 auto;
+    flex-wrap: nowrap;
+    gap: var(--space-2);
+    margin-left: auto;
+}
+
+.plx-handoff-actions .btn {
+    white-space: nowrap;
+}
+
+/* The node pairing question (handoff.js pairNode): the command with a copy
+   button beside it, and the box the printed link is pasted into. */
+.plx-handoff-pair {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2);
+    margin-top: var(--space-2);
+}
+
+.plx-handoff-command {
+    align-items: center;
+    background: var(--surface-0);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-control);
+    display: flex;
+    gap: var(--space-2);
+    justify-content: space-between;
+    padding: var(--space-1) var(--space-1) var(--space-1) var(--space-3);
+}
+
+.plx-handoff-command code {
+    color: var(--text-secondary);
+    font-size: 12.5px;
+    overflow-wrap: anywhere;
+}
 
 /* A file from Explorer or Finder is being dragged over the window. Drawn on
    the whole window because the drop is accepted anywhere: what is not dropped
@@ -3521,6 +3602,29 @@ html.is-native-dragging.has-drop-target body::after {
     padding: var(--space-4) var(--space-5);
     border-top: 1px solid var(--border-subtle);
     background: var(--surface-2);
+}
+
+/* The website's notice in place of the dialog (services/handoff.js): the
+   title and one line above, every button on one row below, nothing between. */
+.connect-modal.is-handoff {
+    width: min(34rem, 94vw);
+}
+
+.connect-modal.is-handoff .connect-modal-body {
+    display: none;
+}
+
+/* The notice's one line is read in full, not cut to the dialog's width. */
+.connect-modal.is-handoff .connect-modal-subtitle {
+    white-space: normal;
+}
+
+.connect-modal.is-handoff .connect-modal-actions {
+    justify-content: flex-end;
+}
+
+.connect-modal.is-handoff .connect-modal-actions .btn {
+    white-space: nowrap;
 }
 
 /* Pushes what follows to the right edge, so the button that acts on the

@@ -67,6 +67,16 @@ STAGES = {
         "wheels": ["reportlab", "charset-normalizer"],
         "modules": ["reportlab"],
     },
+    # A data node paired with this browser (services/connectorClient.js):
+    # server/providers/http.py talks to it through urllib3, whose Emscripten
+    # backend sends each request from the worker as a synchronous
+    # XMLHttpRequest (CORS from the node's allowed origins). Loaded at the
+    # first node call.
+    "nodes": {
+        "pyodide": ["urllib3"],
+        "wheels": [],
+        "modules": ["urllib3"],
+    },
 }
 
 #: Pure packages Pyodide ships older than a stage's wheels need. The build

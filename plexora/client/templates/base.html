@@ -8,7 +8,7 @@
     <link rel="apple-touch-icon" href="{{ data.base_url }}/client/src/img/apple-touch-icon.png">
     <!-- Styles -->
     <link rel="stylesheet" href="{{ data.base_url }}/client/src/css/tokens.css?v=20261027_sidebar_radius">
-    <link rel="stylesheet" href="{{ data.base_url }}/client/src/css/main.css?v=20261107_website_only">
+    <link rel="stylesheet" href="{{ data.base_url }}/client/src/css/main.css?v=20261107_handoff">
     {# Here and not in a page block: the explorer opens from every page, and
        appRouter.adoptStyles turns page stylesheets off on navigation. #}
     <link rel="stylesheet" href="{{ data.base_url }}/client/src/css/explorer.css?v=20261021_explorer_waiting">
@@ -45,7 +45,7 @@
          window.fetch). Before appStatus.js and not deferred, so a static
          build's page can put its own transport in place before that file
          wraps window.fetch and anything issues a request. -->
-    <script src="{{ data.base_url }}/client/src/js/services/backend.js?v=20261107_licence" type="text/javascript"></script>
+    <script src="{{ data.base_url }}/client/src/js/services/backend.js?v=20261107_handoff" type="text/javascript"></script>
     <!-- App-wide status indicator. Loaded here, before everything else and not
          deferred, because it wraps window.fetch to detect a dead/erroring
          server and must be installed before any script issues a request. -->
@@ -171,7 +171,7 @@
        views/settingsPage.js too, which settings.html loads at the end of its
        own body, well after everything here. #}
     <script src="{{ data.base_url }}/client/src/js/services/failureMessage.js?v=20260923_failure_layout" defer></script>
-    <script src="{{ data.base_url }}/client/src/js/services/connectionModal.js?v=20261020_sftp_files" defer></script>
+    <script src="{{ data.base_url }}/client/src/js/services/connectionModal.js?v=20261107_handoff" defer></script>
     <script src="{{ data.base_url }}/client/src/js/services/placePicker.js?v=20261020_sftp_files" defer></script>
     {# The navbar's connection icon. Deferred like the rest, which still runs
        it after pageBoot.js below (a normal script beats every deferred one),
@@ -230,6 +230,11 @@
        nothing until something calls show(): there is no host element until
        then. #}
     <script src="{{ data.base_url }}/client/src/js/services/toast.js?v=20260924_ui_pass" defer></script>
+    {# What the website says where only the desktop app could act -- an SSH
+       connection, the Google Cloud CLI, a data folder (PlexoraWebHandoff):
+       a notice in the panel that asked, or in the corner. After toast.js and
+       confirmDialog.js, which it uses; inert on a page a Plexora served. #}
+    <script src="{{ data.base_url }}/client/src/js/services/handoff.js?v=20261107_handoff" defer></script>
     {# The fast `data-tooltip` bubble, on every page because HD Mode, the
        Local/Remote switch and the navbar globe are on several. One glass
        element through PopoverPortal, placed inside the window, so no overflow
@@ -254,7 +259,7 @@
        confirmDialog and toast, which both use; <dialog>s of their own with
        their CSS in main.css, like importHelp below. #}
     <script src="{{ data.base_url }}/client/src/js/views/updateDialog.js?v=20261107_website" defer></script>
-    <script src="{{ data.base_url }}/client/src/js/views/helpMenu.js?v=20261021_mcp_off" defer></script>
+    <script src="{{ data.base_url }}/client/src/js/views/helpMenu.js?v=20261107_handoff" defer></script>
     <script src="{{ data.base_url }}/client/src/js/views/importHelp.js?v=20261021_pro" defer></script>
     {# What kind of address a string is: a web address, a `node://` locator
        or a plain path. Read by importSample.js and quickViewLanding.js, so
@@ -427,7 +432,9 @@
                        No shortcut, deliberately: it is the one irreversible
                        thing in this menu and it should cost a deliberate trip
                        through it. mod+Q is the browser's anyway. #}
-                    {% if not data.notebook_mode %}
+                    {% if not data.notebook_mode and data.backend != 'browser' %}
+                    {# Nor on the website: there is no Plexora process to stop,
+                       and closing the tab is the way out. #}
                     <div class="dropdown-divider"></div>
                     <button type="button" id="nav_quit" class="dropdown-item text-danger">
                         <span class="fas fa-power-off nav-item-icon"></span>

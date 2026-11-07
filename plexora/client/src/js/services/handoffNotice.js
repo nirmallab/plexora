@@ -20,7 +20,8 @@
 (function (global) {
     "use strict";
 
-    const LIMITS = "/client/src/envelope.json";
+    // Under the site's base path (services/shell.js `BASE`; "" at its root).
+    const LIMITS = (global.PLEXORA_SITE_BASE || "") + "/client/src/envelope.json";
     const REMEMBER_DAYS = 30;
     const shown = new Set();
     let limits = null;
@@ -65,7 +66,7 @@
     }
 
     async function sizeOf(app, project) {
-        const answer = await app.fetch(`/project/${encodeURIComponent(project)}/size`);
+        const answer = await app.fetch(`${global.PLEXORA_SITE_BASE || ""}/project/${encodeURIComponent(project)}/size`);
         return answer.ok ? answer.json() : null;
     }
 

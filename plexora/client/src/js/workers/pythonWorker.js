@@ -38,6 +38,8 @@ import { createStore } from "./storeSync.js";
 let py = null;
 let base = "";
 let origin = "";
+//: The site's base path, the app's `base_url` (services/shell.js `BASE`).
+let siteBase = "";
 let stagesInfo = null;
 //: Python's questions to the page still waiting, by id (`ask`).
 const asks = new Map();
@@ -179,6 +181,7 @@ function scheduleSync() {
 async function boot(args) {
     base = args.base.endsWith("/") ? args.base : `${args.base}/`;
     origin = args.origin;
+    siteBase = String(args.siteBase || "");
     if (args.cancels) cancels = args.cancels;
     debug = Boolean(args.debug);
     inFlight = args.inFlight || null;
@@ -207,6 +210,7 @@ async function boot(args) {
     self.plexoraJ2K = j2kDecode;
     self.plexoraWaiting = () => queue.length > 0 || (inFlight !== null && Atomics.load(inFlight, 0) > 0);
     py.globals.set("ORIGIN", origin);
+    py.globals.set("SITE_BASE", siteBase);
     const info = JSON.parse(await py.runPythonAsync(`
 import json
 import js
@@ -289,7 +293,7 @@ from plexora.browser import imagecodecs_shim as _codecs
 _codecs.set_jpeg2k(_j2k)
 
 _finder = stages.install(lambda name: run_sync(js.plexoraLoadStage(name, _finder.importers.get(name, "?"))))
-json.dumps(boot.start(ORIGIN, post=_post, cancelled=lambda job: bool(js.plexoraCancelled(job)),
+json.dumps(boot.start(ORIGIN, base_url=SITE_BASE, post=_post, cancelled=lambda job: bool(js.plexoraCancelled(job)),
                       idle=_idle, waiting=lambda: bool(js.plexoraWaiting()), columns=_columns,
                       ask=_ask))
 `));

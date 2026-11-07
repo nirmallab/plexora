@@ -21,6 +21,18 @@ const TIMEOUT_MS = 120000;
 //: The site's own files, whatever a route pattern would say of them
 //: (`/<datasource>` matches any single segment): the client, its Python.
 const FILES = ["/client/", "/py/", "/tests/"];
+//: The site's base path: "" at a site's root, the app's root when a node
+//: serves it behind a portal (services/shell.js `BASE`): this worker's scope.
+const BASE = new URL(self.registration.scope).pathname.replace(/\/+$/, "");
+
+//: A path of the site as the app's route table names it: the base taken
+//: off; null for a path outside the site (beside it on a portal: the node's
+//: own `/node/v1/...`), which is the network's.
+function routeOf(pathname) {
+    if (!BASE) return pathname;
+    if (pathname === BASE || pathname.startsWith(BASE + "/")) return pathname.slice(BASE.length) || "/";
+    return null;
+}
 
 self.addEventListener("install", () => self.skipWaiting());
 self.addEventListener("activate", (event) => event.waitUntil(self.clients.claim()));
@@ -70,8 +82,9 @@ self.addEventListener("fetch", (event) => {
     if (request.mode === "navigate") return;
     const url = new URL(request.url);
     if (url.origin !== self.location.origin) return;
-    if (FILES.some((prefix) => url.pathname.startsWith(prefix))) return;
-    const row = classify(url, request.method);
+    const route = routeOf(url.pathname);
+    if (route === null || FILES.some((prefix) => route.startsWith(prefix))) return;
+    const row = classify({ pathname: route }, request.method);
     // A page fetched rather than navigated to (the app's router asks for a
     // fragment) is rendered by the page's Python like any route.
     if (!row || row.class === "network") return;

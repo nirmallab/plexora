@@ -19,12 +19,18 @@ build is actually there: a wheel built without it is a node that says so
 route it claims to have.
 
 **Behind a path prefix.** OOD's `/rnode/<host>/<port>/` strips its prefix
-before the request arrives, so the only place the prefix matters here is a
-redirect -- `/app` to `/app/`, a directory to its trailing slash. A prefix the
-operator named (`--url-prefix`) or the proxy sent (`X-Forwarded-Prefix`) is
-put in front; with neither, the redirect is relative, which resolves under
-any prefix without knowing it. The page works out its own base from its
-address at run time (`base_url` is a runtime value in the static build).
+before the request arrives, so the prefix matters here in two places: a
+redirect -- `/app` to `/app/`, a directory to its trailing slash -- and the
+loader's `<base href>`, which names the app's root for the page (it reads its
+base path back from it: services/shell.js `BASE`, Python's `base_url`). A
+prefix the operator named (`--url-prefix`) or the proxy sent
+(`X-Forwarded-Prefix`) is put in front; with neither, both are relative --
+`../` once per folder between the address and `/app/` -- which resolves under
+any prefix without knowing it.
+
+**Cross-origin isolated**, as the website is (plan D5): the page's Python
+needs SharedArrayBuffer. Every answer here says so (`ISOLATION`), and the
+site's service worker may control the app's whole root.
 """
 
 from __future__ import annotations
@@ -73,6 +79,23 @@ CONTENT_TYPES = {
     ".whl": "application/zip",
     ".gz": "application/gzip",
 }
+
+#: What the website sends with every file (client/static_build.py HEADERS):
+#: the page is cross-origin isolated.
+ISOLATION = {
+    "Cross-Origin-Opener-Policy": "same-origin",
+    "Cross-Origin-Embedder-Policy": "require-corp",
+    "Cross-Origin-Resource-Policy": "same-origin",
+    "Referrer-Policy": "same-origin",
+}
+
+#: The site's service worker, which controls the app's root from a folder
+#: below it.
+RELAY = "client/src/js/workers/backendRelay.js"
+
+#: What the static build writes into the loader for the site's root
+#: (client/static_build.py BASE_HREF), replaced per address here.
+BASE_HREF = b'<base href="/">'
 
 #: One path segment of a prefix: what RFC 3986 allows in a path, minus '/'.
 _SEGMENT = re.compile(r"^[A-Za-z0-9._~!$&'()*+,;=:@%-]+$")
@@ -167,18 +190,40 @@ def install(app, directory, *, url_prefix=""):
         response.headers["Cache-Control"] = "no-store"
         return response
 
-    def send(relative):
-        response = send_from_directory(root, relative,
-                                       mimetype=content_type(relative))
+    def base_href():
+        """The app's root as the loader's `<base href>`: absolute under a
+        known prefix, else relative to the address asked for."""
+        known = prefix()
+        if known:
+            return known + "/app/"
+        below = request.path[len("/app/"):] if request.path.startswith("/app/") else ""
+        return "../" * below.count("/") or "./"
+
+    def stamp(response):
         response.headers["X-Content-Type-Options"] = "nosniff"
-        if relative.endswith(INDEX):
-            # The page names every asset; a stale one after an upgrade would
-            # ask for assets that are no longer there.
-            response.headers["Cache-Control"] = "no-cache"
+        response.headers.update(ISOLATION)
         return response
 
+    def send(relative):
+        if relative.endswith(INDEX):
+            # The loader, with the app's root for this address. Never
+            # cached: the page names every asset, and a stale one after an
+            # upgrade would ask for assets that are no longer there.
+            html = (root / relative).read_bytes()
+            href = base_href().replace("&", "&amp;").replace('"', "&quot;")
+            html = html.replace(BASE_HREF, b'<base href="' + href.encode("utf-8") + b'">', 1)
+            response = Response(html, mimetype="text/html")
+            response.headers["Cache-Control"] = "no-cache"
+            return stamp(response)
+        response = send_from_directory(root, relative,
+                                       mimetype=content_type(relative))
+        if relative == RELAY:
+            response.headers["Service-Worker-Allowed"] = "/"
+            response.headers["Cache-Control"] = "no-cache"
+        return stamp(response)
+
     def not_found():
-        return Response("Not found\n", status=404, mimetype="text/plain")
+        return stamp(Response("Not found\n", status=404, mimetype="text/plain"))
 
     def app_root():
         return add_slash()

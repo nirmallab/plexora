@@ -32,7 +32,8 @@
 (function (global) {
     "use strict";
 
-    const WORKER = "/client/src/js/workers/onnxWorker.js";
+    // Under the site's base path (services/shell.js `BASE`; "" at its root).
+    const WORKER = (globalThis.PLEXORA_SITE_BASE || "") + "/client/src/js/workers/onnxWorker.js";
     const config = { ort: null, models: null, device: null };
     let worker = null;
     let nextId = 1;

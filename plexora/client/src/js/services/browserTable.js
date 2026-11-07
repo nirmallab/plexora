@@ -23,8 +23,9 @@
 (function (global) {
     "use strict";
 
-    const WORKER = "/client/src/js/workers/csvWorker.js";
-    const MODULE = "/client/src/js/node/csv.js";
+    // Under the site's base path (services/shell.js `BASE`; "" at its root).
+    const WORKER = (globalThis.PLEXORA_SITE_BASE || "") + "/client/src/js/workers/csvWorker.js";
+    const MODULE = (globalThis.PLEXORA_SITE_BASE || "") + "/client/src/js/node/csv.js";
     const HEAD = 4 << 20;
     //: A run per this many bytes, at most WORKERS of them.
     const RUN_BYTES = 24 << 20;

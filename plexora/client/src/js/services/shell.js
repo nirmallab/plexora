@@ -34,6 +34,15 @@
  * licence?}`, where `py` is the base of the Python bundle (the assets bucket
  * on the site) and `licence` the platform's address when it is not
  * api.biocognia.com (a test build's).
+ *
+ * **Under a path.** viewer.plexoraapp.com serves the site at its root. A data
+ * node serving the app (`plexora node serve --app`) serves it at `/app/`,
+ * and behind an Open OnDemand portal that is `/rnode/<host>/<port>/app/` on
+ * the portal's address. The loader's `<base href>` names the site's root
+ * either way (server/node/webapp.py writes it per address), and `BASE` is its
+ * path: every file the site loads is under it, and every address of the app
+ * is `BASE` + the route Python answers (`inApp`). Python renders its pages
+ * with `base_url` = `BASE`, so their links stay under it too.
  */
 (function (global) {
     "use strict";
@@ -41,6 +50,22 @@
     const doc = global.document;
     const host = global.parent !== global && global.parent.PlexoraShellHost
         ? global.parent : null;
+
+    //: The site's base path: "" at a site's root, `/rnode/<host>/<port>/app`
+    //: behind a portal (the loader's `<base href>`; see the header). Read
+    //: before the frame's document is replaced by the app's page.
+    const BASE = (() => {
+        try {
+            return new URL(doc.baseURI).pathname.replace(/\/+$/, "");
+        } catch (error) {
+            return "";
+        }
+    })();
+    global.PLEXORA_SITE_BASE = BASE;
+    //: A file of the site, by its path from the site's root.
+    const at = (path) => BASE + path;
+    //: The route an address of the app names, as Python answers it.
+    const inApp = (where) => (where.pathname.slice(BASE.length) || "/") + where.search + where.hash;
 
     const status = (text) => {
         const node = doc.getElementById("plexora-boot-status");
@@ -76,20 +101,27 @@
         });
     }
 
+    //: The app's page in the frame, once it can show a dialog and a notice:
+    //: the frame loads the loader first and writes the app's page into it
+    //: after. Null when it never does (30 s).
+    async function whenApp(frame) {
+        let app = null;
+        for (let i = 0; i < 150 && !(app && app.PlexoraConfirm && app.PlexoraToast
+                                       && app.PlexoraShellFramed); i += 1) {
+            await new Promise((resolve) => setTimeout(resolve, 200));
+            app = frame.contentWindow;
+        }
+        return app && app.PlexoraConfirm ? app : null;
+    }
+
     //: The first visit asks once where the projects are kept
     //: (services/browserStore.js), in the app's own dialog; dismissing it
     //: keeps them in the browser. Only where the browser can write folders.
     async function askWhereOnce(frame) {
         const store = global.PlexoraStore;
         if (!store || !store.shouldAsk()) return;
-        // The frame loads the loader first and writes the app's page into it
-        // after: wait for the app's own dialog.
-        let app = null;
-        for (let i = 0; i < 150 && !(app && app.PlexoraConfirm && app.PlexoraShellFramed); i += 1) {
-            await new Promise((resolve) => setTimeout(resolve, 200));
-            app = frame.contentWindow;
-        }
-        if (!app || !app.PlexoraConfirm) return;
+        const app = await whenApp(frame);
+        if (!app) return;
         const chosen = await app.PlexoraConfirm.choose({
             title: "Save projects on this computer?",
             body: "Your figures, thresholds and gates stay safe in Documents › Plexora. "
@@ -121,16 +153,16 @@
     }
 
     function browserVariables() {
-        global.flaskVariables = { backend: "browser", base_url: "" };
-        global.PLEXORA_BASE_URL = "";
+        global.flaskVariables = { backend: "browser", base_url: BASE };
+        global.PLEXORA_BASE_URL = BASE;
     }
 
     async function controlled() {
         if (!("serviceWorker" in global.navigator)) {
             throw new Error("this browser has no service workers, which the website needs");
         }
-        await global.navigator.serviceWorker.register("/client/src/js/workers/backendRelay.js",
-                                                      { scope: "/" });
+        await global.navigator.serviceWorker.register(at("/client/src/js/workers/backendRelay.js"),
+                                                      { scope: at("/") });
         if (global.navigator.serviceWorker.controller) return;
         await new Promise((resolve) => {
             global.navigator.serviceWorker.addEventListener("controllerchange", resolve, { once: true });
@@ -181,27 +213,45 @@
     //: The address the frame shows, as the address bar should say it.
     const here = (where) => where.pathname + where.search + where.hash;
 
+    //: A node's pairing link (`<site>/connect#v=1&e=…&t=…`, printed by
+    //: `plexora node serve --pair`): its fragment, taken and cleared from the
+    //: address bar and the history before anything else runs, so the token
+    //: is never in either; the app opens at the site's start page. Null for
+    //: any other address.
+    function takePairingLink() {
+        const where = global.location;
+        if (where.pathname.replace(/\/+$/, "") !== at("/connect")) return null;
+        const fragment = where.hash || "";
+        global.history.replaceState(null, "", at("/"));
+        return fragment;
+    }
+
     async function hostBoot() {
         global.PlexoraShellHost = true;
+        const pairing = takePairingLink();
         browserVariables();
-        const shell = await (await global.fetch("/client/shell.json", { cache: "no-cache" })).json();
-        await script("/client/src/js/services/backendRoutes.js");
-        await script("/client/src/js/services/pythonClient.js");
-        await script("/client/src/js/services/backend.js");
-        await script("/client/src/js/services/pickedFiles.js");
-        await script("/client/src/js/services/browserNode.js");
-        await script("/client/src/js/services/browserTable.js");
-        await script("/client/src/js/services/browserPyramid.js");
-        await script("/client/src/js/services/browserStore.js");
-        await script("/client/src/js/services/desktopHandoff.js");
-        await script("/client/src/js/services/handoffNotice.js");
+        const shell = await (await global.fetch(at("/client/shell.json"), { cache: "no-cache" })).json();
+        // The bundle's address, absolute or from the site's root.
+        const py = new URL(shell.py, new URL(at("/"), global.location.origin)).href;
+        await script(at("/client/src/js/services/backendRoutes.js"));
+        await script(at("/client/src/js/services/pythonClient.js"));
+        await script(at("/client/src/js/services/backend.js"));
+        await script(at("/client/src/js/services/pickedFiles.js"));
+        await script(at("/client/src/js/services/browserNode.js"));
+        await script(at("/client/src/js/services/browserTable.js"));
+        await script(at("/client/src/js/services/browserPyramid.js"));
+        await script(at("/client/src/js/services/browserStore.js"));
+        await script(at("/client/src/js/services/desktopHandoff.js"));
+        await script(at("/client/src/js/services/handoffNotice.js"));
+        await script(at("/client/src/js/services/connectorClient.js"));
         // An ES module, fetched while Python starts.
-        const licenceModule = import("/client/src/js/services/licenseClient.js");
+        const licenceModule = import(at("/client/src/js/services/licenseClient.js"));
         licenceModule.catch(() => null);
         // Magic select's model: onnxruntime-web from the Python bundle, the
         // model files from the assets' models folder (services/onnxExecutor.js).
-        await script("/client/src/js/services/onnxExecutor.js");
-        global.PlexoraOnnx.configure({ ort: shell.ort || `${shell.py}ort/`, models: shell.models || "/models/" });
+        await script(at("/client/src/js/services/onnxExecutor.js"));
+        const models = new URL(shell.models || "/models/", new URL(at("/"), global.location.origin)).href;
+        global.PlexoraOnnx.configure({ ort: shell.ort || `${py}ort/`, models });
         await controlled();
         // Where the projects are kept: a folder the user granted, opened again
         // (after one click when the browser asks), or this browser's storage.
@@ -214,8 +264,11 @@
         // `?pydebug` on the address: the worker's test hooks (`run`, `sync`,
         // `trace`), for diagnosing the site in development.
         const debug = new URLSearchParams(global.location.search).has("pydebug");
-        const info = await global.PlexoraPython.start({ base: shell.py, debug, store });
+        const info = await global.PlexoraPython.start({ base: py, root: at("/"), siteBase: BASE,
+                                                        debug, store });
         if (info.error) throw new Error(info.error);
+        // What Help › About says on the website (views/helpMenu.js).
+        global.PlexoraSite = Object.freeze({ version: info.version || shell.version || "" });
         // The licence, in Python's files before the first page is rendered.
         global.PlexoraLicense = await startLicence(shell, licenceModule);
         // The files picked on earlier visits, mounted again where the browser
@@ -239,6 +292,11 @@
         });
         doc.body.appendChild(frame);
         followLicence(frame);
+        // A node's pairing link: paired once the app can say how it went.
+        if (pairing !== null) {
+            whenApp(frame).then((app) => global.PlexoraConnector.pair(
+                global.PlexoraConnector.parse(pairing) || { invalid: true }, app)).catch(() => null);
+        }
     }
 
     //: Keep the tab's address and title what the frame shows.
@@ -314,15 +372,15 @@
         global.PlexoraLicense = host.PlexoraLicense;
         global.PlexoraShellFramed = true;
         if (global.PlexoraNode) global.PlexoraNode.revalidate();
-        await script("/client/src/js/services/backendRoutes.js");
-        await script("/client/src/js/services/backend.js");
+        await script(at("/client/src/js/services/backendRoutes.js"));
+        await script(at("/client/src/js/services/backend.js"));
         const response = await global.PlexoraPython.fetch(
-            here(global.location), { headers: { Accept: "text/html" } });
+            inApp(global.location), { headers: { Accept: "text/html" } });
         let html = await response.text();
         const project = projectOf(html);
         if (project && await findFiles(project)) {
             html = await (await global.PlexoraPython.fetch(
-                here(global.location), { headers: { Accept: "text/html" } })).text();
+                inApp(global.location), { headers: { Accept: "text/html" } })).text();
         }
         // A project's page: the browser node asks Python what it may serve
         // now, ahead of the page's own requests, so its first tile does not

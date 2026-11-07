@@ -3140,6 +3140,28 @@ window.PlexoraConnectionModal = (function () {
         // background watch included.
         dialog.addEventListener("cancel", () => leave());
         dialog.showModal();
+        // The website: a web page cannot open an SSH connection, nor run the
+        // Google Cloud CLI (plan decision 1), so every way into this dialog
+        // -- a saved server, the presets, the Google Cloud form -- shows the
+        // notice that says so and what to do instead (services/handoff.js),
+        // never a form that would fail. Nothing is asked of the server.
+        const handoff = window.PlexoraWebHandoff
+            && (options.recipe === "gcloud"
+                ? window.PlexoraWebHandoff.forPath("settings/gcloud/status")
+                : window.PlexoraWebHandoff.forPath("settings/remotes/_/connect", "POST"));
+        if (handoff) {
+            view = "handoff";
+            parts.title.textContent = handoff.title;
+            parts.subtitle.textContent = handoff.why;
+            parts.body.replaceChildren();
+            parts.body.hidden = true;
+            parts.actions.replaceChildren(...window.PlexoraWebHandoff.buttons(handoff, {
+                before: () => close(null),
+                close: () => close(null),
+            }));
+            dialog.classList.add("is-handoff");
+            return promise;
+        }
         if (options.view === "recipe" && options.recipe) {
             // Straight to one preset's form: a card on the Settings page has
             // already chosen the preset, and an Edit button there has chosen
