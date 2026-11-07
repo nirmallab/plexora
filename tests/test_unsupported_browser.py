@@ -7,6 +7,13 @@ Chrome 131 on a Mac ended the self-check's Python step with "Error code: 5"
 though every compiled module in the bundle validates on an older engine: a
 Chrome or Edge with no JSPI (before 137) is told to update. Firefox and
 Safari without JSPI are not: they take the website's other path, which runs.
+
+That other path runs in Chromium too: Chrome 156 with `WebAssembly.Suspending`
+deleted at the top of the worker (so Pyodide's own detection also finds no
+JSPI) passed the whole self-check, Python ready in 11 s over shared memory
+(7 s with JSPI). What fails is Chrome 131's engine, not a feature it lacks;
+tracing it needs that Chrome run here. The same Mac on Chrome 157 passed
+every step.
 """
 
 import json

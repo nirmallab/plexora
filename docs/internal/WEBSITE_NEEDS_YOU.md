@@ -140,11 +140,11 @@ the kernels' Pyodide wheel), `C:\pxplat` (until web/cors is merged).
   file. It measures the browser, storage, download rate, Python's start, a
   pyramid build, memory and WebGPU, and says what each means there; nothing
   is sent anywhere. Wanted most: Safari on a Mac, an 8 GB laptop (Chrome),
-  Firefox anywhere. **The Mac (2026-11-07) ran Chrome 131**, which crashed
-  starting the website's Python (filed: `bench/envelope/selfcheck/`); the
-  website now asks a Chrome or Edge older than 137 to update instead. On that
-  Mac: update Chrome (menu > Help > About Google Chrome) and run the check
-  again (it starts afresh after an update); and once in Safari.
+  Firefox anywhere. **The Mac is done in Chrome** (2026-11-07: Chrome 131
+  crashed starting the website's Python, so the website now asks a Chrome or
+  Edge older than 137 to update; updated to 157, every step passed, Python
+  ready in 7 s; both filed in `bench/envelope/selfcheck/`). Still wanted on
+  that Mac: the check once in Safari.
 - Safari on a Mac (real OPFS, the 7-day purge, `persist()`), an 8 GB laptop,
   the ERIS portal's rewriting, a GCP VM node behind TLS: the preview's exit
   records (plan Phase 5). The self-check covers the first two's numbers; the
