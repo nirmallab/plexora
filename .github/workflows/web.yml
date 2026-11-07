@@ -143,17 +143,19 @@ jobs:
           sudo apt-get update -q
           sudo apt-get install -y -q brotli
           echo "PLEXORA_BROTLI=$(command -v brotli)" >> "$GITHUB_ENV"
-      - name: Pyodide's release archive (337 MB, sha256-checked by build.py)
-        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
-        with:
-          path: ~/.cache/plexora-web/browser_node/pyodide/pyodide-${{ steps.version.outputs.pyodide }}.tar.bz2
-          key: pyodide-${{ steps.version.outputs.pyodide }}
       - id: cached
         name: The bundle's packages
         uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
           path: ~/.cache/plexora-web/browser_node/web/py
           key: web-bundle-${{ steps.version.outputs.pyodide }}-${{ hashFiles('uv.lock', 'tools/browser_build/build.py', 'plexora/browser/stages.py') }}
+      # Only a whole build reads it.
+      - if: steps.cached.outputs.cache-hit != 'true'
+        name: Pyodide's release archive (337 MB, sha256-checked by build.py)
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: ~/.cache/plexora-web/browser_node/pyodide/pyodide-${{ steps.version.outputs.pyodide }}.tar.bz2
+          key: pyodide-${{ steps.version.outputs.pyodide }}
       - name: Build (Plexora's wheel alone when the packages are cached)
         env:
           HIT: ${{ steps.cached.outputs.cache-hit }}
