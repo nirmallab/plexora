@@ -141,6 +141,8 @@ Renderer peak 1.12–1.37 GB on against 1.76–2.36 GB off.
 
 ## Step 3 measured, not built: the contrast fit in JS
 
+(The persisted fit has since landed; see "What is left".)
+
 What `get_channel_gmm` costs on the desktop for LSP11385 (`desktop2_gmm_py.py` in the session's
 scratch; the parts timed apart): the quantization window ~0 s (already known to the project),
 the overview ~0 s (read at load), **the GaussianMixture fit 0.53–0.64 s per channel** cold
@@ -267,12 +269,37 @@ Reading it:
   `raw` tiles and `_labels`' checks), a store reached over HTTP/S3 (the reader's `{base}` store
   would read it, but `node_spec` serves only local or picked stores), 8-bit tiles in the page,
   volumes.
-- Step 2 (tables via the column store, the Arrow sidecar): not started. On the desktop polars
-  parses natively with threads, so the gain is the open not waiting on the table, which needs
-  the viewer to draw cells from a table the page parsed; measure the desktop's open of a
-  1.26 M-row project first (the plan's "minutes-scale" figure is not this machine's yet).
+- Step 2 (tables via the column store, the Arrow sidecar): measured, **not adopted** (below).
 - Step 3 (contrast windows / GMM in JS): measured (above) at 0.6–0.75× Python's fit, not built.
-  Persisting the packet (`gmm_cache_get_or_set`) is the larger, simpler win.
+  Persisting the fit is the larger, simpler win, and it is done (web/contrast,
+  `database_model.ChannelFit`: a reopen's fits in 27.5 ms for six LSP11385 channels instead of
+  4.1 s). The JS fit would now save a few tenths of a second per channel on a project's first
+  open only.
+
+## Step 2 measured, not adopted: tables via the column store (2026-11-07)
+
+The desktop's open of Orion CRC02's table (1,260,592 × 29, 634 MB CSV) with a small image, through
+the routes the viewer calls (`/init_database`, then `/get_all_cells` for ids and coordinates),
+CPython Plexora on this machine, quiet; each a new process (`px_tableopen.py` in the session's
+scratch):
+
+| | First open (project made) | Reopen (3 runs) |
+|---|---|---|
+| `/init_database` (s) | 0.59 | 0.49–0.63 |
+| `/get_all_cells` (s) | 1.67 | 0.79–0.87 |
+| Open, both (s) | **2.26** | **1.35–1.44** |
+
+Profiled, a reopen in a new process is mostly not the table: `ome_types`' first import is 0.78 s
+of it (the image's OME-XML, `pixel_scale._local_metadata` / `LocalImageProvider.open`), polars'
+read 0.22 s, the cells array 0.30 s (0.02 s once built), their gzip at level 3 0.32 s. In a
+desktop app already running, the table costs about 0.5 s. The column store draws the same table
+in 0.90 s on a first visit and 0.04 s on a reopen (P3), but on the desktop it would have to parse
+from the scheme and keep its columns beside the source; the gain is a few tenths of a second, so
+the cell reads **either** and step 2 is not built. The plan's "minutes-scale first open" is not
+this machine's. Two smaller desktop wins found on the way, neither taken yet: `ome_types` imported
+in `prime_hot_code` (moves 0.78 s from the first project open to the splash; startup grows by
+it), and `/get_all_cells` sent without gzip on the desktop's loopback (−0.3 s; it compresses 2:1
+only, and a tunnelled server must keep it).
 - Steps 4–7 as the plan orders them.
 - macOS/Linux: the scheme is served as `plexora-file://localhost`; whether WKWebView/WebKitGTK
   route worker fetches of a custom scheme with CORS is untested here.
