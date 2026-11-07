@@ -63,8 +63,10 @@ def test_the_report_has_one_row_per_format_and_writer():
                          ("gif", "ffmpeg"), ("mp4", "cv2"), ("gif", "pillow"),
                          ("png", "pngzip")}
     for row in rows.values():
-        assert set(row) == {"format", "writer", "label", "available", "reason", "alpha",
-                            "codec", "side"}
+        # `limits`: what a capped writer refuses (Pillow's GIF), for the dialog.
+        assert set(row) - {"limits"} == {"format", "writer", "label", "available", "reason",
+                                         "alpha", "codec", "side"}
+        assert ("limits" in row) is (row["writer"] == "pillow")
         assert row["side"] == "server" and row["label"]
         # A disabled format always says why; an enabled one says nothing.
         assert bool(row["reason"]) is not row["available"], row

@@ -131,12 +131,23 @@ def report(*, refresh: bool = False) -> dict:
         return _CACHE["report"]
 
 
-def _row(rows, fmt, writer, label, *, available, reason="", alpha=False, codec="", handoff=None):
+def _row(rows, fmt, writer, label, *, available, reason="", alpha=False, codec="", handoff=None,
+         limits=None):
     entry = {"format": fmt, "writer": writer, "label": label, "available": available,
              "reason": "" if available else reason, "alpha": alpha, "codec": codec, "side": "server"}
     if handoff:
         entry["handoff"] = handoff
+    if limits:
+        # What the writer refuses (writers.py): the dialog says so before the
+        # render starts, not at frame 301.
+        entry["limits"] = limits
     rows.append(entry)
+
+
+def _pillow_limits() -> dict:
+    from plexora.plugins.video_studio.server import writers  # noqa: PLC0415
+
+    return {"max_frames": writers.PILLOW_GIF_MAX_FRAMES, "max_side": writers.PILLOW_GIF_MAX_SIDE}
 
 
 def _formats(ffmpeg: dict, cv2: dict) -> list[dict]:
@@ -159,7 +170,7 @@ def _formats(ffmpeg: dict, cv2: dict) -> list[dict]:
     row("gif", "ffmpeg", "GIF", available="gif" in have, codec="GIF", reason=need)
     row("mp4", "cv2", "MP4 (basic)", available=bool(cv2.get("available")),
         codec=cv2.get("codec", ""), reason=cv2.get("reason", ""))
-    row("gif", "pillow", "GIF (short clips)", available=True, codec="GIF")
+    row("gif", "pillow", "GIF (short clips)", available=True, codec="GIF", limits=_pillow_limits())
     row("png", "pngzip", "PNG frames (zip)", available=True, alpha=True, codec="PNG")
     return rows
 
@@ -188,7 +199,8 @@ def page_report() -> dict:
     rows = []
     _row(rows, "mov", "ffmpeg", "ProRes (MOV)", available=False, alpha=True,
          codec="ProRes 422 HQ / 4444", reason=prores["why"], handoff=prores)
-    _row(rows, "gif", "pillow", "GIF (short clips)", available=True, codec="GIF")
+    _row(rows, "gif", "pillow", "GIF (short clips)", available=True, codec="GIF",
+         limits=_pillow_limits())
     _row(rows, "png", "pngzip", "PNG frames (zip)", available=True, alpha=True, codec="PNG")
     return {"ffmpeg": none, "cv2": {"available": False, "reason": "Not on the website."},
             "formats": rows, "encoder": "page"}

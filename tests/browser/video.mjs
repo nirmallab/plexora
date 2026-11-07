@@ -138,7 +138,7 @@ async function importFixture(page, frame, arm) {
 }
 
 /** The Export dialog's format list as a user sees it. */
-async function readDialog(frame) {
+async function readDialog(page, frame, arm) {
     await frame.evaluate(() => { window.__pxvidDialog = window.PlexoraVideoStudio.controller.exportNow(); });
     await frame.waitForSelector("dialog.vs-dialog[open] .vs-format", { timeout: 30000 });
     await frame.waitForTimeout(300);
@@ -162,6 +162,7 @@ async function readDialog(frame) {
                          exportDisabled: document.querySelector("dialog.vs-dialog .vs-primary")?.disabled ?? null };
             }), () => null);
     }
+    await page.screenshot({ path: path.join(outDir, `${arm}-dialog.png`) }).catch(() => null);
     await frame.evaluate(() => [...document.querySelectorAll("dialog.vs-dialog .vs-button")]
         .find((b) => b.textContent.trim() === "Cancel")?.click());
     await frame.evaluate(() => window.__pxvidDialog);
@@ -324,7 +325,7 @@ async function runArm(arm) {
             if (url) writeFileSync(path.join(outDir, `${arm}-probe.png`), Buffer.from(url.split(",")[1], "base64"));
             if (drawerUrl) writeFileSync(path.join(outDir, `${arm}-probe-drawer.png`), Buffer.from(drawerUrl.split(",")[1], "base64"));
         }
-        out.dialog = await readDialog(frame);
+        out.dialog = await readDialog(page, frame, arm);
         log(`${arm}: dialog ${JSON.stringify(out.dialog.rows.map((r) => [r.format, r.disabled, r.how]))}`);
         for (const format of formats) {
             const row = await exportFormat(page, frame, arm, format);

@@ -296,7 +296,9 @@
             }
 
             async function refresh() {
-                rows = await Encoders.available(settings, report, { prefer });
+                // With the frame count, so a writer's limits are known now.
+                const frames = global.PlexoraVideoExportLoop.estimate(project, settings).frames;
+                rows = await Encoders.available({ ...settings, frames }, report, { prefer });
                 const forFormat = rows.filter((r) => r.format === settings.format && r.available);
                 route = forFormat[0] || null;
                 if (!route) {

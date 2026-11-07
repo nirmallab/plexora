@@ -836,7 +836,8 @@
             } catch (error) {
                 // the cached report will do
             }
-            const rows = await global.PlexoraVideoEncoders.available(settings, report, { prefer });
+            const frames = global.PlexoraVideoExportLoop.estimate(this.project, settings).frames;
+            const rows = await global.PlexoraVideoEncoders.available({ ...settings, frames }, report, { prefer });
             const asked = rows.filter((r) => r.format === settings.format);
             // A format only the desktop app writes (ProRes on the website) is
             // refused with its notice, not quietly swapped for another.

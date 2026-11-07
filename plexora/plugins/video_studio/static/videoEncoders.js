@@ -10,6 +10,9 @@
  *                     and WebM (VP9) where the browser supports them -- the
  *                     default whenever it can, and the only sensible choice
  *                     when the server is remote.
+ *   GifEncoder        the website's GIF, written in the browser frame by frame
+ *                     (videoGifWorker.js): the desktop's is FFmpeg's, which a
+ *                     web page cannot run, and Pillow's must hold every frame.
  *   ServerEncoder     frames go to Plexora's server in chunks and a writer
  *                     there encodes them (server/encode_jobs.py): ffmpeg for
  *                     MP4/WebM/ProRes/GIF when installed, and always PNG
@@ -38,9 +41,9 @@
         return found?.src || "";
     })();
 
-    function workerUrl() {
+    function workerUrl(name = "videoEncodeWorker.js") {
         if (!scriptUrl) return null;
-        return scriptUrl.replace(/videoEncoders\.js/, "videoEncodeWorker.js");
+        return scriptUrl.replace(/videoEncoders\.js/, name);
     }
 
     const QUALITY_MBPS_1080P30 = { draft: 4, good: 8, high: 14, max: 24 };
@@ -96,6 +99,19 @@
     const LABELS = { mp4: "MP4 (H.264)", webm: "WebM (VP9)", mov: "ProRes (MOV)", gif: "GIF",
                      png: "PNG frames (zip)" };
 
+    /** Why `settings` (with `frames`, when known) are more than a writer's
+     *  `limits` allow (Pillow's GIF: writers.py), or "". */
+    function beyond(limits, settings) {
+        if (!limits) return "";
+        if (limits.max_side && Math.max(settings.width, settings.height) > limits.max_side) {
+            return `At most ${limits.max_side} px on the longer side here.`;
+        }
+        if (limits.max_frames && settings.frames > limits.max_frames) {
+            return `At most ${limits.max_frames} frames here.`;
+        }
+        return "";
+    }
+
     /** Whether this page's server is its own Python (the website). */
     function inPage() {
         return global.PlexoraBackend?.kind === "browser";
@@ -117,9 +133,16 @@
                 routes.push({ format, label: LABELS[format], route: "browser", writer: "webcodecs",
                               available: ok, reason: ok ? "" : browser[format], alpha: false });
             }
+            // The website's GIF; the desktop keeps FFmpeg's.
+            if (format === "gif" && inPage()) {
+                const ok = typeof global.Worker === "function" && Boolean(workerUrl());
+                routes.push({ format, label: LABELS.gif, route: "browser", writer: "gif", available: ok,
+                              reason: ok ? "" : "Workers are unavailable here.", alpha: false });
+            }
             for (const row of (report?.formats || []).filter((r) => r.format === format)) {
+                const over = beyond(row.limits, settings);
                 routes.push({ format, label: row.label, route: "server", writer: row.writer,
-                              available: row.available, reason: row.reason || "",
+                              available: row.available && !over, reason: over || row.reason || "",
                               alpha: Boolean(row.alpha), handoff: row.handoff || null });
             }
             routes.sort((a, b) => (b.available - a.available)
@@ -210,6 +233,83 @@
             return { kind: "blob", blob: result.blob, bytes: result.bytes,
                      encoder: { encoder: "browser (WebCodecs)", codec: this.codec,
                                 muxer: "mediabunny 1.60.0", bitrate: bitrate(this.settings) } };
+        }
+
+        async cancel() {
+            if (!this.worker) return;
+            await Promise.race([
+                new Promise((resolve) => {
+                    this.onCancelled = resolve;
+                    this.worker.postMessage({ type: "cancel" });
+                }),
+                new Promise((resolve) => setTimeout(resolve, 2000)),
+            ]);
+            this.worker.terminate();
+        }
+    }
+
+    // -- the browser's GIF ---------------------------------------------------------------
+
+    class GifEncoder {
+        constructor(settings) {
+            this.settings = settings;
+            this.inFlight = 0;
+            this.maxInFlight = 3;
+            this.waiters = [];
+            this.error = null;
+        }
+
+        async start() {
+            this.worker = new Worker(workerUrl("videoGifWorker.js"));
+            this.worker.onmessage = (event) => this.onMessage(event.data || {});
+            this.worker.onerror = (event) => this.onMessage({ type: "error",
+                                                              message: event.message || "worker failed" });
+            const started = new Promise((resolve, reject) => {
+                this.onStarted = resolve;
+                this.onFailed = reject;
+            });
+            const s = this.settings;
+            this.worker.postMessage({ type: "start", settings: { width: s.width, height: s.height, fps: s.fps } });
+            return started;
+        }
+
+        onMessage(message) {
+            if (message.type === "started") this.onStarted?.(message);
+            else if (message.type === "ack") {
+                this.inFlight -= 1;
+                this.waiters.shift()?.();
+            } else if (message.type === "done") this.onDone?.(message);
+            else if (message.type === "cancelled") this.onCancelled?.();
+            else if (message.type === "error") {
+                this.error = new Error(message.message);
+                this.onFailed?.(this.error);
+                this.onDoneFailed?.(this.error);
+                for (const waiter of this.waiters.splice(0)) waiter();
+            }
+        }
+
+        async push({ index, canvas }) {
+            if (this.error) throw this.error;
+            while (this.inFlight >= this.maxInFlight) {
+                await new Promise((resolve) => this.waiters.push(resolve));
+                if (this.error) throw this.error;
+            }
+            const pixels = canvas.getContext("2d").getImageData(0, 0, canvas.width, canvas.height).data;
+            this.inFlight += 1;
+            this.worker.postMessage({ type: "frame", rgba: pixels.buffer, index }, [pixels.buffer]);
+        }
+
+        async finish() {
+            if (this.error) throw this.error;
+            const result = await new Promise((resolve, reject) => {
+                this.onDone = resolve;
+                this.onDoneFailed = reject;
+                this.worker.postMessage({ type: "finish" });
+            });
+            this.worker.terminate();
+            return { kind: "blob", blob: result.blob, bytes: result.bytes,
+                     encoder: { encoder: "browser (GIF)", codec: "GIF",
+                                palette: "median cut per frame, 8x8 ordered dither" } };
         }
 
         async cancel() {
@@ -342,12 +442,14 @@
     }
 
     function create(route, settings, context) {
-        if (route.route === "browser") return new WebCodecsEncoder(settings);
+        if (route.route === "browser") {
+            return route.writer === "gif" ? new GifEncoder(settings) : new WebCodecsEncoder(settings);
+        }
         // Over a remote link a raw 4K frame is 33 MB; PNG is a fraction of it.
         return new ServerEncoder({ ...settings, writer: route.writer }, {
             ...context, png: Boolean(context.remote) });
     }
 
     global.PlexoraVideoEncoders = { available, defaultRoute, create, bitrate, avcCodec, inPage,
-                                    WebCodecsEncoder, ServerEncoder, LABELS };
+                                    WebCodecsEncoder, GifEncoder, ServerEncoder, LABELS };
 })(typeof window !== "undefined" ? window : globalThis);
