@@ -56,9 +56,15 @@ def test_a_picked_file_that_is_not_a_tiff_is_left_to_python(info, monkeypatch):
     from plexora.server.models import data_model
 
     data_model.ensure_loaded(info["name"])
-    monkeypatch.setattr(data_model._providers.image, "_path", "/picked/ab12cd/image.zarr")
+    monkeypatch.setattr(data_model._providers.image, "_path", "/picked/ab12cd/image.png")
     spec = node_spec.describe(info["name"])
     assert spec["served"] is False and spec["reason"] == "not a TIFF file"
+    # Named like an OME-Zarr store, but Python reads a TIFF's levels: the
+    # page's OME-Zarr reader is not pointed at it (tests/test_browser_zarr_node.py
+    # holds the stores it reads).
+    monkeypatch.setattr(data_model._providers.image, "_path", "/picked/ab12cd/image.zarr")
+    spec = node_spec.describe(info["name"])
+    assert spec["served"] is False and spec["reason"] == "the store is not read as an OME-Zarr pyramid"
 
 
 def test_a_picked_label_pyramid_is_described_level_by_level(info, monkeypatch):
