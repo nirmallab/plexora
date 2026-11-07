@@ -32,6 +32,15 @@ try {
     const frame = await appFrame(page);
     await frame.waitForSelector("#quick_view_go", { timeout: 120000 });
     out.homeMs = Date.now() - started;
+    // The first visit asks where projects go (where this Chrome can write
+    // folders): this driver keeps them in the browser.
+    out.firstVisit = await frame.waitForFunction(() => {
+        const keep = [...document.querySelectorAll(".plx-confirm .plx-button")]
+            .find((button) => button.textContent.trim() === "Keep in browser");
+        if (!keep) return false;
+        keep.click();
+        return true;
+    }, null, { timeout: 5000, polling: 200 }).then(() => "kept in browser", () => null);
     await page.evaluate(() => { window.showOpenFilePicker = undefined; window.showDirectoryPicker = undefined; });
     const chooser = page.waitForEvent("filechooser", { timeout: 30000 });
     await frame.click("#quick_view_go");
