@@ -1,6 +1,7 @@
 """Build the website's static files: what viewer.plexoraapp.com serves.
 
     python -m plexora.client.static_build [--out DIR] [--py URL] [--noindex]
+        [--licence-api URL] [--licence-portal URL] [--licence-test-key KID=KEY]
 
 Plexora's pages are rendered on the website by Plexora's own Python in a
 worker beside the page (plexora/browser), so what the site serves as files is
@@ -13,9 +14,14 @@ Writes `--out` (default `plexora/client/dist/static/`):
 
 - `index.html`: the loader;
 - `client/{src,dist,external}/...` and `plugins/<name>/static/...`;
-- `client/shell.json`: `{version, py}`, `py` the base the Python bundle is
-  served from (`tools/browser_build/build.py`; the assets bucket on the site,
-  `/py/<version>/` in development);
+- `client/shell.json`: `{version, py, licence?}`, `py` the base the Python
+  bundle is served from (`tools/browser_build/build.py`; the assets bucket on
+  the site, `/py/<version>/` in development); `licence` only when an option
+  below moves it off the defaults (services/licenseClient.js): `api`, the
+  BioCognia platform's product API (default https://api.biocognia.com/v1),
+  `portal`, and `test_keys`, throwaway `bct*` keys a TEST build trusts
+  (tests/browser/license.mjs). `tools/browser_build/publish.py site` refuses
+  to publish a build that carries test keys;
 - `_headers` and `_redirects` for Cloudflare Pages: every response
   cross-origin isolated (the site needs SharedArrayBuffer), the service worker
   allowed the whole site, and every path that is not a file answered with the
@@ -26,6 +32,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import shutil
 from pathlib import Path
 
@@ -95,7 +102,27 @@ def _copy(source: Path, target: Path) -> int:
     return count
 
 
-def build(out: Path = DEFAULT_OUT, py: str | None = None, noindex: bool = False) -> dict:
+def licence_config(api: str | None = None, portal: str | None = None, test_keys=()) -> dict:
+    """shell.json's `licence`: only what differs from the page's defaults.
+    `test_keys` are `KID=KEY` (biocognia.testing's `bct*` kids)."""
+    out = {}
+    if api:
+        out["api"] = api.rstrip("/")
+    if portal:
+        out["portal"] = portal.rstrip("/")
+    keys = {}
+    for item in test_keys or ():
+        kid, _, key = str(item).partition("=")
+        if not re.fullmatch(r"bct\d*", kid) or not re.fullmatch(r"[A-Za-z0-9_-]{43}", key):
+            raise ValueError(f"--licence-test-key wants bct<N>=<base64url Ed25519 public key>, not {item!r}")
+        keys[kid] = key
+    if keys:
+        out["test_keys"] = keys
+    return out
+
+
+def build(out: Path = DEFAULT_OUT, py: str | None = None, noindex: bool = False,
+          licence: dict | None = None) -> dict:
     from plexora import __version__
 
     py = py or f"/py/{__version__}/"
@@ -111,12 +138,15 @@ def build(out: Path = DEFAULT_OUT, py: str | None = None, noindex: bool = False)
         files += _copy(static, out / "plugins" / static.parent.name / "static")
         plugins.append(static.parent.name)
     (out / "index.html").write_bytes(LOADER.encode("utf-8"))
-    (out / "client" / "shell.json").write_bytes(
-        json.dumps({"version": __version__, "py": py}, indent=1).encode("utf-8"))
+    shell = {"version": __version__, "py": py}
+    if licence:
+        shell["licence"] = licence
+    (out / "client" / "shell.json").write_bytes(json.dumps(shell, indent=1).encode("utf-8"))
     headers = HEADERS.replace("/*\n", "/*\n  X-Robots-Tag: noindex\n", 1) if noindex else HEADERS
     (out / "_headers").write_bytes(headers.encode("utf-8"))
     (out / "_redirects").write_bytes(REDIRECTS.encode("utf-8"))
-    return {"out": str(out), "files": files + 4, "plugins": plugins, "version": __version__, "py": py}
+    return {"out": str(out), "files": files + 4, "plugins": plugins, "version": __version__, "py": py,
+            "licence": {k: (sorted(v) if k == "test_keys" else v) for k, v in (licence or {}).items()}}
 
 
 def main(argv=None) -> int:
@@ -124,8 +154,14 @@ def main(argv=None) -> int:
     parser.add_argument("--out", default=str(DEFAULT_OUT))
     parser.add_argument("--py", default=None, help="where the Python bundle is served from")
     parser.add_argument("--noindex", action="store_true", help="ask search engines not to index it")
+    parser.add_argument("--licence-api", default=None,
+                        help="the BioCognia platform's product API (default https://api.biocognia.com/v1)")
+    parser.add_argument("--licence-portal", default=None, help="the portal a person approves a code at")
+    parser.add_argument("--licence-test-key", action="append", default=[], metavar="KID=KEY",
+                        help="a throwaway key a TEST build trusts (never published)")
     args = parser.parse_args(argv)
-    print(json.dumps(build(Path(args.out), args.py, args.noindex), indent=1))
+    licence = licence_config(args.licence_api, args.licence_portal, args.licence_test_key)
+    print(json.dumps(build(Path(args.out), args.py, args.noindex, licence), indent=1))
     return 0
 
 

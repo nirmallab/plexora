@@ -13,7 +13,8 @@ arrive as callables -- so the same boot runs under CPython in the tests
 - `columns(spec)`: a picked table's frame, its columns parsed by the page
   (plexora/browser/columns.py);
 - `ask(kind, args)`: a question only the page can answer -- a picked image's
-  full-resolution maximum (providers/browser.py `page_window`) -- or None.
+  full-resolution maximum (providers/browser.py `page_window`), the AI token
+  the page exchanged against its licence (browser/licence.py) -- or None.
 
 What it does, in order: the environment the app reads at build; the
 `imagecodecs` stand-in, before anything imports tifffile; HTTP through the
@@ -86,7 +87,7 @@ def start(origin: str, *, post=None, cancelled=None, idle=None, waiting=None, co
     environment(origin, data_root=data_root, licence_dir=licence_dir)
     shims = {"imagecodecs": codecs(), "pyodide_http": http()}
 
-    from plexora.browser import cooperative
+    from plexora.browser import cooperative, licence
     from plexora.server.models import viewer_sessions
     from plexora.server.providers import browser as browser_provider
 
@@ -95,6 +96,7 @@ def start(origin: str, *, post=None, cancelled=None, idle=None, waiting=None, co
         viewer_sessions.set_wakeup(lambda: post({"kind": "wakeup"}))
     browser_provider.set_column_source(columns)
     browser_provider.set_asker(ask)
+    licence.set_asker(ask)
 
     import plexora
 

@@ -33,6 +33,7 @@ One provider refusal is answered here: an output schema it will not compile
 from __future__ import annotations
 
 import logging
+import os
 import time
 
 from biocognia import gateway as _shared
@@ -49,9 +50,17 @@ log = logging.getLogger(__name__)
 
 def TokenSource(token: str | None = None) -> _shared.TokenSource:  # noqa: N802 - a constructor
     """The gateway token for this device: `biocognia.gateway.TokenSource(LICENSING)`.
-    `token` (or `BIOCOGNIA_AI_TOKEN`) short-circuits it."""
+    `token` (or `BIOCOGNIA_AI_TOKEN`) short-circuits it. On the website the
+    page holds the licence and exchanges the token (plexora/browser/licence.py
+    `PageTokenSource`)."""
     from plexora.licensing import LICENSING
 
+    if os.environ.get("PLEXORA_BACKEND") == "browser":
+        from plexora.browser import licence as page_licence
+
+        source = page_licence.token_source(LICENSING, token)
+        if source is not None:
+            return source
     return _shared.TokenSource(LICENSING, token)
 
 

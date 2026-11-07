@@ -56,10 +56,11 @@ JS = (
     "fs_places_route", "data_places", "check_file_existence", "check_path_existence",
     "picker_prefs", "save_picker_prefs",
     # The licence: the page holds the certificate and runs the device flow
-    # against the platform; Python reads what the page writes.
-    "license.license_activate", "license.license_connect", "license.license_connect_poll",
-    "license.license_deactivate", "license.license_install", "license.license_refresh",
-    "license.license_remove",
+    # against the platform (services/licenseClient.js); Python reads what the
+    # page writes (browser/licence.py). The account is the page's to ask.
+    "license.license_account", "license.license_activate", "license.license_connect",
+    "license.license_connect_poll", "license.license_deactivate", "license.license_forget",
+    "license.license_install", "license.license_refresh", "license.license_remove",
 )
 
 #: Rendered when the site is built; the shell is on screen before Python is.

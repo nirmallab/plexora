@@ -6,13 +6,21 @@
  *     not granted, not shown; a quiet (restore) load reports it the same way.
  *   - proFeature.js: the modal's words and choices, trial and licence
  *     routes, the page hint, and that loading it does nothing at all.
+ *   - licenseVerify.js: the website's verifier (the platform's own
+ *     packages/shared/src/verify.ts, vendored) against the cross-language
+ *     vectors the `biocognia` package and the platform both test with
+ *     (vectors/biocognia-vectors.json): the platform's three outcomes, the
+ *     package's refusal codes, canonical JSON, and the device binding.
  *
  * Run directly:  node tests/js/license_probe.mjs
+ * (BIOCOGNIA_VECTORS names the vector file; else the installed package's,
+ * found with PLEXORA_PYTHON or the plexora conda env's python.)
  */
 
+import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { createContext, runInContext } from "node:vm";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { dirname, join } from "node:path";
 import assert from "node:assert/strict";
 
@@ -209,4 +217,72 @@ await check("a quiet (restore) load of a locked tool opens nothing", async () =>
     assert.equal(explained.length, 0);
     assert.equal(result.skipped.length, 1);
     assert.match(result.skipped[0], /locked/);
+});
+
+// -- licenseVerify.js: the biocognia vectors through the web verifier ----------
+
+function vectorFile() {
+    if (process.env.BIOCOGNIA_VECTORS) return process.env.BIOCOGNIA_VECTORS;
+    const python = process.env.PLEXORA_PYTHON || "C:/Users/aj/.conda/envs/plexora/python.exe";
+    return execFileSync(python, ["-c", "import biocognia, os; print(os.path.join(os.path.dirname("
+        + "biocognia.__file__), 'vectors', 'biocognia-vectors.json'))"], { encoding: "utf8" }).trim();
+}
+
+const V = JSON.parse(readFileSync(vectorFile(), "utf8"));
+const web = await import(pathToFileURL(join(REPO, "plexora/client/src/js/services/licenseVerify.js")).href);
+const VKEYS = { [V.kid]: V.public_key };
+
+await check("the platform's checkSigned reads every biocognia vector as the platform's own test does", async () => {
+    for (const vector of V.certificates) {
+        const result = await web.checkSigned(VKEYS, web.CERT_PREFIX, vector.certificate, { audience: vector.audience });
+        const want = ["valid", "future_dated"].includes(vector.expect) ? "valid"
+            : vector.expect === "unknown_key" ? "unverifiable" : "forged";
+        assert.equal(result.status, want, vector.name);
+    }
+});
+
+await check("every vector verifies, or is refused with the code the biocognia package gives it", async () => {
+    for (const vector of V.certificates) {
+        const verifying = web.verify(vector.certificate, { audience: vector.audience, now: V.verify_at, keys: VKEYS });
+        if (vector.expect === "valid") {
+            assert.deepEqual(await verifying, vector.payload, vector.name);
+        } else {
+            await assert.rejects(verifying, (error) => error.code === vector.expect, vector.name);
+        }
+    }
+    // A certificate for one product is refused by every other.
+    const desktop = V.certificates[0];
+    await assert.rejects(web.verify(desktop.certificate, { audience: "plexora", now: V.verify_at, keys: VKEYS }),
+                         (error) => error.code === "wrong_product");
+    // And by a browser that trusts only the shipped keys.
+    await assert.rejects(web.verify(desktop.certificate, { audience: desktop.audience, now: V.verify_at }),
+                         (error) => error.code === "unknown_key");
+});
+
+await check("canonical JSON is byte for byte the package's", () => {
+    for (const vector of V.certificates.filter((v) => v.canonical)) {
+        assert.equal(web.canonicalJson(vector.payload), vector.canonical, vector.name);
+    }
+    assert.throws(() => web.canonicalJson({ a: 1.5 }));
+});
+
+await check("a certificate binds to the vectors' device secret, by its binding and by its commitment", async () => {
+    const secret = V.environment_secret;
+    const binding = await web.bindingOf(secret);
+    const desktop = V.certificates.find((v) => v.name === "plexora-desktop").payload;
+    assert.equal(desktop.bind, binding);
+    assert.equal(await web.bindsHere(desktop, secret), true);
+    assert.equal(await web.bindsHere(desktop, "another-browser-secret-000000000000000000"), false);
+    assert.equal(await web.bindsHere(desktop, null), false);
+    const committed = { ...desktop, bind: await web.commitmentOf(binding), bv: 2 };
+    assert.equal(await web.bindsHere(committed, secret), true);
+    assert.equal(await web.bindsHere({ ...committed, bv: 1 }, secret), false);
+    assert.equal(await web.bindsHere({ ...committed, bv: 3 }, secret), false);
+    assert.equal(await web.bindsHere({ ...desktop, bv: true }, secret), false);
+});
+
+await check("the browser trusts the shipped production keys and never a test key", () => {
+    assert.deepEqual(Object.keys(web.PUBLIC_KEYS).sort(), ["bc1", "bc2"]);
+    assert.ok(!(V.kid in web.PUBLIC_KEYS));
+    assert.ok(!("bcs1" in web.PUBLIC_KEYS));
 });

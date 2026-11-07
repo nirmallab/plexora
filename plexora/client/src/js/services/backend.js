@@ -121,8 +121,13 @@
         if (kindOf === "handoff") {
             return json({ success: false, error: row.handoff.why, handoff: row.handoff }, 501);
         }
-        // "js": the page's own answer where it has one (services/browserNode.js
-        // reads a project's tiles from the picked file); Python's otherwise.
+        // "js": the page's own answer where it has one -- the licence the page
+        // holds (services/licenseClient.js), a project's tiles read from the
+        // picked file (services/browserNode.js); Python's otherwise.
+        if (kindOf === "js" && global.PlexoraLicense) {
+            const answered = await global.PlexoraLicense.answer(request).catch(() => null);
+            if (answered) return answered;
+        }
         if (kindOf === "js" && global.PlexoraNode) {
             const answered = await global.PlexoraNode.answer(request).catch(() => null);
             if (answered) return answered;

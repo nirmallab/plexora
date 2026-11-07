@@ -25,8 +25,15 @@
  * with the frame; the browser's Back and Forward move the frame, whose
  * entries are the tab's history.
  *
- * Reads `/client/shell.json` (`client/static_build.py`): `{version, py}`, where
- * `py` is the base of the Python bundle (the assets bucket on the site).
+ * The host also holds the licence (services/licenseClient.js, plan D8): it
+ * hands Python its files before the first page is asked for, answers the
+ * licence routes for every page of the frame, and tells the frame's page when
+ * the licence changed elsewhere (another tab, the background refresh).
+ *
+ * Reads `/client/shell.json` (`client/static_build.py`): `{version, py,
+ * licence?}`, where `py` is the base of the Python bundle (the assets bucket
+ * on the site) and `licence` the platform's address when it is not
+ * api.biocognia.com (a test build's).
  */
 (function (global) {
     "use strict";
@@ -133,6 +140,44 @@
     const LABELS = { core: "Starting Python", packages: "Loading packages",
                      wheels: "Loading Plexora", ready: "Opening" };
 
+    //: The licence this browser holds, restored into Python's files; null
+    //: when it cannot start (the site then runs as Free, as a desktop does
+    //: with a damaged licence file).
+    async function startLicence(shell, loading) {
+        try {
+            const module = await loading;
+            return await module.startInPage({ config: shell.licence || {}, version: shell.version,
+                                              python: global.PlexoraPython });
+        } catch (error) {
+            console.warn("[licence] not started:", error);
+            return null;
+        }
+    }
+
+    //: A change made elsewhere (another tab, the background refresh) shown in
+    //: the frame's page: its licence hint, and Settings if it is open. The
+    //: page that asked for a change draws the answer itself.
+    function followLicence(frame) {
+        const licence = global.PlexoraLicense;
+        if (!licence) return;
+        const key = (status) => JSON.stringify(status ? [status.state, status.entitlements] : null);
+        let shown = key(licence.status());
+        licence.on(({ kind, status, from }) => {
+            if (kind !== "changed" || !status) return;
+            const now = key(status);
+            if (from === "local" || now === shown) {
+                shown = now;
+                return;
+            }
+            shown = now;
+            const app = frame.contentWindow;
+            try {
+                app.PlexoraPro?.adopt?.(status);
+                app.dispatchEvent(new app.CustomEvent("plexora:license-external", { detail: status }));
+            } catch (error) { /* the frame is between pages */ }
+        });
+    }
+
     //: The address the frame shows, as the address bar should say it.
     const here = (where) => where.pathname + where.search + where.hash;
 
@@ -148,6 +193,9 @@
         await script("/client/src/js/services/browserTable.js");
         await script("/client/src/js/services/browserPyramid.js");
         await script("/client/src/js/services/browserStore.js");
+        // An ES module, fetched while Python starts.
+        const licenceModule = import("/client/src/js/services/licenseClient.js");
+        licenceModule.catch(() => null);
         await controlled();
         // Where the projects are kept: a folder the user granted, opened again
         // (after one click when the browser asks), or this browser's storage.
@@ -162,6 +210,8 @@
         const debug = new URLSearchParams(global.location.search).has("pydebug");
         const info = await global.PlexoraPython.start({ base: shell.py, debug, store });
         if (info.error) throw new Error(info.error);
+        // The licence, in Python's files before the first page is rendered.
+        global.PlexoraLicense = await startLicence(shell, licenceModule);
         // The files picked on earlier visits, mounted again where the browser
         // still grants access; the rest wait for a click (PlexoraPicks.reconnect).
         await global.PlexoraPicks.restore().catch(() => null);
@@ -182,6 +232,7 @@
             }
         });
         doc.body.appendChild(frame);
+        followLicence(frame);
     }
 
     //: Keep the tab's address and title what the frame shows.
@@ -229,6 +280,7 @@
         global.PlexoraPython = host.PlexoraPython;
         global.PlexoraPicks = host.PlexoraPicks;
         global.PlexoraNode = host.PlexoraNode;
+        global.PlexoraLicense = host.PlexoraLicense;
         global.PlexoraShellFramed = true;
         if (global.PlexoraNode) global.PlexoraNode.revalidate();
         await script("/client/src/js/services/backendRoutes.js");
