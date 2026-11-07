@@ -84,6 +84,10 @@
     const BROWSER_FEATURES = Object.freeze({
         //: The browser's own file picker (services/pickedFiles.js).
         file_picker: true,
+        //: AI gating, QC and chat: the harness in the worker, the gateway
+        //: through the page's fetch (plexora/browser/fetch.py), on the token
+        //: the page exchanges against its licence.
+        ai: true,
         volume: true,
         surfaces: true,
         agent: true,
@@ -120,6 +124,15 @@
         if (kindOf === "network") return nativeFetch(request);
         if (kindOf === "handoff") {
             return json({ success: false, error: row.handoff.why, handoff: row.handoff }, 501);
+        }
+        // An event stream (EventSource): the worker answers one request at a
+        // time and cannot keep a stream open. 406 is the cue every streaming
+        // caller here takes to poll instead (chatPanel.js: `?after=&wait=`,
+        // held by services/pythonClient.js).
+        if (/text\/event-stream/i.test(request.headers.get("Accept") || "")) {
+            return json({ success: false, ok: false, error: {
+                code: "not_acceptable", retryable: false, detail: { hint: "?after=<seq>&wait=<s>" },
+                message: "The website sends events as a poll, not as a stream." } }, 406);
         }
         // "js": the page's own answer where it has one -- the licence the page
         // holds (services/licenseClient.js), a project's tiles read from the

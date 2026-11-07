@@ -148,13 +148,39 @@ def _api() -> ChatApi:
                    held_poll_s=HELD_POLL_S)
 
 
+def _page_holds_polls() -> bool:
+    """Whether the page, not this process, holds a poll: the website's worker
+    has one thread and can neither keep a stream open nor wait inside a
+    request (`_work` cooperative). Its page holds the poll and asks again
+    when the conversation records an event (plexora/browser/boot.py), or
+    answers it from the events it was sent (services/pythonClient.js)."""
+    from plexora import _work
+
+    return _work.mode() == "cooperative"
+
+
 def _dispatch(path: str):
-    """This request, answered by `ChatApi`, as Flask sends it."""
-    answer = _api().handle(request.method, path, query=request.args.to_dict(),
+    """This request, answered by `ChatApi`, as Flask sends it.
+
+    On the website `/events` is a poll answered at once: a stream is refused
+    with 406, which the panel takes as its cue to poll (chatPanel.js), and a
+    poll that finds nothing says `held: false`, so the page holds it."""
+    query = request.args.to_dict()
+    held_by_page = path.endswith("/events") and _page_holds_polls()
+    if held_by_page:
+        if "text/event-stream" in (request.headers.get("Accept") or "") or query.get("stream") == "1":
+            return jsonify(success=False, ok=False, error={
+                "code": "not_acceptable", "retryable": False, "detail": {"hint": "?after=<seq>&wait=<s>"},
+                "message": "This Plexora sends a conversation's events as a poll, not as a stream."}), 406
+        query.pop("wait", None)
+    answer = _api().handle(request.method, path, query=query,
                            body=request.get_json(silent=True) or {}, headers=dict(request.headers))
     if answer.stream is not None:
         return Response(stream_with_context(answer.stream), mimetype="text/event-stream", headers=answer.headers)
-    return jsonify(answer.body), answer.status
+    body = answer.body
+    if held_by_page and isinstance(body, dict) and body.get("ok") and not body.get("events"):
+        body = {**body, "held": False}
+    return jsonify(body), answer.status
 
 
 @ai_chat_bp.route("/conversations", methods=["POST"])

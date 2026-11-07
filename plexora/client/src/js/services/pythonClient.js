@@ -8,14 +8,24 @@
  * It also keeps three things the worker cannot while Python is busy:
  *
  * - **Job records.** The worker posts every job's record as it is written; a
- *   `GET /agent/v1/jobs/<id>` is answered from the last one when the worker
- *   is running that very job (`job(id)`).
+ *   `GET /agent/v1/jobs/<id>`, and a panel's `GET /plugins/<gating|qc>/jobs/<id>`,
+ *   is answered from the last one while that job is queued or running
+ *   (`job(id)`): the worker is busy running it, and the answer is the route's
+ *   own (the worker sends the bridge's `state` beside the record).
+ * - **Conversations.** The worker posts every event an AI conversation
+ *   records; the chat panel's poll (`GET /ai/v1/conversations/<id>/events`)
+ *   is answered from them while the turn runs -- the worker is busy with it --
+ *   so a streamed answer and each tool call show as they happen.
  * - **Held polls.** Python never holds a request (its worker has one thread),
- *   so a long-poll (`?wait=N`) that comes back empty is held here until the
- *   worker says something changed or N seconds pass, then asked once more.
+ *   so a long-poll (`?wait=N`) that comes back empty (`held: false`) is held
+ *   here until the worker says something changed or N seconds pass, then
+ *   asked once more. A wakeup may name what changed (`topic`): a
+ *   conversation's poll wakes only for that conversation's events.
  * - **Cancels.** A job's cancel is written into shared memory the worker reads
  *   at the job's next check (`cancel(id)`); the site is cross-origin isolated
- *   for exactly this. Without shared memory it is a request like any other.
+ *   for exactly this, and a panel's Cancel, or `job_cancel`, while the job
+ *   runs is answered here. Without shared memory it is a request like any
+ *   other, answered once the job has ended its turn.
  *
  *   start({base, origin, store})  -> promise of the boot's record ({phases, info, ...});
  *                           `store` a granted folder to keep the projects in
@@ -42,7 +52,13 @@
     const waiting = new Map();
     const listeners = new Map();
     const jobs = new Map();
+    //: Held polls waiting for a wakeup: {topic, wake}.
     let wakeups = [];
+    //: AI conversations' events, as the worker recorded them: id -> {base,
+    //: events, running}. Every event recorded since this worker started is
+    //: here, so the events after `base` are all of them.
+    const chats = new Map();
+    const CHAT_KEEP = 4000;
     let resolveReady;
     const ready = new Promise((resolve) => { resolveReady = resolve; });
     const shared = typeof SharedArrayBuffer === "function" && global.crossOriginIsolated;
@@ -107,11 +123,8 @@
                 if (steps.length > RECENT) steps.shift();
             }
             if (event.kind === "ask") respond(event);
-            if (event.kind === "wakeup") {
-                const held = wakeups;
-                wakeups = [];
-                for (const wake of held) wake();
-            }
+            if (event.kind === "chat" && event.conversation && event.event) remember(event);
+            if (event.kind === "wakeup") wake(event.topic || null);
             emit(event.kind, event);
             return;
         }
@@ -228,13 +241,125 @@
         || (value !== null && typeof value === "object" && typeof value.url === "string"
             && typeof value.method === "string" && typeof value.arrayBuffer === "function");
 
+    //: A held poll: resolves when a wakeup names `topic` (or names nothing,
+    //: for a poll with no topic), or after `seconds`.
+    function hold(topic, seconds) {
+        return new Promise((resolve) => {
+            const entry = { topic, wake: null };
+            const timer = setTimeout(() => {
+                wakeups = wakeups.filter((other) => other !== entry);
+                resolve();
+            }, Math.min(seconds * 1000, MAX_HOLD_MS));
+            entry.wake = () => { clearTimeout(timer); resolve(); };
+            wakeups.push(entry);
+        });
+    }
+
+    function wake(topic) {
+        const woken = wakeups.filter((entry) => entry.topic === topic);
+        wakeups = wakeups.filter((entry) => entry.topic !== topic);
+        for (const entry of woken) entry.wake();
+    }
+
+    //: What a poll of `url` waits for: a conversation's events, or (no topic)
+    //: whatever the worker's untargeted wakeup announces.
+    function topicOf(url) {
+        const chat = url.pathname.match(/\/ai\/v1\/conversations\/([^/]+)\/events$/);
+        return chat ? `chat:${decodeURIComponent(chat[1])}` : null;
+    }
+
+    function remember({ conversation, event }) {
+        let chat = chats.get(conversation);
+        if (!chat) {
+            chat = { base: Math.max(0, Number(event.seq) - 1), events: [], running: false };
+            chats.set(conversation, chat);
+        }
+        chat.events.push(event);
+        if (chat.events.length > CHAT_KEEP) {
+            const dropped = chat.events.splice(0, chat.events.length - CHAT_KEEP);
+            chat.base = dropped[dropped.length - 1].seq;
+        }
+        if (event.event === "turn_started") chat.running = true;
+        if (event.event === "turn_finished") chat.running = false;
+        wake(`chat:${conversation}`);
+    }
+
+    //: A conversation's poll, answered from the events the worker sent while
+    //: its turn runs (null: Python answers). Held here, as Python would hold
+    //: it, until an event arrives or the wait ends.
+    async function chatEvents(id, url) {
+        const chat = chats.get(id);
+        const after = Number(url.searchParams.get("after") || 0);
+        if (!chat || !(after >= chat.base)) return null;
+        let found = chat.events.filter((event) => event.seq > after);
+        const wait = Number(url.searchParams.get("wait") || 0);
+        if (!chat.running && !found.length) return null;
+        if (!found.length && wait > 0) {
+            await hold(`chat:${id}`, wait);
+            if (!(after >= chat.base)) return null;
+            found = chat.events.filter((event) => event.seq > after);
+        }
+        return jsonResponse({ success: true, ok: true, conversation_id: id, events: found,
+                              after: found.length ? found[found.length - 1].seq : after,
+                              running: chat.running, answered_by: "page" });
+    }
+
+    //: The panels' own job routes (server/routes.py of each): the fields they answer with.
+    const PANEL_JOB = ["job_id", "status", "progress", "project", "capability", "error", "result"];
+
+    async function jsonBody(init, request) {
+        try {
+            if (init && typeof init.body === "string") return JSON.parse(init.body);
+            if (request) return await request.clone().json();
+        } catch (error) { /* not JSON: Python says so */ }
+        return null;
+    }
+
+    //: What the page answers itself while the worker runs a job, or null.
+    async function whileBusy(url, method, init, request) {
+        const path = url.pathname;
+        if (method === "GET") {
+            const agentJob = path.match(/\/agent\/v1\/jobs\/([^/]+)$/);
+            if (agentJob && busyWithJob(agentJob[1])) {
+                return jsonResponse({ success: true, job: jobs.get(agentJob[1]).state, answered_by: "page" });
+            }
+            const panelJob = path.match(/\/plugins\/(gating|qc)\/jobs\/([^/]+)$/);
+            if (panelJob && busyWithJob(panelJob[2], `${panelJob[1]}.`)) {
+                const record = jobs.get(panelJob[2]).job;
+                return jsonResponse({ ok: true, job: Object.fromEntries(PANEL_JOB.map((k) => [k, record[k] ?? null])),
+                                      answered_by: "page" });
+            }
+            return null;
+        }
+        if (method !== "POST" || !cancels) return null;
+        const panelCancel = path.match(/\/plugins\/(gating|qc)\/jobs\/([^/]+)\/cancel$/);
+        let id = panelCancel && busyWithJob(panelCancel[2], `${panelCancel[1]}.`) ? panelCancel[2] : null;
+        let shape = "panel";
+        if (!id && /\/agent\/v1\/capabilities\/job_cancel$/.test(path)) {
+            const body = await jsonBody(init, request);
+            const asked = body && body.arguments && body.arguments.job_id;
+            if (typeof asked === "string" && busyWithJob(asked)) {
+                id = asked;
+                shape = "agent";
+            }
+        }
+        if (!id || !cancel(id)) return null;
+        const answer = { job_id: id, status: "cancelling",
+                         note: "the job stops at its next checkpoint; job_wait reports when it has" };
+        return jsonResponse(shape === "panel" ? { ok: true, ...answer } : { success: true, result: answer });
+    }
+
     async function fetch(input, init) {
         await ready;
         const request = isRequest(input) ? input : null;
         const url = new URL(request ? request.url : String(input), global.location.href);
-        const job = url.pathname.match(/\/agent\/v1\/jobs\/([^/]+)$/);
-        if (job && busyWithJob(job[1])) {
-            return jsonResponse({ success: true, job: jobs.get(job[1]).state });
+        const method = ((init && init.method) || (request && request.method) || "GET").toUpperCase();
+        const mine = await whileBusy(url, method, init, request);
+        if (mine) return mine;
+        const chat = method === "GET" && url.pathname.match(/\/ai\/v1\/conversations\/([^/]+)\/events$/);
+        if (chat) {
+            const answered = await chatEvents(decodeURIComponent(chat[1]), url);
+            if (answered) return answered;
         }
         const wait = Number(url.searchParams.get("wait") || 0);
         const response = await send(url, init, request);
@@ -245,18 +370,21 @@
             return response;
         }
         // Held here: until the worker says something changed, or the wait ends.
-        await new Promise((resolve) => {
-            const timer = setTimeout(resolve, Math.min(wait * 1000, MAX_HOLD_MS));
-            wakeups.push(() => { clearTimeout(timer); resolve(); });
-        });
+        await hold(topicOf(url), wait);
+        if (chat) {
+            const answered = await chatEvents(decodeURIComponent(chat[1]), url);
+            if (answered) return answered;
+        }
         url.searchParams.set("wait", "0");
         return send(url, init, request);
     }
 
-    //: Whether the worker is (as far as the page knows) running job `id`.
-    function busyWithJob(id) {
+    //: Whether the worker is (as far as the page knows) running job `id`, one
+    //: of capability `prefix`'s when given.
+    function busyWithJob(id, prefix = "") {
         const event = jobs.get(id);
-        return Boolean(event && (event.job.status === "running" || event.job.status === "queued"));
+        return Boolean(event && (event.job.status === "running" || event.job.status === "queued")
+                       && String(event.job.capability || "").startsWith(prefix));
     }
 
     function jsonResponse(value, status = 200) {

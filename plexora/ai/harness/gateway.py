@@ -34,7 +34,6 @@ from __future__ import annotations
 
 import logging
 import os
-import time
 
 from biocognia import gateway as _shared
 from biocognia.gateway import ENV_DEV, ENV_GATEWAY, ENV_TOKEN, RETRYABLE, GatewayError, dev_default, iter_sse
@@ -71,13 +70,31 @@ def gateway_url() -> str:
     return _shared.gateway_url()
 
 
+def origin() -> str | None:
+    """The door a call is filed under on the gateway (`context.origin`): `web`
+    for the website, once spatialagents names it (its `ORIGINS`) -- a release
+    that comes after the gateway accepts it -- and none otherwise, which the
+    gateway files as `app`."""
+    if os.environ.get("PLEXORA_BACKEND") == "browser" and "web" in getattr(_agent, "ORIGINS", ()):
+        return "web"
+    return None
+
+
+def _pause(seconds: float) -> None:
+    # A retry's wait: on the website a sleep that lets the page in (`_work`).
+    from plexora import _work
+
+    _work.pause(seconds)
+
+
 class GatewayClient(_agent.GatewayClient):
     """spatialagents' streamed call, on this device's token, naming Plexora's tasks."""
 
     def __init__(self, base_url: str | None = None, *, tokens: _shared.TokenSource | None = None,
-                 dev: bool | None = None, max_attempts: int = 6, sleep=time.sleep):
+                 dev: bool | None = None, max_attempts: int = 6, sleep=None):
+        options = {"origin": origin()} if origin() else {}
         super().__init__(tokens or TokenSource(), base_url or None, dev=dev, max_attempts=max_attempts,
-                         sleep=sleep)
+                         sleep=sleep or _pause, **options)
 
     def wire_task(self, task: str | None, *, module: str | None = None) -> str:
         """`gating.planning` as the gateway knows it: `plexora.gating.planning`

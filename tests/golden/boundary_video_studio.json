@@ -99,7 +99,7 @@
       "scripts": [
         "/client/src/js/services/passVariablesToFrontend.js?v=20260910_unreachable_message",
         "/client/src/js/services/desktopBridge.js?v=20261103_reload",
-        "/client/src/js/services/backend.js?v=20261107_licence",
+        "/client/src/js/services/backend.js?v=20261107_ai",
         "/client/src/js/services/appStatus.js?v=20260926_help_menu",
         "/client/src/js/services/telemetry.js?v=20260928_qc_owner",
         "/client/src/js/services/errors.js?v=20260927_telemetry",
@@ -316,7 +316,7 @@
       "scripts": [
         "/client/src/js/services/passVariablesToFrontend.js?v=20260910_unreachable_message",
         "/client/src/js/services/desktopBridge.js?v=20261103_reload",
-        "/client/src/js/services/backend.js?v=20261107_licence",
+        "/client/src/js/services/backend.js?v=20261107_ai",
         "/client/src/js/services/appStatus.js?v=20260926_help_menu",
         "/client/src/js/services/telemetry.js?v=20260928_qc_owner",
         "/client/src/js/services/errors.js?v=20260927_telemetry",
@@ -601,7 +601,7 @@
       "scripts": [
         "/client/src/js/services/passVariablesToFrontend.js?v=20260910_unreachable_message",
         "/client/src/js/services/desktopBridge.js?v=20261103_reload",
-        "/client/src/js/services/backend.js?v=20261107_licence",
+        "/client/src/js/services/backend.js?v=20261107_ai",
         "/client/src/js/services/appStatus.js?v=20260926_help_menu",
         "/client/src/js/services/telemetry.js?v=20260928_qc_owner",
         "/client/src/js/services/errors.js?v=20260927_telemetry",

@@ -22,8 +22,9 @@
 //   run {code}                     tests only (boot with debug: true): Python's
 //                                  last expression, as text
 // Events posted to the page, unasked: {event: {kind: "job", job}} as a job's
-// record is written, {event: {kind: "wakeup"}} when a held poll should ask
-// again, {event: {kind: "stage", stage, ms}} as a stage arrives,
+// record is written, {event: {kind: "chat", conversation, event}} as an AI
+// conversation records an event, {event: {kind: "wakeup"}} when a held poll
+// should ask again, {event: {kind: "stage", stage, ms}} as a stage arrives,
 // {event: {kind: "ask", ask, id, args}} when Python needs what only the page
 // knows (a picked table's columns, a picked image's maximum; the page answers
 // with `answer`), {mark, at}.
@@ -31,7 +32,8 @@
 // Background work (jobs, builds) is queued by Python and run here, a slice at
 // a time (cooperative.step), only while no request is waiting: a request is
 // never held behind a job. While Python sleeps inside a job waiting on the
-// user (`idle`, through JSPI), requests are answered in the gap.
+// user (`idle`, through JSPI), or waits on the network (`_wait_on`: the AI
+// gateway's answer, read as it arrives), requests are answered in the gap.
 
 import { createStore } from "./storeSync.js";
 
@@ -226,6 +228,15 @@ def _idle(seconds):
     finally:
         js.self.plexoraIdle(-1)
 
+def _wait_on(promise):
+    # The network (plexora/browser/fetch.py): requests are answered while
+    # Python waits for the answer, as they are while a job sleeps.
+    js.self.plexoraIdle(1)
+    try:
+        return run_sync(promise)
+    finally:
+        js.self.plexoraIdle(-1)
+
 def _absent(value):
     from pyodide.ffi import jsnull
     return value is None or value is jsnull
@@ -280,7 +291,7 @@ _codecs.set_jpeg2k(_j2k)
 _finder = stages.install(lambda name: run_sync(js.plexoraLoadStage(name, _finder.importers.get(name, "?"))))
 json.dumps(boot.start(ORIGIN, post=_post, cancelled=lambda job: bool(js.plexoraCancelled(job)),
                       idle=_idle, waiting=lambda: bool(js.plexoraWaiting()), columns=_columns,
-                      ask=_ask))
+                      ask=_ask, wait_on=_wait_on))
 `));
     phases.ready = at(); mark("ready");
     return { phases, info, store, derived, stages: Object.fromEntries(
