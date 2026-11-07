@@ -6,29 +6,41 @@
 // same results as a file.
 //
 //   node tests/browser/selfcheck.mjs [--headed] [--browser chromium|firefox|webkit]
+//        [--url https://plexora-viewer-preview.pages.dev] [--save <file>]
 // Prints JSON with `ok`, the checks, the results and the downloaded file.
+// `--url` runs a deployed site's page (its first visit through the real CDN)
+// instead of a static build served here; `--save` keeps the downloaded file
+// (tools/bench_envelope/envelope_table.py add files it).
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, readFileSync } from "node:fs";
+import { copyFileSync, mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { launch, PYTHON, REPO, startServer } from "./lib.mjs";
 
 const headed = process.argv.includes("--headed");
+const option = (name) => (process.argv.includes(name) ? process.argv[process.argv.indexOf(name) + 1] : null);
 const out = { checks: [], errors: [] };
 const check = (name, ok, detail = {}) => {
     out.checks.push({ name, ok: Boolean(ok), ...detail });
     console.error(`${ok ? "ok  " : "FAIL"} ${name}`);
 };
 
-const site = mkdtempSync(path.join(tmpdir(), "pxself-site-"));
-execFileSync(PYTHON, ["-m", "plexora.client.static_build", "--out", site],
-             { cwd: REPO, env: { ...process.env, PYTHONPATH: REPO }, stdio: ["ignore", "ignore", "inherit"] });
-const server = await startServer(["--site", site]);
-const origin = `http://127.0.0.1:${server.port}`;
+let server = null;
+let origin = option("--url");
+if (origin) {
+    origin = origin.replace(/\/+$/, "");
+} else {
+    const site = mkdtempSync(path.join(tmpdir(), "pxself-site-"));
+    execFileSync(PYTHON, ["-m", "plexora.client.static_build", "--out", site],
+                 { cwd: REPO, env: { ...process.env, PYTHONPATH: REPO }, stdio: ["ignore", "ignore", "inherit"] });
+    server = await startServer(["--site", site]);
+    origin = `http://127.0.0.1:${server.port}`;
+}
 const browser = await launch({ headed });
 
+let page = null;
 try {
-    const page = await browser.context.newPage();
+    page = await browser.context.newPage();
     const violations = [];
     await page.exposeFunction("__selfcheckViolation", (what) => violations.push(what));
     await page.addInitScript(() => {
@@ -36,6 +48,7 @@ try {
                                   (event) => window.__selfcheckViolation(`${event.violatedDirective} ${event.blockedURI}`));
     });
     page.on("pageerror", (error) => out.errors.push(String(error && error.message || error)));
+    page.on("console", (message) => { if (message.type() === "error") (out.console ||= []).push(message.text().slice(0, 300)); });
     await page.goto(`${origin}/selfcheck`);
     check("the address /selfcheck is the self-check page", await page.locator("#selfcheck-run").count() === 1);
     const buttons = await page.$$eval(".selfcheck-actions button", (nodes) => nodes.map((n) => ({
@@ -87,6 +100,7 @@ try {
 
     const [file] = await Promise.all([page.waitForEvent("download"), page.click("#selfcheck-save")]);
     const saved = JSON.parse(readFileSync(await file.path(), "utf-8"));
+    if (option("--save")) copyFileSync(await file.path(), option("--save"));
     out.download = { name: file.suggestedFilename() };
     check("Download results saves the same results", /^plexora-selfcheck-\d{4}-\d\d-\d\d\.json$/.test(file.suggestedFilename())
           && saved.selfcheck === 1 && JSON.stringify(saved.steps) === JSON.stringify(results.steps));
@@ -94,10 +108,12 @@ try {
     check("no page errors", out.errors.length === 0, { errors: out.errors });
 } catch (error) {
     out.errors.push(String(error && error.stack || error));
-    check("the driver ran", false);
+    // Where it stopped: each row as the page shows it.
+    out.rows = page ? await page.$$eval("#selfcheck-results tr", (trs) => trs.map((tr) => tr.innerText)).catch(() => null) : null;
+    check("the driver ran", false, { rows: out.rows });
 } finally {
     await browser.close();
-    server.stop();
+    if (server) server.stop();
 }
 
 out.ok = out.checks.length > 0 && out.checks.every((c) => c.ok);
