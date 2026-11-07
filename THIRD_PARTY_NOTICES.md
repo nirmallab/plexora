@@ -27,3 +27,13 @@ WebM muxer Video Studio's browser encoder uses, is mediabunny
 Public License 2.0** (`plexora/plugins/video_studio/static/vendor/
 LICENSE-mediabunny`). Its source is the published npm package of that version;
 how the bundled file is built is in that directory's `README.md`.
+
+## OpenJPEG, as @cornerstonejs/codec-openjpeg 1.3.6 (website)
+
+`plexora/client/external/openjpeg-1.3.6/`, the JPEG 2000 decoder the website's
+Python worker uses for tifffile's JPEG 2000 tiles, is the decoder build of
+@cornerstonejs/codec-openjpeg (https://github.com/cornerstonejs/codec-openjpeg),
+under the **MIT License**, compiled from OpenJPEG (https://github.com/uclouvain/openjpeg),
+under the **2-clause BSD License**. The WebAssembly file is as published; the
+JavaScript file has one line appended to make it an ES module. Both licences
+and the published files' sha256 are in that directory's `LICENSE`.

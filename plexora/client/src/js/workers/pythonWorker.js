@@ -201,6 +201,8 @@ async function boot(args) {
     self.plexoraCancelled = cancelled;
     self.plexoraLoadStage = loadStage;
     self.plexoraAsk = ask;
+    self.plexoraJ2KReady = j2kReady;
+    self.plexoraJ2K = j2kDecode;
     self.plexoraWaiting = () => queue.length > 0 || (inFlight !== null && Atomics.load(inFlight, 0) > 0);
     py.globals.set("ORIGIN", origin);
     const info = JSON.parse(await py.runPythonAsync(`
@@ -257,6 +259,22 @@ def _columns(spec):
     from plexora.browser import columns as page_columns
     return page_columns.from_page(spec, _ask_columns)
 
+def _j2k(data):
+    # JPEG 2000 for tifffile (plexora/browser/imagecodecs_shim.py): OpenJPEG in
+    # WebAssembly in this worker, loaded the first time a tile needs it.
+    import numpy as np
+    from pyodide.ffi import to_js
+    run_sync(js.self.plexoraJ2KReady())
+    found = js.self.plexoraJ2K(to_js(memoryview(bytes(data))))
+    bits, signed, components = int(found.bits), bool(found.signed), int(found.components)
+    dtype = np.dtype(("i" if signed else "u") + ("1" if bits <= 8 else "2"))
+    pixels = np.frombuffer(found.data.to_py(), dtype=dtype)
+    shape = (int(found.height), int(found.width)) + ((components,) if components > 1 else ())
+    return pixels.reshape(shape)
+
+from plexora.browser import imagecodecs_shim as _codecs
+_codecs.set_jpeg2k(_j2k)
+
 _finder = stages.install(lambda name: run_sync(js.plexoraLoadStage(name, _finder.importers.get(name, "?"))))
 json.dumps(boot.start(ORIGIN, post=_post, cancelled=lambda job: bool(js.plexoraCancelled(job)),
                       idle=_idle, waiting=lambda: bool(js.plexoraWaiting()), columns=_columns,
@@ -281,6 +299,34 @@ self.plexoraIdle = (delta) => {
     idling += delta;
     if (delta > 0) drain();
 };
+
+// JPEG 2000 for tifffile in Python (imagecodecs_shim's `set_jpeg2k`):
+// OpenJPEG in WebAssembly (client/external/openjpeg-1.3.6), loaded the first
+// time a tile needs it and called synchronously after that.
+const OPENJPEG = "/client/external/openjpeg-1.3.6/";
+let openjpeg = null;
+
+async function j2kReady() {
+    if (!openjpeg) {
+        const { default: factory } = await import(`${OPENJPEG}openjpegwasm_decode.mjs`);
+        openjpeg = await factory({ locateFile: (name) => `${OPENJPEG}${name}` });
+    }
+    return true;
+}
+
+function j2kDecode(bytes) {
+    const decoder = new openjpeg.J2KDecoder();
+    try {
+        decoder.getEncodedBuffer(bytes.length).set(bytes);
+        decoder.decode();
+        const frame = decoder.getFrameInfo();
+        return { width: frame.width, height: frame.height, components: frame.componentCount,
+                 bits: frame.bitsPerSample, signed: frame.isSigned,
+                 data: new Uint8Array(decoder.getDecodedBuffer()) };
+    } finally {
+        decoder.delete();
+    }
+}
 
 // What only the page can answer -- a picked table's columns, a picked
 // image's full-resolution maximum -- asked from Python, which waits on the
