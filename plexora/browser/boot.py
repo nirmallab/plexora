@@ -6,7 +6,8 @@ part that talks to the page is handed in as a function -- JavaScript functions
 arrive as callables -- so the same boot runs under CPython in the tests
 (tests/test_boot.py) with Python functions in their place:
 
-- `post(message)`: a dict to the page (job records, wakeups);
+- `post(message)`: a dict to the page (job records, conversation events,
+  wakeups);
 - `cancelled(job_id)`: the page's cancel flags (shared memory);
 - `idle(seconds)`: let time pass while the page is served;
 - `waiting()`: whether a request is waiting to be served;
@@ -16,14 +17,17 @@ arrive as callables -- so the same boot runs under CPython in the tests
   full-resolution maximum (providers/browser.py `page_window`), the AI token
   the page exchanged against its licence (browser/licence.py), magic
   select's model run (plexora/browser/sam_page.py) -- or None. numpy arrays
-  at the top level of `args` cross as `{dtype, shape, data}`.
+  at the top level of `args` cross as `{dtype, shape, data}`;
+- `wait_on(promise)`: wait for a promise (the network) while the page is
+  served.
 
 What it does, in order: the environment the app reads at build; the
-`imagecodecs` stand-in, before anything imports tifffile; HTTP through the
-browser's fetch for the standard library's urllib (`pyodide_http`), until the
-packages that call out move to urllib3's Emscripten backend; cooperative
-work; the wakeup, the column source and the page's answers (magic select's
-model among them); and the app itself, built once.
+`imagecodecs` stand-in, before anything imports tifffile; the standard
+library's urllib over the page's `fetch` (plexora/browser/fetch.py: streamed,
+with urllib's errors); cooperative work, spatialagents' threads and sleeps
+through it (plexora/browser/agents.py) and conversations' events to the page;
+the wakeup, the column source and the page's answers (magic select's model
+among them); and the app itself, built once.
 
 Nothing here monkeypatches Plexora: every substitution the first proof needed
 (P9's eight) is now a seam in the product, and each remaining one is a
@@ -75,15 +79,35 @@ def codecs() -> bool:
     return False
 
 
-def http() -> bool:
-    """urllib through the browser's fetch (`pyodide_http`), where there is no
-    socket. True if patched."""
-    try:
-        import pyodide_http
-    except ImportError:
-        return False
-    pyodide_http.patch_all()
-    return True
+def http(wait_on=None) -> bool:
+    """urllib through the page's `fetch` (plexora/browser/fetch.py), where
+    there is no socket: streamed, urllib's errors, and the page served while
+    Python waits on the network (`wait_on`). True if installed."""
+    from plexora.browser import fetch
+
+    return fetch.install(wait_on)
+
+
+def agents() -> dict:
+    """spatialagents' threads and sleeps through `_work` (plexora/browser/
+    agents.py): what was replaced."""
+    from plexora.browser import agents as page_agents
+
+    return page_agents.install()
+
+
+def chat_events(post) -> None:
+    """Every event a conversation records, sent to the page as it is
+    recorded (`{kind: "chat", conversation, event}`): the page answers the
+    chat panel's poll from them while the worker runs the turn, and wakes the
+    poll it holds for that conversation (services/pythonClient.js)."""
+    from plexora.ai.harness import conversations
+
+    if post is None:
+        conversations.set_observer(None)
+        return
+    conversations.set_observer(lambda conversation_id, event: post(
+        {"kind": "chat", "conversation": conversation_id, "event": event}))
 
 
 def native_parquet() -> bool:
@@ -224,14 +248,15 @@ def without_jspi(sleep=time.sleep) -> bool:
 
 
 def start(origin: str, *, base_url: str = "", post=None, cancelled=None, idle=None, waiting=None,
-          columns=None, ask=None, jspi: bool = True, sleep=None, data_root: str = "/data",
+          columns=None, ask=None, wait_on=None, jspi: bool = True, sleep=None,
+          data_root: str = "/data",
           licence_dir: str = "/bioc") -> dict:
     """Boot once; returns what the page shows in its status chip and records:
     `{version, rules, seconds, shims}`. `jspi` False: the browser has no JSPI,
     and `sleep(seconds)` blocks (the worker's Atomics.wait)."""
     started = time.perf_counter()
     environment(origin, base_url=base_url, data_root=data_root, licence_dir=licence_dir)
-    shims = {"imagecodecs": codecs(), "pyodide_http": http(), "parquet": parquet()}
+    shims = {"imagecodecs": codecs(), "fetch": http(wait_on), "parquet": parquet()}
     if not jspi:
         shims["sync_loop"] = without_jspi(sleep or time.sleep)
 
@@ -240,6 +265,8 @@ def start(origin: str, *, base_url: str = "", post=None, cancelled=None, idle=No
     from plexora.server.providers import browser as browser_provider
 
     cooperative.install(post=post, cancelled=cancelled, idle=idle, waiting=waiting)
+    shims["spatialagents"] = sorted(agents())
+    chat_events(post)
     if post is not None:
         viewer_sessions.set_wakeup(lambda: post({"kind": "wakeup"}))
     browser_provider.set_column_source(columns)

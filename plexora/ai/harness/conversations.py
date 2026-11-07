@@ -95,12 +95,36 @@ def _trace():
     return TraceStore()
 
 
+#: Told every event a conversation records, as `(conversation_id, event)` with
+#: its `seq` (`set_observer`). The website's worker sends each to its page
+#: (plexora/browser/boot.py), which answers the chat panel's poll from them
+#: while the worker is busy with the turn, and wakes the poll it holds. None
+#: everywhere else: a server's poll is held by `ConversationStore.events`.
+_OBSERVER = None
+
+
+def set_observer(function) -> None:
+    """Install the observer above (None removes it)."""
+    global _OBSERVER
+    _OBSERVER = function
+
+
 class ConversationStore(_conversations.ConversationStore):
     HOLDER = "another Plexora process"
     LIST_HINT = "gating_session_status lists the sessions"
 
     def __init__(self, root: Path | str | None = None):
         super().__init__(Path(root) if root else default_root())
+
+    def append_event(self, conversation_id: str, event: dict) -> dict:
+        numbered = super().append_event(conversation_id, event)
+        observer = _OBSERVER
+        if observer is not None:
+            try:
+                observer(conversation_id, numbered)
+            except Exception:  # noqa: BLE001 -- a lost event costs the page a poll, not the turn
+                log.exception("the conversation observer failed")
+        return numbered
 
 
 class ToolAdapter(_tools.ToolAdapter):

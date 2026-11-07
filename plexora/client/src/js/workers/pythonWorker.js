@@ -22,8 +22,9 @@
 //   run {code}                     tests only (boot with debug: true): Python's
 //                                  last expression, as text
 // Events posted to the page, unasked: {event: {kind: "job", job}} as a job's
-// record is written, {event: {kind: "wakeup"}} when a held poll should ask
-// again, {event: {kind: "stage", stage, ms}} as a stage arrives,
+// record is written, {event: {kind: "chat", conversation, event}} as an AI
+// conversation records an event, {event: {kind: "wakeup"}} when a held poll
+// should ask again, {event: {kind: "stage", stage, ms}} as a stage arrives,
 // {event: {kind: "ask", ask, id, args}} when Python needs what only the page
 // knows (a picked table's columns, a picked image's maximum, magic select's
 // model run; the page answers with `answer`), {mark, at}.
@@ -31,7 +32,8 @@
 // Background work (jobs, builds) is queued by Python and run here, a slice at
 // a time (cooperative.step), only while no request is waiting: a request is
 // never held behind a job. While Python sleeps inside a job waiting on the
-// user (`idle`, through JSPI), requests are answered in the gap.
+// user (`idle`, through JSPI), or waits on the network (`_wait_on`: the AI
+// gateway's answer, read as it arrives), requests are answered in the gap.
 
 import { createStore } from "./storeSync.js";
 import { idbFolder } from "./idbFolder.js";
@@ -151,7 +153,11 @@ async function loadStage(name, importer = "?") {
 let cancels = null;
 function cancelled(jobId) {
     if (!cancels) return false;
-    const text = new TextDecoder().decode(new Uint8Array(cancels).slice());
+    // The page writes the ids and leaves the rest of the buffer zero: the
+    // last id ends at the first zero, not at the buffer's end.
+    const bytes = new Uint8Array(cancels).slice();
+    const end = bytes.indexOf(0);
+    const text = new TextDecoder().decode(end < 0 ? bytes : bytes.subarray(0, end));
     return text.split("\n").includes(jobId);
 }
 
@@ -345,6 +351,21 @@ def _idle(seconds):
     finally:
         js.self.plexoraIdle(-1)
 
+def _wait_on(promise):
+    # The network (plexora/browser/fetch.py). In background work (a chat
+    # turn, a job) requests are answered while Python waits for the answer,
+    # as they are while a job sleeps. A request's own call (the launcher's
+    # balance) just waits: requests run inside a request's wait were seen to
+    # wreck the worker (a polars read nested in /ai/v1/balance's wait never
+    # let the balance resume, and the page crashed).
+    if not js.self.plexoraInStep():
+        return run_sync(promise)
+    js.self.plexoraIdle(1)
+    try:
+        return run_sync(promise)
+    finally:
+        js.self.plexoraIdle(-1)
+
 def _absent(value):
     from pyodide.ffi import jsnull
     return value is None or value is jsnull
@@ -416,7 +437,7 @@ def _load_stage(name):
 _finder = stages.install(_load_stage, loaded=tuple(js.plexoraStagesLoaded.to_py()))
 json.dumps(boot.start(ORIGIN, base_url=SITE_BASE, post=_post, cancelled=lambda job: bool(js.plexoraCancelled(job)),
                       idle=_idle, waiting=lambda: bool(js.plexoraWaiting()), columns=_columns,
-                      ask=_ask, jspi=JSPI, sleep=lambda seconds: js.self.plexoraSleep(seconds)))
+                      ask=_ask, wait_on=_wait_on, jspi=JSPI, sleep=lambda seconds: js.self.plexoraSleep(seconds)))
 `));
     phases.ready = at(); mark("ready");
     return { phases, info, store, derived, stages: Object.fromEntries(
@@ -764,7 +785,9 @@ async function drain() {
         const outer = current;
         current = { op, path: op === "request" ? args.path : null, since: began };
         const nested = busy;
+        const outerStep = inStep;
         busy = true;
+        inStep = false;
         try {
             const result = await OPS[op](args || {});
             const transfer = result && result.body instanceof Uint8Array ? [result.body.buffer] : [];
@@ -777,6 +800,7 @@ async function drain() {
             self.postMessage({ id, ok: false, error: String(error?.message || error).slice(-6000) });
         } finally {
             busy = nested;
+            inStep = outerStep;
             current = outer;
             // It may have queued work: the next step finds out.
             pendingWork = Math.max(pendingWork, 1);
@@ -800,6 +824,10 @@ const BACKGROUND_QUIET_MS = 600;
 let lastRequest = 0;
 let lastStep = 0;
 let stepping = false;
+//: Whether the innermost Python running is background work (a step), not a
+//: request run in its gap: only then may a network wait answer requests.
+let inStep = false;
+self.plexoraInStep = () => inStep;
 //: What the last step left queued: work someone waits on, and background.
 let pendingWork = 0;
 let pendingBackground = 0;
@@ -819,7 +847,8 @@ function step() {
             const cooperative = py.pyimport("plexora.browser.cooperative");
             const began = performance.now();
             const quiet = began - lastRequest >= BACKGROUND_QUIET_MS;
-            const outcome = await call(cooperative.step, 50, quiet);
+            inStep = true;
+            const outcome = await call(cooperative.step, 50, quiet).finally(() => { inStep = false; });
             pendingWork = outcome.get("pending");
             pendingBackground = outcome.get("background");
             const ms = Math.round(performance.now() - began);
