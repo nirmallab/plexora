@@ -14,7 +14,13 @@ Writes, if absent:
 - pyr8_packbits.ome.tif 1 channel, uint8, 1500 x 1100, tiled 256, PackBits, one
 - flat16.tif           2 channels, uint16, 1800 x 1800, stripped, no pyramid
                        (the page must leave it to Python)
-Prints the paths as JSON.
+and three projects with a mask, each an 8-bit image and its labels:
+- labels32             uint32 ids up to 2^25 (the high byte Python drops),
+                       tiled 256, deflate, one sub-resolution
+- labels16             uint16 ids, tiled 256, LZW, one sub-resolution
+- labels_flat          uint32, one level (Python draws the rest: its mask is
+                       Python's, its image the page's)
+Prints {name: [path, ...]} as JSON: the files to import together.
 """
 
 from __future__ import annotations
@@ -50,6 +56,37 @@ def _pyramid(path: Path, data: np.ndarray, *, tile: int, levels: int, **options)
             tif.write(level, subfiletype=1, tile=(tile, tile), **options)
 
 
+def _labels(height: int, width: int, top: int) -> np.ndarray:
+    """Cells of a few pixels across with ids spread up to `top`, and
+    background (0) between some of them."""
+    y, x = np.mgrid[0:height, 0:width]
+    cell = (y // 9) * (width // 7 + 1) + (x // 7)
+    ids = (cell.astype(np.uint64) * 2654435761 % top).astype(np.uint32) + 1
+    ids[(y % 9 == 0) | ((x // 7) % 5 == 0)] = 0
+    return ids
+
+
+def _mask(path: Path, labels: np.ndarray, *, levels: int, **options) -> None:
+    """As tests/agent_fixtures.write_mask_pyramid writes one: not OME."""
+    with tifffile.TiffWriter(path) as tif:
+        tif.write(labels, subifds=levels, tile=(256, 256), metadata={"axes": "YX"}, **options)
+        for level in range(1, levels + 1):
+            tif.write(labels[::2 ** level, ::2 ** level], subfiletype=1, tile=(256, 256), **options)
+
+
+def _with_mask(out: Path, name: str, labels: np.ndarray, levels: int, **options) -> list:
+    image = out / f"{name}_image.ome.tif"
+    mask = out / f"{name}_mask.tif"
+    if not image.exists():
+        _pyramid(image, _planes(1, *labels.shape, np.uint8), tile=256, levels=1)
+    if not mask.exists():
+        if levels:
+            _mask(mask, labels, levels=levels, **options)
+        else:
+            tifffile.imwrite(mask, labels, metadata={"axes": "YX"}, **options)
+    return [image, mask]
+
+
 def main(out: Path) -> dict:
     out.mkdir(parents=True, exist_ok=True)
     made = {}
@@ -83,7 +120,12 @@ def main(out: Path) -> dict:
     if not path.exists():
         tifffile.imwrite(path, _planes(2, 1800, 1800, np.uint16), metadata={"axes": "CYX"})
     made["flat16"] = path
-    return {name: str(p) for name, p in made.items()}
+    made["labels32"] = _with_mask(out, "labels32", _labels(1100, 1300, 1 << 25), 1, compression="zlib")
+    made["labels16"] = _with_mask(out, "labels16", _labels(1100, 1300, 60000).astype(np.uint16), 1,
+                                  compression="lzw")
+    made["labels_flat"] = _with_mask(out, "labels_flat", _labels(1100, 1300, 1 << 20), 0)
+    return {name: [str(p) for p in (paths if isinstance(paths, list) else [paths])]
+            for name, paths in made.items()}
 
 
 if __name__ == "__main__":

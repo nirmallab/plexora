@@ -59,3 +59,30 @@ def test_a_picked_file_that_is_not_a_tiff_is_left_to_python(info, monkeypatch):
     monkeypatch.setattr(data_model._providers.image, "_path", "/picked/ab12cd/image.zarr")
     spec = node_spec.describe(info["name"])
     assert spec["served"] is False and spec["reason"] == "not a TIFF file"
+
+
+def test_a_picked_label_pyramid_is_described_level_by_level(info, monkeypatch):
+    from plexora.browser import node_spec
+    from plexora.server.models import data_model
+
+    data_model.ensure_loaded(info["name"])
+    spec = node_spec.describe(info["name"])
+    assert spec["labels"]["served"] is False
+    assert spec["labels"]["reason"].startswith("the mask is not a file the page holds")
+    monkeypatch.setattr(data_model._providers.segmentation, "_path", "/picked/ab12cd/mask.tif")
+    labels = node_spec.describe(info["name"])["labels"]
+    assert labels["served"] is True, labels
+    with tifffile.TiffFile(info["mask_path"], is_ome=False) as tif:
+        levels = [[k, *level.shape] for k, level in enumerate(tif.series[0].levels)]
+        dtype = str(tif.series[0].dtype)
+    # The levels the file holds, by number: the page answers those and
+    # leaves any level Python draws from a finer one to Python.
+    assert labels["levels"] == levels
+    assert labels["dtype"] == dtype
+
+
+def test_a_project_without_a_mask_says_so(tmp_path):
+    from plexora.browser import node_spec
+
+    made = make_synthetic_project(tmp_path, name="bare", mask=False)
+    assert node_spec.describe(made["name"])["labels"] == {"served": False, "reason": "no mask"}

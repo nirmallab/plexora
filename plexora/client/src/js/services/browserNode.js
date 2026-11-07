@@ -1,6 +1,6 @@
 /**
- * PlexoraNode -- the website's browser node: a project's image tiles read by
- * this page from the file the user picked, not by Plexora's Python.
+ * PlexoraNode -- the website's browser node: a project's image and mask tiles
+ * read by this page from the files the user picked, not by Plexora's Python.
  *
  * Python in the page answers every request one at a time, and a screenful of
  * tiles is dozens of them; the browser-native proof measured the page reading
@@ -9,19 +9,22 @@
  * where it safely can be:
  *
  * - Python says, per project, what it reads (plexora/browser/node_spec.py: the
- *   file, every level's shape, the channels, the tile grid), or why the page
- *   must not answer;
- * - the page opens the same file in a pool of workers (workers/tiffWorker.js,
- *   node/tiffReader.js) and checks every level's shape and the channel count
- *   against Python's before it answers a single tile;
- * - a tile is the window `data_model.read_tile` reads, as the 16-bit grey PNG
- *   `encode_tile_array` makes for the HD path (stored, not deflated: the same
- *   pixels, fewer cycles). Anything else -- the 8-bit preview, a volume's view,
- *   a label mask, a tile past the edge -- returns null, and Python answers it.
+ *   image's and the mask's files, every level's shape, the channels, the tile
+ *   grid), or why the page must not answer;
+ * - the page opens the same files in pools of workers (workers/tiffWorker.js,
+ *   node/tiffReader.js) and checks every level's shape, the channel count, the
+ *   sample size and the compression against Python's before it answers a
+ *   single tile;
+ * - a tile is the window `data_model.read_tile` reads, as `encode_tile_array`
+ *   makes it (stored, not deflated: the same pixels, fewer cycles): a channel's
+ *   HD tile the 16-bit grey PNG, a mask's the RGBA PNG of its ids. Anything
+ *   else -- the 8-bit preview, a volume's view, a mask level Python draws from
+ *   a finer one, a tile past the edge -- returns null, and Python answers it.
  *
  *   answer(request) -> a promise of a Response, or of null (Python's to answer)
- *   project(name)   -> a promise of {spec, geometry, pool} once checked, or of
- *                      {spec?, refused} saying why Python answers instead
+ *   project(name)   -> a promise of {spec, image, labels}, each part {file,
+ *                      geometry, pool} once checked or {refused} saying why
+ *                      Python answers instead
  *   revalidate()    -> check each project with Python again before its next
  *                      tile (services/shell.js, on every page of the app)
  *   forget(name)    -> drop what is held for a project (it changed)
@@ -163,8 +166,8 @@
             return this.workers.reduce((best, w) => (w.inflight < best.inflight ? w : best));
         }
 
-        tile(channel, level, tx, ty, tw, th) {
-            return this.call(this.least(), { op: "tile", channel, level, tx, ty, tw, th });
+        tile(channel, level, tx, ty, tw, th, raw = false) {
+            return this.call(this.least(), { op: "tile", channel, level, tx, ty, tw, th, raw });
         }
 
         close() {
@@ -175,8 +178,9 @@
 
     // -- the projects -----------------------------------------------------------
 
-    //: What is open per project (resolved {spec, file, geometry, pool} or
-    //: {refused}), and the checks made since the app last changed page.
+    //: What is open per project -- {spec, image, labels}, each part
+    //: {file, geometry, pool} or {refused} -- and the checks made since the
+    //: app last changed page.
     const held = new Map();
     const checks = new Map();
 
@@ -186,53 +190,97 @@
     //: rounds differently: those tiles stay Python's.
     const EXACT = new Set([1, 5, 8, 32946, 32773, 50000]);
 
-    function matches(spec, geometry) {
-        if (!EXACT.has(geometry.compression)) return `compression ${geometry.compression}`;
-        if (geometry.numChannels !== spec.levels[0][0]) return "a different channel count";
-        if (geometry.levels.length < spec.levels.length) return "fewer levels";
-        for (let i = 0; i < spec.levels.length; i += 1) {
-            const [, height, width] = spec.levels[i];
-            if (geometry.levels[i].width !== width || geometry.levels[i].height !== height) {
-                return `level ${i} is ${geometry.levels[i].width}x${geometry.levels[i].height}`;
-            }
+    const BITS = { uint8: 8, uint16: 16, uint32: 32, int32: 32 };
+    //: How often a mask still being prepared is asked about again.
+    const RECHECK_MS = 3000;
+
+    function levelDiffers(geometry, level, height, width) {
+        const found = geometry.levels[level];
+        if (!found) return `no level ${level}`;
+        if (found.width !== width || found.height !== height) {
+            return `level ${level} is ${found.width}x${found.height}`;
         }
-        const bits = spec.dtype === "uint16" ? 16 : 8;
-        if (geometry.bitsPerSample !== bits) return `${geometry.bitsPerSample}-bit samples`;
         return null;
     }
+
+    function imageDiffers(spec, geometry) {
+        if (!EXACT.has(geometry.compression)) return `compression ${geometry.compression}`;
+        if (geometry.numChannels !== spec.levels[0][0]) return "a different channel count";
+        for (let i = 0; i < spec.levels.length; i += 1) {
+            const [, height, width] = spec.levels[i];
+            const differs = levelDiffers(geometry, i, height, width);
+            if (differs) return differs;
+        }
+        if (geometry.bitsPerSample !== BITS[spec.dtype]) return `${geometry.bitsPerSample}-bit samples`;
+        return null;
+    }
+
+    function labelsDiffer(labels, geometry) {
+        if (!EXACT.has(geometry.compression)) return `compression ${geometry.compression}`;
+        if (geometry.numChannels !== 1) return `${geometry.numChannels} planes`;
+        for (const [level, height, width] of labels.levels) {
+            const differs = levelDiffers(geometry, level, height, width);
+            if (differs) return differs;
+        }
+        if (geometry.bitsPerSample !== BITS[labels.dtype]) return `${geometry.bitsPerSample}-bit labels`;
+        if ((geometry.sampleFormat === 2) !== labels.dtype.startsWith("int")) return "signed and unsigned";
+        return null;
+    }
+
+    //: One file's part of a project: its pool, once the page reads it as
+    //: Python does.
+    async function openPart(part, size, differs) {
+        if (!part || !part.served) return { refused: part ? part.reason : "nothing to serve" };
+        const file = global.PlexoraPicks ? global.PlexoraPicks.fileFor(part.path) : null;
+        if (!file) return { refused: "the page does not hold that file now" };
+        const pool = new TiffPool(size);
+        try {
+            const geometry = await pool.open(file);
+            const why = differs(part, geometry);
+            if (why) {
+                pool.close();
+                return { file, geometry, refused: `the page reads it differently: ${why}` };
+            }
+            return { file, geometry, pool };
+        } catch (error) {
+            pool.close();
+            return { file, refused: String(error && error.message || error).split(" | ")[0] };
+        }
+    }
+
+    const sameFile = (part, path) => Boolean(part && part.file && global.PlexoraPicks
+        && global.PlexoraPicks.fileFor(path) === part.file);
 
     async function check(name) {
         const spec = await global.PlexoraPython.nodeSpec(name);
         const before = held.get(name);
-        const file = spec.served && global.PlexoraPicks ? global.PlexoraPicks.fileFor(spec.path) : null;
-        // The same load of the same file: what is open stays open.
-        if (before && before.pool && before.file === file
-            && JSON.stringify(before.spec) === JSON.stringify(spec)) {
+        // The same load of the same files: what is open stays open.
+        if (before && JSON.stringify(before.spec) === JSON.stringify(spec)
+            && (!before.image.pool || sameFile(before.image, spec.path))
+            && (!before.labels.pool || sameFile(before.labels, spec.labels && spec.labels.path))) {
             return before;
         }
-        if (before && before.pool) before.pool.close();
+        if (before) close(before);
         held.delete(name);
-        let entry;
-        if (!spec.served) entry = { spec, refused: spec.reason };
-        else if (!file) entry = { spec, refused: "the page does not hold that file now" };
-        else {
-            const pool = new TiffPool(WORKERS);
-            const geometry = await pool.open(file);
-            const differs = matches(spec, geometry);
-            if (differs) {
-                pool.close();
-                entry = { spec, geometry, refused: `the page reads it differently: ${differs}` };
-            } else {
-                entry = { spec, file, geometry, pool };
-            }
-        }
+        const [image, labels] = await Promise.all([
+            openPart(spec, WORKERS, imageDiffers),
+            openPart(spec.labels, Math.max(2, Math.floor(WORKERS / 2)), labelsDiffer),
+        ]);
+        const entry = { spec, image, labels, checkedAt: Date.now() };
         held.set(name, entry);
         return entry;
     }
 
+    function close(entry) {
+        for (const part of [entry.image, entry.labels]) if (part && part.pool) part.pool.close();
+    }
+
     function project(name) {
         if (!checks.has(name)) {
-            checks.set(name, check(name).catch((error) => ({ refused: String(error && error.message || error) })));
+            checks.set(name, check(name).catch((error) => {
+                const refused = String(error && error.message || error);
+                return { image: { refused }, labels: { refused } };
+            }));
         }
         return checks.get(name);
     }
@@ -247,31 +295,68 @@
         checks.delete(name);
         const entry = held.get(name);
         held.delete(name);
-        if (entry && entry.pool) entry.pool.close();
+        if (entry) close(entry);
     }
+
+    // -- the tiles --------------------------------------------------------------
+
+    const png16 = (tile) => png(tile.width, tile.height, 16, 0,
+                                tile.format === "u16" ? tile.array : widen(tile.array));
+
+    /** A label tile as `read_tile` packs it: each id's low three bytes as RGB,
+     * alpha 0 (the high byte dropped, as Python drops it). */
+    function labelPng(tile, bits) {
+        const n = tile.width * tile.height;
+        const bytes = bits / 8;
+        const rgba = new Uint8Array(n * 4);
+        const from = tile.array;
+        for (let i = 0; i < n; i += 1) {
+            const at = i * bytes;
+            rgba[i * 4] = from[at];
+            if (bytes > 1) rgba[i * 4 + 1] = from[at + 1];
+            if (bytes > 2) rgba[i * 4 + 2] = from[at + 2];
+        }
+        return png(tile.width, tile.height, 8, 6, rgba);
+    }
+
+    const respond = (bytes) => new Response(bytes, {
+        status: 200,
+        headers: { "Content-Type": "image/png", "Cache-Control": "private, max-age=31536000",
+                   "X-Plexora-Served-By": "browser" },
+    });
 
     async function answer(request) {
         const url = new URL(request.url);
         const match = url.pathname.match(TILE);
-        if (!match || request.method !== "GET") return null;
-        if (url.searchParams.get("q") !== "hd" || url.searchParams.get("view")) return null;
+        if (!match || request.method !== "GET" || url.searchParams.get("view")) return null;
         const [, name, channel, level, tx, ty] = match.map((part) => decodeURIComponent(part));
+        // `_parse_channel`: a name ending `_<n>` is channel n, anything else
+        // the mask (whose tiles ignore `q`).
         const index = (/_(\d+)$/.exec(channel) || [])[1];
-        if (index === undefined) return null; // a label mask's tile
+        if (index !== undefined && url.searchParams.get("q") !== "hd") return null;
         const entry = await project(name);
-        if (!entry || !entry.pool) return null;
-        const channelNum = Number(index);
+        if (!entry.spec) return null;
         const levelNum = Number(level);
-        if (channelNum >= entry.spec.levels[0][0] || levelNum >= entry.spec.levels.length) return null;
         const [tw, th] = entry.spec.tile;
-        const tile = await entry.pool.tile(channelNum, levelNum, Number(tx), Number(ty), tw, th);
+        if (index === undefined) {
+            const part = entry.labels;
+            if (!part.pool && entry.spec.labels.pending && Date.now() - entry.checkedAt > RECHECK_MS) {
+                // The mask was being prepared; the viewer takes it on in
+                // place, so ask Python again before a later tile.
+                checks.delete(name);
+            }
+            if (!part.pool || !entry.spec.labels.levels.some(([l]) => l === levelNum)) return null;
+            const tile = await part.pool.tile(0, levelNum, Number(tx), Number(ty), tw, th, true);
+            if (!tile.width || !tile.height) return null;
+            return respond(labelPng(tile, BITS[entry.spec.labels.dtype]));
+        }
+        const part = entry.image;
+        const channelNum = Number(index);
+        if (!part.pool) return null;
+        if (channelNum >= entry.spec.levels[0][0] || levelNum >= entry.spec.levels.length) return null;
+        const tile = await part.pool.tile(channelNum, levelNum, Number(tx), Number(ty), tw, th);
         if (!tile.width || !tile.height) return null;
-        const samples = tile.format === "u16" ? tile.array : widen(tile.array);
-        return new Response(png(tile.width, tile.height, 16, 0, samples), {
-            status: 200,
-            headers: { "Content-Type": "image/png", "Cache-Control": "private, max-age=31536000",
-                       "X-Plexora-Served-By": "browser" },
-        });
+        return respond(png16(tile));
     }
 
     global.PlexoraNode = Object.freeze({ answer, project, revalidate, forget, png });

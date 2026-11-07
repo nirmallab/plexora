@@ -55,11 +55,11 @@ try {
     page.on("pageerror", (error) => errors.push(`pageerror: ${error}`.slice(0, 300)));
     page.on("console", (message) => { if (message.type() === "error") errors.push(message.text().slice(0, 300)); });
     page.on("response", (response) => {
-        const tile = response.url().match(/\/generated\/data\/.*\.png\?(.*)$/);
+        const tile = response.url().match(/\/generated\/data\/[^/]+\/([^/]+)\/\d+\/\d+_\d+\.png(?:\?(.*))?$/);
         if (tile && response.status() === 200) {
             const by = response.headers()["x-plexora-served-by"] || "python";
-            const key = `${new URLSearchParams(tile[1]).get("q") || "8bit"}:${by}`;
-            served[key] = (served[key] || 0) + 1;
+            const kind = /_\d+$/.test(tile[1]) ? (new URLSearchParams(tile[2] || "").get("q") || "8bit") : "labels";
+            served[`${kind}:${by}`] = (served[`${kind}:${by}`] || 0) + 1;
         }
         if (response.status() >= 400 && !response.url().includes("/update/check")) {
             failed.push(`${response.status()} ${response.url().replace(/^https?:\/\/[^/]+/, "")}`);
