@@ -239,7 +239,8 @@ jobs:
           VERSION: ${{ needs.preflight.outputs.version }}
         run: |
           uv run --no-sync python -m plexora.client.static_build --out "$RUNNER_TEMP/web/static" \
-            --py "https://assets.plexoraapp.com/py/$VERSION/"
+            --py "https://assets.plexoraapp.com/py/$VERSION/" \
+            --models "https://assets.plexoraapp.com/models/"
       - name: Under every bar, and every part says this version
         env:
           VERSION: ${{ needs.preflight.outputs.version }}

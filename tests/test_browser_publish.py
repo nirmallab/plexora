@@ -204,3 +204,64 @@ def test_the_preview_never_names_a_release_prefix(monkeypatch, capsys):
         _current(stub, monkeypatch, capsys)
     with pytest.raises(SystemExit, match="could not read"):
         _current(_Wrangler(broken=True), monkeypatch, capsys)
+
+
+def _models(tmp_path, monkeypatch, public):
+    """Two stand-in model files pinned as sam_weights pins the real ones, and
+    the bucket's public address answered by `public(url, method)`."""
+    files = {}
+    for name, body in {"enc.onnx": b"encoder", "dec.onnx": b"decoder"}.items():
+        (tmp_path / name).write_bytes(body)
+        files[name] = {"sha256": publish.hashlib.sha256(body).hexdigest(), "bytes": len(body)}
+    monkeypatch.setattr(publish, "_model_pins", lambda: ("mobilesam/tag/", files))
+    monkeypatch.setattr(publish, "_public", public)
+    stub = _Wrangler()
+    monkeypatch.setattr(publish, "run", stub)
+    args = type("Args", (), {"dir": str(tmp_path), "bucket": "b", "base": "https://assets.example",
+                             "wrangler": "wrangler.js"})()
+    return args, stub
+
+
+def test_the_model_files_go_up_once_and_are_read_back(tmp_path, monkeypatch, capsys):
+    stored = {}
+
+    def public(url, method="GET"):
+        name = url.rsplit("/", 1)[1]
+        body = stored.get(name)
+        if body is None:
+            return 404, {}, b""
+        return 200, {"Content-Length": str(len(body)), "Access-Control-Allow-Origin": "*"}, \
+            body if method == "GET" else b""
+
+    args, stub = _models(tmp_path, monkeypatch, public)
+    stored["dec.onnx"] = b"decoder"  # already there: left alone
+    real = stub.__call__
+
+    def put(command, **kwargs):
+        if _op(command) == ["r2", "object", "put"]:
+            stored[_key(command).rsplit("/", 1)[1]] = Path(command[command.index("--file") + 1]).read_bytes()
+        return real(command, **kwargs)
+
+    monkeypatch.setattr(publish, "run", put)
+    assert publish.models(args) == 0
+    report = json.loads(capsys.readouterr().out)
+    assert report["files"] == {"enc.onnx": "uploaded", "dec.onnx": "already there"}
+    assert [_key(call) for call in stub.calls] == ["b/models/mobilesam/tag/enc.onnx"]
+    call = stub.calls[0]
+    assert call[call.index("--cache-control") + 1] == publish.IMMUTABLE
+
+
+def test_a_model_file_that_is_not_the_pinned_one_never_goes_up(tmp_path, monkeypatch):
+    args, stub = _models(tmp_path, monkeypatch, lambda url, method="GET": (404, {}, b""))
+    (tmp_path / "enc.onnx").write_bytes(b"something else")
+    with pytest.raises(SystemExit, match="not the pinned"):
+        publish.models(args)
+    assert not stub.calls
+
+
+def test_a_different_file_already_in_the_bucket_is_never_replaced(tmp_path, monkeypatch):
+    args, stub = _models(tmp_path, monkeypatch,
+                         lambda url, method="GET": (200, {"Content-Length": "3"}, b"old"))
+    with pytest.raises(SystemExit, match="look before replacing"):
+        publish.models(args)
+    assert not stub.calls

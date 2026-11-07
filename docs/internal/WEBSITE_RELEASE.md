@@ -12,10 +12,12 @@ Magic select's runtime (onnxruntime-web) is in the bundle (`ort/`); its model
 is not: `shell.json`'s `models` (`static_build --models`, `/models/` by
 default) is the base the page fetches `mobilesam/segment-model-v1/
 mobile_sam_{encoder,decoder}.onnx` from (`vision/sam_weights.py` `WEB_DIR`;
-checked against the sha256 pins there). **Not yet published:** the two files
-go to the bucket at `models/mobilesam/segment-model-v1/` once, and the builds
-below then pass `--models https://assets.plexoraapp.com/models/`; until then
-the website's setup ends in "… is not at …".
+checked against the sha256 pins there). They are in the bucket at
+`models/mobilesam/segment-model-v1/` (published 2026-11-07 with
+`publish.py models --dir <the desktop's model folder>`, which checks the pins,
+never replaces an object and reads both back), and the builds below pass
+`--models https://assets.plexoraapp.com/models/`. A new `RELEASE_TAG` is a
+new folder: run `publish.py models` once with the new files.
 
 ## What runs where
 

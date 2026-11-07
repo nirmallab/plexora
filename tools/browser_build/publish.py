@@ -5,6 +5,7 @@
     python tools/browser_build/publish.py site --dir DIR --project NAME [--branch B]
     python tools/browser_build/publish.py prune --prefix py/dev/<sha>/
     python tools/browser_build/publish.py current [--set py/dev/<sha>/]
+    python tools/browser_build/publish.py models --dir DIR
 
 Everything goes through wrangler, logged in as the account that holds the
 zone, or with `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID` in CI. No
@@ -36,6 +37,13 @@ the encoding, the cache header and CORS: what a page on another origin with
 
 `site` deploys a static build (`python -m plexora.client.static_build`) to a
 Pages project.
+
+`models` puts magic select's model files (`vision/sam_weights.py`
+`MODEL_FILES`, from a folder that holds them -- the desktop's model folder)
+into the bucket at `models/<WEB_DIR>`, the page's `--models` base: each file
+checked against its pinned sha256 first, an object already there with the
+pinned size left alone (a release tag's files never change), each one read
+back from the public address and checked again.
 
 `current` prints the development prefix the preview site loads (recorded in
 the bucket at `py/dev/current.json`), or nothing; `--set` records a new one.
@@ -320,6 +328,67 @@ def current(args) -> int:
     return 0
 
 
+#: The bucket's public address (`models` reads back through it).
+PUBLIC = "https://assets.plexoraapp.com/"
+
+
+def _model_pins() -> tuple:
+    """(WEB_DIR, MODEL_FILES) from this checkout's vision/sam_weights.py."""
+    root = Path(__file__).resolve().parents[2]
+    if str(root) not in sys.path:
+        sys.path.insert(0, str(root))
+    from plexora.vision import sam_weights
+
+    return sam_weights.WEB_DIR, sam_weights.MODEL_FILES
+
+
+def _public(url: str, method: str = "GET") -> tuple:
+    """(status, headers, body) of the public address; body only for GET."""
+    request = urllib.request.Request(url, method=method, headers={
+        "Origin": ORIGIN, "Accept-Encoding": "identity", "User-Agent": "plexora-publish"})
+    try:
+        with urllib.request.urlopen(request, timeout=120) as response:
+            return response.status, response.headers, response.read() if method == "GET" else b""
+    except urllib.error.HTTPError as error:
+        return error.code, error.headers, b""
+
+
+def models(args) -> int:
+    folder = Path(args.dir)
+    web_dir, files = _model_pins()
+    prefix = f"models/{web_dir}"
+    base = (args.base if args.base.endswith("/") else args.base + "/") + prefix
+    for name, pin in files.items():
+        found = hashlib.sha256((folder / name).read_bytes()).hexdigest() if (folder / name).is_file() else None
+        if found != pin["sha256"]:
+            raise SystemExit(f"{folder / name}: sha256 {found}, not the pinned {pin['sha256']}")
+    command = wrangler(args.wrangler)
+    report = {}
+    for name, pin in files.items():
+        status, headers, _ = _public(base + name, "HEAD")
+        if status == 200 and int(headers.get("Content-Length") or -1) == pin["bytes"]:
+            report[name] = "already there"
+            continue
+        if status not in (404, 403):
+            raise SystemExit(f"{base}{name}: {status} with {headers.get('Content-Length')} bytes; "
+                             "not the pinned file and not absent -- look before replacing it")
+        done = run(command + ["r2", "object", "put", f"{args.bucket}/{prefix}{name}",
+                              "--file", str(folder / name), "--cache-control", IMMUTABLE,
+                              "--content-type", "application/octet-stream"])
+        if done.returncode:
+            raise SystemExit(f"{name}: {(done.stderr or done.stdout)[-400:]}")
+        report[name] = "uploaded"
+    problems = []
+    for name, pin in files.items():
+        status, headers, body = _public(base + name)
+        if status != 200 or hashlib.sha256(body).hexdigest() != pin["sha256"]:
+            problems.append(f"{name}: {status}, {len(body)} bytes")
+        elif headers.get("Access-Control-Allow-Origin") not in ("*", ORIGIN):
+            problems.append(f"{name}: no CORS for {ORIGIN}")
+    print(json.dumps({"base": base, "files": report, "problems": problems}, indent=1))
+    return 1 if problems else 0
+
+
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     parser.add_argument("--wrangler", default=None, help="wrangler, or its bin/wrangler.js")
@@ -349,6 +418,11 @@ def main(argv=None) -> int:
     here.add_argument("--set", default=None, metavar="PREFIX", help="record py/dev/<sha>/ as it")
     here.add_argument("--bucket", default=BUCKET)
     here.set_defaults(fn=current)
+    weights = commands.add_parser("models", help="put magic select's model files in the bucket")
+    weights.add_argument("--dir", required=True, help="a folder holding vision/sam_weights.py's files")
+    weights.add_argument("--bucket", default=BUCKET)
+    weights.add_argument("--base", default=PUBLIC, help="the bucket's public address")
+    weights.set_defaults(fn=models)
     args = parser.parse_args(argv)
     return args.fn(args)
 
