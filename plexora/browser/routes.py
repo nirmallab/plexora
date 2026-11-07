@@ -86,16 +86,19 @@ class Handoff(NamedTuple):
 
 
 #: The buttons a notice can offer (services/handoff.js): the desktop app
-#: opened (on this project, when there is one), its download page, and the
-#: node pairing flow (a node started on the server, paired with this browser).
-ACTIONS = ("open_desktop", "get_desktop", "pair_node")
+#: opened (on this project, when there is one), its download page, the node
+#: pairing flow (a node started on the server, paired with this browser), and
+#: Google Cloud, which the website reaches without SSH (plan L9: a VM that
+#: runs its own node, opened at its own address).
+ACTIONS = ("open_desktop", "get_desktop", "pair_node", "google_cloud")
 
 # A web page cannot open a TCP socket, so it cannot run ssh. Remote data keeps
 # its zero-cost routes: the desktop app (or the small connector), a node the
 # cluster's portal starts, or a tunnel the user opens (plan decision 1).
 _SSH = Handoff("desktop", "Connect from the desktop app",
                "A web page cannot open an SSH connection: use the desktop app, "
-               "or pair a node started on the server.", ("open_desktop", "pair_node"))
+               "or pair a node started on the server.",
+               ("open_desktop", "pair_node", "google_cloud"))
 # An installed program's own business: the website is always the current
 # version, and there is nothing to stop.
 _UPDATES = Handoff("none", "Always up to date",

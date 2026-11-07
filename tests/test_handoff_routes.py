@@ -81,9 +81,11 @@ def test_every_notice_offers_only_known_actions(endpoint):
 
 def test_ssh_offers_the_desktop_app_and_a_paired_node():
     """Decision 1: SSH keeps its zero-cost routes -- the desktop app, or a node
-    started on the server (and paired with this browser)."""
+    started on the server (and paired with this browser) -- and Google Cloud,
+    which the website reaches without SSH since plan L9."""
     for endpoint in SSH:
-        assert routes.HANDOFF[endpoint].actions == ("open_desktop", "pair_node"), endpoint
+        assert routes.HANDOFF[endpoint].actions == ("open_desktop", "pair_node",
+                                                    "google_cloud"), endpoint
 
 
 def test_the_route_table_carries_every_notice_to_the_page():

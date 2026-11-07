@@ -184,6 +184,9 @@
         }
         const python = global.PlexoraPython;
         if (!python) return json({ success: false, error: "Plexora's Python is not loaded" }, 503);
+        // A Google Cloud request carries the page's Google access token
+        // (services/googleAuth.js) to Python for this request only (plan L9).
+        if (global.PlexoraGoogleAuth) request = global.PlexoraGoogleAuth.sign(request, route);
         return python.fetch(request);
     }
 
