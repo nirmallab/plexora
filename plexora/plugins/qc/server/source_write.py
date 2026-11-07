@@ -382,37 +382,43 @@ def _write_flat(dataset, kind, qc, seg, replace):
     import tempfile
 
     from plexora.server.models.adapters import read_flat_table, write_flat_table
+    from plexora.server.utils import source_writes
 
     source = dataset.table.source
-    frame = read_flat_table(source.path, kind)
-    added = []
-    if qc is not None:
-        added += [_flat_series(name, qc[0][name]) for name in qc[0].columns]
-    if seg is not None:
-        added += [seg[0][name] for name in seg[0].columns]
-    written = [s.name for s in added]
-    taken = [c for c in written if c in frame.columns]
-    if taken and not replace:
-        raise Exists(taken)
-    if frame.height != (added[0].len() if added else frame.height):
-        raise ValueError(f"this project's table has {added[0].len()} cells but the file now "
-                         f"has {frame.height} rows; reopen the project and try again")
-    folder = _backup_folder(dataset)
-    backup = None
-    if folder is not None:
-        backup = str(folder / Path(source.path).name)
-        shutil.copy2(source.path, backup)
-    frame = frame.with_columns(added)
-    directory = os.path.dirname(os.path.abspath(source.path)) or "."
-    handle, temporary = tempfile.mkstemp(suffix=Path(source.path).suffix, dir=directory)
-    os.close(handle)
-    try:
-        write_flat_table(frame, temporary, kind)
-        os.replace(temporary, source.path)
-    except BaseException:
-        with contextlib.suppress(OSError):
-            os.unlink(temporary)
-        raise
+    # On the website a picked file is written as a staged copy the page saves
+    # over the original (server/utils/source_writes.py), read from it (Pyodide's
+    # polars cannot read the page's read-only mount), and refused there before
+    # anything -- the backup included -- unless the user allowed it.
+    with source_writes.writable(source.path) as target:
+        frame = read_flat_table(target, kind)
+        added = []
+        if qc is not None:
+            added += [_flat_series(name, qc[0][name]) for name in qc[0].columns]
+        if seg is not None:
+            added += [seg[0][name] for name in seg[0].columns]
+        written = [s.name for s in added]
+        taken = [c for c in written if c in frame.columns]
+        if taken and not replace:
+            raise Exists(taken)
+        if frame.height != (added[0].len() if added else frame.height):
+            raise ValueError(f"this project's table has {added[0].len()} cells but the file now "
+                             f"has {frame.height} rows; reopen the project and try again")
+        folder = _backup_folder(dataset)
+        backup = None
+        if folder is not None:
+            backup = str(folder / Path(source.path).name)
+            shutil.copy2(target, backup)
+        frame = frame.with_columns(added)
+        directory = os.path.dirname(os.path.abspath(target)) or "."
+        handle, temporary = tempfile.mkstemp(suffix=Path(target).suffix, dir=directory)
+        os.close(handle)
+        try:
+            write_flat_table(frame, temporary, kind)
+            os.replace(temporary, target)
+        except BaseException:
+            with contextlib.suppress(OSError):
+                os.unlink(temporary)
+            raise
     passes = qc[0]["plexora_qc_pass"].to_list() if qc is not None else []
     return {"path": source.path, "columns": written, "n_cells": frame.height,
             "n_fail": sum(1 for v in passes if v is False), "backup": backup,
@@ -614,6 +620,11 @@ def _write_anndata(dataset, payload, qc, seg, replace):
         existing.append(f"uns/{SEG_UNS_KEY}")
     if existing and not replace:
         raise Exists(existing)
+    # On the website: refused before the backup when the user has not
+    # allowed saving into the file (server/utils/source_writes.py).
+    from plexora.server.utils import source_writes
+
+    source_writes.check(path)
     backup = _backup(dataset, obs)
     at = _obs_positions(dataset, obs, mask)
     if seg is not None:

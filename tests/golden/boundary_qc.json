@@ -99,7 +99,7 @@
       ],
       "scripts": [
         "/client/src/js/services/passVariablesToFrontend.js?v=20260910_unreachable_message",
-        "/client/src/js/services/desktopBridge.js?v=20261107_local_files",
+        "/client/src/js/services/desktopBridge.js?v=20261107_open_website",
         "/client/src/js/services/backend.js?v=20261107_gcloud",
         "/client/src/js/services/appStatus.js?v=20260926_help_menu",
         "/client/src/js/services/telemetry.js?v=20260928_qc_owner",
@@ -331,7 +331,7 @@
       ],
       "scripts": [
         "/client/src/js/services/passVariablesToFrontend.js?v=20260910_unreachable_message",
-        "/client/src/js/services/desktopBridge.js?v=20261107_local_files",
+        "/client/src/js/services/desktopBridge.js?v=20261107_open_website",
         "/client/src/js/services/backend.js?v=20261107_gcloud",
         "/client/src/js/services/appStatus.js?v=20260926_help_menu",
         "/client/src/js/services/telemetry.js?v=20260928_qc_owner",
@@ -761,7 +761,7 @@
       ],
       "scripts": [
         "/client/src/js/services/passVariablesToFrontend.js?v=20260910_unreachable_message",
-        "/client/src/js/services/desktopBridge.js?v=20261107_local_files",
+        "/client/src/js/services/desktopBridge.js?v=20261107_open_website",
         "/client/src/js/services/backend.js?v=20261107_gcloud",
         "/client/src/js/services/appStatus.js?v=20260926_help_menu",
         "/client/src/js/services/telemetry.js?v=20260928_qc_owner",
@@ -946,7 +946,7 @@
       ]
     }
   },
-  "route_count": 313,
+  "route_count": 314,
   "routes": [
     "DELETE /nodes/<name>/resources/<resource_id>",
     "DELETE /project/<string:name>/layers/<path:layer_id>",
@@ -981,6 +981,7 @@
     "GET /datasets/scan/<token>/create",
     "GET /datasets/scan/<token>/spec",
     "GET /desktop/info",
+    "GET /desktop/website",
     "GET /display_contrast",
     "GET /edit_config",
     "GET /edit_config/<string:name>",

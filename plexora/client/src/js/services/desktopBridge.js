@@ -493,10 +493,38 @@
         document.getElementById("nav_open_in_browser")?.addEventListener("click", () => {
             openInBrowser();
         });
+        offerWebsite(document.getElementById("nav_open_website"));
     });
 
+    // -- File > Open on the Website (plexora/website_link.py) -----------------
+    //
+    // Shown only once the server says so: the website open to everyone (its
+    // flags, the GA switch) and a project on this page. A project in the
+    // library the website shares opens there in the user's browser; any other
+    // gets one line saying where it has to be.
+
+    function websiteFor(project) {
+        return fetch(`${base()}/desktop/website?datasource=${encodeURIComponent(project)}`)
+            .then((response) => (response.ok ? response.json() : null)).catch(() => null);
+    }
+
+    function offerWebsite(row) {
+        const project = window.flaskVariables && window.flaskVariables.datasource;
+        if (!row || !project) return;
+        websiteFor(project).then((answer) => {
+            if (!answer || !answer.shown) return;
+            row.style.display = "";
+            row.addEventListener("click", async () => {
+                const now = await websiteFor(project);
+                if (now && now.url) api.openUrl(now.url).catch(() => {});
+                else if (now && now.message) toast({ title: "Not in " + now.library, note: now.message });
+            });
+        });
+    }
+
     // Exposed for the probe in tests/js; not part of the page API.
-    api._internal = {runMenu, menuTarget, cssPoint, openPaths, onNativeDrop, shellChord, runRow, keyHint};
+    api._internal = {runMenu, menuTarget, cssPoint, openPaths, onNativeDrop, shellChord, runRow, keyHint,
+                     offerWebsite};
 
     window.PlexoraDesktop = Object.freeze(api);
 })();

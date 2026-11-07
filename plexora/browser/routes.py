@@ -193,6 +193,9 @@ PYTHON = (
     "project_bundle", "projects_import_bundle", "project_size",
     "project_attach_resource", "project_thumbnail", "list_projects", "assign_projects", "put_file",
     "reload_datasource", "remote_health", "rename_channels_json", "set_pixel_size",
+    # File > Open on the Website (plexora/website_link.py): `shown: false` here,
+    # as off any desktop app's server; the row is the desktop window's.
+    "desktop_website",
     # Google Cloud over its JSON APIs with the page's sign-in (plan L9:
     # plexora/gcloud_rest.py, services/googleAuth.js); the website's VM runs a
     # node the page hands the user to, so no SSH is involved.

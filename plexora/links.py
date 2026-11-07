@@ -40,3 +40,13 @@ START_URL = f"{ACCOUNT_URL}/start?product=plexora"
 #: covers the free app only. A seat bought there comes with a licence key by
 #: email, kept under Licences in the portal.
 PRICING_URL = "https://biocognia.com/#pricing"
+
+#: The website: Plexora in a browser tab, nothing installed. A project's page
+#: there is this plus the project's name (plexora/website_link.py).
+WEBSITE_URL = "https://viewer.plexoraapp.com/"
+
+#: The website's switches (`tools/browser_build/publish.py flags`): `viewer`
+#: "on" once it is open to everyone (the GA cut-over), "preview" before,
+#: "desktop-only" when it is paused. The desktop app shows "Open on the
+#: Website" only while it says "on".
+WEBSITE_FLAGS_URL = "https://assets.plexoraapp.com/flags.json"

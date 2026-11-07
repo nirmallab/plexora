@@ -391,6 +391,8 @@
         await script(at("/client/src/js/services/pythonClient.js"));
         await script(at("/client/src/js/services/backend.js"));
         await script(at("/client/src/js/services/pickedFiles.js"));
+        // Saving into a picked file Python wrote (Settings > Data, off by default).
+        await script(at("/client/src/js/services/sourceWrites.js"));
         await script(at("/client/src/js/services/browserNode.js"));
         await script(at("/client/src/js/services/browserSlides.js"));
         await script(at("/client/src/js/services/browserTable.js"));

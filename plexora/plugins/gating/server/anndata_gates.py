@@ -120,7 +120,26 @@ def _open_group(path: str, writable: bool = False):
     (real stores mix the two), leaving a store whose tables have vanished.
     Nothing needs it anyway; a root index enumerates which elements exist,
     and adding a key inside a table does not change that.
+
+    On the website a picked file is written as a staged copy the page then
+    saves over the original (server/utils/source_writes.py): `writable` names
+    the copy, and a read meanwhile reads it -- so the several opens of one
+    save (gates, provenance, versions, the classifier's batches) all write the
+    one copy, and the page saves it once.
     """
+    from plexora.server.utils import source_writes
+
+    if not writable:
+        with _open_group_at(source_writes.current(path), False) as group:
+            yield group
+        return
+    with source_writes.writable(path) as target, _open_group_at(target, True) as group:
+        yield group
+
+
+@contextlib.contextmanager
+def _open_group_at(path: str, writable: bool):
+    """`_open_group` on the file or store actually opened."""
     if Path(path).is_dir():
         import zarr
 

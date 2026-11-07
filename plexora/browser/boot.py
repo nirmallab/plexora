@@ -19,7 +19,10 @@ arrive as callables -- so the same boot runs under CPython in the tests
   select's model run (plexora/browser/sam_page.py) -- or None. numpy arrays
   at the top level of `args` cross as `{dtype, shape, data}`;
 - `wait_on(promise)`: wait for a promise (the network) while the page is
-  served.
+  served;
+- `deliver(source, staged)`: a picked file Python wrote, as a staged copy,
+  handed to the page to save over the original (server/utils/
+  source_writes.py; the worker's `plexoraSourceWrite`).
 
 What it does, in order: the environment the app reads at build; the
 `imagecodecs` stand-in, before anything imports tifffile; the standard
@@ -259,7 +262,7 @@ def without_jspi(sleep=time.sleep) -> bool:
 
 def start(origin: str, *, base_url: str = "", post=None, cancelled=None, idle=None, waiting=None,
           columns=None, ask=None, wait_on=None, jspi: bool = True, sleep=None,
-          data_root: str = "/data",
+          deliver=None, data_root: str = "/data",
           licence_dir: str = "/bioc", telemetry: dict | None = None) -> dict:
     """Boot once; returns what the page shows in its status chip and records:
     `{version, rules, seconds, shims}`. `jspi` False: the browser has no JSPI,
@@ -283,6 +286,12 @@ def start(origin: str, *, base_url: str = "", post=None, cancelled=None, idle=No
     browser_provider.set_column_source(columns)
     browser_provider.set_asker(ask)
     licence.set_asker(ask)
+
+    from plexora.server.utils import source_writes
+
+    # Saving into a picked file: the user's setting is the page's answer, and
+    # the staged copy is the page's to save (services/sourceWrites.js).
+    source_writes.configure(ask=ask, deliver=deliver)
 
     from plexora.browser import sam_page
 

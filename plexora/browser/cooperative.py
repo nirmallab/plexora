@@ -58,8 +58,13 @@ def step(budget_ms: float = 50.0, background: bool = True) -> dict:
     on. `{ran, pending, background, names}`: the tasks still queued that are
     not background and those that are, and `names` the tasks that ran (what
     the page records when a step was long)."""
+    from plexora.server.utils import source_writes
+
     names = []
-    ran = _work.run_pending(budget_s=max(0.0, budget_ms) / 1000.0, ran=names,
-                            background=background)
+    # A job's write into a picked file goes to the page as the step ends
+    # (server/utils/source_writes.py), as a request's does.
+    with source_writes.batch():
+        ran = _work.run_pending(budget_s=max(0.0, budget_ms) / 1000.0, ran=names,
+                                background=background)
     return {"ran": ran, "pending": _work.pending(background=False),
             "background": _work.pending(background=True), "names": names}
