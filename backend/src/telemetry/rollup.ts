@@ -69,6 +69,16 @@ export const PERF_DIMS: Record<string, string[]> = {
   'tool.summary': ['tool', 'runtime'],
 };
 
+/**
+ * Counter events with only `count` keys, folded into performance_rollups as
+ * counts (n, ok = n, no bins), split by these dims: the website's loader
+ * counting the browsers it asks to update (`site.summary`.`refused`), shown
+ * on the Performance page by browser, version and OS.
+ */
+export const COUNT_DIMS: Record<string, string[]> = {
+  'site.summary': ['browser', 'major', 'os'],
+};
+
 /** Record props with this dim subset, for band-valued (ms_labels) props. */
 const RECORD_PERF_DIMS = ['kind', 'modality', 'runtime'];
 
@@ -155,6 +165,19 @@ function perfCounterStatement(type: string): Folded {
         SUM(json_extract(r.value, '$.s')), MAX(json_extract(r.value, '$.mx')), ${binsOf(keys)}
       ${ROWS}
       WHERE ${SLICE} AND ${TYPE(type)} AND ${K} IN (${keys.map((k) => `'${k}'`).join(', ')})
+      GROUP BY 2, 3, 4
+      ${PERF_UPSERT}`,
+  };
+}
+
+function countCounterStatement(type: string): Folded {
+  const dims = COUNT_DIMS[type] ?? [];
+  const zeros = BINS.map(() => '0').join(', ');
+  return {
+    sql: `INSERT INTO performance_rollups (day, version, metric, dims_key, n, ok, err, sum, max, ${BIN_COLS})
+      SELECT ?1, ${VERSION}, '${type}.' || ${K}, ${dimsKey(dims, DIM)}, SUM(${N}), SUM(${N}), 0, NULL, NULL, ${zeros}
+      ${ROWS}
+      WHERE ${SLICE} AND ${TYPE(type)}
       GROUP BY 2, 3, 4
       ${PERF_UPSERT}`,
   };
@@ -300,6 +323,7 @@ export const FOLD_STATEMENTS: Folded[] = [
     extra: () => [JSON.stringify(SCALE_DIMS)],
   },
   ...Object.keys(PERF_DIMS).map(perfCounterStatement),
+  ...Object.keys(COUNT_DIMS).map(countCounterStatement),
   perfRecordStatement(),
   {
     sql: `INSERT INTO error_daily (day, version, fp, n, installs)

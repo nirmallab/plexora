@@ -2737,6 +2737,41 @@
     }
    }
   },
+  "site.summary": {
+   "keys": {
+    "refused": {
+     "agg": "count",
+     "dims": {
+      "browser": {
+       "m": "anonymous",
+       "t": "enum",
+       "v": [
+        "chrome",
+        "edge"
+       ]
+      },
+      "major": {
+       "m": "anonymous",
+       "max": 999,
+       "t": "int"
+      },
+      "os": {
+       "m": "anonymous",
+       "t": "enum",
+       "v": [
+        "mac",
+        "windows",
+        "linux",
+        "other"
+       ]
+      }
+     },
+     "m": "anonymous"
+    }
+   },
+   "kind": "counter",
+   "priority": 4
+  },
   "telemetry.health": {
    "keys": {
     "dropped": {
@@ -2884,7 +2919,7 @@
   "rotate",
   "flip"
  ],
- "fingerprint": "68c8d195594ac126",
+ "fingerprint": "bae44f6538cfbaff",
  "first_party": [
   "core",
   "cell_explorer",
