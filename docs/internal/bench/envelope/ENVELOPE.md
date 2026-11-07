@@ -14,7 +14,7 @@ computer against them.
 | batch | `limit_s` 600, `per_image_s` {"gating.apply_to_dataset": 0.75} | 2026-11-07: apply_gate_to_dataset on CPython, this i9, 4 images of 99,856 cells each: 2.44 s, 0.61 s an image; x 1.22, P9's slowest Pyodide/CPython ratio. A job's own pace replaces it once the job has done a step. |
 | model | `wasm_click_s` 0.95 | 2026-11-07: MobileSAM's encoder on onnxruntime-web's WebAssembly EP in Chrome, this i9 (WebGPU 0.04-0.07 s; the desktop's CPU 0.38-0.41 s) |
 | stall | `tiles` 50, `skip` 50, `p95_ms` 150, `node_p95_ms` 35 | 2026-11-07, the envelope's media row: tiles from NVMe p95 35 ms; T_read_p95 150 ms (a slow share). The first 50 tiles of a page are the open's own, not counted. |
-| selfcheck | `pyramid_bytes_per_second` 250000000 | 2026-11-07: the self-check page (/selfcheck) on the reference computer (the i9 of P7, 24 threads, 12 band workers, Chrome 156, quiet): its 2 x 8192 x 16384 uint16 image built in 2.06-2.17 s, median 250 MB/s over 3 runs. Another computer's build rate on a real image is P7's 348 MB/s scaled by its own self-check rate over this one. |
+| selfcheck | `pyramid_bytes_per_second` 227000000 | 2026-11-07: the self-check page (/selfcheck) on the reference computer (the i9 of P7, 24 threads, 12 band workers, Chrome 156, quiet): its 2 x 8192 x 8192 uint16 image built in 1.17-1.24 s, median 227 MB/s over 3 runs. Another computer's build rate on a real image is P7's 348 MB/s scaled by its own self-check rate over this one. |
 
 ## Computers (self-check records)
 

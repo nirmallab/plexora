@@ -48,8 +48,30 @@
     const MEMORY_WORKER = at("/client/src/js/workers/selfcheckMemory.js");
     const WORKERS = Math.max(1, Math.min(12, (global.navigator.hardwareConcurrency || 4) - 2));
     const GB = 1e9;
+    //: The run so far, kept as each step starts and ends: a browser that
+    //: closes the page mid-step (out of memory: Chrome's "Error code: 5")
+    //: leaves the steps before it and the one it died in.
+    const PROGRESS = "plexora-selfcheck";
+    //: A pyramid build that has not finished a tile for this long has stopped.
+    const STALLED_MS = 60000;
+    const LABELS = { browser: "Browser", storage: "Storage", gpu: "GPU", memory: "Memory",
+                     download: "Download", python: "Python", pyramid: "Pyramid" };
 
     let results = null;
+
+    function keep(out) {
+        try {
+            global.localStorage.setItem(PROGRESS, JSON.stringify(out));
+        } catch (error) { /* not kept: a crash leaves no trace */ }
+    }
+
+    function kept() {
+        try {
+            return JSON.parse(global.localStorage.getItem(PROGRESS) || "null");
+        } catch (error) {
+            return null;
+        }
+    }
 
     const round = (value, digits = 1) => Math.round(value * 10 ** digits) / 10 ** digits;
     const gb = (bytes) => (bytes >= 10 * GB ? `${Math.round(bytes / GB)} GB` : `${round(bytes / GB)} GB`);
@@ -249,8 +271,7 @@
     }
 
     async function pyramid(limits, found) {
-        const small = (found.detail.memory_gb || 8) <= 4;
-        const [channels, height, width] = [2, 8192, small ? 8192 : 16384];
+        const [channels, height, width] = [2, 8192, 8192];
         const raw = channels * height * width * 2;
         const image = limits.image || {};
         const perWorker = Number(image.build_bytes_per_second_per_worker) || 29e6;
@@ -263,16 +284,24 @@
         const t0 = performance.now();
         const done = await new Promise((resolve, reject) => {
             const worker = new Worker(PYRAMID_WORKER, { type: "module" });
+            let watchdog = null;
+            const stop = (fn, value) => {
+                global.clearTimeout(watchdog);
+                worker.terminate();
+                fn(value);
+            };
+            const watch = () => {
+                global.clearTimeout(watchdog);
+                watchdog = global.setTimeout(() => stop(reject, new Error(
+                    `the build stopped: no progress for ${STALLED_MS / 1000} s`)), STALLED_MS);
+            };
+            watch();
             worker.onmessage = ({ data }) => {
-                if (data.progress) return;
-                worker.terminate();
-                if (data.error) reject(new Error(data.error));
-                else resolve(data);
+                if (data.progress) return watch();
+                if (data.error) stop(reject, new Error(data.error));
+                else stop(resolve, data);
             };
-            worker.onerror = (event) => {
-                worker.terminate();
-                reject(new Error(event.message || "the pyramid worker failed"));
-            };
+            worker.onerror = (event) => stop(reject, new Error(event.message || "the pyramid worker failed"));
             worker.postMessage({ op: "build", file, key, name: "selfcheck.ome.tif", kind: "image",
                                  shape: [channels, height, width], dtype: "uint16",
                                  factors: factorsFor(height, width, tile), tile,
@@ -299,11 +328,12 @@
 
     // -- memory ---------------------------------------------------------------------
 
-    function memory(limits, found) {
+    function memory(limits, found, reached = () => {}) {
         return new Promise((resolve, reject) => {
             const worker = new Worker(MEMORY_WORKER);
             const t0 = performance.now();
             worker.onmessage = ({ data }) => {
+                if (data.reached !== undefined) return reached(data.reached);
                 worker.terminate();
                 const table = limits.table || {};
                 const values = Number(table.worker_values) || 40e6;
@@ -362,27 +392,57 @@
         tr.className = step.state || "";
     }
 
-    async function run() {
+    //: A run the browser ended mid-step, as the page shows it after a reload:
+    //: the steps it measured, and the one it stopped in.
+    function stopped(previous) {
+        const key = previous.running;
+        const reached = key === "memory" && previous.memory_reached ? ` after ${gb(previous.memory_reached)}` : "";
+        return { ...previous, running: null, ok: false, crashed: key,
+                 steps: { ...previous.steps, [key]: {
+                     key, ok: false, label: LABELS[key] || key, value: "Stopped",
+                     here: `The browser closed the page during this step${reached}`,
+                     detail: { crashed: true, memory_reached: previous.memory_reached || null } } } };
+    }
+
+    function show(table, out) {
+        if (!table) return;
+        for (const step of Object.values(out.steps || {})) row(table, { ...step, state: step.ok ? "done" : "failed" });
+    }
+
+    /** Every step, or -- `resume`, a run the browser ended -- the steps it did
+     *  not reach, the one it stopped in left as stopped. */
+    async function run({ resume = null } = {}) {
         const table = global.document.getElementById("selfcheck-results");
         const shell = await json(at("/client/shell.json"), { cache: "no-store" });
         const limits = await json(at("/client/src/envelope.json"), { cache: "no-store" });
         const py = shell.py.endsWith("/") ? shell.py : `${shell.py}/`;
         const manifest = await json(`${py}manifest.json`, { cache: "no-store" });
-        const out = { selfcheck: 1, date: new Date().toISOString(), version: shell.version,
-                      python_bundle: manifest.plexora || null, envelope: limits.version || null, steps: {} };
+        const out = resume ? { ...resume, resumed: (resume.resumed || 0) + 1 }
+            : { selfcheck: 1, date: new Date().toISOString(), version: shell.version,
+                python_bundle: manifest.plexora || null, envelope: limits.version || null, steps: {} };
         results = out;
-        let found = null;
+        show(table, out);
+        let found = out.steps.browser && out.steps.browser.ok ? out.steps.browser : null;
+        // The cheap steps first, then memory before Python's heap is there,
+        // then what a first visit does.
         const plan = [
-            ["browser", "Browser", () => browser()],
-            ["storage", "Storage", () => storage(found)],
-            ["download", "Download", () => download(shell, manifest)],
-            ["python", "Python", () => python(shell)],
-            ["pyramid", "Pyramid", () => pyramid(limits, found)],
-            ["memory", "Memory", () => memory(limits, found)],
-            ["gpu", "GPU", () => gpu(limits)],
+            ["browser", () => browser()],
+            ["storage", () => storage(found || { detail: {} })],
+            ["gpu", () => gpu(limits)],
+            ["memory", () => memory(limits, found || { detail: {} }, (bytes) => {
+                out.memory_reached = bytes;
+                keep(out);
+            })],
+            ["download", () => download(shell, manifest)],
+            ["python", () => python(shell)],
+            ["pyramid", () => pyramid(limits, found || { detail: {} })],
         ];
-        for (const [key, label, measure] of plan) {
-            if (table) row(table, { key, label, value: "Measuring…", state: "running" });
+        for (const [key, measure] of plan) {
+            if (out.steps[key]) continue;
+            const label = LABELS[key];
+            if (table) row(table, { key, label, value: "Measuring\u2026", state: "running" });
+            out.running = key;
+            keep(out);
             let step;
             try {
                 step = { key, ok: true, ...(await measure()) };
@@ -390,11 +450,15 @@
                 step = { key, ok: false, label, value: "Failed", here: String(error && error.message || error).slice(0, 200),
                          detail: { error: String(error && error.message || error) } };
             }
-            if (key === "browser") found = step.ok ? step : { detail: {} };
+            if (key === "browser") found = step.ok ? step : null;
             out.steps[key] = step;
+            out.running = null;
+            keep(out);
             if (table) row(table, { ...step, state: step.ok ? "done" : "failed" });
         }
+        delete out.running;
         out.ok = Object.values(out.steps).every((step) => step.ok);
+        keep(out);
         return out;
     }
 
@@ -414,13 +478,33 @@
         const start = global.document.getElementById("selfcheck-run");
         const download = global.document.getElementById("selfcheck-save");
         if (!start) return;
+        const table = global.document.getElementById("selfcheck-results");
+        let resume = null;
+        const previous = kept();
+        if (previous && previous.selfcheck === 1 && previous.steps) {
+            // The last run, as it ended -- or as far as it got, when the
+            // browser closed the page: then Run continues after that step.
+            results = previous.running ? stopped(previous) : previous;
+            show(table, results);
+            download.disabled = false;
+            global.document.body.dataset.state = results.crashed ? "stopped" : results.ok ? "done" : "failed";
+            if (results.crashed) {
+                resume = results;
+                keep(results);
+                start.textContent = "Continue the check";
+            }
+        }
         start.addEventListener("click", async () => {
             start.disabled = true;
             download.disabled = true;
             global.document.body.dataset.state = "running";
+            if (!resume && table) table.textContent = "";
             try {
-                await run();
+                await run({ resume });
             } finally {
+                resume = null;
+                start.textContent = "Run the check";
+                start.disabled = false;
                 global.document.body.dataset.state = results && results.ok ? "done" : "failed";
                 download.disabled = !results;
             }

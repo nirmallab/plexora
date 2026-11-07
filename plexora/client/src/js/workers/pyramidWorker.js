@@ -40,12 +40,24 @@ function startHands(url, count, file) {
             if (data.ok) entry.resolve(data.result);
             else entry.reject(new Error(data.error));
         };
+        // A hand that dies (out of memory, a script that fails to load)
+        // answers nothing: what it was asked fails now, or the build would
+        // wait for it forever.
+        worker.onerror = (event) => {
+            if (event && event.preventDefault) event.preventDefault();
+            const why = new Error(`a reader worker stopped: ${(event && event.message) || "no reason given"}`);
+            for (const [id, entry] of pending) {
+                if (entry.hand !== i) continue;
+                pending.delete(id);
+                entry.reject(why);
+            }
+        };
         workers.push(worker);
         load.push(0);
     }
     const call = (i, op, args, transfer = []) => new Promise((resolve, reject) => {
         const id = nextId++;
-        pending.set(id, { resolve, reject });
+        pending.set(id, { resolve, reject, hand: i });
         load[i] += 1;
         workers[i].postMessage({ id, op, ...args }, transfer);
     }).finally(() => { load[i] -= 1; });

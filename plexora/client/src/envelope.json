@@ -32,7 +32,7 @@
         "measured": "2026-11-07, the envelope's media row: tiles from NVMe p95 35 ms; T_read_p95 150 ms (a slow share). The first 50 tiles of a page are the open's own, not counted."
     },
     "selfcheck": {
-        "pyramid_bytes_per_second": 250000000,
-        "measured": "2026-11-07: the self-check page (/selfcheck) on the reference computer (the i9 of P7, 24 threads, 12 band workers, Chrome 156, quiet): its 2 x 8192 x 16384 uint16 image built in 2.06-2.17 s, median 250 MB/s over 3 runs. Another computer's build rate on a real image is P7's 348 MB/s scaled by its own self-check rate over this one."
+        "pyramid_bytes_per_second": 227000000,
+        "measured": "2026-11-07: the self-check page (/selfcheck) on the reference computer (the i9 of P7, 24 threads, 12 band workers, Chrome 156, quiet): its 2 x 8192 x 8192 uint16 image built in 1.17-1.24 s, median 227 MB/s over 3 runs. Another computer's build rate on a real image is P7's 348 MB/s scaled by its own self-check rate over this one."
     }
 }

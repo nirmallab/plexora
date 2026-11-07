@@ -104,6 +104,39 @@ try {
     out.download = { name: file.suggestedFilename() };
     check("Download results saves the same results", /^plexora-selfcheck-\d{4}-\d\d-\d\d\.json$/.test(file.suggestedFilename())
           && saved.selfcheck === 1 && JSON.stringify(saved.steps) === JSON.stringify(results.steps));
+
+    // A browser that closes the page mid-step (Chrome's "Error code: 5" when
+    // it runs out of memory): as the page kept it, the memory step running
+    // with 1 GiB reached, and nothing after it measured.
+    await page.evaluate(() => {
+        const run = JSON.parse(localStorage.getItem("plexora-selfcheck"));
+        for (const key of ["memory", "download", "python", "pyramid"]) delete run.steps[key];
+        run.running = "memory";
+        run.memory_reached = 1 << 30;
+        delete run.ok;
+        localStorage.setItem("plexora-selfcheck", JSON.stringify(run));
+    });
+    await page.reload();
+    const after = await page.evaluate(() => ({
+        state: document.body.dataset.state,
+        button: document.getElementById("selfcheck-run").textContent,
+        download: !document.getElementById("selfcheck-save").disabled,
+        rows: [...document.querySelectorAll("#selfcheck-results tr")].map((tr) => [...tr.children].map((td) => td.textContent)),
+        results: window.PlexoraSelfcheck.results,
+    }));
+    const memoryRow = after.rows.find(([label]) => label === "Memory") || [];
+    check("after a crash the page shows how far it got, and offers the results", after.state === "stopped"
+          && after.download && after.button === "Continue the check" && after.results.crashed === "memory"
+          && memoryRow[1] === "Stopped" && /closed the page during this step after 1\.1 GB/.test(memoryRow[2] || ""),
+          { after: { ...after, results: undefined } });
+    await page.click("#selfcheck-run");
+    await page.waitForFunction(() => ["done", "failed"].includes(document.body.dataset.state), null, { timeout: 600000 });
+    const resumed = await page.evaluate(() => window.PlexoraSelfcheck.results);
+    const measuredAgain = ["download", "python", "pyramid"].every((key) => resumed.steps[key] && resumed.steps[key].ok);
+    check("Continue measures the steps after the one that stopped, and leaves that one stopped", measuredAgain
+          && resumed.steps.memory.detail.crashed && resumed.resumed === 1 && resumed.ok === false
+          && resumed.steps.browser.detail.engine === results.steps.browser.detail.engine,
+          { steps: Object.fromEntries(Object.entries(resumed.steps).map(([k, s]) => [k, s.value])) });
     check("no Content-Security-Policy violation", violations.length === 0, { violations });
     check("no page errors", out.errors.length === 0, { errors: out.errors });
 } catch (error) {

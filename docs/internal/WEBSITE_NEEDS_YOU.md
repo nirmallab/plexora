@@ -6,7 +6,8 @@ state is on `web/phase0`. Each item says what to do and what it unblocks.
 Nothing here has been done for you: nothing pushed, nothing deployed beyond
 the preview, no DNS changed after assets.plexoraapp.com.
 
-Last updated: 2026-11-07 (web/phase0 at 82deda52 and later).
+Last updated: 2026-11-07 (web/phase0 at 39a42309 and later; the preview runs
+its bundle `py/dev/39a42309569f/`, with /selfcheck).
 
 ## 1. Deploys (in this order)
 
