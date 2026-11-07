@@ -119,8 +119,10 @@ def write_config(path, config) -> None:
     notebook sidecar and a CLI server can share one data directory).
     """
     path = Path(path)
-    # The paths as recorded, so the other app's survive (server/models/sources.py).
-    config = sources.record_config(config)
+    # The paths as recorded, so the other app's survive; in a registry the
+    # website shares, with this computer's files identified for it
+    # (server/models/sources.py).
+    config = sources.record_config(config, shared=paths.is_website_library(path.parent))
     with _CONFIG_LOCK:
         path.parent.mkdir(parents=True, exist_ok=True)
         tmp = path.with_name(f"{path.name}.{os.getpid()}.tmp")

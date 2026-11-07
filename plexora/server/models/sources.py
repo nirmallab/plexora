@@ -24,7 +24,9 @@ other's inverse.
 On the website, `record_config` also adds the identity of every page file a
 project names that the map does not have yet: that is what lets the desktop
 app find the same file on this computer (server/utils/relink.py) without
-asking.
+asking. The desktop app does the same for the files on its disk, but only in
+a registry the website shares (`shared=True`: the website's projects on this
+computer), so the website can match them in a folder the user grants.
 """
 
 from __future__ import annotations
@@ -80,9 +82,11 @@ def localize(entry: dict, me: Optional[str] = None) -> dict:
     return _replace(entry, mapping) if mapping else entry
 
 
-def record(entry: dict, me: Optional[str] = None, *, identify: Optional[Callable] = None) -> dict:
+def record(entry: dict, me: Optional[str] = None, *, identify: Optional[Callable] = None,
+           wanted: Optional[Callable] = None) -> dict:
     """One project entry as it is written: the recorded paths, and -- with
-    `identify` -- the identity of every page file it names that the map lacks."""
+    `identify` -- the identity of every file it names (`wanted`, by default a
+    page file) that the map lacks."""
     if not isinstance(entry, dict):
         return entry
     me = me or app_key()
@@ -92,7 +96,7 @@ def record(entry: dict, me: Optional[str] = None, *, identify: Optional[Callable
         return out
     known = dict(out.get(SOURCES) or {})
     added = False
-    for path in sorted(_page_paths(out)):
+    for path in sorted(_paths(out, wanted or (lambda value: value.startswith(PAGE_ROOTS)))):
         if path in known:
             continue
         facts = identify(path)
@@ -107,19 +111,29 @@ def record(entry: dict, me: Optional[str] = None, *, identify: Optional[Callable
     return out
 
 
-def _page_paths(value) -> set:
+def _paths(value, wanted) -> set:
     found = set()
     if isinstance(value, str):
-        if value.startswith(PAGE_ROOTS):
+        if wanted(value):
             found.add(value)
     elif isinstance(value, list):
         for item in value:
-            found |= _page_paths(item)
+            found |= _paths(item, wanted)
     elif isinstance(value, dict):
         for key, item in value.items():
             if key != SOURCES:
-                found |= _page_paths(item)
+                found |= _paths(item, wanted)
     return found
+
+
+def _local_file(value: str) -> bool:
+    """A path to a file on this computer (not a page file, not an address)."""
+    if len(value) < 3 or value.startswith(PAGE_ROOTS) or "://" in value or not os.path.isabs(value):
+        return False
+    try:
+        return Path(value).is_file()
+    except (OSError, ValueError):
+        return False
 
 
 def localize_config(config: dict, me: Optional[str] = None) -> dict:
@@ -130,14 +144,19 @@ def localize_config(config: dict, me: Optional[str] = None) -> dict:
     return {name: localize(entry, me) for name, entry in config.items()}
 
 
-def record_config(config: dict, me: Optional[str] = None) -> dict:
-    """Every entry of a config.json as it is written (`record`); on the website
-    with page files identified."""
+def record_config(config: dict, me: Optional[str] = None, *, shared: bool = False) -> dict:
+    """Every entry of a config.json as it is written (`record`): on the
+    website with its page files identified; in a registry the website shares
+    (`shared`), with this computer's files identified."""
     if not isinstance(config, dict):
         return config
     me = me or app_key()
-    identify = identity if me == "website" else None
-    return {name: record(entry, me, identify=identify) for name, entry in config.items()}
+    if me == "website":
+        return {name: record(entry, me, identify=identity) for name, entry in config.items()}
+    if shared:
+        return {name: record(entry, me, identify=file_identity, wanted=_local_file)
+                for name, entry in config.items()}
+    return {name: record(entry, me) for name, entry in config.items()}
 
 
 def file_identity(path) -> Optional[dict]:

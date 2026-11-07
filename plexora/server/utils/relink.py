@@ -242,3 +242,64 @@ def _project_folders(me: str) -> list:
     except Exception:  # noqa: BLE001 -- a hint, never a reason to fail an open
         return []
     return list(dict.fromkeys(folders))[:50]
+
+
+def missing_here(name: str) -> list:
+    """The files of project `name` this app has no path for: [{recorded, name,
+    size}], from the identities the project recorded. On the website this is
+    what the page asks the user to find, by choosing the folder that holds
+    them (client services/pickedFiles.js `find`)."""
+    from plexora.server.models.project import Project, read_config
+    from plexora import paths
+
+    me = sources.app_key()
+    root = Project.root_for(name)
+    if root is None:
+        return []
+    entry = read_config(paths.config_path(root)).get(name) or {}
+    out = []
+    for recorded, info in (entry.get(sources.SOURCES) or {}).items():
+        info = info or {}
+        here = (info.get("at") or {}).get(me) or (recorded if me == "website" and
+                                                  recorded.startswith(sources.PAGE_ROOTS) else None)
+        if here and Path(here).is_file():
+            continue
+        out.append({"recorded": recorded, "name": info.get("name") or Path(recorded).name,
+                    "size": info.get("size"), "mtime_ms": info.get("mtime_ms"),
+                    "head": info.get("head"), "tail": info.get("tail")})
+    return out
+
+
+def record_found(name: str, found: dict) -> int:
+    """Record where this app found files of project `name` ({recorded: path
+    here}), each only if it is the file the project recorded. Returns how many
+    were recorded."""
+    from plexora.server.models.project import Project, config_transaction, read_config, write_config
+    from plexora import paths
+
+    me = sources.app_key()
+    root = Project.root_for(name)
+    if root is None or not found:
+        return 0
+    path = paths.config_path(root)
+    with config_transaction():
+        config = read_config(path)
+        current = config.get(name)
+        if current is None:
+            return 0
+        known = dict(current.get(sources.SOURCES) or {})
+        recorded = 0
+        for original, here in found.items():
+            info = known.get(original)
+            if not info or not isinstance(here, str) or not sources.same_file(info, here):
+                continue
+            info = dict(info)
+            info["at"] = {**(info.get("at") or {}), me: here}
+            known[original] = info
+            recorded += 1
+        if recorded:
+            current = dict(current)
+            current[sources.SOURCES] = known
+            config[name] = current
+            write_config(path, config)
+    return recorded

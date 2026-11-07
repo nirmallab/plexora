@@ -89,3 +89,21 @@ def test_an_account_with_nothing_yet_uses_the_websites_folder(tmp_path, monkeypa
         assert paths._candidate_data_root().rule == paths.RULE_PLATFORM_DEFAULT
     finally:
         paths.reset()
+
+
+def test_the_desktop_identifies_its_files_only_where_the_website_reads(library, tmp_path):
+    """So the website can match them in a folder the user grants; the desktop's
+    own registry is written exactly as before."""
+    own, lib = library
+    image = tmp_path / "data" / "slide.tif"
+    image.parent.mkdir()
+    image.write_bytes(b"x" * 4096)
+    from plexora.server.models.project import read_config, write_config
+
+    for root in (lib, own):
+        config = read_config(root / "config.json")
+        config["new_one"] = {"channelFile": str(image)}
+        write_config(root / "config.json", config)
+    in_library = json.loads((lib / "config.json").read_text(encoding="utf-8"))["new_one"]
+    assert in_library["sources"][str(image)]["size"] == 4096
+    assert "sources" not in json.loads((own / "config.json").read_text(encoding="utf-8"))["new_one"]

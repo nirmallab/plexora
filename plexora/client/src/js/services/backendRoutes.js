@@ -341,6 +341,8 @@
   {"class": "python", "endpoint": "dataset_scan_plan", "methods": ["POST"], "pattern": "^\\/datasets\\/scan\\/([^/]+)\\/plan$"},
   {"class": "python", "endpoint": "dataset_scan_spec", "methods": ["GET"], "pattern": "^\\/datasets\\/scan\\/([^/]+)\\/spec$"},
   {"class": "network", "endpoint": "roi.static", "methods": ["GET"], "pattern": "^\\/plugins\\/roi\\/static\\/(.+)$"},
+  {"class": "python", "endpoint": "project_files_here", "methods": ["GET"], "pattern": "^\\/project\\/([^/]+)\\/files_here$"},
+  {"class": "python", "endpoint": "project_files_found", "methods": ["POST"], "pattern": "^\\/project\\/([^/]+)\\/files_here$"},
   {"class": "python", "endpoint": "plane_cells", "methods": ["GET"], "pattern": "^\\/volume\\/([^/]+)\\/plane_cells$"},
   {"class": "python", "endpoint": "agent_v1.get_capture", "methods": ["GET"], "pattern": "^\\/agent\\/v1\\/captures\\/([^/]+)$"},
   {"class": "network", "endpoint": "qc.static", "methods": ["GET"], "pattern": "^\\/plugins\\/qc\\/static\\/(.+)$"},

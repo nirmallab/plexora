@@ -644,6 +644,20 @@ def website_library() -> Path:
     return documents / "Plexora" / "projects"
 
 
+def is_website_library(root) -> bool:
+    """Whether `root` is a folder of projects the website shares: Plexora's
+    folder in Documents, or a library named by PLEXORA_LIBRARY_PATH."""
+    try:
+        root = Path(root).resolve()
+        named = os.environ.get(ENV_LIBRARY_PATH)
+        if named is not None:
+            return any(root == Path(entry).expanduser().resolve()
+                       for entry in named.split(os.pathsep) if entry.strip())
+        return root == website_library().resolve()
+    except (OSError, RuntimeError):
+        return False
+
+
 def library_root_resolutions() -> list[Resolution]:
     """Roots the user owns besides their data root, read and written as their
     own: the website's projects on this computer (`website_library`), when it
@@ -673,8 +687,11 @@ def library_root_resolutions() -> list[Resolution]:
             continue
         if path != own and (path / CONFIG_FILENAME).exists():
             resolved.append(Resolution(path, rule))
-    with _cache_lock:
-        _cache["library_roots"] = resolved
+    # None is not remembered: the website may make its folder while this
+    # process runs, and looking again is one stat.
+    if resolved:
+        with _cache_lock:
+            _cache["library_roots"] = resolved
     return list(resolved)
 
 
