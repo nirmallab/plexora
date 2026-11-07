@@ -20,7 +20,8 @@ const site = opt("--site", path.join(REPO, "plexora", "client", "dist", "static"
 
 const server = await startServer(["--site", site, "--tree", `fixture=${dir}`]);
 const browser = await launch({ headed: args.includes("--headed") });
-const out = { steps: {} };
+const served = {};
+const out = { steps: {}, served };
 let errors = [];
 let failed = [];
 const step = async (name, work, frame, page) => {
@@ -54,6 +55,12 @@ try {
     page.on("pageerror", (error) => errors.push(`pageerror: ${error}`.slice(0, 300)));
     page.on("console", (message) => { if (message.type() === "error") errors.push(message.text().slice(0, 300)); });
     page.on("response", (response) => {
+        const tile = response.url().match(/\/generated\/data\/.*\.png\?(.*)$/);
+        if (tile && response.status() === 200) {
+            const by = response.headers()["x-plexora-served-by"] || "python";
+            const key = `${new URLSearchParams(tile[1]).get("q") || "8bit"}:${by}`;
+            served[key] = (served[key] || 0) + 1;
+        }
         if (response.status() >= 400 && !response.url().includes("/update/check")) {
             failed.push(`${response.status()} ${response.url().replace(/^https?:\/\/[^/]+/, "")}`);
         }
@@ -65,7 +72,10 @@ try {
         const paths = await page.evaluate(async (names) => {
             const picked = await Promise.all(names.map(async (n) => new File(
                 [await (await fetch(`/fixture/${n}`)).blob()], n)));
-            return window.PlexoraPython.mount("/picked/fixture", picked);
+            const mounted = await window.PlexoraPython.mount("/picked/fixture", picked);
+            // As a pick would leave them: the page's own readers can open them.
+            mounted.forEach((p, i) => window.PlexoraPicks.adopt(p, picked[i]));
+            return mounted;
         }, files);
         const result = await frame.evaluate(async (picks) => {
             const post = async (route, body) => {

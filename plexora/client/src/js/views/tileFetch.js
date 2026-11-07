@@ -200,8 +200,13 @@
             const key = parsed.origin + batchPath;
             let link = this.links.get(key);
             if (!link) {
+                // The website answers its own origin in the page
+                // (services/backend.js): no wire to save, and a batch would
+                // take its tiles past the page's own reader to Python.
+                const inPage = global.PlexoraBackend?.kind === "browser"
+                    && parsed.origin === global.location?.origin;
                 link = { url: key, wait: null, recent: [], samples: 0, batching: false,
-                         unbatchable: false };
+                         unbatchable: inPage };
                 this.links.set(key, link);
             }
             return { link, tilePath: path.slice(at) + parsed.search };

@@ -19,8 +19,10 @@
  * sentence that says so). `answer(request)` answers by that class; the site's
  * service worker (workers/backendRelay.js) hands it every same-origin request
  * the page makes -- fetch, XMLHttpRequest, an <img>, a stylesheet's url() --
- * so no caller changes. Until the page's own primary exists, "js" routes are
- * the worker's too. Any other kind sends every request to the network.
+ * so no caller changes. A "js" route goes to the page's browser node first
+ * (services/browserNode.js: a project's tiles read from the picked file) and
+ * to the worker where the node declines. Any other kind sends every request
+ * to the network.
  *
  *   kind          "server", or `flaskVariables.backend` where the page says
  *   target        where what the page does not answer itself goes: "server",
@@ -119,7 +121,12 @@
         if (kindOf === "handoff") {
             return json({ success: false, error: row.handoff.why, handoff: row.handoff }, 501);
         }
-        // "python", and "js" until the page's own primary answers it.
+        // "js": the page's own answer where it has one (services/browserNode.js
+        // reads a project's tiles from the picked file); Python's otherwise.
+        if (kindOf === "js" && global.PlexoraNode) {
+            const answered = await global.PlexoraNode.answer(request).catch(() => null);
+            if (answered) return answered;
+        }
         const python = global.PlexoraPython;
         if (!python) return json({ success: false, error: "Plexora's Python is not loaded" }, 503);
         return python.fetch(request);

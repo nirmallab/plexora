@@ -11,6 +11,7 @@
 //   mount {dir, files}             the user's picked files, read on demand (WORKERFS)
 //   mountTree {dir, blobs}         a picked folder: [{name: "<folder>/<path>", data: File}]
 //   columns {key, names, buffers}  a table's columns from the page's column store
+//   nodeSpec {name}                what the browser node may serve for a project
 //   heap                           the wasm heap's bytes
 //   run {code}                     tests only (boot with debug: true): Python's
 //                                  last expression, as text
@@ -287,6 +288,15 @@ const OPS = {
     close: ({ stream }) => { py.pyimport("plexora.browser.bridge").close(stream); return true; },
     mount,
     mountTree,
+    //: What the page's browser node may serve for a project (plexora/browser/node_spec.py).
+    nodeSpec: async ({ name }) => {
+        const module = py.pyimport("plexora.browser.node_spec");
+        try {
+            return JSON.parse(await call(module.describe_json, name));
+        } finally {
+            module.destroy();
+        }
+    },
     columns: ({ key, names, buffers }) => { columnStore.set(key, { names, buffers }); return names.length; },
     forget: ({ key }) => columnStore.delete(key),
     heap: () => (py ? py._module.HEAP8.length : null),

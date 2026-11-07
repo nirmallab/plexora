@@ -86,6 +86,7 @@
         await script("/client/src/js/services/pythonClient.js");
         await script("/client/src/js/services/backend.js");
         await script("/client/src/js/services/pickedFiles.js");
+        await script("/client/src/js/services/browserNode.js");
         await controlled();
         status("Starting Python");
         global.PlexoraPython.on("mark", ({ mark }) => { if (LABELS[mark]) status(LABELS[mark]); });
@@ -138,7 +139,9 @@
         // The host's Python and picks, not a second worker.
         global.PlexoraPython = host.PlexoraPython;
         global.PlexoraPicks = host.PlexoraPicks;
+        global.PlexoraNode = host.PlexoraNode;
         global.PlexoraShellFramed = true;
+        if (global.PlexoraNode) global.PlexoraNode.revalidate();
         await script("/client/src/js/services/backendRoutes.js");
         await script("/client/src/js/services/backend.js");
         const response = await global.PlexoraPython.fetch(

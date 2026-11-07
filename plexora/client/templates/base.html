@@ -45,7 +45,7 @@
          window.fetch). Before appStatus.js and not deferred, so a static
          build's page can put its own transport in place before that file
          wraps window.fetch and anything issues a request. -->
-    <script src="{{ data.base_url }}/client/src/js/services/backend.js?v=20261106_client_seams" type="text/javascript"></script>
+    <script src="{{ data.base_url }}/client/src/js/services/backend.js?v=20261106_browser_node" type="text/javascript"></script>
     <!-- App-wide status indicator. Loaded here, before everything else and not
          deferred, because it wraps window.fetch to detect a dead/erroring
          server and must be installed before any script issues a request. -->
@@ -93,7 +93,7 @@
     <script src="{{ data.base_url }}/client/src/js/views/glInit.js?v=20261015_display_contrast"></script>
     <script src="{{ data.base_url }}/client/src/js/views/tileColorize.js?v=20261015_display_contrast"></script>
     <script src="{{ data.base_url }}/client/src/js/views/tileDecode.js?v=20261010_nav3d"></script>
-    <script src="{{ data.base_url }}/client/src/js/views/tileFetch.js?v=20261106_client_seams"></script>
+    <script src="{{ data.base_url }}/client/src/js/views/tileFetch.js?v=20261106_browser_node"></script>
     <script src="{{ data.base_url }}/client/src/js/views/labelTile.js?v=20261012_main_merge"></script>
     <script src="{{ data.base_url }}/client/src/js/views/labelGpu.js?v=20261012_no_cell_model"></script>
     <script src="{{ data.base_url }}/client/src/js/services/viewTransform.js?v=20260925_view_transform"></script>

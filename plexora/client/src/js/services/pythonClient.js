@@ -264,6 +264,7 @@
         fetch,
         mount: (dir, files) => ready.then(() => call("mount", { dir, files })),
         mountTree: (dir, blobs) => ready.then(() => call("mountTree", { dir, blobs })),
+        nodeSpec: (name) => ready.then(() => call("nodeSpec", { name })),
         columns: (key, names, buffers) => ready.then(() => call("columns", { key, names, buffers },
                                                                buffers)),
         heap: () => ready.then(() => call("heap", {})),

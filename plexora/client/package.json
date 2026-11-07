@@ -5,6 +5,7 @@
   "scripts": {
     "start": "webpack",
     "build": "webpack --mode production",
+    "build:worker": "webpack --config webpack.worker.config.js --mode production",
     "watch": "webpack --watch",
     "test:test": "tsc --project test/tsconfig.json",
     "test:src": "mockttp -c karma start karma.conf.js",
@@ -21,6 +22,7 @@
     "d3": "^7.9.0",
     "d3-simple-slider": "^2.0.0",
     "dropzone": "^5.9.3",
+    "geotiff": "3.0.5",
     "jspdf": "^4.2.1",
     "lodash": "^4.18.1",
     "openseadragon": "^6.1.0",

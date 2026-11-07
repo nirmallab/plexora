@@ -20,6 +20,7 @@
  *   restore()              -> {mounted: [id], waiting: [pick]} at boot
  *   reconnect()            -> mounts every waiting pick (call from a click)
  *   list()                 -> every remembered pick
+ *   fileFor(path)          -> the File behind a mounted path, or null
  *
  * Classic script, `window.PlexoraPicks`. Needs `window.PlexoraPython`.
  */
@@ -30,6 +31,9 @@
     const STORE = "picks";
     const ROOT = "/picked";
     const waiting = [];
+    //: Every mounted file by its path in Python's files: what the page's own
+    //: readers open (services/browserNode.js) to read what Python would.
+    const mounted = new Map();
 
     function database() {
         return new Promise((resolve, reject) => {
@@ -92,12 +96,15 @@
     }
 
     async function mountFiles(id, files) {
-        return global.PlexoraPython.mount(`${ROOT}/${id}`, files);
+        const paths = await global.PlexoraPython.mount(`${ROOT}/${id}`, files);
+        paths.forEach((path, i) => mounted.set(path, files[i]));
+        return paths;
     }
 
     async function mountTree(id, name, entries) {
         const blobs = entries.map(({ path, file }) => ({ name: `${name}/${path}`, data: file }));
         await global.PlexoraPython.mountTree(`${ROOT}/${id}`, blobs);
+        for (const { name: inside, data } of blobs) mounted.set(`${ROOT}/${id}/${inside}`, data);
         return `${ROOT}/${id}/${name}`;
     }
 
@@ -193,5 +200,8 @@
     }
 
     global.PlexoraPicks = Object.freeze({ pick, restore, reconnect, list,
-                                          waiting: () => waiting.slice() });
+                                          waiting: () => waiting.slice(),
+                                          fileFor: (path) => mounted.get(path) || null,
+                                          //: A file mounted by other means (a test, a drop).
+                                          adopt: (path, file) => mounted.set(path, file) });
 })(window);
