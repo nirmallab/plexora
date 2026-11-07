@@ -35,6 +35,7 @@
     const DB = "plexora-picks";
     const STORE = "picks";
     const ROOT = "/picked";
+    const CANCEL_GRACE_MS = 1000;
     const waiting = [];
     //: Every mounted file by its path in Python's files: what the page's own
     //: readers open (services/browserNode.js) to read what Python would.
@@ -93,11 +94,18 @@
             input.multiple = multiple;
             if (directory) input.webkitdirectory = true;
             input.style.display = "none";
-            input.addEventListener("change", () => {
-                resolve(Array.from(input.files || []));
+            let done = false;
+            const finish = (files) => {
+                if (done) return;
+                done = true;
+                resolve(files);
                 input.remove();
-            });
-            input.addEventListener("cancel", () => { resolve([]); input.remove(); });
+            };
+            input.addEventListener("change", () => finish(Array.from(input.files || [])));
+            // A cancel may come before the files: Firefox fires one as a
+            // driver takes over its dialog (Playwright), then sets the files.
+            // A change within a second of it still counts.
+            input.addEventListener("cancel", () => setTimeout(() => finish([]), CANCEL_GRACE_MS));
             global.document.body.appendChild(input);
             input.click();
         });
@@ -191,8 +199,11 @@
             if (global.showDirectoryPicker) {
                 entries = await walk(await global.showDirectoryPicker({ id: "plexora-find", mode: "read" }));
             } else {
-                entries = (await chooseWithInput({ directory: true }))
-                    .map((file) => ({ path: file.webkitRelativePath || file.name, file, handle: null }));
+                // No folder picker (Firefox, Safari): the files themselves
+                // ("Locate file…"); a folder input would list, and ask to
+                // upload, everything under the folder.
+                entries = (await chooseWithInput({ multiple: missing.length > 1 }))
+                    .map((file) => ({ path: file.name, file, handle: null }));
             }
         } catch (error) {
             if (error && error.name === "AbortError") return {};

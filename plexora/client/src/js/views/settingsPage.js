@@ -154,6 +154,7 @@
         const notes = [];
         if (place.notOpened) notes.push(`${place.notOpened} was not opened this time; reload to open it.`);
         notes.push(place.kind === "folder" ? "Safe on this computer."
+            : place.storage === "memory" ? "Not kept: this browser lets the site keep nothing, so they are lost when the tab closes."
             : "Lost if this browser's data is cleared."
               + (folders ? "" : " Chrome and Edge can save them on this computer."));
         if (folders) notes.push("Switching brings your projects along.");
@@ -177,14 +178,27 @@
         drawWebPlace();
         const used = el("settings_web_storage_used");
         const meta = el("settings_web_storage_meta");
+        const keep = el("settings_web_keep");
         try {
             const estimate = await navigator.storage.estimate();
             const kept = navigator.storage.persisted ? await navigator.storage.persisted() : false;
             text(used, `${humanBytes(estimate.usage || 0)} of the ${humanBytes(estimate.quota || 0)} this browser allows`);
             text(meta, kept ? "The browser keeps it until you clear this site's data."
                             : "The browser may clear it when the disk runs short of room.");
+            // Where projects can only be kept here (Firefox, Safari: no folder
+            // on the computer), the browser is asked to keep them, from the click.
+            const store = webStore();
+            show(keep, !kept && Boolean(navigator.storage.persist) && Boolean(store) && !store.canWriteFolders());
+            if (keep) {
+                keep.onclick = async () => {
+                    const granted = await navigator.storage.persist().catch(() => false);
+                    if (granted) drawWebStorage();
+                    else text(meta, "This browser did not agree to keep it.");
+                };
+            }
         } catch (error) {
             text(used, "Unknown");
+            show(keep, false);
         }
     }
 

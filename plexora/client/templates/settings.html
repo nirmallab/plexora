@@ -62,6 +62,10 @@
                     <div class="settings-field-label">Storage used in this browser</div>
                     <div class="settings-path" id="settings_web_storage_used">Loading&hellip;</div>
                     <div class="settings-meta" id="settings_web_storage_meta"></div>
+                    <div class="settings-actions">
+                        <button type="button" class="btn btn-outline-light" id="settings_web_keep" hidden>
+                            Ask to keep it</button>
+                    </div>
                 </div>
                 {% else %}
 
@@ -880,5 +884,5 @@
 {# remoteState.js is loaded by base.html, above and deferred, so it is parsed
    before this file runs -- the Remote servers section is one of its
    subscribers rather than a poller of its own. #}
-<script src="{{ data.base_url }}/client/src/js/views/settingsPage.js?v=20261107_website_places" defer></script>
+<script src="{{ data.base_url }}/client/src/js/views/settingsPage.js?v=20261107_web_browsers" defer></script>
 {% endblock %}

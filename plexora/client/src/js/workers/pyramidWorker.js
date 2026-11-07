@@ -78,6 +78,36 @@ async function writeJson(dir, name, value) {
     }
 }
 
+//: The parts written at their offsets, as one file's parts: the gaps (the
+//: 8-byte alignment before the directories) are zeros.
+function inOrder(parts, bytes) {
+    const out = [];
+    let at = 0;
+    for (const offset of [...parts.keys()].sort((a, b) => a - b)) {
+        const part = parts.get(offset);
+        if (offset < at) throw new Error("the copy's parts overlap");
+        if (offset > at) out.push(new Uint8Array(offset - at));
+        out.push(part);
+        at = offset + part.byteLength;
+    }
+    if (at < bytes) out.push(new Uint8Array(bytes - at));
+    return out;
+}
+
+//: Why a build stopped, as the import says it. A full quota is a sentence
+//: (Firefox lets a site keep about 10 GB), not a storage error's name.
+async function sentence(error) {
+    if (error && error.name === "QuotaExceededError") {
+        let allows = "";
+        try {
+            const { quota } = await navigator.storage.estimate();
+            if (quota) allows = `: it allows this site ${(quota / 1e9).toFixed(1)} GB`;
+        } catch (ignored) { /* no estimate */ }
+        return `this browser has no room left for it${allows}`;
+    }
+    return String(error && error.message || error).slice(0, 500);
+}
+
 self.onmessage = async ({ data }) => {
     if (data.op !== "build") return;
     const { file, key, name, shape, dtype, factors, tile, description, hands: url, workers, folder } = data;
@@ -122,8 +152,30 @@ self.onmessage = async ({ data }) => {
                                timings: { ...result.timings, ms } });
             return;
         }
-        const dir = await derivedDir(key);
-        access = await (await dir.getFileHandle(name, { create: true })).createSyncAccessHandle();
+        // This site's storage, where the browser can write there; else the
+        // copy is put together in memory (WebKit on Windows has no backend
+        // for it; a private window may have no storage at all) and handed
+        // back for the page to keep where it can (`kept: "memory"`).
+        let dir = null;
+        try {
+            dir = await derivedDir(key);
+            access = await (await dir.getFileHandle(name, { create: true })).createSyncAccessHandle();
+        } catch (error) {
+            access = null;
+        }
+        if (!access) {
+            const parts = new Map();
+            const result = await build({
+                geometry, dtype, channels, factors, tile, description, hands,
+                sink: { write: (bytes, at) => { parts.set(at, bytes); } },
+                progress: (progress) => self.postMessage({ progress }),
+            });
+            const copy = new File(inOrder(parts, result.bytes), name);
+            const ms = Math.round(performance.now() - t0);
+            self.postMessage({ done: true, file: copy, bytes: result.bytes, kept: "memory",
+                               timings: { ...result.timings, ms } });
+            return;
+        }
         access.truncate(0);
         const result = await build({
             geometry, dtype, channels, factors, tile, description, hands,
@@ -138,7 +190,7 @@ self.onmessage = async ({ data }) => {
         const copy = await (await dir.getFileHandle(name)).getFile();
         self.postMessage({ done: true, file: copy, bytes: result.bytes, timings: { ...result.timings, ms } });
     } catch (error) {
-        self.postMessage({ error: String(error && error.message || error).slice(0, 500) });
+        self.postMessage({ error: await sentence(error) });
     } finally {
         if (access) try { access.close(); } catch (error) { /* closed */ }
         // A copy that did not finish is dropped: abort() discards the

@@ -56,8 +56,11 @@
         if (!store) return false;
         if (store.current().kind !== "folder") {
             if (!store.canWriteFolders()) {
-                toast({ title: "Open it in the desktop app",
-                        note: "This browser cannot save projects on this computer; Chrome and Edge can." });
+                // Firefox and Safari: a page cannot write a folder on the
+                // computer, so a project kept in the browser cannot reach the
+                // desktop app's library.
+                toast({ title: "This browser can't move projects to the desktop app",
+                        note: "Chrome and Edge can." });
                 return false;
             }
             const moved = await store.useFolder(null).catch(() => null);

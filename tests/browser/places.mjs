@@ -11,8 +11,15 @@
 //
 // --close-pyramid closes the pyramid's question instead of answering it: the
 // copy then goes with the projects (Plexora's folder).
+//
+// Where the browser has no folder picker (Firefox, Safari: `--browser`), there
+// is no folder to choose: the first visit says the projects stay in the
+// browser ("Keep them" asks it to keep them), the pyramid's question takes its
+// other form and the copy is kept in the site's storage (OPFS, else IndexedDB,
+// else memory). The reload then asks for the picked file again ("Locate
+// file…": the browser kept no handle to it), answered with the same file.
 import path from "node:path";
-import { REPO, appFrame, launch, startServer } from "./lib.mjs";
+import { REPO, appFrame, canWriteFolders, launch, startServer } from "./lib.mjs";
 
 const args = process.argv.slice(2);
 const opt = (name, fallback) => (args.includes(name) ? args[args.indexOf(name) + 1] : fallback);
@@ -68,14 +75,16 @@ try {
     const failed = [];
     page.on("response", (response) => { if (response.status() >= 400) failed.push(`${response.status()} ${response.url()}`); });
     const origin = `http://127.0.0.1:${server.port}`;
+    out.canWriteFolders = await canWriteFolders(browser.context, origin);
     // Before the page's own scripts: headless Chrome has no folder picker,
     // and the page decides at load whether this browser can write folders.
-    await page.addInitScript(STUB);
+    if (out.canWriteFolders) await page.addInitScript(STUB);
     await page.goto(`${origin}/?pydebug`);
     let frame = await appFrame(page);
     await frame.waitForSelector("#quick_view_go", { timeout: 120000 });
     await frame.evaluate(() => { window.showOpenFilePicker = undefined; });
-    // The first visit asks where the projects go: a folder.
+    // The first visit asks where the projects go: a folder. (No folder to
+    // choose: they stay in the browser, which is asked to keep them.)
     const primary = ".plx-confirm .plx-button-primary";
     out.firstVisit = await frame.waitForSelector(primary, { timeout: 15000 }).then(async (button) => {
         if (shots) {
@@ -84,9 +93,13 @@ try {
         }
         const title = await frame.evaluate(() => document.querySelector(".plx-confirm .plx-dialog-title")?.textContent);
         await button.click();
-        await page.waitForFunction(() => window.PlexoraStore.current().kind === "folder", null, { timeout: 30000 });
+        if (out.canWriteFolders) {
+            await page.waitForFunction(() => window.PlexoraStore.current().kind === "folder", null, { timeout: 30000 });
+        }
         return title;
     }, () => null);
+    await page.waitForTimeout(1000);
+    out.persisted = await page.evaluate(() => navigator.storage.persisted()).catch((error) => String(error));
     const chooser = page.waitForEvent("filechooser", { timeout: 30000 });
     await frame.click("#quick_view_go");
     const picked = Date.now();
@@ -125,7 +138,7 @@ try {
                 return `import -> ${go.textContent.trim()}`;
             }
             return null;
-        }, args.includes("--close-pyramid")).catch(() => null);
+        }, args.includes("--close-pyramid") && out.canWriteFolders).catch(() => null);
         if (pressed) out.pressed.push({ at: Date.now() - picked, pressed });
         await page.waitForTimeout(400);
     }
@@ -138,21 +151,33 @@ try {
     out.store = await page.evaluate(() => window.PlexoraStore.current());
     out.copies = await page.evaluate(() => window.PlexoraPyramid.builds()
         .map(({ where, place, path: p, state, bytes, note }) => ({ where, place, path: p, state, bytes, note })));
-    out.folders = await page.evaluate(LIST);
+    if (out.canWriteFolders) out.folders = await page.evaluate(LIST);
     await page.waitForTimeout(3000);
-    out.foldersLater = await page.evaluate(LIST);
+    if (out.canWriteFolders) out.foldersLater = await page.evaluate(LIST);
     out.dataFiles = await page.evaluate(() => window.PlexoraPython.run([
         "import os",
         "found = [(os.path.join(d, f), os.path.getsize(os.path.join(d, f))) for d, _, fs in os.walk('/data') for f in fs]",
         "(len(found), sum(s for _, s in found), sorted(found, key=lambda x: -x[1])[:8])",
     ].join("\n")).catch((e) => String(e)));
     out.flushMs = await page.evaluate(async () => { const t = performance.now(); await window.PlexoraPython.flush(); return Math.round(performance.now() - t); });
-    out.foldersFlushed = await page.evaluate(LIST);
+    if (out.canWriteFolders) out.foldersFlushed = await page.evaluate(LIST);
     if (shots) await page.screenshot({ path: path.join(shots, "places-first.png") });
 
     // A later visit: no picker this time; the folder handles kept by the page.
+    // (No handles where there is no folder picker: the loader asks for the
+    // picked file again, a click that may open the browser's file dialog.)
     await page.goto(`${origin}/${out.project}?pydebug`);
     const reopened = Date.now();
+    if (!out.canWriteFolders) {
+        const loader = await (await page.waitForSelector("#plexora-app", { timeout: 120000 })).contentFrame();
+        const locate = loader.locator(".plexora-boot-actions button", { hasText: "Locate file" });
+        out.locateAsked = await locate.waitFor({ timeout: 30000 }).then(() => true, () => false);
+        if (out.locateAsked) {
+            const chooser = page.waitForEvent("filechooser", { timeout: 30000 });
+            await locate.click();
+            await (await chooser).setFiles(file);
+        }
+    }
     frame = await appFrame(page);
     await frame.waitForFunction(viewerDrawn, null, { timeout: 180000, polling: 250 })
         .catch(() => { out.reopenTimedOut = true; });

@@ -65,7 +65,7 @@
     //: Python's questions to the page, answered by whoever registered for
     //: their kind (`answers`); null and why when nobody can.
     const answerers = new Map();
-    async function respond({ id, ask, args }) {
+    async function respond({ id, ask, args, sync }) {
         let value = null;
         let failed = null;
         let transfer = [];
@@ -76,7 +76,89 @@
         } catch (error) {
             failed = String(error && error.message || error).slice(0, 500);
         }
-        await call("answer", { id, value, failed }, transfer);
+        if (sync) await answerSync(value, failed);
+        else await call("answer", { id, value, failed }, transfer);
+    }
+
+    // -- answers through shared memory (a browser without JSPI) ---------------
+    //
+    // There the worker blocks in Atomics.wait for the answer
+    // (workers/pythonWorker.js `syncAsk`), and it is written into the memory
+    // it shares with this page, a chunk at a time: a header (JSON, with each
+    // typed array and file by reference) then the arrays' bytes, each at an
+    // 8-byte boundary. A file is named by a blob: URL, read by the worker.
+    let syncChannel = null;
+    const S = { IDLE: 0, WAITING: 1, CHUNK: 2, LAST: 3, FAILED: 4 };
+    const align8 = (n) => (n + 7) & ~7;
+
+    function encodeAnswer(value) {
+        const bins = [];
+        let offset = 0;
+        const arrays = [];
+        const header = JSON.stringify({ value }, (key, item) => {
+            if (ArrayBuffer.isView(item)) {
+                bins.push({ type: item.constructor.name, offset, length: item.length });
+                arrays.push({ at: offset, bytes: new Uint8Array(item.buffer, item.byteOffset, item.byteLength) });
+                offset += align8(item.byteLength);
+                return { "\u0000bin": bins.length - 1 };
+            }
+            if (typeof Blob !== "undefined" && item instanceof Blob) {
+                // Let go a minute later: the worker reads it at once.
+                const url = URL.createObjectURL(item);
+                setTimeout(() => URL.revokeObjectURL(url), 60000);
+                return { "\u0000blob": url, name: item.name || "", size: item.size };
+            }
+            return item;
+        });
+        const head = new TextEncoder().encode(JSON.stringify({ ...JSON.parse(header), bins }));
+        const start = align8(4 + head.length);
+        const out = new Uint8Array(start + offset);
+        new DataView(out.buffer).setUint32(0, head.length, true);
+        out.set(head, 4);
+        for (const { at, bytes } of arrays) out.set(bytes, start + at);
+        return out;
+    }
+
+    //: Until the worker has taken the chunk (state no longer `value`).
+    async function taken(ctl, value) {
+        while (Atomics.load(ctl, 0) === value) {
+            if (typeof Atomics.waitAsync === "function") {
+                const waited = Atomics.waitAsync(ctl, 0, value, 1000);
+                if (waited.async) await waited.value;
+            } else {
+                await new Promise((resolve) => setTimeout(resolve, 1));
+            }
+        }
+    }
+
+    async function answerSync(value, failed) {
+        const { ctl, data } = syncChannel;
+        let bytes;
+        try {
+            bytes = failed ? null : encodeAnswer(value);
+        } catch (error) {
+            failed = `the answer could not be sent: ${error && error.message || error}`;
+        }
+        if (failed) {
+            const why = new TextEncoder().encode(failed).subarray(0, data.length);
+            data.set(why);
+            Atomics.store(ctl, 1, why.length);
+            Atomics.store(ctl, 0, S.FAILED);
+            Atomics.notify(ctl, 0);
+            return;
+        }
+        Atomics.store(ctl, 2, bytes.length);
+        for (let at = 0; ;) {
+            const n = Math.min(data.length, bytes.length - at);
+            data.set(bytes.subarray(at, at + n));
+            at += n;
+            const last = at >= bytes.length;
+            Atomics.store(ctl, 1, n);
+            Atomics.store(ctl, 0, last ? S.LAST : S.CHUNK);
+            Atomics.notify(ctl, 0);
+            if (last) return;
+            await taken(ctl, S.CHUNK);
+        }
     }
 
     function emit(kind, payload) {
@@ -114,6 +196,7 @@
             emit(event.kind, event);
             return;
         }
+        if (data.syncChannel) syncChannel = data.syncChannel;
         if (data.mark) emit("mark", data);
         if (data.log) console.warn("[python]", data.log);
     }
