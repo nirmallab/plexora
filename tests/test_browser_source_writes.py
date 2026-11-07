@@ -12,7 +12,9 @@ page's "Save into ...?" question. Where the browser gave no handle (a pick
 through `<input type=file>`), the updated file comes back as a download. Each
 saved file must be byte for byte what Python staged, and the desktop's own
 routes, run on copies of the same files (tests/browser/source_writes_desktop.py),
-must have written the same bytes.
+must have written the same bytes: the CSV's are identical; the .h5ad's are the
+same gates, X, obs, var and obsm in a different HDF5 layout (Pyodide's h5py and
+CPython's are different HDF5 builds), which the check accepts.
 
 Needs system Chrome, the bundle `tools/browser_build/build.py` writes
 (PLEXORA_BENCH_HOME), a static build and playwright-core; skipped, saying
