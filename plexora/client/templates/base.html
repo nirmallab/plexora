@@ -39,7 +39,7 @@
          window, null in any browser. Early and not deferred, so its
          subscriptions to the shell exist before a menu or a drop can arrive,
          and so every later script can feature-test it synchronously. -->
-    <script src="{{ data.base_url }}/client/src/js/services/desktopBridge.js?v=20261107_local_files" type="text/javascript"></script>
+    <script src="{{ data.base_url }}/client/src/js/services/desktopBridge.js?v=20261107_open_website" type="text/javascript"></script>
     <!-- Who answers this page's requests: window.PlexoraBackend. Here the
          Plexora that served it, and the file is a pass-through (its fetch is
          window.fetch). Before appStatus.js and not deferred, so a static
@@ -423,6 +423,15 @@
                         <span class="fas fa-arrow-up-right-from-square nav-item-icon"></span>
                         <span class="nav-item-label">Open in Browser</span>
                         <span class="nav-item-key" data-key-hint="mod+shift+b"></span></button>
+                    {# The project on the website (plexora/website_link.py): hidden
+                       until the website's GA switch says it is open; desktopBridge.js
+                       asks /desktop/website and shows it then. #}
+                    {% if data.datasource %}
+                    <button type="button" id="nav_open_website" class="dropdown-item desktop-only"
+                            style="display: none">
+                        <span class="fas fa-globe nav-item-icon"></span>
+                        <span class="nav-item-label">Open on the Website</span></button>
+                    {% endif %}
                     {% endif %}
                     {# Quit ends the server process. In notebook/hosted mode
                        that process belongs to the kernel or the hub, not to the

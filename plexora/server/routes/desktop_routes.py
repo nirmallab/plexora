@@ -186,6 +186,17 @@ def desktop_info():
     )
 
 
+@app.route('/desktop/website', methods=['GET'])
+def desktop_website():
+    """File > Open on the Website for `?datasource=`: `{shown, in_library,
+    url, library, message}` (plexora/website_link.py). `shown` is False --
+    the row stays hidden -- off the desktop app's server and until the
+    website's flags say it is open (the GA switch)."""
+    from plexora import website_link
+
+    return jsonify(website_link.describe(app, request.args.get('datasource')))
+
+
 def _rendering():
     """The "Browser rendering" setting (plexora/browser_rendering.py), and
     with it on, which path each kind of data takes (`paths`). Only the desktop

@@ -201,6 +201,7 @@
   {"class": "python", "endpoint": "telemetry_status", "methods": ["GET"], "pattern": "^\\/telemetry\\/status$"},
   {"class": "python", "endpoint": "upload_data_file", "methods": ["POST"], "pattern": "^\\/upload_data_file$"},
   {"class": "python", "endpoint": "agent_v1.publish_event", "methods": ["POST"], "pattern": "^\\/agent\\/v1\\/events$"},
+  {"class": "python", "endpoint": "desktop_website", "methods": ["GET"], "pattern": "^\\/desktop\\/website$"},
   {"class": "js", "endpoint": "generate_batch", "methods": ["POST"], "pattern": "^\\/generated\\/batch$"},
   {"class": "js", "endpoint": "get_channel_gmm", "methods": ["GET"], "pattern": "^\\/get_channel_gmm$"},
   {"class": "js", "endpoint": "get_load_status", "methods": ["GET"], "pattern": "^\\/get_load_status$"},
