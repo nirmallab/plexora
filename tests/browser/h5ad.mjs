@@ -5,8 +5,8 @@
 // list and its statistics, the cell nearest a point, colouring by a marker
 // and by an obs column (Cell Explorer) -- each checked against anndata's
 // reading of the same file in CPython (tests/browser/spike_h5ad.py --facts).
-// The h5ad stage (h5py, anndata, pandas) must arrive with the table, not at
-// boot. Picks are file-backed Files (setInputFiles), mounted and adopted as
+// The HDF5 stages (`hdf5`: h5py; `h5ad`: anndata, pandas) must arrive with
+// the table, not at boot. Picks are file-backed Files (setInputFiles), mounted and adopted as
 // the picker does; the picker itself is import.mjs's.
 // Prints JSON; exits 1 when a check fails.
 //

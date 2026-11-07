@@ -85,13 +85,67 @@ def http() -> bool:
     return True
 
 
+def native_parquet() -> bool:
+    """Whether this polars reads and writes Parquet itself. Pyodide's is
+    built without it (no `sink_parquet`, no `new_from_parquet`)."""
+    import polars as pl
+
+    return hasattr(type(pl.LazyFrame()._ldf), "sink_parquet")
+
+
+def parquet(native=None) -> bool:
+    """Parquet through pyarrow where polars has none (`native_parquet`).
+
+    Plexora keeps tables beside a project as Parquet -- a z-stack's measured
+    objects (volume/objects.py), a surface's object table (surface/store.py),
+    QC results -- and the desktop's are the same files, so the format stays.
+    pyarrow reads and writes it: its `parquet` stage is fetched the first time
+    one is read or written (an import from here loads it, through JSPI), and
+    polars, which decided at its own import that pyarrow was absent, is told
+    it is not (`_tell_polars`). `scan_parquet` reads eagerly: these tables
+    are a row per object, not a run's transcripts. True if patched."""
+    import polars as pl
+
+    if native_parquet() if native is None else native:
+        return False
+    write, read = pl.DataFrame.write_parquet, pl.read_parquet
+
+    def arrow():
+        import pyarrow.parquet  # noqa: F401 -- the parquet stage, on first use
+
+        _tell_polars()
+
+    def write_parquet(self, file, *args, **kwargs):
+        arrow()
+        kwargs["use_pyarrow"] = True
+        return write(self, file, *args, **kwargs)
+
+    def read_parquet(source, *args, n_rows=None, **kwargs):
+        arrow()
+        kwargs["use_pyarrow"] = True
+        frame = read(source, *args, **kwargs)
+        return frame if n_rows is None else frame.head(n_rows)
+
+    def scan_parquet(source, *args, n_rows=None, **kwargs):
+        # What a scan takes and a read does not (row-group hints, cloud
+        # options), dropped: an eager read has no use for them.
+        keep = {k: v for k, v in kwargs.items() if k in ("columns", "storage_options")}
+        return read_parquet(source, n_rows=n_rows, **keep).lazy()
+
+    write_parquet.__doc__, read_parquet.__doc__ = write.__doc__, read.__doc__
+    pl.DataFrame.write_parquet = write_parquet
+    pl.read_parquet = read_parquet
+    pl.scan_parquet = scan_parquet
+    return True
+
+
 def start(origin: str, *, base_url: str = "", post=None, cancelled=None, idle=None, waiting=None,
           columns=None, ask=None, data_root: str = "/data", licence_dir: str = "/bioc") -> dict:
     """Boot once; returns what the page shows in its status chip and records:
     `{version, rules, seconds, shims}`."""
     started = time.perf_counter()
     environment(origin, base_url=base_url, data_root=data_root, licence_dir=licence_dir)
-    shims = {"imagecodecs": codecs(), "pyodide_http": http()}
+    shims = {"imagecodecs": codecs(), "pyodide_http": http(), "parquet": parquet()}
 
     from plexora.browser import cooperative, licence
     from plexora.server.models import viewer_sessions

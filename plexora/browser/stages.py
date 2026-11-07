@@ -4,7 +4,8 @@ The page loads the **base** stage with Pyodide, before the app is built:
 everything `plexora.app` and a gating session import. Every other stage is
 loaded the first time something imports one of its `modules` (`StageFinder`,
 installed by the boot): the first QC check imports cv2 and the `qc` stage
-arrives; an .h5ad imports h5py and `h5ad` does. Loading by import rather than
+arrives; an .h5ad imports anndata and `h5ad` does, an .ims h5py and `hdf5`
+does. Loading by import rather than
 by route means a stage can never be missing for a route nobody thought of,
 and costs nothing for a session that never needs it.
 
@@ -42,12 +43,33 @@ STAGES = {
         "modules": [],
     },
     "qc": {
-        "pyodide": ["opencv-python", "scikit-image", "shapely"],
+        "pyodide": ["opencv-python", "shapely"],
         "wheels": [],
-        "modules": ["cv2", "skimage", "shapely"],
+        "modules": ["cv2", "shapely"],
+    },
+    "skimage": {
+        # scikit-image on its own: a surface (marching cubes, the threshold
+        # suggestions) needs it and not OpenCV, which is 8 MB of qc's 19.8.
+        # A QC check that imports both loads both.
+        "pyodide": ["scikit-image"],
+        "wheels": [],
+        "modules": ["skimage"],
+    },
+    "hdf5": {
+        # h5py alone, for an Imaris file (and anything else HDF5 that is not
+        # a table): an .ims open fetches 1.15 MB stored, not the 5.7 MB of
+        # h5ad's pandas and anndata, which nothing reading a volume imports.
+        # Pyodide's h5py decodes gzip and lzf itself (spike S-4); lz4 (56 kB)
+        # is imagecodecs_shim's LZ4H5, Imaris 10's LZ4 chunks without
+        # hdf5plugin (volume/sources/ims.py), and arrives with h5py, which
+        # every .ims needs first.
+        "pyodide": ["h5py", "lz4"],
+        "wheels": [],
+        "modules": ["h5py", "lz4"],
     },
     "h5ad": {
-        # Pyodide's h5py decodes gzip and lzf itself (spike S-4).
+        # h5py again as a package (loading it twice is a no-op): anndata
+        # imports it at module level, where `StageFinder` loads no stage.
         "pyodide": ["h5py", "pandas"],
         # anndata asks for scverse-misc[settings]: without pydantic-settings
         # and python-dotenv, `scverse_misc.Settings` is missing and anndata
@@ -55,7 +77,7 @@ STAGES = {
         # session-info2 is scverse-misc's own requirement (build.py `unmet`).
         "wheels": ["anndata", "array-api-compat", "legacy-api-wrap", "natsort", "scverse-misc",
                    "pydantic-settings", "python-dotenv", "session-info2"],
-        "modules": ["h5py", "anndata", "pandas"],
+        "modules": ["anndata", "pandas"],
     },
     "parquet": {
         "pyodide": ["pyarrow"],

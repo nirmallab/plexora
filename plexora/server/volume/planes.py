@@ -78,7 +78,9 @@ class PlaneWriter:
         for handle in self._files.values():
             handle.close()
         # The frame of a row is implied by the offsets: written once here.
-        counts = np.diff(self._starts).reshape(self.frames, self.depth).sum(axis=1)
+        # np.intp: repeats must cast safely to it, and on the website's
+        # 32-bit Python (wasm32) int64 does not.
+        counts = np.diff(self._starts).reshape(self.frames, self.depth).sum(axis=1).astype(np.intp)
         np.repeat(np.arange(self.frames, dtype=np.int32), counts).tofile(self.tmp / "t")
         index = {"version": VERSION, "rows": int(self.rows), "depth": self.depth,
                  "frames": self.frames, "starts": self._starts.tolist(), **meta}

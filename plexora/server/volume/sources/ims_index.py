@@ -356,6 +356,10 @@ def ensure(path) -> bool:
     try:
         if os.environ.get(ENV_SWITCH, "1").strip().lower() in ("0", "false", "no", "off"):
             return False
+        if sys.platform == "emscripten":
+            # The website's Python starts no process: its reads find each
+            # chunk with read_direct_chunk, as before an index exists.
+            return False
         ident = identity(path)
         if ident is None or ident[1] < MIN_BYTES:
             return False

@@ -96,3 +96,32 @@ def test_the_worker_boots_and_answers_through_the_bridge(tmp_path):
     assert out["tifffile_codecs"] == "plexora.browser.imagecodecs_shim"  # tifffile took the stand-in
     assert out["segment_status"] == "weights_missing"
     assert out["segment_asked"] == [["sam", "status"]]
+
+
+def test_parquet_goes_through_pyarrow_where_polars_has_none(tmp_path, monkeypatch):
+    """Pyodide's polars is built without Parquet; a z-stack's objects and a
+    surface's object table are Parquet files (volume/objects.py,
+    surface/store.py). `boot.parquet` routes them through pyarrow: the same
+    file both ways, `n_rows`, `columns` and `scan_parquet` included."""
+    import polars as pl
+
+    from plexora.browser import boot
+
+    # Put back whatever the shim replaces.
+    for owner, name in ((pl.DataFrame, "write_parquet"), (pl, "read_parquet"), (pl, "scan_parquet")):
+        monkeypatch.setattr(owner, name, getattr(owner, name))
+    assert boot.native_parquet() is True and boot.parquet() is False  # CPython's polars has it
+    native = pl.DataFrame({"label": [3, 1, 2], "volume_vox": [10.5, 2.0, 7.25]})
+    native.write_parquet(tmp_path / "native.parquet")
+    calls = []
+    real = pl.DataFrame.to_arrow
+    monkeypatch.setattr(pl.DataFrame, "to_arrow", lambda self, *a, **k: calls.append(1) or real(self, *a, **k))
+
+    assert boot.parquet(native=False) is True
+    native.write_parquet(tmp_path / "arrow.parquet")
+    assert calls, "written through pyarrow"
+    for path in (tmp_path / "native.parquet", tmp_path / "arrow.parquet"):
+        assert pl.read_parquet(path).equals(native)
+        assert pl.read_parquet(path, n_rows=1).equals(native.head(1))
+        assert pl.read_parquet(path, columns=["label"]).equals(native.select("label"))
+        assert pl.scan_parquet(path).collect_schema().names() == ["label", "volume_vox"]

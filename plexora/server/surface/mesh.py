@@ -449,7 +449,8 @@ def orient_outward(mesh: Mesh) -> Mesh:
     p = mesh.positions.astype(np.float64)
     per = np.einsum("ij,ij->i", p[t[:, 0]], np.cross(p[t[:, 1]], p[t[:, 2]]))
     volumes = np.add.reduceat(per, mesh.objects[:, 1].astype(np.int64))
-    flip = np.repeat(volumes < 0, mesh.objects[:, 2].astype(np.int64))
+    # np.intp: int64 repeats do not cast safely on a 32-bit Python (wasm32).
+    flip = np.repeat(volumes < 0, mesh.objects[:, 2].astype(np.intp))
     if not flip.any():
         return mesh
     triangles = mesh.triangles.copy()
