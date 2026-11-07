@@ -115,6 +115,7 @@ impl Grants {
         self.0.lock().unwrap().by_id.get(id).cloned()
     }
 
+    #[cfg(test)]
     pub fn len(&self) -> usize {
         self.0.lock().unwrap().by_id.len()
     }

@@ -5,6 +5,12 @@
 //                 --params '{"passes": ["C1", "C2s", "C2"], "z0": 128, "channels": [0, 4, 7],
 //                            "waypoints": {"a": [x, y], "b": [x, y], "c": [x, y]},
 //                            "timeout": 120000, "volume": true}'
+//                 [--cdp http://127.0.0.1:9333]
+//
+// --cdp drives a browser that is already running instead of a fresh Chrome:
+// the Plexora desktop app's own window, started with
+// WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS=--remote-debugging-port=9333 (its page
+// on --base is taken, its size kept, and it is left running at the end).
 //
 // Passes: C1 starts from an empty browser cache (Chrome's profile is new); C2s
 // clears the browser cache but finds the servers as C1 left them; C2 keeps
@@ -36,6 +42,7 @@ function parseArgs(argv) {
         else if (arg === "--out") out.out = next();
         else if (arg === "--headed") out.headed = true;
         else if (arg === "--params") out.params = JSON.parse(next());
+        else if (arg === "--cdp") out.cdp = next();
     }
     return out;
 }
@@ -43,8 +50,11 @@ function parseArgs(argv) {
 /** Writes answered here: the project must look the same to every pass. */
 const BLOCKED = [/\/save_channel_list\b/, /\/view_state\//, /\/viewer_prefs\b/];
 
-async function blockWrites(browser) {
-    await browser.send("Fetch.enable", { patterns: [{ urlPattern: "*", requestStage: "Request" }] });
+async function blockWrites(browser, base = null) {
+    // Only the server's own requests: a desktop window's reads of its files
+    // (the `plexora-file` scheme) are not the tour's to hold up.
+    const urlPattern = base ? `${base.replace(/\/$/, "")}/*` : "*";
+    await browser.send("Fetch.enable", { patterns: [{ urlPattern, requestStage: "Request" }] });
     browser.ws.addEventListener("message", async (event) => {
         const msg = JSON.parse(event.data);
         if (msg.method !== "Fetch.requestPaused") return;
@@ -278,7 +288,8 @@ async function main() {
     const opts = parseArgs(process.argv.slice(2));
     const browser = new Browser({ headed: opts.headed });
     try {
-        await browser.launch();
+        if (opts.cdp) await browser.attach(opts.cdp, { prefix: opts.base });
+        else await browser.launch();
     } catch (error) {
         await browser.close();
         throw error;
@@ -289,7 +300,7 @@ async function main() {
     try {
         await browser.send("Page.addScriptToEvaluateOnNewDocument",
                            { source: readFileSync(path.join(HERE, "tourpage.js"), "utf8") });
-        await blockWrites(browser);
+        await blockWrites(browser, opts.cdp ? opts.base : null);
         result.renderer = await browser.renderer();
         if (/swiftshader|llvmpipe|software/i.test(result.renderer || "")) {
             throw new Error(`software WebGL (${result.renderer}): refusing to measure`);
