@@ -3091,7 +3091,11 @@ window.PlexoraImportSample = (function () {
                 });
             });
             try {
-                const response = await fetch(plexoraUrl("import/sample"), {
+                // PlexoraBackend.fetch: on the website the answer comes from the
+                // page's Python directly, not through the service worker, which
+                // Chrome cuts off at 5 minutes; a flat image's pyramid, built
+                // while this waits, can take longer. Plain fetch elsewhere.
+                const response = await (window.PlexoraBackend?.fetch || fetch)(plexoraUrl("import/sample"), {
                     method: "POST",
                     headers: {"Content-Type": "application/json"},
                     body: JSON.stringify({

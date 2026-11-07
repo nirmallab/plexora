@@ -11,7 +11,7 @@ The numbers below are the website's benchmark records as of 2026-11-07 (a 12-cor
 | Situation | Website | Desktop app | A node beside the data |
 | --- | --- | --- | --- |
 | A pyramidal image (OME-TIFF, SVS, OME-Zarr) | Opens as on the desktop; tested to 73 GB | Opens | Opens where the file lives |
-| A flat (non-pyramidal) TIFF | Builds the pyramid in the browser: about 2 minutes up to about 40 GB of pixels on a 12-core computer, less with fewer cores (a 9.6 GB image took 28 s); a copy kept in the browser needs room for about half its pixels (Firefox keeps about 10 GB in all) | Any size | Any size, without copying the file |
+| A flat (non-pyramidal) TIFF | Builds the pyramid in the browser: within about 2 minutes up to about 33 GB of pixels on a 12-core computer, less with fewer cores (a 9.6 GB image took 28 s, a 38 GB one about 2½ minutes); a copy kept in the browser needs room for about half its pixels (Firefox keeps about 10 GB in all) | Any size | Any size, without copying the file |
 | A cell table | Up to about 40 million values (cells × columns) for gating and analysis, e.g. 1.26 M cells × 29 columns; less on a device with under 8 GB of memory | No browser limit | No browser limit |
 | A job over a dataset (apply a gate to every image, a QC run) | One image at a time, with the tab open; applying a gate takes about 0.75 s an image of 100 k cells (0.61 s on the desktop), so the website suggests another place once a job would take over 10 minutes | Runs with no browser open | Runs beside the data |
 | Magic select | With WebGPU: 0.04–0.07 s a click. Without WebGPU: about 1 s a click (0.95 s) | 0.38–0.41 s a click on the processor | On the node's own hardware |

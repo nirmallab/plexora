@@ -310,7 +310,7 @@
         const [channels, height, width] = [2, 8192, 8192];
         const raw = channels * height * width * 2;
         const image = limits.image || {};
-        const perWorker = Number(image.build_bytes_per_second_per_worker) || 29e6;
+        const perWorker = Number(image.build_bytes_per_second_per_worker) || 23e6;
         const limitS = Number(image.build_limit_s) || 120;
         const estimate = { workers: WORKERS, bytes_per_second: perWorker * WORKERS,
                            flat_limit_bytes: perWorker * WORKERS * limitS };

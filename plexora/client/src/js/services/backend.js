@@ -70,6 +70,9 @@
     });
 
     const BROWSER = "browser";
+    //: How often a relayed request still being answered says so to the
+    //: service worker (workers/backendRelay.js gives up after 120 s of silence).
+    const WORKING_MS = 30000;
 
     const variables = global.flaskVariables || {};
     const kind = typeof variables.backend === "string" && variables.backend
@@ -226,6 +229,9 @@
             const data = event.data;
             if (!data || data.type !== "plexora-relay" || !event.ports[0]) return;
             const port = event.ports[0];
+            // Still at work: said every WORKING_MS, so the relay (whose limit
+            // is 120 s of silence) waits for a long answer.
+            const working = global.setInterval(() => port.postMessage({ working: true }), WORKING_MS);
             try {
                 const request = new Request(data.url, {
                     method: data.method, headers: data.headers,
@@ -238,6 +244,8 @@
             } catch (error) {
                 port.postMessage({ status: 500, headers: [["Content-Type", "text/plain"]],
                                    body: new TextEncoder().encode(String(error && error.message || error)).buffer });
+            } finally {
+                global.clearInterval(working);
             }
         });
     }

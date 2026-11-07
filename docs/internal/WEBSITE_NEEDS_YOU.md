@@ -109,6 +109,19 @@ its bundle `py/dev/39a42309569f/`, with /selfcheck).
   refuses without it. Recommended: the website copies the table into the
   project as the desktop does, so both behave alike and the setting is only
   for .h5ad/SpatialData. Say so and it gets built.
+- **Browsers asked to update, in the install counts.** The count of visitors
+  told "Update Chrome to use Plexora here" (`site.summary`) arrives as a batch
+  from an install of its own, so each such visitor also appears as a website
+  install, with no sessions, in daily usage and active installs. Keep that, or
+  have the Worker leave installs whose only rows are `site.summary` out of
+  those counts (small; say so and it gets built).
+- **Report Pyodide's 2 GiB bug upstream?** Pyodide 314.0.7's own glue reads
+  four memory addresses as signed numbers, so past 2 GiB of heap data
+  crossing between Python and the page comes out wrong (a 60 M-value table
+  answered every request with its own column values). The bundle build
+  patches it (`tools/browser_build/build.py` GLUE_FIXES); an issue or pull
+  request on github.com/pyodide/pyodide would let a later Pyodide drop the
+  patch. Public, so your call; the write-up is ready to draft.
 
 ## 6. Git
 

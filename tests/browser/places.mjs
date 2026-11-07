@@ -150,7 +150,7 @@ try {
     out.asked = await page.evaluate(() => window.__folders);
     out.store = await page.evaluate(() => window.PlexoraStore.current());
     out.copies = await page.evaluate(() => window.PlexoraPyramid.builds()
-        .map(({ where, place, path: p, state, bytes, note }) => ({ where, place, path: p, state, bytes, note })));
+        .map(({ where, place, path: p, state, bytes, note, ms, timings }) => ({ where, place, path: p, state, bytes, note, ms, timings })));
     if (out.canWriteFolders) out.folders = await page.evaluate(LIST);
     await page.waitForTimeout(3000);
     if (out.canWriteFolders) out.foldersLater = await page.evaluate(LIST);

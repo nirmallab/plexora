@@ -447,7 +447,7 @@ def test_a_pyramid_build_is_shown_from_the_first_moment(dialog):
     first sub-step, synchronously before the POST, with a sliding bar until
     a number arrives. The sub-rail's keys are the server's stage keys."""
     submit = dialog[dialog.index("async function submit(replace, only)"):]
-    assert submit.index('substage: "opening"') < submit.index('fetch(plexoraUrl("import/sample")')
+    assert submit.index('substage: "opening"') < submit.index('plexoraUrl("import/sample")')
     from plexora.server.models.data_model import IMAGE_PYRAMID_STAGES
 
     keys = re.findall(r'\["([a-z]+)", "[^"]+"\],', dialog[

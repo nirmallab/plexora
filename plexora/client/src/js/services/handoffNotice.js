@@ -137,7 +137,7 @@
             * (ITEM[String(build && build.dtype)] || 2);
         if (!(raw > 0)) return { verdict: "website" };
         const workers = Math.max(1, Math.min(Number(image.build_workers_max) || 12, (Number(device.cores) || 4) - 2));
-        const seconds = raw / ((Number(image.build_bytes_per_second_per_worker) || 29e6) * workers);
+        const seconds = raw / ((Number(image.build_bytes_per_second_per_worker) || 23e6) * workers);
         const written = raw * (Number(image.build_written_per_raw) || 0.6);
         const what = build.kind === "labels" ? "labels" : "pixels";
         const gb = (bytes) => (bytes >= 10e9 ? Math.round(bytes / 1e9) : (bytes / 1e9).toFixed(1));

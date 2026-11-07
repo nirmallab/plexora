@@ -16,7 +16,11 @@
 importScripts("../services/backendRoutes.js");
 
 const ROUTES = (self.PlexoraBackendRoutes || []).map((row) => ({ ...row, regex: new RegExp(row.pattern) }));
-//: How long a page may take to answer before the request fails.
+//: How long a page may stay silent before the request fails. A page still at
+//: work on an answer says so every 30 s (services/backend.js), so a long one
+//: is waited for and only a page that has gone (closed, crashed) times out.
+//: (Chrome itself ends a fetch a service worker holds past 5 minutes: the
+//: import, which can wait that long on a pyramid, does not come through here.)
 const TIMEOUT_MS = 120000;
 //: The site's own files, whatever a route pattern would say of them
 //: (`/<datasource>` matches any single segment): the client, its Python.
@@ -69,8 +73,17 @@ async function relay(event) {
     const body = ["GET", "HEAD"].includes(request.method) ? null : await request.arrayBuffer();
     const channel = new MessageChannel();
     const answered = new Promise((resolve, reject) => {
-        const timer = setTimeout(() => reject(new Error("the page did not answer")), TIMEOUT_MS);
-        channel.port1.onmessage = ({ data }) => { clearTimeout(timer); resolve(data); };
+        let timer = null;
+        const arm = () => {
+            clearTimeout(timer);
+            timer = setTimeout(() => reject(new Error("the page did not answer")), TIMEOUT_MS);
+        };
+        arm();
+        channel.port1.onmessage = ({ data }) => {
+            if (data && data.working) { arm(); return; }
+            clearTimeout(timer);
+            resolve(data);
+        };
     });
     page.postMessage({ type: "plexora-relay", url: request.url, method: request.method,
                        headers: [...request.headers.entries()], body },

@@ -45,7 +45,7 @@
          window.fetch). Before appStatus.js and not deferred, so a static
          build's page can put its own transport in place before that file
          wraps window.fetch and anything issues a request. -->
-    <script src="{{ data.base_url }}/client/src/js/services/backend.js?v=20261107_gcloud" type="text/javascript"></script>
+    <script src="{{ data.base_url }}/client/src/js/services/backend.js?v=20261107_long_requests" type="text/javascript"></script>
     <!-- App-wide status indicator. Loaded here, before everything else and not
          deferred, because it wraps window.fetch to detect a dead/erroring
          server and must be installed before any script issues a request. -->
@@ -274,7 +274,7 @@
        primary button, the viewer's "+ Add Layer" and the requirements modal's
        layer row all open it, and none of those three shares a stylesheet.
        After datasetPicker.js, whose picker is this dialog's Dataset row. #}
-    <script src="{{ data.base_url }}/client/src/js/views/importSample.js?v=20261107_compact" defer></script>
+    <script src="{{ data.base_url }}/client/src/js/views/importSample.js?v=20261107_long_requests" defer></script>
     <!-- New Dataset: a dataset from a folder (scan, match, create). After
        importSample.js, whose dialog styles it reuses. -->
     <script src="{{ data.base_url }}/client/src/js/views/datasetBuilder.js?v=20261029_bucket_datasets" defer></script>

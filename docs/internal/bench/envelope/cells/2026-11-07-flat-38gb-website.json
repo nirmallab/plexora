@@ -1,0 +1,97 @@
+{
+ "pressed": [
+  {
+   "at": 855,
+   "pressed": "import -> Import sample"
+  },
+  {
+   "at": 1272,
+   "pressed": "Save the pyramid beside the original? -> Save beside original…"
+  }
+ ],
+ "canWriteFolders": true,
+ "firstVisit": "Save projects on this computer?",
+ "persisted": false,
+ "importMs": 140175,
+ "project": "lsp11385-8ch-strips-38gb",
+ "viewerMs": 141565,
+ "asked": [
+  {
+   "id": "plexora-data",
+   "mode": "readwrite",
+   "gave": "Documents"
+  },
+  {
+   "id": "plexora-copies",
+   "mode": "readwrite",
+   "gave": "images"
+  }
+ ],
+ "store": {
+  "kind": "folder",
+  "chosen": true,
+  "label": "Documents › Plexora"
+ },
+ "copies": [
+  {
+   "where": "beside",
+   "place": "“images”",
+   "path": "/derived/fd7dff532b5657f99f86e37b/lsp11385-8ch-strips-38gb.pyramid.ome.tiff",
+   "state": "done",
+   "bytes": 15184467400,
+   "note": null,
+   "ms": 136222,
+   "timings": {
+    "pasteMs": 24812.894989967346,
+    "writeMs": 9098148.730004787,
+    "hand": {
+     "readMs": 440516.0450077057,
+     "decodeMs": 331774.64000082016,
+     "deriveMs": 94170.96000909805
+    },
+    "backlogPeak": 520093696,
+    "totalMs": 136030.4650001526,
+    "bands": 3312,
+    "ms": 136174
+   }
+  }
+ ],
+ "folders": [
+  "images/lsp11385-8ch-strips-38gb.pyramid.ome.tiff 15184467400",
+  "Documents/Plexora/projects/lsp11385-8ch-strips-38gb/lsp11385-8ch-strips-38gb.db 40960",
+  "Documents/Plexora/projects/lsp11385-8ch-strips-38gb/.open-website.json 42",
+  "Documents/Plexora/projects/config.json 3534"
+ ],
+ "foldersLater": [
+  "images/lsp11385-8ch-strips-38gb.pyramid.ome.tiff 15184467400",
+  "Documents/Plexora/projects/lsp11385-8ch-strips-38gb/lsp11385-8ch-strips-38gb.db 40960",
+  "Documents/Plexora/projects/lsp11385-8ch-strips-38gb/.open-website.json 42",
+  "Documents/Plexora/projects/config.json 3534"
+ ],
+ "dataFiles": "(3, 52728, [('/data/lsp11385-8ch-strips-38gb/lsp11385-8ch-strips-38gb.db', 49152), ('/data/config.json', 3534), ('/data/lsp11385-8ch-strips-38gb/.open-website.json', 42)])",
+ "flushMs": 5866,
+ "foldersFlushed": [
+  "images/lsp11385-8ch-strips-38gb.pyramid.ome.tiff 15184467400",
+  "Documents/Plexora/projects/lsp11385-8ch-strips-38gb/lsp11385-8ch-strips-38gb.db 49152",
+  "Documents/Plexora/projects/lsp11385-8ch-strips-38gb/.open-website.json 42",
+  "Documents/Plexora/projects/config.json 3534"
+ ],
+ "findAsked": true,
+ "reopenMs": 7689,
+ "reopenStore": {
+  "kind": "folder",
+  "chosen": true,
+  "label": "Documents › Plexora"
+ },
+ "reopenProjects": [
+  "lsp11385-8ch-strips-38gb"
+ ],
+ "reopenMounted": "(['config.json', 'lsp11385-8ch-strips-38gb'], ['fd7dff532b5657f99f86e37b'])",
+ "waitingCopies": [],
+ "errors": [
+  "Failed to load resource: the server responded with a status of 404 ()"
+ ],
+ "failed": [
+  "404 http://127.0.0.1:50835/agent/v1/viewer/sessions/view_34940c0357bc"
+ ]
+}

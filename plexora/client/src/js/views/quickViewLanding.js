@@ -446,7 +446,10 @@ PlexoraPage.register(function () {
                 window.PlexoraImportSample.open({paths: [path], proposal});
                 return;
             }
-            const response = await fetch(plexoraUrl("import/sample"), {
+            // Not through the website's service worker (Chrome ends what it
+            // holds at 5 minutes; this waits on the flat image's pyramid):
+            // PlexoraBackend.fetch, as importSample.js sends the same route.
+            const response = await (window.PlexoraBackend?.fetch || fetch)(plexoraUrl("import/sample"), {
                 method: "POST",
                 headers: {"Content-Type": "application/json"},
                 body: JSON.stringify({paths: [path]}),

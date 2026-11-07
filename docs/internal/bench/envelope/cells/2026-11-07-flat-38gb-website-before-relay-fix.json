@@ -1,0 +1,93 @@
+{
+ "pressed": [
+  {
+   "at": 840,
+   "pressed": "import -> Import sample"
+  },
+  {
+   "at": 1256,
+   "pressed": "Save the pyramid beside the original? -> Save beside original…"
+  }
+ ],
+ "canWriteFolders": true,
+ "firstVisit": "Save projects on this computer?",
+ "persisted": false,
+ "importMs": 600052,
+ "project": "",
+ "viewerTimedOut": true,
+ "viewerMs": 780066,
+ "asked": [
+  {
+   "id": "plexora-data",
+   "mode": "readwrite",
+   "gave": "Documents"
+  },
+  {
+   "id": "plexora-copies",
+   "mode": "readwrite",
+   "gave": "images"
+  }
+ ],
+ "store": {
+  "kind": "folder",
+  "chosen": true,
+  "label": "Documents › Plexora"
+ },
+ "copies": [
+  {
+   "where": "beside",
+   "place": "“images”",
+   "path": "/derived/fd7dff532b5657f99f86e37b/lsp11385-8ch-strips-38gb.pyramid.ome.tiff",
+   "state": "done",
+   "bytes": 15184467400,
+   "note": null,
+   "ms": 144166,
+   "timings": {
+    "pasteMs": 28022.75001859665,
+    "writeMs": 10030828.275025845,
+    "hand": {
+     "readMs": 443371.1249885559,
+     "decodeMs": 339474.33500289917,
+     "deriveMs": 96351.64001560211
+    },
+    "backlogPeak": 524288000,
+    "totalMs": 143937.11499977112,
+    "bands": 3312,
+    "ms": 144089
+   }
+  }
+ ],
+ "folders": [
+  "images/lsp11385-8ch-strips-38gb.pyramid.ome.tiff 15184467400",
+  "Documents/Plexora/projects/config.json 3480"
+ ],
+ "foldersLater": [
+  "images/lsp11385-8ch-strips-38gb.pyramid.ome.tiff 15184467400",
+  "Documents/Plexora/projects/config.json 3480"
+ ],
+ "dataFiles": "(1, 3480, [('/data/config.json', 3480)])",
+ "flushMs": 0,
+ "foldersFlushed": [
+  "images/lsp11385-8ch-strips-38gb.pyramid.ome.tiff 15184467400",
+  "Documents/Plexora/projects/config.json 3480"
+ ],
+ "findAsked": false,
+ "reopenTimedOut": true,
+ "reopenMs": 205991,
+ "reopenStore": {
+  "kind": "folder",
+  "chosen": true,
+  "label": "Documents › Plexora"
+ },
+ "reopenProjects": [
+  "lsp11385-8ch-strips-38gb"
+ ],
+ "reopenMounted": "(['config.json', 'lsp11385-8ch-strips-38gb'], ['fd7dff532b5657f99f86e37b'])",
+ "waitingCopies": [],
+ "errors": [
+  "Failed to load resource: the server responded with a status of 504 ()"
+ ],
+ "failed": [
+  "504 http://127.0.0.1:49728/import/sample"
+ ]
+}

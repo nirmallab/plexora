@@ -79,15 +79,18 @@ def test_a_long_batch_is_said_before_it_runs_and_by_its_pace(probe):
 
 
 def test_a_flat_image_too_long_or_too_big_to_build_here_is_said_before_it_starts(probe):
-    """29 MB/s a band worker (P7: 9.6 GB in 27.5 s with 12), against two
-    minutes; a copy kept in the browser against the room it says is left."""
+    """23 MB/s a band worker (a 38.4 GB flat image in 136-144 s with 12; P7's
+    9.6 GB gave 29), against two minutes; a copy kept in the browser against
+    the room it says is left."""
     builds = probe["builds"]
-    assert builds["p7"]["verdict"] == "website" and round(builds["p7"]["seconds"]) == 28
-    assert builds["forty"]["verdict"] == "website"        # 40 GB: 115 s with 12 workers
-    assert builds["eighty"] == {"verdict": "desktop", "seconds": pytest.approx(229.9, abs=0.1),
+    assert builds["p7"]["verdict"] == "website" and round(builds["p7"]["seconds"]) == 35
+    # 40 GB: 145 s with 12 workers -- measured 136-144 s for 38.4 GB.
+    assert builds["forty"]["verdict"] == "desktop"
+    assert builds["forty"]["seconds"] == pytest.approx(144.9, abs=0.1)
+    assert builds["eighty"] == {"verdict": "desktop", "seconds": pytest.approx(289.9, abs=0.1),
                                 "title": "A long build for a browser tab",
-                                "note": "80 GB of pixels: about 4 min here, with this tab open."}
-    assert builds["p7FourCores"]["verdict"] == "desktop"  # 2 workers: 166 s
+                                "note": "80 GB of pixels: about 5 min here, with this tab open."}
+    assert builds["p7FourCores"]["verdict"] == "desktop"  # 2 workers: 209 s
     assert builds["noRoom"]["title"] == "No room for this pyramid here"
     assert builds["noRoom"]["note"] == "About 5.8 GB to keep; 3.0 GB of room left here."
     assert builds["mask"]["note"].startswith("80 GB of labels:")
