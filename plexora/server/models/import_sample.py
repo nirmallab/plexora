@@ -216,7 +216,7 @@ def _pyramidize_on_node(node, resource_id, answers, address):
     node_api.pyramidize_on_node(node, resource_id)
     misses = 0
     while True:
-        _work.wait(NODE_PYRAMID_POLL_S)
+        _work.pause(NODE_PYRAMID_POLL_S)
         try:
             described = node_api.resource_status(node, resource_id)
         except Exception as error:  # noqa: BLE001 -- counted, then said
