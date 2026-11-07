@@ -157,24 +157,69 @@ function cancelled(jobId) {
 //: write). ["opfs" | "indexeddb", handle]; throws where neither works.
 async function browserState() {
     let why = null;
-    try {
-        const root = await navigator.storage.getDirectory();
-        const plexora = await root.getDirectoryHandle("plexora", { create: true });
-        // A write, as the store will make one: opening is not enough.
-        const probe = await plexora.getFileHandle(".write-check", { create: true });
-        const writable = await probe.createWritable();
-        await writable.write(new Uint8Array([1]));
-        await writable.close();
-        await plexora.removeEntry(".write-check").catch(() => {});
-        return ["opfs", await plexora.getDirectoryHandle("state", { create: true })];
-    } catch (error) {
-        why = error;
+    // Three tries: a fresh Firefox profile once refused the first write.
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+        try {
+            const root = await navigator.storage.getDirectory();
+            const plexora = await root.getDirectoryHandle("plexora", { create: true });
+            // A write, as the store will make one: opening is not enough.
+            const probe = await plexora.getFileHandle(".write-check", { create: true });
+            const writable = await probe.createWritable();
+            await writable.write(new Uint8Array([1]));
+            await writable.close();
+            await plexora.removeEntry(".write-check").catch(() => {});
+            const state = await plexora.getDirectoryHandle("state", { create: true });
+            await takeBack(state);
+            return ["opfs", state];
+        } catch (error) {
+            why = error;
+            await new Promise((resolve) => setTimeout(resolve, 250));
+        }
     }
     try {
-        return ["indexeddb", await idbFolder("plexora-state")];
+        const folder = await idbFolder("plexora-state");
+        self.postMessage({ log: `store: this site's files cannot be written here (${why?.name || ""} ${why?.message || why}); `
+                                + "projects are kept in IndexedDB" });
+        return ["indexeddb", folder];
     } catch (error) {
         throw new Error(`${why?.message || why}; ${error?.message || error}`);
     }
+}
+
+//: Projects an earlier visit had to keep in IndexedDB, now that OPFS can be
+//: written: copied into `state` where it has no file of that name (its
+//: registry merged, entries already there kept), then the database dropped.
+async function takeBack(state) {
+    if (typeof indexedDB === "undefined" || typeof indexedDB.databases !== "function") return;
+    const names = (await indexedDB.databases().catch(() => [])).map((db) => db.name);
+    if (!names.includes("plexora-state")) return;
+    const held = await idbFolder("plexora-state");
+    const copy = async (from, to) => {
+        for await (const [name, handle] of from.entries()) {
+            if (handle.kind === "directory") {
+                await copy(handle, await to.getDirectoryHandle(name, { create: true }));
+                continue;
+            }
+            const there = await to.getFileHandle(name).catch(() => null);
+            let body = await handle.getFile();
+            if (there && name === "config.json" && to === state) {
+                const ours = JSON.parse(await (await there.getFile()).text() || "{}");
+                body = JSON.stringify({ ...JSON.parse(await body.text() || "{}"), ...ours }, null, 4);
+            } else if (there) {
+                continue;
+            }
+            const writable = await (await to.getFileHandle(name, { create: true })).createWritable();
+            await writable.write(body);
+            await writable.close();
+        }
+    };
+    await copy(held, state);
+    held.close();
+    await new Promise((resolve) => {
+        const request = indexedDB.deleteDatabase("plexora-state");
+        request.onsuccess = request.onerror = request.onblocked = () => resolve();
+    });
+    self.postMessage({ log: "store: projects kept in IndexedDB on an earlier visit are back with the others" });
 }
 
 async function mountState(folder) {
@@ -334,7 +379,7 @@ def _load_stage(name):
 _finder = stages.install(_load_stage, loaded=tuple(js.plexoraStagesLoaded.to_py()))
 json.dumps(boot.start(ORIGIN, post=_post, cancelled=lambda job: bool(js.plexoraCancelled(job)),
                       idle=_idle, waiting=lambda: bool(js.plexoraWaiting()), columns=_columns,
-                      ask=_ask))
+                      ask=_ask, jspi=JSPI, sleep=lambda seconds: js.self.plexoraSleep(seconds)))
 `));
     phases.ready = at(); mark("ready");
     return { phases, info, store, derived, stages: Object.fromEntries(

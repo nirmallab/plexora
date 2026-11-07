@@ -56,12 +56,12 @@ try {
         checks.websiteWriteKept = (await lines("import pathlib", "p = pathlib.Path('/data/web_note.json')",
                                                "p.read_text() if p.exists() else None")).replace(/'/g, "") === "one";
         checks.binaryKept = (await lines("import pathlib", "p = pathlib.Path('/data/p/p.db')",
-                                         "p.read_bytes() == bytes(range(256)) * 64 if p.exists() else False")) === "True";
+                                         "p.read_bytes() == bytes(range(256)) * 64 if p.exists() else False")) === "true";
         await lines("import pathlib", "pathlib.Path('/data/web_note.json').unlink()");
         await page.evaluate(() => window.PlexoraPython.flush());
         await open();
         checks.websiteDeleteKept = (await lines("import pathlib",
-                                                "pathlib.Path('/data/web_note.json').exists()")) === "False";
+                                                "pathlib.Path('/data/web_note.json').exists()")) === "false";
         throw Object.assign(new Error("done"), { done: true });
     }
     await page.addInitScript(STUB);

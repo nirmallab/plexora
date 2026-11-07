@@ -11,6 +11,7 @@
  * pixels, so a file is one value: its bytes, its time.
  *
  *   idbFolder(name = "plexora-state") -> a promise of the root directory handle
+ *                                        (and its `close()`, the database's)
  *
  * One object store, keyed by the path inside the folder ("a/b/c"); a folder is
  * a {kind: "directory"} entry, a file {kind: "file", bytes, modified}.
@@ -155,5 +156,8 @@ export async function idbFolder(name = "plexora-state") {
         return self;
     }
 
-    return directoryHandle("");
+    const root = directoryHandle("");
+    //: Not a handle's: lets go of the database (before it is deleted).
+    root.close = () => db.close();
+    return root;
 }
