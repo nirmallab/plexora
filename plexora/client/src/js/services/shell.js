@@ -119,9 +119,13 @@
     //: keeps them in the browser. Only where the browser can write folders.
     async function askWhereOnce(frame) {
         const store = global.PlexoraStore;
-        if (!store || !store.shouldAsk()) return;
+        if (!store || !(store.shouldAsk() || store.shouldWarn())) return;
         const app = await whenApp(frame);
         if (!app) return;
+        if (!store.shouldAsk()) {
+            await keepInBrowser(app, store);
+            return;
+        }
         const chosen = await app.PlexoraConfirm.choose({
             title: "Save projects on this computer?",
             body: "Your figures, thresholds and gates stay safe in Documents › Plexora. "
@@ -142,6 +146,41 @@
         await store.useBrowser();
     }
 
+    //: Where the browser cannot write folders the projects stay in it, which
+    //: may clear them (Safari after a week unused; any browser short of room)
+    //: unless it agrees to keep them (`persist()`, from the click: Firefox
+    //: asks the user). Said once; where nothing is kept, every visit.
+    async function keepInBrowser(app, store) {
+        if (store.current().storage === "memory") {
+            await app.PlexoraConfirm.choose({
+                title: "Projects are not kept",
+                body: "This browser lets the site keep nothing: they are lost when the tab closes.",
+                choices: [{ value: "ok", label: "OK", kind: "primary", focus: true }],
+                close: true,
+                inline: true,
+            });
+            return;
+        }
+        const storage = app.navigator.storage;
+        if (storage && storage.persisted && await storage.persisted().catch(() => false)) {
+            await store.useBrowser();
+            return;
+        }
+        const chosen = await app.PlexoraConfirm.choose({
+            title: "Projects are kept in this browser",
+            body: "It may clear them if the site goes unused. Ask it to keep them?",
+            choices: [{ value: "later", label: "Not now" },
+                      { value: "keep", label: "Keep them", kind: "primary", focus: true }],
+            close: true,
+            inline: true,
+        });
+        await store.useBrowser();
+        if (chosen !== "keep" || !storage || !storage.persist) return;
+        const kept = await storage.persist().catch(() => false);
+        app.PlexoraToast?.show(kept ? { title: "This browser will keep them" }
+            : { title: "This browser may still clear them", note: "Chrome and Edge can save them on this computer." });
+    }
+
     function script(src) {
         return new Promise((resolve, reject) => {
             const node = doc.createElement("script");
@@ -157,16 +196,46 @@
         global.PLEXORA_BASE_URL = BASE;
     }
 
+    const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+    //: The site's service worker registered, and this page controlled by it.
+    //: False where the browser has none (a private window may not): the app's
+    //: pages then answer their own requests (`relayed`, services/pageRelay.js).
     async function controlled() {
-        if (!("serviceWorker" in global.navigator)) {
-            throw new Error("this browser has no service workers, which the website needs");
+        if (!global.navigator.serviceWorker) return false;
+        try {
+            await global.navigator.serviceWorker.register(at("/client/src/js/workers/backendRelay.js"),
+                                                          { scope: at("/") });
+        } catch (error) {
+            return false;
         }
-        await global.navigator.serviceWorker.register(at("/client/src/js/workers/backendRelay.js"),
-                                                      { scope: at("/") });
-        if (global.navigator.serviceWorker.controller) return;
-        await new Promise((resolve) => {
-            global.navigator.serviceWorker.addEventListener("controllerchange", resolve, { once: true });
-        });
+        return claimed();
+    }
+
+    //: This page controlled by the site's worker. A navigation the browser did
+    //: not hand to an active worker (a forced reload; Playwright's Firefox
+    //: after the first) is claimed by asking it.
+    async function claimed() {
+        const workers = global.navigator.serviceWorker;
+        if (!workers) return false;
+        if (workers.controller) return true;
+        const changed = new Promise((resolve) => workers.addEventListener("controllerchange", resolve, { once: true }));
+        const registration = await Promise.race([workers.ready, wait(5000).then(() => null)]);
+        if (!registration) return false;
+        if (!workers.controller && registration.active) registration.active.postMessage("plexora-claim");
+        return Promise.race([changed.then(() => true), wait(5000).then(() => Boolean(workers.controller))]);
+    }
+
+    //: Whether the site's worker sees this page's requests: it answers this one
+    //: itself. Being its `controller` is not enough (Playwright's Firefox never
+    //: hands it a frame's requests).
+    async function relayed() {
+        try {
+            const response = await global.fetch(at("/__plexora/relayed"), { cache: "no-store" });
+            return response.headers.get("X-Plexora-Relayed") === "1";
+        } catch (error) {
+            return false;
+        }
     }
 
     const LABELS = { core: "Starting Python", packages: "Loading packages",
@@ -271,6 +340,7 @@
         global.PlexoraSite = Object.freeze({ version: info.version || shell.version || "" });
         // The licence, in Python's files before the first page is rendered.
         global.PlexoraLicense = await startLicence(shell, licenceModule);
+        global.PlexoraStore.booted(info.store);
         // The files picked on earlier visits, mounted again where the browser
         // still grants access; the rest wait for a click (PlexoraPicks.reconnect).
         await global.PlexoraPicks.restore().catch(() => null);
@@ -351,9 +421,13 @@
             return false;
         }
         if (!missing.length || !global.PlexoraPicks || !global.PlexoraPicks.find) return false;
+        // A folder to look in where the browser has a folder picker; the file
+        // itself where it has not (Firefox, Safari).
+        const folders = typeof global.showDirectoryPicker === "function";
+        const label = folders ? "Find them…" : missing.length === 1 ? "Locate file…" : "Locate files…";
         const go = await askInLoader(
             missing.length === 1 ? "This project's image is on this computer." : "This project's files are on this computer.",
-            [{ value: false, label: "Skip" }, { value: true, label: "Find them…", primary: true }]);
+            [{ value: false, label: "Skip" }, { value: true, label, primary: true }]);
         if (!go) return false;
         status("Looking for the files");
         const found = await global.PlexoraPicks.find(missing).catch(() => ({}));
@@ -364,6 +438,7 @@
     }
 
     async function frameBoot() {
+        const address = here(global.location);
         browserVariables();
         // The host's Python and picks, not a second worker.
         global.PlexoraPython = host.PlexoraPython;
@@ -372,8 +447,16 @@
         global.PlexoraLicense = host.PlexoraLicense;
         global.PlexoraShellFramed = true;
         if (global.PlexoraNode) global.PlexoraNode.revalidate();
+        await claimed();
         await script(at("/client/src/js/services/backendRoutes.js"));
         await script(at("/client/src/js/services/backend.js"));
+        // Where the site's worker does not see this page's requests, the
+        // page answers them itself.
+        if (!await relayed()) {
+            await script(at("/client/src/js/services/pageRelay.js"));
+            global.PlexoraPageRelay.install(global);
+            global.PlexoraShellRelay = "page";
+        }
         const response = await global.PlexoraPython.fetch(
             inApp(global.location), { headers: { Accept: "text/html" } });
         let html = await response.text();
@@ -387,6 +470,10 @@
         // wait behind them (or behind the work opening the project queues).
         if (project && global.PlexoraNode) global.PlexoraNode.project(project);
         doc.open();
+        // WebKit gives a document opened here the host's address (it takes
+        // the entry document from the host's promise this continues): this
+        // page's own address back, before the page's scripts read it.
+        if (here(global.location) !== address) global.history.replaceState(null, "", address);
         doc.write(html);
         doc.close();
         doc.documentElement.classList.add("is-website");

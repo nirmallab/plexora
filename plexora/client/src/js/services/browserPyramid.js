@@ -158,6 +158,19 @@
             if (data.progress) {
                 build.tiles = data.progress.tiles;
                 build.total = data.progress.total;
+            } else if (data.done && data.kept === "memory") {
+                // This browser could not write the site's storage: the copy
+                // came back whole, kept in IndexedDB where it can be.
+                stop();
+                keepInDatabase(build, data.file).then((where) => {
+                    Object.assign(build, { state: "done", file: data.file, timings: data.timings, where,
+                                           ms: Math.round(performance.now() - build.began) });
+                    adopt(build.path, build.file);
+                    if (where === "memory") {
+                        build.note = "This browser cannot store it for the site; it is lost when the tab closes.";
+                        notify("Pyramid kept until this tab closes", null);
+                    }
+                });
             } else if (data.done) {
                 stop();
                 Object.assign(build, { state: "done", file: data.file, timings: data.timings,
@@ -184,6 +197,19 @@
             failed(build, message, event.message || "the pyramid worker failed");
         };
         worker.postMessage(message);
+    }
+
+    //: A copy built in memory, kept in IndexedDB beside the folder records
+    //: ({path, key, name, blob, bytes}): "indexeddb", or "memory" when the
+    //: database will not take it.
+    async function keepInDatabase(build, file) {
+        try {
+            await transact("readwrite", (store) => store.put({
+                path: build.path, key: build.key, name: build.name, blob: file, bytes: file.size, made: Date.now() }));
+            return "indexeddb";
+        } catch (error) {
+            return "memory";
+        }
     }
 
     //: A folder that could not take the copy: build it in the browser instead,
@@ -239,8 +265,10 @@
         builds.set(id, build);
         if (!folder) {
             const found = await finished(key, name);
-            if (found) {
-                Object.assign(build, { state: "done", file: found.file, adopted: true });
+            const held = found ? null : await transact("readonly", (store) => store.get(build.path)).catch(() => null);
+            if (found || (held && held.blob && held.bytes === held.blob.size)) {
+                const file = found ? found.file : new File([held.blob], name);
+                Object.assign(build, { state: "done", file, adopted: true, where: found ? "browser" : "indexeddb" });
                 adopt(build.path, build.file);
                 return { value: { id } };
             }
@@ -272,8 +300,8 @@
     }
 
     async function mountCopy(record) {
-        const handle = await record.folder.getFileHandle(record.name);
-        const file = await handle.getFile();
+        const file = record.blob ? new File([record.blob], record.name)
+            : await (await record.folder.getFileHandle(record.name)).getFile();
         if (file.size !== record.bytes) return false; // changed since: not ours to read as the copy
         await global.PlexoraPython.mount(`${ROOT}/${record.key}`, [file]);
         adopt(record.path, file);
@@ -301,6 +329,12 @@
         try { records = await transact("readonly", (store) => store.getAll()); } catch (error) { /* none */ }
         for (const record of records) {
             try {
+                if (record.blob) {
+                    // Kept in the database (this browser could not write the
+                    // site's files): no permission to ask.
+                    if (await mountCopy(record)) out.push(record.path);
+                    continue;
+                }
                 if (await record.folder.queryPermission({ mode: "read" }) === "granted" && await mountCopy(record)) {
                     out.push(record.path);
                 } else {

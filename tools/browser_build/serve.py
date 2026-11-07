@@ -120,6 +120,15 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
 
 
+class Server(ThreadingHTTPServer):
+    def handle_error(self, request, client_address):
+        # A browser that closes a connection it no longer needs (WebKit does,
+        # often) is not an error worth a traceback.
+        if isinstance(sys.exc_info()[1], (ConnectionResetError, ConnectionAbortedError, BrokenPipeError)):
+            return
+        super().handle_error(request, client_address)
+
+
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     parser.add_argument("--host", default="127.0.0.1")
@@ -141,7 +150,7 @@ def main(argv=None) -> int:
     for tree in args.tree:
         prefix, _, directory = tree.partition("=")
         Handler.trees[f"/{prefix.strip('/')}/"] = (Path(directory), "no-store")
-    server = ThreadingHTTPServer((args.host, args.port), Handler)
+    server = Server((args.host, args.port), Handler)
     print(json.dumps({"port": server.server_address[1], "pid": os.getpid()}), flush=True)
     try:
         server.serve_forever()

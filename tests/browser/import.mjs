@@ -28,19 +28,29 @@ try {
     const requests = [];
     page.on("request", (request) => requests.push(`${request.method()} ${request.url().replace(/^https?:\/\/[^/]+/, "")}`));
     const started = Date.now();
+    if (args.includes("--verbose")) {
+        // Every console line of the page and its workers, timed, on stderr.
+        const say = (where, text) => process.stderr.write(`${((Date.now() - started) / 1000).toFixed(1)}s ${where} ${text.slice(0, 400)}\n`);
+        page.on("console", (message) => say(`[${message.type()}]`, message.text()));
+        page.on("worker", (worker) => worker.on("console", (message) => say("[worker]", message.text())));
+        page.on("crash", () => say("[crash]", "the page crashed"));
+    }
     await page.goto(`http://127.0.0.1:${server.port}/`);
     const frame = await appFrame(page);
     await frame.waitForSelector("#quick_view_go", { timeout: 120000 });
     out.homeMs = Date.now() - started;
-    // The first visit asks where projects go (where this Chrome can write
-    // folders): this driver keeps them in the browser.
+    // The first visit asks where projects go, where this browser can write
+    // folders: this driver keeps them in the browser. Where it cannot, it says
+    // they stay in the browser: "Keep them" asks the browser to keep them.
     out.firstVisit = await frame.waitForFunction(() => {
         const keep = [...document.querySelectorAll(".plx-confirm .plx-button")]
-            .find((button) => button.textContent.trim() === "Keep in browser");
+            .find((button) => ["Keep in browser", "Keep them"].includes(button.textContent.trim()));
         if (!keep) return false;
         keep.click();
-        return true;
-    }, null, { timeout: 5000, polling: 200 }).then(() => "kept in browser", () => null);
+        return keep.textContent.trim();
+    }, null, { timeout: 8000, polling: 200 }).then((answer) => answer.jsonValue(), () => null);
+    out.store = await page.evaluate(() => window.PlexoraStore.current());
+    out.persisted = await page.evaluate(() => navigator.storage.persisted()).catch((error) => String(error));
     await page.evaluate(() => { window.showOpenFilePicker = undefined; window.showDirectoryPicker = undefined; });
     const chooser = page.waitForEvent("filechooser", { timeout: 30000 });
     await frame.click("#quick_view_go");
@@ -74,6 +84,9 @@ try {
     if (!moved) {
         out.stuck = await frame.evaluate(() => ({
             input: document.getElementById("quick_view_path_input")?.value,
+            at: location.pathname,
+            framed: Boolean(window.PlexoraShellFramed),
+            booting: Boolean(document.getElementById("plexora-boot")),
             text: document.body.innerText.slice(0, 800),
         }));
         out.errors = errors.slice(0, 20);

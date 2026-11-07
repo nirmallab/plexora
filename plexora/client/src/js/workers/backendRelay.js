@@ -36,6 +36,13 @@ function routeOf(pathname) {
 
 self.addEventListener("install", () => self.skipWaiting());
 self.addEventListener("activate", (event) => event.waitUntil(self.clients.claim()));
+// A page of the site this worker does not control asks to be (shell.js
+// `claimed`): a navigation the browser did not hand to the worker (a forced
+// reload; Playwright's Firefox after the first) still needs its route
+// requests relayed.
+self.addEventListener("message", (event) => {
+    if (event.data === "plexora-claim") event.waitUntil(self.clients.claim());
+});
 
 function classify(url, method) {
     for (const row of ROUTES) {
@@ -77,12 +84,21 @@ async function relay(event) {
     }
 }
 
+//: Answered here: whether this worker sees the asking page's requests
+//: (services/shell.js `relayed`; a page it does not see answers them itself,
+//: services/pageRelay.js).
+const PROBE = "/__plexora/relayed";
+
 self.addEventListener("fetch", (event) => {
     const request = event.request;
     if (request.mode === "navigate") return;
     const url = new URL(request.url);
     if (url.origin !== self.location.origin) return;
     const route = routeOf(url.pathname);
+    if (route === PROBE) {
+        event.respondWith(new Response(null, { status: 204, headers: { "X-Plexora-Relayed": "1" } }));
+        return;
+    }
     if (route === null || FILES.some((prefix) => route.startsWith(prefix))) return;
     const row = classify({ pathname: route }, request.method);
     // A page fetched rather than navigated to (the app's router asks for a

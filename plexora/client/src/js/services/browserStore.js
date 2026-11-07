@@ -47,6 +47,9 @@
     let current = { kind: "browser", chosen: false };
     //: Plexora's folder this visit, once granted: {home, projects, pyramids}.
     let opened = null;
+    //: Where the worker keeps a store in the browser (its boot says):
+    //: "opfs", "indexeddb", or "memory" -- kept nowhere, lost with the tab.
+    let storage = null;
 
     function database() {
         return new Promise((resolve, reject) => {
@@ -252,11 +255,21 @@
         return true;
     }
 
+    //: What the worker's boot said of the store (`mountState`): "folder",
+    //: "opfs", "indexeddb", or "memory (why)".
+    function booted(kind) {
+        storage = String(kind || "").startsWith("memory") ? "memory" : kind || null;
+    }
+
     global.PlexoraStore = Object.freeze({
         prepare,
-        current: () => ({ ...current }),
+        booted,
+        current: () => ({ ...current, ...(current.kind === "browser" && storage ? { storage } : {}) }),
         pyramids: () => (opened && current.kind === "folder" ? opened.pyramids : null),
         shouldAsk: () => canWriteFolders() && !current.chosen,
+        //: Where projects can only be kept in the browser: said once, on the
+        //: first visit (services/shell.js); every visit when nothing is kept.
+        shouldWarn: () => !canWriteFolders() && (!current.chosen || storage === "memory"),
         canWriteFolders,
         useFolder,
         useBrowser,

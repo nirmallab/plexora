@@ -32,6 +32,7 @@ function named here with a test that removes it when it is no longer needed.
 
 from __future__ import annotations
 
+import asyncio
 import os
 import time
 
@@ -139,13 +140,100 @@ def parquet(native=None) -> bool:
     return True
 
 
+class _NoSelector:
+    """What `asyncio.BaseEventLoop._run_once` asks of a selector, for a loop
+    that watches no file or socket: the wait for the next timer is a sleep."""
+
+    def __init__(self, sleep):
+        self._sleep = sleep
+
+    def select(self, timeout=None):
+        if timeout:
+            self._sleep(timeout)
+        return []
+
+    def close(self):
+        pass
+
+
+class SyncLoop(asyncio.BaseEventLoop):
+    """An event loop with no I/O of its own, run to completion inside the call
+    that needs a coroutine's answer. Pyodide's loop blocks for one only through
+    JSPI (`run_until_complete` -> `run_sync`), and Python's selector loop needs a
+    socket pair Pyodide has not got; this one needs neither, because what Plexora
+    runs this way -- zarr's synchronous API over a store tifffile or the page
+    reads -- never waits on a socket."""
+
+    def __init__(self, sleep=time.sleep):
+        super().__init__()
+        self._selector = _NoSelector(sleep)
+
+    def _process_events(self, event_list):
+        pass
+
+    def _write_to_self(self):
+        pass
+
+
+#: The loop `run_to_completion` keeps: one, so what a library binds to the
+#: loop it first ran on (an asyncio.Lock in a store) still works the next time.
+_sync_loop = None
+
+
+def run_to_completion(awaitable, sleep=time.sleep):
+    """`awaitable`'s result, on a `SyncLoop`, whatever loop is said to be
+    running (Pyodide's always is). A call from inside one (a coroutine on it
+    asking again) gets a loop of its own."""
+    global _sync_loop
+    nested = _sync_loop is not None and _sync_loop.is_running()
+    if _sync_loop is None or _sync_loop.is_closed():
+        _sync_loop = SyncLoop(sleep)
+    loop = SyncLoop(sleep) if nested else _sync_loop
+    running = asyncio.events._get_running_loop()
+    asyncio.events._set_running_loop(None)
+    try:
+        return loop.run_until_complete(awaitable)
+    finally:
+        asyncio.events._set_running_loop(running)
+        if nested:
+            loop.close()
+
+
+def without_jspi(sleep=time.sleep) -> bool:
+    """Where the browser has no JavaScript Promise Integration (Firefox and
+    Safari before it shipped): Pyodide's loop cannot block for a coroutine, and
+    zarr's synchronous API -- every TIFF Plexora opens goes through it -- says
+    so and stops. Its `run_until_complete` runs the coroutine on a `SyncLoop`
+    instead. True if patched."""
+    try:
+        from pyodide import webloop
+    except ImportError:
+        return False
+    original = webloop.WebLoop.run_until_complete
+    if getattr(original, "plexora_sync", False):
+        return True
+
+    def run_until_complete(self, future):
+        if asyncio.isfuture(future) and getattr(future, "get_loop", lambda: None)() is self:
+            return original(self, future)  # a task of this loop: only JSPI can wait for it
+        return run_to_completion(future, sleep)
+
+    run_until_complete.plexora_sync = True
+    webloop.WebLoop.run_until_complete = run_until_complete
+    return True
+
+
 def start(origin: str, *, base_url: str = "", post=None, cancelled=None, idle=None, waiting=None,
-          columns=None, ask=None, data_root: str = "/data", licence_dir: str = "/bioc") -> dict:
+          columns=None, ask=None, jspi: bool = True, sleep=None, data_root: str = "/data",
+          licence_dir: str = "/bioc") -> dict:
     """Boot once; returns what the page shows in its status chip and records:
-    `{version, rules, seconds, shims}`."""
+    `{version, rules, seconds, shims}`. `jspi` False: the browser has no JSPI,
+    and `sleep(seconds)` blocks (the worker's Atomics.wait)."""
     started = time.perf_counter()
     environment(origin, base_url=base_url, data_root=data_root, licence_dir=licence_dir)
     shims = {"imagecodecs": codecs(), "pyodide_http": http(), "parquet": parquet()}
+    if not jspi:
+        shims["sync_loop"] = without_jspi(sleep or time.sleep)
 
     from plexora.browser import cooperative, licence
     from plexora.server.models import viewer_sessions

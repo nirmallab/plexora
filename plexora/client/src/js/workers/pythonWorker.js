@@ -34,6 +34,7 @@
 // user (`idle`, through JSPI), requests are answered in the gap.
 
 import { createStore } from "./storeSync.js";
+import { idbFolder } from "./idbFolder.js";
 
 let py = null;
 let base = "";
@@ -70,10 +71,26 @@ const mark = (name) => self.postMessage({ mark: name, at: at() });
 const BLOCK = 1 << 20;
 const KEEP = 64;
 
-function blockReads(workerfs) {
+// Python lets go of its lock around a file read, as around any blocking call.
+// WebKit runs FinalizationRegistry callbacks inside FileReaderSync's read
+// (a nested run loop; Chromium and Firefox run nothing there), and Pyodide's
+// callback, finding the lock let go, aborts the worker ("NoGilError"). So the
+// read takes the lock back while it reads, as a C extension's callback would.
+function withGil(module, read) {
+    if (!module._PyGILState_Check || module._PyGILState_Check()) return read();
+    const state = module._PyGILState_Ensure();
+    try {
+        return read();
+    } finally {
+        module._PyGILState_Release(state);
+    }
+}
+
+function blockReads(workerfs, module) {
     const reader = new FileReaderSync();
     const blocks = new Map();
-    const slice = (node, from, to) => new Uint8Array(reader.readAsArrayBuffer(node.contents.slice(from, to)));
+    const slice = (node, from, to) => withGil(module,
+        () => new Uint8Array(reader.readAsArrayBuffer(node.contents.slice(from, to))));
     const block = (node, index) => {
         const key = `${node.id}:${index}`;
         let data = blocks.get(key);
@@ -138,22 +155,90 @@ function cancelled(jobId) {
     return text.split("\n").includes(jobId);
 }
 
+//: This site's own storage for the projects: OPFS plexora/state where this
+//: browser can write there, else a folder kept in IndexedDB
+//: (workers/idbFolder.js: WebKit on Windows opens OPFS and fails every
+//: write). ["opfs" | "indexeddb", handle]; throws where neither works.
+async function browserState() {
+    let why = null;
+    // Three tries: a fresh Firefox profile once refused the first write.
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+        try {
+            const root = await navigator.storage.getDirectory();
+            const plexora = await root.getDirectoryHandle("plexora", { create: true });
+            // A write, as the store will make one: opening is not enough.
+            const probe = await plexora.getFileHandle(".write-check", { create: true });
+            const writable = await probe.createWritable();
+            await writable.write(new Uint8Array([1]));
+            await writable.close();
+            await plexora.removeEntry(".write-check").catch(() => {});
+            const state = await plexora.getDirectoryHandle("state", { create: true });
+            await takeBack(state);
+            return ["opfs", state];
+        } catch (error) {
+            why = error;
+            await new Promise((resolve) => setTimeout(resolve, 250));
+        }
+    }
+    try {
+        const folder = await idbFolder("plexora-state");
+        self.postMessage({ log: `store: this site's files cannot be written here (${why?.name || ""} ${why?.message || why}); `
+                                + "projects are kept in IndexedDB" });
+        return ["indexeddb", folder];
+    } catch (error) {
+        throw new Error(`${why?.message || why}; ${error?.message || error}`);
+    }
+}
+
+//: Projects an earlier visit had to keep in IndexedDB, now that OPFS can be
+//: written: copied into `state` where it has no file of that name (its
+//: registry merged, entries already there kept), then the database dropped.
+async function takeBack(state) {
+    if (typeof indexedDB === "undefined" || typeof indexedDB.databases !== "function") return;
+    const names = (await indexedDB.databases().catch(() => [])).map((db) => db.name);
+    if (!names.includes("plexora-state")) return;
+    const held = await idbFolder("plexora-state");
+    const copy = async (from, to) => {
+        for await (const [name, handle] of from.entries()) {
+            if (handle.kind === "directory") {
+                await copy(handle, await to.getDirectoryHandle(name, { create: true }));
+                continue;
+            }
+            const there = await to.getFileHandle(name).catch(() => null);
+            let body = await handle.getFile();
+            if (there && name === "config.json" && to === state) {
+                const ours = JSON.parse(await (await there.getFile()).text() || "{}");
+                body = JSON.stringify({ ...JSON.parse(await body.text() || "{}"), ...ours }, null, 4);
+            } else if (there) {
+                continue;
+            }
+            const writable = await (await to.getFileHandle(name, { create: true })).createWritable();
+            await writable.write(body);
+            await writable.close();
+        }
+    };
+    await copy(held, state);
+    held.close();
+    await new Promise((resolve) => {
+        const request = indexedDB.deleteDatabase("plexora-state");
+        request.onsuccess = request.onerror = request.onblocked = () => resolve();
+    });
+    self.postMessage({ log: "store: projects kept in IndexedDB on an earlier visit are back with the others" });
+}
+
 async function mountState(folder) {
     // The project store: a folder the user granted (services/browserStore.js),
-    // or OPFS plexora/state, read into /data where the app keeps its data
+    // or this site's own storage, read into /data where the app keeps its data
     // root, and kept in step with it (workers/storeSync.js) -- never mirrored:
     // the desktop app may write the same folder.
     store = createStore(py.FS, "/data", (line) => self.postMessage({ log: line }));
     try {
         let handle = folder;
-        if (!handle) {
-            const root = await navigator.storage.getDirectory();
-            const plexora = await root.getDirectoryHandle("plexora", { create: true });
-            handle = await plexora.getDirectoryHandle("state", { create: true });
-        }
+        let kind = "folder";
+        if (!handle) [kind, handle] = await browserState();
         await store.open(handle);
         lastPull = performance.now();
-        return folder ? "folder" : "opfs";
+        return kind;
     } catch (error) {
         store = null;
         py.FS.mkdirTree("/data");
@@ -190,7 +275,7 @@ async function boot(args) {
     const wheels = Promise.all(stagesInfo.base.wheels.map(fetchWheel));
     const { loadPyodide } = await import(`${base}pyodide/pyodide.mjs`);
     py = await loadPyodide({ indexURL: `${base}pyodide/` });
-    blockReads(py.FS.filesystems.WORKERFS);
+    blockReads(py.FS.filesystems.WORKERFS, py._module);
     phases.core = at(); mark("core");
     await py.loadPackage(stagesInfo.base.pyodide, { messageCallback: () => {} });
     phases.packages = at(); mark("packages");
@@ -202,12 +287,35 @@ async function boot(args) {
     py.FS.mkdirTree("/picked");
     py.FS.mkdirTree("/derived");
     const derived = await mountDerived();
+    // Without JSPI Python cannot wait on a promise: every stage is loaded
+    // now (none can arrive mid-import), and the page's answers come through
+    // shared memory (`syncAsk`).
+    const loaded = ["base"];
+    if (!jspi) {
+        for (const name of Object.keys(stagesInfo)) {
+            if (name === "base") continue;
+            try {
+                await loadStage(name, "boot (no JSPI)");
+                loaded.push(name);
+            } catch (error) {
+                self.postMessage({ log: `stage ${name}: ${error?.message || error}` });
+            }
+        }
+        // The JPEG 2000 decoder too: Python cannot wait for it later.
+        await j2kReady().catch((error) => self.postMessage({ log: `JPEG 2000: ${error?.message || error}` }));
+        phases.stages = at(); mark("stages");
+        openSyncChannel();
+    }
     self.plexoraPost = (text) => self.postMessage({ event: JSON.parse(text) });
     self.plexoraCancelled = cancelled;
     self.plexoraLoadStage = loadStage;
     self.plexoraAsk = ask;
     self.plexoraJ2KReady = j2kReady;
     self.plexoraJ2K = j2kDecode;
+    self.plexoraAskSync = syncAsk;
+    self.plexoraSleep = sleep;
+    self.plexoraJspi = jspi;
+    self.plexoraStagesLoaded = loaded;
     self.plexoraWaiting = () => queue.length > 0 || (inFlight !== null && Atomics.load(inFlight, 0) > 0);
     py.globals.set("ORIGIN", origin);
     py.globals.set("SITE_BASE", siteBase);
@@ -217,11 +325,18 @@ import js
 from pyodide.ffi import run_sync
 from plexora.browser import boot, stages
 
+JSPI = bool(js.plexoraJspi)
+
 def _post(message):
     js.plexoraPost(json.dumps(message))
 
 def _idle(seconds):
     import asyncio
+    if not JSPI:
+        # Nothing can be served meanwhile: the time passes, blocked.
+        if seconds > 0:
+            js.self.plexoraSleep(seconds)
+        return
     js.self.plexoraIdle(1)
     try:
         # No time (a long task's checkpoint): yield to whatever is queued --
@@ -247,7 +362,7 @@ def _ask(kind, args):
         entry = js.JSON.parse(json.dumps({"dtype": str(value.dtype), "shape": list(value.shape)}))
         entry.data = to_js(memoryview(value).cast("B"))
         setattr(message, key, entry)
-    value = run_sync(js.plexoraAsk(kind, message))
+    value = run_sync(js.plexoraAsk(kind, message)) if JSPI else js.plexoraAskSync(kind, message)
     return None if _absent(value) else value
 
 def _ask_columns(src, kinds):
@@ -281,7 +396,8 @@ def _j2k(data):
     # WebAssembly in this worker, loaded the first time a tile needs it.
     import numpy as np
     from pyodide.ffi import to_js
-    run_sync(js.self.plexoraJ2KReady())
+    if JSPI:  # without it, loaded at boot with the stages
+        run_sync(js.self.plexoraJ2KReady())
     found = js.self.plexoraJ2K(to_js(memoryview(bytes(data))))
     bits, signed, components = int(found.bits), bool(found.signed), int(found.components)
     dtype = np.dtype(("i" if signed else "u") + ("1" if bits <= 8 else "2"))
@@ -292,14 +408,115 @@ def _j2k(data):
 from plexora.browser import imagecodecs_shim as _codecs
 _codecs.set_jpeg2k(_j2k)
 
-_finder = stages.install(lambda name: run_sync(js.plexoraLoadStage(name, _finder.importers.get(name, "?"))))
+def _load_stage(name):
+    if not JSPI:
+        raise ImportError(f"the {name} stage could not be loaded in this browser")
+    run_sync(js.plexoraLoadStage(name, _finder.importers.get(name, "?")))
+
+_finder = stages.install(_load_stage, loaded=tuple(js.plexoraStagesLoaded.to_py()))
 json.dumps(boot.start(ORIGIN, base_url=SITE_BASE, post=_post, cancelled=lambda job: bool(js.plexoraCancelled(job)),
                       idle=_idle, waiting=lambda: bool(js.plexoraWaiting()), columns=_columns,
-                      ask=_ask))
+                      ask=_ask, jspi=JSPI, sleep=lambda seconds: js.self.plexoraSleep(seconds)))
 `));
     phases.ready = at(); mark("ready");
     return { phases, info, store, derived, stages: Object.fromEntries(
-        Object.entries(stagesInfo).map(([name, stage]) => [name, stage.bytes])) };
+        Object.entries(stagesInfo).map(([name, stage]) => [name, stage.bytes])),
+             transport: jspi ? "jspi" : syncChannel ? "shared memory" : "none", loaded };
+}
+
+// -- Python waiting on the page without JSPI -----------------------------------
+//
+// Firefox and Safari releases before JavaScript Promise Integration cannot
+// suspend Python on a promise. There the worker asks the page and blocks in
+// Atomics.wait on memory it shares with the page (the site is cross-origin
+// isolated), and the page writes the answer there (services/pythonClient.js
+// `answerSync`), in chunks of the shared buffer's size: header (JSON, its
+// arrays and files by reference) then the arrays' bytes. A File the answer
+// names (a pyramid the page built) comes as a blob: URL the worker reads with
+// a synchronous request. Nothing else can run in the worker meanwhile -- the
+// page's answer never needs it.
+
+//: Shared with the page: [state, bytes in this chunk, bytes in all], and the chunk.
+let syncChannel = null;
+//: Atomics.wait's cell for a blocking sleep.
+let sleepCell = null;
+const SYNC_BYTES = 8 << 20;
+const S = { IDLE: 0, WAITING: 1, CHUNK: 2, LAST: 3, FAILED: 4 };
+
+function openSyncChannel() {
+    if (typeof SharedArrayBuffer !== "function" || !self.crossOriginIsolated) return;
+    syncChannel = { ctl: new Int32Array(new SharedArrayBuffer(16)),
+                    data: new Uint8Array(new SharedArrayBuffer(SYNC_BYTES)) };
+    sleepCell = new Int32Array(new SharedArrayBuffer(4));
+    self.postMessage({ syncChannel });
+}
+
+function sleep(seconds) {
+    if (sleepCell) Atomics.wait(sleepCell, 0, 0, Math.max(0, seconds * 1000));
+}
+
+//: The page's answer to `kind`, waited for here; null when it has none (or
+//: there is no shared memory: Python then does the work itself).
+function syncAsk(kind, args) {
+    if (!syncChannel) return null;
+    const { ctl, data } = syncChannel;
+    const id = nextAsk++;
+    Atomics.store(ctl, 0, S.WAITING);
+    self.postMessage({ event: { kind: "ask", ask: kind, id, args, sync: true } });
+    let all = null;
+    let at = 0;
+    for (;;) {
+        Atomics.wait(ctl, 0, S.WAITING);
+        const state = Atomics.load(ctl, 0);
+        const n = Atomics.load(ctl, 1);
+        if (state === S.FAILED) {
+            const why = new TextDecoder().decode(data.slice(0, n));
+            Atomics.store(ctl, 0, S.IDLE);
+            self.postMessage({ log: `the page could not answer: ${why}` });
+            return null;
+        }
+        if (!all) all = new Uint8Array(Atomics.load(ctl, 2));
+        all.set(data.subarray(0, n), at);
+        at += n;
+        if (state === S.LAST) {
+            Atomics.store(ctl, 0, S.IDLE);
+            Atomics.notify(ctl, 0);
+            break;
+        }
+        Atomics.store(ctl, 0, S.WAITING);
+        Atomics.notify(ctl, 0);
+    }
+    const value = decodeAnswer(all);
+    if (value && value.mount) {
+        try { mount(value.mount); } catch (error) { self.postMessage({ log: `mount: ${error}` }); }
+        delete value.mount;
+    }
+    return value;
+}
+
+//: services/pythonClient.js `encodeAnswer`, undone: arrays become views of
+//: the bytes, files are read through their blob: URLs.
+function decodeAnswer(bytes) {
+    const length = new DataView(bytes.buffer).getUint32(0, true);
+    const head = JSON.parse(new TextDecoder().decode(bytes.subarray(4, 4 + length)));
+    const start = (4 + length + 7) & ~7;
+    const revive = (value) => {
+        if (Array.isArray(value)) return value.map(revive);
+        if (!value || typeof value !== "object") return value;
+        if ("\u0000bin" in value) {
+            const { type, offset, length: count } = head.bins[value["\u0000bin"]];
+            return new self[type](bytes.buffer, start + offset, count);
+        }
+        if ("\u0000blob" in value) {
+            const request = new XMLHttpRequest();
+            request.open("GET", value["\u0000blob"], false);
+            request.responseType = "blob";
+            request.send();
+            return new File([request.response], value.name || "file");
+        }
+        return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, revive(item)]));
+    };
+    return revive(head.value);
 }
 
 //: A long task's yield (its checkpoint): turns of the event loop until every
@@ -623,6 +840,15 @@ function step() {
         else if (pendingWork || pendingBackground) step();
     }, wait);
 }
+
+// What escaped every handler, with where it came from, said to the page
+// before the worker is gone (worker.onerror has the message only).
+self.addEventListener("error", (event) => {
+    self.postMessage({ log: `uncaught: ${event.error?.stack || event.message}` });
+});
+self.addEventListener("unhandledrejection", (event) => {
+    self.postMessage({ log: `unhandled: ${event.reason?.stack || event.reason}` });
+});
 
 self.onmessage = ({ data }) => {
     if (inFlight !== null) Atomics.sub(inFlight, 0, 1);
