@@ -40,6 +40,17 @@ cron */15 ─▶ one slice of one step: fold → export → verify → purge_bat
   `vectors`, the fingerprint of the allowlist this deploy was built with
   (also in the Usage page's header); `unknown > 0` in a 202 means the
   Worker is behind the client and should be redeployed.
+- **The website is a client too.** Plexora's website runs the same Python
+  client in a worker beside its page and posts through the page's fetch, so
+  `/v1/telemetry/{register,events,config}` answer CORS for exactly
+  `https://viewer.plexoraapp.com` and `https://plexora-viewer-preview.pages.dev`
+  (`src/cors.ts`, the rules of biocognia-platform's `packages/shared/src/cors.ts`;
+  `TELEMETRY_WEB_ORIGINS` adds exact origins for staging, none in production).
+  A preflight ends in the middleware, before any D1 read. Each browser is an
+  install, so `REGISTER_LIMIT_PER_DAY` is 1000 per address. Its batches say
+  `deployment: web` (and `runtime: web` in the archived client block); the
+  fold splits every performance metric by `runtime` (web | desktop, read from
+  `deployment`), which the Performance page offers as an axis.
 - **Ingest writes ≤ 3 D1 rows** (2 without a session summary). Every table is
   `WITHOUT ROWID` and there are no secondary indexes, so each write is one
   row. Both are asserted in the tests.
