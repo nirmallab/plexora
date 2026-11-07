@@ -991,6 +991,16 @@ def _build_project_parser():
     show.add_argument("name")
     show.add_argument("--json", action="store_true")
 
+    export = subs.add_parser(
+        "export", help="Write a project's own work to one .plexora file (never its images).")
+    export.add_argument("name")
+    export.add_argument("--out", metavar="FILE", help="Where to write it (default: <name>.plexora here).")
+
+    bring = subs.add_parser(
+        "import", help="Add the project in a .plexora file to this computer's projects.")
+    bring.add_argument("file")
+    bring.add_argument("--name", help="A name for it, if not the one it has.")
+
     settings = subs.add_parser(
         "set", help="Answer a question about a registered project.")
     settings.add_argument("name")
@@ -2644,6 +2654,20 @@ def _run_project(args):
                 print(name)
                 _print_manifest(api.project_manifest(name))
                 _say_what_is_converting(api, [name])
+            return _said_where(args, mutating=True)
+
+        if command == "export":
+            from plexora.server.models import bundles
+
+            out = Path(args.out or f"{args.name}{bundles.SUFFIX}")
+            out.write_bytes(bundles.export(args.name))
+            print(out)
+            return 0
+
+        if command == "import":
+            from plexora.server.models import bundles
+
+            print(bundles.import_bundle(args.file, name=args.name))
             return _said_where(args, mutating=True)
 
         if command == "show":

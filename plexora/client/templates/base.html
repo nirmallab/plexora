@@ -374,6 +374,17 @@
                                 <span class="nav-item-label">PDF&hellip;</span></button>
                         </div>
                     </div>
+                    {# The project as one file (server/models/bundles.py): its own
+                       work, never its images, for another computer or the other app. #}
+                    <a class="dropdown-item{% if not data.datasource %} disabled{% endif %}" id="nav_export_project"
+                       {% if data.datasource %}href="{{ data.base_url }}/project/{{ data.datasource|urlencode }}/bundle" download{% endif %}>
+                        <span class="fas fa-box-archive nav-item-icon"></span>
+                        <span class="nav-item-label">Export Project</span></a>
+                    {# The website only: a project file opened (on the desktop app, File >
+                       Open takes one, as does a drop on the window). #}
+                    <button type="button" id="nav_open_bundle" class="dropdown-item website-only">
+                        <span class="fas fa-box-open nav-item-icon"></span>
+                        <span class="nav-item-label">Open Project File&hellip;</span></button>
                     {# The website only (services/desktopHandoff.js): the project in
                        the desktop app, from the folder both read. #}
                     <button type="button" id="nav_open_desktop" class="dropdown-item website-only"

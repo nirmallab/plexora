@@ -76,6 +76,16 @@ def desktop_open():
         if project:
             return jsonify(project=project, url=_with_context(project, payload),
                            existing=True)
+        # A project as one file, from the website or another computer: put in
+        # this app's projects, its images found when it opens.
+        from plexora.server.models import bundles
+
+        if picked[0].lower().endswith(bundles.SUFFIX) and Path(picked[0]).is_file():
+            try:
+                name = bundles.import_bundle(picked[0])
+            except bundles.BundleError as error:
+                return jsonify(error=str(error), url=f"{_base_url()}/open_project"), 400
+            return jsonify(project=name, url=_with_context(name, payload), existing=False)
 
     missing = [entry for entry in picked
                if not entry.startswith('node://') and '://' not in entry

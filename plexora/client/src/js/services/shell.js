@@ -278,9 +278,14 @@
         // On the document, not the button: the app's router swaps pages in
         // place, so the project is the one shown when the item is clicked.
         doc.addEventListener("click", (event) => {
-            const item = event.target.closest && event.target.closest("#nav_open_desktop");
+            const item = event.target.closest && event.target.closest("#nav_open_desktop, #nav_open_bundle");
+            if (!item || !host.PlexoraHandoff) return;
+            if (item.id === "nav_open_bundle") {
+                host.PlexoraHandoff.openFile(global);
+                return;
+            }
             const shown = global.flaskVariables && global.flaskVariables.datasource;
-            if (item && shown && host.PlexoraHandoff) host.PlexoraHandoff.open(shown, global);
+            if (shown) host.PlexoraHandoff.open(shown, global);
         });
         mirror();
     }

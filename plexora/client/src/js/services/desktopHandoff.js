@@ -15,6 +15,11 @@
  * open it), and otherwise the download is offered.
  *
  *   open(project, app) -> from a click; `app` is the app's frame window (toasts)
+ *   openFile(app)      -> from a click: a `.plexora` project file opened here
+ *
+ * Where the browser cannot save into a folder (Firefox, Safari), the project
+ * goes as one file instead (server/models/bundles.py): downloaded here, and
+ * opened by the desktop app (it is the app's file type).
  *
  * Classic script, `window.PlexoraHandoff`; needs PlexoraStore and PlexoraPython.
  */
@@ -57,7 +62,10 @@
         if (store.current().kind !== "folder") {
             if (!store.canWriteFolders()) {
                 toast({ title: "Open it in the desktop app",
-                        note: "This browser cannot save projects on this computer; Chrome and Edge can." });
+                        note: "Download the project file, then open it with the desktop app.",
+                        timeout: 0,
+                        actions: [{ label: "Download", primary: true, onSelect: () => download(project, app) },
+                                  { label: "Get the desktop app", onSelect: () => global.open(DOWNLOAD, "_blank", "noopener") }] });
                 return false;
             }
             const moved = await store.useFolder(null).catch(() => null);
@@ -76,5 +84,39 @@
         return answered;
     }
 
-    global.PlexoraHandoff = Object.freeze({ open });
+    //: The project's `.plexora` file, saved by the browser.
+    function download(project, app) {
+        const link = app.document.createElement("a");
+        link.href = `/project/${encodeURIComponent(project)}/bundle`;
+        link.download = `${project}.plexora`;
+        app.document.body.appendChild(link);
+        link.click();
+        link.remove();
+    }
+
+    //: From a click: a `.plexora` file chosen, put in this browser's projects
+    //: (or Plexora's folder), and opened.
+    function openFile(app) {
+        const input = app.document.createElement("input");
+        input.type = "file";
+        input.accept = ".plexora";
+        input.style.display = "none";
+        input.addEventListener("change", async () => {
+            const file = input.files && input.files[0];
+            input.remove();
+            if (!file) return;
+            const answer = await app.fetch("/projects/bundle", { method: "POST", body: file,
+                                                                headers: { "Content-Type": "application/zip" } });
+            const body = await answer.json().catch(() => ({}));
+            if (!answer.ok || !body.project) {
+                app.PlexoraToast?.show({ title: "That file could not be opened", note: body.error || "" });
+                return;
+            }
+            app.location.href = `/${encodeURIComponent(body.project)}`;
+        });
+        app.document.body.appendChild(input);
+        input.click();
+    }
+
+    global.PlexoraHandoff = Object.freeze({ open, openFile, download });
 })(window);

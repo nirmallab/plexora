@@ -1108,3 +1108,36 @@ def project_open_elsewhere(name):
 
     open_marks.beat(name)
     return jsonify(open=open_marks.others(name))
+
+
+# -- a project as one file (server/models/bundles.py) ----------------------
+
+
+@app.route('/project/<string:name>/bundle')
+def project_bundle(name):
+    """The project as a `.plexora` file: its own work, never its images."""
+    import io
+
+    from plexora.server.models import bundles
+
+    try:
+        data = bundles.export(name)
+    except KeyError:
+        abort(404)
+    return send_file(io.BytesIO(data), mimetype="application/zip", as_attachment=True,
+                     download_name=f"{name}{bundles.SUFFIX}")
+
+
+@app.route('/projects/bundle', methods=['POST'])
+def projects_import_bundle():
+    """Register the project in a `.plexora` file (the request's body, or its
+    `file` field) and say its name; its images are found when it opens."""
+    from plexora.server.models import bundles
+
+    upload = request.files.get('file')
+    data = upload.read() if upload is not None else request.get_data()
+    try:
+        name = bundles.import_bundle(data, name=(request.args.get('name') or '').strip() or None)
+    except bundles.BundleError as error:
+        return jsonify(error=str(error)), 400
+    return jsonify(project=name, url=f"/{name}")

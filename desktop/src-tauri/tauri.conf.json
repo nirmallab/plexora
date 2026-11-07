@@ -40,7 +40,8 @@
       { "ext": ["ndpi"], "name": "Hamamatsu slide", "role": "Viewer" },
       { "ext": ["scn"], "name": "Leica slide", "role": "Viewer" },
       { "ext": ["mrxs"], "name": "MIRAX slide", "role": "Viewer" },
-      { "ext": ["h5ad"], "name": "AnnData table", "role": "Viewer" }
+      { "ext": ["h5ad"], "name": "AnnData table", "role": "Viewer" },
+      { "ext": ["plexora"], "name": "Plexora project", "role": "Editor", "mimeType": "application/zip" }
     ],
     "windows": {
       "webviewInstallMode": { "type": "downloadBootstrapper", "silent": true },
