@@ -638,6 +638,11 @@ html:not(.is-desktop) .desktop-only {
     display: none;
 }
 
+/* The website. services/shell.js sets `html.is-website` in the app's frame. */
+html:not(.is-website) .website-only {
+    display: none;
+}
+
 /* A file from Explorer or Finder is being dragged over the window. Drawn on
    the whole window because the drop is accepted anywhere: what is not dropped
    on a zone goes to the drop router (dropRouter.js), which opens, attaches or

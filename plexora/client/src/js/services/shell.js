@@ -148,6 +148,7 @@
         await script("/client/src/js/services/browserTable.js");
         await script("/client/src/js/services/browserPyramid.js");
         await script("/client/src/js/services/browserStore.js");
+        await script("/client/src/js/services/desktopHandoff.js");
         await controlled();
         // Where the projects are kept: a folder the user granted, opened again
         // (after one click when the browser asks), or this browser's storage.
@@ -273,6 +274,14 @@
         doc.open();
         doc.write(html);
         doc.close();
+        doc.documentElement.classList.add("is-website");
+        // On the document, not the button: the app's router swaps pages in
+        // place, so the project is the one shown when the item is clicked.
+        doc.addEventListener("click", (event) => {
+            const item = event.target.closest && event.target.closest("#nav_open_desktop");
+            const shown = global.flaskVariables && global.flaskVariables.datasource;
+            if (item && shown && host.PlexoraHandoff) host.PlexoraHandoff.open(shown, global);
+        });
         mirror();
     }
 

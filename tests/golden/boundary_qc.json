@@ -62,6 +62,7 @@
         "nav_export_image_png",
         "nav_export_menu",
         "nav_help_badge",
+        "nav_open_desktop",
         "nav_quit",
         "nav_report_issue",
         "nav_settings",
@@ -192,7 +193,7 @@
       "status": 200,
       "styles": [
         "/client/src/css/tokens.css?v=20261027_sidebar_radius",
-        "/client/src/css/main.css?v=20261107_confirm_chip",
+        "/client/src/css/main.css?v=20261107_website_only",
         "/client/src/css/explorer.css?v=20261021_explorer_waiting",
         "/client/src/css/openProject.css?v=20261103_select_all"
       ],
@@ -288,6 +289,7 @@
         "nav_export_image_png",
         "nav_export_menu",
         "nav_help_badge",
+        "nav_open_desktop",
         "nav_quit",
         "nav_report_issue",
         "nav_settings",
@@ -476,7 +478,7 @@
       "status": 200,
       "styles": [
         "/client/src/css/tokens.css?v=20261027_sidebar_radius",
-        "/client/src/css/main.css?v=20261107_confirm_chip",
+        "/client/src/css/main.css?v=20261107_website_only",
         "/client/src/css/explorer.css?v=20261021_explorer_waiting",
         "/client/src/css/viewer.css?v=20261106_no_carry",
         "/client/src/css/quickView.css?v=20261021_native_drop",
@@ -601,6 +603,7 @@
         "nav_export_image_png",
         "nav_export_menu",
         "nav_help_badge",
+        "nav_open_desktop",
         "nav_quit",
         "nav_report_issue",
         "nav_settings",
@@ -914,7 +917,7 @@
       "status": 200,
       "styles": [
         "/client/src/css/tokens.css?v=20261027_sidebar_radius",
-        "/client/src/css/main.css?v=20261107_confirm_chip",
+        "/client/src/css/main.css?v=20261107_website_only",
         "/client/src/css/explorer.css?v=20261021_explorer_waiting",
         "/client/src/css/viewer.css?v=20261106_no_carry",
         "/client/src/css/quickView.css?v=20261021_native_drop",

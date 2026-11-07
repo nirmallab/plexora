@@ -8,7 +8,7 @@
     <link rel="apple-touch-icon" href="{{ data.base_url }}/client/src/img/apple-touch-icon.png">
     <!-- Styles -->
     <link rel="stylesheet" href="{{ data.base_url }}/client/src/css/tokens.css?v=20261027_sidebar_radius">
-    <link rel="stylesheet" href="{{ data.base_url }}/client/src/css/main.css?v=20261107_confirm_chip">
+    <link rel="stylesheet" href="{{ data.base_url }}/client/src/css/main.css?v=20261107_website_only">
     {# Here and not in a page block: the explorer opens from every page, and
        appRouter.adoptStyles turns page stylesheets off on navigation. #}
     <link rel="stylesheet" href="{{ data.base_url }}/client/src/css/explorer.css?v=20261021_explorer_waiting">
@@ -374,6 +374,12 @@
                                 <span class="nav-item-label">PDF&hellip;</span></button>
                         </div>
                     </div>
+                    {# The website only (services/desktopHandoff.js): the project in
+                       the desktop app, from the folder both read. #}
+                    <button type="button" id="nav_open_desktop" class="dropdown-item website-only"
+                            {% if not data.datasource %}disabled{% endif %}>
+                        <span class="fas fa-desktop nav-item-icon"></span>
+                        <span class="nav-item-label">Open in Desktop App</span></button>
                     <div class="dropdown-divider"></div>
                     {# mod+, is the settings convention on every desktop platform
                        and no browser claims it. #}
