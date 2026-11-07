@@ -455,8 +455,10 @@ export function createLicenseClient({
             if (nextEnvironment) await store.put(ENVIRONMENT, nextEnvironment); else await store.delete(ENVIRONMENT);
             environment = nextEnvironment;
         }
+        // The AI token was exchanged against this certificate: a new one, a
+        // revocation or none ends it; a refresh's bookkeeping does not.
+        if (!nextRecord || !record || nextRecord.certificate !== record.certificate || nextRecord.revoked) token = null;
         record = nextRecord;
-        token = null;
         await evaluate();
         await toPython();
         if (channel) {

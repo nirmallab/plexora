@@ -417,6 +417,8 @@ await check("the AI token is exchanged once, held in memory, renewed at two thir
     assert.match(first.token, /^BIOCAI1\./);
     assert.equal(first.gateway, "https://ai.biocognia.test");
     assert.equal((await client.aiTokenForPython({})).token, first.token);
+    assert.equal(await client.heartbeat({ force: true }), "ok");
+    assert.equal((await client.aiTokenForPython({})).token, first.token, "a refresh's bookkeeping keeps the token");
     assert.equal(service.of("/ai/token").length, 1);
     assert.equal(service.of("/ai/token")[0].body.app_version, "0.0.36");
     page.set(page.t + 21 * 60);
