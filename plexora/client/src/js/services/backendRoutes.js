@@ -376,6 +376,7 @@
   {"class": "python", "endpoint": "volume_window", "methods": ["GET"], "pattern": "^\\/volume\\/([^/]+)\\/window$"},
   {"class": "python", "endpoint": "project_requirements", "methods": ["GET"], "pattern": "^\\/([^/]+)\\/requirements$"},
   {"class": "python", "endpoint": "satisfy_requirements", "methods": ["POST"], "pattern": "^\\/([^/]+)\\/requirements$"},
+  {"class": "python", "endpoint": "project_size", "methods": ["GET"], "pattern": "^\\/project\\/([^/]+)\\/size$"},
   {"class": "python", "endpoint": "volume_level", "methods": ["GET"], "pattern": "^\\/volume\\/([^/]+)\\/level$"},
   {"class": "python", "endpoint": "edit_project_page", "methods": ["GET"], "pattern": "^\\/edit_config\\/([^/]+)$"},
   {"class": "python", "endpoint": "volume_info", "methods": ["GET"], "pattern": "^\\/volume\\/([^/]+)\\/info$"},

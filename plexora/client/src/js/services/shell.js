@@ -149,6 +149,7 @@
         await script("/client/src/js/services/browserPyramid.js");
         await script("/client/src/js/services/browserStore.js");
         await script("/client/src/js/services/desktopHandoff.js");
+        await script("/client/src/js/services/handoffNotice.js");
         await controlled();
         // Where the projects are kept: a folder the user granted, opened again
         // (after one click when the browser asks), or this browser's storage.
@@ -275,6 +276,8 @@
         doc.write(html);
         doc.close();
         doc.documentElement.classList.add("is-website");
+        // More than a browser tab handles well: the desktop app offered.
+        if (project && host.PlexoraEnvelope) host.PlexoraEnvelope.check(project, global).catch(() => null);
         // On the document, not the button: the app's router swaps pages in
         // place, so the project is the one shown when the item is clicked.
         doc.addEventListener("click", (event) => {

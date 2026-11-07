@@ -840,7 +840,7 @@
       ]
     }
   },
-  "route_count": 247,
+  "route_count": 248,
   "routes": [
     "DELETE /nodes/<name>/resources/<resource_id>",
     "DELETE /project/<string:name>/layers/<path:layer_id>",
@@ -919,6 +919,7 @@
     "GET /project/<string:name>/manifest",
     "GET /project/<string:name>/open_elsewhere",
     "GET /project/<string:name>/resources",
+    "GET /project/<string:name>/size",
     "GET /project_thumbnail/<string:name>",
     "GET /projects",
     "GET /remote_health",

@@ -1141,3 +1141,29 @@ def projects_import_bundle():
     except bundles.BundleError as error:
         return jsonify(error=str(error)), 400
     return jsonify(project=name, url=f"/{name}")
+
+
+@app.route('/project/<string:name>/size')
+def project_size(name):
+    """{rows, columns, image: {shape, dtype, levels}}: how large the open
+    project is, for the website's notice of what a browser tab handles well
+    (client services/handoffNotice.js). `rows` is null while the table is
+    still loading behind the viewer."""
+    data_model.ensure_loaded(name)
+    table = getattr(data_model, "datasource", None)
+    rows = columns = None
+    if table is not None:
+        try:
+            rows = int(len(table))
+            columns = int(len(getattr(table, "columns", None) or []))
+        except Exception:  # noqa: BLE001 -- a table that cannot say: no notice
+            rows = columns = None
+    image = None
+    group = getattr(data_model, "channels", None)
+    try:
+        level = group["0"] if hasattr(group, "array_keys") else group
+        levels = len([k for k in group.array_keys() if str(k).isdigit()]) if hasattr(group, "array_keys") else 1
+        image = {"shape": [int(side) for side in level.shape], "dtype": str(level.dtype), "levels": levels}
+    except Exception:  # noqa: BLE001 -- no image, or not one this reads
+        image = None
+    return jsonify(rows=rows, columns=columns, image=image)

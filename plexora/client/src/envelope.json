@@ -1,0 +1,13 @@
+{
+    "version": 1,
+    "measured": "2026-11-07: P3 (tables), P7 (pyramids), P9 (the worker's heap at 1.26 M x 29 cells, 2.1 GiB), the website's own runs",
+    "table": {
+        "worker_values": 40000000,
+        "worker_bytes_per_value": 52,
+        "reference_device_memory_gb": 8
+    },
+    "image": {
+        "flat_bytes_per_second": 560000000,
+        "flat_build_seconds": 120
+    }
+}
