@@ -10,7 +10,7 @@ Writes `<out>/py/<plexora version>/`:
 - `wheels/`: this checkout's plexora wheel without its web client (the page
   serves `client/` and every plugin's `static/` itself; templates stay, since
   the app renders pages and panels), and the pure-Python wheels Pyodide does
-  not ship, at the versions this environment has installed;
+  not ship, at the versions this checkout's uv.lock pins;
 - `stages.json`: per stage, the lockfile packages to `loadPackage` and the
   wheel files to unpack, with their bytes;
 - `manifest.json`: every file with its size and sha256, the Pyodide and Python
@@ -39,6 +39,7 @@ import subprocess
 import sys
 import tarfile
 import tempfile
+import tomllib
 import urllib.request
 import zipfile
 from importlib import metadata
@@ -46,6 +47,10 @@ from pathlib import Path
 
 PYODIDE = "314.0.7"
 URL = f"https://github.com/pyodide/pyodide/releases/download/{PYODIDE}/pyodide-{PYODIDE}.tar.bz2"
+#: The release archive's sha256, checked before it is unpacked (the archive
+#: this machine downloaded from URL on 2026-11-06, which every bundle so far
+#: was built from). A new PYODIDE needs a new hash.
+PYODIDE_SHA256 = "192b5864e6e6d30ab074861af800cb8b4acb0998ef0f9342c3367448aeb86645"
 REPO = Path(__file__).resolve().parents[2]
 CACHE = Path(os.environ.get("PLEXORA_BENCH_HOME") or "C:/plexora-bench") / "browser_node" / "pyodide"
 SITE = "/lib/python3.14/site-packages"
@@ -77,6 +82,10 @@ def release() -> Path:
         with urllib.request.urlopen(URL) as response, part.open("wb") as out:
             shutil.copyfileobj(response, out, 1 << 20)
         part.replace(archive)
+    found = sha256(archive)
+    if found != PYODIDE_SHA256:
+        raise SystemExit(f"{archive}: sha256 {found}, not Pyodide {PYODIDE}'s {PYODIDE_SHA256}; "
+                         "delete it to download it again")
     with tarfile.open(archive, "r:bz2") as tar:
         tar.extractall(CACHE / PYODIDE, filter="data")
     return dist
@@ -106,9 +115,40 @@ def lean(wheel: Path) -> None:
     out.replace(wheel)
 
 
+def locked_versions(lock_file: Path = REPO / "uv.lock") -> dict:
+    """{normalized name: {versions}} from this checkout's uv.lock."""
+    lock = tomllib.loads(lock_file.read_text(encoding="utf-8"))
+    out: dict = {}
+    for package in lock.get("package", []):
+        out.setdefault(_norm(package["name"]), set()).add(package["version"])
+    return out
+
+
+def pin(name: str, locked: dict) -> str:
+    """The version of a pure wheel the bundle takes: the one uv.lock pins, as
+    the desktop app ships it (the installed one where the lock holds several,
+    for different platforms). Never unpinned: a wheel the lock does not know
+    and this environment does not have stops the build."""
+    versions = locked.get(_norm(name), set())
+    try:
+        installed = metadata.version(name)
+    except metadata.PackageNotFoundError:
+        installed = None
+    if len(versions) == 1:
+        version = next(iter(versions))
+        if installed and installed != version:
+            print(f"note: {name} {version} as uv.lock pins it (this environment has {installed})",
+                  flush=True)
+        return version
+    if installed and (not versions or installed in versions):
+        return installed
+    raise SystemExit(f"{name}: uv.lock pins {sorted(versions) or 'nothing'} and this environment has "
+                     f"{installed or 'none'}: no version to take (add it to pyproject.toml and uv lock)")
+
+
 def wheels(scratch: Path) -> dict:
     """{distribution: wheel path}: plexora built from this checkout, the rest
-    downloaded as pure wheels at the installed versions."""
+    downloaded as pure wheels at the versions uv.lock pins."""
     pip = [sys.executable, "-m", "pip", "--disable-pip-version-check", "-q"]
     out = scratch / "wheels"
     out.mkdir(parents=True, exist_ok=True)
@@ -117,12 +157,8 @@ def wheels(scratch: Path) -> dict:
     for wheel in out.glob("plexora-*.whl"):
         lean(wheel)
     wanted = sorted({name for stage in STAGES.values() for name in stage["wheels"]} - {"plexora"})
-    pins = []
-    for name in wanted:
-        try:
-            pins.append(f"{name}=={metadata.version(name)}")
-        except metadata.PackageNotFoundError:
-            pins.append(name)
+    locked = locked_versions()
+    pins = [f"{name}=={pin(name, locked)}" for name in wanted]
     subprocess.run([*pip, "download", "--no-deps", "--only-binary=:all:", "--python-version",
                     "3.14", "--platform", "any", "--implementation", "py", "-d", str(out), *pins],
                    check=True)
@@ -245,31 +281,43 @@ def build(out_root: Path, python314: str | None, encoder: str | None) -> Path:
                         brotli(target, encoder)
                 stages[stage_name]["wheels"].append(wheel.name)
 
-    def size(path: Path) -> int:
-        compressed = path.with_name(path.name + ".br")
-        return (compressed if compressed.exists() else path).stat().st_size
-
-    for stage_name, stage in stages.items():
-        stage["bytes"] = (sum(size(out / "pyodide" / lock["packages"][n]["file_name"])
-                              for n in stage["pyodide"])
-                          + sum(size(out / "wheels" / w) for w in stage["wheels"]))
-    core_bytes = sum(size(out / "pyodide" / name) for name in CORE)
+    core_bytes = account(out, lock, stages)
     (out / "stages.json").write_text(json.dumps(stages, indent=1), encoding="utf-8")
-    files = {path.relative_to(out).as_posix(): {"bytes": path.stat().st_size, "sha256": sha256(path)}
-             for path in sorted(out.rglob("*")) if path.is_file()}
     manifest = {"plexora": __version__, "pyodide": PYODIDE, "python": lock["info"]["python"],
                 "precompiled": python314 is not None, "brotli": encoder is not None,
                 "first_visit_bytes": core_bytes + stages["base"]["bytes"],
                 "stages": {name: stage["bytes"] for name, stage in stages.items()},
-                "files": files}
+                "files": listing(out)}
     (out / "manifest.json").write_text(json.dumps(manifest, indent=1), encoding="utf-8")
     return out
+
+
+def _stored(path: Path) -> int:
+    """A file's bytes as the bucket stores it: its `.br` where there is one."""
+    compressed = path.with_name(path.name + ".br")
+    return (compressed if compressed.exists() else path).stat().st_size
+
+
+def account(out: Path, lock: dict, stages: dict) -> int:
+    """Each stage's bytes as stored, written into `stages`; returns the core's."""
+    for stage in stages.values():
+        stage["bytes"] = (sum(_stored(out / "pyodide" / lock["packages"][n]["file_name"])
+                              for n in stage["pyodide"])
+                          + sum(_stored(out / "wheels" / w) for w in stage["wheels"]))
+    return sum(_stored(out / "pyodide" / name) for name in CORE)
+
+
+def listing(out: Path) -> dict:
+    """Every file of the bundle but the manifest itself, with its size and sha256."""
+    return {path.relative_to(out).as_posix(): {"bytes": path.stat().st_size, "sha256": sha256(path)}
+            for path in sorted(out.rglob("*")) if path.is_file() and path != out / "manifest.json"}
 
 
 def plexora_only(out_root: Path, python314: str | None, encoder: str | None) -> Path:
     """Rebuild the plexora wheel inside an existing bundle (development: a
     change to Plexora's Python without the 15 minutes of brotli the packages
-    take). stages.json and manifest.json are rewritten to match."""
+    take). stages.json and manifest.json are rewritten to match, the stage
+    sizes and the first visit included."""
     from plexora import __version__
 
     out = out_root / "py" / __version__
@@ -291,11 +339,13 @@ def plexora_only(out_root: Path, python314: str | None, encoder: str | None) -> 
     for stage in stages.values():
         stage["wheels"] = [wheel.name if name.startswith("plexora-") else name
                            for name in stage["wheels"]]
+    lock = json.loads((out / "pyodide" / "pyodide-lock.json").read_text(encoding="utf-8"))
+    core_bytes = account(out, lock, stages)
     (out / "stages.json").write_text(json.dumps(stages, indent=1), encoding="utf-8")
     manifest = json.loads((out / "manifest.json").read_text(encoding="utf-8"))
-    manifest["files"] = {path.relative_to(out).as_posix(): {"bytes": path.stat().st_size,
-                                                            "sha256": sha256(path)}
-                         for path in sorted(out.rglob("*")) if path.is_file()}
+    manifest.update({"plexora": __version__, "first_visit_bytes": core_bytes + stages["base"]["bytes"],
+                     "stages": {name: stage["bytes"] for name, stage in stages.items()},
+                     "files": listing(out)})
     (out / "manifest.json").write_text(json.dumps(manifest, indent=1), encoding="utf-8")
     return out
 
