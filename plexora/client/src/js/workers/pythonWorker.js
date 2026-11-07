@@ -323,6 +323,7 @@ async function boot(args) {
     self.plexoraJ2KReady = j2kReady;
     self.plexoraJ2K = j2kDecode;
     self.plexoraAskSync = syncAsk;
+    self.plexoraSourceWrite = sourceWrite;
     self.plexoraSleep = sleep;
     self.plexoraJspi = jspi;
     self.plexoraStagesLoaded = loaded;
@@ -443,6 +444,7 @@ _finder = stages.install(_load_stage, loaded=tuple(js.plexoraStagesLoaded.to_py(
 json.dumps(boot.start(ORIGIN, base_url=SITE_BASE, post=_post, cancelled=lambda job: bool(js.plexoraCancelled(job)),
                       idle=_idle, waiting=lambda: bool(js.plexoraWaiting()), columns=_columns,
                       ask=_ask, wait_on=_wait_on, jspi=JSPI, sleep=lambda seconds: js.self.plexoraSleep(seconds),
+                      deliver=lambda source, staged: bool(js.self.plexoraSourceWrite(source, staged)),
                       telemetry=json.loads(TELEMETRY)))
 `));
     phases.ready = at(); mark("ready");
@@ -713,6 +715,37 @@ function mountTree({ dir, blobs }) {
     py.FS.mkdirTree(dir);
     py.FS.mount(py.FS.filesystems.WORKERFS, { blobs }, dir);
     return blobs.length;
+}
+
+// -- saving into a picked file (plexora/server/utils/source_writes.py) ---------
+//
+// Python wrote a picked file as a staged copy in its memory. The copy becomes
+// the file Python reads at that path from now on -- the pick's mount made again
+// with it in the original's place, as the desktop reads the file it wrote --
+// and goes to the page, which saves it over the original through the
+// browser's handle or offers it as a download (services/sourceWrites.js).
+// Python removes the staged copy once this returns.
+function sourceWrite(source, staged) {
+    const bytes = py.FS.readFile(staged);
+    const file = new File([bytes], source.split("/").pop(), { lastModified: Date.now() });
+    swapPicked(source, file);
+    self.postMessage({ event: { kind: "sourceWrite", source, file } });
+    return true;
+}
+
+//: The pick mounted at /picked/<id> made again with `file` at `source`.
+function swapPicked(source, file) {
+    const parts = source.split("/");
+    const dir = parts.slice(0, 3).join("/");
+    const inside = parts.slice(3).join("/");
+    const node = py.FS.lookupPath(dir).node;
+    if (!node.mount || node.mount.mountpoint !== dir) return;
+    const opts = node.mount.opts || {};
+    const next = opts.blobs
+        ? { blobs: opts.blobs.map((blob) => (blob.name === inside ? { name: blob.name, data: file } : blob)) }
+        : { files: (opts.files || []).map((other) => (other.name === inside ? file : other)) };
+    py.FS.unmount(dir);
+    py.FS.mount(py.FS.filesystems.WORKERFS, next, dir);
 }
 
 // -- telemetry (plexora/browser/telemetry.py) -----------------------------------

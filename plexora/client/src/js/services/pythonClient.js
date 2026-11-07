@@ -43,6 +43,9 @@
  *   flush()                 the project store written back now
  *   useStore(folder)        the project store moved to a granted folder
  *   job(id) / cancel(id) / on(kind, fn)
+ *   saveWith(fn)            who saves a picked file Python wrote (services/
+ *                           sourceWrites.js): `fn({source, file})` -> a promise;
+ *                           a request's answer waits for the saves it started
  *
  * Classic script, `window.PlexoraPython`.
  */
@@ -73,6 +76,11 @@
     //: worker's event loop delivers it, which a busy loop starves).
     const inFlight = shared ? new Int32Array(new SharedArrayBuffer(4)) : null;
     const cancelled = [];
+    //: Saves of picked files Python wrote (plexora/server/utils/source_writes.py),
+    //: running: a request's answer waits for the ones its request started,
+    //: whose events the worker posted before the answer.
+    const saving = new Set();
+    let saver = null;
 
     function call(op, args, transfer) {
         const id = nextId++;
@@ -182,6 +190,14 @@
         }
     }
 
+    function save(event) {
+        if (!saver) return;
+        const done = Promise.resolve().then(() => saver(event))
+            .catch((error) => console.error("[python] saving", event.source, error));
+        saving.add(done);
+        done.finally(() => saving.delete(done));
+    }
+
     function emit(kind, payload) {
         for (const fn of listeners.get(kind) || []) {
             try { fn(payload); } catch (error) { console.error(error); }
@@ -211,6 +227,7 @@
             if (event.kind === "ask") respond(event);
             if (event.kind === "chat" && event.conversation && event.event) remember(event);
             if (event.kind === "wakeup") wake(event.topic || null);
+            if (event.kind === "sourceWrite") save(event);
             emit(event.kind, event);
             return;
         }
@@ -295,6 +312,8 @@
             method, path: route(url.pathname), query: url.search.replace(/^\?/, ""), headers,
             body: body ? body.buffer.slice(body.byteOffset, body.byteOffset + body.byteLength) : null,
         });
+        // The picked files this request wrote, saved before its answer is.
+        if (saving.size) await Promise.all([...saving]);
         let payload = answer.body;
         if (answer.stream !== null && answer.stream !== undefined) {
             const parts = [answer.body];
@@ -557,5 +576,8 @@
         tasks: () => tasks.slice(),
         cancel,
         on,
+        saveWith: (fn) => { saver = fn; },
+        //: Every save still running (tests, and a page about to close).
+        saved: () => Promise.all([...saving]),
     });
 })(typeof window !== "undefined" ? window : globalThis);

@@ -79,9 +79,15 @@ def handle(app, request: dict, origin: str) -> dict:
         captured["headers"] = [[name, value] for name, value in headers]
         return lambda data: captured.setdefault("written", []).append(bytes(data))
 
+    from plexora.server.utils import source_writes
+
     method = (request.get("method") or "GET").upper()
-    iterable = app.wsgi_app(environ(request, origin), start_response)
-    body, rest = _first(iterable, CHUNK)
+    # A write into a picked file goes to the page once, as the request ends
+    # (server/utils/source_writes.py): before its answer, so the answer the
+    # caller gets is about a file the page is already saving.
+    with source_writes.batch():
+        iterable = app.wsgi_app(environ(request, origin), start_response)
+        body, rest = _first(iterable, CHUNK)
     if captured.get("written"):
         body = b"".join(captured["written"]) + body
     stream = None

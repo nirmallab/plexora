@@ -129,6 +129,11 @@
         const blobs = entries.map(({ path, file }) => ({ name: `${name}/${path}`, data: file }));
         await global.PlexoraPython.mountTree(`${ROOT}/${id}`, blobs);
         for (const { name: inside, data } of blobs) mounted.set(`${ROOT}/${id}/${inside}`, data);
+        // Each file's own handle, where the browser gave the folder's: what a
+        // save into one of them writes through (services/sourceWrites.js).
+        for (const { path, handle } of entries) {
+            if (handle) handles.set(`${ROOT}/${id}/${name}/${path}`, handle);
+        }
         return `${ROOT}/${id}/${name}`;
     }
 

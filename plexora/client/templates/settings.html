@@ -67,6 +67,16 @@
                             Ask to keep it</button>
                     </div>
                 </div>
+                {# Saving gates, QC calls and ROI columns into the table or .h5ad
+                   the user opened (services/sourceWrites.js, on the host page;
+                   plexora/server/utils/source_writes.py). Off by default. #}
+                <div class="settings-card" id="settings_web_writes" hidden>
+                    <label class="settings-node-field settings-remote-check">
+                        <input type="checkbox" id="settings_web_writes_on">
+                        <span>Save into your files</span>
+                    </label>
+                    <div class="settings-meta" id="settings_web_writes_meta"></div>
+                </div>
                 {% else %}
 
                 <h2 class="settings-panel-title">Data directory</h2>
@@ -976,5 +986,5 @@
 {# remoteState.js is loaded by base.html, above and deferred, so it is parsed
    before this file runs -- the Remote servers section is one of its
    subscribers rather than a poller of its own. #}
-<script src="{{ data.base_url }}/client/src/js/views/settingsPage.js?v=20261107_handoff_advanced_browsers" defer></script>
+<script src="{{ data.base_url }}/client/src/js/views/settingsPage.js?v=20261107_source_writes" defer></script>
 {% endblock %}

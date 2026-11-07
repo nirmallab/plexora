@@ -596,12 +596,13 @@ def _write_flat_columns(dataset, kind, labels, names, category_column,
     import polars as pl
 
     from plexora.server.models.adapters import read_flat_table, write_flat_table
+    from plexora.server.utils import source_writes
 
     source = dataset.table.source
     if source is None or not source.path:
         raise ValueError("no table file is recorded for this project")
 
-    frame = read_flat_table(source.path, kind)
+    frame = read_flat_table(source_writes.current(source.path), kind)
     taken = [c for c in (category_column, name_column) if c in frame.columns]
     if taken and not replace:
         raise ColumnExists(sorted(frame.columns),
@@ -617,17 +618,20 @@ def _write_flat_columns(dataset, kind, labels, names, category_column,
         pl.Series(name_column, names, dtype=pl.Utf8),
     ])
 
-    directory = os.path.dirname(os.path.abspath(source.path)) or "."
-    handle, temporary = tempfile.mkstemp(suffix=Path(source.path).suffix,
-                                         dir=directory)
-    os.close(handle)
-    try:
-        write_flat_table(frame, temporary, kind)
-        os.replace(temporary, source.path)
-    except BaseException:
-        with contextlib.suppress(OSError):
-            os.unlink(temporary)
-        raise
+    # On the website, a picked file's staged copy: the page saves it over the
+    # original (server/utils/source_writes.py).
+    with source_writes.writable(source.path, copy=False) as target:
+        directory = os.path.dirname(os.path.abspath(target)) or "."
+        handle, temporary = tempfile.mkstemp(suffix=Path(target).suffix,
+                                             dir=directory)
+        os.close(handle)
+        try:
+            write_flat_table(frame, temporary, kind)
+            os.replace(temporary, target)
+        except BaseException:
+            with contextlib.suppress(OSError):
+                os.unlink(temporary)
+            raise
 
     return {
         "path": source.path,
@@ -753,7 +757,24 @@ def _open_group(path: str, writable: bool = False):
     Duplicated rather than imported from the gating plugin on purpose: a plugin
     that reaches into another plugin's internals stops working the moment the
     user's build does not ship that plugin.
+
+    On the website a picked file is written as a staged copy the page then
+    saves over the original (server/utils/source_writes.py): `writable` names
+    the copy, and a read meanwhile reads it.
     """
+    from plexora.server.utils import source_writes
+
+    if not writable:
+        with _open_group_at(source_writes.current(path), False) as group:
+            yield group
+        return
+    with source_writes.writable(path) as target, _open_group_at(target, True) as group:
+        yield group
+
+
+@contextlib.contextmanager
+def _open_group_at(path: str, writable: bool):
+    """`_open_group` on the file or store actually opened."""
     if Path(path).is_dir():
         import zarr
 

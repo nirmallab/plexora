@@ -174,8 +174,35 @@
         if (toBrowser) toBrowser.onclick = () => move("browser");
     }
 
+    //: Saving into the files the user opened (services/sourceWrites.js, on
+    //: the host page): off by default, one switch.
+    function drawWebWrites() {
+        let writes = null;
+        try {
+            writes = window.parent?.PlexoraSourceWrites || null;
+        } catch (error) {
+            writes = null;
+        }
+        const card = el("settings_web_writes");
+        const box = el("settings_web_writes_on");
+        show(card, Boolean(writes));
+        if (!writes || !box) return;
+        const folders = Boolean(webStore()?.canWriteFolders());
+        const say = () => text(el("settings_web_writes_meta"), box.checked
+            ? (folders ? "Gates, QC and ROI columns are saved into the table you opened; the browser asks once per file."
+                       : "Gates, QC and ROI columns come back as a download of the updated table.")
+            : "Off: Plexora never changes your files.");
+        box.checked = writes.allowed();
+        say();
+        box.onchange = () => {
+            box.checked = writes.setAllowed(box.checked);
+            say();
+        };
+    }
+
     async function drawWebStorage() {
         drawWebPlace();
+        drawWebWrites();
         const used = el("settings_web_storage_used");
         const meta = el("settings_web_storage_meta");
         const keep = el("settings_web_keep");
