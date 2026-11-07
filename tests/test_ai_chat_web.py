@@ -117,3 +117,26 @@ def test_the_stand_ins_go_once_spatialagents_takes_a_spawn_and_a_sleep():
     has one (`spatialagents.runtime`), `install()` uses it, and PATCHED and
     the stand-ins are dead code: remove them."""
     assert not agents.hooked(), "spatialagents.runtime exists: drop agents.PATCHED and the stand-ins"
+
+
+@pytest.mark.pro
+def test_a_conversation_has_the_plugins_tools_though_core_was_registered_first(service, http, monkeypatch):
+    """Another route registering core's capabilities first (on the website the
+    page asks several before the chat) must not leave the chat without the
+    plugins' tools: its catalog is frozen when it starts."""
+    from plexora.agent import registry
+    from plexora.server.routes import ai_chat_routes
+
+    before = dict(registry._REGISTRY)
+    registry._REGISTRY.clear()
+    registry.register_core()
+    monkeypatch.setattr(ai_chat_routes, "_DISCOVERED", False)
+    try:
+        with FakeGateway(_destructive_brain()) as gateway:
+            made = service(gateway)
+            cid = http.post("/ai/v1/conversations", json={"viewer": True}).get_json()["conversation_id"]
+            catalog = {entry.get("tool") for entry in made.store.load(cid)["catalog"]}
+    finally:
+        registry._REGISTRY.clear()
+        registry._REGISTRY.update(before)
+    assert {"set_gate", "run_blur_check"} <= catalog, sorted(catalog)[:20]

@@ -63,16 +63,26 @@ def _loopback_unless_token():
 guards.guard_blueprint(ai_chat_bp, ENTITLEMENT)
 
 _SESSION = None
+_DISCOVERED = False
 
 
 def _session():
-    global _SESSION
+    """The app's session for conversations, with every mounted plugin's tools
+    registered once. Not "once `ai.chat_start` is there": core's own
+    registration (another route's) brings it without any plugin's, and a
+    conversation started then froze a catalog with no gating or QC tools in
+    it (seen on the website: "'set_gate' is not a tool in this
+    conversation's catalog")."""
+    global _SESSION, _DISCOVERED
     from plexora.agent import AgentSession, registry
 
     try:
         registry.get("ai.chat_start")
     except Exception:
+        _DISCOVERED = False  # the registry was emptied (a test's): register again
+    if not _DISCOVERED:
         registry.discover_installed(current_app)
+        _DISCOVERED = True
     if _SESSION is None:
         _SESSION = AgentSession()
     return _SESSION

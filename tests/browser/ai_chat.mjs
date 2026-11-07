@@ -57,21 +57,26 @@ made = make_gating_project("/data/_chatfx", "src", grid=8, size=256)
 folder = "/data/_chatfx/_src_files"
 name = datasets.create_project(made["image_path"], name="${PROJECT}", segmentation=folder + "/mask.tif",
                                data=folder + "/cells.csv", cell_id="CellID", x="X_centroid", y="Y_centroid",
-                               markers=["DNA", "CD3", "CD8", "CD20"], metadata=["Area"], exist_ok=True)
+                               markers=["DNA", "CD3", "CD8", "CD20"], metadata=["Area"], single_image=True,
+                               exist_ok=True)
 cd3 = pl.read_csv(folder + "/cells.csv")["CD3"]
 json.dumps({"name": name, "cells": len(cd3), "median": round(float(cd3.median()), 3)})
 `;
 
 const GATE = `
 import json
-from plexora.agent import AgentSession, invoke
+import plexora
+from plexora.agent import AgentSession, invoke, registry
+registry.discover_installed(plexora.app)
 answer = invoke(AgentSession(), "get_gate", {"project": "${PROJECT}", "marker": "CD3"})
 gate = (answer.get("result") or {}).get("gate") or {}
 json.dumps({"ok": answer["ok"], "low": gate.get("low"), "error": answer.get("error")})
 `;
 
+const live = {};
 try {
     const page = await browser.context.newPage();
+    live.page = page;
     await page.setViewportSize({ width: 1440, height: 900 });
     page.on("pageerror", (error) => out.errors.push(`pageerror: ${String(error).slice(0, 300)}`));
     page.on("crash", () => out.errors.push("the page crashed"));
@@ -106,6 +111,7 @@ try {
           { cells: made.cells });
     await page.goto(`${origin}/${PROJECT}?pydebug`);
     const frame = await appFrame(page);
+    live.frame = frame;
     await frame.waitForSelector("#openseadragon_wrapper", { timeout: 120000 });
     const before = await py(page, GATE);
 
@@ -116,10 +122,17 @@ try {
             name: "set_gate", arguments: { project: PROJECT, marker: "CD3", low } } }] },
         { text: ANSWER, chunks: 8, delay_ms: 250 },
     ]);
+    // The sidebar's AI button opens the launcher once the panel has bound it
+    // (views/agentPanel.js); pressed again until it does.
     await frame.waitForSelector("#plexora_ai_button:not([hidden])", { timeout: 60000 });
-    await frame.click("#plexora_ai_button");
+    for (let tries = 0; tries < 30 && !(await frame.$(".plx-ai-launcher")); tries += 1) {
+        await frame.click("#plexora_ai_button");
+        await frame.waitForSelector(".plx-ai-launcher", { timeout: 2000 }).catch(() => null);
+    }
     await frame.click('[data-action="ai-chat"]', { timeout: 30000 });
     await frame.waitForSelector(".plx-chat-panel:not([hidden]) .plx-chat-input", { timeout: 60000 });
+    // The panel has its conversation once POST /ai/v1/conversations answers.
+    await frame.waitForFunction(() => Boolean(window.PlexoraChatPanel._state.conversation), null, { timeout: 60000 });
     // What the answer's line said, each time it changed.
     await frame.evaluate(() => {
         window.__chatSeen = [];
@@ -183,6 +196,17 @@ try {
     check("Undo on the chip puts the gate back", undone.low === before.low, { low: undone.low });
 } catch (error) {
     out.errors.push(String(error && error.stack || error).slice(0, 2000));
+    // What the panel, the worker and the gateway had got to.
+    try {
+        const { page, frame } = live;
+        out.panel = await frame.evaluate(() => ({
+            busy: document.querySelector(".plx-chat-panel")?.classList.contains("is-busy"),
+            lines: [...document.querySelectorAll(".plx-chat-line, .plx-chat-tool")]
+                .map((node) => `${node.className}: ${node.textContent.slice(0, 160)} ${node.title || ""}`) }));
+        out.worker = await page.evaluate(() => window.PlexoraPython.state());
+        out.gateway = (await mock.requests()).filter((r) => r.path === "/ai/messages")
+            .map((r) => ({ task: r.task, results: r.tool_results, text: r.user_text }));
+    } catch (more) { out.errors.push(`diagnostics: ${String(more).slice(0, 300)}`); }
 } finally {
     await browser.close();
     server.stop();

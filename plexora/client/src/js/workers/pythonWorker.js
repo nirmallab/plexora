@@ -229,8 +229,14 @@ def _idle(seconds):
         js.self.plexoraIdle(-1)
 
 def _wait_on(promise):
-    # The network (plexora/browser/fetch.py): requests are answered while
-    # Python waits for the answer, as they are while a job sleeps.
+    # The network (plexora/browser/fetch.py). In background work (a chat
+    # turn, a job) requests are answered while Python waits for the answer,
+    # as they are while a job sleeps. A request's own call (the launcher's
+    # balance) just waits: requests run inside a request's wait were seen to
+    # wreck the worker (a polars read nested in /ai/v1/balance's wait never
+    # let the balance resume, and the page crashed).
+    if not js.self.plexoraInStep():
+        return run_sync(promise)
     js.self.plexoraIdle(1)
     try:
         return run_sync(promise)
@@ -533,7 +539,9 @@ async function drain() {
         const outer = current;
         current = { op, path: op === "request" ? args.path : null, since: began };
         const nested = busy;
+        const outerStep = inStep;
         busy = true;
+        inStep = false;
         try {
             const result = await OPS[op](args || {});
             const transfer = result && result.body instanceof Uint8Array ? [result.body.buffer] : [];
@@ -546,6 +554,7 @@ async function drain() {
             self.postMessage({ id, ok: false, error: String(error?.message || error).slice(-6000) });
         } finally {
             busy = nested;
+            inStep = outerStep;
             current = outer;
             // It may have queued work: the next step finds out.
             pendingWork = Math.max(pendingWork, 1);
@@ -569,6 +578,10 @@ const BACKGROUND_QUIET_MS = 600;
 let lastRequest = 0;
 let lastStep = 0;
 let stepping = false;
+//: Whether the innermost Python running is background work (a step), not a
+//: request run in its gap: only then may a network wait answer requests.
+let inStep = false;
+self.plexoraInStep = () => inStep;
 //: What the last step left queued: work someone waits on, and background.
 let pendingWork = 0;
 let pendingBackground = 0;
@@ -588,7 +601,8 @@ function step() {
             const cooperative = py.pyimport("plexora.browser.cooperative");
             const began = performance.now();
             const quiet = began - lastRequest >= BACKGROUND_QUIET_MS;
-            const outcome = await call(cooperative.step, 50, quiet);
+            inStep = true;
+            const outcome = await call(cooperative.step, 50, quiet).finally(() => { inStep = false; });
             pendingWork = outcome.get("pending");
             pendingBackground = outcome.get("background");
             const ms = Math.round(performance.now() - began);
