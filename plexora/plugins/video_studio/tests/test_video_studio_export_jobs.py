@@ -439,3 +439,73 @@ def test_drain_cancels_every_running_export_and_forgets_them(video):
     assert encode_jobs.get(video_id, second) is None
     statuses = {row["export_id"]: row["status"] for row in repository.list_exports(video_id)}
     assert statuses == {first: "cancelled", second: "cancelled"}
+
+
+# -- the encoder seam (plan L10): the desktop's FFmpeg, the website's Python ----------------
+
+
+@pytest.fixture
+def page_encoder():
+    """The website's encoder, as encoder() picks it in a web page."""
+    encode_jobs.use_encoder(encode_jobs.PageEncoder())
+    yield encode_jobs.encoder()
+    encode_jobs.use_encoder(None)
+
+
+def test_a_desktop_or_server_writes_with_its_processes(monkeypatch):
+    """CPython: ProcessEncoder, whose report is encoders.report() itself, so the
+    desktop's FFmpeg path is the one it always was."""
+    assert isinstance(encode_jobs.encoder(), encode_jobs.ProcessEncoder)
+    assert encode_jobs.encoder().kind == "process"
+    assert encode_jobs.encoder().report() is encoders.report()
+
+
+def test_a_web_page_writes_with_the_page_encoder(monkeypatch):
+    monkeypatch.setattr(encode_jobs.sys, "platform", "emscripten")
+    assert isinstance(encode_jobs.encoder(), encode_jobs.PageEncoder)
+
+
+def test_the_website_looks_for_no_program(page_encoder, monkeypatch):
+    """No process can start in a web page: its report probes nothing."""
+    def refuse():
+        raise AssertionError("the website probed for a program")
+
+    monkeypatch.setattr(encoders, "_probe_ffmpeg", refuse)
+    monkeypatch.setattr(encoders, "_probe_cv2", refuse)
+    report = page_encoder.report()
+    rows = {(row["format"], row["writer"]): row for row in report["formats"]}
+    assert report["encoder"] == "page" and report["ffmpeg"]["available"] is False
+    assert rows[("png", "pngzip")]["available"] and rows[("gif", "pillow")]["available"]
+    # MP4 and WebM are the browser's own (WebCodecs, probed by the page).
+    assert not {fmt for fmt, _ in rows} & {"mp4", "webm"}
+
+
+def test_prores_on_the_website_is_the_desktop_apps_with_its_notice(page_encoder):
+    from plexora.browser import routes
+
+    (row,) = [row for row in page_encoder.report()["formats"] if row["format"] == "mov"]
+    notice = routes.FEATURES["video_studio.prores"]
+    assert row["available"] is False and row["reason"] == notice.why
+    assert row["handoff"] == {"to": "desktop", "title": notice.title, "why": notice.why,
+                              "actions": list(notice.actions)}
+    assert page_encoder.pick("mov") is None
+
+
+def test_the_website_exports_png_frames_through_the_same_job(page_encoder, video):
+    video_id, _ = video
+    job = _start(video)
+    assert job["writer"] == "pngzip"
+    for first in (0, 2, 4):
+        _push(video_id, job["export_id"], first, 2, _frames(first, 2))
+    encode_jobs.finish(video_id, job["export_id"], {})
+    assert _wait(video_id, job["export_id"])["status"] == "done"
+    with zipfile.ZipFile(encode_jobs.download_path(video_id, job["export_id"])) as archive:
+        assert len(archive.namelist()) == 6
+
+
+def test_the_website_refuses_a_writer_it_cannot_run(page_encoder, video):
+    with pytest.raises(JobError) as info:
+        _start(video, format="mov")
+    assert _status(info) == 422
+    with pytest.raises(writers.WriterError):
+        page_encoder.open_writer({"format": "mov", "writer": "ffmpeg"}, ".", "x", W, H, FPS, {})

@@ -159,6 +159,25 @@ HANDOFF = {
                            ()),
 }
 
+#: What the website cannot do inside a route it otherwise answers, by name:
+#: the same notice, carried in that route's answer (`feature(name)`) for the
+#: panel to draw with services/handoff.js.
+FEATURES = {
+    # Video Studio writes ProRes with FFmpeg's prores_ks, a program the desktop
+    # runs as a separate process. No LGPL build of FFmpeg for the web with that
+    # encoder exists to ship (docs/internal/bench/browser_node/L10.md).
+    "video_studio.prores": Handoff("desktop", "ProRes is in the desktop app",
+                                   "A web page cannot run FFmpeg, ProRes's encoder.",
+                                   ("open_desktop", "get_desktop")),
+}
+
+
+def feature(name: str) -> dict:
+    """`FEATURES[name]` in the shape backendRoutes.js gives a handoff route."""
+    notice = FEATURES[name]
+    return {"to": notice.to, "title": notice.title, "why": notice.why, "actions": list(notice.actions)}
+
+
 #: Whole blueprints, by name: every route of a plugin is its Python's, and its
 #: static files are files (`<blueprint>.static` is ``network``).
 BLUEPRINTS = {

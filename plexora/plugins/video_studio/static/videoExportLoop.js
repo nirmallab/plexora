@@ -154,19 +154,23 @@
             manifest.encoder = result.encoder;
             let saved = null;
             if (result.kind === "blob") {
-                const name = fileName(project, settings);
+                const name = result.recorded && result.name ? result.name : fileName(project, settings);
                 result.name = name;
                 saved = await saveBlob(result.blob, name);
-                try {
-                    const recorded = await api.recordExport(videoId, {
-                        output: { width: settings.width, height: settings.height, fps: settings.fps,
-                                  format: settings.format, quality: settings.quality,
-                                  transparent: Boolean(settings.transparent), overlays: settings.overlays },
-                        manifest, frames: frames.length, bytes: result.bytes, complete: true });
-                    result.manifest = recorded.manifest;
-                    result.exportId = recorded.export_id;
-                } catch (error) {
-                    console.warn("Video Studio: the export's manifest could not be kept", error);
+                // A file the page's own Python wrote (the website) is recorded
+                // by its export job already.
+                if (!result.recorded) {
+                    try {
+                        const recorded = await api.recordExport(videoId, {
+                            output: { width: settings.width, height: settings.height, fps: settings.fps,
+                                      format: settings.format, quality: settings.quality,
+                                      transparent: Boolean(settings.transparent), overlays: settings.overlays },
+                            manifest, frames: frames.length, bytes: result.bytes, complete: true });
+                        result.manifest = recorded.manifest;
+                        result.exportId = recorded.export_id;
+                    } catch (error) {
+                        console.warn("Video Studio: the export's manifest could not be kept", error);
+                    }
                 }
             }
             return { result, manifest, saved };

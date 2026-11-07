@@ -9,10 +9,11 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import { PYTHON, REPO, appFrame } from "./lib.mjs";
 
-export function startMock(home) {
+//: `extra`: more of mock_platform.py's options (`--roots ai,volume,plugin:video_studio`).
+export function startMock(home, extra = []) {
     return new Promise((resolve, reject) => {
         const child = spawn(PYTHON, [path.join(REPO, "tests", "browser", "mock_platform.py"), "--bind-version", "2",
-                                     "--home", home], { cwd: REPO, stdio: ["ignore", "pipe", "inherit"] });
+                                     "--home", home, ...extra], { cwd: REPO, stdio: ["ignore", "pipe", "inherit"] });
         let buffer = "";
         child.stdout.on("data", (chunk) => {
             buffer += chunk;

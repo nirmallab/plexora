@@ -199,6 +199,21 @@ def test_encoders_and_facts(client):
     assert client.get(f"{API}/facts/nope").status_code == 404
 
 
+def test_the_website_answers_its_own_encoders_and_prores_with_its_notice(client):
+    """The page's Python (encode_jobs.PageEncoder): the routes report what
+    the website writes, ProRes carrying the hand-off notice the dialog draws."""
+    encode_jobs.use_encoder(encode_jobs.PageEncoder())
+    try:
+        for body in (client.get(f"{API}/encoders").get_json(),
+                     client.get(f"{API}/state?datasource=demo").get_json()["encoders"]):
+            rows = {row["format"]: row for row in body["formats"]}
+            assert body["encoder"] == "page" and set(rows) == {"mov", "gif", "png"}
+            assert rows["mov"]["handoff"]["to"] == "desktop"
+            assert rows["mov"]["handoff"]["actions"] == ["open_desktop", "get_desktop"]
+    finally:
+        encode_jobs.use_encoder(None)
+
+
 def test_a_preset_previews_without_saving(client):
     response = client.post(f"{API}/presets/build", json={
         "preset": "z_sweep", "datasource": "demo", "facts": STACK_FACTS})

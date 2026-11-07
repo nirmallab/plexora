@@ -118,7 +118,10 @@
     function captureViewport(env) {
         const scene = global.PlexoraViewerScene;
         const iv = env.iv;
-        if (!scene || !iv) return null;
+        // No image open yet: no view to keep. (currentViewport would answer a
+        // 1-pixel rectangle at the corner, and the video would start there;
+        // null lets the preset fit the whole image.)
+        if (!scene || !iv || !scene.referenceItem?.(iv)) return null;
         const v = scene.currentViewport(iv, env.config);
         const transform = iv.viewTransform?.get?.() || {};
         return { cx: v.x + v.w / 2, cy: v.y + v.h / 2, w: v.w,

@@ -17,7 +17,13 @@
  *
  * `available(settings, report)` merges the browser's own probe with the
  * server's report (GET /api/encoders) into one list for the Export dialog;
- * every format is listed, an unavailable one with the reason.
+ * every format is listed, an unavailable one with the reason -- and, for a
+ * format only the desktop app can write (ProRes on the website), the
+ * website's hand-off notice (`handoff`, plexora/browser/routes.py FEATURES).
+ *
+ * On the website "the server" is the page's own Python (encode_jobs.py's
+ * `encoder()` is its PageEncoder there): what it writes is fetched through the
+ * page and saved like a browser encoder's file, since no link can reach it.
  *
  * Classic script: `window.PlexoraVideoEncoders`.
  */
@@ -90,6 +96,11 @@
     const LABELS = { mp4: "MP4 (H.264)", webm: "WebM (VP9)", mov: "ProRes (MOV)", gif: "GIF",
                      png: "PNG frames (zip)" };
 
+    /** Whether this page's server is its own Python (the website). */
+    function inPage() {
+        return global.PlexoraBackend?.kind === "browser";
+    }
+
     /**
      * One row per format, best route first: `{format, label, route:
      * "browser"|"server", writer, available, reason, alpha}`. `prefer`
@@ -109,7 +120,7 @@
             for (const row of (report?.formats || []).filter((r) => r.format === format)) {
                 routes.push({ format, label: row.label, route: "server", writer: row.writer,
                               available: row.available, reason: row.reason || "",
-                              alpha: Boolean(row.alpha) });
+                              alpha: Boolean(row.alpha), handoff: row.handoff || null });
             }
             routes.sort((a, b) => (b.available - a.available)
                 || ((a.route === prefer ? 0 : 1) - (b.route === prefer ? 0 : 1)));
@@ -298,9 +309,18 @@
             for (;;) {
                 const status = await this.api.exportStatus(this.videoId, this.exportId);
                 if (status.status === "done") {
-                    return { kind: "download", url: this.api.downloadUrl(this.videoId, this.exportId),
-                             name: status.name, bytes: status.bytes, exportId: this.exportId,
-                             encoder: { encoder: "server", writer: status.writer, label: status.label } };
+                    const result = { kind: "download", url: this.api.downloadUrl(this.videoId, this.exportId),
+                                     name: status.name, bytes: status.bytes, exportId: this.exportId,
+                                     encoder: { encoder: "server", writer: status.writer, label: status.label } };
+                    if (!inPage()) return result;
+                    // The website: the file is in this page's own Python, which
+                    // a link cannot reach (the site would answer its home
+                    // page). Read through the page, saved as a download; the
+                    // export is already recorded.
+                    const response = await fetch(result.url);
+                    if (!response.ok) throw new Error(`the finished file could not be read (${response.status})`);
+                    const blob = await response.blob();
+                    return { ...result, kind: "blob", blob, bytes: blob.size, recorded: true };
                 }
                 if (status.status === "failed" || status.status === "cancelled") {
                     const error = new Error(status.error || `the export ${status.status}`);
@@ -328,6 +348,6 @@
             ...context, png: Boolean(context.remote) });
     }
 
-    global.PlexoraVideoEncoders = { available, defaultRoute, create, bitrate, avcCodec,
+    global.PlexoraVideoEncoders = { available, defaultRoute, create, bitrate, avcCodec, inPage,
                                     WebCodecsEncoder, ServerEncoder, LABELS };
 })(typeof window !== "undefined" ? window : globalThis);

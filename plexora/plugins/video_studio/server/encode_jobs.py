@@ -25,6 +25,13 @@ memory with 4K frames.
 **Frames are contiguous.** A chunk that does not start where the last one
 ended is refused with 409 -- a dropped chunk would otherwise be a video that is
 silently a second shorter than its manifest says.
+
+**Which encoder** (`encoder()`, the backend seam): the desktop app and every
+server run `ProcessEncoder` -- FFmpeg as a separate process where it is
+installed, as before. The website's Python runs `PageEncoder`: no process can
+start in a web page, so it offers what Python itself writes (PNG frames,
+Pillow's GIF), leaves MP4 and WebM to the browser's encoder, and answers
+ProRes with the website's hand-off notice.
 """
 
 from __future__ import annotations
@@ -32,6 +39,7 @@ from __future__ import annotations
 import json
 import queue
 import shutil
+import sys
 import threading
 import time
 import uuid
@@ -54,6 +62,59 @@ _JOBS: dict[str, dict] = {}
 _LOCK = threading.Lock()
 
 
+class ProcessEncoder:
+    """The desktop app's and every server's encoder: FFmpeg run as a separate
+    process when it is installed (encoders.py finds it), OpenCV's basic MP4,
+    and always PNG frames and Pillow's GIF (writers.py)."""
+
+    kind = "process"
+
+    def report(self, *, refresh: bool = False) -> dict:
+        return encoders.report(refresh=refresh)
+
+    def pick(self, fmt: str, writer: str | None = None) -> dict | None:
+        return encoders.pick(fmt, writer)
+
+    def open_writer(self, entry, directory, name, width, height, fps, settings):
+        return writers.open_writer(entry, directory, name, width, height, fps, settings)
+
+
+class PageEncoder(ProcessEncoder):
+    """The website's: Python in the page, where no process can start. It
+    writes what Python can (`encoders.PAGE_WRITERS`)."""
+
+    kind = "page"
+
+    def report(self, *, refresh: bool = False) -> dict:
+        return encoders.page_report()
+
+    def pick(self, fmt: str, writer: str | None = None) -> dict | None:
+        return encoders.pick(fmt, writer, rows=self.report()["formats"])
+
+    def open_writer(self, entry, directory, name, width, height, fps, settings):
+        if entry["writer"] not in encoders.PAGE_WRITERS:
+            raise writers.WriterError(f"the website cannot run the {entry['writer']} writer")
+        return super().open_writer(entry, directory, name, width, height, fps, settings)
+
+
+#: A backend set by `use_encoder` (tests), else the platform's.
+_ENCODER = None
+
+
+def encoder():
+    """The encoder this Plexora writes server-side exports with: the
+    website's (`PageEncoder`) in a web page, else `ProcessEncoder`."""
+    if _ENCODER is not None:
+        return _ENCODER
+    return PageEncoder() if sys.platform == "emscripten" else ProcessEncoder()
+
+
+def use_encoder(backend) -> None:
+    """Run with `backend` (None: the platform's again). For tests."""
+    global _ENCODER
+    _ENCODER = backend
+
+
 class JobError(Exception):
     def __init__(self, message, status=400):
         super().__init__(message)
@@ -67,13 +128,14 @@ def _now():
 def start(video_id: str, document: dict, output: dict, *, frames: int, name: str) -> dict:
     """Open a writer for an export of `frames` frames. Returns the job's public
     description; raises JobError when no writer can produce the format."""
-    entry = encoders.pick(output["format"], output.get("writer"))
+    backend = encoder()
+    entry = backend.pick(output["format"], output.get("writer"))
     if entry is None:
         raise JobError(f"this server cannot write {output['format']!r}", 422)
     export_id = "exp_" + uuid.uuid4().hex[:12]
     directory = repository.exports_dir(video_id) / export_id
     try:
-        writer = writers.open_writer(entry, directory, name, output["width"], output["height"],
+        writer = backend.open_writer(entry, directory, name, output["width"], output["height"],
                                      output["fps"], output)
     except writers.WriterError as exc:
         shutil.rmtree(directory, ignore_errors=True)
