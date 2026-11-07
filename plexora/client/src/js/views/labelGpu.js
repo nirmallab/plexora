@@ -78,13 +78,16 @@ function labelGpuPreference() {
  * @returns {{mask: Uint8Array, count: number, notCalledCount: number, maxId: number}}
  *   mask is indexed by cell id: 0 negative, 1 positive, 2 not called; count is
  *   the number of distinct ids that pass (the size the server's id list makes
- *   as a Set) and notCalledCount the number of distinct ids not called.
+ *   as a Set) and notCalledCount the number of distinct ids not called. With
+ *   an id at 2^24 or past it, mask is null: a mask that long is never built
+ *   (ids near 2^32 would have asked for 4 GB), and the caller asks the server.
  */
 function evaluateGateMask(ids, columns, gates, notCalled = null) {
     let maxId = 0;
     for (let i = 0; i < ids.length; i += 1) {
         if (ids[i] > maxId) maxId = ids[i];
     }
+    if (maxId + 1 > LABEL_GPU_MAX_IDS) return { mask: null, count: 0, notCalledCount: 0, maxId };
     const tests = [];
     const skips = [];
     for (const key of Object.keys(gates || {})) {
@@ -143,19 +146,23 @@ function evaluateGateMask(ids, columns, gates, notCalled = null) {
     return { mask, count, notCalledCount, maxId };
 }
 
-/** A Set of passing ids (the server path's answer) as the same mask. */
+/** A Set of passing ids (the server path's answer) as the same mask; null
+ *  when an id reaches 2^24, before anything that long is allocated. */
 function maskFromSet(set) {
     let maxId = 0;
     for (const id of set) if (id > maxId) maxId = id;
+    if (maxId + 1 > LABEL_GPU_MAX_IDS) return null;
     const mask = new Uint8Array(maxId + 1);
     for (const id of set) if (id >= 0) mask[id] = 1;
     return mask;
 }
 
-/** A sparse LUT ({map: Map<id, [r,g,b,a]>}) as the dense shape. */
+/** A sparse LUT ({map: Map<id, [r,g,b,a]>}) as the dense shape; null when
+ *  an id reaches 2^24 (a plugin keeps such a table sparse on purpose). */
 function denseFromMap(map) {
     let maxId = 0;
     for (const id of map.keys()) if (id > maxId) maxId = id;
+    if (maxId + 1 > LABEL_GPU_MAX_IDS) return null;
     const colors = new Uint8Array(4 * (maxId + 1));
     for (const [id, entry] of map) {
         if (!entry || id < 0) continue;
@@ -324,7 +331,7 @@ function createLabelGpu({ renderer, vShaderUrl, fShaderUrl, labelTile, onChange 
         if (gateSrc !== s.gateSrc) {
             if (gateSrc) {
                 const mask = gateSrc instanceof Uint8Array ? gateSrc : maskFromSet(gateSrc);
-                if (mask.length > LABEL_GPU_MAX_IDS) { disable("cell ids reach 2^24"); return null; }
+                if (!mask || mask.length > LABEL_GPU_MAX_IDS) { disable("cell ids reach 2^24"); return null; }
                 s.gateTex = s.gateTex || newTexture();
                 // R8UI, an integer texture: the bytes arrive as they are, so a
                 // not-called 2 reaches the shader as 2, not clamped to 1.
@@ -338,6 +345,7 @@ function createLabelGpu({ renderer, vShaderUrl, fShaderUrl, labelTile, onChange 
         if (lut !== s.lutSrc || lutVersion !== s.lutVersion) {
             if (lut) {
                 const dense = lut.colors ? lut : (lut.map ? denseFromMap(lut.map) : null);
+                if (lut.map && !dense) { disable("cell ids reach 2^24"); return null; }
                 if (dense) {
                     const count = Math.min(dense.maxId + 1, Math.floor(dense.colors.length / 4));
                     if (count > LABEL_GPU_MAX_IDS) { disable("cell ids reach 2^24"); return null; }

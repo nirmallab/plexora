@@ -239,7 +239,8 @@ function maskScale(config) {
 
 //: Bumped when label tiles already in browsers' caches must not be reused.
 //: 2: single-level masks used to be served at full resolution at every level.
-const LABEL_TILE_REVISION = "2";
+//: 3: an id's high byte (alpha) used to be dropped, so ids from 2^24 aliased.
+const LABEL_TILE_REVISION = "3";
 
 /**
  * @function getTileKey -- return string key for tile

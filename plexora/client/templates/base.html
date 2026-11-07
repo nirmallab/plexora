@@ -62,7 +62,7 @@
          awaits it before it builds a single tile source, and every page that
          can open a viewer loads it. Costs one request that answers "{}" for a
          project with nothing on a node. -->
-    <script src="{{ data.base_url }}/client/src/js/services/resourceRouting.js?v=20261107_zarr" type="text/javascript"></script>
+    <script src="{{ data.base_url }}/client/src/js/services/resourceRouting.js?v=20261107_label_high_byte" type="text/javascript"></script>
     <!-- Why a layer is missing, when one is. Asks /resource_status once per
          project load and says nothing at all for a project with everything on
          this machine, which is every ordinary one. -->
@@ -72,7 +72,7 @@
     <script src="{{ data.base_url }}/client/src/js/services/performanceTelemetry.js?v=20260927_telemetry" type="text/javascript"></script>
 
     <!-- Webpack -->
-    <script src="{{ data.base_url }}/client/dist/vendor_bundle.js?v=20261106_client_seams"></script>
+    <script src="{{ data.base_url }}/client/dist/vendor_bundle.js?v=20261107_label_high_byte"></script>
 
     <!-- OpenSeadragon imports-->
     <script src="{{ data.base_url }}/client/external/openseadragon-bin-2.4.0/canvas-overlay-hd.js?v=20260925_view_transform"></script>
@@ -95,7 +95,7 @@
     <script src="{{ data.base_url }}/client/src/js/views/tileDecode.js?v=20261010_nav3d"></script>
     <script src="{{ data.base_url }}/client/src/js/views/tileFetch.js?v=20261107_local_browser"></script>
     <script src="{{ data.base_url }}/client/src/js/views/labelTile.js?v=20261012_main_merge"></script>
-    <script src="{{ data.base_url }}/client/src/js/views/labelGpu.js?v=20261012_no_cell_model"></script>
+    <script src="{{ data.base_url }}/client/src/js/views/labelGpu.js?v=20261107_label_high_byte"></script>
     <script src="{{ data.base_url }}/client/src/js/services/viewTransform.js?v=20260925_view_transform"></script>
     {# Where the viewer is looking, in full-resolution image pixels, and how to
        move it: Figure Builder's capture/restore and the agent bridge

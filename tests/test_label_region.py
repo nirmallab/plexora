@@ -59,6 +59,32 @@ def test_an_edge_tile_is_cut_at_the_mask_edge():
     assert (_ids(tile) == expected).all()
 
 
+def test_ids_past_2_24_keep_their_high_byte():
+    """The fourth byte travels as alpha. It was dropped until 2026-11: a mask
+    with ids from 16,777,216 up drew that cell as background and 16,777,217
+    as cell 1. Every id below 2^24 is packed as before (alpha 0)."""
+    import io
+
+    from PIL import Image
+
+    labels = np.zeros((512, 512), dtype=np.uint32)
+    ids = [1, (1 << 24) - 1, 1 << 24, (1 << 24) + 1, (1 << 31) + 5, (1 << 32) - 1]
+    for i, cell in enumerate(ids):
+        labels[i * 64:(i + 1) * 64, :64] = cell
+    mask = zarr.array(labels, chunks=(256, 256))
+    tile = data_model.read_tile(mask, None, 0, "0_0", 512, 512)
+    assert tile.dtype == np.uint8 and tile.shape == (512, 512, 4)
+    assert (_ids(tile) == labels).all()
+    assert not tile[labels < (1 << 24), 3].any()
+    png, mimetype = data_model.encode_tile_array(tile, True, "png")
+    assert mimetype == "image/png"
+    decoded = np.asarray(Image.open(io.BytesIO(png)).convert("RGBA"))
+    assert (_ids(decoded) == labels).all()
+    # A narrower mask packs as before.
+    small = zarr.array(labels.astype(np.uint16) % 1000, chunks=(256, 256))
+    assert (_ids(data_model.read_tile(small, None, 0, "0_0", 512, 512)) == labels.astype(np.uint16) % 1000).all()
+
+
 def test_a_tile_wholly_past_the_mask_edge_is_empty_not_an_error():
     """A mask smaller than its image: the viewer asks for the image's tiles,
     and one beyond the mask packed an empty array and raised (a 500 per tile,

@@ -15,7 +15,7 @@ Writes, if absent:
 - flat16.tif           2 channels, uint16, 1800 x 1800, stripped, no pyramid
                        (the page must leave it to Python)
 and three projects with a mask, each an 8-bit image and its labels:
-- labels32             uint32 ids up to 2^25 (the high byte Python drops),
+- labels32             uint32 ids up to 2^25 (their high byte in the tile's alpha),
                        tiled 256, deflate, one sub-resolution
 - labels16             uint16 ids, tiled 256, LZW, one sub-resolution
 - labels_flat          uint32, one level: the page builds its label pyramid

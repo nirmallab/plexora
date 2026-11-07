@@ -59,6 +59,10 @@ class CellExplorerRoiBridge {
     //: is re-hovering the same few shapes, not holding a slide's worth.
     static MEMBER_CACHE = 16;
 
+    //: Past this id, codeById keeps a Map instead of an array as long as the
+    //: largest id (CellExplorerColors.DENSE_MAX_ID's reasoning and value).
+    static DENSE_MAX_ID = 8_000_000;
+
     //: `Other` is not a category and must not look like one, so it takes a
     //: neutral of its own rather than the next palette colour.
     static OTHER_COLOR = "#79839a";
@@ -424,8 +428,16 @@ class CellExplorerRoiBridge {
         for (let i = 0; i < ids.length; i += 1) {
             if (ids[i] > maxId) maxId = ids[i];
         }
-        const table = new Int32Array(maxId + 1).fill(-1);
-        for (let i = 0; i < ids.length; i += 1) table[ids[i]] = codes[i];
+        // A Map past DENSE_MAX_ID, as CellExplorerColors does: ids near 2^32
+        // would have asked for a 16 GB array.
+        let table;
+        if (maxId <= CellExplorerRoiBridge.DENSE_MAX_ID) {
+            table = new Int32Array(maxId + 1).fill(-1);
+            for (let i = 0; i < ids.length; i += 1) table[ids[i]] = codes[i];
+        } else {
+            table = new Map();
+            for (let i = 0; i < ids.length; i += 1) table.set(ids[i], codes[i]);
+        }
         this._lookup = { source: data, table };
         return this._lookup;
     }
@@ -446,7 +458,8 @@ class CellExplorerRoiBridge {
         let total = 0;
         for (let n = 0; n < indices.length; n += 1) {
             const id = cellIds[indices[n]];
-            const code = id < table.length ? table[id] : -1;
+            const code = table instanceof Map ? (table.has(id) ? table.get(id) : -1)
+                : (id < table.length ? table[id] : -1);
             if (code < 0) continue;
             total += 1;
             if (code < categoryCount) counts[code] += 1;

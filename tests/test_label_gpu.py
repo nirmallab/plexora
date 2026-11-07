@@ -265,3 +265,42 @@ process.stdout.write(JSON.stringify(out));
         assert sorted(browser["notCalled"]) == not_called, gates
         assert browser["count"] == len(positive), gates
         assert browser["notCalledCount"] == len(not_called), gates
+
+
+def test_ids_past_2_24_are_refused_before_any_table_is_built():
+    """The id-indexed tables are as long as the largest id, so the 2^24 limit
+    is checked before they are allocated: ids near 2^32 asked for 4 GB (a gate
+    or the server's id set) and 16 GB (a plugin's sparse colours made dense)
+    before the check refused them. Below 2^24 nothing changes."""
+    import json
+
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("node is not installed")
+    script = """
+const fs = require("fs");
+const path = require("path");
+const views = path.join(process.cwd(), "plexora", "client", "src", "js", "views");
+(0, eval)(fs.readFileSync(path.join(views, "labelGpu.js"), "utf8"));
+const gpu = globalThis.PlexoraLabelGpu;
+const far = 4000000000;
+const ids = Uint32Array.from([1, 2, far]);
+const columns = {A: Float32Array.from([5, 50, 50])};
+const gate = gpu.evaluateGateMask(ids, columns, {A: [10, 100]});
+const near = gpu.evaluateGateMask(Uint32Array.from([1, 2, 3]), columns, {A: [10, 100]});
+process.stdout.write(JSON.stringify({
+    gate: {mask: gate.mask, maxId: gate.maxId},
+    set: gpu.maskFromSet(new Set([1, far])),
+    map: gpu.denseFromMap(new Map([[1, [1, 2, 3, 4]], [far, [5, 6, 7, 8]]])),
+    edge: gpu.maskFromSet(new Set([(1 << 24) - 1])).length,
+    over: gpu.maskFromSet(new Set([1 << 24])),
+    near: {mask: [...near.mask], count: near.count},
+}));
+"""
+    proc = subprocess.run([node, "-e", script], capture_output=True, text=True, cwd=REPO_ROOT, timeout=60)
+    assert proc.returncode == 0, proc.stderr
+    got = json.loads(proc.stdout)
+    assert got["gate"] == {"mask": None, "maxId": 4000000000}
+    assert got["set"] is None and got["map"] is None and got["over"] is None
+    assert got["edge"] == 1 << 24
+    assert got["near"] == {"mask": [0, 0, 1, 1], "count": 2}

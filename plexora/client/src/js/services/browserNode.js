@@ -470,8 +470,9 @@
     const png16 = (tile) => png(tile.width, tile.height, 16, 0,
                                 tile.format === "u16" ? tile.array : widen(tile.array));
 
-    /** A label tile as `read_tile` packs it: each id's low three bytes as RGB,
-     * alpha 0 (the high byte dropped, as Python drops it). */
+    /** A label tile as `read_tile` packs it: each id's four little-endian
+     * bytes as RGBA, alpha the high byte (0 below 2^24; a wider id keeps its
+     * low four bytes, as Python's uint32 cast does). */
     function labelPng(tile, bits) {
         const n = tile.width * tile.height;
         const bytes = bits / 8;
@@ -482,6 +483,7 @@
             rgba[i * 4] = from[at];
             if (bytes > 1) rgba[i * 4 + 1] = from[at + 1];
             if (bytes > 2) rgba[i * 4 + 2] = from[at + 2];
+            if (bytes > 3) rgba[i * 4 + 3] = from[at + 3];
         }
         return png(tile.width, tile.height, 8, 6, rgba);
     }

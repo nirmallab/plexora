@@ -3916,10 +3916,12 @@ def read_tile(pyramid, channel_num, level, tile, tile_width, tile_height):
             # one background pixel, which the browser draws as nothing over
             # the whole tile, where packing an empty array would raise.
             return np.zeros((1, 1, 4), dtype=np.uint8)
-        if tile.dtype.itemsize != 4:
-            tile = tile.astype(np.uint32)
-        tile = tile.view('uint8').reshape(tile.shape + (-1,))[..., [0, 1, 2]]
-        tile = np.append(tile, np.zeros((tile.shape[0], tile.shape[1], 1), dtype='uint8'), axis=2)
+        # Each id's four little-endian bytes as RGBA: alpha is the high byte,
+        # 0 below 2^24. It was dropped until 2026-11, so an id from 2^24 up
+        # was drawn as id - 2^24 (16,777,216 as background, 16,777,217 as
+        # cell 1), though the client has always read all four.
+        tile = np.ascontiguousarray(tile.astype('<u4', copy=False))
+        tile = tile.view('uint8').reshape(tile.shape + (4,))
     else:
         if isinstance(pyramid, zarr.Array):
             tile = pyramid[channel_num, iy:iy + tile_height, ix:ix + tile_width]

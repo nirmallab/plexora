@@ -16,7 +16,7 @@
  *    swapped here, off the main thread.
  *  - a label tile is `u32`: the uint32 id's 4 little-endian bytes per pixel,
  *    which is exactly the RGBA8 layout data_model.read_tile builds for the
- *    node's label PNG (low three bytes in RGB, alpha 0 for ids < 2^24).
+ *    node's label PNG (alpha the high byte: 0 for ids < 2^24).
  *  - an edge tile is the clipped size, as `read_tile` slices it.
  *
  * createTiffReader() -> {open, tile, level, region}; workers/tiffWorker.js puts

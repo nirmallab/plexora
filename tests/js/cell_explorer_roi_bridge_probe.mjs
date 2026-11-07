@@ -186,6 +186,19 @@ function bruteForce(geometry) {
     check("an id past the end of the lookup is skipped, not read", beyond.total, 0);
 }
 
+{
+    // Ids near 2^32: the lookup is a Map, never an array as long as the
+    // largest id (that asked for 16 GB), and the tally reads it the same way.
+    const far = 4000000000;
+    const bridge = Object.create(Bridge.prototype);
+    bridge.state = { data: { kind: "categorical", ids: new ctx.Uint32Array([far + 1, far + 2, far + 3]),
+                             codes: new ctx.Int32Array([0, 1, 1]) } };
+    const lookup = bridge.codeById();
+    check("ids past the dense limit are looked up in a Map", lookup.table instanceof Map, true);
+    const tally = Bridge.tally([0, 1, 2], new ctx.Uint32Array([far + 1, far + 2, far + 9]), lookup.table, 2);
+    check("...and tallied from it", [Array.from(tally.counts), tally.total], [[1, 1], 2]);
+}
+
 // -- ranking and Other ---------------------------------------------------
 
 {
