@@ -96,6 +96,22 @@ def get_channel_names():
 _CELLS_GZIP = 3
 
 
+def _cells_gzipped():
+    """Whether `/get_all_cells` compresses its array: everywhere but the
+    desktop app's own server.
+
+    That server (`plexora --desktop`, `PLEXORA_DESKTOP`) answers its own
+    window on this machine's loopback, where the bytes never cross a network
+    and gzip is pure cost: on Orion CRC02's 1.26 M cells, 0.32 s of a 1.4 s
+    reopen to halve 15 MB (P6D.md). Decided by the mode, never by the
+    caller's address: a terminal `plexora` or `--remote` reached through an
+    SSH tunnel sees 127.0.0.1 too, and its bytes do travel. The client reads
+    either (dataLayer.getAllCells takes `arrayBuffer()`, which the browser
+    has already inflated when the answer was gzipped).
+    """
+    return not app.config.get('PLEXORA_DESKTOP')
+
+
 @app.route('/get_all_cells/<dtype>/', methods=['GET'])
 def get_all_cells(dtype):
     datasource = request.args.get('datasource')
@@ -104,11 +120,15 @@ def get_all_cells(dtype):
     t = request.args.get('t')
     resp = data_model.get_all_cells(datasource, start_keys, data_type,
                                     t=int(t) if t not in (None, "") else None)
-    content = gzip.compress(resp.tobytes('C'), compresslevel=_CELLS_GZIP)
+    gzipped = _cells_gzipped()
+    content = resp.tobytes('C')
+    if gzipped:
+        content = gzip.compress(content, compresslevel=_CELLS_GZIP)
     response = make_response(content)
     response.headers.set('Content-Type', 'application/octet-stream')
     response.headers['Content-length'] = len(content)
-    response.headers['Content-Encoding'] = 'gzip'
+    if gzipped:
+        response.headers['Content-Encoding'] = 'gzip'
     return response
 
 

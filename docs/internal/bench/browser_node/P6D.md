@@ -296,10 +296,38 @@ desktop app already running, the table costs about 0.5 s. The column store draws
 in 0.90 s on a first visit and 0.04 s on a reopen (P3), but on the desktop it would have to parse
 from the scheme and keep its columns beside the source; the gain is a few tenths of a second, so
 the cell reads **either** and step 2 is not built. The plan's "minutes-scale first open" is not
-this machine's. Two smaller desktop wins found on the way, neither taken yet: `ome_types` imported
-in `prime_hot_code` (moves 0.78 s from the first project open to the splash; startup grows by
-it), and `/get_all_cells` sent without gzip on the desktop's loopback (−0.3 s; it compresses 2:1
-only, and a tunnelled server must keep it).
+this machine's. Two smaller desktop wins found on the way are **both taken** (web/desktop-wins):
+
+- `/get_all_cells` is sent raw by the desktop app's own server (`data_routes._cells_gzipped`:
+  decided by `PLEXORA_DESKTOP`, never by the caller's address, because a terminal or `--remote`
+  server reached through an SSH tunnel sees 127.0.0.1 too and keeps gzip): 15.1 MB raw instead
+  of 7.7 MB gzipped, over loopback, and the route takes 0.53–0.56 s instead of 0.82–0.87 s
+  (medians by pause, below).
+- `ome_types` is imported by `data_model.warm_after_ready`, a background thread the desktop
+  server starts after its ready line and that waits for the window's first page to finish (the
+  server busy, then 0.4 s quiet; waitress' own counts, `cli._waitress_busy`); `prime_hot_code`
+  loads only its native part (`pydantic_core`, 25 ms), so the thread dlopens nothing beside a
+  request. Measured three placements: inside `prime_hot_code` it held the splash **+0.73 s**
+  (paired median of the ready line against the same code without it, 11 of 12 pairs slower);
+  a thread started at the announce cost the window's first page **+62 ms** (ready to `load`,
+  22 of 30 pairs slower); waiting for the page costs nothing measurable (−18 ms, 8 of 18 pairs
+  slower). The price of waiting: a project opened at the very moment the page loads pays the
+  import itself, as before.
+
+Reopen of the same project in a new desktop server process per run (`python -B -m plexora
+--desktop` from each arm's code, headless Chrome on the ready url, then from the page
+`/init_database` and `/get_all_cells/integer` read to an ArrayBuffer), six or twelve pairs per
+cell, arms alternated and rotated every round, the machine shared with other work:
+
+| Opened after the page's load event | before (web/phase0) | gzip off | gzip off + warm-up |
+|---|---|---|---|
+| at once | 1.45 s (1.31–1.58) | 1.17 s (1.00–1.33) | 1.15 s (1.10–1.22) |
+| 1 s later | 1.44 s (1.37–1.72) | 1.10 s (1.06–1.78) | 0.63 s (0.55–0.68) |
+| 2 s later | 1.40 s (1.27–1.70) | 1.09 s (0.96–1.41) | 0.55 s (0.50–0.60) |
+
+Medians (ranges). `/init_database` falls from 0.55–0.62 s to 0.035 s once the warm-up has run;
+the ready line (5.2–5.7 s medians, ranges of seconds from the other work) and the page's load
+(0.6–0.8 s after it) do not move with either change.
 - Steps 4–7 as the plan orders them.
 - macOS/Linux: the scheme is served as `plexora-file://localhost`; whether WKWebView/WebKitGTK
   route worker fetches of a custom scheme with CORS is untested here.
@@ -319,6 +347,12 @@ node tools/bench_remote/desktop_parity.mjs --dataset lsp11385 --out parity.json 
 # datasource.register_image_datasource; its tour's waypoints are P6's divided by 4
 # the website's node against its Python (bundle and wheel in the bench home, the static build):
 PLEXORA_BENCH_HOME=<home> node tests/browser/node_parity.mjs --dir <home>/browser_node/node_fixtures
+# the two desktop wins (web/desktop-wins): one exported tree per arm (`git archive <rev> plexora`,
+# compileall'd), a data root holding Orion CRC02's table on a 2x512x512 OME-TIFF, then per run a
+# fresh Chrome profile, `python -B -u -X utf8 -m plexora --desktop --port 0` from the arm's tree
+# (PLEXORA_DATA_PATH, WIN_PD_OVERRIDE_LOCAL_APPDATA, PLEXORA_TELEMETRY=off), the ready url to
+# `load`, a pause, then the two fetches; scripts dwins_make_fixture.py and dwins_bench.mjs
+# (session scratch), records in C:\plexora-bench-dwins\runs1.jsonl and runs2.jsonl
 ```
 
 The bench home holds the data root, a settings file of its own (`WIN_PD_OVERRIDE_LOCAL_APPDATA`)

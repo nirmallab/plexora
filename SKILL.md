@@ -2128,6 +2128,14 @@ One authoritative database; nodes are data services with no project state.
   and impossible on macOS, which has no `dl_iterate_phdr`; that asymmetry is
   why "local works, remote doesn't" pointed here. Order is tested in
   `tests/test_prime_hot_code.py` (prime < announce < warm < serve).
+  A slow pure-Python import that only a project's first open needs goes in
+  `data_model.warm_after_ready()` instead (the desktop server starts it after
+  its ready line, and it waits for the window's first page: waitress busy,
+  then 0.4 s quiet, via `cli._waitress_busy`; today `ome_types`, 0.6-0.8 s,
+  which in the prime held the splash ~0.7 s longer and started at the
+  announce slowed the first page ~60 ms): a background thread, so its native
+  part must already be loaded by the prime (`pydantic_core`), and
+  `tests/test_prime_hot_code.py` checks the thread dlopens nothing.
   `--manifest PATH` persists
   the resulting resource set (kinds, ids, paths -- never a project, a role or
   a read spec) so it is re-served identically at the next startup.
@@ -14789,7 +14797,10 @@ selection, with names decoded once (`_decoded`, object arrays): a 3M-cell load
 3.5 s → 2.6 s. `_describe_frame` describes columns on up to 8 threads (4.8 →
 1.4 s, same output). `centroid_tiles._load_table` reuses the loaded frame
 (`data_model.loaded_frame_for`) instead of re-reading the file (4.3 → 0.7 s).
-`/get_all_cells` compresses at gzip level 3 (`_CELLS_GZIP`). A segmentation
+`/get_all_cells` compresses at gzip level 3 (`_CELLS_GZIP`), except on the
+desktop app's own server (`PLEXORA_DESKTOP`; `data_routes._cells_gzipped`),
+which sends it raw to its own window -- by mode, never by the caller's
+address, since a tunnelled server sees 127.0.0.1 too. A segmentation
 job race is closed: a conversion finishing after its mask was removed,
 replaced or reclassified no longer writes it back
 (`_patch_config_segmentation` checks `segmentationSource`), the replacement's
