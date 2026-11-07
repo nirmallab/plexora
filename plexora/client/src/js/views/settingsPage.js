@@ -132,10 +132,49 @@
 
     // -- the website's storage --------------------------------------------
     //
-    // On the website projects live in this site's storage in the browser, so
-    // the Data panel says how much they take of what the browser allows, and
-    // whether the browser has agreed to keep it (navigator.storage.persist).
+    // On the website projects live in this site's storage in the browser or
+    // in a folder the user granted (services/browserStore.js, on the host
+    // page): the Data panel says which, offers the other where this browser
+    // can write into folders, and says how much the browser's storage holds
+    // of what it allows and whether it has agreed to keep it.
+    function webStore() {
+        try {
+            return window.parent?.PlexoraStore || null;
+        } catch (error) {
+            return null;
+        }
+    }
+
+    function drawWebPlace() {
+        const store = webStore();
+        const place = store ? store.current() : { kind: "browser" };
+        const folders = Boolean(store && store.canWriteFolders());
+        text(el("settings_web_place_name"), place.kind === "folder"
+            ? place.label : "This browser");
+        const notes = [];
+        if (place.notOpened) notes.push(`${place.notOpened} was not opened this time; reload to open it.`);
+        notes.push(place.kind === "folder" ? "Safe on this computer."
+            : "Lost if this browser's data is cleared."
+              + (folders ? "" : " Chrome and Edge can save them on this computer."));
+        if (folders) notes.push("Switching brings your projects along.");
+        text(el("settings_web_place_meta"), notes.join(" "));
+        const toFolder = el("settings_web_to_folder");
+        const toBrowser = el("settings_web_to_browser");
+        show(toFolder, folders && place.kind !== "folder");
+        show(toBrowser, folders && place.kind === "folder");
+        const move = async (kind) => {
+            try {
+                await store.switchTo(kind);
+            } catch (error) {
+                text(el("settings_web_place_meta"), `That did not work: ${error?.message || error}`);
+            }
+        };
+        if (toFolder) toFolder.onclick = () => move("folder");
+        if (toBrowser) toBrowser.onclick = () => move("browser");
+    }
+
     async function drawWebStorage() {
+        drawWebPlace();
         const used = el("settings_web_storage_used");
         const meta = el("settings_web_storage_meta");
         try {

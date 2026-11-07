@@ -106,8 +106,12 @@ window.PlexoraConfirm = (function () {
      * `close` puts an X in the top-right corner instead of a Cancel button:
      * it answers null, as Escape does, and it takes the focus, so Enter on a
      * freshly opened question still changes nothing.
+     *
+     * `inline` keeps every answer on one line, the dialog as wide as they
+     * need (up to the window): for three short answers that would otherwise
+     * wrap the primary one onto a line of its own.
      */
-    function choose({ title, body, content, choices, stack, close }) {
+    function choose({ title, body, content, choices, stack, close, inline }) {
         const buttons = choices.map((choice, index) =>
             `<button type="button" data-choice="${index}"
                      class="plx-button${KINDS[choice.kind] || ""}"
@@ -115,7 +119,7 @@ window.PlexoraConfirm = (function () {
              >${escapeHtml(choice.label)}</button>`).join("");
 
         const dialog = document.createElement("dialog");
-        dialog.className = `plx-dialog plx-confirm${close ? " has-close" : ""}`;
+        dialog.className = `plx-dialog plx-confirm${close ? " has-close" : ""}${inline ? " is-inline" : ""}`;
         dialog.innerHTML = `<h2 class="plx-dialog-title">${escapeHtml(title)}</h2>
             ${close ? `<button type="button" class="plx-picker-close plx-confirm-close"
                                title="Close" aria-label="Close" autofocus>

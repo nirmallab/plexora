@@ -21,6 +21,9 @@
  *   reconnect()            -> mounts every waiting pick (call from a click)
  *   list()                 -> every remembered pick
  *   fileFor(path)          -> the File behind a mounted path, or null
+ *   handleFor(path)        -> its File System Access handle, where the browser gave one
+ *   canWriteFolders()      -> whether this browser lets the page write into a
+ *                             folder the user grants (Chromium's File System Access)
  *
  * Classic script, `window.PlexoraPicks`. Needs `window.PlexoraPython`.
  */
@@ -34,6 +37,9 @@
     //: Every mounted file by its path in Python's files: what the page's own
     //: readers open (services/browserNode.js) to read what Python would.
     const mounted = new Map();
+    //: The handle behind a mounted file, where the browser gave one: what a
+    //: folder picker can open beside (services/browserPyramid.js).
+    const handles = new Map();
 
     function database() {
         return new Promise((resolve, reject) => {
@@ -95,9 +101,12 @@
         });
     }
 
-    async function mountFiles(id, files) {
+    async function mountFiles(id, files, fileHandles = null) {
         const paths = await global.PlexoraPython.mount(`${ROOT}/${id}`, files);
-        paths.forEach((path, i) => mounted.set(path, files[i]));
+        paths.forEach((path, i) => {
+            mounted.set(path, files[i]);
+            if (fileHandles && fileHandles[i]) handles.set(path, fileHandles[i]);
+        });
         return paths;
     }
 
@@ -139,7 +148,7 @@
                 files = await chooseWithInput({ multiple });
             }
             if (!files.length) return null;
-            const paths = await mountFiles(id, files);
+            const paths = await mountFiles(id, files, handles);
             await remember({ id, kind: "files", handles, picked: Date.now(),
                              files: files.map((file) => ({ name: file.name, size: file.size,
                                                            modified: file.lastModified })) });
@@ -166,7 +175,7 @@
             for (const handle of record.handles) {
                 if (!await granted(handle, ask)) return false;
             }
-            await mountFiles(record.id, await Promise.all(record.handles.map((h) => h.getFile())));
+            await mountFiles(record.id, await Promise.all(record.handles.map((h) => h.getFile())), record.handles);
             return true;
         }
         return false; // no handle kept: picked again by the user ("Locate file")
@@ -202,6 +211,8 @@
     global.PlexoraPicks = Object.freeze({ pick, restore, reconnect, list,
                                           waiting: () => waiting.slice(),
                                           fileFor: (path) => mounted.get(path) || null,
+                                          handleFor: (path) => handles.get(path) || null,
+                                          canWriteFolders: () => typeof global.showDirectoryPicker === "function",
                                           //: A file mounted by other means (a test, a drop).
                                           adopt: (path, file) => mounted.set(path, file) });
 })(window);

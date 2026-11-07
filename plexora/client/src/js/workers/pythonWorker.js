@@ -10,6 +10,8 @@
 //   close {stream}                 the page stopped reading it
 //   mount {dir, files}             the user's picked files, read on demand (WORKERFS)
 //   mountTree {dir, blobs}         a picked folder: [{name: "<folder>/<path>", data: File}]
+//   flush                          the project store written back now
+//   useStore {folder}              the project store moved to a granted folder
 //   answer {id, value, failed}     the page's answer to Python's question `id`
 //                                  (handled at once, never queued: Python waits);
 //                                  a `mount` {dir, files} in it is mounted first
@@ -126,10 +128,15 @@ function cancelled(jobId) {
     return text.split("\n").includes(jobId);
 }
 
-async function mountState() {
-    // The project store: OPFS plexora/state, mounted where the app keeps its
-    // data root. Written back after every request that may have changed it.
+async function mountState(folder) {
+    // The project store: a folder the user granted (services/browserStore.js),
+    // or OPFS plexora/state, mounted where the app keeps its data root.
+    // Written back after every request that may have changed it.
     try {
+        if (folder) {
+            nativeFs = await py.mountNativeFS("/data", folder);
+            return "folder";
+        }
         const root = await navigator.storage.getDirectory();
         const plexora = await root.getDirectoryHandle("plexora", { create: true });
         const state = await plexora.getDirectoryHandle("state", { create: true });
@@ -141,14 +148,18 @@ async function mountState() {
     }
 }
 
-// One write back at a time, and at most one more queued behind it: a burst of
-// writes is one more sync, never several at once (NativeFS warns, and does
-// the work twice).
+// One write back at a time, and at most one more queued behind it, a moment
+// after it was asked for: a burst of requests is one more sync, never several
+// at once (NativeFS warns, and does the work twice). Asked after every
+// request and every background step: a GET writes too (a project's first
+// load makes its database), and a sync with nothing new costs 2-3 ms (S-3).
+const SYNC_DELAY_MS = 250;
 let syncing = Promise.resolve();
 function scheduleSync() {
     if (!nativeFs || syncPending) return;
     syncPending = true;
     syncing = syncing.then(async () => {
+        await new Promise((resolve) => setTimeout(resolve, SYNC_DELAY_MS));
         syncPending = false;
         try { await nativeFs.syncfs(); } catch (error) { self.postMessage({ log: `syncfs: ${error}` }); }
     });
@@ -172,7 +183,7 @@ async function boot(args) {
     const site = py.runPython("import site; site.getsitepackages()[0]");
     for (const buffer of await wheels) py.unpackArchive(buffer, "wheel", { extractDir: site });
     phases.wheels = at(); mark("wheels");
-    const store = await mountState();
+    const store = await mountState(args.store || null);
     py.FS.mkdirTree("/bioc");
     py.FS.mkdirTree("/picked");
     py.FS.mkdirTree("/derived");
@@ -279,7 +290,7 @@ function answered({ id, value, failed }) {
     if (value && value.mount) {
         // A file the page made for Python (a pyramid it built): mounted before
         // Python hears the answer that names it.
-        try { mountOnce(value.mount); } catch (error) { self.postMessage({ log: `mount: ${error}` }); }
+        try { mount(value.mount); } catch (error) { self.postMessage({ log: `mount: ${error}` }); }
         delete value.mount;
     }
     const resolve = asks.get(id);
@@ -317,7 +328,7 @@ async function request(args) {
         stream: answer.get("stream") ?? null,
         pyMs: Math.round(performance.now() - started),
     };
-    if (answer.get("wrote")) scheduleSync();
+    scheduleSync();
     answer.destroy(); message.destroy(); handle.destroy(); app.destroy();
     return result;
 }
@@ -330,16 +341,14 @@ function read({ stream, size }) {
     return result;
 }
 
+//: Files read on demand under `dir`; a folder already mounted is left as it
+//: is (a copy the page built is mounted at boot and may be announced again).
 function mount({ dir, files }) {
-    py.FS.mkdirTree(dir);
-    py.FS.mount(py.FS.filesystems.WORKERFS, { files }, dir);
+    if (!(py.FS.analyzePath(dir).exists && py.FS.isMountpoint(py.FS.lookupPath(dir).node))) {
+        py.FS.mkdirTree(dir);
+        py.FS.mount(py.FS.filesystems.WORKERFS, { files }, dir);
+    }
     return files.map((file) => `${dir}/${file.name}`);
-}
-
-//: `mount`, unless the folder is already there (a copy mounted at boot).
-function mountOnce({ dir, files }) {
-    if (py.FS.analyzePath(dir).exists && py.FS.isMountpoint(py.FS.lookupPath(dir).node)) return [];
-    return mount({ dir, files });
 }
 
 // The pyramids the page built in earlier visits (services/browserPyramid.js,
@@ -357,7 +366,7 @@ async function mountDerived() {
                 const manifest = JSON.parse(await (await (await handle.getFileHandle("manifest.json")).getFile()).text());
                 const file = await (await handle.getFileHandle(manifest.name)).getFile();
                 if (file.size !== manifest.bytes) continue;
-                mountOnce({ dir: `/derived/${key}`, files: [file] });
+                mount({ dir: `/derived/${key}`, files: [file] });
                 count += 1;
             } catch (error) {
                 // Unfinished: built again when an import asks for it.
@@ -392,6 +401,21 @@ const OPS = {
         }
     },
     heap: () => (py ? py._module.HEAP8.length : null),
+    //: The project store written back now (before the page copies it).
+    flush: async () => {
+        await syncing;
+        if (nativeFs) await nativeFs.syncfs();
+        return true;
+    },
+    //: Keep the projects in `folder` from now on (services/browserStore.js
+    //: has copied them there): the store written back, /data mounted from it.
+    useStore: async ({ folder }) => {
+        await syncing;
+        if (nativeFs) await nativeFs.syncfs();
+        py.FS.unmount("/data");
+        nativeFs = await py.mountNativeFS("/data", folder);
+        return "folder";
+    },
     sync: async () => {
         if (!debug) throw new Error("sync is for tests: boot with debug: true");
         const started = performance.now();
@@ -480,6 +504,10 @@ function step() {
             const ms = Math.round(performance.now() - began);
             if (outcome.get("ran")) {
                 self.postMessage({ event: { kind: "step", ms, names: outcome.get("names").toJs() } });
+                // Background work writes too (an import's project, a job's
+                // record): written back as a request's writes are, else they
+                // wait in memory for the next writing request.
+                scheduleSync();
             }
             outcome.destroy(); cooperative.destroy();
         } catch (error) {

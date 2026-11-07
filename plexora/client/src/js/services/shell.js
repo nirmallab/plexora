@@ -45,6 +45,64 @@
         if (box) box.classList.add("plexora-boot-failed");
     };
 
+    //: A question in the loader, before the app starts: `text`, then a button
+    //: per action; resolves with the chosen action's value. (A click here is
+    //: what lets the page ask the browser for a permission.)
+    function askInLoader(text, actions) {
+        status(text);
+        const box = doc.getElementById("plexora-boot");
+        const row = doc.createElement("div");
+        row.className = "plexora-boot-actions";
+        return new Promise((resolve) => {
+            for (const action of actions) {
+                const button = doc.createElement("button");
+                button.type = "button";
+                button.textContent = action.label;
+                if (action.primary) button.className = "is-primary";
+                button.addEventListener("click", () => {
+                    row.remove();
+                    resolve(action.value);
+                });
+                row.appendChild(button);
+            }
+            box.appendChild(row);
+        });
+    }
+
+    //: The first visit asks once where the projects are kept
+    //: (services/browserStore.js), in the app's own dialog; dismissing it
+    //: keeps them in the browser. Only where the browser can write folders.
+    async function askWhereOnce(frame) {
+        const store = global.PlexoraStore;
+        if (!store || !store.shouldAsk()) return;
+        // The frame loads the loader first and writes the app's page into it
+        // after: wait for the app's own dialog.
+        let app = null;
+        for (let i = 0; i < 150 && !(app && app.PlexoraConfirm && app.PlexoraShellFramed); i += 1) {
+            await new Promise((resolve) => setTimeout(resolve, 200));
+            app = frame.contentWindow;
+        }
+        if (!app || !app.PlexoraConfirm) return;
+        const chosen = await app.PlexoraConfirm.choose({
+            title: "Save projects on this computer?",
+            body: "Your figures, thresholds and gates stay safe in Documents › Plexora. "
+                + "Kept in the browser, they are lost if its browsing data is cleared.",
+            choices: [{ value: "browser", label: "Keep in browser" },
+                      { value: "folder", label: "Save on this computer", kind: "primary", focus: true }],
+            close: true,
+            inline: true,
+        });
+        if (chosen === "folder") {
+            const done = await store.useFolder(null).catch(() => null);
+            if (done) {
+                app.PlexoraToast?.show({ title: `Projects are saved in ${done.label}` });
+                return;
+            }
+            app.PlexoraToast?.show({ title: "Projects kept in this browser", note: "Change it in Settings › Data." });
+        }
+        await store.useBrowser();
+    }
+
     function script(src) {
         return new Promise((resolve, reject) => {
             const node = doc.createElement("script");
@@ -89,25 +147,39 @@
         await script("/client/src/js/services/browserNode.js");
         await script("/client/src/js/services/browserTable.js");
         await script("/client/src/js/services/browserPyramid.js");
+        await script("/client/src/js/services/browserStore.js");
         await controlled();
+        // Where the projects are kept: a folder the user granted, opened again
+        // (after one click when the browser asks), or this browser's storage.
+        const store = await global.PlexoraStore.prepare((record) => askInLoader(
+            `Your projects are in ${global.PlexoraStore.labelOf(record.parent)}.`,
+            [{ value: false, label: "Use browser this time" },
+             { value: true, label: "Open folder", primary: true }])).catch(() => null);
         status("Starting Python");
         global.PlexoraPython.on("mark", ({ mark }) => { if (LABELS[mark]) status(LABELS[mark]); });
         // `?pydebug` on the address: the worker's test hooks (`run`, `sync`,
         // `trace`), for diagnosing the site in development.
         const debug = new URLSearchParams(global.location.search).has("pydebug");
-        const info = await global.PlexoraPython.start({ base: shell.py, debug });
+        const info = await global.PlexoraPython.start({ base: shell.py, debug, store });
         if (info.error) throw new Error(info.error);
         // The files picked on earlier visits, mounted again where the browser
         // still grants access; the rest wait for a click (PlexoraPicks.reconnect).
         await global.PlexoraPicks.restore().catch(() => null);
+        // And the pyramidized copies saved in folders beside their originals.
+        await global.PlexoraPyramid.restore().catch(() => null);
         const frame = doc.createElement("iframe");
         frame.id = "plexora-app";
         frame.title = "Plexora";
         frame.className = "plexora-app-frame";
         frame.src = here(global.location);
+        let asked = false;
         frame.addEventListener("load", () => {
             const box = doc.getElementById("plexora-boot");
             if (box) box.hidden = true;
+            if (!asked) {
+                asked = true;
+                askWhereOnce(frame).catch(() => null);
+            }
         });
         doc.body.appendChild(frame);
     }

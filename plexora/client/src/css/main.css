@@ -5205,6 +5205,60 @@ html.is-native-dragging.has-drop-target body::after {
     width: min(440px, 92vw);
 }
 
+/* `choose({ inline: true })`: the answers on one line whatever their count,
+   the dialog as wide as they need, its text wrapping within that. */
+.plx-confirm.is-inline {
+    width: max-content;
+    min-width: min(400px, 92vw);
+    max-width: min(560px, 92vw);
+}
+
+.plx-confirm.is-inline .plx-dialog-actions {
+    flex-wrap: nowrap;
+}
+
+.plx-confirm.is-inline .plx-button {
+    white-space: nowrap;
+}
+
+/* A file a question is about: its name, and the facts that decide the
+   answer under it (views/importSample.js). */
+.plx-confirm-chip {
+    align-items: center;
+    background: var(--surface-2);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-md);
+    column-gap: var(--space-3);
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    margin: var(--space-3) 0 var(--space-1);
+    padding: var(--space-2) var(--space-3);
+}
+
+.plx-confirm-chip > .fas {
+    color: var(--text-muted);
+    grid-column: 1;
+    grid-row: 1 / span 2;
+}
+
+.plx-confirm-chip-name {
+    grid-column: 2;
+    justify-self: start;
+    text-align: left;
+    font-size: 13px;
+    font-weight: 600;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.plx-confirm-chip-meta {
+    grid-column: 2;
+    justify-self: start;
+    color: var(--text-secondary);
+    font-size: 12px;
+}
+
 /* `choose({ close: true })`: the way out is an X in the corner rather than
    a Cancel among the answers. The title gives it room. */
 .plx-confirm-close {

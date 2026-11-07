@@ -50,7 +50,7 @@ SECTIONS = (
 #: The website's blurbs where a section means something else there: projects
 #: live in the browser's storage, and the site is always the current version.
 WEBSITE_BLURBS = {
-    "data": "Where this browser keeps your projects, and the room they take.",
+    "data": "Where your projects are kept: this browser, or a folder you choose.",
     "updates": "Which version this is.",
 }
 

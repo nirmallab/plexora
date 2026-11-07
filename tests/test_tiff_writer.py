@@ -152,3 +152,17 @@ def test_what_the_page_would_read_differently_is_left_to_python(tmp_path, make, 
     source = tmp_path / "s.tif"
     make(source)
     assert image_pyramid.page_build(source) is None, why
+
+
+@pytest.mark.parametrize("recorded, current, same", [
+    ("1000-1730000000123456700", "1000-1730000000123456700", True),   # the same machine
+    ("1000-1730000000123000000", "1000-1730000000123456700", True),   # the website (ms) vs the desktop (100 ns)
+    ("1000-1730000000124000000", "1000-1730000000123456700", True),   # rounded rather than truncated
+    ("1000-1730000000125000000", "1000-1730000000123456700", False),  # a later save
+    ("1001-1730000000123456700", "1000-1730000000123456700", False),  # another size
+    (None, "1000-1", False),
+])
+def test_a_copy_made_on_the_website_is_the_desktops_and_back(recorded, current, same):
+    """A page sees a file's time in whole milliseconds: a copy made by the
+    website from a file is still a copy of that file to the desktop app."""
+    assert image_pyramid._same_source(recorded, current) is same

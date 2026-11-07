@@ -10,10 +10,16 @@
  * ms} -- written last, so a build that stopped part way is never taken for a
  * finished one (it is built again).
  *
+ * Or, given `folder` (a directory the user granted, beside the original), the
+ * copy goes there under its own name, through the folder's writable stream:
+ * the browser writes a temporary file and puts it in place on close, so the
+ * name never holds half a copy. A file already under that name is never
+ * written over: it is handed back (`exists`) for Python to judge.
+ *
  * {op: "build", file, key, name, shape: [C, H, W], dtype, factors, tile,
- *  description, hands: <tiff worker URL>, workers}
+ *  description, hands: <tiff worker URL>, workers, folder?}
  *  -> {progress: {tiles, total, bands, bandsTotal}}..., then
- *     {done, file, bytes, timings} or {error}
+ *     {done, file, bytes, timings}, {exists, file} or {error}
  */
 import { build, dtypeOf } from "../node/pyramid.js";
 
@@ -74,10 +80,11 @@ async function writeJson(dir, name, value) {
 
 self.onmessage = async ({ data }) => {
     if (data.op !== "build") return;
-    const { file, key, name, shape, dtype, factors, tile, description, hands: url, workers } = data;
+    const { file, key, name, shape, dtype, factors, tile, description, hands: url, workers, folder } = data;
     const t0 = performance.now();
     let hands = null;
     let access = null;
+    let writable = null;
     try {
         hands = startHands(url, Math.max(1, workers), file);
         const [opened] = await hands.opened;
@@ -89,6 +96,31 @@ self.onmessage = async ({ data }) => {
             || found !== dtype) {
             throw new Error(`the page reads ${geometry.numChannels} x ${geometry.height} x ${geometry.width} ${found}, `
                             + `Python ${channels} x ${height} x ${width} ${dtype}`);
+        }
+        if (folder) {
+            const there = await folder.getFileHandle(name).catch(() => null);
+            if (there) {
+                self.postMessage({ exists: true, file: await there.getFile() });
+                return;
+            }
+            const handle = await folder.getFileHandle(name, { create: true });
+            writable = await handle.createWritable();
+            // One write at a time, in the order asked: the stream takes no
+            // two at once.
+            let queue = Promise.resolve();
+            const result = await build({
+                geometry, dtype, channels, factors, tile, description, hands,
+                sink: { write: (bytes, at) => (queue = queue.then(
+                    () => writable.write({ type: "write", position: at, data: bytes }))) },
+                progress: (progress) => self.postMessage({ progress }),
+            });
+            await queue;
+            await writable.close();
+            writable = null;
+            const ms = Math.round(performance.now() - t0);
+            self.postMessage({ done: true, file: await handle.getFile(), bytes: result.bytes,
+                               timings: { ...result.timings, ms } });
+            return;
         }
         const dir = await derivedDir(key);
         access = await (await dir.getFileHandle(name, { create: true })).createSyncAccessHandle();
@@ -109,6 +141,9 @@ self.onmessage = async ({ data }) => {
         self.postMessage({ error: String(error && error.message || error).slice(0, 500) });
     } finally {
         if (access) try { access.close(); } catch (error) { /* closed */ }
+        // A copy that did not finish is dropped: abort() discards the
+        // browser's temporary file and leaves the folder as it was.
+        if (writable) try { await writable.abort(); } catch (error) { /* gone */ }
         if (hands) hands.stop();
     }
 };

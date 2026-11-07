@@ -8,7 +8,7 @@
     <link rel="apple-touch-icon" href="{{ data.base_url }}/client/src/img/apple-touch-icon.png">
     <!-- Styles -->
     <link rel="stylesheet" href="{{ data.base_url }}/client/src/css/tokens.css?v=20261027_sidebar_radius">
-    <link rel="stylesheet" href="{{ data.base_url }}/client/src/css/main.css?v=20261029_bucket_datasets">
+    <link rel="stylesheet" href="{{ data.base_url }}/client/src/css/main.css?v=20261107_confirm_chip">
     {# Here and not in a page block: the explorer opens from every page, and
        appRouter.adoptStyles turns page stylesheets off on navigation. #}
     <link rel="stylesheet" href="{{ data.base_url }}/client/src/css/explorer.css?v=20261021_explorer_waiting">
@@ -222,7 +222,7 @@
        had to reach for `window.confirm` for -- and because the app shell
        disables a page's stylesheet when it leaves, so its CSS is in main.css
        and the two have to be loaded on the same terms. #}
-    <script src="{{ data.base_url }}/client/src/js/views/confirmDialog.js?v=20261004_box_default" defer></script>
+    <script src="{{ data.base_url }}/client/src/js/views/confirmDialog.js?v=20261107_inline" defer></script>
     {# The bottom-right notice: something happened and nothing is waiting on
        you. On every page for the same reason confirmDialog is -- it is a core
        affordance whose CSS is in main.css, and a notice that only existed on
@@ -269,7 +269,7 @@
        primary button, the viewer's "+ Add Layer" and the requirements modal's
        layer row all open it, and none of those three shares a stylesheet.
        After datasetPicker.js, whose picker is this dialog's Dataset row. #}
-    <script src="{{ data.base_url }}/client/src/js/views/importSample.js?v=20261029_bucket_progress" defer></script>
+    <script src="{{ data.base_url }}/client/src/js/views/importSample.js?v=20261107_compact" defer></script>
     <!-- New Dataset: a dataset from a folder (scan, match, create). After
        importSample.js, whose dialog styles it reuses. -->
     <script src="{{ data.base_url }}/client/src/js/views/datasetBuilder.js?v=20261029_bucket_datasets" defer></script>

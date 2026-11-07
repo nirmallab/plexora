@@ -2793,9 +2793,10 @@ window.PlexoraImportSample = (function () {
         const head = el("div", "plx-import-question-label");
         head.appendChild(el("span", "plx-import-badge",
             said === "no" ? "as is" : "will pyramidize"));
+        const place = (state.copyPlaces || {})[question.id];
         head.appendChild(el("span", null, said === "no"
             ? "Opens the original, without a pyramid."
-            : `Builds ${pyramid.output_name || "a pyramidized copy"} first.`));
+            : `Builds ${pyramid.output_name || "a pyramidized copy"} first${place ? `, ${place}` : ""}.`));
         const change = el("button", "plx-import-link", "Change…");
         change.type = "button";
         change.addEventListener("click", async () => {
@@ -2811,9 +2812,36 @@ window.PlexoraImportSample = (function () {
         return row;
     }
 
+    //: On the website, the host page's pyramid builder (services/
+    //: browserPyramid.js), which may save a copy beside the original where
+    //: this browser lets a page write into a folder the user grants.
+    function websitePyramids() {
+        if (window.PlexoraBackend?.kind !== "browser") return null;
+        try {
+            return window.parent?.PlexoraPyramid || null;
+        } catch (error) {
+            return null;
+        }
+    }
+
+    //: A file a question is about: its name, and the facts that decide it.
+    function fileChip(name, facts) {
+        const chip = el("div", "plx-confirm-chip");
+        const icon = el("span", "fas fa-layer-group");
+        icon.setAttribute("aria-hidden", "true");
+        chip.append(icon, el("span", "plx-confirm-chip-name", name),
+                    el("span", "plx-confirm-chip-meta", facts.filter(Boolean).join(" · ")));
+        return chip;
+    }
+
     /**
      * Put one pyramidize confirmation to the user. Resolves the chosen value
      * ("yes" / "no"), or null when the modal is dismissed.
+     *
+     * On the website, where the browser can write into a folder the user
+     * grants, the copy goes beside the original (the folder picker opens
+     * there) or stays in this browser; a cancelled picker keeps it in the
+     * browser.
      */
     async function askPyramid(question, sample) {
         const layer = layerOf(sample, question);
@@ -2825,31 +2853,59 @@ window.PlexoraImportSample = (function () {
         const no = options.find((option) => option.value === "no")
             || {value: "no", label: "Import as is"};
         if (!window.PlexoraConfirm?.choose) return question.default ?? yes.value;
-        const facts = [pyramid.dtype, formatBytes(pyramid.bytes)].filter(Boolean);
         const size = formatBytes(pyramid.output_bytes_estimate);
-        const copy = pyramid.output_name || "a .pyramid.ome.tiff file";
-        return window.PlexoraConfirm.choose({
-            title: "This image is not pyramidized",
-            body: [
-                `${name} is ${formatCount(pyramid.width)} × ${formatCount(pyramid.height)} px `
-                + `with ${formatCount(pyramid.channels)} channels`
-                + (facts.length ? ` (${facts.join(", ")})` : "")
-                + " and has no reduced-resolution levels.",
-                "Opening it at full resolution directly can need more memory "
-                + "than this machine has, and some readers refuse it — the "
-                + "viewer may stall or fail to open it.",
-                "Plexora can write a pyramidized copy once"
-                + (size ? ` — about ${size}` : "")
-                + (pyramid.levels ? `, ${pyramid.levels} levels` : "")
-                + `, saved as ${copy} ${pyramid.location || "beside the original"}`
-                + " — and open that instead. The original is not changed. Each "
-                + "step is shown as it runs.",
-            ],
-            choices: [
-                {value: no.value, label: no.label},
-                {value: yes.value, label: yes.label, kind: "primary", focus: true},
-            ],
+        const pyramids = websitePyramids();
+        const chip = fileChip(name, [
+            `${formatCount(pyramid.width)} × ${formatCount(pyramid.height)} px`,
+            pyramid.channels ? `${formatCount(pyramid.channels)} channels` : null,
+            size ? `copy ≈ ${size}` : null,
+        ]);
+        if (!pyramids || !pyramids.canWriteFolders()) {
+            return window.PlexoraConfirm.choose({
+                title: "Build a pyramid first?",
+                body: `Large flat images open slowly without one. The copy is saved ${pyramid.location
+                    || "beside the original"}; the original is not changed.`,
+                content: chip,
+                choices: [
+                    {value: no.value, label: no.label},
+                    {value: yes.value, label: yes.label, kind: "primary", focus: true},
+                ],
+                close: true,
+                inline: true,
+            });
+        }
+        // The website, where the browser can write into a folder: one answer;
+        // closing the question keeps the copy with the projects (Plexora's
+        // folder, or this browser).
+        let home = null;
+        try {
+            home = window.parent?.PlexoraStore?.current?.() || null;
+        } catch (error) {
+            home = null;
+        }
+        const kept = home?.kind === "folder" ? home.label : "this browser";
+        const chosen = await window.PlexoraConfirm.choose({
+            title: "Save the pyramid beside the original?",
+            body: `Large flat images need one to open quickly. Close to keep it in ${kept}.`,
+            content: chip,
+            choices: [{value: "folder", label: "Save beside original…", kind: "primary", focus: true}],
+            close: true,
+            inline: true,
         });
+        let folder = null;
+        if (chosen === "folder") {
+            try {
+                folder = await pyramids.chooseFolder(layer?.src);
+            } catch (error) {
+                folder = null;
+            }
+            if (!folder) window.PlexoraToast?.show({ title: `Pyramid kept in ${kept}` });
+        } else {
+            pyramids.forgetFolder(layer?.src);
+        }
+        state.copyPlaces = state.copyPlaces || {};
+        state.copyPlaces[question.id] = folder ? `in “${folder.name}”` : `in ${kept}`;
+        return yes.value;
     }
 
     /**

@@ -95,7 +95,13 @@ def page_pyramid(source, *, name, spec, progress=None, stage=None):
 
     The import waits for it a look at a time (`_work.wait`): the page's
     progress reaches the import's bar, and other requests are answered between
-    looks."""
+    looks.
+
+    Where the user chose to save it beside the original and a file of that
+    name is already there, the page hands that file back unread (`existing`):
+    it is used when it is a finished copy of this image as it is now
+    (`image_pyramid.is_adoptable_image`), and otherwise the copy is built in
+    the browser instead -- a user's file is never written over."""
     if _asker is None or os.environ.get("PLEXORA_BACKEND") != "browser":
         return None
     path = str(source)
@@ -105,13 +111,14 @@ def page_pyramid(source, *, name, spec, progress=None, stage=None):
     if wanted is None:
         return None
     from plexora import _work
+    from plexora.server.utils import image_pyramid
     from plexora.server.utils.segmentation_pyramid import PyramidError
 
     # One copy per source file as it is now, whichever pick it came through.
     key = hashlib.sha256(f"{PurePosixPath(path).name}|{wanted['fingerprint']}".encode()).hexdigest()[:24]
-    started = _plain(_asker("pyramid", {
-        "path": path, "key": key, "name": name,
-        **{field: wanted[field] for field in ("shape", "dtype", "factors", "tile", "description")}}))
+    asked = {"path": path, "key": key, "name": name,
+             **{field: wanted[field] for field in ("shape", "dtype", "factors", "tile", "description")}}
+    started = _plain(_asker("pyramid", asked))
     if not started or started.get("id") is None:
         return None
     if stage is not None:
@@ -120,6 +127,13 @@ def page_pyramid(source, *, name, spec, progress=None, stage=None):
         state = _plain(_asker("pyramid_status", {"id": started["id"]})) or {}
         if progress is not None and state.get("total"):
             progress(int(state.get("tiles") or 0), int(state["total"]))
+        if state.get("state") == "done" and state.get("existing"):
+            if image_pyramid.is_adoptable_image(state["path"], source):
+                return str(state["path"])
+            started = _plain(_asker("pyramid", {**asked, "browser": True}))
+            if not started or started.get("id") is None:
+                return None
+            continue
         if state.get("state") == "done":
             if stage is not None:
                 stage("writing", None)

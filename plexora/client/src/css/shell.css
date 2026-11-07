@@ -33,6 +33,36 @@ html, body {
     text-align: center;
 }
 
+/* A question before the app starts (a folder to open again). */
+.plexora-boot-actions {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: 8px;
+}
+
+.plexora-boot-actions button {
+    font: inherit;
+    font-size: 14px;
+    padding: 6px 14px;
+    border-radius: 6px;
+    border: 1px solid var(--border-strong, #8a93a3);
+    background: transparent;
+    color: inherit;
+    cursor: pointer;
+}
+
+.plexora-boot-actions button.is-primary {
+    background: var(--accent-channel, #2f80ed);
+    border-color: var(--accent-channel, #2f80ed);
+    color: #fff;
+}
+
+#plexora-boot-status {
+    max-width: 40em;
+    text-align: center;
+}
+
 @media (prefers-color-scheme: dark) {
     html, body {
         background: var(--plx-bg, #12151b);

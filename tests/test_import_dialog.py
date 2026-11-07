@@ -435,7 +435,7 @@ def test_a_pyramid_confirmation_is_a_note_under_its_row_and_a_modal_at_import(di
     submit = dialog[dialog.index("async function submit(replace, only)"):]
     assert submit.index("await askConfirmations(targets)") < submit.index('render("importing")')
     assert "if (value === null || !state) return false;" in dialog
-    assert 'title: "This image is not pyramidized"' in dialog
+    assert 'title: "Build a pyramid first?"' in dialog
     assert 'part("go").disabled = !importable;' in dialog
     css = _read(MAIN_CSS)
     assert ".plx-import-question.is-confirm" in css

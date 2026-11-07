@@ -371,6 +371,23 @@ def copy_source(path) -> Optional[str]:
     return payload.get("source") if payload else None
 
 
+def _same_source(recorded, current) -> bool:
+    """Whether a copy's recorded source key is the source's key now. Keys are
+    `<size>-<mtime_ns>`; a web page sees modification times in whole
+    milliseconds (File.lastModified), so a copy made on the website and one
+    made by the desktop app from the same file agree to the millisecond."""
+    if not recorded or not current:
+        return False
+    if recorded == current:
+        return True
+    try:
+        size_a, time_a = (int(part) for part in str(recorded).split("-"))
+        size_b, time_b = (int(part) for part in str(current).split("-"))
+    except ValueError:
+        return False
+    return size_a == size_b and abs(time_a - time_b) < 1_000_000
+
+
 def is_adoptable_image(candidate, source) -> bool:
     """Whether `candidate` is a finished copy of `source` as it is now.
 
@@ -384,7 +401,7 @@ def is_adoptable_image(candidate, source) -> bool:
     payload = _description(candidate)
     if not payload:
         return False
-    if payload.get("source_key") != segmentation_pyramid.source_fingerprint(source):
+    if not _same_source(payload.get("source_key"), segmentation_pyramid.source_fingerprint(source)):
         return False
     try:
         with tf.TiffFile(str(candidate), is_ome=False) as copy:

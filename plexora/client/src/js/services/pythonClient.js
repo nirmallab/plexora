@@ -17,12 +17,16 @@
  *   at the job's next check (`cancel(id)`); the site is cross-origin isolated
  *   for exactly this. Without shared memory it is a request like any other.
  *
- *   start({base, origin})  -> promise of the boot's record ({phases, info, ...})
+ *   start({base, origin, store})  -> promise of the boot's record ({phases, info, ...});
+ *                           `store` a granted folder to keep the projects in
  *   ready                   a promise of the same, for whoever asks later
  *   fetch(url, init)        -> promise of a Response, as from the server
  *   mount(dir, files)       picked File objects under `dir` in Python's files
  *   mountTree(dir, blobs)   a picked folder: [{name: "<folder>/<path>", data: File}]
- *   columns(key, names, buffers)  a table's columns for the table provider
+ *   answers(kind, fn)       who answers Python's questions of `kind` (the page's
+ *                           table, window and pyramid readers)
+ *   flush()                 the project store written back now
+ *   useStore(folder)        the project store moved to a granted folder
  *   job(id) / cancel(id) / on(kind, fn)
  *
  * Classic script, `window.PlexoraPython`.
@@ -114,12 +118,12 @@
         if (data.log) console.warn("[python]", data.log);
     }
 
-    function start({ base, origin = global.location.origin, root = "/", debug = false } = {}) {
+    function start({ base, origin = global.location.origin, root = "/", debug = false, store = null } = {}) {
         if (worker) return ready;
         worker = new Worker(new URL(root + WORKER, global.location.href), { type: "module" });
         worker.onmessage = onMessage;
         worker.onerror = (event) => console.error("[python] worker failed:", event.message);
-        call("boot", { base, origin, cancels, inFlight, debug }).then(resolveReady, (error) => {
+        call("boot", { base, origin, cancels, inFlight, debug, store }).then(resolveReady, (error) => {
             resolveReady({ error: String(error?.message || error) });
         });
         return ready;
@@ -290,6 +294,10 @@
         heap: () => ready.then(() => call("heap", {})),
         run: (code) => ready.then(() => call("run", { code })),
         sync: () => ready.then(() => call("sync", {})),
+        //: The project store written back now; moved to a granted folder
+        //: (services/browserStore.js).
+        flush: () => ready.then(() => call("flush", {})),
+        useStore: (folder) => ready.then(() => call("useStore", { folder })),
         trace: () => ready.then(() => call("trace", {})),
         //: The worker's own account (busy, queued, current), and the calls
         //: this page is still waiting on; null if it does not answer in 2 s.

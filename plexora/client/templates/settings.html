@@ -41,22 +41,28 @@
                      data-section="data" aria-label="Data">
                 {% if website %}
                 {# The website keeps projects in this site's storage in the
-                   browser; settingsPage.js fills in how much they take. #}
-                <h2 class="settings-panel-title">Projects in this browser</h2>
+                   browser or in a folder the user granted (services/
+                   browserStore.js); settingsPage.js fills both cards in. #}
+                <h2 class="settings-panel-title">Where your projects are</h2>
                 <p class="settings-panel-lead">
-                    On the website, every project you import and every figure you
-                    build is kept in this browser's storage for this site. Your
-                    image and table files stay where they are on your computer;
-                    Plexora reads them when a project opens.
+                    Your figures, thresholds and gates. Your images stay where they are.
                 </p>
+                <div class="settings-card" id="settings_web_place">
+                    <div class="settings-field-label">Kept in</div>
+                    <div class="settings-path" id="settings_web_place_name">Loading&hellip;</div>
+                    <div class="settings-meta" id="settings_web_place_meta"></div>
+                    <div class="settings-actions">
+                        <button type="button" class="btn btn-primary" id="settings_web_to_folder" hidden>
+                            Save on this computer</button>
+                        <button type="button" class="btn btn-outline-light" id="settings_web_to_browser" hidden>
+                            Keep in browser</button>
+                    </div>
+                </div>
                 <div class="settings-card" id="settings_web_storage">
-                    <div class="settings-field-label">Storage used</div>
+                    <div class="settings-field-label">Storage used in this browser</div>
                     <div class="settings-path" id="settings_web_storage_used">Loading&hellip;</div>
                     <div class="settings-meta" id="settings_web_storage_meta"></div>
                 </div>
-                <p class="settings-hint">
-                    A data folder on a disk is a setting of the Plexora desktop app.
-                </p>
                 {% else %}
 
                 <h2 class="settings-panel-title">Data directory</h2>
@@ -874,5 +880,5 @@
 {# remoteState.js is loaded by base.html, above and deferred, so it is parsed
    before this file runs -- the Remote servers section is one of its
    subscribers rather than a poller of its own. #}
-<script src="{{ data.base_url }}/client/src/js/views/settingsPage.js?v=20261107_website" defer></script>
+<script src="{{ data.base_url }}/client/src/js/views/settingsPage.js?v=20261107_website_places" defer></script>
 {% endblock %}
