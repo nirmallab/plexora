@@ -82,7 +82,7 @@ def test_the_chat_streams_calls_a_tool_and_undoes_it_on_the_website():
 #: What differs between two runs of the same computation and is no part of
 #: its result: ids, times, places on disk.
 VOLATILE = ("operation_id", "receipt", "job_id", "seconds", "_ms", "elapsed", "_at", "path", "computed",
-            "timings", "duration", "created", "updated", "revision", "run_id", "source_path")
+            "timing", "duration", "created", "updated", "revision", "run_id", "source_path", "fingerprint")
 
 
 def _normal(value, digits=6):
@@ -99,9 +99,10 @@ def _normal(value, digits=6):
 
 
 def _desktop(tmp_path):
-    """The same three computations in this process, on the same fixtures."""
+    """The same three computations in this process, on the same fixtures,
+    asked of the same routes the website's page asks."""
     import plexora
-    from plexora.agent import AgentSession, invoke, jobs
+    from plexora.agent import jobs
     from tests.autogate_fixtures import make_gating_dataset
     from tests.qc_fixtures import make_qc_project
 
@@ -109,20 +110,21 @@ def _desktop(tmp_path):
     make_gating_dataset(tmp_path, "cohort", shifts=tuple(cohort["shifts"]), grid=cohort["grid"],
                         size=cohort["size"])
     make_qc_project(tmp_path, "qcsynth", size=qc["size"], grid=qc["grid"], artifacts=tuple(qc["artifacts"]))
-    session = AgentSession()
-    out = {}
-    started = invoke(session, "apply_gate_to_dataset", {"dataset": "cohort", "marker": gate["marker"],
-                                                        "low": gate["low"]})
-    assert started["ok"], started
-    out["apply"] = jobs.store().wait(started["result"]["job_id"], 300)["result"]
     http = plexora.app.test_client()
+    out = {}
+
+    def capability(tool, arguments):
+        answer = http.post(f"/agent/v1/capabilities/{tool}", json={"arguments": arguments}).get_json()
+        assert answer["success"], answer
+        return jobs.store().wait(answer["result"]["job_id"], 300)["result"]
+
+    out["apply"] = capability("apply_gate_to_dataset", {"dataset": "cohort", "marker": gate["marker"],
+                                                        "low": gate["low"]})
     run = http.post("/plugins/qc/blur/run", json={"datasource": "qcsynth", "channel": qc["channel"]}).get_json()
     jobs.store().wait(run["job_id"], 300)
     out["qc"] = http.get(f"/plugins/qc/blur?datasource=qcsynth&channel={qc['channel']}").get_json()
-    started = invoke(session, "classifier_run", {"project": "cohort_1", "marker": gate["marker"],
-                                                 "auto_pick": True})
-    assert started["ok"], started
-    out["classify"] = jobs.store().wait(started["result"]["job_id"], 300)["result"]
+    out["classify"] = capability("classifier_run", {"project": "cohort_1", "marker": gate["marker"],
+                                                    "auto_pick": True})
     return out
 
 
@@ -132,4 +134,16 @@ def test_jobs_run_on_the_website_as_on_the_desktop(tmp_path):
     done, out = _drive("jobs.mjs", "--spec", json.dumps(SPEC))
     assert done.returncode == 0 and out.get("ok"), json.dumps(out, indent=1)[-4000:] + done.stderr[-2000:]
     for name in ("apply", "qc", "classify"):
-        assert _normal(out["results"][name]) == _normal(want[name]), name
+        assert _normal(out["results"][name]) == _normal(want[name]),             (name, _differences(_normal(out["results"][name]), _normal(want[name]))[:20])
+
+
+def _differences(got, want, where=""):
+    """The paths at which two normalised answers differ, with both values."""
+    if isinstance(got, dict) and isinstance(want, dict):
+        out = []
+        for key in sorted(set(got) | set(want)):
+            out += _differences(got.get(key, "<absent>"), want.get(key, "<absent>"), f"{where}.{key}")
+        return out
+    if isinstance(got, list) and isinstance(want, list) and len(got) == len(want):
+        return [d for i, (g, w) in enumerate(zip(got, want)) for d in _differences(g, w, f"{where}[{i}]")]
+    return [] if got == want else [(where, str(got)[:120], str(want)[:120])]

@@ -134,7 +134,11 @@ async function loadStage(name, importer = "?") {
 let cancels = null;
 function cancelled(jobId) {
     if (!cancels) return false;
-    const text = new TextDecoder().decode(new Uint8Array(cancels).slice());
+    // The page writes the ids and leaves the rest of the buffer zero: the
+    // last id ends at the first zero, not at the buffer's end.
+    const bytes = new Uint8Array(cancels).slice();
+    const end = bytes.indexOf(0);
+    const text = new TextDecoder().decode(end < 0 ? bytes : bytes.subarray(0, end));
     return text.split("\n").includes(jobId);
 }
 

@@ -159,14 +159,14 @@ try {
 
     // Cancel, from the panel, while it runs
     const stopped = await follow(page, {
-        start: { url: "/plugins/qc/blur/run", body: { datasource: "qcsynth", channels: ["DNA_1", "DNA_2", "DNA_3"],
+        start: { url: "/plugins/qc/blur/run", body: { datasource: "qcsynth", channels: ["DNA_1", "CD3", "CD8", "DNA_2", "CD20"],
                                                        force: true } },
         poll: "/plugins/qc/jobs/{id}", cancel: "/plugins/qc/jobs/{id}/cancel", cancelAfter: 0 });
     out.polls.cancel = summary(stopped);
     const ended = stopped.last && stopped.last.job;
     check("a job cancelled from its panel while it runs stops", shared && stopped.cancelled
           && stopped.cancelled.ok && ended && ended.status === "cancelled",
-          { shared, cancelled: stopped.cancelled, status: ended && ended.status });
+          { shared, cancelled: stopped.cancelled, status: ended && ended.status, error: ended && ended.error });
     if (shots) await page.screenshot({ path: path.join(shots, "jobs.png") });
 } catch (error) {
     out.errors.push(String(error && error.stack || error).slice(0, 2000));
