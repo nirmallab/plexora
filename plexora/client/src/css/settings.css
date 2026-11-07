@@ -137,6 +137,29 @@
     max-width: 62ch;
 }
 
+/* The website's Data nodes: one line, and the button that pairs a node,
+   beside it (settings.html, services/handoff.js pairNode). */
+.settings-node-pair {
+    align-items: center;
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-2) var(--space-4);
+    margin-bottom: var(--space-4);
+}
+
+.settings-node-pair .settings-panel-lead {
+    margin: 0;
+}
+
+.settings-node-pair .btn {
+    white-space: nowrap;
+}
+
+/* The website's Remote servers: the notice, under the panel's title. */
+#settings_panel_remotes .plx-handoff {
+    max-width: 46rem;
+}
+
 .settings-card {
     background: var(--surface-1);
     border: 1px solid var(--border-subtle);

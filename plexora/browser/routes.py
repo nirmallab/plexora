@@ -32,6 +32,7 @@ from __future__ import annotations
 import json
 import re
 from pathlib import Path
+from typing import NamedTuple
 
 CLASSES = ("js", "python", "static", "network", "handoff")
 
@@ -69,51 +70,93 @@ STATIC = ("my_index", "image_viewer", "open_project_page", "settings_page")
 #: Files served as they are.
 NETWORK = ("serveClient", "favicon")
 
-#: What a web page cannot do, the sentence that says so, where to go instead
-#: (`to`: the desktop app, a node beside the data, or nowhere because the
-#: website does not need it) and the actions the notice offers.
+class Handoff(NamedTuple):
+    """What the website says instead of answering a route it cannot serve.
+
+    `to`: where the work goes -- "desktop" (the desktop app, or a node it or
+    the cluster's portal starts) or "none" (the website does not need it).
+    `title`: the notice's few words. `why`: its one line. `actions`: the
+    buttons, from `ACTIONS`, in order (services/handoff.js draws them).
+    """
+
+    to: str
+    title: str
+    why: str
+    actions: tuple
+
+
+#: The buttons a notice can offer (services/handoff.js): the desktop app
+#: opened (on this project, when there is one), its download page, and the
+#: node pairing flow (a node started on the server, paired with this browser).
+ACTIONS = ("open_desktop", "get_desktop", "pair_node")
+
+# A web page cannot open a TCP socket, so it cannot run ssh. Remote data keeps
+# its zero-cost routes: the desktop app (or the small connector), a node the
+# cluster's portal starts, or a tunnel the user opens (plan decision 1).
+_SSH = Handoff("desktop", "Connect from the desktop app",
+               "A web page cannot open an SSH connection: use the desktop app, "
+               "or pair a node started on the server.", ("open_desktop", "pair_node"))
+# Google Cloud through its command-line tool, until the website reaches
+# Google's own APIs with the user's sign-in (plan L9).
+_GCLOUD = Handoff("desktop", "Google Cloud is in the desktop app",
+                  "It runs through the Google Cloud CLI, which a web page cannot start.",
+                  ("open_desktop",))
+# An installed program's own business: the website is always the current
+# version, and there is nothing to stop.
+_UPDATES = Handoff("none", "Always up to date",
+                   "The website is always the current version of Plexora.", ())
+# A data folder on a disk: the website keeps projects in this browser, or in
+# Documents/Plexora when the user chose it (services/browserStore.js).
+_DATA_FOLDER = Handoff("desktop", "A desktop app setting",
+                       "The website keeps projects in this browser or in Documents › Plexora.",
+                       ("open_desktop",))
+
+#: What a web page cannot do: the notice that says so, by endpoint. The set is
+#: exactly the ssh-, CLI- and desktop-bound routes (tests/test_handoff_routes.py
+#: holds it), so a new entry is a decision, not a default.
 HANDOFF = {
-    # A web page cannot open a TCP socket, so it cannot run ssh. Remote data
-    # keeps its zero-cost routes: the desktop app (or the small connector),
-    # a node the cluster's portal starts, or a tunnel the user opens.
-    "settings_remotes_connect": ("desktop", "Connecting to a server runs ssh, which a web page cannot do. Connect from the Plexora desktop app, or start a node on the server and pair it here.", ("open_desktop", "pair_node")),
-    "settings_remotes_answer": ("desktop", "Answering a server's password or Duo prompt is part of an ssh connection, which a web page cannot make.", ("open_desktop",)),
-    "settings_remotes_disconnect": ("desktop", "Connections to servers are made and closed by the Plexora desktop app.", ("open_desktop",)),
-    "settings_remotes_status": ("desktop", "Connections to servers are made by the Plexora desktop app; a node paired here shows its own status.", ("open_desktop", "pair_node")),
-    "settings_remotes_askpass_prompt": ("desktop", "Password prompts belong to an ssh connection, which a web page cannot make.", ("open_desktop",)),
-    "settings_remotes_askpass_answer": ("desktop", "Password prompts belong to an ssh connection, which a web page cannot make.", ("open_desktop",)),
-    # Google Cloud through its command-line tool, until the website reaches
-    # Google's own APIs with the user's sign-in (plan L9).
-    "gcloud_auth": ("desktop", "Google Cloud is reached through the Google Cloud CLI, which runs on your computer. Use the Plexora desktop app for cloud machines.", ("open_desktop",)),
-    "gcloud_status": ("desktop", "Google Cloud is reached through the Google Cloud CLI, which runs on your computer.", ("open_desktop",)),
-    "gcloud_projects": ("desktop", "Google Cloud is reached through the Google Cloud CLI, which runs on your computer.", ("open_desktop",)),
-    "gcloud_buckets": ("desktop", "Google Cloud is reached through the Google Cloud CLI, which runs on your computer.", ("open_desktop",)),
-    "gcloud_bucket": ("desktop", "Google Cloud is reached through the Google Cloud CLI, which runs on your computer.", ("open_desktop",)),
-    "gcloud_zones": ("desktop", "Google Cloud is reached through the Google Cloud CLI, which runs on your computer.", ("open_desktop",)),
-    "gcloud_instances": ("desktop", "Google Cloud is reached through the Google Cloud CLI, which runs on your computer.", ("open_desktop",)),
-    "gcloud_vm_status": ("desktop", "Cloud machines are started and stopped from the Plexora desktop app.", ("open_desktop",)),
-    "gcloud_vm_start": ("desktop", "Cloud machines are started and stopped from the Plexora desktop app.", ("open_desktop",)),
-    "gcloud_vm_stop": ("desktop", "Cloud machines are started and stopped from the Plexora desktop app.", ("open_desktop",)),
-    "gcloud_vm_delete": ("desktop", "Cloud machines are deleted from the Plexora desktop app.", ("open_desktop",)),
-    "gcloud_vm_standard": ("desktop", "Cloud machines are changed from the Plexora desktop app.", ("open_desktop",)),
-    # An installed program's own business: the website is always the current
-    # version, and there is nothing to stop.
-    "update_check": ("none", "The website is always the current version of Plexora.", ()),
-    "update_install": ("none", "The website is always the current version of Plexora.", ()),
-    "update_install_status": ("none", "The website is always the current version of Plexora.", ()),
-    "update_prefs": ("none", "The website is always the current version of Plexora.", ()),
-    "update_restart": ("none", "The website is always the current version of Plexora.", ()),
-    "shutdown": ("none", "There is no Plexora process to stop: close the tab.", ()),
-    # A data folder on a disk: the website keeps projects in this browser.
-    "settings_data": ("none", "On the website, projects are kept in this browser's storage; a data folder is a setting of the desktop app.", ("open_desktop",)),
-    "settings_data_set": ("desktop", "A data folder is a setting of the desktop app; the website keeps projects in this browser.", ("open_desktop",)),
-    "settings_data_check": ("desktop", "A data folder is a setting of the desktop app; the website keeps projects in this browser.", ("open_desktop",)),
-    "settings_data_migration": ("desktop", "Moving a data folder is done by the desktop app.", ("open_desktop",)),
+    "settings_remotes_connect": _SSH,
+    "settings_remotes_answer": _SSH,
+    "settings_remotes_disconnect": _SSH,
+    "settings_remotes_status": _SSH,
+    "settings_remotes_askpass_prompt": _SSH,
+    "settings_remotes_askpass_answer": _SSH,
+    "gcloud_auth": _GCLOUD,
+    "gcloud_status": _GCLOUD,
+    "gcloud_projects": _GCLOUD,
+    "gcloud_buckets": _GCLOUD,
+    "gcloud_bucket": _GCLOUD,
+    "gcloud_zones": _GCLOUD,
+    "gcloud_instances": _GCLOUD,
+    "gcloud_vm_status": _GCLOUD,
+    "gcloud_vm_start": _GCLOUD,
+    "gcloud_vm_stop": _GCLOUD,
+    "gcloud_vm_delete": _GCLOUD,
+    "gcloud_vm_standard": _GCLOUD,
+    "update_check": _UPDATES,
+    "update_install": _UPDATES,
+    "update_install_status": _UPDATES,
+    "update_prefs": _UPDATES,
+    "update_restart": _UPDATES,
+    "shutdown": Handoff("none", "Nothing to quit",
+                        "The website has no process to stop: close its tab.", ()),
+    "settings_data": _DATA_FOLDER,
+    "settings_data_set": _DATA_FOLDER,
+    "settings_data_check": _DATA_FOLDER,
+    "settings_data_migration": Handoff("desktop", "A desktop app setting",
+                                       "Moving a data folder is done by the desktop app.",
+                                       ("open_desktop",)),
     # The desktop app's own window.
-    "desktop_info": ("none", "This is the website, not the desktop app.", ("get_desktop",)),
-    "desktop_open": ("desktop", "Opening a project in the desktop app is the notice's \"Open in Plexora desktop\".", ("open_desktop", "get_desktop")),
+    "desktop_info": Handoff("none", "This is the website",
+                            "Details of an installed Plexora come from the desktop app.",
+                            ("get_desktop",)),
+    "desktop_open": Handoff("desktop", "Open in the desktop app",
+                            "File › Open in Desktop App hands this project over.",
+                            ("open_desktop", "get_desktop")),
     # A benchmark's cache flush, for the bench harness against a real server.
-    "bench_flush": ("none", "A benchmark route of the server; the website has no server caches to flush.", ()),
+    "bench_flush": Handoff("none", "Not on the website",
+                           "A benchmark route of the server; the website has no caches to flush.",
+                           ()),
 }
 
 #: Whole blueprints, by name: every route of a plugin is its Python's, and its
@@ -216,8 +259,9 @@ def table(app) -> list[dict]:
         row = {"pattern": pattern(rule.rule), "methods": methods,
                "class": classify(rule.endpoint) or "python", "endpoint": rule.endpoint}
         if row["class"] == "handoff":
-            to, why, actions = HANDOFF[rule.endpoint]
-            row["handoff"] = {"to": to, "why": why, "actions": list(actions)}
+            notice = HANDOFF[rule.endpoint]
+            row["handoff"] = {"to": notice.to, "title": notice.title, "why": notice.why,
+                              "actions": list(notice.actions)}
         rows.append((variables, -fixed, rule.rule, row))
     rows.sort(key=lambda each: each[:3])
     return [row for *_key, row in rows]

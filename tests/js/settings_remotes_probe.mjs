@@ -198,7 +198,8 @@ function logText(term) {
 const byId = new Map();
 
 function elementFor(id) {
-    if (id === "settings_panel_nodes" || id === "settings_rail") return null;
+    // Not on a page a Plexora served: the website's notice (settings.html).
+    if (id === "settings_panel_nodes" || id === "settings_rail" || id === "settings_remotes_handoff") return null;
     if (!byId.has(id)) byId.set(id, makeElement("div"));
     return byId.get(id);
 }

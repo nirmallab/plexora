@@ -58,12 +58,11 @@ def test_an_endpoint_has_one_class():
 
 
 def test_every_handoff_says_why_and_what_to_do():
-    for endpoint, (to, why, actions) in routes.HANDOFF.items():
-        assert to in ("desktop", "node", "none"), endpoint
-        assert why.endswith(".") and len(why) > 30, endpoint
-        assert all(action in ("open_desktop", "get_desktop", "pair_node") for action in actions)
-        for word in ("upgrade", "unlock", "pro "):
-            assert word not in why.lower(), (endpoint, word)
+    """The notice's own rules are tests/test_handoff_routes.py's."""
+    for endpoint, notice in routes.HANDOFF.items():
+        assert notice.to in ("desktop", "none"), endpoint
+        assert notice.why.endswith(".") and len(notice.why) > 30, endpoint
+        assert all(action in routes.ACTIONS for action in notice.actions)
 
 
 def test_the_page_answers_only_what_it_must():

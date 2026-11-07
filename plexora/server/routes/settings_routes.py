@@ -77,8 +77,13 @@ def settings_page():
     sections = tuple({**s, "blurb": WEBSITE_BLURBS.get(s["id"], s["blurb"])} for s in SECTIONS) \
         if website else SECTIONS
     from plexora import __version__
+    from plexora.browser.routes import HANDOFF
+
+    # The website's Remote servers panel is the notice that a web page cannot
+    # open an SSH connection (services/handoff.js gives it its buttons).
     return render_template('settings.html', data=template_data(), sections=sections,
-                           website=website, version=__version__)
+                           website=website, version=__version__,
+                           remotes_handoff=HANDOFF["settings_remotes_connect"])
 
 
 def _resolve(raw):

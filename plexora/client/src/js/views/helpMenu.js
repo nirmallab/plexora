@@ -6,7 +6,8 @@
  * they open, trap focus and close the way every other core dialog does.
  *
  * About reads `/desktop/info`, which answers in every mode despite its name
- * (desktop_routes.py) and never carries the token or the port. The same
+ * (desktop_routes.py) and never carries the token or the port -- except on
+ * the website, which has no installed Plexora to describe (`siteInfo`). The same
  * document, minus the paths, is what Report an Issue puts in the new issue's
  * body: a GitHub issue is public, and a data root is usually a home directory
  * with somebody's name in it.
@@ -47,12 +48,30 @@ window.PlexoraHelpMenu = (function () {
     }
 
     function mode(info) {
+        if (info?.website) return "website";
         if (window.PlexoraDesktop || info?.desktop) return "desktop app";
         if (window.flaskVariables?.notebook_mode || window.self !== window.top) return "notebook";
         return "browser";
     }
 
+    //: On the website there is no installed Plexora to describe
+    //: (`/desktop/info` is the desktop's, routes.py HANDOFF): what the site
+    //: knows -- the version its loader started (services/shell.js) and the
+    //: plan this browser holds.
+    function siteInfo() {
+        if (window.PlexoraBackend?.kind !== "browser") return null;
+        let site = null;
+        try {
+            site = window.parent?.PlexoraSite || window.PlexoraSite || null;
+        } catch (error) { /* another origin */ }
+        const plan = window.flaskVariables?.license?.plan || "free";
+        return { website: true, version: site?.version || "",
+                 plan: plan.charAt(0).toUpperCase() + plan.slice(1) };
+    }
+
     async function info() {
+        const site = siteInfo();
+        if (site) return site;
         try {
             const response = await fetch(plexoraUrl("desktop/info"), { cache: "no-store" });
             if (response.ok) return await response.json();

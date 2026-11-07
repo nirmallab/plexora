@@ -16,7 +16,8 @@
  * plexora/browser/routes.py) classes every endpoint as "js" (answered in the
  * page), "python" (the worker), "static" (a page of the site), "network" (a
  * file, as it is) or "handoff" (what a web page cannot do; answered with the
- * sentence that says so). `answer(request)` answers by that class; the site's
+ * notice that says so, and the page told with a `plexora:handoff` event, which
+ * services/handoff.js draws). `answer(request)` answers by that class; the site's
  * service worker (workers/backendRelay.js) hands it every same-origin request
  * the page makes -- fetch, XMLHttpRequest, an <img>, a stylesheet's url() --
  * so no caller changes. A "js" route goes to the page's browser node first
@@ -91,8 +92,20 @@
 
     const compiled = routes ? routes.map((row) => ({ ...row, regex: new RegExp(row.pattern) })) : [];
 
+    //: A path of the site as the route table names it: the site's base path
+    //: (services/shell.js `BASE`; "" at a site's root) taken off; null for a
+    //: path outside the site (a node's own `/node/v1/...` beside it on a
+    //: portal), which no route names.
+    function routeOf(pathname) {
+        const base = String(global.PLEXORA_SITE_BASE || "");
+        if (!base) return pathname;
+        if (pathname === base || pathname.startsWith(base + "/")) return pathname.slice(base.length) || "/";
+        return null;
+    }
+
     function classify(url, method = "GET") {
-        const path = new URL(String(url), global.location ? global.location.href : "http://x/").pathname;
+        const path = routeOf(new URL(String(url), global.location ? global.location.href : "http://x/").pathname);
+        if (path === null) return null;
         const verb = String(method || "GET").toUpperCase();
         for (const row of compiled) {
             if ((row.methods.includes(verb) || (verb === "HEAD" && row.methods.includes("GET")))
@@ -101,6 +114,22 @@
             }
         }
         return null;
+    }
+
+    //: The handoffs the page's notice (services/handoff.js) has not heard yet,
+    //: the last few: it takes each one it hears, and when it loads, those
+    //: answered before it was there.
+    const handoffs = [];
+
+    //: A handoff answered: the page says so (services/handoff.js) unless the
+    //: panel that asked drew the notice itself.
+    function told(detail) {
+        handoffs.push(detail);
+        if (handoffs.length > 8) handoffs.shift();
+        if (typeof global.dispatchEvent !== "function" || typeof CustomEvent !== "function") return;
+        try {
+            global.dispatchEvent(new CustomEvent("plexora:handoff", { detail }));
+        } catch (error) { /* a page between documents */ }
     }
 
     function json(value, status) {
@@ -119,7 +148,15 @@
         // site's own page, and navigations never come here.
         if (kindOf === "network") return nativeFetch(request);
         if (kindOf === "handoff") {
+            told({ endpoint: row.endpoint, path: routeOf(url.pathname), method: request.method,
+                   handoff: row.handoff });
             return json({ success: false, error: row.handoff.why, handoff: row.handoff }, 501);
+        }
+        // Under a base path (a node serving the app behind a portal), every
+        // answerer below is handed the route as the app names it.
+        const route = routeOf(url.pathname);
+        if (route !== url.pathname) {
+            request = new Request(new URL(route + url.search, url.origin).href, request);
         }
         // "js": the page's own answer where it has one -- the licence the page
         // holds (services/licenseClient.js), a project's tiles read from the
@@ -198,6 +235,7 @@
         fetch,
         answer: browser ? answer : null,
         classify: browser ? classify : null,
+        handoffs,
     });
     if (typeof module !== "undefined" && module.exports) {
         module.exports = global.PlexoraBackend;

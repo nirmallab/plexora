@@ -511,6 +511,20 @@
     NodesSection.prototype.start = function () {
         const add = el("settings_node_add");
         if (add) add.addEventListener("click", () => this.add());
+        // The website: a node started on a server and paired with this
+        // browser (services/handoff.js asks for the link it printed).
+        const pair = el("settings_node_pair");
+        if (pair) pair.addEventListener("click", () => window.PlexoraWebHandoff?.pairNode());
+        // A node paired while this list is on screen joins it. One listener
+        // for the window, whichever section is current: the app's router
+        // mounts this page again without a new document.
+        NodesSection.current = this;
+        if (!NodesSection.hooked) {
+            NodesSection.hooked = true;
+            window.addEventListener("plexora:node-paired", () => {
+                if (NodesSection.current && el("settings_nodes_list")) NodesSection.current.refresh();
+            });
+        }
         // Enter in any field submits, because a four-field form where the
         // keyboard does nothing is a form people distrust.
         ["settings_node_name", "settings_node_endpoint",
@@ -536,8 +550,9 @@
         if (!nodes.length) {
             const empty = document.createElement("div");
             empty.className = "settings-meta";
-            empty.textContent = "No data nodes yet. Every project reads from this "
-                + "machine.";
+            empty.textContent = window.PlexoraBackend?.kind === "browser"
+                ? "No nodes paired with this browser yet."
+                : "No data nodes yet. Every project reads from this machine.";
             list.appendChild(empty);
             return;
         }
@@ -2740,7 +2755,10 @@
         if (!el("settings_panel_data")) return unwireRail || null;
         if (el("settings_panel_nodes")) new NodesSection().start();
         let remotes = null;
-        if (el("settings_panel_remotes")) {
+        // On the website the panel is the notice that a web page cannot open
+        // an SSH connection (settings.html, services/handoff.js): no saved
+        // servers to watch, no presets to draw.
+        if (el("settings_panel_remotes") && !el("settings_remotes_handoff")) {
             remotes = new RemotesSection();
             remotes.start();
         }
