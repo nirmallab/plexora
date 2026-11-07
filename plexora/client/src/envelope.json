@@ -4,7 +4,8 @@
     "table": {
         "worker_values": 40000000,
         "worker_bytes_per_value": 52,
-        "reference_device_memory_gb": 8
+        "reference_device_memory_gb": 8,
+        "measured": "2026-11-07, the website on this i9 (Chrome 156; tests/browser/table_capacity.mjs on tools/bench_envelope/big_table.py tables, whole table handed to Python, then a gate): 38.4 M values (1.2 M x 32) 2.1 GiB heap, no notice; 60 M (2 M x 30) notice, then 3.5 GiB and every answer right; 80 M (2.5 M x 32) notice, then Pyodide stops at 4.07 GiB (polars' allocation fails at the worker's 4 GiB) and the tab says 'This tab ran out of memory'. About 53 B a value over a 0.32 GiB base. 40 M is kept: it leaves the AI session and jobs a GiB and more. Before Pyodide's glue was fixed (build.py GLUE_FIXES) anything past 2 GiB of heap could be read wrong, 38 M included."
     },
     "image": {
         "build_bytes_per_second_per_worker": 29000000,

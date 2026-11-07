@@ -263,3 +263,29 @@ def test_the_base_stage_ships_the_kernels():
 
     assert STAGES["base"]["platform"] == ["plexora-kernels"]
     assert not any(stage.get("platform") for name, stage in STAGES.items() if name != "base")
+
+
+def test_pyodides_glue_reads_its_four_addresses_unsigned(tmp_path):
+    """Past 2 GiB of heap Pyodide 314.0.7's own glue read four addresses as
+    negative numbers (a 60 M-value table's columns came back as every JSON
+    answer). The fix is applied once, bytes elsewhere untouched, and a glue
+    without the expected code stops the build."""
+    glue = tmp_path / "pyodide.asm.mjs"
+    before = "\r\nvar a=1;" + ";".join(old for old, _ in build.GLUE_FIXES) + ";var z=2;\n"
+    glue.write_bytes(before.encode("utf-8"))
+    assert build.patch_glue(glue) is True
+    after = glue.read_bytes().decode("utf-8")
+    assert after == "\r\nvar a=1;" + ";".join(new for _, new in build.GLUE_FIXES) + ";var z=2;\n"
+    assert build.patch_glue(glue) is False and glue.read_bytes().decode("utf-8") == after
+    glue.write_bytes(b"var nothing;")
+    with pytest.raises(SystemExit, match="GLUE_FIXES"):
+        build.patch_glue(glue)
+
+
+def test_the_shipped_pyodide_glue_takes_the_fix():
+    """The pinned release's own pyodide.asm.mjs has each site exactly once."""
+    glue = build.CACHE / build.PYODIDE / "pyodide" / "pyodide.asm.mjs"
+    if not glue.exists():
+        pytest.skip("the pinned Pyodide release is not unpacked here (tools/browser_build/build.py)")
+    text = glue.read_bytes().decode("utf-8")
+    assert all(text.count(old) == 1 for old, _ in build.GLUE_FIXES)

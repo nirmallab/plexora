@@ -1,0 +1,123 @@
+{
+ "dir": "C:/plexora-bench-cap/highids/hi32",
+ "offset": 4000000000,
+ "pivot": 4000000128,
+ "checks": [
+  {
+   "name": "the project imports",
+   "ok": true,
+   "status": 200
+  },
+  {
+   "name": "every id in the label tiles is a cell of the table",
+   "ok": true,
+   "tiles": 1,
+   "ids": 256,
+   "strangers": []
+  },
+  {
+   "name": "the viewer's ids (/get_all_cells/integer/) are the table's, exactly",
+   "ok": true,
+   "count": 256,
+   "first": [
+    4000000001,
+    4000000002,
+    4000000003
+   ]
+  },
+  {
+   "name": "the nearest-cell pick names each cell either side of the pivot",
+   "ok": true,
+   "picks": [
+    [
+     4000000126,
+     4000000126
+    ],
+    [
+     4000000127,
+     4000000127
+    ],
+    [
+     4000000128,
+     4000000128
+    ],
+    [
+     4000000129,
+     4000000129
+    ],
+    [
+     4000000130,
+     4000000130
+    ]
+   ]
+  },
+  {
+   "name": "a gate (CD3 > 565.8944) selects exactly the table's cells",
+   "ok": true,
+   "got": 127,
+   "expected": 127
+  },
+  {
+   "name": "a plugin's cell layer keeps exactly the gate's cells",
+   "ok": true,
+   "ids": 127,
+   "mask": null
+  },
+  {
+   "name": "and draws them on the CPU, with no id table built",
+   "ok": true,
+   "renderer": "cpu",
+   "before": "gpu",
+   "heapMb": 40
+  },
+  {
+   "name": "no page errors, no failed requests",
+   "ok": true,
+   "errors": [],
+   "failed": []
+  }
+ ],
+ "errors": [],
+ "failed": [],
+ "generated": [
+  "/generated/data/image/image_0/0/0_0.png?q=hd",
+  "/generated/data/image/image_0/0/0_0.png?q=hd",
+  "/generated/data/image/mask/0/0_0.png?v=3",
+  "/generated/data/image/mask/0/0_0.png?v=3"
+ ],
+ "labelRenderer": "gpu",
+ "picks": [
+  {
+   "asked": 4000000126,
+   "got": 4000000126,
+   "body": "{\"id\":125,\"CellID\":4000000126,\"X_centroid\":648,\"Y_centroid\":360,\"Area\":1009,\"DNA\":3144.7458,\"CD3\":1392.095,\"CD8\":1174.655,\"CD20\":51.1035,\"celltype\":\"\"}"
+  },
+  {
+   "asked": 4000000127,
+   "got": 4000000127,
+   "body": "{\"id\":126,\"CellID\":4000000127,\"X_centroid\":696,\"Y_centroid\":360,\"Area\":1009,\"DNA\":3030.355,\"CD3\":43.5558,\"CD8\":62.7465,\"CD20\":64.122,\"celltype\":\"\"}"
+  },
+  {
+   "asked": 4000000128,
+   "got": 4000000128,
+   "body": "{\"id\":127,\"CellID\":4000000128,\"X_centroid\":744,\"Y_centroid\":360,\"Area\":1009,\"DNA\":3030.7902,\"CD3\":61.3058,\"CD8\":50.4049,\"CD20\":1712.5712,\"celltype\":\"\"}"
+  },
+  {
+   "asked": 4000000129,
+   "got": 4000000129,
+   "body": "{\"id\":128,\"CellID\":4000000129,\"X_centroid\":24,\"Y_centroid\":408,\"Area\":1009,\"DNA\":2751.6839,\"CD3\":1356.0584,\"CD8\":1463.6867,\"CD20\":47.6696,\"celltype\":\"\"}"
+  },
+  {
+   "asked": 4000000130,
+   "got": 4000000130,
+   "body": "{\"id\":129,\"CellID\":4000000130,\"X_centroid\":72,\"Y_centroid\":408,\"Area\":1009,\"DNA\":3121.1365,\"CD3\":63.2558,\"CD8\":68.2841,\"CD20\":46.5023,\"celltype\":\"\"}"
+  }
+ ],
+ "gateDrawn": {
+  "renderer": "cpu",
+  "ids": 127,
+  "mask": null,
+  "heapMb": 40
+ },
+ "ok": true
+}

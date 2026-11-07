@@ -1,0 +1,228 @@
+{
+ "dir": "C:/plexora-bench-cap/tables/t60",
+ "at": {
+  "mounted": 9641,
+  "imported": 11272,
+  "noticeAnswered": 14666
+ },
+ "errors": [],
+ "heapBootMib": 320,
+ "importStatus": 200,
+ "project": "image",
+ "notice": {
+  "note": "2.0 M cells × 31 columns need about 3.2 GB here. The desktop app opens it with room to spare.",
+  "answered": true
+ },
+ "error": "the viewer did not finish drawing in 10 minutes",
+ "python": {
+  "state": {
+   "worker": {
+    "busy": false,
+    "idling": 0,
+    "queued": [],
+    "stepping": false,
+    "inFlight": 1,
+    "current": null
+   },
+   "waitingOn": 0
+  },
+  "heapMib": 2488,
+  "recent": [
+   {
+    "path": "/agent/v1/viewer/sessions",
+    "status": 200,
+    "ms": 2,
+    "py": 2
+   },
+   {
+    "path": "/health",
+    "status": 204,
+    "ms": 5,
+    "py": 1
+   },
+   {
+    "path": "/agent/v1/viewer/sessions",
+    "status": 200,
+    "ms": 2,
+    "py": 1
+   },
+   {
+    "path": "/health",
+    "status": 204,
+    "ms": 4,
+    "py": 1
+   },
+   {
+    "path": "/agent/v1/viewer/sessions",
+    "status": 200,
+    "ms": 1,
+    "py": 1
+   },
+   {
+    "path": "/health",
+    "status": 204,
+    "ms": 6,
+    "py": 1
+   },
+   {
+    "path": "/agent/v1/viewer/sessions",
+    "status": 200,
+    "ms": 3,
+    "py": 3
+   },
+   {
+    "path": "/health",
+    "status": 204,
+    "ms": 4,
+    "py": 1
+   }
+  ],
+  "tasks": [
+   {
+    "name": "table-image",
+    "at": 9482
+   },
+   {
+    "name": "_warm_datasource_caches",
+    "at": 12333
+   },
+   {
+    "name": "warm-get_image_channel_stats-DNA",
+    "at": 15955
+   },
+   {
+    "name": "warm-get_image_channel_stats-CD3",
+    "at": 15984
+   },
+   {
+    "name": "warm-get_channel_gmm-DNA",
+    "at": 16019
+   },
+   {
+    "name": "warm-get_channel_gmm-CD3",
+    "at": 17651
+   }
+  ]
+ },
+ "text": "Plexora\nFile \nTools \nView \nHelp \nLive\nPLEXORA\nViewer\nLayers\nHD\nChannels",
+ "stillAnswering": {
+  "python": "2",
+  "table": "Error: frame.evaluate: SyntaxError: Unexpected token '\u001b', \"\u001b/�$\u0006�@\u0012\u0014?\"... is not valid JSON",
+  "load": "Error: frame.evaluate: SyntaxError: Unexpected token '�', \"��\u000fz6kI@\u0019�\"... is not valid JSON",
+  "direct": "L¡a@¹\u0006ð\u0016p@›UŸ«­øC@-²ï§´e@èÙ¬ú\\\u0003`@\tù g³²O@\u001cëâ6\u001a9z@b¡Ö4ïôf@Zd;ßO‰R@!°rh‘]U@ÿ!ýöu\bY@èÙ¬ú\\q{@\u0018&S\u0005£°g@›UŸ«­äP@tF”ö\u0006²†@\u00116<½RfU@4\u00116<½²@@ØðôJY\u0012d@\u0003x\u000b$(ÖO@àœ\u0011¥½Ìœ@Üh\u0000opV@Š\u001fcîZ_@V\u000e-²OI@d]ÜF\u0003z†@¢´7øÂ^e@¹\u0006ð\u0016\u0018E@Ô+e\u0019",
+  "client": {
+   "status": 200,
+   "headers": [
+    [
+     "content-length",
+     "114"
+    ],
+    [
+     "content-type",
+     "application/json"
+    ],
+    [
+     "referrer-policy",
+     "same-origin"
+    ],
+    [
+     "x-content-type-options",
+     "nosniff"
+    ],
+    [
+     "x-frame-options",
+     "SAMEORIGIN"
+    ]
+   ],
+   "bytes": 114,
+   "head": "72f90fe9b76561403a234a7b832184403bdf4f8d97a97240"
+  },
+  "recent": [
+   {
+    "path": "/get_load_status",
+    "status": 200,
+    "bytes": 100,
+    "ms": 2534,
+    "py": 1
+   },
+   {
+    "path": "/resource_routing",
+    "status": 200,
+    "bytes": 14,
+    "ms": 2973,
+    "py": 1
+   },
+   {
+    "path": "/get_load_status",
+    "status": 200,
+    "bytes": 100,
+    "ms": 2471,
+    "py": 1
+   },
+   {
+    "path": "/resource_status",
+    "status": 200,
+    "bytes": 72,
+    "ms": 19,
+    "py": 5
+   },
+   {
+    "path": "/project/image/open_elsewhere",
+    "status": 200,
+    "bytes": 12,
+    "ms": 20,
+    "py": 2
+   },
+   {
+    "path": "/get_channel_names",
+    "status": 200,
+    "bytes": 13,
+    "ms": 21,
+    "py": 1
+   },
+   {
+    "path": "/image_status",
+    "status": 200,
+    "bytes": 81,
+    "ms": 15,
+    "py": 2
+   },
+   {
+    "path": "/get_load_status",
+    "status": 200,
+    "bytes": 100,
+    "ms": 1,
+    "py": 1
+   },
+   {
+    "path": "/project/image/open_elsewhere",
+    "status": 200,
+    "bytes": 12,
+    "ms": 2,
+    "py": 2
+   },
+   {
+    "path": "/get_table_status",
+    "status": 200,
+    "bytes": 114,
+    "ms": 1,
+    "py": 1
+   },
+   {
+    "path": "/get_load_status",
+    "status": 200,
+    "bytes": 100,
+    "ms": 1,
+    "py": 1
+   },
+   {
+    "path": "/get_table_status",
+    "status": 200,
+    "bytes": 114,
+    "ms": 1,
+    "py": 1
+   }
+  ]
+ },
+ "crashed": false
+}

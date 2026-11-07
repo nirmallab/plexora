@@ -1,0 +1,61 @@
+{
+ "ballastMib": 2304,
+ "checks": [
+  {
+   "name": "the heap is past 2 GiB",
+   "ok": true,
+   "heapMib": 2707
+  },
+  {
+   "name": "a JS array copied into Python past 2^31 arrives whole (to_py)",
+   "ok": true,
+   "addr": 2737864600
+  },
+  {
+   "name": "Python memory past 2^31 copied into a JS array arrives whole (assign)",
+   "ok": true,
+   "addr": 2753864616
+  },
+  {
+   "name": "a numpy array past 2^31 reaches the page whole (to_js)",
+   "ok": true,
+   "addr": 2761864624,
+   "answer": "True"
+  },
+  {
+   "name": "a long string past 2^31 reaches the page whole",
+   "ok": true,
+   "addr": 2769864632,
+   "length": 8000000
+  },
+  {
+   "name": "JSON routes through the bridge still parse",
+   "ok": true,
+   "routes": {
+    "config": {
+     "status": 200,
+     "parsed": true,
+     "head": "{}\n"
+    },
+    "get_load_status?datasource=none": {
+     "status": 200,
+     "parsed": true,
+     "head": "{\"error\":null,\"progress\":100,\"stage\":\"re"
+    },
+    "health": {
+     "status": 204,
+     "parsed": true,
+     "head": ""
+    }
+   }
+  },
+  {
+   "name": "no page errors",
+   "ok": true,
+   "errors": []
+  }
+ ],
+ "errors": [],
+ "heapMib": 2707,
+ "ok": true
+}

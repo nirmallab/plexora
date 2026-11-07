@@ -1,0 +1,224 @@
+{
+ "dir": "C:/plexora-bench-cap/tables/t80",
+ "at": {
+  "mounted": 10504,
+  "imported": 12579,
+  "noticeAnswered": 16555,
+  "viewer": 22699
+ },
+ "errors": [
+  "Aborted()",
+  "Pyodide has suffered a fatal error. Please report this to the Pyodide maintainers.",
+  "The cause of the fatal error was:",
+  "RuntimeError: unreachable\n    at http://127.0.0.1:50061/py/0.0.36/pyodide/pyodide.asm.wasm:wasm-function[13197]:0x55aabb\n    at abort (http://127.0.0.1:50061/py/0.0.36/pyodide/pyodide.asm.mjs:1:5007)\n    at __abort_js (http://127.0.0.1:50061/py/0.0.36/pyodide/pyodide.asm.mjs:1:138562)\n    at http://",
+  "Recursive call to fatal_error. Inner error was:",
+  "NoGilError: Attempted to use PyProxy when Python GIL not held\n    at throw_no_gil (http://127.0.0.1:50061/py/0.0.36/pyodide/pyodide.asm.mjs:1:583731)\n    at http://127.0.0.1:50061/py/0.0.36/pyodide/pyodide.asm.wasm:wasm-function[450]:0x6e2e7\n    at http://127.0.0.1:50061/py/0.0.36/pyodide/pyodide.as",
+  "Failed to load resource: the server responded with a status of 500 ()",
+  "Failed to load resource: the server responded with a status of 500 ()",
+  "Failed to load resource: the server responded with a status of 500 ()",
+  "Failed to load resource: the server responded with a status of 500 ()",
+  "Failed to load resource: the server responded with a status of 500 ()"
+ ],
+ "heapBootMib": 319,
+ "importStatus": 200,
+ "project": "image",
+ "notice": {
+  "note": "2.5 M cells × 33 columns need about 4.3 GB here. The desktop app opens it with room to spare.",
+  "answered": true
+ },
+ "console": [
+  "memory allocation of 20000000 bytes failed",
+  "[python] step: Pyodide already fatally failed and can no longer be used.",
+  "[python] step: Pyodide already fatally failed and can no longer be used.",
+  "[python] step: Pyodide already fatally failed and can no longer be used.",
+  "[python] step: Pyodide already fatally failed and can no longer be used.",
+  "[python] step: Pyodide already fatally failed and can no longer be used.",
+  "[python] step: Pyodide already fatally failed and can no longer be used.",
+  "Error Saving Channel List SyntaxError: Unexpected token 'P', \"Pyodide al\"... is not valid JSON",
+  "[python] step: Pyodide already fatally failed and can no longer be used.",
+  "[python] step: Pyodide already fatally failed and can no longer be used.",
+  "[python] step: Pyodide already fatally failed and can no longer be used."
+ ],
+ "error": "frame.evaluate: SyntaxError: Unexpected token 'P', \"Pyodide al\"... is not valid JSON",
+ "python": {
+  "state": {
+   "worker": {
+    "busy": false,
+    "idling": 0,
+    "queued": [],
+    "stepping": true,
+    "inFlight": 1,
+    "current": null
+   },
+   "waitingOn": 0
+  },
+  "heapMib": 4073,
+  "recent": [
+   {
+    "path": "/generated/data/image/image_0/0/3_0.png",
+    "status": 200,
+    "ms": 1826,
+    "py": 3
+   },
+   {
+    "path": "/generated/data/image/image_0/0/1_3.png",
+    "status": 200,
+    "ms": 1827,
+    "py": 1
+   },
+   {
+    "path": "/generated/data/image/image_0/0/0_3.png",
+    "status": 200,
+    "ms": 1813,
+    "py": 3
+   },
+   {
+    "path": "/generated/data/image/image_0/0/2_3.png",
+    "status": 200,
+    "ms": 1814,
+    "py": 1
+   },
+   {
+    "path": "/save_channel_list",
+    "status": 200,
+    "ms": 1485,
+    "py": 4
+   },
+   {
+    "path": "/display_contrast",
+    "status": 200,
+    "ms": 335,
+    "py": 2
+   },
+   {
+    "path": "/generated/data/image/image_0/0/3_3.png",
+    "status": 200,
+    "ms": 25,
+    "py": 6
+   },
+   {
+    "path": "/generated/data/image/image_0/0/0_3.png",
+    "status": 200,
+    "ms": 8,
+    "py": 1
+   }
+  ],
+  "tasks": [
+   {
+    "name": "table-image",
+    "at": 10848
+   },
+   {
+    "name": "_warm_datasource_caches",
+    "at": 14394
+   },
+   {
+    "name": "display-contrast:image",
+    "at": 20416
+   }
+  ]
+ },
+ "text": "Plexora\nFile \nTools \nView \nHelp \nServer error 500\nPLEXORA\nViewer\nLayers\nImage\nOpacity\n100%\nUpload channel names\nContrast\n·\nCD3\n2/2\nJ\nK\nSelected\n\nReference layer\n\n1\nactive\n· 15 max\nNone\nCentroids\nAdd Seg Mask\nHD\n100 px\nimage\nDNA\nChannels\nDNA\nCD3\nThis tab ran out of memory\n×\n\nThis project needs more than the 4 GB a browser tab can give. The desktop app opens it with room to spare.\n\nOpen in Desktop App\nReload",
+ "stopped": {
+  "title": "This tab ran out of memory",
+  "buttons": [
+   "Open in Desktop App",
+   "Open in Desktop App",
+   "Reload"
+  ]
+ },
+ "stillAnswering": {
+  "python": "error: Error: page.evaluate: Error: Pyodide already fatally failed and can no longer be used.\n    at Worker.onMessage (http://127.0.0.1:50061/client/src/js/services/pythonClient.js:216:33)",
+  "table": "Error: frame.evaluate: SyntaxError: Unexpected token 'P', \"Pyodide al\"... is not valid JSON",
+  "load": "Error: frame.evaluate: SyntaxError: Unexpected token 'P', \"Pyodide al\"... is not valid JSON",
+  "direct": "error: Error: page.evaluate: Error: Pyodide already fatally failed and can no longer be used.\n    at Worker.onMessage (http://127.0.0.1:50061/client/src/js/services/pythonClient.js:216:33)",
+  "client": "error: Error: page.evaluate: Error: Pyodide already fatally failed and can no longer be used.\n    at Worker.onMessage (http://127.0.0.1:50061/client/src/js/services/pythonClient.js:216:33)",
+  "recent": [
+   {
+    "path": "/generated/data/image/image_0/0/2_3.png",
+    "status": 200,
+    "bytes": 131406,
+    "ms": 1849,
+    "py": 3
+   },
+   {
+    "path": "/generated/data/image/image_0/0/1_0.png",
+    "status": 200,
+    "bytes": 131406,
+    "ms": 1849,
+    "py": 1
+   },
+   {
+    "path": "/generated/data/image/image_0/0/0_0.png",
+    "status": 200,
+    "bytes": 131406,
+    "ms": 1836,
+    "py": 3
+   },
+   {
+    "path": "/generated/data/image/image_0/0/3_2.png",
+    "status": 200,
+    "bytes": 131406,
+    "ms": 1837,
+    "py": 1
+   },
+   {
+    "path": "/generated/data/image/image_0/0/3_0.png",
+    "status": 200,
+    "bytes": 131406,
+    "ms": 1826,
+    "py": 3
+   },
+   {
+    "path": "/generated/data/image/image_0/0/1_3.png",
+    "status": 200,
+    "bytes": 131406,
+    "ms": 1827,
+    "py": 1
+   },
+   {
+    "path": "/generated/data/image/image_0/0/0_3.png",
+    "status": 200,
+    "bytes": 131406,
+    "ms": 1813,
+    "py": 3
+   },
+   {
+    "path": "/generated/data/image/image_0/0/2_3.png",
+    "status": 200,
+    "bytes": 131406,
+    "ms": 1814,
+    "py": 1
+   },
+   {
+    "path": "/save_channel_list",
+    "status": 200,
+    "bytes": 17,
+    "ms": 1485,
+    "py": 4
+   },
+   {
+    "path": "/display_contrast",
+    "status": 200,
+    "bytes": 63,
+    "ms": 335,
+    "py": 2
+   },
+   {
+    "path": "/generated/data/image/image_0/0/3_3.png",
+    "status": 200,
+    "bytes": 131406,
+    "ms": 25,
+    "py": 6
+   },
+   {
+    "path": "/generated/data/image/image_0/0/0_3.png",
+    "status": 200,
+    "bytes": 131406,
+    "ms": 8,
+    "py": 1
+   }
+  ]
+ },
+ "crashed": false
+}

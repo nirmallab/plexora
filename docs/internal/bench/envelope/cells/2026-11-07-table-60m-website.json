@@ -1,0 +1,42 @@
+{
+ "dir": "C:/plexora-bench-cap/tables/t60",
+ "at": {
+  "mounted": 8717,
+  "imported": 10346,
+  "noticeAnswered": 13221,
+  "viewer": 22056,
+  "tableReady": 22060,
+  "handedOver": 22063,
+  "afterwards": 22103
+ },
+ "errors": [],
+ "heapBootMib": 319,
+ "importStatus": 200,
+ "project": "image",
+ "notice": {
+  "note": "2.0 M cells × 31 columns need about 3.2 GB here. The desktop app opens it with room to spare.",
+  "answered": true
+ },
+ "table": {
+  "error": null,
+  "message": "Cell table ready",
+  "progress": 100,
+  "stage": "ready",
+  "stage_label": "Ready",
+  "status": "ready"
+ },
+ "heapTableMib": 3544,
+ "handOver": {
+  "rows": 2000000,
+  "columns": 31,
+  "s": 0,
+  "frame_mb": 496
+ },
+ "heapAfterMib": 3544,
+ "afterwards": {
+  "status": 200,
+  "gated": 56066
+ },
+ "jsHeapMb": 517,
+ "crashed": false
+}

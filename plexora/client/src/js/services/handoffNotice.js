@@ -5,7 +5,7 @@
  * or a node beside the data (services/handoff.js `pairNode`).
  *
  * The limits are measured (client/src/envelope.json, each with its date) and
- * a situation within them gets no notice at all. Five moments:
+ * a situation within them gets no notice at all. Six moments:
  *
  * - **open** (`check`): the project's table against the worker's heap (P9's
  *   2.1 GiB at 36.6 M values, of the ~3 GiB a tab's worker has), scaled to
@@ -24,7 +24,11 @@
  * - **stall** (`watchTiles`, a PerformanceObserver on the app's frame): the
  *   rolling p95 of the last 50 tiles over the limit, after the open's own
  *   tiles and never while a job holds the worker: slow media, where a node
- *   beside the data helps and the desktop app on the same share would not.
+ *   beside the data helps and the desktop app on the same share would not;
+ * - **stopped** (`stopped`, the worker's `fatal` event): Python failed for
+ *   good -- past the open notice, a table that does not fit the worker's
+ *   4 GiB ends Pyodide when an allocation fails -- "This tab ran out of
+ *   memory" with the desktop app and Reload, never remembered.
  *
  * Each says what was found in a short title, one line with the measured
  * numbers rounded, and its buttons on one row. Once per project per tab;
@@ -36,7 +40,8 @@
  *   judgeBuild(build, limits, device) -> {verdict: "website"|"desktop", title, note, seconds}
  *   judgeModel(gpu, limits)      -> {verdict: "website"|"node", title, note}
  *   judgeStall(samples, limits)  -> {verdict: "website"|"node", title, note, p95}
- *   onJob(event) / beforeBuild(build) / beforeModel() / tile(ms, app)  the triggers (tests call them)
+ *   onJob(event) / beforeBuild(build) / beforeModel() / tile(ms, app) / stopped(event)
+ *                                the triggers (tests call them)
  *
  * Classic script, `window.PlexoraEnvelope`, in the site's host page only: the
  * desktop app shows no notice. Uses PlexoraHandoff and the frame's
@@ -233,6 +238,11 @@
         if (kind === "open") return [{ ...desktop("Open in Desktop App"), primary: true }, stay];
         if (kind === "batch" || kind === "build") return [{ ...desktop("Desktop app"), primary: true }, node(), stay];
         if (kind === "model") return [{ ...node(), primary: true }, desktop("Desktop app"), stay];
+        if (kind === "stopped") {
+            const reload = { label: "Reload", onSelect: () => global.location.reload() };
+            return project ? [{ ...desktop("Open in Desktop App"), primary: true }, reload]
+                : [{ ...reload, primary: true }];
+        }
         return [{ ...node(), primary: true }, stay];
     }
 
@@ -382,10 +392,26 @@
         }
     }
 
+    // -- stopped: Python failed for good (the worker's `fatal` event) --------
+
+    async function stopped(event) {
+        const app = appNow();
+        const project = projectOf(app, null);
+        const verdict = event && event.memory
+            ? { title: "This tab ran out of memory",
+                note: "This project needs more than the 4 GB a browser tab can give. "
+                    + "The desktop app opens it with room to spare." }
+            : { title: "Plexora stopped in this tab",
+                note: "Its Python failed and cannot go on. Reload, or open the project in the desktop app." };
+        // Never remembered: a dismissal must not hide the next failure.
+        return notice("stopped", project || "", app, verdict, `plexora-notice:stopped:${Date.now()}`);
+    }
+
     if (global.PlexoraPython && typeof global.PlexoraPython.on === "function") {
         global.PlexoraPython.on("job", (event) => { onJob(event).catch(() => null); });
+        global.PlexoraPython.on("fatal", (event) => { stopped(event).catch(() => null); });
     }
 
     global.PlexoraEnvelope = Object.freeze({ check, judge, judgeBatch, judgeBuild, judgeModel, judgeStall, p95,
-                                             onJob, beforeBuild, beforeModel, tile, watchTiles });
+                                             onJob, beforeBuild, beforeModel, tile, watchTiles, stopped });
 })(typeof window !== "undefined" ? window : globalThis);

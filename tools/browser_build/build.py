@@ -168,6 +168,41 @@ def ort_release() -> Path:
     return dist
 
 
+#: Pyodide's own glue in pyodide.asm.mjs (not Emscripten's, which reads every
+#: address unsigned, `>>>0`) takes these four addresses as signed numbers, so
+#: once the worker's heap passes 2 GiB a buffer copied into Python throws
+#: ("offset is out of bounds"), and bytes or a string of 64 or more characters
+#: handed to the page are read from the wrong end of memory: a 60 M-value
+#: table answered every JSON route with its own column values (envelope,
+#: 2026-11-07). Each is read unsigned; a Pyodide whose glue no longer has
+#: them stops the build (check the new release for the same pattern).
+GLUE_FIXES = (
+    ("decoder.decode(Module.HEAPU8.subarray(ptr,ptr+len))",             # _python2js_ascii
+     "decoder.decode(Module.HEAPU8.subarray(ptr>>>0,(ptr>>>0)+len))"),
+    ("Module.HEAPU8.set(bufferAsUint8Array(buf),ptr)",                  # JsvBuffer_assignToPtr
+     "Module.HEAPU8.set(bufferAsUint8Array(buf),ptr>>>0)"),
+    ("bufferAsUint8Array(buf).set(Module.HEAPU8.subarray(ptr,ptr+buf.byteLength))",  # ...FromPtr
+     "bufferAsUint8Array(buf).set(Module.HEAPU8.subarray(ptr>>>0,(ptr>>>0)+buf.byteLength))"),
+    ("return HEAP8.slice(t,t+n).buffer",                                # python2js_buffer_1d_contiguous
+     "return HEAP8.slice(t>>>0,(t>>>0)+n).buffer"),
+)
+
+
+def patch_glue(path: Path) -> bool:
+    """GLUE_FIXES applied to `path` (pyodide.asm.mjs); False when it already
+    has them. Bytes in, bytes out: nothing else in the file changes."""
+    text = path.read_bytes().decode("utf-8")
+    if all(new in text for _, new in GLUE_FIXES):
+        return False
+    for old, new in GLUE_FIXES:
+        if text.count(old) != 1:
+            raise SystemExit(f"{path.name}: expected {old!r} once, found it {text.count(old)} times "
+                             "(a new Pyodide? see GLUE_FIXES)")
+        text = text.replace(old, new)
+    path.write_bytes(text.encode("utf-8"))
+    return True
+
+
 def ort(out: Path, encoder: str | None) -> Path:
     """onnxruntime-web into the bundle's `ort/` (kept when it is already this
     release, compressed as asked): the files the page loads, a `.br` beside
@@ -511,6 +546,8 @@ def build(out_root: Path, python314: str | None, encoder: str | None, kernels=No
     (out / "wheels").mkdir()
     for name in CORE:
         shutil.copy2(dist / name, out / "pyodide" / name)
+        if name == "pyodide.asm.mjs":
+            patch_glue(out / "pyodide" / name)
         if encoder and name.endswith((".wasm", ".mjs", ".js")):
             brotli(out / "pyodide" / name, encoder)
     ort(out, encoder)
@@ -623,8 +660,12 @@ def plexora_only(out_root: Path, python314: str | None, encoder: str | None,
     for stage in stages.values():
         stage["wheels"] = [wheel.name if name.startswith("plexora-") else name
                            for name in stage["wheels"]]
-    # A bundle built before the page ran magic select's model gains it here.
+    # A bundle built before the page ran magic select's model gains it here,
+    # and one built before GLUE_FIXES its glue fixed.
     ort(out, encoder)
+    glue = out / "pyodide" / "pyodide.asm.mjs"
+    if patch_glue(glue) and encoder:
+        brotli(glue, encoder)
     lock = json.loads((out / "pyodide" / "pyodide-lock.json").read_text(encoding="utf-8"))
     manifest = json.loads((out / "manifest.json").read_text(encoding="utf-8"))
     held = manifest.get("kernels")

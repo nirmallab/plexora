@@ -68,6 +68,12 @@ let current = null;
 const traced = [];
 //: The page's count of messages posted and not yet received (shared memory).
 let inFlight = null;
+//: Whether the page has been told Python failed for good (`fatal` event).
+let fatalTold = false;
+//: Past this heap a fatal failure is taken for running out of memory: the
+//: worker's WebAssembly memory stops at 4 GiB, and an allocation that fails
+//: there (polars' Rust aborts) ends Pyodide.
+const FATAL_MEMORY_BYTES = 3.5 * 2 ** 30;
 const at = () => performance.timeOrigin + performance.now();
 const mark = (name) => self.postMessage({ mark: name, at: at() });
 
@@ -892,7 +898,15 @@ async function drain() {
                               done: Math.round(performance.now()), nested, idling });
             }
         } catch (error) {
-            self.postMessage({ id, ok: false, error: String(error?.message || error).slice(-6000) });
+            const message = String(error?.message || error);
+            // After a fatal error Pyodide answers every call with this; the
+            // page is told once, so it can say so instead of a 500 per request.
+            if (!fatalTold && /fatally failed and can no longer be used/.test(message)) {
+                fatalTold = true;
+                const heap = py && py._module && py._module.HEAP8 ? py._module.HEAP8.length : 0;
+                self.postMessage({ event: { kind: "fatal", memory: heap >= FATAL_MEMORY_BYTES, heap } });
+            }
+            self.postMessage({ id, ok: false, error: message.slice(-6000) });
         } finally {
             busy = nested;
             inStep = outerStep;

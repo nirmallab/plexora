@@ -1,0 +1,39 @@
+{
+ "dir": "C:/plexora-bench-cap/tables/t38",
+ "at": {
+  "mounted": 9907,
+  "imported": 11420,
+  "viewer": 22900,
+  "tableReady": 24892,
+  "noticeChecked": 51378,
+  "handedOver": 51382,
+  "afterwards": 51463
+ },
+ "errors": [],
+ "heapBootMib": 321,
+ "importStatus": 200,
+ "project": "image",
+ "table": {
+  "error": null,
+  "message": "Cell table ready",
+  "progress": 100,
+  "stage": "ready",
+  "stage_label": "Ready",
+  "status": "ready"
+ },
+ "heapTableMib": 2154,
+ "notice": false,
+ "handOver": {
+  "rows": 1200000,
+  "columns": 33,
+  "s": 0,
+  "frame_mb": 317
+ },
+ "heapAfterMib": 2154,
+ "afterwards": {
+  "status": 200,
+  "gated": 33953
+ },
+ "jsHeapMb": 29,
+ "crashed": false
+}
