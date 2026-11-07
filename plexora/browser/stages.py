@@ -31,7 +31,7 @@ STAGES = {
         "pyodide": ["numpy", "scipy", "scikit-learn", "polars", "pillow", "zarr", "numcodecs",
                     "pydantic", "pyyaml", "cryptography", "orjson", "msgpack", "jinja2",
                     "markupsafe", "packaging", "platformdirs", "click", "fsspec",
-                    "typing-extensions", "zstandard", "pyodide-http", "narwhals"],
+                    "typing-extensions", "zstandard", "narwhals"],
         "wheels": ["plexora", "flask", "werkzeug", "itsdangerous", "blinker", "tifffile",
                    "universal-pathlib", "pathlib-abc", "biocognia", "biocognia-markers",
                    "spatialagents", "spatialbridge", "ome-types", "xsdata",
