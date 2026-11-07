@@ -39,7 +39,11 @@ STAGES = {
     },
     "h5ad": {
         "pyodide": ["h5py", "pandas"],
-        "wheels": ["anndata", "array-api-compat", "legacy-api-wrap", "natsort", "scverse-misc"],
+        # anndata asks for scverse-misc[settings]: without pydantic-settings
+        # and python-dotenv, `scverse_misc.Settings` is missing and anndata
+        # fails at import (found by tests/browser/import_check.mjs).
+        "wheels": ["anndata", "array-api-compat", "legacy-api-wrap", "natsort", "scverse-misc",
+                   "pydantic-settings", "python-dotenv"],
         "modules": ["h5py", "anndata", "pandas"],
     },
     "parquet": {
