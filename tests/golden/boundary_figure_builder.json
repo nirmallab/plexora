@@ -517,7 +517,7 @@
         "/client/src/js/views/chatPanel.js?v=20261012_merge_main",
         "/client/src/js/services/agentBridge.js?v=20261105_gating_v4",
         "/client/src/js/services/launchContext.js?v=20261005_bridge",
-        "/client/src/js/main.js?v=20261028_gating_show"
+        "/client/src/js/main.js?v=20261107_open_elsewhere"
       ],
       "status": 200,
       "styles": [
@@ -908,7 +908,7 @@
         "/client/src/js/views/chatPanel.js?v=20261012_merge_main",
         "/client/src/js/services/agentBridge.js?v=20261105_gating_v4",
         "/client/src/js/services/launchContext.js?v=20261005_bridge",
-        "/client/src/js/main.js?v=20261028_gating_show"
+        "/client/src/js/main.js?v=20261107_open_elsewhere"
       ],
       "status": 200,
       "styles": [
@@ -933,7 +933,7 @@
       ]
     }
   },
-  "route_count": 270,
+  "route_count": 273,
   "routes": [
     "DELETE /nodes/<name>/resources/<resource_id>",
     "DELETE /plugins/figure_builder/api/captures",
@@ -1023,7 +1023,9 @@
     "GET /plugins/figure_builder/figure/<figure_id>",
     "GET /plugins/figure_builder/figures",
     "GET /plugins/figure_builder/static/<path:filename>",
+    "GET /project/<string:name>/files_here",
     "GET /project/<string:name>/manifest",
+    "GET /project/<string:name>/open_elsewhere",
     "GET /project/<string:name>/resources",
     "GET /project_thumbnail/<string:name>",
     "GET /projects",
@@ -1140,6 +1142,7 @@
     "POST /plugins/figure_builder/api/figures/<figure_id>/previews/from_captures",
     "POST /project/<string:name>",
     "POST /project/<string:name>/delete",
+    "POST /project/<string:name>/files_here",
     "POST /project/<string:name>/resources/<string:kind>",
     "POST /projects/assign",
     "POST /put_file",

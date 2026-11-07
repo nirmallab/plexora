@@ -30,6 +30,36 @@ const imageChannelsIdx = {};
 //OTHER SETTINGS
 document.getElementById("openseadragon").addEventListener("contextmenu", (event) => event.preventDefault()); //Disable right clicking on element
 
+/**
+ * A project in the folder the website and the desktop app share can be open
+ * in both at once, and each would write over the other's changes: say so
+ * while it lasts (server/models/open_marks.py). Asked once a minute, which is
+ * also what tells the other app this one has it open.
+ */
+function watchOpenElsewhere(name) {
+  window.clearInterval(window.__plexoraOpenWatch);
+  const told = new Set();
+  const ask = async () => {
+    try {
+      const response = await fetch(plexoraUrl(`project/${encodeURIComponent(name)}/open_elsewhere`));
+      const answer = await response.json();
+      for (const other of answer.open || []) {
+        if (told.has(other.app)) continue;
+        told.add(other.app);
+        window.PlexoraToast?.show({
+          title: `Also open in ${other.where}`,
+          note: "Close it there, or changes may overwrite each other.",
+          timeout: 0,
+        });
+      }
+    } catch (error) {
+      // A missed minute: the next one asks again.
+    }
+  };
+  ask();
+  window.__plexoraOpenWatch = window.setInterval(ask, 60000);
+}
+
 //LOAD DATA
 /**
  * Ask the server why this sample's image would not open, and say so.
@@ -395,6 +425,7 @@ async function init(config, savedViewTransform = null) {
     if (window.PlexoraResourceStatus) {
         PlexoraResourceStatus.report(datasource, routing);
     }
+    watchOpenElsewhere(datasource);
 
     if (Array.isArray(config.imageData)) {
         config.imageData.forEach(function (channel) {

@@ -1098,3 +1098,13 @@ def project_files_found(name):
     if not isinstance(found, dict):
         return jsonify(error="`found` maps a recorded path to a path here."), 400
     return jsonify(recorded=relink.record_found(name, found), missing=relink.missing_here(name))
+
+
+@app.route('/project/<string:name>/open_elsewhere')
+def project_open_elsewhere(name):
+    """{open: [{app, where, beat}]}: the other apps with this project open now
+    (server/models/open_marks.py). Asking is also this app's own mark."""
+    from plexora.server.models import open_marks
+
+    open_marks.beat(name)
+    return jsonify(open=open_marks.others(name))

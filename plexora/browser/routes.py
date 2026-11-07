@@ -140,7 +140,7 @@ PYTHON = (
     "list_spatialdata_tables_route", "node_share_resource", "node_unshare_resource",
     "node_resource_status", "save_project", "delete_project", "project_remove_layer",
     "project_update_layer", "project_order_layers", "project_manifest", "project_resources",
-    "project_files_here", "project_files_found",
+    "project_files_here", "project_files_found", "project_open_elsewhere",
     "project_attach_resource", "project_thumbnail", "list_projects", "assign_projects", "put_file",
     "reload_datasource", "remote_health", "rename_channels_json", "set_pixel_size",
     "settings_nodes", "settings_nodes_add", "settings_nodes_remove", "settings_recipes",

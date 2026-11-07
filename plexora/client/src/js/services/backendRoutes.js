@@ -324,6 +324,7 @@
   {"class": "python", "endpoint": "preview_surface", "methods": ["GET"], "pattern": "^\\/volume\\/([^/]+)\\/surfaces\\/preview$"},
   {"class": "python", "endpoint": "suggest_threshold", "methods": ["GET"], "pattern": "^\\/volume\\/([^/]+)\\/surfaces\\/suggest$"},
   {"class": "python", "endpoint": "qc.job_cancel", "methods": ["POST"], "pattern": "^\\/plugins\\/qc\\/jobs\\/([^/]+)\\/cancel$"},
+  {"class": "python", "endpoint": "project_open_elsewhere", "methods": ["GET"], "pattern": "^\\/project\\/([^/]+)\\/open_elsewhere$"},
   {"class": "python", "endpoint": "bricks_manifest", "methods": ["GET"], "pattern": "^\\/volume\\/([^/]+)\\/bricks\\/manifest$"},
   {"class": "python", "endpoint": "import_surface", "methods": ["POST"], "pattern": "^\\/volume\\/([^/]+)\\/surfaces\\/import$"},
   {"class": "python", "endpoint": "agent_v1.call_capability", "methods": ["POST"], "pattern": "^\\/agent\\/v1\\/capabilities\\/([^/]+)$"},
