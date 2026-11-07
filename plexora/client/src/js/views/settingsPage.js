@@ -2617,7 +2617,7 @@
             return info.source === "file"
                 ? "This licence came from an offline file. Your account shows here on a device "
                   + "connected to account.biocognia.com."
-                : "Connect this device below to see your account here.";
+                : `Connect this ${window.PlexoraBackend?.kind === "browser" ? "browser" : "device"} below to see your account here.`;
         }
         if (["job", "ci"].includes(info.environment?.type)) return "A job's licence has no account of its own.";
         if (!info.service_configured || info.offline_only) {

@@ -684,7 +684,7 @@
                     <div class="account-who">
                         <span class="account-name" id="settings_account_name">Not signed in</span>
                         <span class="account-email" id="settings_account_email" hidden></span>
-                        <span class="account-note" id="settings_account_note">Connect this device below to see your account here.</span>
+                        <span class="account-note" id="settings_account_note">Connect this {% if website %}browser{% else %}device{% endif %} below to see your account here.</span>
                     </div>
                     <a class="license-quiet-button account-manage" id="settings_account_manage"
                        href="https://account.biocognia.com" target="_blank" rel="noopener" hidden>
@@ -805,7 +805,7 @@
                             <span class="license-label">Name <span class="settings-optional">(optional)</span></span>
                             <input type="text" id="settings_license_connect_name" class="license-input"
                                    maxlength="80" autocomplete="off" placeholder="My laptop">
-                            <span class="license-help">How this device is listed in the portal.</span>
+                            <span class="license-help">How this {% if website %}browser{% else %}device{% endif %} is listed in the portal.</span>
                         </label>
                         <div class="license-foot">
                             {% if website %}
@@ -843,7 +843,7 @@
                             <span class="license-label">Name <span class="settings-optional">(optional)</span></span>
                             <input type="text" id="settings_license_name" class="license-input"
                                    maxlength="80" autocomplete="off" placeholder="My laptop">
-                            <span class="license-help">How this device is listed in the portal.</span>
+                            <span class="license-help">How this {% if website %}browser{% else %}device{% endif %} is listed in the portal.</span>
                         </label>
                         <div class="license-foot">
                             {% if website %}
