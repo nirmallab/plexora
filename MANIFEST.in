@@ -24,3 +24,5 @@ prune licensing
 # published to GitHub Pages; neither is part of the package.
 prune website
 prune tools
+# plexora-kernels is its own distribution (kernels/pyproject.toml).
+prune kernels

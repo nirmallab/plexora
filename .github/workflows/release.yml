@@ -232,6 +232,12 @@ jobs:
           sudo apt-get update -q
           sudo apt-get install -y -q brotli
           echo "PLEXORA_BROTLI=$(command -v brotli)" >> "$GITHUB_ENV"
+      # plexora-kernels' Pyodide wheel for the base stage (as web.yml builds it;
+      # build.py refuses a bundle without one, or one ported from other kernels).
+      - name: plexora-kernels for the website (cibuildwheel --platform pyodide)
+        run: |
+          uvx --from cibuildwheel==4.3.5 cibuildwheel --platform pyodide --output-dir kernels/dist kernels
+          echo "PLEXORA_KERNELS_WHEEL=$(ls kernels/dist/plexora_kernels-*-pyemscripten_*_wasm32.whl)" >> "$GITHUB_ENV"
       - name: The Python bundle (Pyodide's archive sha256-checked), into web/py/<version>/
         run: uv run --no-sync python tools/browser_build/build.py --out "$RUNNER_TEMP/web"
       - name: The shell, loading this version's bundle from the assets bucket

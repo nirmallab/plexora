@@ -1,0 +1,316 @@
+{
+ "record": "L5",
+ "date": "2026-11-07",
+ "side": "desktop",
+ "machine": "i9-12900K, 128 GB, Windows 11 25H2; CPython 3.13.15 (conda env plexora), numpy 2.5.2, numba 0.67.0",
+ "package": {
+  "plexora_kernels": "0.1.0",
+  "wheel": "cp313-win_amd64, built with llvm-mingw 20260922 (clang), -O3 -ffp-contract=off",
+  "ported_from": "35ec13ecc2e9"
+ },
+ "inputs": "tests/kernel_cases.py build --size bench (seed 7)",
+ "method": "tests.kernel_cases run in a fresh interpreter per mode; best of 5 (compiled, numba) or 1 (python) calls on fresh copies; numba-cold = first call with an empty NUMBA_CACHE_DIR",
+ "kernels": {
+  "label_kernels._boundary": {
+   "python_s": 0.8089910997077823,
+   "numba_s": 0.003653199877589941,
+   "numba_cold_first_s": 0.7934049000032246,
+   "compiled_s": 0.002754699904471636,
+   "compiled_first_s": 0.0027876999229192734
+  },
+  "label_kernels._boundary/r2-int32": {
+   "python_s": 1.1158806001767516,
+   "numba_s": 0.005114400293678045,
+   "numba_cold_first_s": 0.22799029992893338,
+   "compiled_s": 0.004061500076204538,
+   "compiled_first_s": 0.004410599824041128
+  },
+  "label_kernels._bboxes": {
+   "python_s": 1.3949918998405337,
+   "numba_s": 0.006536700297147036,
+   "numba_cold_first_s": 0.202681599650532,
+   "compiled_s": 0.006760000251233578,
+   "compiled_first_s": 0.006716599687933922
+  },
+  "label_kernels._bboxes/u16": {
+   "python_s": 1.3915395997464657,
+   "numba_s": 0.006690900307148695,
+   "numba_cold_first_s": 0.21185880014672875,
+   "compiled_s": 0.006968399975448847,
+   "compiled_first_s": 0.007233799900859594
+  },
+  "measure._bbox_kernel": {
+   "python_s": 0.41997670009732246,
+   "numba_s": 0.0012719002552330494,
+   "numba_cold_first_s": 0.18573560006916523,
+   "compiled_s": 0.0015805000439286232,
+   "compiled_first_s": 0.0016554002650082111
+  },
+  "cell_features._background_blocks": {
+   "python_s": 0.2370194997638464,
+   "numba_s": 0.0016559003852307796,
+   "numba_cold_first_s": 4.282781399786472,
+   "compiled_s": 0.0010027997195720673,
+   "compiled_first_s": 0.0010653999634087086
+  },
+  "cell_features._tile_kernel": {
+   "python_s": 2.25997699983418,
+   "numba_s": 0.005404700059443712,
+   "numba_cold_first_s": 0.6686766999773681,
+   "compiled_s": 0.005296999588608742,
+   "compiled_first_s": 0.007505199871957302
+  },
+  "cell_features._tile_kernel/no-dna": {
+   "python_s": 1.7555439001880586,
+   "numba_s": 0.005249599926173687,
+   "numba_cold_first_s": 0.005285500083118677,
+   "compiled_s": 0.0048454999923706055,
+   "compiled_first_s": 0.00484029995277524
+  },
+  "cell_features._run_labels": {
+   "python_s": 0.11135630030184984,
+   "numba_s": 0.0008244002237915993,
+   "numba_cold_first_s": 0.16608979972079396,
+   "compiled_s": 0.0009357999078929424,
+   "compiled_first_s": 0.0009717000648379326
+  },
+  "segqc.label_stats": {
+   "python_s": 1.1725059999153018,
+   "numba_s": 0.003944199997931719,
+   "numba_cold_first_s": 0.23681689985096455,
+   "compiled_s": 0.0033648000098764896,
+   "compiled_first_s": 0.003601099830120802
+  },
+  "segqc.count_pairs": {
+   "python_s": 0.326481600292027,
+   "numba_s": 0.0011622998863458633,
+   "numba_cold_first_s": 0.19244319992139935,
+   "compiled_s": 0.0008978997357189655,
+   "compiled_first_s": 0.0008923998102545738
+  },
+  "segqc.fill_pairs": {
+   "python_s": 0.49451400013640523,
+   "numba_s": 0.001707400195300579,
+   "numba_cold_first_s": 0.26131709991022944,
+   "compiled_s": 0.001542199868708849,
+   "compiled_first_s": 0.0015981001779437065
+  },
+  "autogate._count": {
+   "python_s": 10.40883560013026,
+   "numba_s": 0.11365590011700988,
+   "numba_cold_first_s": 0.3919174000620842,
+   "compiled_s": 0.07880149967968464,
+   "compiled_first_s": 0.08260460011661053
+  },
+  "nets._pool_runs": {
+   "python_s": 0.4421665002591908,
+   "numba_s": 0.0015891999937593937,
+   "numba_cold_first_s": 0.22946850024163723,
+   "compiled_s": 0.0013517001643776894,
+   "compiled_first_s": 0.0014007003046572208
+  },
+  "nets._count": {
+   "python_s": 4.844801700208336,
+   "numba_s": 0.004304799716919661,
+   "numba_cold_first_s": 0.5370906996540725,
+   "compiled_s": 0.0037140999920666218,
+   "compiled_first_s": 0.0039059999398887157
+  },
+  "nets._count/skip": {
+   "python_s": 4.498668699990958,
+   "numba_s": 0.0037576998583972454,
+   "numba_cold_first_s": 0.0037716999650001526,
+   "compiled_s": 0.003127099946141243,
+   "compiled_first_s": 0.0033185998909175396
+  },
+  "nets._fill": {
+   "python_s": 9.147683599963784,
+   "numba_s": 0.008129999972879887,
+   "numba_cold_first_s": 0.46276909997686744,
+   "compiled_s": 0.006513699889183044,
+   "compiled_first_s": 0.006625000387430191
+  },
+  "nets._triangulate": {
+   "python_s": 1.7105729999020696,
+   "numba_s": 0.0057609002105891705,
+   "numba_cold_first_s": 0.6460171998478472,
+   "compiled_s": 0.005025600083172321,
+   "compiled_first_s": 0.005942600313574076
+  },
+  "nets._corners": {
+   "python_s": 6.90016895532608e-06,
+   "numba_s": 4.100147634744644e-06,
+   "numba_cold_first_s": 6.800051778554916e-06,
+   "compiled_s": 8.100178092718124e-06,
+   "compiled_first_s": 2.7600210160017014e-05
+  },
+  "nets._distinct": {
+   "python_s": 4.299916326999664e-06,
+   "numba_s": 2.998858690261841e-07,
+   "numba_cold_first_s": 1.700129359960556e-06,
+   "compiled_s": 5.997717380523682e-07,
+   "compiled_first_s": 9.09995287656784e-06
+  },
+  "mesh._face_normals_into": {
+   "python_s": 4.059904399793595,
+   "numba_s": 0.00434659980237484,
+   "numba_cold_first_s": 0.15949029987677932,
+   "compiled_s": 0.003984400071203709,
+   "compiled_first_s": 0.004089500289410353
+  },
+  "mesh._adjacency": {
+   "python_s": 8.114997699856758,
+   "numba_s": 0.041184999980032444,
+   "numba_cold_first_s": 0.5149894999340177,
+   "compiled_s": 0.04287930019199848,
+   "compiled_first_s": 0.04319699993357062
+  },
+  "mesh._umbrella_step": {
+   "python_s": 2.160089900251478,
+   "numba_s": 0.003671499900519848,
+   "numba_cold_first_s": 0.2571561001241207,
+   "compiled_s": 0.003626700025051832,
+   "compiled_first_s": 0.004593399818986654
+  },
+  "mesh._signed_volumes": {
+   "python_s": 1.9945620000362396,
+   "numba_s": 0.003851700108498335,
+   "numba_cold_first_s": 0.17290480015799403,
+   "compiled_s": 0.0032986002042889595,
+   "compiled_first_s": 0.0036476999521255493
+  },
+  "mesh._object_sums": {
+   "python_s": 9.824721099808812,
+   "numba_s": 0.01102149998769164,
+   "numba_cold_first_s": 0.3433965998701751,
+   "compiled_s": 0.009825300425291061,
+   "compiled_first_s": 0.010522000025957823
+  },
+  "mesh._object_moments": {
+   "python_s": 4.954874000046402,
+   "numba_s": 0.007602300029247999,
+   "numba_cold_first_s": 0.281175899785012,
+   "compiled_s": 0.006725400220602751,
+   "compiled_first_s": 0.006751300301402807
+  },
+  "lzw_decode": {
+   "python_s": 1.240184500347823,
+   "numba_s": null,
+   "numba_cold_first_s": null,
+   "compiled_s": 0.008345600217580795,
+   "compiled_first_s": 0.008471000008285046
+  }
+ },
+ "product": {
+  "compiled": {
+   "surfaces": {
+    "s": 0.128,
+    "cells": 300,
+    "triangles": 318076,
+    "digest": "131536c60b65eea5f1d810c5",
+    "first_s": 0.133
+   },
+   "cell_features": {
+    "s": 0.019,
+    "cells": 2926,
+    "kernel": "compiled",
+    "first_s": 0.019
+   },
+   "segqc": {
+    "s": 0.006,
+    "pairs": 32472,
+    "digest": "0207ea316dea59b5c8db032d",
+    "first_s": 0.006
+   },
+   "neighbours": {
+    "s": 0.103,
+    "digest": "32b3ea9fca915304b4f1f471",
+    "first_s": 0.108
+   }
+  },
+  "numba": {
+   "surfaces": {
+    "s": 0.134,
+    "cells": 300,
+    "triangles": 318076,
+    "digest": "131536c60b65eea5f1d810c5",
+    "first_s": 0.469
+   },
+   "cell_features": {
+    "s": 0.021,
+    "cells": 2926,
+    "kernel": "numba",
+    "first_s": 4.747
+   },
+   "segqc": {
+    "s": 0.007,
+    "pairs": 32472,
+    "digest": "0207ea316dea59b5c8db032d",
+    "first_s": 0.06
+   },
+   "neighbours": {
+    "s": 0.117,
+    "digest": "32b3ea9fca915304b4f1f471",
+    "first_s": 0.16
+   }
+  },
+  "python": {
+   "surfaces": {
+    "s": 31.502,
+    "cells": 300,
+    "triangles": 318076,
+    "digest": "131536c60b65eea5f1d810c5",
+    "first_s": 31.502
+   },
+   "cell_features": {
+    "s": 0.065,
+    "cells": 2926,
+    "kernel": "python",
+    "first_s": 0.065
+   },
+   "segqc": {
+    "s": 1.512,
+    "pairs": 32472,
+    "digest": "0207ea316dea59b5c8db032d",
+    "first_s": 1.512
+   },
+   "neighbours": {
+    "s": 7.924,
+    "digest": "32b3ea9fca915304b4f1f471",
+    "first_s": 7.924
+   }
+  }
+ },
+ "startup": {
+  "compiled": {
+   "best_s": 3.618,
+   "runs_s": [
+    3.618,
+    7.802,
+    4.549
+   ],
+   "numba_imported": false,
+   "primed": 7
+  },
+  "numba_warm": {
+   "best_s": 5.646,
+   "runs_s": [
+    5.66,
+    6.322,
+    5.646
+   ],
+   "numba_imported": true,
+   "primed": 7
+  },
+  "numba_cold": {
+   "best_s": 15.182,
+   "runs_s": [
+    16.333,
+    15.182,
+    15.778
+   ],
+   "numba_imported": true,
+   "primed": 7
+  }
+ }
+}

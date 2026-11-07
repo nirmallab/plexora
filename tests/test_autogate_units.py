@@ -71,7 +71,8 @@ def test_kernels_give_the_same_answers_without_numba(tmp_path):
         edge = label_kernels.boundary_mask_kernel(labels, 2)
         print(json.dumps([int(n.sum()), int(f.sum()), int(edge.sum())]))
     """)
-    env = {**os.environ, "PLEXORA_NO_NUMBA": "1"}
+    # Plain Python: neither numba nor plexora-kernels' compiled ports.
+    env = {**os.environ, "PLEXORA_NO_NUMBA": "1", "PLEXORA_KERNELS": "0"}
     done = subprocess.run([sys.executable, "-c", script], capture_output=True, text=True,
                           env=env, timeout=120)
     assert done.returncode == 0, done.stderr[-2000:]

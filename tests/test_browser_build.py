@@ -209,3 +209,57 @@ def test_a_package_pyodide_ships_too_old_is_taken_at_the_locks_pin(tmp_path):
     assert files["typing-extensions"] == wheel
     assert lock["packages"]["typing-extensions"] == {"file_name": wheel.name, "version": "4.16.0"}
     assert files["numpy"] == tmp_path / "dist" / "numpy-2.3.1-cp314-cp314-pyemscripten_2026_0_wasm32.whl"
+
+
+# -- plexora-kernels' wheel (plan L5) ------------------------------------------------------
+
+KLOCK = {"info": {"python": "3.14.2", "abi_version": "2026_0", "arch": "wasm32"}}
+KTAG = "cp314-cp314-pyemscripten_2026_0_wasm32"
+
+
+def kernels(tmp_path, fingerprints, tag=KTAG):
+    path = tmp_path / f"plexora_kernels-0.1.0-{tag}.whl"
+    body = f"PORTED_FROM = 'test'\nFINGERPRINTS = {fingerprints!r}\n"
+    with zipfile.ZipFile(path, "w") as archive:
+        archive.writestr("plexora_kernels/_fingerprints.py", body)
+        archive.writestr("plexora_kernels/_kernels.cpython-314-wasm32-emscripten.so", b"\0asm")
+    return path
+
+
+def _current(module):
+    from plexora.server.utils import jit
+
+    source = ROOT / (module.replace(".", "/") + ".py")
+    return jit.kernel_fingerprints(source.read_text(encoding="utf-8"))
+
+
+def test_a_kernels_wheel_ported_from_this_checkout_is_taken(tmp_path):
+    module = "plexora.server.utils.label_kernels"
+    wheel = kernels(tmp_path, {module: _current(module)})
+    assert build.kernels_wheel(str(wheel), KLOCK) == wheel
+
+
+def test_a_kernels_wheel_of_older_kernels_is_refused(tmp_path):
+    """The website's bytecode has no source for jit.py to check a port
+    against at run time, so the build checks it."""
+    module = "plexora.server.utils.label_kernels"
+    old = dict(_current(module), _bboxes="0" * 20)
+    with pytest.raises(SystemExit, match="_bboxes"):
+        build.kernels_wheel(str(kernels(tmp_path, {module: old})), KLOCK)
+
+
+def test_a_kernels_wheel_for_another_pyodide_is_refused(tmp_path, monkeypatch):
+    module = "plexora.server.utils.label_kernels"
+    wheel = kernels(tmp_path, {module: _current(module)}, tag="cp313-cp313-pyodide_2025_0_wasm32")
+    with pytest.raises(SystemExit, match="not built for this Pyodide"):
+        build.kernels_wheel(str(wheel), KLOCK)
+    monkeypatch.setattr(build, "KERNELS_DIST", tmp_path)
+    with pytest.raises(SystemExit, match="--no-kernels"):
+        build.kernels_wheel(None, KLOCK)
+
+
+def test_the_base_stage_ships_the_kernels():
+    from plexora.browser.stages import STAGES
+
+    assert STAGES["base"]["platform"] == ["plexora-kernels"]
+    assert not any(stage.get("platform") for name, stage in STAGES.items() if name != "base")

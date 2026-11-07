@@ -1,0 +1,9 @@
+# Build output (python -m build / cibuildwheel / pyodide build).
+build/
+dist/
+wheelhouse/
+.pyodide-xbuildenv*/
+src/plexora_kernels/_kernels.c
+src/plexora_kernels/*.html
+*.so
+*.pyd

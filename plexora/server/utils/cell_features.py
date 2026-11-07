@@ -15,7 +15,7 @@ statistic is a running sum per label, accumulated tile by tile with
 whatever the image's size.
 
 Two implementations of one tile's sums, kept equal by the tests: a compiled
-kernel (`_tile_kernel`, numba through `utils.jit`) that walks the tile's
+kernel (`_tile_kernel`, compiled through `utils.jit`) that walks the tile's
 pixels once and adds every statistic as it goes, and the numpy form
 (`_tile_sums`, a `bincount` per statistic) that runs when kernels are not
 compiled. On a 64-megapixel mask with 250,000 cells the kernel's pass is
@@ -35,7 +35,7 @@ import io
 
 import numpy as np
 
-from plexora.server.utils.jit import enabled as _jit_enabled
+from plexora.server.utils.jit import is_compiled as _is_compiled
 from plexora.server.utils.jit import njit, register_primer
 
 #: Bumped when a feature's definition changes, so a cached matrix built by the
@@ -278,9 +278,9 @@ def accumulate(read_marker, read_labels, *, width, height, read_dna=None, tile=T
     `progress(done, total)` after every tile; `cancelled()` is polled before
     each and raises InterruptedError when it answers True. `compiled` picks
     the kernel (True) or the numpy form (False); None, the kernel whenever
-    kernels are compiled in this process.
+    it is compiled in this process (plexora-kernels or numba).
     """
-    use_kernel = _jit_enabled() if compiled is None else bool(compiled)
+    use_kernel = _is_compiled(_tile_kernel) if compiled is None else bool(compiled)
     tile_sums = _tile_sums_compiled if use_kernel else _tile_sums
     boxes = list(tiles(width, height, tile))
     sums = _Sums()

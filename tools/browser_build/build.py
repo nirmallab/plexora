@@ -16,6 +16,12 @@ Writes `<out>/py/<plexora version>/`:
   WebAssembly-only one, their licence and third-party notices, and `ort.json`
   naming the version -- here, not in the static site, because the WebGPU
   build's wasm is over Pages' 25 MiB per file;
+- `wheels/` also holds plexora-kernels' WebAssembly wheel (kernels/, plan L5),
+  built by `pyodide build` or kernels.yml and handed over with
+  `--kernels-wheel` (default: the newest in kernels/dist/): checked for this
+  Pyodide's platform tag and for having been ported from this checkout's
+  kernels, since the website's bytecode carries no source to check against
+  (plexora/server/utils/jit.py);
 - `stages.json`: per stage, the lockfile packages to `loadPackage` and the
   wheel files to unpack, with their bytes;
 - `manifest.json`: every file with its size and sha256, the Pyodide and Python
@@ -269,6 +275,69 @@ def wheels(scratch: Path) -> dict:
     return found
 
 
+#: Where a locally built plexora-kernels wheel lands (`pyodide build kernels -o kernels/dist`).
+KERNELS_DIST = REPO / "kernels" / "dist"
+
+
+def kernels_wheel(given, lock: dict) -> Path:
+    """plexora-kernels' wheel for this Pyodide: `given`, else the newest in
+    kernels/dist/. Refused unless its tag is this release's
+    (cp3XY-pyemscripten_<abi>_wasm32) and every kernel it ports still has the
+    source it was ported from here."""
+    python = "".join(lock["info"]["python"].split(".")[:2])
+    tag = f"-cp{python}-cp{python}-pyemscripten_{lock['info']['abi_version']}_{lock['info']['arch']}.whl"
+    if given:
+        wheel = Path(given)
+    else:
+        found = sorted(KERNELS_DIST.glob("plexora_kernels-*.whl"), key=lambda p: p.stat().st_mtime)
+        found = [p for p in found if p.name.endswith(tag)]
+        if not found:
+            raise SystemExit(f"no plexora-kernels wheel ending {tag} in {KERNELS_DIST}: build it "
+                             "(docs/internal/bench/browser_node/L5.md), pass --kernels-wheel, or "
+                             "--no-kernels to ship the website without it")
+        wheel = found[-1]
+    if not wheel.name.endswith(tag):
+        raise SystemExit(f"{wheel.name} is not built for this Pyodide ({tag[1:]})")
+    stale = kernels_stale(wheel)
+    if stale:
+        raise SystemExit(f"{wheel.name} ports older kernels than this checkout's ({stale}): "
+                         "update the ports and rebuild it (kernels/tools/fingerprints.py)")
+    return wheel
+
+
+def kernels_recorded(wheel: Path) -> dict:
+    """What a plexora-kernels wheel (as built, with its sources) says it
+    ported: `{"FINGERPRINTS": {module: {kernel: fingerprint}}, "PORTED_FROM": commit}`."""
+    with zipfile.ZipFile(wheel) as archive:
+        name = next(n for n in archive.namelist() if n.endswith("plexora_kernels/_fingerprints.py"))
+        recorded: dict = {}
+        # Our own build output: a module of two literals.
+        exec(compile(archive.read(name).decode("utf-8"), name, "exec"), recorded)  # noqa: S102
+    return {"FINGERPRINTS": recorded["FINGERPRINTS"], "PORTED_FROM": recorded.get("PORTED_FROM")}
+
+
+def kernels_stale(wheel: Path) -> dict:
+    """{module: [kernels]} whose source here differs from what `wheel` ported."""
+    return stale_against(kernels_recorded(wheel)["FINGERPRINTS"])
+
+
+def stale_against(fingerprints: dict) -> dict:
+    """{module: [kernels]} whose source here differs from `fingerprints`."""
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location("_web_build_jit", REPO / "plexora/server/utils/jit.py")
+    jit = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(jit)
+    out = {}
+    for module, kernels in fingerprints.items():
+        source = REPO / (module.replace(".", "/") + ".py")
+        found = jit.kernel_fingerprints(source.read_text(encoding="utf-8")) if source.exists() else {}
+        differ = sorted(n for n in set(found) | set(kernels) if found.get(n) != kernels.get(n))
+        if differ:
+            out[module] = differ
+    return out
+
+
 def _norm(name: str) -> str:
     return name.lower().replace("_", "-").replace(".", "-")
 
@@ -411,7 +480,26 @@ def newer(lock: dict, dist: Path, found: dict) -> dict:
     return files
 
 
-def build(out_root: Path, python314: str | None, encoder: str | None) -> Path:
+def add_kernels(out: Path, wheel: Path, stages: dict, python314, encoder) -> dict:
+    """plexora-kernels' wheel into the bundle's base stage, replacing any
+    older one: its modules precompiled like every wheel's, its .so as built.
+    Returns the manifest's `kernels` entry: the wheel and what it ported (the
+    bundled copy is sourceless, so a later `--plexora-only` checks this)."""
+    recorded = kernels_recorded(wheel)
+    for old in (out / "wheels").glob("plexora_kernels-*.whl*"):
+        old.unlink()
+    target = out / "wheels" / wheel.name
+    precompile(wheel, target, python314, encoder is not None)
+    if encoder:
+        brotli(target, encoder)
+    for stage in stages.values():
+        stage["wheels"] = [w for w in stage["wheels"] if not w.startswith("plexora_kernels-")]
+    stages["base"]["wheels"].append(wheel.name)
+    return {"wheel": wheel.name, "ported_from": recorded["PORTED_FROM"],
+            "fingerprints": recorded["FINGERPRINTS"]}
+
+
+def build(out_root: Path, python314: str | None, encoder: str | None, kernels=None) -> Path:
     from plexora import __version__
 
     dist = release()
@@ -468,9 +556,14 @@ def build(out_root: Path, python314: str | None, encoder: str | None) -> Path:
                         brotli(target, encoder)
                 stages[stage_name]["wheels"].append(wheel.name)
 
+    held = None
+    if kernels is not False:
+        held = add_kernels(out, kernels_wheel(kernels, lock), stages, python314, encoder)
+
     core_bytes = account(out, lock, stages)
     (out / "stages.json").write_text(json.dumps(stages, indent=1), encoding="utf-8")
     manifest = {"plexora": __version__, "pyodide": PYODIDE, "python": lock["info"]["python"],
+                "kernels": held,
                 "precompiled": python314 is not None, "brotli": encoder is not None,
                 "first_visit_bytes": core_bytes + stages["base"]["bytes"],
                 "stages": {name: stage["bytes"] for name, stage in stages.items()},
@@ -500,10 +593,14 @@ def listing(out: Path) -> dict:
             for path in sorted(out.rglob("*")) if path.is_file() and path != out / "manifest.json"}
 
 
-def plexora_only(out_root: Path, python314: str | None, encoder: str | None) -> Path:
-    """Rebuild the plexora wheel inside an existing bundle (development: a
+def plexora_only(out_root: Path, python314: str | None, encoder: str | None,
+                 kernels=None) -> Path:
+    """Rebuild Plexora's own wheels inside an existing bundle (development: a
     change to Plexora's Python without the 15 minutes of brotli the packages
-    take). stages.json and manifest.json are rewritten to match, the stage
+    take): the plexora wheel, and plexora-kernels' when one is handed over or
+    found in kernels/dist (`kernels` False: left as it is). Whichever kernels
+    wheel the bundle ends with must have been ported from this checkout's
+    kernels. stages.json and manifest.json are rewritten to match, the stage
     sizes and the first visit included."""
     from plexora import __version__
 
@@ -529,10 +626,29 @@ def plexora_only(out_root: Path, python314: str | None, encoder: str | None) -> 
     # A bundle built before the page ran magic select's model gains it here.
     ort(out, encoder)
     lock = json.loads((out / "pyodide" / "pyodide-lock.json").read_text(encoding="utf-8"))
+    manifest = json.loads((out / "manifest.json").read_text(encoding="utf-8"))
+    held = manifest.get("kernels")
+    if kernels is not False:
+        try:
+            held = add_kernels(out, kernels_wheel(kernels, lock), stages, python314, encoder)
+        except SystemExit:
+            if kernels:  # handed one: it must be usable
+                raise
+            print("note: no usable plexora-kernels wheel in kernels/dist; the bundle keeps what "
+                  "it has", flush=True)
+    bundled = [w for w in stages["base"]["wheels"] if w.startswith("plexora_kernels-")]
+    if bundled and not (held and held.get("wheel") == bundled[0]):
+        raise SystemExit(f"the bundle's {bundled[0]} has no record of what it ported: pass "
+                         "--kernels-wheel")
+    if held and bundled:
+        stale = stale_against(held["fingerprints"])
+        if stale:
+            raise SystemExit(f"the bundle's {held['wheel']} ports older kernels than this "
+                             f"checkout's ({stale}): rebuild it and pass --kernels-wheel")
     core_bytes = account(out, lock, stages)
     (out / "stages.json").write_text(json.dumps(stages, indent=1), encoding="utf-8")
-    manifest = json.loads((out / "manifest.json").read_text(encoding="utf-8"))
-    manifest.update({"plexora": __version__, "first_visit_bytes": core_bytes + stages["base"]["bytes"],
+    manifest.update({"plexora": __version__, "kernels": held if bundled else None,
+                     "first_visit_bytes": core_bytes + stages["base"]["bytes"],
                      "stages": {name: stage["bytes"] for name, stage in stages.items()},
                      "files": listing(out)})
     (out / "manifest.json").write_text(json.dumps(manifest, indent=1), encoding="utf-8")
@@ -548,12 +664,18 @@ def main(argv=None) -> int:
     parser.add_argument("--brotli", default=os.environ.get("PLEXORA_BROTLI") or shutil.which("brotli"),
                         help="the brotli encoder (omit for deflated wheels and no .br)")
     parser.add_argument("--plexora-only", action="store_true",
-                        help="rebuild only the plexora wheel in an existing bundle")
+                        help="rebuild only Plexora's own wheels in an existing bundle")
+    parser.add_argument("--kernels-wheel", default=os.environ.get("PLEXORA_KERNELS_WHEEL"),
+                        help="plexora-kernels' Pyodide wheel (default: the newest in kernels/dist)")
+    parser.add_argument("--no-kernels", action="store_true",
+                        help="ship without plexora-kernels (every kernel then runs as Python)")
     args = parser.parse_args(argv)
+    kernels = False if args.no_kernels else args.kernels_wheel
     if args.plexora_only:
-        print(json.dumps({"out": str(plexora_only(Path(args.out), args.python314, args.brotli))}))
+        print(json.dumps({"out": str(plexora_only(Path(args.out), args.python314, args.brotli,
+                                                  kernels))}))
         return 0
-    out = build(Path(args.out), args.python314, args.brotli)
+    out = build(Path(args.out), args.python314, args.brotli, kernels)
     manifest = json.loads((out / "manifest.json").read_text(encoding="utf-8"))
     print(json.dumps({"out": str(out), "first_visit_mb": round(manifest["first_visit_bytes"] / 1e6, 1),
                       "stages_mb": {k: round(v / 1e6, 1) for k, v in manifest["stages"].items()}},

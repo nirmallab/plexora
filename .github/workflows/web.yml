@@ -11,8 +11,9 @@ name: web
 #                 Python and JS tests, the node probes among them
 #   bundle        the Python bundle (tools/browser_build/build.py), cached on
 #                 Pyodide's version, uv.lock, build.py and the stage list: a
-#                 hit rebuilds Plexora's wheel alone (--plexora-only, about a
-#                 minute; a miss is the whole build, 15-30 minutes); the first
+#                 hit rebuilds Plexora's wheels alone (--plexora-only, about a
+#                 minute; a miss is the whole build, 15-30 minutes), with
+#                 plexora-kernels' Pyodide wheel built first; the first
 #                 visit's Python under its bar (budget.py --bundle); the
 #                 bundle says this checkout's version
 #   import_check  the bundle booted in Node from disk: the app builds with no
@@ -156,6 +157,14 @@ jobs:
         with:
           path: ~/.cache/plexora-web/browser_node/pyodide/pyodide-${{ steps.version.outputs.pyodide }}.tar.bz2
           key: pyodide-${{ steps.version.outputs.pyodide }}
+      # plexora-kernels for Pyodide (kernels/, plan L5; kernels.yml builds
+      # every platform and holds the ports to numba): the base stage ships it,
+      # and build.py refuses one ported from other kernels than this
+      # checkout's. cibuildwheel runs its tests in Node.
+      - name: plexora-kernels for the website (cibuildwheel --platform pyodide)
+        run: |
+          uvx --from cibuildwheel==4.3.5 cibuildwheel --platform pyodide --output-dir kernels/dist kernels
+          echo "PLEXORA_KERNELS_WHEEL=$(ls kernels/dist/plexora_kernels-*-pyemscripten_*_wasm32.whl)" >> "$GITHUB_ENV"
       - name: Build (Plexora's wheel alone when the packages are cached)
         env:
           HIT: ${{ steps.cached.outputs.cache-hit }}

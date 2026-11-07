@@ -240,7 +240,8 @@ def test_the_kernels_agree_without_numba(tmp_path):
         "                  np.round(value, 6).tolist(), py.tolist(), px.tolist()]))\n")
     outputs = []
     for off in ("0", "1"):
-        env = {**os.environ, "PLEXORA_NO_NUMBA": off}
+        # "1": plain Python -- neither numba nor plexora-kernels' compiled ports.
+        env = {**os.environ, "PLEXORA_NO_NUMBA": off, "PLEXORA_KERNELS": "0" if off == "1" else "1"}
         done = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True,
                               env=env, check=True)
         outputs.append(json.loads(done.stdout))

@@ -49,7 +49,8 @@ def test_the_bundle_was_built_from_this_stage_list(checked):
     built = json.loads((BUILD / _version() / "stages.json").read_text(encoding="utf-8"))
     for name, stage in STAGES.items():
         wheels = sorted(_norm(wheel.split("-")[0]) for wheel in built[name]["wheels"])
-        assert wheels == sorted(_norm(wheel) for wheel in stage["wheels"]), (
+        listed = stage["wheels"] + stage.get("platform", [])
+        assert wheels == sorted(_norm(wheel) for wheel in listed), (
             f"the bundle's {name} stage is not plexora/browser/stages.py's: rebuild it")
 
 
