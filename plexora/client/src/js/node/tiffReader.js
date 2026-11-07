@@ -361,7 +361,7 @@ export function createTiffReader() {
             }
             // Level sizes from channel 0's SubIFDs: one small IFD parse each,
             // all at once (their offsets are in hand).
-            const reduced = await Promise.all(subifds.map((_, i) => images[0](i + 1)));
+            const reduced = await Promise.all(Array.from(subifds, (_, i) => images[0](i + 1)));
             levelSizes = [{ width, height }, ...reduced.map((image) => ({ width: image.getWidth(), height: image.getHeight() }))];
         } else {
             const sizes = [];

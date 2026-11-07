@@ -336,6 +336,20 @@ def _subifd_pyramid(tmp_path):
     return out
 
 
+def _classic_subifd_pyramid(tmp_path):
+    """A classic (not Big) TIFF with SubIFDs, as tests/browser/node_fixtures.py
+    writes one: geotiff.js hands its SubIFDs tag back as a typed array."""
+    out = tmp_path / "classic.ome.tif"
+    data = _pixels("uint16", (3, 900, 1100), seed=9)
+    with tifffile.TiffWriter(out, bigtiff=False, ome=True) as tiff:
+        tiff.write(data, subifds=2, tile=(128, 128), metadata={"axes": "CYX"}, compression="zlib")
+        level = data
+        for _ in range(2):
+            level = level[:, ::2, ::2]
+            tiff.write(level, subfiletype=1, tile=(128, 128), compression="zlib")
+    return out
+
+
 def _series_pyramid(tmp_path):
     out = tmp_path / "series.tif"
     data = _pixels("uint16", (2, 700, 900), seed=6)
@@ -353,8 +367,8 @@ def _flat(tmp_path):
     return out
 
 
-@pytest.mark.parametrize("make, layout", [(_subifd_pyramid, "subifd"), (_series_pyramid, "series"),
-                                          (_flat, "flat")])
+@pytest.mark.parametrize("make, layout", [(_subifd_pyramid, "subifd"), (_classic_subifd_pyramid, "subifd"),
+                                          (_series_pyramid, "series"), (_flat, "flat")])
 def test_a_pool_opens_its_file_once(tmp_path, make, layout):
     from plexora.browser import node_spec
 
