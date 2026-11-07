@@ -307,3 +307,87 @@ def test_a_copy_made_on_the_website_is_the_desktops_and_back(recorded, current, 
     """A page sees a file's time in whole milliseconds: a copy made by the
     website from a file is still a copy of that file to the desktop app."""
     assert image_pyramid._same_source(recorded, current) is same
+
+
+# -- a pool of the page's readers opens a file once ----------------------------
+#
+# services/browserNode.js opens a project's file in several workers; the first
+# reads the header and IFDs from the file (on the desktop app, a chain of byte
+# ranges through the shell's scheme) and records them, and the rest open from
+# that record (node/tiffReader.js `seed`). Held here to: the seeded open reads
+# nothing, finds the same geometry, and every tile it reads is the same.
+
+SEED_PROBE = ROOT / "tests" / "js" / "tiff_seed_probe.mjs"
+
+
+def _seed_probe(path, ifds=None):
+    extra = [json.dumps(ifds)] if ifds else []
+    done = subprocess.run([NODE, str(SEED_PROBE), str(path), *extra], capture_output=True, text=True,
+                          encoding="utf-8", timeout=300)
+    assert done.returncode == 0, done.stderr[-3000:]
+    return json.loads(done.stdout.strip().splitlines()[-1])
+
+
+def _subifd_pyramid(tmp_path):
+    source = tmp_path / "s.tif"
+    _write_source(source, "uint16", (3, 1037, 1529), {"compression": "zlib", "tile": (128, 128)}, seed=5)
+    out = tmp_path / "pyramid.ome.tiff"
+    image_pyramid.pyramidize_image(source, out, channel_names=["a", "b", "c"], tile_size=TILE)
+    return out
+
+
+def _series_pyramid(tmp_path):
+    out = tmp_path / "series.tif"
+    data = _pixels("uint16", (2, 700, 900), seed=6)
+    with tifffile.TiffWriter(out, bigtiff=True) as tiff:
+        for level in range(3):
+            step = 2 ** level
+            for channel in data[:, ::step, ::step]:
+                tiff.write(channel, tile=(128, 128), compression="zlib", photometric="minisblack")
+    return out
+
+
+def _flat(tmp_path):
+    out = tmp_path / "flat.tif"
+    _write_source(out, "uint16", (4, 300, 500), {"compression": "lzw", "rowsperstrip": 16}, seed=7)
+    return out
+
+
+@pytest.mark.parametrize("make, layout", [(_subifd_pyramid, "subifd"), (_series_pyramid, "series"),
+                                          (_flat, "flat")])
+def test_a_pool_opens_its_file_once(tmp_path, make, layout):
+    from plexora.browser import node_spec
+
+    path = make(tmp_path)
+    ifds = node_spec.main_ifds(str(path))
+    with tifffile.TiffFile(path) as tif:
+        assert ifds == [page.offset for page in tif.pages] and ifds[0] == 8 + 8 * tif.is_bigtiff
+    found = _seed_probe(path, ifds)
+    assert found["layout"] == layout
+    assert found["first"]["reads"] > 0 and found["first"]["recorded"] == found["first"]["reads"]
+    assert found["seeded"]["reads"] == 0, "the seeded open read the file"
+    assert found["geometrySame"]
+    assert found["tiles"] > 0 and found["differ"] == 0
+    # Python's offsets are the chain, so they are taken; a spoiled list is
+    # not, and the chain is walked instead: the same file either way.
+    hints = found["hints"]
+    assert hints["right"] == {"hinted": True, "geometrySame": True, "tileSame": True}
+    assert len(ifds) > 2 and hints["spoiled"]["hinted"] is False
+    assert hints["wrongFirst"]["hinted"] is False
+    for name in ("spoiled", "wrongFirst"):
+        assert hints[name]["geometrySame"] and hints[name]["tileSame"], name
+
+
+def test_the_ifd_offsets_are_kept_until_the_file_changes(tmp_path):
+    from plexora.browser import node_spec
+
+    path = _flat(tmp_path)
+    first = node_spec.main_ifds(str(path))
+    assert len(first) == 4
+    assert node_spec.main_ifds(str(path)) is first
+    _write_source(path, "uint16", (2, 300, 500), {"compression": "lzw", "rowsperstrip": 16}, seed=8)
+    again = node_spec.main_ifds(str(path))
+    assert len(again) == 2
+    assert node_spec.main_ifds(str(tmp_path / "missing.tif")) is None
+    (tmp_path / "not.tif").write_bytes(b"not a tiff")
+    assert node_spec.main_ifds(str(tmp_path / "not.tif")) is None

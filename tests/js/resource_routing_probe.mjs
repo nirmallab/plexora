@@ -348,7 +348,9 @@ function assertPlain(resolved, calls, why) {
     // the shell grants FOR THE PROJECT -- the page names a project, never a
     // path.
     const used = [];
-    const node = { decoded: () => null, use: (source) => used.push(source) };
+    const opened = [];
+    const node = { decoded: () => null, use: (source) => used.push(source),
+                   project: (name) => opened.push([name, used.length]) };
     const granted = [
         { kind: "image", path: LOCAL_ON.path, url: "http://plexora-file.localhost/ab", size: 9 },
         { kind: "labels", path: LOCAL_ON.labels.path, url: null, size: null, error: "on the network" },
@@ -359,6 +361,8 @@ function assertPlain(resolved, calls, why) {
     assert.equal(attached, node, "the node already on the page is used, not loaded again");
     assert.equal(calls.scripts.length, 0);
     assert.equal(used.length, 1);
+    assert.deepEqual(opened, [["tonsil", 1]],
+                     "the project's files are granted and opened at once, after the source is set");
     const spec = await used[0].spec("tonsil");
     assert.equal(spec.path, LOCAL_ON.path, "the first check takes the answer in hand");
     const files = await used[0].files("tonsil", spec);

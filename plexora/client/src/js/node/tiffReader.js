@@ -21,7 +21,10 @@
  *
  * createTiffReader() -> {open, tile, level, region}; workers/tiffWorker.js puts
  * it behind messages.
- *   open({file|url, size, decoder: "native"|"native-blob"|"pako", prefetchOffsets})
+ *   open({file|url, size, decoder: "native"|"native-blob"|"pako", prefetchOffsets,
+ *         record, seed})                         -- `record`: the result's `seed` is
+ *                                                 every slice the open read; `seed`:
+ *                                                 open from such slices (SeededSource)
  *   tile({channel, level, tx, ty, tw, th, raw})  -- `timing` says where it went
  *   region({channel, level, x0, y0, x1, y1})     -- a window as native values
  *   level({channel, level})                      -- a whole (small) level, raw
@@ -177,6 +180,55 @@ class CountingUrlSource {
     }
 }
 
+/**
+ * Another source, answered first from `seed`: the slices a worker of the same
+ * pool already read while it opened the file ({offset, length, buffer} each,
+ * `length` the range asked for, `buffer` what came back). With `recorded` an
+ * array, every slice read through the source is added to it -- the seed the
+ * pool's other workers open from (services/browserNode.js): a file whose
+ * header and IFDs are scattered over gigabytes costs one chain of reads per
+ * pool, not one per worker. Answers are the same bytes, so the same parse.
+ */
+class SeededSource {
+    constructor(inner, seed = null) {
+        this.inner = inner;
+        this.seed = Array.isArray(seed) ? seed.filter((s) => s && s.buffer) : [];
+        this.recorded = null;
+    }
+
+    get fileSize() { return this.inner.fileSize; }
+    get bytes() { return this.inner.bytes; }
+    get reads() { return this.inner.reads; }
+    get readMs() { return this.inner.readMs; }
+
+    /** The seeded bytes of one asked slice, or null. */
+    fromSeed({ offset, length }) {
+        for (const s of this.seed) {
+            if (offset >= s.offset && offset + length <= s.offset + s.length) {
+                const from = offset - s.offset;
+                return s.buffer.slice(from, from + length);
+            }
+        }
+        return null;
+    }
+
+    async fetch(slices, signal) {
+        const out = slices.map((slice) => (this.seed.length ? this.fromSeed(slice) : null));
+        const missing = [];
+        out.forEach((buffer, i) => { if (!buffer) missing.push(i); });
+        if (missing.length) {
+            const got = await this.inner.fetch(missing.map((i) => slices[i]), signal);
+            missing.forEach((i, k) => {
+                out[i] = got[k];
+                if (this.recorded) {
+                    this.recorded.push({ offset: slices[i].offset, length: slices[i].length, buffer: got[k].slice(0) });
+                }
+            });
+        }
+        return out;
+    }
+}
+
 /** Channel names and pixel size out of the OME-XML, when there is one. */
 function parseOme(xml) {
     if (!xml || !xml.includes("<OME")) return { names: null, physicalSize: null, sizeC: null };
@@ -199,6 +251,35 @@ async function tagValue(ifd, tag) {
     return ifd.loadValue(tag);
 }
 
+/**
+ * The file's main IFDs parsed at `offsets` all at once, or null. A file's
+ * IFDs are a chain, each saying where the next is, so walking it is one read
+ * after another -- forty for a forty-channel OME-TIFF whose IFDs sit beside
+ * each plane's gigabytes. Python knows the offsets (plexora/browser/
+ * node_spec.py `ifds`); they are taken only when they ARE the chain: the
+ * first is the header's, each IFD's next is the following offset, the last
+ * IFD's next is 0. Anything else -- or a parse that fails -- is null, and
+ * the chain is walked.
+ */
+async function mainIfdsAt(tiff, offsets) {
+    if (!Array.isArray(offsets) || !offsets.length || offsets.length > 4096) return null;
+    if (Number(offsets[0]) !== Number(tiff.firstIFDOffset)) return null;
+    const size = tiff.source && tiff.source.fileSize;
+    if (offsets.some((offset) => !Number.isSafeInteger(Number(offset)) || Number(offset) <= 0
+                     || (size && Number(offset) >= size))) return null;
+    let parsed;
+    try {
+        parsed = await Promise.all(offsets.map((offset) => tiff.parser.parseFileDirectoryAt(Number(offset))));
+    } catch (error) {
+        return null;
+    }
+    for (let i = 0; i < parsed.length; i += 1) {
+        const next = i + 1 < offsets.length ? Number(offsets[i + 1]) : 0;
+        if (Number(parsed[i].nextIFDByteOffset) !== next) return null;
+    }
+    return parsed;
+}
+
 export function createTiffReader() {
     let state = null;
 
@@ -211,25 +292,36 @@ export function createTiffReader() {
      *  - FLAT: one level, channels as main IFDs of the same size.
      * Only the main IFDs are parsed here; a level's IFD is parsed on first use.
      */
-    async function open({ file, url, size = null, source: given, decoder = "native", prefetchOffsets = true }) {
+    async function open({ file, url, size = null, source: given, decoder = "native", prefetchOffsets = true,
+                          seed = null, record = false, ifds = null }) {
         useDecoder(decoder);
         decodeClock.ms = 0;
         decodeClock.calls = 0;
         const t0 = now();
         // `given` is any {fetch(slices), fileSize} with the same counters (Node tests
         // read through a file handle: fs.openAsBlob truncates sizes past 4 GiB).
-        const source = given || (file ? new CountingBlobSource(file) : new CountingUrlSource(url, size));
+        // `seed`: what another worker read opening this file (`record`), answered
+        // from memory (SeededSource).
+        const source = new SeededSource(given || (file ? new CountingBlobSource(file) : new CountingUrlSource(url, size)),
+                                        seed);
+        if (record) source.recorded = [];
         const tiff = await GeoTIFF.fromSource(source);
         const tHeader = now();
-        const main = [];
-        for (let i = 0; ; i += 1) {
-            try {
-                main.push(await tiff.requestIFD(i));
-            } catch (error) {
-                if (error?.name === "GeoTIFFImageIndexError" || /index/i.test(String(error?.message))) break;
-                throw error;
+        // The main IFDs: all at once where the caller knows where they are
+        // (`ifds`, checked against the chain they make), else one after another.
+        let main = await mainIfdsAt(tiff, ifds);
+        const hinted = Boolean(main);
+        if (!main) {
+            main = [];
+            for (let i = 0; ; i += 1) {
+                try {
+                    main.push(await tiff.requestIFD(i));
+                } catch (error) {
+                    if (error?.name === "GeoTIFFImageIndexError" || /index/i.test(String(error?.message))) break;
+                    throw error;
+                }
+                if (main.length > 4096) throw new Error("more than 4096 main IFDs");
             }
-            if (main.length > 4096) throw new Error("more than 4096 main IFDs");
         }
         const tMain = now();
         const first = new GeoTIFFImage(main[0], tiff.littleEndian, false, source);
@@ -267,12 +359,10 @@ export function createTiffReader() {
                     return parsed.get(level);
                 });
             }
-            levelSizes = [{ width, height }];
-            // Level sizes from channel 0's SubIFDs: one small IFD parse each.
-            for (let level = 1; level <= subifds.length; level += 1) {
-                const image = await images[0](level);
-                levelSizes.push({ width: image.getWidth(), height: image.getHeight() });
-            }
+            // Level sizes from channel 0's SubIFDs: one small IFD parse each,
+            // all at once (their offsets are in hand).
+            const reduced = await Promise.all(subifds.map((_, i) => images[0](i + 1)));
+            levelSizes = [{ width, height }, ...reduced.map((image) => ({ width: image.getWidth(), height: image.getHeight() }))];
         } else {
             const sizes = [];
             for (const ifd of main) {
@@ -324,13 +414,18 @@ export function createTiffReader() {
             mainIfds: main.length,
             size: source.fileSize,
         };
-        return {
+        const opened = {
             geometry,
             timing: {
-                openMs: now() - t0, headerMs: tHeader - t0, mainIfdsMs: tMain - tHeader,
+                openMs: now() - t0, headerMs: tHeader - t0, mainIfdsMs: tMain - tHeader, hinted,
                 reads: source.reads, bytes: source.bytes, readMs: source.readMs,
             },
         };
+        if (record) {
+            opened.seed = source.recorded;
+            source.recorded = null;
+        }
+        return opened;
     }
 
     async function image(channel, level) {

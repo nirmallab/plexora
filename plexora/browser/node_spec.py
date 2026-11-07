@@ -32,6 +32,7 @@ becomes "a regular file on a local disk"; every other refusal is the website's.
 from __future__ import annotations
 
 import os
+import struct
 
 _TIFF = (".tif", ".tiff")
 
@@ -59,13 +60,78 @@ def is_local_file(path: str) -> bool:
     return os.path.isabs(path) and os.path.isfile(path)
 
 
+#: path -> ((size, mtime_ns), offsets): `main_ifds`'s answers, until the file changes.
+_IFDS: dict[str, tuple[tuple[int, int], list[int] | None]] = {}
+#: More main IFDs than the page's reader opens (node/tiffReader.js).
+_MAX_IFDS = 4096
+
+
+def main_ifds(path: str) -> list[int] | None:
+    """The offsets of a TIFF's main IFDs, in the order the file chains them,
+    or None. The page's reader walks that chain one read after another -- forty
+    reads through the desktop shell's scheme for a forty-channel OME-TIFF whose
+    IFDs sit beside each plane's gigabytes -- and with these it reads them all
+    at once (node/tiffReader.js `mainIfdsAt`, which takes them only when they
+    ARE the chain it finds). Kept per file until its size or time changes."""
+    try:
+        stat = os.stat(path)
+    except OSError:
+        return None
+    stamp = (stat.st_size, stat.st_mtime_ns)
+    held = _IFDS.get(path)
+    if held is not None and held[0] == stamp:
+        return held[1]
+    try:
+        with open(path, "rb") as fh:
+            offsets = _walk_ifds(fh)
+    except (OSError, struct.error):  # only a hint: the page walks the chain itself
+        offsets = None
+    if len(_IFDS) >= 64:
+        _IFDS.clear()
+    _IFDS[path] = (stamp, offsets)
+    return offsets
+
+
+def _walk_ifds(fh) -> list[int] | None:
+    """The main IFD chain of an open TIFF, as a reader walks it: the header's
+    first offset, then each IFD's next, until 0. None for anything that is not
+    a classic or Big TIFF, a chain that loops, or one longer than the page's
+    reader opens."""
+    head = fh.read(16)
+    order = {b"II": "<", b"MM": ">"}.get(head[:2])
+    if order is None or len(head) < 8:
+        return None
+    version = struct.unpack(order + "H", head[2:4])[0]
+    if version == 42:
+        at = struct.unpack(order + "I", head[4:8])[0]
+        count, entry, offset = "H", 12, "I"
+    elif version == 43 and len(head) == 16:
+        at = struct.unpack(order + "Q", head[8:16])[0]
+        count, entry, offset = "Q", 20, "Q"
+    else:
+        return None
+    count_size = struct.calcsize(count)
+    out = []
+    seen = set()
+    while at:
+        if at in seen or len(out) >= _MAX_IFDS:
+            return None
+        seen.add(at)
+        out.append(int(at))
+        fh.seek(at)
+        entries = struct.unpack(order + count, fh.read(count_size))[0]
+        fh.seek(at + count_size + entries * entry)
+        at = struct.unpack(order + offset, fh.read(struct.calcsize(offset)))[0]
+    return out or None
+
+
 def describe(name: str, local: bool = False) -> dict:
     """For project `name`, loading it if need be: the image as `{served,
     reason?, path, format, levels: [[c, h, w], ...], dtype, channels: [name,
     ...]}`, with `tile: [w, h]` (the grid of every tile route), `generation`
     and `labels` (the mask, `_labels`) beside it. `local`: the desktop app's
     question -- a file on this computer instead of one the website's page
-    holds."""
+    holds -- whose served image and mask also carry `ifds` (`main_ifds`)."""
     from plexora.server.models import data_model
     from plexora.server.models.project import IMAGE_TYPE_BRIGHTFIELD, Project
     from plexora.server.providers.browser import PAGE_ROOTS
@@ -124,6 +190,8 @@ def describe(name: str, local: bool = False) -> dict:
         return refuse(f"{dtype} samples in {len(levels[0])} dimensions")
     out.update(served=True, levels=levels, dtype=dtype,
                channels=[c.get("fullname") or c.get("name") for c in config["imageData"]])
+    if local:
+        out["ifds"] = main_ifds(path)
     return out
 
 
@@ -179,6 +247,8 @@ def _labels(data_model, config, local: bool = False) -> dict:
     if dtype not in ("uint8", "uint16", "uint32", "int32") or any(len(level) != 3 for level in levels):
         return refuse(f"{dtype} labels in {len(levels[0]) - 1} dimensions")
     out.update(served=True, levels=levels, dtype=dtype)
+    if local:
+        out["ifds"] = main_ifds(path)
     return out
 
 

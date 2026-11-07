@@ -34,6 +34,8 @@ const OPS = {
 
 function transfers(result) {
     if (result?.parts) return result.parts.map((part) => part.buffer);
+    // An open's recorded slices (`record`): copies, nothing here reads them again.
+    if (result?.seed) return result.seed.map((slice) => slice.buffer);
     const buffer = result?.array?.buffer || result?.values?.buffer || result?.bytes?.buffer;
     return buffer ? [buffer] : [];
 }

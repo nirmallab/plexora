@@ -334,7 +334,7 @@ window.PlexoraRouting = (function () {
     //: The browser node's script and its tag, loaded once into a page that
     //: chose `local-browser` -- nowhere else (the website's shell loads its own).
     const NODE_SCRIPT = "client/src/js/services/browserNode.js";
-    const NODE_SCRIPT_TAG = "20261107_desktop";
+    const NODE_SCRIPT_TAG = "20261107_local_open";
     let nodeScript = null;
 
     function loadNode() {
@@ -364,8 +364,9 @@ window.PlexoraRouting = (function () {
      * `local`). The node's spec is the server's `local` answer -- the one in
      * hand first, `/resource_routing` again when the node re-checks -- and its
      * files are the ones the shell grants for the project (the page names the
-     * project, never a path). Rejects when the node cannot be loaded; the
-     * caller then leaves every tile to the server.
+     * project, never a path). The grant and the files' opening start here,
+     * before any tile is asked for. Rejects when the node cannot be loaded;
+     * the caller then leaves every tile to the server.
      */
     async function attachLocal(datasource, route) {
         if (!route || route.mode !== LOCAL_BROWSER) throw new Error("not a local-browser routing");
@@ -394,6 +395,11 @@ window.PlexoraRouting = (function () {
                 return (path) => byPath.get(path) || null;
             },
         });
+        // Grant and open the files now, not at the first tile: the page asks
+        // for its channels and metadata meanwhile (main.js attaches as soon
+        // as the routing is known). `project` never rejects; a refusal is
+        // Python's to answer, tile by tile.
+        if (typeof node.project === "function") node.project(datasource);
         return node;
     }
 
