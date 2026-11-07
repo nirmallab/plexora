@@ -1,11 +1,57 @@
 # P6D: the desktop app adopts the browser node (plan Phase 6, step 1)
 
 Date: 2026-11-07. Records: `P6D-M-2026-11-07.json` (the tour, ABBA), `P6D-parity-M-2026-11-07.json`
-(tile parity). Branch `web/desktop`.
+(tile parity). Branch `web/desktop`. Then `P6D-open-M-2026-11-07.json` (the open fixed, eight
+blocks on a release shell; branch `web/desktop2`, see "The open, fixed" below).
 
-Status: **step 1 built and switched off.** Tile parity holds in the real window; the timings
-below were taken while other agents loaded the machine (CPU 27–66 % before each block) on a
-**debug** shell build, so they are provisional, not the desktop's final rows.
+Status: **step 1 built and switched off; the open is no longer slower with it on.** Tile parity
+holds in the real window; the timings were taken while other agents loaded the machine (CPU
+13–71 % before each block), so they are provisional, not the desktop's final rows.
+
+## The open, fixed (web/desktop2, 7f673247)
+
+The first record's open was 1.10–1.16× slower with the setting on. Where it went, read in the
+app's window (`PlexoraNode.project(name).timing` and each pool's `opening`, warm passes): the
+grant 40–75 ms after `/resource_routing`, then the image's pool 160–270 ms -- 49 reads one after
+another per worker (the header, LSP11385's 40 main IFDs, which sit beside each plane's
+gigabytes, and the reduced levels' IFDs), ~2.5 ms each through the scheme, in six workers, plus
+the workers' start (their 367 KB script) -- all after the first tile had asked. Now:
+
+- **one open per pool**: the first worker records the slices it read; the others open from them
+  (`node/tiffReader.js` `SeededSource`) and read nothing (`tests/js/tiff_seed_probe.mjs`: 49
+  reads → 0 on LSP11385, 1120 tiles byte-identical);
+- **the IFDs at once**: Python's spec carries the main IFDs' offsets (`node_spec.main_ifds`, a
+  walk of the chain in 0.9 ms, kept per file until it changes; `ifds` on the desktop's image and
+  mask), which the page parses in parallel and takes only when they ARE the chain (first = the
+  header's, each next = the following offset, the last's next 0); the reduced levels' IFDs are
+  parsed together too. Main IFDs 29–31 ms (were 99–173);
+- **opened while the page boots**: `main.js` attaches the routing as soon as `/resource_routing`
+  answers, `attachLocal` starts the grant and the open at once, and a project's first check
+  starts its workers before the grant.
+
+From the routing to the files open: 126–150 ms (was 234–276); the image pool's first open
+46–56 ms (was 112–195).
+
+| Step (time to full, ms, mean of 4 blocks) | C1 off | C1 on | on/off | C2 off | C2 on | on/off |
+|---|---|---|---|---|---|---|
+| open | 2370 | 2365 | **1.00** | 822 | 776 | **0.94** |
+| zoom to 1:4 at a | 1795 | 949 | 0.53 | 1721 | 922 | 0.54 |
+| zoom to 1:1 at a | 551 | 279 | 0.51 | 468 | 273 | 0.58 |
+| pan to b at 1:1 | 1133 | 557 | 0.49 | 1205 | 567 | 0.47 |
+| home | 192 | 27 | 0.14 | 174 | 35 | 0.20 |
+| revisit a at 1:1 | 28 | 26 | 0.91 | 23 | 25 | 1.09 |
+| jump to c at 1:1 | 857 | 497 | 0.58 | 858 | 473 | 0.55 |
+| animated zoom to 1:4 at b | 1403 | 1192 | 0.85 | 1201 | 1192 | 0.99 |
+| animated pan to c | 1197 | 1193 | 1.00 | 1204 | 1197 | 0.99 |
+| **geometric mean, the four tile steps** | | | **0.53** | | | **0.53** |
+
+Release shell (`cargo build --release`, gnullvm), eight blocks off, on, on, off, on, off, off,
+on, each a fresh app; renderer peak 1.33–1.37 GB on against 1.84–1.91 GB off. The open's spread
+is wide (C1 on 2152–2586 ms, off 2214–2572 ms): read the two as equal, not as a gain.
+`tour.mjs` now pauses only the three write routes it answers itself; it used to pause every
+server request over CDP, which added a round trip to each tile the server answered and none to
+those the page read (the first record's tile steps were measured that way; off's tile steps
+moved by about 4 %).
 
 ## What is adopted
 
@@ -134,12 +180,13 @@ Reading it:
 
 ## What is left
 
-- Rerun the campaign on an idle machine with a **release** shell (and P6's ABBA count) before the
-  numbers enter the measured map; until then these are the desktop's provisional rows.
-- Open: share one file open (geometry and IFD offsets) across a pool, or fewer workers at open;
-  overlap the grant with the page boot. Steps: a separate in-flight cap for the page's reads;
-  measure the scheme's raw range throughput from a worker (a micro-benchmark was written, not run)
-  against the read path's decode time.
+- Rerun the campaign on an idle machine (the release shell is built: `cargo build --release
+  --target x86_64-pc-windows-gnullvm` with `_cargo_env`'s variables) before the numbers enter
+  the measured map; until then these are the desktop's provisional rows.
+- Open: done (above). The grant is still a second `/resource_routing` round trip after the
+  page's own (40–120 ms). Steps: a separate in-flight cap for the page's reads (the scheduler
+  keeps six in flight, one per image worker, so a worker idles while its range read is in
+  flight); measure the scheme's raw range throughput from a worker against the decode time.
 - OME-Zarr in the node (a JS zarr reader with blosc/zstd), 8-bit tiles in the page, volumes.
 - Step 2 (tables via the column store, the Arrow sidecar), step 3 (contrast windows/GMM in JS),
   steps 4–7 as the plan orders them.
