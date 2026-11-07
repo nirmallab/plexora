@@ -133,15 +133,22 @@ try {
         return seen;
     };
 
-    // -- the one-time setup, through the routes the viewer's client calls --
+    // -- the one-time setup, as the viewer's client makes it when magic select
+    // is armed (PlexoraSegment.ensureReady: /status says the model is missing,
+    // it calls /install and shows its setup dialog while it polls /status) --
     const before = await route("/segment/v1/status");
     result.setup.before = { state: before.data.state, missing: before.data.weights?.missing,
                             device: before.data.device, runtime: before.data.runtime, ms: before.ms };
     const setupStarted = Date.now();
-    const install = await route("/segment/v1/install", {});
-    result.setup.install = { status: install.status, state: install.data.state, ms: install.ms };
+    result.setup.armedReady = await frame.evaluate(() => window.PlexoraSegment.ensureReady());
+    const dialogOf = () => frame.evaluate(() => {
+        const dialog = document.querySelector("dialog.plx-segment-setup");
+        return dialog ? { open: dialog.open, title: dialog.querySelector(".plx-dialog-title")?.textContent || "",
+                          meta: dialog.querySelector(".plx-segment-setup-meta")?.textContent || "" } : null;
+    });
     const states = [];
-    let state = install.data;
+    const dialogs = [];
+    let state = null;
     while (Date.now() - setupStarted < 300000) {
         state = (await route("/segment/v1/status")).data;
         const last = states[states.length - 1];
@@ -150,11 +157,30 @@ try {
         if (!last || last.state !== seen.state || last.file !== seen.file) {
             states.push({ ...seen, at: Date.now() - setupStarted });
         }
+        const shown = await dialogOf();
+        if (shown && (!dialogs.length || dialogs[dialogs.length - 1].title !== shown.title)) {
+            dialogs.push({ ...shown, at: Date.now() - setupStarted });
+            if (shots) await page.screenshot({ path: path.join(shots, `magic-select-setup-${dialogs.length}.png`) });
+        }
         if (["ready", "error"].includes(state.state) && !state.download?.running) break;
         await page.waitForTimeout(250);
     }
     result.setup.states = states;
     result.setup.readyMs = Date.now() - setupStarted;
+    // The dialog says it is ready, then closes itself.
+    for (let i = 0; i < 40; i += 1) {
+        const shown = await dialogOf();
+        if (shown && dialogs[dialogs.length - 1]?.title !== shown.title) {
+            dialogs.push({ ...shown, at: Date.now() - setupStarted });
+            if (shots) await page.screenshot({ path: path.join(shots, `magic-select-setup-${dialogs.length}.png`) });
+        }
+        if (!shown || !shown.open) {
+            dialogs.push({ open: false, at: Date.now() - setupStarted });
+            break;
+        }
+        await page.waitForTimeout(250);
+    }
+    result.setup.dialog = dialogs;
     // What else Python's worker ran meanwhile (background steps, requests).
     result.setup.python = await page.evaluate((since) => ({
         steps: window.PlexoraPython.steps().filter((s) => s.at >= since - 5000),
