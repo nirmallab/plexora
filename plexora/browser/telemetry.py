@@ -47,14 +47,18 @@ _last_upload: float | None = None
 _kept = False
 
 
-def start(home: str = "/telemetry", *, keep_queue: bool = True, scratch: str = "/tmp/telemetry",
+def start(home: str = "/telemetry", *, keep_queue: bool = True, scratch: str | None = None,
           context: dict | None = None) -> dict:
     """Telemetry for this tab, from what the worker has read back into
     `home`. `keep_queue`: this tab holds the queue's lock, and its queue is
-    `home`'s; otherwise one in `scratch`, in memory only. `context`: what the
-    browser reports (`os` family, `cpus`, `memory_gb`). Returns
+    `home`'s; otherwise one of its own in `scratch` -- by default a new
+    folder for this start (the worker's memory on the website), so no queue
+    left by anything before is ever sent again. `context`: what the browser
+    reports (`os` family, `cpus`, `memory_gb`). Returns
     `{enabled, mode, source, kept}`."""
     global _kept, _last_upload
+    import tempfile
+
     import plexora
     from plexora.telemetry import config
     from plexora.telemetry.client import telemetry
@@ -64,7 +68,11 @@ def start(home: str = "/telemetry", *, keep_queue: bool = True, scratch: str = "
     _last_upload = None
     config.set_prefs_file(Path(home) / PREFS)
     if telemetry._queue is None:
-        telemetry._queue = Queue(Path(home if keep_queue else scratch) / QUEUE)
+        if keep_queue:
+            where = Path(home)
+        else:
+            where = Path(scratch) if scratch else Path(tempfile.mkdtemp(prefix="plexora-telemetry-"))
+        telemetry._queue = Queue(where / QUEUE)
     telemetry.context = {**telemetry.context, **(context or {})}
     telemetry.start(plexora.app, serve_mode="web", upload=False)
     return state()
