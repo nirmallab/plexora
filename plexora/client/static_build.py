@@ -2,6 +2,7 @@
 
     python -m plexora.client.static_build [--out DIR] [--py URL] [--models URL] [--noindex]
         [--licence-api URL] [--licence-portal URL] [--licence-test-key KID=KEY]
+        [--telemetry URL]
 
 Plexora's pages are rendered on the website by Plexora's own Python in a
 worker beside the page (plexora/browser), so what the site serves as files is
@@ -14,7 +15,7 @@ Writes `--out` (default `plexora/client/dist/static/`):
 
 - `index.html`: the loader;
 - `client/{src,dist,external}/...` and `plugins/<name>/static/...`;
-- `client/shell.json`: `{version, py, models, licence?}`, `py` the base the
+- `client/shell.json`: `{version, py, models, licence?, telemetry?}`, `py` the base the
   Python bundle is served from (`tools/browser_build/build.py`; the assets
   bucket on the site, `/py/<version>/` in development; onnxruntime-web is its
   `ort/`), `models` the base magic select's model files are under
@@ -25,7 +26,11 @@ Writes `--out` (default `plexora/client/dist/static/`):
   BioCognia platform's product API (default https://api.biocognia.com/v1),
   `portal`, and `test_keys`, throwaway `bct*` keys a TEST build trusts
   (tests/browser/license.mjs). `tools/browser_build/publish.py site` refuses
-  to publish a build that carries test keys;
+  to publish a build that carries test keys; `telemetry` `{endpoint}` only
+  with `--telemetry`: the service the website sends the desktop's anonymous
+  usage counts to (plexora/browser/telemetry.py; the site's builds name
+  https://analytics.plexoraapp.com, which admits their origins). A build
+  without it -- every test's, a node's -- sends nothing;
 - `_headers` and `_redirects` for Cloudflare Pages: every response
   cross-origin isolated (the site needs SharedArrayBuffer), the service worker
   allowed the whole site, and every path that is not a file answered with the
@@ -135,8 +140,14 @@ def licence_config(api: str | None = None, portal: str | None = None, test_keys=
     return out
 
 
+#: The telemetry service the website's own builds name (`--telemetry`):
+#: plexora/telemetry/config.py's DEFAULT_ENDPOINT, the Worker in backend/.
+TELEMETRY_ENDPOINT = "https://analytics.plexoraapp.com"
+
+
 def build(out: Path = DEFAULT_OUT, py: str | None = None, noindex: bool = False,
-          licence: dict | None = None, models: str | None = None) -> dict:
+          licence: dict | None = None, models: str | None = None,
+          telemetry: str | None = None) -> dict:
     from plexora import __version__
 
     py = py or f"/py/{__version__}/"
@@ -156,12 +167,14 @@ def build(out: Path = DEFAULT_OUT, py: str | None = None, noindex: bool = False,
     shell = {"version": __version__, "py": py, "models": models}
     if licence:
         shell["licence"] = licence
+    if telemetry:
+        shell["telemetry"] = {"endpoint": telemetry.rstrip("/")}
     (out / "client" / "shell.json").write_bytes(json.dumps(shell, indent=1).encode("utf-8"))
     headers = HEADERS.replace("/*\n", "/*\n  X-Robots-Tag: noindex\n", 1) if noindex else HEADERS
     (out / "_headers").write_bytes(headers.encode("utf-8"))
     (out / "_redirects").write_bytes(REDIRECTS.encode("utf-8"))
     return {"out": str(out), "files": files + 4, "plugins": plugins, "version": __version__, "py": py,
-            "models": models,
+            "models": models, "telemetry": shell.get("telemetry"),
             "licence": {k: (sorted(v) if k == "test_keys" else v) for k, v in (licence or {}).items()}}
 
 
@@ -177,9 +190,13 @@ def main(argv=None) -> int:
     parser.add_argument("--licence-portal", default=None, help="the portal a person approves a code at")
     parser.add_argument("--licence-test-key", action="append", default=[], metavar="KID=KEY",
                         help="a throwaway key a TEST build trusts (never published)")
+    parser.add_argument("--telemetry", default=None, metavar="URL",
+                        help="send the desktop's anonymous usage counts to this service "
+                             f"(the site's builds: {TELEMETRY_ENDPOINT}); none: nothing is sent")
     args = parser.parse_args(argv)
     licence = licence_config(args.licence_api, args.licence_portal, args.licence_test_key)
-    print(json.dumps(build(Path(args.out), args.py, args.noindex, licence, args.models), indent=1))
+    print(json.dumps(build(Path(args.out), args.py, args.noindex, licence, args.models,
+                           args.telemetry), indent=1))
     return 0
 
 

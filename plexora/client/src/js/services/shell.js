@@ -31,9 +31,10 @@
  * the licence changed elsewhere (another tab, the background refresh).
  *
  * Reads `/client/shell.json` (`client/static_build.py`): `{version, py,
- * licence?}`, where `py` is the base of the Python bundle (the assets bucket
- * on the site) and `licence` the platform's address when it is not
- * api.biocognia.com (a test build's).
+ * licence?, telemetry?}`, where `py` is the base of the Python bundle (the
+ * assets bucket on the site), `licence` the platform's address when it is not
+ * api.biocognia.com (a test build's), and `telemetry.endpoint` the usage-count
+ * service the site's builds name (none: nothing is sent).
  *
  * **Under a path.** viewer.plexoraapp.com serves the site at its root. A data
  * node serving the app (`plexora node serve --app`) serves it at `/app/`,
@@ -295,6 +296,26 @@
         return fragment;
     }
 
+    //: Telemetry for the worker (plexora/browser/telemetry.py): the desktop's
+    //: anonymous usage counts, when the build names the service
+    //: (shell.json `telemetry`), with what a desktop's environment would say:
+    //: Do Not Track (or Global Privacy Control) turns it off, as DO_NOT_TRACK
+    //: does there, and the machine's coarse facts, which the worker cannot
+    //: ask for. Null (off) for a build that names no service.
+    function telemetryOptions(shell) {
+        const endpoint = shell && shell.telemetry && shell.telemetry.endpoint;
+        if (!endpoint) return null;
+        const nav = global.navigator || {};
+        const dnt = nav.doNotTrack === "1" || global.doNotTrack === "1" || nav.globalPrivacyControl === true;
+        const platform = String((nav.userAgentData && nav.userAgentData.platform) || nav.platform || nav.userAgent || "");
+        const os = /Win/i.test(platform) ? "windows" : /Mac/i.test(platform) ? "mac"
+            : /Linux|X11|CrOS/i.test(platform) ? "linux" : "other";
+        const context = { os };
+        if (nav.hardwareConcurrency) context.cpus = nav.hardwareConcurrency;
+        if (nav.deviceMemory) context.memory_gb = nav.deviceMemory;
+        return { endpoint: String(endpoint), dnt, context };
+    }
+
     async function hostBoot() {
         global.PlexoraShellHost = true;
         const pairing = takePairingLink();
@@ -335,7 +356,7 @@
         // `trace`), for diagnosing the site in development.
         const debug = new URLSearchParams(global.location.search).has("pydebug");
         const info = await global.PlexoraPython.start({ base: py, root: at("/"), siteBase: BASE,
-                                                        debug, store });
+                                                        debug, store, telemetry: telemetryOptions(shell) });
         if (info.error) throw new Error(info.error);
         // What Help › About says on the website (views/helpMenu.js).
         global.PlexoraSite = Object.freeze({ version: info.version || shell.version || "" });

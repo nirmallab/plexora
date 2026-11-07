@@ -19,6 +19,9 @@
 //   licence {files}                the page's licence records written into /bioc
 //                                  (plexora/browser/licence.py) -> the licence status
 //   heap                           the wasm heap's bytes
+//   telemetry {hidden}             telemetry's turn now (the page's tab is being
+//                                  hidden): counts into the queue, an upload if
+//                                  due, the files kept (plexora/browser/telemetry.py)
 //   run {code}                     tests only (boot with debug: true): Python's
 //                                  last expression, as text
 // Events posted to the page, unasked: {event: {kind: "job", job}} as a job's
@@ -37,6 +40,7 @@
 
 import { createStore } from "./storeSync.js";
 import { idbFolder } from "./idbFolder.js";
+import { createTelemetryStore, indexedKv } from "./telemetryStore.js";
 
 let py = null;
 let base = "";
@@ -325,6 +329,7 @@ async function boot(args) {
     self.plexoraWaiting = () => queue.length > 0 || (inFlight !== null && Atomics.load(inFlight, 0) > 0);
     py.globals.set("ORIGIN", origin);
     py.globals.set("SITE_BASE", siteBase);
+    py.globals.set("TELEMETRY", JSON.stringify(args.telemetry || null));
     const info = JSON.parse(await py.runPythonAsync(`
 import json
 import js
@@ -437,9 +442,11 @@ def _load_stage(name):
 _finder = stages.install(_load_stage, loaded=tuple(js.plexoraStagesLoaded.to_py()))
 json.dumps(boot.start(ORIGIN, base_url=SITE_BASE, post=_post, cancelled=lambda job: bool(js.plexoraCancelled(job)),
                       idle=_idle, waiting=lambda: bool(js.plexoraWaiting()), columns=_columns,
-                      ask=_ask, wait_on=_wait_on, jspi=JSPI, sleep=lambda seconds: js.self.plexoraSleep(seconds)))
+                      ask=_ask, wait_on=_wait_on, jspi=JSPI, sleep=lambda seconds: js.self.plexoraSleep(seconds),
+                      telemetry=json.loads(TELEMETRY)))
 `));
     phases.ready = at(); mark("ready");
+    if (args.telemetry && args.telemetry.endpoint) info.telemetry = await startTelemetry(args.telemetry);
     return { phases, info, store, derived, stages: Object.fromEntries(
         Object.entries(stagesInfo).map(([name, stage]) => [name, stage.bytes])),
              transport: jspi ? "jspi" : syncChannel ? "shared memory" : "none", loaded };
@@ -649,6 +656,10 @@ async function request(args) {
         pyMs: Math.round(performance.now() - started),
     };
     scheduleSync();
+    // Settings > Usage data (the mode, the notice, a new install id): kept now.
+    if (telemetry && args.method === "POST" && /\/telemetry\/(mode|notice_seen|reset|send)$/.test(args.path || "")) {
+        telemetry.kept.save().catch(() => null);
+    }
     answer.destroy(); message.destroy(); handle.destroy(); app.destroy();
     return result;
 }
@@ -704,6 +715,51 @@ function mountTree({ dir, blobs }) {
     return blobs.length;
 }
 
+// -- telemetry (plexora/browser/telemetry.py) -----------------------------------
+//
+// The desktop's anonymous usage counts, sent from here by the desktop's code:
+// its files kept in IndexedDB (workers/telemetryStore.js), its turn taken a
+// minute after the start, then every few minutes and when the tab is hidden
+// (the `telemetry` op), queued behind the page's requests like any message.
+const TELEMETRY_FIRST_MS = 60 * 1000;
+const TELEMETRY_EVERY_MS = 5 * 60 * 1000;
+let telemetry = null;
+
+async function startTelemetry(options) {
+    const kept = createTelemetryStore({ FS: py.FS, kv: indexedKv() });
+    try {
+        await kept.restore();
+    } catch (error) {
+        self.postMessage({ log: `telemetry: kept in memory only (${error?.message || error})` });
+    }
+    const module = py.pyimport("plexora.browser.telemetry");
+    let answer;
+    try {
+        answer = JSON.parse(await call(module.start_json, JSON.stringify({
+            home: "/telemetry", keep_queue: kept.kept, context: options.context || {} })));
+    } finally {
+        module.destroy();
+    }
+    telemetry = { kept, answer };
+    await kept.save().catch(() => null);
+    const tick = () => { queue.push({ op: "telemetry", args: { hidden: false }, arrived: performance.now() }); drain(); };
+    setTimeout(() => { tick(); setInterval(tick, TELEMETRY_EVERY_MS); }, TELEMETRY_FIRST_MS);
+    return answer;
+}
+
+async function telemetryTurn({ hidden = false } = {}) {
+    if (!telemetry) return null;
+    const module = py.pyimport("plexora.browser.telemetry");
+    let answer;
+    try {
+        answer = JSON.parse(await call(module.tick_json, Boolean(hidden)));
+    } finally {
+        module.destroy();
+    }
+    answer.saved = await telemetry.kept.save().catch(() => []);
+    return answer;
+}
+
 const OPS = {
     boot,
     request,
@@ -731,6 +787,7 @@ const OPS = {
         }
     },
     heap: () => (py ? py._module.HEAP8.length : null),
+    telemetry: telemetryTurn,
     //: The project store written back now (before the page copies it).
     flush: async () => {
         await syncing;

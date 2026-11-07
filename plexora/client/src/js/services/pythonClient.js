@@ -27,8 +27,12 @@
  *   runs is answered here. Without shared memory it is a request like any
  *   other, answered once the job has ended its turn.
  *
- *   start({base, origin, store})  -> promise of the boot's record ({phases, info, ...});
- *                           `store` a granted folder to keep the projects in
+ *   start({base, origin, store, telemetry})  -> promise of the boot's record ({phases, info, ...});
+ *                           `store` a granted folder to keep the projects in;
+ *                           `telemetry` {endpoint, dnt, context} when the site sends
+ *                           the desktop's anonymous usage counts (plexora/browser/
+ *                           telemetry.py), whose turn is also taken when the tab hides
+ *   telemetry({hidden})     telemetry's turn now
  *   ready                   a promise of the same, for whoever asks later
  *   fetch(url, init)        -> promise of a Response, as from the server
  *   mount(dir, files)       picked File objects under `dir` in Python's files
@@ -220,15 +224,23 @@
     let siteBase = "";
 
     function start({ base, origin = global.location.origin, root = "/", siteBase: under = "",
-                     debug = false, store = null } = {}) {
+                     debug = false, store = null, telemetry = null } = {}) {
         if (worker) return ready;
         siteBase = String(under || "").replace(/\/+$/, "");
         worker = new Worker(new URL(root + WORKER, global.location.href), { type: "module" });
         worker.onmessage = onMessage;
         worker.onerror = (event) => console.error("[python] worker failed:", event.message);
-        call("boot", { base, origin, siteBase, cancels, inFlight, debug, store }).then(resolveReady, (error) => {
+        call("boot", { base, origin, siteBase, cancels, inFlight, debug, store, telemetry }).then(resolveReady, (error) => {
             resolveReady({ error: String(error?.message || error) });
         });
+        if (telemetry && telemetry.endpoint && global.document) {
+            // Hidden may be closed: what was counted is queued (and kept) now.
+            global.document.addEventListener("visibilitychange", () => {
+                if (global.document.visibilityState === "hidden") {
+                    ready.then(() => call("telemetry", { hidden: true })).catch(() => null);
+                }
+            });
+        }
         return ready;
     }
 
@@ -522,6 +534,7 @@
         //: services/browserNode.js "window").
         answers: (kind, fn) => { answerers.set(kind, fn); },
         heap: () => ready.then(() => call("heap", {})),
+        telemetry: (args) => ready.then(() => call("telemetry", args || {})),
         run: (code) => ready.then(() => call("run", { code })),
         sync: () => ready.then(() => call("sync", {})),
         //: The project store written back now; moved to a granted folder
