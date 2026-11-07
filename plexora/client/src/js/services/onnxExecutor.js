@@ -24,7 +24,7 @@
  *                         "webgpu" | "wasm" (`?segment_device=` on the
  *                         address does the same)
  *   call(op, args)        the worker directly (diagnostics, tests)
- *   reset({device})       sessions dropped; the next run on `device`
+ *   reset({device})       sessions (and the run log) dropped; the next run on `device`
  *   times()               the latest runs: [{op, ep, ms}]
  *
  * Classic script, `window.PlexoraOnnx`; registers with PlexoraPython.

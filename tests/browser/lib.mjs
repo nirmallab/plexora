@@ -2,7 +2,9 @@
 // and a Chrome to open its pages in. Chrome is the system's where there is
 // one (`PLEXORA_BENCH_CHROME` names another), else Playwright's own Chromium
 // (CI: `playwright-core install chromium`); playwright-core comes from
-// tools/poc_browser_node (`npm ci` there). `PLEXORA_PYTHON` runs serve.py.
+// tools/poc_browser_node (`npm ci` there), or the node_modules folder
+// `PLEXORA_PLAYWRIGHT_MODULES` names (a worktree whose own is not usable).
+// `PLEXORA_PYTHON` runs serve.py.
 import { spawn } from "node:child_process";
 import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -16,7 +18,9 @@ export const CHROME = process.env.PLEXORA_BENCH_CHROME
 export const PYTHON = process.env.PLEXORA_PYTHON || "C:/Users/aj/.conda/envs/plexora/python.exe";
 
 export async function playwright() {
-    const where = path.join(REPO, "tools", "poc_browser_node", "node_modules", "playwright-core", "index.mjs");
+    const modules = process.env.PLEXORA_PLAYWRIGHT_MODULES
+        || path.join(REPO, "tools", "poc_browser_node", "node_modules");
+    const where = path.join(modules, "playwright-core", "index.mjs");
     return import(pathToFileURL(where).href);
 }
 

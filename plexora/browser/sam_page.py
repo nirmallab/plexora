@@ -75,6 +75,25 @@ class PageError(RuntimeError):
     """The page could not do what was asked; its reason is the message."""
 
 
+_PRIMED = False
+
+
+def prime() -> None:
+    """The pre- and post-processing's modules (cv2, shapely: the website's
+    `qc` stage, ~20 MB, plexora/browser/stages.py), imported once the page
+    says the model is there -- when magic select is armed -- rather than
+    inside the first click; the desktop's `sam.prime` imports cv2 at start."""
+    global _PRIMED
+    if _PRIMED:
+        return
+    _PRIMED = True
+    try:
+        import cv2  # noqa: F401
+        import shapely  # noqa: F401
+    except ImportError:
+        pass  # the click says so, as it would have
+
+
 class PageExecutor:
     """`sam_backend.Executor` over the page's onnxruntime-web."""
 
@@ -88,6 +107,8 @@ class PageExecutor:
         said = self._call("status", model=pins())
         if not said:
             return {"runtime": {"installed": False, "install": None}, "hint": NO_PAGE}
+        if (said.get("runtime") or {}).get("installed") and not (said.get("weights") or {}).get("missing"):
+            prime()
         return said
 
     def install(self) -> None:

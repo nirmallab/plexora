@@ -41,6 +41,9 @@
 // (`device.fallback`), as the desktop's GPU providers fall back to CPU.
 
 const RUNTIMES = { webgpu: "ort.webgpu.min.mjs", wasm: "ort.wasm.min.mjs" };
+//: Every session's options: all graph optimisations, as the desktop, and only
+//: errors logged (ORT's node-placement warnings would reach the console).
+const SESSION = { graphOptimizationLevel: "all", logSeverityLevel: 3 };
 //: Embeddings kept for decoder calls that name them (segment.py keeps 8 views).
 const KEEP = 8;
 const RECENT = 100;
@@ -240,15 +243,27 @@ async function runtime() {
     return runtimeInfo;
 }
 
-async function gpuAdapter() {
-    if (adapter !== undefined) return adapter;
-    adapter = null;
-    try {
-        if (navigator.gpu) adapter = await navigator.gpu.requestAdapter();
-    } catch (error) {
-        adapter = null;
+//: Asked once; every caller waits for the same answer (a caller that came
+//: while the first asked must not read "none": the background load a later
+//: visit's status starts asks as status itself does).
+let adapterAsked = null;
+//: Why there is no adapter, for `device.gpu_note`.
+let adapterWhy = null;
+function gpuAdapter() {
+    if (!adapterAsked) {
+        adapterAsked = (async () => {
+            try {
+                if (!navigator.gpu) adapterWhy = "this browser has no WebGPU";
+                else adapter = await navigator.gpu.requestAdapter();
+                if (navigator.gpu && !adapter) adapterWhy = "WebGPU offered no adapter";
+            } catch (error) {
+                adapterWhy = `WebGPU: ${readable(error)}`;
+            }
+            adapter = adapter || null;
+            return adapter;
+        })();
     }
-    return adapter;
+    return adapterAsked;
 }
 
 function adapterName(found) {
@@ -297,7 +312,7 @@ async function status({ model } = {}) {
         const plan = await planned(lastDevice);
         out.device = { requested: config.device || lastDevice, encoder: plan.ep, decoder: plan.ep,
                        gpu: plan.ep === "webgpu", fallback: plan.why || null,
-                       adapter: adapterName(adapter), runtime: out.runtime.version };
+                       adapter: adapterName(adapter), gpu_note: adapterWhy, runtime: out.runtime.version };
     }
     return out;
 }
@@ -333,13 +348,13 @@ async function makeSessions(model, device) {
     ort.env.wasm.wasmPaths = where;
     ort.env.logLevel = "error";
     const record = { requested: config.device || device || "auto", encoder: null, decoder: null,
-                     gpu: false, fallback: null, adapter: adapterName(adapter),
+                     gpu: false, fallback: null, adapter: adapterName(adapter), gpu_note: adapterWhy,
                      runtime: `onnxruntime-web ${info.version}` };
     const make = async (role) => {
         if (plan.ep === "webgpu") {
             try {
                 const session = await ort.InferenceSession.create(bytes[role], {
-                    executionProviders: ["webgpu"], graphOptimizationLevel: "all" });
+                    executionProviders: ["webgpu"], ...SESSION });
                 record[role] = "webgpu";
                 return session;
             } catch (error) {
@@ -347,7 +362,7 @@ async function makeSessions(model, device) {
             }
         }
         const session = await ort.InferenceSession.create(bytes[role], {
-            executionProviders: ["wasm"], graphOptimizationLevel: "all" });
+            executionProviders: ["wasm"], ...SESSION });
         record[role] = "wasm";
         return session;
     };
@@ -387,7 +402,7 @@ async function fallBack(made, role, bytes, error) {
     const model = bytes || await readVerified(await folder(made.model, false), made.files[role]);
     if (!model) throw new Error(`${made.files[role].name} is no longer in storage`);
     return made.ort.InferenceSession.create(model, {
-        executionProviders: ["wasm"], graphOptimizationLevel: "all" });
+        executionProviders: ["wasm"], ...SESSION });
 }
 
 async function load({ model, device } = {}) {
@@ -550,6 +565,7 @@ const OPS = {
     reset: async ({ device } = {}) => {
         await drop();
         loadError = null;
+        runs.length = 0;
         if (device !== undefined) config.device = device || null;
         return true;
     },

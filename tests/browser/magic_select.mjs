@@ -112,7 +112,7 @@ try {
     const project = await frame.evaluate(() => window.flaskVariables?.datasource);
     result.project = project;
 
-    const route = (where, body) => frame.evaluate(async ({ where, body }) => {
+    const routeOn = (target) => (where, body) => target.evaluate(async ({ where, body }) => {
         const t = performance.now();
         const response = await fetch(where, {
             method: body === undefined ? "GET" : "POST",
@@ -121,6 +121,7 @@ try {
         const data = await response.json().catch(() => null);
         return { status: response.status, data, ms: Math.round(performance.now() - t) };
     }, { where, body });
+    const route = routeOn(frame);
     const py = (code) => page.evaluate((code) => window.PlexoraPython.run(code), code);
     const dumpOf = async (answer, name, folder) => {
         const code = `TOKEN = ${JSON.stringify(answer.token)}\nPROJECT = ${JSON.stringify(project)}\n`
@@ -135,10 +136,10 @@ try {
     // -- the one-time setup, through the routes the viewer's client calls --
     const before = await route("/segment/v1/status");
     result.setup.before = { state: before.data.state, missing: before.data.weights?.missing,
-                            device: before.data.device, runtime: before.data.runtime };
+                            device: before.data.device, runtime: before.data.runtime, ms: before.ms };
     const setupStarted = Date.now();
     const install = await route("/segment/v1/install", {});
-    result.setup.install = { status: install.status, state: install.data.state };
+    result.setup.install = { status: install.status, state: install.data.state, ms: install.ms };
     const states = [];
     let state = install.data;
     while (Date.now() - setupStarted < 300000) {
@@ -154,6 +155,11 @@ try {
     }
     result.setup.states = states;
     result.setup.readyMs = Date.now() - setupStarted;
+    // What else Python's worker ran meanwhile (background steps, requests).
+    result.setup.python = await page.evaluate((since) => ({
+        steps: window.PlexoraPython.steps().filter((s) => s.at >= since - 5000),
+        requests: window.PlexoraPython.recent().filter((r) => r.path.startsWith("/segment/")).slice(-6),
+    }), await page.evaluate(() => performance.now()) - (Date.now() - setupStarted));
     result.setup.after = { state: state.state, hint: state.hint, device: state.device,
                            download: state.download };
     if (state.state !== "ready") throw new Error(`setup ended ${state.state}: ${state.hint}`);
@@ -235,6 +241,31 @@ try {
             ort: summarize(run.ortTimes),
         };
     }
+
+    // -- a later visit (same profile): the model comes from the browser's
+    // storage, checked again, with no download --
+    await page.goto(`http://127.0.0.1:${server.port}/?pydebug`);
+    const home = await appFrame(page);
+    const later = await routeOn(home)("/segment/v1/status");
+    const loadStarted = Date.now();
+    const loaded = await py("from plexora.vision import sam\nimport json\njson.dumps(sam.session().device)");
+    const loadMs = Date.now() - loadStarted;
+    const embedded = await py("import numpy as np\nfrom plexora.vision import sam\n"
+        + "e = sam.embed(np.full((256, 256, 3), 128, np.uint8))\nstr(e.array.shape)");
+    result.revisit = {
+        state: later.data.state, download: later.data.download, missing: later.data.weights?.missing,
+        loadMs, device: JSON.parse(loaded), embedded,
+        stored: await page.evaluate(async (dir) => {
+            let at = await navigator.storage.getDirectory();
+            for (const part of ["plexora", "cache", "models", ...dir.split("/").filter(Boolean)]) {
+                at = await at.getDirectoryHandle(part);
+            }
+            const out = {};
+            for await (const [name, handle] of at.entries()) out[name] = (await handle.getFile()).size;
+            return out;
+        }, spec.web_dir),
+    };
+    if (later.data.state !== "ready" || later.data.download) failed = true;
     result.errors = errors.slice(0, 20);
 } catch (error) {
     result.error = String(error && error.stack || error);

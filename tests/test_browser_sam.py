@@ -185,6 +185,20 @@ def test_the_status_is_the_desktops_states_from_what_the_page_says():
     assert (sam.status().state, sam.status().hint) == ("error", page.error)
 
 
+def test_the_processing_modules_load_when_the_model_is_there(monkeypatch):
+    """cv2 and shapely are the website's qc stage (~20 MB): imported when the
+    page says the model is ready (magic select armed), not inside a click."""
+    primed = []
+    monkeypatch.setattr(sam_page, "prime", lambda: primed.append(True))
+    page = Page(sam_backend.FakeSamBackend(), stored=False)
+    sam_page.install(page)
+    sam.status()
+    assert primed == []
+    page.stored = True
+    sam.status()
+    assert primed == [True]
+
+
 def test_a_page_that_does_not_answer_is_not_a_runtime():
     sam_page.install(Page(None, runtime=False))
     status = sam.status()
