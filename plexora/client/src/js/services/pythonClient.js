@@ -27,8 +27,9 @@
  *   runs is answered here. Without shared memory it is a request like any
  *   other, answered once the job has ended its turn.
  *
- *   start({base, origin, store, telemetry})  -> promise of the boot's record ({phases, info, ...});
- *                           `store` a granted folder to keep the projects in;
+ *   start({base, origin, store, telemetry, scratch})  -> promise of the boot's record ({phases, info, ...});
+ *                           `store` a granted folder to keep the projects in
+ *                           (`scratch`: none, data in memory -- services/selfcheck.js);
  *                           `telemetry` {endpoint, dnt, context} when the site sends
  *                           the desktop's anonymous usage counts (plexora/browser/
  *                           telemetry.py), whose turn is also taken when the tab hides
@@ -241,13 +242,13 @@
     let siteBase = "";
 
     function start({ base, origin = global.location.origin, root = "/", siteBase: under = "",
-                     debug = false, store = null, telemetry = null } = {}) {
+                     debug = false, store = null, telemetry = null, scratch = false } = {}) {
         if (worker) return ready;
         siteBase = String(under || "").replace(/\/+$/, "");
         worker = new Worker(new URL(root + WORKER, global.location.href), { type: "module" });
         worker.onmessage = onMessage;
         worker.onerror = (event) => console.error("[python] worker failed:", event.message);
-        call("boot", { base, origin, siteBase, cancels, inFlight, debug, store, telemetry }).then(resolveReady, (error) => {
+        call("boot", { base, origin, siteBase, cancels, inFlight, debug, store, telemetry, scratch }).then(resolveReady, (error) => {
             resolveReady({ error: String(error?.message || error) });
         });
         if (telemetry && telemetry.endpoint && global.document) {

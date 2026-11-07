@@ -18,6 +18,9 @@ Writes `--out` (default `plexora/client/dist/static/`):
 - `google-auth.html`: the page Google's sign-in returns to
   (services/googleAuthReturn.js), the `redirect_uri` the site's OAuth client
   registers (`https://<site>/google-auth.html`);
+- `selfcheck.html`: the self-check page, at `/selfcheck` (Pages serves a
+  page without its `.html`): how Plexora runs in this browser on this
+  computer, its results saved as a file (services/selfcheck.js);
 - `client/shell.json`: `{version, py, models, flags?, licence?, telemetry?, google?}`, `py` the base the
   Python bundle is served from (`tools/browser_build/build.py`; the assets
   bucket on the site, `/py/<version>/` in development; onnxruntime-web is its
@@ -134,6 +137,35 @@ GOOGLE_AUTH = """<!doctype html>
 </html>
 """
 
+#: The self-check page (services/selfcheck.js): a heading, one line, the
+#: buttons on one row, then a row per measurement as it is made.
+SELFCHECK = """<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+""" + BASE_HREF + """
+<title>Plexora - Self-check</title>
+<link rel="icon" type="image/svg+xml" href="client/src/img/logo.svg">
+<link rel="stylesheet" href="client/src/css/tokens.css">
+<link rel="stylesheet" href="client/src/css/selfcheck.css">
+<script src="client/src/js/services/pythonClient.js"></script>
+<script src="client/src/js/services/selfcheck.js"></script>
+</head>
+<body>
+<main id="selfcheck">
+  <header><img src="client/src/img/logo.svg" alt=""><h1>Plexora on this computer</h1></header>
+  <p>About a minute. Nothing is sent: download the results to share them.</p>
+  <div class="selfcheck-actions">
+    <button id="selfcheck-run" class="is-primary" type="button">Run the check</button>
+    <button id="selfcheck-save" type="button" disabled>Download results</button>
+  </div>
+  <table id="selfcheck-results"></table>
+</main>
+</body>
+</html>
+"""
+
 #: Cloudflare Pages' `_headers`: the site is cross-origin isolated everywhere
 #: (plan D5) and under its Content-Security-Policy; its service worker may
 #: control every path.
@@ -241,6 +273,7 @@ def build(out: Path = DEFAULT_OUT, py: str | None = None, noindex: bool = False,
         plugins.append(static.parent.name)
     (out / "index.html").write_bytes(LOADER.encode("utf-8"))
     (out / "google-auth.html").write_bytes(GOOGLE_AUTH.encode("utf-8"))
+    (out / "selfcheck.html").write_bytes(SELFCHECK.encode("utf-8"))
     shell = {"version": __version__, "py": py, "models": models}
     if flags:
         shell["flags"] = flags
@@ -254,7 +287,7 @@ def build(out: Path = DEFAULT_OUT, py: str | None = None, noindex: bool = False,
     headers = HEADERS.replace("/*\n", "/*\n  X-Robots-Tag: noindex\n", 1) if noindex else HEADERS
     (out / "_headers").write_bytes(headers.encode("utf-8"))
     (out / "_redirects").write_bytes(REDIRECTS.encode("utf-8"))
-    return {"out": str(out), "files": files + 5, "plugins": plugins, "version": __version__, "py": py,
+    return {"out": str(out), "files": files + 6, "plugins": plugins, "version": __version__, "py": py,
             "models": models, "flags": flags, "telemetry": shell.get("telemetry"),
             "google": dict(google or {}),
             "licence": {k: (sorted(v) if k == "test_keys" else v) for k, v in (licence or {}).items()}}

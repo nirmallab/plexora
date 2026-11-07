@@ -1,0 +1,116 @@
+/* The website's self-check page (/selfcheck, services/selfcheck.js): a
+   heading, one line, the buttons on one row, then a row per measurement. */
+html, body {
+    margin: 0;
+    min-height: 100%;
+    background: var(--plx-bg, #f6f7f9);
+    color: var(--plx-text, #1d2433);
+    font-family: var(--plx-font, system-ui, -apple-system, "Segoe UI", sans-serif);
+    font-size: 14px;
+}
+
+#selfcheck {
+    max-width: 52rem;
+    margin: 0 auto;
+    padding: 40px 16px;
+    box-sizing: border-box;
+}
+
+#selfcheck header {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+}
+
+#selfcheck header img {
+    width: 32px;
+    height: 32px;
+}
+
+#selfcheck h1 {
+    font-size: 20px;
+    font-weight: 600;
+    margin: 0;
+}
+
+#selfcheck p {
+    color: var(--text-secondary, #5b6474);
+    margin: 8px 0 16px;
+}
+
+.selfcheck-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+}
+
+.selfcheck-actions button {
+    font: inherit;
+    padding: 6px 14px;
+    border-radius: 6px;
+    border: 1px solid var(--border-strong, #8a93a3);
+    background: transparent;
+    color: inherit;
+    cursor: pointer;
+}
+
+.selfcheck-actions button.is-primary {
+    background: var(--accent-channel, #2f80ed);
+    border-color: var(--accent-channel, #2f80ed);
+    color: #fff;
+}
+
+.selfcheck-actions button:disabled {
+    opacity: 0.5;
+    cursor: default;
+}
+
+#selfcheck-results {
+    width: 100%;
+    margin-top: 24px;
+    border-collapse: collapse;
+}
+
+#selfcheck-results td {
+    padding: 8px 8px 8px 0;
+    border-top: 1px solid var(--border-subtle, #dde1e7);
+    vertical-align: top;
+}
+
+#selfcheck-results td:first-child {
+    width: 6rem;
+    font-weight: 600;
+}
+
+#selfcheck-results td:last-child {
+    color: var(--text-secondary, #5b6474);
+}
+
+#selfcheck-results tr.running td:nth-child(2) {
+    color: var(--text-muted, #8a93a3);
+}
+
+#selfcheck-results tr.failed td:nth-child(2) {
+    color: var(--accent-danger, #b42318);
+}
+
+@media (max-width: 600px) {
+    #selfcheck-results td {
+        display: block;
+        border-top: 0;
+        padding: 2px 0;
+    }
+
+    #selfcheck-results tr {
+        display: block;
+        padding: 8px 0;
+        border-top: 1px solid var(--border-subtle, #dde1e7);
+    }
+}
+
+@media (prefers-color-scheme: dark) {
+    html, body {
+        background: var(--plx-bg, #12151b);
+        color: var(--plx-text, #e6e9ef);
+    }
+}

@@ -133,9 +133,17 @@ the kernels' Pyodide wheel), `C:\pxplat` (until web/cors is merged).
 
 ## 8. Records only you can make
 
+- **The self-check, on every computer you can reach** (the quickest of
+  these): open https://plexora-viewer-preview.pages.dev/selfcheck, click
+  **Run the check** (about a minute), then **Download results** and send me the
+  file. It measures the browser, storage, download rate, Python's start, a
+  pyramid build, memory and WebGPU, and says what each means there; nothing
+  is sent anywhere. Wanted most: Safari on a Mac, an 8 GB laptop (Chrome),
+  Firefox anywhere.
 - Safari on a Mac (real OPFS, the 7-day purge, `persist()`), an 8 GB laptop,
   the ERIS portal's rewriting, a GCP VM node behind TLS: the preview's exit
-  records (plan Phase 5).
+  records (plan Phase 5). The self-check covers the first two's numbers; the
+  purge and `persist()` still need a person over a week.
 - Chrome's local-network prompt when pairing a node (headless Chrome cannot
   show it).
 - Chrome's write prompt when the website saves into your file (Settings >

@@ -273,6 +273,7 @@ ignore:
   PLEXORA_NODE_RESOURCES: Flask config key on a data node.
   PLEXORA_NODE_URL_PREFIX: Flask config key on a data node.
   PLEXORA_NS: UUID namespace constant.
+  PLEXORA_NUMCODECS_URL: JavaScript global, where node tests load numcodecs.js from (node/zarrReader.js).
   PLEXORA_QC_CHANGED: JavaScript constant (services/numericData.js).
   PLEXORA_SERVER_CONCURRENCY: JavaScript global set by the page template.
   PLEXORA_SERVING: Flask config key.

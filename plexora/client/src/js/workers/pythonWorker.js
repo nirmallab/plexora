@@ -4,7 +4,8 @@
 // it classes "python" here, and plexora/browser/bridge.py answers them.
 //
 // Messages from the page (each answered with {id, ok, result | error}):
-//   boot {base, origin, cancels}   load Pyodide, the base stage and the app
+//   boot {base, origin, cancels, scratch?}  load Pyodide, the base stage and the app
+//                                  (`scratch`: data in memory, no project store or copies)
 //   request {method, path, query, headers, body}  -> {status, headers, body, stream}
 //   read {stream, size}            the rest of a long body -> {body, done}
 //   close {stream}                 the page stopped reading it
@@ -292,11 +293,15 @@ async function boot(args) {
     const site = py.runPython("import site; site.getsitepackages()[0]");
     for (const buffer of await wheels) py.unpackArchive(buffer, "wheel", { extractDir: site });
     phases.wheels = at(); mark("wheels");
-    const store = await mountState(args.store || null);
+    // A scratch boot (the self-check page, services/selfcheck.js) keeps its
+    // data in memory and mounts none of the site's copies: the projects the
+    // app's tab keeps are never opened by a second Python.
+    if (args.scratch) py.FS.mkdirTree("/data");
+    const store = args.scratch ? "memory (scratch)" : await mountState(args.store || null);
     py.FS.mkdirTree("/bioc");
     py.FS.mkdirTree("/picked");
     py.FS.mkdirTree("/derived");
-    const derived = await mountDerived();
+    const derived = args.scratch ? 0 : await mountDerived();
     // Without JSPI Python cannot wait on a promise: every stage is loaded
     // now (none can arrive mid-import), and the page's answers come through
     // shared memory (`syncAsk`).

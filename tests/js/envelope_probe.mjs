@@ -129,5 +129,5 @@ console.log(JSON.stringify({
     batchPrior, batchPace, quietBatch, batch,
     model, modelToasts,
     stallVerdicts, duringJob, firstVerdictAt, stall, rememberedStall,
-    limitsDated: ["image", "batch", "model", "stall"].every((k) => /^2026-\d\d-\d\d/.test(limits[k].measured || "")),
+    limitsDated: ["image", "batch", "model", "stall", "selfcheck"].every((k) => /^2026-\d\d-\d\d/.test(limits[k].measured || "")),
 }));

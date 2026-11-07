@@ -75,6 +75,9 @@ class Handler(BaseHTTPRequestHandler):
             target = (self.site / rel).resolve() if rel and rel != "." else self.site / "index.html"
             if self.site.resolve() not in target.parents and target != self.site.resolve():
                 return self._send(403, b"forbidden")
+            if not target.is_file() and target.with_name(target.name + ".html").is_file():
+                # A page without its .html (/selfcheck), as Pages serves it.
+                target = target.with_name(target.name + ".html")
             if not target.is_file():
                 target = self.site / "index.html"
             return self._file(target, "no-cache", head, extra=self.site_headers)
