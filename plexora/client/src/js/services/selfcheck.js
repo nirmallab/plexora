@@ -496,7 +496,11 @@
         if (!start) return;
         const table = global.document.getElementById("selfcheck-results");
         let resume = null;
-        const previous = kept();
+        let previous = kept();
+        // A run from another browser, or this one before an update, is not
+        // this browser's: the check starts afresh.
+        const ran = previous && previous.steps && previous.steps.browser && previous.steps.browser.detail;
+        if (ran && ran.user_agent && ran.user_agent !== global.navigator.userAgent) previous = null;
         if (previous && previous.selfcheck === 1 && previous.steps) {
             // The last run, as it ended -- or as far as it got, when the
             // browser closed the page: then Run continues after that step.

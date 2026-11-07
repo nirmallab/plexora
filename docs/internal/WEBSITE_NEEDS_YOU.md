@@ -143,9 +143,8 @@ the kernels' Pyodide wheel), `C:\pxplat` (until web/cors is merged).
   Firefox anywhere. **The Mac (2026-11-07) ran Chrome 131**, which crashed
   starting the website's Python (filed: `bench/envelope/selfcheck/`); the
   website now asks a Chrome or Edge older than 137 to update instead. On that
-  Mac: update Chrome (menu > Help > About Google Chrome), clear the old run
-  (it continues the last one otherwise: click Run the check after it ends),
-  run it again; and once in Safari.
+  Mac: update Chrome (menu > Help > About Google Chrome) and run the check
+  again (it starts afresh after an update); and once in Safari.
 - Safari on a Mac (real OPFS, the 7-day purge, `persist()`), an 8 GB laptop,
   the ERIS portal's rewriting, a GCP VM node behind TLS: the preview's exit
   records (plan Phase 5). The self-check covers the first two's numbers; the
