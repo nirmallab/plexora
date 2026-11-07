@@ -769,9 +769,18 @@ def serve_node(serve, token=None, host="127.0.0.1", port=8642, *, node_id=None,
             raise NodeStartupError(str(exc)) from None
     app_dir = None
     if serve_app:
+        from plexora import paths
         from plexora.server.node import webapp
 
         app_dir = webapp.resolve_dir()
+        if app_dir is None:
+            # An install that shipped no build (a wheel): make one, once.
+            try:
+                app_dir = webapp.package_build(paths.data_root())
+            except OSError as exc:
+                log(f"  --app: could not write the web app's build ({exc}).")
+            if app_dir is not None:
+                log(f"  --app: the web app is served from {app_dir}.")
         if app_dir is None:
             log(f"  --app: this install has no web app build "
                 f"({webapp.DEFAULT_DIR}), so /app/ is off.")

@@ -198,6 +198,7 @@ def test_serve_node_app_uses_the_shipped_build(build, monkeypatch, tmp_path):
 
     lines.clear()
     monkeypatch.setattr(webapp, "DEFAULT_DIR", tmp_path / "not-built")
+    monkeypatch.setattr(webapp, "package_build", lambda data_root, **kw: None)  # no client to build from
     node_app.serve_node([], token=TOKEN, port=8642, node_id="app-test",
                         dynamic=True, manifest=tmp_path / "m.json",
                         serve_app=True, log=lambda line="", **kw: lines.append(str(line)))
@@ -205,3 +206,34 @@ def test_serve_node_app_uses_the_shipped_build(build, monkeypatch, tmp_path):
     assert client.get("/app/").status_code == 404
     assert "app" not in _features(client)
     assert any("no web app build" in line for line in lines)
+
+
+def test_an_install_without_a_build_makes_one_from_its_own_client(tmp_path, monkeypatch):
+    """A wheel ships the client but no static build: `--app` makes one below
+    the data root, once per version, loading that version's Python bundle
+    from the assets bucket -- with no telemetry and no site flags."""
+    import json
+
+    from plexora import __version__
+    from plexora.client import static_build
+
+    made = webapp.package_build(tmp_path)
+    assert made == tmp_path / webapp.BUILD_FOLDER / __version__
+    assert webapp.resolve_dir(made) == made and not made.with_name(made.name + ".part").exists()
+    shell = json.loads((made / "client" / "shell.json").read_text(encoding="utf-8"))
+    assert shell == {"version": __version__, "py": f"{webapp.ASSETS}/py/{__version__}/",
+                     "models": f"{webapp.ASSETS}/models/"}
+    assert (made / "client" / "dist" / "vendor_bundle.js").is_file()
+
+    monkeypatch.setattr(static_build, "build", lambda *a, **k: pytest.fail("built again"))
+    assert webapp.package_build(tmp_path) == made  # once per version
+
+
+def test_the_wheel_ships_what_the_node_builds_from():
+    """pyproject's package data names static_build.py beside the client files
+    it copies; release.py's wheel check requires it."""
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[1]
+    assert '"client/static_build.py"' in (root / "pyproject.toml").read_text(encoding="utf-8")
+    assert '"plexora/client/static_build.py"' in (root / "scripts" / "release.py").read_text(encoding="utf-8")

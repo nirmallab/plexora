@@ -155,6 +155,8 @@ COMPLETE = [
     "plexora/server/routes/page_routes.py", "plexora/client/dist/vendor_bundle.js",
     "plexora/client/src/js/services/desktopBridge.js", "plexora/client/templates/base.html",
     "plexora/plugins/roi/static/roi.js",
+    # What a node's /app/ is built from (server/node/webapp.py package_build).
+    "plexora/client/static_build.py",
     # A webpack chunk named after node_modules is not node_modules.
     "plexora/client/dist/vendors-node_modules_dompurify_bundle.js",
 ]
@@ -466,3 +468,16 @@ def test_a_dry_run_bump_never_touches_the_worker(ctx, monkeypatch):
 ])
 def test_wrangler_whoami_is_read(code, text, who):
     assert release.parse_whoami(code, text) == who
+
+
+def test_a_wheel_a_node_cannot_build_its_web_app_from_fails(tmp_path):
+    names = [n for n in COMPLETE if not n.endswith("static_build.py")]
+    with pytest.raises(release.StepError, match="static_build"):
+        release.verify_wheel(_wheel(tmp_path / "noapp.whl", names))
+
+
+def test_a_wheel_carrying_the_websites_static_build_fails(tmp_path):
+    """dist/static is a 30+ MB copy of the client; a node makes its own."""
+    names = COMPLETE + ["plexora/client/dist/static/index.html"]
+    with pytest.raises(release.StepError, match="leaked: plexora/client/dist/static/index.html"):
+        release.verify_wheel(_wheel(tmp_path / "static.whl", names))

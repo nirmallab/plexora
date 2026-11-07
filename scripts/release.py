@@ -751,8 +751,9 @@ def cmd_client(ctx, args):
 
 def verify_wheel(path: Path):
     """The wheel holds the server, the client and the plugins -- and not
-    node_modules. Namespace discovery (pyproject.toml) is what fails silently
-    otherwise."""
+    node_modules, nor the website's static build (a 30+ MB copy of the
+    client, when one was built in the checkout; MANIFEST.in prunes it).
+    Namespace discovery (pyproject.toml) is what fails silently otherwise."""
     with zipfile.ZipFile(path) as wheel:
         names = wheel.namelist()
     required = [
@@ -763,6 +764,8 @@ def verify_wheel(path: Path):
         "plexora/client/dist/vendor_bundle.js",
         "plexora/client/src/js/services/desktopBridge.js",
         "plexora/client/templates/base.html",
+        # A node's /app/ is built from the install (server/node/webapp.py).
+        "plexora/client/static_build.py",
     ]
     missing = [name for name in required if name not in names]
     if not any("/static/" in name and name.startswith("plexora/plugins/") for name in names):
@@ -774,7 +777,8 @@ def verify_wheel(path: Path):
         with zipfile.ZipFile(path) as wheel:
             if "[plexora.plugins]" not in wheel.read(entry).decode():
                 missing.append("[plexora.plugins] entry points")
-    leaked = [name for name in names if "/node_modules/" in name]
+    leaked = [name for name in names
+              if "/node_modules/" in name or name.startswith("plexora/client/dist/static/")]
     if missing or leaked:
         raise StepError("The wheel is incomplete:\n  "
                         + "\n  ".join(missing + [f"leaked: {n}" for n in leaked[:5]]))

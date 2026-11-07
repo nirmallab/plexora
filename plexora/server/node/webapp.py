@@ -13,10 +13,13 @@ no file and no resource. Everything that does is under `/node/v1/`, whose
 guard (`api.require_node_token`) is untouched by this module. The node's `/`
 stays as uninformative as it was (`app._root`).
 
-**Off unless asked for.** `plexora node serve --app`, and then only when the
-build is actually there: a wheel built without it is a node that says so
-(`/hello.features` leaves out `app`) rather than one that serves 404s from a
-route it claims to have.
+**Off unless asked for.** `plexora node serve --app`, and then only when a
+build is actually there: a checkout's own (`DEFAULT_DIR`), or, for an install
+that shipped none (a wheel from PyPI), the one `package_build` makes once per
+version below the data root from the install's own client files, loading that
+version's Python bundle from the assets bucket. A node with neither says so
+(`/hello.features` leaves out `app`) rather than serving 404s from a route it
+claims to have.
 
 **Behind a path prefix.** OOD's `/rnode/<host>/<port>/` strips its prefix
 before the request arrives, so the prefix matters here in two places: a
@@ -37,6 +40,7 @@ from __future__ import annotations
 
 import os
 import re
+import shutil
 from pathlib import Path
 
 from flask import Response, request, send_from_directory
@@ -46,6 +50,11 @@ from werkzeug.security import safe_join
 DEFAULT_DIR = Path(__file__).resolve().parents[2] / "client" / "dist" / "static"
 
 INDEX = "index.html"
+
+#: Below the data root: the builds `package_build` makes, one per version.
+BUILD_FOLDER = "node-app"
+#: Where a released version's Python bundle and magic select's model are.
+ASSETS = "https://assets.plexoraapp.com"
 
 #: Spelled out rather than left to `mimetypes`, which on Windows reads the
 #: registry -- where `.js` is often `text/plain`, and a module script served
@@ -116,6 +125,35 @@ def resolve_dir(directory=None):
         return path if (path / INDEX).is_file() else None
     except OSError:
         return None
+
+
+def package_build(data_root, *, assets: str = ASSETS):
+    """A build of the web app made from this install's own client files,
+    for an install that shipped none: `static_build` into
+    `<data_root>/node-app/<version>/`, once per version (a half-written one is
+    never served: it is made beside and renamed into place), loading this
+    version's Python bundle and model from `assets`. The same files the
+    website serves, with no telemetry and no site flags -- the node is its
+    operator's own deployment. None when the install has no client to build
+    from."""
+    from plexora import __version__
+
+    try:
+        from plexora.client import static_build
+    except ImportError:
+        return None
+    if not (static_build.CLIENT / "dist").is_dir():
+        return None
+    target = Path(data_root) / BUILD_FOLDER / __version__
+    if resolve_dir(target) is not None:
+        return target
+    partial = target.with_name(target.name + ".part")
+    shutil.rmtree(partial, ignore_errors=True)
+    static_build.build(partial, py=f"{assets.rstrip('/')}/py/{__version__}/",
+                       models=f"{assets.rstrip('/')}/models/")
+    shutil.rmtree(target, ignore_errors=True)
+    partial.rename(target)
+    return resolve_dir(target)
 
 
 def clean_prefix(value):

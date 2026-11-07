@@ -335,6 +335,9 @@ plexora = [
     "client/src/js/**/*.js",
     "client/src/shaders/*.glsl",
     "client/external/**/*",
+    # The website's static build, which a node serving the web app at /app/
+    # makes from the files above (plexora/server/node/webapp.py package_build).
+    "client/static_build.py",
     # Bundled plugins ship their own templates and client assets.
     "plugins/*/templates/**/*.html",
     "plugins/*/static/**/*",

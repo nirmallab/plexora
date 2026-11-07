@@ -1,5 +1,9 @@
 recursive-include plexora/client/templates *.html
 recursive-include plexora/client/dist *
+# The website's static build (python -m plexora.client.static_build) is a copy
+# of the client above, 30+ MB of it: never shipped. A node serving the web app
+# makes its own from the install (plexora/server/node/webapp.py package_build).
+prune plexora/client/dist/static
 recursive-include plexora/client/src/css *.css
 recursive-include plexora/client/src/img *
 recursive-include plexora/client/src/js *.js
