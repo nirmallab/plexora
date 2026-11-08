@@ -4,9 +4,12 @@ Everything the website work (plan `dreamy-brewing-sunset.md`, branch `web/phase0
 is waiting on from you, in one place. Kept current as work lands; the newest
 state is on `web/phase0`. Each item says what to do and what it unblocks.
 **The website is live** at https://viewer.plexoraapp.com since 2026-11-08
-00:40 UTC: 0.0.37 (`main` at 56284d8a, no tag), Pages project
-`plexora-viewer` branch `release`, bundle `py/0.0.37/`, flags `viewer: on`,
-telemetry on. Activating a licence and AI do not work there until section 1,
+00:40 UTC, now 0.0.39 (`main` at 602b298d, no tag; since 2026-11-08
+evening), Pages project `plexora-viewer` branch `release`, bundle
+`py/0.0.39/`, flags `viewer: on`, telemetry on. 0.0.38 was live for under
+an hour and did not start Python on the self-check page, in a second tab or
+without sync access handles; its `py/0.0.38/` stays, as every released
+prefix does, and nothing points at it. Activating a licence and AI do not work there until section 1,
 item 1 is deployed. Nothing else here has been done for you.
 
 Last updated: 2026-11-07 evening (the launch; the preview still runs its
@@ -147,10 +150,11 @@ bundle `py/dev/4f583c3b9745/` and, sharing the flags, no longer shows its
 - The **next desktop release** from `main` carries the removals (Segment in
   3-D, Carry an ROI through planes), the desktop speed-ups and the new
   telemetry values (the Worker that takes them is deployed). Make it
-  **0.0.38** (`release.py ci --bump patch`), not a `v0.0.37` tag: the
-  website's `py/0.0.37/` is published and never rewritten, so once the CI
-  secrets exist a v0.0.37 Release run's `web_deploy` would refuse its own
-  rebuild of that bundle and hold the release.
+  **0.0.40** (`release.py ci --bump patch` from 0.0.39), not a tag of a
+  version the website already has: its `py/0.0.37/`, `py/0.0.38/` and
+  `py/0.0.39/` are published and never rewritten, so once the CI secrets
+  exist such a Release run's `web_deploy` would refuse its own rebuild of
+  that bundle and hold the release.
 - **CI on `main` has been red since 2026-11-04** (48dff7d1, before the
   website work): `[tool.uv.sources]` points `biocognia-markers` at
   `../biocognia-markers`, which CI does not have, so `uv lock --check` and

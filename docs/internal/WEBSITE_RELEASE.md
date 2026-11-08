@@ -104,6 +104,26 @@ Learned on 0.0.37, the first one (2026-11-07, website only, no tag):
 - After the deploy: `node tests/browser/selfcheck.mjs --url
   https://viewer.plexoraapp.com` (a first visit through the real CDN).
 
+Learned on 0.0.38 (2026-11-08, replaced by 0.0.39 within the hour):
+- The smoke test boots one tab, which has the chunk cache's files. The
+  self-check page boots Python as a scratch boot, without them, as does a
+  second tab (the first holds them) and a browser without sync access
+  handles; 0.0.38 failed there and the smoke test could not see it. Before
+  the upload, also run the self-check against the bundle served here:
+  `python tools/browser_build/serve.py --site <site built without --py>
+  --py OUT/py --port 8779`, then `node tests/browser/selfcheck.mjs --url
+  http://127.0.0.1:8779`.
+- `tests/browser/lib.mjs` defaults to Windows paths. On a Mac set
+  `PLEXORA_PYTHON` (the plexora env's python), `PLEXORA_BENCH_CHROME`
+  (`/Applications/Google Chrome.app/Contents/MacOS/Google Chrome`) and,
+  without `npm ci` in tools/poc_browser_node, `PLEXORA_PLAYWRIGHT_MODULES`.
+- `--plexora-only --no-kernels` over a copy of the previous release's
+  bundle keeps its plexora-kernels wheel (`--no-kernels` means "leave it" in
+  that mode, and the build still checks it against this checkout's kernels)
+  and is right when only Plexora's Python changed since: check with
+  `git diff --stat <its commit> -- kernels/ uv.lock tools/browser_build/
+  plexora/browser/stages.py`.
+
 ## Rolling back
 
 - **The website:** Pages keeps every deployment. In the dashboard, project
