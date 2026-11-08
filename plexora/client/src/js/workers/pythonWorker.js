@@ -133,6 +133,26 @@ function blockReads(workerfs, module) {
     };
 }
 
+// WORKERFS dates a mounted file by `file.lastModifiedDate`, which Firefox no
+// longer has, and a folder's files (`blobs`: a picked folder, an MRXS slide's)
+// by nothing at all: both took the time of the mount, a new one at every
+// visit. Python takes a file's time for its version (a mask's
+// `segmentationSourceKey`, the key of the pyramid the page builds of it), so
+// each reload took the mask for a changed one and the page built its pyramid
+// again, under a new key, beside the old. A file is dated by its own
+// `lastModified` instead, as the desktop reads a file's time. Once per
+// WORKERFS (the mounts all share it); a Blob with no time keeps the mount's.
+function datedFiles(workerfs) {
+    if (workerfs.plexoraDated) return workerfs;
+    const createNode = workerfs.createNode;
+    workerfs.createNode = function (parent, name, mode, dev, contents, mtime) {
+        const own = contents && typeof contents.lastModified === "number" ? new Date(contents.lastModified) : mtime;
+        return createNode.call(this, parent, name, mode, dev, contents, own);
+    };
+    workerfs.plexoraDated = true;
+    return workerfs;
+}
+
 async function fetchWheel(name) {
     const response = await fetch(`${base}wheels/${name}`);
     if (!response.ok) throw new Error(`${name}: HTTP ${response.status}`);
@@ -690,7 +710,7 @@ function read({ stream, size }) {
 function mount({ dir, files }) {
     if (!(py.FS.analyzePath(dir).exists && py.FS.isMountpoint(py.FS.lookupPath(dir).node))) {
         py.FS.mkdirTree(dir);
-        py.FS.mount(py.FS.filesystems.WORKERFS, { files }, dir);
+        py.FS.mount(datedFiles(py.FS.filesystems.WORKERFS), { files }, dir);
     }
     return files.map((file) => `${dir}/${file.name}`);
 }
@@ -724,7 +744,7 @@ async function mountDerived() {
 
 function mountTree({ dir, blobs }) {
     py.FS.mkdirTree(dir);
-    py.FS.mount(py.FS.filesystems.WORKERFS, { blobs }, dir);
+    py.FS.mount(datedFiles(py.FS.filesystems.WORKERFS), { blobs }, dir);
     return blobs.length;
 }
 
@@ -756,7 +776,7 @@ function swapPicked(source, file) {
         ? { blobs: opts.blobs.map((blob) => (blob.name === inside ? { name: blob.name, data: file } : blob)) }
         : { files: (opts.files || []).map((other) => (other.name === inside ? file : other)) };
     py.FS.unmount(dir);
-    py.FS.mount(py.FS.filesystems.WORKERFS, next, dir);
+    py.FS.mount(datedFiles(py.FS.filesystems.WORKERFS), next, dir);
 }
 
 // -- telemetry (plexora/browser/telemetry.py) -----------------------------------

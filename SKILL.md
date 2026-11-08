@@ -9563,6 +9563,31 @@ in **5.6 s**.
   or stem. Callers with a recorded `segmentationSourceKey` still use it
   (`refresh_segmentation_ mapping`); the ones without — a fresh import, a node
   — fall back to "ours, of this mode, not older than the source".
+- **A recorded `segmentationSourceKey` matches to the millisecond, and the
+  website dates a mounted file by its own time.** `source_fingerprint` is
+  `<size>-<mtime_ns>` (a folder's `<count>-<bytes>-<newest_ns>`), but a web
+  page sees whole milliseconds (`File.lastModified`) and the desktop
+  nanoseconds, so one file read by both had two keys and a project shared
+  through Documents/Plexora/projects rebuilt its mask on whichever side had
+  not written the record. `segmentation_pyramid.same_fingerprint(recorded,
+  current)` is exact except that the last (time) part of a 2- or 3-part key
+  may differ by under 1 ms; `data_model._segmentation_mapping_is_current`,
+  `refresh_segmentation_mapping`'s `source_changed` and
+  `image_pyramid._same_source` all go through it, so masks and image copies
+  agree by one rule. Separately, Emscripten's WORKERFS dated a mounted file by
+  `lastModifiedDate` (absent in Firefox) and a folder's `blobs` by nothing, so
+  every visit's mount took the time of the mount: the key changed each reload,
+  the mask job re-ran, and `server/providers/browser.py` `page_pyramid` (whose key is
+  seeded with the fingerprint) left another label pyramid in OPFS
+  `plexora/derived/`. `workers/pythonWorker.js` `datedFiles(workerfs)` wraps
+  `createNode` so every mount (`mount`, `mountTree`, `swapPicked`) dates a file
+  by its own `lastModified`. And `services/browserPyramid.js` `start()`, when
+  the copy's target is a folder, hands a file already under the copy's name
+  back at once as `existing` for Python to judge (`is_adoptable_mask`/
+  `is_adoptable_image`), instead of starting `pyramidWorker` and its tiff
+  readers first. Pinned by `tests/test_mask_pyramid_reuse.py` and
+  `tests/js/workerfs_times_probe.mjs` (runs `datedFiles` against a copy of
+  Pyodide 314.0.7's WORKERFS `mount`/`createNode`).
 - **A mask is any format that can hold an integer id, and everything else is
   refused up front with a sentence.** `segmentation_pyramid.mask_format_refusal(path)`
   returns that sentence or None: JPEG (lossy, so ids are not preserved), slide
