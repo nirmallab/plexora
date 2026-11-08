@@ -44,6 +44,7 @@
 import { createStore } from "./storeSync.js";
 import { idbFolder } from "./idbFolder.js";
 import { createTelemetryStore, indexedKv } from "./telemetryStore.js";
+import { openCacheFiles } from "./cacheFiles.js";
 
 let py = null;
 let base = "";
@@ -295,6 +296,7 @@ async function mountState(folder) {
 const SYNC_DELAY_MS = 250;
 let syncing = Promise.resolve();
 function scheduleSync() {
+    scheduleKeep();
     if (!store || syncPending) return;
     syncPending = true;
     syncing = syncing.then(async () => {
@@ -303,6 +305,32 @@ function scheduleSync() {
         try { await store.push(); } catch (error) { self.postMessage({ log: `store: ${error}` }); }
     });
 }
+
+// The chunk cache's index (plexora/browser/cachefiles.py) written to the
+// site's storage once Python has been quiet for a moment after a request or
+// a step: the snapshot a reload starts from. Only when it changed.
+const KEEP_MS = 2000;
+let keepTimer = null;
+function scheduleKeep() {
+    if (!self.plexoraCacheFiles || keepTimer) return;
+    keepTimer = setTimeout(() => {
+        keepTimer = null;
+        if (!py || busy || stepping || queue.length) {
+            scheduleKeep();
+            return;
+        }
+        let module = null;
+        try {
+            module = py.pyimport("plexora.browser.cachefiles");
+            module.keep(true);
+        } catch (error) {
+            self.postMessage({ log: `cache: ${error?.message || error}` });
+        } finally {
+            module?.destroy();
+        }
+    }, KEEP_MS);
+}
+
 
 // Pyodide, the base stage's packages and Plexora's wheels, loaded and
 // unpacked: everything of the boot that needs nothing from the page but the
@@ -355,6 +383,12 @@ async function boot(args) {
     py.FS.mkdirTree("/picked");
     py.FS.mkdirTree("/derived");
     const derived = args.scratch ? 0 : await mountDerived();
+    // The chunk cache's files (plexora/browser/cachefiles.py), opened now:
+    // Python cannot wait for them later in every browser.
+    const cache = args.scratch ? { error: "a scratch boot" } : await openCacheFiles();
+    self.plexoraCacheFiles = cache.files || null;
+    self.plexoraCacheQuota = cache.quota || 0;
+    self.plexoraCacheWhy = cache.error || "";
     // Without JSPI Python cannot wait on a promise: every stage is loaded
     // now (none can arrive mid-import), and the page's answers come through
     // shared memory (`syncAsk`).

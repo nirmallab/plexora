@@ -333,6 +333,70 @@ Entry points:
   cut at a line break, kept under `head_cache` kind `"web-heads"`) and
   `download(url, dest, progress=)` (the whole file), both through the folder
   store's own fsspec filesystem (`_whole_file`, `_on_host`).
+
+  On the website none of aiohttp, s3fs or gcsfs runs, so `_read_by_page(scheme)`
+  (true once `plexora/browser/buckets.py` is installed for that scheme) is
+  what `support()`, `_require_scheme()` and `storage_options_for()` defer to;
+  aiohttp is now imported only off the page. `_page_refused(exc)` walks
+  `__cause__` for the page's `PageRefused`, and `ChunkCacheStore._fetch` and
+  `_raise_for` raise its sentence as a `PermissionError` instead of reading
+  the 403 as missing, because a host that lets no page read it would
+  otherwise make every key "missing" and the person would never learn why.
+
+  Where a value's bytes live is a seam on `CacheIndex`: `read_value`/
+  `write_value`/`drop_value` (one file at `value_path` each, on the desktop),
+  with `_write_marker` split out of `register_store`, because the website keeps
+  the bytes in OPFS instead (`plexora/browser/cachefiles.py`) under the same
+  rows. `use_index(factory, root)` sets `_index_factory`, what the next
+  `cache_index()` is made with. `names_a_file(name)` is `is_file_url`'s test on
+  one path segment (`FILE_SUFFIXES` or `DICOMDIR`, no request), and
+  `ome_zarr._RemoteView.children()` drops such names before probing a listed
+  child for zarr metadata, because a DICOM folder of 216 instances otherwise
+  cost about 1,080 requests that all answered 404.
+- `plexora/browser/buckets.py` — **`s3://`, `gs://` and `https://` on the
+  website**, read through the page's own `fetch`, because Python in the
+  Pyodide worker has no sockets. An fsspec `AsyncFileSystem` per scheme
+  (`S3PageFileSystem`, `GCSPageFileSystem`, `HTTPPageFileSystem`), registered
+  for `s3`/`s3a`/`gs`/`gcs`/`http`/`https` by `install(transport)` (the boot's
+  `buckets()` shim; `uninstall()` for tests, `handles(scheme)` for
+  `remote_store`), so the chunk cache, `RemoteFile` and New Dataset's listings
+  run unchanged on top of it. S3 becomes a virtual-hosted URL (the region's
+  host, path-style under an `endpoint_url` or for a dotted bucket name, which
+  breaks the wildcard certificate), read by `Range` GET and sized
+  from a ListObjectsV2 listing; gs goes through Google's JSON API; https by
+  HEAD or a GET's headers, a folder listed from its index page's links.
+  Every request is anonymous: the website reads public buckets only. On
+  Pyodide's own loop a request is an awaited `fetch` (requests gathered
+  together are in flight together); on any other loop -- a browser without
+  JSPI -- it is one synchronous XMLHttpRequest. A failed fetch to a host that
+  does answer a `no-cors` request becomes `PageRefused` (`PermissionError`,
+  `page_refused=True`) with a sentence about CORS. `Transport` is the seam:
+  `tests/test_browser_buckets.py` stands in a Cloud transport answering as
+  S3, the GCS JSON API and a web host. The boot (`browser/boot.py`) also
+  installs the chunk cache's storage (its `cache()` shim, `cachefiles.py`
+  below), and its `SyncLoop.run_in_executor` runs the function in place,
+  because the chunk cache's `asyncio.to_thread` would otherwise try to start a
+  thread the worker does not have.
+- `plexora/browser/cachefiles.py` — **the website's chunk cache, in OPFS
+  `plexora/cache/`**, because `/data` is held in the worker's memory and copied
+  into the user's project store, so a cache there was capped at what a tab
+  holds and written into the projects folder besides. Python reaches OPFS only
+  through sync access handles, opened with a promise it cannot wait on in every
+  browser, so `workers/cacheFiles.js` (`openCacheFiles`, `SEGMENTS = 32`)
+  opens two index snapshots and 32 segment files in `pythonWorker.js`'s
+  `boot()` before Python starts. `PackedCacheIndex(CacheIndex)` appends values
+  to the segments in turn behind a header (magic `PXC1`, length, which value,
+  crc32), so a row whose bytes were since overwritten reads as a miss, never as
+  the wrong bytes; a full ring takes over the next segment, carrying pinned and
+  recently read values forward and evicting the rest together. The SQLite index
+  is in memory, restored from the newer snapshot that reads whole; the worker
+  calls `keep(true)` 2 s after it goes idle (`scheduleKeep`). Budget: the
+  desktop's setting (`remote_cache_bytes` / `PLEXORA_REMOTE_CACHE_BYTES`, default 10 GiB),
+  capped at 40 % of the browser's quota (`QUOTA_SHARE`, the site's derived
+  copies need the rest) and at a ceiling learnt from a quota refusal. A second
+  tab (a sync access handle is exclusive), a browser without sync handles, or a
+  scratch boot gets a plain `CacheIndex` in memory of 256 MiB (`MEMORY_BUDGET`).
+  `install()` says which; `tests/test_browser_cachefiles.py`.
 - `server/utils/sftp.py` — **SFTP as a fourth remote transport, with nothing
   running on the far side** (first case: HMS O2's transfer node). `SFTPClient`
   speaks SFTP v3 over the stdin/stdout of a system `ssh -s <target> sftp`, so
@@ -1135,7 +1199,21 @@ Entry points:
   of its first rows (`sftp.head_copy`/`remote_store.head_copy`). A bucket's
   files are read `WEB_INSPECT_WORKERS` (8) at a time (`_inspect_together`,
   `layer-scan` threads) under their own `WEB_INSPECT_BUDGET_S` (600), because
-  a header there is mostly waiting. `dataset_plan._PANEL_CACHE` is keyed by
+  a header there is mostly waiting; on the website, which has no threads, they
+  are read one at a time. (Side by side through `PyProxy.callPromising` stacks
+  was tried and dropped: Pyodide 314.0.7 now and then refuses one of its event
+  loop's callbacks during the scan -- "Cannot enter a promising task from
+  inside another running promising task" -- and the read waiting on it never
+  ends, holding the worker for good.) Both tasks are started with a `layer_jobs.start_task(...,
+  mirror=)` (`{key, get, answer, cancel, cancelled}`), because on the website
+  a running task holds the only Python thread and its status poll could not
+  reach Python: the task posts a `kind: "mirror"` message with `answer()` at
+  most once a second (`MIRROR_EVERY_S`), `pythonClient.js` keeps it in
+  `mirrors` and answers that GET (and turns a POST to the cancel route into a
+  shared-memory cancel) in `whileBusy`, and `_PageCancel` makes the task's
+  cancel event also read the page's flag. `cooperative.install` calls
+  `layer_jobs.set_page(post, cancelled)`; without it (desktop, server) a
+  mirror is ignored. `tests/test_layer_task_mirror.py`. `dataset_plan._PANEL_CACHE` is keyed by
   `(entry.key, entry.proxy, count)`, because the dialog plans mid-scan and a
   remote channel list planned before its local copy existed would otherwise
   cache `None` for good. Remotely the plan never calls two files copies by
@@ -9703,6 +9781,32 @@ in **5.6 s**.
   whole-mask downloads (0.28 GB each) and conversions, with no limit, and
   registration crawled from about 1 s to over a minute per sample.
   `tests/test_dataset_web.py` pins both cases.
+- **On the website, remote reading is `plexora/browser/buckets.py`, never
+  aiohttp, s3fs or gcsfs.** None of them runs in the worker (no sockets), so
+  `remote_store` asks `_read_by_page` before it reaches for one. **gs:// goes
+  through Google's JSON API** (`objects.list`, `objects.get`, `alt=media`
+  with `Range`), because the XML host refuses a page for a bucket with no
+  CORS rules (IDC's `idc-open-data`). **S3 sizes a file from its listing,
+  never HEAD**, because a public bucket's CORS commonly admits GET only and
+  exposes neither `Content-Range` nor `ETag`; a bucket that will not list is
+  sized from a GET's headers with the body left unread (`bytes=0-0` without
+  JSPI). `tests/test_browser_buckets.py` pins all three.
+- **All chunk-cache value IO goes through `CacheIndex.read_value`/
+  `write_value`/`drop_value`.** The website's `PackedCacheIndex` keeps the
+  bytes in OPFS segments and has no file at `value_path`, so a caller that
+  reads, writes or unlinks `value_path` directly works on the desktop and
+  silently misses (or leaks) on the website.
+- **The cache's OPFS handles are opened in JS before Python boots**
+  (`workers/cacheFiles.js` from `pythonWorker.js` `boot()`), because opening
+  one is a promise Python cannot wait on in every browser; a file the cache
+  needs that was not opened then does not exist for it. The handles are
+  exclusive, so a second tab caching in memory is expected, not a fault.
+- **A layer task's `mirror` must name exactly the GET and cancel routes the
+  client polls** (`dataset_scan._run`, `dataset_build.start_build`), and its
+  `answer()` must return what that GET route returns, because on the website
+  the page answers those paths from the mirror while the task holds the
+  worker; a route renamed on one side leaves New Dataset's progress frozen and
+  its Stop unheard until the task ends.
 - **A remote mask that is not a pyramid is converted into the
   project.** `resolve_derived_mask` for a web address (`is_remote_locator`)
   skips beside-the-source entirely: there is no folder beside a URL to write

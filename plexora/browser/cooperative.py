@@ -37,10 +37,14 @@ def install(*, post=None, cancelled=None, idle=None, waiting=None) -> None:
     `waiting()` says whether a request is waiting (long tasks then let it in,
     `_work.checkpoint`). Each may be None (that part is off)."""
     from plexora.agent import jobs
+    from plexora.server.models import layer_jobs
 
     os.environ["PLEXORA_WORK"] = "cooperative"
     _work.set_idle(idle, waiting)
     jobs.set_cancel_probe(cancelled)
+    # A long task's status poll answered by the page, and its Stop passed on
+    # (New Dataset's scan and create: server/models/layer_jobs.py).
+    layer_jobs.set_page(post, cancelled)
     if post is not None:
         from plexora.agent.bridge_wire import job_state
 

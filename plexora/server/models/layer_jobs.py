@@ -33,6 +33,7 @@ from __future__ import annotations
 
 import contextlib
 import threading
+import time
 from dataclasses import replace
 
 from plexora import _work
@@ -214,14 +215,86 @@ def _finish(project_name, layer_id, status, *, error=None, install=None):
 #: (sample, task_id) -> (thread, cancel event), for the tasks started below.
 _tasks: dict[tuple, tuple] = {}
 
+#: The website's page (plexora/browser/cooperative.py `install`). A task holds
+#: the website's only Python thread for as long as it runs, so its status poll
+#: cannot reach Python meanwhile: a task started with a `mirror` posts the
+#: poll's answer to the page as it goes, the page answers the poll from it
+#: (services/pythonClient.js), and a Stop pressed meanwhile reaches the task
+#: as a flag in shared memory (`cancelled(key)`), not as a request.
+_page_post = None
+_page_cancelled = None
+#: How often a running task's answer is posted to the page, at most.
+MIRROR_EVERY_S = 1.0
+
+
+def set_page(post=None, cancelled=None) -> None:
+    """Post mirrored answers with `post(message)`; read the page's Stop with
+    `cancelled(key)`. None: no page (the desktop app, the server)."""
+    global _page_post, _page_cancelled
+    _page_post = post
+    _page_cancelled = cancelled
+
+
+class _PageCancel(threading.Event):
+    """A task's cancel that the page can also set (`_page_cancelled`)."""
+
+    def __init__(self, key, inner):
+        super().__init__()
+        self._key = key
+        self._inner = inner
+
+    def is_set(self) -> bool:
+        if super().is_set() or self._inner.is_set():
+            return True
+        probe = _page_cancelled
+        try:
+            stopped = bool(probe is not None and probe(self._key))
+        except Exception:  # noqa: BLE001 -- no page to ask
+            stopped = False
+        if stopped:
+            self.set()
+        return stopped
+
+    def set(self) -> None:
+        super().set()
+        self._inner.set()
+
+
+def _mirror_poster(mirror):
+    """`post(running)` for a task's `mirror`, or None without a page.
+
+    `mirror` is `{key, get, answer, cancel?, cancelled?}`: the task's key in
+    the page's Stop flags, the path of its status route, `answer()` that
+    route's JSON, and the path and answer of its cancel route."""
+    post = _page_post
+    if post is None or not mirror:
+        return None
+
+    def send(running):
+        message = {"kind": "mirror", "key": mirror["key"], "running": bool(running),
+                   "get": mirror["get"], "cancel": mirror.get("cancel"),
+                   "cancelled": mirror.get("cancelled")}
+        if running:
+            try:
+                message["answer"] = mirror["answer"]()
+            except Exception:  # noqa: BLE001 -- the next one may do
+                return
+        try:
+            post(message)
+        except Exception:  # noqa: BLE001 -- an answer not JSON: Python answers later
+            pass
+
+    return send
+
 
 def start_task(project_name, task_id, work, *, stages=None, message=None,
-               cancel=None):
+               cancel=None, mirror=None):
     """Run `work(stage, report, cancel)` on a daemon thread.
 
     `cancel` is a `threading.Event` the work checks between steps; one is made
     when none is passed. A task already running is left alone and its record
-    returned, exactly as `start` does for a layer.
+    returned, exactly as `start` does for a layer. `mirror`: what the website's
+    page answers for the task while it runs (`_mirror_poster`).
     """
     from plexora.server.models import data_model
 
@@ -236,6 +309,10 @@ def start_task(project_name, task_id, work, *, stages=None, message=None,
                              stage_label=bands[first][2],
                              message=message or bands[first][2])
         cancel = cancel or threading.Event()
+    page = _mirror_poster(mirror)
+    if page is not None:
+        cancel = _PageCancel(mirror["key"], cancel)
+    posted = [0.0]
 
     def on_change(percent, stage_key, text):
         with _lock:
@@ -246,9 +323,25 @@ def start_task(project_name, task_id, work, *, stages=None, message=None,
             record["stage"] = stage_key
             record["stage_label"] = bands.get(stage_key, (0, 0, stage_key))[2]
             record["message"] = text
+        post_now()
+
+    def post_now():
+        if page is not None and time.monotonic() - posted[0] >= MIRROR_EVERY_S:
+            posted[0] = time.monotonic()
+            page(True)
 
     def run():
-        stage, report = data_model._staged_reporter(bands, on_change)
+        stage, reporter = data_model._staged_reporter(bands, on_change)
+        report = reporter
+        if page is not None:
+            posted[0] = time.monotonic()
+            page(True)
+
+            def report(done, total):
+                # The percent may not move for many files (a scan's count
+                # does): the page's answer is kept up all the same.
+                reporter(done, total)
+                post_now()
         try:
             work(stage, report, cancel)
             outcome = _record(
@@ -263,6 +356,8 @@ def start_task(project_name, task_id, work, *, stages=None, message=None,
         with _lock:
             _jobs[key] = outcome
             _tasks.pop(key, None)
+        if page is not None:
+            page(False)
 
     with _lock:
         # Taken before the thread starts: a quick task can finish before this

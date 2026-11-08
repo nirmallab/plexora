@@ -1366,7 +1366,12 @@ def _run(record, roots):
         stage("planning")
         plan_for(record.token)
 
-    layer_jobs.start_task(TASK_OWNER, task_id, work, stages=SCAN_STAGES)
+    token = record.token
+    layer_jobs.start_task(TASK_OWNER, task_id, work, stages=SCAN_STAGES, mirror={
+        "key": f"dataset-scan:{task_id}", "get": f"/datasets/scan/{token}",
+        "answer": lambda: snapshot(token),
+        "cancel": f"/datasets/scan/{token}/cancel",
+        "cancelled": {"cancelled": True, "stopped": True}})
 
 
 def _get(token) -> Scan:

@@ -104,6 +104,25 @@ def http(wait_on=None) -> bool:
     return fetch.install(wait_on)
 
 
+def buckets() -> bool:
+    """`s3://`, `gs://` and `https://` read through the page's `fetch`
+    (plexora/browser/buckets.py), where aiohttp, s3fs and gcsfs cannot run.
+    True if installed."""
+    from plexora.browser import buckets as page_buckets
+
+    return page_buckets.install()
+
+
+def cache() -> str:
+    """The chunk cache of what was read from a bucket or web host, in the
+    site's own storage rather than under /data, which the worker holds in
+    memory and copies into the project store (plexora/browser/cachefiles.py):
+    what it is kept in."""
+    from plexora.browser import cachefiles
+
+    return cachefiles.install()
+
+
 def agents() -> dict:
     """spatialagents' threads and sleeps through `_work` (plexora/browser/
     agents.py): what was replaced."""
@@ -214,6 +233,18 @@ class SyncLoop(asyncio.BaseEventLoop):
     def _write_to_self(self):
         pass
 
+    def run_in_executor(self, executor, func, *args):
+        """`func(*args)` here and now, as Pyodide's own loop runs it: the worker
+        has no threads, and `asyncio.to_thread` (remote_store's chunk cache
+        reads its files through it) would start one ("can't start new
+        thread")."""
+        future = self.create_future()
+        try:
+            future.set_result(func(*args))
+        except Exception as exc:  # noqa: BLE001 -- the caller's to see
+            future.set_exception(exc)
+        return future
+
 
 #: The loop `run_to_completion` keeps: one, so what a library binds to the
 #: loop it first ran on (an asyncio.Lock in a store) still works the next time.
@@ -273,10 +304,10 @@ def start(origin: str, *, base_url: str = "", post=None, cancelled=None, idle=No
     started = time.perf_counter()
     environment(origin, base_url=base_url, data_root=data_root, licence_dir=licence_dir,
                 telemetry=telemetry)
-    shims = {"imagecodecs": codecs(), "fetch": http(wait_on), "parquet": parquet()}
+    shims = {"imagecodecs": codecs(), "fetch": http(wait_on), "parquet": parquet(),
+             "buckets": buckets(), "cache": cache()}
     if not jspi:
         shims["sync_loop"] = without_jspi(sleep or time.sleep)
-
     from plexora.browser import cooperative, licence
     from plexora.server.models import viewer_sessions
     from plexora.server.providers import browser as browser_provider
