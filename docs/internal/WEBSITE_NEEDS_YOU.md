@@ -4,9 +4,9 @@ Everything the website work (plan `dreamy-brewing-sunset.md`, branch `web/phase0
 is waiting on from you, in one place. Kept current as work lands; the newest
 state is on `web/phase0`. Each item says what to do and what it unblocks.
 **The website is live** at https://viewer.plexoraapp.com since 2026-11-08
-00:40 UTC, now 0.0.39 (`main` at 602b298d, no tag; since 2026-11-08
-evening), Pages project `plexora-viewer` branch `release`, bundle
-`py/0.0.39/`, flags `viewer: on`, telemetry on. 0.0.38 was live for under
+00:40 UTC, now 0.0.40 (`main` at fe331037, no tag; since 2026-11-08
+23:19 UTC: the Lite label's new wording), Pages project `plexora-viewer`
+branch `release`, bundle `py/0.0.40/`, flags `viewer: on`, telemetry on. 0.0.38 was live for under
 an hour and did not start Python on the self-check page, in a second tab or
 without sync access handles; its `py/0.0.38/` stays, as every released
 prefix does, and nothing points at it. Activating a licence and AI do not work there until section 1,
@@ -60,8 +60,16 @@ bundle `py/dev/4f583c3b9745/` and, sharing the flags, no longer shows its
   setup). The site's Content-Security-Policy blocks it, so nothing is sent
   and nothing breaks, but every visit logs a policy violation in the console
   and the live self-check fails that one check. Turn the injection off for
-  the zone (Analytics & Logs > Web Analytics, plexoraapp.com: disable the
-  automatic setup / JS snippet) rather than allowing it in the policy.
+  the zone rather than allowing it in the policy. Not where it looks
+  (2026-11-08): plexoraapp.com is not in the account's Web Analytics list
+  (only biocognia.com and scimap.xyz), and the script outlived a fresh
+  Pages deployment, so it is not the Pages project's Metrics switch either.
+  It is on viewer.plexoraapp.com only, never on *.pages.dev: the zone's own
+  Real User Monitoring (plexoraapp.com > Speed > Observatory), which
+  Cloudflare turns on by itself for Free zones (EEA/UK/CH excluded). Its
+  beacon token is 9665ce7e6839434090ebd6d83050328d. If no switch stops it,
+  `Cache-Control: no-transform` on the site's HTML does (Cloudflare's Web
+  Analytics FAQ).
 - **CI secrets** `CLOUDFLARE_API_TOKEN` (Pages: Edit + R2: Edit) and
   `CLOUDFLARE_ACCOUNT_ID` (`6978852cf325dd1049afd2aa427d77a7`), so releases
   and previews deploy the website themselves (docs/internal/WEBSITE_RELEASE.md).
@@ -150,9 +158,9 @@ bundle `py/dev/4f583c3b9745/` and, sharing the flags, no longer shows its
 - The **next desktop release** from `main` carries the removals (Segment in
   3-D, Carry an ROI through planes), the desktop speed-ups and the new
   telemetry values (the Worker that takes them is deployed). Make it
-  **0.0.40** (`release.py ci --bump patch` from 0.0.39), not a tag of a
-  version the website already has: its `py/0.0.37/`, `py/0.0.38/` and
-  `py/0.0.39/` are published and never rewritten, so once the CI secrets
+  **0.0.41** (`release.py ci --bump patch` from 0.0.40), not a tag of a
+  version the website already has: its `py/0.0.37/` to `py/0.0.40/` are
+  published and never rewritten, so once the CI secrets
   exist such a Release run's `web_deploy` would refuse its own rebuild of
   that bundle and hold the release.
 - **CI on `main` has been red since 2026-11-04** (48dff7d1, before the
