@@ -193,11 +193,17 @@ class _RemoteView:
 
     def children(self, sub: str = "") -> Optional[list[str]]:
         """Child node names, or None when this host cannot say."""
+        from plexora.server.utils import remote_store
+
         listed = self.store.list_children(self._key(sub, ""))
         if listed:
+            # A listed `.dcm`, `.tif`... is a file, never a node: asking it
+            # for its five metadata names cost a DICOM series of 216
+            # instances 1,080 requests that all answered 404.
             return sorted(name for name in listed
                           if name not in _ZARR_MARKERS and name != ".zmetadata"
                           and not name.endswith(".json")
+                          and not remote_store.names_a_file(name)
                           and self.exists("/".join(p for p in (sub, name) if p)))
         consolidated = self._consolidated_paths()
         if consolidated is None:

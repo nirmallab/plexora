@@ -202,6 +202,13 @@ def _has_zarr_segment(url) -> bool:
                for segment in urlsplit(canonical_url(url)).path.split("/"))
 
 
+def names_a_file(name: str) -> bool:
+    """Whether one path segment is the name of a file (`FILE_SUFFIXES`, or a
+    `DICOMDIR`) rather than of a store or a folder. Name only, no request."""
+    name = str(name).rstrip("/")
+    return name.lower().endswith(FILE_SUFFIXES) or name.upper() == "DICOMDIR"
+
+
 def is_file_url(url) -> bool:
     """Whether `url` names one file (a `.tif`, a `.dcm`, a `DICOMDIR`...).
 
@@ -210,8 +217,7 @@ def is_file_url(url) -> bool:
     """
     if _has_zarr_segment(url):
         return False
-    name = url_name(url)
-    return name.lower().endswith(FILE_SUFFIXES) or name.upper() == "DICOMDIR"
+    return names_a_file(url_name(url))
 
 
 def parent_url(url) -> str:
@@ -291,12 +297,21 @@ def storage_options_for(url, options: Optional[Mapping[str, Any]] = None) -> dic
     https: the environment's proxy settings are honoured (`trust_env`), and a
     connection that goes quiet fails after 90 s rather than never. s3: anonymous
     unless the address book says otherwise, in which case boto's own credential
-    chain applies -- Plexora never holds a key.
+    chain applies -- Plexora never holds a key. On the website the page's own
+    filesystem reads the scheme (`_read_by_page`), and takes only what it can
+    use.
     """
-    import aiohttp
-
     options = dict(options or {})
     scheme = _scheme(url)
+    if _read_by_page(scheme):
+        if scheme == "s3":
+            return {key: value for key, value in (
+                ("anon", bool(options.get("anon", True))),
+                ("endpoint_url", options.get("endpoint_url")),
+                ("region", options.get("region"))) if value is not None}
+        return {"anon": bool(options.get("anon", True))} if scheme == "gs" else {}
+    import aiohttp
+
     if scheme in ("http", "https"):
         from plexora.server.utils import host_policy
 
@@ -343,6 +358,17 @@ def storage_options_for(url, options: Optional[Mapping[str, Any]] = None) -> dic
     return {}
 
 
+def _read_by_page(scheme) -> bool:
+    """Whether the website's page reads `scheme` here: its `fetch`, behind the
+    filesystem the website's boot registers (plexora/browser/buckets.py), in
+    place of aiohttp, s3fs and gcsfs, none of which runs in its worker."""
+    try:
+        from plexora.browser import buckets
+    except Exception:  # noqa: BLE001 -- no fsspec, no page
+        return False
+    return buckets.handles(scheme)
+
+
 def support() -> dict:
     """Which schemes can be read in this install."""
     import importlib.util
@@ -351,9 +377,9 @@ def support() -> dict:
         return importlib.util.find_spec(module) is not None
 
     return {
-        "https": has("aiohttp") and has("fsspec"),
-        "s3": has("s3fs"),
-        "gs": has("gcsfs"),
+        "https": (has("aiohttp") and has("fsspec")) or _read_by_page("https"),
+        "s3": has("s3fs") or _read_by_page("s3"),
+        "gs": has("gcsfs") or _read_by_page("gs"),
         "az": has("adlfs"),
         # DICOM slides at a web address: wsidicom reads the frames, pydicom
         # the headers, and both come with `plexora[remote]`.
@@ -366,6 +392,8 @@ def support() -> dict:
 
 def _require_scheme(url) -> None:
     scheme = _scheme(url)
+    if _read_by_page(scheme):
+        return
     scheme = {"az": "abfs"}.get(scheme, scheme)
     module = _SCHEME_MODULES.get(scheme)
     if scheme == "s3":
@@ -388,6 +416,16 @@ _MISSING, _FORBIDDEN, _RETRY, _FATAL = "missing", "forbidden", "retry", "fatal"
 def _not_connected(exc) -> bool:
     """Whether `exc` is an `sftp://` read whose server is not connected."""
     return bool(getattr(exc, "not_connected", False))
+
+
+def _page_refused(exc):
+    """The website's `PageRefused` behind `exc` (CORS), or None."""
+    seen = 0
+    while exc is not None and seen < 4:
+        if getattr(exc, "page_refused", False):
+            return exc
+        exc, seen = exc.__cause__, seen + 1
+    return None
 
 
 def _classify(exc) -> str:
@@ -659,6 +697,10 @@ class CacheIndex:
                 "VALUES (?, ?, ?, ?) ON CONFLICT(store_id) DO UPDATE SET "
                 "root_url = excluded.root_url, last_opened_at = excluded.last_opened_at",
                 (store_id, root_url, now, now))
+        self._write_marker(store_id, root_url)
+
+    def _write_marker(self, store_id: str, root_url: str) -> None:
+        """Say in the store's directory which store it is, for a rebuild."""
         directory = self.files / store_id
         marker = directory / _STORE_MARKER
         if not marker.exists():
@@ -711,6 +753,28 @@ class CacheIndex:
         if rng == _FULL:
             return base
         return base.with_name(base.name + ".ranges") / _range_name(*rng)
+
+    # -- values ----------------------------------------------------------
+    #
+    # Where a value's bytes are kept: one file each, at `value_path`. The
+    # website keeps them in its own storage instead (plexora/browser/
+    # cachefiles.py), and overrides these three; the rows are the same.
+
+    def read_value(self, store_id: str, key: str, rng=_FULL) -> bytes:
+        """A recorded value's bytes; OSError when they have gone."""
+        return self.value_path(store_id, key, rng).read_bytes()
+
+    def write_value(self, store_id: str, key: str, rng, data: bytes) -> None:
+        """Keep a value's bytes (recorded by the caller afterwards); OSError
+        when they cannot be written."""
+        _atomic_write(self.value_path(store_id, key, rng), data)
+
+    def drop_value(self, store_id: str, key: str, rng=_FULL) -> None:
+        """Remove a value's bytes, if they are there."""
+        try:
+            self.value_path(store_id, key, rng).unlink(missing_ok=True)
+        except OSError:
+            pass
 
     def record(self, store_id: str, key: str, rng, size: int, *,
                missing: bool = False, expires_at: Optional[float] = None) -> None:
@@ -811,11 +875,7 @@ class CacheIndex:
             for store_id, key, start, end, size in victims:
                 if self._total <= target:
                     break
-                path = self.value_path(store_id, key, (start, end))
-                try:
-                    path.unlink(missing_ok=True)
-                except OSError:
-                    pass
+                self.drop_value(store_id, key, (start, end))
                 self._db.execute(
                     "DELETE FROM entries WHERE store_id = ? AND key = ? "
                     "AND range_start = ? AND range_end = ?", (store_id, key, start, end))
@@ -1073,6 +1133,10 @@ def _atomic_write(path: Path, data: bytes) -> None:
 _index: Optional[CacheIndex] = None
 _index_lock = threading.Lock()
 _index_root_override: Optional[Path] = None
+#: What the process's index is made with, given the cache root: `CacheIndex`,
+#: or on the website the one that keeps its bytes in the site's own storage
+#: (plexora/browser/cachefiles.py `install`, through `use_index`).
+_index_factory: Optional[Callable[[Path], CacheIndex]] = None
 
 
 def cache_root() -> Path:
@@ -1092,7 +1156,7 @@ def cache_index() -> CacheIndex:
             return _index
         if _index is not None:
             _index.close()
-        _index = CacheIndex(Path(root))
+        _index = (_index_factory or CacheIndex)(Path(root))
         index = _index
     _work.spawn(index.reconcile, name="remote-cache-reconcile")
     return index
@@ -1197,9 +1261,8 @@ class ChunkCacheStore(WrapperStore):
                     return "missing", None
                 index.forget(self.store_id, key, _FULL)
             else:
-                path = index.value_path(self.store_id, key, _FULL)
                 try:
-                    data = path.read_bytes()
+                    data = index.read_value(self.store_id, key, _FULL)
                 except OSError:
                     index.forget(self.store_id, key, _FULL)
                 else:
@@ -1208,9 +1271,8 @@ class ChunkCacheStore(WrapperStore):
         if rng != _FULL:
             entry = index.lookup(self.store_id, key, rng)
             if entry is not None and not entry.missing:
-                path = index.value_path(self.store_id, key, rng)
                 try:
-                    data = path.read_bytes()
+                    data = index.read_value(self.store_id, key, rng)
                 except OSError:
                     index.forget(self.store_id, key, rng)
                 else:
@@ -1234,14 +1296,13 @@ class ChunkCacheStore(WrapperStore):
             return
         if not index.accommodate(len(data)):
             return
-        path = index.value_path(self.store_id, key, rng)
         try:
-            _atomic_write(path, data)
+            index.write_value(self.store_id, key, rng, data)
         except OSError as exc:
-            _report_write_failure(path, exc)
+            _report_write_failure(index.value_path(self.store_id, key, rng), exc)
             return
         if index.generation != generation:
-            path.unlink(missing_ok=True)
+            index.drop_value(self.store_id, key, rng)
             return
         index.record(self.store_id, key, rng, len(data))
 
@@ -1264,6 +1325,11 @@ class ChunkCacheStore(WrapperStore):
                     raise RemoteUnreachable(str(exc), self.root_url) from exc
                 kind = _classify(exc)
                 if kind in (_MISSING, _FORBIDDEN):
+                    if _page_refused(exc) is not None:
+                        # The website, and a host that lets no page read it:
+                        # every key would be "missing", so it is said once,
+                        # in its own words, instead.
+                        raise PermissionError(str(_page_refused(exc))) from exc
                     self._last_status[key] = kind
                     return None
                 if kind == _FATAL:
@@ -1505,6 +1571,10 @@ class ChunkCacheStore(WrapperStore):
             raise FileNotFoundError(
                 f"{url_join(self.root_url, key)} was not found") from exc
         if kind == _FORBIDDEN:
+            if _page_refused(exc):
+                # The website, and a host that does not let pages read it:
+                # its own sentence says so and what to do instead.
+                raise PermissionError(str(_page_refused(exc))) from exc
             raise PermissionError(
                 f"{host_of(self.root_url)} refused access to {key}") from exc
         if kind == _RETRY:
@@ -2142,10 +2212,7 @@ class RemoteFile(io.RawIOBase):
         """A host that answered a byte range with the whole file."""
         index = self.store.index
         rng = (int(block[0]), int(block[1]))
-        try:
-            index.value_path(self.store.store_id, self.key, rng).unlink(missing_ok=True)
-        except OSError:
-            pass
+        index.drop_value(self.store.store_id, self.key, rng)
         index.forget(self.store.store_id, self.key, rng)
         if len(data) > _WHOLE_FILE_MAX:
             raise ValueError(
@@ -2462,6 +2529,21 @@ def forget(root_url: Optional[str] = None, prefix: Optional[str] = None) -> None
             if (root_url is None and prefix is None) or root == root_url or (
                     prefix and root.startswith(prefix)):
                 _stores.pop(root, None)
+
+
+def use_index(factory: Optional[Callable[[Path], CacheIndex]],
+              root: Optional[Path] = None) -> None:
+    """Make the process's index with `factory` (None: `CacheIndex`), over
+    `root` (None: `paths.remote_cache_root()`), from the next `cache_index()`
+    on. The index open now is closed."""
+    global _index, _index_factory, _index_root_override
+    forget()
+    with _index_lock:
+        if _index is not None:
+            _index.close()
+            _index = None
+        _index_factory = factory
+        _index_root_override = Path(root) if root is not None else None
 
 
 def close_all() -> None:

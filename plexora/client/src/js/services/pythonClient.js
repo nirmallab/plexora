@@ -21,6 +21,10 @@
  *   here until the worker says something changed or N seconds pass, then
  *   asked once more. A wakeup may name what changed (`topic`): a
  *   conversation's poll wakes only for that conversation's events.
+ * - **Long tasks' polls.** New Dataset's scan and create each run as one task
+ *   (server/models/layer_jobs.py `mirror`), which posts its status route's
+ *   answer as it goes; that route is answered from the last one while the
+ *   task runs, and its cancel route is passed on as a cancel (below).
  * - **Cancels.** A job's cancel is written into shared memory the worker reads
  *   at the job's next check (`cancel(id)`); the site is cross-origin isolated
  *   for exactly this, and a panel's Cancel, or `job_cancel`, while the job
@@ -62,6 +66,8 @@
     const waiting = new Map();
     const listeners = new Map();
     const jobs = new Map();
+    //: Long tasks' answers (layer_jobs `mirror`): key -> {running, get, answer, cancel, cancelled}.
+    const mirrors = new Map();
     //: Held polls waiting for a wakeup: {topic, wake}.
     let wakeups = [];
     //: AI conversations' events, as the worker recorded them: id -> {base,
@@ -219,6 +225,10 @@
         if (data.event) {
             const event = data.event;
             if (event.kind === "job" && event.job) jobs.set(event.job.job_id, event);
+            if (event.kind === "mirror" && event.key) {
+                if (event.running) mirrors.set(event.key, event);
+                else mirrors.delete(event.key);
+            }
             if (event.kind === "task") {
                 tasks.push({ name: event.name, at: Math.round(performance.now()) });
                 if (tasks.length > 50) tasks.shift();
@@ -450,6 +460,13 @@
     //: What the page answers itself while the worker runs a job, or null.
     async function whileBusy(url, method, init, request) {
         const path = url.pathname;
+        const mirrored = mirrorFor(path, method);
+        if (mirrored && method === "GET") {
+            return jsonResponse({ ...mirrored.answer, answered_by: "page" });
+        }
+        if (mirrored && cancels && cancel(mirrored.key)) {
+            return jsonResponse({ ...(mirrored.cancelled || { cancelled: true }), answered_by: "page" });
+        }
         if (method === "GET") {
             const agentJob = path.match(/\/agent\/v1\/jobs\/([^/]+)$/);
             if (agentJob && busyWithJob(agentJob[1])) {
@@ -509,6 +526,16 @@
         }
         url.searchParams.set("wait", "0");
         return send(url, init, request);
+    }
+
+    //: The running task whose status route (GET) or cancel route (POST) `path`
+    //: is, or null. The page's paths may carry the site's base before the route.
+    function mirrorFor(path, method) {
+        for (const event of mirrors.values()) {
+            const route = method === "GET" ? event.get : method === "POST" ? event.cancel : null;
+            if (route && (path === route || path.endsWith(route))) return event;
+        }
+        return null;
     }
 
     //: Whether the worker is (as far as the page knows) running job `id`, one

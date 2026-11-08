@@ -354,7 +354,11 @@ def start_build(token, plan, *, name, description="", exist_ok=False,
             raise
         state["dataset"] = result["dataset"]
 
-    layer_jobs.start_task(TASK_OWNER, token, work, stages=BUILD_STAGES)
+    layer_jobs.start_task(TASK_OWNER, token, work, stages=BUILD_STAGES, mirror={
+        "key": f"dataset-build:{token}", "get": f"/datasets/scan/{token}/create",
+        "answer": lambda: build_status(token),
+        "cancel": f"/datasets/scan/{token}/create/cancel",
+        "cancelled": {"cancelled": True}})
     return build_status(token)
 
 
