@@ -3,12 +3,15 @@
 Everything the website work (plan `dreamy-brewing-sunset.md`, branch `web/phase0`)
 is waiting on from you, in one place. Kept current as work lands; the newest
 state is on `web/phase0`. Each item says what to do and what it unblocks.
-Nothing here has been done for you: nothing deployed beyond the preview, no
-DNS changed after assets.plexoraapp.com. `main` is pushed (section 6).
+**The website is live** at https://viewer.plexoraapp.com since 2026-11-08
+00:40 UTC: 0.0.37 (`main` at 56284d8a, no tag), Pages project
+`plexora-viewer` branch `release`, bundle `py/0.0.37/`, flags `viewer: on`,
+telemetry on. Activating a licence and AI do not work there until section 1,
+item 1 is deployed. Nothing else here has been done for you.
 
-Last updated: 2026-11-07 evening (web/phase0 merged into `main` and pushed;
-the preview runs its bundle `py/dev/4f583c3b9745/`, with /selfcheck and the
-capacity fixes: ids past 2^24, Python past 2 GiB, long flat-image imports).
+Last updated: 2026-11-07 evening (the launch; the preview still runs its
+bundle `py/dev/4f583c3b9745/` and, sharing the flags, no longer shows its
+"Preview" mark).
 
 ## 1. Deploys (in this order)
 
@@ -18,11 +21,14 @@ capacity fixes: ids past 2^24, Python past 2 GiB, long flat-image imports).
      bioc-core (exact-origin CORS for the viewer's origins).
    - ai: the `ai_requests` migration (the `web` origin) **outside 03:30-04:15
      UTC**, then deploy bioc-ai (CORS on its eight product routes).
-   - Unblocks: activating a licence and every AI feature on the live website.
+   - Unblocks: activating a licence and every AI feature on the live website
+     (live since 2026-11-08 without them, your call).
    - Your call inside it: `askingProductOnly` in `activation.ts` registers a
      browser only for the product that asked (so it does not use a SCIMAP Pro
      device slot). Revert that one function for the old behaviour.
-2. **Plexora's telemetry Worker** (`backend/`, from Plexora `main`): `cd backend && npm ci && npx tsc --noEmit && npx
+2. **Done 2026-11-07:** the Worker is deployed from `main` and its
+   `/healthz` reports `bae44f6538cfbaff`; kept for the record:
+   **Plexora's telemetry Worker** (`backend/`, from Plexora `main`): `cd backend && npm ci && npx tsc --noEmit && npx
    vitest run`, then `python scripts/release.py telemetry` (deploys because
    the vectors differ; waits for `/healthz` to report `bae44f6538cfbaff`,
    the allowlist with the website's count of browsers it asks to update,
@@ -46,16 +52,24 @@ capacity fixes: ids past 2^24, Python past 2 GiB, long flat-image imports).
   `cf-cache-status: DYNAMIC`, so every first visit reads R2).
 - **Zero Trust Access** on the preview (`plexora-viewer-preview`); it is
   public but unlisted (`noindex`) today.
-- **Production Pages project `plexora-viewer`** (production branch `release`)
-  and the CI secrets `CLOUDFLARE_API_TOKEN` (Pages: Edit + R2: Edit) and
-  `CLOUDFLARE_ACCOUNT_ID` (docs/internal/WEBSITE_RELEASE.md).
+- **Cloudflare Web Analytics is injected** into viewer.plexoraapp.com's pages
+  (`static.cloudflareinsights.com/beacon.min.js`, the zone's automatic
+  setup). The site's Content-Security-Policy blocks it, so nothing is sent
+  and nothing breaks, but every visit logs a policy violation in the console
+  and the live self-check fails that one check. Turn the injection off for
+  the zone (Analytics & Logs > Web Analytics, plexoraapp.com: disable the
+  automatic setup / JS snippet) rather than allowing it in the policy.
+- **CI secrets** `CLOUDFLARE_API_TOKEN` (Pages: Edit + R2: Edit) and
+  `CLOUDFLARE_ACCOUNT_ID` (`6978852cf325dd1049afd2aa427d77a7`), so releases
+  and previews deploy the website themselves (docs/internal/WEBSITE_RELEASE.md).
+  The project `plexora-viewer` exists (created 2026-11-07).
 - **The docs move** (decision 5): create the `plexora-site` Pages project and
   the DNS for plexoraapp.com / www (refused here as a new public surface).
-- **At GA**: attach viewer.plexoraapp.com, then
-  `python tools/browser_build/publish.py flags --viewer on` (it says
-  `preview` now: the preview shows a "Preview" mark). The same switch shows
-  the desktop app's **File > Open on the Website** (it reads that file; no
-  desktop release needed), and `--viewer desktop-only` hides it again.
+- **Done 2026-11-07:** viewer.plexoraapp.com attached (you added the CNAME
+  `viewer` -> `plexora-viewer.pages.dev`) and `flags --viewer on`. That
+  switch also shows the desktop app's **File > Open on the Website** in
+  desktop builds that have it (from 0.0.37's code on); `--viewer
+  desktop-only` is the kill switch.
 
 ## 3. Google (for Google Cloud on the website, plan L9)
 
@@ -132,7 +146,18 @@ capacity fixes: ids past 2^24, Python past 2 GiB, long flat-image imports).
   is attached (your call, 2026-11-07).
 - The **next desktop release** from `main` carries the removals (Segment in
   3-D, Carry an ROI through planes), the desktop speed-ups and the new
-  telemetry values: deploy the telemetry Worker (section 1, item 2) first.
+  telemetry values (the Worker that takes them is deployed). Make it
+  **0.0.38** (`release.py ci --bump patch`), not a `v0.0.37` tag: the
+  website's `py/0.0.37/` is published and never rewritten, so once the CI
+  secrets exist a v0.0.37 Release run's `web_deploy` would refuse its own
+  rebuild of that bundle and hold the release.
+- **CI on `main` has been red since 2026-11-04** (48dff7d1, before the
+  website work): `[tool.uv.sources]` points `biocognia-markers` at
+  `../biocognia-markers`, which CI does not have, so `uv lock --check` and
+  every install fail (ci, web, Docs, security; the docs site has not
+  deployed since). biocognia-markers is on PyPI now: dropping the override
+  and moving its uv.lock entry to the registry (by hand; uv here rewrites
+  the lock) fixes it. Say so and it gets done.
 - Old merged branches you may delete: `web/client-seams`, `web/node-pair`,
   `web/removals`.
 

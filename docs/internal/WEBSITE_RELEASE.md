@@ -91,6 +91,19 @@ upload puts `manifest.json` last, so an upload that stopped can simply run
 again; a re-run against a prefix that already holds this same bundle does
 nothing.
 
+Learned on 0.0.37, the first one (2026-11-07, website only, no tag):
+- Both builds name the version `plexora.__version__`, the **installed**
+  distribution's. An editable install made before the bump labels the
+  release with the old version (`propagate --check` says so). Reinstall it
+  (`pip install -e . --no-deps`), or, when a running Plexora holds the env's
+  `plexora.exe`, put a folder holding `plexora-<v>.dist-info/METADATA`
+  (`Name: plexora`, `Version: <v>`) first on `PYTHONPATH` for both builds.
+- Smoke-test **before** the upload with a site built without `--py` (it
+  loads `/py/<v>/` from smoke.mjs's own server); the release site waits on
+  `assets.plexoraapp.com/py/<v>/`, which is not there yet.
+- After the deploy: `node tests/browser/selfcheck.mjs --url
+  https://viewer.plexoraapp.com` (a first visit through the real CDN).
+
 ## Rolling back
 
 - **The website:** Pages keeps every deployment. In the dashboard, project
