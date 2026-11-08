@@ -18,7 +18,7 @@ plexora node serve [-h] [--serve KIND:ID=PATH] [--host HOST] [--port PORT] [--to
                           [--node-id NODE_ID] [--allow-origin ORIGIN] [--pair [ORIGIN]]
                           [--browser-endpoint URL] [--app] [--tls {self-signed}]
                           [--url-prefix PATH] [--plugins PLUGINS] [--dynamic] [--manifest PATH]
-                          [--exit-on-stdin-close]
+                          [--exit-on-stdin-close] [--relay-file PATH]
 ```
 
 ## Options
@@ -108,6 +108,12 @@ A file recording what this node ends up serving, re-read at startup so a project
 <Param name={"--exit-on-stdin-close"}>
 
 Stop when whatever started this node closes its input. For a node launched over SSH without a terminal -- a Windows workstation, where asking for one folds the startup line this node prints -- it is what makes the node end with the connection instead of being left running and holding a port.
+
+</Param>
+
+<Param name={"--relay-file PATH"}>
+
+Join a room on the Plexora website's relay, as the JSON file at PATH describes (written by the page's start script, which runs this). The file is read and deleted at startup; the node then answers the page through the relay, reconnecting on its own, until the page stops it or none has been open for the file's idle_exit seconds.
 
 </Param>
 

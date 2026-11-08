@@ -157,6 +157,28 @@ def _segmentation_spec(fields):
     )
 
 
+def _edit_root(data_dir):
+    """The root an edit of a registered project reads and writes: the one
+    named, or None -- every root, the user's own first, and the project saved
+    back where it is (a project in the library shared with the website,
+    paths.new_projects_root, as much as one in the data root)."""
+    return Path(data_dir).expanduser().resolve() if data_dir else None
+
+
+def _register_roots(name, data_dir):
+    """`(registry, files)` for registering `name`: the root its entry is
+    written to, and the one whose `<name>` folder holds what registering makes
+    (copies, pyramids, extensions). Both the one named; otherwise the entry
+    goes where new projects go (paths.new_projects_root) and the files stay
+    in the data root, out of a folder the website reads whole."""
+    from plexora import paths
+
+    if data_dir:
+        root = Path(data_dir).expanduser().resolve()
+        return root, root
+    return paths.new_projects_root(name), paths.data_root()
+
+
 def _copy_if_requested(path, target_dir, copy):
     from plexora.server.providers.base import is_remote_locator
 
@@ -467,7 +489,7 @@ def rename_channels(name, channel_names, data_dir=None):
     """
     from plexora import paths
 
-    data_root = Path(data_dir).expanduser().resolve() if data_dir else paths.data_root()
+    data_root = _edit_root(data_dir)
     try:
         project = Project.load(name, data_root)
     except KeyError:
@@ -520,7 +542,7 @@ def rename_layer_channels(name, layer_id, channel_names, data_dir=None):
     from plexora import paths
     from plexora.server.models.project import Project
 
-    data_root = Path(data_dir).expanduser().resolve() if data_dir else paths.data_root()
+    data_root = _edit_root(data_dir)
     project = Project.find(name, data_root)
     if project is None:
         raise ValueError(f"No datasource named {name!r}.")
@@ -576,7 +598,7 @@ def set_pixel_size(name, value, unit=None, data_dir=None, axis="xy"):
     from plexora.server.models.project import (DEFAULT_PIXEL_SIZE_UNIT,
                                                normalize_pixel_size)
 
-    data_root = Path(data_dir).expanduser().resolve() if data_dir else paths.data_root()
+    data_root = _edit_root(data_dir)
     try:
         project = Project.load(name, data_root)
     except KeyError:
@@ -929,7 +951,10 @@ def register_datasource(
             into the project's own folder instead of reading them where
             they are. Defaults to False.
         data_dir (str | Path, optional): The data root to register the
-            project under. Defaults to Plexora's configured data directory.
+            project under. By default the project is registered where new
+            projects go (on your own computer, Documents/Plexora/projects,
+            which the Plexora website opens too) and what registering builds
+            is written to Plexora's configured data directory.
         segmentation_async (bool, optional): Defer mask conversion to a
             background job and return immediately, leaving the returned
             entry's `segmentation_status` as `"pending"`. Defaults to
@@ -971,8 +996,8 @@ def register_datasource(
     from plexora import paths
     from plexora.server.models import data_model
 
-    data_root = Path(data_dir).expanduser().resolve() if data_dir else paths.data_root()
-    dataset_dir = data_root / name
+    data_root, files_root = _register_roots(name, data_dir)
+    dataset_dir = files_root / name
     dataset_dir.mkdir(parents=True, exist_ok=True)
     config_path = data_root / "config.json"
     if not config_path.exists():
@@ -1421,7 +1446,10 @@ def register_anndata_datasource(
             they are. Ignored for a live `adata`, which is always written
             into the project's folder. Defaults to False.
         data_dir (str | Path, optional): The data root to register the
-            project under. Defaults to Plexora's configured data directory.
+            project under. By default the project is registered where new
+            projects go (on your own computer, Documents/Plexora/projects,
+            which the Plexora website opens too) and what registering builds
+            is written to Plexora's configured data directory.
         table (str, optional): The table inside `features` to load, when
             `features` is a SpatialData `.zarr` store. A store with exactly
             one table resolves on its own.
@@ -1483,8 +1511,8 @@ def register_anndata_datasource(
     if table and adata is not None:
         raise ValueError("`table` selects a table inside a .zarr store, so pass `features`, not `adata`")
 
-    data_root = Path(data_dir).expanduser().resolve() if data_dir else paths.data_root()
-    dataset_dir = data_root / name
+    data_root, files_root = _register_roots(name, data_dir)
+    dataset_dir = files_root / name
     dataset_dir.mkdir(parents=True, exist_ok=True)
     config_path = data_root / "config.json"
     if not config_path.exists():
@@ -1685,7 +1713,10 @@ def register_image_datasource(name, image, channel_names=None, copy=False,
         copy (bool, optional): Copy `image` into the project's own folder
             instead of reading it where it is. Defaults to False.
         data_dir (str | Path, optional): The data root to register the
-            project under. Defaults to Plexora's configured data directory.
+            project under. By default the project is registered where new
+            projects go (on your own computer, Documents/Plexora/projects,
+            which the Plexora website opens too) and what registering builds
+            is written to Plexora's configured data directory.
         image_type (str, optional): `"brightfield"` or `"fluorescence"`, to
             override how the image is read. Defaults to None, which
             decides from the file.
@@ -1718,8 +1749,8 @@ def register_image_datasource(name, image, channel_names=None, copy=False,
     from plexora import paths
     from plexora.server.models import data_model
 
-    data_root = Path(data_dir).expanduser().resolve() if data_dir else paths.data_root()
-    dataset_dir = data_root / name
+    data_root, files_root = _register_roots(name, data_dir)
+    dataset_dir = files_root / name
     dataset_dir.mkdir(parents=True, exist_ok=True)
     config_path = data_root / "config.json"
     if not config_path.exists():
@@ -1775,7 +1806,7 @@ def reregister_image(name, data_dir=None):
     from plexora import paths
     from plexora.server.models import data_model
 
-    data_root = Path(data_dir).expanduser().resolve() if data_dir else paths.data_root()
+    data_root = _edit_root(data_dir)
     project = Project.find(name, data_root)
     if project is None:
         raise ValueError(f"Unknown project: {name}")
@@ -1785,7 +1816,7 @@ def reregister_image(name, data_dir=None):
             f"{name!r} has no local image file to re-read -- an image on a "
             "data node is read by the node that holds it.")
 
-    dataset_dir = data_root / name
+    dataset_dir = (data_root or paths.data_root()) / name
     # Never pyramidizes: this re-reads the file the project already serves,
     # which is the copy when one was made, and nobody is watching a rail.
     channel_info = data_model.convertOmeTiff(
@@ -1867,8 +1898,8 @@ def register_blank_datasource(name, *, width, height, pixel_size=None,
     """
     from plexora import paths
 
-    data_root = Path(data_dir).expanduser().resolve() if data_dir else paths.data_root()
-    dataset_dir = data_root / name
+    data_root, files_root = _register_roots(name, data_dir)
+    dataset_dir = files_root / name
     dataset_dir.mkdir(parents=True, exist_ok=True)
     config_path = data_root / "config.json"
     if not config_path.exists():
@@ -1912,8 +1943,8 @@ def register_rgb_datasource(name, image, copy=False, data_dir=None):
 
     from plexora import paths
 
-    data_root = Path(data_dir).expanduser().resolve() if data_dir else paths.data_root()
-    dataset_dir = data_root / name
+    data_root, files_root = _register_roots(name, data_dir)
+    dataset_dir = files_root / name
     dataset_dir.mkdir(parents=True, exist_ok=True)
 
     image_path = _copy_if_requested(image, dataset_dir, copy)

@@ -36,6 +36,11 @@ def plexora_data_root(tmp_path, monkeypatch):
     # The website's projects on the developer's own computer
     # (Documents/Plexora/projects) are never a test's second library.
     monkeypatch.setenv("PLEXORA_LIBRARY_PATH", "")
+    # The admin's free/licensed switch for remote servers is never read from
+    # the platform in a test (server/models/remote_access.py): free.
+    monkeypatch.setenv("PLEXORA_FEATURES_URL", "off")
+    from plexora.server.models import remote_access
+    remote_access.reset_for_tests()
     # What Plexora learns about markers goes to the marker graph's overlay,
     # which is the user's own (shared with SCIMAP Pro) unless this names
     # another -- every test gets one of its own, and a lab's shared folder from

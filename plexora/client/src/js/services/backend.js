@@ -145,9 +145,24 @@
         });
     }
 
+    //: The page's connections to servers (services/webRemote.js): held by
+    //: the site's host page, which a page in the app's frame borrows.
+    function webRemote() {
+        if (global.PlexoraWebRemote) return global.PlexoraWebRemote;
+        try {
+            return (global.parent && global.parent !== global && global.parent.PlexoraWebRemote) || null;
+        } catch (error) {
+            return null;
+        }
+    }
+
     async function answer(request) {
         const url = new URL(request.url, global.location.href);
         if (url.origin !== global.location.origin) return nativeFetch(request);
+        // A connection to a server, and the node it started: the page's own
+        // (docs/internal/WEB_REMOTE_RELAY.md), never a route of the app.
+        const remote = webRemote();
+        if (remote && remote.handles(url.pathname)) return remote.answer(request);
         const row = classify(url, request.method);
         const kindOf = row ? row.class : "network";
         // A "static" page asked for by fetch (the app's router wants a
@@ -158,6 +173,18 @@
             told({ endpoint: row.endpoint, path: routeOf(url.pathname), method: request.method,
                    handoff: row.handoff });
             return json({ success: false, error: row.handoff.why, handoff: row.handoff }, 501);
+        }
+        // A page the website showed before its Python had started (services/
+        // shell.js `earlyPage`) asks nothing until it has: the licence and the
+        // picked files are in by then, as they are for every page drawn after.
+        // Set only in the app's frame; resolved at once for any later page.
+        const gate = global.PlexoraShellGate;
+        if (gate) {
+            try {
+                await gate;
+            } catch (error) {
+                return json({ success: false, error: "Plexora's Python did not start" }, 503);
+            }
         }
         // Under a base path (a node serving the app behind a portal), every
         // answerer below is handed the route as the app names it.

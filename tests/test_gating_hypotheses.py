@@ -489,8 +489,12 @@ def test_a_panel_gates_review_names_the_partners_its_looks_drew(tmp_path):
         for s in review["supporting"]:
             if {"tile_expected", "tile_not_expected", "plot"} & set(s["roles"]):
                 assert s["marker"] in tiled
-        if hyp.get("status") == "resolved":
+        # A resolved gate that fails its own checks is written for review, and
+        # its notes say so first (Engine.finalize, explain._notes).
+        if hyp.get("status") == "resolved" and not review["needs_review"]:
             assert review["notes"].startswith("Decided by"), review["notes"]
+        if review["needs_review"]:
+            assert review["notes"].startswith("Written for review"), review["notes"]
         if unit["state"] == "manual_review_recommended":
             assert review["needs_review"] and review["uncertainty"]
     assert panelled

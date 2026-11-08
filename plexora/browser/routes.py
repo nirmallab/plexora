@@ -92,12 +92,14 @@ class Handoff(NamedTuple):
 #: runs its own node, opened at its own address).
 ACTIONS = ("open_desktop", "get_desktop", "pair_node", "google_cloud")
 
-# A web page cannot open a TCP socket, so it cannot run ssh. Remote data keeps
-# its zero-cost routes: the desktop app (or the small connector), a node the
-# cluster's portal starts, or a tunnel the user opens (plan decision 1).
+# The askpass relay is the desktop's own: ssh, a local process, asking the
+# server that started it for a password. The website signs in to a server in
+# the page itself (services/webRemote.js, docs/internal/WEB_REMOTE_RELAY.md),
+# so connecting, its status, answers and disconnecting are Python's like any
+# route, and only these two are never asked.
 _SSH = Handoff("desktop", "Connect from the desktop app",
-               "A web page cannot open an SSH connection: use the desktop app, "
-               "or pair a node started on the server.",
+               "The website signs in to servers in the page; this part belongs to the "
+               "desktop app's own SSH.",
                ("open_desktop", "pair_node", "google_cloud"))
 # An installed program's own business: the website is always the current
 # version, and there is nothing to stop.
@@ -113,10 +115,6 @@ _DATA_FOLDER = Handoff("desktop", "A desktop app setting",
 #: exactly the ssh- and desktop-bound routes (tests/test_handoff_routes.py
 #: holds it), so a new entry is a decision, not a default.
 HANDOFF = {
-    "settings_remotes_connect": _SSH,
-    "settings_remotes_answer": _SSH,
-    "settings_remotes_disconnect": _SSH,
-    "settings_remotes_status": _SSH,
     "settings_remotes_askpass_prompt": _SSH,
     "settings_remotes_askpass_answer": _SSH,
     "update_check": _UPDATES,
@@ -205,6 +203,10 @@ PYTHON = (
     "gcloud_vm_resize", "gcloud_vm_node",
     "settings_nodes", "settings_nodes_add", "settings_nodes_remove", "settings_recipes",
     "settings_recipes_save", "settings_remotes", "settings_remotes_save", "settings_remotes_remove",
+    # Connecting a saved server: the page signs in itself (services/webRemote.js)
+    # and Python reads its connections (server/models/web_remote.py).
+    "settings_remotes_connect", "settings_remotes_status", "settings_remotes_answer",
+    "settings_remotes_disconnect",
     "settings_webdata", "settings_webdata_budget", "settings_webdata_clear", "settings_webdata_jobs",
     "settings_webdata_options", "settings_webdata_options_delete", "settings_webdata_options_save",
     "settings_webdata_pin", "settings_webdata_remove", "settings_webdata_unpin",

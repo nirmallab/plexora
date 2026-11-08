@@ -12,6 +12,7 @@ Large images usually live where they were made: a cluster's scratch space, a lab
 
 <Cards>
 <Card title="Add a server" href="/docs/remote/add-a-server" description="Save a machine once from the home page or Settings, then pick its files like local ones." />
+<Card title="Connect from the website" href="/docs/remote/from-the-website" description="The same servers from the Plexora website, with nothing installed on your computer." />
 <Card title="SLURM clusters" href="/docs/remote/slurm" description="Plexora asks the scheduler for a job and connects to it when it starts." />
 <Card title="Files over SFTP" href="/docs/remote/files-over-sftp" description="Read images from a machine where nothing can be installed." />
 <Card title="Data nodes" href="/docs/remote/data-nodes" description="One project whose image, mask and table come from different machines." />
@@ -28,7 +29,7 @@ Large images usually live where they were made: a cluster's scratch space, a lab
 | Regions, gates and quality-control results | A data node or Plexora, while you are connected (not for SFTP) |
 | Figures and exports | Nothing that Plexora writes, unless you ask for it |
 
-Plexora connects with your system `ssh`, so your keys, your `~/.ssh/config`, jump hosts and Duo prompts work as they do in a terminal. Nothing is opened to the network: every connection is an SSH tunnel.
+The desktop app connects with your system `ssh`, so your keys, your `~/.ssh/config`, jump hosts and Duo prompts work as they do in a terminal. Nothing is opened to the network: every connection is an SSH tunnel. The website signs in from the page and reaches the server's data through an encrypted relay; see [Connect from the website](/docs/remote/from-the-website).
 
 ## Tips
 

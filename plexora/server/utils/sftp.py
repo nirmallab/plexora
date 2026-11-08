@@ -767,6 +767,17 @@ def target_of(url) -> str:
 _clients: dict[str, SFTPClient] = {}
 _clients_lock = threading.Lock()
 
+#: Where a client comes from when none is registered: on the website the
+#: connections are the page's (`web_remote.files_client`, set by
+#: browser/boot.py), and Python only learns of one when it asks. None on the
+#: desktop, whose connections register themselves (`connect.FilesSession`).
+_resolver: Optional[Callable[[str], Optional[object]]] = None
+
+
+def set_resolver(resolver: Optional[Callable[[str], Optional[object]]]) -> None:
+    global _resolver
+    _resolver = resolver
+
 
 def register(target, client: SFTPClient) -> None:
     with _clients_lock:
@@ -784,8 +795,14 @@ def unregister(target, client: Optional[SFTPClient] = None) -> None:
 
 def client_for(target) -> Optional[SFTPClient]:
     """The live client for `target`, or None."""
+    key = canonical_target(target)
     with _clients_lock:
-        client = _clients.get(canonical_target(target))
+        client = _clients.get(key)
+    if (client is None or not client.alive) and _resolver is not None:
+        try:
+            client = _resolver(key)
+        except Exception:  # noqa: BLE001 -- no answer is "not connected"
+            client = None
     return client if client is not None and client.alive else None
 
 

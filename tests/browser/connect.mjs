@@ -1,15 +1,16 @@
-// Remote work on the website (plan Phase 4, decision 1): a web page cannot
-// open an SSH connection, so the website says so plainly wherever one would
-// start -- and pairs a node started on the server in one click.
+// Remote work on the website: saved servers are connected from the page
+// itself (docs/internal/WEB_REMOTE_RELAY.md; tests/browser/remote.mjs drives a
+// whole connection), and a node started on the server by hand pairs in one
+// click.
 //
 // Checks, in one Chrome against the dev server (tools/browser_build/serve.py)
 // and a real data node (`plexora node serve --dynamic --pair <site>`):
 //   quit        File has no Quit (no process to stop)
-//   remotes     Settings > Remote servers is the notice, with its buttons on
-//               one row, in place of the server list (no request is made)
-//   dialog      the Connect dialog's presets are the notice, with a Google
-//               Cloud button; Google Cloud itself is the form (plan L9: no
-//               SSH, so the website reaches it), which on a build with no
+//   remotes     Settings > Remote servers has the saved servers and the
+//               presets, and says what connecting from a web page does (no
+//               connection is asked for by drawing it)
+//   dialog      the Connect dialog's presets are the presets, not a notice;
+//               Google Cloud is its form (plan L9), which on a build with no
 //               Google OAuth client says sign-in is not set up
 //   toast       any other caller of a desktop-bound route gets the notice in the corner
 //   about       Help > About says "website" without asking /desktop/info
@@ -127,22 +128,16 @@ try {
     step("remotes");
     // -- remotes ------------------------------------------------------------
     frame = await visit(page, "/settings#remotes");
-    await frame.waitForSelector("#settings_panel_remotes .plx-handoff [data-handoff-action]", { timeout: 60000 });
+    await frame.waitForSelector("#settings_remote_catalogue .connect-recipe", { timeout: 60000 });
     await frame.evaluate(() => document.querySelector('[data-section="remotes"]')?.click());
     await page.waitForTimeout(300);
-    out.remotes = await frame.evaluate(() => {
-        const box = document.querySelector("#settings_panel_remotes .plx-handoff");
-        const buttons = [...box.querySelectorAll("button")];
-        const tops = new Set(buttons.map((button) => Math.round(button.getBoundingClientRect().top)));
-        return {
-            title: box.querySelector(".plx-handoff-title").textContent,
-            why: box.querySelector(".plx-handoff-why").textContent,
-            buttons: buttons.map((button) => button.textContent),
-            oneRow: tops.size === 1,
-            serverList: Boolean(document.getElementById("settings_remotes_list")),
-            pairButton: Boolean(document.getElementById("settings_node_pair")),
-        };
-    });
+    out.remotes = await frame.evaluate(() => ({
+        lead: document.querySelector("#settings_panel_remotes .settings-panel-lead")?.textContent || "",
+        handoff: Boolean(document.querySelector("#settings_panel_remotes .plx-handoff")),
+        serverList: Boolean(document.getElementById("settings_remotes_list")),
+        presets: document.querySelectorAll("#settings_remote_catalogue .connect-recipe").length,
+        pairButton: Boolean(document.getElementById("settings_node_pair")),
+    }));
     out.remotes.asked = requests.filter((line) => /\/settings\/remotes\/[^/]+\/(connect|status)/.test(line)).length;
     await (await frame.$("#settings_panel_remotes")).screenshot({ path: path.join(shots, "settings-remotes.png") });
 
@@ -150,18 +145,15 @@ try {
     // -- dialog -------------------------------------------------------------
     const dialog = async (options, shot) => {
         await frame.evaluate((how) => { window.__opened = window.PlexoraConnectionModal.open(how); }, options);
-        await frame.waitForSelector("dialog.connect-modal.is-handoff[open]", { timeout: 15000 });
+        await frame.waitForSelector("dialog.connect-modal[open] .connect-recipe", { timeout: 15000 });
         const seen = await frame.evaluate(() => {
             const box = document.querySelector("dialog.connect-modal[open]");
-            const buttons = [...box.querySelectorAll(".connect-modal-actions button")];
-            const tops = new Set(buttons.map((button) => Math.round(button.getBoundingClientRect().top)));
             return { title: box.querySelector(".connect-modal-title").textContent,
-                     line: box.querySelector(".connect-modal-subtitle").textContent,
-                     buttons: buttons.map((button) => button.textContent), oneRow: tops.size === 1,
-                     forms: box.querySelectorAll("input, select, .connect-recipe").length };
+                     handoff: box.classList.contains("is-handoff"),
+                     presets: box.querySelectorAll(".connect-recipe").length };
         });
         await page.screenshot({ path: path.join(shots, shot) });
-        await frame.click('dialog.connect-modal[open] [data-handoff-action="close"]');
+        await frame.evaluate(() => document.querySelector("dialog.connect-modal[open]")?.close());
         seen.result = await frame.evaluate(() => window.__opened);
         return seen;
     };
@@ -189,7 +181,7 @@ try {
     // -- toast --------------------------------------------------------------
     out.toast = await frame.evaluate(async () => {
         // A route whose notice is not the one already drawn inline on this
-        // page (Settings > Remote servers is the SSH notice), so the toast
+        // page, so the toast
         // says it.
         const answer = await fetch("/settings/data");
         const body = await answer.json();
@@ -345,8 +337,10 @@ try {
     const last = await browser.context.newPage();
     await last.goto(`${site}/settings#remotes`);
     const lastFrame = await appFrame(last);
-    await lastFrame.waitForSelector("#settings_panel_remotes .plx-handoff [data-handoff-action]", { timeout: 60000 });
-    await lastFrame.click('#settings_panel_remotes [data-handoff-action="open_desktop"]');
+    // The data folder's notice (a desktop app setting) still offers the app.
+    await lastFrame.evaluate(() => fetch("/settings/data").catch(() => null));
+    await lastFrame.waitForSelector('.plx-toast [data-handoff-action="open_desktop"]', { timeout: 60000 });
+    await lastFrame.click('.plx-toast [data-handoff-action="open_desktop"]');
     out.remotes.openDesktop = await lastFrame.waitForFunction(() => {
         const toast = document.querySelector(".plx-toast-title");
         return toast && /desktop app/i.test(toast.textContent) ? toast.textContent : null;
@@ -359,10 +353,10 @@ try {
 const named = (out.pair.nodes || []).find((entry) => entry.address === node.endpoint);
 out.ok = Boolean(
     out.quit && out.quit.website && !out.quit.quit
-    && out.remotes.buttons.join("|") === "Open Desktop App|Pair a Node|Google Cloud" && out.remotes.oneRow
-    && !out.remotes.serverList && out.remotes.pairButton && out.remotes.asked === 0
-    && out.dialog.title === "Connect from the desktop app" && out.dialog.forms === 0 && out.dialog.oneRow
-    && out.dialog.buttons.join("|") === "Open Desktop App|Pair a Node|Google Cloud|Close"
+    && !out.remotes.handoff && out.remotes.serverList && out.remotes.presets > 0
+    && /Nothing is installed on this computer/.test(out.remotes.lead)
+    && out.remotes.pairButton && out.remotes.asked === 0
+    && !out.dialog.handoff && out.dialog.presets > 0
     && !out.gcloud.handoff && out.gcloud.title === "Connect to Google Cloud"
     && /Google sign-in is not set up on this site/.test(out.gcloud.identity)
     && out.toast.status === 501 && out.toast.toast && out.toast.toast.title === "A desktop app setting"

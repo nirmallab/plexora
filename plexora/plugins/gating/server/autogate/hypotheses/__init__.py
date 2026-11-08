@@ -25,8 +25,8 @@ beyond them:
    reads resolve on (VERSION 7), else another novel look
    (`controller.next_action`) or review with a stated reason.
 4. A resolved gate passes the same numeric checks as any other
-   (`Engine.run_regression`) and is written with them; a failed check caps
-   its confidence, it never moves the gate (`settle`).
+   (`Engine.run_regression`) and is written with them; a failed check sends
+   it to review at that gate, it never moves the gate (`settle`).
 
 Every observation, the candidates and the terminal status are kept on the
 unit (`unit["hypotheses"]`) and in the gate's provenance.

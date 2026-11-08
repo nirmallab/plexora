@@ -22,12 +22,25 @@ Plain `python` is the miniforge base environment and has no Flask — it is not 
 fallback. `.venv/` is a partially-synced Dropbox checkout (empty `pip list`,
 missing `click`); ignore it, do not try to repair it, do not run tests with it.
 
+Four BioCognia packages are imported from their sibling checkouts, not from the
+conda env, so put them on `PYTHONPATH` for every run (from the plexora clone):
+
+```bash
+PYTHONPATH=../spatialagents/src:../spatialbridge/src:../biocognia-markers/src:../biocognia-intelligence/src
+```
+
+Without it, tests fail with `ModuleNotFoundError` for one of those packages;
+that is the environment, not a regression. Likewise for `bs4` or
+`unrecognized arguments: --timeout`: the env is missing a package from
+`requirements-dev.lock.txt` or the `dev` extra (`pytest-timeout`). Report it
+as an environment gap.
+
 `spatialdata` **is** installed in the conda env (verified 2026-08-24 on
 Windows, 0.8.0), so do not pass `--ignore=tests/test_spatialdata_adapter.py`
 unless an import actually fails. The full-suite command is:
 
 ```bash
-<conda python> -m pytest -q -p no:randomly
+PYTHONPATH=<the four above> <conda python> -m pytest -q -p no:randomly
 ```
 
 `testpaths` in pyproject.toml is `["tests", "plexora/plugins"]`, so plugin tests
@@ -47,8 +60,9 @@ Fails on macOS only (it asserts on a Windows path), passes on Windows:
 `tests/baseline_orion2.py` depends on datasource files that may be absent on this
 machine; those skip rather than fail. Skips are not failures.
 
-The healthy baseline is **1468 passed, 1 failed, 3 skipped** on Windows
-(2026-08-24); expect one more failure on macOS. State the delta from that.
+The healthy baseline is **10865 passed, 0 failed, 180 skipped** on macOS
+(2026-11-08, about 46 minutes, with the PYTHONPATH above); the two tests
+above passed in that run. State the delta from that.
 
 ## The JS syntax gate
 
@@ -77,7 +91,7 @@ not that routing broke.
 
 ## Report format
 
-1. One line: `N passed, M failed, K skipped` and the delta from the 338/2 baseline.
+1. One line: `N passed, M failed, K skipped` and the delta from the baseline above.
 2. If all failures are the known-failing pair, say `no regressions` and stop.
 3. For each genuine failure: the test id, the assertion line, and the last ~15
    lines of its traceback. Nothing else — no full pytest output, no passing tests.

@@ -158,6 +158,9 @@
             : "Lost if this browser's data is cleared."
               + (folders ? "" : " Chrome and Edge can save them on this computer."));
         if (folders) notes.push("Switching brings your projects along.");
+        if (folders && place.kind !== "folder") {
+            notes.push("Choose Documents › Plexora in the window that opens, where the desktop app finds them too.");
+        }
         text(el("settings_web_place_meta"), notes.join(" "));
         const toFolder = el("settings_web_to_folder");
         const toBrowser = el("settings_web_to_browser");
@@ -2830,10 +2833,9 @@
         if (!el("settings_panel_data")) return unwireRail || null;
         if (el("settings_panel_nodes")) new NodesSection().start();
         let remotes = null;
-        // On the website the panel is the notice that a web page cannot open
-        // an SSH connection (settings.html, services/handoff.js): no saved
-        // servers to watch, no presets to draw.
-        if (el("settings_panel_remotes") && !el("settings_remotes_handoff")) {
+        // The website's saved servers too: the page signs in to them itself
+        // (services/webRemote.js).
+        if (el("settings_panel_remotes") && el("settings_remotes_list")) {
             remotes = new RemotesSection();
             remotes.start();
         }

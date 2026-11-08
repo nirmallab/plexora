@@ -26,7 +26,7 @@ public:
     example: /lab/shared/plexora
   - name: PLEXORA_LIBRARY_PATH
     group: Data
-    description: Folders of projects that are your own besides your data directory, read and written in place, separated by `:` (macOS, Linux) or `;` (Windows); empty for none. By default, the folder the Plexora website keeps its projects in on this computer (Documents/Plexora/projects), when it exists -- so a project made on the website opens in the desktop app with nothing to import.
+    description: Folders of projects that are your own besides your data directory, read and written in place, separated by `:` (macOS, Linux) or `;` (Windows); empty for none. By default, the folder the Plexora website keeps its projects in on this computer (Documents/Plexora/projects), when it exists -- so a project made on the website opens in the desktop app with nothing to import. Unset, with the data directory at its default, new projects made on this computer go in that folder too, so they open on the website; set (even empty), new projects stay in the data directory.
     default: <Documents>/Plexora/projects, when it holds projects
     example: D:/Plexora/projects
   - name: PLEXORA_VOCABULARY_PATH

@@ -59,6 +59,9 @@ def environment(origin: str, *, base_url: str = "", data_root: str = "/data",
         "PLEXORA_BASE_URL": base_url or "",
         "PLEXORA_DATA_PATH": data_root,
         "PLEXORA_ALLOWED_ORIGINS": origin,
+        # The page's own address, which its connections to servers are
+        # reached at (server/models/web_remote.py).
+        "PLEXORA_SITE_ORIGIN": origin,
         "PLEXORA_WORK": "cooperative",
         "PLEXORA_BACKEND": "browser",
         "PLEXORA_NO_NUMBA": "1",
@@ -286,6 +289,13 @@ def start(origin: str, *, base_url: str = "", post=None, cancelled=None, idle=No
     browser_provider.set_column_source(columns)
     browser_provider.set_asker(ask)
     licence.set_asker(ask)
+
+    from plexora.server.models import web_remote
+    from plexora.server.utils import sftp
+
+    # Files-only servers: the page holds their connections, and Python finds
+    # one when it first reads an `sftp://` address there.
+    sftp.set_resolver(web_remote.files_client)
 
     from plexora.server.utils import source_writes
 

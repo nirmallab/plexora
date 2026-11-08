@@ -101,6 +101,8 @@ async function relay(event) {
 //: (services/shell.js `relayed`; a page it does not see answers them itself,
 //: services/pageRelay.js).
 const PROBE = "/__plexora/relayed";
+//: Answered by the page's connections to servers (services/webRemote.js).
+const REMOTE = ["/__plexora/remote/", "/__plexora/relay/"];
 
 self.addEventListener("fetch", (event) => {
     const request = event.request;
@@ -113,6 +115,12 @@ self.addEventListener("fetch", (event) => {
         return;
     }
     if (route === null || FILES.some((prefix) => route.startsWith(prefix))) return;
+    // The page's connections to servers and the nodes they started
+    // (services/webRemote.js): no route of the app, answered by the page.
+    if (REMOTE.some((prefix) => route.startsWith(prefix))) {
+        event.respondWith(relay(event));
+        return;
+    }
     const row = classify({ pathname: route }, request.method);
     // A page fetched rather than navigated to (the app's router asks for a
     // fragment) is rendered by the page's Python like any route.

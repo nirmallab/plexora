@@ -45,8 +45,10 @@ def test_every_path_is_cross_origin_isolated(built):
 def test_shell_names_the_python_bundle(built):
     out, record = built
     shell = json.loads((out / "client" / "shell.json").read_text(encoding="utf-8"))
+    # And the relay a connection to a server goes through (docs/internal/
+    # WEB_REMOTE_RELAY.md).
     assert shell == {"version": record["version"], "py": "https://assets.example/py/dev/abc/",
-                     "models": "https://assets.example/models/"}
+                     "models": "https://assets.example/models/", "relay": static_build.RELAY_URL}
 
 
 def test_a_release_build_may_be_indexed(tmp_path):
@@ -94,3 +96,29 @@ def test_google_sign_in_comes_back_to_a_page_of_the_site(built, tmp_path):
     assert static_build.google_config(None) == {}
     with pytest.raises(ValueError):
         static_build.google_config("not a client id")
+
+
+def test_a_first_visits_home_page_is_drawn_as_the_websites_python_draws_it(tmp_path):
+    # The loader shows it at once on a first visit while Python starts
+    # (services/shell.js `builtHome`); Python's own answer replaces it if it
+    # differs. Matched the preview's Python byte for byte on 2026-11-07.
+    record = static_build.build(tmp_path, py="https://assets.example/py/dev/abc/", home=True)
+    page = (tmp_path / "client" / "home.html").read_text(encoding="utf-8")
+    assert record["home"] == "client/home.html"
+    assert json.loads((tmp_path / "client" / "shell.json").read_text(encoding="utf-8"))["home"] == "client/home.html"
+    assert 'id="quick_view_go"' in page
+    variables = json.loads(page.split('id="plexora-variables">', 1)[1].split("</script>", 1)[0])
+    # A first visit's: the website's backend, at the site's root, nothing kept,
+    # no licence -- nothing of the computer that built it.
+    assert variables["backend"] == "browser" and variables["base_url"] == ""
+    assert variables["datasources"] == [] and variables["client_node"] == ""
+    assert variables["license"]["plan"] == "free" and variables["license"]["paid"] is False
+    assert "quick-view-recent" not in page
+    assert "/client/home.html\n  Cache-Control: no-cache" in (tmp_path / "_headers").read_text(encoding="utf-8")
+
+
+def test_a_nodes_build_has_no_home_page(built):
+    # webapp.package_build serves the app under a path a root page does not fit.
+    out, record = built
+    assert not (out / "client" / "home.html").exists() and record["home"] is None
+    assert "home" not in json.loads((out / "client" / "shell.json").read_text(encoding="utf-8"))

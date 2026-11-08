@@ -2,7 +2,7 @@
 
     python -m plexora.client.static_build [--out DIR] [--py URL] [--models URL] [--noindex]
         [--flags URL] [--licence-api URL] [--licence-portal URL] [--licence-test-key KID=KEY]
-        [--telemetry URL] [--google-client-id ID] [--google-auth URL]
+        [--telemetry URL] [--google-client-id ID] [--google-auth URL] [--no-home]
 
 Plexora's pages are rendered on the website by Plexora's own Python in a
 worker beside the page (plexora/browser), so what the site serves as files is
@@ -18,10 +18,16 @@ Writes `--out` (default `plexora/client/dist/static/`):
 - `google-auth.html`: the page Google's sign-in returns to
   (services/googleAuthReturn.js), the `redirect_uri` the site's OAuth client
   registers (`https://<site>/google-auth.html`);
+- `client/home.html`: the home page as the website's Python draws it for a
+  first visit (no projects, no licence), rendered here by this checkout's own
+  Python in a process of its own (`home_page`): what the loader shows at
+  once on a first visit while Python starts behind it (services/shell.js
+  `builtHome`); `--no-home` leaves it out, and a node's build has none;
 - `selfcheck.html`: the self-check page, at `/selfcheck` (Pages serves a
   page without its `.html`): how Plexora runs in this browser on this
   computer, its results saved as a file (services/selfcheck.js);
-- `client/shell.json`: `{version, py, models, flags?, licence?, telemetry?, google?}`, `py` the base the
+- `client/shell.json`: `{version, py, models, home?, flags?, licence?, telemetry?, google?}`, `home`
+  the first visit's home page above, `py` the base the
   Python bundle is served from (`tools/browser_build/build.py`; the assets
   bucket on the site, `/py/<version>/` in development; onnxruntime-web is its
   `ort/`), `models` the base magic select's model files are under
@@ -53,8 +59,12 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import shutil
+import subprocess
+import sys
+import tempfile
 from pathlib import Path
 
 CLIENT = Path(__file__).resolve().parent
@@ -95,18 +105,23 @@ LOADER = """<!doctype html>
 #: (A CSP host source cannot name an IPv6 address: `[::1]` is refused.)
 _LOOPBACK = "http://127.0.0.1:* http://localhost:*"
 
+#: The relay a connection to a server goes through (docs/internal/
+#: WEB_REMOTE_RELAY.md, relay/): SSH to start a node, then the node's room.
+RELAY_URL = "wss://relay.plexoraapp.com"
+
 #: The site's Content-Security-Policy (plan Phase 5). Scripts only from the
 #: site and the assets bucket -- no inline script: the website's pages carry
 #: their variables as JSON (base.html) -- and WebAssembly compiled; workers
 #: from the site (blob: for a library that starts its own); requests anywhere
-#: over https and to the loopback; images also from the loopback (a node's
-#: tiles); inline styles allowed (the app sets them everywhere); no plugins;
-#: the site framed by nobody but itself.
+#: over https, WebSockets over wss (the relay), and to the loopback (a relay
+#: under `wrangler dev` too); images also from the loopback (a node's tiles);
+#: inline styles allowed (the app sets them everywhere); no plugins; the site
+#: framed by nobody but itself.
 CSP = "; ".join((
     "default-src 'self'",
     "script-src 'self' 'wasm-unsafe-eval' https://assets.plexoraapp.com blob:",
     "worker-src 'self' blob:",
-    f"connect-src 'self' https: {_LOOPBACK} blob: data:",
+    f"connect-src 'self' https: wss: {_LOOPBACK} ws://127.0.0.1:* ws://localhost:* blob: data:",
     f"img-src 'self' data: blob: https: {_LOOPBACK}",
     "media-src 'self' blob: data:",
     "style-src 'self' 'unsafe-inline'",
@@ -187,6 +202,9 @@ HEADERS = f"""/*
 /client/shell.json
   Cache-Control: no-cache
 
+/client/home.html
+  Cache-Control: no-cache
+
 /google-auth.html
   Cache-Control: no-store
   Referrer-Policy: no-referrer
@@ -252,10 +270,66 @@ def google_config(client_id: str | None = None, auth: str | None = None) -> dict
     return out
 
 
+#: The home page, drawn as the website's Python draws it on a first visit
+#: (plexora/browser/boot.py `environment`): run in a process of its own,
+#: because Plexora builds its app from the environment as it is imported.
+_HOME = r"""
+import sys
+from pathlib import Path
+
+root = Path(sys.argv[1])
+from plexora.browser import boot
+
+boot.environment("https://viewer.plexoraapp.com", base_url="", data_root=str(root / "data"),
+                 licence_dir=str(root / "bioc"))
+import plexora
+
+response = plexora.app.test_client().get("/", headers={"Accept": "text/html"})
+if response.status_code != 200:
+    raise SystemExit(f"/ answered {response.status_code}")
+(root / "home.html").write_bytes(response.data)
+"""
+
+
+def home_page(timeout: float = 300) -> bytes | None:
+    """The home page a first visit's Python draws, or None (said on stderr)
+    when it cannot be drawn here. Nothing of this computer's own Plexora may
+    reach a page every visitor is shown: an empty home folder, an empty
+    project store and licence folder, and no PLEXORA_ or BIOCOGNIA_ setting
+    but those the website's Python has. Matches the page the website's Python
+    draws byte for byte (2026-11-07, against the preview's)."""
+    with tempfile.TemporaryDirectory(prefix="plexora-home-") as folder:
+        root = Path(folder)
+        for name in ("data", "bioc", "home"):
+            (root / name).mkdir()
+        home = str(root / "home")
+        env = {key: value for key, value in os.environ.items()
+               if not key.startswith(("PLEXORA_", "BIOCOGNIA_"))}
+        env.update({"HOME": home, "USERPROFILE": home, "APPDATA": home, "LOCALAPPDATA": home,
+                    "XDG_CONFIG_HOME": home, "XDG_DATA_HOME": home, "XDG_CACHE_HOME": home})
+        from plexora._subprocess import popen_kwargs
+
+        try:
+            done = subprocess.run([sys.executable, "-c", _HOME, str(root)], cwd=str(PACKAGE.parent), env=env,
+                                  capture_output=True, text=True, timeout=timeout, **popen_kwargs())
+        except (OSError, subprocess.TimeoutExpired) as error:
+            print(f"static_build: no home page ({error})", file=sys.stderr)
+            return None
+        page = root / "home.html"
+        if done.returncode != 0 or not page.is_file():
+            print(f"static_build: no home page: {done.stderr.strip()[-2000:]}", file=sys.stderr)
+            return None
+        html = page.read_bytes()
+        if b'id="quick_view_go"' not in html:
+            print("static_build: no home page: / did not draw the home page", file=sys.stderr)
+            return None
+        return html
+
+
 def build(out: Path = DEFAULT_OUT, py: str | None = None, noindex: bool = False,
           licence: dict | None = None, models: str | None = None,
           flags: str | None = None, telemetry: str | None = None,
-          google: dict | None = None) -> dict:
+          google: dict | None = None, home: bool = False, relay: str | None = None) -> dict:
     from plexora import __version__
 
     py = py or f"/py/{__version__}/"
@@ -274,7 +348,8 @@ def build(out: Path = DEFAULT_OUT, py: str | None = None, noindex: bool = False,
     (out / "index.html").write_bytes(LOADER.encode("utf-8"))
     (out / "google-auth.html").write_bytes(GOOGLE_AUTH.encode("utf-8"))
     (out / "selfcheck.html").write_bytes(SELFCHECK.encode("utf-8"))
-    shell = {"version": __version__, "py": py, "models": models}
+    shell = {"version": __version__, "py": py, "models": models,
+             "relay": (relay or RELAY_URL).rstrip("/")}
     if flags:
         shell["flags"] = flags
     if licence:
@@ -283,13 +358,20 @@ def build(out: Path = DEFAULT_OUT, py: str | None = None, noindex: bool = False,
         shell["telemetry"] = {"endpoint": telemetry.rstrip("/")}
     if google:
         shell["google"] = google
+    # A first visit's home page (`home_page`): the website's builds only. A
+    # node serves the app under a path of its own, which a page drawn for
+    # the site's root does not fit.
+    page = home_page() if home else None
+    if page is not None:
+        (out / "client" / "home.html").write_bytes(page)
+        shell["home"] = "client/home.html"
     (out / "client" / "shell.json").write_bytes(json.dumps(shell, indent=1).encode("utf-8"))
     headers = HEADERS.replace("/*\n", "/*\n  X-Robots-Tag: noindex\n", 1) if noindex else HEADERS
     (out / "_headers").write_bytes(headers.encode("utf-8"))
     (out / "_redirects").write_bytes(REDIRECTS.encode("utf-8"))
     return {"out": str(out), "files": files + 6, "plugins": plugins, "version": __version__, "py": py,
             "models": models, "flags": flags, "telemetry": shell.get("telemetry"),
-            "google": dict(google or {}),
+            "google": dict(google or {}), "home": shell.get("home"), "relay": shell["relay"],
             "licence": {k: (sorted(v) if k == "test_keys" else v) for k, v in (licence or {}).items()}}
 
 
@@ -314,11 +396,16 @@ def main(argv=None) -> int:
                         help="the site's Google OAuth client id, for Google Cloud (plan L9)")
     parser.add_argument("--google-auth", default=None,
                         help="the OAuth authorization endpoint, for a stand-in (default Google's)")
+    parser.add_argument("--no-home", action="store_true",
+                        help="leave out the first visit's home page (client/home.html)")
+    parser.add_argument("--relay", default=None, metavar="WSS_URL",
+                        help=f"the relay connections to servers go through (default {RELAY_URL})")
     args = parser.parse_args(argv)
     licence = licence_config(args.licence_api, args.licence_portal, args.licence_test_key)
     google = google_config(args.google_client_id, args.google_auth)
     print(json.dumps(build(Path(args.out), args.py, args.noindex, licence, args.models,
-                           flags=args.flags, telemetry=args.telemetry, google=google),
+                           flags=args.flags, telemetry=args.telemetry, google=google,
+                           home=not args.no_home, relay=args.relay),
                      indent=1))
     return 0
 

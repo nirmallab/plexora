@@ -359,8 +359,10 @@ def support() -> dict:
         # the headers, and both come with `plexora[remote]`.
         "dicom": has("wsidicom") and has("pydicom"),
         # A files-only saved server: nothing to install beyond an ssh client,
-        # which is the system's own (see `server/utils/sftp.py`).
-        "sftp": shutil.which("ssh") is not None,
+        # which is the system's own (see `server/utils/sftp.py`) -- or, on the
+        # website, the page's (server/models/web_remote.py).
+        "sftp": (shutil.which("ssh") is not None
+                 or os.environ.get("PLEXORA_BACKEND") == "browser"),
     }
 
 

@@ -126,14 +126,17 @@ def test_the_probe_is_bounded_so_a_dead_machine_answers_quickly(
     from plexora.server.routes import settings_routes
 
     seen = {}
-    monkeypatch.setattr(
-        http, "hello",
-        lambda node, timeout=None: seen.setdefault("timeout", timeout) or {})
+
+    def hello(node, timeout=None):
+        seen["timeout"] = timeout
+        return {}
+
+    monkeypatch.setattr(http, "hello", hello)
     remote = remote_store.save(a_remote())
     open_a_node(remote)
     map_a_node("hpc")
 
-    client.get("/remote_health")
+    assert client.get("/remote_health").status_code == 200
 
     assert seen["timeout"] == settings_routes.HEALTH_TIMEOUT
     assert settings_routes.HEALTH_TIMEOUT <= 5

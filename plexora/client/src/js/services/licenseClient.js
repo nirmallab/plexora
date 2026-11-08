@@ -1025,6 +1025,10 @@ export function createLicenseClient({
         deactivate, remove, forget, account, aiToken, aiTokenForPython, installId, files,
         status: () => status,
         state: () => state,
+        // The certificate as held, for a service that checks it itself: the
+        // relay, when the website's remote servers need a licence
+        // (services/webRemote.js). Null when there is none, or it was revoked.
+        certificate: () => (record && record.certificate && !record.revoked ? record.certificate : null),
         storeKind: store.kind || "unknown",
         due: (held) => due(held), refreshable: (held) => refreshable(held),
     };

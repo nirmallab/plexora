@@ -2554,8 +2554,10 @@ class Project:
     def _write_root(self, data_root=None) -> Path:
         """The root this project's entry is written to.
 
-        An explicit argument wins, then the root it was loaded from, then the
-        user's own. A shared project resolves to the shared root and the write
+        An explicit argument wins, then the root it was loaded from, then where
+        a new project goes (`paths.new_projects_root`: the user's own root that
+        holds the name, else the library shared with the website, else their
+        data root). A shared project resolves to the shared root and the write
         will fail there -- deliberately, since silently redirecting it into the
         user's root would fork the registry entry and leave two projects with
         one name. Callers that can do something better refuse earlier, on
@@ -2563,7 +2565,7 @@ class Project:
         """
         if data_root is not None:
             return Path(data_root)
-        return self.home_root if self.home_root is not None else paths.data_root()
+        return self.home_root if self.home_root is not None else paths.new_projects_root(self.name)
 
     def save(self, data_root=None) -> dict:
         """Write this project back, leaving every other project untouched.

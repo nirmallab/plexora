@@ -72,6 +72,16 @@
         const node = doc.getElementById("plexora-boot-status");
         if (node) node.textContent = text;
     };
+    //: What the loader says while nothing is being asked: Python's progress
+    //: (`progress`) arrives while a question may be up, and waits for it.
+    let asking = 0;
+    let progressText = "";
+    const progress = (text) => {
+        progressText = text;
+        if (!asking) status(text);
+        // Said in the host for a frame's loader to say too (frameBoot).
+        if (!host) global.PlexoraShellProgress = text;
+    };
     const fail = (text) => {
         status(text);
         const box = doc.getElementById("plexora-boot");
@@ -82,6 +92,7 @@
     //: per action; resolves with the chosen action's value. (A click here is
     //: what lets the page ask the browser for a permission.)
     function askInLoader(text, actions) {
+        asking += 1;
         status(text);
         const box = doc.getElementById("plexora-boot");
         const row = doc.createElement("div");
@@ -94,6 +105,8 @@
                 if (action.primary) button.className = "is-primary";
                 button.addEventListener("click", () => {
                     row.remove();
+                    asking -= 1;
+                    if (!asking && progressText) status(progressText);
                     resolve(action.value);
                 });
                 row.appendChild(button);
@@ -129,7 +142,10 @@
         }
         const chosen = await app.PlexoraConfirm.choose({
             title: "Save projects on this computer?",
-            body: "Your figures, thresholds and gates stay safe in Documents › Plexora. "
+            // A page is never given Documents itself (services/browserStore.js
+            // `chooseHome`): the user chooses Plexora's folder in it.
+            body: "Your figures, thresholds and gates go in Documents › Plexora, where the desktop app "
+                + "finds them too. Choose that folder in the next window, or make it with New Folder. "
                 + "Kept in the browser, they are lost if its browsing data is cleared.",
             choices: [{ value: "browser", label: "Keep in browser" },
                       { value: "folder", label: "Save on this computer", kind: "primary", focus: true }],
@@ -137,12 +153,17 @@
             inline: true,
         });
         if (chosen === "folder") {
-            const done = await store.useFolder(null).catch(() => null);
+            let why = null;
+            const done = await store.useFolder(null).catch((error) => {
+                why = error && error.message;
+                return null;
+            });
             if (done) {
                 app.PlexoraToast?.show({ title: `Projects are saved in ${done.label}` });
                 return;
             }
-            app.PlexoraToast?.show({ title: "Projects kept in this browser", note: "Change it in Settings › Data." });
+            app.PlexoraToast?.show({ title: "Projects kept in this browser",
+                                     note: why ? `${why} Change it in Settings › Data.` : "Change it in Settings › Data." });
         }
         await store.useBrowser();
     }
@@ -191,6 +212,81 @@
             doc.head.appendChild(node);
         });
     }
+
+    //: Files fetched together and run one after another, in the order given
+    //: (a script inserted with `async` off keeps its place): the loader's
+    //: services, which used to wait on each other's download one by one.
+    function scripts(sources) {
+        return Promise.all(sources.map((src) => new Promise((resolve, reject) => {
+            const node = doc.createElement("script");
+            node.src = src;
+            node.async = false;
+            node.onload = resolve;
+            node.onerror = () => reject(new Error(`could not load ${src}`));
+            doc.head.appendChild(node);
+        })));
+    }
+
+    //: The pages this browser shows before Python has started: the last
+    //: answer Python gave for each, kept in Cache Storage per site version,
+    //: Python bundle and base path. Only the home page: what it does is open
+    //: something, which waits for Python anyway, while a page that saves what
+    //: it shows (Settings, a project) shown from an old copy could save old
+    //: values back. A page shown from here is checked against Python's own
+    //: answer once Python is up (frameBoot `early`).
+    const PAGE_CACHE = "plexora-pages";
+    const EARLY_ROUTES = new Set(["/"]);
+
+    function pageStore(shell, py) {
+        const caches = global.caches;
+        const stamp = encodeURIComponent(`${shell.version || ""}|${py}`);
+        const key = (route) => new URL(at(`/__plexora/page${route}?v=${stamp}`), global.location.origin).href;
+        const open = () => (caches ? caches.open(PAGE_CACHE) : Promise.reject(new Error("no Cache Storage")));
+        return Object.freeze({
+            //: The HTML kept for `route`, or null.
+            async get(route) {
+                if (!EARLY_ROUTES.has(route)) return null;
+                try {
+                    const found = await (await open()).match(key(route));
+                    return found ? await found.text() : null;
+                } catch (error) {
+                    return null;
+                }
+            },
+            //: Python's answer for `route` kept, and every copy from another
+            //: version dropped.
+            async put(route, html) {
+                if (!EARLY_ROUTES.has(route) || typeof html !== "string" || !html) return;
+                try {
+                    const cache = await open();
+                    const mine = key(route);
+                    for (const request of await cache.keys()) {
+                        const url = new URL(request.url);
+                        if (url.pathname === new URL(mine).pathname && request.url !== mine) await cache.delete(request);
+                    }
+                    await cache.put(mine, new Response(html, { headers: { "Content-Type": "text/html; charset=utf-8" } }));
+                } catch (error) { /* nothing kept: the next visit waits for Python, as before */ }
+            },
+        });
+    }
+
+    //: The home page as Python draws it on a first visit, rendered when the
+    //: site was built (client/static_build.py `home_page`; shell.json `home`):
+    //: what a browser that has kept nothing yet shows while Python starts.
+    //: At the site's root only: a node serves the app under a path of its own.
+    async function builtHome(shell, route) {
+        if (!shell.home || BASE || route !== "/") return null;
+        try {
+            const response = await global.fetch(at(`/${shell.home}`), { cache: "no-cache" });
+            return response.ok ? await response.text() : null;
+        } catch (error) {
+            return null;
+        }
+    }
+
+    //: Two answers for a page the same but for what time has changed: the
+    //: words of each `<time>` ("3 hours ago" a day later).
+    const timeless = (html) => String(html).replace(/(<time\b[^>]*>)[^<]*(<\/time>)/g, "$1$2");
 
     function browserVariables() {
         global.flaskVariables = { backend: "browser", base_url: BASE };
@@ -390,7 +486,12 @@
         const pairing = takePairingLink();
         browserVariables();
         const shell = await (await global.fetch(at("/client/shell.json"), { cache: "no-cache" })).json();
-        const flags = await readFlags(shell);
+        // The site's switches, and the two files that can start Python,
+        // fetched together.
+        const [flags] = await Promise.all([
+            readFlags(shell),
+            scripts([at("/client/src/js/services/backendRoutes.js"), at("/client/src/js/services/pythonClient.js")]),
+        ]);
         global.PlexoraFlags = Object.freeze(flags);
         if (flags.viewer === "desktop-only") {
             return stop(flags.message || "The website is paused for now. The desktop app works as usual.",
@@ -407,8 +508,6 @@
         }
         // The bundle's address, absolute or from the site's root.
         const py = new URL(shell.py, new URL(at("/"), global.location.origin)).href;
-        await script(at("/client/src/js/services/backendRoutes.js"));
-        await script(at("/client/src/js/services/pythonClient.js"));
         // A Chrome or Edge too old to run the website's Python (no JSPI)
         // crashes or hangs trying: asked to update, before anything starts.
         const old = global.PlexoraPython.unsupported();
@@ -419,57 +518,102 @@
                  [{ label: "Get the desktop app", act: () => global.open(DOWNLOAD, "_blank", "noopener") }]);
             return countRefusal(shell, old);
         }
-        await script(at("/client/src/js/services/backend.js"));
-        await script(at("/client/src/js/services/pickedFiles.js"));
-        // Saving into a picked file Python wrote (Settings > Data, off by default).
-        await script(at("/client/src/js/services/sourceWrites.js"));
-        await script(at("/client/src/js/services/browserNode.js"));
-        await script(at("/client/src/js/services/browserSlides.js"));
-        await script(at("/client/src/js/services/browserTable.js"));
-        await script(at("/client/src/js/services/browserPyramid.js"));
-        await script(at("/client/src/js/services/browserStore.js"));
-        await script(at("/client/src/js/services/desktopHandoff.js"));
-        await script(at("/client/src/js/services/handoffNotice.js"));
-        await script(at("/client/src/js/services/connectorClient.js"));
-        // Google sign-in for Google Cloud (plan L9): the token is held here,
-        // in the host, for the tab's life, and each page's frame borrows it.
-        await script(at("/client/src/js/services/googleAuth.js"));
-        global.PlexoraGoogleAuth.configure(shell.google || {});
+        // Python's downloads first -- the longest part of a visit by far --
+        // and everything below while they run.
+        global.PlexoraPython.on("mark", ({ mark }) => { if (LABELS[mark]) progress(LABELS[mark]); });
+        global.PlexoraPython.warm({ base: py, root: at("/") });
+        progress("Starting Python");
+        // The page this address shows, as Python last drew it -- or, on a
+        // first visit, as the site's build drew it -- looked up now.
+        const pages = pageStore(shell, py);
+        global.PlexoraPages = pages;
+        const route = inApp(global.location);
+        const kept = pages.get(route).then((html) => html || builtHome(shell, route));
         // An ES module, fetched while Python starts.
         const licenceModule = import(at("/client/src/js/services/licenseClient.js"));
         licenceModule.catch(() => null);
-        // Magic select's model: onnxruntime-web from the Python bundle, the
-        // model files from the assets' models folder (services/onnxExecutor.js).
-        await script(at("/client/src/js/services/onnxExecutor.js"));
+        const control = controlled();
+        await scripts([
+            at("/client/src/js/services/backend.js"),
+            at("/client/src/js/services/pickedFiles.js"),
+            // Saving into a picked file Python wrote (Settings > Data, off by default).
+            at("/client/src/js/services/sourceWrites.js"),
+            at("/client/src/js/services/browserNode.js"),
+            at("/client/src/js/services/browserSlides.js"),
+            at("/client/src/js/services/browserTable.js"),
+            at("/client/src/js/services/browserPyramid.js"),
+            at("/client/src/js/services/browserStore.js"),
+            at("/client/src/js/services/desktopHandoff.js"),
+            at("/client/src/js/services/handoffNotice.js"),
+            at("/client/src/js/services/connectorClient.js"),
+            // Connections to servers, held here so they outlive the app
+            // frame's pages (docs/internal/WEB_REMOTE_RELAY.md).
+            at("/client/src/js/services/relayRoom.js"),
+            at("/client/src/js/services/webRemote.js"),
+            // Google sign-in for Google Cloud (plan L9): the token is held
+            // here, in the host, for the tab's life, and each page's frame
+            // borrows it.
+            at("/client/src/js/services/googleAuth.js"),
+            // Magic select's model: onnxruntime-web from the Python bundle,
+            // the model files from the assets' models folder.
+            at("/client/src/js/services/onnxExecutor.js"),
+        ]);
+        global.PlexoraGoogleAuth.configure(shell.google || {});
+        global.PlexoraWebRemote.configure({
+            relay: shell.relay,
+            bundle: `${at("/client/dist/ssh_bundle.js")}?v=${encodeURIComponent(shell.version || "")}`,
+            // When the website's remote servers are behind a licence, the
+            // relay asks for the certificate the page holds.
+            licence: () => (global.PlexoraLicense && typeof global.PlexoraLicense.certificate === "function"
+                ? global.PlexoraLicense.certificate() : null),
+        });
         const models = new URL(shell.models || "/models/", new URL(at("/"), global.location.origin)).href;
         const sam = ((flags.models || {}).mobilesam || {}).enabled === false;
         global.PlexoraOnnx.configure({ ort: shell.ort || `${py}ort/`, models,
                                        disabled: sam ? "Magic select is switched off on the website for now." : null });
-        await controlled();
+        await control;
         // Where the projects are kept: a folder the user granted, opened again
         // (after one click when the browser asks), or this browser's storage.
+        // Chrome's answer "Allow on every visit" ends the question for good.
         const store = await global.PlexoraStore.prepare((record) => askInLoader(
-            `Your projects are in ${global.PlexoraStore.labelOf(record.parent)}.`,
+            `Your projects are in ${global.PlexoraStore.labelOf(record.parent)}. `
+            + "To open it without this question next time, choose “Allow on every visit”.",
             [{ value: false, label: "Use browser this time" },
              { value: true, label: "Open folder", primary: true }])).catch(() => null);
-        status("Starting Python");
-        global.PlexoraPython.on("mark", ({ mark }) => { if (LABELS[mark]) status(LABELS[mark]); });
         // `?pydebug` on the address: the worker's test hooks (`run`, `sync`,
         // `trace`), for diagnosing the site in development.
         const debug = new URLSearchParams(global.location.search).has("pydebug");
-        const info = await global.PlexoraPython.start({ base: py, root: at("/"), siteBase: BASE,
-                                                        debug, store, telemetry: telemetryOptions(shell) });
-        if (info.error) throw new Error(info.error);
-        // What Help › About says on the website (views/helpMenu.js).
-        global.PlexoraSite = Object.freeze({ version: info.version || shell.version || "" });
-        // The licence, in Python's files before the first page is rendered.
-        global.PlexoraLicense = await startLicence(shell, licenceModule);
-        global.PlexoraStore.booted(info.store);
-        // The files picked on earlier visits, mounted again where the browser
-        // still grants access; the rest wait for a click (PlexoraPicks.reconnect).
-        await global.PlexoraPicks.restore().catch(() => null);
-        // And the pyramidized copies saved in folders beside their originals.
-        await global.PlexoraPyramid.restore().catch(() => null);
+        const booting = global.PlexoraPython.start({ base: py, root: at("/"), siteBase: BASE,
+                                                     debug, store, telemetry: telemetryOptions(shell) });
+        //: Python started, with everything a page's requests may need: the
+        //: licence in its files, the store's state, the files picked on
+        //: earlier visits mounted. A page shown before then (frameBoot
+        //: `early`) holds its requests until it resolves (services/backend.js).
+        const started = (async () => {
+            const info = await booting;
+            if (info.error) throw new Error(info.error);
+            // What Help › About says on the website (views/helpMenu.js).
+            global.PlexoraSite = Object.freeze({ version: info.version || shell.version || "" });
+            // The licence, in Python's files before the first page is rendered.
+            global.PlexoraLicense = await startLicence(shell, licenceModule);
+            global.PlexoraStore.booted(info.store);
+            // The files picked on earlier visits, mounted again where the browser
+            // still grants access; the rest wait for a click (PlexoraPicks.reconnect).
+            await global.PlexoraPicks.restore().catch(() => null);
+            // And the pyramidized copies saved in folders beside their originals.
+            await global.PlexoraPyramid.restore().catch(() => null);
+            return info;
+        })();
+        started.catch(() => null);
+        global.PlexoraShellStarted = started;
+        // The app's frame now when this page was kept, with the kept page
+        // handed to it; otherwise once Python has started, as it always was.
+        const early = await kept;
+        if (early) {
+            global.PlexoraShellEarly = { route, html: early };
+        } else {
+            await started;
+        }
         const frame = doc.createElement("iframe");
         frame.id = "plexora-app";
         frame.title = "Plexora";
@@ -481,16 +625,46 @@
             if (box) box.hidden = true;
             if (!asked) {
                 asked = true;
-                askWhereOnce(frame).catch(() => null);
+                started.then(() => askWhereOnce(frame)).catch(() => null);
             }
+            started.then(() => keepHome(frame, pages)).catch(() => null);
         });
         doc.body.appendChild(frame);
+        await started.catch((error) => {
+            // Python did not start under a kept page: the page goes, and the
+            // loader says why, as it would have without one.
+            frame.remove();
+            const box = doc.getElementById("plexora-boot");
+            if (box) box.hidden = false;
+            throw error;
+        });
         followLicence(frame);
         // A node's pairing link: paired once the app can say how it went.
         if (pairing !== null) {
             whenApp(frame).then((app) => global.PlexoraConnector.pair(
                 global.PlexoraConnector.parse(pairing) || { invalid: true }, app)).catch(() => null);
         }
+    }
+
+    //: The home page kept as Python would draw it now, a few seconds after the
+    //: frame shows any other page: opening a project changes its Recent rows,
+    //: and the next visit's home page should not be the one from before.
+    let homeTimer = null;
+    function keepHome(frame, pages) {
+        let route = null;
+        try {
+            route = inApp(frame.contentWindow.location);
+        } catch (error) {
+            return;
+        }
+        if (EARLY_ROUTES.has(route)) return;
+        global.clearTimeout(homeTimer);
+        homeTimer = global.setTimeout(async () => {
+            try {
+                const response = await global.PlexoraPython.fetch("/", { headers: { Accept: "text/html" } });
+                if (response.ok) await pages.put("/", await response.text());
+            } catch (error) { /* kept as it was */ }
+        }, 5000);
     }
 
     //: Keep the tab's address and title what the frame shows.
@@ -561,40 +735,53 @@
         return true;
     }
 
-    async function frameBoot() {
-        const address = here(global.location);
-        browserVariables();
-        // The host's Python and picks, not a second worker.
-        global.PlexoraPython = host.PlexoraPython;
-        global.PlexoraPicks = host.PlexoraPicks;
-        global.PlexoraNode = host.PlexoraNode;
-        global.PlexoraLicense = host.PlexoraLicense;
-        global.PlexoraGoogleAuth = host.PlexoraGoogleAuth;
-        global.PlexoraShellFramed = true;
-        if (global.PlexoraNode) global.PlexoraNode.revalidate();
-        await claimed();
-        await script(at("/client/src/js/services/backendRoutes.js"));
-        await script(at("/client/src/js/services/backend.js"));
-        // Where the site's worker does not see this page's requests, the
-        // page answers them itself.
-        if (!await relayed()) {
-            await script(at("/client/src/js/services/pageRelay.js"));
-            global.PlexoraPageRelay.install(global);
-            global.PlexoraShellRelay = "page";
-        }
-        const response = await global.PlexoraPython.fetch(
-            inApp(global.location), { headers: { Accept: "text/html" } });
-        let html = await response.text();
-        const project = projectOf(html);
-        if (project && await findFiles(project)) {
-            html = await (await global.PlexoraPython.fetch(
-                inApp(global.location), { headers: { Accept: "text/html" } })).text();
-        }
-        // A project's page: the browser node asks Python what it may serve
-        // now, ahead of the page's own requests, so its first tile does not
-        // wait behind them (or behind the work opening the project queues).
-        if (project && global.PlexoraNode) global.PlexoraNode.project(project);
+    //: Takes this frame out of the host's layout for two of the host's frames,
+    //: and resolves to the function that puts it back; frameBoot opens the
+    //: app's document in between.
+    //:
+    //: Chrome (157) never gives pointer capture to a document opened while
+    //: the pointer is over its frame -- over the last page of the app, or
+    //: over this loader while it waited on Python, which is every page but a
+    //: first one the mouse has not yet touched. `setPointerCapture` does
+    //: nothing, and every pointer event arrives as if the pointer had just
+    //: come in from outside the page: pointerover and pointerenter from the
+    //: document down. OpenSeadragon takes the position from that pointerenter
+    //: as the drag's last position, so every drag measured 0 px and the image
+    //: zoomed but never panned; anything else that captures the pointer (a
+    //: slider dragged past its end) lost it. The document stays like that
+    //: when the pointer leaves and comes back. Opened while the frame has no
+    //: layout box it is an ordinary document. Hiding it any other way
+    //: (pointer-events, visibility, display for less than two frames) is not
+    //: enough. Reproduced outside Plexora with a host page, an iframe and
+    //: document.open alone (tests/test_shell_pointer_capture.py).
+    //:
+    //: The host's frames, not this one's: a frame without a box draws none.
+    //: They can come late -- 0.46 and 0.71 s on the preview in headless
+    //: Chrome while a project opened -- and a frame cut short by a timer is
+    //: no use, so the timer is only for frames that never come. A tab in
+    //: the background draws none at all; it is opened as before.
+    function hiddenForOpen() {
+        const frame = global.frameElement;
+        if (!frame || host.document.visibilityState !== "visible") return Promise.resolve(() => {});
+        const before = frame.style.display;
+        frame.style.display = "none";
+        const shown = () => { frame.style.display = before; };
+        return new Promise((resolve) => {
+            const done = () => {
+                global.clearTimeout(timer);
+                resolve(shown);
+            };
+            const timer = global.setTimeout(done, 5000);
+            host.requestAnimationFrame(() => host.requestAnimationFrame(done));
+        });
+    }
+
+    //: The app's page `html` in place of this loader. `project`: the
+    //: project it shows, or "".
+    async function writePage(html, project, address) {
+        const shown = await hiddenForOpen();
         doc.open();
+        shown();
         // WebKit gives a document opened here the host's address (it takes
         // the entry document from the host's promise this continues): this
         // page's own address back, before the page's scripts read it.
@@ -617,6 +804,116 @@
             if (shown) host.PlexoraHandoff.open(shown, global);
         });
         mirror();
+    }
+
+    //: The written page parsed, its deferred scripts run.
+    const parsed = () => (doc.readyState !== "loading" ? Promise.resolve()
+        : new Promise((resolve) => doc.addEventListener("DOMContentLoaded", resolve, { once: true })));
+
+    //: The page the host kept for this address (hostBoot `early`), taken once.
+    function takeEarly(route) {
+        const early = host.PlexoraShellEarly;
+        host.PlexoraShellEarly = null;
+        return early && early.route === route && typeof early.html === "string" ? early.html : null;
+    }
+
+    //: A kept page shown at once, while Python starts. Its requests wait for
+    //: Python (services/backend.js `PlexoraShellGate`) and the status chip
+    //: says "Starting" meanwhile. Then Python's own answer for the address:
+    //: kept for the next visit; the same, or the same but for its times
+    //: (written in); otherwise the page loads again from Python -- unless it
+    //: has been used (pressed, typed in), when it stays as it is: a reload
+    //: would throw away what was being done, a file being picked among it.
+    async function earlyPage(route, html, address) {
+        await writePage(html, "", address);
+        let used = false;
+        const use = () => { used = true; };
+        const USES = ["pointerdown", "keydown", "input", "change", "drop"];
+        for (const type of USES) global.addEventListener(type, use, true);
+        const task = parsed().then(() => (global.PlexoraStatus ? global.PlexoraStatus.begin("Starting") : null));
+        let fresh = null;
+        try {
+            await host.PlexoraShellStarted;
+            const response = await global.PlexoraPython.fetch(route, { headers: { Accept: "text/html" } });
+            if (response.ok) fresh = await response.text();
+        } catch (error) {
+            // Python did not start: the host takes the frame down and says so.
+            return;
+        } finally {
+            const shown = await task;
+            if (shown) shown.done();
+            for (const type of USES) global.removeEventListener(type, use, true);
+        }
+        if (fresh === null) return;
+        host.PlexoraPages.put(route, fresh);
+        if (fresh === html) return;
+        // Left for another page meanwhile (a Recent row opened): `global` is
+        // that page's window now, and nothing here is about it.
+        if (global.document !== doc) return;
+        if (timeless(fresh) === timeless(html)) {
+            const times = new DOMParser().parseFromString(fresh, "text/html").querySelectorAll("time");
+            doc.querySelectorAll("time").forEach((node, i) => {
+                if (times[i]) node.textContent = times[i].textContent;
+            });
+            return;
+        }
+        if (!used) global.location.replace(global.location.href);
+    }
+
+    async function frameBoot() {
+        const address = here(global.location);
+        browserVariables();
+        // The host's Python and picks, not a second worker.
+        global.PlexoraPython = host.PlexoraPython;
+        global.PlexoraPicks = host.PlexoraPicks;
+        global.PlexoraNode = host.PlexoraNode;
+        // The host's licence, which it holds only once Python has started: read
+        // through to it, since a kept page is up before then.
+        Object.defineProperty(global, "PlexoraLicense", {
+            configurable: true, enumerable: true, get: () => host.PlexoraLicense,
+        });
+        global.PlexoraGoogleAuth = host.PlexoraGoogleAuth;
+        global.PlexoraShellFramed = true;
+        // What the page's requests wait for (services/backend.js).
+        global.PlexoraShellGate = host.PlexoraShellStarted || null;
+        if (global.PlexoraNode) global.PlexoraNode.revalidate();
+        await claimed();
+        await scripts([at("/client/src/js/services/backendRoutes.js"), at("/client/src/js/services/backend.js")]);
+        // Where the site's worker does not see this page's requests, the
+        // page answers them itself.
+        if (!await relayed()) {
+            await script(at("/client/src/js/services/pageRelay.js"));
+            global.PlexoraPageRelay.install(global);
+            global.PlexoraShellRelay = "page";
+        }
+        const route = inApp(global.location);
+        const early = takeEarly(route);
+        if (early !== null) return earlyPage(route, early, address);
+        // A page asked for while Python starts (one opened from a kept page)
+        // is drawn once the licence and the picked files are in; this loader
+        // says how far Python has got meanwhile, as the host's would.
+        if (host.PlexoraShellStarted) {
+            if (host.PlexoraShellProgress) progress(host.PlexoraShellProgress);
+            const off = global.PlexoraPython.on("mark", ({ mark }) => { if (LABELS[mark]) progress(LABELS[mark]); });
+            try {
+                await host.PlexoraShellStarted;
+            } finally {
+                off();
+            }
+        }
+        const response = await global.PlexoraPython.fetch(route, { headers: { Accept: "text/html" } });
+        let html = await response.text();
+        const project = projectOf(html);
+        if (project && await findFiles(project)) {
+            html = await (await global.PlexoraPython.fetch(route, { headers: { Accept: "text/html" } })).text();
+        }
+        // The next visit's first page, shown before Python is up.
+        if (response.ok && !project && host.PlexoraPages) host.PlexoraPages.put(route, html);
+        // A project's page: the browser node asks Python what it may serve
+        // now, ahead of the page's own requests, so its first tile does not
+        // wait behind them (or behind the work opening the project queues).
+        if (project && global.PlexoraNode) global.PlexoraNode.project(project);
+        await writePage(html, project, address);
     }
 
     (host ? frameBoot() : hostBoot())

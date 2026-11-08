@@ -78,8 +78,10 @@ SETTINGS_FILENAME = "settings.json"
 #: with the CLI and notebooks.
 RULE_PLATFORM_DEFAULT = "platform default"
 
-#: The data root chosen because the website keeps its projects on this
-#: computer and this account had none of its own yet (`website_library`).
+#: Why the library this computer shares with the website is one of the
+#: user's own roots (`library_root_resolutions`). Never a data root: a data
+#: root also holds what is one machine's (servers, node tokens, the agent's
+#: sessions, caches), and the website reads that whole folder.
 RULE_WEBSITE_LIBRARY = "the website's projects on this computer"
 
 #: The first line of the two-used-directories refusal, fixed so that
@@ -336,16 +338,10 @@ def _candidate_data_root() -> Resolution:
         return Resolution(suggested,
                           f"{ENV_DATA_PATH_DEFAULT}, suggested by the connection")
 
+    # The website's projects on this computer are never the data root, even
+    # for an account with nothing yet: new projects go there instead
+    # (`new_projects_root`), and what is one machine's stays here.
     default = Path(user_data_dir(APP_NAME, appauthor=False)).resolve()
-    # The one rule that looks at the disk: when the website keeps its projects
-    # on this computer (Documents/Plexora/projects) and this account has none
-    # of its own yet, both apps use that one folder -- work started in either
-    # is simply there in the other, with nothing to import.
-    library = website_library()
-    if (os.environ.get(ENV_LIBRARY_PATH) is None and (library / CONFIG_FILENAME).exists()
-            and not (default / CONFIG_FILENAME).exists()):
-        return Resolution(library.resolve(), RULE_WEBSITE_LIBRARY)
-
     return Resolution(default, RULE_PLATFORM_DEFAULT)
 
 
@@ -704,6 +700,62 @@ def owned_roots() -> list[Path]:
     return [data_root(), *library_roots()]
 
 
+#: Set (to "1") for a Plexora reached from another computer -- `--remote`,
+#: Open OnDemand (cli.py) -- or a notebook's own server: nobody there has a
+#: browser on this machine's Documents.
+ENV_SERVER_IS_REMOTE = "PLEXORA_SERVER_IS_REMOTE"
+ENV_NOTEBOOK_MODE = "PLEXORA_NOTEBOOK_MODE"
+
+
+def _served_from_elsewhere() -> bool:
+    return any(os.environ.get(name, "").strip().lower() in ("1", "true", "yes")
+               for name in (ENV_SERVER_IS_REMOTE, ENV_NOTEBOOK_MODE))
+
+
+def new_projects_root(name=None) -> Path:
+    """Where a project registered now is written: its registry entry, and so
+    the user's state for it (`project_state_dir`).
+
+    The user's own root that already holds `name`, when one does: a project
+    registered again stays where it is. Otherwise the library this computer
+    shares with the website (`website_library`: Documents/Plexora/projects),
+    made if missing, so a project made in the desktop app opens on the website
+    too -- a browser can reach that folder and never the data root (Chromium
+    refuses ~/Library, AppData and ~/.local/share). Only on the user's own
+    computer with the data root at its platform default: a data directory
+    somebody chose, a library list named by PLEXORA_LIBRARY_PATH (empty for
+    none), a server reached from elsewhere and a notebook's server keep new
+    projects in the data root, as does a library that cannot be written.
+
+    The files a registration makes -- copies, pyramids, caches -- are not
+    written here but in the data root (`derived_root`).
+    """
+    own = data_root()
+    if name is not None:
+        for root in owned_roots():
+            if name in _registered(root):
+                return root
+    if (os.environ.get(ENV_LIBRARY_PATH) is not None or _served_from_elsewhere()
+            or data_root_resolution().rule != RULE_PLATFORM_DEFAULT):
+        return own
+    try:
+        library = website_library().resolve()
+    except (OSError, RuntimeError):
+        return own
+    if library == own or not is_writable(library):
+        return own
+    return library
+
+
+def is_library_root(root) -> bool:
+    """Whether `root` is one of the user's libraries shared with the website."""
+    try:
+        resolved = Path(root).resolve()
+    except (OSError, RuntimeError):
+        return False
+    return any(resolved == library for library in library_roots())
+
+
 _names_cache: dict = {}
 
 
@@ -888,12 +940,16 @@ def derived_root(name, home_root=None) -> Path:
     Reading is the other half and is not symmetric -- use `find_derived`, which
     also looks where a previous build may have put something.
     """
-    if home_root is not None and is_writable(home_root):
+    # Never a library shared with the website (`library_roots`): the page
+    # holds that folder in memory, and everything built here can be built
+    # again. A library project's are built in the user's data root.
+    if home_root is not None and not is_library_root(home_root) and is_writable(home_root):
         return Path(home_root) / name
     for root in project_roots(name):
-        if is_writable(root):
+        if not is_library_root(root) and is_writable(root):
             return root / name
-    return project_state_dir(name)
+    state = project_state_dir(name)
+    return data_root() / name if is_library_root(state.parent) else state
 
 
 #: Where a newly derived label pyramid is written. "beside" puts it next to the

@@ -2,5 +2,14 @@
   "title": "Remote servers",
   "icon": "Server",
   "defaultOpen": false,
-  "pages": ["add-a-server", "slurm", "files-over-sftp", "data-nodes", "ssh-connect", "hubs", "google-cloud"]
+  "pages": [
+    "add-a-server",
+    "from-the-website",
+    "slurm",
+    "files-over-sftp",
+    "data-nodes",
+    "ssh-connect",
+    "hubs",
+    "google-cloud"
+  ]
 }

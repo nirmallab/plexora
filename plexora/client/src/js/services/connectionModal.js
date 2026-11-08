@@ -237,6 +237,40 @@ window.PlexoraConnectionModal = (function () {
         });
     }
 
+    /**
+     * The website's files-only connections sign in again by themselves when
+     * theirs drops or the tab reloads (services/webRemote.js, in the site's
+     * host page). Each is watched in the background from here, so the dialog
+     * comes back for the password or the Duo question, and a notice says when
+     * it is connected again.
+     */
+    let attentionHost = null;
+
+    function adoptWebAttention() {
+        let host = null;
+        try {
+            host = window.PlexoraWebRemote ? window
+                : (window.parent && window.parent !== window && window.parent.PlexoraWebRemote
+                    ? window.parent : null);
+        } catch (e) {
+            host = null;
+        }
+        if (!host || !Remotes() || typeof host.PlexoraWebRemote.takeAttention !== "function") return;
+        const take = () => {
+            for (const name of host.PlexoraWebRemote.takeAttention()) {
+                watchInBackground(name, "node", "", null);
+            }
+        };
+        take();
+        if (attentionHost === host) return;
+        attentionHost = host;
+        host.addEventListener("plexora-remote-attention", take);
+        window.addEventListener("pagehide", () => {
+            host.removeEventListener("plexora-remote-attention", take);
+            attentionHost = null;
+        }, { once: true });
+    }
+
     function el(tag, className, text) {
         const node = document.createElement(tag);
         if (className) node.className = className;
@@ -3466,7 +3500,7 @@ window.PlexoraConnectionModal = (function () {
     // `recipeGrid` is public because Settings draws the catalogue on the page
     // itself, in the place its own hand-written "add a server" form used to
     // be. One grid, one set of cards, one request.
-    return { open, recipeGrid, STEPS, stepStates, adoptBackground,
+    return { open, recipeGrid, STEPS, stepStates, adoptBackground, adoptWebAttention,
              // For a probe: which connections are being watched unseen.
              _background: () => Array.from(background.keys()) };
 })();
@@ -3475,6 +3509,9 @@ window.PlexoraConnectionModal = (function () {
 // the background is in session storage, and is watched again from here.
 // Through PlexoraPage, so it runs once on whichever page the tab lands on.
 window.PlexoraPage?.register?.(() => {
-    if (window.PlexoraRemotes) window.PlexoraConnectionModal.adoptBackground();
+    if (window.PlexoraRemotes) {
+        window.PlexoraConnectionModal.adoptBackground();
+        window.PlexoraConnectionModal.adoptWebAttention();
+    }
     return null;
 });

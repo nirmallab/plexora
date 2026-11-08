@@ -198,6 +198,63 @@ function sameFields(a, b) {
           && backend.supports("remote") === false);
 }
 
+// -- the website, a page shown before its Python had started --------------------------------
+//
+// services/shell.js shows the home page this browser kept before Python is up
+// (`earlyPage`) and sets PlexoraShellGate in the app's frame: the page's routes
+// wait for it, so they reach Python only once the licence and the picked files
+// are in. A file, a handoff and another site are not held.
+
+{
+    const TABLE_SOURCE = readFileSync(join(REPO, "plexora/client/src/js/services/backendRoutes.js"), "utf8");
+    const holder = {};
+    runInContext(TABLE_SOURCE, createContext(holder));
+    const asked = [];
+    const python = { fetch: async (request) => { asked.push(request.url); return new Response("py"); } };
+    let open;
+    const gate = new Promise((resolve) => { open = resolve; });
+    const location = { href: "https://viewer.plexoraapp.com/", origin: "https://viewer.plexoraapp.com" };
+    const { box, calls, backend } = page({
+        flaskVariables: { backend: "browser" }, PlexoraBackendRoutes: holder.PlexoraBackendRoutes,
+        PlexoraPython: python, PlexoraShellGate: gate,
+        location, URL, Request, Response, Headers, TextEncoder,
+    });
+    box.nextAnswer = Promise.resolve(new Response("file"));
+    let routeDone = false;
+    const routed = backend.fetch("/projects").then((response) => { routeDone = true; return response; });
+    const file = await backend.fetch("/client/src/js/main.js");
+    const refused = await backend.fetch("/shutdown", { method: "POST" });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    check("before the gate opens, a route waits and Python is not asked",
+          routeDone === false && asked.length === 0, JSON.stringify(asked));
+    check("...while a file and a handoff are answered at once",
+          (await file.text()) === "file" && calls.length === 1 && refused.status === 501);
+    open();
+    check("once it opens, the route is Python's", (await (await routed).text()) === "py" && asked.length === 1);
+    const later = await backend.fetch("/projects");
+    check("...and every later route goes straight through", (await later.text()) === "py" && asked.length === 2);
+}
+
+{
+    const TABLE_SOURCE = readFileSync(join(REPO, "plexora/client/src/js/services/backendRoutes.js"), "utf8");
+    const holder = {};
+    runInContext(TABLE_SOURCE, createContext(holder));
+    const asked = [];
+    const python = { fetch: async (request) => { asked.push(request.url); return new Response("py"); } };
+    const gate = Promise.reject(new Error("no Python"));
+    gate.catch(() => null);
+    const location = { href: "https://viewer.plexoraapp.com/", origin: "https://viewer.plexoraapp.com" };
+    const { backend } = page({
+        flaskVariables: { backend: "browser" }, PlexoraBackendRoutes: holder.PlexoraBackendRoutes,
+        PlexoraPython: python, PlexoraShellGate: gate,
+        location, URL, Request, Response, Headers, TextEncoder,
+    });
+    const answer = await backend.fetch("/projects");
+    const said = await answer.json();
+    check("when Python did not start, a held route is told so (503), not sent to it",
+          answer.status === 503 && said.success === false && asked.length === 0, JSON.stringify(said));
+}
+
 // -- a kind with no backend here -------------------------------------------------------------
 
 {

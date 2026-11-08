@@ -37,6 +37,8 @@
         function relayed(url, method) {
             if (url.origin !== win.location.origin) return false;
             if (FILES.some((prefix) => url.pathname.startsWith(prefix))) return false;
+            // The page's connections to servers (services/webRemote.js).
+            if (/\/__plexora\/(remote|relay)\//.test(url.pathname)) return true;
             const backend = win.PlexoraBackend;
             if (!backend || !backend.classify) return false;
             const row = backend.classify(url.href, method);
