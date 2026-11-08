@@ -263,7 +263,19 @@
                               + "this copy is kept in this browser.",
                         began: performance.now() };
         builds.set(id, build);
-        if (!folder) {
+        if (folder) {
+            // A file already under the copy's name there -- a copy an earlier
+            // visit made, asked for again when a project could not mount it
+            // -- is handed back unread for Python to judge (`existing`), as
+            // the worker would hand it back after opening the original in
+            // every one of its readers.
+            const there = await folder.getFileHandle(name).then((handle) => handle.getFile()).catch(() => null);
+            if (there) {
+                Object.assign(build, { state: "done", file: there, existing: true });
+                adopt(build.path, build.file);
+                return { value: { id } };
+            }
+        } else {
             const found = await finished(key, name);
             const held = found ? null : await transact("readonly", (store) => store.get(build.path)).catch(() => null);
             if (found || (held && held.blob && held.bytes === held.blob.size)) {

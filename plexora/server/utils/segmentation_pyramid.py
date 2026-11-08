@@ -746,6 +746,31 @@ def source_fingerprint(path) -> Optional[str]:
     return f"{count}-{total_size}-{newest}"
 
 
+def same_fingerprint(recorded, current) -> bool:
+    """Whether a recorded `source_fingerprint` is the source's fingerprint now.
+
+    Exact, except for a file's time: a web page sees modification times in
+    whole milliseconds (File.lastModified), the desktop app in nanoseconds,
+    so one file read by both has two fingerprints -- `<size>-<mtime_ns>` (or
+    a folder's `<count>-<bytes>-<newest_ns>`) agreeing in every other part
+    and in the time to the millisecond. A project the website made and the
+    desktop app opened (or the other way round) took its mask for a changed
+    one every time, and built its pyramid again. Anything else (a remote
+    ETag, a store too large to walk) is compared as it is."""
+    if not recorded or not current:
+        return False
+    if recorded == current:
+        return True
+    try:
+        before = [int(part) for part in str(recorded).split("-")]
+        now = [int(part) for part in str(current).split("-")]
+    except ValueError:
+        return False
+    if len(before) != len(now) or len(before) not in (2, 3):
+        return False
+    return before[:-1] == now[:-1] and abs(before[-1] - now[-1]) < 1_000_000
+
+
 def _open_level_zero(path):
     """Return (array, closer) for the highest-resolution plane of `path`.
 
@@ -1614,6 +1639,7 @@ __all__ = [
     "pyramid_factors",
     "pyramidize_segmentation_mask",
     "resolve_derived_mask",
+    "same_fingerprint",
     "source_fingerprint",
     "write_label_pyramid",
 ]

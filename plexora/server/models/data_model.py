@@ -458,7 +458,8 @@ def _segmentation_mapping_is_current(entry):
         # from it is the mask; rebuilding would need the very host that is
         # not answering.
         return True
-    return current == recorded_key
+    # To the millisecond: the website reads a file's time in whole ones.
+    return segmentation_pyramid.same_fingerprint(recorded_key, current)
 
 
 def refresh_segmentation_mapping(entry, datasource_name):
@@ -508,9 +509,8 @@ def refresh_segmentation_mapping(entry, datasource_name):
     # nothing about whether its derived file is stale -- only a mismatch
     # against a key we actually recorded means the user's mask has changed.
     had_mapping = bool(entry.get('segmentationSource') and entry.get('segmentationSourceKey'))
-    source_changed = had_mapping and (
-        segmentation_pyramid.source_fingerprint(source) != entry.get('segmentationSourceKey')
-    )
+    source_changed = had_mapping and not segmentation_pyramid.same_fingerprint(
+        entry.get('segmentationSourceKey'), segmentation_pyramid.source_fingerprint(source))
 
     mode = segmentation_mode(entry)
     # Not asked of a web address: the sniff reads the mask's pixels, over the
