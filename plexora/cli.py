@@ -1368,6 +1368,17 @@ def _build_node_parser():
              "node prints -- it is what makes the node end with the "
              "connection instead of being left running and holding a port.",
     )
+    serve.add_argument(
+        "--relay-file",
+        default=None,
+        metavar="PATH",
+        help="Join a room on the Plexora website's relay, as the JSON file at "
+             "PATH describes (written by the page's start script, which runs "
+             "this). The file is read and deleted at startup; the node then "
+             "answers the page through the relay, reconnecting on its own, "
+             "until the page stops it or none has been open for the file's "
+             "idle_exit seconds.",
+    )
 
     node_connect = subs.add_parser(
         "connect",
@@ -1520,6 +1531,7 @@ def _run_node(args):
             serve_app=args.app,
             url_prefix=args.url_prefix,
             tls=getattr(args, "tls", None),
+            relay_file=getattr(args, "relay_file", None),
         )
     except NodeStartupError as exc:
         raise SystemExit(str(exc))
@@ -2973,7 +2985,14 @@ def _save_remote(name, target, kwargs):
 
 def _run_connect(args):
     from plexora.connect import connect
+    from plexora.server.models import remote_access
 
+    # The admin's switch for local sessions (server/models/remote_access.py):
+    # free unless it says a licence is needed and this install has none.
+    if remote_access.needs_licence():
+        print(f"{remote_access.SENTENCE} Connect this device with `plexora license activate`, "
+              f"or in the app's Settings › Licence.", file=sys.stderr)
+        return 2
     profile = _saved_remote(args.target)
     target = profile.target if profile is not None else args.target
     kwargs = connect_kwargs(args, profile)
@@ -3656,6 +3675,9 @@ def main(argv=None):
     # page_routes.server_is_remote.
     if args.remote or args.ood:
         app.config["PLEXORA_SERVER_IS_REMOTE"] = True
+        # And for what has no app to ask: new projects stay in the data root
+        # (paths.new_projects_root), not in a Documents nobody here browses.
+        os.environ["PLEXORA_SERVER_IS_REMOTE"] = "1"
 
     # Printed before the URL, because a first-time user reading this is about
     # to import data and the one thing they will want later is where it went.

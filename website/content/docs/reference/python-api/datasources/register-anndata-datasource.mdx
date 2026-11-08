@@ -6,9 +6,9 @@ symbol: "plexora.register_anndata_datasource"
 signature: "register_anndata_datasource(name, image, features=None, adata=None, segmentation=None, coordinate_source=None, obsm_key=None, x=None, y=None, feature_source='X', layer=None, feature_obs_columns=None, obs_id_field=None, celltype_column=None, subset_by=None, subset_value=None, apply_log_transform=False, channel_names=None, copy=False, data_dir=None, table=None, segmentation_async=False, segmentation_mode=None, image_type=None, pyramidize=None)"
 aliases: ["anndata", "h5ad", "scanpy"]
 source:
-  end: 1597
+  end: 1625
   path: "plexora/datasource.py"
-  start: 1320
+  start: 1345
 ---
 
 {/* GENERATED from plexora.datasource.register_anndata_datasource. Edit the docstring or tools/docs/manifest.yaml, then run: python tools/docs/sync_docs.py generate */}
@@ -223,7 +223,10 @@ into the project's folder. Defaults to False.
 <Param name={"data_dir"} type={"str | Path"} default={"None"}>
 
 The data root to register the
-project under. Defaults to Plexora's configured data directory.
+project under. By default the project is registered where new
+projects go (on your own computer, Documents/Plexora/projects,
+which the Plexora website opens too) and what registering builds
+is written to Plexora's configured data directory.
 
 </Param>
 

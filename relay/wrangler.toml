@@ -1,0 +1,78 @@
+# Plexora's relay: how the website reaches a remote server with no download
+# (docs/internal/WEB_REMOTE_RELAY.md is the contract; README.md says how to run
+# and deploy it).
+#
+#   /v1/hello           what this relay offers (CORS for ALLOWED_ORIGINS)
+#   /v1/ssh             WebSocket <-> TCP, only to start a node over SSH
+#   /v1/rooms/<room>    the Durable Object `Room` joining a node to its pages
+#
+# Separate from the telemetry Worker (backend/) and from SCIMAP Pro's: a bad
+# deploy of one must not touch the others.
+name = "plexora-relay"
+main = "src/index.ts"
+# WebSocket Hibernation (acceptWebSocket, setWebSocketAutoResponse) and the
+# synchronous storage.kv API of SQLite-backed Durable Objects are both in this
+# date. Moving it later changes runtime behaviour: run the tests first.
+compatibility_date = "2026-11-01"
+# Required by @cloudflare/vitest-plugin; nothing in src/ imports a node builtin.
+compatibility_flags = ["nodejs_compat"]
+# No *.workers.dev address and no preview URLs: the relay lives on its own host.
+workers_dev = false
+preview_urls = false
+
+# One host, a Custom Domain: `wrangler deploy` creates the DNS record and the
+# certificate itself (the plexoraapp.com zone is on this account). First
+# deployed 2026-11-08.
+routes = [{ pattern = "relay.plexoraapp.com", custom_domain = true }]
+
+[[durable_objects.bindings]]
+# One object per room id (idFromName). It holds the room's auth hash and its
+# sockets, and nothing it can read of what they carry.
+name = "ROOMS"
+class_name = "Room"
+
+[[migrations]]
+# SQLite-backed (the free plan's kind of Durable Object). Never edit a
+# migration that has been deployed; add the next tag instead.
+tag = "v1"
+new_sqlite_classes = ["Room"]
+
+[observability]
+enabled = true
+
+# Per client address (CF-Connecting-IP; an IPv6 client by its /64), per
+# Cloudflare location, approximate: src/ratelimit.ts. Past either, the socket
+# closes 4429 "Too many connections from this address; try again in a minute."
+# A period is 10 or 60 s. namespace_id is any positive integer, unique on the
+# account: these two are the relay's own.
+[[ratelimits]]
+# /v1/ssh opens, counted once the request is well formed.
+name = "SSH_LIMIT"
+namespace_id = "7301"
+simple = { limit = 20, period = 60 }
+
+[[ratelimits]]
+# Rooms created (a page socket for a room with no stored auth). Joining an
+# existing room, and every node socket, is not counted.
+name = "ROOM_CREATE_LIMIT"
+namespace_id = "7302"
+simple = { limit = 30, period = 60 }
+
+# Every value is a string. Editing one needs a redeploy but never a code
+# change. `.dev.vars` overrides any of them for `wrangler dev`
+# (.dev.vars.example).
+[vars]
+# Page origins that may open /v1/ssh and page room sockets, and read
+# /v1/hello cross-origin: exact origins, commas or spaces.
+# The website, then its preview build (the same Python, deployed first).
+ALLOWED_ORIGINS = "https://viewer.plexoraapp.com,https://plexora-viewer-preview.pages.dev"
+# TCP ports /v1/ssh may open.
+SSH_PORTS = "22"
+# Days a room with no sockets keeps its record (its auth hash). A node that
+# reconnects after that gets 4404; a page recreates the room.
+ROOM_IDLE_DAYS = "7"
+# The free/licensed switch (core admin, "Plexora features" card), read at
+# most once a minute per isolate. Empty: always free.
+FEATURES_URL = "https://api.biocognia.com/v1/features"
+# ALLOW_PRIVATE_HOSTS lets /v1/ssh reach loopback and private addresses. It is
+# for `wrangler dev` and the tests only (.dev.vars); never set it here.

@@ -9,10 +9,13 @@
  * System Access): the projects are then files the user keeps, backs up, and
  * can open in the desktop app.
  *
- * That folder is Documents/Plexora: the browser's dialog opens in Documents
- * and Plexora makes its folder there (a page cannot make a folder unasked;
- * the user confirms the place once, and the browser asks to allow editing).
- * Inside it:
+ * That folder is Documents/Plexora, where the desktop app keeps its projects
+ * too (plexora/paths.py `website_library`). A page can reach only a folder
+ * the user chooses in the browser's dialog, and never Documents itself
+ * (Chromium refuses it, though not the folders in it), so the dialog opens in
+ * Documents for the user to choose Plexora's folder (made by the desktop app,
+ * or with New Folder); a folder of another name gets Plexora's made inside
+ * it. Chosen once; the browser then asks to allow editing. Inside it:
  *   projects/   the store Python opens as /data -- the browser reads all of it
  *               into memory when it opens it, so it holds state, never pixels;
  *   pyramids/   the pyramidized copies Plexora builds (services/
@@ -22,7 +25,9 @@
  * `shouldAsk` / `useFolder` / `useBrowser`), and changed in Settings > Data
  * (`switchTo`, which reloads the page so Python starts on the new store).
  * On a later visit `prepare` gives the boot the folder to open, after one
- * click when the browser asks for permission again.
+ * click when the browser asks for permission again -- until the user answers
+ * Chrome's "Allow on every visit" (122+), or always for an installed site,
+ * after which the folder opens with no question.
  *
  *   prepare(ask)        -> at boot: the projects folder to mount, or null (the browser)
  *   current()           -> {kind: "browser"|"folder", label?, chosen}: label as
@@ -47,6 +52,9 @@
     let current = { kind: "browser", chosen: false };
     //: Plexora's folder this visit, once granted: {home, projects, pyramids}.
     let opened = null;
+    //: Plexora's folder as an earlier visit chose it, granted now or not: the
+    //: browser's dialog opens there, so choosing it again is one click.
+    let remembered = null;
     //: Where the worker keeps a store in the browser (its boot says):
     //: "opfs", "indexeddb", or "memory" -- kept nowhere, lost with the tab.
     let storage = null;
@@ -169,6 +177,7 @@
      */
     async function prepare(ask) {
         const record = await read();
+        remembered = (record && record.home) || null;
         if (!record) {
             current = { kind: "browser", chosen: false };
             return null;
@@ -190,21 +199,35 @@
         return opened.projects;
     }
 
-    //: The place the user confirms (the dialog opens in Documents), and
-    //: Plexora's folder in it -- or the place itself, when it is that folder.
+    /**
+     * The place the user confirms, and Plexora's folder in it -- or the place
+     * itself, when it is that folder. A browser never lets a page have
+     * Documents itself (Chromium refuses the home folder, Desktop, Documents
+     * and Downloads, though not the folders in them), so the dialog opens in
+     * Documents for the user to choose Plexora's folder there (the desktop app
+     * makes it; New Folder where it has not), or in that folder when an
+     * earlier visit chose it. Plexora's own `projects` folder, chosen by
+     * mistake, is refused with what to choose instead: a page cannot reach
+     * the folder above the one it was given.
+     */
     async function chooseHome(startIn) {
+        let picked;
         try {
-            const parent = await global.showDirectoryPicker({ id: "plexora-data", mode: "readwrite",
-                                                              startIn: startIn || "documents" });
-            const home = parent.name === FOLDER ? parent : await parent.getDirectoryHandle(FOLDER, { create: true });
-            return { parent: parent.name === FOLDER ? null : parent.name, home };
+            picked = await global.showDirectoryPicker({ id: "plexora-data", mode: "readwrite",
+                                                        startIn: startIn || remembered || "documents" });
         } catch (error) {
             if (error && error.name === "AbortError") return null;
             throw error;
         }
+        if (picked.name === FOLDER) return { parent: null, home: picked };
+        if (picked.name === "projects" && await picked.getFileHandle("config.json").then(() => true, () => false)) {
+            throw new Error(`That is the projects folder inside ${FOLDER}: choose the ${FOLDER} folder itself.`);
+        }
+        return { parent: picked.name, home: await picked.getDirectoryHandle(FOLDER, { create: true }) };
     }
 
     async function remember(chosen) {
+        remembered = chosen.home;
         await write({ kind: "folder", home: chosen.home, name: FOLDER, parent: chosen.parent });
         current = { kind: "folder", chosen: true, label: labelOf(chosen.parent) };
     }
@@ -227,8 +250,13 @@
         return { ...current };
     }
 
+    //: The browser's storage as the choice; Plexora's folder, where one was
+    //: chosen, is kept for the dialog to open in (`prepare` opens only a
+    //: "folder" record).
+    const browserRecord = () => ({ kind: "browser", ...(remembered ? { home: remembered } : {}) });
+
     async function useBrowser() {
-        await write({ kind: "browser" });
+        await write(browserRecord());
         current = { kind: "browser", chosen: true };
         return current;
     }
@@ -249,7 +277,7 @@
             await remember(chosen);
         } else {
             if (opened) await merge(opened.projects, await browserState());
-            await write({ kind: "browser" });
+            await write(browserRecord());
         }
         global.location.reload();
         return true;

@@ -4370,8 +4370,11 @@ def prime_hot_code(log=None):
         # The one native library `ome_types` brings (pydantic's core, ~25 ms),
         # dlopened here like every other, so that `warm_after_ready` -- which
         # imports the rest of ome_types on a thread beside live requests --
-        # loads only Python and never meets the loader lock.
+        # loads only Python and never meets the loader lock. And urllib.request,
+        # which its XML writer reaches through xml.sax.saxutils: on macOS it
+        # dlopens _scproxy (about 10 ms).
         import pydantic_core  # noqa: F401
+        import urllib.request  # noqa: F401
     step("the OME-XML model's native core", ome_model_core)
 
 

@@ -221,8 +221,10 @@ def test_an_install_without_a_build_makes_one_from_its_own_client(tmp_path, monk
     assert made == tmp_path / webapp.BUILD_FOLDER / __version__
     assert webapp.resolve_dir(made) == made and not made.with_name(made.name + ".part").exists()
     shell = json.loads((made / "client" / "shell.json").read_text(encoding="utf-8"))
+    # The relay a page served this way connects to servers through
+    # (docs/internal/WEB_REMOTE_RELAY.md), as the website's does.
     assert shell == {"version": __version__, "py": f"{webapp.ASSETS}/py/{__version__}/",
-                     "models": f"{webapp.ASSETS}/models/"}
+                     "models": f"{webapp.ASSETS}/models/", "relay": static_build.RELAY_URL}
     assert (made / "client" / "dist" / "vendor_bundle.js").is_file()
 
     monkeypatch.setattr(static_build, "build", lambda *a, **k: pytest.fail("built again"))

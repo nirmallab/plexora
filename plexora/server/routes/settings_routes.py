@@ -85,16 +85,11 @@ def settings_page():
     sections = tuple({**s, "blurb": WEBSITE_BLURBS.get(s["id"], s["blurb"])} for s in SECTIONS) \
         if website else SECTIONS
     from plexora import __version__, browser_rendering
-    from plexora.browser.routes import HANDOFF
-
     desktop = not website and browser_rendering.is_desktop(app)
     if desktop:
         sections = sections + DESKTOP_SECTIONS
-    # The website's Remote servers panel is the notice that a web page cannot
-    # open an SSH connection (services/handoff.js gives it its buttons).
     return render_template('settings.html', data=template_data(), sections=sections,
-                           website=website, desktop=desktop, version=__version__,
-                           remotes_handoff=HANDOFF["settings_remotes_connect"])
+                           website=website, desktop=desktop, version=__version__)
 
 
 @app.route('/settings/advanced')
@@ -299,7 +294,12 @@ def _session_kind(name=None):
     two SFTP logins for one profile would be two Duo pushes for nothing.
     """
     from plexora.server.models import remote_sessions, remotes as remote_store
+    from plexora.server.models import web_remote
 
+    # The website is the viewer: every connection it makes is a data node
+    # (server/models/web_remote.py), whichever surface asked.
+    if web_remote.active():
+        return remote_sessions.KIND_NODE
     if name is not None:
         remote = remote_store.find(name)
         if remote is not None and remote.files:
@@ -981,11 +981,15 @@ def settings_remotes_connect(name):
     hour, and a route that waited with it would pin a Waitress worker and time
     out in the browser long before the job started.
     """
-    from plexora.server.models import remote_sessions, remotes as remote_store
+    from plexora.server.models import remote_access, remote_sessions, remotes as remote_store
 
     remote = remote_store.find(name)
     if remote is None:
         return jsonify(error=f"No saved server named “{name}”."), 404
+    # The admin's switch: free unless it says a licence is needed here.
+    refused = remote_access.refusal()
+    if refused is not None:
+        return refused
     kind = _session_kind(name)
     extra = {}
     if kind == remote_sessions.KIND_NODE:

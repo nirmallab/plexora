@@ -1,0 +1,18 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Pointer capture: host</title>
+<style>
+    html, body { margin: 0; height: 100%; background: #f6f7f9; }
+    /* As services/shell.js's host shows the app: a frame filling the window. */
+    iframe { position: fixed; inset: 0; width: 100%; height: 100%; border: 0; }
+</style>
+</head>
+<body>
+<!-- tests/browser/pointer_capture.mjs: the website's two layers with nothing
+     else of the site. The frame is navigated to frame.html?mode=..., which
+     opens its page the way the loader does. -->
+<iframe id="app" src="frame.html?mode=first"></iframe>
+</body>
+</html>

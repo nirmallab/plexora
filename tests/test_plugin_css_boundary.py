@@ -37,6 +37,9 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 CORE_TEMPLATES = REPO_ROOT / "plexora" / "client" / "templates"
 CORE_CSS_DIR = REPO_ROOT / "plexora" / "client" / "src" / "css"
 CORE_JS = REPO_ROOT / "plexora" / "client" / "src" / "js"
+#: The website's own pages that are not templates (selfcheck.html), written
+#: from markup held in this file.
+STATIC_PAGES = REPO_ROOT / "plexora" / "client" / "static_build.py"
 PLUGINS_DIR = REPO_ROOT / "plexora" / "plugins"
 
 #: `id="thing"` in a template.
@@ -91,7 +94,7 @@ def _plugin_dirs():
 
 
 def _core_ids():
-    return _ids_owned_by([CORE_TEMPLATES], [CORE_JS])
+    return _ids_owned_by([CORE_TEMPLATES], [CORE_JS]) | set(TEMPLATE_ID.findall(_read(STATIC_PAGES)))
 
 
 def _plugin_ids(plugin_dir):

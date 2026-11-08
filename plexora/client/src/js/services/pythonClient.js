@@ -27,6 +27,8 @@
  *   runs is answered here. Without shared memory it is a request like any
  *   other, answered once the job has ended its turn.
  *
+ *   warm({base, root})      the worker started and its downloads begun, before start()
+ *                           is ready to be called (services/shell.js)
  *   start({base, origin, store, telemetry, scratch})  -> promise of the boot's record ({phases, info, ...});
  *                           `store` a granted folder to keep the projects in
  *                           (`scratch`: none, data in memory -- services/selfcheck.js);
@@ -243,13 +245,29 @@
     //: the app's routes are under it on the page's side, at "/" in Python.
     let siteBase = "";
 
-    function start({ base, origin = global.location.origin, root = "/", siteBase: under = "",
-                     debug = false, store = null, telemetry = null, scratch = false } = {}) {
-        if (worker) return ready;
-        siteBase = String(under || "").replace(/\/+$/, "");
+    function spawn(root) {
+        if (worker) return;
         worker = new Worker(new URL(root + WORKER, global.location.href), { type: "module" });
         worker.onmessage = onMessage;
         worker.onerror = (event) => console.error("[python] worker failed:", event.message);
+    }
+
+    //: The worker started, and Pyodide, the base stage and Plexora's wheels
+    //: loading (pythonWorker.js `warm`), while the page gets on with what
+    //: start() needs. start() with the same `base` then picks up from there.
+    function warm({ base, root = "/" } = {}) {
+        spawn(root);
+        worker.postMessage({ op: "warm", args: { base } });
+    }
+
+    let booted = false;
+
+    function start({ base, origin = global.location.origin, root = "/", siteBase: under = "",
+                     debug = false, store = null, telemetry = null, scratch = false } = {}) {
+        if (booted) return ready;
+        booted = true;
+        siteBase = String(under || "").replace(/\/+$/, "");
+        spawn(root);
         call("boot", { base, origin, siteBase, cancels, inFlight, debug, store, telemetry, scratch }).then(resolveReady, (error) => {
             resolveReady({ error: String(error?.message || error) });
         });
@@ -559,6 +577,7 @@
     }
 
     global.PlexoraPython = Object.freeze({
+        warm,
         start,
         ready,
         unsupported,

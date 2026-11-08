@@ -17,12 +17,14 @@ The numbers below are the website's benchmark records as of 2026-11-07 (a 12-cor
 | Magic select | With WebGPU: 0.04–0.07 s a click. Without WebGPU: about 1 s a click (0.95 s) | 0.38–0.41 s a click on the processor | On the node's own hardware |
 | An image on a slow network share | Says so when the last 50 tiles take over 150 ms (95th percentile) | Reads the same share at the same speed | About 35 ms a tile (95th percentile) from local disk |
 | An image in a cloud bucket (S3, Google Cloud Storage) | Opens in about 7 s | Opens in 21–25 s | Opens where the bucket is |
-| The first visit | About 14 s at 50 Mbps; later visits are faster | Installed once | — |
+| Starting up | The home page shows at once. Opening an image waits until the rest has loaded: about 14 s at 50 Mbps on the first visit, about 6 s on later ones; the status at the top right says **Starting** meanwhile | Installed once | — |
 
 ## What the website tells you
 
 When something is beyond these bounds, a short notice appears in the corner with the measured reason and what to do about it: **Desktop app** opens the project in the desktop app (or offers it, if you do not have it), **Connect a node** pairs a Plexora node running beside your data, and **Continue here** carries on in the browser. A notice appears once per project in a tab; closing it or choosing **Continue here** keeps it away for 30 days. The desktop app shows no notices.
 
 ## A node beside the data
+
+The website connects to a saved server itself: **Settings › Remote servers**, then **Connect** (see [Connect from the website](/docs/remote/from-the-website)). It signs in from the page and starts a node on the server for you.
 
 A node is Plexora running on the computer that holds the files (a lab server, a cluster job) and serving them to your browser. Start one with `plexora node serve --dynamic --pair` and open the link it prints (**Settings › Data nodes › Pair a Node** shows the same command); see [Install with pip](/docs/getting-started/install-python) for installing Plexora on a server.

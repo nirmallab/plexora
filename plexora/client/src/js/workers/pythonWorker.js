@@ -4,6 +4,8 @@
 // it classes "python" here, and plexora/browser/bridge.py answers them.
 //
 // Messages from the page (each answered with {id, ok, result | error}):
+//   warm {base}                    start loading Pyodide and the base stage (never
+//                                  answered, never queued: boot waits on it)
 //   boot {base, origin, cancels, scratch?}  load Pyodide, the base stage and the app
 //                                  (`scratch`: data in memory, no project store or copies)
 //   request {method, path, query, headers, body}  -> {status, headers, body, stream}
@@ -253,7 +255,9 @@ async function mountState(folder) {
         let handle = folder;
         let kind = "folder";
         if (!handle) [kind, handle] = await browserState();
-        await store.open(handle);
+        // Plexora's folder on the computer is the desktop app's too: what is
+        // only one machine's, or too big to hold, stays there (storeSync.js).
+        await store.open(handle, { shared: kind === "folder" });
         lastPull = performance.now();
         return kind;
     } catch (error) {
@@ -280,25 +284,48 @@ function scheduleSync() {
     });
 }
 
-async function boot(args) {
+// Pyodide, the base stage's packages and Plexora's wheels, loaded and
+// unpacked: everything of the boot that needs nothing from the page but the
+// bundle's address. Started by `warm` as soon as the page has the address, so
+// the downloads run while the page still sets itself up (services/shell.js),
+// and awaited by `boot`. Nothing is imported: Plexora builds its app as its
+// package is imported, and the environment it reads is boot's. The instance
+// stays out of `py` until boot takes it, so no step runs before then.
+let warming = null;
+
+function warm(args) {
+    if (warming) return warming;
     base = args.base.endsWith("/") ? args.base : `${args.base}/`;
+    warming = (async () => {
+        const phases = { start: at() };
+        stagesInfo = await (await fetch(`${base}stages.json`)).json();
+        const wheels = Promise.all(stagesInfo.base.wheels.map(fetchWheel));
+        const { loadPyodide } = await import(`${base}pyodide/pyodide.mjs`);
+        const pyodide = await loadPyodide({ indexURL: `${base}pyodide/` });
+        blockReads(pyodide.FS.filesystems.WORKERFS, pyodide._module);
+        phases.core = at(); mark("core");
+        await pyodide.loadPackage(stagesInfo.base.pyodide, { messageCallback: () => {} });
+        phases.packages = at(); mark("packages");
+        const site = pyodide.runPython("import site; site.getsitepackages()[0]");
+        for (const buffer of await wheels) pyodide.unpackArchive(buffer, "wheel", { extractDir: site });
+        phases.wheels = at(); mark("wheels");
+        return { pyodide, phases };
+    })();
+    // A failure is boot's to report, with boot's answer.
+    warming.catch(() => null);
+    return warming;
+}
+
+async function boot(args) {
     origin = args.origin;
     siteBase = String(args.siteBase || "");
     if (args.cancels) cancels = args.cancels;
     debug = Boolean(args.debug);
     inFlight = args.inFlight || null;
-    const phases = { start: at() };
-    stagesInfo = await (await fetch(`${base}stages.json`)).json();
-    const wheels = Promise.all(stagesInfo.base.wheels.map(fetchWheel));
-    const { loadPyodide } = await import(`${base}pyodide/pyodide.mjs`);
-    py = await loadPyodide({ indexURL: `${base}pyodide/` });
-    blockReads(py.FS.filesystems.WORKERFS, py._module);
-    phases.core = at(); mark("core");
-    await py.loadPackage(stagesInfo.base.pyodide, { messageCallback: () => {} });
-    phases.packages = at(); mark("packages");
-    const site = py.runPython("import site; site.getsitepackages()[0]");
-    for (const buffer of await wheels) py.unpackArchive(buffer, "wheel", { extractDir: site });
-    phases.wheels = at(); mark("wheels");
+    // A warm worker was given the same address; one booted cold warms now.
+    const warmed = await warm(args);
+    py = warmed.pyodide;
+    const phases = { ...warmed.phases, boot: at() };
     // A scratch boot (the self-check page, services/selfcheck.js) keeps its
     // data in memory and mounts none of the site's copies: the projects the
     // app's tab keeps are never opened by a second Python.
@@ -844,7 +871,7 @@ const OPS = {
         await syncing;
         if (store) await store.push();
         else store = createStore(py.FS, "/data", (line) => self.postMessage({ log: line }));
-        await store.open(folder);
+        await store.open(folder, { shared: true });
         lastPull = performance.now();
         return "folder";
     },
@@ -989,6 +1016,11 @@ self.addEventListener("unhandledrejection", (event) => {
 });
 
 self.onmessage = ({ data }) => {
+    if (data.op === "warm") {
+        // Not queued: it runs beside whatever comes next, and boot waits on it.
+        warm(data.args || {});
+        return;
+    }
     if (inFlight !== null) Atomics.sub(inFlight, 0, 1);
     data.arrived = performance.now();
     if (data.op === "answer") {

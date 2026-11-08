@@ -242,18 +242,15 @@
 
                 <h2 class="settings-panel-title">Remote servers</h2>
                 {% if website %}
-                {# The website: a web page cannot open an SSH connection (plan
-                   decision 1). The notice in place of the saved servers and the
-                   presets, drawn here so it is there before any script, and
-                   given its buttons by services/handoff.js. #}
-                <div class="plx-handoff" role="note" id="settings_remotes_handoff"
-                     data-handoff-path="settings/remotes/_/connect" data-handoff-method="POST">
-                    <span class="plx-handoff-icon fas fa-desktop" aria-hidden="true"></span>
-                    <div class="plx-handoff-text">
-                        <strong class="plx-handoff-title">{{ remotes_handoff.title }}</strong>
-                        <span class="plx-handoff-why">{{ remotes_handoff.why }}</span>
-                    </div>
-                </div>
+                {# The website signs in to a server in this page, through the
+                   relay, and starts a data node there; the node's files then
+                   open here (services/webRemote.js, docs/internal/
+                   WEB_REMOTE_RELAY.md). Nothing is installed on this computer. #}
+                <p class="settings-panel-lead">
+                    Plexora signs in to a server from this page and starts a data
+                    node there. Its files then open here, under Remote in every
+                    file picker. Nothing is installed on this computer.
+                </p>
                 {% else %}
                 {# The one sentence this panel needs before either box: which
                    machine Plexora is, and which machines these are. Running
@@ -277,6 +274,7 @@
                     Plexora the cluster is Local, and these same saved servers
                     are what <code>plexora connect</code> reads.
                 </p>
+                {% endif %}
 
                 {# Two things, boxed apart. What you have saved and what you
                    can add were a run of cards and a heading on one flat
@@ -323,7 +321,6 @@
                 <div class="settings-recipes" id="settings_remote_catalogue">
                     <div class="settings-meta">Loading&hellip;</div>
                 </div>
-                {% endif %}
             </section>
 
             {# Data nodes: what is CURRENTLY reachable, which is a different
@@ -986,5 +983,5 @@
 {# remoteState.js is loaded by base.html, above and deferred, so it is parsed
    before this file runs -- the Remote servers section is one of its
    subscribers rather than a poller of its own. #}
-<script src="{{ data.base_url }}/client/src/js/views/settingsPage.js?v=20261107_source_writes" defer></script>
+<script src="{{ data.base_url }}/client/src/js/views/settingsPage.js?v=20261108_early_home" defer></script>
 {% endblock %}

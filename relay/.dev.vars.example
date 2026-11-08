@@ -1,0 +1,16 @@
+# Copy to .dev.vars (git-ignored) for `wrangler dev`. Each line overrides the
+# wrangler.toml [vars] value of the same name, locally only.
+
+# A website served from this machine, on any port, plus the real site.
+ALLOWED_ORIGINS="http://localhost:*,http://127.0.0.1:*,https://viewer.plexoraapp.com"
+
+# Let /v1/ssh reach 127.0.0.1, a VM or a lab server on a private address.
+# Development only: never set this in wrangler.toml.
+ALLOW_PRIVATE_HOSTS="1"
+
+# Ports /v1/ssh may open (22 plus, say, a local test sshd on 2222).
+SSH_PORTS="22,2222"
+
+# Empty: the website switch is always "free", so no licence is asked for.
+# Point it at a local file server to try "licensed".
+FEATURES_URL=""

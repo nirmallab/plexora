@@ -1,0 +1,20 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["ES2022"],
+    "module": "ES2022",
+    "moduleResolution": "Bundler",
+    // The Worker needs only the Cloudflare types; "node" is for the node-side
+    // tests (vectors read from disk, the `wrangler dev` run). The plugin's types
+    // supply `cloudflare:test`.
+    "types": ["@cloudflare/workers-types", "node", "@cloudflare/vitest-plugin/types"],
+    "resolveJsonModule": true,
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "noEmit": true,
+    "skipLibCheck": true,
+    "isolatedModules": true,
+    "verbatimModuleSyntax": true
+  },
+  "include": ["src/**/*.ts", "test/**/*.ts", "*.ts"]
+}

@@ -4,7 +4,7 @@ description: "Find, open, edit and delete samples, group them into datasets, and
 aliases: ["samples", "project", "dataset", "data directory", "data-dir", "shared directory", "plexora where"]
 ---
 
-Every sample you import becomes a project. The **Samples** page lists them all, groups them into datasets, and is where you edit or delete one. Everything Plexora makes for a project lives in one data directory, which you can move.
+Every sample you import becomes a project. The **Samples** page lists them all, groups them into datasets, and is where you edit or delete one. Projects you make on your own computer are kept in **Documents › Plexora**, where the Plexora website finds them too; everything else Plexora makes is kept in its data directory, which you can move.
 
 <Media src="/media/features/projects-samples-list.webp" alt="The Samples page in list view, with a search field, sort menu, dataset folders and sample rows" caption="The Samples page in list view." />
 
@@ -45,11 +45,15 @@ Plexora keeps every project, dataset and setting in one data directory. Open **S
 | What | Where |
 | --- | --- |
 | Your image, mask and table files | Where they were. Plexora reads them in place and never changes them. |
-| Projects, datasets, settings | The data directory. |
-| Converted masks, gates, regions | The data directory, in each project's own folder. |
+| Projects made on this computer, with their gates and regions | `Documents/Plexora/projects`, which the website opens too. |
+| Datasets that hold one of those projects | `Documents/Plexora/projects`, so the website shows the same groups. |
+| Projects made before, other datasets, settings | The data directory. |
+| Converted masks, image pyramids and other files Plexora can build again | The data directory, in each project's own folder. |
 | Figures and captures | The data directory's figure library, outside any one project. |
 
-The default data directory is `~/Library/Application Support/plexora` on macOS, `%LOCALAPPDATA%\plexora` on Windows and `~/.local/share/plexora` on Linux.
+The default data directory is `~/Library/Application Support/plexora` on macOS, `%LOCALAPPDATA%\plexora` on Windows and `~/.local/share/plexora` on Linux. A browser can never open that folder, which is why projects go in Documents. If you set a data directory yourself, or Plexora runs on a server, new projects stay in the data directory.
+
+On the website, choose **Save on this computer** and then the **Plexora** folder in Documents (make it with **New Folder** if it is not there). The browser asks once to allow editing; choose **Allow on every visit** when it asks again on a later visit, and it stops asking.
 
 ## Tips
 

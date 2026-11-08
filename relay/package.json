@@ -1,0 +1,24 @@
+{
+  "name": "plexora-relay",
+  "version": "0.1.0",
+  "private": true,
+  "description": "The website's remote-server relay: WebSocket to SSH for starting a node, and one Durable Object room per node forwarding sealed frames between pages and the node.",
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "test": "vitest run",
+    "test:node": "vitest run --project node",
+    "test:workers": "vitest run --project workers",
+    "test:dev": "vitest run --project dev",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@cloudflare/vitest-plugin": "^1.6.0",
+    "@cloudflare/workers-types": "^5.20261108.1",
+    "@types/node": "^22.20.5",
+    "typescript": "^5.9.3",
+    "vitest": "~4.1.12",
+    "wrangler": "^4.158.0"
+  }
+}

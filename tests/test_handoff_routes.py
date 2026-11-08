@@ -28,10 +28,11 @@ CLIENT = ROOT / "plexora" / "client"
 
 #: The routes a web page cannot serve, by why. A new one is a decision: add
 #: it to routes.HANDOFF *and* here, with the reason.
-SSH = {  # a web page cannot open an SSH connection
-    "settings_remotes_connect", "settings_remotes_answer", "settings_remotes_disconnect",
-    "settings_remotes_status", "settings_remotes_askpass_prompt", "settings_remotes_askpass_answer",
+SSH = {  # the desktop's own ssh asking its server for a password (askpass)
+    "settings_remotes_askpass_prompt", "settings_remotes_askpass_answer",
 }
+# Connecting a saved server is not here: the website signs in from the page
+# through the relay (services/webRemote.js, docs/internal/WEB_REMOTE_RELAY.md).
 # Google Cloud is not here: since plan L9 the website answers it over Google's
 # JSON APIs with the page's sign-in (plexora/gcloud_rest.py).
 INSTALLED_PROGRAM = {  # updating or stopping an installed Plexora
@@ -81,9 +82,8 @@ def test_every_notice_offers_only_known_actions(endpoint):
 
 
 def test_ssh_offers_the_desktop_app_and_a_paired_node():
-    """Decision 1: SSH keeps its zero-cost routes -- the desktop app, or a node
-    started on the server (and paired with this browser) -- and Google Cloud,
-    which the website reaches without SSH since plan L9."""
+    """The askpass relay is the desktop's; a page that ever asked it is offered
+    the desktop app, a node paired by hand, and Google Cloud."""
     for endpoint in SSH:
         assert routes.HANDOFF[endpoint].actions == ("open_desktop", "pair_node",
                                                     "google_cloud"), endpoint
@@ -136,7 +136,9 @@ def website(monkeypatch, tmp_path):
     monkeypatch.setenv("PLEXORA_BACKEND", "browser")
     import plexora
 
-    plexora.app.config["TESTING"] = True
+    # Undone after the test: the app is the suite's one instance, and left on,
+    # TESTING turns every later file's 500s into exceptions in the test.
+    monkeypatch.setitem(plexora.app.config, "TESTING", True)
     return plexora.app.test_client()
 
 
@@ -147,18 +149,19 @@ def test_the_website_has_no_quit(website, monkeypatch):
     assert 'id="nav_quit"' in website.get("/settings").get_data(as_text=True)
 
 
-def test_the_website_shows_the_notice_for_remote_servers(website, monkeypatch):
+def test_the_website_lists_saved_servers_and_presets(website, monkeypatch):
+    """The website connects to a saved server itself (services/webRemote.js):
+    its Settings has the saved servers and the presets, with one sentence on
+    what connecting does from a web page, and no notice in their place."""
     html = website.get("/settings").get_data(as_text=True)
-    notice = routes.HANDOFF["settings_remotes_connect"]
-    assert 'id="settings_remotes_handoff"' in html
-    assert 'data-handoff-path="settings/remotes/_/connect"' in html
-    assert notice.title in html and notice.why in html
-    # No saved-server list and no presets to fail.
-    assert 'id="settings_remotes_list"' not in html
-    assert 'id="settings_remote_catalogue"' not in html
-    # Pairing a node is offered where nodes are listed.
+    assert 'id="settings_remotes_handoff"' not in html
+    assert 'id="settings_remotes_list"' in html
+    assert 'id="settings_remote_catalogue"' in html
+    assert "Nothing is installed on this computer." in html
+    # Pairing a node by hand is still offered where nodes are listed.
     assert 'id="settings_node_pair"' in html
     monkeypatch.delenv("PLEXORA_BACKEND")
     served = website.get("/settings").get_data(as_text=True)
-    assert 'id="settings_remotes_list"' in served and 'id="settings_remotes_handoff"' not in served
+    assert 'id="settings_remotes_list"' in served
+    assert "Nothing is installed on this computer." not in served
     assert 'id="settings_node_pair"' not in served

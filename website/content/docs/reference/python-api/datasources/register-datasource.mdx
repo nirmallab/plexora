@@ -6,9 +6,9 @@ symbol: "plexora.register_datasource"
 signature: "register_datasource(name, image, features, x=None, y=None, segmentation=None, id_column=None, celltype_column=None, channel_names=None, copy=False, data_dir=None, segmentation_async=False, segmentation_mode=None, image_type=None, pyramidize=None)"
 aliases: ["csv", "table", "register"]
 source:
-  end: 1045
+  end: 1070
   path: "plexora/datasource.py"
-  start: 879
+  start: 901
 ---
 
 {/* GENERATED from plexora.datasource.register_datasource. Edit the docstring or tools/docs/manifest.yaml, then run: python tools/docs/sync_docs.py generate */}
@@ -127,7 +127,10 @@ they are. Defaults to False.
 <Param name={"data_dir"} type={"str | Path"} default={"None"}>
 
 The data root to register the
-project under. Defaults to Plexora's configured data directory.
+project under. By default the project is registered where new
+projects go (on your own computer, Documents/Plexora/projects,
+which the Plexora website opens too) and what registering builds
+is written to Plexora's configured data directory.
 
 </Param>
 

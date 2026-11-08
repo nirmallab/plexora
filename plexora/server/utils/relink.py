@@ -33,6 +33,7 @@ import time
 from pathlib import Path
 from typing import Iterable, Optional
 
+from plexora._subprocess import popen_kwargs
 from plexora.server.models import sources
 
 _log = logging.getLogger(__name__)
@@ -75,7 +76,8 @@ def _index(name: str) -> list:
     """Paths the operating system's file index knows by this name."""
     try:
         if sys.platform == "darwin" and shutil.which("mdfind"):
-            done = subprocess.run(["mdfind", "-name", name], capture_output=True, text=True, timeout=INDEX_SECONDS)
+            done = subprocess.run(["mdfind", "-name", name], capture_output=True, text=True, timeout=INDEX_SECONDS,
+                                  **popen_kwargs())
             return [Path(line) for line in done.stdout.splitlines() if Path(line).name == name]
         if os.name == "nt":
             quoted = name.replace("'", "''")
@@ -89,13 +91,12 @@ def _index(name: str) -> list:
             shell = Path(os.environ.get("SystemRoot", "C:/Windows")) / "System32" / "WindowsPowerShell" / "v1.0" / "powershell.exe"
             done = subprocess.run([str(shell) if shell.is_file() else "powershell", "-NoProfile", "-NonInteractive",
                                    "-Command", script],
-                                  capture_output=True, text=True, timeout=INDEX_SECONDS,
-                                  creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+                                  capture_output=True, text=True, timeout=INDEX_SECONDS, **popen_kwargs())
             return [Path(line.strip()) for line in done.stdout.splitlines() if line.strip()]
         for tool in ("plocate", "locate"):
             if shutil.which(tool):
                 done = subprocess.run([tool, "-b", "-l", "50", f"\\{name}"], capture_output=True, text=True,
-                                      timeout=INDEX_SECONDS)
+                                      timeout=INDEX_SECONDS, **popen_kwargs())
                 return [Path(line) for line in done.stdout.splitlines()]
     except (OSError, subprocess.SubprocessError, ValueError):
         return []

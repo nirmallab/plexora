@@ -612,7 +612,10 @@ def test_a_large_result_is_offloaded_and_read_back_in_slices(caps, tmp_path):
     assert stub["offloaded"] and stub["artifact_id"] == outcome.offloaded and stub["kind"] == "tool_result"
     assert stub["size"] > 4000 * offload.CHARS_PER_TOKEN and len(outcome.content[0]["text"]) < 4000
     stored = (tmp_path / "off" / f"{stub['artifact_id']}.txt").read_text(encoding="utf-8")
-    assert stored.startswith(stub["head"]) and stored.endswith(stub["tail"])
+    if "head" in stub:      # text, or data before spatialagents 0.2.5: its first and last
+        assert stored.startswith(stub["head"]) and stored.endswith(stub["tail"])
+    else:                   # data from 0.2.5 on: an outline of its parts
+        assert stub["outline"]["rows"].startswith("list of 900 objects with keys i, marker, note")
     piece = adapter.execute("t2", "read_artifact", {"artifact_id": stub["artifact_id"], "start": 100,
                                                     "end": 400})
     assert json.loads(piece.content[0]["text"])["text"] == stored[100:400]

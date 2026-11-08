@@ -19,11 +19,22 @@ that way and so does everything downstream. A `"datasets"` key would become a
 phantom project on the Open Project page with no image and no way to delete it.
 So: `<data_root>/datasets.json`, beside `remotes.json` and `figures/`.
 
-**User root only.** A shared root is somebody else's install, mounted
-read-only; the user's own grouping of what they found there is theirs.
+**The user's own roots only.** A shared root is somebody else's install,
+mounted read-only; the user's own grouping of what they found there is theirs.
 `paths.figures_root()` and `captures_root()` are the same rule for the same
 reason, and shared projects can still be members -- membership is recorded
 here, not over there.
+
+The user's own roots are two when the website keeps its projects on this
+computer (`paths.owned_roots`: the data root, then Documents/Plexora/projects).
+Each has a `datasets.json`, and both are read as one registry. The website
+reads only the second, so a dataset is kept there once a project of that
+folder is in it, and one made empty goes where new projects do
+(`paths.new_projects_root`): what the user groups in the desktop app is
+grouped on the website too. A dataset of the data root's projects alone stays
+in the data root, and one kept in the library never moves back: a library
+whose config.json cannot be read for a moment must not take a grouping off the
+website.
 
 **Membership is pruned in the view and never on read.** A shared root that is
 not mounted this morning makes its projects vanish from `Project.load_all()`.
@@ -142,8 +153,16 @@ class Dataset:
 
 
 def datasets_path(root=None) -> Path:
-    """Where the registry lives. The user's own root unless told otherwise."""
+    """Where a registry lives: `root`'s, the user's data root's by default."""
     return (Path(root) if root is not None else paths.data_root()) / FILENAME
+
+
+def _roots(root=None) -> list:
+    """The registries read and written: `root`'s alone when it is named, else
+    every root the user owns, the data root first (`paths.owned_roots`)."""
+    if root is not None:
+        return [Path(root)]
+    return list(paths.owned_roots())
 
 
 # -- reading -------------------------------------------------------------
@@ -166,6 +185,74 @@ def _read(root=None) -> dict:
     return {k: v for k, v in raw.items() if k != "version" and isinstance(v, Mapping)}
 
 
+@dataclass
+class _Files:
+    """The registries one change read, so it can write back only what moved.
+
+    `homes` is the root whose file holds each dataset; `held` is what each
+    root's file held, as records, when it was read.
+    """
+
+    roots: list
+    homes: dict
+    held: dict
+
+
+def _open(root=None) -> tuple:
+    """Every dataset across `_roots(root)`, keyed by id, and where each is.
+
+    An id in two files (a hand copy) is read once, from the earlier root.
+    """
+    files = _Files(roots=_roots(root), homes={}, held={})
+    records: dict[str, Dataset] = {}
+    for home in files.roots:
+        files.held[home] = {}
+        for dataset_id, raw in _read(home).items():
+            dataset = Dataset.from_dict(dataset_id, raw)
+            if dataset is None:
+                continue
+            files.held[home][dataset.id] = dataset.to_dict()
+            if dataset.id not in records:
+                records[dataset.id] = dataset
+                files.homes[dataset.id] = home
+    return records, files
+
+
+def _home(dataset: Dataset, files: _Files, members: Mapping) -> Path:
+    """The root whose file keeps `dataset` (see the module docstring)."""
+    own = files.roots[0]
+    current = files.homes.get(dataset.id)
+    if current is not None and current != own:
+        return current
+    for library in files.roots[1:]:
+        if any(name in members[library] for name in dataset.projects):
+            return library
+    # Only when a library is read: asking makes the library's folder.
+    if current is None and not dataset.projects and len(files.roots) > 1:
+        target = paths.new_projects_root()
+        if target in files.roots:
+            return target
+    return own
+
+
+def _store(records: Mapping[str, Dataset], files: _Files) -> None:
+    """Write each registry whose datasets changed.
+
+    Libraries first: a dataset moving out of the data root is written into the
+    library before it is taken out of the data root, so a write that fails
+    between the two leaves it in both files, where reading finds it once.
+    """
+    members = {library: set(read_config(paths.config_path(library)))
+               for library in files.roots[1:]}
+    placed: dict = {home: {} for home in files.roots}
+    for dataset in records.values():
+        placed[_home(dataset, files, members)][dataset.id] = dataset
+    for home in reversed(files.roots):
+        kept = placed[home]
+        if {ds.id: ds.to_dict() for ds in kept.values()} != files.held[home]:
+            _write(kept, home)
+
+
 def _write(records: Mapping[str, Dataset], root=None) -> None:
     write_config(datasets_path(root), {
         "version": VERSION,
@@ -183,16 +270,12 @@ def load_all(root=None, known: Iterable[str] | None = None) -> dict:
     data loss.
     """
     names = set(known) if known is not None else None
-    out: dict[str, Dataset] = {}
-    for dataset_id, raw in _read(root).items():
-        dataset = Dataset.from_dict(dataset_id, raw)
-        if dataset is None:
-            continue
-        if names is not None:
-            dataset = dataset.with_projects(
+    records, _ = _open(root)
+    if names is None:
+        return records
+    return {dataset_id: dataset.with_projects(
                 [name for name in dataset.projects if name in names])
-        out[dataset.id] = dataset
-    return out
+            for dataset_id, dataset in records.items()}
 
 
 def find(dataset_id: str, root=None, known: Iterable[str] | None = None) -> "Dataset | None":
@@ -303,7 +386,7 @@ def create(name: str, *, description: str = "", projects: Iterable[str] = (),
            root=None, known: Iterable[str] | None = None) -> Dataset:
     """Make a folder. Every named project must already exist."""
     with _CONFIG_LOCK:
-        records = load_all(root)
+        records, files = _open(root)
         clean = _clean_name(name, datasets=records)
         members = _check_projects(projects, known)
         dataset = Dataset(
@@ -316,20 +399,20 @@ def create(name: str, *, description: str = "", projects: Iterable[str] = (),
         # Single parent: joining this one is leaving whatever held them.
         records = _released(records, members)
         records[dataset.id] = dataset
-        _write(records, root)
+        _store(records, files)
         return dataset
 
 
 def rename(dataset_id: str, name: str, root=None) -> Dataset:
     with _CONFIG_LOCK:
-        records = load_all(root)
+        records, files = _open(root)
         dataset = records.get(str(dataset_id))
         if dataset is None:
             raise DatasetError(f"no dataset with id {dataset_id!r}")
         clean = _clean_name(name, datasets=records, allow=dataset.id)
         updated = replace(dataset, name=clean)
         records[updated.id] = updated
-        _write(records, root)
+        _store(records, files)
         return updated
 
 
@@ -343,7 +426,7 @@ def describe(dataset_id: str, *, description: str | None = None,
     None is removed, which is the only way to take one back out.
     """
     with _CONFIG_LOCK:
-        records = load_all(root)
+        records, files = _open(root)
         dataset = records.get(str(dataset_id))
         if dataset is None:
             raise DatasetError(f"no dataset with id {dataset_id!r}")
@@ -354,7 +437,7 @@ def describe(dataset_id: str, *, description: str | None = None,
             merged = {**updated.meta, **dict(meta)}
             updated = replace(updated, meta={k: v for k, v in merged.items() if v is not None})
         records[updated.id] = updated
-        _write(records, root)
+        _store(records, files)
         return updated
 
 
@@ -362,11 +445,11 @@ def remove(dataset_id: str, root=None) -> "Dataset | None":
     """Delete the folder. **The projects in it are not touched** -- they go
     back to being unassociated, which is where they started."""
     with _CONFIG_LOCK:
-        records = load_all(root)
+        records, files = _open(root)
         dataset = records.pop(str(dataset_id), None)
         if dataset is None:
             return None
-        _write(records, root)
+        _store(records, files)
         return dataset
 
 
@@ -380,7 +463,7 @@ def assign(projects: Iterable[str], dataset_id: str | None, root=None,
     in two folders.
     """
     with _CONFIG_LOCK:
-        records = load_all(root)
+        records, files = _open(root)
         members = _check_projects(projects, known)
         target = None
         if dataset_id is not None:
@@ -392,7 +475,7 @@ def assign(projects: Iterable[str], dataset_id: str | None, root=None,
             target = records[target.id]
             target = target.with_projects(tuple(target.projects) + members)
             records[target.id] = target
-        _write(records, root)
+        _store(records, files)
         return target
 
 
@@ -405,12 +488,12 @@ def forget_project(name: str, root=None) -> "Dataset | None":
     if not name:
         return None
     with _CONFIG_LOCK:
-        records = load_all(root)
+        records, files = _open(root)
         holder = next((ds for ds in records.values() if name in ds.projects), None)
         if holder is None:
             return None
         records = _released(records, (name,))
-        _write(records, root)
+        _store(records, files)
         return records[holder.id]
 
 

@@ -1294,12 +1294,30 @@ class ConnectionRefused(RuntimeError):
     """Asked for something the manager will not do -- with a reason to show."""
 
 
+def _web():
+    """The website's connections (server/models/web_remote.py), or None here.
+
+    On the website the page holds every connection -- SSH in the page, then
+    the relay -- so each call below is answered from it, in this module's
+    shapes, and nothing that reads sessions knows the difference.
+    """
+    from plexora.server.models import web_remote
+
+    return web_remote if web_remote.active() else None
+
+
 def get(name, kind=KIND_VIEWER):
+    web = _web()
+    if web is not None:
+        return web.get(name, kind)
     with _REGISTRY_LOCK:
         return _SESSIONS.get(_key(kind, name))
 
 
 def all_sessions():
+    web = _web()
+    if web is not None:
+        return web.all_sessions()
     with _REGISTRY_LOCK:
         return dict(_SESSIONS)
 
@@ -1311,7 +1329,7 @@ def find_by_nonce(nonce):
     nonce is the credential: a dictionary keyed by it would be a lookup table
     an attacker could probe one entry at a time.
     """
-    if not nonce:
+    if not nonce or _web() is not None:
         return None
     for session in all_sessions().values():
         if secrets.compare_digest(str(nonce), session.nonce):
@@ -1322,6 +1340,9 @@ def find_by_nonce(nonce):
 def start(remote, *, askpass_url=None, auth_token=None, timeout=None,
           kind=KIND_VIEWER, allow_origin=None, register=None, unregister=None):
     """Begin connecting to `remote`, or say why not."""
+    web = _web()
+    if web is not None:
+        return web.start(remote, kind=kind, register=register, unregister=unregister)
     key = _key(kind, remote.name)
     with _REGISTRY_LOCK:
         existing = _SESSIONS.get(key)
@@ -1354,6 +1375,9 @@ def start(remote, *, askpass_url=None, auth_token=None, timeout=None,
 
 
 def stop(name, kind=KIND_VIEWER):
+    web = _web()
+    if web is not None:
+        return web.stop(name, kind)
     session = get(name, kind)
     if session is None:
         return False
@@ -1363,6 +1387,9 @@ def stop(name, kind=KIND_VIEWER):
 
 def forget(name, kind=KIND_VIEWER):
     """Drop a finished session's record. Live ones are stopped first."""
+    web = _web()
+    if web is not None:
+        return web.forget(name, kind)
     session = get(name, kind)
     if session is not None:
         session.stop()

@@ -237,6 +237,7 @@ def test_a_campaign_runs_each_arm_through_the_harness_and_writes_no_gate(tmp_pat
     from plexora.ai.harness.gateway import GatewayClient, TokenSource
     from plexora.plugins.gating.server import model
     from plexora.plugins.gating.server.autogate import engine as engines
+    from plexora.plugins.gating.server.autogate import schemas
     from tests.ai_harness_fixtures import FakeGateway
     from tests.autogate_fixtures import make_gating_project
 
@@ -288,9 +289,10 @@ def test_a_campaign_runs_each_arm_through_the_harness_and_writes_no_gate(tmp_pat
         stored = json.loads((records / "e2e" / entry["record"]).read_text(encoding="utf-8"))
         assert stored["session_id"] == entry["session_id"]
         options = stored["options"]
+        # The session records its engine by its current name (v2 is now v3).
         assert (options["engine"], options["mode"], options["reuse_answers"], options["seed"],
                 options["display_check"], options["on_limit"]) == \
-            (manifest["arms"][arm]["engine"], "propose", False, 4, "off", "extend")
+            (schemas.engine_name(manifest["arms"][arm]["engine"]), "propose", False, 4, "off", "extend")
     assert model.get_saved_gating_list("gsynth") is None
     scored = json.loads((records / "e2e" / "score_gap.json").read_text(encoding="utf-8"))
     assert set(scored["summaries"]) == {"classic", "candidates"}

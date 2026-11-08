@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Pointer capture: loader</title>
+</head>
+<body style="margin: 0; height: 100vh; background: #eef0f4">
+<script>
+    // Stands in for services/shell.js frameBoot: waits as the loader waits on
+    // Python, then replaces this document with a page by document.open/write.
+    // ?mode=plain opens it bare; any other mode as the loader does, between
+    // shell.js's own hiddenForOpen() and the function it resolves to (taken
+    // out of shell.js's closure, so this tests the code the site runs).
+    (async function () {
+        const mode = new URLSearchParams(location.search).get("mode") || "shell";
+
+        // A box that captures the pointer on a press and records what reaches it.
+        const PAGE = `<!doctype html><html><head><meta charset="utf-8"><title>Pointer capture: page</title></head>
+<body style="margin: 0; height: 100vh; background: #fff">
+<div id="box" style="position: absolute; left: 100px; top: 100px; width: 300px; height: 200px; background: #ccd"></div>
+<script>
+    window.__events = [];
+    const box = document.getElementById("box");
+    for (const type of ["pointerover", "pointerenter", "pointerdown", "pointermove", "pointerup",
+                        "gotpointercapture", "lostpointercapture"]) {
+        box.addEventListener(type, (event) => {
+            window.__events.push({ type, x: event.clientX, y: event.clientY, buttons: event.buttons });
+        });
+    }
+    box.addEventListener("pointerdown", (event) => {
+        box.setPointerCapture(event.pointerId);
+        window.__events.push({ type: "setPointerCapture", has: box.hasPointerCapture(event.pointerId) });
+    });
+    window.__written = true;
+<\/script>
+</body></html>`;
+
+        async function hiddenForOpen() {
+            const source = await (await fetch("/client/src/js/services/shell.js")).text();
+            const start = source.indexOf("function hiddenForOpen()");
+            if (start < 0) throw new Error("shell.js has no hiddenForOpen");
+            let depth = 0;
+            let end = source.indexOf("{", start);
+            for (; end < source.length; end += 1) {
+                if (source[end] === "{") depth += 1;
+                if (source[end] === "}" && --depth === 0) break;
+            }
+            const make = new Function("global", "host", `${source.slice(start, end + 1)}\nreturn hiddenForOpen;`);
+            return make(window, window.parent)();
+        }
+
+        try {
+            const hide = mode === "plain" ? null : hiddenForOpen;
+            await new Promise((resolve) => setTimeout(resolve, 300));   // Python's answer
+            const started = performance.now();
+            const shown = hide ? await hide() : () => {};
+            const hiddenMs = performance.now() - started;
+            document.open();
+            shown();
+            document.write(PAGE);
+            document.close();
+            window.__hiddenMs = hiddenMs;
+        } catch (error) {
+            window.__failed = String(error && error.stack || error);
+        }
+    })();
+</script>
+</body>
+</html>

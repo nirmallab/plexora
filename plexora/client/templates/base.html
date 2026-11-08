@@ -8,7 +8,7 @@
     <link rel="apple-touch-icon" href="{{ data.base_url }}/client/src/img/apple-touch-icon.png">
     <!-- Styles -->
     <link rel="stylesheet" href="{{ data.base_url }}/client/src/css/tokens.css?v=20261027_sidebar_radius">
-    <link rel="stylesheet" href="{{ data.base_url }}/client/src/css/main.css?v=20261107_gcloud">
+    <link rel="stylesheet" href="{{ data.base_url }}/client/src/css/main.css?v=20261108_lite_badge">
     {# Here and not in a page block: the explorer opens from every page, and
        appRouter.adoptStyles turns page stylesheets off on navigation. #}
     <link rel="stylesheet" href="{{ data.base_url }}/client/src/css/explorer.css?v=20261021_explorer_waiting">
@@ -45,7 +45,7 @@
          window.fetch). Before appStatus.js and not deferred, so a static
          build's page can put its own transport in place before that file
          wraps window.fetch and anything issues a request. -->
-    <script src="{{ data.base_url }}/client/src/js/services/backend.js?v=20261107_long_requests" type="text/javascript"></script>
+    <script src="{{ data.base_url }}/client/src/js/services/backend.js?v=20261108_early_home" type="text/javascript"></script>
     <!-- App-wide status indicator. Loaded here, before everything else and not
          deferred, because it wraps window.fetch to detect a dead/erroring
          server and must be installed before any script issues a request. -->
@@ -171,7 +171,7 @@
        views/settingsPage.js too, which settings.html loads at the end of its
        own body, well after everything here. #}
     <script src="{{ data.base_url }}/client/src/js/services/failureMessage.js?v=20260923_failure_layout" defer></script>
-    <script src="{{ data.base_url }}/client/src/js/services/connectionModal.js?v=20261107_gcloud" defer></script>
+    <script src="{{ data.base_url }}/client/src/js/services/connectionModal.js?v=20261108_sftp_web" defer></script>
     <script src="{{ data.base_url }}/client/src/js/services/placePicker.js?v=20261020_sftp_files" defer></script>
     {# The navbar's connection icon. Deferred like the rest, which still runs
        it after pageBoot.js below (a normal script beats every deferred one),
@@ -313,10 +313,33 @@
    datasource stays the key (projectTitle.js). #}
 <body data-plexora-datasource="{{ data.datasource }}" data-plexora-title="{{ project_title or data.datasource }}" data-plexora-docs-url="{{ docs_url }}">
 <nav id="topBar" class="navbar navbar-expand-sm navbar-dark">
+    {# The brand, and on the website (Plexora Lite) its edition label. The
+       label is the home link's sibling, not its child: its tooltip holds a
+       link of its own, and a link may not sit inside another. Hidden
+       everywhere but the website by `.website-only` (main.css). #}
+    <span class="plx-brand">
     <a id="title" class="navbar-brand mb-0 h1" href="{{ data.base_url }}/">
     <img src="{{ data.base_url }}/client/src/img/logo.svg" alt="" id="navbar-logo">
     Plexora
 </a>
+    <span class="plx-edition website-only" tabindex="0" aria-label="Plexora Lite"
+          aria-describedby="plx-edition-tip">
+        <span class="plx-edition-badge" aria-hidden="true">
+            <svg class="plx-edition-spark" viewBox="0 0 12 12" focusable="false">
+                <path d="M6 0C6.5 3.4 8.6 5.5 12 6 8.6 6.5 6.5 8.6 6 12 5.5 8.6 3.4 6.5 0 6 3.4 5.5 5.5 3.4 6 0Z"/>
+            </svg>
+            <span class="plx-edition-name">Lite</span>
+        </span>
+        <span class="plx-edition-tip" id="plx-edition-tip" role="tooltip">
+            <span class="plx-edition-tip-title">Plexora <span class="plx-edition-tint">Lite</span></span>
+            <span class="plx-edition-tip-body">The browser version, with fewer features.
+                The desktop app has them all, runs faster and handles large datasets.</span>
+            <a class="plx-edition-tip-link" href="https://github.com/nirmallab/plexora/releases/latest"
+               target="_blank" rel="noopener">Get the desktop app<svg class="plx-edition-tip-arrow"
+               viewBox="0 0 12 12" aria-hidden="true" focusable="false"><path d="M2 6h7.5M6.5 2.5 10 6l-3.5 3.5"/></svg></a>
+        </span>
+    </span>
+    </span>
     <div class="collapse navbar-collapse" id="navbarSupportedContent">
         <ul class="navbar-nav me-auto">
 

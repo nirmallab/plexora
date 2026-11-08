@@ -1,0 +1,55 @@
+---
+title: "Connect from the website"
+description: "Open images on a lab server or cluster from the Plexora website, with nothing installed on your computer."
+aliases: ["website", "browser", "remote from website", "relay", "no install", "duo", "sftp", "transfer node", "files only"]
+---
+
+The Plexora website connects to a server the same way the desktop app does: you save the server once, press **Connect**, and its files appear under **Remote** in every file picker. Nothing is installed on your computer. Plexora must be installed on the server, as it is for the desktop app ([Install with pip](/docs/getting-started/install-python)), unless the server only stores files ([below](#a-server-that-only-stores-files)).
+
+## How to connect
+
+1. Open **Settings › Remote servers** on the website, or choose **Remote** in a file picker.
+2. Add the server from the card for your kind of machine, as in [Add a server](/docs/remote/add-a-server). Put your user name in the address, as `you@login.cluster.edu`.
+3. Press **Connect**. The first time, check the server's key fingerprint against the one your site publishes and answer **yes**.
+4. Type your password, then answer Duo or the code prompt the server asks for. Each connection asks once.
+5. Wait for **Connected**. On a cluster that runs Plexora in a job, this includes the time the job waits in the queue.
+
+The server's files then open like your own. Projects, regions, gates and figures stay in your browser or your Plexora folder; only the image, mask and table files stay on the server.
+
+## What happens when you connect
+
+- The website signs in to the server over SSH from this page, through BioCognia's relay. SSH is encrypted from your browser to the server; the relay passes the encrypted bytes on and cannot read them.
+- On the server, Plexora starts a data node: in a job when the saved server asks for one (the same `srun` line the desktop app uses), otherwise directly. Then the SSH connection closes.
+- The data node and this page exchange data through the relay, encrypted end to end with a key made in your browser.
+- If the relay restarts or your network drops for a moment, both sides reconnect by themselves. Nothing is lost and you are not asked to sign in again. Reloading the page reconnects in the same way.
+
+## A server that only stores files
+
+Some servers are for storing and moving files, and nothing else may run on them, such as the HMS O2 transfer node. Add one with the **Files on an SSH server** card, or your site's transfer card. Connecting starts nothing on the server: the website reads the files over SFTP, from this page, through the same relay, and SSH is encrypted from your browser to the server as above.
+
+- The page holds the connection for as long as it is connected. If it drops (the relay restarts, your network changes) or you reload the page, the website signs in again by itself, and the connection dialog asks for your password and Duo again. Files being read wait until it is back.
+- Closing the tab ends the connection.
+
+On a cluster whose transfer node shares its files with the login nodes, as HMS O2's does, connecting with the cluster's own card instead reads the same files through a data node, which a dropped connection or a reload does not interrupt.
+
+## Ending a connection
+
+- **Disconnect** in Settings, or in the connection dialog, stops the data node and its job.
+- A data node with no browser connected for 30 minutes stops by itself, and so does one whose job reaches its time limit.
+
+## What the website cannot do yet
+
+| Situation | Use instead |
+| --- | --- |
+| The server only accepts SSH keys | The desktop app, which uses your `ssh` and its keys |
+| The server is reached through a jump host | The desktop app |
+| The server is only reachable on a VPN or a campus network | The desktop app, or **Settings › Data nodes › Pair a Node** with a node you start yourself |
+| A Windows workstation | The desktop app |
+
+## Related
+
+<Cards>
+<Card title="Add a server" href="/docs/remote/add-a-server" description="The cards and what each one asks." />
+<Card title="SLURM clusters" href="/docs/remote/slurm" description="How a connection waits for a job." />
+<Card title="Website or desktop app" href="/docs/getting-started/website-or-desktop" description="What the website handles, and when the desktop app is the better place." />
+</Cards>

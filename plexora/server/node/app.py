@@ -694,7 +694,7 @@ def _print_pairing(link, origin):
     print("", flush=True)
 
 
-def _serve_then_pair(app, options, link, origin):
+def _serve_then_pair(app, options, link, origin, on_bound=None):
     """`waitress.serve`, with the pairing link said once the socket listens.
 
     The link is only useful once the node answers, and a browser opened on it
@@ -705,6 +705,8 @@ def _serve_then_pair(app, options, link, origin):
 
     server = create_server(app, **options)
     server.print_listen("Serving on http://{}:{}")
+    if on_bound is not None:
+        on_bound(options.get("host", "127.0.0.1"), _bound_port(server, options.get("port")))
     _print_pairing(link, origin)
     server.run()
 
@@ -712,7 +714,8 @@ def _serve_then_pair(app, options, link, origin):
 def serve_node(serve, token=None, host="127.0.0.1", port=8642, *, node_id=None,
                allow_origins=(), plugins=None, dynamic=False, manifest=None,
                exit_on_stdin_close=False, log=print, pair=None,
-               browser_endpoint=None, serve_app=False, url_prefix=None, tls=None):
+               browser_endpoint=None, serve_app=False, url_prefix=None, tls=None,
+               relay_file=None):
     """Start a node and block, printing what a primary needs to register it.
 
     `pair` (a page address, or True for the hosted viewer) allows that page's
@@ -720,6 +723,8 @@ def serve_node(serve, token=None, host="127.0.0.1", port=8642, *, node_id=None,
     `serve_app` serves the static build at `/app/` when this install has one.
     `tls="self-signed"` serves HTTPS with a certificate the node makes and
     keeps (server/node/tls.py): a node a browser opens at its own address.
+    `relay_file` is the website relay's JSON (docs/internal/WEB_REMOTE_RELAY.md):
+    read and deleted first, and the relay link started once the port is bound.
     """
     from waitress import serve as waitress_serve
 
@@ -728,6 +733,22 @@ def serve_node(serve, token=None, host="127.0.0.1", port=8642, *, node_id=None,
 
     # Warnings to stderr; stdout stays the announce `plexora connect` parses.
     _logging.configure()
+
+    # First, before anything slow: a bad file is refused while the start
+    # script is still watching, and a good one is off the disk at once -- it
+    # holds the room's auth and the frame key.
+    relay = None
+    if relay_file is not None:
+        if exit_on_stdin_close:
+            raise NodeStartupError(
+                "--relay-file and --exit-on-stdin-close do not go together: a "
+                "relayed node outlives the connection that started it.")
+        from plexora.server.node import relay_link
+
+        try:
+            relay = relay_link.read_relay_file(relay_file)
+        except relay_link.RelayConfigError as exc:
+            raise NodeStartupError(f"--relay-file: {exc}") from None
 
     # Hex rather than token_urlsafe: the printed registration line is meant to
     # be copied and pasted, and a token that begins with '-' is read as a flag
@@ -862,33 +883,135 @@ def serve_node(serve, token=None, host="127.0.0.1", port=8642, *, node_id=None,
     # does -- never touches the files it was pointed at.
     warm_resources(registry, log=log)
 
+    on_bound = None
+    if relay is not None:
+        on_bound = _RelayStarter(relay, app, token, host, log)
+    try:
+        _serve_node_app(app, host, port, token, tls_files, pairing, on_bound,
+                        WAITRESS_LIMITS, worker_threads(), waitress_serve, log)
+    finally:
+        if on_bound is not None:
+            on_bound.close()
+
+
+def _serve_node_app(app, host, port, token, tls_files, pairing, on_bound,
+                    limits, threads, waitress_serve, log):
+    """Serve until stopped: HTTPS, with a pairing link, or plain. `on_bound(
+    host, port)` is called once the socket listens, with where this node's own
+    server answers on loopback."""
     if tls_files is not None:
         link = None
         if pairing is not None:
             from plexora.connect import pairing_url
 
             link = (pairing_url(pairing[0], pairing[2], token), pairing[1])
-        _serve_tls(app, host, port, tls_files, dict(**WAITRESS_LIMITS, threads=worker_threads()),
-                   link, log)
+        _serve_tls(app, host, port, tls_files, dict(**limits, threads=threads),
+                   link, log, on_bound=on_bound)
         return
     if pairing is not None:
         from plexora.connect import pairing_url
 
         page, pair_origin, endpoint = pairing
-        _serve_then_pair(app, dict(host=host, port=port, **WAITRESS_LIMITS,
-                                   threads=worker_threads()),
-                         pairing_url(page, endpoint, token), pair_origin)
+        _serve_then_pair(app, dict(host=host, port=port, **limits, threads=threads),
+                         pairing_url(page, endpoint, token), pair_origin,
+                         on_bound=on_bound)
+        return
+    if on_bound is not None:
+        # The relay needs the port this socket really bound (--port 0 is a
+        # free one), so the server is built first and served after.
+        from waitress import create_server
+
+        server = create_server(app, host=host, port=port, **limits, threads=threads)
+        server.print_listen("Serving on http://{}:{}")
+        on_bound(host, _bound_port(server, port))
+        server.run()
         return
     waitress_serve(
         app,
         host=host,
         port=port,
-        **WAITRESS_LIMITS,
-        threads=worker_threads(),
+        **limits,
+        threads=threads,
     )
 
 
-def _serve_tls(app, host, port, files, options, link, log=print):
+def _bound_port(server, fallback):
+    """The port a waitress server listens on: one socket's `effective_port`,
+    or the first of several (a host name that resolves to two addresses)."""
+    port = getattr(server, "effective_port", None)
+    if port is None:
+        listening = getattr(server, "effective_listen", None) or []
+        port = listening[0][1] if listening else fallback
+    return int(port)
+
+
+class _RelayStarter:
+    """`on_bound` for a relayed node: start the link at the bound port, and
+    make the main thread one a STOP can reach.
+
+    `_lifetime.request_shutdown` stops waitress with the KeyboardInterrupt
+    Ctrl+C would raise. A node the start script runs as `nohup setsid ... &`
+    inherits SIGINT ignored, where that interrupt does nothing and only the
+    hard exit ten seconds later would stop it; and the scheduler's SIGTERM at
+    the walltime should stop it as cleanly. SIGTERM's own handler is put back
+    on the way out.
+    """
+
+    def __init__(self, config, app, token, host, log):
+        self.config = config
+        self.app = app
+        self.token = token
+        self.host = host
+        self.log = log
+        self.link = None
+        self._previous_term = None
+
+    def __call__(self, host, port):
+        import signal
+
+        from plexora import _lifetime
+        from plexora._resources import platform_word
+        from plexora.server.node import relay_link
+        from plexora.server.node.api import API_VERSION
+
+        _lifetime.make_interruptible()
+        try:
+            self._previous_term = signal.getsignal(signal.SIGTERM)
+            _lifetime.install_signal_handlers([signal.SIGTERM])
+        except (ValueError, OSError):
+            self._previous_term = None
+        try:
+            from plexora.cli import version_string
+
+            version = version_string()
+        except Exception:  # noqa: BLE001 - a label, never a reason not to start
+            version = "unknown"
+        hello = {
+            "node_id": self.app.config["PLEXORA_NODE_ID"],
+            "api_version": API_VERSION,
+            "token": self.token,
+            "version": version,
+            "hostname": socket.gethostname(),
+            "platform": platform_word(),
+        }
+        self.log(f"Joining relay room {self.config.room} at {self.config.relay}")
+        self.link = relay_link.RelayLink(
+            self.config, port=port, token=self.token, hello=hello,
+            host=relay_link.relay_target_host(host)).start()
+
+    def close(self):
+        if self.link is not None:
+            self.link.stop()
+        if self._previous_term is not None:
+            import signal
+
+            try:
+                signal.signal(signal.SIGTERM, self._previous_term)
+            except (ValueError, OSError):
+                pass
+
+
+def _serve_tls(app, host, port, files, options, link, log=print, on_bound=None):
     """Waitress on loopback, behind `tls.TlsFront` on the node's own port.
 
     The fingerprint is said with the address, so whoever reads this terminal
@@ -907,6 +1030,9 @@ def _serve_tls(app, host, port, files, options, link, log=print):
     log(f"Serving on https://{_advertised(host)}:{front.port}")
     log(f"  certificate SHA-256 {node_tls.fingerprint(files[0])}")
     front.start()
+    if on_bound is not None:
+        # Plain HTTP to waitress itself, behind the TLS front.
+        on_bound("127.0.0.1", server.effective_port)
     if link is not None:
         _print_pairing(*link)
     try:
