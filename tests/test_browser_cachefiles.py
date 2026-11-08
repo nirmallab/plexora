@@ -299,3 +299,31 @@ def test_without_the_files_the_cache_is_kept_in_memory_outside_the_data_root(tmp
     finally:
         cachefiles.uninstall()
         remote_store._reset_for_tests()
+
+
+def test_a_page_without_its_files_starts_with_the_cache_in_memory(tmp_path, monkeypatch):
+    # The worker sets self.plexoraCacheFiles = null when it has no files (the
+    # self-check's scratch boot, a second tab, no sync access handles); in
+    # Pyodide that null is pyodide.ffi.jsnull, not None (0.0.38 failed to boot).
+    import sys
+    import types
+
+    jsnull = type("JsNull", (), {"__bool__": lambda self: False})()
+    ffi = types.ModuleType("pyodide.ffi")
+    ffi.jsnull = jsnull
+    pyodide = types.ModuleType("pyodide")
+    pyodide.ffi = ffi
+    js = types.ModuleType("js")
+    js.plexoraCacheFiles = jsnull
+    js.plexoraCacheQuota = 0
+    js.plexoraCacheWhy = "another tab holds the files"
+    monkeypatch.setitem(sys.modules, "pyodide", pyodide)
+    monkeypatch.setitem(sys.modules, "pyodide.ffi", ffi)
+    monkeypatch.setitem(sys.modules, "js", js)
+    monkeypatch.setattr(cachefiles, "ROOT", str(tmp_path / "cache"))
+    try:
+        assert cachefiles.install() == "memory (another tab holds the files)"
+        assert type(remote_store.cache_index()) is remote_store.CacheIndex
+    finally:
+        cachefiles.uninstall()
+        remote_store._reset_for_tests()

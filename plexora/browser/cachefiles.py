@@ -547,6 +547,19 @@ class PackedCacheIndex(CacheIndex):
 _installed: Optional[str] = None
 
 
+def _given(value) -> bool:
+    """Whether the page left its files: without them it sets null (a scratch
+    boot, another tab holding them, no sync access handles), which reaches
+    Python as pyodide.ffi.jsnull rather than None."""
+    if value is None:
+        return False
+    try:
+        from pyodide.ffi import jsnull
+    except ImportError:
+        return True
+    return value is not jsnull
+
+
 def install(files=None, quota: Optional[int] = None) -> str:
     """Use the page's files for the chunk cache, or memory when there are
     none (another tab holds them, or the browser has no sync access handles).
@@ -559,7 +572,7 @@ def install(files=None, quota: Optional[int] = None) -> str:
             import js
 
             found = getattr(js, "plexoraCacheFiles", None)
-            files = PageFiles(found) if found is not None else None
+            files = PageFiles(found) if _given(found) else None
             quota = quota or (int(getattr(js, "plexoraCacheQuota", 0) or 0) or None)
             why = str(getattr(js, "plexoraCacheWhy", "") or "")
         except ImportError:
