@@ -4,11 +4,13 @@ Everything the website work (plan `dreamy-brewing-sunset.md`, branch `web/phase0
 is waiting on from you, in one place. Kept current as work lands; the newest
 state is on `web/phase0`. Each item says what to do and what it unblocks.
 **The website is live** at https://viewer.plexoraapp.com since 2026-11-08
-00:40 UTC, now 0.0.43 (`main` at 23a28c08, no tag; since 2026-11-09
-16:05 UTC: the website's performance, round two, docs/internal/bench/web/
-WEBSITE_PERF_2026-11-09.md; 0.0.42, round one, before it), Pages
+00:40 UTC, now 0.0.44 (`main` at f123c3ae, no tag; since 2026-11-09
+21:15 UTC: the website's performance, round three -- the live site's freeze,
+contrast at desktop speed, kept answers that move on, a plain mask's first
+open -- docs/internal/bench/web/WEBSITE_PERF_2026-11-09.md; 0.0.43 and 0.0.42,
+rounds two and one, before it), Pages
 project `plexora-viewer`
-branch `release`, bundle `py/0.0.43/`, flags `viewer: on`, telemetry on. 0.0.38 was live for under
+branch `release`, bundle `py/0.0.44/`, flags `viewer: on`, telemetry on. 0.0.38 was live for under
 an hour and did not start Python on the self-check page, in a second tab or
 without sync access handles; its `py/0.0.38/` stays, as every released
 prefix does, and nothing points at it. Activating a licence and AI do not work there until section 1,

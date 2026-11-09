@@ -52,11 +52,14 @@ const OPS = {
     level: (args) => tiff.level(args),
     region: (args) => tiff.region(args),
     max: (args) => tiff.max(args),
+    regions: (args) => tiff.regions(args),
     block: (args) => bandParts(tiff, args),
     deflate,
 };
 
 function transfers(result) {
+    // Rectangles for Python: each its own buffer (once each: a list may not name one twice).
+    if (result?.regions) return [...new Set(result.regions.map((one) => one.values?.buffer).filter(Boolean))];
     if (result?.parts) return result.parts.map((part) => part.buffer);
     // An open's recorded reads (`record`): copies, nothing here reads them again.
     if (result?.seed) return result.seed.map((slice) => slice.buffer).filter(Boolean);

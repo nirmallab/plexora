@@ -65,6 +65,19 @@
     global.PLEXORA_SITE_BASE = BASE;
     //: A file of the site, by its path from the site's root.
     const at = (path) => BASE + path;
+    //: The site's version, from this script's own address (the loader stamps
+    //: its files: client/static_build.py `LOADER`). The site's files are kept
+    //: by the browser and checked in the background (static_build.py `KEPT`),
+    //: so every file this loader fetches carries it: a release is a new
+    //: address for each, never last release's copy.
+    const STAMP = (() => {
+        try {
+            return new URL(doc.currentScript.src).searchParams.get("v") || "";
+        } catch (error) {
+            return "";
+        }
+    })();
+    const stamped = (src) => (STAMP && !src.includes("?") ? `${src}?v=${encodeURIComponent(STAMP)}` : src);
     //: The route an address of the app names, as Python answers it.
     const inApp = (where) => (where.pathname.slice(BASE.length) || "/") + where.search + where.hash;
 
@@ -571,7 +584,7 @@
     function script(src) {
         return new Promise((resolve, reject) => {
             const node = doc.createElement("script");
-            node.src = src;
+            node.src = stamped(src);
             node.onload = resolve;
             node.onerror = () => reject(new Error(`could not load ${src}`));
             doc.head.appendChild(node);
@@ -584,7 +597,7 @@
     function scripts(sources) {
         return Promise.all(sources.map((src) => new Promise((resolve, reject) => {
             const node = doc.createElement("script");
-            node.src = src;
+            node.src = stamped(src);
             node.async = false;
             node.onload = resolve;
             node.onerror = () => reject(new Error(`could not load ${src}`));
@@ -840,6 +853,19 @@
         });
     }
 
+    //: The site's description (`client/shell.json`) as the loader carries it
+    //: (client/static_build.py writes it into index.html): no round trip
+    //: before anything else can start. Null where it does not (a build from
+    //: before), and the file is fetched.
+    function described() {
+        try {
+            const block = doc.getElementById("plexora-shell");
+            return block && block.textContent.trim() ? JSON.parse(block.textContent) : null;
+        } catch (error) {
+            return null;
+        }
+    }
+
     async function hostBoot() {
         global.PlexoraShellHost = true;
         // The loader as the app's frame sees it, before there is a frame.
@@ -885,7 +911,7 @@
         core.catch(() => null);
         services.catch(() => null);
         const control = controlled();
-        const shell = await (await global.fetch(at("/client/shell.json"), { cache: "no-cache" })).json();
+        const shell = described() || await (await global.fetch(at("/client/shell.json"), { cache: "no-cache" })).json();
         // The site's switches, read while Python warms: what they stop is
         // stopped before Python starts and before the app's frame is made
         // (`halted` below), so a paused site still never runs its Python.
@@ -939,7 +965,7 @@
                 return global.PlexoraKept.early(route);
             }).catch(() => null);
         // An ES module, fetched while Python starts.
-        const licenceModule = import(at("/client/src/js/services/licenseClient.js"));
+        const licenceModule = import(stamped(at("/client/src/js/services/licenseClient.js")));
         licenceModule.catch(() => null);
         await services;
         global.PlexoraGoogleAuth.configure(shell.google || {});

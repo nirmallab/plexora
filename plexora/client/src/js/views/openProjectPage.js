@@ -218,7 +218,7 @@
         function thumbMarkup(project) {
             const thumbUrl = plexoraUrl("project_thumbnail/" + encodeURIComponent(project.name));
             return `<span class="project-thumb">
-                <img src="${thumbUrl}" alt="" loading="lazy" onerror="this.parentElement.classList.add('project-thumb-fallback');this.remove();">
+                <img src="${thumbUrl}" alt="" loading="lazy">
                 <span class="fas fa-image project-thumb-icon"></span>
             </span>`;
         }
@@ -798,6 +798,17 @@
         // ------------------------------------------------------------------
         // Events
         // ------------------------------------------------------------------
+
+        // A thumbnail that cannot be had leaves the icon behind it. Here, not
+        // as an inline onerror: the website's Content-Security-Policy runs no
+        // inline handler. An image's error does not bubble, so it is caught
+        // on its way down.
+        resultsEl.addEventListener("error", (event) => {
+            const img = event.target;
+            if (!(img instanceof HTMLImageElement) || !img.parentElement?.classList.contains("project-thumb")) return;
+            img.parentElement.classList.add("project-thumb-fallback");
+            img.remove();
+        }, true);
 
         resultsEl.addEventListener("click", (event) => {
             const target = event.target;

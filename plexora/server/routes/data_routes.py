@@ -335,7 +335,8 @@ def get_channel_gmm():
         # `patient`: on the website a window the page is still scanning is
         # asked for again later, the page's other requests answered first.
         resp = (data_model.get_channel_gmm(channel, datasource, view) if view
-                else data_model.get_channel_gmm(channel, datasource, patient=_patient()))
+                else data_model.get_channel_gmm(channel, datasource, patient=_patient(),
+                                                 provisional=request.args.get('provisional') == '1'))
     except _page.WindowPending as exc:
         return _retry_later(exc)
     except data_model.UnknownChannelError as exc:
@@ -354,7 +355,9 @@ def get_image_channel_stats():
     view = request.args.get('view') or ''
     try:
         resp = (data_model.get_image_channel_stats(channel, datasource, view) if view
-                else data_model.get_image_channel_stats(channel, datasource, patient=_patient()))
+                else data_model.get_image_channel_stats(
+                    channel, datasource, patient=_patient(),
+                    provisional=request.args.get('provisional') == '1'))
     except _page.WindowPending as exc:
         return _retry_later(exc)
     except data_model.UnknownChannelError as exc:

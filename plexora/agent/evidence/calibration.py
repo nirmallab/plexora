@@ -485,13 +485,15 @@ def compute(source, channels, *, nuclear=None, level=None, caps=None,
     from plexora.agent.evidence import image_qc
 
     level = image_qc.overview_level(source) if level is None else level
+    # Every plane read in one go (on the website one question to the page).
+    planes = image_qc.read_overviews(source, list(channels.values()), level)
     nuclear_plane = None
     if nuclear is not None:
-        nuclear_plane, _l, _c = image_qc.read_overview(source, channels[nuclear], level)
+        nuclear_plane, _l, _c = planes[channels[nuclear]]
     tissue = image_qc.tissue_mask(nuclear_plane)
     out = {}
     for name, key in channels.items():
-        plane, _l, ceiling = image_qc.read_overview(source, key, level)
+        plane, _l, ceiling = planes[key]
         role = "nuclear" if name == nuclear else "marker"
         stats = _stats(plane)
         stats["saturation_fraction"] = float((plane >= 0.98 * ceiling).mean()) \
@@ -680,6 +682,17 @@ def save(project, record) -> str:
     blob = json.dumps(record, sort_keys=True, separators=(",", ":")).encode("utf-8")
     _store(project).put_state(blob)
     return hashlib.sha1(blob).hexdigest()[:16]
+
+
+def prepare(session, project) -> None:
+    """Read now what every `calibrate` of `project` reads first: the agent's
+    copy of its table (its fingerprint) and QC's exclusions. The website's
+    auto-contrast job takes this as a step of its own (display_contrast
+    `_stepped`): the first time, on a large table, it is a second or more of
+    WebAssembly that a request should not wait behind together with a
+    channel's crops. Cached by the session, so `calibrate` then finds it read."""
+    _table_fingerprint(session, project)
+    _qc_fingerprint(session, project)
 
 
 def calibrate(session, project, channels=None, *, force=False, reset_choices=False,

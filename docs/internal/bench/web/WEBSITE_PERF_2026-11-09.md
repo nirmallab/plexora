@@ -200,6 +200,71 @@ or if a visit's first seconds stop needing a table.
 - `/image/requirements` is 6 ms in Pyodide. The 1.4 s in the tool rows is the
   POST that saves a tool's set-up form and reloads the table, once per project.
 
+## Round three (after 0.0.43): the live site's freeze, contrast, a plain mask
+
+Reported on the live site (0.0.43) on a large local image: a reload that never finished loading,
+channels that took "forever" to draw, tile errors when zooming, `get_image_channel_stats ... Failed
+to fetch` and a 504 in the console. Reproduced on LSP11385 with the files picked by real handles,
+so a reload restores them as "Allow on every visit" does (`tools/bench_web/bench_flow_web.mjs`;
+the local server's arm is `bench_flow_server.mjs`).
+
+- **The freeze.** `agent/evidence/display_contrast.py` `compute` answered with `describe()` while
+  holding `_LOCK`, which `describe` takes again (a plain `threading.Lock`): a second auto-contrast ask
+  while a job ran waited on itself for ever. On the desktop one request thread hung; on the website
+  the one Python thread did, and the whole site stopped. Found by pausing the frozen worker over CDP
+  and tracing Python with `?pydebug` wrappers. `tests/test_display_contrast_steps.py` fails on the
+  old code.
+- **The scan.** A channel's exact window waited for its full-resolution maximum, read window by
+  window through geotiff.js (7-9 s a channel). `node/tiffReader.js` `tiledMax` reads a tiled plane in
+  large reads with the browser's zlib: 3.1-3.4 s, as the desktop's own read (tifffile, 8 threads:
+  3.7 s); held to numpy (`tests/js/tiff_max_probe.mjs`).
+- **Provisional windows.** In HD a tile is windowed on the GPU in raw units, so the exact window only
+  bounds a channel's slider: stats and fit come at once with (0, the overview's max),
+  `window_exact: false`, and the viewer takes the exact one when it lands (`awaitExactWindow`).
+- **Auto-contrast at desktop speed.** Its cell crops, the mask labels under them and the overview
+  planes are read by the page's workers in one batch (`SourceImage.read_many` -> `page_regions`):
+  a four-channel calibration 7.0 s -> 1.1 s. The job steps four channels at a time; after a project
+  opens the website fits every channel (0.4 s each) and calibrates the rest in the background while
+  nothing else is asked.
+- **Reload's kept answers.** Answers Python moves on by itself (the browser node's spec while a
+  mask's pyramid is built, its `generation`, auto-contrast calibrating channel after channel) are no
+  longer taken for a change, which refused every write of the page (the channel list unsaved, the
+  agent bridge signing in every 5 s, a 409 each time); channel names and the spec are kept again
+  after a write. The agent bridge no longer asks for a session before registering (a 404 on every
+  reload): the registration says whether it was `resumed`.
+- **A plain mask's first open.** The page builds a plain mask's label pyramid on eight workers; the
+  project's load beside it ran 6-11x slower (the 66 GB image opened in 11 s instead of 1 s, the table
+  read in 3.8 s instead of 0.6 s), and the viewer was drawn 17 s after the open. The build now works
+  on one worker while a page waits on Python for more than 50 ms or on the browser node's tiles, and
+  on all of them otherwise or when a request waits on the build itself (`node/pace.js`,
+  `browserPyramid.js` `pace`): drawn in 4.3 s; the mask, built beside a working viewer, lands at
+  26 s instead of 20 s.
+- Also: a folder named `plexora` in any case is the library (a lowercase `Documents/plexora` got a
+  second library inside it); the threadpoolctl deprecation warning is silenced; two inline `onerror`
+  handlers the CSP blocked are listeners.
+
+LSP11385 (40-ch uint16, 66.7 GB, prepared label pyramid, 202,049 cells), this Mac, nothing else
+running, seconds:
+
+| | local server | website (0.0.44) | live 0.0.43 |
+|---|---|---|---|
+| import (image, mask, CSV) | 0.5 | 3.0 | 4.3 |
+| open -> first channel visible | 3.9 | 3.0 | 15.9 |
+| 4 channels on at once -> visible | 4.8 | 2.7 | 13.3 |
+| ... at their fitted contrast | (with the final) | 5.2 | ~30 |
+| ... at the final auto-contrast | 4.8 | 8.9 | not in 50 |
+| 4 channels on after a 5 s look -> final auto-contrast | 3.6 | 2.3 | -- |
+| reload -> image back | 0.9-1.0 | 1.6 | 3.7-20.5 |
+
+The same with the plain mask `cell.ome.tif` (its pyramid built on import): viewer drawn after the
+open, local server 4.5, website 4.3 (17 before pacing); the mask's build 23 (15 alone).
+
+Left: auto-contrast on channels switched on the moment the image appears (one Python thread beside
+the page's tile reads: ~2x the local server), Python's restart on a reload (a SharedWorker with
+Chrome's `extendedLifetime` survives one: Chrome and Edge only, and every tab would share one
+Python), the page's own CSV parse on import, geotiff.js's big-endian predictor tiles (the fast
+scan does not share the bug; the tiles still come from geotiff.js).
+
 ## Rerun
 
 ```bash

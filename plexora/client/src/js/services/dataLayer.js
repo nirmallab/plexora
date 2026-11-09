@@ -317,12 +317,12 @@ class DataLayer {
      * failed request, or an answer that is not a fit): the caller may ask
      * again, and must never keep an error body as if it were the fit.
      */
-    async getChannelGMM(channel) {
+    async getChannelGMM(channel, { provisional = false } = {}) {
         try {
-            let response = await fetch(plexoraUrl('get_channel_gmm') + '?' + new URLSearchParams({
-                channel: channel,
-                datasource: datasource
-            }))
+            const query = { channel: channel, datasource: datasource };
+            // As getImageChannelStats': the fit at once, its window provisional.
+            if (provisional) query.provisional = "1";
+            let response = await fetch(plexoraUrl('get_channel_gmm') + '?' + new URLSearchParams(query))
             if (!response.ok) return null;
             const packet = await response.json();
             return packet && Number.isFinite(Number(packet.vmin)) && Number.isFinite(Number(packet.vmax))
@@ -334,11 +334,15 @@ class DataLayer {
     }
 
     /** A channel's statistics, or null as getChannelGMM. */
-    async getImageChannelStats(channel, view = "") {
+    async getImageChannelStats(channel, view = "", { provisional = false } = {}) {
         try {
             const query = { channel: channel, datasource: datasource };
             // A projection's own brightness (a z-stack's `view=` token).
             if (view) query.view = view;
+            // A viewer drawing HD tiles takes a provisional window while the
+            // website's page still reads the plane for the exact one
+            // (`window_exact: false` then; views/channelList.js asks again).
+            if (provisional) query.provisional = "1";
             let response = await fetch(plexoraUrl('get_image_channel_stats') + '?' + new URLSearchParams(query))
             if (!response.ok) return null;
             const stats = await response.json();

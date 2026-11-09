@@ -93,10 +93,27 @@
     const saving = new Set();
     let saver = null;
 
+    //: What a page waits on Python for: its requests (and their streamed
+    //: bodies) and the browser node's spec of a project. Not the page's
+    //: answers to Python's own questions, nor the bookkeeping ops.
+    const FOREGROUND = new Set(["request", "read", "nodeSpec"]);
+    //: Of those, when each still unanswered was sent (`busy`).
+    const foreground = new Set();
+
     //: `signal`: an AbortSignal whose abort takes the message out of the
     //: worker's queue if Python has not begun it (one Python has begun runs
     //: to its end: nothing interrupts it), and rejects with an AbortError.
     function call(op, args, transfer, signal = null) {
+        if (!FOREGROUND.has(op)) return post(op, args, transfer, signal);
+        const sent = { at: performance.now() };
+        foreground.add(sent);
+        const ended = () => foreground.delete(sent);
+        const answered = post(op, args, transfer, signal);
+        answered.then(ended, ended);
+        return answered;
+    }
+
+    function post(op, args, transfer, signal) {
         const id = nextId++;
         return new Promise((resolve, reject) => {
             if (signal && signal.aborted) {
@@ -717,6 +734,16 @@
             new Promise((resolve) => setTimeout(() => resolve(null), 2000)),
         ]),
         job: (id) => (jobs.has(id) ? jobs.get(id).job : null),
+        //: Whether a page has waited on Python more than `afterMs` for
+        //: something still unanswered: a long answer (a project's load, a
+        //: fit), or requests queued behind one. The page's own background
+        //: work (a pyramid build, services/browserPyramid.js) steps back
+        //: meanwhile; a quick answer, a status poll's, holds nothing back.
+        busy: (afterMs = 50) => {
+            const now = performance.now();
+            for (const sent of foreground) if (now - sent.at >= afterMs) return true;
+            return false;
+        },
         recent: () => recent.slice(),
         steps: () => steps.slice(),
         tasks: () => tasks.slice(),

@@ -9,9 +9,13 @@ be indexed, and no file is over Pages' 25 MiB.
 """
 
 import json
+import re
+from fnmatch import fnmatchcase
+from pathlib import Path
 
 import pytest
 
+from plexora import __version__
 from plexora.client import static_build
 
 PAGES_FILE_LIMIT = 25 << 20
@@ -114,7 +118,8 @@ def test_a_first_visits_home_page_is_drawn_as_the_websites_python_draws_it(tmp_p
     assert variables["datasources"] == [] and variables["client_node"] == ""
     assert variables["license"]["plan"] == "free" and variables["license"]["paid"] is False
     assert "quick-view-recent" not in page
-    assert "/client/home.html\n  Cache-Control: no-cache" in (tmp_path / "_headers").read_text(encoding="utf-8")
+    assert "/client/home.html\n  ! Cache-Control\n  Cache-Control: no-cache" in (
+        tmp_path / "_headers").read_text(encoding="utf-8")
 
 
 def test_a_nodes_build_has_no_home_page(built):
@@ -122,3 +127,106 @@ def test_a_nodes_build_has_no_home_page(built):
     out, record = built
     assert not (out / "client" / "home.html").exists() and record["home"] is None
     assert "home" not in json.loads((out / "client" / "shell.json").read_text(encoding="utf-8"))
+
+
+
+# -- what a returning visitor's browser keeps (`KEPT`, `FRESH`) --------------------------
+
+CLIENT_JS = Path(static_build.__file__).resolve().parent / "src" / "js"
+
+
+def _rules(headers):
+    rules = {}
+    for block in headers.strip().split("\n\n"):
+        path, *lines = block.split("\n")
+        rules[path] = [line.strip() for line in lines]
+    return rules
+
+
+def _fresh(path):
+    return any(fnmatchcase(path, pattern) for pattern in static_build.FRESH)
+
+
+def test_the_sites_files_are_kept_and_checked_in_the_background(built):
+    """A warm visit runs what the browser has and asks the CDN in the
+    background, except where a file's address does not change with it."""
+    out, _ = built
+    rules = _rules((out / "_headers").read_text(encoding="utf-8"))
+    for path in ("/client/*", "/plugins/*"):
+        assert rules[path] == [f"Cache-Control: {static_build.KEPT}"]
+    for path in static_build.FRESH:
+        assert rules[path] == ["! Cache-Control", "Cache-Control: no-cache"], path
+    assert rules["/index.html"] == ["Cache-Control: no-cache"]
+    assert len(rules) <= 100  # Pages' limit
+
+
+def test_the_loader_carries_shell_json(built):
+    """services/shell.js reads it from the page: one round trip less."""
+    out, _ = built
+    loader = (out / "index.html").read_text(encoding="utf-8")
+    block = loader.split('<script type="application/json" id="plexora-shell">', 1)[1].split("</script>", 1)[0]
+    assert json.loads(block) == json.loads((out / "client" / "shell.json").read_text(encoding="utf-8"))
+    assert loader.index('id="plexora-shell"') < loader.index("services/shell.js")
+
+
+def test_the_loaders_own_files_carry_the_sites_version(built):
+    out, _ = built
+    stamp = f"?v={__version__}"
+    for page in ("index.html", "selfcheck.html"):
+        text = (out / page).read_text(encoding="utf-8")
+        files = re.findall(r'(?:src|href)="(client/src/[^"]+\.(?:js|css))', text)
+        assert files, page
+        for found in re.findall(r'(?:src|href)="(client/src/[^"]+\.(?:js|css)[^"]*)"', text):
+            assert found.endswith(stamp), (page, found)
+
+
+def _module(source: Path, target: str) -> Path:
+    path = (source.parent / target).resolve()
+    return path if path.suffix else path.with_name(path.name + ".js")
+
+
+def _site_path(source: Path, target: str) -> str:
+    resolved = _module(source, target)
+    return "/client/" + resolved.relative_to(CLIENT_JS.parents[1]).as_posix()
+
+
+IMPORTS = re.compile(r"""^\s*(?:import|export)\b[^;'"]*?\bfrom\s+['"](\.{1,2}/[^'"]+)['"]""", re.M)
+#: webpack's entries (client/webpack*.config.js): what they import is in a
+#: bundle in dist/, never fetched at its own address.
+WEBPACK_ENTRIES = ("vendor.js", "ssh/sshEntry.js", "workers/tiffWorker.js")
+
+
+def _bundled() -> set:
+    todo = [CLIENT_JS / entry for entry in WEBPACK_ENTRIES]
+    seen = set()
+    while todo:
+        source = todo.pop().resolve()
+        if source in seen or not source.is_file():
+            continue
+        seen.add(source)
+        todo += [_module(source, target) for target in IMPORTS.findall(source.read_text(encoding="utf-8"))]
+    return seen
+
+
+def test_every_file_reached_at_an_address_without_a_version_is_fresh():
+    """A worker, a script a worker imports, a module imported by name: their
+    addresses carry no version, so a kept copy would outlive a release. A
+    vendored library's folder names its version (`external/<name>-<version>/`)."""
+    bundled = _bundled()
+    assert len(bundled) > 10
+    reached = set()
+    for source in CLIENT_JS.rglob("*.js"):
+        text = source.read_text(encoding="utf-8")
+        if source.resolve() not in bundled:
+            for target in IMPORTS.findall(text):
+                reached.add((source.name, _site_path(source, target)))
+        for target in re.findall(r'importScripts\("(\.{1,2}/[^"]+)"\)', text):
+            reached.add((source.name, _site_path(source, target)))
+        # Workers' addresses, however a file spells them.
+        for found in re.findall(r'["`]/?(client/(?:src/js/workers|dist)/[^"`?]+\.m?js)["`]', text):
+            reached.add((source.name, "/" + found))
+    assert len(reached) > 10
+    versioned = re.compile(r"^/client/external/[A-Za-z][\w.-]*-\d[\w.-]*/")
+    missing = sorted(f"{where} -> {path}" for where, path in reached
+                     if not _fresh(path) and not versioned.match(path))
+    assert missing == []

@@ -63,15 +63,31 @@
         "get_image_channel_stats", "get_channel_gmm", "get_display_contrast",
     ]);
     const KEPT = new Set(ENDPOINTS);
-    //: What a write can change: asked again after one (`recapture`).
+    //: What a write can change: asked again after one (`recapture`), with the
+    //: browser node's spec (a mask attached, a file found again). The channels'
+    //: names: renamed from the image panel or a channel file.
     const STATEFUL = new Set(["image_viewer", "serve_config", "get_view_transform", "get_view_state_route",
                               "get_saved_channel_list", "get_display_contrast", "resource_routing",
-                              "resource_status"]);
+                              "resource_status", "get_channel_names"]);
     //: Keys an answer carries that change with every start and say nothing
     //: about what the page draws: left out when a kept answer is compared.
     const VOLATILE = { serve_config: ["lastOpenedAt"] };
-    //: Query keys that only defeat a cache (main.js asks `config?t=<now>`).
-    const BUSTERS = new Set(["t", "_"]);
+    //: Answers Python moves on by itself, with nothing written: the same when
+    //: everything the kept one said still stands. Auto-contrast
+    //: (agent/evidence/display_contrast.py `describe`) calibrates channel after
+    //: channel in the background: a channel calibrated since is not a change,
+    //: a kept channel's window that is no longer so is.
+    const PROGRESS = {
+        get_display_contrast: (kept, fresh) => {
+            const was = (kept && kept.channels) || {};
+            const now = (fresh && fresh.channels) || {};
+            return Object.keys(was).every((name) => JSON.stringify(was[name]) === JSON.stringify(now[name]));
+        },
+    };
+    //: Query keys that only defeat a cache (main.js asks `config?t=<now>`),
+    //: and `provisional`: what a channel's stats may be while the page reads
+    //: its plane, never what is kept (an exact answer, for either ask).
+    const BUSTERS = new Set(["t", "_", "provisional"]);
     const CACHE = "plexora-kept";
     //: Quiet this long after a write before its project's state is asked again.
     const RECAPTURE_QUIET_MS = 1500;
@@ -245,8 +261,26 @@
         write((cache) => cache.delete(key)).then((gone) => { if (gone) counts.dropped += 1; }).catch(() => null);
     }
 
+    //: A channel's stats or fit made with a provisional window (data_model
+    //: `_provisional_stats`, `_provisional_gmm`: the page still reading the
+    //: plane): kept only where nothing is kept yet (an exact answer is never
+    //: replaced by one), so a reload draws the channel at once and the viewer
+    //: settles it as it does live (views/channelList.js `awaitExactWindow`);
+    //: and, kept or fresh, no sign of a change -- the exact packet is the
+    //: same but for its window.
+    function provisional(endpoint, bytes) {
+        if ((endpoint !== "get_image_channel_stats" && endpoint !== "get_channel_gmm") || !bytes) return false;
+        try {
+            return JSON.parse(new TextDecoder().decode(bytes)).window_exact === false;
+        } catch (error) {
+            return false;
+        }
+    }
+
     async function keep(where, headers, bytes) {
         if (!bytes) return;
+        if (provisional(where.endpoint, bytes)
+            && await (await open()).match(where.key).catch(() => null)) return;
         const type = headerOf(headers, "content-type") || "application/octet-stream";
         if (where.endpoint === "image_viewer") {
             // Only a project's viewer, as Python draws it for that project.
@@ -298,6 +332,14 @@
     //: Whether two answers of `endpoint` say the same.
     function same(endpoint, a, b) {
         if (a.length === b.length && a.every((byte, i) => byte === b[i])) return true;
+        if (PROGRESS[endpoint]) {
+            try {
+                const read = (bytes) => JSON.parse(new TextDecoder().decode(bytes));
+                return PROGRESS[endpoint](read(a), read(b));
+            } catch (error) {
+                return false;
+            }
+        }
         const keys = VOLATILE[endpoint];
         if (!keys) return false;
         const strip = (value) => {
@@ -331,6 +373,7 @@
             } catch (error) {
                 fresh = null;
             }
+            if (fresh && (provisional(entry.endpoint, fresh) || provisional(entry.endpoint, entry.bytes))) continue;
             if (!fresh || !same(entry.endpoint, entry.bytes, fresh)) changed.push(entry.url);
         }
         changed.push(...await specsChecked());
@@ -392,6 +435,21 @@
         return fresh;
     }
 
+    //: What the page may have drawn from `spec`, given from here as `was`
+    //: (JSON): the parts the browser node served then. A mask still being
+    //: prepared then (`labels.pending`: its pyramid built in the page) and
+    //: served now is the build finishing, not a change: nothing was drawn
+    //: from it. `generation` counts the project's loads in one run of Python
+    //: (the mask attached is a second; a new start counts from one again):
+    //: nothing of the files.
+    function drawnFrom(spec, was) {
+        const kept = JSON.parse(was);
+        const out = { ...spec };
+        delete out.generation;
+        if (!kept.labels || !kept.labels.served) delete out.labels;
+        return JSON.stringify(out);
+    }
+
     //: Each spec given from here, asked of Python again (once); the node then
     //: checks every project again, and keeps open what is the same.
     function specsChecked() {
@@ -406,7 +464,7 @@
                         fresh = null;
                     }
                     if (fresh) putSpec(name, fresh);
-                    if (!fresh || JSON.stringify(fresh) !== was) changed.push(`spec:${name}`);
+                    if (!fresh || drawnFrom(fresh, was) !== drawnFrom(JSON.parse(was), was)) changed.push(`spec:${name}`);
                 }
                 if (specsGiven.size && global.PlexoraNode) global.PlexoraNode.revalidate();
                 return changed;
@@ -513,6 +571,11 @@
                 // Through pythonClient.js, which keeps the answer (`observe`).
                 const init = endpoint === "image_viewer" ? { headers: { Accept: "text/html" } } : undefined;
                 await global.PlexoraPython.fetch(base() + normal, init).catch(() => null);
+            }
+            const project = lastProject;
+            if (await readSpec(project)) {
+                const fresh = await global.PlexoraPython.nodeSpec(project).catch(() => null);
+                if (fresh) putSpec(project, fresh);
             }
         } catch (error) { /* kept as it was: a later check finds the difference */ }
     }

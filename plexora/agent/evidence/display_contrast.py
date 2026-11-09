@@ -41,6 +41,13 @@ _SESSION = None
 #: A failed calibration is not retried for this long (seconds): a broken
 #: image would otherwise be read again on every channel switched on.
 RETRY_AFTER_S = 300.0
+#: On the website (one Python thread, no other: `_work.threaded()` False),
+#: how many channels one step of a job calibrates before the page's requests
+#: are answered again. A channel's cell crops and overview plane are a few
+#: tenths of a second on a large slide; the whole job in one step (35
+#: channels: 7 s on LSP11385) held the page, `/health` and every request
+#: behind it.
+STEP_CHANNELS = 4
 
 
 def _session():
@@ -150,18 +157,25 @@ def compute(project, channels=None, session=None, *, wait=False) -> dict:
     if why:
         return {"state": "unavailable", "rev": None, "channels": {}, "reason": why}
     wanted = [str(c) for c in (channels or []) if c]
+    # `describe` takes the lock itself, and a threading.Lock is not
+    # re-entrant: it is called once the lock is let go. Called inside it, a
+    # second ask while a job ran (a channel switched on as a project opens)
+    # waited on itself for ever -- a request thread on the desktop, and on
+    # the website the one Python thread there is: the whole site froze.
     with _LOCK:
         job = _JOBS.get(project)
+        started = False
         if job and job.get("state") == "computing":
             queued = job.setdefault("queued", [])
             queued.extend(c for c in wanted if c not in queued)
             if not wanted:
                 job["everything"] = True
-            return describe(project, session)
-        if job and job.get("state") == "failed" \
-                and time.time() - float(job.get("finished") or 0) < RETRY_AFTER_S:
-            return describe(project, session)
-        _JOBS[project] = {"state": "computing", "started": time.time(), "channels": wanted}
+        elif not (job and job.get("state") == "failed"
+                  and time.time() - float(job.get("finished") or 0) < RETRY_AFTER_S):
+            _JOBS[project] = {"state": "computing", "started": time.time(), "channels": wanted}
+            started = True
+    if not started:
+        return describe(project, session)
 
     def run():
         from plexora.agent.evidence import calibration
@@ -187,9 +201,99 @@ def compute(project, channels=None, session=None, *, wait=False) -> dict:
 
     if wait:
         run()
-    else:
+    elif _work.threaded():
         _work.spawn(run, name=f"display-contrast:{project}")
+    else:
+        _work.spawn(_stepped, session, project, wanted, None,
+                    name=f"display-contrast:{project}")
     return describe(project, session)
+
+
+def _stepped(session, project, wanted, todo):
+    """`compute`'s job on the website: `STEP_CHANNELS` channels a step,
+    each step its own task, the page's requests answered between them (not
+    background work: the viewer is waiting on it, polling, and background
+    work waits for the requests to fall quiet), until every channel asked for
+    and every one queued meanwhile is calibrated. `calibrate` merges each
+    step's channels into the stored record, so the record at the end is the
+    one a single call would have made. `todo` None: the first step, which
+    resolves what was asked (nothing named: every channel) and reads what
+    every calibration reads first (`calibration.prepare`), a step of its own."""
+    from plexora.agent.evidence import calibration
+
+    try:
+        if todo is None:
+            # As `run`: none of what was asked is the image's, every channel.
+            todo = _known(session, project, wanted) or _channel_names(session, project)
+            # What every calibration reads first, as a step of its own.
+            calibration.prepare(session, project)
+            _work.spawn(_stepped, session, project, wanted, todo,
+                        name=f"display-contrast:{project}")
+            return
+        while not todo:
+            with _LOCK:
+                job = _JOBS.get(project) or {}
+                queued, everything = job.pop("queued", []), job.pop("everything", False)
+                if not queued and not everything:
+                    _JOBS.pop(project, None)
+                    start_ahead = project not in _AHEAD
+                    _AHEAD.add(project)
+                    break
+            todo = _channel_names(session, project) if everything else _known(session, project, queued)
+        if not todo:
+            if start_ahead:
+                _work.spawn(_ahead, session, project, name=f"display-contrast-ahead:{project}",
+                            background=True)
+            return
+        calibration.calibrate(session, project, todo[:STEP_CHANNELS])
+        _work.spawn(_stepped, session, project, wanted, todo[STEP_CHANNELS:],
+                    name=f"display-contrast:{project}")
+    except Exception as exc:  # the viewer keeps its own levelling
+        with _LOCK:
+            _JOBS[project] = {"state": "failed", "finished": time.time(),
+                              "error": str(getattr(exc, "message", None) or exc)[:300]}
+
+
+#: Projects whose channels the website calibrates ahead (`_ahead`), once a session.
+_AHEAD: set = set()
+
+
+def _ahead(session, project):
+    """The website: the channels nobody has asked about yet calibrated ahead
+    of their click, `STEP_CHANNELS` a background task -- run only once the
+    page's requests have been quiet -- so a channel switched on later finds
+    its calibration stored, as the desktop's thread makes it in about the
+    time the viewer takes to ask. A job asked for meanwhile goes first (it is
+    not background work), and this one stops when the project is no longer
+    open or its record has every channel."""
+    from plexora.agent.evidence import calibration
+
+    try:
+        if _unavailable(session, project):
+            return
+        with _LOCK:
+            if (_JOBS.get(project) or {}).get("state") == "computing":
+                # A job asked for runs first; this goes on after it.
+                _work.spawn(_ahead, session, project, name=f"display-contrast-ahead:{project}",
+                            background=True)
+                return
+        record = calibration.load(project) or {}
+        done = set(record.get("channels") or {})
+        todo = [name for name in _channel_names(session, project) if name not in done]
+        if not todo:
+            return
+        calibration.calibrate(session, project, todo[:STEP_CHANNELS])
+        if len(todo) > STEP_CHANNELS:
+            _work.spawn(_ahead, session, project, name=f"display-contrast-ahead:{project}",
+                        background=True)
+    except Exception:  # noqa: BLE001 -- ahead of need: a failure here is nobody's
+        return
+
+
+def _channel_names(session, project):
+    """Every real channel of the project's image, as `calibrate` names them."""
+    return [c.get("fullname") or c.get("name")
+            for c in session.project(project).image.real_channels]
 
 
 def _known(session, project, wanted):

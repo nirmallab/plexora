@@ -74,13 +74,62 @@ class ChannelList {
     async ensureChannelStats(name) {
         const fullName = this.dataLayer.getFullChannelName(name);
         if (this.databaseDescription[fullName]?.image_histogram) return;
-        const stats = await this.dataLayer.getImageChannelStats(fullName);
+        const stats = await this.dataLayer.getImageChannelStats(fullName, "", { provisional: Boolean(this.hdTiles?.()) });
         // None to be had now: nothing is kept, so the next ask asks again.
         if (!stats) throw new Error(`no statistics for ${fullName}`);
         this.databaseDescription[fullName] = { ...this.databaseDescription[fullName], ...stats };
         this.image_channels[name] = [stats.image_min, stats.image_max];
         const channelListWidth = document.getElementById("channel_list").getBoundingClientRect().width;
         this.addSlider(name, channelListWidth, [stats.image_min, stats.image_max]);
+        if (stats.window_exact === false) this.awaitExactWindow(name, fullName);
+    }
+
+    /**
+     * Whether the viewer draws HD tiles (services/tileSource.js `tileQuality`,
+     * in the vendor bundle and reached as `window.PlexoraTileSource`):
+     * windowed on the GPU in raw units, so a channel's quantization window
+     * only bounds its slider (viewerSidebar.getRawImageRange) and a
+     * provisional one draws the channel as the exact one will. The 8-bit
+     * tiles are made with the window, and wait for the exact one.
+     */
+    hdTiles() {
+        return Boolean(window.PlexoraTileSource?.tileQuality?.hd);
+    }
+
+    /**
+     * A channel shown with a provisional window (the website, while its
+     * page reads the full-resolution plane for the exact one: seconds a
+     * channel on a large slide): asked again, backing off, until the exact
+     * window comes, which then replaces it -- the packet and, through
+     * `plexora:channel-window`, the sidebar's ranges and slider, as a
+     * volume's exact window does (viewerSidebar.onVolumeWindow).
+     */
+    async awaitExactWindow(name, fullName) {
+        this.exactPending = this.exactPending || new Set();
+        if (this.exactPending.has(fullName)) return;
+        this.exactPending.add(fullName);
+        let wait = 1000;
+        try {
+            for (let tries = 0; tries < 120; tries += 1) {
+                await new Promise((resolve) => setTimeout(resolve, wait));
+                wait = Math.min(wait * 1.5, 3000);
+                const stats = await this.dataLayer.getImageChannelStats(fullName, "", { provisional: true });
+                if (!stats || stats.window_exact === false) continue;
+                // The sidebar moves its ranges from the window it had (the
+                // packet as it stands) to this one, then the packet is it.
+                window.dispatchEvent(new CustomEvent("plexora:channel-window",
+                    { detail: { name: fullName, window: [Number(stats.qmin), Number(stats.qmax)], exact: true } }));
+                this.databaseDescription[fullName] = { ...this.databaseDescription[fullName], ...stats };
+                // A fit had with the provisional window: the same fit, this window.
+                const fit = this.hasChannelGMM[name];
+                if (fit && fit.window_exact === false) {
+                    this.hasChannelGMM[name] = { ...fit, qmin: stats.qmin, qmax: stats.qmax, window_exact: true };
+                }
+                return;
+            }
+        } finally {
+            this.exactPending.delete(fullName);
+        }
     }
 
     /**
@@ -595,7 +644,7 @@ class ChannelList {
         // calls this directly, bypassing selectChannel.
         await this.ensureChannelStats(name);
         const fullName = this.dataLayer.getFullChannelName(name);
-        const packet = await this.dataLayer.getChannelGMM(fullName);
+        const packet = await this.dataLayer.getChannelGMM(fullName, { provisional: Boolean(this.hdTiles?.()) });
         const channelID = this.channelIDs[name];
         document.getElementById(`auto-btn_${channelID}`)?.classList.remove("auto-loading");
         if (!packet) throw new Error(`no contrast fit for ${fullName}`);

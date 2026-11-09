@@ -118,6 +118,14 @@ def test_the_warm_up_looks_and_comes_back_instead_of_waiting(project, monkeypatc
     for name in channels:
         assert (NAME, name) in data_model._image_stats_cache
         assert (data_model._gmm_cache.get((NAME, name)) is not None) == (name == shown)
+    # And every channel's fit ahead of its click (a chain of its own, the
+    # shown channel first, one fit a task, never looking at a scan): the
+    # rest with the window still provisional, the exact packet's fit then.
+    fits = [n for n in names if n.startswith("warm-fit-")]
+    assert fits[0] == f"warm-fit-{shown}" and len(fits) == len(channels)
+    for name in channels:
+        assert (NAME, name) in data_model._gmm_cache \
+            or (NAME, data_model.load_generation, name) in data_model._provisional_fits
 
 
 def test_a_reload_ends_the_old_warm_up(project, monkeypatch):
@@ -144,15 +152,16 @@ def test_a_stats_request_for_a_scan_in_progress_is_asked_again_later(project, mo
     assert stats["qmax"] == 1001.0
 
 
-def _stats_request(name, retried=None, retryable=True):
+def _stats_request(name, retried=None, retryable=True, provisional=False):
     from urllib.parse import urlencode
 
     import plexora
     from plexora.browser import bridge
 
     headers = [["X-Plexora-Retried", str(retried)]] if retried is not None else []
+    query = {"channel": name, "datasource": NAME, **({"provisional": "1"} if provisional else {})}
     return bridge.handle(plexora.app, {"method": "GET", "path": "/get_image_channel_stats",
-                                       "query": urlencode({"channel": name, "datasource": NAME}),
+                                       "query": urlencode(query),
                                        "headers": headers, "retryable": retryable}, "http://127.0.0.1")
 
 
@@ -210,6 +219,94 @@ def test_on_threads_nothing_changes(project, monkeypatch):
     # The one wait get_channel_quantization_window always made, and no look.
     assert scans.looks == [] and scans.waits == [0]
     assert stats["qmax"] == 1000.0
+
+
+def test_an_hd_viewer_is_answered_at_once_with_a_provisional_window(project, monkeypatch):
+    """The website, a viewer drawing HD tiles (`provisional`): while the page
+    still reads the channel's plane, the packet made with (0, the overview's
+    largest value) and `window_exact` False, at once -- not "again later"
+    until a 4.8 GB scan is done -- and not kept; asked again once the scan is
+    done, the exact one, the same packet but for its window."""
+    Page(monkeypatch, pending=1)
+    _work.set_idle(lambda seconds: pytest.fail("paused inside a request"))
+    name = _channels()[1]
+    plane = data_model._require_overview(NAME)[data_model.real_channel_index(name, NAME)]
+
+    first = data_model.get_image_channel_stats(name, NAME, patient=True, provisional=True)
+    assert first["window_exact"] is False
+    assert (first["qmin"], first["qmax"]) == (0.0, float(plane.max()))
+    assert first["vmin_hint"] <= first["vmax_hint"] <= first["qmax"]
+    assert (NAME, name) not in data_model._image_stats_cache
+
+    exact = data_model.get_image_channel_stats(name, NAME, patient=True, provisional=True)
+    assert "window_exact" not in exact and exact["qmax"] == 1001.0
+    keys = ("image_histogram", "image_min", "image_max", "vmin_hint", "vmax_hint")
+    assert {k: first[k] for k in keys} == {k: exact[k] for k in keys}
+
+
+def test_the_route_answers_provisionally_only_when_asked(project, monkeypatch):
+    import json
+
+    Page(monkeypatch, pending=10)
+    name = _channels()[0]
+    # An 8-bit viewer's tiles are made with the window: it waits for it.
+    assert _stats_request(name)["retry"] == page.WindowPending.retry_ms
+    answered = _stats_request(name, provisional=True)
+    assert "retry" not in answered and answered["status"] == 200
+    assert json.loads(answered["body"])["window_exact"] is False
+
+
+def test_an_hd_viewer_has_its_contrast_fit_at_once_fitted_once(project, monkeypatch):
+    """The fit is of the overview alone (the window only rides in the
+    packet): had at once with the provisional window, and the exact packet,
+    once the scan is done, is that same fit -- not fitted again."""
+    Page(monkeypatch, pending=1)
+    _work.set_idle(lambda seconds: pytest.fail("paused inside a request"))
+    name = _channels()[1]
+    plane = data_model._require_overview(NAME)[data_model.real_channel_index(name, NAME)]
+    fitted = []
+    real = data_model.channel_gmm_of
+    monkeypatch.setattr(data_model, "channel_gmm_of", lambda *a: fitted.append(a[1:]) or real(*a))
+
+    first = data_model.get_channel_gmm(name, NAME, patient=True, provisional=True)
+    assert first["window_exact"] is False and first["qmax"] == float(plane.max())
+    assert first["vmin"] <= first["vmax"] <= first["qmax"]
+    assert (NAME, name) not in data_model._gmm_cache
+
+    exact = data_model.get_channel_gmm(name, NAME, patient=True, provisional=True)
+    assert "window_exact" not in exact and (exact["qmin"], exact["qmax"]) == (0.0, 1001.0)
+    assert len(fitted) == 1
+    keys = ("vmin", "vmax", "log_window", "image_gmm_1", "image_gmm_2", "image_gmm_3")
+    assert {k: first[k] for k in keys} == {k: exact[k] for k in keys} \
+        == {k: real(plane, 0.0, 1001.0)[k] for k in keys}
+
+
+def test_the_fit_route_answers_provisionally_only_when_asked(project, monkeypatch):
+    import json
+    from urllib.parse import urlencode
+
+    import plexora
+    from plexora.browser import bridge
+
+    Page(monkeypatch, pending=10)
+    name = _channels()[0]
+
+    def ask(**extra):
+        return bridge.handle(plexora.app, {"method": "GET", "path": "/get_channel_gmm",
+                                           "query": urlencode({"channel": name, "datasource": NAME, **extra}),
+                                           "headers": [], "retryable": True}, "http://127.0.0.1")
+
+    assert ask()["retry"] == page.WindowPending.retry_ms
+    answered = ask(provisional="1")
+    assert "retry" not in answered and json.loads(answered["body"])["window_exact"] is False
+
+
+def test_the_desktop_never_answers_provisionally(project, monkeypatch):
+    monkeypatch.setenv("PLEXORA_WORK", "threads")
+    scans = Page(monkeypatch, pending=5)
+    stats = data_model.get_image_channel_stats(_channels()[0], NAME, patient=True, provisional=True)
+    assert "window_exact" not in stats and stats["qmax"] == 1000.0
+    assert scans.looks == [] and scans.waits == [0]
 
 
 def test_the_page_scans_one_line_urgent_first_and_keeps_the_answers():

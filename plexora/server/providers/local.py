@@ -260,6 +260,64 @@ class LocalSegmentationProvider:
             pyramid = pyramid.plane(int(z))
         return padded_label_region(pyramid, level, box)
 
+    def read_regions(self, level, boxes):
+        """`read_region(level, box)` for each of `boxes`, in order.
+
+        On the website a picked TIFF mask's rectangles are asked of the page
+        in one question (`providers.browser.page_regions`: its workers read
+        them side by side with the browser's own zlib) -- the labels under an
+        auto-contrast run's cell crops, which Python reads one at a time in
+        WebAssembly. Padded as `read_region` pads. A level the mask does not
+        have (derived from a finer one), a 3-D label volume and whatever the
+        page does not answer are read here.
+        """
+        boxes = [tuple(int(v) for v in box) for box in boxes]
+        found = self._page_regions(level, boxes) or [None] * len(boxes)
+        return [got if got is not None else self.read_region(level, box)
+                for box, got in zip(boxes, found)]
+
+    def _page_regions(self, level, boxes):
+        import numpy as np
+
+        from plexora.server.providers import browser as page
+
+        if not boxes or not self._path or not page.is_page_file(self._path):
+            return None
+        if self._opened is None:
+            self._opened = self.open()
+        pyramid = self._opened
+        if pyramid is None or hasattr(pyramid, "plane"):
+            return None
+        try:
+            levels = ([pyramid] if hasattr(pyramid, "shape")
+                      else [pyramid[str(i)] for i in range(len(list(pyramid.array_keys())))])
+        except KeyError:
+            return None
+        if not 0 <= level < len(levels) or any(getattr(arr, "ndim", 0) != 2 for arr in levels):
+            return None
+        full_h, full_w = levels[level].shape
+        asked, where = [], []
+        for at, (x0, y0, x1, y1) in enumerate(boxes):
+            cx0, cy0 = max(0, min(x0, full_w)), max(0, min(y0, full_h))
+            cx1, cy1 = max(cx0, min(x1, full_w)), max(cy0, min(y1, full_h))
+            if cx1 > cx0 and cy1 > cy0:
+                asked.append((0, level, (cx0, cy0, cx1, cy1)))
+                where.append(at)
+        if not asked:
+            return None
+        got = page.page_regions(self._path, [(1, *arr.shape) for arr in levels], levels[0].dtype, asked)
+        if got is None:
+            return None
+        out = [None] * len(boxes)
+        for at, (_c, _l, (cx0, cy0, cx1, cy1)), labels in zip(where, asked, got):
+            if labels is None:
+                continue
+            x0, y0, x1, y1 = boxes[at]
+            block = np.zeros((max(0, y1 - y0), max(0, x1 - x0)), dtype=np.uint32)
+            block[cy0 - y0:cy1 - y0, cx0 - x0:cx1 - x0] = labels
+            out[at] = block
+        return out
+
     @property
     def path(self) -> str | None:
         return self._path

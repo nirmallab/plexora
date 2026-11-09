@@ -66,6 +66,7 @@ import subprocess
 import sys
 import tempfile
 from pathlib import Path
+from urllib.parse import quote
 
 CLIENT = Path(__file__).resolve().parent
 PACKAGE = CLIENT.parent
@@ -90,11 +91,12 @@ LOADER = """<!doctype html>
 """ + BASE_HREF + """
 <title>Plexora</title>
 <link rel="icon" type="image/svg+xml" href="client/src/img/logo.svg">
-<link rel="stylesheet" href="client/src/css/tokens.css">
-<link rel="stylesheet" href="client/src/css/shell.css">
+<link rel="stylesheet" href="client/src/css/tokens.css?v=__V__">
+<link rel="stylesheet" href="client/src/css/shell.css?v=__V__">
 <link rel="modulepreload" href="client/external/thinking-orbs-0.3.2/orbs.js">
-<script src="client/src/js/services/orbDriver.js"></script>
-<script src="client/src/js/services/shell.js"></script>
+<script type="application/json" id="plexora-shell">__SHELL__</script>
+<script src="client/src/js/services/orbDriver.js?v=__V__"></script>
+<script src="client/src/js/services/shell.js?v=__V__"></script>
 </head>
 <body>
 <div id="plexora-boot">
@@ -168,10 +170,10 @@ SELFCHECK = """<!doctype html>
 """ + BASE_HREF + """
 <title>Plexora - Self-check</title>
 <link rel="icon" type="image/svg+xml" href="client/src/img/logo.svg">
-<link rel="stylesheet" href="client/src/css/tokens.css">
-<link rel="stylesheet" href="client/src/css/selfcheck.css">
-<script src="client/src/js/services/pythonClient.js"></script>
-<script src="client/src/js/services/selfcheck.js"></script>
+<link rel="stylesheet" href="client/src/css/tokens.css?v=__V__">
+<link rel="stylesheet" href="client/src/css/selfcheck.css?v=__V__">
+<script src="client/src/js/services/pythonClient.js?v=__V__"></script>
+<script src="client/src/js/services/selfcheck.js?v=__V__"></script>
 </head>
 <body>
 <main id="selfcheck">
@@ -187,6 +189,37 @@ SELFCHECK = """<!doctype html>
 </html>
 """
 
+#: How the site's files are cached (`HEADERS`). Pages' own default is
+#: `max-age=0, must-revalidate`: a warm visit asked the CDN about every file
+#: the home page loads (110 of 113, one round trip each before it could run),
+#: where the desktop's server answers the same questions from this computer.
+#: Instead a browser runs what it has and asks in the background
+#: (stale-while-revalidate), which is safe for a file whose address changes
+#: when it does: the templates' `?v=` tags, the plugins' `?v=VERSION`, the
+#: loader's own files stamped with the site's version (`LOADER`, services/
+#: shell.js `stamped`), vendored libraries named by their version. A file
+#: fetched at an address that does not change -- a worker, and what a module
+#: imports by name -- is asked about every time (`FRESH`); so are the loader,
+#: `shell.json` and the first visit's home page, which name everything else.
+KEPT = "public, max-age=0, stale-while-revalidate=604800"
+
+#: Paths whose files are reached at addresses without the site's version:
+#: workers (`new Worker`) and what they import (the service worker's route
+#: table, the node readers), webpack's chunks (fixed names, whatever their
+#: content), a module the loader's licence module imports by name, and the
+#: one script a template names without a tag. tests/test_static_build.py
+#: checks every worker and every static import lands here.
+FRESH = ("/client/src/js/workers/*", "/client/src/js/node/*", "/client/dist/*",
+         "/client/src/js/services/backendRoutes.js", "/client/src/js/services/licenseVerify.js",
+         "/client/src/js/services/shellVariables.js", "/client/shell.json", "/client/home.html")
+
+
+def _fresh(path: str) -> str:
+    # `! Cache-Control` drops what `/client/*` set: Pages joins two rules'
+    # values of one header with a comma rather than letting one win.
+    return f"{path}\n  ! Cache-Control\n  Cache-Control: no-cache\n"
+
+
 #: Cloudflare Pages' `_headers`: the site is cross-origin isolated everywhere
 #: (plan D5) and under its Content-Security-Policy; its service worker may
 #: control every path.
@@ -198,17 +231,17 @@ HEADERS = f"""/*
   Referrer-Policy: same-origin
   Content-Security-Policy: {CSP}
 
+/client/*
+  Cache-Control: {KEPT}
+
+/plugins/*
+  Cache-Control: {KEPT}
+
+""" + "\n".join(_fresh(path) for path in FRESH) + """
 /client/src/js/workers/backendRelay.js
   Service-Worker-Allowed: /
-  Cache-Control: no-cache
 
 /index.html
-  Cache-Control: no-cache
-
-/client/shell.json
-  Cache-Control: no-cache
-
-/client/home.html
   Cache-Control: no-cache
 
 /google-auth.html
@@ -351,9 +384,10 @@ def build(out: Path = DEFAULT_OUT, py: str | None = None, noindex: bool = False,
     for static in sorted((PACKAGE / "plugins").glob("*/static")):
         files += _copy(static, out / "plugins" / static.parent.name / "static")
         plugins.append(static.parent.name)
-    (out / "index.html").write_bytes(LOADER.encode("utf-8"))
+    # The loader's own files carry the site's version (`KEPT`).
+    stamp = quote(__version__, safe="")
     (out / "google-auth.html").write_bytes(GOOGLE_AUTH.encode("utf-8"))
-    (out / "selfcheck.html").write_bytes(SELFCHECK.encode("utf-8"))
+    (out / "selfcheck.html").write_bytes(SELFCHECK.replace("__V__", stamp).encode("utf-8"))
     shell = {"version": __version__, "py": py, "models": models,
              "relay": (relay or RELAY_URL).rstrip("/")}
     if flags:
@@ -372,6 +406,12 @@ def build(out: Path = DEFAULT_OUT, py: str | None = None, noindex: bool = False,
         (out / "client" / "home.html").write_bytes(page)
         shell["home"] = "client/home.html"
     (out / "client" / "shell.json").write_bytes(json.dumps(shell, indent=1).encode("utf-8"))
+    # The loader carries shell.json itself (services/shell.js `described`):
+    # one round trip less before anything else can start; the file stays for
+    # whatever else reads it.
+    inline = json.dumps(shell, separators=(",", ":")).replace("</", "<\\/")
+    (out / "index.html").write_bytes(
+        LOADER.replace("__V__", stamp).replace("__SHELL__", inline).encode("utf-8"))
     headers = HEADERS.replace("/*\n", "/*\n  X-Robots-Tag: noindex\n", 1) if noindex else HEADERS
     (out / "_headers").write_bytes(headers.encode("utf-8"))
     (out / "_redirects").write_bytes(REDIRECTS.encode("utf-8"))

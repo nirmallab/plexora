@@ -32,6 +32,8 @@ export PLEXORA_BENCH_WORK=<a scratch folder>                                 # f
 | `bench_dataset_web.mjs [--fixture DIR] [--files a,b,c] [--tools a,b] [--no-reload] [--input] [--site DIR] [--py-dir DIR]` | import, viewer drawn, tiles p50/p95, a 7-step tour (frame p95), every tool's open, the figure library and back, a reload, memory; which Python stage arrived when and what asked for it (`stages`, the last page's) |
 | `bench_dataset_server.mjs [--fixture DIR] [--tools none] [--no-figures] [--no-reload]` | the same flow on the local server |
 | `bench_packages.mjs` | Python's boot, per package and per import, against a bundle |
+| `bench_flow_web.mjs --site DIR --py-dir DIR --fixture DIR [--files a,b,c] [--pause MS]` (or `--origin URL`) | the user's flow with real file handles: import, open (drawn, lit), four channels on (their stats, fit and auto-contrast as they land), a reload restored from kept answers; the page's pyramid builds |
+| `bench_flow_server.mjs --repo DIR --fixture DIR [--files a,b,c] [--pause MS]` | the same flow on the local server |
 
 Each writes one JSON record to `$PLEXORA_BENCH_WORK/out/`. Results so far are in
 `docs/internal/bench/web/`.

@@ -60,7 +60,7 @@ const python = {
         if (python.observer) python.observer.observe(where.href, "GET", status, [["Content-Type", "application/json"]], bytes, []);
         return new Response(bytes, { status, headers: { "Content-Type": "application/json" } });
     },
-    async nodeSpec(name) { return specs.get(name) || null; },
+    async nodeSpec(name) { asked.push(`spec:${name}`); return specs.get(name) || null; },
 };
 const specs = new Map();
 
@@ -203,6 +203,47 @@ await wait(20);
 K2.observe("http://site.test/view_transform/image", "PUT", 200, type, json({ success: true }));
 await wait(3500);
 out.recaptured = asked.slice().sort();
+
+// The mask's pyramid built after the spec was kept (`labels.pending` then,
+// served now): the build finishing, not a change. A mask the page was served
+// that is no longer so: a change.
+const specCase = async (keptSpec, freshSpec) => {
+    specs.set("image", keptSpec);
+    await K.spec("image", () => python.nodeSpec("image"));  // Python up in K: kept as given
+    await wait(20);
+    const w = { ...window, PlexoraKept: undefined };
+    new Function("window", "console", source)(w, console);
+    const k = w.PlexoraKept;
+    k.configure({ stamp: "1.0|py/1/" });
+    let go;
+    const up = new Promise((resolve) => { go = resolve; });
+    k.starting(up);
+    const p = {};
+    await k.answer(req("/get_channel_names?datasource=image"), p);
+    await k.spec("image", async () => { throw new Error("Python asked while a spec is kept"); });
+    specs.set("image", freshSpec);
+    go();
+    await up;
+    return k.checked(p);
+};
+const image = { served: true, path: "/picked/abc/image.ome.tif", tile: [512, 512] };
+const labels = { served: true, path: "/derived/k/cell.labels.pyramid.ome.tiff", levels: [[0, 10, 10]] };
+out.specPending = await specCase({ ...image, labels: { served: false, pending: true, reason: "the mask is being prepared" } },
+                                 { ...image, labels });
+// The project loaded twice in the run that kept the spec (the mask attached),
+// once in this one: the same files.
+out.specGeneration = await specCase({ ...image, generation: 2, labels }, { ...image, generation: 1, labels });
+out.specMoved = await specCase({ ...image, labels }, { ...image, labels: { ...labels, path: "/derived/j/other.tiff" } });
+out.specWarnings = warnings.filter((w) => w.includes("spec:image"));
+for (const w of out.specWarnings) warnings.splice(warnings.indexOf(w), 1);
+
+// Auto-contrast moving on by itself: channels calibrated since, not a change;
+// a kept channel's window no longer so, a change.
+const contrast = (channels, extra = {}) => json({ state: "computing", rev: 1, channels, calibrated: Object.keys(channels), ...extra });
+out.contrastMovedOn = K.same("get_display_contrast", contrast({ A: { lo: 1, hi: 9 } }),
+                             contrast({ A: { lo: 1, hi: 9 }, B: { lo: 2, hi: 7 } }, { state: "ready", rev: 3 }));
+out.contrastChanged = K.same("get_display_contrast", contrast({ A: { lo: 1, hi: 9 } }),
+                             contrast({ A: { lo: 1, hi: 8 } }, { state: "ready", rev: 3 }));
 
 // Another version's answers are not this one's.
 const window3 = { ...window, PlexoraKept: undefined };

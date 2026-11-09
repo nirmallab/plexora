@@ -455,6 +455,7 @@
         const entry = held.get(name);
         held.delete(name);
         if (entry) close(entry);
+        closeRegions();
     }
 
     // -- the tiles --------------------------------------------------------------
@@ -540,8 +541,41 @@
         return { label: false, tile };
     }
 
+    // -- what someone is waiting for, ahead of the warm-up's scans ---------------
+    //
+    // The warm-up's scans of whole planes (`windowOf`, not urgent) keep every
+    // scan worker reading; a tile the viewer asks for, or a rectangle Python
+    // asks for (`regionsOf`), would share the machine's cores with them. A
+    // round of such a scan waits while any of those is being read, and a
+    // moment after (FOREGROUND_QUIET_MS), so the reads somebody waits on go
+    // first. An urgent scan (a request waiting on its window) does not wait.
+
+    //: Reads in flight that someone waits on, and when the last one ended.
+    let foreground = 0;
+    let foregroundEnded = -Infinity;
+    const FOREGROUND_QUIET_MS = 150;
+
+    async function inForeground(work) {
+        foreground += 1;
+        try {
+            return await work();
+        } finally {
+            foreground -= 1;
+            foregroundEnded = performance.now();
+        }
+    }
+
+    /** Until nothing someone waits on is being read (bounded: a page reading
+     *  tiles without a pause still scans, a round now and then). */
+    async function foregroundQuiet() {
+        for (let i = 0; i < 40; i += 1) {
+            if (!foreground && performance.now() - foregroundEnded >= FOREGROUND_QUIET_MS) return;
+            await new Promise((resolve) => setTimeout(resolve, 50));
+        }
+    }
+
     async function answer(request) {
-        const got = await read(request.url, request.method);
+        const got = await inForeground(() => read(request.url, request.method));
         if (!got) return null;
         if (got.slide) return respond(got.bytes);  // the RGB PNG, as cut
         return respond(got.label ? labelPng(got.tile, got.bits) : png16(got.tile));
@@ -557,7 +591,7 @@
      * answers, and for a raster ask that is not a mask's (or the reverse).
      */
     async function decoded(href, { raster = false } = {}) {
-        const got = await read(href, "GET");
+        const got = await inForeground(() => read(href, "GET"));
         // A slide's colour tile is already a PNG: the network path's.
         if (!got || got.slide || got.label !== Boolean(raster)) return null;
         if (got.label) return { raster: labelPng(got.tile, got.bits).buffer, status: 200 };
@@ -684,6 +718,10 @@
         try {
             while (scanLine.length) {
                 // Read again every round: an urgent scan asked meanwhile is in front now.
+                if (!scanLine[0].urgent && (foreground || performance.now() - foregroundEnded < FOREGROUND_QUIET_MS)) {
+                    await foregroundQuiet();
+                }
+                if (!scanLine.length) break;
                 const entry = scanLine[0];
                 try {
                     if (await scanRound(entry)) {
@@ -740,7 +778,82 @@
         return { value: { done: false } };
     }
 
-    if (global.PlexoraPython && global.PlexoraPython.answers) global.PlexoraPython.answers("window", windowOf);
+    // -- rectangles for Python ---------------------------------------------------
+    //
+    // Python's "regions" question: the rectangles of a picked image a piece of
+    // its work reads (data_model's cell crops for auto-contrast: hundreds of
+    // small windows, each decoding the 1024-px compressed tiles under it).
+    // Python reads them one at a time in WebAssembly -- 1.5-2.4 s a channel on
+    // a large slide -- where the desktop reads four at a time natively; here
+    // the page's workers read them side by side with the browser's own zlib
+    // (node/tiffReader.js `regions`), the same values.
 
-    global.PlexoraNode = Object.freeze({ answer, decoded, project, revalidate, forget, use, png, windowOf });
+    //: The pool reading rectangles: {file, pool, geometry}, kept while it is the same file.
+    let regionReader = null;
+
+    async function regionPool(file) {
+        if (regionReader && regionReader.file === file) return regionReader;
+        closeRegions();
+        const pool = new TiffPool(Math.max(2, Math.min(8, SCAN_WORKERS)));
+        try {
+            regionReader = { file, pool, geometry: await pool.open({ file }) };
+        } catch (error) {
+            pool.close();
+            throw error;
+        }
+        return regionReader;
+    }
+
+    /** The open project's image pool reading `file`, or null. */
+    function viewerPool(file) {
+        for (const entry of held.values()) {
+            const part = entry && entry.image;
+            if (part && part.file === file && part.pool && part.pool.workers.length && part.geometry) return part;
+        }
+        return null;
+    }
+
+    function closeRegions() {
+        if (regionReader) regionReader.pool.close();
+        regionReader = null;
+    }
+
+    /**
+     * `{path, levels, dtype, reads: [{channel, level, box}]}`: `levels` and
+     * `dtype` as Python reads the file (every level's [channels, height,
+     * width]), checked against the page's reading as the tiles' are; each box
+     * inside its level. `{regions: [{values, width, height} | {refused}]}` in
+     * the order asked, or `{error}` when the page does not read the file.
+     */
+    async function regionsOf({ path, levels, dtype, reads }) {
+        const file = global.PlexoraPicks ? global.PlexoraPicks.fileFor(path) : null;
+        if (!file) return { value: { error: "the page does not hold that file now" } };
+        // The viewer's own pool for this image when it has one open (its
+        // tiles' workers, the file's IFDs read already): opening another
+        // parses them again, a second on a large slide.
+        const { pool, geometry } = viewerPool(file) || await regionPool(file);
+        const why = imageDiffers({ levels, dtype }, geometry);
+        if (why) return { value: { error: `the page reads it differently: ${why}` } };
+        const asked = Array.isArray(reads) ? reads : [];
+        const shares = pool.workers.map(() => []);
+        asked.forEach((read, i) => shares[i % shares.length].push(i));
+        const found = new Array(asked.length).fill(null);
+        await inForeground(() => Promise.all(shares.map((share, w) => (share.length
+            ? pool.call(pool.workers[w], { op: "regions", reads: share.map((i) => asked[i]) })
+                .then(({ regions }) => regions.forEach((one, k) => { found[share[k]] = one; }))
+            : null))));
+        const transfer = [...new Set(found.map((one) => one && one.values && one.values.buffer).filter(Boolean))];
+        return { value: { regions: found }, transfer };
+    }
+
+    if (global.PlexoraPython && global.PlexoraPython.answers) {
+        global.PlexoraPython.answers("window", windowOf);
+        global.PlexoraPython.answers("regions", regionsOf);
+    }
+
+    //: Whether a read someone waits on is under way, or ended less than
+    //: `quietMs` ago (services/browserPyramid.js paces its build by it).
+    const busy = (quietMs = FOREGROUND_QUIET_MS) => foreground > 0 || performance.now() - foregroundEnded < quietMs;
+
+    global.PlexoraNode = Object.freeze({ answer, decoded, project, revalidate, forget, use, png, windowOf, busy });
 })(window);

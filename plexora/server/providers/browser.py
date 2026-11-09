@@ -129,6 +129,45 @@ def page_window(provider, pyramid, index, *, wait_ms=None, urgent=True, ahead=()
     return (0.0, max(float(found["max"]), 1.0))
 
 
+def page_regions(path, levels, dtype, reads):
+    """The rectangles `reads` -- [(channel, level, (x0, y0, x1, y1))], each
+    inside its level -- of the picked TIFF at `path`, read by the page's
+    workers (services/browserNode.js `regionsOf`: the browser's own zlib,
+    side by side) rather than one at a time in WebAssembly: [2-D array, or
+    None where the page declined that one] in order. None when the page does
+    not read this file -- not the website, not the page's TIFF, read
+    differently there than here (`levels`, every level's (channels, height,
+    width), and `dtype` are how Python reads it) -- and Python reads them all."""
+    if _asker is None or os.environ.get("PLEXORA_BACKEND") != "browser":
+        return None
+    import numpy as np
+
+    path = str(path or "")
+    if not path.startswith(PAGE_ROOTS) or not path.lower().endswith((".tif", ".tiff")):
+        return None
+    dtype = str(dtype)
+    if dtype not in ("uint8", "uint16", "uint32") or not reads:
+        return None
+    found = _plain(_asker("regions", {
+        "path": path, "dtype": dtype,
+        "levels": [[int(v) for v in shape] for shape in levels],
+        "reads": [{"channel": int(channel), "level": int(level), "box": [int(v) for v in box]}
+                  for channel, level, box in reads]}))
+    if not isinstance(found, dict) or found.get("error") or not isinstance(found.get("regions"), list) \
+            or len(found["regions"]) != len(reads):
+        return None
+    out = []
+    for (_channel, _level, box), one in zip(reads, found["regions"]):
+        values = (one or {}).get("values") if isinstance(one, dict) else None
+        if values is None or one.get("refused"):
+            out.append(None)
+            continue
+        x0, y0, x1, y1 = (int(v) for v in box)
+        pixels = np.frombuffer(values, dtype=dtype)
+        out.append(pixels.reshape(y1 - y0, x1 - x0) if pixels.size == (y1 - y0) * (x1 - x0) else None)
+    return out
+
+
 def is_page_file(path) -> bool:
     """Whether `path` is one of the page's files on the website: picked by the
     user (read-only to a web page) or made by the page."""

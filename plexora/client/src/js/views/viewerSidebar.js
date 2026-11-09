@@ -220,6 +220,9 @@ class ViewerSidebar {
             window.addEventListener("plexora:view-class-changed", this._viewClassListener);
             this._volumeWindowListener = (e) => this.onVolumeWindow(e.detail || {});
             window.addEventListener("plexora:volume-window", this._volumeWindowListener);
+            // A planar channel's exact window replacing its provisional one
+            // (views/channelList.js `awaitExactWindow`): the same move.
+            window.addEventListener("plexora:channel-window", this._volumeWindowListener);
         }
     }
 
@@ -242,6 +245,7 @@ class ViewerSidebar {
         }
         if (this._volumeWindowListener) {
             window.removeEventListener("plexora:volume-window", this._volumeWindowListener);
+            window.removeEventListener("plexora:channel-window", this._volumeWindowListener);
             this._volumeWindowListener = null;
         }
         if (this._viewClassListener) {
@@ -2224,6 +2228,9 @@ class ViewerSidebar {
     async pollGatingContrast() {
         if (this._gatingPolling) {
             this._gatingAgain = true;
+            // A channel switched on while the poll sleeps is asked for now,
+            // not at the end of a backoff that may have grown to seconds.
+            this._gatingWake?.();
             return;
         }
         this._gatingPolling = true;
@@ -2245,9 +2252,15 @@ class ViewerSidebar {
                 }
                 this.syncGatingContrast();
                 if (body.state !== "computing" && !fresh.length && !this._gatingAgain) break;
-                await new Promise((resolve) => window.setTimeout(resolve, wait));
+                let woken = false;
+                await new Promise((resolve) => {
+                    this._gatingWake = () => { woken = true; resolve(); };
+                    window.setTimeout(resolve, wait);
+                });
+                this._gatingWake = null;
                 body = await this.fetchGatingContrast();
-                wait = Math.min(wait * 1.6, 8000);
+                // Woken for new channels: their calibration is a fresh wait.
+                wait = woken ? GATING_POLL_FIRST_MS : Math.min(wait * 1.6, 8000);
             }
             this.syncGatingContrast();
         } finally {
@@ -2770,7 +2783,13 @@ class ViewerSidebar {
         const after = { qmin: next[0], qmax: next[1] };
         packet.qmin = after.qmin;
         packet.qmax = after.qmax;
-        if (this.isHdMode() || !Number.isFinite(before.qmax)) return;
+        if (this.isHdMode() || !Number.isFinite(before.qmax)) {
+            // Raw ranges stay; the slider's domain runs to the window's top.
+            this.channelSlots.forEach((slot) => {
+                if (slot.name && this.dataLayer.getFullChannelName(slot.name) === name) this.syncChannelSlider(slot);
+            });
+            return;
+        }
         this.channelSlots.forEach((slot) => {
             if (!slot.name || this.dataLayer.getFullChannelName(slot.name) !== name) return;
             const remap = (range) => this.rawToByteRange(this.byteToRawRange(range, before), after);

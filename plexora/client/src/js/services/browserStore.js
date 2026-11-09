@@ -228,7 +228,10 @@
             if (error && error.name === "AbortError") return null;
             throw error;
         }
-        if (picked.name === FOLDER) return { parent: null, home: picked };
+        // In any case: macOS and Windows name `Documents/plexora` and
+        // `Documents/Plexora` the same folder, the desktop app's library, and
+        // a Plexora made inside it would be a second library.
+        if (picked.name.toLowerCase() === FOLDER.toLowerCase()) return { parent: null, home: picked };
         if (picked.name === "projects" && await picked.getFileHandle("config.json").then(() => true, () => false)) {
             throw new Error(`That is the projects folder inside ${FOLDER}: choose the ${FOLDER} folder itself.`);
         }

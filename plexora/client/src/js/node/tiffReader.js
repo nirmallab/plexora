@@ -29,6 +29,7 @@
  *   region({channel, level, x0, y0, x1, y1})     -- a window as native values
  *   level({channel, level})                      -- a whole (small) level, raw
  *   max({channel, level, windows})               -- the largest sample over windows
+ *   regions({reads: [{channel, level, box}]})     -- rectangles as native values
  */
 import { addDecoder, BaseDecoder, GeoTIFF, GeoTIFFImage } from "geotiff";
 import pako from "pako"; // CommonJS: Node takes no named import from it
@@ -654,6 +655,199 @@ export function createTiffReader() {
         };
     }
 
+    //: Each tiled image's reading plan (`tilePlan`), once.
+    const plans = new WeakMap();
+
+    /**
+     * How a tiled plane is read fast (`tiledMax`, `tiledRegion`), or null for
+     * one `region` reads instead: another codec, a floating point predictor,
+     * several samples a pixel. Its tiles' offsets and byte counts, read once.
+     */
+    async function tilePlan(img) {
+        if (plans.has(img)) return plans.get(img);
+        let plan = null;
+        const compression = Number(img.fileDirectory.getValue("Compression") || 1);
+        const predictor = Number(img.fileDirectory.getValue("Predictor") || 1);
+        const Kind = img.isTiled && Number(img.getSamplesPerPixel()) === 1 ? arrayKind(img) : null;
+        if (Kind && [1, ...DEFLATE].includes(compression) && [1, 2].includes(predictor)
+            && !(predictor === 2 && (Kind === Float32Array || Kind === Float64Array))) {
+            const W = img.getWidth();
+            const H = img.getHeight();
+            const tw = img.getTileWidth();
+            const th = img.getTileHeight();
+            plan = {
+                compression, predictor, Kind, W, H, tw, th,
+                across: Math.ceil(W / tw), down: Math.ceil(H / th),
+                tileBytes: tw * th * Kind.BYTES_PER_ELEMENT,
+                offsets: await img.fileDirectory.loadValue("TileOffsets"),
+                counts: await img.fileDirectory.loadValue("TileByteCounts"),
+            };
+        }
+        plans.set(img, plan);
+        return plan;
+    }
+
+    /** A window's tiles as reads of tiles back to back: [{offset, length, tiles: [index]}]. */
+    function readsOf(plan, [x0, y0, x1, y1]) {
+        const reads = [];
+        for (let ty = Math.floor(y0 / plan.th); ty * plan.th < y1 && ty < plan.down; ty += 1) {
+            let run = null;
+            for (let tx = Math.floor(x0 / plan.tw); tx * plan.tw < x1 && tx < plan.across; tx += 1) {
+                const i = ty * plan.across + tx;
+                const at = Number(plan.offsets[i]);
+                const n = Number(plan.counts[i]);
+                if (run && at === run.offset + run.length) {
+                    run.length += n;
+                    run.tiles.push(i);
+                } else {
+                    run = { offset: at, length: n, tiles: [i] };
+                    reads.push(run);
+                }
+            }
+        }
+        return reads;
+    }
+
+    /** A window's tiles' bytes, read (`decodeTiles` decodes them). */
+    function fetchTiles(plan, window) {
+        const reads = readsOf(plan, window);
+        const real = reads.filter((read) => read.length > 0);
+        return state.source.fetch(real.map(({ offset, length }) => ({ offset, length })))
+            .then((buffers) => ({ reads, real, buffers }));
+    }
+
+    /** `fn(index, samples)` for every tile fetched, in this machine's byte
+     *  order, the predictor not yet undone; `samples` null for a tile with no
+     *  bytes (tifffile's zeros). */
+    async function decodeTiles(plan, fetched, fn) {
+        for (const read of fetched.reads) if (read.length === 0) for (const i of read.tiles) fn(i, null);
+        for (let r = 0; r < fetched.real.length; r += 1) {
+            let from = 0;
+            for (const i of fetched.real[r].tiles) {
+                const n = Number(plan.counts[i]);
+                let bytes = fetched.buffers[r].slice(from, from + n);
+                from += n;
+                if (!n) {
+                    fn(i, null);
+                    continue;
+                }
+                if (plan.compression !== 1) {
+                    const t1 = now();
+                    bytes = await throughStream(bytes, new DecompressionStream("deflate"));
+                    decodeClock.ms += now() - t1;
+                    decodeClock.calls += 1;
+                }
+                if (!state.littleEndian) bytes = fromBigEndian(bytes, plan.Kind);
+                fn(i, new plan.Kind(bytes, 0, Math.min(plan.tileBytes, bytes.byteLength) / plan.Kind.BYTES_PER_ELEMENT));
+            }
+        }
+    }
+
+    /** The part of tile `i` inside both the image and `window`, in the tile's
+     *  own pixels, its rows' predictor undone in place (along each row from
+     *  its first sample, in the sample type: the byte order settled first,
+     *  which geotiff.js does not for a big-endian file). */
+    function settle(plan, i, samples, [x0, y0, x1, y1]) {
+        const ox = (i % plan.across) * plan.tw;
+        const oy = Math.floor(i / plan.across) * plan.th;
+        const left = Math.max(0, x0 - ox);
+        const right = Math.min(plan.tw, plan.W - ox, x1 - ox);
+        const top = Math.max(0, y0 - oy);
+        const bottom = Math.min(plan.th, plan.H - oy, y1 - oy, Math.floor(samples.length / plan.tw));
+        if (plan.predictor === 2) {
+            for (let y = top; y < bottom; y += 1) {
+                const o = y * plan.tw;
+                for (let x = o + 1, end = o + right; x < end; x += 1) samples[x] += samples[x - 1];
+            }
+        }
+        return { ox, oy, left, right, top, bottom };
+    }
+
+    /**
+     * `max` of a tiled plane at the speed the browser reads and inflates
+     * (a 66 GB slide's channel: 3 s, as the desktop's own read, not the 7-9 s
+     * of `region` per window, which assembles each window through geotiff.js
+     * only for its largest value to be taken): each window's tiles in a few
+     * large reads (a row of tiles sits back to back in the file), the next
+     * window's read while this one is decoded, the browser's zlib, and the
+     * maximum taken over each tile in place -- over the image only, an edge
+     * tile's padding not being the image's, and an empty tile counting as 0,
+     * as Python reads them. null for a file `tilePlan` leaves to `region`.
+     */
+    async function tiledMax(img, windows) {
+        const plan = await tilePlan(img);
+        if (!plan) return null;
+        let top = -Infinity;
+        let next = windows.length ? fetchTiles(plan, windows[0]) : null;
+        for (let w = 0; w < windows.length; w += 1) {
+            const fetched = await next;
+            next = w + 1 < windows.length ? fetchTiles(plan, windows[w + 1]) : null;
+            await decodeTiles(plan, fetched, (i, samples) => {
+                if (!samples) {
+                    top = Math.max(top, 0);
+                    return;
+                }
+                const part = settle(plan, i, samples, windows[w]);
+                for (let y = part.top; y < part.bottom; y += 1) {
+                    const o = y * plan.tw;
+                    for (let x = o + part.left, end = o + part.right; x < end; x += 1) if (samples[x] > top) top = samples[x];
+                }
+            });
+        }
+        return top;
+    }
+
+    /**
+     * A window of a tiled plane as `region` answers it (native values, rows
+     * of x1 - x0), read as `tiledMax` reads: its tiles in large reads,
+     * inflated by the browser, each copied in with its predictor undone. The
+     * window is inside the plane (Python clips it). null for a file
+     * `tilePlan` leaves to `region`.
+     */
+    async function tiledRegion(img, x0, y0, x1, y1) {
+        const plan = await tilePlan(img);
+        if (!plan) return null;
+        const w = x1 - x0;
+        const out = new plan.Kind(w * (y1 - y0));
+        const window = [x0, y0, x1, y1];
+        await decodeTiles(plan, await fetchTiles(plan, window), (i, samples) => {
+            if (!samples) return;
+            const part = settle(plan, i, samples, window);
+            for (let y = part.top; y < part.bottom; y += 1) {
+                const o = y * plan.tw;
+                out.set(samples.subarray(o + part.left, o + part.right),
+                        (part.oy + y - y0) * w + (part.ox + part.left - x0));
+            }
+        });
+        return out;
+    }
+
+    /**
+     * Python's rectangles of a picked image, read here (data_model's cell
+     * crops: services/browserNode.js `regionsOf`). `reads`: [{channel, level,
+     * box: [x0, y0, x1, y1]}], each inside its level. {regions: [{values,
+     * width, height} | {refused}]}: refused where geotiff.js would read other
+     * values than Python (a big-endian file with a predictor, outside the
+     * tiled fast path), which Python then reads itself.
+     */
+    async function regions({ reads }) {
+        const found = [];
+        for (const { channel, level: index, box } of reads) {
+            const [x0, y0, x1, y1] = box.map(Number);
+            const img = await image(channel, index);
+            let values = await tiledRegion(img, x0, y0, x1, y1);
+            if (values === null) {
+                if (!state.littleEndian && Number(img.fileDirectory.getValue("Predictor") || 1) !== 1) {
+                    found.push({ refused: "a big-endian file with a predictor" });
+                    continue;
+                }
+                ({ values } = await region({ channel, level: index, x0, y0, x1, y1 }));
+            }
+            found.push({ values, width: x1 - x0, height: y1 - y0 });
+        }
+        return { regions: found };
+    }
+
     /**
      * The largest sample of one channel's level over `windows` ([x0, y0, x1,
      * y1] each, read one at a time): what `data_model.quantization_window_of`
@@ -661,6 +855,8 @@ export function createTiffReader() {
      */
     async function max({ channel, level: index = 0, windows }) {
         const t0 = now();
+        const fast = await tiledMax(await image(channel, index), windows);
+        if (fast !== null) return { max: fast, windows: windows.length, timing: { totalMs: now() - t0, tiled: true } };
         let top = -Infinity;
         for (const window of windows) {
             const { values } = await region({ channel, level: index, x0: window[0], y0: window[1],
@@ -670,5 +866,5 @@ export function createTiffReader() {
         return { max: top, windows: windows.length, timing: { totalMs: now() - t0 } };
     }
 
-    return { open, tile, level, region, max };
+    return { open, tile, level, region, max, regions };
 }

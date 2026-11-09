@@ -296,7 +296,15 @@ export async function openTools(frame, host, only = null) {
         let python = null;
         if (host) { const recent = (await pyRecent(host)).slice(before); python = { n: recent.length, ms: recent.reduce((a, r) => a + r.ms, 0), py: recent.reduce((a, r) => a + (r.pyMs || 0), 0), routes: byRoute(recent) }; }
         const requests = res.length;
-        out.push({ tool: name, ms, result, scripts, requests, panel, python });
+        // Every request but a file, by route, as the page timed it: the
+        // server's arm has no Python client to ask (`python` is the website's).
+        const fetched = {};
+        for (const e of res.filter((x) => !/\.(js|mjs|css|png|svg|woff2?|json)(\?|$)/.test(x.n))) {
+            const route = e.n.replace(/^https?:\/\/[^/]+/, "").split("?")[0].slice(0, 80);
+            const row = (fetched[route] ||= { n: 0, ms: 0, max: 0 });
+            row.n += 1; row.ms += Math.round(e.d); row.max = Math.max(row.max, Math.round(e.d));
+        }
+        out.push({ tool: name, ms, result, scripts, requests, panel, python, fetched });
         await frame.waitForTimeout(400);
     }
     return out;

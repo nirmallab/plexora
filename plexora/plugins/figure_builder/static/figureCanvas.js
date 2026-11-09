@@ -171,6 +171,14 @@ class FigureCanvas {
     // -- lifecycle -------------------------------------------------------
 
     setup() {
+        // A panel's image that cannot be had is marked (not an inline onerror,
+        // which the website's Content-Security-Policy does not run); an
+        // image's error does not bubble, so it is caught on its way down.
+        this.surfaceEl.addEventListener("error", (event) => {
+            if (event.target instanceof HTMLImageElement && event.target.classList.contains("fb-panel-image")) {
+                event.target.classList.add("fb-panel-image-missing");
+            }
+        }, true);
         this.surfaceEl.addEventListener("pointerdown", (event) => this.pointerDown(event));
         // Scoped to the sheet, and deliberately not folded into the window
         // listener below: that one owns the chords and the nudge, which act on
@@ -396,9 +404,18 @@ class FigureCanvas {
             };
             // `decode` where there is one, so the swap never shows a frame of
             // an undecoded image; an error swaps too, so a missing preview
-            // still says so (its own onerror marks it).
-            if (typeof img.decode === "function") img.decode().then(swap, swap);
-            else img.addEventListener("load", swap, { once: true });
+            // still says so (marked here: off the page, the surface's error
+            // listener does not see it).
+            const failed = () => {
+                img.classList.add("fb-panel-image-missing");
+                swap();
+            };
+            if (typeof img.decode === "function") {
+                img.decode().then(swap, () => (img.complete && !img.naturalWidth ? failed() : swap()));
+            } else {
+                img.addEventListener("load", swap, { once: true });
+                img.addEventListener("error", failed, { once: true });
+            }
         }
         for (const owner of Array.from(pending.keys())) {
             if (!seen.has(owner)) pending.delete(owner);
@@ -540,7 +557,7 @@ class FigureCanvas {
             <img class="fb-panel-image" draggable="false"
                  src="${this.panelImageUrl(panel, source)}"
                  style="${FigureCanvas.flipStyle(place)}"
-                 alt="" onerror="this.classList.add('fb-panel-image-missing')">
+                 alt="">
             ${this.scaleBarMarkup(panel, source, place)}
             ${this.colorBarMarkup(panel, place)}
             ${this.panelLabelsMarkup(panel, place)}

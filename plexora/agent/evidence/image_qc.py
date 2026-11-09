@@ -59,6 +59,35 @@ def read_overview(source, channel_key, level=None):
     return plane.astype(np.float32, copy=False), level, ceiling
 
 
+def read_overviews(source, channel_keys, level=None):
+    """{key: `read_overview(source, key, level)`} for every key, read in one
+    go where the reader can (`SourceImage.read_many`: on the website one
+    question to the page for every plane). The same planes as one at a time."""
+    from plexora.agent.errors import AgentError
+
+    keys = list(dict.fromkeys(channel_keys))
+    many = getattr(source, "read_many", None)
+    if many is None or len(keys) < 2:
+        return {key: read_overview(source, key, level) for key in keys}
+    level = overview_level(source) if level is None else level
+    indices = []
+    for key in keys:
+        index = source.channel_index(key)
+        if index is None:
+            raise AgentError("invalid_input", f"{key!r} is not a channel of this image")
+        indices.append(index)
+    height, width = source.level_shape(level)
+    out = {}
+    for key, (plane, _clipped) in zip(keys, many([(index, level, (0, 0, width, height)) for index in indices])):
+        plane = np.asarray(plane)
+        if plane.dtype.kind in "ui":
+            ceiling = float(np.iinfo(plane.dtype).max)
+        else:
+            ceiling = float(np.nanmax(plane)) if plane.size else 1.0
+        out[key] = (plane.astype(np.float32, copy=False), level, ceiling)
+    return out
+
+
 def otsu_level(values):
     """The Otsu threshold of `values` (any shape), or None when they hold no
     two classes to split."""
@@ -85,9 +114,28 @@ def tissue_mask(nuclear):
     if level is None:
         return None
     mask = logged > level
-    from scipy.ndimage import binary_dilation
+    if mask.ndim != 2:
+        from scipy.ndimage import binary_dilation
 
-    return binary_dilation(mask, iterations=2)
+        return binary_dilation(mask, iterations=2)
+    return dilate(mask, 2)
+
+
+def dilate(mask, iterations):
+    """`scipy.ndimage.binary_dilation(mask, iterations=...)` of a 2-D mask,
+    its default cross and nothing beyond the edge, in numpy: the same pixels
+    (tests/test_image_qc_dilate.py), without scipy. On the website scipy is a
+    stage loaded on first use (plexora/browser/stages.py), and this was what
+    made the display calibration of a project opening wait 1.1 s for it."""
+    out = np.asarray(mask, dtype=bool)
+    for _ in range(iterations):
+        grown = out.copy()
+        grown[1:, :] |= out[:-1, :]
+        grown[:-1, :] |= out[1:, :]
+        grown[:, 1:] |= out[:, :-1]
+        grown[:, :-1] |= out[:, 1:]
+        out = grown
+    return out
 
 
 def _surface(plane_log, mask, size=128):
