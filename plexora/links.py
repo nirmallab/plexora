@@ -6,8 +6,9 @@ the desktop shell cannot drift apart. `base.html` renders `DOCS_URL` into the
 page for the client, and tests/test_docs_links.py holds the desktop menu's
 copy in `desktop/src-tauri/src/menu.rs` to this value.
 
-Moving the documentation to plexoraapp.com is a change to `DOCS_URL` here and
-to the site's own base path (website/lib/site.ts), nothing else.
+The documentation site is GitHub Pages with the custom domain plexoraapp.com
+(since 2026-11-09), so the old https://nirmallab.github.io/plexora/ addresses
+in earlier builds redirect to the same page here.
 """
 
 #: The GitHub repository, as `owner/name`.
@@ -24,7 +25,7 @@ PYPI_URL = "https://pypi.org/project/plexora/"
 
 #: The documentation site. Always ends in a slash, so a page is
 #: `DOCS_URL + "docs/<section>/<page>/"`.
-DOCS_URL = "https://nirmallab.github.io/plexora/"
+DOCS_URL = "https://plexoraapp.com/"
 
 #: Where a person signs in, buys, starts a trial and approves a device: the
 #: BioCognia portal every BioCognia product shares. Plexora holds no account

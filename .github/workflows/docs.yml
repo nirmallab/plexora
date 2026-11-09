@@ -17,9 +17,12 @@ name: Docs
 # exist. Not `release: published` or `workflow_run`: a release created with
 # GITHUB_TOKEN starts no other workflow, and zizmor refuses workflow_run.
 #
-# One-time setup: repository Settings > Pages > Source: "GitHub Actions".
-# A custom domain later needs only website/public/CNAME and the domain in the
-# Pages settings: the base path below comes from actions/configure-pages.
+# One-time setup: repository Settings > Pages > Source: "GitHub Actions", and
+# the custom domain plexoraapp.com (Settings > Pages > Custom domain, with the
+# apex A/AAAA records and www CNAME at Cloudflare, DNS only). A workflow-
+# deployed site ignores a CNAME file, so there is none. The base path below
+# comes from actions/configure-pages: "" with the custom domain. GitHub
+# redirects nirmallab.github.io/plexora/<page> to plexoraapp.com/<page>.
 
 on:
   pull_request:
@@ -53,8 +56,11 @@ jobs:
         with:
           python-version: "3.13"
       - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6.8.0
+      # --no-sources: pyproject's [tool.uv.sources] points biocognia-markers
+      # at a sibling checkout (../biocognia-markers) the runner does not have;
+      # the PyPI release satisfies the same requirement.
       - name: Install Plexora
-        run: uv pip install --system -e ".[dev,spatial,jupyter]"
+        run: uv pip install --system --no-sources -e ".[dev,spatial,jupyter]"
       - name: Reference pages, regenerated
         run: |
           python tools/docs/sync_docs.py generate

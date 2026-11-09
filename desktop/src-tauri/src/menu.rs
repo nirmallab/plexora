@@ -35,7 +35,7 @@ use crate::{windows, ServerState};
 
 /// The documentation site. Must equal `DOCS_URL` in plexora/links.py, which
 /// tests/test_docs_links.py checks, so the app and the browser UI agree.
-const DOCS_URL: &str = "https://nirmallab.github.io/plexora/";
+const DOCS_URL: &str = "https://plexoraapp.com/";
 
 /// Whether this platform gets a native menu bar at all. See the module notes.
 pub const NATIVE_MENU_BAR: bool = cfg!(target_os = "macos");

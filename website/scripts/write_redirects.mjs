@@ -15,7 +15,7 @@ import { fileURLToPath } from 'node:url';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const outDir = resolve(process.argv[2] ?? join(here, '..', 'out'));
-const basePath = process.env.NEXT_PUBLIC_BASE_PATH ?? '/plexora';
+const basePath = process.env.NEXT_PUBLIC_BASE_PATH ?? '';
 const { pages, prefixes } = JSON.parse(readFileSync(join(here, '..', 'redirects.json'), 'utf8'));
 
 if (!existsSync(outDir)) {

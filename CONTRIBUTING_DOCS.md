@@ -1,7 +1,8 @@
 # Contributing to the documentation
 
-The documentation site (https://nirmallab.com/plexora/, also reached at
-https://nirmallab.github.io/plexora/) is built from this repository. It covers
+The documentation site (https://plexoraapp.com/; the old addresses
+https://nirmallab.github.io/plexora/ and https://nirmallab.com/plexora/
+redirect there) is built from this repository. It covers
 the **free app only**: nothing about Pro, pricing, licences or trials, and no
 page for a paid feature. Like the app, it is dark only (no light theme, no
 switch). It has two tabs. **Docs** is the guide, written by

@@ -7,7 +7,7 @@ opens large images where they are, without converting or copying them, draws
 segmentation masks and cell tables over them, and runs on a laptop, in a
 notebook, on a remote workstation or on an HPC cluster.
 
-**Documentation: https://nirmallab.github.io/plexora/**
+**Documentation: https://plexoraapp.com/**
 
 ![The Plexora viewer showing a multiplexed tissue image](./website/public/screenshots/home/viewer.webp)
 
@@ -21,7 +21,7 @@ plexora
 `plexora` starts the viewer and opens it in your browser. Python 3.12, 3.13 or
 3.14 is required. A desktop app for macOS, Windows and Linux is on the
 [releases page](https://github.com/nirmallab/plexora/releases). See
-[Installation](https://nirmallab.github.io/plexora/docs/getting-started/installation/).
+[Installation](https://plexoraapp.com/docs/getting-started/installation/).
 
 ## Quick start
 
@@ -35,7 +35,7 @@ name = plexora.import_sample("slide.ome.tif", "slide_mask.tif", "cells.csv", wai
 plexora.view(name)   # in a notebook, shows the viewer inline
 ```
 
-More in [Your first image](https://nirmallab.github.io/plexora/docs/getting-started/first-image/).
+More in [Your first image](https://plexoraapp.com/docs/getting-started/first-image/).
 
 ## What it reads
 
@@ -45,17 +45,17 @@ More in [Your first image](https://nirmallab.github.io/plexora/docs/getting-star
 - SpatialData stores and AnnData tables; CSV, TSV and Parquet cell tables
 - Segmentation masks (label images) and cell boundary polygons
 
-The full list is in [Supported formats](https://nirmallab.github.io/plexora/docs/reference/supported-formats/).
+The full list is in [Supported formats](https://plexoraapp.com/docs/reference/supported-formats/).
 
 ## Where to go next
 
 | I want to | Read |
 | --- | --- |
-| Use the viewer and its tools | [Image viewer](https://nirmallab.github.io/plexora/docs/features/viewer/), [Plugins](https://nirmallab.github.io/plexora/docs/plugins/) |
-| Script it from Python or a notebook | [Python](https://nirmallab.github.io/plexora/docs/python/), [Notebook](https://nirmallab.github.io/plexora/docs/notebook/) |
-| Look at data on a remote machine or cluster | [Remote and HPC](https://nirmallab.github.io/plexora/docs/features/remote/) |
-| Write a plugin | [Build a custom plugin](https://nirmallab.github.io/plexora/docs/plugins/build-a-plugin/) |
-| Look up a function or command | [Python API](https://nirmallab.github.io/plexora/docs/reference/python-api/), [Command line](https://nirmallab.github.io/plexora/docs/reference/cli/) |
+| Use the viewer and its tools | [Image viewer](https://plexoraapp.com/docs/features/viewer/), [Plugins](https://plexoraapp.com/docs/plugins/) |
+| Script it from Python or a notebook | [Python](https://plexoraapp.com/docs/python/), [Notebook](https://plexoraapp.com/docs/notebook/) |
+| Look at data on a remote machine or cluster | [Remote and HPC](https://plexoraapp.com/docs/features/remote/) |
+| Write a plugin | [Build a custom plugin](https://plexoraapp.com/docs/plugins/build-a-plugin/) |
+| Look up a function or command | [Python API](https://plexoraapp.com/docs/reference/python-api/), [Command line](https://plexoraapp.com/docs/reference/cli/) |
 
 ## Developing Plexora
 

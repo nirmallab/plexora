@@ -1,16 +1,18 @@
 // The one place that knows where the site lives and where it links out to.
-// Components, the search client and the source links all read from here, so
-// moving to plexoraapp.com is NEXT_PUBLIC_BASE_PATH="" plus public/CNAME.
+// Components, the search client and the source links all read from here. The
+// site is GitHub Pages with the custom domain plexoraapp.com, so it is served
+// from the root; nirmallab.github.io/plexora/ redirects there.
 import releaseInfo from '@/generated/release.json';
 import versionInfo from '@/generated/version.json';
 
 export const siteName = 'Plexora';
 export const tagline = 'A free viewer for multiplexed tissue images: open an image, adjust channels, gate markers, draw regions and make figures, on your laptop, in a notebook or on a cluster.';
 
-/** Next.js basePath ("/plexora" on GitHub Pages, "" on a custom domain). */
-export const basePath = process.env.NEXT_PUBLIC_BASE_PATH ?? '/plexora';
+/** Next.js basePath: "" on the custom domain, "/plexora" only if the site is
+ * ever served as a plain project site again (docs.yml passes it). */
+export const basePath = process.env.NEXT_PUBLIC_BASE_PATH ?? '';
 
-export const siteUrl = process.env.NEXT_PUBLIC_SITE_URL ?? 'https://nirmallab.github.io/plexora';
+export const siteUrl = process.env.NEXT_PUBLIC_SITE_URL ?? 'https://plexoraapp.com';
 
 export const repo = 'nirmallab/plexora';
 export const repoUrl = `https://github.com/${repo}`;

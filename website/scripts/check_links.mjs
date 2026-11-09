@@ -1,8 +1,9 @@
 #!/usr/bin/env node
 // Checks every internal link, asset and #anchor in the static export.
 //
-// Pages are served from a sub-path (/plexora/ on GitHub Pages), which generic
-// link checkers cannot mount, so this walks out/**/*.html itself: strip the
+// Pages may be served from a sub-path (NEXT_PUBLIC_BASE_PATH; "" on
+// plexoraapp.com), which generic link checkers cannot mount, so this walks
+// out/**/*.html itself: strip the
 // basePath from each href/src, resolve against out/, and require a file (or
 // dir/index.html) and, for #fragments, an element with that id. External
 // links are only checked for being well-formed URLs.
@@ -14,7 +15,7 @@ import { fileURLToPath } from 'node:url';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const outDir = resolve(process.argv[2] ?? join(here, '..', 'out'));
-const basePath = process.env.NEXT_PUBLIC_BASE_PATH ?? '/plexora';
+const basePath = process.env.NEXT_PUBLIC_BASE_PATH ?? '';
 
 if (!existsSync(outDir)) {
   console.error(`check_links: ${outDir} does not exist; run \`npm run build\` first.`);

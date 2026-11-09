@@ -76,8 +76,17 @@ bundle `py/dev/4f583c3b9745/` and, sharing the flags, no longer shows its
   `CLOUDFLARE_ACCOUNT_ID` (`6978852cf325dd1049afd2aa427d77a7`), so releases
   and previews deploy the website themselves (docs/internal/WEBSITE_RELEASE.md).
   The project `plexora-viewer` exists (created 2026-11-07).
-- **The docs move** (decision 5): create the `plexora-site` Pages project and
-  the DNS for plexoraapp.com / www (refused here as a new public surface).
+- **The docs move** (your call, 2026-11-09: GitHub Pages with the custom
+  domain plexoraapp.com, not a `plexora-site` Pages project). The code is on
+  `main`: the site is built at the root, `DOCS_URL` is https://plexoraapp.com/,
+  and the Docs workflow installs with `--no-sources`. It needs these records
+  in the plexoraapp.com zone, every one **DNS only** (grey cloud) so GitHub
+  can issue the certificate: `A @` 185.199.108.153, 185.199.109.153,
+  185.199.110.153, 185.199.111.153; `AAAA @` 2606:50c0:8000::153,
+  2606:50c0:8001::153, 2606:50c0:8002::153, 2606:50c0:8003::153;
+  `CNAME www` nirmallab.github.io. Then the repository's Pages custom domain
+  is set to plexoraapp.com and the Docs workflow run again;
+  nirmallab.github.io/plexora/<page> then redirects to plexoraapp.com/<page>.
 - **Done 2026-11-07:** viewer.plexoraapp.com attached (you added the CNAME
   `viewer` -> `plexora-viewer.pages.dev`) and `flags --viewer on`. That
   switch also shows the desktop app's **File > Open on the Website** in
@@ -168,8 +177,9 @@ bundle `py/dev/4f583c3b9745/` and, sharing the flags, no longer shows its
 - **CI on `main` has been red since 2026-11-04** (48dff7d1, before the
   website work): `[tool.uv.sources]` points `biocognia-markers` at
   `../biocognia-markers`, which CI does not have, so `uv lock --check` and
-  every install fail (ci, web, Docs, security; the docs site has not
-  deployed since). biocognia-markers is on PyPI now: dropping the override
+  every install fail (ci, web, Docs, security). The Docs workflow alone
+  installs with `--no-sources` since 2026-11-09, so the docs deploy again.
+  biocognia-markers is on PyPI now: dropping the override
   and moving its uv.lock entry to the registry (by hand; uv here rewrites
   the lock) fixes it. Say so and it gets done.
 - Old merged branches you may delete: `web/client-seams`, `web/node-pair`,

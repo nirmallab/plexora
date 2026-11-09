@@ -19,7 +19,7 @@ window.PlexoraHelpMenu = (function () {
     const ISSUES_URL = `${REPO}/issues/new`;
     //: Fallback only. The page renders `plexora.links.DOCS_URL` into
     //: <body data-plexora-docs-url>, so the site's address has one home.
-    const DEFAULT_DOCS_URL = "https://nirmallab.github.io/plexora/";
+    const DEFAULT_DOCS_URL = "https://plexoraapp.com/";
 
     /** The documentation site, or one page of it: `path` is relative to the
      *  site's /docs/ root ("plugins/roi"). */

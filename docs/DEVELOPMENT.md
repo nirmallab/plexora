@@ -31,7 +31,7 @@ the notebook sidecar both need the package importable by name, not merely
 present in the current directory. `dev` adds pytest; `jupyter` adds the
 notebook sidecar. Add `spatial`, `remote` or `wsi` as well if you are
 touching the code paths they cover — see
-[the installation requirements](https://nirmallab.github.io/plexora/docs/getting-started/installation/) for what
+[the installation requirements](https://plexoraapp.com/docs/getting-started/installation/) for what
 each one is for.
 
 ### Start it

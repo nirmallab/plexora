@@ -138,7 +138,7 @@ docs and the UI; a redesign renames them only deliberately.
 
 **Established: a documentation site.** `website/` builds Plexora's public
 documentation and pricing page, published at
-https://nirmallab.github.io/plexora/ (`plexora/links.py` `DOCS_URL`). Settings,
+https://plexoraapp.com/ (`plexora/links.py` `DOCS_URL`). Settings,
 `plexora license status` and a Pro refusal link to its pricing page.
 
 ## Brand Commitments

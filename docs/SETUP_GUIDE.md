@@ -1,10 +1,10 @@
 # Setting up Plexora — a guide for everyone
 
-> **This guide has moved to https://nirmallab.github.io/plexora/**, where it is
-> kept up to date: [Getting started](https://nirmallab.github.io/plexora/docs/getting-started/installation/),
-> [Remote and HPC](https://nirmallab.github.io/plexora/docs/features/remote/),
-> [Notebook](https://nirmallab.github.io/plexora/docs/notebook/) and the
-> [installation requirements](https://nirmallab.github.io/plexora/docs/getting-started/installation/).
+> **This guide has moved to https://plexoraapp.com/**, where it is
+> kept up to date: [Getting started](https://plexoraapp.com/docs/getting-started/installation/),
+> [Remote and HPC](https://plexoraapp.com/docs/features/remote/),
+> [Notebook](https://plexoraapp.com/docs/notebook/) and the
+> [installation requirements](https://plexoraapp.com/docs/getting-started/installation/).
 > This copy is no longer updated.
 
 This guide is written for people who want to look at their images, not for

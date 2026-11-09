@@ -99,7 +99,7 @@ three jobs:
    Linux (x86_64), each building its own installer. There is no Intel macOS
    build: `llvmlite`, which Plexora needs through `numba`, no longer
    publishes wheels for it — see the
-   [installation requirements](https://nirmallab.github.io/plexora/docs/getting-started/installation/).
+   [installation requirements](https://plexoraapp.com/docs/getting-started/installation/).
 3. **publish** (tagged runs only) — collects every installer, the wheel and
    the sdist into one place, writes `SHA256SUMS.txt` and the manifest the
    in-app updater reads, and creates the GitHub Release with all of it
@@ -111,7 +111,7 @@ Builds are unsigned until the environment variables that turn signing on
 are present — a set of repository secrets for Apple notarization, Windows
 code signing, and the in-app updater's own signing key. None of that
 changes what the workflow above builds or how; it only changes whether the
-result is signed. See [Troubleshooting](https://nirmallab.github.io/plexora/docs/help/troubleshooting/)
+result is signed. See [Troubleshooting](https://plexoraapp.com/docs/help/troubleshooting/)
 for what an unsigned build looks like to someone installing it.
 
 ## Where a release ends up
@@ -119,5 +119,5 @@ for what an unsigned build looks like to someone installing it.
 Every published version is on
 [GitHub Releases](https://github.com/nirmallab/plexora/releases), tagged
 `v<version>`, with the wheel, the sdist and an installer per platform
-attached to it. See [Troubleshooting](https://nirmallab.github.io/plexora/docs/help/troubleshooting/) for how
+attached to it. See [Troubleshooting](https://plexoraapp.com/docs/help/troubleshooting/) for how
 a user finds and installs a new one.
