@@ -87,7 +87,9 @@ def fingerprints(project, document=None) -> dict:
 
 
 def _seg_fp(project):
-    from plexora.plugins.qc.server.segqc import run as segqc
+    # identity.py, not run.py: the fingerprint is a file read, and run.py
+    # brings QC's kernels (on the website, the scipy stage) with it.
+    from plexora.plugins.qc.server.segqc import identity as segqc
 
     try:
         return segqc.current_fingerprint(project)

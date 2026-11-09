@@ -53,6 +53,21 @@ bundle `py/dev/4f583c3b9745/` and, sharing the flags, no longer shows its
 
 ## 2. Cloudflare (dashboard or a wider token)
 
+- **Browser Cache TTL overrides the site's own headers for `.js` and
+  `.css`** (found 2026-11-09). plexoraapp.com > Caching > Configuration >
+  *Browser Cache TTL* is 4 hours, so viewer.plexoraapp.com's scripts reach
+  browsers as `max-age=14400` whatever `_headers` says: `backendRelay.js`
+  asks for `no-cache` and is served `max-age=14400` (`.json` is not
+  overridden: `shell.json` keeps its `no-cache`). The shell, the host's
+  services and the workers carry no `?v=` (a module worker's imports cannot),
+  so for up to 4 hours after a release a returning visitor runs the previous
+  release's JavaScript against the new Python bundle. The one protocol
+  change so far (0.0.42's retry) is safe both ways from the release after
+  0.0.42 (the worker says it follows a retry, plexora/browser/bridge.py
+  `RETRYABLE`), but the next change may not be.
+  **Set it to "Respect Existing Headers"**: Pages then serves its default
+  (`max-age=0, must-revalidate`, one 304 a file a visit) and the site's own
+  `_headers` hold.
 - **Cache Rule** on assets.plexoraapp.com for `.wasm` and `.whl` (they show
   `cf-cache-status: DYNAMIC`, so every first visit reads R2).
 - **Zero Trust Access** on the preview (`plexora-viewer-preview`); it is

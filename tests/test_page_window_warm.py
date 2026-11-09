@@ -144,7 +144,7 @@ def test_a_stats_request_for_a_scan_in_progress_is_asked_again_later(project, mo
     assert stats["qmax"] == 1001.0
 
 
-def _stats_request(name, retried=None):
+def _stats_request(name, retried=None, retryable=True):
     from urllib.parse import urlencode
 
     import plexora
@@ -153,7 +153,7 @@ def _stats_request(name, retried=None):
     headers = [["X-Plexora-Retried", str(retried)]] if retried is not None else []
     return bridge.handle(plexora.app, {"method": "GET", "path": "/get_image_channel_stats",
                                        "query": urlencode({"channel": name, "datasource": NAME}),
-                                       "headers": headers}, "http://127.0.0.1")
+                                       "headers": headers, "retryable": retryable}, "http://127.0.0.1")
 
 
 def test_the_route_answers_again_later_and_the_bridge_says_when(project, monkeypatch):
@@ -166,6 +166,18 @@ def test_the_route_answers_again_later_and_the_bridge_says_when(project, monkeyp
 
     answered = _stats_request(name, retried=1)
     assert "retry" not in answered and answered["status"] == 200
+
+
+def test_a_worker_that_does_not_follow_a_retry_gets_the_wait(project, monkeypatch):
+    """An older pythonWorker.js still in a browser's cache, with a newer bundle:
+    never answered "again later", which it would hand the page as a 503."""
+    scans = Page(monkeypatch, pending=10_000)
+    name = _channels()[0]
+
+    answered = _stats_request(name, retryable=False)
+
+    assert "retry" not in answered and answered["status"] == 200
+    assert scans.looks == [] and scans.waits == [0]
 
 
 def test_after_enough_retries_the_route_waits_as_it_always_did(project, monkeypatch):

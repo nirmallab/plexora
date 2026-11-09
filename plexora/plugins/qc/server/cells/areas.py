@@ -32,7 +32,7 @@ _MEMORY: dict = {}
 def mask_fingerprint(record) -> str | None:
     """A mask's identity without reading a pixel: where it is, its stamp,
     scale and mode (`segqc.mask_identity`)."""
-    from plexora.plugins.qc.server.segqc.run import mask_identity
+    from plexora.plugins.qc.server.segqc.identity import mask_identity
 
     try:
         identity = mask_identity(record)

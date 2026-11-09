@@ -59,26 +59,14 @@ _MEMORY: dict = {}
 
 # -- where it lives --------------------------------------------------------------------
 
-
-def _folder(project):
-    from plexora import api
-
-    path = api.store(project, "qc").directory() / "segqc"
-    path.mkdir(parents=True, exist_ok=True)
-    return path
+# In identity.py (imports nothing heavy), named here as they always were.
+from plexora.plugins.qc.server.segqc.identity import _folder, _read_json, current_fingerprint  # noqa: E402,F401
 
 
 def _atomic_write(path, data: bytes):
     tmp = path.with_name(f"{path.name}.{os.getpid()}.{threading.get_ident()}.tmp")
     tmp.write_bytes(data)
     os.replace(tmp, path)
-
-
-def _read_json(path):
-    try:
-        return json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return None
 
 
 def settings(project) -> dict:
@@ -95,27 +83,9 @@ def save_settings(project, **values):
 # -- inputs and their fingerprint --------------------------------------------------------
 
 
-def _stamp(path):
-    if not path:
-        return None
-    try:
-        stat = os.stat(path)
-        return f"{stat.st_size}-{stat.st_mtime_ns}"
-    except OSError:
-        return None
-
-
-def mask_identity(record) -> dict:
-    seg = record.segmentation
-    binding = record.resources.get("segmentation")
-    if binding is not None:
-        where = f"node://{binding.node}/{binding.resource_id}"
-        stamp = None
-    else:
-        where = str(seg.derived) if seg.derived else None
-        stamp = _stamp(seg.derived)
-    return {"where": where, "stamp": stamp, "scale": int(getattr(seg, "scale", 1) or 1),
-            "mode": getattr(seg, "mode", None)}
+# A mask's identity lives in identity.py (imports nothing heavy), named here
+# as it always was.
+from plexora.plugins.qc.server.segqc.identity import _stamp, mask_identity  # noqa: E402,F401
 
 
 def channel_names(record) -> list:
@@ -592,11 +562,6 @@ def load_summary(project, fp):
     with _GUARD:
         _MEMORY[(project, fp)] = summary
     return summary
-
-
-def current_fingerprint(project):
-    pointer = _read_json(_folder(project) / "current.json") or {}
-    return pointer.get("fingerprint")
 
 
 def current(project):

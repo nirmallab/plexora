@@ -212,7 +212,14 @@ def find(dataset, column: str) -> dict | None:
 def _describe_values(column, values, declared=None, is_cell_id=False) -> dict:
     values = np.asarray(values)
     total = int(values.size)
-    text, missing = as_text(values)
+    # A column of numbers is counted as numbers (`_count_numbers`); its text
+    # is made only if it turns out to be categorical. Text for every value of
+    # every column was most of a first `variables` on a large table.
+    counted = _count_numbers(values)
+    if counted is None:
+        text, missing = as_text(values)
+    else:
+        text, (missing, distinct_numbers) = None, counted
     valid = int(total - int(missing.sum()))
 
     descriptor = {
@@ -225,7 +232,10 @@ def _describe_values(column, values, declared=None, is_cell_id=False) -> dict:
     }
 
     numeric = _numeric_values(values)
-    distinct = int(np.unique(text[~missing]).size) if valid else 0
+    if text is None:
+        distinct = distinct_numbers if valid else 0
+    else:
+        distinct = int(np.unique(text[~missing]).size) if valid else 0
     descriptor["n_unique"] = distinct
 
     if _looks_like_an_identifier(column, distinct, valid, is_cell_id):
@@ -244,6 +254,8 @@ def _describe_values(column, values, declared=None, is_cell_id=False) -> dict:
     descriptor["ambiguous"] = ambiguous
 
     if kind == "categorical":
+        if text is None:
+            text, missing = as_text(values)
         descriptor.update(_categorical_payload(text, missing, declared))
     # Both halves for an ambiguous column, which costs nothing (it has at most
     # CATEGORICAL_INTEGER_LIMIT categories) and makes flipping the override a
@@ -300,6 +312,26 @@ def _numeric_values(values):
 def _all_whole(numeric) -> bool:
     finite = numeric[np.isfinite(numeric)]
     return bool(finite.size) and bool(np.all(finite == np.round(finite)))
+
+
+def _count_numbers(values):
+    """(missing, distinct) for a column of numbers, exactly as `as_text`'s
+    text would count them, without making the text; None for any other
+    column. Whole numbers are labelled as int64 values, so they are counted as
+    those; any other float's label is the shortest text that reads back to it
+    (numpy), one per bit pattern, so its bit patterns are counted."""
+    if values.dtype.kind in "fc":
+        numeric = values.astype(np.float64, copy=False)
+        missing = ~np.isfinite(numeric)
+        finite = np.ascontiguousarray(numeric[~missing])
+        if not finite.size:
+            return missing, 0
+        if np.all(finite == np.round(finite)):
+            return missing, int(np.unique(finite.astype(np.int64)).size)
+        return missing, int(np.unique(finite.view(np.int64)).size)
+    if values.dtype.kind in "iub":
+        return np.zeros(values.shape, dtype=bool), int(np.unique(values).size) if values.size else 0
+    return None
 
 
 def as_text(values):

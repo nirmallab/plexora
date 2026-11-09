@@ -30,6 +30,8 @@ CHUNK = 8 * 2**20
 _READS = ("GET", "HEAD", "OPTIONS")
 #: server/providers/browser.py `RETRY_HEADER` (not imported: the bridge loads first).
 RETRY_HEADER = "X-Plexora-Retry-Ms"
+#: In a request's environ: whether the worker that asked follows a retry.
+RETRYABLE = "plexora.retryable"
 
 _streams: dict = {}
 _ids = itertools.count(1)
@@ -59,7 +61,12 @@ def environ(request: dict, origin: str) -> dict:
         method=(request.get("method") or "GET").upper(),
         headers=headers,
         data=body,
-        environ_base={"REMOTE_ADDR": "127.0.0.1", "SERVER_SOFTWARE": "plexora-browser"},
+        environ_base={"REMOTE_ADDR": "127.0.0.1", "SERVER_SOFTWARE": "plexora-browser",
+                      # The worker puts a request "asked again later" back in
+                      # its queue (`handle` `retry`). Said by the worker, so an
+                      # older one still in a browser's cache with a newer
+                      # bundle is never answered with what it cannot follow.
+                      RETRYABLE: bool(request.get("retryable"))},
     )
     try:
         return builder.get_environ()

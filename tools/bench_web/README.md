@@ -16,7 +16,7 @@ export PLEXORA_BENCH_WORK=<a scratch folder>                                 # f
 
 - **Fixtures.** `$PLEXORA_BENCH_WORK/fixture/<name>/{image.ome.tif, mask.tif, cells.csv}`, one copy
   per arm (`<name>` and `<name>_srv`) so each builds its own mask pyramid. The small one used so far
-  is `plexora-public-data/codex-spacec-tonsil`; the large one LSP11385 (66 GB, 1.26 M cells; symlinks
+  is `plexora-public-data/codex-spacec-tonsil`; the large one LSP11385 (66 GB, 202,049 cells; symlinks
   are fine). A gating-capable fixture needs an Image ID column.
 - **The site.** `python -m plexora.client.static_build --out $PLEXORA_BENCH_WORK/site --py <bundle URL>`:
   the published bundle (`https://assets.plexoraapp.com/py/<version>/`) for JS-only changes, or a

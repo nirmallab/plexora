@@ -302,19 +302,42 @@ def start(origin: str, *, base_url: str = "", post=None, cancelled=None, idle=No
     `{version, rules, seconds, shims}`. `jspi` False: the browser has no JSPI,
     and `sleep(seconds)` blocks (the worker's Atomics.wait)."""
     started = time.perf_counter()
+    # Where the boot's time goes, in ms, for the page's record and the
+    # self-check (`timings`).
+    timings = {}
+    mark = [started]
+
+    def lap(name):
+        now = time.perf_counter()
+        timings[name] = round((now - mark[0]) * 1000)
+        mark[0] = now
+
     environment(origin, base_url=base_url, data_root=data_root, licence_dir=licence_dir,
                 telemetry=telemetry)
-    shims = {"imagecodecs": codecs(), "fetch": http(wait_on), "parquet": parquet(),
-             "buckets": buckets(), "cache": cache()}
+    lap("environment")
+    shims = {"imagecodecs": codecs()}
+    lap("codecs")
+    shims["fetch"] = http(wait_on)
+    lap("fetch")
+    shims["parquet"] = parquet()
+    lap("parquet")
+    shims["buckets"] = buckets()
+    lap("buckets")
+    shims["cache"] = cache()
+    lap("cache")
     if not jspi:
         shims["sync_loop"] = without_jspi(sleep or time.sleep)
     from plexora.browser import cooperative, licence
     from plexora.server.models import viewer_sessions
     from plexora.server.providers import browser as browser_provider
 
+    lap("imports")
     cooperative.install(post=post, cancelled=cancelled, idle=idle, waiting=waiting)
+    lap("cooperative")
     shims["spatialagents"] = sorted(agents())
+    lap("agents")
     chat_events(post)
+    lap("chat")
     if post is not None:
         viewer_sessions.set_wakeup(lambda: post({"kind": "wakeup"}))
     browser_provider.set_column_source(columns)
@@ -337,10 +360,13 @@ def start(origin: str, *, base_url: str = "", post=None, cancelled=None, idle=No
     from plexora.browser import sam_page
 
     sam_page.install(ask)
+    lap("page_seams")
 
     import plexora
 
+    lap("import_plexora")
     app = plexora.app
+    lap("create_app")
 
     from plexora import _work
     from plexora.server.models import data_model
@@ -362,8 +388,9 @@ def start(origin: str, *, base_url: str = "", post=None, cancelled=None, idle=No
             pass
 
     _work.spawn(scipy_stage, background=True, name="stage-scipy")
+    lap("spawned")
     return {"version": plexora.__version__, "rules": len(list(app.url_map.iter_rules())),
-            "seconds": round(time.perf_counter() - started, 3), "shims": shims}
+            "seconds": round(time.perf_counter() - started, 3), "shims": shims, "timings": timings}
 
 
 def stage(name: str) -> None:

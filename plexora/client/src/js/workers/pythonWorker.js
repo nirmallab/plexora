@@ -757,7 +757,9 @@ async function request(args) {
     const started = performance.now();
     const handle = py.pyimport("plexora.browser.bridge").handle;
     const app = py.pyimport("plexora").app;
-    const message = py.toPy({ ...args, body: args.body ? new Uint8Array(args.body) : null });
+    // `retryable`: this worker puts a request a route asks to be asked again
+    // later back in its queue (`drain`), so the route may say so (bridge.py).
+    const message = py.toPy({ ...args, retryable: true, body: args.body ? new Uint8Array(args.body) : null });
     const answer = await call(handle, app, message, origin);
     const retry = answer.get("retry");
     if (retry !== undefined && retry !== null) {
