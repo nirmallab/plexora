@@ -201,12 +201,16 @@ _PROVIDERS_LOCK = threading.Lock()
 def _load_providers() -> list:
     from plexora.server import plugins as plugin_registry
 
+    # One scan of the installed plugins: each `available_names()` reads every
+    # distribution's entry points (importlib.metadata), and asking it once a
+    # plugin was nine scans -- most of Cell Explorer's first `variables`.
+    available = plugin_registry.available_names()
     names = plugin_registry.requested()
     if names is None:
-        names = plugin_registry.available_names()
+        names = available
     found = []
     for name in names:
-        if name not in plugin_registry.available_names():
+        if name not in available:
             continue
         plugin = plugin_registry.load(name)
         factory = getattr(plugin, "cell_exclusions_factory", None) if plugin else None
@@ -279,12 +283,16 @@ _ANNOTATORS = None
 def _load_annotators() -> list:
     from plexora.server import plugins as plugin_registry
 
+    # One scan of the installed plugins: each `available_names()` reads every
+    # distribution's entry points (importlib.metadata), and asking it once a
+    # plugin was nine scans -- most of Cell Explorer's first `variables`.
+    available = plugin_registry.available_names()
     names = plugin_registry.requested()
     if names is None:
-        names = plugin_registry.available_names()
+        names = available
     found = []
     for name in names:
-        if name not in plugin_registry.available_names():
+        if name not in available:
             continue
         plugin = plugin_registry.load(name)
         factory = getattr(plugin, "cell_annotations_factory", None) if plugin else None

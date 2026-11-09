@@ -604,7 +604,10 @@ def init(datasource_name):
     # always was, so the first picks do not each start a build.
     ensure_loaded(datasource_name)
     if not table_preparing(datasource_name):
-        load_ball_tree(datasource_name)
+        if _work.threaded():
+            load_ball_tree(datasource_name)
+        else:
+            _index_later(datasource_name)
 
 
 # Read-only accessors onto this module's currently-loaded-datasource state.
@@ -923,9 +926,11 @@ def _load_table_behind(datasource_name, resolved, project, reload, epoch, event)
         stage("opening")
         loaded = resolved.table.load(reload=reload, stage=stage, report=report)
         frame = loaded.table if loaded is not None else None
-        if frame is not None and project.roles.x and project.roles.y:
+        if frame is not None and project.roles.x and project.roles.y and _work.threaded():
             # The cell index, off the request path too: picking a cell is the
-            # next thing anybody does with one.
+            # next thing anybody does with one. (On the website the table
+            # lands without it, and it is built in a background task of its
+            # own once the table is in: `_index_later`.)
             stage("loading")
             try:
                 index = _index_over(datasource_name, project, frame, reload=reload)
@@ -946,6 +951,8 @@ def _load_table_behind(datasource_name, resolved, project, reload, epoch, event)
                     datasource = frame
                     ball_tree = index
                     _clear_table_caches()
+                    if index is None and frame is not None and not _work.threaded():
+                        _index_later(datasource_name)
                 else:
                     _resource_errors["table"] = str(error)
                     _table_failed[scope] = str(error)
@@ -1146,7 +1153,11 @@ def load_datasource(datasource_name, reload=False, wait_for_table=False):
                 # existing -- swapping a CSV for an .h5ad renames them
                 # X_centroid -> X, and the build then raised ColumnNotFound against
                 # the very table it was replacing.
-                load_ball_tree(datasource_name, reload=True)
+                # On the website the index waits (`_index_later`): it needs
+                # scipy, a second of WebAssembly before the viewer's first
+                # requests, and nothing on the first screen picks a cell.
+                if _work.threaded():
+                    load_ball_tree(datasource_name, reload=True)
             # Data on disk just changed underneath us (first load or explicit
             # reload) -- any cached GMM/description results are now stale.
             _gmm_cache.clear()
@@ -1788,6 +1799,28 @@ def load_ball_tree(datasource_name_name, reload=False):
     # its own, and an index of these cells would answer its picks.
     if datasource is frame:
         ball_tree = index
+
+
+def _index_later(datasource_name):
+    """The website's cell index: built in a background task once requests
+    have been quiet (plexora/browser/cooperative.py `step`), not on the
+    viewer's boot or with its table. Building it needs scipy (a stage of its
+    own, ~1 s of WebAssembly to load) and, on a large table, seconds of tree
+    building; the first screen picks no cell. A pick before it is built builds
+    it then (`_spatial_index`), as it always could."""
+    _work.spawn(_index_in_background, datasource_name, load_generation, background=True,
+                name=f"spatial-index-{datasource_name}")
+
+
+def _index_in_background(datasource_name, generation):
+    if generation != load_generation or not is_loaded(datasource_name):
+        return
+    if ball_tree is not None or datasource is None or table_preparing(datasource_name):
+        return
+    try:
+        _spatial_index(datasource_name)
+    except Exception as exc:  # noqa: BLE001 -- a pick builds it again, and says why
+        _log.info("Spatial index for %s not built in the background: %s", datasource_name, exc)
 
 
 def _index_over(datasource_name, project, frame, reload=False):

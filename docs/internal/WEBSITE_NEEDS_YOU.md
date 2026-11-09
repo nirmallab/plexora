@@ -4,11 +4,11 @@ Everything the website work (plan `dreamy-brewing-sunset.md`, branch `web/phase0
 is waiting on from you, in one place. Kept current as work lands; the newest
 state is on `web/phase0`. Each item says what to do and what it unblocks.
 **The website is live** at https://viewer.plexoraapp.com since 2026-11-08
-00:40 UTC, now 0.0.42 (`main` at 30a01116, no tag; since 2026-11-09
-11:42 UTC: the website's performance work, docs/internal/bench/web/
-WEBSITE_PERF_2026-11-09.md; 0.0.41, the loader's orb, before it), Pages
+00:40 UTC, now 0.0.43 (`main` at 23a28c08, no tag; since 2026-11-09
+16:05 UTC: the website's performance, round two, docs/internal/bench/web/
+WEBSITE_PERF_2026-11-09.md; 0.0.42, round one, before it), Pages
 project `plexora-viewer`
-branch `release`, bundle `py/0.0.42/`, flags `viewer: on`, telemetry on. 0.0.38 was live for under
+branch `release`, bundle `py/0.0.43/`, flags `viewer: on`, telemetry on. 0.0.38 was live for under
 an hour and did not start Python on the self-check page, in a second tab or
 without sync access handles; its `py/0.0.38/` stays, as every released
 prefix does, and nothing points at it. Activating a licence and AI do not work there until section 1,
@@ -53,8 +53,21 @@ bundle `py/dev/4f583c3b9745/` and, sharing the flags, no longer shows its
 
 ## 2. Cloudflare (dashboard or a wider token)
 
+- **Done 2026-11-09: Browser Cache TTL is "Respect Existing Headers"**, so
+  the site's `_headers` hold (the zone used to serve its scripts as
+  `max-age=14400`, and a returning visitor could run the previous release's
+  JavaScript for 4 hours). The other side of it: Pages' default for the
+  site's files is `max-age=0, must-revalidate`, so a warm visit now asks the
+  CDN about every file (110 of the home page's 113); the site's own
+  `_headers` are to fix that, not the zone.
 - **Cache Rule** on assets.plexoraapp.com for `.wasm` and `.whl` (they show
-  `cf-cache-status: DYNAMIC`, so every first visit reads R2).
+  `cf-cache-status: DYNAMIC`, so every first visit reads R2: measured
+  2026-11-09, 0.2-0.6 s to the first byte and 1.6-4.4 MB/s per file, and the
+  live self-check's first visit downloaded at 1.5 MB/s and started Python in
+  20 s). Every release is a new `py/<version>/`, so every returning visitor
+  fetches the whole bundle (33 MB) again after each release. Rules > Cache
+  Rules > for hostname `assets.plexoraapp.com`: *Eligible for cache*; the
+  objects already say `public, max-age=31536000, immutable`.
 - **Zero Trust Access** on the preview (`plexora-viewer-preview`); it is
   public but unlisted (`noindex`) today.
 - **Cloudflare Web Analytics is injected** into viewer.plexoraapp.com's pages
@@ -169,8 +182,8 @@ bundle `py/dev/4f583c3b9745/` and, sharing the flags, no longer shows its
 - The **next desktop release** from `main` carries the removals (Segment in
   3-D, Carry an ROI through planes), the desktop speed-ups and the new
   telemetry values (the Worker that takes them is deployed). Make it
-  **0.0.43** (`release.py ci --bump patch` from 0.0.42), not a tag of a
-  version the website already has: its `py/0.0.37/` to `py/0.0.42/` are
+  **0.0.44** (`release.py ci --bump patch` from 0.0.43), not a tag of a
+  version the website already has: its `py/0.0.37/` to `py/0.0.43/` are
   published and never rewritten, so once the CI secrets
   exist such a Release run's `web_deploy` would refuse its own rebuild of
   that bundle and hold the release.

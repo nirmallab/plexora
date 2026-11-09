@@ -51,7 +51,7 @@ site with a bundle built from this branch (`tools/browser_build/build.py`), serv
 - The mask pyramid was not rebuilt on reload (`builds: []`; the OPFS copy was mounted).
 - Gating was declined on both arms: this CSV has no Image ID column.
 
-## LSP11385 (40-ch uint16 OME-TIFF, 66.7 GB, 7 levels, label pyramid, 1.26 M cells)
+## LSP11385 (40-ch uint16 OME-TIFF, 66.7 GB, 7 levels, label pyramid, 202,049 cells)
 
 | Measure | Website before | Website after |
 |---|---|---|
@@ -110,6 +110,95 @@ site with a bundle built from this branch (`tools/browser_build/build.py`), serv
 | Wall ≤ 1.5× Python time; no request behind speculative work | LSP 4.2× (was 12.7×); a 1.5 s `display-contrast` step and the 1.1 s scipy stage still delay the first requests |
 | Plugin first open ≤ 1 s | tonsil met except QC (1.06 s); LSP ROI 2.2 s, Cell Explorer 4.1 s, mostly Python work (`/image/requirements` 1.4–1.6 s, Cell Explorer `variables` 1.9 s) |
 | No "Connect a node" toast | met |
+
+(0.0.42 shipped these, 2026-11-09 11:42 UTC.)
+
+## Round two (after 0.0.42)
+
+Branch `feature/website-perf-2`. Records: `data_2026-11-09/*_round2.json`.
+
+**The cell index waits for the first screen.** The cell index (a cKDTree, so
+scipy) was built or read back in `init_database` and inside the table loaded
+behind the viewer. On the website it is now a background task once the
+project is loaded (`data_model._index_later`). A pick made before that task
+runs builds the index itself.
+
+| | 0.0.42 | Round two |
+|---|---|---|
+| Tonsil: viewer drawn / table + mask ready | 1,722 / 1,914 | 1,449 / 1,650 |
+| LSP11385: viewer drawn | 3,352 | 2,052 |
+| LSP11385: `init_database` Python time | 1,131 | 1 |
+| LSP11385: table + mask ready | 3,575 | 5,276 |
+| LSP11385, in isolation: saving a tool's set-up form (reloads the table) | 3,824 first, 1,231 again | 1,286 first, 1,203 again |
+
+The LSP "table + mask ready" moved the other way. The harness opens the
+project the moment Python is up, before the idle preload of the scipy stage
+has run. So the stage now loads inside the first background job that needs it,
+which is display contrast's tissue mask (`image_qc.tissue_mask`, 1.5 → 3.0 s),
+and the status polls wait behind that job. A visitor who picks files first
+gives the preload its pause, and then nothing on the open path pays for scipy.
+
+**Cell Explorer's first `variables`.** It no longer makes text out of every
+value to count a numeric column's distinct values: the text is made only for a
+column that turns out to be categorical (`variables._count_numbers`, equal
+counts by construction, tested against the text path). It also scans the
+installed plugins once, not once per plugin (`cell_exclusions`). On LSP11385
+the first `variables` went from 2,394 ms to about 300 ms in Pyodide, and from
+1,359 to 281 ms in CPython.
+
+**A worker kept in a browser's cache.** The route answers "again later" only
+to a worker that says it follows a retry (`bridge.RETRYABLE`). The site's
+`.js` reach browsers with a 4-hour `max-age` from the zone (WEBSITE_NEEDS_YOU.md
+§2), so an older worker can meet a newer bundle.
+
+**Background work waits for quiet after the boot too.** The worker runs
+background work (a stage preload, a cache warm-up) only after 600 ms without
+a request, counted from the last request. At the end of the boot there had
+been none, so the first background task took the worker at once, and a
+reloaded project's first screen, which the page sends a moment after Python
+is ready, waited behind it: `/config` 786–810 ms behind the scipy preload.
+Now the quiet counts from the boot's end (`pythonWorker.js`).
+
+| Tonsil, ms (`tonsil_web_*.json`) | Round two (2 runs) | Quiet after the boot |
+|---|---|---|
+| Reload: `/config` | 786–810 | 26 |
+| Reload → table and mask ready | 5,152–5,380 | 4,414 |
+| Import / viewer drawn / table + mask ready | 1,599–1,652 / 1,449–1,538 / 1,650–1,741 | 1,556 / 1,435 / 1,630 |
+
+**Tried and backed out: polars as a stage of its own** (commit 20fd6bee).
+Of the base packages' 0.9 s, polars is 0.69 s, and the home page reads no
+table. The app-building modules kept `import polars as pl` at their top (the
+desktop imports every C extension before a request thread exists:
+`data_model.prime_hot_code`), and on the website a stand-in in `sys.modules`
+loaded the stage at the first attribute read, preloaded with scipy in one
+`loadPackage` once the first page was answered. Python was ready 0.55 s
+sooner (reload 3.17 → 2.54–2.68 s) and a first visit fetched 22.9 MB
+instead of 32.8 before it. But nothing a visitor does next works without
+polars, and polars loaded after the boot costs ~0.7 s where it costs ~0.5 s
+beside the other base packages, so a project opened at once landed later:
+
+| ms (`*_quiet_after_boot.json`, `*_polars_stage.json`) | Quiet after the boot | + polars stage |
+|---|---|---|
+| Python ready, reload (`startup_*.jsonl`; the quiet fix does not touch the boot) | 3,161–3,181 | 2,541–2,683 |
+| LSP11385: import | 2,887 | 4,108 |
+| LSP11385: table + mask ready | 5,593 | 6,485 |
+| LSP11385: ROI / Cell Explorer | 4,315 / 3,941 | 4,850 / 4,495 |
+| Tonsil: reload → table and mask ready | 4,414 | 4,614 |
+
+Worth another look if Pyodide's package loading gets cheaper after the boot,
+or if a visit's first seconds stop needing a table.
+
+**Measured, left as it is:**
+- Python's boot, 0.6 s of it: `create_app` 247 ms, chunk cache 107, parquet 75,
+  buckets 53, cooperative 43 ms (`boot.start` now returns `timings`). The rest
+  of the 3.0 s is Pyodide (1.07 s) and the base packages (0.9 s, polars 0.69 s
+  of it; deferring it is above).
+- Warm home, 0.39 s: the frame reloads the loader's five files, then waits two
+  animation frames (the pointer-capture guard), then the home page loads 111
+  files (`base.html`, ~95 scripts) and runs them. Reaching 0.2 s needs a lighter
+  home page or one script file: the page-model phase.
+- `/image/requirements` is 6 ms in Pyodide. The 1.4 s in the tool rows is the
+  POST that saves a tool's set-up form and reloads the table, once per project.
 
 ## Rerun
 

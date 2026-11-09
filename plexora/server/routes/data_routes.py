@@ -301,7 +301,11 @@ _MAX_RETRIES = 150
 
 def _patient():
     """Whether this request may be answered "again later" on the website:
+    when the worker that asked follows a retry (plexora/browser/bridge.py
+    `RETRYABLE`; an older worker a browser kept in its cache does not), and
     until it has been asked again `_MAX_RETRIES` times."""
+    if not request.environ.get('plexora.retryable'):
+        return False
     try:
         return int(request.headers.get('X-Plexora-Retried') or 0) < _MAX_RETRIES
     except ValueError:

@@ -1,0 +1,1753 @@
+{
+ "arm": "website",
+ "fixture": "$PLEXORA_BENCH_WORK/fixture/tonsil",
+ "steps": {
+  "homeMs": 447,
+  "pythonStartedMs": 3323,
+  "fixtureCopyMs": 984,
+  "picked": [
+   "/picked/6600bfb8febf/image.ome.tif",
+   "/picked/6600bfb8febf/mask.tif",
+   "/picked/6600bfb8febf/cells.csv"
+  ],
+  "inspect": {
+   "ms": 641,
+   "status": 200,
+   "layers": [
+    "image:image.ome.tif",
+    "labels:Segmentation mask",
+    "table:Cells"
+   ],
+   "questions": []
+  },
+  "importSample": {
+   "ms": 953,
+   "status": 200,
+   "name": "image"
+  },
+  "importTotalMs": 1599,
+  "pyramidBuilds": [],
+  "viewerPageWrittenMs": 413,
+  "viewerFirstItemMs": 1419,
+  "viewerDrawnMs": 1449,
+  "ready": {
+   "ms": 201,
+   "table": {
+    "error": null,
+    "message": "Cell table ready",
+    "progress": 100,
+    "stage": "ready",
+    "stage_label": "Ready",
+    "status": "ready"
+   },
+   "seg": {
+    "error": null,
+    "message": "Segmentation mask ready",
+    "progress": 100,
+    "scale": 1,
+    "segmentation": "/derived/78b1309fcf2c4c4949437fb5/mask.labels.pyramid.ome.tiff",
+    "stage": "ready",
+    "stage_label": "Ready",
+    "status": "ready"
+   }
+  },
+  "readyTotalMs": 1650,
+  "openTiles": {
+   "n": 3,
+   "p50": 28,
+   "p95": 28,
+   "max": 28,
+   "sumMs": 83,
+   "viaWorker": 0,
+   "local": 3
+  },
+  "openTileFetch": {
+   "requests": 9,
+   "shared": 9,
+   "aborted": 0,
+   "cancelled": 0,
+   "decoded": 9,
+   "failed": 0,
+   "retried": 0,
+   "bytes": 0,
+   "batches": 0,
+   "batchedTiles": 0,
+   "local": 9
+  },
+  "openPython": {
+   "n": 28,
+   "ms": 8524,
+   "py": 186,
+   "routes": {
+    "/project/image/size": {
+     "n": 1,
+     "ms": 795,
+     "py": 3,
+     "max": 795
+    },
+    "/telemetry/status": {
+     "n": 1,
+     "ms": 793,
+     "py": 0,
+     "max": 793
+    },
+    "/get_load_status": {
+     "n": 2,
+     "ms": 790,
+     "py": 0,
+     "max": 681
+    },
+    "/settings/remotes": {
+     "n": 1,
+     "ms": 718,
+     "py": 0,
+     "max": 718
+    },
+    "/data_places": {
+     "n": 1,
+     "ms": 718,
+     "py": 0,
+     "max": 718
+    },
+    "/datasets": {
+     "n": 1,
+     "ms": 703,
+     "py": 1,
+     "max": 703
+    },
+    "/volume/image/info": {
+     "n": 1,
+     "ms": 681,
+     "py": 1,
+     "max": 681
+    },
+    "/view_state/image": {
+     "n": 1,
+     "ms": 681,
+     "py": 1,
+     "max": 681
+    },
+    "/view_transform/image": {
+     "n": 1,
+     "ms": 680,
+     "py": 12,
+     "max": 680
+    },
+    "/config": {
+     "n": 1,
+     "ms": 665,
+     "py": 1,
+     "max": 665
+    },
+    "/<page>": {
+     "n": 1,
+     "ms": 228,
+     "py": 4,
+     "max": 228
+    },
+    "/agent/v1/viewer/sessions": {
+     "n": 1,
+     "ms": 222,
+     "py": 1,
+     "max": 222
+    },
+    "/get_table_status": {
+     "n": 1,
+     "ms": 181,
+     "py": 0,
+     "max": 181
+    },
+    "/init_database": {
+     "n": 1,
+     "ms": 128,
+     "py": 0,
+     "max": 128
+    },
+    "/get_database_description": {
+     "n": 1,
+     "ms": 127,
+     "py": 127,
+     "max": 127
+    },
+    "/save_channel_list": {
+     "n": 1,
+     "ms": 127,
+     "py": 8,
+     "max": 127
+    },
+    "/display_contrast": {
+     "n": 1,
+     "ms": 119,
+     "py": 3,
+     "max": 119
+    },
+    "/display_contrast/compute": {
+     "n": 1,
+     "ms": 111,
+     "py": 2,
+     "max": 111
+    },
+    "/get_channel_names": {
+     "n": 1,
+     "ms": 19,
+     "py": 1,
+     "max": 19
+    },
+    "/project/image/open_elsewhere": {
+     "n": 1,
+     "ms": 18,
+     "py": 13,
+     "max": 18
+    },
+    "/resource_routing": {
+     "n": 1,
+     "ms": 9,
+     "py": 1,
+     "max": 9
+    },
+    "/resource_status": {
+     "n": 1,
+     "ms": 5,
+     "py": 2,
+     "max": 5
+    },
+    "/get_ome_metadata": {
+     "n": 1,
+     "ms": 3,
+     "py": 3,
+     "max": 3
+    },
+    "/project/image/files_here": {
+     "n": 1,
+     "ms": 1,
+     "py": 1,
+     "max": 1
+    },
+    "/get_saved_channel_list": {
+     "n": 1,
+     "ms": 1,
+     "py": 1,
+     "max": 1
+    },
+    "/agent/v1/viewer/sessions/<id>/commands": {
+     "n": 1,
+     "ms": 1,
+     "py": 0,
+     "max": 1
+    },
+    "/get_segmentation_status": {
+     "n": 1,
+     "ms": 0,
+     "py": 0,
+     "max": 0
+    }
+   }
+  },
+  "items": 2,
+  "pyramidBuildsAfter": [
+   {
+    "id": 1,
+    "key": "78b1309fcf2c4c4949437fb5",
+    "name": "mask.labels.pyramid.ome.tiff",
+    "kind": "labels",
+    "state": "done",
+    "tiles": 33,
+    "total": 33,
+    "path": "/derived/78b1309fcf2c4c4949437fb5/mask.labels.pyramid.ome.tiff",
+    "dir": "/derived/78b1309fcf2c4c4949437fb5",
+    "source": "/picked/6600bfb8febf/mask.tif",
+    "where": "browser",
+    "place": "this browser",
+    "error": null,
+    "note": null,
+    "began": 6506.84500002861,
+    "timings": {
+     "pasteMs": 26.524999856948853,
+     "writeMs": 2.350000262260437,
+     "hand": {
+      "readMs": 562.0099999904633,
+      "decodeMs": 1883.3099998235703,
+      "deriveMs": 17.62000000476837
+     },
+     "backlogPeak": 96468992,
+     "totalMs": 156.85999989509583,
+     "bands": 8,
+     "ms": 195
+    },
+    "ms": 230,
+    "mountSent": true,
+    "bytes": 3229520
+   }
+  ],
+  "tour": [
+   {
+    "label": "zoom_quarter_centre",
+    "fullMs": 2,
+    "frameP50": 16.664999999999964,
+    "frameP95": 16.670000000000073,
+    "frameMax": 16.670000000000073,
+    "long": 0,
+    "tiles": {
+     "n": 0,
+     "p50": null,
+     "p95": null,
+     "max": null,
+     "sumMs": 0,
+     "viaWorker": 0,
+     "local": 0
+    }
+   },
+   {
+    "label": "zoom_full_centre",
+    "fullMs": 2,
+    "frameP50": 16.664999999999964,
+    "frameP95": 16.670000000000073,
+    "frameMax": 16.670000000000073,
+    "long": 0,
+    "tiles": {
+     "n": 2,
+     "p50": 18,
+     "p95": 18,
+     "max": 18,
+     "sumMs": 36,
+     "viaWorker": 0,
+     "local": 2
+    }
+   },
+   {
+    "label": "pan_full_b",
+    "fullMs": 1,
+    "frameP50": 16.664999999999964,
+    "frameP95": 16.670000000000073,
+    "frameMax": 16.670000000000073,
+    "long": 0,
+    "tiles": {
+     "n": 3,
+     "p50": 19,
+     "p95": 24,
+     "max": 24,
+     "sumMs": 61,
+     "viaWorker": 0,
+     "local": 3
+    }
+   },
+   {
+    "label": "pan_full_c",
+    "fullMs": 10,
+    "frameP50": 16.664999999999964,
+    "frameP95": 16.670000000000073,
+    "frameMax": 16.670000000000073,
+    "long": 0,
+    "tiles": {
+     "n": 3,
+     "p50": 18,
+     "p95": 22,
+     "max": 22,
+     "sumMs": 56,
+     "viaWorker": 0,
+     "local": 3
+    }
+   },
+   {
+    "label": "anim_zoom_out",
+    "fullMs": 1253,
+    "frameP50": 16.665000000000873,
+    "frameP95": 16.670000000000073,
+    "frameMax": 16.670000000000073,
+    "long": 0,
+    "tiles": {
+     "n": 2,
+     "p50": 15,
+     "p95": 15,
+     "max": 15,
+     "sumMs": 29,
+     "viaWorker": 0,
+     "local": 2
+    }
+   },
+   {
+    "label": "anim_pan",
+    "fullMs": 1239,
+    "frameP50": 16.665000000000873,
+    "frameP95": 16.670000000000073,
+    "frameMax": 16.670000000000073,
+    "long": 0,
+    "tiles": {
+     "n": 0,
+     "p50": null,
+     "p95": null,
+     "max": null,
+     "sumMs": 0,
+     "viaWorker": 0,
+     "local": 0
+    }
+   },
+   {
+    "label": "fit",
+    "fullMs": 1,
+    "frameP50": 16.665000000000873,
+    "frameP95": 16.670000000000073,
+    "frameMax": 16.670000000000073,
+    "long": 0,
+    "tiles": {
+     "n": 0,
+     "p50": null,
+     "p95": null,
+     "max": null,
+     "sumMs": 0,
+     "viaWorker": 0,
+     "local": 0
+    }
+   }
+  ],
+  "tools": [
+   {
+    "tool": "qc",
+    "ms": 998,
+    "result": "ok (asked: Set up Quality Control / Cell ID columnoptional Choose a column… CellID X Y Area DAPI FoxP3 HLA-DR CD103 CHGA EGFR CD206 GFAP PD-1 BCL2 panCK CD45RO CD11b CD56 CD163 CD21 CD8 S100 Vimen)",
+    "scripts": 12,
+    "requests": 17,
+    "panel": [
+     {
+      "n": "/image/tools/qc/panel",
+      "d": 6
+     },
+     {
+      "n": "/image/tools/qc/panel",
+      "d": 9
+     }
+    ],
+    "python": {
+     "n": 5,
+     "ms": 843,
+     "py": 823,
+     "routes": {
+      "/image/requirements": {
+       "n": 1,
+       "ms": 683,
+       "py": 682,
+       "max": 683
+      },
+      "/get_database_description": {
+       "n": 1,
+       "ms": 132,
+       "py": 130,
+       "max": 132
+      },
+      "/config": {
+       "n": 1,
+       "ms": 18,
+       "py": 1,
+       "max": 18
+      },
+      "/<ds>/tools/qc/panel": {
+       "n": 2,
+       "ms": 10,
+       "py": 10,
+       "max": 7
+      }
+     }
+    }
+   },
+   {
+    "tool": "gating",
+    "ms": 4236,
+    "result": "skipped: declined (asked: Before this tool can open / Image ID column Choose a column… This data has only one image CellID X Y Area DAPI FoxP3 HLA-DR CD103 CHGA EGFR CD206 GFAP PD-1 BCL2 panCK CD45RO CD11b CD56 CD1; closed)",
+    "scripts": 0,
+    "requests": 4,
+    "panel": [
+     {
+      "n": "/image/tools/gating/panel",
+      "d": 5
+     },
+     {
+      "n": "/image/tools/gating/requirements",
+      "d": 2
+     }
+    ],
+    "python": {
+     "n": 7,
+     "ms": 1031,
+     "py": 819,
+     "routes": {
+      "/image/requirements": {
+       "n": 1,
+       "ms": 687,
+       "py": 687,
+       "max": 687
+      },
+      "/agent/v1/viewer/sessions/<id>/commands": {
+       "n": 1,
+       "ms": 195,
+       "py": 1,
+       "max": 195
+      },
+      "/get_database_description": {
+       "n": 1,
+       "ms": 117,
+       "py": 117,
+       "max": 117
+      },
+      "/config": {
+       "n": 1,
+       "ms": 23,
+       "py": 9,
+       "max": 23
+      },
+      "/<ds>/tools/gating/panel": {
+       "n": 1,
+       "ms": 4,
+       "py": 3,
+       "max": 4
+      },
+      "/health": {
+       "n": 1,
+       "ms": 4,
+       "py": 1,
+       "max": 4
+      },
+      "/image/tools/gating/requirements": {
+       "n": 1,
+       "ms": 1,
+       "py": 1,
+       "max": 1
+      }
+     }
+    }
+   },
+   {
+    "tool": "roi",
+    "ms": 216,
+    "result": "ok",
+    "scripts": 9,
+    "requests": 13,
+    "panel": [
+     {
+      "n": "/image/tools/roi/panel",
+      "d": 157
+     }
+    ],
+    "python": {
+     "n": 3,
+     "ms": 146,
+     "py": 8,
+     "routes": {
+      "/<ds>/tools/roi/panel": {
+       "n": 1,
+       "ms": 141,
+       "py": 3,
+       "max": 141
+      },
+      "/plugins/roi/api/adapters/destination": {
+       "n": 1,
+       "ms": 3,
+       "py": 3,
+       "max": 3
+      },
+      "/plugins/roi/api/state": {
+       "n": 1,
+       "ms": 2,
+       "py": 2,
+       "max": 2
+      }
+     }
+    }
+   },
+   {
+    "tool": "cell_explorer",
+    "ms": 285,
+    "result": "ok",
+    "scripts": 9,
+    "requests": 15,
+    "panel": [
+     {
+      "n": "/image/tools/cell_explorer/panel",
+      "d": 8
+     }
+    ],
+    "python": {
+     "n": 6,
+     "ms": 248,
+     "py": 75,
+     "routes": {
+      "/plugins/cell_explorer/api/state": {
+       "n": 2,
+       "ms": 121,
+       "py": 4,
+       "max": 119
+      },
+      "/get_all_cells/integer/": {
+       "n": 1,
+       "ms": 54,
+       "py": 18,
+       "max": 54
+      },
+      "/plugins/cell_explorer/api/variables": {
+       "n": 1,
+       "ms": 34,
+       "py": 32,
+       "max": 34
+      },
+      "/plugins/cell_explorer/api/values": {
+       "n": 1,
+       "ms": 33,
+       "py": 15,
+       "max": 33
+      },
+      "/<ds>/tools/cell_explorer/panel": {
+       "n": 1,
+       "ms": 6,
+       "py": 6,
+       "max": 6
+      }
+     }
+    }
+   },
+   {
+    "tool": "figure_builder",
+    "ms": 97,
+    "result": "ok",
+    "scripts": 35,
+    "requests": 40,
+    "panel": [
+     {
+      "n": "/image/tools/figure_builder/panel",
+      "d": 5
+     }
+    ],
+    "python": {
+     "n": 4,
+     "ms": 6,
+     "py": 5,
+     "routes": {
+      "/<ds>/tools/figure_builder/panel": {
+       "n": 1,
+       "ms": 3,
+       "py": 3,
+       "max": 3
+      },
+      "/plugins/figure_builder/api/figures": {
+       "n": 2,
+       "ms": 2,
+       "py": 2,
+       "max": 1
+      },
+      "/plugins/figure_builder/api/captures": {
+       "n": 1,
+       "ms": 1,
+       "py": 0,
+       "max": 1
+      }
+     }
+    }
+   },
+   {
+    "tool": "rotate",
+    "ms": 47,
+    "result": "ok",
+    "scripts": 0,
+    "requests": 1,
+    "panel": [
+     {
+      "n": "/image/tools/rotate/panel",
+      "d": 6
+     }
+    ],
+    "python": {
+     "n": 1,
+     "ms": 4,
+     "py": 4,
+     "routes": {
+      "/<ds>/tools/rotate/panel": {
+       "n": 1,
+       "ms": 4,
+       "py": 4,
+       "max": 4
+      }
+     }
+    }
+   }
+  ],
+  "figuresPageMs": 54,
+  "figuresKeptViewer": true,
+  "backToViewerMs": 109,
+  "viewerBeforeFigures": true,
+  "reloadLoaderAsked": [],
+  "reloadPicks": [
+   {
+    "id": "6600bfb8febf",
+    "kind": "files",
+    "files": 3,
+    "handles": true
+   }
+  ],
+  "reloadPageWrittenMs": 311,
+  "reloadViewerDrawnMs": 438,
+  "reloadReady": {
+   "ms": 4714,
+   "table": {
+    "error": null,
+    "message": "Cell table ready",
+    "progress": 100,
+    "stage": "ready",
+    "stage_label": "Ready",
+    "status": "ready"
+   },
+   "seg": {
+    "error": null,
+    "message": null,
+    "progress": 100,
+    "scale": 1,
+    "segmentation": "/derived/78b1309fcf2c4c4949437fb5/mask.labels.pyramid.ome.tiff",
+    "stage": "ready",
+    "stage_label": "Ready",
+    "status": "ready"
+   }
+  },
+  "reloadTotalMs": 5152,
+  "reloadInfo": {
+   "derived": 1,
+   "store": "opfs",
+   "phases": {
+    "start": 0,
+    "core": 1064,
+    "packages": 1971,
+    "wheels": 2037,
+    "boot": 2037,
+    "ready": 2988
+   }
+  },
+  "reloadBuilds": [],
+  "reloadTiles": {
+   "n": 9,
+   "p50": 25,
+   "p95": 38,
+   "max": 38,
+   "sumMs": 228,
+   "viaWorker": 0,
+   "local": 9
+  },
+  "reloadTileFetch": {
+   "requests": 9,
+   "shared": 9,
+   "aborted": 0,
+   "cancelled": 0,
+   "decoded": 9,
+   "failed": 0,
+   "retried": 0,
+   "bytes": 0,
+   "batches": 0,
+   "batchedTiles": 0,
+   "local": 9
+  },
+  "reloadTour": [
+   {
+    "label": "zoom_quarter_centre",
+    "fullMs": 2,
+    "frameP50": 16.664999999999964,
+    "frameP95": 16.670000000000073,
+    "frameMax": 16.670000000000073,
+    "long": 0,
+    "tiles": {
+     "n": 0,
+     "p50": null,
+     "p95": null,
+     "max": null,
+     "sumMs": 0,
+     "viaWorker": 0,
+     "local": 0
+    }
+   },
+   {
+    "label": "zoom_full_centre",
+    "fullMs": 1,
+    "frameP50": 16.664999999999964,
+    "frameP95": 16.670000000000073,
+    "frameMax": 16.670000000000073,
+    "long": 0,
+    "tiles": {
+     "n": 2,
+     "p50": 24,
+     "p95": 24,
+     "max": 24,
+     "sumMs": 42,
+     "viaWorker": 0,
+     "local": 2
+    }
+   },
+   {
+    "label": "pan_full_b",
+    "fullMs": 2,
+    "frameP50": 16.665000000000873,
+    "frameP95": 16.670000000000073,
+    "frameMax": 16.670000000000073,
+    "long": 0,
+    "tiles": {
+     "n": 3,
+     "p50": 17,
+     "p95": 18,
+     "max": 18,
+     "sumMs": 52,
+     "viaWorker": 0,
+     "local": 3
+    }
+   },
+   {
+    "label": "pan_full_c",
+    "fullMs": 2,
+    "frameP50": 16.665000000000873,
+    "frameP95": 16.670000000000073,
+    "frameMax": 16.670000000000073,
+    "long": 0,
+    "tiles": {
+     "n": 3,
+     "p50": 18,
+     "p95": 47,
+     "max": 47,
+     "sumMs": 81,
+     "viaWorker": 0,
+     "local": 3
+    }
+   },
+   {
+    "label": "anim_zoom_out",
+    "fullMs": 1240,
+    "frameP50": 16.665000000000873,
+    "frameP95": 16.670000000000073,
+    "frameMax": 16.670000000000073,
+    "long": 0,
+    "tiles": {
+     "n": 2,
+     "p50": 13,
+     "p95": 13,
+     "max": 13,
+     "sumMs": 24,
+     "viaWorker": 0,
+     "local": 2
+    }
+   },
+   {
+    "label": "anim_pan",
+    "fullMs": 1248,
+    "frameP50": 16.665000000000873,
+    "frameP95": 16.670000000000073,
+    "frameMax": 16.670000000000073,
+    "long": 0,
+    "tiles": {
+     "n": 0,
+     "p50": null,
+     "p95": null,
+     "max": null,
+     "sumMs": 0,
+     "viaWorker": 0,
+     "local": 0
+    }
+   },
+   {
+    "label": "fit",
+    "fullMs": 2,
+    "frameP50": 16.665000000000873,
+    "frameP95": 16.670000000000073,
+    "frameMax": 16.670000000000073,
+    "long": 0,
+    "tiles": {
+     "n": 0,
+     "p50": null,
+     "p95": null,
+     "max": null,
+     "sumMs": 0,
+     "viaWorker": 0,
+     "local": 0
+    }
+   }
+  ],
+  "heapMB": 631,
+  "perfMemory": 572,
+  "recentTail": [
+   {
+    "p": "/config",
+    "ms": 786,
+    "py": 14
+   },
+   {
+    "p": "/image",
+    "ms": 838,
+    "py": 52
+   },
+   {
+    "p": "/telemetry/status",
+    "ms": 838,
+    "py": 1
+   },
+   {
+    "p": "/project/image/size",
+    "ms": 2015,
+    "py": 1176
+   },
+   {
+    "p": "/settings/remotes",
+    "ms": 2022,
+    "py": 7
+   },
+   {
+    "p": "/datasets",
+    "ms": 2023,
+    "py": 1
+   },
+   {
+    "p": "/project/image/open_elsewhere",
+    "ms": 2024,
+    "py": 1
+   },
+   {
+    "p": "/agent/v1/viewer/sessions/view_400bcdb177e4",
+    "ms": 2025,
+    "py": 0
+   },
+   {
+    "p": "/data_places",
+    "ms": 2025,
+    "py": 0
+   },
+   {
+    "p": "/get_load_status",
+    "ms": 2026,
+    "py": 0
+   },
+   {
+    "p": "/get_load_status",
+    "ms": 2026,
+    "py": 0
+   },
+   {
+    "p": "/get_table_status",
+    "ms": 2026,
+    "py": 0
+   },
+   {
+    "p": "/view_transform/image",
+    "ms": 1252,
+    "py": 12
+   },
+   {
+    "p": "/get_segmentation_status",
+    "ms": 24,
+    "py": 1
+   },
+   {
+    "p": "/volume/image/info",
+    "ms": 15,
+    "py": 1
+   },
+   {
+    "p": "/view_state/image",
+    "ms": 1,
+    "py": 1
+   },
+   {
+    "p": "/resource_routing",
+    "ms": 1,
+    "py": 1
+   },
+   {
+    "p": "/resource_status",
+    "ms": 1,
+    "py": 1
+   },
+   {
+    "p": "/get_channel_names",
+    "ms": 1,
+    "py": 1
+   },
+   {
+    "p": "/get_ome_metadata",
+    "ms": 3,
+    "py": 3
+   },
+   {
+    "p": "/init_database",
+    "ms": 0,
+    "py": 0
+   },
+   {
+    "p": "/get_database_description",
+    "ms": 131,
+    "py": 131
+   },
+   {
+    "p": "/get_saved_channel_list",
+    "ms": 2,
+    "py": 2
+   },
+   {
+    "p": "/get_image_channel_stats",
+    "ms": 14,
+    "py": 14
+   },
+   {
+    "p": "/get_channel_gmm",
+    "ms": 1058,
+    "py": 1058
+   },
+   {
+    "p": "/health",
+    "ms": 1028,
+    "py": 1
+   },
+   {
+    "p": "/display_contrast",
+    "ms": 255,
+    "py": 248
+   },
+   {
+    "p": "/agent/v1/viewer/sessions",
+    "ms": 1,
+    "py": 1
+   },
+   {
+    "p": "/image/tools/rotate/panel",
+    "ms": 2,
+    "py": 2
+   },
+   {
+    "p": "/agent/v1/viewer/sessions/view_400bcdb177e4/commands",
+    "ms": 5,
+    "py": 0
+   },
+   {
+    "p": "/",
+    "ms": 15,
+    "py": 2
+   },
+   {
+    "p": "/config",
+    "ms": 122,
+    "py": 1
+   },
+   {
+    "p": "/image",
+    "ms": 3,
+    "py": 3
+   },
+   {
+    "p": "/view_transform/image",
+    "ms": 1,
+    "py": 1
+   },
+   {
+    "p": "/view_state/image",
+    "ms": 1,
+    "py": 1
+   },
+   {
+    "p": "/resource_routing",
+    "ms": 1,
+    "py": 1
+   },
+   {
+    "p": "/resource_status",
+    "ms": 1,
+    "py": 1
+   },
+   {
+    "p": "/get_saved_channel_list",
+    "ms": 1,
+    "py": 1
+   },
+   {
+    "p": "/display_contrast",
+    "ms": 4,
+    "py": 4
+   },
+   {
+    "p": "/health",
+    "ms": 2,
+    "py": 2
+   },
+   {
+    "p": "/agent/v1/viewer/sessions/view_400bcdb177e4/commands",
+    "ms": 149,
+    "py": 1
+   },
+   {
+    "p": "/health",
+    "ms": 7,
+    "py": 1
+   },
+   {
+    "p": "/agent/v1/viewer/sessions/view_400bcdb177e4/commands",
+    "ms": 2,
+    "py": 2
+   },
+   {
+    "p": "/health",
+    "ms": 1,
+    "py": 1
+   },
+   {
+    "p": "/agent/v1/viewer/sessions/view_400bcdb177e4/commands",
+    "ms": 3,
+    "py": 3
+   },
+   {
+    "p": "/health",
+    "ms": 3,
+    "py": 2
+   },
+   {
+    "p": "/agent/v1/viewer/sessions/view_400bcdb177e4/commands",
+    "ms": 2,
+    "py": 2
+   },
+   {
+    "p": "/health",
+    "ms": 4,
+    "py": 3
+   },
+   {
+    "p": "/agent/v1/viewer/sessions/view_400bcdb177e4/commands",
+    "ms": 2,
+    "py": 2
+   }
+  ],
+  "stepsTail": [
+   {
+    "ms": 39,
+    "names": [
+     "prime-encoders"
+    ],
+    "at": 3094
+   },
+   {
+    "ms": 772,
+    "names": [
+     "stage-scipy"
+    ],
+    "at": 3866
+   },
+   {
+    "ms": 7,
+    "names": [
+     "_warm_datasource_caches"
+    ],
+    "at": 7235
+   },
+   {
+    "ms": 18,
+    "names": [
+     "spatial-index-image"
+    ],
+    "at": 7253
+   },
+   {
+    "ms": 0,
+    "names": [
+     "warm-get_image_channel_stats-DAPI"
+    ],
+    "at": 7254
+   },
+   {
+    "ms": 7,
+    "names": [
+     "warm-get_image_channel_stats-FoxP3"
+    ],
+    "at": 7261
+   },
+   {
+    "ms": 11,
+    "names": [
+     "warm-get_image_channel_stats-HLA-DR"
+    ],
+    "at": 7272
+   },
+   {
+    "ms": 12,
+    "names": [
+     "warm-get_image_channel_stats-CD103"
+    ],
+    "at": 7284
+   },
+   {
+    "ms": 11,
+    "names": [
+     "warm-get_image_channel_stats-CHGA"
+    ],
+    "at": 7295
+   },
+   {
+    "ms": 12,
+    "names": [
+     "warm-get_image_channel_stats-EGFR"
+    ],
+    "at": 7307
+   },
+   {
+    "ms": 8,
+    "names": [
+     "warm-get_image_channel_stats-CD206"
+    ],
+    "at": 7315
+   },
+   {
+    "ms": 1,
+    "names": [
+     "warm-get_image_channel_stats-GFAP"
+    ],
+    "at": 7316
+   },
+   {
+    "ms": 13,
+    "names": [
+     "warm-get_image_channel_stats-PD-1"
+    ],
+    "at": 7329
+   },
+   {
+    "ms": 9,
+    "names": [
+     "warm-get_image_channel_stats-BCL2"
+    ],
+    "at": 7338
+   },
+   {
+    "ms": 8,
+    "names": [
+     "warm-get_image_channel_stats-panCK"
+    ],
+    "at": 7346
+   },
+   {
+    "ms": 13,
+    "names": [
+     "warm-get_image_channel_stats-CD45RO"
+    ],
+    "at": 7359
+   },
+   {
+    "ms": 8,
+    "names": [
+     "warm-get_image_channel_stats-CD11b"
+    ],
+    "at": 7366
+   },
+   {
+    "ms": 9,
+    "names": [
+     "warm-get_image_channel_stats-CD56"
+    ],
+    "at": 7376
+   },
+   {
+    "ms": 3,
+    "names": [
+     "warm-get_image_channel_stats-CD163"
+    ],
+    "at": 7378
+   },
+   {
+    "ms": 10,
+    "names": [
+     "warm-get_image_channel_stats-CD21"
+    ],
+    "at": 7389
+   },
+   {
+    "ms": 3,
+    "names": [
+     "warm-get_image_channel_stats-CD8"
+    ],
+    "at": 7391
+   },
+   {
+    "ms": 6,
+    "names": [
+     "warm-get_image_channel_stats-S100"
+    ],
+    "at": 7397
+   },
+   {
+    "ms": 6,
+    "names": [
+     "warm-get_image_channel_stats-Vimentin"
+    ],
+    "at": 7403
+   },
+   {
+    "ms": 8,
+    "names": [
+     "warm-get_image_channel_stats-PDGFRb"
+    ],
+    "at": 7412
+   },
+   {
+    "ms": 9,
+    "names": [
+     "warm-get_image_channel_stats-CCR7"
+    ],
+    "at": 7421
+   },
+   {
+    "ms": 1,
+    "names": [
+     "warm-get_image_channel_stats-CD57"
+    ],
+    "at": 7422
+   },
+   {
+    "ms": 11,
+    "names": [
+     "warm-get_image_channel_stats-CD34"
+    ],
+    "at": 7433
+   },
+   {
+    "ms": 6,
+    "names": [
+     "warm-get_image_channel_stats-Synaptophysin"
+    ],
+    "at": 7439
+   },
+   {
+    "ms": 3,
+    "names": [
+     "warm-get_image_channel_stats-CD31"
+    ],
+    "at": 7442
+   },
+   {
+    "ms": 8,
+    "names": [
+     "warm-get_image_channel_stats-CXCR5"
+    ],
+    "at": 7451
+   },
+   {
+    "ms": 5,
+    "names": [
+     "warm-get_image_channel_stats-CD3"
+    ],
+    "at": 7456
+   },
+   {
+    "ms": 4,
+    "names": [
+     "warm-get_image_channel_stats-CD38"
+    ],
+    "at": 7460
+   },
+   {
+    "ms": 9,
+    "names": [
+     "warm-get_image_channel_stats-LAG3"
+    ],
+    "at": 7469
+   },
+   {
+    "ms": 8,
+    "names": [
+     "warm-get_image_channel_stats-CD25"
+    ],
+    "at": 7477
+   },
+   {
+    "ms": 11,
+    "names": [
+     "warm-get_image_channel_stats-CD16"
+    ],
+    "at": 7488
+   },
+   {
+    "ms": 3,
+    "names": [
+     "warm-get_image_channel_stats-IL-10"
+    ],
+    "at": 7491
+   },
+   {
+    "ms": 2,
+    "names": [
+     "warm-get_image_channel_stats-Ki67"
+    ],
+    "at": 7493
+   },
+   {
+    "ms": 238,
+    "names": [
+     "warm-get_image_channel_stats-CLEC9A"
+    ],
+    "at": 7731
+   },
+   {
+    "ms": 189,
+    "names": [
+     "warm-get_image_channel_stats-p53"
+    ],
+    "at": 7920
+   },
+   {
+    "ms": 187,
+    "names": [
+     "warm-get_image_channel_stats-CD69"
+    ],
+    "at": 8107
+   },
+   {
+    "ms": 18,
+    "names": [
+     "warm-get_image_channel_stats-CD11c"
+    ],
+    "at": 8736
+   },
+   {
+    "ms": 225,
+    "names": [
+     "warm-get_image_channel_stats-CD68"
+    ],
+    "at": 8960
+   },
+   {
+    "ms": 190,
+    "names": [
+     "warm-get_image_channel_stats-Ox40"
+    ],
+    "at": 9149
+   },
+   {
+    "ms": 209,
+    "names": [
+     "warm-get_image_channel_stats-aSMA"
+    ],
+    "at": 9358
+   },
+   {
+    "ms": 181,
+    "names": [
+     "warm-get_image_channel_stats-CD20"
+    ],
+    "at": 9539
+   },
+   {
+    "ms": 211,
+    "names": [
+     "warm-get_image_channel_stats-CD4"
+    ],
+    "at": 9751
+   },
+   {
+    "ms": 10,
+    "names": [
+     "warm-get_image_channel_stats-MUC-1"
+    ],
+    "at": 10956
+   },
+   {
+    "ms": 252,
+    "names": [
+     "warm-get_image_channel_stats-Podoplanin"
+    ],
+    "at": 11208
+   },
+   {
+    "ms": 197,
+    "names": [
+     "warm-get_image_channel_stats-CD45RA"
+    ],
+    "at": 11406
+   },
+   {
+    "ms": 162,
+    "names": [
+     "warm-get_image_channel_stats-CD15"
+    ],
+    "at": 11568
+   },
+   {
+    "ms": 223,
+    "names": [
+     "warm-get_image_channel_stats-betaCatenin"
+    ],
+    "at": 11790
+   },
+   {
+    "ms": 26,
+    "names": [
+     "warm-get_image_channel_stats-PAX5"
+    ],
+    "at": 12429
+   },
+   {
+    "ms": 224,
+    "names": [
+     "warm-get_image_channel_stats-MCT"
+    ],
+    "at": 12651
+   },
+   {
+    "ms": 205,
+    "names": [
+     "warm-get_image_channel_stats-FAP"
+    ],
+    "at": 12856
+   },
+   {
+    "ms": 182,
+    "names": [
+     "warm-get_image_channel_stats-CD138"
+    ],
+    "at": 13038
+   },
+   {
+    "ms": 222,
+    "names": [
+     "warm-get_image_channel_stats-Tbet"
+    ],
+    "at": 13261
+   },
+   {
+    "ms": 164,
+    "names": [
+     "warm-get_image_channel_stats-GranzymeB"
+    ],
+    "at": 13425
+   },
+   {
+    "ms": 196,
+    "names": [
+     "warm-get_image_channel_stats-IDO-1"
+    ],
+    "at": 13621
+   },
+   {
+    "ms": 223,
+    "names": [
+     "warm-get_image_channel_stats-CD45"
+    ],
+    "at": 13844
+   },
+   {
+    "ms": 185,
+    "names": [
+     "warm-get_image_channel_stats-CollagenIV"
+    ],
+    "at": 14029
+   },
+   {
+    "ms": 209,
+    "names": [
+     "warm-get_image_channel_stats-PD-L1"
+    ],
+    "at": 14238
+   },
+   {
+    "ms": 181,
+    "names": [
+     "warm-get_image_channel_stats-Arginase-1"
+    ],
+    "at": 14420
+   },
+   {
+    "ms": 194,
+    "names": [
+     "warm-get_image_channel_stats-GATA3"
+    ],
+    "at": 14614
+   },
+   {
+    "ms": 0,
+    "names": [
+     "warm-get_channel_gmm-DAPI"
+    ],
+    "at": 14614
+   }
+  ],
+  "handoffs": [],
+  "toasts": [
+   "About the cell mask\n×\n\n/picked/6600bfb8febf is read-only for this account, so the cell-mask pyramid is kept in /derived/78b1309fcf2c4c4949437fb5."
+  ]
+ },
+ "frameNavigations": [
+  {
+   "ms": 148,
+   "url": "http://127.0.0.1:PORT/"
+  },
+  {
+   "ms": 6529,
+   "url": "http://127.0.0.1:PORT/image"
+  },
+  {
+   "ms": 19783,
+   "url": "http://127.0.0.1:PORT/image?tool=qc"
+  },
+  {
+   "ms": 25074,
+   "url": "http://127.0.0.1:PORT/image?tool=roi"
+  },
+  {
+   "ms": 25635,
+   "url": "http://127.0.0.1:PORT/image?tool=cell_explorer"
+  },
+  {
+   "ms": 26335,
+   "url": "http://127.0.0.1:PORT/image?tool=figure_builder"
+  },
+  {
+   "ms": 26809,
+   "url": "http://127.0.0.1:PORT/image?tool=rotate"
+  },
+  {
+   "ms": 27294,
+   "url": "http://127.0.0.1:PORT/plugins/figure_builder/figures"
+  },
+  {
+   "ms": 27305,
+   "url": "http://127.0.0.1:PORT/image?tool=rotate"
+  },
+  {
+   "ms": 27506,
+   "url": "http://127.0.0.1:PORT/image?tool=rotate"
+  }
+ ],
+ "workers": [
+  "http://127.0.0.1:PORT/client/src/js/workers/pythonWorker.js",
+  "ttp://127.0.0.1:50092/client/src/js/workers/pyramidWorker.js",
+  "http://127.0.0.1:PORT/client/dist/tiffWorker_bundle.js",
+  "http://127.0.0.1:PORT/client/dist/tiffWorker_bundle.js",
+  "http://127.0.0.1:PORT/client/dist/tiffWorker_bundle.js",
+  "http://127.0.0.1:PORT/client/dist/tiffWorker_bundle.js",
+  "http://127.0.0.1:PORT/client/dist/tiffWorker_bundle.js",
+  "http://127.0.0.1:PORT/client/dist/tiffWorker_bundle.js",
+  "http://127.0.0.1:PORT/client/dist/tiffWorker_bundle.js",
+  "http://127.0.0.1:PORT/client/dist/tiffWorker_bundle.js",
+  "http://127.0.0.1:PORT/client/src/js/workers/csvWorker.js",
+  "http://127.0.0.1:PORT/client/dist/tiffWorker_bundle.js",
+  "http://127.0.0.1:PORT/client/dist/tiffWorker_bundle.js",
+  "http://127.0.0.1:PORT/client/dist/tiffWorker_bundle.js",
+  "http://127.0.0.1:PORT/client/dist/tiffWorker_bundle.js",
+  "http://127.0.0.1:PORT/client/dist/tiffWorker_bundle.js",
+  "http://127.0.0.1:PORT/client/dist/tiffWorker_bundle.js",
+  "http://127.0.0.1:PORT/client/dist/tiffWorker_bundle.js",
+  "http://127.0.0.1:PORT/client/src/js/workers/tileDecoder.js",
+  "http://127.0.0.1:PORT/client/src/js/workers/tileDecoder.js",
+  "http://127.0.0.1:PORT/client/src/js/workers/tileDecoder.js",
+  "http://127.0.0.1:PORT/client/src/js/workers/tileDecoder.js",
+  "http://127.0.0.1:PORT/client/dist/tiffWorker_bundle.js",
+  "http://127.0.0.1:PORT/client/dist/tiffWorker_bundle.js",
+  "http://127.0.0.1:PORT/client/dist/tiffWorker_bundle.js",
+  "http://127.0.0.1:PORT/client/dist/tiffWorker_bundle.js",
+  "http://127.0.0.1:PORT/client/dist/tiffWorker_bundle.js",
+  "http://127.0.0.1:PORT/client/dist/tiffWorker_bundle.js",
+  "http://127.0.0.1:PORT/client/dist/tiffWorker_bundle.js",
+  "http://127.0.0.1:PORT/client/dist/tiffWorker_bundle.js",
+  "http://127.0.0.1:PORT/client/src/js/workers/csvWorker.js",
+  "http://127.0.0.1:PORT/client/dist/tiffWorker_bundle.js",
+  "http://127.0.0.1:PORT/client/dist/tiffWorker_bundle.js",
+  "http://127.0.0.1:PORT/client/dist/tiffWorker_bundle.js",
+  "http://127.0.0.1:PORT/client/dist/tiffWorker_bundle.js",
+  "http://127.0.0.1:PORT/client/dist/tiffWorker_bundle.js",
+  "http://127.0.0.1:PORT/client/dist/tiffWorker_bundle.js",
+  "http://127.0.0.1:PORT/client/dist/tiffWorker_bundle.js",
+  "http://127.0.0.1:PORT/client/dist/tiffWorker_bundle.js",
+  "http://127.0.0.1:PORT/client/dist/tiffWorker_bundle.js",
+  "http://127.0.0.1:PORT/client/dist/tiffWorker_bundle.js",
+  "http://127.0.0.1:PORT/client/dist/tiffWorker_bundle.js",
+  "http://127.0.0.1:PORT/client/dist/tiffWorker_bundle.js",
+  "http://127.0.0.1:PORT/client/dist/tiffWorker_bundle.js",
+  "http://127.0.0.1:PORT/client/dist/tiffWorker_bundle.js",
+  "http://127.0.0.1:PORT/client/dist/tiffWorker_bundle.js",
+  "http://127.0.0.1:PORT/client/dist/tiffWorker_bundle.js",
+  "http://127.0.0.1:PORT/client/dist/tiffWorker_bundle.js",
+  "http://127.0.0.1:PORT/client/dist/tiffWorker_bundle.js",
+  "http://127.0.0.1:PORT/client/dist/tiffWorker_bundle.js",
+  "http://127.0.0.1:PORT/client/dist/tiffWorker_bundle.js",
+  "http://127.0.0.1:PORT/client/dist/tiffWorker_bundle.js",
+  "http://127.0.0.1:PORT/client/dist/tiffWorker_bundle.js",
+  "http://127.0.0.1:PORT/client/dist/tiffWorker_bundle.js",
+  "http://127.0.0.1:PORT/client/dist/tiffWorker_bundle.js",
+  "http://127.0.0.1:PORT/client/dist/tiffWorker_bundle.js",
+  "http://127.0.0.1:PORT/client/dist/tiffWorker_bundle.js",
+  "http://127.0.0.1:PORT/client/dist/tiffWorker_bundle.js",
+  "http://127.0.0.1:PORT/client/dist/tiffWorker_bundle.js",
+  "http://127.0.0.1:PORT/client/dist/tiffWorker_bundle.js",
+  "http://127.0.0.1:PORT/client/dist/tiffWorker_bundle.js",
+  "http://127.0.0.1:PORT/client/dist/tiffWorker_bundle.js",
+  "http://127.0.0.1:PORT/client/dist/tiffWorker_bundle.js",
+  "http://127.0.0.1:PORT/client/dist/tiffWorker_bundle.js",
+  "http://127.0.0.1:PORT/client/dist/tiffWorker_bundle.js",
+  "http://127.0.0.1:PORT/client/dist/tiffWorker_bundle.js",
+  "http://127.0.0.1:PORT/client/dist/tiffWorker_bundle.js",
+  "http://127.0.0.1:PORT/client/dist/tiffWorker_bundle.js",
+  "http://127.0.0.1:PORT/client/dist/tiffWorker_bundle.js",
+  "http://127.0.0.1:PORT/client/dist/tiffWorker_bundle.js",
+  "http://127.0.0.1:PORT/client/dist/tiffWorker_bundle.js",
+  "http://127.0.0.1:PORT/client/src/js/workers/csvWorker.js",
+  "http://127.0.0.1:PORT/client/src/js/workers/csvWorker.js",
+  "http://127.0.0.1:PORT/client/dist/tiffWorker_bundle.js",
+  "http://127.0.0.1:PORT/client/dist/tiffWorker_bundle.js",
+  "http://127.0.0.1:PORT/client/dist/tiffWorker_bundle.js",
+  "http://127.0.0.1:PORT/client/dist/tiffWorker_bundle.js",
+  "http://127.0.0.1:PORT/client/dist/tiffWorker_bundle.js",
+  "http://127.0.0.1:PORT/client/dist/tiffWorker_bundle.js",
+  "http://127.0.0.1:PORT/client/dist/tiffWorker_bundle.js",
+  "http://127.0.0.1:PORT/client/dist/tiffWorker_bundle.js",
+  "http://127.0.0.1:PORT/client/dist/tiffWorker_bundle.js",
+  "http://127.0.0.1:PORT/client/dist/tiffWorker_bundle.js",
+  "http://127.0.0.1:PORT/client/dist/tiffWorker_bundle.js",
+  "http://127.0.0.1:PORT/client/dist/tiffWorker_bundle.js",
+  "http://127.0.0.1:PORT/client/dist/tiffWorker_bundle.js",
+  "http://127.0.0.1:PORT/client/dist/tiffWorker_bundle.js",
+  "http://127.0.0.1:PORT/client/dist/tiffWorker_bundle.js",
+  "http://127.0.0.1:PORT/client/dist/tiffWorker_bundle.js",
+  "http://127.0.0.1:PORT/client/src/js/workers/pythonWorker.js",
+  "http://127.0.0.1:PORT/client/dist/tiffWorker_bundle.js",
+  "http://127.0.0.1:PORT/client/dist/tiffWorker_bundle.js",
+  "http://127.0.0.1:PORT/client/dist/tiffWorker_bundle.js",
+  "http://127.0.0.1:PORT/client/dist/tiffWorker_bundle.js",
+  "http://127.0.0.1:PORT/client/dist/tiffWorker_bundle.js",
+  "http://127.0.0.1:PORT/client/src/js/workers/tileDecoder.js",
+  "http://127.0.0.1:PORT/client/src/js/workers/tileDecoder.js",
+  "http://127.0.0.1:PORT/client/src/js/workers/tileDecoder.js",
+  "http://127.0.0.1:PORT/client/src/js/workers/tileDecoder.js",
+  "http://127.0.0.1:PORT/client/src/js/workers/csvWorker.js",
+  "http://127.0.0.1:PORT/client/src/js/workers/csvWorker.js",
+  "http://127.0.0.1:PORT/client/dist/tiffWorker_bundle.js",
+  "http://127.0.0.1:PORT/client/dist/tiffWorker_bundle.js",
+  "http://127.0.0.1:PORT/client/dist/tiffWorker_bundle.js",
+  "http://127.0.0.1:PORT/client/dist/tiffWorker_bundle.js",
+  "http://127.0.0.1:PORT/client/dist/tiffWorker_bundle.js",
+  "http://127.0.0.1:PORT/client/dist/tiffWorker_bundle.js",
+  "http://127.0.0.1:PORT/client/dist/tiffWorker_bundle.js",
+  "http://127.0.0.1:PORT/client/dist/tiffWorker_bundle.js",
+  "http://127.0.0.1:PORT/client/dist/tiffWorker_bundle.js",
+  "http://127.0.0.1:PORT/client/dist/tiffWorker_bundle.js",
+  "http://127.0.0.1:PORT/client/dist/tiffWorker_bundle.js",
+  "http://127.0.0.1:PORT/client/dist/tiffWorker_bundle.js",
+  "http://127.0.0.1:PORT/client/dist/tiffWorker_bundle.js",
+  "http://127.0.0.1:PORT/client/dist/tiffWorker_bundle.js",
+  "http://127.0.0.1:PORT/client/dist/tiffWorker_bundle.js",
+  "http://127.0.0.1:PORT/client/dist/tiffWorker_bundle.js",
+  "http://127.0.0.1:PORT/client/dist/tiffWorker_bundle.js",
+  "http://127.0.0.1:PORT/client/dist/tiffWorker_bundle.js",
+  "http://127.0.0.1:PORT/client/dist/tiffWorker_bundle.js",
+  "http://127.0.0.1:PORT/client/dist/tiffWorker_bundle.js",
+  "http://127.0.0.1:PORT/client/dist/tiffWorker_bundle.js",
+  "http://127.0.0.1:PORT/client/dist/tiffWorker_bundle.js",
+  "http://127.0.0.1:PORT/client/dist/tiffWorker_bundle.js",
+  "http://127.0.0.1:PORT/client/dist/tiffWorker_bundle.js",
+  "http://127.0.0.1:PORT/client/dist/tiffWorker_bundle.js",
+  "http://127.0.0.1:PORT/client/dist/tiffWorker_bundle.js",
+  "http://127.0.0.1:PORT/client/dist/tiffWorker_bundle.js",
+  "http://127.0.0.1:PORT/client/dist/tiffWorker_bundle.js",
+  "http://127.0.0.1:PORT/client/dist/tiffWorker_bundle.js",
+  "http://127.0.0.1:PORT/client/dist/tiffWorker_bundle.js",
+  "http://127.0.0.1:PORT/client/dist/tiffWorker_bundle.js",
+  "http://127.0.0.1:PORT/client/dist/tiffWorker_bundle.js"
+ ],
+ "workerBigLogs": [],
+ "bigLogs": {
+  "frame": [],
+  "host": []
+ },
+ "errors": [
+  "Failed to load resource: the server responded with a status of 404 ()"
+ ]
+}

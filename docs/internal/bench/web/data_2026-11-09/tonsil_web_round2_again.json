@@ -1,0 +1,1838 @@
+{
+ "arm": "website",
+ "fixture": "$PLEXORA_BENCH_WORK/fixture/tonsil",
+ "steps": {
+  "homeMs": 445,
+  "pythonStartedMs": 3303,
+  "fixtureCopyMs": 882,
+  "picked": [
+   "/picked/bd94da7f5727/image.ome.tif",
+   "/picked/bd94da7f5727/mask.tif",
+   "/picked/bd94da7f5727/cells.csv"
+  ],
+  "inspect": {
+   "ms": 636,
+   "status": 200,
+   "layers": [
+    "image:image.ome.tif",
+    "labels:Segmentation mask",
+    "table:Cells"
+   ],
+   "questions": []
+  },
+  "importSample": {
+   "ms": 1010,
+   "status": 200,
+   "name": "image"
+  },
+  "importTotalMs": 1652,
+  "pyramidBuilds": [],
+  "viewerPageWrittenMs": 516,
+  "viewerFirstItemMs": 1512,
+  "viewerDrawnMs": 1538,
+  "ready": {
+   "ms": 203,
+   "table": {
+    "error": null,
+    "message": "Cell table ready",
+    "progress": 100,
+    "stage": "ready",
+    "stage_label": "Ready",
+    "status": "ready"
+   },
+   "seg": {
+    "error": null,
+    "message": "Segmentation mask ready",
+    "progress": 100,
+    "scale": 1,
+    "segmentation": "/derived/96d1d56c9d2e69b707ab6741/mask.labels.pyramid.ome.tiff",
+    "stage": "ready",
+    "stage_label": "Ready",
+    "status": "ready"
+   }
+  },
+  "readyTotalMs": 1741,
+  "openTiles": {
+   "n": 3,
+   "p50": 32,
+   "p95": 33,
+   "max": 33,
+   "sumMs": 94,
+   "viaWorker": 0,
+   "local": 3
+  },
+  "openTileFetch": {
+   "requests": 9,
+   "shared": 9,
+   "aborted": 0,
+   "cancelled": 0,
+   "decoded": 9,
+   "failed": 0,
+   "retried": 0,
+   "bytes": 0,
+   "batches": 0,
+   "batchedTiles": 0,
+   "local": 9
+  },
+  "openPython": {
+   "n": 28,
+   "ms": 8289,
+   "py": 209,
+   "routes": {
+    "/telemetry/status": {
+     "n": 1,
+     "ms": 860,
+     "py": 1,
+     "max": 860
+    },
+    "/project/image/size": {
+     "n": 1,
+     "ms": 859,
+     "py": 4,
+     "max": 859
+    },
+    "/get_load_status": {
+     "n": 2,
+     "ms": 745,
+     "py": 1,
+     "max": 626
+    },
+    "/settings/remotes": {
+     "n": 1,
+     "ms": 681,
+     "py": 1,
+     "max": 681
+    },
+    "/data_places": {
+     "n": 1,
+     "ms": 680,
+     "py": 0,
+     "max": 680
+    },
+    "/datasets": {
+     "n": 1,
+     "ms": 655,
+     "py": 1,
+     "max": 655
+    },
+    "/view_state/image": {
+     "n": 1,
+     "ms": 625,
+     "py": 1,
+     "max": 625
+    },
+    "/volume/image/info": {
+     "n": 1,
+     "ms": 624,
+     "py": 1,
+     "max": 624
+    },
+    "/view_transform/image": {
+     "n": 1,
+     "ms": 623,
+     "py": 15,
+     "max": 623
+    },
+    "/config": {
+     "n": 1,
+     "ms": 610,
+     "py": 1,
+     "max": 610
+    },
+    "/<page>": {
+     "n": 1,
+     "ms": 249,
+     "py": 5,
+     "max": 249
+    },
+    "/get_table_status": {
+     "n": 1,
+     "ms": 177,
+     "py": 1,
+     "max": 177
+    },
+    "/init_database": {
+     "n": 1,
+     "ms": 135,
+     "py": 1,
+     "max": 135
+    },
+    "/get_database_description": {
+     "n": 1,
+     "ms": 134,
+     "py": 134,
+     "max": 134
+    },
+    "/agent/v1/viewer/sessions": {
+     "n": 1,
+     "ms": 128,
+     "py": 1,
+     "max": 128
+    },
+    "/save_channel_list": {
+     "n": 1,
+     "ms": 127,
+     "py": 8,
+     "max": 127
+    },
+    "/display_contrast": {
+     "n": 1,
+     "ms": 119,
+     "py": 5,
+     "max": 119
+    },
+    "/display_contrast/compute": {
+     "n": 1,
+     "ms": 110,
+     "py": 2,
+     "max": 110
+    },
+    "/agent/v1/viewer/sessions/<id>/commands": {
+     "n": 1,
+     "ms": 104,
+     "py": 1,
+     "max": 104
+    },
+    "/get_channel_names": {
+     "n": 1,
+     "ms": 17,
+     "py": 12,
+     "max": 17
+    },
+    "/resource_routing": {
+     "n": 1,
+     "ms": 12,
+     "py": 2,
+     "max": 12
+    },
+    "/project/image/open_elsewhere": {
+     "n": 1,
+     "ms": 5,
+     "py": 2,
+     "max": 5
+    },
+    "/get_ome_metadata": {
+     "n": 1,
+     "ms": 4,
+     "py": 4,
+     "max": 4
+    },
+    "/resource_status": {
+     "n": 1,
+     "ms": 2,
+     "py": 2,
+     "max": 2
+    },
+    "/get_saved_channel_list": {
+     "n": 1,
+     "ms": 2,
+     "py": 1,
+     "max": 2
+    },
+    "/project/image/files_here": {
+     "n": 1,
+     "ms": 1,
+     "py": 1,
+     "max": 1
+    },
+    "/get_segmentation_status": {
+     "n": 1,
+     "ms": 1,
+     "py": 1,
+     "max": 1
+    }
+   }
+  },
+  "items": 2,
+  "pyramidBuildsAfter": [
+   {
+    "id": 1,
+    "key": "96d1d56c9d2e69b707ab6741",
+    "name": "mask.labels.pyramid.ome.tiff",
+    "kind": "labels",
+    "state": "done",
+    "tiles": 33,
+    "total": 33,
+    "path": "/derived/96d1d56c9d2e69b707ab6741/mask.labels.pyramid.ome.tiff",
+    "dir": "/derived/96d1d56c9d2e69b707ab6741",
+    "source": "/picked/bd94da7f5727/mask.tif",
+    "where": "browser",
+    "place": "this browser",
+    "error": null,
+    "note": null,
+    "began": 6525.459999918938,
+    "timings": {
+     "pasteMs": 20.83999991416931,
+     "writeMs": 2.215000033378601,
+     "hand": {
+      "readMs": 589.3899998664856,
+      "decodeMs": 2133.9549998044968,
+      "deriveMs": 17.804999828338623
+     },
+     "backlogPeak": 79691776,
+     "totalMs": 181.31500005722046,
+     "bands": 8,
+     "ms": 220
+    },
+    "ms": 252,
+    "mountSent": true,
+    "bytes": 3229520
+   }
+  ],
+  "tour": [
+   {
+    "label": "zoom_quarter_centre",
+    "fullMs": 2,
+    "frameP50": 16.664999999999964,
+    "frameP95": 16.670000000000073,
+    "frameMax": 16.670000000000073,
+    "long": 0,
+    "tiles": {
+     "n": 0,
+     "p50": null,
+     "p95": null,
+     "max": null,
+     "sumMs": 0,
+     "viaWorker": 0,
+     "local": 0
+    }
+   },
+   {
+    "label": "zoom_full_centre",
+    "fullMs": 2,
+    "frameP50": 16.664999999999964,
+    "frameP95": 16.670000000000073,
+    "frameMax": 16.670000000000073,
+    "long": 0,
+    "tiles": {
+     "n": 2,
+     "p50": 20,
+     "p95": 20,
+     "max": 20,
+     "sumMs": 40,
+     "viaWorker": 0,
+     "local": 2
+    }
+   },
+   {
+    "label": "pan_full_b",
+    "fullMs": 2,
+    "frameP50": 16.664999999999964,
+    "frameP95": 16.670000000000073,
+    "frameMax": 16.670000000000073,
+    "long": 0,
+    "tiles": {
+     "n": 3,
+     "p50": 18,
+     "p95": 19,
+     "max": 19,
+     "sumMs": 54,
+     "viaWorker": 0,
+     "local": 3
+    }
+   },
+   {
+    "label": "pan_full_c",
+    "fullMs": 4,
+    "frameP50": 16.664999999999964,
+    "frameP95": 16.670000000000073,
+    "frameMax": 16.670000000000073,
+    "long": 0,
+    "tiles": {
+     "n": 3,
+     "p50": 22,
+     "p95": 30,
+     "max": 30,
+     "sumMs": 71,
+     "viaWorker": 0,
+     "local": 3
+    }
+   },
+   {
+    "label": "anim_zoom_out",
+    "fullMs": 1212,
+    "frameP50": 16.665000000000873,
+    "frameP95": 16.670000000000073,
+    "frameMax": 16.670000000000073,
+    "long": 0,
+    "tiles": {
+     "n": 2,
+     "p50": 13,
+     "p95": 13,
+     "max": 13,
+     "sumMs": 25,
+     "viaWorker": 0,
+     "local": 2
+    }
+   },
+   {
+    "label": "anim_pan",
+    "fullMs": 1249,
+    "frameP50": 16.665000000000873,
+    "frameP95": 16.670000000000073,
+    "frameMax": 16.670000000000073,
+    "long": 0,
+    "tiles": {
+     "n": 0,
+     "p50": null,
+     "p95": null,
+     "max": null,
+     "sumMs": 0,
+     "viaWorker": 0,
+     "local": 0
+    }
+   },
+   {
+    "label": "fit",
+    "fullMs": 1,
+    "frameP50": 16.665000000000873,
+    "frameP95": 16.670000000000073,
+    "frameMax": 16.670000000000073,
+    "long": 0,
+    "tiles": {
+     "n": 0,
+     "p50": null,
+     "p95": null,
+     "max": null,
+     "sumMs": 0,
+     "viaWorker": 0,
+     "local": 0
+    }
+   }
+  ],
+  "tools": [
+   {
+    "tool": "qc",
+    "ms": 1033,
+    "result": "ok (asked: Set up Quality Control / Cell ID columnoptional Choose a column… CellID X Y Area DAPI FoxP3 HLA-DR CD103 CHGA EGFR CD206 GFAP PD-1 BCL2 panCK CD45RO CD11b CD56 CD163 CD21 CD8 S100 Vimen)",
+    "scripts": 12,
+    "requests": 17,
+    "panel": [
+     {
+      "n": "/image/tools/qc/panel",
+      "d": 7
+     },
+     {
+      "n": "/image/tools/qc/panel",
+      "d": 10
+     }
+    ],
+    "python": {
+     "n": 5,
+     "ms": 874,
+     "py": 851,
+     "routes": {
+      "/image/requirements": {
+       "n": 1,
+       "ms": 713,
+       "py": 713,
+       "max": 713
+      },
+      "/get_database_description": {
+       "n": 1,
+       "ms": 130,
+       "py": 123,
+       "max": 130
+      },
+      "/config": {
+       "n": 1,
+       "ms": 18,
+       "py": 5,
+       "max": 18
+      },
+      "/<ds>/tools/qc/panel": {
+       "n": 2,
+       "ms": 13,
+       "py": 10,
+       "max": 9
+      }
+     }
+    }
+   },
+   {
+    "tool": "gating",
+    "ms": 4235,
+    "result": "skipped: declined (asked: Before this tool can open / Image ID column Choose a column… This data has only one image CellID X Y Area DAPI FoxP3 HLA-DR CD103 CHGA EGFR CD206 GFAP PD-1 BCL2 panCK CD45RO CD11b CD56 CD1; closed)",
+    "scripts": 0,
+    "requests": 4,
+    "panel": [
+     {
+      "n": "/image/tools/gating/panel",
+      "d": 5
+     },
+     {
+      "n": "/image/tools/gating/requirements",
+      "d": 2
+     }
+    ],
+    "python": {
+     "n": 7,
+     "ms": 1253,
+     "py": 849,
+     "routes": {
+      "/image/requirements": {
+       "n": 1,
+       "ms": 713,
+       "py": 713,
+       "max": 713
+      },
+      "/health": {
+       "n": 1,
+       "ms": 272,
+       "py": 1,
+       "max": 272
+      },
+      "/get_database_description": {
+       "n": 1,
+       "ms": 120,
+       "py": 120,
+       "max": 120
+      },
+      "/agent/v1/viewer/sessions/<id>/commands": {
+       "n": 1,
+       "ms": 118,
+       "py": 1,
+       "max": 118
+      },
+      "/config": {
+       "n": 1,
+       "ms": 26,
+       "py": 10,
+       "max": 26
+      },
+      "/<ds>/tools/gating/panel": {
+       "n": 1,
+       "ms": 3,
+       "py": 3,
+       "max": 3
+      },
+      "/image/tools/gating/requirements": {
+       "n": 1,
+       "ms": 1,
+       "py": 1,
+       "max": 1
+      }
+     }
+    }
+   },
+   {
+    "tool": "roi",
+    "ms": 171,
+    "result": "ok",
+    "scripts": 9,
+    "requests": 13,
+    "panel": [
+     {
+      "n": "/image/tools/roi/panel",
+      "d": 109
+     }
+    ],
+    "python": {
+     "n": 3,
+     "ms": 100,
+     "py": 8,
+     "routes": {
+      "/<ds>/tools/roi/panel": {
+       "n": 1,
+       "ms": 95,
+       "py": 3,
+       "max": 95
+      },
+      "/plugins/roi/api/adapters/destination": {
+       "n": 1,
+       "ms": 3,
+       "py": 3,
+       "max": 3
+      },
+      "/plugins/roi/api/state": {
+       "n": 1,
+       "ms": 2,
+       "py": 2,
+       "max": 2
+      }
+     }
+    }
+   },
+   {
+    "tool": "cell_explorer",
+    "ms": 299,
+    "result": "ok",
+    "scripts": 9,
+    "requests": 16,
+    "panel": [
+     {
+      "n": "/image/tools/cell_explorer/panel",
+      "d": 7
+     }
+    ],
+    "python": {
+     "n": 6,
+     "ms": 149,
+     "py": 70,
+     "routes": {
+      "/get_all_cells/integer/": {
+       "n": 1,
+       "ms": 51,
+       "py": 17,
+       "max": 51
+      },
+      "/plugins/cell_explorer/api/variables": {
+       "n": 1,
+       "ms": 32,
+       "py": 29,
+       "max": 32
+      },
+      "/plugins/cell_explorer/api/values": {
+       "n": 1,
+       "ms": 31,
+       "py": 14,
+       "max": 31
+      },
+      "/plugins/cell_explorer/api/state": {
+       "n": 2,
+       "ms": 29,
+       "py": 5,
+       "max": 23
+      },
+      "/<ds>/tools/cell_explorer/panel": {
+       "n": 1,
+       "ms": 6,
+       "py": 5,
+       "max": 6
+      }
+     }
+    }
+   },
+   {
+    "tool": "figure_builder",
+    "ms": 306,
+    "result": "ok",
+    "scripts": 35,
+    "requests": 40,
+    "panel": [
+     {
+      "n": "/image/tools/figure_builder/panel",
+      "d": 201
+     }
+    ],
+    "python": {
+     "n": 4,
+     "ms": 179,
+     "py": 5,
+     "routes": {
+      "/<ds>/tools/figure_builder/panel": {
+       "n": 1,
+       "ms": 168,
+       "py": 1,
+       "max": 168
+      },
+      "/plugins/figure_builder/api/captures": {
+       "n": 1,
+       "ms": 6,
+       "py": 1,
+       "max": 6
+      },
+      "/plugins/figure_builder/api/figures": {
+       "n": 2,
+       "ms": 5,
+       "py": 3,
+       "max": 4
+      }
+     }
+    }
+   },
+   {
+    "tool": "rotate",
+    "ms": 50,
+    "result": "ok",
+    "scripts": 0,
+    "requests": 1,
+    "panel": [
+     {
+      "n": "/image/tools/rotate/panel",
+      "d": 10
+     }
+    ],
+    "python": {
+     "n": 2,
+     "ms": 6,
+     "py": 6,
+     "routes": {
+      "/<ds>/tools/rotate/panel": {
+       "n": 1,
+       "ms": 5,
+       "py": 5,
+       "max": 5
+      },
+      "/health": {
+       "n": 1,
+       "ms": 1,
+       "py": 1,
+       "max": 1
+      }
+     }
+    }
+   }
+  ],
+  "figuresPageMs": 69,
+  "figuresKeptViewer": true,
+  "backToViewerMs": 111,
+  "viewerBeforeFigures": true,
+  "reloadLoaderAsked": [],
+  "reloadPicks": [
+   {
+    "id": "bd94da7f5727",
+    "kind": "files",
+    "files": 3,
+    "handles": true
+   }
+  ],
+  "reloadPageWrittenMs": 369,
+  "reloadViewerDrawnMs": 530,
+  "reloadReady": {
+   "ms": 4850,
+   "table": {
+    "error": null,
+    "message": "Cell table ready",
+    "progress": 100,
+    "stage": "ready",
+    "stage_label": "Ready",
+    "status": "ready"
+   },
+   "seg": {
+    "error": null,
+    "message": null,
+    "progress": 100,
+    "scale": 1,
+    "segmentation": "/derived/96d1d56c9d2e69b707ab6741/mask.labels.pyramid.ome.tiff",
+    "stage": "ready",
+    "stage_label": "Ready",
+    "status": "ready"
+   }
+  },
+  "reloadTotalMs": 5380,
+  "reloadInfo": {
+   "derived": 1,
+   "store": "opfs",
+   "phases": {
+    "start": 0,
+    "core": 1098,
+    "packages": 2033,
+    "wheels": 2100,
+    "boot": 2100,
+    "ready": 3094
+   }
+  },
+  "reloadBuilds": [],
+  "reloadTiles": {
+   "n": 9,
+   "p50": 30,
+   "p95": 39,
+   "max": 39,
+   "sumMs": 233,
+   "viaWorker": 0,
+   "local": 9
+  },
+  "reloadTileFetch": {
+   "requests": 9,
+   "shared": 9,
+   "aborted": 0,
+   "cancelled": 0,
+   "decoded": 9,
+   "failed": 0,
+   "retried": 0,
+   "bytes": 0,
+   "batches": 0,
+   "batchedTiles": 0,
+   "local": 9
+  },
+  "reloadTour": [
+   {
+    "label": "zoom_quarter_centre",
+    "fullMs": 3,
+    "frameP50": 16.664999999999964,
+    "frameP95": 16.670000000000073,
+    "frameMax": 16.670000000000073,
+    "long": 0,
+    "tiles": {
+     "n": 0,
+     "p50": null,
+     "p95": null,
+     "max": null,
+     "sumMs": 0,
+     "viaWorker": 0,
+     "local": 0
+    }
+   },
+   {
+    "label": "zoom_full_centre",
+    "fullMs": 2,
+    "frameP50": 16.664999999999964,
+    "frameP95": 16.670000000000073,
+    "frameMax": 16.670000000000073,
+    "long": 0,
+    "tiles": {
+     "n": 2,
+     "p50": 22,
+     "p95": 22,
+     "max": 22,
+     "sumMs": 39,
+     "viaWorker": 0,
+     "local": 2
+    }
+   },
+   {
+    "label": "pan_full_b",
+    "fullMs": 20,
+    "frameP50": 16.665000000000873,
+    "frameP95": 16.670000000000073,
+    "frameMax": 16.670000000000073,
+    "long": 0,
+    "tiles": {
+     "n": 3,
+     "p50": 18,
+     "p95": 21,
+     "max": 21,
+     "sumMs": 56,
+     "viaWorker": 0,
+     "local": 3
+    }
+   },
+   {
+    "label": "pan_full_c",
+    "fullMs": 1,
+    "frameP50": 16.665000000000873,
+    "frameP95": 16.670000000000073,
+    "frameMax": 16.670000000000073,
+    "long": 0,
+    "tiles": {
+     "n": 3,
+     "p50": 16,
+     "p95": 18,
+     "max": 18,
+     "sumMs": 49,
+     "viaWorker": 0,
+     "local": 3
+    }
+   },
+   {
+    "label": "anim_zoom_out",
+    "fullMs": 1246,
+    "frameP50": 16.665000000000873,
+    "frameP95": 16.670000000000073,
+    "frameMax": 16.670000000000073,
+    "long": 0,
+    "tiles": {
+     "n": 2,
+     "p50": 35,
+     "p95": 35,
+     "max": 35,
+     "sumMs": 57,
+     "viaWorker": 0,
+     "local": 2
+    }
+   },
+   {
+    "label": "anim_pan",
+    "fullMs": 1210,
+    "frameP50": 16.665000000000873,
+    "frameP95": 16.670000000000073,
+    "frameMax": 16.670000000000073,
+    "long": 0,
+    "tiles": {
+     "n": 0,
+     "p50": null,
+     "p95": null,
+     "max": null,
+     "sumMs": 0,
+     "viaWorker": 0,
+     "local": 0
+    }
+   },
+   {
+    "label": "fit",
+    "fullMs": 2,
+    "frameP50": 16.665000000000873,
+    "frameP95": 16.670000000000073,
+    "frameMax": 16.670000000000073,
+    "long": 0,
+    "tiles": {
+     "n": 0,
+     "p50": null,
+     "p95": null,
+     "max": null,
+     "sumMs": 0,
+     "viaWorker": 0,
+     "local": 0
+    }
+   }
+  ],
+  "heapMB": 626,
+  "perfMemory": 566,
+  "recentTail": [
+   {
+    "p": "/config",
+    "ms": 810,
+    "py": 14,
+    "at": 3243
+   },
+   {
+    "p": "/image",
+    "ms": 864,
+    "py": 54,
+    "at": 3243
+   },
+   {
+    "p": "/telemetry/status",
+    "ms": 865,
+    "py": 1,
+    "at": 3243
+   },
+   {
+    "p": "/project/image/size",
+    "ms": 2092,
+    "py": 1227,
+    "at": 3243
+   },
+   {
+    "p": "/settings/remotes",
+    "ms": 2100,
+    "py": 8,
+    "at": 3243
+   },
+   {
+    "p": "/datasets",
+    "ms": 2101,
+    "py": 1,
+    "at": 3243
+   },
+   {
+    "p": "/project/image/open_elsewhere",
+    "ms": 2102,
+    "py": 1,
+    "at": 3243
+   },
+   {
+    "p": "/agent/v1/viewer/sessions/view_31109ec2a9a7",
+    "ms": 2103,
+    "py": 0,
+    "at": 3243
+   },
+   {
+    "p": "/data_places",
+    "ms": 2103,
+    "py": 0,
+    "at": 3243
+   },
+   {
+    "p": "/get_load_status",
+    "ms": 2103,
+    "py": 0,
+    "at": 3243
+   },
+   {
+    "p": "/get_load_status",
+    "ms": 2104,
+    "py": 0,
+    "at": 3243
+   },
+   {
+    "p": "/get_table_status",
+    "ms": 2104,
+    "py": 0,
+    "at": 3243
+   },
+   {
+    "p": "/view_transform/image",
+    "ms": 1305,
+    "py": 12,
+    "at": 4054
+   },
+   {
+    "p": "/get_segmentation_status",
+    "ms": 24,
+    "py": 1,
+    "at": 5349
+   },
+   {
+    "p": "/volume/image/info",
+    "ms": 15,
+    "py": 1,
+    "at": 5359
+   },
+   {
+    "p": "/view_state/image",
+    "ms": 1,
+    "py": 1,
+    "at": 5374
+   },
+   {
+    "p": "/resource_routing",
+    "ms": 1,
+    "py": 1,
+    "at": 5376
+   },
+   {
+    "p": "/resource_status",
+    "ms": 2,
+    "py": 2,
+    "at": 5377
+   },
+   {
+    "p": "/get_channel_names",
+    "ms": 1,
+    "py": 1,
+    "at": 5378
+   },
+   {
+    "p": "/get_ome_metadata",
+    "ms": 3,
+    "py": 3,
+    "at": 5379
+   },
+   {
+    "p": "/get_database_description",
+    "ms": 135,
+    "py": 134,
+    "at": 5382
+   },
+   {
+    "p": "/health",
+    "ms": 110,
+    "py": 0,
+    "at": 5408
+   },
+   {
+    "p": "/init_database",
+    "ms": 1,
+    "py": 0,
+    "at": 5518
+   },
+   {
+    "p": "/get_saved_channel_list",
+    "ms": 2,
+    "py": 2,
+    "at": 5519
+   },
+   {
+    "p": "/get_image_channel_stats",
+    "ms": 15,
+    "py": 14,
+    "at": 5521
+   },
+   {
+    "p": "/get_channel_gmm",
+    "ms": 1092,
+    "py": 1092,
+    "at": 5536
+   },
+   {
+    "p": "/display_contrast",
+    "ms": 256,
+    "py": 251,
+    "at": 6628
+   },
+   {
+    "p": "/agent/v1/viewer/sessions",
+    "ms": 1,
+    "py": 1,
+    "at": 6890
+   },
+   {
+    "p": "/image/tools/rotate/panel",
+    "ms": 2,
+    "py": 2,
+    "at": 6891
+   },
+   {
+    "p": "/agent/v1/viewer/sessions/view_31109ec2a9a7/commands",
+    "ms": 6,
+    "py": 0,
+    "at": 6892
+   },
+   {
+    "p": "/",
+    "ms": 159,
+    "py": 2,
+    "at": 8245
+   },
+   {
+    "p": "/health",
+    "ms": 50,
+    "py": 1,
+    "at": 10409
+   },
+   {
+    "p": "/agent/v1/viewer/sessions/view_31109ec2a9a7/commands",
+    "ms": 30,
+    "py": 1,
+    "at": 11903
+   },
+   {
+    "p": "/config",
+    "ms": 9,
+    "py": 3,
+    "at": 14407
+   },
+   {
+    "p": "/image",
+    "ms": 6,
+    "py": 6,
+    "at": 14416
+   },
+   {
+    "p": "/view_transform/image",
+    "ms": 2,
+    "py": 2,
+    "at": 14422
+   },
+   {
+    "p": "/view_state/image",
+    "ms": 2,
+    "py": 1,
+    "at": 14424
+   },
+   {
+    "p": "/resource_routing",
+    "ms": 1,
+    "py": 1,
+    "at": 14426
+   },
+   {
+    "p": "/resource_status",
+    "ms": 2,
+    "py": 2,
+    "at": 14427
+   },
+   {
+    "p": "/get_saved_channel_list",
+    "ms": 1,
+    "py": 1,
+    "at": 14429
+   },
+   {
+    "p": "/display_contrast",
+    "ms": 6,
+    "py": 6,
+    "at": 14431
+   },
+   {
+    "p": "/health",
+    "ms": 2,
+    "py": 2,
+    "at": 15409
+   },
+   {
+    "p": "/agent/v1/viewer/sessions/view_31109ec2a9a7/commands",
+    "ms": 1,
+    "py": 1,
+    "at": 16943
+   },
+   {
+    "p": "/health",
+    "ms": 2,
+    "py": 2,
+    "at": 20409
+   },
+   {
+    "p": "/agent/v1/viewer/sessions/view_31109ec2a9a7/commands",
+    "ms": 3,
+    "py": 3,
+    "at": 21950
+   },
+   {
+    "p": "/health",
+    "ms": 2,
+    "py": 2,
+    "at": 25410
+   },
+   {
+    "p": "/agent/v1/viewer/sessions/view_31109ec2a9a7/commands",
+    "ms": 3,
+    "py": 2,
+    "at": 26960
+   },
+   {
+    "p": "/health",
+    "ms": 3,
+    "py": 2,
+    "at": 30410
+   },
+   {
+    "p": "/agent/v1/viewer/sessions/view_31109ec2a9a7/commands",
+    "ms": 3,
+    "py": 2,
+    "at": 31966
+   }
+  ],
+  "stages": [
+   {
+    "stage": "scipy",
+    "importer": "plexora.browser.boot",
+    "ms": 787,
+    "at": 4031
+   },
+   {
+    "stage": "fit",
+    "importer": "plexora.server.models.data_model",
+    "ms": 466,
+    "at": 6006
+   }
+  ],
+  "stepsTail": [
+   {
+    "ms": 39,
+    "names": [
+     "prime-encoders"
+    ],
+    "at": 3242
+   },
+   {
+    "ms": 796,
+    "names": [
+     "stage-scipy"
+    ],
+    "at": 4039
+   },
+   {
+    "ms": 5,
+    "names": [
+     "_warm_datasource_caches"
+    ],
+    "at": 7499
+   },
+   {
+    "ms": 17,
+    "names": [
+     "spatial-index-image"
+    ],
+    "at": 7517
+   },
+   {
+    "ms": 0,
+    "names": [
+     "warm-get_image_channel_stats-DAPI"
+    ],
+    "at": 7517
+   },
+   {
+    "ms": 7,
+    "names": [
+     "warm-get_image_channel_stats-FoxP3"
+    ],
+    "at": 7524
+   },
+   {
+    "ms": 12,
+    "names": [
+     "warm-get_image_channel_stats-HLA-DR"
+    ],
+    "at": 7536
+   },
+   {
+    "ms": 12,
+    "names": [
+     "warm-get_image_channel_stats-CD103"
+    ],
+    "at": 7548
+   },
+   {
+    "ms": 11,
+    "names": [
+     "warm-get_image_channel_stats-CHGA"
+    ],
+    "at": 7559
+   },
+   {
+    "ms": 12,
+    "names": [
+     "warm-get_image_channel_stats-EGFR"
+    ],
+    "at": 7572
+   },
+   {
+    "ms": 8,
+    "names": [
+     "warm-get_image_channel_stats-CD206"
+    ],
+    "at": 7579
+   },
+   {
+    "ms": 1,
+    "names": [
+     "warm-get_image_channel_stats-GFAP"
+    ],
+    "at": 7580
+   },
+   {
+    "ms": 14,
+    "names": [
+     "warm-get_image_channel_stats-PD-1"
+    ],
+    "at": 7594
+   },
+   {
+    "ms": 9,
+    "names": [
+     "warm-get_image_channel_stats-BCL2"
+    ],
+    "at": 7603
+   },
+   {
+    "ms": 9,
+    "names": [
+     "warm-get_image_channel_stats-panCK"
+    ],
+    "at": 7612
+   },
+   {
+    "ms": 13,
+    "names": [
+     "warm-get_image_channel_stats-CD45RO"
+    ],
+    "at": 7625
+   },
+   {
+    "ms": 8,
+    "names": [
+     "warm-get_image_channel_stats-CD11b"
+    ],
+    "at": 7633
+   },
+   {
+    "ms": 9,
+    "names": [
+     "warm-get_image_channel_stats-CD56"
+    ],
+    "at": 7642
+   },
+   {
+    "ms": 3,
+    "names": [
+     "warm-get_image_channel_stats-CD163"
+    ],
+    "at": 7645
+   },
+   {
+    "ms": 11,
+    "names": [
+     "warm-get_image_channel_stats-CD21"
+    ],
+    "at": 7655
+   },
+   {
+    "ms": 3,
+    "names": [
+     "warm-get_image_channel_stats-CD8"
+    ],
+    "at": 7658
+   },
+   {
+    "ms": 6,
+    "names": [
+     "warm-get_image_channel_stats-S100"
+    ],
+    "at": 7664
+   },
+   {
+    "ms": 6,
+    "names": [
+     "warm-get_image_channel_stats-Vimentin"
+    ],
+    "at": 7671
+   },
+   {
+    "ms": 9,
+    "names": [
+     "warm-get_image_channel_stats-PDGFRb"
+    ],
+    "at": 7679
+   },
+   {
+    "ms": 9,
+    "names": [
+     "warm-get_image_channel_stats-CCR7"
+    ],
+    "at": 7688
+   },
+   {
+    "ms": 1,
+    "names": [
+     "warm-get_image_channel_stats-CD57"
+    ],
+    "at": 7689
+   },
+   {
+    "ms": 11,
+    "names": [
+     "warm-get_image_channel_stats-CD34"
+    ],
+    "at": 7700
+   },
+   {
+    "ms": 7,
+    "names": [
+     "warm-get_image_channel_stats-Synaptophysin"
+    ],
+    "at": 7707
+   },
+   {
+    "ms": 3,
+    "names": [
+     "warm-get_image_channel_stats-CD31"
+    ],
+    "at": 7710
+   },
+   {
+    "ms": 9,
+    "names": [
+     "warm-get_image_channel_stats-CXCR5"
+    ],
+    "at": 7719
+   },
+   {
+    "ms": 6,
+    "names": [
+     "warm-get_image_channel_stats-CD3"
+    ],
+    "at": 7725
+   },
+   {
+    "ms": 4,
+    "names": [
+     "warm-get_image_channel_stats-CD38"
+    ],
+    "at": 7729
+   },
+   {
+    "ms": 9,
+    "names": [
+     "warm-get_image_channel_stats-LAG3"
+    ],
+    "at": 7738
+   },
+   {
+    "ms": 8,
+    "names": [
+     "warm-get_image_channel_stats-CD25"
+    ],
+    "at": 7746
+   },
+   {
+    "ms": 11,
+    "names": [
+     "warm-get_image_channel_stats-CD16"
+    ],
+    "at": 7758
+   },
+   {
+    "ms": 3,
+    "names": [
+     "warm-get_image_channel_stats-IL-10"
+    ],
+    "at": 7761
+   },
+   {
+    "ms": 2,
+    "names": [
+     "warm-get_image_channel_stats-Ki67"
+    ],
+    "at": 7763
+   },
+   {
+    "ms": 9,
+    "names": [
+     "warm-get_image_channel_stats-CLEC9A"
+    ],
+    "at": 7772
+   },
+   {
+    "ms": 265,
+    "names": [
+     "warm-get_image_channel_stats-p53"
+    ],
+    "at": 8036
+   },
+   {
+    "ms": 192,
+    "names": [
+     "warm-get_image_channel_stats-CD69"
+    ],
+    "at": 8229
+   },
+   {
+    "ms": 173,
+    "names": [
+     "warm-get_image_channel_stats-CD11c"
+    ],
+    "at": 8402
+   },
+   {
+    "ms": 18,
+    "names": [
+     "warm-get_image_channel_stats-CD68"
+    ],
+    "at": 9030
+   },
+   {
+    "ms": 250,
+    "names": [
+     "warm-get_image_channel_stats-Ox40"
+    ],
+    "at": 9280
+   },
+   {
+    "ms": 194,
+    "names": [
+     "warm-get_image_channel_stats-aSMA"
+    ],
+    "at": 9474
+   },
+   {
+    "ms": 186,
+    "names": [
+     "warm-get_image_channel_stats-CD20"
+    ],
+    "at": 9661
+   },
+   {
+    "ms": 202,
+    "names": [
+     "warm-get_image_channel_stats-CD4"
+    ],
+    "at": 9863
+   },
+   {
+    "ms": 179,
+    "names": [
+     "warm-get_image_channel_stats-MUC-1"
+    ],
+    "at": 10042
+   },
+   {
+    "ms": 211,
+    "names": [
+     "warm-get_image_channel_stats-Podoplanin"
+    ],
+    "at": 10253
+   },
+   {
+    "ms": 205,
+    "names": [
+     "warm-get_image_channel_stats-CD45RA"
+    ],
+    "at": 10458
+   },
+   {
+    "ms": 14,
+    "names": [
+     "warm-get_image_channel_stats-CD15"
+    ],
+    "at": 11082
+   },
+   {
+    "ms": 256,
+    "names": [
+     "warm-get_image_channel_stats-betaCatenin"
+    ],
+    "at": 11338
+   },
+   {
+    "ms": 193,
+    "names": [
+     "warm-get_image_channel_stats-PAX5"
+    ],
+    "at": 11532
+   },
+   {
+    "ms": 179,
+    "names": [
+     "warm-get_image_channel_stats-MCT"
+    ],
+    "at": 11711
+   },
+   {
+    "ms": 221,
+    "names": [
+     "warm-get_image_channel_stats-FAP"
+    ],
+    "at": 11932
+   },
+   {
+    "ms": 22,
+    "names": [
+     "warm-get_image_channel_stats-CD138"
+    ],
+    "at": 12556
+   },
+   {
+    "ms": 263,
+    "names": [
+     "warm-get_image_channel_stats-Tbet"
+    ],
+    "at": 12820
+   },
+   {
+    "ms": 163,
+    "names": [
+     "warm-get_image_channel_stats-GranzymeB"
+    ],
+    "at": 12983
+   },
+   {
+    "ms": 194,
+    "names": [
+     "warm-get_image_channel_stats-IDO-1"
+    ],
+    "at": 13177
+   },
+   {
+    "ms": 207,
+    "names": [
+     "warm-get_image_channel_stats-CD45"
+    ],
+    "at": 13384
+   },
+   {
+    "ms": 186,
+    "names": [
+     "warm-get_image_channel_stats-CollagenIV"
+    ],
+    "at": 13570
+   },
+   {
+    "ms": 213,
+    "names": [
+     "warm-get_image_channel_stats-PD-L1"
+    ],
+    "at": 13783
+   },
+   {
+    "ms": 185,
+    "names": [
+     "warm-get_image_channel_stats-Arginase-1"
+    ],
+    "at": 13968
+   },
+   {
+    "ms": 190,
+    "names": [
+     "warm-get_image_channel_stats-GATA3"
+    ],
+    "at": 14158
+   },
+   {
+    "ms": 0,
+    "names": [
+     "warm-get_channel_gmm-DAPI"
+    ],
+    "at": 14158
+   }
+  ],
+  "handoffs": [],
+  "toasts": [
+   "About the cell mask\n×\n\n/picked/bd94da7f5727 is read-only for this account, so the cell-mask pyramid is kept in /derived/96d1d56c9d2e69b707ab6741."
+  ]
+ },
+ "frameNavigations": [
+  {
+   "ms": 152,
+   "url": "http://127.0.0.1:59940/"
+  },
+  {
+   "ms": 6547,
+   "url": "http://127.0.0.1:59940/image"
+  },
+  {
+   "ms": 19911,
+   "url": "http://127.0.0.1:59940/image?tool=qc"
+  },
+  {
+   "ms": 25130,
+   "url": "http://127.0.0.1:59940/image?tool=roi"
+  },
+  {
+   "ms": 25696,
+   "url": "http://127.0.0.1:59940/image?tool=cell_explorer"
+  },
+  {
+   "ms": 26636,
+   "url": "http://127.0.0.1:59940/image?tool=figure_builder"
+  },
+  {
+   "ms": 27120,
+   "url": "http://127.0.0.1:59940/image?tool=rotate"
+  },
+  {
+   "ms": 27613,
+   "url": "http://127.0.0.1:59940/plugins/figure_builder/figures"
+  },
+  {
+   "ms": 27634,
+   "url": "http://127.0.0.1:59940/image?tool=rotate"
+  },
+  {
+   "ms": 27855,
+   "url": "http://127.0.0.1:59940/image?tool=rotate"
+  }
+ ],
+ "workers": [
+  "http://127.0.0.1:59940/client/src/js/workers/pythonWorker.js",
+  "http://127.0.0.1:59940/client/dist/tiffWorker_bundle.js",
+  "ttp://127.0.0.1:59940/client/src/js/workers/pyramidWorker.js",
+  "http://127.0.0.1:59940/client/dist/tiffWorker_bundle.js",
+  "http://127.0.0.1:59940/client/dist/tiffWorker_bundle.js",
+  "http://127.0.0.1:59940/client/dist/tiffWorker_bundle.js",
+  "http://127.0.0.1:59940/client/dist/tiffWorker_bundle.js",
+  "http://127.0.0.1:59940/client/dist/tiffWorker_bundle.js",
+  "http://127.0.0.1:59940/client/dist/tiffWorker_bundle.js",
+  "http://127.0.0.1:59940/client/dist/tiffWorker_bundle.js",
+  "http://127.0.0.1:59940/client/src/js/workers/csvWorker.js",
+  "http://127.0.0.1:59940/client/dist/tiffWorker_bundle.js",
+  "http://127.0.0.1:59940/client/dist/tiffWorker_bundle.js",
+  "http://127.0.0.1:59940/client/dist/tiffWorker_bundle.js",
+  "http://127.0.0.1:59940/client/dist/tiffWorker_bundle.js",
+  "http://127.0.0.1:59940/client/dist/tiffWorker_bundle.js",
+  "http://127.0.0.1:59940/client/dist/tiffWorker_bundle.js",
+  "http://127.0.0.1:59940/client/dist/tiffWorker_bundle.js",
+  "http://127.0.0.1:59940/client/src/js/workers/tileDecoder.js",
+  "http://127.0.0.1:59940/client/src/js/workers/tileDecoder.js",
+  "http://127.0.0.1:59940/client/src/js/workers/tileDecoder.js",
+  "http://127.0.0.1:59940/client/src/js/workers/tileDecoder.js",
+  "http://127.0.0.1:59940/client/dist/tiffWorker_bundle.js",
+  "http://127.0.0.1:59940/client/dist/tiffWorker_bundle.js",
+  "http://127.0.0.1:59940/client/dist/tiffWorker_bundle.js",
+  "http://127.0.0.1:59940/client/dist/tiffWorker_bundle.js",
+  "http://127.0.0.1:59940/client/dist/tiffWorker_bundle.js",
+  "http://127.0.0.1:59940/client/dist/tiffWorker_bundle.js",
+  "http://127.0.0.1:59940/client/dist/tiffWorker_bundle.js",
+  "http://127.0.0.1:59940/client/dist/tiffWorker_bundle.js",
+  "http://127.0.0.1:59940/client/src/js/workers/csvWorker.js",
+  "http://127.0.0.1:59940/client/dist/tiffWorker_bundle.js",
+  "http://127.0.0.1:59940/client/dist/tiffWorker_bundle.js",
+  "http://127.0.0.1:59940/client/dist/tiffWorker_bundle.js",
+  "http://127.0.0.1:59940/client/dist/tiffWorker_bundle.js",
+  "http://127.0.0.1:59940/client/dist/tiffWorker_bundle.js",
+  "http://127.0.0.1:59940/client/dist/tiffWorker_bundle.js",
+  "http://127.0.0.1:59940/client/dist/tiffWorker_bundle.js",
+  "http://127.0.0.1:59940/client/dist/tiffWorker_bundle.js",
+  "http://127.0.0.1:59940/client/dist/tiffWorker_bundle.js",
+  "http://127.0.0.1:59940/client/dist/tiffWorker_bundle.js",
+  "http://127.0.0.1:59940/client/dist/tiffWorker_bundle.js",
+  "http://127.0.0.1:59940/client/dist/tiffWorker_bundle.js",
+  "http://127.0.0.1:59940/client/dist/tiffWorker_bundle.js",
+  "http://127.0.0.1:59940/client/dist/tiffWorker_bundle.js",
+  "http://127.0.0.1:59940/client/dist/tiffWorker_bundle.js",
+  "http://127.0.0.1:59940/client/dist/tiffWorker_bundle.js",
+  "http://127.0.0.1:59940/client/dist/tiffWorker_bundle.js",
+  "http://127.0.0.1:59940/client/dist/tiffWorker_bundle.js",
+  "http://127.0.0.1:59940/client/dist/tiffWorker_bundle.js",
+  "http://127.0.0.1:59940/client/dist/tiffWorker_bundle.js",
+  "http://127.0.0.1:59940/client/dist/tiffWorker_bundle.js",
+  "http://127.0.0.1:59940/client/dist/tiffWorker_bundle.js",
+  "http://127.0.0.1:59940/client/dist/tiffWorker_bundle.js",
+  "http://127.0.0.1:59940/client/dist/tiffWorker_bundle.js",
+  "http://127.0.0.1:59940/client/dist/tiffWorker_bundle.js",
+  "http://127.0.0.1:59940/client/dist/tiffWorker_bundle.js",
+  "http://127.0.0.1:59940/client/dist/tiffWorker_bundle.js",
+  "http://127.0.0.1:59940/client/dist/tiffWorker_bundle.js",
+  "http://127.0.0.1:59940/client/dist/tiffWorker_bundle.js",
+  "http://127.0.0.1:59940/client/dist/tiffWorker_bundle.js",
+  "http://127.0.0.1:59940/client/dist/tiffWorker_bundle.js",
+  "http://127.0.0.1:59940/client/dist/tiffWorker_bundle.js",
+  "http://127.0.0.1:59940/client/dist/tiffWorker_bundle.js",
+  "http://127.0.0.1:59940/client/dist/tiffWorker_bundle.js",
+  "http://127.0.0.1:59940/client/dist/tiffWorker_bundle.js",
+  "http://127.0.0.1:59940/client/dist/tiffWorker_bundle.js",
+  "http://127.0.0.1:59940/client/dist/tiffWorker_bundle.js",
+  "http://127.0.0.1:59940/client/dist/tiffWorker_bundle.js",
+  "http://127.0.0.1:59940/client/dist/tiffWorker_bundle.js",
+  "http://127.0.0.1:59940/client/dist/tiffWorker_bundle.js",
+  "http://127.0.0.1:59940/client/src/js/workers/csvWorker.js",
+  "http://127.0.0.1:59940/client/src/js/workers/csvWorker.js",
+  "http://127.0.0.1:59940/client/dist/tiffWorker_bundle.js",
+  "http://127.0.0.1:59940/client/dist/tiffWorker_bundle.js",
+  "http://127.0.0.1:59940/client/dist/tiffWorker_bundle.js",
+  "http://127.0.0.1:59940/client/dist/tiffWorker_bundle.js",
+  "http://127.0.0.1:59940/client/dist/tiffWorker_bundle.js",
+  "http://127.0.0.1:59940/client/dist/tiffWorker_bundle.js",
+  "http://127.0.0.1:59940/client/dist/tiffWorker_bundle.js",
+  "http://127.0.0.1:59940/client/dist/tiffWorker_bundle.js",
+  "http://127.0.0.1:59940/client/dist/tiffWorker_bundle.js",
+  "http://127.0.0.1:59940/client/dist/tiffWorker_bundle.js",
+  "http://127.0.0.1:59940/client/dist/tiffWorker_bundle.js",
+  "http://127.0.0.1:59940/client/dist/tiffWorker_bundle.js",
+  "http://127.0.0.1:59940/client/dist/tiffWorker_bundle.js",
+  "http://127.0.0.1:59940/client/dist/tiffWorker_bundle.js",
+  "http://127.0.0.1:59940/client/dist/tiffWorker_bundle.js",
+  "http://127.0.0.1:59940/client/dist/tiffWorker_bundle.js",
+  "http://127.0.0.1:59940/client/dist/tiffWorker_bundle.js",
+  "http://127.0.0.1:59940/client/dist/tiffWorker_bundle.js",
+  "http://127.0.0.1:59940/client/dist/tiffWorker_bundle.js",
+  "http://127.0.0.1:59940/client/dist/tiffWorker_bundle.js",
+  "http://127.0.0.1:59940/client/dist/tiffWorker_bundle.js",
+  "http://127.0.0.1:59940/client/dist/tiffWorker_bundle.js",
+  "http://127.0.0.1:59940/client/dist/tiffWorker_bundle.js",
+  "http://127.0.0.1:59940/client/dist/tiffWorker_bundle.js",
+  "http://127.0.0.1:59940/client/dist/tiffWorker_bundle.js",
+  "http://127.0.0.1:59940/client/dist/tiffWorker_bundle.js",
+  "http://127.0.0.1:59940/client/dist/tiffWorker_bundle.js",
+  "http://127.0.0.1:59940/client/dist/tiffWorker_bundle.js",
+  "http://127.0.0.1:59940/client/dist/tiffWorker_bundle.js",
+  "http://127.0.0.1:59940/client/dist/tiffWorker_bundle.js",
+  "http://127.0.0.1:59940/client/dist/tiffWorker_bundle.js",
+  "http://127.0.0.1:59940/client/dist/tiffWorker_bundle.js",
+  "http://127.0.0.1:59940/client/src/js/workers/pythonWorker.js",
+  "http://127.0.0.1:59940/client/dist/tiffWorker_bundle.js",
+  "http://127.0.0.1:59940/client/dist/tiffWorker_bundle.js",
+  "http://127.0.0.1:59940/client/dist/tiffWorker_bundle.js",
+  "http://127.0.0.1:59940/client/dist/tiffWorker_bundle.js",
+  "http://127.0.0.1:59940/client/dist/tiffWorker_bundle.js",
+  "http://127.0.0.1:59940/client/src/js/workers/tileDecoder.js",
+  "http://127.0.0.1:59940/client/src/js/workers/tileDecoder.js",
+  "http://127.0.0.1:59940/client/src/js/workers/tileDecoder.js",
+  "http://127.0.0.1:59940/client/src/js/workers/tileDecoder.js",
+  "http://127.0.0.1:59940/client/src/js/workers/csvWorker.js",
+  "http://127.0.0.1:59940/client/src/js/workers/csvWorker.js",
+  "http://127.0.0.1:59940/client/dist/tiffWorker_bundle.js",
+  "http://127.0.0.1:59940/client/dist/tiffWorker_bundle.js",
+  "http://127.0.0.1:59940/client/dist/tiffWorker_bundle.js",
+  "http://127.0.0.1:59940/client/dist/tiffWorker_bundle.js",
+  "http://127.0.0.1:59940/client/dist/tiffWorker_bundle.js",
+  "http://127.0.0.1:59940/client/dist/tiffWorker_bundle.js",
+  "http://127.0.0.1:59940/client/dist/tiffWorker_bundle.js",
+  "http://127.0.0.1:59940/client/dist/tiffWorker_bundle.js",
+  "http://127.0.0.1:59940/client/dist/tiffWorker_bundle.js",
+  "http://127.0.0.1:59940/client/dist/tiffWorker_bundle.js",
+  "http://127.0.0.1:59940/client/dist/tiffWorker_bundle.js",
+  "http://127.0.0.1:59940/client/dist/tiffWorker_bundle.js",
+  "http://127.0.0.1:59940/client/dist/tiffWorker_bundle.js",
+  "http://127.0.0.1:59940/client/dist/tiffWorker_bundle.js",
+  "http://127.0.0.1:59940/client/dist/tiffWorker_bundle.js",
+  "http://127.0.0.1:59940/client/dist/tiffWorker_bundle.js",
+  "http://127.0.0.1:59940/client/dist/tiffWorker_bundle.js",
+  "http://127.0.0.1:59940/client/dist/tiffWorker_bundle.js",
+  "http://127.0.0.1:59940/client/dist/tiffWorker_bundle.js",
+  "http://127.0.0.1:59940/client/dist/tiffWorker_bundle.js",
+  "http://127.0.0.1:59940/client/dist/tiffWorker_bundle.js",
+  "http://127.0.0.1:59940/client/dist/tiffWorker_bundle.js",
+  "http://127.0.0.1:59940/client/dist/tiffWorker_bundle.js",
+  "http://127.0.0.1:59940/client/dist/tiffWorker_bundle.js",
+  "http://127.0.0.1:59940/client/dist/tiffWorker_bundle.js",
+  "http://127.0.0.1:59940/client/dist/tiffWorker_bundle.js",
+  "http://127.0.0.1:59940/client/dist/tiffWorker_bundle.js",
+  "http://127.0.0.1:59940/client/dist/tiffWorker_bundle.js",
+  "http://127.0.0.1:59940/client/dist/tiffWorker_bundle.js",
+  "http://127.0.0.1:59940/client/dist/tiffWorker_bundle.js",
+  "http://127.0.0.1:59940/client/dist/tiffWorker_bundle.js",
+  "http://127.0.0.1:59940/client/dist/tiffWorker_bundle.js"
+ ],
+ "workerBigLogs": [],
+ "bigLogs": {
+  "frame": [],
+  "host": []
+ },
+ "errors": [
+  "Failed to load resource: the server responded with a status of 404 ()"
+ ]
+}

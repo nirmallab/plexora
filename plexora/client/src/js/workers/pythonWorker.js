@@ -557,6 +557,11 @@ json.dumps(boot.start(ORIGIN, base_url=SITE_BASE, post=_post, cancelled=lambda j
                       telemetry=json.loads(TELEMETRY)))
 `));
     phases.ready = at(); mark("ready");
+    // The quiet background work waits for counts from here: the page sends
+    // what it held for Python a moment after this (a reloaded project's
+    // first screen), and a stage preload started in that moment held all of
+    // it (/config waited 0.8 s behind the scipy stage).
+    lastAnswer = performance.now();
     if (args.telemetry && args.telemetry.endpoint) info.telemetry = await startTelemetry(args.telemetry);
     return { phases, info, store, derived, stages: Object.fromEntries(
         Object.entries(stagesInfo).map(([name, stage]) => [name, stage.bytes])),
@@ -757,7 +762,9 @@ async function request(args) {
     const started = performance.now();
     const handle = py.pyimport("plexora.browser.bridge").handle;
     const app = py.pyimport("plexora").app;
-    const message = py.toPy({ ...args, body: args.body ? new Uint8Array(args.body) : null });
+    // `retryable`: this worker puts a request a route asks to be asked again
+    // later back in its queue (`drain`), so the route may say so (bridge.py).
+    const message = py.toPy({ ...args, retryable: true, body: args.body ? new Uint8Array(args.body) : null });
     const answer = await call(handle, app, message, origin);
     const retry = answer.get("retry");
     if (retry !== undefined && retry !== null) {
