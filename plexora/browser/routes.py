@@ -64,8 +64,26 @@ JS = (
     "license.license_install", "license.license_refresh", "license.license_remove",
 )
 
+#: Kept: Python's own answers for these GET routes, as it last gave them, are
+#: kept in the browser (services/keptAnswers.js) and given to a project's
+#: viewer that a reload of the site shows before Python has started again --
+#: what its first screen asks for, in the order it asks (the page, then
+#: /config with the view, then the image's channels and their windows).
+#: Nothing is answered from them once Python is up, and every one given is
+#: asked of Python again then: a difference replaces the page, and what the
+#: page wrote meanwhile is never sent. Each must answer the same to the same
+#: request from one start of Python to the next (`serve_config` but for its
+#: `lastOpenedAt`), and none may carry a token. The same list is in
+#: keptAnswers.js (tests/test_kept_answers.py holds the two together).
+KEPT = (
+    "image_viewer", "serve_config", "get_view_transform", "volume_info", "get_view_state_route",
+    "resource_routing", "resource_status", "get_channel_names", "get_ome_metadata",
+    "get_database_description", "init_database", "get_saved_channel_list",
+    "get_image_channel_stats", "get_channel_gmm", "get_display_contrast",
+)
+
 #: Rendered when the site is built; the shell is on screen before Python is.
-STATIC = ("my_index", "image_viewer", "open_project_page", "settings_page")
+STATIC =("my_index", "image_viewer", "open_project_page", "settings_page")
 
 #: Files served as they are.
 NETWORK = ("serveClient", "favicon")

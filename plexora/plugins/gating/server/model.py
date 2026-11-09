@@ -9,8 +9,6 @@ import pickle
 
 import numpy as np
 import polars as pl
-from scipy.stats import norm
-from sklearn.mixture import GaussianMixture
 
 from plexora import api
 from plexora.agent.expression import values_logged  # noqa: F401  (gating's callers)
@@ -298,6 +296,11 @@ def _fit_mixture(values, components):
         sample = sample[rng.choice(sample.shape[0], size=_GMM_FIT_SAMPLE_CAP,
                                    replace=False)]
 
+    # Imported here, not with the module: on the website scikit-learn is a
+    # stage of its own (`fit`, plexora/browser/stages.py) that arrives with the
+    # first fit, not with the app every visit.
+    from sklearn.mixture import GaussianMixture
+
     gmm = GaussianMixture(components, max_iter=1000, tol=1e-6, random_state=0)
     gmm.fit(sample.reshape(-1, 1))
     order = np.argsort(gmm.means_[:, 0])
@@ -315,6 +318,8 @@ def _populations(fitted, x):
     to the whole distribution, so the two curves drawn over the histogram cover
     it instead of leaving the largest peak unexplained.
     """
+    from scipy.stats import norm  # a stage on the website; see _fit_mixture
+
     means, sds, weights = fitted
     positive = norm(means[-1], sds[-1]).pdf(x) * weights[-1]
     background = sum(norm(means[i], sds[i]).pdf(x) * weights[i]

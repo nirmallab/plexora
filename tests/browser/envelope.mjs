@@ -103,10 +103,10 @@ try {
         job_id: "env-1", capability: "gating.apply_to_dataset", status: "running", project: "envtest",
         progress: { done: 0, total: 2000 }, started_at: new Date().toISOString() } }));
     const batch = await until(() => toast(frame));
-    check("a long batch: title, one line, three buttons on one row", batch
+    check("a long batch: title, one line, two buttons on one row", batch
           && batch.title === "A long run for a browser tab"
           && batch.note === "2000 images: about 25 min here, with this tab open."
-          && JSON.stringify(batch.buttons) === JSON.stringify(["Desktop app", "Connect a node", "Continue here"])
+          && JSON.stringify(batch.buttons) === JSON.stringify(["Desktop app", "Continue here"])
           && batch.oneRow && batch.inside, { batch });
     if (shot) await page.screenshot({ path: `${shot}-batch.png` });
     await press(frame, "Continue here");
@@ -129,25 +129,24 @@ try {
     check("magic select without WebGPU: the measured second a click, buttons on one row",
           model && model.verdict === "node" && modelToast && modelToast.title === "Magic select without a GPU here"
           && modelToast.note === "No WebGPU here: about 1 s a click (0.95 s measured)."
-          && JSON.stringify(modelToast.buttons) === JSON.stringify(["Connect a node", "Desktop app", "Continue here"])
+          && JSON.stringify(modelToast.buttons) === JSON.stringify(["Desktop app", "Continue here"])
           && modelToast.oneRow && modelToast.inside, { modelToast });
     if (shot) await page.screenshot({ path: `${shot}-model.png` });
     await press(frame, "Continue here");
 
-    // Slow tiles: the rolling p95 of the last 50 over 150 ms.
-    await page.evaluate(async () => {
+    // Slow tiles: judged (the rolling p95 of the last 50 over 150 ms) but
+    // never said -- no notice offers a node.
+    const stallVerdict = await page.evaluate(async () => {
         const app = document.getElementById("plexora-app").contentWindow;
-        for (let i = 0; i < 60; i += 1) await window.PlexoraEnvelope.tile(400, app);
+        let verdict = null;
+        for (let i = 0; i < 60; i += 1) verdict = (await window.PlexoraEnvelope.tile(400, app)) || verdict;
+        return verdict && verdict.verdict;
     });
-    const stall = await until(async () => { const t = await toast(frame); return t && t.title === "Slow to read here" ? t : null; });
-    check("slow tiles: a node beside the data, two buttons on one row", stall && stall.title === "Slow to read here"
-          && /^Tiles take 400 ms here; a node beside the data: ~35 ms\.$/.test(stall.note || "")
-          && JSON.stringify(stall.buttons) === JSON.stringify(["Connect a node", "Continue here"])
-          && stall.oneRow && stall.inside, { stall });
-    if (shot) await page.screenshot({ path: `${shot}-stall.png` });
-    await frame.evaluate(() => document.querySelector(".plx-toast button[aria-label='Dismiss']")?.click());
-    const dismissed = await page.evaluate(() => Object.keys(localStorage).filter((k) => k.endsWith(":stall")));
-    check("the x is remembered too", dismissed.length === 1, { dismissed });
+    await page.waitForTimeout(1000);
+    const stall = await toast(frame);
+    check("slow tiles: judged, no notice", stallVerdict === "node" && stall === null, { stallVerdict, stall });
+    const offers = await frame.evaluate(() => [...document.querySelectorAll(".plx-toast button")].map((b) => b.textContent.trim()));
+    check("no notice offers a node", !offers.includes("Connect a node"), { offers });
 } catch (error) {
     out.errors.push(String(error?.stack || error).slice(0, 2000));
 } finally {

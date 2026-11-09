@@ -28,6 +28,8 @@ CHUNK = 8 * 2**20
 
 #: Methods after which the worker writes its project store back to disk.
 _READS = ("GET", "HEAD", "OPTIONS")
+#: server/providers/browser.py `RETRY_HEADER` (not imported: the bridge loads first).
+RETRY_HEADER = "X-Plexora-Retry-Ms"
 
 _streams: dict = {}
 _ids = itertools.count(1)
@@ -66,12 +68,13 @@ def environ(request: dict, origin: str) -> dict:
 
 
 def handle(app, request: dict, origin: str) -> dict:
-    """`{status, headers, body, stream, wrote}` for one request.
+    """`{status, headers, body, stream, wrote, retry}` for one request.
 
     `headers` is a list of [name, value] (a header may repeat); `body` is
     bytes, at most `CHUNK` of them; `stream` is None or the id `read` takes
     for the rest; `wrote` says the request may have changed files, so the
-    worker writes its store back."""
+    worker writes its store back; `retry` (ms), when present, that the route
+    asked to be asked again later (nothing else in the answer counts then)."""
     captured = {}
 
     def start_response(status, headers, exc_info=None):
@@ -90,6 +93,15 @@ def handle(app, request: dict, origin: str) -> dict:
         body, rest = _first(iterable, CHUNK)
     if captured.get("written"):
         body = b"".join(captured["written"]) + body
+    # "Ask me again in N ms" (server/providers/browser.py `WindowPending`):
+    # the worker puts the request back in its queue instead of answering.
+    retry = next((value for name, value in captured.get("headers", [])
+                  if name.lower() == RETRY_HEADER.lower()), None)
+    if retry is not None:
+        if rest is not None and hasattr(rest, "close"):
+            rest.close()
+        return {"status": captured.get("status", 503), "headers": [], "body": b"", "stream": None,
+                "wrote": False, "retry": int(retry)}
     stream = None
     if rest is not None:
         stream = next(_ids)

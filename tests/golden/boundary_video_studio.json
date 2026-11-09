@@ -11,9 +11,9 @@
     "plexora.plugins.transcripts": false,
     "plexora.plugins.video_studio": true,
     "plexora.plugins.visium_hd": false,
-    "pyarrow": true,
-    "scipy.stats": true,
-    "sklearn.mixture": true,
+    "pyarrow": false,
+    "scipy.stats": false,
+    "sklearn.mixture": false,
     "torch": false
   },
   "installed_plugins": [
@@ -100,7 +100,7 @@
       "scripts": [
         "/client/src/js/services/passVariablesToFrontend.js?v=20260910_unreachable_message",
         "/client/src/js/services/desktopBridge.js?v=20261107_open_website",
-        "/client/src/js/services/backend.js?v=20261108_early_home",
+        "/client/src/js/services/backend.js?v=20261109_webperf",
         "/client/src/js/services/appStatus.js?v=20260926_help_menu",
         "/client/src/js/services/telemetry.js?v=20260928_qc_owner",
         "/client/src/js/services/errors.js?v=20260927_telemetry",
@@ -186,11 +186,11 @@
         "/client/src/js/views/importHelp.js?v=20261021_pro",
         "/client/src/js/views/locators.js?v=20261020_sftp_files",
         "/client/src/js/services/orbDriver.js?v=20261108_loader_orb",
-        "/client/src/js/views/importSample.js?v=20261107_long_requests",
+        "/client/src/js/views/importSample.js?v=20261109_webperf",
         "/client/src/js/views/datasetBuilder.js?v=20261029_bucket_datasets",
-        "/client/src/js/views/toolLoader.js?v=20261025_dataset_answers",
+        "/client/src/js/views/toolLoader.js?v=20261109_webperf",
         "/client/src/js/services/pageBoot.js?v=20260825_app_shell",
-        "/client/src/js/services/appRouter.js?v=20261002_hash_tab",
+        "/client/src/js/services/appRouter.js?v=20261109_webperf",
         "/client/src/js/views/openProjectPage.js?v=20261103_select_all"
       ],
       "status": 200,
@@ -319,7 +319,7 @@
       "scripts": [
         "/client/src/js/services/passVariablesToFrontend.js?v=20260910_unreachable_message",
         "/client/src/js/services/desktopBridge.js?v=20261107_open_website",
-        "/client/src/js/services/backend.js?v=20261108_early_home",
+        "/client/src/js/services/backend.js?v=20261109_webperf",
         "/client/src/js/services/appStatus.js?v=20260926_help_menu",
         "/client/src/js/services/telemetry.js?v=20260928_qc_owner",
         "/client/src/js/services/errors.js?v=20260927_telemetry",
@@ -405,11 +405,11 @@
         "/client/src/js/views/importHelp.js?v=20261021_pro",
         "/client/src/js/views/locators.js?v=20261020_sftp_files",
         "/client/src/js/services/orbDriver.js?v=20261108_loader_orb",
-        "/client/src/js/views/importSample.js?v=20261107_long_requests",
+        "/client/src/js/views/importSample.js?v=20261109_webperf",
         "/client/src/js/views/datasetBuilder.js?v=20261029_bucket_datasets",
-        "/client/src/js/views/toolLoader.js?v=20261025_dataset_answers",
+        "/client/src/js/views/toolLoader.js?v=20261109_webperf",
         "/client/src/js/services/pageBoot.js?v=20260825_app_shell",
-        "/client/src/js/services/appRouter.js?v=20261002_hash_tab",
+        "/client/src/js/services/appRouter.js?v=20261109_webperf",
         "/client/src/js/services/viewerLoader.js?v=20260915_center_loader",
         "/client/src/js/services/viewSnapshot.js?v=20261004_magic_select",
         "/client/src/js/services/segmentService.js?v=20261106_no_carry",
@@ -466,7 +466,7 @@
         "/client/src/js/views/chatPanel.js?v=20261012_merge_main",
         "/client/src/js/services/agentBridge.js?v=20261105_gating_v4",
         "/client/src/js/services/launchContext.js?v=20261005_bridge",
-        "/client/src/js/main.js?v=20261107_local_open"
+        "/client/src/js/main.js?v=20261109_webperf"
       ],
       "status": 200,
       "styles": [
@@ -606,7 +606,7 @@
       "scripts": [
         "/client/src/js/services/passVariablesToFrontend.js?v=20260910_unreachable_message",
         "/client/src/js/services/desktopBridge.js?v=20261107_open_website",
-        "/client/src/js/services/backend.js?v=20261108_early_home",
+        "/client/src/js/services/backend.js?v=20261109_webperf",
         "/client/src/js/services/appStatus.js?v=20260926_help_menu",
         "/client/src/js/services/telemetry.js?v=20260928_qc_owner",
         "/client/src/js/services/errors.js?v=20260927_telemetry",
@@ -692,11 +692,11 @@
         "/client/src/js/views/importHelp.js?v=20261021_pro",
         "/client/src/js/views/locators.js?v=20261020_sftp_files",
         "/client/src/js/services/orbDriver.js?v=20261108_loader_orb",
-        "/client/src/js/views/importSample.js?v=20261107_long_requests",
+        "/client/src/js/views/importSample.js?v=20261109_webperf",
         "/client/src/js/views/datasetBuilder.js?v=20261029_bucket_datasets",
-        "/client/src/js/views/toolLoader.js?v=20261025_dataset_answers",
+        "/client/src/js/views/toolLoader.js?v=20261109_webperf",
         "/client/src/js/services/pageBoot.js?v=20260825_app_shell",
-        "/client/src/js/services/appRouter.js?v=20261002_hash_tab",
+        "/client/src/js/services/appRouter.js?v=20261109_webperf",
         "/client/src/js/services/viewerLoader.js?v=20260915_center_loader",
         "/client/src/js/services/viewSnapshot.js?v=20261004_magic_select",
         "/client/src/js/services/segmentService.js?v=20261106_no_carry",
@@ -753,7 +753,7 @@
         "/client/src/js/views/chatPanel.js?v=20261012_merge_main",
         "/client/src/js/services/agentBridge.js?v=20261105_gating_v4",
         "/client/src/js/services/launchContext.js?v=20261005_bridge",
-        "/client/src/js/main.js?v=20261107_local_open"
+        "/client/src/js/main.js?v=20261109_webperf"
       ],
       "status": 200,
       "styles": [

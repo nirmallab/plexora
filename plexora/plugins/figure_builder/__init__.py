@@ -36,7 +36,7 @@ schema and the operation vocabulary) is left to the factory.
 
 from plexora.api.plugin import NavItem, Plugin, Requires
 
-VERSION = "20261026_security_docs"
+VERSION = "20261109_webperf"
 
 
 def _blueprint():
@@ -123,6 +123,7 @@ PLUGIN = Plugin(
         "figureContextMenu.js",
         "figureViewOptions.js",
         "figurePanelCompositor.js",
+        "figureNodePixels.js",
         "figureQuickEdit.js",
         "figureThumbnail.js",
         "figureDestinationPicker.js",

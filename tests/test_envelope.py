@@ -75,7 +75,7 @@ def test_a_long_batch_is_said_before_it_runs_and_by_its_pace(probe):
     assert probe["quietBatch"] == 0
     assert probe["batch"] == [{"title": "A long run for a browser tab",
                                "note": "2000 images: about 25 min here, with this tab open.",
-                               "actions": ["*Desktop app", "Connect a node", "Continue here"]}]
+                               "actions": ["*Desktop app", "Continue here"]}]
 
 
 def test_a_flat_image_too_long_or_too_big_to_build_here_is_said_before_it_starts(probe):
@@ -100,7 +100,7 @@ def test_a_flat_image_too_long_or_too_big_to_build_here_is_said_before_it_starts
     assert probe["buildVerdicts"] == ["website", "desktop"]
     assert probe["buildToasts"] == [{"title": "No room for this pyramid here",
                                      "note": "About 5.8 GB to keep; 4.0 GB of room left here.",
-                                     "actions": ["*Desktop app", "Connect a node", "Continue here"]}]
+                                     "actions": ["*Desktop app", "Continue here"]}]
 
 
 def test_a_model_without_webgpu_says_what_a_click_costs(probe):
@@ -108,20 +108,20 @@ def test_a_model_without_webgpu_says_what_a_click_costs(probe):
     assert probe["modelToasts"] == [{
         "title": "Magic select without a GPU here",
         "note": "No WebGPU here: about 1 s a click (0.95 s measured).",
-        "actions": ["*Connect a node", "Desktop app", "Continue here"]}]
+        "actions": ["*Desktop app", "Continue here"]}]
 
 
-def test_slow_tiles_offer_a_node(probe):
+def test_slow_tiles_are_judged_but_never_said(probe):
+    """No notice offers a node (the website's own tiles tripped the stall
+    limit on a large image): the stall is measured and returned only."""
     verdicts = probe["stallVerdicts"]
     assert verdicts["fast"]["verdict"] == "website" and verdicts["short"]["verdict"] == "website"
     assert verdicts["slow"]["verdict"] == "node" and verdicts["slow"]["p95"] == 300
     assert verdicts["p95"] == 500
     assert probe["duringJob"] == 0           # a job holds the worker: not counted
     assert probe["firstVerdictAt"] == 100    # 50 of the open's own, then a full window
-    assert probe["stall"] == [{"title": "Slow to read here",
-                               "note": "Tiles take 400 ms here; a node beside the data: ~35 ms.",
-                               "actions": ["*Connect a node", "Continue here"]}]
-    assert probe["rememberedStall"] == [{"key": "plexora-notice:slides:stall", "days": 30}]
+    assert probe["stall"] == []
+    assert probe["rememberedStall"] == []
 
 
 def test_every_notice_is_short(probe):

@@ -464,6 +464,29 @@ await checkAsync("a script the document already ran is not run again", async () 
         + "any file declaring a top-level class");
 });
 
+await checkAsync("a script a tool loaded after the router started is not run again", async () => {
+    // Figure Builder's scripts arrive by views/toolLoader.js once the viewer
+    // is up, after the router listed what the document had; /figures names
+    // them again. Re-running them threw 30 "has already been declared".
+    const app = boot({
+        fragments: {
+            "/figures": '<div id="figures"></div>'
+                + '<script src="/plugins/figure_builder/static/figureModel.js?v=2"></script>'
+                + '<script src="/plugins/figure_builder/static/figureLibrary.js?v=1"></script>',
+        },
+    });
+    const late = makeElement("script");
+    late.setAttribute("src", "/plugins/figure_builder/static/figureModel.js?v=1");
+    app.head.appendChild(late);
+    const before = app.head.querySelectorAll("script").length;
+    app.click({ href: "/figures" });
+    await settle();
+    const added = app.head.querySelectorAll("script")
+        .slice(before)
+        .map((node) => new URL(node.src).pathname);
+    assert.deepEqual(added, ["/plugins/figure_builder/static/figureLibrary.js"]);
+});
+
 await checkAsync("the page's controllers are mounted, and the last page's dropped", async () => {
     const app = boot({ fragments: { "/settings": "<div></div>" } });
     app.click({ href: "/settings" });

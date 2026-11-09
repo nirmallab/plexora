@@ -138,20 +138,35 @@ def derived(dataset, taken=()) -> list[dict]:
     for name, body in annotations(dataset).items():
         if name in taken:
             continue
-        values = np.asarray(body.get("values") or [], dtype=object)
-        descriptor = _describe_values(name, values, declared=body.get("categories"))
-        descriptor.update(derived=True, label=body.get("label") or name,
-                          provider=body.get("provider"),
-                          description=body.get("description"),
-                          colors=dict(body.get("colors") or {}),
-                          fingerprint=body.get("fingerprint"))
-        # Labels, whatever the count: a status is never a scale.
-        if descriptor.get("kind") != "categorical":
-            descriptor.update(kind="categorical", ambiguous=False,
-                              **_categorical_payload(*as_text(values),
-                                                     body.get("categories")))
-        out.append(descriptor)
+        fingerprint = body.get("fingerprint")
+        if fingerprint:
+            # Kept per fingerprint (the provider's stamp of what the values
+            # are made from): describing a status over every cell -- text,
+            # counts, levels -- was done again on every `variables` and every
+            # `values` call, seconds a time on a million-cell table in the
+            # website's Python, for an answer that had not changed.
+            descriptor = dataset.cached(("cell_explorer", "derived", name, fingerprint),
+                                        lambda name=name, body=body: _describe_derived(name, body))
+            out.append(dict(descriptor))
+        else:
+            out.append(_describe_derived(name, body))
     return out
+
+
+def _describe_derived(name, body) -> dict:
+    values = np.asarray(body.get("values") or [], dtype=object)
+    descriptor = _describe_values(name, values, declared=body.get("categories"))
+    descriptor.update(derived=True, label=body.get("label") or name,
+                      provider=body.get("provider"),
+                      description=body.get("description"),
+                      colors=dict(body.get("colors") or {}),
+                      fingerprint=body.get("fingerprint"))
+    # Labels, whatever the count: a status is never a scale.
+    if descriptor.get("kind") != "categorical":
+        descriptor.update(kind="categorical", ambiguous=False,
+                          **_categorical_payload(*as_text(values),
+                                                 body.get("categories")))
+    return descriptor
 
 
 def column_values(dataset, column, descriptor=None):

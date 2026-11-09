@@ -1,11 +1,12 @@
 """What the website's Python loads, and when.
 
 The page loads the **base** stage with Pyodide, before the app is built:
-everything `plexora.app` and a gating session import. Every other stage is
-loaded the first time something imports one of its `modules` (`StageFinder`,
-installed by the boot): the first QC check imports cv2 and the `qc` stage
-arrives; an .h5ad imports anndata and `h5ad` does, an .ims h5py and `hdf5`
-does. Loading by import rather than
+everything `plexora.app` imports. Every other stage is loaded the first time
+something imports one of its `modules` (`StageFinder`, installed by the
+boot): the first QC check imports cv2 and the `qc` stage arrives; a project's
+cell index imports scipy and `scipy` does, the first mixture fit (a channel's
+contrast, a gate) sklearn and `fit`; an .h5ad imports anndata and `h5ad`
+does, an .ims h5py and `hdf5` does. Loading by import rather than
 by route means a stage can never be missing for a route nobody thought of,
 and costs nothing for a session that never needs it.
 
@@ -28,7 +29,7 @@ import sys
 
 STAGES = {
     "base": {
-        "pyodide": ["numpy", "scipy", "scikit-learn", "polars", "pillow", "zarr", "numcodecs",
+        "pyodide": ["numpy", "polars", "pillow", "zarr", "numcodecs",
                     "pydantic", "pyyaml", "cryptography", "orjson", "msgpack", "jinja2",
                     "markupsafe", "packaging", "platformdirs", "click", "fsspec",
                     "typing-extensions", "zstandard", "narwhals"],
@@ -41,6 +42,27 @@ STAGES = {
         # called -- a stage arriving mid-request would cost more than it saves.
         "platform": ["plexora-kernels"],
         "modules": [],
+    },
+    "scipy": {
+        # scipy, for whatever of Plexora's imports it: a project's cell index
+        # (a cKDTree, server/utils/spatial_index.py) as its table loads, and
+        # the analyses after. Not in the base any more: building the app
+        # imports none of it (tests/test_browser_imports.py blocks it), and
+        # with scikit-learn it was ~2 s of every visit's start (load 1.2 s,
+        # import 0.8 s on Chrome 157) before Python could answer anything.
+        "pyodide": ["scipy"],
+        "wheels": [],
+        "modules": ["scipy"],
+    },
+    "fit": {
+        # scikit-learn (scipy, joblib and threadpoolctl come with it): every
+        # mixture fit -- a channel's contrast (`data_model.channel_gmm_of`),
+        # a gate's (plugins/gating/server/model.py). The first contrast fit
+        # waits for it; the channel is drawn by then, levelled from its stats
+        # packet's hint.
+        "pyodide": ["scikit-learn"],
+        "wheels": [],
+        "modules": ["sklearn"],
     },
     "qc": {
         "pyodide": ["opencv-python", "shapely"],
@@ -70,7 +92,9 @@ STAGES = {
     "h5ad": {
         # h5py again as a package (loading it twice is a no-op): anndata
         # imports it at module level, where `StageFinder` loads no stage.
-        "pyodide": ["h5py", "pandas"],
+        # scipy as a package for the same reason: anndata imports
+        # scipy.sparse at module level (the `scipy` stage's otherwise).
+        "pyodide": ["h5py", "pandas", "scipy"],
         # anndata asks for scverse-misc[settings]: without pydantic-settings
         # and python-dotenv, `scverse_misc.Settings` is missing and anndata
         # fails at import (found by tests/browser/import_check.mjs).

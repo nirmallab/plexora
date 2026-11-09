@@ -17,9 +17,10 @@ ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = r"""
 import importlib.abc, json, sys
 class Absent(importlib.abc.MetaPathFinder):
-    # As in Pyodide: no imagecodecs, no numba.
+    # As in Pyodide: no imagecodecs, no numba; and scikit-learn and scipy
+    # not until something fits (the `fit` stage, plexora/browser/stages.py).
     def find_spec(self, name, path=None, target=None):
-        if name.split(".")[0] in ("imagecodecs", "numba"):
+        if name.split(".")[0] in ("imagecodecs", "numba", "sklearn", "scipy"):
             raise ModuleNotFoundError(f"No module named {name!r}", name=name)
 sys.meta_path.insert(0, Absent())
 

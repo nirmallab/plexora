@@ -35,8 +35,12 @@ import itertools
 import sys
 import threading
 import zarr
-from sklearn.mixture import GaussianMixture
-from scipy.stats import norm
+# scikit-learn and scipy are imported where a fit is made (`channel_gmm_of`,
+# `prime_hot_code`), not here: on the website they are stages of their own
+# (`scipy` and `fit`, plexora/browser/stages.py) that arrive when first used
+# instead of costing every visit ~2 s before the app can answer anything. The
+# desktop still pays them before serving, on one thread: prime_hot_code's
+# mixture fit imports both, and every CLI entry runs it before its first request.
 import logging
 
 # `_log`, not `log`: prime_hot_code takes a `log` callback of its own.
@@ -313,15 +317,20 @@ def resolve_outline_segmentation(segmentation_path, dataDirectory=None, progress
         return label_volume
     if _servable_as_is(segmentation_path, mode):
         return str(segmentation_path)
-    if mode == segmentation_pyramid.MODE_FILLED:
-        built = _page_label_pyramid(segmentation_path, progress_callback, stage_callback)
-        if built is not None:
-            return built
+    # A pyramid already beside the mask or in the project is adopted before
+    # the website's page is asked to build one: a pyramid the desktop app
+    # made beside a mask the user picked as a folder, or one Python built
+    # into the project, is the mask's pyramid there too. Off the website the
+    # page builds nothing, so the order changes nothing.
     location = segmentation_pyramid.resolve_derived_mask(
         segmentation_path, dataDirectory, mode=mode
     )
     if location.existing is not None:
         return str(location.existing)
+    if mode == segmentation_pyramid.MODE_FILLED:
+        built = _page_label_pyramid(segmentation_path, progress_callback, stage_callback)
+        if built is not None:
+            return built
     return segmentation_pyramid.pyramidize_segmentation_mask(
         segmentation_path,
         location.target,
@@ -438,6 +447,13 @@ def _segmentation_mapping_is_current(entry):
         if derived != source:
             return False
     elif not Path(derived).exists():
+        # On the website a pyramid kept in a folder the browser opens again
+        # only after a click (client services/derivedIndex.js) is not gone:
+        # it is current while its source is unchanged, and one click brings
+        # it back -- never a rebuild for want of a permission.
+        if _derived_waiting(derived):
+            current = segmentation_pyramid.source_fingerprint(source)
+            return current is None or segmentation_pyramid.same_fingerprint(recorded_key, current)
         return False
     # A datasource switched between outline and filled mode still has the other
     # kind's file recorded here; that has to be re-derived rather than served.
@@ -460,6 +476,15 @@ def _segmentation_mapping_is_current(entry):
         return True
     # To the millisecond: the website reads a file's time in whole ones.
     return segmentation_pyramid.same_fingerprint(recorded_key, current)
+
+
+def _derived_waiting(path) -> bool:
+    """Whether `path` is a copy the website's page made that waits on a
+    folder the browser has not opened again this visit. Never asks anything
+    off the website (providers/browser.py `derived_status`)."""
+    from plexora.server.providers import browser as browser_provider
+
+    return browser_provider.derived_status(path) == "waiting"
 
 
 def refresh_segmentation_mapping(entry, datasource_name):
@@ -1898,23 +1923,30 @@ def _saved_channels_first(datasource_name, fullnames):
     waits behind them. Best-effort: any failure here just leaves the original
     order, which is what this did before.
     """
+    active = _saved_active_channels(datasource_name, fullnames)
+    if not active:
+        return fullnames
+    return [n for n in fullnames if n in active] + [n for n in fullnames if n not in active]
+
+
+def _saved_active_channels(datasource_name, fullnames):
+    """Of `fullnames`, the channels the project last had switched on (a
+    set); empty when nothing was saved, or on any failure (best-effort)."""
     try:
         saved = get_saved_channel_list(datasource_name)
         if not saved:
-            return fullnames
+            return set()
         # save_channel_list writes whatever map_channels supplied, which the
         # client builds from imageChannelsIdx -- i.e. fullnames. Also match the
         # config's short `name` so this keeps working for a datasource where
         # the two differ.
         active = {row['channel'] for row in saved if row.get('channel_active')}
         if not active:
-            return fullnames
+            return set()
         short_of = {c['fullname']: c.get('name') for c in config[datasource_name]['imageData']}
-        is_active = lambda n: n in active or short_of.get(n) in active
-        return ([n for n in fullnames if is_active(n)] +
-                [n for n in fullnames if not is_active(n)])
+        return {n for n in fullnames if n in active or short_of.get(n) in active}
     except Exception:
-        return fullnames
+        return set()
 
 
 def _warm_datasource_caches(datasource_name):
@@ -1979,14 +2011,22 @@ def _warm_datasource_caches(datasource_name):
                     # leave the other ninety-one to be computed on click.
                     _log.debug("Skipped warming %s in %s: %s", fullname, datasource_name, exc)
             if not _work.threaded():
-                # The website: one short task per channel and pass, so the
-                # page's requests are answered between them rather than after
-                # the whole pass (its one thread would otherwise be held for
-                # seconds by work nobody is waiting on).
-                for step in (get_image_channel_stats, get_channel_gmm):
-                    for fullname in to_warm:
-                        _work.spawn(warm, step, fullname, background=True,
-                                    name=f"warm-{step.__name__}-{fullname}")
+                # The website: one short task at a time (`_warm_on_page`), so
+                # the page's requests are answered between them rather than
+                # after the whole pass, and never one waiting on a window scan
+                # (its one thread would otherwise be held for seconds a channel
+                # by work nobody is waiting on). The contrast fits only for the
+                # channels last switched on: a fit is 1-7 s of WebAssembly that
+                # no request can interrupt, and one for each of 59 channels
+                # nobody had turned on kept every click waiting seconds for
+                # minutes. A channel turned on later is drawn at once from its
+                # stats (warmed here, cheap) and fitted when it asks.
+                shown = _saved_active_channels(datasource_name, to_warm)
+                plan = ([(get_image_channel_stats, fullname) for fullname in to_warm]
+                        + [(get_channel_gmm, fullname) for fullname in to_warm if fullname in shown])
+                if plan:
+                    _work.spawn(_warm_on_page, datasource_name, load_generation, plan, 0,
+                                background=True, name=f"warm-{plan[0][0].__name__}-{plan[0][1]}")
                 return
             # Pass 1 -- everything the first paint blocks on.
             for fullname in to_warm:
@@ -2011,6 +2051,105 @@ def _warm_datasource_caches(datasource_name):
         _log.exception("Background cache warmup failed for %s: %s", datasource_name, exc)
     finally:
         lock.release()
+
+
+#: How long the website's warm-up looks at the page's scan of a channel's
+#: plane before giving the worker back (`_warm_on_page`): the longest a
+#: request arriving meanwhile waits for it.
+_PAGE_WINDOW_LOOK_MS = 250
+#: How long a request for a channel the page is still scanning looks at the
+#: scan before it is put back in the worker's queue (`_page_window_or_retry`).
+_PAGE_WINDOW_REQUEST_LOOK_MS = 100
+
+
+def _warm_on_page(datasource_name, generation, plan, at):
+    """The website's warm-up (`_warm_datasource_caches`): `plan[at]`, then
+    itself queued again for the rest -- one short background task at a time,
+    each run only once requests have been quiet (plexora/browser/
+    cooperative.py `step`).
+
+    A step that needs a window the page is still scanning does not wait for
+    it: it looks for `_PAGE_WINDOW_LOOK_MS` and is queued again, the scan
+    going on in the page's workers meanwhile (services/browserNode.js
+    `windowOf`, the next channel's queued behind it). Waiting is what held
+    the worker for 7-9 s a channel on a 40-channel slide, every request of
+    the page behind it, for minutes after the project opened. Stops when
+    the project is unloaded or loaded again (a new load starts its own)."""
+    from plexora.server.providers import browser as page
+
+    if at >= len(plan) or generation != load_generation or not is_loaded(datasource_name):
+        return
+    step, fullname = plan[at]
+    try:
+        upcoming = [name for kind, name in plan[at + 1:] if kind is get_image_channel_stats][:1]
+        found = _page_window_look(fullname, datasource_name, wait_ms=_PAGE_WINDOW_LOOK_MS,
+                                  urgent=False, ahead=upcoming)
+        if found is page.WINDOW_PENDING:
+            _work.spawn(_warm_on_page, datasource_name, generation, plan, at, background=True,
+                        name=f"warm-window-{fullname}")
+            return
+        step(fullname, datasource_name)
+    except UnknownChannelError:
+        pass
+    except providers.ResourceUnavailable as exc:
+        _log.info("Stopped warming %s: %s", datasource_name, exc)
+        return
+    except Exception as exc:  # noqa: BLE001 -- one channel is one channel (see `warm`)
+        _log.debug("Skipped warming %s in %s: %s", fullname, datasource_name, exc)
+    if at + 1 < len(plan):
+        following, name = plan[at + 1]
+        _work.spawn(_warm_on_page, datasource_name, generation, plan, at + 1, background=True,
+                    name=f"warm-{following.__name__}-{name}")
+
+
+def _page_window_look(channel_name, datasource_name, *, wait_ms, urgent, ahead=()):
+    """On the website, a planar channel's quantization window without Python
+    waiting for the page to scan for it: the window when it is known (in
+    memory, stored, or the page's answer), `providers.browser.WINDOW_PENDING`
+    while the page is still reading the plane, and None when the window is
+    not the page's to make (not the website, a volume, an image on a node or
+    one the page does not read) -- `get_channel_quantization_window` then
+    makes it as it always did. `ahead` (channel names) are scanned next."""
+    from plexora.server.providers import browser as page
+
+    if _work.threaded() or _window_class(None) is not None:
+        return None
+    known = _gmm_cache.get(('qwindow', datasource_name, channel_name))
+    if known is None:
+        known = _quantization_windows(datasource_name).get(channel_name)
+    if known is not None:
+        return known
+    if _remote_image() is not None or getattr(_providers.image, "quantization_window", None) is not None:
+        return None
+    index = real_channel_index(channel_name, datasource_name)
+    others = []
+    for name in ahead:
+        try:
+            others.append(real_channel_index(name, datasource_name))
+        except UnknownChannelError:
+            continue
+    return page.page_window(_providers.image, channels, index, wait_ms=wait_ms,
+                            urgent=urgent, ahead=others)
+
+
+def _page_window_or_retry(channel_name, datasource_name):
+    """A request for a channel's stats or fit on the website, whose window
+    the page is still scanning: raises `providers.browser.WindowPending`
+    after a short look, and the worker asks again later with the page's
+    other requests answered first -- rather than Python waiting for the scan
+    inside `get_channel_quantization_window`, holding the worker for seconds
+    a channel on a large slide and every other request with it. Python never
+    waits inside the request itself: a request answered while it was
+    suspended could need a lock it holds, or suspend in its turn, and the
+    worker froze (plexora/_work.py `checkpoint`). Only from the two routes
+    (`patient=True`), which answer the exception with a retry."""
+    from plexora.server.providers import browser as page
+
+    if _work.threaded():
+        return
+    if _page_window_look(channel_name, datasource_name, wait_ms=_PAGE_WINDOW_REQUEST_LOOK_MS,
+                         urgent=True) is page.WINDOW_PENDING:
+        raise page.WindowPending(channel_name)
 
 
 def _frame_rows(datasource_name, t):
@@ -2794,13 +2933,17 @@ def _unplaced_cells(project):
     return int(points.shape[0]), int((~np.isfinite(points).all(axis=1)).sum())
 
 
-def get_channel_gmm(channel_name, datasource_name, view=""):
+def get_channel_gmm(channel_name, datasource_name, view="", *, patient=False):
     """The contrast mixture fit for one channel.
 
     `view` names a view of a volume; only a slab projection has a fit of its
     own (see `_slab_view`), cached beside the channel's under its stats key.
     Every other request -- a planar image, a plane, a section, no view -- is
     the unchanged path with the unchanged cache key.
+
+    `patient` (the route's call): on the website, a window the page is still
+    scanning raises `providers.browser.WindowPending` before the lock below
+    is taken, and the request is asked again later (`_page_window_or_retry`).
     """
     ensure_loaded(datasource_name)
     slab = _slab_view(datasource_name, view)
@@ -2809,6 +2952,11 @@ def get_channel_gmm(channel_name, datasource_name, view=""):
     cached = _gmm_cache.get(cache_key)
     if cached is not None:
         return cached
+    if patient and slab is None and not _work.threaded():
+        _page_window_or_retry(channel_name, datasource_name)
+        cached = _gmm_cache.get(cache_key)
+        if cached is not None:
+            return cached
     # Single-flight. encode_tile() calls this for every default-quality tile,
     # and a cold entry costs ~0.7 s: a GaussianMixture(3) fit plus a .max()
     # over the entire full-resolution channel plane (~218 MB, see the comment
@@ -3462,6 +3610,10 @@ def channel_gmm_of(image_data, qmin, qmax):
     full-resolution data; see `get_image_channel_stats` for why mixing those up
     saturates whole channels.
     """
+    # Here rather than at module level (see the imports at the top).
+    from scipy.stats import norm
+    from sklearn.mixture import GaussianMixture
+
     packet_gmm = {}
 
     nonzero = image_data[image_data > 0]
@@ -3572,7 +3724,7 @@ def channel_gmm_of(image_data, qmin, qmax):
 _HINT_PERCENTILES = (50.0, 99.5)
 
 
-def get_image_channel_stats(channel_name, datasource_name, view=""):
+def get_image_channel_stats(channel_name, datasource_name, view="", *, patient=False):
     """Per-channel image_min/image_max/image_histogram, split out of
     get_datasource_description so a page load only pays for the channels the
     user actually activates instead of every channel up front.
@@ -3608,6 +3760,8 @@ def get_image_channel_stats(channel_name, datasource_name, view=""):
     slab's window class (a standard deviation's is half the planes'); a plane
     or a section shares the channel's packet, which is this function with no
     view at all -- see `_slab_view`.
+
+    `patient`: as get_channel_gmm's.
     """
     global zarray
     global config
@@ -3620,6 +3774,10 @@ def get_image_channel_stats(channel_name, datasource_name, view=""):
     cache_key = (datasource_name, channel_name)
     if cache_key in _image_stats_cache:
         return _image_stats_cache[cache_key]
+    if patient and not _work.threaded():
+        _page_window_or_retry(channel_name, datasource_name)
+        if cache_key in _image_stats_cache:
+            return _image_stats_cache[cache_key]
 
     remote = _remote_image()
     if remote is not None:
@@ -4261,6 +4419,33 @@ def encode_rgb_overview(image_data):
     return file_object.getvalue()
 
 
+def prime_encoders(log=None):
+    """The first of `prime_hot_code`'s steps, on their own: PIL's format
+    plugins and the tile encoders' first use. The website's Python pays just
+    these, as background work once the first page has been answered
+    (plexora/browser/boot.py `start`): the rest are not for it -- the mixture
+    fit would load the `fit` stage and shapely the `qc` stage at every visit
+    (plexora/browser/stages.py), and there are no native codecs, compiled
+    kernels or ONNX Runtime to open there. Never raises."""
+    def step(name, run):
+        try:
+            run()
+        except Exception as exc:
+            if log:
+                log(f"  could not pre-load {name}: {exc}")
+
+    step("PIL's format plugins", Image.init)
+
+    def encoders():
+        tiny = np.arange(16, dtype=np.uint16).reshape(4, 4)
+        encode_tile_array(tiny, False, 'webp', qmin=0.0, qmax=15.0)
+        encode_tile_array(tiny, False, 'hd')
+        encode_tile_array(np.zeros((4, 4), dtype=np.uint8), False, 'legacy')
+        encode_tile_array(np.zeros((4, 4, 4), dtype=np.uint8), True, 'webp')
+        encode_overview(tiny, 0.0, 15.0)
+    step("the tile encoders", encoders)
+
+
 def prime_hot_code(log=None):
     """Every lazy import and first-use initializer on the tile and contrast
     paths, paid once, here, on one thread, before any request exists.
@@ -4294,19 +4479,15 @@ def prime_hot_code(log=None):
             if log:
                 log(f"  could not pre-load {name}: {exc}")
 
-    step("PIL's format plugins", Image.init)
-
-    def encoders():
-        tiny = np.arange(16, dtype=np.uint16).reshape(4, 4)
-        encode_tile_array(tiny, False, 'webp', qmin=0.0, qmax=15.0)
-        encode_tile_array(tiny, False, 'hd')
-        encode_tile_array(np.zeros((4, 4), dtype=np.uint8), False, 'legacy')
-        encode_tile_array(np.zeros((4, 4, 4), dtype=np.uint8), True, 'webp')
-        encode_overview(tiny, 0.0, 15.0)
-    step("the tile encoders", encoders)
+    prime_encoders(log)
 
     def mixture():
         import warnings
+
+        # The imports themselves are the first half of what this pays for: no
+        # longer at the module's top (the website loads them later), so here.
+        from scipy.stats import norm
+        from sklearn.mixture import GaussianMixture
 
         # Three components over three decades, like a real channel; max_iter
         # is tiny because nothing reads the fit -- what matters is that
@@ -5235,9 +5416,15 @@ def _pyramidized_copy(filePath, dataDirectory, stage, report, volume_description
     physical = brightfield.physical_metadata(filePath)
     if not volume_description:
         # On the website the page builds a picked image's copy with its own
-        # workers, into the browser's storage (providers/browser.py).
+        # workers, into the browser's storage (providers/browser.py). A copy
+        # already beside the original (a folder picked whole, where the
+        # desktop app made one) or in the project is adopted first.
         from plexora.server.providers import browser as browser_provider
 
+        if browser_provider.is_page_file(filePath):
+            found = image_pyramid.find_derived_image(filePath, dataDirectory)
+            if found is not None:
+                return found
         built = browser_provider.page_pyramid(
             filePath, name=image_pyramid.derived_output_path(filePath).name,
             spec=lambda: image_pyramid.page_build(filePath, channel_names=names, physical=physical),

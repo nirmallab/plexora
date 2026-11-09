@@ -11,7 +11,9 @@ left as they were.
 Where it looks, cheapest first, and why:
 1. where this computer already found it (`at`) -- every open after the first;
 2. a pyramid the website built in Plexora's own folder
-   (Documents/Plexora/pyramids/<key>/<name>), or beside its source;
+   (Documents/Plexora/pyramids/<key>/<name>), or beside its source; a file
+   the website's Python wrote into its project store (`/data/<rel>`), which
+   is Documents/Plexora/projects/<rel> when the projects are kept there;
 3. the folder of a file of the same project already found -- one pick is one
    folder, so one find usually finds the rest;
 4. the operating system's file index (Spotlight, Windows Search, plocate);
@@ -59,6 +61,46 @@ def documents_dir() -> Path:
 def plexora_folder() -> Path:
     """Plexora's own folder, shared with the website: Documents/Plexora."""
     return documents_dir() / "Plexora"
+
+
+def website_copies(source, name: str, kind: str = "image") -> list:
+    """Where the website keeps its copy of the file `source` in Plexora's
+    folder, when it made one: Documents/Plexora/pyramids/<key>/<name>, the
+    key worked out from the file as the page reads it (providers/browser.py
+    `derived_key`: a web page sees times in whole milliseconds, so the
+    millisecond each side of this computer's time is tried too). The paths
+    that exist; [] on the website itself, for a folder, or a file not here.
+    A desktop resolver adopts one only after its own check, and never writes
+    there."""
+    if sources.app_key() == "website":
+        return []
+    try:
+        path = Path(source)
+        stat = path.stat()
+        if path.is_dir():
+            return []
+    except (OSError, TypeError, ValueError):
+        return []
+    folder = plexora_folder() / "pyramids"
+    if not folder.is_dir():
+        return []
+    from plexora.server.providers.browser import derived_key
+
+    millis = stat.st_mtime_ns // 1_000_000
+    found = []
+    for when in (millis, millis - 1, millis + 1):
+        candidate = folder / derived_key(path.name, f"{stat.st_size}-{when * 1_000_000}", kind) / name
+        if candidate.is_file() and candidate not in found:
+            found.append(candidate)
+    return found
+
+
+def _library_path(recorded: str) -> Optional[Path]:
+    """A file the website's Python wrote into its store (`/data/<rel>`), where
+    it is on this computer when the projects are kept in Plexora's folder."""
+    if not recorded.startswith("/data/"):
+        return None
+    return plexora_folder() / "projects" / recorded[len("/data/"):]
 
 
 def _user_folders() -> list:
@@ -161,6 +203,9 @@ def resolve(entry: dict, me: str, extra_roots: Iterable[Path] = (), *, walk_seco
             facts = known[recorded] or {}
             name = facts.get("name") or Path(recorded).name
             candidates = []
+            library = _library_path(recorded)
+            if library is not None:
+                candidates.append(library)
             if facts.get("key"):
                 candidates.append(plexora_folder() / "pyramids" / facts["key"] / name)
             source = facts.get("from")
@@ -183,10 +228,12 @@ def resolve(entry: dict, me: str, extra_roots: Iterable[Path] = (), *, walk_seco
                 if hit is not None:
                     out[recorded] = str(hit)
 
-    # The user's files first, then the pyramids made from them: a pyramid
+    # The user's files first, then what was made from them (the page's
+    # pyramids, what the website's Python wrote into its store): a pyramid
     # beside its original is found from where the original was.
-    look([recorded for recorded in missing if not recorded.startswith("/derived/")])
-    look([recorded for recorded in missing if recorded.startswith("/derived/")])
+    made = ("/derived/", "/data/")
+    look([recorded for recorded in missing if not recorded.startswith(made)])
+    look([recorded for recorded in missing if recorded.startswith(made)])
     return out
 
 
@@ -247,9 +294,12 @@ def _project_folders(me: str) -> list:
 
 def missing_here(name: str) -> list:
     """The files of project `name` this app has no path for: [{recorded, name,
-    size}], from the identities the project recorded. On the website this is
-    what the page asks the user to find, by choosing the folder that holds
-    them (client services/pickedFiles.js `find`)."""
+    size, ...}], from the identities the project recorded. On the website this
+    is what the page asks the user to find, by choosing the folder that holds
+    them (client services/pickedFiles.js `find`); a pyramid the page made that
+    waits on a folder the browser opens again after one click (client
+    services/derivedIndex.js) says so (`waiting`, and where: `place`), so the
+    page can ask for that click instead of a search."""
     from plexora.server.models.project import Project, read_config
     from plexora import paths
 
@@ -259,16 +309,33 @@ def missing_here(name: str) -> list:
         return []
     entry = read_config(paths.config_path(root)).get(name) or {}
     out = []
+    waiting_here = None
     for recorded, info in (entry.get(sources.SOURCES) or {}).items():
         info = info or {}
         here = (info.get("at") or {}).get(me) or (recorded if me == "website" and
                                                   recorded.startswith(sources.PAGE_ROOTS) else None)
         if here and Path(here).is_file():
             continue
-        out.append({"recorded": recorded, "name": info.get("name") or Path(recorded).name,
-                    "size": info.get("size"), "mtime_ms": info.get("mtime_ms"),
-                    "head": info.get("head"), "tail": info.get("tail")})
+        item = {"recorded": recorded, "name": info.get("name") or Path(recorded).name,
+                "size": info.get("size"), "mtime_ms": info.get("mtime_ms"),
+                "head": info.get("head"), "tail": info.get("tail")}
+        if me == "website" and recorded.startswith("/derived/"):
+            if waiting_here is None:
+                waiting_here = _waiting_copies()  # one question to the page, asked once
+            waiting = waiting_here.get(recorded)
+            if waiting is not None:
+                item.update(waiting=True, place=waiting.get("place"))
+        out.append(item)
     return out
+
+
+def _waiting_copies() -> dict:
+    """{path: the page's record} of the website's copies waiting on a
+    folder's permission (providers/browser.py `derived_index`)."""
+    from plexora.server.providers import browser as browser_provider
+
+    return {path: found for path, found in browser_provider.derived_index().items()
+            if isinstance(found, dict) and found.get("state") == "waiting"}
 
 
 def record_found(name: str, found: dict) -> int:

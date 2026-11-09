@@ -9,7 +9,8 @@ deleting a project silently deletes figures that merely mentioned it.
 
 So each figure is its own single-file SQLite database:
 
-    data_path/.figures/<figure_id>/figure.db      the document, previews, journal
+    data_path/.figures/<figure_id>/figure.db      the document, journal, preview records
+    data_path/.figures/<figure_id>/previews/      each panel's preview raster, one file
     data_path/.figures/<figure_id>/assets/        imported PNG/JPEG/TIFF
     data_path/.figures/<figure_id>/exports/       generated PDFs, swept freely
 
@@ -44,7 +45,9 @@ reinstates its whole world.
 
 from __future__ import annotations
 
+import hashlib
 import json
+import os
 import re
 import shutil
 import sqlite3
@@ -61,6 +64,7 @@ FIGURES_DIRNAME = ".figures"
 
 DB_FILENAME = "figure.db"
 ASSETS_DIRNAME = "assets"
+PREVIEWS_DIRNAME = "previews"
 
 #: Biggest preview or thumbnail accepted, per panel. A WebP of a canvas crop is
 #: tens of kilobytes; anything past this is a client sending the wrong thing.
@@ -453,11 +457,14 @@ def apply(figure_id, base_revision, ops) -> int:
 
     with _lock_for(figure_id):
         document = load(figure_id)
-        if document["revision"] != base_revision:
-            raise ConflictError(document["revision"])
+        current = document["revision"]
+        if current != base_revision:
+            raise ConflictError(current)
 
-        updated = operations.apply_operations(document, ops)
-        updated["revision"] = document["revision"] + 1
+        # This request's own copy, just read from disk and dropped on an error:
+        # no deep copy needed to keep it intact (see apply_operations).
+        updated = operations.apply_operations(document, ops, in_place=True)
+        updated["revision"] = current + 1
         stamp = _now()
         updated["updated_at"] = stamp
 
@@ -494,10 +501,33 @@ def replace(figure_id, base_revision, document) -> int:
         connection = _open(figure_id)
         try:
             with connection:
+                _keep_render_revisions_forward(connection, current, updated)
                 _write_document(connection, updated, stamp)
         finally:
             connection.close()
         return updated["revision"]
+
+
+def _keep_render_revisions_forward(connection, current, updated):
+    """No panel's render revision goes backwards, whatever the document says.
+
+    An undo replaces the whole document with an earlier one, and in it a panel
+    Quick Edit re-rendered since carries the revision from BEFORE the edit. The
+    preview stored is the edit's, at the later revision. Left alone, the next
+    edit of that panel would bump the old number to the later one again and
+    store a different picture under a URL the browser was told it may keep for
+    good (routes.get_preview). The same floor `operations.update_panel` applies
+    to an ordinary edit, against both the stored document and the stored
+    preview; the client applies it too (figureDocumentState._replaceWith), so
+    both sides go on from the same number.
+    """
+    stored = {row["panel_id"]: int(row["render_revision"])
+              for row in connection.execute("SELECT panel_id, render_revision FROM previews")}
+    for panel_id, panel in updated["panels"].items():
+        floor = max(int((current["panels"].get(panel_id) or {}).get("render_revision") or 0),
+                    stored.get(panel_id, 0))
+        if int(panel.get("render_revision") or 0) < floor:
+            panel["render_revision"] = floor
 
 
 def _write_document(connection, document, stamp):
@@ -567,6 +597,15 @@ def put_preview(figure_id, panel_id, render_revision, data, width=0, height=0, f
     overwrite the second and the panel shows a state they have left. Comparing
     render revisions makes a late arrival a no-op instead.
 
+    The bytes go in a file of their own under `previews/`, and the row in
+    `figure.db` says which revision is current. They used to be a BLOB in the
+    row, which made the database the size of every picture in the figure --
+    and the database is rewritten by every edit, so moving one panel rewrote
+    megabytes. On the website that rewrite is then copied to the user's folder
+    after every request. A preview file is written once per render instead.
+    See `_preview_file` for the name, and `get_preview` for the rows from
+    before, whose bytes are still in the database.
+
     Returns True if it was stored.
     """
     schema.validate_id(panel_id, "panel id")
@@ -576,41 +615,108 @@ def put_preview(figure_id, panel_id, render_revision, data, width=0, height=0, f
         raise ValueError("a preview needs image data")
     if len(data) > MAX_PREVIEW_BYTES:
         raise ValueError(f"preview is larger than {MAX_PREVIEW_BYTES // (1024 * 1024)} MB")
+    fmt = _preview_format(fmt)
 
-    connection = _open(figure_id)
-    try:
-        with connection:
+    # Held across the check, the file and the row: two renders of one panel
+    # landing at once must not leave the row naming one and the file holding
+    # the other.
+    with _lock_for(figure_id):
+        connection = _open(figure_id)
+        try:
             row = connection.execute(
                 "SELECT render_revision FROM previews WHERE panel_id = ?", (panel_id,)).fetchone()
             if row is not None and int(row["render_revision"]) > render_revision:
                 return False
-            connection.execute(
-                "INSERT INTO previews (panel_id, render_revision, width, height, format, data, updated_at) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?) "
-                "ON CONFLICT(panel_id) DO UPDATE SET render_revision = excluded.render_revision, "
-                "width = excluded.width, height = excluded.height, format = excluded.format, "
-                "data = excluded.data, updated_at = excluded.updated_at",
-                (panel_id, render_revision, int(width or 0), int(height or 0),
-                 fmt, sqlite3.Binary(data), _now()),
-            )
+            # The file first, under its own revision's name, then the row that
+            # points at it. A crash between the two leaves a file nothing names
+            # (swept by the next render of the panel), never a row naming bytes
+            # of another revision -- which a browser told to keep that URL for
+            # good would then keep.
+            path = _preview_file(figure_id, panel_id, render_revision, fmt)
+            path.parent.mkdir(parents=True, exist_ok=True)
+            partial = path.with_name(f".{path.name}.{uuid.uuid4().hex}.tmp")
+            partial.write_bytes(bytes(data))
+            os.replace(partial, path)
+            with connection:
+                connection.execute(
+                    "INSERT INTO previews (panel_id, render_revision, width, height, format, data, updated_at) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?) "
+                    "ON CONFLICT(panel_id) DO UPDATE SET render_revision = excluded.render_revision, "
+                    "width = excluded.width, height = excluded.height, format = excluded.format, "
+                    "data = excluded.data, updated_at = excluded.updated_at",
+                    (panel_id, render_revision, int(width or 0), int(height or 0),
+                     fmt, sqlite3.Binary(b""), _now()),
+                )
+        finally:
+            connection.close()
+        _sweep_previews(figure_id, panel_id, keep=path)
         return True
-    finally:
-        connection.close()
 
 
 def get_preview(figure_id, panel_id):
-    """(bytes, format, render_revision) or None."""
+    """(bytes, format, render_revision) or None.
+
+    A row with bytes in it is a preview stored before they moved to files, and
+    is served from the row; a row without is served from its file.
+    """
     schema.validate_id(panel_id, "panel id")
-    connection = _open(figure_id)
-    try:
-        row = connection.execute(
-            "SELECT data, format, render_revision FROM previews WHERE panel_id = ?",
-            (panel_id,)).fetchone()
-    finally:
-        connection.close()
-    if row is None:
-        return None
-    return bytes(row["data"]), row["format"], int(row["render_revision"])
+    # Twice at most: a render can land between reading the row and opening its
+    # file, and sweep the file away. The second read finds the new row.
+    for _attempt in range(2):
+        connection = _open(figure_id)
+        try:
+            row = connection.execute(
+                "SELECT data, format, render_revision FROM previews WHERE panel_id = ?",
+                (panel_id,)).fetchone()
+        finally:
+            connection.close()
+        if row is None:
+            return None
+        revision = int(row["render_revision"])
+        if row["data"]:
+            return bytes(row["data"]), row["format"], revision
+        try:
+            data = _preview_file(figure_id, panel_id, revision, row["format"]).read_bytes()
+        except FileNotFoundError:
+            continue
+        return data, row["format"], revision
+    return None
+
+
+def _preview_format(fmt):
+    """A format that is safe in a filename: "webp", "png", "jpeg"."""
+    fmt = str(fmt or "webp").lower()
+    return fmt if re.fullmatch(r"[a-z0-9]{1,8}", fmt) else "webp"
+
+
+def _preview_file(figure_id, panel_id, render_revision, fmt):
+    """Where one render of one panel's preview is kept.
+
+    Named by a hash of the panel id rather than the id itself: an id may hold a
+    colon, which Windows refuses in a filename, and two ids differing only in
+    case are one file on the filesystems most users have. The revision is in
+    the name so a row only ever names the bytes it was written with.
+    """
+    digest = hashlib.sha256(panel_id.encode("utf-8")).hexdigest()[:24]
+    return figure_dir(figure_id) / PREVIEWS_DIRNAME / f"{digest}.{int(render_revision)}.{_preview_format(fmt)}"
+
+
+def _sweep_previews(figure_id, panel_id, keep=None):
+    """Remove a panel's preview files other than `keep` (every one with None).
+
+    Best-effort, like `drop_previews`: a stale file costs disk and nothing else.
+    """
+    digest = hashlib.sha256(panel_id.encode("utf-8")).hexdigest()[:24]
+    directory = figure_dir(figure_id) / PREVIEWS_DIRNAME
+    if not directory.is_dir():
+        return
+    for path in directory.glob(f"{digest}.*"):
+        if keep is not None and path == keep:
+            continue
+        try:
+            path.unlink()
+        except OSError:
+            pass
 
 
 def drop_previews(figure_id, panel_ids):
@@ -634,6 +740,11 @@ def drop_previews(figure_id, panel_ids):
         pass
     finally:
         connection.close()
+    for panel_id in panel_ids:
+        try:
+            _sweep_previews(figure_id, panel_id)
+        except (OSError, ValueError):
+            pass
 
 
 def put_thumbnail(figure_id, data, fmt="webp"):

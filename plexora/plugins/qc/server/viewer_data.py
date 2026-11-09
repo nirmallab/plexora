@@ -396,7 +396,10 @@ def cells(ds, project, result_id=None, *, max_ids=MAX_TOTAL_IDS) -> dict:
     regions drawn by hand behind a region reason ([{roi_id, name}]). Whole-cell groups come first (every fail
     before every warn before every note, then the order a cell's primary
     reason is chosen in),
-    then the marker groups (unreliable before flagged, by marker)."""
+    then the marker groups (unreliable before flagged, by marker).
+
+    `ds` may be a function returning the project's data, called only once
+    there are cell calls to group (the routes' copy of the table is not free)."""
     import polars as pl
 
     result = _result(project, result_id)
@@ -416,6 +419,8 @@ def cells(ds, project, result_id=None, *, max_ids=MAX_TOTAL_IDS) -> dict:
     summary = result.get("cells") or {}
     document = results.load(project)
     disabled = results.disabled_categories(document)
+    if callable(ds):
+        ds = ds()
     table_kind, on_node = _where(ds)
     base = {"available": True, "result_id": result.get("result_id"),
             "n": int(summary.get("n") or frame.height),

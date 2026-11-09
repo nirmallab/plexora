@@ -11,15 +11,21 @@
  * over node/pyramid.js).
  *
  * Where the copy goes is the user's choice, made in the import's question
- * for an image (views/importSample.js): beside the original, in a folder they grant
- * (`chooseFolder`, Chromium only: a page may write into a folder only when
- * the user picks it and allows editing); otherwise in Plexora's own folder
- * when the projects are kept there (services/browserStore.js: Documents/
- * Plexora/pyramids/<key>/), else in the site's own storage, OPFS
- * plexora/derived/<key>/. A cancelled picker, or a folder write that fails,
- * leaves the copy in the browser. A file already under the copy's name in the
- * folder is never written over: Python judges whether it is a finished copy of
- * this image (`exists`), and if not the copy goes to the browser.
+ * for an image (views/importSample.js): in Plexora's folder when the projects
+ * are kept there (services/browserStore.js: Documents/Plexora/pyramids/
+ * <key>/), or in a folder they grant (`chooseFolder`, Chromium only: a page
+ * may write into a folder only when the user picks it and allows editing),
+ * usually beside the original; otherwise in the site's own storage, OPFS
+ * plexora/derived/<key>/ (moved into Plexora's folder later, when the
+ * projects are kept there: services/derivedIndex.js `migrate`). A cancelled
+ * picker, or a folder write that fails, leaves the copy in the browser. A
+ * file already under the copy's name in a folder is never written over:
+ * Python judges whether it is a finished copy of this image (`existing`), and
+ * if not the copy goes to the browser.
+ *
+ * Before anything is built every home is looked in, in one order
+ * (services/derivedIndex.js `lookup`): a copy made on an earlier visit, in
+ * any of them, is used again, wherever the store is this visit.
  *
  *   "pyramid" {path, key, name, kind, shape, dtype, factors, tile, description, browser?}
  *       -> {id}: a build started, the same build still running (asked again by
@@ -34,11 +40,13 @@
  *
  * Finished copies are the page's files like the user's picks: registered
  * with PlexoraPicks under their path (so the browser node serves their tiles)
- * and mounted for Python again at every load -- those in the browser by the
- * worker at boot, those in a folder here, where the browser still grants
- * access (`waiting()` / `reconnect()` otherwise, from a click).
+ * and mounted for Python again at every load, through the index of every
+ * copy the page made (services/derivedIndex.js): those in the browser by the
+ * worker at boot, those in folders where the browser still grants access
+ * (`waiting()` / `reconnect()` otherwise, from a click).
  *
- * Classic script, `window.PlexoraPyramid`; needs PlexoraPython and PlexoraPicks.
+ * Classic script, `window.PlexoraPyramid`; needs PlexoraPython, PlexoraPicks and
+ * PlexoraDerived.
  */
 (function (global) {
     "use strict";
@@ -48,57 +56,12 @@
     const HANDS = (globalThis.PLEXORA_SITE_BASE || "") + "/client/dist/tiffWorker_bundle.js";
     const ROOT = "/derived";
     const WORKERS = Math.max(1, Math.min(12, (global.navigator.hardwareConcurrency || 4) - 2));
-    const DB = "plexora-copies";
-    const STORE = "copies";
     const builds = new Map();
     //: The folder chosen for the next build of a source, by its path.
     const targets = new Map();
-    //: Copies in folders this visit cannot read yet (no permission without a click).
-    const waiting = [];
     let nextId = 1;
 
-    function database() {
-        return new Promise((resolve, reject) => {
-            const request = global.indexedDB.open(DB, 1);
-            request.onupgradeneeded = () => request.result.createObjectStore(STORE, { keyPath: "path" });
-            request.onsuccess = () => resolve(request.result);
-            request.onerror = () => reject(request.error);
-        });
-    }
-
-    async function transact(mode, work) {
-        const db = await database();
-        try {
-            return await new Promise((resolve, reject) => {
-                const tx = db.transaction(STORE, mode);
-                const result = work(tx.objectStore(STORE));
-                tx.oncomplete = () => resolve(result && "result" in result ? result.result : result);
-                tx.onerror = () => reject(tx.error);
-            });
-        } finally {
-            db.close();
-        }
-    }
-
-    async function derived() {
-        const root = await global.navigator.storage.getDirectory();
-        const plexora = await root.getDirectoryHandle("plexora", { create: true });
-        return plexora.getDirectoryHandle("derived", { create: true });
-    }
-
-    //: The finished copy under `key` in the browser, or null: its manifest is
-    //: written last, and the file must be the size it says.
-    async function finished(key, name) {
-        try {
-            const dir = await (await derived()).getDirectoryHandle(key);
-            const manifest = JSON.parse(await (await (await dir.getFileHandle("manifest.json")).getFile()).text());
-            if (name && manifest.name !== name) return null;
-            const file = await (await dir.getFileHandle(manifest.name)).getFile();
-            return file.size === manifest.bytes ? { manifest, file } : null;
-        } catch (error) {
-            return null;
-        }
-    }
+    const derived = () => global.PlexoraDerived || null;
 
     function adopt(path, file) {
         if (global.PlexoraPicks && global.PlexoraPicks.adopt) global.PlexoraPicks.adopt(path, file);
@@ -166,6 +129,7 @@
                     Object.assign(build, { state: "done", file: data.file, timings: data.timings, where,
                                            ms: Math.round(performance.now() - build.began) });
                     adopt(build.path, build.file);
+                    settle(build);
                     if (where === "memory") {
                         build.note = "This browser cannot store it for the site; it is lost when the tab closes.";
                         notify("Pyramid kept until this tab closes", null);
@@ -177,16 +141,18 @@
                                        ms: Math.round(performance.now() - build.began) });
                 adopt(build.path, build.file);
                 settle(build);
-                if (message.folder) {
-                    transact("readwrite", (store) => store.put({
-                        path: build.path, key: build.key, name: build.name, folder: message.folder,
-                        bytes: data.file.size, made: Date.now() })).catch(() => {});
-                }
+                // Every copy is recorded where it was made, so any later
+                // visit finds it before building (services/derivedIndex.js).
+                keep(build, message.folder ? build.where : "opfs", data.file, message.folder);
             } else if (data.exists) {
                 stop();
                 Object.assign(build, { state: "done", file: data.file, existing: true });
                 adopt(build.path, build.file);
                 settle(build);
+                // Python judges it now; recorded meanwhile, so the copy it
+                // adopts is found again next visit. One it refuses is
+                // recorded over by the browser's own build.
+                keep(build, build.where, data.file, message.folder);
             } else if (data.error) {
                 stop();
                 failed(build, message, data.error);
@@ -199,17 +165,20 @@
         worker.postMessage(message);
     }
 
-    //: A copy built in memory, kept in IndexedDB beside the folder records
-    //: ({path, key, name, blob, bytes}): "indexeddb", or "memory" when the
-    //: database will not take it.
+    //: The copy recorded in the index under its home: "beside" (a folder the
+    //: user chose), "plexora" (Plexora's folder), "opfs", "indexeddb".
+    function keep(build, home, file, folder = null, extra = {}) {
+        const index = derived();
+        if (!index) return Promise.resolve(null);
+        return index.record({ path: build.path, key: build.key, name: build.name, kind: build.kind, home,
+                              ...(home === "beside" && folder ? { folder } : {}),
+                              bytes: file.size, source: build.source, ...extra }, file).catch(() => null);
+    }
+
+    //: A copy built in memory, kept in IndexedDB in the index (`blob`):
+    //: "indexeddb", or "memory" when the database will not take it.
     async function keepInDatabase(build, file) {
-        try {
-            await transact("readwrite", (store) => store.put({
-                path: build.path, key: build.key, name: build.name, blob: file, bytes: file.size, made: Date.now() }));
-            return "indexeddb";
-        } catch (error) {
-            return "memory";
-        }
+        return (await keep(build, "indexeddb", file, null, { blob: file })) ? "indexeddb" : "memory";
     }
 
     //: A folder that could not take the copy: build it in the browser instead,
@@ -249,12 +218,9 @@
         if (same) return { value: { id: same.id } };
         const id = nextId++;
         const chosen = browser ? null : targets.get(path) || null;
-        const folder = chosen || (browser ? null : await homeFolder(key));
         targets.delete(path);
         const build = { id, key, name, kind, state: "building", tiles: 0, total: 0, path: `${ROOT}/${key}/${name}`,
-                        dir: `${ROOT}/${key}`, where: chosen ? "beside" : folder ? "plexora" : "browser",
-                        place: chosen ? `“${chosen.name}”` : folder ? global.PlexoraStore.current().label
-                            : "this browser",
+                        dir: `${ROOT}/${key}`, source: path, where: "browser", place: "this browser",
                         file: null, error: null,
                         note: !browser ? null : kind === "labels"
                             ? "A file of that name in Plexora's folder is not this mask's pyramid; "
@@ -263,25 +229,41 @@
                               + "this copy is kept in this browser.",
                         began: performance.now() };
         builds.set(id, build);
-        if (folder) {
+        // A copy made before, wherever it is (services/derivedIndex.js: the
+        // index, Plexora's folder, the site's storage, IndexedDB), whatever
+        // this visit's choices: built once, used from then on. A file found
+        // under the name but never recorded here is handed back unread for
+        // Python to judge (`existing`), as a folder's file always was.
+        const index = derived();
+        const found = index ? await index.lookup(key, name, { browserOnly: browser }).catch(() => null) : null;
+        if (found) {
+            const own = found.home === "opfs" || found.home === "indexeddb";
+            Object.assign(build, { state: "done", file: found.file, existing: !found.trusted, adopted: found.trusted,
+                                   where: own ? "browser" : found.home });
+            adopt(build.path, build.file);
+            if (!found.trusted) keep(build, found.home, found.file);
+            if (chosen && own && index.copyTo) index.copyTo(build.path, chosen).catch(() => null);
+            return { value: { id } };
+        }
+        // Where it is built: the folder chosen in the import's question; else
+        // Plexora's folder when the projects are kept there and it is open;
+        // else the site's own storage (moved to Plexora's folder later, when
+        // that is where projects are kept).
+        const folder = chosen || (browser ? null : await homeFolder(key));
+        Object.assign(build, { where: chosen ? "beside" : folder ? "plexora" : "browser",
+                               place: chosen ? `“${chosen.name}”` : folder ? global.PlexoraStore.current().label
+                                   : "this browser" });
+        if (chosen) {
             // A file already under the copy's name there -- a copy an earlier
             // visit made, asked for again when a project could not mount it
             // -- is handed back unread for Python to judge (`existing`), as
             // the worker would hand it back after opening the original in
             // every one of its readers.
-            const there = await folder.getFileHandle(name).then((handle) => handle.getFile()).catch(() => null);
+            const there = await chosen.getFileHandle(name).then((handle) => handle.getFile()).catch(() => null);
             if (there) {
                 Object.assign(build, { state: "done", file: there, existing: true });
                 adopt(build.path, build.file);
-                return { value: { id } };
-            }
-        } else {
-            const found = await finished(key, name);
-            const held = found ? null : await transact("readonly", (store) => store.get(build.path)).catch(() => null);
-            if (found || (held && held.blob && held.bytes === held.blob.size)) {
-                const file = found ? found.file : new File([held.blob], name);
-                Object.assign(build, { state: "done", file, adopted: true, where: found ? "browser" : "indexeddb" });
-                adopt(build.path, build.file);
+                keep(build, "beside", there, chosen);
                 return { value: { id } };
             }
         }
@@ -316,67 +298,17 @@
         return { value };
     }
 
-    async function mountCopy(record) {
-        const file = record.blob ? new File([record.blob], record.name)
-            : await (await record.folder.getFileHandle(record.name)).getFile();
-        if (file.size !== record.bytes) return false; // changed since: not ours to read as the copy
-        await global.PlexoraPython.mount(`${ROOT}/${record.key}`, [file]);
-        adopt(record.path, file);
-        return true;
-    }
-
-    //: Every finished copy, as the page's files again: those in the browser
-    //: (the worker mounted them at boot), and those in folders still granted.
+    //: Every finished copy, as the page's files again, mounted for Python
+    //: where the browser still grants access (services/derivedIndex.js).
     async function restore() {
-        const out = [];
-        try {
-            for await (const [key, handle] of (await derived()).entries()) {
-                if (handle.kind !== "directory") continue;
-                const found = await finished(key, null);
-                if (!found) continue;
-                const path = `${ROOT}/${key}/${found.manifest.name}`;
-                adopt(path, found.file);
-                out.push(path);
-            }
-        } catch (error) {
-            // No OPFS (a private window, an old Safari): nothing was built here.
-        }
-        waiting.length = 0;
-        let records = [];
-        try { records = await transact("readonly", (store) => store.getAll()); } catch (error) { /* none */ }
-        for (const record of records) {
-            try {
-                if (record.blob) {
-                    // Kept in the database (this browser could not write the
-                    // site's files): no permission to ask.
-                    if (await mountCopy(record)) out.push(record.path);
-                    continue;
-                }
-                if (await record.folder.queryPermission({ mode: "read" }) === "granted" && await mountCopy(record)) {
-                    out.push(record.path);
-                } else {
-                    waiting.push(record);
-                }
-            } catch (error) {
-                waiting.push(record);
-            }
-        }
-        return out;
+        const index = derived();
+        return index ? index.restore() : [];
     }
 
     //: From a click: ask again for the folders whose copies are waiting.
     async function reconnect() {
-        const done = [];
-        for (const record of waiting.splice(0)) {
-            try {
-                if (await record.folder.requestPermission({ mode: "read" }) === "granted" && await mountCopy(record)) {
-                    done.push(record.path);
-                    continue;
-                }
-            } catch (error) { /* still waiting */ }
-            waiting.push(record);
-        }
-        return { mounted: done, waiting: waiting.map((record) => record.path) };
+        const index = derived();
+        return index ? index.reconnect() : { mounted: [], waiting: [] };
     }
 
     if (global.PlexoraPython && global.PlexoraPython.answers) {
@@ -390,7 +322,7 @@
         chooseFolder,
         forgetFolder,
         canWriteFolders,
-        waiting: () => waiting.map((record) => ({ path: record.path, folder: record.folder.name })),
+        waiting: () => (derived() ? derived().waiting() : []),
         builds: () => [...builds.values()].map(({ file, waiters, ...rest }) => ({ ...rest, bytes: file ? file.size : null })),
     });
 })(window);

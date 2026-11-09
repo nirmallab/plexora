@@ -1,0 +1,1606 @@
+{
+ "arm": "website",
+ "fixture": "$PLEXORA_BENCH_WORK/fixture/tonsil",
+ "steps": {
+  "homeMs": 450,
+  "pythonStartedMs": 3407,
+  "fixtureCopyMs": 894,
+  "picked": [
+   "/picked/6d94e4bf2e62/image.ome.tif",
+   "/picked/6d94e4bf2e62/mask.tif",
+   "/picked/6d94e4bf2e62/cells.csv"
+  ],
+  "inspect": {
+   "ms": 641,
+   "status": 200,
+   "layers": [
+    "image:image.ome.tif",
+    "labels:Segmentation mask",
+    "table:Cells"
+   ],
+   "questions": []
+  },
+  "importSample": {
+   "ms": 954,
+   "status": 200,
+   "name": "image"
+  },
+  "importTotalMs": 1601,
+  "pyramidBuilds": [],
+  "viewerPageWrittenMs": 398,
+  "viewerFirstItemMs": 1696,
+  "viewerDrawnMs": 1722,
+  "ready": {
+   "ms": 191,
+   "table": {
+    "error": null,
+    "message": "Cell table ready",
+    "progress": 100,
+    "stage": "ready",
+    "stage_label": "Ready",
+    "status": "ready"
+   },
+   "seg": {
+    "error": null,
+    "message": "Segmentation mask ready",
+    "progress": 100,
+    "scale": 1,
+    "segmentation": "/derived/d153f96a4900bc70fd06b24f/mask.labels.pyramid.ome.tiff",
+    "stage": "ready",
+    "stage_label": "Ready",
+    "status": "ready"
+   }
+  },
+  "readyTotalMs": 1914,
+  "openTiles": {
+   "n": 0,
+   "p50": null,
+   "p95": null,
+   "max": null,
+   "sumMs": 0,
+   "viaWorker": 0,
+   "local": 0
+  },
+  "openTileFetch": {
+   "requests": 9,
+   "shared": 9,
+   "aborted": 0,
+   "cancelled": 0,
+   "decoded": 9,
+   "failed": 0,
+   "retried": 0,
+   "bytes": 0,
+   "batches": 0,
+   "batchedTiles": 0,
+   "local": 9
+  },
+  "openPython": {
+   "n": 29,
+   "ms": 8731,
+   "py": 482,
+   "routes": {
+    "/get_load_status": {
+     "n": 3,
+     "ms": 800,
+     "py": 0,
+     "max": 677
+    },
+    "/telemetry/status": {
+     "n": 1,
+     "ms": 782,
+     "py": 1,
+     "max": 782
+    },
+    "/project/image/size": {
+     "n": 1,
+     "ms": 781,
+     "py": 4,
+     "max": 781
+    },
+    "/settings/remotes": {
+     "n": 1,
+     "ms": 704,
+     "py": 0,
+     "max": 704
+    },
+    "/data_places": {
+     "n": 1,
+     "ms": 704,
+     "py": 1,
+     "max": 704
+    },
+    "/datasets": {
+     "n": 1,
+     "ms": 694,
+     "py": 1,
+     "max": 694
+    },
+    "/view_state/image": {
+     "n": 1,
+     "ms": 677,
+     "py": 1,
+     "max": 677
+    },
+    "/volume/image/info": {
+     "n": 1,
+     "ms": 676,
+     "py": 2,
+     "max": 676
+    },
+    "/view_transform/image": {
+     "n": 1,
+     "ms": 674,
+     "py": 15,
+     "max": 674
+    },
+    "/config": {
+     "n": 1,
+     "ms": 659,
+     "py": 1,
+     "max": 659
+    },
+    "/init_database": {
+     "n": 1,
+     "ms": 426,
+     "py": 293,
+     "max": 426
+    },
+    "/<page>": {
+     "n": 1,
+     "ms": 240,
+     "py": 5,
+     "max": 240
+    },
+    "/agent/v1/viewer/sessions": {
+     "n": 1,
+     "ms": 218,
+     "py": 1,
+     "max": 218
+    },
+    "/get_table_status": {
+     "n": 1,
+     "ms": 180,
+     "py": 0,
+     "max": 180
+    },
+    "/get_database_description": {
+     "n": 1,
+     "ms": 133,
+     "py": 133,
+     "max": 133
+    },
+    "/save_channel_list": {
+     "n": 1,
+     "ms": 125,
+     "py": 8,
+     "max": 125
+    },
+    "/display_contrast": {
+     "n": 1,
+     "ms": 117,
+     "py": 3,
+     "max": 117
+    },
+    "/display_contrast/compute": {
+     "n": 1,
+     "ms": 113,
+     "py": 2,
+     "max": 113
+    },
+    "/resource_routing": {
+     "n": 1,
+     "ms": 12,
+     "py": 1,
+     "max": 12
+    },
+    "/get_ome_metadata": {
+     "n": 1,
+     "ms": 8,
+     "py": 5,
+     "max": 8
+    },
+    "/resource_status": {
+     "n": 1,
+     "ms": 2,
+     "py": 1,
+     "max": 2
+    },
+    "/project/image/open_elsewhere": {
+     "n": 1,
+     "ms": 2,
+     "py": 1,
+     "max": 2
+    },
+    "/project/image/files_here": {
+     "n": 1,
+     "ms": 1,
+     "py": 1,
+     "max": 1
+    },
+    "/get_channel_names": {
+     "n": 1,
+     "ms": 1,
+     "py": 1,
+     "max": 1
+    },
+    "/get_saved_channel_list": {
+     "n": 1,
+     "ms": 1,
+     "py": 1,
+     "max": 1
+    },
+    "/agent/v1/viewer/sessions/<id>/commands": {
+     "n": 1,
+     "ms": 1,
+     "py": 0,
+     "max": 1
+    },
+    "/get_segmentation_status": {
+     "n": 1,
+     "ms": 0,
+     "py": 0,
+     "max": 0
+    }
+   }
+  },
+  "items": 2,
+  "pyramidBuildsAfter": [
+   {
+    "id": 1,
+    "key": "d153f96a4900bc70fd06b24f",
+    "name": "mask.labels.pyramid.ome.tiff",
+    "kind": "labels",
+    "state": "done",
+    "tiles": 33,
+    "total": 33,
+    "path": "/derived/d153f96a4900bc70fd06b24f/mask.labels.pyramid.ome.tiff",
+    "dir": "/derived/d153f96a4900bc70fd06b24f",
+    "source": "/picked/6d94e4bf2e62/mask.tif",
+    "where": "browser",
+    "place": "this browser",
+    "error": null,
+    "note": null,
+    "began": 6604.830000042915,
+    "timings": {
+     "pasteMs": 18.144999861717224,
+     "writeMs": 1.749999761581421,
+     "hand": {
+      "readMs": 570.2749999761581,
+      "decodeMs": 2029.0799988508224,
+      "deriveMs": 17.62499988079071
+     },
+     "backlogPeak": 83886080,
+     "totalMs": 176.11499989032745,
+     "bands": 8,
+     "ms": 210
+    },
+    "ms": 237,
+    "mountSent": true,
+    "bytes": 3229520
+   }
+  ],
+  "tour": [
+   {
+    "label": "zoom_quarter_centre",
+    "fullMs": 1,
+    "frameP50": 16.664999999999964,
+    "frameP95": 16.670000000000073,
+    "frameMax": 16.670000000000073,
+    "long": 0,
+    "tiles": {
+     "n": 0,
+     "p50": null,
+     "p95": null,
+     "max": null,
+     "sumMs": 0,
+     "viaWorker": 0,
+     "local": 0
+    }
+   },
+   {
+    "label": "zoom_full_centre",
+    "fullMs": 2,
+    "frameP50": 16.664999999999964,
+    "frameP95": 16.670000000000073,
+    "frameMax": 16.670000000000528,
+    "long": 0,
+    "tiles": {
+     "n": 2,
+     "p50": 20,
+     "p95": 20,
+     "max": 20,
+     "sumMs": 39,
+     "viaWorker": 0,
+     "local": 2
+    }
+   },
+   {
+    "label": "pan_full_b",
+    "fullMs": 3,
+    "frameP50": 16.664999999999964,
+    "frameP95": 16.670000000000073,
+    "frameMax": 16.670000000000073,
+    "long": 0,
+    "tiles": {
+     "n": 3,
+     "p50": 17,
+     "p95": 20,
+     "max": 20,
+     "sumMs": 54,
+     "viaWorker": 0,
+     "local": 3
+    }
+   },
+   {
+    "label": "pan_full_c",
+    "fullMs": 1,
+    "frameP50": 16.664999999999964,
+    "frameP95": 16.670000000000073,
+    "frameMax": 16.670000000000073,
+    "long": 0,
+    "tiles": {
+     "n": 3,
+     "p50": 39,
+     "p95": 59,
+     "max": 59,
+     "sumMs": 123,
+     "viaWorker": 0,
+     "local": 3
+    }
+   },
+   {
+    "label": "anim_zoom_out",
+    "fullMs": 1213,
+    "frameP50": 16.665000000000873,
+    "frameP95": 16.670000000000073,
+    "frameMax": 16.670000000000073,
+    "long": 0,
+    "tiles": {
+     "n": 2,
+     "p50": 13,
+     "p95": 13,
+     "max": 13,
+     "sumMs": 25,
+     "viaWorker": 0,
+     "local": 2
+    }
+   },
+   {
+    "label": "anim_pan",
+    "fullMs": 1215,
+    "frameP50": 16.665000000000873,
+    "frameP95": 16.670000000000073,
+    "frameMax": 16.670000000000073,
+    "long": 0,
+    "tiles": {
+     "n": 0,
+     "p50": null,
+     "p95": null,
+     "max": null,
+     "sumMs": 0,
+     "viaWorker": 0,
+     "local": 0
+    }
+   },
+   {
+    "label": "fit",
+    "fullMs": 1504,
+    "frameP50": 16.665000000000873,
+    "frameP95": 16.670000000000073,
+    "frameMax": 433.3149999999987,
+    "long": 1,
+    "tiles": {
+     "n": 0,
+     "p50": null,
+     "p95": null,
+     "max": null,
+     "sumMs": 0,
+     "viaWorker": 0,
+     "local": 0
+    }
+   }
+  ],
+  "tools": [
+   {
+    "tool": "qc",
+    "ms": 1061,
+    "result": "ok (asked: Set up Quality Control / Cell ID columnoptional Choose a column… CellID X Y Area DAPI FoxP3 HLA-DR CD103 CHGA EGFR CD206 GFAP PD-1 BCL2 panCK CD45RO CD11b CD56 CD163 CD21 CD8 S100 Vimen)",
+    "scripts": 12,
+    "requests": 17,
+    "panel": [
+     {
+      "n": "/image/tools/qc/panel",
+      "d": 3
+     },
+     {
+      "n": "/image/tools/qc/panel",
+      "d": 9
+     }
+    ],
+    "python": {
+     "n": 5,
+     "ms": 907,
+     "py": 889,
+     "routes": {
+      "/image/requirements": {
+       "n": 1,
+       "ms": 743,
+       "py": 743,
+       "max": 743
+      },
+      "/get_database_description": {
+       "n": 1,
+       "ms": 138,
+       "py": 132,
+       "max": 138
+      },
+      "/config": {
+       "n": 1,
+       "ms": 16,
+       "py": 4,
+       "max": 16
+      },
+      "/<ds>/tools/qc/panel": {
+       "n": 2,
+       "ms": 10,
+       "py": 10,
+       "max": 8
+      }
+     }
+    }
+   },
+   {
+    "tool": "gating",
+    "ms": 4237,
+    "result": "skipped: declined (asked: Before this tool can open / Image ID column Choose a column… This data has only one image CellID X Y Area DAPI FoxP3 HLA-DR CD103 CHGA EGFR CD206 GFAP PD-1 BCL2 panCK CD45RO CD11b CD56 CD1; closed)",
+    "scripts": 0,
+    "requests": 4,
+    "panel": [
+     {
+      "n": "/image/tools/gating/panel",
+      "d": 6
+     },
+     {
+      "n": "/image/tools/gating/requirements",
+      "d": 2
+     }
+    ],
+    "python": {
+     "n": 7,
+     "ms": 1073,
+     "py": 863,
+     "routes": {
+      "/image/requirements": {
+       "n": 1,
+       "ms": 742,
+       "py": 738,
+       "max": 742
+      },
+      "/agent/v1/viewer/sessions/<id>/commands": {
+       "n": 1,
+       "ms": 184,
+       "py": 1,
+       "max": 184
+      },
+      "/get_database_description": {
+       "n": 1,
+       "ms": 118,
+       "py": 118,
+       "max": 118
+      },
+      "/config": {
+       "n": 1,
+       "ms": 24,
+       "py": 1,
+       "max": 24
+      },
+      "/<ds>/tools/gating/panel": {
+       "n": 1,
+       "ms": 2,
+       "py": 2,
+       "max": 2
+      },
+      "/health": {
+       "n": 1,
+       "ms": 2,
+       "py": 2,
+       "max": 2
+      },
+      "/image/tools/gating/requirements": {
+       "n": 1,
+       "ms": 1,
+       "py": 1,
+       "max": 1
+      }
+     }
+    }
+   },
+   {
+    "tool": "roi",
+    "ms": 89,
+    "result": "ok",
+    "scripts": 9,
+    "requests": 13,
+    "panel": [
+     {
+      "n": "/image/tools/roi/panel",
+      "d": 26
+     }
+    ],
+    "python": {
+     "n": 3,
+     "ms": 25,
+     "py": 7,
+     "routes": {
+      "/<ds>/tools/roi/panel": {
+       "n": 1,
+       "ms": 18,
+       "py": 3,
+       "max": 18
+      },
+      "/plugins/roi/api/adapters/destination": {
+       "n": 1,
+       "ms": 5,
+       "py": 2,
+       "max": 5
+      },
+      "/plugins/roi/api/state": {
+       "n": 1,
+       "ms": 2,
+       "py": 2,
+       "max": 2
+      }
+     }
+    }
+   },
+   {
+    "tool": "cell_explorer",
+    "ms": 352,
+    "result": "ok",
+    "scripts": 9,
+    "requests": 15,
+    "panel": [
+     {
+      "n": "/image/tools/cell_explorer/panel",
+      "d": 5
+     }
+    ],
+    "python": {
+     "n": 6,
+     "ms": 428,
+     "py": 171,
+     "routes": {
+      "/get_all_cells/integer/": {
+       "n": 1,
+       "ms": 150,
+       "py": 18,
+       "max": 150
+      },
+      "/plugins/cell_explorer/api/variables": {
+       "n": 1,
+       "ms": 132,
+       "py": 130,
+       "max": 132
+      },
+      "/plugins/cell_explorer/api/state": {
+       "n": 2,
+       "ms": 110,
+       "py": 4,
+       "max": 108
+      },
+      "/plugins/cell_explorer/api/values": {
+       "n": 1,
+       "ms": 32,
+       "py": 15,
+       "max": 32
+      },
+      "/<ds>/tools/cell_explorer/panel": {
+       "n": 1,
+       "ms": 4,
+       "py": 4,
+       "max": 4
+      }
+     }
+    }
+   },
+   {
+    "tool": "figure_builder",
+    "ms": 91,
+    "result": "ok",
+    "scripts": 35,
+    "requests": 40,
+    "panel": [
+     {
+      "n": "/image/tools/figure_builder/panel",
+      "d": 5
+     }
+    ],
+    "python": {
+     "n": 4,
+     "ms": 6,
+     "py": 5,
+     "routes": {
+      "/<ds>/tools/figure_builder/panel": {
+       "n": 1,
+       "ms": 3,
+       "py": 3,
+       "max": 3
+      },
+      "/plugins/figure_builder/api/figures": {
+       "n": 2,
+       "ms": 2,
+       "py": 1,
+       "max": 1
+      },
+      "/plugins/figure_builder/api/captures": {
+       "n": 1,
+       "ms": 1,
+       "py": 1,
+       "max": 1
+      }
+     }
+    }
+   },
+   {
+    "tool": "rotate",
+    "ms": 57,
+    "result": "ok",
+    "scripts": 0,
+    "requests": 1,
+    "panel": [
+     {
+      "n": "/image/tools/rotate/panel",
+      "d": 9
+     }
+    ],
+    "python": {
+     "n": 1,
+     "ms": 7,
+     "py": 4,
+     "routes": {
+      "/<ds>/tools/rotate/panel": {
+       "n": 1,
+       "ms": 7,
+       "py": 4,
+       "max": 7
+      }
+     }
+    }
+   }
+  ],
+  "figuresPageMs": 72,
+  "figuresKeptViewer": true,
+  "backToViewerMs": 109,
+  "viewerBeforeFigures": true,
+  "reloadLoaderAsked": [],
+  "reloadPicks": [
+   {
+    "id": "6d94e4bf2e62",
+    "kind": "files",
+    "files": 3,
+    "handles": true
+   }
+  ],
+  "reloadPageWrittenMs": 313,
+  "reloadViewerDrawnMs": 445,
+  "reloadReady": {
+   "ms": 4625,
+   "table": {
+    "error": null,
+    "message": "Cell table ready",
+    "progress": 100,
+    "stage": "ready",
+    "stage_label": "Ready",
+    "status": "ready"
+   },
+   "seg": {
+    "error": null,
+    "message": null,
+    "progress": 100,
+    "scale": 1,
+    "segmentation": "/derived/d153f96a4900bc70fd06b24f/mask.labels.pyramid.ome.tiff",
+    "stage": "ready",
+    "stage_label": "Ready",
+    "status": "ready"
+   }
+  },
+  "reloadTotalMs": 5070,
+  "reloadInfo": {
+   "derived": 1,
+   "store": "opfs",
+   "phases": {
+    "start": 0,
+    "core": 1070,
+    "packages": 1911,
+    "wheels": 1976,
+    "boot": 1976,
+    "ready": 2906
+   }
+  },
+  "reloadBuilds": [],
+  "reloadTiles": {
+   "n": 9,
+   "p50": 23,
+   "p95": 38,
+   "max": 38,
+   "sumMs": 238,
+   "viaWorker": 0,
+   "local": 9
+  },
+  "reloadTileFetch": {
+   "requests": 9,
+   "shared": 9,
+   "aborted": 0,
+   "cancelled": 0,
+   "decoded": 9,
+   "failed": 0,
+   "retried": 0,
+   "bytes": 0,
+   "batches": 0,
+   "batchedTiles": 0,
+   "local": 9
+  },
+  "reloadTour": [
+   {
+    "label": "zoom_quarter_centre",
+    "fullMs": 3,
+    "frameP50": 16.664999999999964,
+    "frameP95": 16.670000000000073,
+    "frameMax": 16.670000000000073,
+    "long": 0,
+    "tiles": {
+     "n": 0,
+     "p50": null,
+     "p95": null,
+     "max": null,
+     "sumMs": 0,
+     "viaWorker": 0,
+     "local": 0
+    }
+   },
+   {
+    "label": "zoom_full_centre",
+    "fullMs": 2,
+    "frameP50": 16.664999999999964,
+    "frameP95": 16.670000000000073,
+    "frameMax": 16.670000000000073,
+    "long": 0,
+    "tiles": {
+     "n": 2,
+     "p50": 23,
+     "p95": 23,
+     "max": 23,
+     "sumMs": 40,
+     "viaWorker": 0,
+     "local": 2
+    }
+   },
+   {
+    "label": "pan_full_b",
+    "fullMs": 2,
+    "frameP50": 16.665000000000873,
+    "frameP95": 16.670000000000073,
+    "frameMax": 16.670000000000073,
+    "long": 0,
+    "tiles": {
+     "n": 3,
+     "p50": 17,
+     "p95": 18,
+     "max": 18,
+     "sumMs": 51,
+     "viaWorker": 0,
+     "local": 3
+    }
+   },
+   {
+    "label": "pan_full_c",
+    "fullMs": 2,
+    "frameP50": 16.665000000000873,
+    "frameP95": 16.670000000000073,
+    "frameMax": 16.670000000000073,
+    "long": 0,
+    "tiles": {
+     "n": 3,
+     "p50": 18,
+     "p95": 48,
+     "max": 48,
+     "sumMs": 82,
+     "viaWorker": 0,
+     "local": 3
+    }
+   },
+   {
+    "label": "anim_zoom_out",
+    "fullMs": 1211,
+    "frameP50": 16.665000000000873,
+    "frameP95": 16.670000000000073,
+    "frameMax": 16.670000000000073,
+    "long": 0,
+    "tiles": {
+     "n": 2,
+     "p50": 56,
+     "p95": 56,
+     "max": 56,
+     "sumMs": 80,
+     "viaWorker": 0,
+     "local": 2
+    }
+   },
+   {
+    "label": "anim_pan",
+    "fullMs": 1206,
+    "frameP50": 16.665000000000873,
+    "frameP95": 16.670000000000073,
+    "frameMax": 16.670000000000073,
+    "long": 0,
+    "tiles": {
+     "n": 0,
+     "p50": null,
+     "p95": null,
+     "max": null,
+     "sumMs": 0,
+     "viaWorker": 0,
+     "local": 0
+    }
+   },
+   {
+    "label": "fit",
+    "fullMs": 1560,
+    "frameP50": 16.665000000000873,
+    "frameP95": 16.670000000000073,
+    "frameMax": 449.97999999999956,
+    "long": 1,
+    "tiles": {
+     "n": 0,
+     "p50": null,
+     "p95": null,
+     "max": null,
+     "sumMs": 0,
+     "viaWorker": 0,
+     "local": 0
+    }
+   }
+  ],
+  "heapMB": 631,
+  "perfMemory": 568,
+  "recentTail": [
+   {
+    "p": "/config",
+    "ms": 779,
+    "py": 13
+   },
+   {
+    "p": "/image",
+    "ms": 830,
+    "py": 51
+   },
+   {
+    "p": "/telemetry/status",
+    "ms": 830,
+    "py": 1
+   },
+   {
+    "p": "/project/image/size",
+    "ms": 2016,
+    "py": 1185
+   },
+   {
+    "p": "/settings/remotes",
+    "ms": 2023,
+    "py": 7
+   },
+   {
+    "p": "/datasets",
+    "ms": 2023,
+    "py": 1
+   },
+   {
+    "p": "/project/image/open_elsewhere",
+    "ms": 2024,
+    "py": 1
+   },
+   {
+    "p": "/agent/v1/viewer/sessions/view_343594313dc0",
+    "ms": 2025,
+    "py": 0
+   },
+   {
+    "p": "/data_places",
+    "ms": 2025,
+    "py": 0
+   },
+   {
+    "p": "/get_load_status",
+    "ms": 2025,
+    "py": 0
+   },
+   {
+    "p": "/get_load_status",
+    "ms": 2026,
+    "py": 0
+   },
+   {
+    "p": "/get_table_status",
+    "ms": 2026,
+    "py": 0
+   },
+   {
+    "p": "/view_state/image",
+    "ms": 1258,
+    "py": 11
+   },
+   {
+    "p": "/get_segmentation_status",
+    "ms": 24,
+    "py": 1
+   },
+   {
+    "p": "/view_transform/image",
+    "ms": 15,
+    "py": 1
+   },
+   {
+    "p": "/volume/image/info",
+    "ms": 1,
+    "py": 1
+   },
+   {
+    "p": "/resource_routing",
+    "ms": 1,
+    "py": 1
+   },
+   {
+    "p": "/resource_status",
+    "ms": 2,
+    "py": 2
+   },
+   {
+    "p": "/get_channel_names",
+    "ms": 1,
+    "py": 1
+   },
+   {
+    "p": "/get_ome_metadata",
+    "ms": 4,
+    "py": 3
+   },
+   {
+    "p": "/get_database_description",
+    "ms": 130,
+    "py": 130
+   },
+   {
+    "p": "/init_database",
+    "ms": 276,
+    "py": 276
+   },
+   {
+    "p": "/health",
+    "ms": 136,
+    "py": 1
+   },
+   {
+    "p": "/get_saved_channel_list",
+    "ms": 3,
+    "py": 1
+   },
+   {
+    "p": "/get_image_channel_stats",
+    "ms": 15,
+    "py": 15
+   },
+   {
+    "p": "/get_channel_gmm",
+    "ms": 805,
+    "py": 805
+   },
+   {
+    "p": "/display_contrast",
+    "ms": 281,
+    "py": 274
+   },
+   {
+    "p": "/agent/v1/viewer/sessions",
+    "ms": 1,
+    "py": 1
+   },
+   {
+    "p": "/image/tools/rotate/panel",
+    "ms": 2,
+    "py": 2
+   },
+   {
+    "p": "/agent/v1/viewer/sessions/view_343594313dc0/commands",
+    "ms": 6,
+    "py": 0
+   },
+   {
+    "p": "/",
+    "ms": 35,
+    "py": 2
+   },
+   {
+    "p": "/config",
+    "ms": 71,
+    "py": 1
+   },
+   {
+    "p": "/image",
+    "ms": 3,
+    "py": 3
+   },
+   {
+    "p": "/view_state/image",
+    "ms": 1,
+    "py": 1
+   },
+   {
+    "p": "/view_transform/image",
+    "ms": 1,
+    "py": 1
+   },
+   {
+    "p": "/resource_routing",
+    "ms": 1,
+    "py": 1
+   },
+   {
+    "p": "/resource_status",
+    "ms": 2,
+    "py": 2
+   },
+   {
+    "p": "/get_saved_channel_list",
+    "ms": 1,
+    "py": 1
+   },
+   {
+    "p": "/display_contrast",
+    "ms": 4,
+    "py": 4
+   },
+   {
+    "p": "/health",
+    "ms": 213,
+    "py": 1
+   },
+   {
+    "p": "/agent/v1/viewer/sessions/view_343594313dc0/commands",
+    "ms": 26,
+    "py": 1
+   },
+   {
+    "p": "/health",
+    "ms": 3,
+    "py": 1
+   },
+   {
+    "p": "/agent/v1/viewer/sessions/view_343594313dc0/commands",
+    "ms": 4,
+    "py": 3
+   },
+   {
+    "p": "/health",
+    "ms": 3,
+    "py": 3
+   },
+   {
+    "p": "/agent/v1/viewer/sessions/view_343594313dc0/commands",
+    "ms": 4,
+    "py": 3
+   },
+   {
+    "p": "/health",
+    "ms": 4,
+    "py": 3
+   },
+   {
+    "p": "/agent/v1/viewer/sessions/view_343594313dc0/commands",
+    "ms": 3,
+    "py": 3
+   },
+   {
+    "p": "/health",
+    "ms": 2,
+    "py": 2
+   },
+   {
+    "p": "/agent/v1/viewer/sessions/view_343594313dc0/commands",
+    "ms": 2,
+    "py": 2
+   }
+  ],
+  "stepsTail": [
+   {
+    "ms": 36,
+    "names": [
+     "prime-encoders"
+    ],
+    "at": 3012
+   },
+   {
+    "ms": 765,
+    "names": [
+     "stage-scipy"
+    ],
+    "at": 3778
+   },
+   {
+    "ms": 5,
+    "names": [
+     "_warm_datasource_caches"
+    ],
+    "at": 7202
+   },
+   {
+    "ms": 0,
+    "names": [
+     "warm-get_image_channel_stats-DAPI"
+    ],
+    "at": 7202
+   },
+   {
+    "ms": 10,
+    "names": [
+     "warm-get_image_channel_stats-FoxP3"
+    ],
+    "at": 7213
+   },
+   {
+    "ms": 15,
+    "names": [
+     "warm-get_image_channel_stats-HLA-DR"
+    ],
+    "at": 7228
+   },
+   {
+    "ms": 14,
+    "names": [
+     "warm-get_image_channel_stats-CD103"
+    ],
+    "at": 7242
+   },
+   {
+    "ms": 12,
+    "names": [
+     "warm-get_image_channel_stats-CHGA"
+    ],
+    "at": 7254
+   },
+   {
+    "ms": 13,
+    "names": [
+     "warm-get_image_channel_stats-EGFR"
+    ],
+    "at": 7267
+   },
+   {
+    "ms": 8,
+    "names": [
+     "warm-get_image_channel_stats-CD206"
+    ],
+    "at": 7275
+   },
+   {
+    "ms": 1,
+    "names": [
+     "warm-get_image_channel_stats-GFAP"
+    ],
+    "at": 7276
+   },
+   {
+    "ms": 14,
+    "names": [
+     "warm-get_image_channel_stats-PD-1"
+    ],
+    "at": 7290
+   },
+   {
+    "ms": 9,
+    "names": [
+     "warm-get_image_channel_stats-BCL2"
+    ],
+    "at": 7299
+   },
+   {
+    "ms": 9,
+    "names": [
+     "warm-get_image_channel_stats-panCK"
+    ],
+    "at": 7308
+   },
+   {
+    "ms": 13,
+    "names": [
+     "warm-get_image_channel_stats-CD45RO"
+    ],
+    "at": 7320
+   },
+   {
+    "ms": 8,
+    "names": [
+     "warm-get_image_channel_stats-CD11b"
+    ],
+    "at": 7328
+   },
+   {
+    "ms": 9,
+    "names": [
+     "warm-get_image_channel_stats-CD56"
+    ],
+    "at": 7337
+   },
+   {
+    "ms": 3,
+    "names": [
+     "warm-get_image_channel_stats-CD163"
+    ],
+    "at": 7340
+   },
+   {
+    "ms": 11,
+    "names": [
+     "warm-get_image_channel_stats-CD21"
+    ],
+    "at": 7351
+   },
+   {
+    "ms": 3,
+    "names": [
+     "warm-get_image_channel_stats-CD8"
+    ],
+    "at": 7354
+   },
+   {
+    "ms": 6,
+    "names": [
+     "warm-get_image_channel_stats-S100"
+    ],
+    "at": 7360
+   },
+   {
+    "ms": 6,
+    "names": [
+     "warm-get_image_channel_stats-Vimentin"
+    ],
+    "at": 7367
+   },
+   {
+    "ms": 9,
+    "names": [
+     "warm-get_image_channel_stats-PDGFRb"
+    ],
+    "at": 7375
+   },
+   {
+    "ms": 9,
+    "names": [
+     "warm-get_image_channel_stats-CCR7"
+    ],
+    "at": 7384
+   },
+   {
+    "ms": 1,
+    "names": [
+     "warm-get_image_channel_stats-CD57"
+    ],
+    "at": 7385
+   },
+   {
+    "ms": 11,
+    "names": [
+     "warm-get_image_channel_stats-CD34"
+    ],
+    "at": 7396
+   },
+   {
+    "ms": 7,
+    "names": [
+     "warm-get_image_channel_stats-Synaptophysin"
+    ],
+    "at": 7403
+   },
+   {
+    "ms": 3,
+    "names": [
+     "warm-get_image_channel_stats-CD31"
+    ],
+    "at": 7406
+   },
+   {
+    "ms": 9,
+    "names": [
+     "warm-get_image_channel_stats-CXCR5"
+    ],
+    "at": 7414
+   },
+   {
+    "ms": 6,
+    "names": [
+     "warm-get_image_channel_stats-CD3"
+    ],
+    "at": 7420
+   },
+   {
+    "ms": 4,
+    "names": [
+     "warm-get_image_channel_stats-CD38"
+    ],
+    "at": 7424
+   },
+   {
+    "ms": 10,
+    "names": [
+     "warm-get_image_channel_stats-LAG3"
+    ],
+    "at": 7434
+   },
+   {
+    "ms": 8,
+    "names": [
+     "warm-get_image_channel_stats-CD25"
+    ],
+    "at": 7442
+   },
+   {
+    "ms": 11,
+    "names": [
+     "warm-get_image_channel_stats-CD16"
+    ],
+    "at": 7453
+   },
+   {
+    "ms": 224,
+    "names": [
+     "warm-get_image_channel_stats-IL-10"
+    ],
+    "at": 7678
+   },
+   {
+    "ms": 168,
+    "names": [
+     "warm-get_image_channel_stats-Ki67"
+    ],
+    "at": 7846
+   },
+   {
+    "ms": 202,
+    "names": [
+     "warm-get_image_channel_stats-CLEC9A"
+    ],
+    "at": 8048
+   },
+   {
+    "ms": 28,
+    "names": [
+     "warm-get_image_channel_stats-p53"
+    ],
+    "at": 8690
+   },
+   {
+    "ms": 232,
+    "names": [
+     "warm-get_image_channel_stats-CD69"
+    ],
+    "at": 8920
+   },
+   {
+    "ms": 170,
+    "names": [
+     "warm-get_image_channel_stats-CD11c"
+    ],
+    "at": 9090
+   },
+   {
+    "ms": 174,
+    "names": [
+     "warm-get_image_channel_stats-CD68"
+    ],
+    "at": 9264
+   },
+   {
+    "ms": 205,
+    "names": [
+     "warm-get_image_channel_stats-Ox40"
+    ],
+    "at": 9469
+   },
+   {
+    "ms": 199,
+    "names": [
+     "warm-get_image_channel_stats-aSMA"
+    ],
+    "at": 9668
+   },
+   {
+    "ms": 32,
+    "names": [
+     "warm-get_image_channel_stats-CD20"
+    ],
+    "at": 10322
+   },
+   {
+    "ms": 237,
+    "names": [
+     "warm-get_image_channel_stats-CD4"
+    ],
+    "at": 10558
+   },
+   {
+    "ms": 9,
+    "names": [
+     "warm-get_image_channel_stats-MUC-1"
+    ],
+    "at": 11169
+   },
+   {
+    "ms": 263,
+    "names": [
+     "warm-get_image_channel_stats-Podoplanin"
+    ],
+    "at": 11432
+   },
+   {
+    "ms": 196,
+    "names": [
+     "warm-get_image_channel_stats-CD45RA"
+    ],
+    "at": 11629
+   },
+   {
+    "ms": 7,
+    "names": [
+     "warm-get_image_channel_stats-CD15"
+    ],
+    "at": 12241
+   },
+   {
+    "ms": 243,
+    "names": [
+     "warm-get_image_channel_stats-betaCatenin"
+    ],
+    "at": 12484
+   },
+   {
+    "ms": 186,
+    "names": [
+     "warm-get_image_channel_stats-PAX5"
+    ],
+    "at": 12670
+   },
+   {
+    "ms": 176,
+    "names": [
+     "warm-get_image_channel_stats-MCT"
+    ],
+    "at": 12846
+   },
+   {
+    "ms": 220,
+    "names": [
+     "warm-get_image_channel_stats-FAP"
+    ],
+    "at": 13066
+   },
+   {
+    "ms": 177,
+    "names": [
+     "warm-get_image_channel_stats-CD138"
+    ],
+    "at": 13243
+   },
+   {
+    "ms": 189,
+    "names": [
+     "warm-get_image_channel_stats-Tbet"
+    ],
+    "at": 13432
+   },
+   {
+    "ms": 180,
+    "names": [
+     "warm-get_image_channel_stats-GranzymeB"
+    ],
+    "at": 13612
+   },
+   {
+    "ms": 195,
+    "names": [
+     "warm-get_image_channel_stats-IDO-1"
+    ],
+    "at": 13807
+   },
+   {
+    "ms": 188,
+    "names": [
+     "warm-get_image_channel_stats-CD45"
+    ],
+    "at": 13996
+   },
+   {
+    "ms": 655,
+    "names": [
+     "warm-get_image_channel_stats-CollagenIV"
+    ],
+    "at": 14651
+   },
+   {
+    "ms": 193,
+    "names": [
+     "warm-get_image_channel_stats-PD-L1"
+    ],
+    "at": 14844
+   },
+   {
+    "ms": 189,
+    "names": [
+     "warm-get_image_channel_stats-Arginase-1"
+    ],
+    "at": 15033
+   },
+   {
+    "ms": 185,
+    "names": [
+     "warm-get_image_channel_stats-GATA3"
+    ],
+    "at": 15218
+   },
+   {
+    "ms": 0,
+    "names": [
+     "warm-get_channel_gmm-DAPI"
+    ],
+    "at": 15218
+   }
+  ],
+  "handoffs": [],
+  "toasts": [
+   "About the cell mask\n×\n\n/picked/6d94e4bf2e62 is read-only for this account, so the cell-mask pyramid is kept in /derived/d153f96a4900bc70fd06b24f."
+  ]
+ },
+ "frameNavigations": [
+  {
+   "ms": 153,
+   "url": "http://127.0.0.1:PORT/"
+  },
+  {
+   "ms": 6620,
+   "url": "http://127.0.0.1:PORT/image"
+  },
+  {
+   "ms": 20198,
+   "url": "http://127.0.0.1:PORT/image?tool=qc"
+  },
+  {
+   "ms": 25332,
+   "url": "http://127.0.0.1:PORT/image?tool=roi"
+  },
+  {
+   "ms": 25983,
+   "url": "http://127.0.0.1:PORT/image?tool=cell_explorer"
+  },
+  {
+   "ms": 26655,
+   "url": "http://127.0.0.1:PORT/image?tool=figure_builder"
+  },
+  {
+   "ms": 27132,
+   "url": "http://127.0.0.1:PORT/image?tool=rotate"
+  },
+  {
+   "ms": 27633,
+   "url": "http://127.0.0.1:PORT/plugins/figure_builder/figures"
+  },
+  {
+   "ms": 27652,
+   "url": "http://127.0.0.1:PORT/image?tool=rotate"
+  },
+  {
+   "ms": 27856,
+   "url": "http://127.0.0.1:PORT/image?tool=rotate"
+  }
+ ],
+ "errors": [
+  "Failed to load resource: the server responded with a status of 404 ()"
+ ]
+}

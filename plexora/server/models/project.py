@@ -25,6 +25,7 @@ replacing an entry wholesale.
 
 from __future__ import annotations
 
+import copy
 import json
 import os
 import threading
@@ -98,6 +99,52 @@ def read_config(path) -> dict:
     # Each project's files as this app finds them: the website and the
     # desktop app may share one config.json (server/models/sources.py).
     return sources.localize_config(json.loads(text) or {})
+
+
+#: config.json as `read_config` returns it, per file, with the state it was
+#: read at: (generation, size, mtime_ns). Never handed out (callers change
+#: what they are given): `config_names` lists it, `read_entry` copies one entry.
+_parsed_cache: dict = {}
+
+
+def _parsed(path) -> dict:
+    """`read_config(path)`, parsed again only once this process has written a
+    record (`config_generation`) or the file's size or mtime has moved
+    (another process's write, or the website's store reading the folder in
+    again)."""
+    path = Path(path)
+    try:
+        stat = path.stat()
+    except OSError:
+        return {}
+    key = (_config_generation, stat.st_size, stat.st_mtime_ns)
+    held = _parsed_cache.get(str(path))
+    if held is not None and held[0] == key:
+        return held[1]
+    config = read_config(path)
+    _parsed_cache[str(path)] = (key, config)
+    return config
+
+
+def config_names(path) -> list:
+    """The project names in config.json, as `read_config(path)` lists them,
+    without parsing the file again while it is unchanged (`_parsed`).
+
+    Every page's context lists the projects (page_routes.template_data), and a
+    tool's panel or any route that opens one project (`Project.load`) parsed
+    every root's whole config.json for it: 4-5 ms a request for a 1.6 MB
+    config of 127 projects on the desktop, several times that in the
+    website's Python."""
+    return list(_parsed(path))
+
+
+def read_entry(path, name: str) -> dict:
+    """One project's entry of config.json (a copy: the caller's to change),
+    as `read_config(path)[name]` gives it; KeyError when it is not there."""
+    config = _parsed(path)
+    if name not in config:
+        raise KeyError(name)
+    return copy.deepcopy(config[name])
 
 
 def bump_config_generation() -> int:
@@ -2463,9 +2510,11 @@ class Project:
         name -- somebody who has made their own copy means to open it.
         """
         for root in ([Path(data_root)] if data_root is not None else paths.roots()):
-            config = read_config(paths.config_path(root))
-            if name in config:
-                return cls.from_entry(name, config[name], home_root=root)
+            try:
+                entry = read_entry(paths.config_path(root), name)
+            except KeyError:
+                continue
+            return cls.from_entry(name, entry, home_root=root)
         raise KeyError(f"Unknown datasource: {name!r}")
 
     @classmethod
@@ -2504,7 +2553,7 @@ class Project:
         """
         found: dict = {}
         for root in paths.roots():
-            for name in read_config(paths.config_path(root)):
+            for name in config_names(paths.config_path(root)):
                 found.setdefault(name, root)
         return found
 
@@ -2512,7 +2561,7 @@ class Project:
     def root_for(name: str) -> Path | None:
         """The root whose config.json holds `name`, or None if none does."""
         for root in paths.roots():
-            if name in read_config(paths.config_path(root)):
+            if name in config_names(paths.config_path(root)):
                 return root
         return None
 

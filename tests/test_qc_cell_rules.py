@@ -364,6 +364,32 @@ def test_the_panel_groups_cells_and_markers_with_their_evidence(tmp_path):
     assert extreme["label"].startswith(f"{marker} · ")
 
 
+def test_no_result_yet_makes_no_copy_of_the_table(tmp_path, monkeypatch):
+    """Opening the panel on a project QC has not run on: the answer says so
+    without the session's copy of the cell table (a second parse of the
+    whole table, on the website through the page)."""
+    import plexora
+    from plexora.plugins.qc.server import routes
+
+    make_qc_project(tmp_path, artifacts=())
+    copies = []
+    real = routes._session
+
+    class Watch:
+        def __getattr__(self, name):
+            return getattr(real(), name)
+
+        def data(self, project):
+            copies.append(project)
+            return real().data(project)
+
+    monkeypatch.setattr(routes, "_session", Watch)
+    answer = plexora.app.test_client().get("/plugins/qc/cells?datasource=qcsynth").get_json()
+    assert answer["ok"] and answer["available"] is False
+    assert answer["note"] == "no QC result yet"
+    assert copies == []
+
+
 # -- the region test itself ---------------------------------------------------------------
 
 

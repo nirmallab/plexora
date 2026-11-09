@@ -113,7 +113,10 @@ def cells():
     from plexora.plugins.qc.server import viewer_data
 
     project = _project_arg()
-    return _read(lambda: viewer_data.cells(_session().data(project), project,
+    # The session's copy of the cell table is made only once there are cell
+    # calls to place on it: opening the panel on a project QC has not run
+    # on parsed the whole table a second time for "no QC result yet".
+    return _read(lambda: viewer_data.cells(lambda: _session().data(project), project,
                                            request.args.get("result_id")))
 
 

@@ -1,11 +1,13 @@
 /**
  * PlexoraEnvelope -- on the website, saying when something is more than a
  * browser tab does well, and offering what does it better: the desktop app,
- * which opens the project with nothing to export (services/desktopHandoff.js),
- * or a node beside the data (services/handoff.js `pairNode`).
+ * which opens the project with nothing to export (services/desktopHandoff.js).
+ * No notice offers a node: a node is something the user sets up from the
+ * Remote menu when they want one, not something a toast pushes on them.
  *
  * The limits are measured (client/src/envelope.json, each with its date) and
- * a situation within them gets no notice at all. Six moments:
+ * a situation within them gets no notice at all. Six moments (the stall one
+ * is judged but never said, see `tile`):
  *
  * - **open** (`check`): the project's table against the worker's heap (P9's
  *   2.1 GiB at 36.6 M values, of the ~3 GiB a tab's worker has), scaled to
@@ -21,10 +23,11 @@
  * - **model** (`beforeModel`, from services/onnxExecutor.js): magic select's
  *   model about to load where the browser has no WebGPU adapter, with the
  *   measured time per click on WebAssembly;
- * - **stall** (`watchTiles`, a PerformanceObserver on the app's frame): the
- *   rolling p95 of the last 50 tiles over the limit, after the open's own
- *   tiles and never while a job holds the worker: slow media, where a node
- *   beside the data helps and the desktop app on the same share would not;
+ * - **stall** (`watchTiles`, a PerformanceObserver on the app's frame, not
+ *   started by `check`): the rolling p95 of the last 50 tiles over the
+ *   limit, after the open's own tiles and never while a job holds the
+ *   worker. Judged only -- the one answer to slow media is a node, and no
+ *   notice offers one;
  * - **stopped** (`stopped`, the worker's `fatal` event): Python failed for
  *   good -- past the open notice, a table that does not fit the worker's
  *   4 GiB ends Pyodide when an allocation fails -- "This tab ran out of
@@ -45,7 +48,7 @@
  *
  * Classic script, `window.PlexoraEnvelope`, in the site's host page only: the
  * desktop app shows no notice. Uses PlexoraHandoff and the frame's
- * PlexoraToast and PlexoraWebHandoff.
+ * PlexoraToast.
  */
 (function (global) {
     "use strict";
@@ -233,17 +236,15 @@
     //: The actions, in the plan's order, each on one row with the others.
     function actions(kind, project, app, key) {
         const desktop = (label) => ({ label, onSelect: () => global.PlexoraHandoff && global.PlexoraHandoff.open(project, app) });
-        const node = () => ({ label: "Connect a node", onSelect: () => app && app.PlexoraWebHandoff && app.PlexoraWebHandoff.pairNode() });
         const stay = { label: "Continue here", onSelect: () => remember(key) };
         if (kind === "open") return [{ ...desktop("Open in Desktop App"), primary: true }, stay];
-        if (kind === "batch" || kind === "build") return [{ ...desktop("Desktop app"), primary: true }, node(), stay];
-        if (kind === "model") return [{ ...node(), primary: true }, desktop("Desktop app"), stay];
+        if (kind === "batch" || kind === "build" || kind === "model") return [{ ...desktop("Desktop app"), primary: true }, stay];
         if (kind === "stopped") {
             const reload = { label: "Reload", onSelect: () => global.location.reload() };
             return project ? [{ ...desktop("Open in Desktop App"), primary: true }, reload]
                 : [{ ...reload, primary: true }];
         }
-        return [{ ...node(), primary: true }, stay];
+        return [{ ...stay, primary: true }];
     }
 
     /** The notice for `reason` on `project`, unless said in this tab or
@@ -271,7 +272,11 @@
         if (!project) return null;
         current.project = project;
         current.app = app;
-        watchTiles(app);
+        // Tiles are not watched: the only thing a slow-tile notice could offer
+        // is a node, and the website's own tile path was what tripped it (its
+        // tiles crossed the stall limit on a large image with nothing slow
+        // about the media). `watchTiles` stays for a caller that wants the
+        // measurement.
         // Judged once per project per tab: every page of a project opens a frame.
         if (opened.has(project)) return null;
         opened.add(project);
@@ -356,6 +361,7 @@
 
     //: One tile's time (ms) on `app`'s frame; resolves a verdict once the
     //: window is full. Tiles while a job holds the worker are not counted.
+    //: The verdict is returned, never shown: no notice suggests a node.
     async function tile(ms, app) {
         const watch = app && app.__plexoraStall;
         if (!watch || !(ms >= 0) || running.size) return null;
@@ -366,9 +372,7 @@
         const window = Number(stall.tiles) || 50;
         if (watch.samples.length > window) watch.samples.shift();
         if (watch.samples.length < window || !limits) return null;
-        const verdict = judgeStall(watch.samples, limits);
-        if (verdict.verdict === "node") await notice("stall", projectOf(app), app, verdict);
-        return verdict;
+        return judgeStall(watch.samples, limits);
     }
 
     function watchTiles(app) {

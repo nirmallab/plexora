@@ -35,22 +35,32 @@
 <\/script>
 </body></html>`;
 
-        async function hiddenForOpen() {
+        //: `name` taken out of shell.js's closure (the code the site runs).
+        async function fromShell(name) {
             const source = await (await fetch("/client/src/js/services/shell.js")).text();
-            const start = source.indexOf("function hiddenForOpen()");
-            if (start < 0) throw new Error("shell.js has no hiddenForOpen");
+            const start = source.indexOf(`function ${name}(`);
+            if (start < 0) throw new Error(`shell.js has no ${name}`);
             let depth = 0;
             let end = source.indexOf("{", start);
             for (; end < source.length; end += 1) {
                 if (source[end] === "{") depth += 1;
                 if (source[end] === "}" && --depth === 0) break;
             }
-            const make = new Function("global", "host", `${source.slice(start, end + 1)}\nreturn hiddenForOpen;`);
-            return make(window, window.parent)();
+            const make = new Function("global", "host", `${source.slice(start, end + 1)}\nreturn ${name};`);
+            return make(window, window.parent);
         }
+        const hiddenForOpen = async () => (await fromShell("hiddenForOpen"))();
 
         try {
             const hide = mode === "plain" ? null : hiddenForOpen;
+            const watchCapture = await fromShell("watchCapture");
+            // ?mode=hidden: the host's tab in the background while the page
+            // is opened; the driver shows it again later.
+            if (mode === "hidden") {
+                Object.defineProperty(window.parent.document, "visibilityState",
+                                      { get: () => window.parent.__vis || "visible", configurable: true });
+                window.parent.__vis = "hidden";
+            }
             await new Promise((resolve) => setTimeout(resolve, 300));   // Python's answer
             const started = performance.now();
             const shown = hide ? await hide() : () => {};
@@ -59,6 +69,8 @@
             shown();
             document.write(PAGE);
             document.close();
+            window.__broken = false;
+            watchCapture(document, () => { window.__broken = true; });
             window.__hiddenMs = hiddenMs;
         } catch (error) {
             window.__failed = String(error && error.stack || error);

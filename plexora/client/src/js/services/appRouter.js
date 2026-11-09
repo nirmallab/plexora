@@ -336,6 +336,14 @@ window.PlexoraRouter = (function () {
         }
 
         const key = assetKey(src);
+        // Also what was added since the router started: a tool's scripts
+        // (views/toolLoader.js) are not in `executed`, and running Figure
+        // Builder's again on the way to /figures threw 30 "has already been
+        // declared" errors a session.
+        if (!executed.has(key) && Array.from(document.querySelectorAll("script[src]"))
+            .some((node) => assetKey(node.getAttribute("src")) === key)) {
+            executed.add(key);
+        }
         if (executed.has(key)) return Promise.resolve();
         executed.add(key);
 

@@ -8,7 +8,9 @@
  * the exported PDF rather than 4 mm on whichever screen it was nudged into
  * place on.
  *
- * Panels are cached preview rasters -- <img> elements, one HTTP request each.
+ * Panels are cached preview rasters -- <img> elements, one HTTP request each,
+ * made once: a render rebuilds the markup around them and keeps the pictures
+ * (`replaceKeepingImages`).
  * Never live viewers: a figure with a hundred panels would otherwise be a
  * hundred WebGL contexts and a hundred tile queues, and the browser stops
  * responding long before the figure is finished. Editing a panel's SCENE hands
@@ -140,8 +142,9 @@ class FigureCanvas {
         //:
         //: A map consulted at render time rather than an element patched once,
         //: because render() rebuilds the page from markup on every document
-        //: change -- a patched <img> would be replaced by the next unrelated
-        //: edit and the panel would silently go back to the saved raster.
+        //: change -- a patched <img> would be carried into the next unrelated
+        //: edit's markup only while its `src` still matched what that markup
+        //: asks for, and the panel would silently go back to the saved raster.
         this.previewOverrides = new Map();
     }
 
@@ -256,13 +259,166 @@ class FigureCanvas {
         const held = this.surfaceEl.contains(document.activeElement)
             && document.activeElement !== this.surfaceEl;
 
-        this.surfaceEl.innerHTML =
+        // The markup is rebuilt; the PICTURES are not. See `replaceKeepingImages`.
+        FigureCanvas.replaceKeepingImages(this.surfaceEl,
             panels.map((panel, index) => this.panelMarkup(panel, index, labelStyle)).join("")
             + annotations.map((annotation) => this.annotationMarkup(annotation)).join("")
-            + this.selectionUnionMarkup();
+            + this.selectionUnionMarkup());
         this.describeObjects();
         if (held) this.focusObject(this.focusId);
         this.clearGuides();
+    }
+
+    /**
+     * Put new markup into `container`, keeping every picture already on screen.
+     *
+     * The sheet, the tray and the capture strip are drawn from markup on every document change,
+     * every selection, every zoom step. Written with `innerHTML`, each of
+     * those made a NEW `<img>` per panel: each one a fresh request for a
+     * preview the page was already showing, and a white panel until it came
+     * back and decoded. On the desktop that was a blink; on the website, where
+     * every request is answered one at a time by the page's own Python, it
+     * was a page of white rectangles after every drag. So the elements around
+     * the pictures are rebuilt, as before, and the pictures are carried over:
+     *
+     *   - an `<img>` whose object and `src` are unchanged is MOVED into the new
+     *     markup, its other attributes (a flip's transform) brought up to date.
+     *     No request, no decode, no blank frame. One that failed to load is not
+     *     kept, so a later render asks again, as it always did;
+     *   - an `<img>` whose `src` changed (a new render revision, an override
+     *     going away) keeps the OLD picture in its place until the new one has
+     *     decoded, then swaps. The panel goes from one picture to the next and
+     *     never through nothing -- which is what Quick Edit's Done, Apply
+     *     Rendering and an undo all looked like before.
+     *
+     * The new markup is parsed in an inert `<template>` and its `src`s are
+     * taken off before it is adopted, so a picture that is about to be
+     * replaced by the one already on screen never starts a request at all.
+     *
+     * A swap is abandoned if something else wrote the stand-in's `src` in the
+     * meantime (Quick Edit's live preview writes straight onto the element):
+     * that picture is newer than the one being waited for.
+     *
+     * Falls back to `innerHTML` for a container that is not a real element --
+     * the layout probes drive this class with stubs whose `innerHTML` is a
+     * string.
+     */
+    static replaceKeepingImages(container, markup) {
+        const doc = container && container.ownerDocument;
+        if (!doc || typeof container.replaceChildren !== "function"
+                || typeof doc.createElement !== "function") {
+            container.innerHTML = markup;
+            return;
+        }
+        const ownerOf = (img) => {
+            const owner = img.closest("[data-panel-id], [data-annotation-id], [data-capture-id]");
+            return owner ? (owner.dataset.panelId || owner.dataset.annotationId
+                            || owner.dataset.captureId || "") : "";
+        };
+        const broken = (img) => img.complete && !img.naturalWidth;
+        if (!FigureCanvas._swaps) FigureCanvas._swaps = new WeakMap();
+        let pending = FigureCanvas._swaps.get(container);
+        if (!pending) {
+            pending = new Map();
+            FigureCanvas._swaps.set(container, pending);
+        }
+
+        // What is on screen now: by object and picture, and per object the
+        // picture it is SHOWING (loaded), which can stand in for a new one.
+        const exact = new Map();
+        const showing = new Map();
+        for (const img of container.querySelectorAll("img")) {
+            const owner = ownerOf(img);
+            const src = img.getAttribute("src");
+            if (src === null || broken(img)) continue;
+            const key = owner + "\u0000" + src;
+            if (!exact.has(key)) exact.set(key, img);
+            if (owner && img.complete && !showing.has(owner)) showing.set(owner, img);
+        }
+
+        const template = doc.createElement("template");
+        template.innerHTML = markup;
+        const wanted = [];
+        for (const img of template.content.querySelectorAll("img")) {
+            const src = img.getAttribute("src");
+            if (src === null) continue;
+            img.removeAttribute("src");
+            wanted.push([img, src]);
+        }
+        container.replaceChildren(template.content);
+
+        const seen = new Set();
+        for (const [img, src] of wanted) {
+            const owner = ownerOf(img);
+            seen.add(owner);
+            const kept = exact.get(owner + "\u0000" + src);
+            if (kept) {
+                exact.delete(owner + "\u0000" + src);
+                FigureCanvas._adoptAttributes(kept, img);
+                img.replaceWith(kept);
+                // This is the picture wanted now: a swap still on its way to a
+                // different one is out of date.
+                if (owner && pending.get(owner)?.src !== src) pending.delete(owner);
+                continue;
+            }
+            const standIn = owner ? showing.get(owner) : null;
+            const waiting = owner ? pending.get(owner) : null;
+            if (standIn && waiting && waiting.src === src) {
+                // Already on its way: the old picture stays up a little longer.
+                showing.delete(owner);
+                FigureCanvas._adoptAttributes(standIn, img);
+                img.replaceWith(standIn);
+                waiting.target = standIn;
+                waiting.targetSrc = standIn.getAttribute("src");
+                continue;
+            }
+            if (!standIn) {
+                if (owner) pending.delete(owner);
+                img.setAttribute("src", src);
+                continue;
+            }
+            showing.delete(owner);
+            FigureCanvas._adoptAttributes(standIn, img);
+            img.replaceWith(standIn);
+            // Off the page until it swaps, and a lazy image off the page never
+            // loads: this one was on screen a moment ago, so it is wanted now.
+            img.removeAttribute("loading");
+            img.setAttribute("src", src);
+            const entry = { img, src, target: standIn, targetSrc: standIn.getAttribute("src") };
+            pending.set(owner, entry);
+            const swap = () => {
+                if (pending.get(owner) !== entry) return;
+                pending.delete(owner);
+                const target = entry.target;
+                if (!target.isConnected || target.getAttribute("src") !== entry.targetSrc) return;
+                FigureCanvas._adoptAttributes(img, target);
+                target.replaceWith(img);
+            };
+            // `decode` where there is one, so the swap never shows a frame of
+            // an undecoded image; an error swaps too, so a missing preview
+            // still says so (its own onerror marks it).
+            if (typeof img.decode === "function") img.decode().then(swap, swap);
+            else img.addEventListener("load", swap, { once: true });
+        }
+        for (const owner of Array.from(pending.keys())) {
+            if (!seen.has(owner)) pending.delete(owner);
+        }
+    }
+
+    /** Copy every attribute but `src` from `from` onto `to`, and drop the ones
+     *  `from` does not have -- but keep the mark a failed load leaves, which
+     *  belongs to the picture `to` is still showing. */
+    static _adoptAttributes(to, from) {
+        const missing = to.classList.contains("fb-panel-image-missing");
+        for (const attr of Array.from(to.attributes)) {
+            if (attr.name !== "src" && !from.hasAttribute(attr.name)) to.removeAttribute(attr.name);
+        }
+        for (const attr of Array.from(from.attributes)) {
+            if (attr.name !== "src" && to.getAttribute(attr.name) !== attr.value) {
+                to.setAttribute(attr.name, attr.value);
+            }
+        }
+        if (missing && to.complete && !to.naturalWidth) to.classList.add("fb-panel-image-missing");
     }
 
     /**
@@ -1594,8 +1750,9 @@ class FigureCanvas {
      * Write the provisional positions straight onto the elements.
      *
      * Inline styles rather than a re-render: a re-render per pointer move
-     * rebuilds every <img> in the page, which makes the browser re-decode the
-     * previews and turns a smooth drag into a slideshow.
+     * rebuilds the markup of every object on the page (the pictures are kept,
+     * `replaceKeepingImages`, but the rest is not free), and a smooth drag
+     * would turn into a slideshow.
      */
     previewMove(dx, dy, disableSnap) {
         const snapped = disableSnap ? { dx, dy } : this.snapMove(dx, dy);
@@ -1809,8 +1966,8 @@ class FigureCanvas {
      * strokeMarkup).
      *
      * Ordinary items get inline styles rather than a re-render: re-rendering
-     * per pointer move rebuilds every <img> on the page and turns a smooth drag
-     * into a slideshow. A line has no <img> and cannot be expressed as four
+     * per pointer move rebuilds every object's markup on the page and turns a
+     * smooth drag into a slideshow. A line has no <img> and cannot be expressed as four
      * style properties, so it is the one thing redrawn each frame.
      */
     previewBox(item, box) {

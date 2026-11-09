@@ -483,29 +483,34 @@ class FigureQuickEdit {
         });
         this.session.keyByName = keyByName;
 
+        // Each channel's range, from `pixel_info` -- asked for the channels the
+        // panel SHOWS before the controls appear, and for any other only when
+        // the sidebar first needs it (switched on, auto-levelled: its
+        // `ensureChannelStats`). Every channel of the source used to be asked
+        // for on every open, a coarsest-level read each: forty requests in
+        // front of a forty-channel panel showing three, and on the website
+        // forty turns of the page's one Python queue.
         const described = {};
-        await Promise.all(names.map(async (name) => {
-            const result = await this.api.pixelInfo(
-                this.figureId, this.session.sourceId, keyByName[name]);
-            const stats = (result.ok && result.data.stats) || {};
-            const low = Number.isFinite(stats.min) ? stats.min : 0;
-            const high = Number.isFinite(stats.max) ? stats.max : 65535;
-            described[name] = {
-                image_min: low,
-                image_max: Math.max(high, low + 1),
-                // The slider's domain, and it is this channel's own content
-                // rather than the sensor's theoretical range: a 16-bit slider
-                // spread over [0, 65535] for a channel whose brightest pixel
-                // is 900 would put every usable setting in its first 1.4%.
-                qmin: low,
-                qmax: Math.max(high, low + 1),
-                // Where Auto lands: the same percentile window the viewer's
-                // auto-level produces, so a channel switched on here arrives
-                // looking the way it would there.
-                vmin_hint: Number.isFinite(stats.p01) ? stats.p01 : low,
-                vmax_hint: Number.isFinite(stats.p999) ? stats.p999 : high,
-            };
-        }));
+        const asking = new Map();
+        const sourceId = this.session.sourceId;
+        const describe = (name) => {
+            if (described[name]) return Promise.resolve(described[name]);
+            if (!keyByName[name]) return Promise.resolve({});
+            if (!asking.has(name)) {
+                asking.set(name, this.api.pixelInfo(this.figureId, sourceId, keyByName[name])
+                    .catch(() => ({ ok: false }))
+                    .then((result) => {
+                        described[name] = FigureQuickEdit.describeRange(
+                            (result && result.ok && result.data.stats) || {});
+                        return described[name];
+                    }));
+            }
+            return asking.get(name);
+        };
+        const shown = new Set((panel.scene.channels || [])
+            .filter((channel) => channel.visible !== false).map((channel) => channel.key));
+        await Promise.all(names.filter((name) => shown.has(keyByName[name])).map(describe));
+        this.session.describe = describe;
 
         // A bus of this session's own. `SimpleEventHandler` has no unbind, so a
         // handler bound to document.body would outlive every close and fire
@@ -516,8 +521,8 @@ class FigureQuickEdit {
 
         this.sidebar = new ViewerSidebar(
             { maxSelections: names.length }, names,
-            this.dataLayerShim(described), new SimpleEventHandler(this.bus),
-            this.channelListShim(described),
+            this.dataLayerShim(described, describe), new SimpleEventHandler(this.bus),
+            this.channelListShim(described, describe),
             {
                 root: this.root,
                 idPrefix: "fbqe_",
@@ -619,13 +624,38 @@ class FigureQuickEdit {
      * identity, and every saved-list call is a no-op for the reason in the
      * class comment.
      */
-    dataLayerShim(described) {
+    dataLayerShim(described, describe) {
         return {
             imageBitRange: [0, 65535],
             getFullChannelName: (name) => name,
             getSavedChannelList: () => Promise.resolve([]),
             saveChannelList: () => Promise.resolve(null),
-            getImageChannelStats: (name) => Promise.resolve(described[name] || {}),
+            getImageChannelStats: (name) => (describe ? describe(name)
+                : Promise.resolve(described[name] || {})),
+        };
+    }
+
+    /**
+     * A channel's slider domain and Auto window, from `pixel_info`'s stats; the
+     * sensor's whole range when there are none.
+     */
+    static describeRange(stats) {
+        const low = Number.isFinite(stats.min) ? stats.min : 0;
+        const high = Number.isFinite(stats.max) ? stats.max : 65535;
+        return {
+            image_min: low,
+            image_max: Math.max(high, low + 1),
+            // The slider's domain, and it is this channel's own content
+            // rather than the sensor's theoretical range: a 16-bit slider
+            // spread over [0, 65535] for a channel whose brightest pixel
+            // is 900 would put every usable setting in its first 1.4%.
+            qmin: low,
+            qmax: Math.max(high, low + 1),
+            // Where Auto lands: the same percentile window the viewer's
+            // auto-level produces, so a channel switched on here arrives
+            // looking the way it would there.
+            vmin_hint: Number.isFinite(stats.p01) ? stats.p01 : low,
+            vmax_hint: Number.isFinite(stats.p999) ? stats.p999 : high,
         };
     }
 
@@ -641,7 +671,7 @@ class FigureQuickEdit {
      * percentile window from `pixel_info` (the sidebar's first pass) and stops
      * there rather than waiting for a fit that will never come.
      */
-    channelListShim(described) {
+    channelListShim(described, describe) {
         return {
             selections: [],
             sel: {},
@@ -649,8 +679,11 @@ class FigureQuickEdit {
             rangeConnector: {},
             colorConnector: {},
             hasChannelGMM: {},
+            // The same object `describe` fills, so a channel described late is
+            // in the sidebar's `databaseDescription` the moment it lands.
             databaseDescription: described,
-            ensureChannelStats: () => Promise.resolve(),
+            ensureChannelStats: (name) => (describe ? describe(name).then(() => undefined)
+                : Promise.resolve()),
             getAndDrawChannelGMM: () => Promise.resolve(null),
         };
     }
@@ -1152,7 +1185,7 @@ class FigureQuickEdit {
 
         const results = await Promise.all(fetches.map(async (key) => ({
             key: key,
-            result: await this.api.readPixels(this.figureId, this.session.sourceId, {
+            result: await this.readPixels({
                 channel: key, x: clamped.x, y: clamped.y, w: clamped.w, h: clamped.h,
                 out_w: out.w, out_h: out.h, view: view, signal: controller.signal,
             }),
@@ -1179,6 +1212,22 @@ class FigureQuickEdit {
         this.sheetDirty = true;
         this.paint();
         this.scheduleLivePreview();
+    }
+
+    /**
+     * One channel of one region: from the page's own reader of the file where
+     * it can answer (the website, the datasource the viewer has open --
+     * FigureNodePixels), else from the server, as always.
+     */
+    async readPixels(params) {
+        const session = this.session;
+        const datasource = session && session.source && session.source.datasource;
+        if (typeof FigureNodePixels === "function"
+                && FigureNodePixels.available(datasource, this.loadedDatasource)) {
+            const read = await FigureNodePixels.read(datasource, params.channel, params).catch(() => null);
+            if (read) return read;
+        }
+        return this.api.readPixels(this.figureId, session.sourceId, params);
     }
 
     activeSlots() {

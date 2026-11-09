@@ -17,7 +17,14 @@
 //           the other two would prove nothing);
 //   still   opened as the loader opens it (shell.js's own hiddenForOpen),
 //           the pointer still;
-//   moving  the same, the pointer moving over the frame while it loads.
+//   moving  the same, the pointer moving over the frame while it loads;
+//   hidden  the same, with the host's tab in the background while the page
+//           is opened and shown again 1 s later (the import's sample opened
+//           by itself while the user looked elsewhere): the page must wait
+//           for the tab to be shown.
+//
+// Each case also runs shell.js's watchCapture on the written page, which
+// must report the control's document as broken and no other.
 //
 //   node tests/browser/pointer_capture.mjs --out FILE [--headed]
 import { writeFileSync } from "node:fs";
@@ -31,6 +38,7 @@ const CASES = [
     { name: "plain", mode: "plain", moving: false },
     { name: "still", mode: "shell", moving: false },
     { name: "moving", mode: "shell", moving: true },
+    { name: "hidden", mode: "hidden", moving: false },
 ];
 
 const server = await startServer();
@@ -60,6 +68,16 @@ try {
         await page.mouse.move(600, 450);
         await page.mouse.move(605, 452);
         await frame.evaluate((m) => { location.href = `frame.html?mode=${m}`; }, mode);
+        if (mode === "hidden") {
+            // Shown again 1 s on; the page must not be written before that.
+            await page.waitForTimeout(1000);
+            const early = await frame.evaluate(() => window.__written === true).catch(() => null);
+            if (early) out.failed.push(`${name}: the page was written while the tab was hidden`);
+            await page.evaluate(() => {
+                window.__vis = "visible";
+                document.dispatchEvent(new Event("visibilitychange"));
+            });
+        }
         const until = Date.now() + 1500;
         for (let i = 0; moving && Date.now() < until; i += 1) {
             await page.mouse.move(600 + (i % 5) * 4, 450);
@@ -85,6 +103,7 @@ try {
         const during = press < 0 ? [] : events.slice(press);
         out.cases[name] = {
             hiddenMs: await frame.evaluate(() => (window.__hiddenMs == null ? null : Math.round(window.__hiddenMs))),
+            brokenSeen: await frame.evaluate(() => window.__broken),
             hasCaptureAfterSet: events.find((event) => event.type === "setPointerCapture")?.has ?? null,
             gotCapture: events.some((event) => event.type === "gotpointercapture"),
             // Each of these, during a drag that never left and came back,

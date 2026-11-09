@@ -968,11 +968,25 @@ class FigureWorkspace {
         const blob = await FigureThumbnail.render(
             document_, this.canvas?.pageId,
             (panelId, renderRevision) =>
-                this.api.previewUrl(this.figureId, panelId, renderRevision));
+                this.api.previewUrl(this.figureId, panelId, renderRevision),
+            { imageFor: (panelId) => this.shownImage(panelId) });
         // No toast and no status either way. A thumbnail is a convenience and
         // the figure is already saved; an error beside work that is safely
         // stored would be reporting a failure the user cannot act on.
         if (blob) await this.api.putThumbnail(this.figureId, blob);
+    }
+
+    /**
+     * The picture of a panel this page is showing, decoded -- on the sheet, or
+     * for a panel not placed yet, in the tray -- or null.
+     */
+    shownImage(panelId) {
+        const id = FigureSchema.cssEscape(panelId);
+        const candidates = [
+            this.canvas?.surfaceEl?.querySelector?.(`.fb-panel[data-panel-id="${id}"] .fb-panel-image`),
+            this.el("fb_tray_strip")?.querySelector?.(`[data-panel-id="${id}"] img`),
+        ];
+        return candidates.find((image) => image && image.complete && image.naturalWidth > 0) || null;
     }
 
     bindCanvasHost() {
@@ -2736,7 +2750,10 @@ class FigureWorkspace {
             strip.innerHTML = '<p class="fb-muted fb-tray-nomatch">No panel matches that.</p>';
             return;
         }
-        strip.innerHTML = shown.map((panel) => {
+        // Kept pictures, as on the sheet: the strip is redrawn on every
+        // document change and a tray of a dozen previews re-fetched each time
+        // was a dozen requests per nudge (FigureCanvas.replaceKeepingImages).
+        FigureCanvas.replaceKeepingImages(strip, shown.map((panel) => {
             const source = this.state.source(panel.source_id);
             const span = FigureSchema.physicalWidthUm(source, panel.scene.viewport);
             const caption = FigureSchema.panelCaption(panel)
@@ -2769,7 +2786,7 @@ class FigureWorkspace {
                     <span class="fb-tray-item-meta">${FigureSchema.escapeHtml(detail)}</span>
                 </span>
             </div>`;
-        }).join("");
+        }).join(""));
     }
 
     renderStatus(payload) {

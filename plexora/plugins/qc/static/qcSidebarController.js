@@ -206,7 +206,10 @@ class QcSidebarController {
         this.registration.onShow();
         this.blur.onShow();
         this.artifacts.onShow();
-        this.reload();
+        // A reload already on its way answers for this showing too: on a
+        // first open setup()'s is, and asking again behind it (`_reloadAgain`)
+        // read the state, the regions and every cell call a second time.
+        if (!this._reloading) this.reload();
     }
 
     onHide() {

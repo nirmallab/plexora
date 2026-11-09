@@ -701,6 +701,15 @@ def resolve_derived_mask(segmentation_path, data_directory=None, *,
 
     existing = next(
         (c for c in candidates if _is_adoptable(c, source_path, mode)), None)
+    if existing is None and mode == MODE_FILLED:
+        # In the desktop app, to read only: the label pyramid the website
+        # built of the same mask, kept in Plexora's folder
+        # (server/utils/relink.py `website_copies`). Never a target.
+        from plexora.server.utils import relink
+
+        existing = next((Path(c) for c in relink.website_copies(
+            source_path, derived_output_path(source_path, None, mode=mode).name, "labels")
+            if _is_adoptable(Path(c), source_path, mode)), None)
     for candidate in candidates:
         if paths.is_writable(candidate.parent):
             return DerivedMask(existing, candidate, True)

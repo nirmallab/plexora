@@ -1730,3 +1730,25 @@
         width: 100%;
     }
 }
+
+/* Settings > Data on the website: the pyramids made from the user's files
+   (settingsPage.js `drawWebCopies`), one row each, divided like a list. */
+.settings-web-copies {
+    display: flex;
+    flex-direction: column;
+    margin-top: var(--space-3);
+}
+
+.settings-web-copy {
+    border-top: 1px solid var(--border-subtle);
+    padding: var(--space-3) 0;
+}
+
+.settings-web-copy .settings-actions {
+    justify-content: flex-start;
+    margin-top: var(--space-2);
+}
+
+.settings-web-copies-reload {
+    margin-left: var(--space-2);
+}

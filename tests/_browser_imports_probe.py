@@ -28,6 +28,7 @@ os.environ["PLEXORA_NO_NUMBA"] = "1"
 BLOCKED = (
     "cv2", "skimage", "h5py", "anndata", "pandas", "pyarrow", "reportlab", "numba",
     "onnxruntime", "torch", "imagecodecs", "hdf5plugin", "openslide", "spatialdata",
+    "scipy", "sklearn",
 )
 
 asked = {}

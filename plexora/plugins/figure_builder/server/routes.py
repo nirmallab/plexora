@@ -222,19 +222,40 @@ def duplicate_figure(figure_id):
 # -- rasters -------------------------------------------------------------
 
 
-def _image_response(data, media_type):
-    """A raster the browser may cache only after revalidating.
+#: How a preview whose URL names the render revision it holds may be cached:
+#: for good. See `get_preview`.
+IMMUTABLE = "public, max-age=31536000, immutable"
 
-    `no-cache` rather than a max-age: a preview is replaced in place whenever
-    its panel changes, at the same URL, and a cached copy would show the user
-    the view they just edited away from.
+
+def _image_response(data, media_type, immutable=False):
+    """A raster the browser may cache only after revalidating -- or, when the
+    URL names exactly these bytes, keep.
+
+    `no-cache` by default rather than a max-age: a thumbnail is replaced in
+    place, at the same URL, and a cached copy would show the user the figure
+    they just edited away from.
     """
     return Response(data, mimetype=media_type,
-                    headers={"Cache-Control": "no-cache, must-revalidate"})
+                    headers={"Cache-Control": IMMUTABLE if immutable else "no-cache, must-revalidate"})
 
 
 @figure_builder_bp.route('/api/figures/<figure_id>/previews/<panel_id>', methods=['GET'])
 def get_preview(figure_id, panel_id):
+    """A panel's preview raster.
+
+    Cached for good when the URL's `?v=` is the render revision the stored
+    preview was rendered at (`FigureBuilderApi.previewUrl` always sends it):
+    a panel's picture at one render revision never changes -- a new picture is
+    a new revision, which is a new URL. Without that, every panel the canvas
+    drew asked again on every page and every reload, and on the website each
+    ask is a turn of the page's one Python queue. A `?v=` that does not match
+    (an old URL asked after a newer picture landed, or before this one did) is
+    answered `no-cache`, because those bytes are not the ones it names.
+
+    What keeps "never changes" true is that a render revision is never reused
+    for different bytes: it only goes forwards (operations.update_panel), an
+    undo keeps it forwards (repository.replace), and a copy is a new panel.
+    """
     try:
         schema.validate_figure_id(figure_id)
         found = repository.get_preview(figure_id, panel_id)
@@ -244,8 +265,10 @@ def get_preview(figure_id, panel_id):
         return _not_found()
     if found is None:
         return jsonify(success=False, error="no_preview"), 404
-    data, fmt, _ = found
-    return _image_response(data, f"image/{fmt}")
+    data, fmt, revision = found
+    asked = request.args.get('v', '')
+    return _image_response(data, f"image/{fmt}",
+                           immutable=asked.isdigit() and int(asked) == revision)
 
 
 @figure_builder_bp.route('/api/figures/<figure_id>/previews/<panel_id>', methods=['POST'])

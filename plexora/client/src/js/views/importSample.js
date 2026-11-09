@@ -2839,9 +2839,10 @@ window.PlexoraImportSample = (function () {
      * ("yes" / "no"), or null when the modal is dismissed.
      *
      * On the website, where the browser can write into a folder the user
-     * grants, the copy goes beside the original (the folder picker opens
-     * there) or stays in this browser; a cancelled picker keeps it in the
-     * browser.
+     * grants: where the projects are kept in Plexora's folder the copy goes
+     * there, or into a folder of the user's own (`askPyramidHome`); otherwise
+     * beside the original (the folder picker opens there) or in this browser.
+     * A cancelled picker keeps it where it would have gone.
      */
     async function askPyramid(question, sample) {
         const layer = layerOf(sample, question);
@@ -2874,16 +2875,20 @@ window.PlexoraImportSample = (function () {
                 inline: true,
             });
         }
-        // The website, where the browser can write into a folder: one answer;
-        // closing the question keeps the copy with the projects (Plexora's
-        // folder, or this browser).
+        // The website, where the browser can write into a folder. Where the
+        // projects are kept in Plexora's folder that is where the copy goes
+        // by default -- the user's choice of a place for Plexora's files --
+        // with a folder of their own (beside the original) one click away.
+        // Closing the question keeps the copy with the projects.
         let home = null;
         try {
             home = window.parent?.PlexoraStore?.current?.() || null;
         } catch (error) {
             home = null;
         }
-        const kept = home?.kind === "folder" ? home.label : "this browser";
+        const plexora = home?.kind === "folder" ? home.label : home?.notOpened || null;
+        if (plexora) return askPyramidHome(question, layer, chip, yes, pyramids, plexora);
+        const kept = "this browser";
         const chosen = await window.PlexoraConfirm.choose({
             title: "Save the pyramid beside the original?",
             body: `Large flat images need one to open quickly. Close to keep it in ${kept}.`,
@@ -2905,6 +2910,62 @@ window.PlexoraImportSample = (function () {
         }
         state.copyPlaces = state.copyPlaces || {};
         state.copyPlaces[question.id] = folder ? `in “${folder.name}”` : `in ${kept}`;
+        return yes.value;
+    }
+
+    /**
+     * The question where the projects are kept in Plexora's folder (`label`,
+     * "Documents › Plexora"): the copy goes there unless the user picks a
+     * folder of their own. A folder this visit did not open (the loader's
+     * "Use browser this time") is opened from this click
+     * (PlexoraStore.reopen); refused, the copy is kept in this browser and
+     * moves to Plexora's folder on a later visit that opens it.
+     */
+    async function askPyramidHome(question, layer, chip, yes, pyramids, label) {
+        const chosen = await window.PlexoraConfirm.choose({
+            title: `Save the pyramid in ${label}?`,
+            body: "Large flat images need one to open quickly. It is made once and used again on every visit; "
+                + "the original is not changed.",
+            content: chip,
+            choices: [{value: "beside", label: "Beside the original…"},
+                      {value: "plexora", label: `Save in ${label}`, kind: "primary", focus: true}],
+            close: true,
+            inline: true,
+        });
+        let place = `in ${label}`;
+        let cancelled = false;
+        if (chosen === "beside") {
+            let folder = null;
+            try {
+                folder = await pyramids.chooseFolder(layer?.src);
+            } catch (error) {
+                folder = null;
+            }
+            if (folder) place = `in “${folder.name}”`;
+            else cancelled = true;
+        } else {
+            pyramids.forgetFolder(layer?.src);
+        }
+        if (place === `in ${label}`) {
+            let open = false;
+            try {
+                const store = window.parent?.PlexoraStore;
+                open = Boolean(store?.pyramids?.()) || Boolean(await store?.reopen?.());
+                // Copies kept there on an earlier visit, found again now.
+                if (open) window.parent?.PlexoraDerived?.reconnect?.({ ask: false })?.catch?.(() => null);
+            } catch (error) {
+                open = false;
+            }
+            if (!open) {
+                place = "in this browser";
+                window.PlexoraToast?.show({ title: "Pyramid kept in this browser",
+                                            note: `It moves to ${label} on a visit that opens the folder.` });
+            } else if (cancelled) {
+                window.PlexoraToast?.show({ title: `Pyramid saved in ${label}` });
+            }
+        }
+        state.copyPlaces = state.copyPlaces || {};
+        state.copyPlaces[question.id] = place;
         return yes.value;
     }
 

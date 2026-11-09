@@ -272,6 +272,20 @@ def test_qc_status_is_an_annotation_cell_explorer_can_colour_by(tmp_path):
     assert listed["qc_status"]["colors"]["excluded"]
     payload, kind, n = values.encode(ds, "qc_status", listed["qc_status"])
     assert kind == "categorical" and n == len(info["cells"]) and payload
+    # Described once per fingerprint: listing again describes nothing, and a
+    # region drawn since (a new fingerprint) is described afresh.
+    described = []
+    real = variables._describe_derived
+    variables._describe_derived = lambda *a: described.append(a[0]) or real(*a)
+    try:
+        again = {d["name"]: d for d in variables.describe_all(ds)}
+        assert described == [] and again["qc_status"] == listed["qc_status"]
+        _fold(session, "qcsynth", _box(300, 0, 400, 100))
+        changed = {d["name"]: d for d in variables.describe_all(api.project_data("qcsynth"))}
+        assert "qc_status" in described
+        assert changed["qc_status"]["fingerprint"] != listed["qc_status"]["fingerprint"]
+    finally:
+        variables._describe_derived = real
 
 
 # -- the SCIMAP Pro hand-off ---------------------------------------------------------------

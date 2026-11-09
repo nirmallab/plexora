@@ -43,11 +43,19 @@ from plexora.plugins.figure_builder.server import schema
 MAX_OPERATIONS = 2_000
 
 
-def apply_operations(document, operations):
+def apply_operations(document, operations, in_place=False):
     """Apply every operation in order, returning a new document.
 
     Raises ValueError -- with a message meant for the user -- if any of them is
     invalid, having changed nothing.
+
+    `in_place` is for a caller that owns `document` outright and throws it away
+    on an error (repository.apply, which has just loaded it from disk): the
+    operations are applied to it directly instead of to a deep copy. The copy
+    was most of the cost of a PATCH -- every scene of every panel, for a drag
+    that moved one -- and protected nothing, because nobody else holds that
+    dict. On an error the document is then half-edited, so such a caller must
+    not use it afterwards.
     """
     if not isinstance(operations, list):
         raise ValueError("operations must be a list")
@@ -56,7 +64,7 @@ def apply_operations(document, operations):
     if len(operations) > MAX_OPERATIONS:
         raise ValueError(f"too many operations in one request (max {MAX_OPERATIONS})")
 
-    working = copy.deepcopy(document)
+    working = document if in_place else copy.deepcopy(document)
     for operation in operations:
         if not isinstance(operation, dict):
             raise ValueError("each operation must be an object")

@@ -20,6 +20,7 @@ import pytest
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 PROBE = REPO_ROOT / "tests" / "js" / "store_sync_shared_probe.mjs"
+HELD_PROBE = REPO_ROOT / "tests" / "js" / "store_sync_held_probe.mjs"
 WORKER = REPO_ROOT / "plexora" / "client" / "src" / "js" / "workers" / "pythonWorker.js"
 STORE_SYNC = REPO_ROOT / "plexora" / "client" / "src" / "js" / "workers" / "storeSync.js"
 PATHS = REPO_ROOT / "plexora" / "paths.py"
@@ -33,6 +34,19 @@ def test_a_shared_folder_keeps_what_is_not_the_pages():
                           cwd=REPO_ROOT, timeout=60)
     assert done.returncode == 0, done.stdout[-3000:] + done.stderr[-3000:]
     assert "store sync shared probe OK" in done.stdout
+
+
+def test_big_tiffs_in_a_shared_folder_are_read_where_they_lie():
+    """A pyramid Python built into a project, too big to hold in memory, is
+    read in the folder through a link (WORKERFS) and found on the next visit
+    instead of being built again; a big database is left there as before."""
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("node is not installed")
+    done = subprocess.run([node, str(HELD_PROBE)], capture_output=True, text=True,
+                          cwd=REPO_ROOT, timeout=60)
+    assert done.returncode == 0, done.stdout[-3000:] + done.stderr[-3000:]
+    assert "store sync held probe OK" in done.stdout
 
 
 def test_the_worker_opens_plexoras_folder_shared():

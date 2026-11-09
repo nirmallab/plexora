@@ -155,7 +155,7 @@ def test_a_stale_channel_name_gets_an_answer_not_a_traceback(monkeypatch, route)
     """Both routes are asked for a channel BY NAME, and a page open across a
     rename asks for the old one. That is a stale question, not a broken
     server, so it is a 404 with a sentence in it."""
-    def raise_unknown(channel, datasource):
+    def raise_unknown(channel, datasource, *_, **__):  # the routes pass `patient`
         raise data_model.UnknownChannelError(f"{channel!r} is not a channel of 'tonsil'.")
 
     monkeypatch.setattr(data_model, "get_image_channel_stats", raise_unknown)

@@ -58,6 +58,8 @@ let nextAsk = 1;
 const queue = [];
 let busy = false;
 let idling = 0;
+//: id -> timer of a request a route asked to be asked again later (`drain`).
+const retrying = new Map();
 let syncPending = false;
 //: The project store at /data (workers/storeSync.js), once mounted.
 let store = null;
@@ -290,20 +292,35 @@ async function mountState(folder) {
 
 // One write back at a time, and at most one more queued behind it, a moment
 // after it was asked for: a burst of requests is one more write-back, never
-// several at once. Asked after every request and every background step: a
-// GET writes too (a project's first load makes its database), and one with
-// nothing new only looks.
+// several at once. Asked after every request and every background step. A
+// request that may have written (the bridge's `wrote`: anything but a read)
+// is written back SYNC_DELAY_MS after it; a read only later, after
+// READ_SYNC_DELAY_MS -- a GET can write too (a project's first load makes its
+// database), but most write nothing, and each write-back walks all of /data.
+// An earlier write-back asked for replaces a later one.
 const SYNC_DELAY_MS = 250;
+const READ_SYNC_DELAY_MS = 2000;
 let syncing = Promise.resolve();
-function scheduleSync() {
+let syncTimer = null;
+let syncAt = 0;
+function scheduleSync(delay = SYNC_DELAY_MS) {
     scheduleKeep();
-    if (!store || syncPending) return;
-    syncPending = true;
-    syncing = syncing.then(async () => {
-        await new Promise((resolve) => setTimeout(resolve, SYNC_DELAY_MS));
-        syncPending = false;
-        try { await store.push(); } catch (error) { self.postMessage({ log: `store: ${error}` }); }
-    });
+    if (!store) return;
+    const at = performance.now() + delay;
+    if (syncTimer !== null) {
+        if (at >= syncAt) return;
+        clearTimeout(syncTimer);
+    }
+    syncAt = at;
+    syncTimer = setTimeout(() => {
+        syncTimer = null;
+        if (syncPending) return;
+        syncPending = true;
+        syncing = syncing.then(async () => {
+            syncPending = false;
+            try { await store.push(); } catch (error) { self.postMessage({ log: `store: ${error}` }); }
+        });
+    }, delay);
 }
 
 // The chunk cache's index (plexora/browser/cachefiles.py) written to the
@@ -742,6 +759,14 @@ async function request(args) {
     const app = py.pyimport("plexora").app;
     const message = py.toPy({ ...args, body: args.body ? new Uint8Array(args.body) : null });
     const answer = await call(handle, app, message, origin);
+    const retry = answer.get("retry");
+    if (retry !== undefined && retry !== null) {
+        // The route asked to be asked again later (a channel the page is
+        // still scanning, server/providers/browser.py `WindowPending`): `drain`
+        // puts it back in the queue; nothing to answer or write back.
+        answer.destroy(); message.destroy(); handle.destroy(); app.destroy();
+        return { retry: Math.max(20, Number(retry) || 200), pyMs: Math.round(performance.now() - started) };
+    }
     const result = {
         status: answer.get("status"),
         headers: answer.get("headers").toJs(),
@@ -749,7 +774,7 @@ async function request(args) {
         stream: answer.get("stream") ?? null,
         pyMs: Math.round(performance.now() - started),
     };
-    scheduleSync();
+    scheduleSync(answer.get("wrote") === false ? READ_SYNC_DELAY_MS : SYNC_DELAY_MS);
     // Settings > Usage data (the mode, the notice, a new install id): kept now.
     if (telemetry && args.method === "POST" && /\/telemetry\/(mode|notice_seen|reset|send)$/.test(args.path || "")) {
         telemetry.kept.save().catch(() => null);
@@ -766,14 +791,34 @@ function read({ stream, size }) {
     return result;
 }
 
-//: Files read on demand under `dir`; a folder already mounted is left as it
-//: is (a copy the page built is mounted at boot and may be announced again).
+//: Files read on demand under `dir`. A folder already mounted with the same
+//: files is left as it is (a copy the page built is mounted at boot and may
+//: be announced again); one mounted with other files -- a copy Python refused,
+//: rebuilt by the page under the same key -- is mounted again with the new
+//: ones, or Python would go on reading the refused file.
 function mount({ dir, files }) {
-    if (!(py.FS.analyzePath(dir).exists && py.FS.isMountpoint(py.FS.lookupPath(dir).node))) {
-        py.FS.mkdirTree(dir);
-        py.FS.mount(datedFiles(py.FS.filesystems.WORKERFS), { files }, dir);
-    }
+    const mounted = py.FS.analyzePath(dir).exists && py.FS.isMountpoint(py.FS.lookupPath(dir).node);
+    if (mounted && sameFiles(dir, files)) return files.map((file) => `${dir}/${file.name}`);
+    if (mounted) py.FS.unmount(dir);
+    py.FS.mkdirTree(dir);
+    py.FS.mount(datedFiles(py.FS.filesystems.WORKERFS), { files }, dir);
     return files.map((file) => `${dir}/${file.name}`);
+}
+
+//: Whether `dir` holds `files` already: each by name, with the same size and
+//: time (the same File object when it is the same announcement).
+function sameFiles(dir, files) {
+    for (const file of files) {
+        let held = null;
+        try {
+            held = py.FS.lookupPath(`${dir}/${file.name}`).node.contents;
+        } catch (error) {
+            return false;
+        }
+        if (held === file) continue;
+        if (!held || held.size !== file.size || held.lastModified !== file.lastModified) return false;
+    }
+    return true;
 }
 
 // The pyramids the page built in earlier visits (services/browserPyramid.js,
@@ -936,10 +981,16 @@ const OPS = {
         return performance.now() - started;
     },
     //: Tests: what another app changed in the store, read in now.
-    pull: async () => (store ? store.pull() : null),
+    //: Also the page's, when the tab is shown again: what changed meanwhile.
+    pull: async () => {
+        if (!store) return null;
+        lastPull = performance.now();
+        pullEvery = PULL_MS;
+        return store.pull();
+    },
     trace: () => (debug ? traced.splice(0) : null),
     //: What the worker is doing, for the status chip and diagnostics.
-    state: () => ({ busy, idling, queued: queue.map((m) => m.op === "request" ? m.args.path : m.op),
+    state: () => ({ busy, idling, retrying: retrying.size, queued: queue.map((m) => m.op === "request" ? m.args.path : m.op),
                     stepping, inFlight: inFlight === null ? null : Atomics.load(inFlight, 0),
                     current: current ? { ...current, forMs: Math.round(performance.now() - current.since) } : null }),
     run: async ({ code }) => {
@@ -953,16 +1004,20 @@ const OPS = {
 // waiting on the user, when the next request is answered in the gap.
 async function drain() {
     while (queue.length && (!busy || idling > 0)) {
-        // Between requests, now and then: what another app (the desktop app
-        // sharing the projects folder) changed, read in before Python looks.
-        if (!busy && store && queue[0].op === "request" && performance.now() - lastPull > PULL_MS) {
-            lastPull = performance.now();
-            busy = true;
-            try { await store.pull(); } catch (error) { self.postMessage({ log: `store: ${error}` }); }
-            busy = false;
+        // What another app (the desktop app sharing the projects folder, or
+        // this site in another tab) changed is read in while nothing is
+        // asked (`idlePull`) and when the tab is shown again (the page's
+        // `pull`), not in front of a request: a pull asks the folder for
+        // every one of its files. Only a page that has kept asking without a
+        // pause for PULL_STALE_MS pays for one here.
+        const now = performance.now();
+        if (!busy && store && queue[0].op === "request"
+            && now - lastPull > PULL_STALE_MS && now - lastQuiet > PULL_STALE_MS) {
+            await pullNow();
             continue;
         }
-        const { id, op, args, arrived } = queue.shift();
+        const queued = queue.shift();
+        const { id, op, args, arrived } = queued;
         const began = performance.now();
         const outer = current;
         current = { op, path: op === "request" ? args.path : null, since: began };
@@ -972,6 +1027,21 @@ async function drain() {
         inStep = false;
         try {
             const result = await OPS[op](args || {});
+            if (op === "request" && result && result.retry) {
+                // Back in the queue in `retry` ms, behind whatever arrives
+                // meanwhile; a cancel finds it in `retrying`.
+                // Each time with its count, so the route stops asking for
+                // patience once it has had enough (data_routes `_patient`).
+                queued.retries = (queued.retries || 0) + 1;
+                queued.args = { ...args, headers: [...(args.headers || []).filter(([name]) => name.toLowerCase() !== "x-plexora-retried"),
+                                                   ["X-Plexora-Retried", String(queued.retries)]] };
+                retrying.set(id, setTimeout(() => {
+                    retrying.delete(id);
+                    queue.push(queued);
+                    drain();
+                }, result.retry));
+                continue;
+            }
             const transfer = result && result.body instanceof Uint8Array ? [result.body.buffer] : [];
             self.postMessage({ id, ok: true, result }, transfer);
             if (debug && op === "request") {
@@ -994,9 +1064,63 @@ async function drain() {
             current = outer;
             // It may have queued work: the next step finds out.
             pendingWork = Math.max(pendingWork, 1);
+            if (op === "request") lastAnswer = performance.now();
         }
     }
-    if (!busy && !queue.length) step();
+    if (!busy && !queue.length) {
+        step();
+        idlePull();
+    }
+}
+
+//: The store's pull, holding the queue while it reads (Python must not see
+//: half a folder).
+//: Resolves whether anything was read in or dropped.
+async function pullNow() {
+    lastPull = performance.now();
+    busy = true;
+    let changed = false;
+    try {
+        const done = await store.pull();
+        changed = Boolean(done && (done.read || done.dropped));
+    } catch (error) {
+        self.postMessage({ log: `store: ${error}` });
+    }
+    busy = false;
+    return changed;
+}
+
+//: A pull once requests have been quiet for IDLE_PULL_MS, again and again
+//: while they stay quiet, each further apart while nothing comes in (PULL_MS,
+//: doubled up to PULL_IDLE_MAX_MS): the folder read in during the pauses,
+//: where no request waits for it.
+const IDLE_PULL_MS = 800;
+const PULL_STALE_MS = 10000;
+const PULL_IDLE_MAX_MS = 30000;
+let idleTimer = null;
+let lastQuiet = 0;
+let pullEvery = PULL_MS;
+function idlePull() {
+    if (!store || idleTimer !== null) return;
+    idleTimer = setTimeout(async () => {
+        idleTimer = null;
+        if (busy || stepping || queue.length) return;  // the next drain asks again
+        const now = performance.now();
+        if (now - lastRequest < IDLE_PULL_MS) {
+            idlePull();
+            return;
+        }
+        lastQuiet = now;
+        if (now - lastPull >= pullEvery) {
+            const changed = await pullNow();
+            pullEvery = changed ? PULL_MS : Math.min(pullEvery * 2, PULL_IDLE_MAX_MS);
+            if (queue.length) {
+                drain();
+                return;
+            }
+        }
+        idlePull();
+    }, IDLE_PULL_MS);
 }
 
 // Background work, a slice at a time, while nothing is waiting -- and once
@@ -1008,10 +1132,18 @@ async function drain() {
 // ahead of being asked) waits for BACKGROUND_QUIET_MS without a request, and
 // MAX_DEFER_MS never hurries it: a page opening asks one thing after another,
 // and a GMM fit started in a gap holds the next for a second.
+// The quiet is counted from the last request's ANSWER as well as its arrival,
+// and before every background task, not only the first (cooperative.py runs
+// one a step): a page asks its next question once it has the last answer, so
+// counted from arrival alone, a request that had waited out a long task left
+// the next task free to start before the page could ask again -- and every
+// request of a project opening on a 40-channel slide waited 7-9 s that way.
 const QUIET_MS = 150;
 const MAX_DEFER_MS = 500;
 const BACKGROUND_QUIET_MS = 600;
 let lastRequest = 0;
+//: When the last request was answered (drain).
+let lastAnswer = 0;
 let lastStep = 0;
 let stepping = false;
 //: Whether the innermost Python running is background work (a step), not a
@@ -1026,7 +1158,8 @@ function step() {
     stepping = true;
     const now = performance.now();
     const onlyBackground = pendingBackground > 0 && pendingWork === 0;
-    const wait = onlyBackground ? Math.max(0, BACKGROUND_QUIET_MS - (now - lastRequest))
+    const heard = Math.max(lastRequest, lastAnswer);
+    const wait = onlyBackground ? Math.max(0, BACKGROUND_QUIET_MS - (now - heard))
         : now - lastStep >= MAX_DEFER_MS ? 0 : Math.max(0, QUIET_MS - (now - lastRequest));
     setTimeout(async () => {
         stepping = false;
@@ -1036,7 +1169,7 @@ function step() {
         try {
             const cooperative = py.pyimport("plexora.browser.cooperative");
             const began = performance.now();
-            const quiet = began - lastRequest >= BACKGROUND_QUIET_MS;
+            const quiet = began - Math.max(lastRequest, lastAnswer) >= BACKGROUND_QUIET_MS;
             inStep = true;
             const outcome = await call(cooperative.step, 50, quiet).finally(() => { inStep = false; });
             pendingWork = outcome.get("pending");
@@ -1086,6 +1219,18 @@ self.onmessage = ({ data }) => {
     if (data.op === "state") {
         // Answered at once, whatever Python is doing: it reads only JS.
         self.postMessage({ id: data.id, ok: true, result: OPS.state() });
+        return;
+    }
+    if (data.op === "cancel") {
+        // A request the page gave up on (its AbortSignal), dropped if Python
+        // has not begun it; one already begun runs to its end.
+        const at = queue.findIndex((queued) => queued.id === data.args.id);
+        const later = retrying.get(data.args.id);
+        if (at >= 0 || later !== undefined) {
+            if (at >= 0) queue.splice(at, 1);
+            if (later !== undefined) { clearTimeout(later); retrying.delete(data.args.id); }
+            self.postMessage({ id: data.args.id, ok: false, error: "AbortError: the page gave up on this request", aborted: true });
+        }
         return;
     }
     if (data.op === "request") lastRequest = performance.now();

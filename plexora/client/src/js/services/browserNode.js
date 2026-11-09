@@ -232,21 +232,7 @@
         /** The largest sample of a channel's level, its plane cut into
          *  windows of whole file tiles (bands of a stripped file) shared out
          *  among the workers. */
-        async max(channel, level, { width, height }, fileTile) {
-            const windows = [];
-            if (fileTile && fileTile.tiled) {
-                const step = (dim) => dim * Math.max(1, Math.round(4096 / dim));
-                const sx = step(fileTile.width);
-                const sy = step(fileTile.height);
-                for (let y = 0; y < height; y += sy) {
-                    for (let x = 0; x < width; x += sx) {
-                        windows.push([x, y, Math.min(width, x + sx), Math.min(height, y + sy)]);
-                    }
-                }
-            } else {
-                const rows = Math.max(1, Math.floor((16 << 20) / Math.max(1, width)));
-                for (let y = 0; y < height; y += rows) windows.push([0, y, width, Math.min(height, y + rows)]);
-            }
+        async max(channel, level, size, fileTile, windows = planeWindows(size, fileTile)) {
             const shares = this.workers.map(() => []);
             windows.forEach((window, i) => shares[i % shares.length].push(window));
             const found = await Promise.all(shares.map((share, i) => (share.length
@@ -328,7 +314,13 @@
     //:   files(name, spec) -> a promise of `(path) => found | null`, `found`
     //:                        what a pool opens: {file} or {url, size}
     let source = {
-        spec: (name) => global.PlexoraPython.nodeSpec(name),
+        // Python's spec, kept as it is given (services/keptAnswers.js): after
+        // a reload of the site the kept one lets the first tiles be read
+        // before Python is up. Each file is still checked against it as it
+        // opens (`differs`), so a stale spec refuses rather than misdraws.
+        spec: (name) => (global.PlexoraKept
+            ? global.PlexoraKept.spec(name, () => global.PlexoraPython.nodeSpec(name))
+            : global.PlexoraPython.nodeSpec(name)),
         files: async () => (path) => {
             const picks = global.PlexoraPicks;
             const file = picks ? picks.fileFor(path) : null;
@@ -576,28 +568,176 @@
 
     // -- the window ------------------------------------------------------------
 
-    /**
-     * Python's "window" question: the largest full-resolution sample of a
-     * picked image's channel (`data_model.quantization_window_of`, which
-     * otherwise reads every pixel in Python, one at a time). Asked only of a
-     * file the page reads as Python does -- checked here against the shape
-     * and sample type Python reads -- by a pool opened for the question.
-     */
-    async function windowOf({ path, channel, shape, dtype }) {
-        const file = global.PlexoraPicks ? global.PlexoraPicks.fileFor(path) : null;
+    /** A level's plane cut into windows of whole file tiles (~4096 px a
+     *  side; bands of ~16 MB for a stripped file), [x0, y0, x1, y1] each. */
+    function planeWindows({ width, height }, fileTile) {
+        const windows = [];
+        if (fileTile && fileTile.tiled) {
+            const step = (dim) => dim * Math.max(1, Math.round(4096 / dim));
+            const sx = step(fileTile.width);
+            const sy = step(fileTile.height);
+            for (let y = 0; y < height; y += sy) {
+                for (let x = 0; x < width; x += sx) {
+                    windows.push([x, y, Math.min(width, x + sx), Math.min(height, y + sy)]);
+                }
+            }
+        } else {
+            const rows = Math.max(1, Math.floor((16 << 20) / Math.max(1, width)));
+            for (let y = 0; y < height; y += rows) windows.push([0, y, width, Math.min(height, y + rows)]);
+        }
+        return windows;
+    }
+
+    // Python's "window" question: the largest full-resolution sample of a
+    // picked image's channel (`data_model.quantization_window_of`, which
+    // otherwise reads every pixel in Python, one at a time). On a large image
+    // that is seconds per channel (7 s each for a 66 GB, 40-channel slide),
+    // and Python used to wait for every one, so every request behind it
+    // waited too. The scans are the page's own work now: one line of them,
+    // one plane at a time, read a round of windows at a time so a channel
+    // somebody is looking at (`urgent`) goes ahead of the warm-up's between
+    // two rounds, without losing what was read of the one it interrupts; and
+    // each answer is kept for the session, so asking again is free. Python
+    // either waits for its answer (no `wait`: as before), or looks (`wait`
+    // ms at most) and comes back later (data_model's warm-up, and a request
+    // that lets others in meanwhile).
+
+    //: Windows per scan worker per round: ~0.5 s of reading on this Mac, the
+    //: longest an urgent scan waits for the one in front of it to give way.
+    const ROUND_PER_WORKER = 2;
+    //: key -> {args, file, urgent, state: queued|scanning|done|failed, top, at, windows, value, error, promise}
+    const scans = new Map();
+    //: The scans not finished, urgent first, each class in the order asked.
+    const scanLine = [];
+    //: The pool reading the file of the scan in front: {file, pool, geometry}.
+    let scanner = null;
+    let scanning = false;
+
+    function scanKey({ path, channel, shape, dtype }, file) {
+        return [path, file.size, file.lastModified, channel, (shape || []).join("x"), dtype].join("|");
+    }
+
+    /** The scan of `args`'s channel plane: the one already asked for, or a
+     *  new one at the end of its class. Throws when the page does not hold
+     *  the file. */
+    function wantScan(args, urgent) {
+        const file = global.PlexoraPicks ? global.PlexoraPicks.fileFor(args.path) : null;
         if (!file) throw new Error("the page does not hold that file now");
-        // A pool of its own, wider than a project's: every pixel is read once,
-        // and Python waits for the answer.
+        const key = scanKey(args, file);
+        let entry = scans.get(key);
+        if (!entry) {
+            entry = { args: { path: args.path, channel: args.channel, shape: args.shape, dtype: args.dtype },
+                      file, urgent: Boolean(urgent), state: "queued", top: -Infinity, at: 0, windows: null };
+            entry.promise = new Promise((resolve, reject) => { entry.resolve = resolve; entry.reject = reject; });
+            // A look nobody waits for must not report its failure as unhandled.
+            entry.promise.catch(() => {});
+            scans.set(key, entry);
+            scanLine.push(entry);
+        } else if (urgent) {
+            entry.urgent = true;
+        }
+        // Stable: urgent first, each class in the order it was asked.
+        scanLine.sort((a, b) => Number(b.urgent) - Number(a.urgent));
+        if (!scanning) runScans();
+        return entry;
+    }
+
+    async function scannerFor(file) {
+        if (scanner && scanner.file === file) return scanner;
+        closeScanner();
+        // A pool of its own, wider than a project's: every pixel is read once.
         const pool = new TiffPool(SCAN_WORKERS);
         try {
-            const geometry = await pool.open({ file });
-            const why = imageDiffers({ levels: [shape], dtype }, geometry);
-            if (why) throw new Error(`the page reads it differently: ${why}`);
-            const top = await pool.max(channel, 0, geometry.levels[0], geometry.fileTile);
-            return { value: Number.isFinite(top) ? top : 0 };
-        } finally {
+            scanner = { file, pool, geometry: await pool.open({ file }) };
+        } catch (error) {
             pool.close();
+            throw error;
         }
+        return scanner;
+    }
+
+    function closeScanner() {
+        if (scanner) scanner.pool.close();
+        scanner = null;
+    }
+
+    /** One round of `entry`'s scan; true once its whole plane is read. */
+    async function scanRound(entry) {
+        const { pool, geometry } = await scannerFor(entry.file);
+        if (!entry.windows) {
+            const why = imageDiffers({ levels: [entry.args.shape], dtype: entry.args.dtype }, geometry);
+            if (why) throw new Error(`the page reads it differently: ${why}`);
+            entry.windows = planeWindows(geometry.levels[0], geometry.fileTile);
+        }
+        entry.state = "scanning";
+        const round = entry.windows.slice(entry.at, entry.at + pool.workers.length * ROUND_PER_WORKER);
+        entry.at += round.length;
+        if (round.length) {
+            const top = await pool.max(entry.args.channel, 0, geometry.levels[0], geometry.fileTile, round);
+            entry.top = Math.max(entry.top, top);
+        }
+        return entry.at >= entry.windows.length;
+    }
+
+    async function runScans() {
+        scanning = true;
+        try {
+            while (scanLine.length) {
+                // Read again every round: an urgent scan asked meanwhile is in front now.
+                const entry = scanLine[0];
+                try {
+                    if (await scanRound(entry)) {
+                        scanLine.splice(scanLine.indexOf(entry), 1);
+                        entry.value = Number.isFinite(entry.top) ? entry.top : 0;
+                        entry.state = "done";
+                        entry.resolve(entry.value);
+                    }
+                } catch (error) {
+                    scanLine.splice(scanLine.indexOf(entry), 1);
+                    entry.state = "failed";
+                    entry.error = error;
+                    entry.reject(error);
+                }
+            }
+        } finally {
+            scanning = false;
+            closeScanner();
+        }
+    }
+
+    /**
+     * `{path, channel, shape, dtype}`: asked only of a file the page reads as
+     * Python does -- checked against the shape and sample type Python reads.
+     * Without `wait`, answers the maximum once the plane is read (or throws).
+     * With `wait` (ms), answers within it: `{done: true, max}`, `{done: true,
+     * failed}` or `{done: false}` -- the scan goes on either way, behind any
+     * `urgent` one (`urgent: false` is the warm-up's), and `ahead` (channels)
+     * are queued after it so the line never runs dry between two looks.
+     */
+    async function windowOf(args) {
+        if (args.wait === undefined || args.wait === null) {
+            const entry = wantScan(args, true);
+            await entry.promise;
+            return { value: entry.value };
+        }
+        const entry = wantScan(args, args.urgent !== false);
+        for (const channel of args.ahead || []) {
+            try {
+                wantScan({ ...args, channel }, false);
+            } catch (error) {
+                // The next look at that channel says so.
+            }
+        }
+        if (entry.state === "queued" || entry.state === "scanning") {
+            const ms = Math.max(0, Number(args.wait) || 0);
+            await Promise.race([entry.promise.catch(() => null),
+                                new Promise((resolve) => setTimeout(resolve, ms))]);
+        }
+        if (entry.state === "done") return { value: { done: true, max: entry.value } };
+        if (entry.state === "failed") {
+            return { value: { done: true, failed: String(entry.error && entry.error.message || entry.error) } };
+        }
+        return { value: { done: false } };
     }
 
     if (global.PlexoraPython && global.PlexoraPython.answers) global.PlexoraPython.answers("window", windowOf);

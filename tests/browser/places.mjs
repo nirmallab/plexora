@@ -1,13 +1,15 @@
 // Where the website keeps what it makes: the first import asks where the
 // projects go and where a flat image's pyramidized copy goes, and both are
-// answered "a folder on this computer". The browser's folder picker is a
+// answered "a folder on this computer": the projects in Plexora's folder, and
+// the copy with them (the question's default once the projects are kept
+// there), or with --beside in a folder of its own. The browser's folder picker is a
 // native dialog no driver can answer, so `showDirectoryPicker` hands back
 // folders in the test profile's own storage (OPFS test-folders/<projects |
 // images>); everything after the picker is the product's. Then the page is
 // reloaded: the projects must be read from that folder again and the copy
 // mounted from it, and the project must open.
 //
-//   node tests/browser/places.mjs --file PATH [--close-pyramid] [--shots DIR] [--headed]
+//   node tests/browser/places.mjs --file PATH [--close-pyramid | --beside] [--shots DIR] [--headed]
 //
 // --close-pyramid closes the pyramid's question instead of answering it: the
 // copy then goes with the projects (Plexora's folder).
@@ -117,7 +119,7 @@ try {
             await page.waitForTimeout(300);
             await page.screenshot({ path: path.join(shots, `places-question-${out.pressed.length}.png`) });
         }
-        const pressed = await frame.evaluate((closePyramid) => {
+        const pressed = await frame.evaluate(([closePyramid, beside]) => {
             const visible = (node) => node && !node.disabled && node.offsetParent !== null;
             const confirm = document.querySelector(".plx-confirm .plx-button-primary");
             const close = document.querySelector(".plx-confirm .plx-confirm-close");
@@ -125,6 +127,12 @@ try {
             if (closePyramid && visible(close) && asked.includes("pyramid")) {
                 close.click();
                 return `${asked} -> closed`;
+            }
+            const own = [...document.querySelectorAll(".plx-confirm button")]
+                .find((node) => /^Beside the original/.test(node.textContent.trim()));
+            if (beside && visible(own) && asked.includes("pyramid")) {
+                own.click();
+                return `${asked} -> ${own.textContent.trim()}`;
             }
             if (visible(confirm)) {
                 const title = document.querySelector(".plx-confirm .plx-dialog-title")?.textContent.trim();
@@ -138,7 +146,7 @@ try {
                 return `import -> ${go.textContent.trim()}`;
             }
             return null;
-        }, args.includes("--close-pyramid") && out.canWriteFolders).catch(() => null);
+        }, [args.includes("--close-pyramid") && out.canWriteFolders, args.includes("--beside")]).catch(() => null);
         if (pressed) out.pressed.push({ at: Date.now() - picked, pressed });
         await page.waitForTimeout(400);
     }

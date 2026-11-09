@@ -58,15 +58,27 @@ def test_chrome_breaks_capture_in_a_document_opened_under_the_pointer(record):
     assert plain["hasCaptureAfterSet"] is False and plain["gotCapture"] is False
     assert plain["entersDuringDrag"] >= 3
     assert plain["movesOutsideReached"] == 0
+    # shell.js's watchCapture sees it on the first press.
+    assert plain["brokenSeen"] is True
 
 
-@pytest.mark.parametrize("case", ["still", "moving"])
+@pytest.mark.parametrize("case", ["still", "moving", "hidden"])
 def test_the_loaders_document_captures_the_pointer(record, case):
     opened = record[case]
     assert opened["hasCaptureAfterSet"] is True and opened["gotCapture"] is True
     assert opened["entersDuringDrag"] == 0
     assert opened["movesOutsideReached"] == 2
     assert opened["hiddenMs"] is not None
+    # The check itself takes nothing from the page's own capture.
+    assert opened["brokenSeen"] is False
+
+
+def test_a_tab_in_the_background_waits_to_be_shown(record):
+    # The import's sample opens by itself after a build of minutes; a tab in
+    # the background draws no frames, so its page is opened once it is shown
+    # (the driver fails the run if it was written before; the frame starts
+    # its wait ~300 ms into the driver's 1 s).
+    assert record["hidden"]["hiddenMs"] >= 500
 
 
 def test_frame_boot_opens_the_page_while_the_frame_is_hidden():
@@ -82,4 +94,8 @@ def test_frame_boot_opens_the_page_while_the_frame_is_hidden():
     boot = source[source.index("async function frameBoot()"):]
     early = source[source.index("async function earlyPage("):source.index("async function frameBoot()")]
     assert "await writePage(html, project, address)" in boot
-    assert "await writePage(html, \"\", address)" in early
+    # A kept page: the home page (no project), or a project's viewer
+    # (services/keptAnswers.js), written the same way.
+    assert "await writePage(html, project, address)" in early
+    # A page written without capture all the same is opened again, once.
+    assert "watchCapture(doc," in write and "global.location.reload()" in write

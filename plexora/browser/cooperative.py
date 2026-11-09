@@ -69,6 +69,13 @@ def step(budget_ms: float = 50.0, background: bool = True) -> dict:
     # (server/utils/source_writes.py), as a request's does.
     with source_writes.batch():
         ran = _work.run_pending(budget_s=max(0.0, budget_ms) / 1000.0, ran=names,
-                                background=background)
+                                background=False)
+        if background and not ran:
+            # At most ONE background task a step, and only in a step that ran
+            # nothing else: the worker then looks for quiet again before the
+            # next (pythonWorker.js `step`). Several in one step -- the budget
+            # is only checked between tasks -- let a warm-up's second task
+            # start after a request had arrived, and the request waited for it.
+            ran = _work.run_pending(budget_s=0.0, ran=names, background=True)
     return {"ran": ran, "pending": _work.pending(background=False),
             "background": _work.pending(background=True), "names": names}

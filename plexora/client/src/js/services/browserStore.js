@@ -32,7 +32,10 @@
  *   prepare(ask)        -> at boot: the projects folder to mount, or null (the browser)
  *   current()           -> {kind: "browser"|"folder", label?, chosen}: label as
  *                          "Documents › Plexora"
- *   pyramids()          -> Plexora's pyramids folder, when the projects are in Plexora's folder
+ *   pyramids()          -> Plexora's pyramids folder, when Plexora's folder is open this visit
+ *   reopen()            -> from a click: Plexora's folder, chosen on an earlier visit but
+ *                          not opened on this one, opened for its pyramids (the projects
+ *                          stay where this visit's Python has them)
  *   shouldAsk()         -> whether this visit should ask where (the first one)
  *   useFolder(startIn)  -> from a click: confirm the place, move the store there now
  *   useBrowser()        -> remember the browser's storage as the choice
@@ -189,6 +192,12 @@
         let state = await record.home.queryPermission({ mode: "readwrite" }).catch(() => "denied");
         if (state !== "granted" && ask && await ask(record)) {
             state = await record.home.requestPermission({ mode: "readwrite" }).catch(() => "denied");
+            // The same click for the folders the pyramids beside their
+            // originals are in (services/derivedIndex.js), so none of them
+            // waits for another: Plexora's own pyramids come with this folder.
+            if (state === "granted" && global.PlexoraDerived) {
+                await global.PlexoraDerived.requestFolders().catch(() => 0);
+            }
         }
         if (state !== "granted") {
             current = { kind: "browser", chosen: true, notOpened: labelOf(record.parent) };
@@ -247,6 +256,9 @@
         await global.PlexoraPython.useStore(next.projects);
         opened = next;
         await remember(chosen);
+        // The pyramids this browser holds for the site go there too, in the
+        // background (services/derivedIndex.js).
+        if (global.PlexoraDerived) global.PlexoraDerived.migrate().catch(() => null);
         return { ...current };
     }
 
@@ -283,6 +295,23 @@
         return true;
     }
 
+    /**
+     * From a click, where the projects are kept in Plexora's folder but this
+     * visit did not open it ("Use browser this time", or a permission the
+     * browser let lapse): the folder opened again for the pyramids Plexora
+     * keeps in it, so a copy goes where the user chose. The projects stay
+     * where this visit's Python has them. True when it is open now.
+     */
+    async function reopen() {
+        if (opened) return true;
+        const record = await read();
+        if (!record || record.kind !== "folder" || !record.home) return false;
+        const state = await record.home.requestPermission({ mode: "readwrite" }).catch(() => "denied");
+        if (state !== "granted") return false;
+        opened = await parts(record.home);
+        return true;
+    }
+
     //: What the worker's boot said of the store (`mountState`): "folder",
     //: "opfs", "indexeddb", or "memory (why)".
     function booted(kind) {
@@ -293,7 +322,10 @@
         prepare,
         booted,
         current: () => ({ ...current, ...(current.kind === "browser" && storage ? { storage } : {}) }),
-        pyramids: () => (opened && current.kind === "folder" ? opened.pyramids : null),
+        //: Open for the pyramids even when this visit's projects are in the
+        //: browser (`reopen`): the copies go where the user chose.
+        pyramids: () => (opened ? opened.pyramids : null),
+        reopen,
         shouldAsk: () => canWriteFolders() && !current.chosen,
         //: Where projects can only be kept in the browser: said once, on the
         //: first visit (services/shell.js); every visit when nothing is kept.

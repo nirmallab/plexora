@@ -203,9 +203,137 @@
         };
     }
 
+    //: The pyramids the page made of the user's files (services/
+    //: derivedIndex.js, on the host page): where each is kept, and Move to
+    //: Plexora's folder, Reconnect (a folder the browser opens again after a
+    //: click), Rebuild (a mask's) and Delete.
+    function webDerived() {
+        try {
+            return window.parent?.PlexoraDerived || null;
+        } catch (error) {
+            return null;
+        }
+    }
+
+    async function drawWebCopies() {
+        const derived = webDerived();
+        const card = el("settings_web_copies");
+        show(card, Boolean(derived));
+        if (!derived || !card) return;
+        const meta = el("settings_web_copies_meta");
+        const list = el("settings_web_copies_list");
+        let copies = [];
+        let usage = null;
+        try {
+            [copies, usage] = await Promise.all([derived.list(), derived.usage()]);
+        } catch (error) {
+            text(meta, "Unknown");
+            return;
+        }
+        const notes = [copies.length
+            ? `${copies.length} kept; each is made once and used again on every visit.`
+            : "None yet: a flat image or mask gets one the first time it is opened."];
+        if (usage) {
+            notes.push(`In this browser: pyramids ${humanBytes(usage.derived)}, projects ${humanBytes(usage.state)}, `
+                       + `caches ${humanBytes(usage.other)}.`);
+        }
+        text(meta, notes.join(" "));
+        if (list) list.replaceChildren(...copies.map((row) => webCopyRow(row, derived)));
+    }
+
+    function webCopyRow(row, derived) {
+        const item = document.createElement("div");
+        item.className = "settings-web-copy";
+        const head = document.createElement("div");
+        head.className = "settings-node-head";
+        const name = document.createElement("div");
+        name.className = "settings-path";
+        name.textContent = row.name;
+        head.appendChild(name);
+        const state = row.state === "waiting" ? "Waiting for access" : row.state === "missing" ? "Missing"
+            : row.moveFailed ? "Not moved" : null;
+        if (state) {
+            const badge = document.createElement("span");
+            badge.className = "settings-node-state";
+            badge.textContent = state;
+            head.appendChild(badge);
+        }
+        item.appendChild(head);
+        const facts = [row.kind === "labels" ? "Mask pyramid" : "Image pyramid", `in ${row.place}`];
+        if (row.bytes) facts.push(humanBytes(row.bytes));
+        const line = document.createElement("div");
+        line.className = "settings-meta";
+        line.textContent = facts.join(" · ")
+            + (row.state !== "ready" && row.why ? `. ${row.why[0].toUpperCase()}${row.why.slice(1)}.` : "")
+            + (row.moveFailed ? `. Could not move it: ${row.moveFailed}.` : "");
+        item.appendChild(line);
+        const actions = document.createElement("div");
+        actions.className = "settings-actions";
+        const place = webStore()?.current?.() || {};
+        const folder = place.label || place.notOpened || "Plexora's folder";
+        const own = row.home !== "beside";
+        const button = (label, run) => {
+            const node = document.createElement("button");
+            node.type = "button";
+            node.className = "btn btn-outline-light";
+            node.textContent = label;
+            node.addEventListener("click", async () => {
+                node.disabled = true;
+                try {
+                    const done = await run();
+                    if (done && done.reload) webCopiesNeedReload();
+                } catch (error) {
+                    text(line, `That did not work: ${error?.message || error}`);
+                }
+                drawWebCopies();
+            });
+            actions.appendChild(node);
+        };
+        if (row.canMove || (row.moveFailed && (row.home === "opfs" || row.home === "indexeddb"))) {
+            button(`Move to ${folder}`, () => derived.move(row.path));
+        }
+        if (row.state === "waiting") button("Reconnect", () => derived.reconnect());
+        if (own && row.kind === "labels") button("Rebuild", () => derived.remove(row.path));
+        button(own ? "Delete" : "Forget", async () => {
+            if (own && row.kind !== "labels" && window.PlexoraConfirm?.choose) {
+                const sure = await window.PlexoraConfirm.choose({
+                    title: `Delete ${row.name}?`,
+                    body: "A project opened from it will need its image imported again.",
+                    choices: [{ value: "keep", label: "Keep" },
+                              { value: "delete", label: "Delete", kind: "danger", focus: true }],
+                    close: true,
+                    inline: true,
+                });
+                if (sure !== "delete") return null;
+            }
+            return derived.remove(row.path);
+        });
+        item.appendChild(actions);
+        return item;
+    }
+
+    //: A copy Python had open is gone: said once, with the way to finish.
+    function webCopiesNeedReload() {
+        const meta = el("settings_web_copies_meta");
+        if (!meta || meta.querySelector(".settings-web-copies-reload")) return;
+        const again = document.createElement("button");
+        again.type = "button";
+        again.className = "btn btn-primary settings-web-copies-reload";
+        again.textContent = "Restart Plexora to finish";
+        again.addEventListener("click", () => {
+            try {
+                window.parent.location.reload();
+            } catch (error) {
+                window.location.reload();
+            }
+        });
+        meta.appendChild(again);
+    }
+
     async function drawWebStorage() {
         drawWebPlace();
         drawWebWrites();
+        drawWebCopies();
         const used = el("settings_web_storage_used");
         const meta = el("settings_web_storage_meta");
         const keep = el("settings_web_keep");

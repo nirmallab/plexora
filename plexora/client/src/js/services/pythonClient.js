@@ -93,12 +93,27 @@
     const saving = new Set();
     let saver = null;
 
-    function call(op, args, transfer) {
+    //: `signal`: an AbortSignal whose abort takes the message out of the
+    //: worker's queue if Python has not begun it (one Python has begun runs
+    //: to its end: nothing interrupts it), and rejects with an AbortError.
+    function call(op, args, transfer, signal = null) {
         const id = nextId++;
         return new Promise((resolve, reject) => {
+            if (signal && signal.aborted) {
+                reject(new DOMException("The request was aborted", "AbortError"));
+                return;
+            }
             waiting.set(id, { resolve, reject });
             if (inFlight) Atomics.add(inFlight, 0, 1);
             worker.postMessage({ id, op, args }, transfer || []);
+            if (signal) {
+                signal.addEventListener("abort", () => {
+                    if (!waiting.has(id)) return;
+                    // Counted like every message the worker takes in.
+                    if (inFlight) Atomics.add(inFlight, 0, 1);
+                    worker.postMessage({ op: "cancel", args: { id } });
+                }, { once: true });
+            }
         });
     }
 
@@ -221,7 +236,7 @@
             if (!pending) return;
             waiting.delete(data.id);
             if (data.ok) pending.resolve(data.result);
-            else pending.reject(new Error(data.error));
+            else pending.reject(data.aborted ? new DOMException(data.error, "AbortError") : new Error(data.error));
             return;
         }
         if (data.event) {
@@ -339,10 +354,15 @@
         } else if (contentTypeOf(init)) {
             headers.push(["Content-Type", contentTypeOf(init)]);
         }
+        // An aborted request (a Quick Edit read overtaken by the next, a page
+        // navigated away from) is dropped from Python's queue if it is still
+        // waiting there: on the website every request waits its turn on one
+        // thread, and a stale one would hold up the fresh ones.
+        const signal = (init && init.signal) || (request && request.signal) || null;
         const answer = await call("request", {
             method, path: route(url.pathname), query: url.search.replace(/^\?/, ""), headers,
             body: body ? body.buffer.slice(body.byteOffset, body.byteOffset + body.byteLength) : null,
-        });
+        }, undefined, signal);
         // The picked files this request wrote, saved before its answer is.
         if (saving.size) await Promise.all([...saving]);
         let payload = answer.body;
@@ -369,6 +389,14 @@
                       pyMs: answer.pyMs ?? null, bytes: payload ? payload.byteLength : 0,
                       at: Math.round(sent) });
         if (recent.length > RECENT) recent.shift();
+        // Python's answer to a project's first screen, kept for the next
+        // reload of the site to show before Python is up again
+        // (services/keptAnswers.js); a write has what it changed asked again.
+        if (global.PlexoraKept) {
+            try {
+                global.PlexoraKept.observe(url.href, method, status, answered, payload, headers);
+            } catch (error) { /* nothing kept: the next reload waits for Python */ }
+        }
         const nullBody = status === 204 || status === 304 || method === "HEAD";
         return new Response(nullBody ? null : payload, { status, headers: answered });
     }
@@ -516,11 +544,47 @@
         return jsonResponse(shape === "panel" ? { ok: true, ...answer } : { success: true, result: answer });
     }
 
+    //: Python's answers marked `Cache-Control: immutable` (a figure panel's
+    //: preview at its render revision), kept for the tab's life. A response
+    //: the site's service worker makes never enters the browser's HTTP cache,
+    //: so without this every picture drawn again asked Python again, one at a
+    //: time behind everything else. The least recently used go first past
+    //: IMMUTABLE_BYTES.
+    const IMMUTABLE_BYTES = 96 << 20;
+    const immutable = new Map();
+    let immutableBytes = 0;
+
+    function keptImmutable(href) {
+        const hit = immutable.get(href);
+        if (!hit) return null;
+        immutable.delete(href);
+        immutable.set(href, hit);
+        return new Response(hit.body, { status: hit.status, headers: hit.headers });
+    }
+
+    async function keepImmutable(href, response) {
+        if (!response.ok || immutable.has(href)
+            || !/\bimmutable\b/i.test(response.headers.get("Cache-Control") || "")) return;
+        const body = await response.clone().arrayBuffer();
+        if (body.byteLength > IMMUTABLE_BYTES / 8) return;
+        immutable.set(href, { status: response.status, headers: [...response.headers.entries()], body });
+        immutableBytes += body.byteLength;
+        for (const [key, value] of immutable) {
+            if (immutableBytes <= IMMUTABLE_BYTES) break;
+            immutable.delete(key);
+            immutableBytes -= value.body.byteLength;
+        }
+    }
+
     async function fetch(input, init) {
         await ready;
         const request = isRequest(input) ? input : null;
         const url = new URL(request ? request.url : String(input), global.location.href);
         const method = ((init && init.method) || (request && request.method) || "GET").toUpperCase();
+        if (method === "GET") {
+            const kept = keptImmutable(url.href);
+            if (kept) return kept;
+        }
         const mine = await whileBusy(url, method, init, request);
         if (mine) return mine;
         const chat = method === "GET" && url.pathname.match(/\/ai\/v1\/conversations\/([^/]+)\/events$/);
@@ -530,6 +594,7 @@
         }
         const wait = Number(url.searchParams.get("wait") || 0);
         const response = await send(url, init, request);
+        if (method === "GET") await keepImmutable(url.href, response).catch(() => null);
         if (!(wait > 0) || !response.ok) return response;
         const answer = await response.clone().json().catch(() => null);
         if (!answer || answer.held !== false || (answer.commands || []).length
@@ -601,6 +666,20 @@
         if (!listeners.has(kind)) listeners.set(kind, new Set());
         listeners.get(kind).add(fn);
         return () => listeners.get(kind).delete(fn);
+    }
+
+    // The tab shown again: what another app (or this site in another tab)
+    // changed in the project store meanwhile, read in before the user's next
+    // click. The worker reads the folder only while requests pause
+    // (workers/pythonWorker.js `idlePull`), and not on every request as it
+    // did; this is where a return to the tab gets a fresh look.
+    let shownAt = 0;
+    if (global.document && typeof global.document.addEventListener === "function") {
+        global.document.addEventListener("visibilitychange", () => {
+            if (global.document.visibilityState !== "visible" || Date.now() - shownAt < 5000) return;
+            shownAt = Date.now();
+            ready.then(() => call("pull", {})).catch(() => null);
+        });
     }
 
     global.PlexoraPython = Object.freeze({

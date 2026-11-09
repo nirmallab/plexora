@@ -7,6 +7,7 @@ from plexora.datasource import (rename_channels, rename_layer_channels,
                                 set_pixel_size as _set_pixel_size)
 from plexora.server.models import data_model, layer_sources
 from plexora.server.models.project import Project
+from plexora.server.providers import browser as _page
 # Same helper the import page's path inputs use: a path dragged in from a file
 # manager, or copied on Windows, arrives wrapped in quotes.
 from plexora.server.routes.import_routes import trim_filepath_quotes
@@ -292,6 +293,31 @@ def _unknown_channel(channel, exc):
                    error=str(exc)), 404
 
 
+#: Retries after which a channel's request waits for the page's scan as it
+#: always did (~30 s at WindowPending.retry_ms): a scan that never ends must
+#: not leave the request asked again forever.
+_MAX_RETRIES = 150
+
+
+def _patient():
+    """Whether this request may be answered "again later" on the website:
+    until it has been asked again `_MAX_RETRIES` times."""
+    try:
+        return int(request.headers.get('X-Plexora-Retried') or 0) < _MAX_RETRIES
+    except ValueError:
+        return True
+
+
+def _retry_later(pending):
+    """The website's "ask me again": the worker puts the request back in its
+    queue for `retry_ms` (plexora/browser/bridge.py), so a channel the page is
+    still scanning holds no other request up. Raised only there."""
+    response = jsonify({'pending': True, 'channel': str(pending)})
+    response.status_code = 503
+    response.headers[_page.RETRY_HEADER] = str(int(pending.retry_ms))
+    return response
+
+
 #: Both routes below take `view=` (a slab projection has statistics of its own;
 #: see data_model._slab_view). Absent is exactly the call it always was.
 @app.route('/get_channel_gmm', methods=['GET'])
@@ -302,8 +328,12 @@ def get_channel_gmm():
     datasource = request.args.get('datasource')
     view = request.args.get('view') or ''
     try:
+        # `patient`: on the website a window the page is still scanning is
+        # asked for again later, the page's other requests answered first.
         resp = (data_model.get_channel_gmm(channel, datasource, view) if view
-                else data_model.get_channel_gmm(channel, datasource))
+                else data_model.get_channel_gmm(channel, datasource, patient=_patient()))
+    except _page.WindowPending as exc:
+        return _retry_later(exc)
     except data_model.UnknownChannelError as exc:
         return _unknown_channel(channel, exc)
     except BadView as exc:
@@ -320,7 +350,9 @@ def get_image_channel_stats():
     view = request.args.get('view') or ''
     try:
         resp = (data_model.get_image_channel_stats(channel, datasource, view) if view
-                else data_model.get_image_channel_stats(channel, datasource))
+                else data_model.get_image_channel_stats(channel, datasource, patient=_patient()))
+    except _page.WindowPending as exc:
+        return _retry_later(exc)
     except data_model.UnknownChannelError as exc:
         return _unknown_channel(channel, exc)
     except BadView as exc:

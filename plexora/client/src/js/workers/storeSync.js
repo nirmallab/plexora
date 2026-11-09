@@ -25,16 +25,24 @@
  *
  * A folder the desktop app writes too (`open(handle, {shared: true})`) may
  * hold what is not the page's to read: the caches of one machine a data root
- * keeps and its server's token (`KEPT_OUT`), and files too big to hold in
- * memory (`HELD_BYTES`). Those are never read in, written or deleted: the
- * page's Python may make its own at the same path, which stays in memory.
+ * keeps and its server's token (`KEPT_OUT`), never read in, written or
+ * deleted: the page's Python may make its own at the same path, which stays in
+ * memory. And files too big to hold in memory (`HELD_BYTES`: a pyramid
+ * Python built into a project, a big table): those are read where they lie,
+ * a slice at a time (Emscripten's WORKERFS, mounted under /held/<n> and
+ * linked at their path, `linkHeld`), never copied into memory -- before,
+ * Python never saw them, and built them again every visit. One Python writes
+ * anew at such a path is written to the folder like any other file, and then
+ * read from there in its turn, which gives its bytes back to the heap. Where
+ * this Emscripten cannot read through a link (`canLink`, probed once) they
+ * are left in the folder, unread, as they always were.
  *
  * The store holds every project and a page opens one, so a file of
  * `LAZY_BYTES` or more is read when Python first reads it, not when the folder
  * is opened (`placeLazy`); one never read is never written back.
  *
  *   createStore(FS, root = "/data", log, {readSync}) ->
- *       {open(handle, {shared}), push(), pull(), files(), held(), unread()}
+ *       {open(handle, {shared}), push(), pull(), files(), held(), linked(), unread()}
  */
 
 const now = () => performance.now();
@@ -54,6 +62,29 @@ export const LAZY_BYTES = 64 * 1024;
 //: Emscripten's errno for an I/O error: what a read of a file the folder
 //: changed under it gets.
 const EIO = 29;
+//: Where held files are mounted, one folder each (outside the store's root).
+const HELD_ROOT = "/held";
+//: The held files read where they lie: TIFFs -- the pyramids Python builds
+//: into a project, which it writes beside and moves into place
+//: (`os.replace`, which replaces the link). Anything else may be opened to be
+//: written in place (a project's SQLite database), which a file read in the
+//: folder cannot take, so it is left there as before.
+export const linkable = (rel) => /\.(ome\.)?tiff?$/i.test(String(rel));
+
+// WORKERFS dates a mounted file by `file.lastModifiedDate`, which Firefox no
+// longer has: a file is dated by its own `lastModified`, as the worker's own
+// mounts are (workers/pythonWorker.js `datedFiles`, whose flag this shares,
+// so WORKERFS is patched once whichever mounts first).
+function datedFiles(workerfs) {
+    if (workerfs.plexoraDated) return workerfs;
+    const createNode = workerfs.createNode;
+    workerfs.createNode = function (parent, name, mode, dev, contents, mtime) {
+        const own = contents && typeof contents.lastModified === "number" ? new Date(contents.lastModified) : mtime;
+        return createNode.call(this, parent, name, mode, dev, contents, own);
+    };
+    workerfs.plexoraDated = true;
+    return workerfs;
+}
 
 export function keptOut(rel) {
     const top = String(rel).split("/")[0];
@@ -88,7 +119,18 @@ export function createStore(FS, root = "/data", log = () => {}, options = {}) {
     let shared = false;
     //: Files of a shared folder left there for their size (rel path -> bytes).
     const held = new Map();
-    const skipped = (rel) => shared && (keptOut(rel) || held.has(rel));
+    //: Held files read where they lie: rel -> {dir, target, mtime, size}.
+    const links = new Map();
+    //: Held files whose link Python removed (rel -> the folder file's time):
+    //: not linked again while the folder holds that same file.
+    const unlinked = new Map();
+    let nextHeld = 1;
+    //: Whether this FS reads through a link into WORKERFS (`canLink`); null: not probed.
+    let linksWork = null;
+    //: Held files are linked (`linkHeld`) and so walked past as links; where
+    //: they cannot be, they are left out by name, as before.
+    const readInPlace = (rel) => Boolean(linksWork) && linkable(rel);
+    const skipped = (rel) => shared && (keptOut(rel) || (held.has(rel) && !readInPlace(rel)));
     let chain = Promise.resolve();
     const queue = (work) => (chain = chain.then(work, work));
 
@@ -108,6 +150,8 @@ export function createStore(FS, root = "/data", log = () => {}, options = {}) {
                 if (name === "." || name === "..") continue;
                 const child = rel ? `${rel}/${name}` : name;
                 if (skipped(child)) continue;
+                // A held file's link: the folder's file, read where it lies.
+                if (isLink(full(child))) continue;
                 const stat = FS.stat(full(child));
                 if (FS.isDir(stat.mode)) {
                     dirs.add(child);
@@ -136,7 +180,7 @@ export function createStore(FS, root = "/data", log = () => {}, options = {}) {
                 } else {
                     const file = await child.getFile();
                     if (shared && file.size >= HELD_BYTES) {
-                        big.set(path, file.size);
+                        big.set(path, file);
                         continue;
                     }
                     files.set(path, { mtime: file.lastModified, size: file.size, file });
@@ -144,13 +188,148 @@ export function createStore(FS, root = "/data", log = () => {}, options = {}) {
             }
         };
         await visit(handle, "");
-        for (const [path, size] of big) {
-            if (!held.has(path)) log(`store: ${path} (${Math.round(size / 2 ** 20)} MB) is left in the folder, `
-                                     + "too big to hold in memory");
+        const reads = big.size > 0 && canLink();
+        for (const [path, file] of big) {
+            if (!held.has(path)) log(`store: ${path} (${Math.round(file.size / 2 ** 20)} MB) is `
+                                     + (reads && linkable(path) ? "read in the folder, where it is" : "left in the folder")
+                                     + ", too big to hold in memory");
         }
         held.clear();
-        for (const [path, size] of big) held.set(path, size);
-        return { files, dirs };
+        for (const [path, file] of big) held.set(path, file.size);
+        return { files, dirs, big };
+    }
+
+    function isLink(path) {
+        if (typeof FS.lstat !== "function" || typeof FS.isLink !== "function") return false;
+        try {
+            return FS.isLink(FS.lstat(path).mode);
+        } catch (error) {
+            return false;
+        }
+    }
+
+    /**
+     * Whether this Emscripten reads a WORKERFS file through a link in memory,
+     * and lets Python replace the link with a file of its own (`os.replace`):
+     * tried once, on a three-byte file, before any held file is linked.
+     */
+    function canLink() {
+        if (linksWork !== null) return linksWork;
+        linksWork = false;
+        const WORKERFS = FS.filesystems && FS.filesystems.WORKERFS;
+        if (!WORKERFS || typeof FS.symlink !== "function" || typeof FS.mount !== "function"
+            || typeof FS.lstat !== "function" || typeof File === "undefined") return false;
+        const dir = `${HELD_ROOT}/probe`;
+        const link = `${HELD_ROOT}/probe-link`;
+        const fresh = `${HELD_ROOT}/probe-fresh`;
+        try {
+            FS.mkdirTree(dir);
+            FS.mount(datedFiles(WORKERFS), { files: [new File([new Uint8Array([1, 2, 3])], "probe.bin")] }, dir);
+            FS.symlink(`${dir}/probe.bin`, link);
+            const read = FS.readFile(link);
+            FS.writeFile(fresh, new Uint8Array([9]));
+            FS.rename(fresh, link);
+            const replaced = FS.readFile(link);
+            linksWork = read.length === 3 && read[2] === 3 && replaced.length === 1 && replaced[0] === 9
+                && !isLink(link);
+            FS.unlink(link);
+            FS.unmount(dir);
+        } catch (error) {
+            log(`store: big files are left in the folder (${error?.message || error})`);
+            linksWork = false;
+        }
+        return linksWork;
+    }
+
+    //: The folder's held `file` at `rel`, read where it lies: WORKERFS under
+    //: /held/<n>, linked at its path in place of anything there.
+    function linkHeld(rel, file) {
+        const path = full(rel);
+        const before = links.get(rel);
+        if (before) {
+            // The file it read before: nothing reads it through this path now.
+            try { FS.unmount(before.dir); } catch (error) { /* still open somewhere */ }
+        }
+        const dir = `${HELD_ROOT}/${nextHeld++}`;
+        FS.mkdirTree(dir);
+        FS.mount(datedFiles(FS.filesystems.WORKERFS), { files: [file] }, dir);
+        FS.mkdirTree(path.slice(0, path.lastIndexOf("/")));
+        try { FS.unlink(path); } catch (error) { /* not there yet */ }
+        const target = `${dir}/${file.name}`;
+        FS.symlink(target, path);
+        unread.delete(rel);
+        unlinked.delete(rel);
+        links.set(rel, { dir, target, mtime: file.lastModified, size: file.size });
+    }
+
+    //: Whether `rel` is still the link this store made for it.
+    function ownLink(rel) {
+        const link = links.get(rel);
+        if (!link || !isLink(full(rel))) return false;
+        try {
+            return FS.readlink(full(rel)) === link.target;
+        } catch (error) {
+            return false;
+        }
+    }
+
+    function dropLinks() {
+        for (const { dir } of links.values()) {
+            try { FS.unmount(dir); } catch (error) { /* a file of it still open */ }
+        }
+        links.clear();
+        unlinked.clear();
+    }
+
+    /**
+     * The held files of a walk of the folder, linked where they lie: a new
+     * one, or one the folder changed; one Python wrote itself and the folder
+     * now holds as written (pushed, unchanged since) is swapped for its link,
+     * which gives its bytes back to the heap. A link Python removed stays
+     * removed while the folder holds the same file. Nothing while a file
+     * there is open.
+     */
+    function linkAll(big) {
+        if (!shared || !canLink()) return 0;
+        let count = 0;
+        for (const [rel, file] of big) {
+            if (!linkable(rel)) continue;
+            const link = links.get(rel);
+            if (link && link.mtime === file.lastModified && link.size === file.size && ownLink(rel)) continue;
+            if (unlinked.get(rel) === file.lastModified) continue;
+            const path = full(rel);
+            if (link && !ownLink(rel) && !isLink(path) && !exists(path) && link.mtime === file.lastModified) {
+                unlinked.set(rel, file.lastModified); // Python removed it
+                continue;
+            }
+            if (exists(path) && !isLink(path)) {
+                // Python's own file at that path: swapped only once the folder
+                // holds what it wrote, and never while it is open.
+                const was = known.get(rel);
+                let here = null;
+                try { here = FS.stat(path); } catch (error) { here = null; }
+                if (!was || !here || here.mtime.getTime() !== was.local || isOpen(rel)) continue;
+                known.delete(rel);
+            } else if (isOpen(rel)) {
+                continue;
+            }
+            try {
+                linkHeld(rel, file);
+                count += 1;
+            } catch (error) {
+                log(`store: ${rel} could not be read in the folder (${error?.message || error})`);
+            }
+        }
+        return count;
+    }
+
+    function exists(path) {
+        try {
+            FS.lstat ? FS.lstat(path) : FS.stat(path);
+            return true;
+        } catch (error) {
+            return false;
+        }
     }
 
     async function folderOf(rel, create) {
@@ -244,7 +423,7 @@ export function createStore(FS, root = "/data", log = () => {}, options = {}) {
         for (const name of FS.readdir(path)) {
             if (name === "." || name === "..") continue;
             const child = `${path}/${name}`;
-            if (FS.isDir(FS.stat(child).mode)) {
+            if (!isLink(child) && FS.isDir(FS.stat(child).mode)) {
                 clear(child);
                 FS.rmdir(child);
             } else {
@@ -260,6 +439,7 @@ export function createStore(FS, root = "/data", log = () => {}, options = {}) {
             const began = now();
             FS.mkdirTree(root);
             clear();
+            dropLinks();
             known.clear();
             knownDirs.clear();
             held.clear();
@@ -272,7 +452,9 @@ export function createStore(FS, root = "/data", log = () => {}, options = {}) {
                 knownDirs.add(rel);
             }
             for (const [rel, file] of remote.files) known.set(rel, await place(rel, file));
-            return { files: known.size, unread: unread.size, held: held.size, ms: Math.round(now() - began) };
+            const linked = linkAll(remote.big);
+            return { files: known.size, unread: unread.size, held: held.size, linked,
+                     ms: Math.round(now() - began) };
         });
     }
 
@@ -364,6 +546,14 @@ export function createStore(FS, root = "/data", log = () => {}, options = {}) {
             }
             for (const [rel, was] of [...known]) {
                 if (remote.files.has(rel)) continue;
+                if (remote.big.has(rel)) {
+                    // Grown past HELD_BYTES in the folder -- most often a file
+                    // Python wrote and this store pushed. Linked below where
+                    // links work; otherwise Python keeps the copy it has (it
+                    // was dropped once, and built again within the visit).
+                    if (!(canLink() && linkable(rel))) known.delete(rel);
+                    continue;
+                }
                 const here = local.files.get(rel);
                 if (here && here.mtime !== was.local) continue; // changed here: written back next
                 if (isOpen(rel)) continue;
@@ -372,7 +562,15 @@ export function createStore(FS, root = "/data", log = () => {}, options = {}) {
                 known.delete(rel);
                 dropped += 1;
             }
-            return { read, dropped };
+            const linked = linkAll(remote.big);
+            for (const rel of [...links.keys()]) {
+                // Gone from the folder: its link goes too, unless Python has it open.
+                if (remote.big.has(rel) || isOpen(rel)) continue;
+                if (ownLink(rel)) { try { FS.unlink(full(rel)); } catch (error) { /* gone */ } }
+                try { FS.unmount(links.get(rel).dir); } catch (error) { /* in use */ }
+                links.delete(rel);
+            }
+            return { read, dropped, linked };
         });
     }
 
@@ -384,6 +582,8 @@ export function createStore(FS, root = "/data", log = () => {}, options = {}) {
         files: () => known.size,
         //: The files of a shared folder left there for their size.
         held: () => [...held.keys()],
+        //: Of those, the ones Python reads where they lie (`linkHeld`).
+        linked: () => [...links.keys()],
         //: The files in memory whose bytes have not been read from the folder.
         unread: () => [...unread.keys()],
     };

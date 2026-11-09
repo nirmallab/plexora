@@ -341,6 +341,27 @@ def start(origin: str, *, base_url: str = "", post=None, cancelled=None, idle=No
     import plexora
 
     app = plexora.app
+
+    from plexora import _work
+    from plexora.server.models import data_model
+
+    # PIL's format plugins and the tile encoders' first use, which the
+    # desktop pays before its first request (data_model.prime_hot_code): here
+    # behind the first page instead, as background work, so a visit's start
+    # does not wait for it and the first image Python encodes does not either.
+    _work.spawn(data_model.prime_encoders, background=True, name="prime-encoders")
+
+    def scipy_stage():
+        # The `scipy` stage (plexora/browser/stages.py), no longer in the
+        # base: fetched and compiled once the first page has been answered,
+        # while the user looks at it, rather than inside the request that
+        # opens a project with cells (its cell index imports scipy).
+        try:
+            import scipy  # noqa: F401
+        except ImportError:  # a stage that could not load: the index says so when asked
+            pass
+
+    _work.spawn(scipy_stage, background=True, name="stage-scipy")
     return {"version": plexora.__version__, "rules": len(list(app.url_map.iter_rules())),
             "seconds": round(time.perf_counter() - started, 3), "shims": shims}
 

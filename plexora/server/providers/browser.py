@@ -66,11 +66,39 @@ def set_asker(ask) -> None:
     _slides.clear()
 
 
-def page_window(provider, pyramid, index):
+#: `page_window(..., wait_ms=...)`'s answer while the page is still scanning.
+WINDOW_PENDING = object()
+
+
+class WindowPending(Exception):
+    """A request for a channel the page is still scanning, on the website:
+    answered later rather than waited for. Python cannot wait inside a
+    request with the page's other requests answered meanwhile -- one of them
+    taking a lock the suspended one holds, or suspending in turn, freezes the
+    only thread (plexora/_work.py `checkpoint`) -- so the route says "again
+    in `retry_ms`" (`RETRY_HEADER`) and the worker puts the request back in
+    its queue, behind whatever arrived meanwhile (workers/pythonWorker.js)."""
+
+    retry_ms = 200
+
+
+#: The header a route's answer carries to be asked again later on the
+#: website (plexora/browser/bridge.py `handle`); never seen anywhere else.
+RETRY_HEADER = "X-Plexora-Retry-Ms"
+
+
+def page_window(provider, pyramid, index, *, wait_ms=None, urgent=True, ahead=()):
     """`(0.0, qmax)` for channel `index` of a picked TIFF the page reads
     (`data_model.quantization_window_of`, computed by the page's workers over
     the same full-resolution plane), or None: not on the website, not a file
-    the page reads as Python does -- Python then reads every pixel itself."""
+    the page reads as Python does -- Python then reads every pixel itself.
+
+    Without `wait_ms` Python waits for the scan, as it always did. With it,
+    this only looks: the page answers within `wait_ms`, and `WINDOW_PENDING`
+    means it is still reading (the scan goes on without Python, behind any
+    `urgent` one; `ahead`, other channel indices, are queued after it). A
+    scan can take seconds a channel on a large slide, and a Python waiting
+    for it answers nothing else (services/browserNode.js `windowOf`)."""
     if _asker is None or os.environ.get("PLEXORA_BACKEND") != "browser":
         return None
     path = str(getattr(provider, "_path", "") or "")
@@ -84,10 +112,21 @@ def page_window(provider, pyramid, index):
     dtype = str(getattr(level, "dtype", ""))
     if len(shape) != 3 or dtype not in ("uint8", "uint16"):
         return None
-    found = _asker("window", {"path": path, "channel": int(index), "shape": shape, "dtype": dtype})
-    if found is None:
+    question = {"path": path, "channel": int(index), "shape": shape, "dtype": dtype}
+    if wait_ms is None:
+        found = _asker("window", question)
+        if found is None:
+            return None
+        return (0.0, max(float(found), 1.0))
+    found = _plain(_asker("window", {**question, "wait": max(0, int(wait_ms)), "urgent": bool(urgent),
+                                     "ahead": [int(other) for other in ahead]}))
+    if not isinstance(found, dict):
         return None
-    return (0.0, max(float(found), 1.0))
+    if not found.get("done"):
+        return WINDOW_PENDING
+    if found.get("failed") or found.get("max") is None:
+        return None
+    return (0.0, max(float(found["max"]), 1.0))
 
 
 def is_page_file(path) -> bool:
@@ -154,10 +193,7 @@ def page_pyramid(source, *, name, spec, progress=None, stage=None, adoptable=Non
     kind = wanted.get("kind") or "image"
     # One copy per source file as it is now, whichever pick it came through;
     # a mask's apart from an image's of the same file.
-    seed = f"{PurePosixPath(path).name}|{wanted['fingerprint']}"
-    if kind != "image":
-        seed = f"{kind}|{seed}"
-    key = hashlib.sha256(seed.encode()).hexdigest()[:24]
+    key = derived_key(PurePosixPath(path).name, wanted["fingerprint"], kind)
     asked = {"path": path, "key": key, "name": name, "kind": kind,
              **{field: wanted[field] for field in ("shape", "dtype", "factors", "tile", "description")}}
     started = _plain(_asker("pyramid", asked))
@@ -189,6 +225,51 @@ def page_pyramid(source, *, name, spec, progress=None, stage=None, adoptable=Non
         if not hold:
             raise PageBuilding(int(state.get("tiles") or 0), int(state.get("total") or 0))
         _work.pause(_POLL_S)
+
+
+def derived_key(source_name: str, fingerprint: str, kind: str = "image") -> str:
+    """The folder a copy the page builds of a file is kept under
+    (/derived/<key>/, OPFS plexora/derived/<key>/, Documents/Plexora/
+    pyramids/<key>/): the source's name and its fingerprint as the website
+    reads it (`segmentation_pyramid.source_fingerprint`, times in whole
+    milliseconds), a mask's apart from an image's. The desktop app works it
+    out from the same file to find the website's copy (utils/relink.py
+    `website_copies`)."""
+    seed = f"{source_name}|{fingerprint}"
+    if kind != "image":
+        seed = f"{kind}|{seed}"
+    return hashlib.sha256(seed.encode()).hexdigest()[:24]
+
+
+def derived_index() -> dict:
+    """{path: {state, home, kind, key, name, place}} of every copy the page
+    has made or found (client services/derivedIndex.js), `state` "ready" (the
+    page reads it), "waiting" (in a folder the browser opens again only after
+    a click) or "missing"; {} anywhere but the website."""
+    if _asker is None or os.environ.get("PLEXORA_BACKEND") != "browser":
+        return {}
+    try:
+        found = _plain(_asker("derived_index", {})) or {}
+    except Exception:  # noqa: BLE001 -- a page that cannot say: nothing is known to wait
+        return {}
+    copies = found.get("copies") if isinstance(found, dict) else None
+    return dict(copies) if isinstance(copies, dict) else {}
+
+
+def derived_status(path):
+    """Of a copy the page made, as the website sees it now: "mounted" (Python
+    reads it), "waiting" (kept in a folder the browser has not opened again
+    this visit: one click, and it is back -- neither rebuilt nor asked to be
+    found) or "missing". None for anything else, and anywhere but the
+    website: the page is asked only about a /derived/ path not mounted."""
+    path = str(path)
+    if not is_page_file(path) or not path.startswith("/derived/"):
+        return None
+    if os.path.exists(path):
+        return "mounted"
+    found = derived_index().get(path) or {}
+    state = found.get("state") if isinstance(found, dict) else None
+    return "waiting" if state == "waiting" else "missing"
 
 
 class PageSlideError(RuntimeError):

@@ -88,6 +88,11 @@ async function relay(event) {
     page.postMessage({ type: "plexora-relay", url: request.url, method: request.method,
                        headers: [...request.headers.entries()], body },
                      [channel.port2, ...(body ? [body] : [])]);
+    // The asking page aborted its fetch (where the browser passes that on to
+    // the fetch event): the page is told, so Python never starts it.
+    if (request.signal) {
+        request.signal.addEventListener("abort", () => channel.port1.postMessage({ abort: true }), { once: true });
+    }
     try {
         const answer = await answered;
         const empty = answer.status === 204 || answer.status === 304 || request.method === "HEAD";

@@ -22,9 +22,12 @@ replacements over the entry's values, `sources` itself excepted, and are each
 other's inverse.
 
 On the website, `record_config` also adds the identity of every page file a
-project names that the map does not have yet: that is what lets the desktop
-app find the same file on this computer (server/utils/relink.py) without
-asking. The desktop app does the same for the files on its disk, but only in
+project names that the map does not have yet, and of every pyramid the
+website's Python wrote into its store (`/data/<rel>`, which is
+Documents/Plexora/projects/<rel> when the projects are kept there): that is
+what lets the desktop app find the same file on this computer
+(server/utils/relink.py) without asking -- and so never build again what the
+website built. A mask's pyramid names the mask it was made from (`from`). The desktop app does the same for the files on its disk, but only in
 a registry the website shares (`shared=True`: the website's projects on this
 computer), so the website can match them in a folder the user grants.
 """
@@ -42,6 +45,19 @@ SOURCES = "sources"
 PAGE_ROOTS = ("/picked/", "/derived/")
 #: Bytes hashed at each end of a file for its identity.
 IDENTITY_BYTES = 1 << 20
+#: The website's project store, as its Python sees it (plexora/browser/boot.py).
+STORE_ROOT = "/data/"
+#: How a pyramid Plexora writes is named (image_pyramid PYRAMID_SUFFIX and the
+#: mask pyramids' suffixes, which all end in it).
+PYRAMID_ENDING = ".pyramid.ome.tiff"
+#: A project entry's derived file and the field naming what it was made from.
+_MADE_FROM = (("segmentation", "segmentationSource"),)
+
+
+def website_file(value: str) -> bool:
+    """A path the website records the identity of: one of the page's files,
+    or a pyramid its Python wrote into the project store."""
+    return value.startswith(PAGE_ROOTS) or (value.startswith(STORE_ROOT) and value.endswith(PYRAMID_ENDING))
 
 
 def app_key() -> str:
@@ -96,12 +112,16 @@ def record(entry: dict, me: Optional[str] = None, *, identify: Optional[Callable
         return out
     known = dict(out.get(SOURCES) or {})
     added = False
+    made_from = {out.get(made): out.get(source) for made, source in _MADE_FROM
+                 if isinstance(out.get(made), str) and isinstance(out.get(source), str)}
     for path in sorted(_paths(out, wanted or (lambda value: value.startswith(PAGE_ROOTS)))):
         if path in known:
             continue
         facts = identify(path)
         if facts:
             facts = dict(facts)
+            if not facts.get("from") and made_from.get(path) and made_from[path] != path:
+                facts["from"] = made_from[path]
             facts["at"] = {me: path}
             known[path] = facts
             added = True
@@ -152,7 +172,7 @@ def record_config(config: dict, me: Optional[str] = None, *, shared: bool = Fals
         return config
     me = me or app_key()
     if me == "website":
-        return {name: record(entry, me, identify=identity) for name, entry in config.items()}
+        return {name: record(entry, me, identify=identity, wanted=website_file) for name, entry in config.items()}
     if shared:
         return {name: record(entry, me, identify=file_identity, wanted=_local_file)
                 for name, entry in config.items()}
@@ -219,9 +239,9 @@ def identity(path: str) -> Optional[dict]:
     facts = file_identity(path)
     if facts is None:
         return None
-    if path.startswith("/derived/"):
+    if path.startswith("/derived/") or path.startswith(STORE_ROOT):
         parts = path.split("/")
-        if len(parts) >= 4:
+        if path.startswith("/derived/") and len(parts) >= 4:
             facts["key"] = parts[2]
         try:
             from plexora.server.utils import image_pyramid

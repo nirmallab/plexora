@@ -107,3 +107,24 @@ def test_background_work_waits_for_a_quiet_moment(monkeypatch):
         assert ran == ["job", "warm"] and quiet["background"] == 0
     finally:
         _work._reset_for_tests()
+
+
+def test_one_background_task_a_step_and_never_after_other_work(monkeypatch):
+    """A quiet step runs at most one background task, and none when it ran
+    queued work someone waits on: the worker looks for quiet again before
+    the next (pythonWorker.js `step`), so a request arriving meanwhile goes
+    first instead of waiting behind a second warm-up task."""
+    monkeypatch.setenv("PLEXORA_WORK", "cooperative")
+    ran = []
+    for name in ("warm-a", "warm-b"):
+        _work.spawn(ran.append, name, background=True, name=name)
+    _work.spawn(ran.append, "job", name="job")
+    try:
+        first = cooperative.step(budget_ms=10_000)
+        assert ran == ["job"] and first["background"] == 2
+        second = cooperative.step(budget_ms=10_000)
+        assert ran == ["job", "warm-a"] and second["ran"] == 1 and second["background"] == 1
+        third = cooperative.step(budget_ms=10_000)
+        assert ran == ["job", "warm-a", "warm-b"] and third["background"] == 0
+    finally:
+        _work._reset_for_tests()

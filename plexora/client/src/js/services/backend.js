@@ -180,10 +180,27 @@
         // Set only in the app's frame; resolved at once for any later page.
         const gate = global.PlexoraShellGate;
         if (gate) {
+            // A project's viewer shown while Python starts again after a
+            // reload of the site: what its first screen asks for is answered
+            // from Python's own answers, kept (services/keptAnswers.js).
+            const kept = global.PlexoraKept;
+            if (kept && kept.waiting()) {
+                const answered = await kept.answer(request, global).catch(() => null);
+                if (answered) return answered;
+            }
             try {
                 await gate;
             } catch (error) {
                 return json({ success: false, error: "Plexora's Python did not start" }, 503);
+            }
+            // A write from a page given kept answers waits until Python has
+            // given each of them again: the same, and it goes; any different,
+            // and it is refused, since the page may be saving back what was
+            // true before (the page is replaced, or offers a reload).
+            if (kept && !["GET", "HEAD"].includes(request.method)
+                && !await kept.cleared(global).catch(() => false)) {
+                return json({ success: false, ok: false, error: "This project changed while Plexora was "
+                              + "starting. Reload to see it as it is now; this change was not saved." }, 409);
             }
         }
         // Under a base path (a node serving the app behind a portal), every
@@ -259,10 +276,16 @@
             // Still at work: said every WORKING_MS, so the relay (whose limit
             // is 120 s of silence) waits for a long answer.
             const working = global.setInterval(() => port.postMessage({ working: true }), WORKING_MS);
+            // The asking page gave up (its fetch aborted): the relay says so
+            // on the same port, and the request is dropped from Python's
+            // queue if it is still waiting there (services/pythonClient.js).
+            const gaveUp = new AbortController();
+            port.onmessage = ({ data: said }) => { if (said && said.abort) gaveUp.abort(); };
             try {
                 const request = new Request(data.url, {
                     method: data.method, headers: data.headers,
                     body: ["GET", "HEAD"].includes(data.method) ? undefined : data.body,
+                    signal: gaveUp.signal,
                 });
                 const response = await global.PlexoraBackend.answer(request);
                 const body = await response.arrayBuffer();

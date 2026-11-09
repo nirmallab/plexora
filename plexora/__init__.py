@@ -417,11 +417,20 @@ def get_config():
 
 
 def get_config_names():
-    data = get_config()
-    try:
-        return [key for key in data.keys()]
-    except AttributeError:
-        return []
+    """The names `get_config()` has, in its order, without parsing every
+    root's config.json again for them (`project.config_names`): every page's
+    context asks (page_routes.template_data)."""
+    from plexora import paths
+    from plexora.server.models.project import config_names
+
+    names: list = []
+    seen: set = set()
+    for root in paths.roots():
+        for name in config_names(paths.config_path(root)):
+            if name not in seen:
+                seen.add(name)
+                names.append(name)
+    return names
 
 
 #: Arguments to `view()` that describe DATA rather than the viewer.

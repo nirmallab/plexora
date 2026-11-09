@@ -741,7 +741,7 @@ class FigureCaptureDock {
 
         const items = this.el("items");
         if (items) {
-            items.innerHTML = captures.map((capture, index) => {
+            const html = captures.map((capture, index) => {
                 const escape = FigureSchema.escapeHtml;
                 const classes = ["fb-strip-item"];
                 if (capture.checked) classes.push("is-checked");
@@ -784,6 +784,12 @@ class FigureCaptureDock {
                     </button>
                 </figure>`;
             }).join("");
+            // Redrawn on every tick, select and capture: keep the thumbnails
+            // already shown rather than asking for each again
+            // (FigureCanvas.replaceKeepingImages; plain markup where this runs
+            // without the canvas's file).
+            if (typeof FigureCanvas === "function") FigureCanvas.replaceKeepingImages(items, html);
+            else items.innerHTML = html;
         }
 
         this.edges();

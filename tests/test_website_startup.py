@@ -69,14 +69,30 @@ def test_kept_pages_in_node():
 def test_python_downloads_start_before_the_loaders_other_services():
     boot = _function(SHELL, "hostBoot")
     warm = boot.index("PlexoraPython.warm(")
-    # After the switches and the browser check, which may stop the site...
-    assert boot.index('flags.viewer === "desktop-only"') < warm
+    # After the browser check, which may stop the site...
     assert boot.index("PlexoraPython.unsupported()") < warm
-    # ...and before every other service, the store's question and the boot.
-    for later in ('services/backend.js"', "PlexoraStore.prepare(", "PlexoraPython.start("):
+    # ...and before the services are waited for, the store's question and
+    # the boot. The services are fetched from the start, beside it.
+    for later in ("await services;", "PlexoraStore.prepare(", "PlexoraPython.start("):
         assert warm < boot.index(later), later
+    assert boot.index('services/backend.js"') < boot.index("await (await global.fetch(")
     # The services are fetched together, not one after another.
     assert "await script(" not in boot
+
+
+def test_the_switches_do_not_hold_up_the_start_but_still_stop_python():
+    boot = _function(SHELL, "hostBoot")
+    # Read beside Python's downloads, not before them...
+    assert boot.index("const flagsRead = readFlags(shell);") < boot.index("PlexoraPython.warm(")
+    assert "await readFlags(" not in boot
+    halted = boot[boot.index("const halted = flagsRead.then("):boot.index("const pages = pageStore(")]
+    assert 'flags.viewer === "desktop-only"' in halted and "flags.min_site_version" in halted
+    # ...and a stop is applied before Python starts or the frame is made.
+    halt = boot.index("if (halt) return halt();")
+    assert halt < boot.index("PlexoraPython.start(") < boot.index('doc.createElement("iframe")')
+    # The worker's registration is not waited for: the frame claims itself.
+    assert "await control" not in boot
+    assert "await claimed()" in _function(SHELL, "frameBoot")
 
 
 def test_the_frame_is_shown_early_only_with_a_kept_page():
@@ -97,7 +113,8 @@ def test_a_kept_page_holds_its_requests_and_yields_to_python():
     early = _function(SHELL, "earlyPage")
     assert 'PlexoraStatus.begin("Starting")' in early
     # Replaced only when unused, and never from a page already left.
-    assert early.index("global.document !== doc") < early.index("if (!used) global.location.replace")
+    assert early.index("global.document !== doc") < early.index("if (!used) {")
+    assert "global.location.replace(global.location.href)" in early[early.index("if (!used) {"):]
 
 
 def test_the_worker_warms_outside_its_queue_and_boot_takes_over():

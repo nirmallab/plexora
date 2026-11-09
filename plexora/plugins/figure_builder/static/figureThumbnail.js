@@ -150,6 +150,11 @@ class FigureThumbnail {
      * @param {object} document_ the figure document.
      * @param {?string} pageId
      * @param {function} previewUrlFor `(panelId, renderRevision) -> url`.
+     * @param {object} options `{width, imageFor}`: `imageFor(panelId)` hands
+     *        back a picture of that panel the page already has decoded (the
+     *        one on the canvas), or null. Drawn from instead of fetching the
+     *        preview again: a thumbnail after every save used to ask for every
+     *        preview on the page once more.
      */
     static async render(document_, pageId, previewUrlFor, options) {
         const plan = FigureThumbnail.layout(document_, pageId,
@@ -170,7 +175,8 @@ class FigureThumbnail {
 
         for (const item of plan.items) {
             if (item.kind === "panel") {
-                const image = await FigureThumbnail._load(
+                const shown = options && options.imageFor ? options.imageFor(item.panel_id) : null;
+                const image = shown || await FigureThumbnail._load(
                     previewUrlFor(item.panel_id, item.render_revision));
                 if (image) {
                     FigureThumbnail._cover(context, image, item);
@@ -219,10 +225,16 @@ class FigureThumbnail {
         return new Promise((resolve) => {
             if (!url) return resolve(null);
             const image = new Image();
-            // Same origin, always -- these are this app's own routes -- but
-            // stated so a future absolute URL cannot silently taint the canvas
-            // and make toBlob throw.
-            image.crossOrigin = "anonymous";
+            // CORS only for another origin's picture, so a future absolute URL
+            // cannot silently taint the canvas and make toBlob throw. Not for
+            // this app's own routes: a CORS request is kept apart from the
+            // canvas's own copy of the same URL, so every preview was
+            // downloaded a second time for the thumbnail.
+            try {
+                if (new URL(url, location.href).origin !== location.origin) image.crossOrigin = "anonymous";
+            } catch (error) {
+                image.crossOrigin = "anonymous";
+            }
             image.onload = () => resolve(image);
             image.onerror = () => resolve(null);
             image.src = url;

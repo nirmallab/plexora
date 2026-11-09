@@ -30,6 +30,7 @@ VIEWER_CSS = REPO_ROOT / "plexora" / "client" / "src" / "css" / "viewer.css"
 #: to a different project" is what stops it being a lie.
 CHECKS = (
     "a page link routes and never touches the viewer",
+    "a script a tool loaded after the router started is not run again",
     "coming back to the viewer fetches nothing at all",
     "the viewer announces going and coming back",
     "a link to a different project is left to the browser",

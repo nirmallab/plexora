@@ -561,6 +561,18 @@ async function init(config, savedViewTransform = null) {
         } catch (error) {
             console.warn("main: browser rendering is unavailable, the server reads every tile:", error);
         }
+    } else if (window.PlexoraBackend?.kind === "browser" && seaDragonViewer.tileFetch
+               && typeof window.PlexoraNode?.decoded === "function") {
+        // The website: the page's own reader of the picked files
+        // (services/browserNode.js) answers the image's HD tiles and the
+        // mask's straight into the tile scheduler. They used to be made into
+        // PNGs on the host's main thread, sent through the service worker and
+        // decoded again; now the pixels arrive as read. Whatever it cannot
+        // read (an 8-bit preview, a copy Python made, a file in a bucket) it
+        // declines, and that tile goes the network path as before.
+        const node = window.PlexoraNode;
+        seaDragonViewer.tileFetch.local = (request) => node.decoded(request.url, { raster: request.raster });
+        seaDragonViewer.localTiles = true;
     }
     // Before init() adds a single channel, so the first tile is drawn turned.
     // `adopt` applies without saving: this IS what was saved.

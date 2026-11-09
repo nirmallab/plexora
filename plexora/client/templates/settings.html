@@ -1,6 +1,6 @@
 {% extends layout|default('base.html', true) %}
 {% block style %}
-    <link rel="stylesheet" href="{{ data.base_url }}/client/src/css/settings.css?v=20261107_handoff">
+    <link rel="stylesheet" href="{{ data.base_url }}/client/src/css/settings.css?v=20261109_webperf">
 {% endblock %}
 {% block content %}
 <title>Plexora - Settings</title>
@@ -66,6 +66,14 @@
                         <button type="button" class="btn btn-outline-light" id="settings_web_keep" hidden>
                             Ask to keep it</button>
                     </div>
+                </div>
+                {# Every pyramid the website made of the user's files, wherever
+                   it is kept (services/derivedIndex.js, on the host page), with
+                   what can be done to it. settingsPage.js fills it in. #}
+                <div class="settings-card" id="settings_web_copies" hidden>
+                    <div class="settings-field-label">Pyramids made from your files</div>
+                    <div class="settings-meta" id="settings_web_copies_meta"></div>
+                    <div class="settings-web-copies" id="settings_web_copies_list"></div>
                 </div>
                 {# Saving gates, QC calls and ROI columns into the table or .h5ad
                    the user opened (services/sourceWrites.js, on the host page;
@@ -983,5 +991,5 @@
 {# remoteState.js is loaded by base.html, above and deferred, so it is parsed
    before this file runs -- the Remote servers section is one of its
    subscribers rather than a poller of its own. #}
-<script src="{{ data.base_url }}/client/src/js/views/settingsPage.js?v=20261108_early_home" defer></script>
+<script src="{{ data.base_url }}/client/src/js/views/settingsPage.js?v=20261109_webperf" defer></script>
 {% endblock %}

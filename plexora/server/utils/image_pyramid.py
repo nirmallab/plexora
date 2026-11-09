@@ -285,6 +285,42 @@ def _sweep_leftovers(directory: Path, name: str) -> None:
             continue
 
 
+def _candidates(source: Path, data_directory=None) -> list:
+    """Where a copy of `source` may be written, in the order it is looked for."""
+    from plexora import paths
+
+    candidates = [derived_output_path(source)]
+    if data_directory is not None:
+        in_project = derived_output_path(source, data_directory)
+        if paths.mask_output_preference() == "project":
+            candidates.insert(0, in_project)
+        else:
+            candidates.append(in_project)
+    return candidates
+
+
+def _found(source: Path, candidates) -> Optional[Path]:
+    """The first finished copy of `source` among `candidates`, then -- in the
+    desktop app, to read only -- the copy the website kept for the same file
+    in Plexora's folder (Documents/Plexora/pyramids/<key>/,
+    server/utils/relink.py `website_copies`): built once, by either app."""
+    existing = next((c for c in candidates if is_adoptable_image(c, source)), None)
+    if existing is not None:
+        return existing
+    from plexora.server.utils import relink
+
+    return next((Path(c) for c in relink.website_copies(source, derived_output_path(source).name, "image")
+                 if is_adoptable_image(c, source)), None)
+
+
+def find_derived_image(source, data_directory=None) -> Optional[Path]:
+    """A finished copy of `source`, beside it or in the project's folder
+    (`resolve_derived_image`'s order), or None. Looks only: the website asks
+    before its page builds one (data_model `_pyramidized_copy`)."""
+    source = Path(source)
+    return _found(source, _candidates(source, data_directory))
+
+
 def resolve_derived_image(source, data_directory=None, *, needed_bytes: int = 0) -> DerivedImage:
     """Where `source`'s pyramidized copy is, and where one would be written.
 
@@ -299,15 +335,8 @@ def resolve_derived_image(source, data_directory=None, *, needed_bytes: int = 0)
     from plexora import paths
 
     source = Path(source)
-    candidates = [derived_output_path(source)]
-    if data_directory is not None:
-        in_project = derived_output_path(source, data_directory)
-        if paths.mask_output_preference() == "project":
-            candidates.insert(0, in_project)
-        else:
-            candidates.append(in_project)
-
-    existing = next((c for c in candidates if is_adoptable_image(c, source)), None)
+    candidates = _candidates(source, data_directory)
+    existing = _found(source, candidates)
     problems = []
     for candidate in candidates:
         folder = candidate.parent

@@ -777,15 +777,45 @@ window.PlexoraToolLoader = (function () {
         }
     }
 
+    //: The path of a script's address, its `?v=` left out: a file the page
+    //: already has under another tag is the same classic script, and running
+    //: it twice only throws "Identifier ... has already been declared".
+    function scriptPath(src) {
+        try {
+            return new URL(src, document.baseURI).pathname;
+        } catch (error) {
+            return String(src).split("?")[0];
+        }
+    }
+
+    function hasScript(src) {
+        const path = scriptPath(src);
+        for (const script of document.querySelectorAll("script[src]")) {
+            const src = script.src || (script.getAttribute && script.getAttribute("src"));
+            if (src && scriptPath(src) === path) return true;
+        }
+        return false;
+    }
+
     function loadScript(src) {
-        if (document.querySelector(`script[src="${src}"]`)) return Promise.resolve();
+        if (hasScript(src)) return Promise.resolve();
         return new Promise((resolve, reject) => {
             const script = document.createElement("script");
             script.src = src;
+            // In the order inserted, whatever order they arrive in: a
+            // plugin's files are fetched together and still run in turn.
+            script.async = false;
             script.onload = () => resolve();
             script.onerror = () => reject(new Error(`toolLoader: failed to load ${src}`));
             document.head.appendChild(script);
         });
+    }
+
+    //: A plugin's scripts fetched together and run in the order given. They
+    //: used to be fetched one after another -- Figure Builder's 34 were 34
+    //: round trips in a row.
+    function loadScripts(sources) {
+        return Promise.all((sources || []).map(loadScript));
     }
 
     function loadStyle(href) {
@@ -939,9 +969,7 @@ window.PlexoraToolLoader = (function () {
         });
 
         stage.at = "script";
-        for (const src of payload.scripts || []) {
-            await loadScript(src);
-        }
+        await loadScripts(payload.scripts);
         stage.at = "other";
 
         // main.js runs before any tool can be opened (deferred, but earlier in

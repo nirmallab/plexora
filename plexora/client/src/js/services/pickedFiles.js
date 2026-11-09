@@ -116,8 +116,11 @@
         });
     }
 
-    async function mountFiles(id, files, fileHandles = null) {
-        const paths = await global.PlexoraPython.mount(`${ROOT}/${id}`, files);
+    //: `python`: who mounts the files for Python -- the worker, or `later`'s
+    //: stand-in, which mounts nothing yet (`reopen`). The paths are the same
+    //: either way: the worker mounts each file at `<dir>/<name>`.
+    async function mountFiles(id, files, fileHandles = null, python = global.PlexoraPython) {
+        const paths = await python.mount(`${ROOT}/${id}`, files);
         paths.forEach((path, i) => {
             mounted.set(path, files[i]);
             if (fileHandles && fileHandles[i]) handles.set(path, fileHandles[i]);
@@ -125,9 +128,9 @@
         return paths;
     }
 
-    async function mountTree(id, name, entries) {
+    async function mountTree(id, name, entries, python = global.PlexoraPython) {
         const blobs = entries.map(({ path, file }) => ({ name: `${name}/${path}`, data: file }));
-        await global.PlexoraPython.mountTree(`${ROOT}/${id}`, blobs);
+        await python.mountTree(`${ROOT}/${id}`, blobs);
         for (const { name: inside, data } of blobs) mounted.set(`${ROOT}/${id}/${inside}`, data);
         // Each file's own handle, where the browser gave the folder's: what a
         // save into one of them writes through (services/sourceWrites.js).
@@ -194,10 +197,10 @@
     }
 
     //: The .mrxs at /picked/<id>/<name>.mrxs and its folder at /picked/<id>/<stem>/.
-    async function mountSlide(id, file, folder) {
+    async function mountSlide(id, file, folder, python = global.PlexoraPython) {
         const blobs = [{ name: file.name, data: file },
                        ...folder.entries.map(({ path, file: f }) => ({ name: `${folder.name}/${path}`, data: f }))];
-        await global.PlexoraPython.mountTree(`${ROOT}/${id}`, blobs);
+        await python.mountTree(`${ROOT}/${id}`, blobs);
         for (const { name, data } of blobs) mounted.set(`${ROOT}/${id}/${name}`, data);
         return `${ROOT}/${id}/${file.name}`;
     }
@@ -324,36 +327,93 @@
         return ask && await handle.requestPermission(options) === "granted";
     }
 
-    async function mountRecord(record, ask) {
+    async function mountRecord(record, ask, python = global.PlexoraPython) {
         if (record.kind === "slide" && record.handles && record.folder) {
             if (!await granted(record.handles[0], ask) || !await granted(record.folder, ask)) return false;
             const entries = slideEntries(record.name, await walkNamed(record.folder));
             if (!entries) return false;
-            await mountSlide(record.id, await record.handles[0].getFile(), { name: record.name, entries });
+            await mountSlide(record.id, await record.handles[0].getFile(), { name: record.name, entries }, python);
             return true;
         }
         if (record.kind === "directory" && record.handle) {
             if (!await granted(record.handle, ask)) return false;
-            await mountTree(record.id, record.name, await walk(record.handle));
+            await mountTree(record.id, record.name, await walk(record.handle), python);
             return true;
         }
         if (record.kind === "files" && record.handles) {
             for (const handle of record.handles) {
                 if (!await granted(handle, ask)) return false;
             }
-            await mountFiles(record.id, await Promise.all(record.handles.map((h) => h.getFile())), record.handles);
+            await mountFiles(record.id, await Promise.all(record.handles.map((h) => h.getFile())), record.handles,
+                             python);
             return true;
         }
         return false; // no handle kept: picked again by the user ("Locate file")
     }
 
+    //: record id -> Python's half of its mount, for a pick reopened before
+    //: Python started (`reopen`); `restore` does it.
+    const unmounted = new Map();
+    //: record id -> the promise of its reopening.
+    const reopening = new Map();
+
+    //: Python's mounts written down to be done later, with the paths the
+    //: worker would give (`<dir>/<name>`).
+    function later(calls) {
+        return {
+            mount: async (dir, files) => {
+                calls.push(() => global.PlexoraPython.mount(dir, files));
+                return files.map((file) => `${dir}/${file.name}`);
+            },
+            mountTree: async (dir, blobs) => {
+                calls.push(() => global.PlexoraPython.mountTree(dir, blobs));
+            },
+        };
+    }
+
+    //: The files picked on earlier visits (those of `ids`, or all), opened
+    //: again where the browser still grants them without asking -- for the
+    //: page only: Python's mounts wait for `restore`. What a reload of the
+    //: site shows before Python is up reads its pixels from these
+    //: (services/keptAnswers.js `early`). Each record once.
+    async function reopen(ids = null) {
+        const wanted = ids ? new Set(ids) : null;
+        for (const record of await list()) {
+            if ((wanted && !wanted.has(record.id)) || reopening.has(record.id)) continue;
+            reopening.set(record.id, (async () => {
+                const calls = [];
+                try {
+                    if (await mountRecord(record, false, later(calls))) {
+                        unmounted.set(record.id, calls);
+                        return true;
+                    }
+                } catch (error) { /* `restore` tries it again, with Python */ }
+                return false;
+            })());
+        }
+        const opened = [];
+        for (const [id, done] of reopening) if ((!wanted || wanted.has(id)) && await done) opened.push(id);
+        return { opened };
+    }
+
     async function restore() {
         const mounted = [];
         waiting.length = 0;
+        // What `reopen` opened is only Python's to mount now: the same File
+        // objects, at the same paths, not read from their handles again.
+        await Promise.all([...reopening.values()]);
         for (const record of await list()) {
             try {
-                if (await mountRecord(record, false)) mounted.push(record.id);
-                else waiting.push(record);
+                const calls = unmounted.get(record.id);
+                if (calls) {
+                    unmounted.delete(record.id);
+                    for (const call of calls) await call();
+                    mounted.push(record.id);
+                } else if (await mountRecord(record, false)) {
+                    mounted.push(record.id);
+                } else {
+                    waiting.push(record);
+                }
             } catch (error) {
                 waiting.push(record);
             }
@@ -374,7 +434,7 @@
         return { mounted: done, waiting: waiting.slice() };
     }
 
-    global.PlexoraPicks = Object.freeze({ pick, restore, reconnect, list,
+    global.PlexoraPicks = Object.freeze({ pick, reopen, restore, reconnect, list,
                                           waiting: () => waiting.slice(),
                                           fileFor: (path) => mounted.get(path) || null,
                                           //: Every mounted file under the folder `prefix`

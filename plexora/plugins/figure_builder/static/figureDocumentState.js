@@ -189,6 +189,17 @@ class FigureDocumentState {
     _replaceWith(target) {
         const current = this.document;
         const draft = JSON.parse(JSON.stringify(target));
+        // A panel's render revision never goes back, not even on an undo: the
+        // preview stored for it is the latest render's, at the latest number,
+        // and an edit that bumped the earlier number again would put a
+        // different picture under a URL the browser keeps for good. The server
+        // floors it the same way (repository._keep_render_revisions_forward).
+        for (const [panelId, panel] of Object.entries(draft.panels || {})) {
+            const now = current && current.panels && current.panels[panelId];
+            if (now && (now.render_revision || 0) > (panel.render_revision || 0)) {
+                panel.render_revision = now.render_revision;
+            }
+        }
         // The revision is the CURRENT one, not the one the snapshot was taken
         // at: going back to an earlier state is a new edit, and rewinding the
         // number would make every other tab's next save look valid when it is

@@ -45,7 +45,7 @@
          window.fetch). Before appStatus.js and not deferred, so a static
          build's page can put its own transport in place before that file
          wraps window.fetch and anything issues a request. -->
-    <script src="{{ data.base_url }}/client/src/js/services/backend.js?v=20261108_early_home" type="text/javascript"></script>
+    <script src="{{ data.base_url }}/client/src/js/services/backend.js?v=20261109_webperf" type="text/javascript"></script>
     <!-- App-wide status indicator. Loaded here, before everything else and not
          deferred, because it wraps window.fetch to detect a dead/erroring
          server and must be installed before any script issues a request. -->
@@ -274,11 +274,11 @@
        primary button, the viewer's "+ Add Layer" and the requirements modal's
        layer row all open it, and none of those three shares a stylesheet.
        After datasetPicker.js, whose picker is this dialog's Dataset row. #}
-    <script src="{{ data.base_url }}/client/src/js/views/importSample.js?v=20261107_long_requests" defer></script>
+    <script src="{{ data.base_url }}/client/src/js/views/importSample.js?v=20261109_webperf" defer></script>
     <!-- New Dataset: a dataset from a folder (scan, match, create). After
        importSample.js, whose dialog styles it reuses. -->
     <script src="{{ data.base_url }}/client/src/js/views/datasetBuilder.js?v=20261029_bucket_datasets" defer></script>
-    <script src="{{ data.base_url }}/client/src/js/views/toolLoader.js?v=20261025_dataset_answers" defer></script>
+    <script src="{{ data.base_url }}/client/src/js/views/toolLoader.js?v=20261109_webperf" defer></script>
     {# Not deferred: every page controller below calls PlexoraPage.register at
        the top level of its own file, so the registry has to exist before any of
        them is parsed -- including the ones a routed page loads later. #}
@@ -286,7 +286,7 @@
     {# Deferred, because it looks for the viewer's own root element (#container)
        to decide whether this document has anything worth preserving -- and that
        element is in the content block, below. #}
-    <script src="{{ data.base_url }}/client/src/js/services/appRouter.js?v=20261002_hash_tab" defer></script>
+    <script src="{{ data.base_url }}/client/src/js/services/appRouter.js?v=20261109_webperf" defer></script>
 
     {# Assets of the plugin this page opened with, plus those of every plugin
        that is a LAYER section on this sample -- page_routes folds the two
