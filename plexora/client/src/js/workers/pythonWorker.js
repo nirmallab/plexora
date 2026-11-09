@@ -174,14 +174,22 @@ async function installWheels(names) {
 // A stage, loaded when Python first imports one of its modules
 // (plexora/browser/stages.py); Python waits through JSPI.
 async function loadStage(name, importer = "?") {
-    const stage = stagesInfo[name];
-    if (!stage) throw new Error(`no stage ${name}`);
+    return loadStages([name], importer);
+}
+
+// Several stages in one go (stages.StageFinder.preload): their packages in
+// one loadPackage, which fetches and compiles them side by side -- two calls
+// would wait for each other.
+async function loadStages(names, importer = "?") {
+    const wanted = [...names];
+    for (const name of wanted) if (!stagesInfo[name]) throw new Error(`no stage ${name}`);
     const started = performance.now();
-    const wheels = installWheels(stage.wheels);
-    if (stage.pyodide.length) await py.loadPackage(stage.pyodide, { messageCallback: () => {} });
+    const wheels = installWheels(wanted.flatMap((name) => stagesInfo[name].wheels));
+    const packages = wanted.flatMap((name) => stagesInfo[name].pyodide);
+    if (packages.length) await py.loadPackage(packages, { messageCallback: () => {} });
     await wheels;
-    self.postMessage({ event: { kind: "stage", stage: name, importer,
-                                ms: Math.round(performance.now() - started) } });
+    const ms = Math.round(performance.now() - started);
+    for (const stage of wanted) self.postMessage({ event: { kind: "stage", stage, importer, ms } });
 }
 
 // The page's cancel flags: job ids it wrote into shared memory while this
@@ -428,6 +436,7 @@ async function boot(args) {
     self.plexoraPost = (text) => self.postMessage({ event: JSON.parse(text) });
     self.plexoraCancelled = cancelled;
     self.plexoraLoadStage = loadStage;
+    self.plexoraLoadStages = loadStages;
     self.plexoraAsk = ask;
     self.plexoraJ2KReady = j2kReady;
     self.plexoraJ2K = j2kDecode;
@@ -549,7 +558,15 @@ def _load_stage(name):
         raise ImportError(f"the {name} stage could not be loaded in this browser")
     run_sync(js.plexoraLoadStage(name, _finder.importers.get(name, "?")))
 
+def _load_stages(names):
+    if not JSPI:
+        raise ImportError("stages could not be loaded in this browser")
+    from pyodide.ffi import to_js
+    run_sync(js.plexoraLoadStages(to_js(list(names)), "preload"))
+
 _finder = stages.install(_load_stage, loaded=tuple(js.plexoraStagesLoaded.to_py()))
+# An attribute, not an argument: a bundle older than this worker has no use for it.
+_finder.load_many = _load_stages
 json.dumps(boot.start(ORIGIN, base_url=SITE_BASE, post=_post, cancelled=lambda job: bool(js.plexoraCancelled(job)),
                       idle=_idle, waiting=lambda: bool(js.plexoraWaiting()), columns=_columns,
                       ask=_ask, wait_on=_wait_on, jspi=JSPI, sleep=lambda seconds: js.self.plexoraSleep(seconds),
@@ -557,6 +574,10 @@ json.dumps(boot.start(ORIGIN, base_url=SITE_BASE, post=_post, cancelled=lambda j
                       telemetry=json.loads(TELEMETRY)))
 `));
     phases.ready = at(); mark("ready");
+    // The quiet background work waits for counts from here: the page sends
+    // what it held for Python a moment after this (a reloaded project's
+    // first screen), and a stage load started in that moment held all of it.
+    lastAnswer = performance.now();
     if (args.telemetry && args.telemetry.endpoint) info.telemetry = await startTelemetry(args.telemetry);
     return { phases, info, store, derived, stages: Object.fromEntries(
         Object.entries(stagesInfo).map(([name, stage]) => [name, stage.bytes])),

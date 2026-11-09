@@ -163,9 +163,12 @@ def parquet(native=None) -> bool:
     one is read or written (an import from here loads it, through JSPI), and
     polars, which decided at its own import that pyarrow was absent, is told
     it is not (`_tell_polars`). `scan_parquet` reads eagerly: these tables
-    are a row per object, not a run's transcripts. True if patched."""
+    are a row per object, not a run's transcripts. True if patched (now or
+    before: run from the `polars` stage's hook, which can run twice)."""
     import polars as pl
 
+    if getattr(pl.read_parquet, "plexora_arrow", False):
+        return True
     if native_parquet() if native is None else native:
         return False
     write, read = pl.DataFrame.write_parquet, pl.read_parquet
@@ -193,6 +196,7 @@ def parquet(native=None) -> bool:
         return read_parquet(source, n_rows=n_rows, **keep).lazy()
 
     write_parquet.__doc__, read_parquet.__doc__ = write.__doc__, read.__doc__
+    read_parquet.plexora_arrow = True
     pl.DataFrame.write_parquet = write_parquet
     pl.read_parquet = read_parquet
     pl.scan_parquet = scan_parquet
@@ -319,8 +323,8 @@ def start(origin: str, *, base_url: str = "", post=None, cancelled=None, idle=No
     lap("codecs")
     shims["fetch"] = http(wait_on)
     lap("fetch")
-    shims["parquet"] = parquet()
-    lap("parquet")
+    # Parquet through pyarrow (`parquet`) waits for polars: its stage's hook
+    # (`stage`), polars being a stage of its own (stages.DEFERRED).
     shims["buckets"] = buckets()
     lap("buckets")
     shims["cache"] = cache()
@@ -377,17 +381,24 @@ def start(origin: str, *, base_url: str = "", post=None, cancelled=None, idle=No
     # does not wait for it and the first image Python encodes does not either.
     _work.spawn(data_model.prime_encoders, background=True, name="prime-encoders")
 
-    def scipy_stage():
-        # The `scipy` stage (plexora/browser/stages.py), no longer in the
-        # base: fetched and compiled once the first page has been answered,
-        # while the user looks at it, rather than inside the request that
-        # opens a project with cells (its cell index imports scipy).
-        try:
-            import scipy  # noqa: F401
-        except ImportError:  # a stage that could not load: the index says so when asked
-            pass
+    def stages_ahead():
+        # The `polars` and `scipy` stages (plexora/browser/stages.py), no
+        # longer in the base: fetched and compiled once the first page has
+        # been answered, while the user looks at it, rather than inside the
+        # request that opens a project (its table is polars, its cell index
+        # scipy). Together, in one go where the
+        # page can (`StageFinder.load_many`): their WebAssembly compiles side
+        # by side, as polars' did in the base. polars is run too
+        # (stages.Deferred), its Parquet shim with it.
+        from plexora.browser import stages
 
-    _work.spawn(scipy_stage, background=True, name="stage-scipy")
+        found = stages.finder()
+        if found is not None:
+            found.preload(("polars", "scipy"))
+
+    # One background task a quiet moment, in the order spawned: the encoders'
+    # warm-up (light), then the stages.
+    _work.spawn(stages_ahead, background=True, name="stages-ahead")
     lap("spawned")
     return {"version": plexora.__version__, "rules": len(list(app.url_map.iter_rules())),
             "seconds": round(time.perf_counter() - started, 3), "shims": shims, "timings": timings}
@@ -396,6 +407,11 @@ def start(origin: str, *, base_url: str = "", post=None, cancelled=None, idle=No
 def stage(name: str) -> None:
     """A package stage the page has just loaded (`stages.json`): whatever it
     needs before Plexora's adapters import it."""
+    if name == "polars":
+        # Its own stage (stages.DEFERRED): Parquet through pyarrow where it
+        # has none, and pyarrow or pandas if a stage brought them first.
+        parquet()
+        _tell_polars()
     if name in ("parquet", "h5ad"):
         # polars decided at its own import that pyarrow and pandas were absent
         # (they were); it is told otherwise now they are here.
@@ -428,6 +444,10 @@ def _venv_stand_in() -> None:
 
 
 def _tell_polars() -> None:
+    from plexora.browser import stages
+
+    if stages.waiting("polars"):
+        return  # polars not used yet: its own import will see what is installed
     try:
         from polars import dependencies
     except ImportError:

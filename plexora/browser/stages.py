@@ -10,6 +10,14 @@ does, an .ims h5py and `hdf5` does. Loading by import rather than
 by route means a stage can never be missing for a route nobody thought of,
 and costs nothing for a session that never needs it.
 
+A stage in `DEFERRED` loads at its module's first *use* instead: polars,
+which the modules that build the app import at their top (as they must on
+the desktop, where every C extension is imported before a request thread
+exists: `data_model.prime_hot_code`). On the website `install` puts a
+stand-in (`Deferred`) in `sys.modules` for it, so those imports cost nothing,
+and the first attribute anything reads from it loads the stage and makes the
+stand-in the real module, in place, as `importlib.util.LazyLoader` does.
+
 `pyodide` names packages in Pyodide's lockfile (their dependencies follow,
 less `DROP_DEPENDS`); `wheels` names pure-Python wheels the build fetches at
 the versions this checkout's lock pins; `platform` names WebAssembly wheels
@@ -24,12 +32,14 @@ whose wheels need a package neither it nor the base ships (`build.py`
 from __future__ import annotations
 
 import importlib.abc
+import importlib.machinery
 import importlib.util
 import sys
+import types
 
 STAGES = {
     "base": {
-        "pyodide": ["numpy", "polars", "pillow", "zarr", "numcodecs",
+        "pyodide": ["numpy", "pillow", "zarr", "numcodecs",
                     "pydantic", "pyyaml", "cryptography", "orjson", "msgpack", "jinja2",
                     "markupsafe", "packaging", "platformdirs", "click", "fsspec",
                     "typing-extensions", "zstandard", "narwhals"],
@@ -42,6 +52,16 @@ STAGES = {
         # called -- a stage arriving mid-request would cost more than it saves.
         "platform": ["plexora-kernels"],
         "modules": [],
+    },
+    "polars": {
+        # Every table Plexora reads (a project's cells, a gate's, the plugin
+        # store's). Not in the base any more: 0.7 s of every visit's start
+        # (its WebAssembly compiled at load, Chrome 157), and the home page
+        # reads no table. Loaded at polars' first use (`DEFERRED`), which the
+        # boot asks for as soon as the first page has been answered.
+        "pyodide": ["polars"],
+        "wheels": [],
+        "modules": ["polars"],
     },
     "scipy": {
         # scipy, for whatever of Plexora's imports it: a project's cell index
@@ -137,6 +157,10 @@ STAGES = {
     },
 }
 
+#: Modules whose stage loads at their first use, not their first import
+#: (`Deferred`): imported at the top of modules that build the app.
+DEFERRED = ("polars",)
+
 #: Pure packages Pyodide ships older than a stage's wheels need. The build
 #: ships each at the version uv.lock pins, under Pyodide's own name for it, so
 #: every package that depends on it loads that one: anndata 0.13 imports
@@ -171,6 +195,19 @@ class StageFinder(importlib.abc.MetaPathFinder):
         self.failed = {}
         #: Which module's import loaded each stage (for the page's record).
         self.importers = {}
+        #: The page's loader for several stages in one go (`preload`), when
+        #: it has one: their packages in one `loadPackage`, which compiles
+        #: their WebAssembly side by side. None: one stage after another.
+        self.load_many = None
+        #: The stand-ins `defer` made, by module name.
+        self.deferred = {}
+
+    @staticmethod
+    def _loaded(stage):
+        importlib.invalidate_caches()
+        from plexora.browser import boot
+
+        boot.stage(stage)
 
     def find_spec(self, name, path=None, target=None):
         if path is not None:  # a submodule: its package was found already
@@ -192,11 +229,131 @@ class StageFinder(importlib.abc.MetaPathFinder):
             self.failed[stage] = str(exc)
             return None
         self.loaded.add(stage)
-        importlib.invalidate_caches()
-        from plexora.browser import boot
-
-        boot.stage(stage)
+        self._loaded(stage)
         return None  # the ordinary finders find what was just installed
+
+    def preload(self, names) -> list:
+        """Load these stages now, as background work rather than inside the
+        request that first needs one, together where the page can
+        (`load_many`), and run any deferred module of theirs. A stage that
+        will not load is left for its first use to ask again and say why.
+        Returns the stages loaded."""
+        todo = [name for name in names if name not in self.loaded and name not in self.failed]
+        if not todo:
+            return []
+        for name in todo:
+            self.importers.setdefault(name, "preload")
+        try:
+            if self.load_many is not None:
+                self.load_many(todo)
+            else:
+                for name in todo:
+                    self._load(name)
+        except Exception:  # noqa: BLE001 -- the first use asks again and says why
+            return []
+        self.loaded.update(todo)
+        importlib.invalidate_caches()
+        for name in todo:
+            waiting_here = [stand_in for module, stand_in in self.deferred.items()
+                            if stage_of(module) == name and type(stand_in) is Deferred]
+            if waiting_here:
+                for stand_in in waiting_here:
+                    self.arrive(stand_in)  # runs the stage's hook
+            else:
+                self._loaded(name)
+        return todo
+
+    def defer(self, name: str) -> "Deferred | None":
+        """Put a stand-in for `name` in `sys.modules` (`Deferred`), unless its
+        stage is loaded already (a browser without JSPI loads every stage at
+        boot) or something imported it first."""
+        if stage_of(name) in self.loaded or name in sys.modules:
+            return None
+        stand_in = Deferred(name, self)
+        sys.modules[name] = self.deferred[name] = stand_in
+        return stand_in
+
+    def arrive(self, module: "Deferred") -> None:
+        """Load a deferred module's stage and run the real module in the
+        stand-in's place: every module that imported the stand-in holds the
+        real one after this."""
+        name = object.__getattribute__(module, "__name__")
+        stage = stage_of(name)
+        # Not a name of the real module's.
+        module.__dict__.pop("_plexora_finder", None)
+        if stage in self.failed:
+            raise ModuleNotFoundError(f"No module named {name!r} (its stage did not load: "
+                                      f"{self.failed[stage]})", name=name)
+        if stage not in self.loaded:
+            self.importers[stage] = _reader()
+            try:
+                self._load(stage)
+            except Exception as exc:  # noqa: BLE001 -- said by the error below
+                self.failed[stage] = str(exc)
+                raise ModuleNotFoundError(f"No module named {name!r} (its stage did not load: "
+                                          f"{exc})", name=name) from exc
+            self.loaded.add(stage)
+            importlib.invalidate_caches()
+        spec = importlib.machinery.PathFinder.find_spec(name)
+        if spec is None:
+            self.failed[stage] = "installed, but not found"
+            raise ModuleNotFoundError(f"No module named {name!r}", name=name)
+        # As `importlib.util.module_from_spec` would set them, on this object.
+        module.__class__ = types.ModuleType
+        module.__spec__, module.__loader__ = spec, spec.loader
+        module.__file__, module.__cached__ = spec.origin, spec.cached
+        if spec.submodule_search_locations is not None:
+            module.__path__ = spec.submodule_search_locations
+        module.__package__ = name if spec.submodule_search_locations is not None else spec.parent
+        try:
+            spec.loader.exec_module(module)
+        except BaseException as exc:
+            self.failed[stage] = f"{name} failed to import: {exc}"
+            raise
+        # The stage's hook, now there is a module to patch (it may have run
+        # once already, while this was a stand-in: `boot.parquet` is idempotent).
+        self._loaded(stage)
+
+
+class Deferred(types.ModuleType):
+    """A deferred module before its first use (`DEFERRED`): `import polars as
+    pl` at a module's top binds this, and the first attribute read from it
+    (`pl.DataFrame`, `from polars import col`, a submodule's import asking
+    for `__path__`) loads the stage and turns this object into polars itself.
+
+    `__spec__` is a placeholder so `importlib.util.find_spec("polars")` says
+    it is there (it is, one stage away) rather than raising."""
+
+    def __init__(self, name, finder):
+        super().__init__(name)
+        self.__spec__ = importlib.machinery.ModuleSpec(name, None, is_package=True)
+        self._plexora_finder = finder
+
+    def __getattr__(self, attr):
+        finder = self.__dict__.get("_plexora_finder")
+        if finder is None:  # arriving already, or failed: as a missing attribute
+            raise AttributeError(f"module {self.__name__!r} has no attribute {attr!r}")
+        try:
+            finder.arrive(self)  # takes `_plexora_finder` away first
+        except BaseException:
+            if type(self) is Deferred:
+                self._plexora_finder = finder  # asked again, it says the same
+            raise
+        return getattr(self, attr)
+
+
+def waiting(name: str) -> bool:
+    """Whether `name` is a deferred module not yet used (`Deferred`)."""
+    return type(sys.modules.get(name)) is Deferred
+
+
+def finder() -> StageFinder | None:
+    """The stage finder `install` put on the import path, if any (none on the
+    desktop)."""
+    for entry in sys.meta_path:
+        if isinstance(entry, StageFinder):
+            return entry
+    return None
 
 
 def _probing() -> bool:
@@ -227,6 +384,19 @@ def _importer() -> str:
     return frame.f_globals.get("__name__", "?") if frame is not None else "?"
 
 
+def _reader() -> str:
+    """Who read a deferred module's first attribute: the nearest frame outside
+    this module and the import machinery, as `module:function`."""
+    frame = sys._getframe(2)
+    while frame is not None and (frame.f_globals.get("__name__") == __name__
+                                 or frame.f_globals.get("__name__", "").startswith(
+                                     ("importlib", "_frozen_importlib"))):
+        frame = frame.f_back
+    if frame is None:
+        return "?"
+    return f"{frame.f_globals.get('__name__', '?')}:{frame.f_code.co_name}"
+
+
 def _wanted() -> bool:
     """Whether this import is one a stage should load for: Plexora's own, or
     a library function asking at run time (`frame.to_pandas()`) -- not a
@@ -249,4 +419,6 @@ def _wanted() -> bool:
 def install(load, loaded=("base",)) -> StageFinder:
     finder = StageFinder(load, loaded)
     sys.meta_path.insert(0, finder)
+    for name in DEFERRED:
+        finder.defer(name)
     return finder

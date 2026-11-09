@@ -44,6 +44,8 @@ try {
     let frame = await frameEl.contentFrame();
     await frame.waitForFunction(() => document.getElementById("quick_view_go") && !document.getElementById("plexora-boot"), null, { timeout: 120000, polling: 20 });
     say('homeMs'); out.steps.homeMs = Date.now() - t0;
+    // Which stage arrived when, and what asked for it (plexora/browser/stages.py).
+    await page.evaluate(() => { window.__benchStages = []; window.PlexoraPython.on("stage", (e) => window.__benchStages.push({ stage: e.stage, importer: e.importer, ms: e.ms, at: Math.round(performance.now()) })); }).catch(() => null);
     await page.waitForFunction(() => window.PlexoraShellStarted !== undefined, null, { timeout: 120000 });
     await page.evaluate(() => window.PlexoraShellStarted);
     say('pythonStartedMs'); out.steps.pythonStartedMs = Date.now() - t0;
@@ -156,6 +158,7 @@ try {
     out.steps.reloadLoaderAsked = asked;
     out.steps.reloadPicks = await page.evaluate(async () => (await window.PlexoraPicks.list()).map((p) => ({ id: p.id, kind: p.kind, files: (p.files || []).length, handles: Boolean(p.handles || p.handle) })));
     say('reloadPageWrittenMs'); out.steps.reloadPageWrittenMs = Date.now() - t0;
+    await page.evaluate(() => { window.__benchStages = window.__benchStages || []; window.PlexoraPython.on("stage", (e) => window.__benchStages.push({ stage: e.stage, importer: e.importer, ms: e.ms, at: Math.round(performance.now()) })); }).catch(() => null);
     await waitViewer(frame).catch(() => { out.steps.reloadViewerTimedOut = true; });
     say('reloadViewerDrawnMs'); out.steps.reloadViewerDrawnMs = Date.now() - t0;
     say('reloadReady'); out.steps.reloadReady = await pollReady(frame, name);
@@ -169,7 +172,8 @@ try {
     }
     say('perfMemory'); out.steps.perfMemory = await page.evaluate(async () => (performance.measureUserAgentSpecificMemory ? Math.round((await performance.measureUserAgentSpecificMemory()).bytes / 1e6) : null)).catch(() => null);
     say('heapMB'); out.steps.heapMB = await page.evaluate(async () => Math.round((await window.PlexoraPython.heap()) / 1e6));
-    out.steps.recentTail = (await pyRecent(page)).slice(-60).map((r) => ({ p: r.path.slice(0, 60), ms: r.ms, py: r.pyMs }));
+    out.steps.recentTail = (await pyRecent(page)).slice(-60).map((r) => ({ p: r.path.slice(0, 60), ms: r.ms, py: r.pyMs, at: r.at }));
+    out.steps.stages = await page.evaluate(() => window.__benchStages || []).catch(() => null);
     out.steps.stepsTail = await page.evaluate(() => window.PlexoraPython.steps().slice(-80));
     out.steps.handoffs = await frame.evaluate(() => (window.PlexoraBackend && window.PlexoraBackend.handoffs) || []).catch(() => null);
     out.workerBigLogs = (await Promise.all(workers.map((w) => w.evaluate(() => self.__bigLogs || []).catch(() => null)))).filter((x) => x && x.length);
