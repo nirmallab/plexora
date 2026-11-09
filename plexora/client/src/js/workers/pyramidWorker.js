@@ -22,8 +22,18 @@
  *  description, hands: <tiff worker URL>, workers, folder?}
  *  -> {progress: {tiles, total, bands, bandsTotal}}..., then
  *     {done, file, bytes, timings}, {exists, file} or {error}
+ * {op: "pace", hands: n}: at most n hands at work from now on (`paced`).
  */
+import { pacer } from "../node/pace.js";
 import { build, dtypeOf } from "../node/pyramid.js";
+
+// How many hands may work at once ({op: "pace", hands: n}): all of them while
+// nothing else is under way, one while the page waits on something
+// (services/browserPyramid.js `pace`). On LSP11385 a plain mask's build on
+// eight hands kept the viewer's first open waiting 20 s, Python opening the
+// image in 11 s instead of 1 s.
+const pace = pacer();
+const paced = (work) => pace.run(work);
 
 /** The browser node's tiff workers, each opened on the source. */
 function startHands(url, count, file) {
@@ -64,11 +74,11 @@ function startHands(url, count, file) {
     return {
         count,
         opened: Promise.all(workers.map((_, i) => call(i, "open", { file, decoder: "native" }))),
-        block: (i, job) => call(i, "block", job),
-        deflate: (bytes) => {
+        block: (i, job) => paced(() => call(i, "block", job)),
+        deflate: (bytes) => paced(() => {
             const i = load.indexOf(Math.min(...load));
             return call(i, "deflate", { buffer: bytes.buffer }, [bytes.buffer]).then((r) => r.bytes);
-        },
+        }),
         stop: () => workers.forEach((worker) => worker.terminate()),
     };
 }
@@ -134,6 +144,10 @@ async function sentence(error) {
 }
 
 self.onmessage = async ({ data }) => {
+    if (data.op === "pace") {
+        pace.set(data.hands);
+        return;
+    }
     if (data.op !== "build") return;
     const { file, key, name, kind = "image", shape, dtype, factors, tile, description, hands: url, workers,
             folder } = data;

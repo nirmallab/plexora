@@ -118,8 +118,9 @@ def test_the_same_answers_let_the_writes_go(probe):
     # /config's lastOpenedAt changes with every start: not a difference.
     assert probe["checked"] == {"checked": 3, "changed": []}
     assert probe["cleared"] is True
-    assert probe["asked"] == ["/config", "/get_channel_names?datasource=image",
-                              "/get_saved_channel_list?datasource=image"]
+    # The spec: Python's while none was kept, then asked again by the check.
+    assert probe["asked"] == ["spec:image", "/config", "/get_channel_names?datasource=image",
+                              "/get_saved_channel_list?datasource=image", "spec:image"]
     # The browser node checks its project again, with Python's spec.
     assert probe["revalidated"] == 1
     # A page given nothing from here never waits.
@@ -136,9 +137,37 @@ def test_a_changed_answer_refuses_the_writes_and_is_kept_anew(probe):
 
 
 def test_a_write_has_its_projects_state_asked_again(probe):
-    assert probe["recaptured"] == ["/config", "/get_saved_channel_list?datasource=image", "/image",
-                                   "/view_transform/image"]
+    # The channels' names too (a rename), and the browser node's spec (a mask
+    # attached): kept as Python gives them now, or the next reload's check
+    # finds them changed and refuses the page's writes.
+    assert probe["recaptured"] == ["/config", "/get_channel_names?datasource=image",
+                                   "/get_saved_channel_list?datasource=image", "/image",
+                                   "/view_transform/image", "spec:image"]
     assert probe["equalVolatile"] is True and probe["unequal"] is False
+
+
+def test_what_python_moves_on_by_itself_is_no_change(probe):
+    """Measured on LSP11385 with a plain (not pyramidal) mask: the spec was
+    kept while the page built the mask's pyramid, and auto-contrast's answer
+    while it was calibrating; a reload found both "changed", and every write
+    of the page was refused -- the channel list unsaved, the agent bridge
+    signing in again every 5 s."""
+    assert probe["specPending"] == {"checked": 1, "changed": []}
+    assert probe["specGeneration"] == {"checked": 1, "changed": []}
+    assert probe["specMoved"] == {"checked": 1, "changed": ["spec:image"]}
+    assert probe["specWarnings"] == ["kept answers: changed since they were kept: spec:image"]
+    assert probe["contrastMovedOn"] is True
+    assert probe["contrastChanged"] is False
+
+
+def test_the_tabs_agent_session_is_never_held_back():
+    unheld = BACKEND[BACKEND.index("const UNHELD = new Set(["):]
+    unheld = unheld[:unheld.index("]);")]
+    for endpoint in ("register_session", "ack_command", "leave_session", "post_capture"):
+        assert f'"agent_v1.{endpoint}"' in unheld
+        assert f'"agent_v1.{endpoint}"' in TABLE
+    answer = BACKEND[BACKEND.index("async function answer(request)"):BACKEND.index("function supports(")]
+    assert "!UNHELD.has(row.endpoint)" in answer[:answer.index("kept.cleared(global)")]
 
 
 def test_the_gate_answers_from_kept_answers_and_holds_writes():

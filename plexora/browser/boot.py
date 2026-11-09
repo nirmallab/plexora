@@ -312,6 +312,13 @@ def start(origin: str, *, base_url: str = "", post=None, cancelled=None, idle=No
         timings[name] = round((now - mark[0]) * 1000)
         mark[0] = now
 
+    # threadpoolctl (scikit-learn's, imported with the first fit) calls a
+    # method Pyodide 314 deprecated; the warning landed in every visitor's
+    # console and says nothing to them.
+    import warnings
+
+    warnings.filterwarnings("ignore", message=r"JsProxy\.as_object_map\(\) is deprecated",
+                            category=RuntimeWarning)
     environment(origin, base_url=base_url, data_root=data_root, licence_dir=licence_dir,
                 telemetry=telemetry)
     lap("environment")

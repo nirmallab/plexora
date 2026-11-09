@@ -12,6 +12,7 @@ const fixture = opt("--fixture", path.join(S, "fixture", "tonsil"));
 const files = opt("--files", "image.ome.tif,mask.tif,cells.csv").split(",").map((f) => path.join(fixture, f));
 const NO_RELOAD = args.includes("--no-reload");
 const ONLY_TOOLS = opt("--tools", null);
+const PROFILE_SETUP = args.includes("--profile-setup");
 const USE_INPUT = args.includes("--input");
 const say = (m) => process.stderr.write(`${new Date().toISOString().slice(11,19)} ${m}\n`);
 const out = { arm: "website", fixture, steps: {} };
@@ -39,7 +40,8 @@ try {
     await page.setViewportSize({ width: 1440, height: 900 });
     const origin = `http://127.0.0.1:${server.port}`;
     let t0 = Date.now();
-    await page.goto(`${origin}/`);
+    // `--profile-setup`: the worker's debug hooks (`?pydebug`), for the profile below.
+    await page.goto(`${origin}/${PROFILE_SETUP ? "?pydebug" : ""}`);
     let frameEl = await page.waitForSelector("#plexora-app", { timeout: 120000 });
     let frame = await frameEl.contentFrame();
     await frame.waitForFunction(() => document.getElementById("quick_view_go") && !document.getElementById("plexora-boot"), null, { timeout: 120000, polling: 20 });
@@ -122,6 +124,25 @@ try {
     // Tour.
     say('tour'); out.steps.tour = await tour(frame);
     // Tools.
+    if (PROFILE_SETUP) {
+        // Saving a tool's set-up form reloads the table: profiled in the
+        // website's own Python (cProfile, in the worker), the same answer the
+        // form sends with its defaults.
+        say('setupProfile'); out.steps.setupProfile = JSON.parse(await page.evaluate((code) => window.PlexoraPython.run(code), `
+import cProfile, io, json, pstats, time
+from plexora import app as _app
+_client = _app.test_client()
+_profile = cProfile.Profile()
+_t0 = time.perf_counter()
+_profile.enable()
+_reply = _client.post("/${name}/requirements", json={"tool": "roi", "roles": {"cell_id": "CellID"}})
+_profile.disable()
+_ms = round((time.perf_counter() - _t0) * 1000)
+_out = io.StringIO()
+pstats.Stats(_profile, stream=_out).sort_stats("cumulative").print_stats(45)
+json.dumps({"status": _reply.status_code, "ms": _ms, "profile": _out.getvalue()[-14000:]})
+`));
+    }
     say('tools'); out.steps.tools = await openTools(frame, page, ONLY_TOOLS ? ONLY_TOOLS.split(',') : null);
     // Figure library and back (the router or a full navigation?).
     t0 = Date.now();

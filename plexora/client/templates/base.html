@@ -45,7 +45,7 @@
          window.fetch). Before appStatus.js and not deferred, so a static
          build's page can put its own transport in place before that file
          wraps window.fetch and anything issues a request. -->
-    <script src="{{ data.base_url }}/client/src/js/services/backend.js?v=20261109_webperf" type="text/javascript"></script>
+    <script src="{{ data.base_url }}/client/src/js/services/backend.js?v=20261109_kept_writes" type="text/javascript"></script>
     <!-- App-wide status indicator. Loaded here, before everything else and not
          deferred, because it wraps window.fetch to detect a dead/erroring
          server and must be installed before any script issues a request. -->
@@ -82,9 +82,9 @@
     <script src="{{ data.base_url }}/client/src/js/pluginRegistry.js?v=20260929_ai_qc"></script>
     <script src="{{ data.base_url }}/client/src/js/services/datasetContext.js?v=20260820_csv_markers_log1p"></script>
     <script src="{{ data.base_url }}/client/src/js/views/rainbow.js?v=20260811_selection_provider"></script>
-    <script src="{{ data.base_url }}/client/src/js/services/dataLayer.js?v=20261107_contrast_lands"></script>
+    <script src="{{ data.base_url }}/client/src/js/services/dataLayer.js?v=20261109_provisional_window"></script>
     <script src="{{ data.base_url }}/client/src/js/services/numericData.js?v=20261030_gating_show"></script>
-    <script src="{{ data.base_url }}/client/src/js/views/channelList.js?v=20261107_contrast_lands"></script>
+    <script src="{{ data.base_url }}/client/src/js/views/channelList.js?v=20261109_provisional_window"></script>
     <script src="{{ data.base_url }}/client/src/js/views/cardList.js?v=20260925_desktop_app"></script>
     <script src="{{ data.base_url }}/client/src/js/views/layerStack.js?v=20261011_surfaces"></script>
     {# One display curve (linear or asinh) for every surface that draws a channel:
@@ -120,7 +120,7 @@
     <script src="{{ data.base_url }}/client/src/js/views/geneGroupModal.js?v=20261027_machine_chip"></script>
     <script src="{{ data.base_url }}/client/src/js/views/viewerControls.js?v=20261029_bucket_datasets"></script>
     <script src="{{ data.base_url }}/client/src/js/views/scaleCalibration.js?v=20260910_scalebar_pencil"></script>
-    <script src="{{ data.base_url }}/client/src/js/views/viewerSidebar.js?v=20261107_contrast_lands"></script>
+    <script src="{{ data.base_url }}/client/src/js/views/viewerSidebar.js?v=20261109_provisional_window"></script>
     {# After viewerSidebar (whose class it instantiates) and before
        layerManager (which mounts it). Both only have to be PRESENT -- the
        mount happens when a card is built -- but the order is what says so. #}

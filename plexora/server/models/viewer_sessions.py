@@ -195,12 +195,16 @@ def _reset_for_tests():
 def register(*, session_id=None, project=None, dataset=None, client="browser",
              capabilities=(), tools=(), page_url="", title="", revision=0) -> dict:
     """Register (or re-register) a tab. Idempotent on `session_id`: a tab that
-    navigated keeps its id -- and the commands queued for it."""
+    navigated keeps its id -- and the commands queued for it. `resumed` in the
+    answer: whether this server still knew the session (a tab reloaded after
+    the server restarted gets the same id, with its sequence numbers starting
+    again, and must not carry its old cursors: services/agentBridge.js)."""
     with _LOCK:
         _expire()
         sid = session_id if session_id and len(str(session_id)) <= 64 else None
         sid = sid or f"view_{uuid.uuid4().hex[:12]}"
         session = _SESSIONS.get(sid)
+        resumed = session is not None
         if session is None:
             session = _SESSIONS[sid] = Session(session_id=sid, project=project)
         session.project = project
@@ -215,7 +219,7 @@ def register(*, session_id=None, project=None, dataset=None, client="browser",
         session.navigating_to = None
         session.navigating_until = 0.0
         _changed()
-        return session.describe()
+        return {**session.describe(), "resumed": resumed}
 
 
 def heartbeat(session_id, *, revision=None, visible=None) -> Session | None:

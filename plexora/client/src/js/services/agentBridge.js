@@ -350,29 +350,10 @@ window.PlexoraAgentBridge = (function () {
         const stored = readStore();
         let id = session || stored.session_id || null;
         if (id && !session && await takenElsewhere(id)) id = null;
-        if (id && !session) {
-            cursor.after = 0;
-            cursor.afterEvent = 0;
-            // Does the server still know it? A session it has forgotten comes
-            // back as a NEW one under the same id, with its sequence numbers
-            // starting again from zero -- and cursors carried from the old one
-            // would silently skip everything it is sent.
-            try {
-                const response = await fetch(url(`${API}/${encodeURIComponent(id)}`),
-                    { credentials: "same-origin" });
-                if (response.status === 403) {
-                    halt();
-                    return false;
-                }
-                if (response.ok) {
-                    cursor.after = Number(stored.after) || 0;
-                    cursor.afterEvent = Number(stored.after_event) || 0;
-                    revision = Math.max(revision, (Number(stored.revision) || 0) + 1);
-                }
-            } catch (error) {
-                // Unreachable: register below will say so.
-            }
-        }
+        // An id from before this page (a reload, a navigation): its revision
+        // goes on from where it was.
+        const carried = Boolean(id && !session);
+        if (carried) revision = Math.max(revision, (Number(stored.revision) || 0) + 1);
         const response = await post(API, {
             session_id: id,
             project: datasource(),
@@ -392,7 +373,17 @@ window.PlexoraAgentBridge = (function () {
         const payload = await json(response);
         const described = payload.session || {};
         if (!described.view_id) return false;
-        if (described.view_id !== id) {
+        // Did the server still know it (`resumed`)? A session it had
+        // forgotten (it restarted: on the website, every reload) comes back
+        // as a NEW one under the same id, with its sequence numbers starting
+        // again from zero -- and cursors carried from the old one would
+        // silently skip everything it is sent. Said by the registration
+        // itself: asking first answered 404 on every such reload, an error
+        // in the console each time.
+        if (carried && described.view_id === id && described.resumed === true) {
+            cursor.after = Number(stored.after) || 0;
+            cursor.afterEvent = Number(stored.after_event) || 0;
+        } else if (carried || described.view_id !== id) {
             cursor.after = 0;
             cursor.afterEvent = 0;
         }

@@ -28,6 +28,7 @@ import pickle
 import tifffile as tf
 import re
 import collections
+import dataclasses
 import contextlib
 import contextvars
 import heapq
@@ -751,6 +752,56 @@ def _remote_segmentation():
     return seg_provider if seg_provider is not None and not seg_provider.is_local else None
 
 
+def _of_the_image(key) -> bool:
+    """A `_gmm_cache` entry measured from the image, not the table: a
+    channel's window `('qwindow', project, channel)` or its contrast fit
+    `(project, channel[, slab])`. A plugin's (`Dataset.cached`) are
+    `(project, (its key...))`, derived from the table, and go with it."""
+    return isinstance(key, tuple) and len(key) in (2, 3) and isinstance(key[1], str)
+
+
+def _image_identity(provider):
+    """What `open()` of a local image is a function of: the provider's reading
+    of it and its files as they are on disk. None for any other provider (an
+    image on a node is never kept: `_kept_image`)."""
+    from plexora.server.providers.local import LocalImageProvider
+
+    if type(provider) is not LocalImageProvider:
+        return None
+
+    def stamp(path):
+        if not path:
+            return None
+        try:
+            found = os.stat(path)
+        except OSError:
+            return None
+        return found.st_size, found.st_mtime_ns
+
+    return (provider.path, stamp(provider.path), provider._pyramid, stamp(provider._pyramid),
+            provider._rgb, provider._z_semantics, provider._t_semantics)
+
+
+#: `_image_identity` of the image the loaded project opened, taken as it was
+#: opened (`load_datasource`): what a reload compares the record with now.
+_image_opened_as = None
+
+
+def _kept_image(datasource_name, resolved):
+    """The image provider already open for `datasource_name`, when a reload
+    may keep it (`load_datasource` `keep_image`): the same project loaded,
+    its image opened without a failure, and the record naming the same image
+    read the same way, unchanged on disk since it was opened. None
+    otherwise: it is opened again."""
+    if _providers is None or _loaded_source != loaded_scope(datasource_name):
+        return None
+    if channels is None or "image" in _resource_errors or _image_opened_as is None:
+        return None
+    if _image_identity(resolved.image) != _image_opened_as:
+        return None
+    return _providers.image
+
+
 def gmm_cache_get_or_set(key, compute_fn):
     """Shared entry point into this module's _gmm_cache for feature modules
     (e.g. gating's per-selection GMM) that want the same warm/invalidate-on-
@@ -980,13 +1031,23 @@ def _clear_table_caches():
     _metadata_column_cache.clear()
 
 
-def load_datasource(datasource_name, reload=False, wait_for_table=False):
+def load_datasource(datasource_name, reload=False, wait_for_table=False, keep_image=False):
     """Make `datasource_name` the loaded project: its table, mask and image.
 
     A table at least `BACKGROUND_TABLE_BYTES` large is read behind the viewer
     (`_load_table_behind`) unless `wait_for_table` -- a caller that has to know
     the table reads before it answers, such as a route that restores the
     previous project when it does not.
+
+    `keep_image`: a reload of the project already loaded because how its
+    TABLE is read changed -- a column's role, the coordinates -- which the
+    caller knows (tool_routes.satisfy_requirements). The image already open
+    is kept (`_kept_image`), with what was measured of it: its overview,
+    stats, windows and contrast fits. Re-opening it re-parsed a 66 GB
+    OME-TIFF's 570 pages and re-read its overview (1.1 s on the website,
+    where every read is a slice of a picked file), and the warm-up then
+    measured every channel again. Everything the table feeds is dropped as on
+    any reload, and the mask is opened again (its cells are the table's).
     """
     global datasource
     global ball_tree
@@ -1002,6 +1063,7 @@ def load_datasource(datasource_name, reload=False, wait_for_table=False):
     global _remote
     global volume_source
     global _table_epoch
+    global _image_opened_as
     behind = None
     with load_lock:
         if _loaded_source == loaded_scope(datasource_name) and reload is False:
@@ -1021,6 +1083,9 @@ def load_datasource(datasource_name, reload=False, wait_for_table=False):
             # it, while a probe times out. Unreachability surfaces on the first
             # real call instead, where the caller can degrade.
             resolved = providers.resolve_providers(project)
+            kept_image = _kept_image(datasource_name, resolved) if reload and keep_image else None
+            if kept_image is not None:
+                resolved = dataclasses.replace(resolved, image=kept_image)
             behind = _loads_behind(project, wait_for_table)
             progress.begin(project, table=not behind)
             # A node that cannot be reached must not stop the project opening. It
@@ -1097,32 +1162,44 @@ def load_datasource(datasource_name, reload=False, wait_for_table=False):
             # the exception has reached the tile route it is one 500 of hundreds.
             # Nothing about the loud path changes: the same exception, with the
             # same traceback, carries on out of here.
-            try:
-                loaded_channels, loaded_zarray, loaded_metadata = attempt(
-                    "image", resolved.image.open, (None, None, {}))
-            except Exception as exc:
-                status, detail = classify_image_error(exc)
-                _record_image_failure(datasource_name, status, detail,
-                                      getattr(project.image, "src", None))
-                raise
-            if failures.get("image"):
-                # An unreachable node, which `attempt` caught and turned into a
-                # degraded load rather than a raise. Recorded too, so one probe
-                # answers for every way an image can be absent -- though the
-                # BANNER for this case stays resourceStatus's, which can offer to
-                # reconnect.
-                _record_image_failure(datasource_name,
-                                      "offline" if "image" in offline else "unavailable",
-                                      failures["image"],
-                                      getattr(project.image, "src", None))
+            if kept_image is not None:
+                loaded_channels, loaded_zarray, loaded_metadata = channels, zarray, metadata
+                opened_as = _image_opened_as
             else:
-                _clear_image_failure(datasource_name)
+                # Before the open: a file written while it is read is not
+                # the file that was read.
+                opened_as = _image_identity(resolved.image)
+                try:
+                    loaded_channels, loaded_zarray, loaded_metadata = attempt(
+                        "image", resolved.image.open, (None, None, {}))
+                except Exception as exc:
+                    status, detail = classify_image_error(exc)
+                    _record_image_failure(datasource_name, status, detail,
+                                          getattr(project.image, "src", None))
+                    raise
+            if kept_image is not None:
+                # Opened, recorded and wrapped (spacing, bricks) by the load
+                # that opened it.
+                loaded_volume = volume_source
+            else:
+                if failures.get("image"):
+                    # An unreachable node, which `attempt` caught and turned into a
+                    # degraded load rather than a raise. Recorded too, so one probe
+                    # answers for every way an image can be absent -- though the
+                    # BANNER for this case stays resourceStatus's, which can offer to
+                    # reconnect.
+                    _record_image_failure(datasource_name,
+                                          "offline" if "image" in offline else "unavailable",
+                                          failures["image"],
+                                          getattr(project.image, "src", None))
+                else:
+                    _clear_image_failure(datasource_name)
 
-            loaded_volume = getattr(resolved.image, "volume_source", None)
-            if loaded_volume is not None:
-                _apply_project_spacing(loaded_volume, project)
-                if not _with_volume_extension(datasource_name, loaded_volume):
-                    loaded_volume = _with_bricks(datasource_name, loaded_volume)
+                loaded_volume = getattr(resolved.image, "volume_source", None)
+                if loaded_volume is not None:
+                    _apply_project_spacing(loaded_volume, project)
+                    if not _with_volume_extension(datasource_name, loaded_volume):
+                        loaded_volume = _with_bricks(datasource_name, loaded_volume)
 
             datasource = loaded_datasource
             # An index never outlives the table it was built from: the callers
@@ -1134,6 +1211,7 @@ def load_datasource(datasource_name, reload=False, wait_for_table=False):
             volume_source = loaded_volume
             zarray = loaded_zarray
             metadata = loaded_metadata
+            _image_opened_as = opened_as if not failures.get("image") else None
             source = datasource_name
             _providers = resolved
             _resource_errors.clear()
@@ -1160,16 +1238,21 @@ def load_datasource(datasource_name, reload=False, wait_for_table=False):
                     load_ball_tree(datasource_name, reload=True)
             # Data on disk just changed underneath us (first load or explicit
             # reload) -- any cached GMM/description results are now stale.
-            _gmm_cache.clear()
-            # The persisted quantization windows are keyed on the image file's
-            # fingerprint, so they survive a reload that did not change the image
-            # -- which is the common case (a segmentation regenerated, a column
-            # remapped). Only this process's memo of them is dropped, so the next
-            # read re-fingerprints and finds out for itself.
-            _quantization_store_cache.clear()
+            # Unless the image was kept: then what was measured of it stays.
+            if kept_image is None:
+                _gmm_cache.clear()
+                # The persisted quantization windows are keyed on the image file's
+                # fingerprint, so they survive a reload that did not change the image
+                # -- which is the common case (a segmentation regenerated, a column
+                # remapped). Only this process's memo of them is dropped, so the next
+                # read re-fingerprints and finds out for itself.
+                _quantization_store_cache.clear()
+                _image_stats_cache.clear()
+                _view_overview_cache.clear()
+            else:
+                for key in [key for key in _gmm_cache if not _of_the_image(key)]:
+                    _gmm_cache.pop(key, None)
             _description_cache.clear()
-            _image_stats_cache.clear()
-            _view_overview_cache.clear()
             _consistency_cache.clear()
             _gate_filter_cache.clear()
             _feature_column_cache.clear()
@@ -2060,6 +2143,17 @@ def _warm_datasource_caches(datasource_name):
                 if plan:
                     _work.spawn(_warm_on_page, datasource_name, load_generation, plan, 0,
                                 background=True, name=f"warm-{plan[0][0].__name__}-{plan[0][1]}")
+                # Beside it, every channel's contrast fit ahead of its click,
+                # the shown ones first: a fit is of the overview alone (0.4-
+                # 0.6 s of WebAssembly on a 40-channel slide, whatever the
+                # slide's size), so it waits on no scan -- with the window
+                # still provisional (`_fit_ahead`) -- and a channel switched on
+                # later has its fit at once, as the desktop's threads give it.
+                # One fit a task: a click waits for one at most.
+                ahead = [(_fit_ahead, fullname) for fullname in to_warm]
+                if ahead:
+                    _work.spawn(_warm_on_page, datasource_name, load_generation, ahead, 0,
+                                background=True, name=f"warm-fit-{ahead[0][1]}")
                 return
             # Pass 1 -- everything the first paint blocks on.
             for fullname in to_warm:
@@ -2089,7 +2183,7 @@ def _warm_datasource_caches(datasource_name):
 #: How long the website's warm-up looks at the page's scan of a channel's
 #: plane before giving the worker back (`_warm_on_page`): the longest a
 #: request arriving meanwhile waits for it.
-_PAGE_WINDOW_LOOK_MS = 250
+_PAGE_WINDOW_LOOK_MS = 100
 #: How long a request for a channel the page is still scanning looks at the
 #: scan before it is put back in the worker's queue (`_page_window_or_retry`).
 _PAGE_WINDOW_REQUEST_LOOK_MS = 100
@@ -2114,13 +2208,14 @@ def _warm_on_page(datasource_name, generation, plan, at):
         return
     step, fullname = plan[at]
     try:
-        upcoming = [name for kind, name in plan[at + 1:] if kind is get_image_channel_stats][:1]
-        found = _page_window_look(fullname, datasource_name, wait_ms=_PAGE_WINDOW_LOOK_MS,
-                                  urgent=False, ahead=upcoming)
-        if found is page.WINDOW_PENDING:
-            _work.spawn(_warm_on_page, datasource_name, generation, plan, at, background=True,
-                        name=f"warm-window-{fullname}")
-            return
+        if step is not _fit_ahead:
+            upcoming = [name for kind, name in plan[at + 1:] if kind is get_image_channel_stats][:1]
+            found = _page_window_look(fullname, datasource_name, wait_ms=_PAGE_WINDOW_LOOK_MS,
+                                      urgent=False, ahead=upcoming)
+            if found is page.WINDOW_PENDING:
+                _work.spawn(_warm_on_page, datasource_name, generation, plan, at, background=True,
+                            name=f"warm-window-{fullname}")
+                return
         step(fullname, datasource_name)
     except UnknownChannelError:
         pass
@@ -2131,8 +2226,25 @@ def _warm_on_page(datasource_name, generation, plan, at):
         _log.debug("Skipped warming %s in %s: %s", fullname, datasource_name, exc)
     if at + 1 < len(plan):
         following, name = plan[at + 1]
+        label = "fit" if following is _fit_ahead else following.__name__
         _work.spawn(_warm_on_page, datasource_name, generation, plan, at + 1, background=True,
-                    name=f"warm-{following.__name__}-{name}")
+                    name=f"warm-{label}-{name}")
+
+
+def _fit_ahead(channel_name, datasource_name):
+    """The website's warm-up: a channel's contrast fit before anyone asks --
+    the exact one when its window is known already (stored, or scanned), else
+    the fit with the provisional window (`_provisional_gmm`), which the exact
+    packet takes over unfitted once the window is in."""
+    if (datasource_name, channel_name) in _gmm_cache:
+        return
+    known = _gmm_cache.get(('qwindow', datasource_name, channel_name))
+    if known is None:
+        known = _quantization_windows(datasource_name).get(channel_name)
+    if known is not None:
+        get_channel_gmm(channel_name, datasource_name)
+    else:
+        _provisional_gmm(channel_name, datasource_name)
 
 
 def _page_window_look(channel_name, datasource_name, *, wait_ms, urgent, ahead=()):
@@ -2165,7 +2277,7 @@ def _page_window_look(channel_name, datasource_name, *, wait_ms, urgent, ahead=(
                             urgent=urgent, ahead=others)
 
 
-def _page_window_or_retry(channel_name, datasource_name):
+def _page_window_or_retry(channel_name, datasource_name, wait_ms=None):
     """A request for a channel's stats or fit on the website, whose window
     the page is still scanning: raises `providers.browser.WindowPending`
     after a short look, and the worker asks again later with the page's
@@ -2175,12 +2287,15 @@ def _page_window_or_retry(channel_name, datasource_name):
     waits inside the request itself: a request answered while it was
     suspended could need a lock it holds, or suspend in its turn, and the
     worker froze (plexora/_work.py `checkpoint`). Only from the two routes
-    (`patient=True`), which answer the exception with a retry."""
+    (`patient=True`), which answer the exception with a retry. `wait_ms` 0:
+    an ask that takes a provisional window instead, which only says the scan
+    is wanted now (urgent) and does not wait for it."""
     from plexora.server.providers import browser as page
 
     if _work.threaded():
         return
-    if _page_window_look(channel_name, datasource_name, wait_ms=_PAGE_WINDOW_REQUEST_LOOK_MS,
+    wait = _PAGE_WINDOW_REQUEST_LOOK_MS if wait_ms is None else wait_ms
+    if _page_window_look(channel_name, datasource_name, wait_ms=wait,
                          urgent=True) is page.WINDOW_PENDING:
         raise page.WindowPending(channel_name)
 
@@ -2966,7 +3081,7 @@ def _unplaced_cells(project):
     return int(points.shape[0]), int((~np.isfinite(points).all(axis=1)).sum())
 
 
-def get_channel_gmm(channel_name, datasource_name, view="", *, patient=False):
+def get_channel_gmm(channel_name, datasource_name, view="", *, patient=False, provisional=False):
     """The contrast mixture fit for one channel.
 
     `view` names a view of a volume; only a slab projection has a fit of its
@@ -2986,7 +3101,16 @@ def get_channel_gmm(channel_name, datasource_name, view="", *, patient=False):
     if cached is not None:
         return cached
     if patient and slab is None and not _work.threaded():
-        _page_window_or_retry(channel_name, datasource_name)
+        from plexora.server.providers import browser as page
+
+        try:
+            _page_window_or_retry(channel_name, datasource_name, 0 if provisional else None)
+        except page.WindowPending:
+            # As get_image_channel_stats': the fit, now, with the window
+            # still provisional (`_provisional_gmm`).
+            if not provisional:
+                raise
+            return _provisional_gmm(channel_name, datasource_name)
         cached = _gmm_cache.get(cache_key)
         if cached is not None:
             return cached
@@ -3501,6 +3625,32 @@ def quantization_window_of(channel_pyramid, index):
     return (0.0, max(ceiling, 1.0))
 
 
+#: (datasource, load_generation, channel) -> a fit made with a provisional
+#: window (`_provisional_gmm`), taken by `_compute_channel_gmm` once the exact
+#: one is known: only the packet's window differs.
+_provisional_fits: dict = {}
+
+
+def _provisional_gmm(channel_name, datasource_name):
+    """A planar channel's contrast fit on the website while the page still
+    reads its full-resolution plane: the fit (`channel_gmm_of`) over the
+    overview, which is all it is made of -- the window is only carried in the
+    packet -- with `_provisional_stats`' window and `window_exact` False. Not
+    in `_gmm_cache` or the project's stored fits, which hold exact packets;
+    kept for this load so the exact packet is not fitted again."""
+    key = (datasource_name, load_generation, channel_name)
+    made = _provisional_fits.get(key)
+    if made is None:
+        index = real_channel_index(channel_name, datasource_name)
+        plane = _require_overview(datasource_name)[index]
+        top = float(np.max(plane)) if getattr(plane, "size", 0) else 0.0
+        made = {**channel_gmm_of(plane, 0.0, max(top, 1.0)), "window_exact": False}
+        for old in [k for k in _provisional_fits if k[:2] != key[:2]]:
+            _provisional_fits.pop(old, None)
+        _provisional_fits[key] = made
+    return made
+
+
 def _compute_channel_gmm(channel_name, datasource_name, cache_key, slab=None):
     global datasource
     global source
@@ -3521,6 +3671,12 @@ def _compute_channel_gmm(channel_name, datasource_name, cache_key, slab=None):
     # windows at once on the desktop and the website alike.
     key = _fit_key(image_channelIdx, plane, qmin, qmax) if slab is None else None
     packet_gmm = _stored_fit(datasource_name, channel_name, key) if key else None
+    if packet_gmm is None and slab is None:
+        # Fitted already while the window was provisional: the same fit.
+        made = _provisional_fits.get((datasource_name, load_generation, channel_name))
+        if made is not None:
+            packet_gmm = {k: v for k, v in made.items() if k != "window_exact"}
+            packet_gmm.update({"qmin": qmin, "qmax": qmax})
     if packet_gmm is None:
         packet_gmm = channel_gmm_of(plane, qmin, qmax)
         if key:
@@ -3757,7 +3913,8 @@ def channel_gmm_of(image_data, qmin, qmax):
 _HINT_PERCENTILES = (50.0, 99.5)
 
 
-def get_image_channel_stats(channel_name, datasource_name, view="", *, patient=False):
+def get_image_channel_stats(channel_name, datasource_name, view="", *, patient=False,
+                            provisional=False):
     """Per-channel image_min/image_max/image_histogram, split out of
     get_datasource_description so a page load only pays for the channels the
     user actually activates instead of every channel up front.
@@ -3794,7 +3951,13 @@ def get_image_channel_stats(channel_name, datasource_name, view="", *, patient=F
     or a section shares the channel's packet, which is this function with no
     view at all -- see `_slab_view`.
 
-    `patient`: as get_channel_gmm's.
+    `patient`: as get_channel_gmm's. `provisional` (the website, a viewer
+    drawing HD tiles): while the page still reads the channel's plane, the
+    packet made with a provisional window at once (`_provisional_stats`)
+    rather than "again later" -- an HD tile is windowed on the GPU in raw
+    units, so the exact window only bounds the slider there, and the channel
+    is drawn now instead of after a full-resolution scan. Never on the
+    desktop, whose threads read the plane itself.
     """
     global zarray
     global config
@@ -3808,7 +3971,14 @@ def get_image_channel_stats(channel_name, datasource_name, view="", *, patient=F
     if cache_key in _image_stats_cache:
         return _image_stats_cache[cache_key]
     if patient and not _work.threaded():
-        _page_window_or_retry(channel_name, datasource_name)
+        from plexora.server.providers import browser as page
+
+        try:
+            _page_window_or_retry(channel_name, datasource_name, 0 if provisional else None)
+        except page.WindowPending:
+            if not provisional:
+                raise
+            return _provisional_stats(channel_name, datasource_name)
         if cache_key in _image_stats_cache:
             return _image_stats_cache[cache_key]
 
@@ -3839,6 +4009,22 @@ def get_image_channel_stats(channel_name, datasource_name, view="", *, patient=F
     if exact:
         _image_stats_cache[cache_key] = stats
     return stats
+
+
+def _provisional_stats(channel_name, datasource_name):
+    """A planar channel's stats packet on the website while the page still
+    reads its full-resolution plane for the exact window: made with
+    (0, the overview plane's largest value) and `window_exact` False, and
+    not kept -- the next ask once the scan is done is answered exactly (the
+    viewer asks again: views/channelList.js `awaitExactWindow`). Every value
+    the packet is made of -- the histogram, image_min/image_max, the hints --
+    is of the overview, so it lies inside that window, and so does the fit's
+    vmin/vmax that follows (`channel_gmm_of` clips to the overview's max):
+    the channel is drawn at the contrast the exact packet gives it."""
+    index = real_channel_index(channel_name, datasource_name)
+    plane = _require_overview(datasource_name)[index]
+    top = float(np.max(plane)) if getattr(plane, "size", 0) else 0.0
+    return {**channel_stats_of(plane, 0.0, max(top, 1.0)), "window_exact": False}
 
 
 def _slab_channel_stats(channel_name, datasource_name, slab):

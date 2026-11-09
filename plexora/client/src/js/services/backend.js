@@ -99,6 +99,13 @@
 
     const compiled = routes ? routes.map((row) => ({ ...row, regex: new RegExp(row.pattern) })) : [];
 
+    //: Writes that save nothing of a project: this tab's own session with the
+    //: agent API (services/agentBridge.js). Never held back by a page's kept
+    //: answers -- refused, the bridge signs in again every few seconds for as
+    //: long as the page is open.
+    const UNHELD = new Set(["agent_v1.register_session", "agent_v1.ack_command",
+                            "agent_v1.leave_session", "agent_v1.post_capture"]);
+
     //: A path of the site as the route table names it: the site's base path
     //: (services/shell.js `BASE`; "" at a site's root) taken off; null for a
     //: path outside the site (a node's own `/node/v1/...` beside it on a
@@ -197,7 +204,7 @@
             // given each of them again: the same, and it goes; any different,
             // and it is refused, since the page may be saving back what was
             // true before (the page is replaced, or offers a reload).
-            if (kept && !["GET", "HEAD"].includes(request.method)
+            if (kept && !["GET", "HEAD"].includes(request.method) && !UNHELD.has(row.endpoint)
                 && !await kept.cleared(global).catch(() => false)) {
                 return json({ success: false, ok: false, error: "This project changed while Plexora was "
                               + "starting. Reload to see it as it is now; this change was not saved." }, 409);

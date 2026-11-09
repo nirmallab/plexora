@@ -232,6 +232,7 @@ class SourceImage:
         from plexora.server.utils import tiff_series
 
         self._file = tifffile.TiffFile(source.path, is_ome=False)
+        self._path = str(source.path)
         self._zarr = zarr.open(
             tiff_series.channel_series(self._file).aszarr(), mode="r")
         self._is_array = hasattr(self._zarr, "shape")
@@ -415,6 +416,60 @@ class SourceImage:
             if src.rsplit("/", 1)[-1] == key:
                 return index
         return None
+
+    def read_many(self, jobs):
+        """`read(channel_index, level, box)` for each of `jobs`, in order.
+
+        On the website a picked TIFF's rectangles are asked of the page in one
+        question (`providers.browser.page_regions`): its workers decode the
+        tiles under them side by side with the browser's own zlib, where Python
+        would decode them one at a time in WebAssembly -- the cell crops of an
+        auto-contrast run, seconds a channel on a large slide. The same values
+        (the page reads the file only as Python does). Whatever the page does
+        not answer is read here, as is everything everywhere else.
+        """
+        jobs = list(jobs)
+        found = self._page_reads(jobs)
+        if found is None:
+            return [self.read(*job) for job in jobs]
+        return [got if got is not None else self.read(*job) for job, got in zip(jobs, found)]
+
+    def _page_reads(self, jobs):
+        """`read_many`'s rectangles as the page reads them, each `(array,
+        clipped)` or None for one left to `read`; None for none at all."""
+        path = getattr(self, "_path", None)
+        if (not jobs or path is None or self._remote is not None or self._pyramid is not None
+                or self.spec is not None or self._budgeted):
+            return None
+        from plexora.server.providers import browser as page
+
+        if not page.is_page_file(path):
+            return None
+        levels = [self.level(index) for index in range(self.levels)]
+        if any(getattr(level, "ndim", 0) != 3 for level in levels):
+            return None
+        asked, where, out = [], [], [None] * len(jobs)
+        for at, (channel_index, level, box) in enumerate(jobs):
+            array = levels[level]
+            height, width = array.shape[-2], array.shape[-1]
+            x0 = max(0, min(int(math.floor(box[0])), width))
+            y0 = max(0, min(int(math.floor(box[1])), height))
+            x1 = max(x0, min(int(math.ceil(box[2])), width))
+            y1 = max(y0, min(int(math.ceil(box[3])), height))
+            if x1 <= x0 or y1 <= y0 or (x1 - x0) * (y1 - y0) > MAX_SOURCE_PIXELS:
+                continue        # `read`'s own answer (an empty block, or its refusal)
+            asked.append((int(channel_index), int(level), (x0, y0, x1, y1)))
+            where.append(at)
+        if not asked:
+            return None
+        got = page.page_regions(path, [tuple(level.shape) for level in levels],
+                                levels[0].dtype, asked)
+        if got is None:
+            return None
+        for at, (_channel, _level, clipped), pixels in zip(where, asked, got):
+            if pixels is not None:
+                out[at] = (pixels, clipped)
+        return out
 
     def read(self, channel_index, level, box):
         """A rectangle of one channel, at one level, as a 2-D array.

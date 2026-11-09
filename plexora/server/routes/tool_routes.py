@@ -415,7 +415,12 @@ def satisfy_requirements(datasource):
         return jsonify(success=False, error=str(exc)), 400
 
     if reload_needed:
-        error = _reload_or_restore(datasource, project)
+        # An answer about how the table is read -- a column's role, the
+        # coordinates, the features -- leaves the image as it is: the reload
+        # keeps it open, with what was measured of it (data_model
+        # `keep_image`). A new data file or mask is a reload of everything.
+        keeps = not data_path and not payload.get("segmentation")
+        error = _reload_or_restore(datasource, project, keep_image=keeps)
         if error:
             return jsonify(success=False, error=error), 400
 
@@ -465,7 +470,7 @@ def satisfy_requirements(datasource):
     )
 
 
-def _reload_or_restore(datasource, previous, wait_for_table=True):
+def _reload_or_restore(datasource, previous, wait_for_table=True, keep_image=False):
     """Reload the datasource, putting `previous` back if it will not load.
 
     An answer is only really accepted once the file can be read with it. A role
@@ -492,12 +497,15 @@ def _reload_or_restore(datasource, previous, wait_for_table=True):
     the canvas for the read -- the import dialog's "Add data" -- and learns
     about a table that will not read from the load status instead
     (data_model._with_table_behind).
+
+    `keep_image`: only how the table is read changed (data_model
+    `load_datasource`). Restoring `previous` reloads everything.
     """
     from plexora.server.providers.base import ResourceUnavailable
 
     try:
         data_model.load_datasource(datasource, reload=True,
-                                   wait_for_table=wait_for_table)
+                                   wait_for_table=wait_for_table, keep_image=keep_image)
         return None
     except ResourceUnavailable:
         raise

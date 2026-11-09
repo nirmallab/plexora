@@ -61,6 +61,17 @@ def test_register_is_idempotent_and_keeps_queued_commands():
     assert again["view_id"] == sid and again["project"] == "b"
     work = vs.wait_for_work(sid)
     assert [c["type"] for c in work["commands"]] == ["pan_to"]
+    # The answer says it was known: the tab keeps its cursors.
+    assert first["resumed"] is False and again["resumed"] is True
+
+
+def test_a_session_this_server_never_knew_is_not_resumed():
+    """A tab reloaded after the server restarted (on the website, every
+    reload) registers under its old id; the answer says the server did not
+    know it, so the tab's cursors start again (services/agentBridge.js) --
+    without first asking for it and getting a 404 in the console."""
+    again = vs.register(session_id="view_from_before", project="a")
+    assert again["view_id"] == "view_from_before" and again["resumed"] is False
 
 
 def test_a_command_round_trip():

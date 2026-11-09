@@ -76,9 +76,10 @@ function makeServer() {
         if (!sid && method === "POST") {
             const body = JSON.parse(init.body);
             const id = body.session_id || `view_${server.nextId++}`;
+            const resumed = server.sessions.has(id);
             server.sessions.set(id, body);
             server.registrations.push(body);
-            return respond(200, { success: true, session: { view_id: id }, idle_poll_s: 5, held_poll_s: 15 });
+            return respond(200, { success: true, session: { view_id: id, resumed }, idle_poll_s: 5, held_poll_s: 15 });
         }
         if (sid && !action && method === "GET") {
             return server.sessions.has(sid) ? respond(200, { success: true }) : respond(404, {});
@@ -836,6 +837,12 @@ async function run(cmd) {
     fresh.bridge.stop();
     check("a forgotten session keeps its id", (server.registrations[2] || {}).session_id === sid);
     check("...but restarts its cursors", fresh.bridge._status().cursor.afterEvent === 0, fresh.bridge._status());
+    // The registration says whether the server knew it: nothing is asked
+    // first, so a server that restarted (the website, on every reload) is
+    // never answered with a 404 in the console.
+    check("a reloaded tab asks nothing before registering",
+        !server.requests.some((r) => r.method === "GET" && /\/sessions\/[^/]+$/.test(r.path)),
+        server.requests.filter((r) => r.method === "GET").map((r) => r.path));
 
     // A 404 mid-life: the server restarted. Re-register, then carry on.
     server.sessions.clear();

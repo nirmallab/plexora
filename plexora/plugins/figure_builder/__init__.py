@@ -36,7 +36,7 @@ schema and the operation vocabulary) is left to the factory.
 
 from plexora.api.plugin import NavItem, Plugin, Requires
 
-VERSION = "20261109_webperf"
+VERSION = "20261109_csp_handlers"
 
 
 def _blueprint():

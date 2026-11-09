@@ -236,14 +236,33 @@ def _read_plane_crops(session, record, cells, *, channels, crop_px, tile_px, mas
         with source_image.SHELF.reader(image_data, view=view) as reader:
             return reader.read(index, level, block)
 
-    # Read side by side, laid out in order: the same crops as one at a time.
-    planes = _pool().map(read, reads) if len(reads) > 1 else map(read, reads)
+    planes = None
+    if not _work.threaded() and len(reads) > 1:
+        # The website: one question to the page for every rectangle, which its
+        # workers read side by side (source_image `read_many`).
+        with source_image.SHELF.reader(image_data, view=view) as reader:
+            planes = reader.read_many([(index, level, block) for block, _o, _n, index in reads])
+    if planes is None:
+        # Read side by side, laid out in order: the same crops as one at a time.
+        planes = _pool().map(read, reads) if len(reads) > 1 else map(read, reads)
     mask_status, labels_by_group = "none", None
     if mask:
         # The mask's reads, meanwhile, on this thread (a mask provider is
         # read by one thread at a time).
         provider, mask_status, _reason, _locator = render._mask_for(record)
-        if provider is not None:
+        if provider is not None and z is None and not _work.threaded() \
+                and hasattr(provider, "read_regions"):
+            # The website: every group's labels in one question to the page
+            # (`LocalSegmentationProvider.read_regions`), as the pixels above.
+            mask_level = level + record.segmentation.extra_levels
+            boxes, owners = [], []
+            for members in groups.values():
+                boxes.append((min(c.box[0] for c in members), min(c.box[1] for c in members),
+                              max(c.box[2] for c in members), max(c.box[3] for c in members)))
+                owners.append(members)
+            labels_by_group = [(members, box[0], box[1], labels) for members, box, labels
+                               in zip(owners, boxes, provider.read_regions(mask_level, boxes))]
+        elif provider is not None:
             mask_level = level + record.segmentation.extra_levels
             labels_by_group = []
             for members in groups.values():

@@ -405,3 +405,57 @@ def test_the_ifd_offsets_are_kept_until_the_file_changes(tmp_path):
     assert node_spec.main_ifds(str(tmp_path / "missing.tif")) is None
     (tmp_path / "not.tif").write_bytes(b"not a tiff")
     assert node_spec.main_ifds(str(tmp_path / "not.tif")) is None
+
+
+# -- the page's scan of a channel's maximum (node/tiffReader.js `max`) ---------
+#
+# What data_model.quantization_window_of reads every full-resolution pixel
+# for, on the website done by the page's workers. A tiled plane is read tile by
+# tile -- large reads, the browser's inflate, the predictor undone and the
+# maximum taken in one pass over each tile inside the image and the window --
+# at the speed the desktop reads it (3 s a channel of LSP11385, not 7-9 s).
+# Held to the window-by-window `region` reads it replaced, and to numpy.
+
+MAX_PROBE = ROOT / "tests" / "js" / "tiff_max_probe.mjs"
+
+
+def _max_file(tmp_path, dtype, options, byteorder="<", shape=(2, 300, 517)):
+    out = tmp_path / f"max_{dtype}_{options.get('compression', 'none')}_{options.get('predictor', 1)}_{byteorder}.tif"
+    data = _pixels(dtype, shape, seed=11)
+    data[1, -1, -1] = np.iinfo(dtype).max if np.issubdtype(np.dtype(dtype), np.integer) else 1e6
+    with tifffile.TiffWriter(out, byteorder=byteorder) as tiff:
+        for plane in data:          # a page a channel, as an OME-TIFF's
+            tiff.write(plane, tile=(128, 64), photometric="minisblack", metadata=None, **options)
+    return out, data
+
+
+@pytest.mark.parametrize("dtype, options, byteorder", [
+    ("uint16", {"compression": "zlib", "predictor": True}, "<"),
+    ("uint16", {"compression": "zlib"}, "<"),
+    ("uint16", {}, "<"),
+    ("uint16", {"compression": "zlib", "predictor": True}, ">"),
+    ("uint8", {"compression": "zlib", "predictor": True}, "<"),
+    ("uint8", {}, "<"),
+])
+def test_the_pages_maximum_of_a_tiled_plane_is_every_pixels(tmp_path, dtype, options, byteorder):
+    path, data = _max_file(tmp_path, dtype, options, byteorder)
+    done = subprocess.run([NODE, str(MAX_PROBE), str(path), str(data.shape[0])], capture_output=True,
+                          text=True, encoding="utf-8", timeout=300)
+    assert done.returncode == 0, done.stderr[-3000:]
+    found = json.loads(done.stdout.strip().splitlines()[-1])["channels"]
+    for row, plane in zip(found, data):
+        assert row["tiled"], row
+        width, height = plane.shape[1], plane.shape[0]
+        odd = max(int(plane[5:min(height, 77), 3:min(width, 141)].max()),
+                  int(plane[max(0, height - 61):, max(0, width - 97):].max()))
+        assert row["whole"] == int(plane.max()) and row["odd"] == odd, row
+        # geotiff.js undoes a big-endian file's predictor in the wrong byte
+        # order (its region reads drift from Python's); the scan does not.
+        if byteorder == "<" or "predictor" not in options:
+            assert row["regionWhole"] == row["whole"] and row["regionOdd"] == row["odd"], row
+    # The rectangles the page reads for Python: every pixel Python's.
+    for got in json.loads(done.stdout.strip().splitlines()[-1])["regions"]:
+        x0, y0, x1, y1 = got["box"]
+        assert got["refused"] is None and (got["width"], got["height"]) == (x1 - x0, y1 - y0), got["box"]
+        assert np.array_equal(np.array(got["values"], dtype=data.dtype).reshape(y1 - y0, x1 - x0),
+                              data[got["channel"], y0:y1, x0:x1]), got["box"]
