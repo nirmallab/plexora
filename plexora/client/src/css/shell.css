@@ -1,76 +1,242 @@
 /* The website's loader (services/shell.js): what shows while Plexora's
-   Python starts, before the page it asked for is written in its place. */
+   Python starts, and while a page of the app is asked for, before the page
+   is written in its place.
+
+   One orb -- the agent's (services/orbDriver.js), the import dialog's
+   "searching" globe, in a lighter silver than the agent panel's -- in the
+   middle of the window, with a slow glow behind it, and one line
+   under it that shell.js moves through the start. The orb stays exactly in
+   the middle: the line, a question's buttons and a last word hang below it
+   without moving it.
+
+   On the app's own ground (main.css `body`: --surface-0), whatever the
+   system's light or dark setting, so the page that replaces it comes in on
+   the same black instead of out of a grey flash. No `color-scheme`: the
+   app's pages declare none, and a frame whose scheme differs from the
+   host's is painted an opaque canvas (white) while its page has no styles
+   yet -- the moment between a page written and its stylesheets in, when
+   the host's black should show through.
+
+   Every element here that sets `display` also gets an explicit
+   `[hidden] { display: none }`: an id or a class with `display` defeats the
+   hidden attribute. */
+
 html, body {
     margin: 0;
     height: 100%;
-    background: var(--plx-bg, #f6f7f9);
-    color: var(--plx-text, #1d2433);
-    font-family: var(--plx-font, system-ui, -apple-system, "Segoe UI", sans-serif);
+    background: var(--surface-0, #05070a);
+    color: var(--text-primary, #f8fafc);
+    font-family: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue",
+        "Noto Sans", "Liberation Sans", Arial, sans-serif;
+    -webkit-font-smoothing: antialiased;
 }
 
 #plexora-boot {
+    /* Match ORB's display and tint in services/shell.js. */
+    --plexora-boot-orb: 80px;
+    --plexora-boot-ink: #dbe3ee;
+    --plexora-boot-glow: 56, 189, 248;
+    /* The entrance; a page's loader waits NAV_GRACE_MS first (below). */
+    --plexora-boot-enter-delay: 0ms;
+    position: fixed;
+    inset: 0;
+    display: grid;
+    place-items: center;
+    overflow: hidden;
+    user-select: none;
+    cursor: default;
+}
+
+#plexora-boot[hidden] {
+    display: none;
+}
+
+.plexora-boot-orb {
+    position: relative;
+    width: var(--plexora-boot-orb);
+    height: var(--plexora-boot-orb);
+    animation: plexora-boot-orb-in 900ms var(--plexora-boot-enter-delay) cubic-bezier(0.2, 0, 0, 1) both;
+}
+
+/* The glow: Signal Cyan, faint, breathing slower than the orb turns. Its
+   phase is the orb's clock (shell.js sets --plexora-boot-glow-at), so the
+   app frame's loader takes over from the host's without a beat. */
+.plexora-boot-orb::before {
+    content: "";
+    position: absolute;
+    inset: -75%;
+    border-radius: 50%;
+    background: radial-gradient(closest-side,
+        rgba(var(--plexora-boot-glow), 0.20) 0%,
+        rgba(var(--plexora-boot-glow), 0.08) 38%,
+        rgba(var(--plexora-boot-glow), 0.02) 66%,
+        rgba(var(--plexora-boot-glow), 0) 100%);
+    animation: plexora-boot-glow 4.8s var(--plexora-boot-glow-at, 0ms) ease-in-out infinite;
+    pointer-events: none;
+}
+
+#plexora-boot-orb {
+    position: relative;
+    display: block;
+    width: 100%;
     height: 100%;
+    opacity: 0;
+    transition: opacity 600ms cubic-bezier(0.2, 0, 0, 1);
+}
+
+/* The engine has drawn its first frame. */
+#plexora-boot-orb[data-orb="live"] {
+    opacity: 1;
+}
+
+/* No engine (it failed to load, or the driver is missing): a still dot in
+   the glow, so the middle of the window is never empty. */
+#plexora-boot-orb[data-orb="static"] {
+    opacity: 1;
+    background: radial-gradient(circle, var(--plexora-boot-ink) 0 13%, transparent 15%);
+}
+
+/* What hangs under the orb: the line, then a question's or a last word's
+   buttons. */
+.plexora-boot-below {
+    position: absolute;
+    top: calc(50% + var(--plexora-boot-orb) / 2 + 28px);
+    left: 16px;
+    right: 16px;
     display: flex;
     flex-direction: column;
     align-items: center;
-    justify-content: center;
-    gap: 16px;
-}
-
-#plexora-boot img {
-    width: 56px;
-    height: 56px;
+    gap: 20px;
 }
 
 #plexora-boot-status {
+    max-width: 36em;
     font-size: 14px;
-    color: var(--plx-text-muted, #5b6474);
+    font-weight: 400;
+    line-height: 20px;
+    letter-spacing: 0.01em;
+    text-align: center;
+    color: var(--text-muted, #8ea0b8);
+    animation: plexora-boot-line-in 700ms calc(var(--plexora-boot-enter-delay) + 160ms)
+        cubic-bezier(0.2, 0, 0, 1) both;
+}
+
+/* A last word (the site paused, out of date, a browser too old, a start that
+   failed): the orb stands still and steps back, the words come forward. On
+   the canvas and the glow, not their box, whose entrance holds its opacity. */
+#plexora-boot.plexora-boot-stopped #plexora-boot-orb,
+#plexora-boot.plexora-boot-failed #plexora-boot-orb {
+    opacity: 0.3;
+    transition: opacity 400ms ease;
+}
+
+#plexora-boot.plexora-boot-stopped .plexora-boot-orb::before,
+#plexora-boot.plexora-boot-failed .plexora-boot-orb::before {
+    animation: none;
+    opacity: 0.3;
+    transition: opacity 400ms ease;
+}
+
+#plexora-boot.plexora-boot-stopped #plexora-boot-status {
+    color: var(--text-secondary, #d8e1ed);
 }
 
 #plexora-boot.plexora-boot-failed #plexora-boot-status {
-    color: var(--plx-danger, #b42318);
-    max-width: 40em;
-    text-align: center;
+    color: var(--accent-danger, #f87171);
 }
 
-/* A question before the app starts (a folder to open again). */
+/* A question before the app starts (a folder to open again, a project's
+   files to find), or a last word's way on. The buttons are the app's own
+   (main.css `.plx-button`, `.plx-button-primary`): the loader has no
+   main.css. */
 .plexora-boot-actions {
     display: flex;
     flex-wrap: wrap;
     justify-content: center;
     gap: 8px;
+    animation: plexora-boot-line-in 420ms cubic-bezier(0.2, 0, 0, 1) both;
 }
 
 .plexora-boot-actions button {
     font: inherit;
-    font-size: 14px;
-    padding: 6px 14px;
-    border-radius: 6px;
-    border: 1px solid var(--border-strong, #8a93a3);
-    background: transparent;
-    color: inherit;
+    font-size: 13px;
+    line-height: 18px;
+    padding: var(--space-2, 8px) var(--space-4, 16px);
+    border-radius: var(--radius-sm, 6px);
+    border: 1px solid var(--border-strong, rgba(255, 255, 255, 0.22));
+    background: var(--surface-2, #121820);
+    color: var(--text-primary, #f8fafc);
     cursor: pointer;
+    transition: background var(--duration-fast, 120ms) var(--ease-standard, ease),
+        border-color var(--duration-fast, 120ms) var(--ease-standard, ease);
+}
+
+.plexora-boot-actions button:hover {
+    border-color: var(--text-secondary, #d8e1ed);
 }
 
 .plexora-boot-actions button.is-primary {
-    background: var(--accent-channel, #2f80ed);
-    border-color: var(--accent-channel, #2f80ed);
-    color: #fff;
+    background: var(--accent-channel, #38bdf8);
+    border-color: var(--accent-channel, #38bdf8);
+    color: #05070a;
 }
 
-#plexora-boot-status {
-    max-width: 40em;
-    text-align: center;
+.plexora-boot-actions button:focus-visible {
+    outline: 2px solid var(--accent-channel-soft, rgba(56, 189, 248, 0.36));
+    outline-offset: 2px;
 }
 
-@media (prefers-color-scheme: dark) {
-    html, body {
-        background: var(--plx-bg, #12151b);
-        color: var(--plx-text, #e6e9ef);
+/* A page's loader in the app's frame (shell.js `plexora-boot-nav`): nothing
+   for NAV_GRACE_MS, so a page that comes sooner is never covered by a flash
+   of the orb. */
+html.plexora-boot-nav #plexora-boot {
+    --plexora-boot-enter-delay: 240ms;
+}
+
+/* The frame's loader taking over from the host's, which shows the same orb
+   at the same phase and the same line (shell.js `plexora-boot-continued`):
+   no entrance. */
+html.plexora-boot-continued .plexora-boot-orb,
+html.plexora-boot-continued #plexora-boot-status {
+    animation: none;
+}
+
+@keyframes plexora-boot-orb-in {
+    from {
+        opacity: 0;
+        transform: scale(0.92);
+    }
+    to {
+        opacity: 1;
+        transform: none;
     }
 }
 
-/* The app, in a frame filling the window (services/shell.js). */
+@keyframes plexora-boot-line-in {
+    from {
+        opacity: 0;
+        transform: translateY(4px);
+    }
+    to {
+        opacity: 1;
+        transform: none;
+    }
+}
+
+@keyframes plexora-boot-glow {
+    0%, 100% {
+        opacity: 0.55;
+        transform: scale(0.94);
+    }
+    50% {
+        opacity: 1;
+        transform: scale(1.04);
+    }
+}
+
+/* The app, in a frame filling the window (services/shell.js). Veiled while
+   the host's loader shows through it, then faded in over it: the start ends
+   in one cross-fade from the orb to the page. */
 .plexora-app-frame {
     position: fixed;
     inset: 0;
@@ -78,6 +244,44 @@ html, body {
     height: 100%;
     border: 0;
     background: transparent;
+    transition: opacity 320ms cubic-bezier(0.2, 0, 0, 1);
+}
+
+.plexora-app-frame.is-veiled {
+    opacity: 0;
+}
+
+/* Reduced motion: no rise, no scale, no breathing glow, no fades; the orb
+   is one still frame (orbDriver.js) and a line changes in place. */
+@media (prefers-reduced-motion: reduce) {
+    .plexora-boot-orb,
+    .plexora-boot-orb::before,
+    #plexora-boot-status,
+    .plexora-boot-actions {
+        animation: none;
+    }
+
+    #plexora-boot-orb,
+    .plexora-app-frame,
+    #plexora-boot.plexora-boot-stopped .plexora-boot-orb,
+    #plexora-boot.plexora-boot-failed .plexora-boot-orb {
+        transition: none;
+    }
+
+    html.plexora-boot-nav .plexora-boot-orb,
+    html.plexora-boot-nav #plexora-boot-status {
+        animation: plexora-boot-appear 1ms var(--plexora-boot-enter-delay) both;
+    }
+}
+
+/* Reduced motion's grace: hidden, then there, with nothing in between. */
+@keyframes plexora-boot-appear {
+    from {
+        visibility: hidden;
+    }
+    to {
+        visibility: visible;
+    }
 }
 
 /* The preview's mark (the site's flags say `viewer: "preview"`): above the
@@ -93,7 +297,7 @@ html, body {
     text-transform: uppercase;
     padding: 2px 8px;
     border-radius: 999px;
-    background: var(--accent-channel, #2f80ed);
+    background: var(--accent-channel, #38bdf8);
     color: #fff;
     opacity: 0.85;
 }

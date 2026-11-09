@@ -20,10 +20,14 @@
  * The chunk's exports are minified aliases (M, S, p, r); the long names are
  * accepted too, so a stub -- or a later version that exports them -- works.
  *
- *   window.PlexoraOrb.mount(canvas, {state, size, display, tint, dark})
+ *   window.PlexoraOrb.mount(canvas, {state, size, display, tint, dark, clock, paused})
  *       (`size` picks the preset the engine draws; `display`, when given, is
  *       the CSS size the canvas is shown at -- a 64 preset shown at 48 px
- *       keeps the 64's detail at a size no preset has)
+ *       keeps the 64's detail at a size no preset has, and one shown at 72 px
+ *       is drawn at 72, its dots as sharp as the 64's; `clock`, when given,
+ *       is the time in ms the frames are drawn at instead of the page's own,
+ *       so two orbs in two documents keep one phase (the website's loader,
+ *       services/shell.js); `paused` mounts it without drawing until resume)
  *       -> {setState, pause, resume, destroy}
  *   window.PlexoraOrb.configure({load})
  *   window.PlexoraOrb.isReady()
@@ -117,7 +121,7 @@ window.PlexoraOrb = (function () {
         const tint = parseTint(options.tint);
         const dpr = Math.min(2, Number(window.devicePixelRatio) || 1);
         let state = options.state || "breathing";
-        let paused = false;
+        let paused = Boolean(options.paused);
         let destroyed = false;
         let raf = 0;
         let running = false;
@@ -127,9 +131,13 @@ window.PlexoraOrb = (function () {
         //: per state, not once per call.
         let stillFor = null;
 
-        canvas.width = Math.round(size * dpr);
-        canvas.height = Math.round(size * dpr);
         const shown = Number(options.display) > 0 ? Number(options.display) : size;
+        // Drawn at the larger of the preset and the shown size: shrunk by the
+        // browser below it, and scaled as geometry (not as a bitmap) above it.
+        const pixels = Math.max(size, shown);
+        const scale = dpr * pixels / size;
+        canvas.width = Math.round(pixels * dpr);
+        canvas.height = Math.round(pixels * dpr);
         if (canvas.style) {
             canvas.style.width = `${shown}px`;
             canvas.style.height = `${shown}px`;
@@ -143,12 +151,13 @@ window.PlexoraOrb = (function () {
         }
 
         function draw(t) {
-            ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+            ctx.setTransform(scale, 0, 0, scale, 0, 0);
             ctx.clearRect(0, 0, size, size);
             engine.paintFrame(ctx, engine.MODE_FRAMES[resolved.mode](size, t, resolved.opts), dark, tint);
         }
 
-        const now = () => (window.performance && window.performance.now ? window.performance.now() : Date.now());
+        const now = typeof options.clock === "function" ? options.clock
+            : () => (window.performance && window.performance.now ? window.performance.now() : Date.now());
         const tick = () => {
             if (!running) return;
             draw(now() / 1000 * resolved.speed);

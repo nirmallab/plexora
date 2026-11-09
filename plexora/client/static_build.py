@@ -71,7 +71,9 @@ CLIENT = Path(__file__).resolve().parent
 PACKAGE = CLIENT.parent
 DEFAULT_OUT = CLIENT / "dist" / "static"
 
-#: The loader. Its own files are named relative to `<base href>`, which is
+#: The loader: the agent's orb (services/orbDriver.js, its engine fetched
+#: with the page) and one line under it, which services/shell.js moves
+#: through Plexora's start. Its own files are named relative to `<base href>`, which is
 #: the site's root: "/" as built (viewer.plexoraapp.com serves it at every
 #: path), and the app's root behind a portal's proxy, where a data node
 #: serving the app (`plexora node serve --app`, server/node/webapp.py) writes
@@ -90,12 +92,16 @@ LOADER = """<!doctype html>
 <link rel="icon" type="image/svg+xml" href="client/src/img/logo.svg">
 <link rel="stylesheet" href="client/src/css/tokens.css">
 <link rel="stylesheet" href="client/src/css/shell.css">
+<link rel="modulepreload" href="client/external/thinking-orbs-0.3.2/orbs.js">
+<script src="client/src/js/services/orbDriver.js"></script>
 <script src="client/src/js/services/shell.js"></script>
 </head>
 <body>
-<div id="plexora-boot" role="status" aria-live="polite">
-  <img src="client/src/img/logo.svg" alt="">
-  <div id="plexora-boot-status">Starting Plexora</div>
+<div id="plexora-boot">
+  <div class="plexora-boot-orb" aria-hidden="true"><canvas id="plexora-boot-orb"></canvas></div>
+  <div class="plexora-boot-below">
+    <div id="plexora-boot-status" role="status" aria-live="polite">Opening Plexora</div>
+  </div>
 </div>
 </body>
 </html>

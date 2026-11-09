@@ -68,35 +68,401 @@
     //: The route an address of the app names, as Python answers it.
     const inApp = (where) => (where.pathname.slice(BASE.length) || "/") + where.search + where.hash;
 
-    const status = (text) => {
-        const node = doc.getElementById("plexora-boot-status");
-        if (node) node.textContent = text;
+    // -- The loader's screen ---------------------------------------------------
+    //
+    // One orb and one line under it (shell.css). The line says how far
+    // Plexora has got, in four steps that always come in this order. A step
+    // is said only once its part of the start has begun, and stays at least
+    // HOLD_MS, so the line can trail the start but never run ahead of it:
+    // "Almost ready" waits for Python to have started with the licence, the
+    // projects and the picked files in (hostBoot `started`).
+    //
+    //   0  Opening Plexora           the loader's own words, from its first paint
+    //   1  Preparing your workspace  Python's runtime up (pythonWorker.js mark
+    //                                `core`): its packages, Plexora's files
+    //   2  Loading the viewer        Plexora's files unpacked (mark `wheels`):
+    //                                Plexora imported, the projects mounted
+    //   3  Almost ready              Python started: the page asked for, written
+    //
+    // A page of the app asked for later is the frame's loader (frameBoot),
+    // which shows nothing for its first NAV_GRACE_MS, and then starts where
+    // the start is or -- Python up -- at "Loading the viewer" for a project's
+    // viewer and "Almost ready" for any other page.
+    //
+    // The frame made while the host's loader is up is veiled (shell.css
+    // `is-veiled`): the host's loader shows through it until its page is
+    // written, and the page then fades in over it. When the frame's own
+    // loader has to be seen first (a question, a last word), the frame is
+    // unveiled over the host's, whose orb, glow and line it shows on the same
+    // clock: one loader all the way.
+    const STEPS = Object.freeze(["Opening Plexora", "Preparing your workspace",
+                                 "Loading the viewer", "Almost ready"]);
+    const VIEWER_STEP = 2;
+    const ALMOST = STEPS.length - 1;
+    //: Python's marks (workers/pythonWorker.js) and the step each begins.
+    const MARK_STEPS = Object.freeze({ core: 1, wheels: 2 });
+    //: How long a step stays once in, at least; how long the line takes to
+    //: go out and to come in (consistent for every change).
+    const HOLD_MS = 1400;
+    const OUT_MS = 220;
+    const IN_MS = 420;
+    //: From the loader's first paint to its line being read (shell.css: the
+    //: line comes in 160 ms after the orb, over 700 ms).
+    const READABLE_MS = 620;
+    //: A page's loader shows nothing this long (shell.css
+    //: `html.plexora-boot-nav`).
+    const NAV_GRACE_MS = 240;
+    //: The frame's fade over the host's loader (shell.css `.plexora-app-frame`).
+    const VEIL_MS = 320;
+    //: The glow's breath (shell.css `plexora-boot-glow`).
+    const GLOW_MS = 4800;
+    //: The agent's orb (views/agentPanel.js), as the import dialog shows it
+    //: while it reads (views/importSample.js `readingOrb`): the 64 preset at
+    //: 80 px (shell.css --plexora-boot-orb), in a lighter silver than the
+    //: agent panel's (agentPanel.css --plx-agent-ink), being the one thing on
+    //: the screen (shell.css --plexora-boot-ink).
+    const ORB = Object.freeze({ state: "searching", size: 64, display: 80, tint: "#dbe3ee", dark: true });
+    const ORB_ENGINE = "/client/external/thinking-orbs-0.3.2/orbs.js";
+
+    //: One clock for the host and its frame (ms): the orb, the glow and a
+    //: step's hold carry on from one document to the other.
+    const wall = () => {
+        const clock = global.performance;
+        return clock && clock.timeOrigin ? clock.timeOrigin + clock.now() : Date.now();
     };
-    //: What the loader says while nothing is being asked: Python's progress
-    //: (`progress`) arrives while a question may be up, and waits for it.
-    let asking = 0;
-    let progressText = "";
-    const progress = (text) => {
-        progressText = text;
-        if (!asking) status(text);
-        // Said in the host for a frame's loader to say too (frameBoot).
-        if (!host) global.PlexoraShellProgress = text;
+
+    const reducedMotion = () => {
+        try {
+            return Boolean(global.matchMedia && global.matchMedia("(prefers-reduced-motion: reduce)").matches);
+        } catch (error) {
+            return false;
+        }
     };
+
+    //: `fn` once the loader's markup is parsed (this script runs in its head).
+    function whenParsed(fn) {
+        if (doc.readyState === "loading") doc.addEventListener("DOMContentLoaded", fn, { once: true });
+        else fn();
+    }
+
+    //: The loader's screen in this document: its line and its orb. `step`
+    //: and `reached`: where it starts; `until`: when that step's hold ends;
+    //: `epoch`: the clock's zero (the host's); `paused`: the orb mounted but
+    //: not drawing (a veiled frame's).
+    function bootScreen({ step = 0, reached = step, until = wall() + READABLE_MS + HOLD_MS,
+                          epoch = wall(), paused = false } = {}) {
+        let shown = step;
+        let ahead = Math.max(step, reached);
+        //: Words in place of the step's (a question, a last word), or null.
+        let said = null;
+        //: Bumped whenever the line is written outright: a change in flight
+        //: then leaves it alone.
+        let turn = 0;
+        let moving = false;
+        let asleep = false;
+        let gone = false;
+        let timer = 0;
+        let orb = null;
+        let orbPaused = paused;
+
+        const box = () => doc.getElementById("plexora-boot");
+        const line = () => doc.getElementById("plexora-boot-status");
+        const write = (text) => {
+            const node = line();
+            if (node) node.textContent = text;
+        };
+        const still = () => {
+            const node = line();
+            if (node && typeof node.getAnimations === "function") node.getAnimations().forEach((one) => one.cancel());
+        };
+        const fadeIn = (node) => {
+            if (node && typeof node.animate === "function" && !reducedMotion()) {
+                node.animate([{ opacity: 0, transform: "translateY(4px)" }, { opacity: 1, transform: "none" }],
+                             { duration: IN_MS, easing: "cubic-bezier(0.2, 0, 0, 1)" });
+            }
+        };
+
+        function plan() {
+            global.clearTimeout(timer);
+            if (gone || asleep || said !== null || moving || shown >= ahead) return;
+            const wait = until - wall();
+            if (wait > 0) {
+                timer = global.setTimeout(plan, wait);
+                return;
+            }
+            advance();
+        }
+
+        //: The next step in: the line out (lifting away), its words changed,
+        //: and back in (rising into place).
+        async function advance() {
+            const next = shown + 1;
+            const mine = ++turn;
+            const node = line();
+            moving = true;
+            if (node && typeof node.animate === "function" && !reducedMotion()) {
+                const out = node.animate([{ opacity: 1, transform: "none" }, { opacity: 0, transform: "translateY(-4px)" }],
+                                         { duration: OUT_MS, easing: "cubic-bezier(0.4, 0, 1, 1)", fill: "forwards" });
+                await out.finished.catch(() => null);
+                if (mine !== turn || gone) return;
+                if (asleep) {
+                    // Gone out of sight meanwhile: the step stays where it was.
+                    out.cancel();
+                    moving = false;
+                    return;
+                }
+                node.textContent = STEPS[next];
+                out.cancel();
+                fadeIn(node);
+            } else {
+                write(STEPS[next]);
+            }
+            shown = next;
+            moving = false;
+            until = wall() + IN_MS + HOLD_MS;
+            plan();
+        }
+
+        function setOrb(pausedNow) {
+            orbPaused = pausedNow;
+            if (!orb) return;
+            if (pausedNow) orb.pause();
+            else orb.resume();
+        }
+
+        return {
+            //: The start has begun step `step`.
+            reach(step) {
+                if (step > ahead) ahead = Math.min(step, ALMOST);
+                plan();
+            },
+            //: Words in place of the step's, at once: a question, a last word.
+            say(text) {
+                said = String(text);
+                turn += 1;
+                moving = false;
+                global.clearTimeout(timer);
+                still();
+                write(said);
+            },
+            //: The step's words back after a question, and on from there.
+            resume() {
+                if (said === null || gone) return;
+                said = null;
+                turn += 1;
+                still();
+                write(STEPS[shown]);
+                fadeIn(line());
+                until = wall() + IN_MS + HOLD_MS;
+                plan();
+            },
+            //: Where it is, for the frame's loader to take over from.
+            snapshot: () => ({ shown, reached: ahead, until }),
+            //: Take over from the host's screen, which was the one in sight.
+            adopt(from) {
+                if (!from || gone) return;
+                shown = from.shown;
+                ahead = Math.max(ahead, from.reached, shown);
+                until = from.until;
+                turn += 1;
+                moving = false;
+                still();
+                if (said === null) write(STEPS[shown]);
+                plan();
+            },
+            //: The orb mounted in the loader's canvas; the line and the glow
+            //: set to where this screen is.
+            attach() {
+                if (gone) return;
+                write(said === null ? STEPS[shown] : said);
+                const frameBox = box();
+                if (frameBox) frameBox.style.setProperty("--plexora-boot-glow-at", `${-Math.round((wall() - epoch) % GLOW_MS)}ms`);
+                const canvas = doc.getElementById("plexora-boot-orb");
+                if (!canvas || orb) return;
+                const driver = global.PlexoraOrb;
+                if (!driver || typeof driver.mount !== "function") {
+                    canvas.setAttribute("data-orb", "static");
+                    return;
+                }
+                try {
+                    driver.configure({ load: () => import(at(ORB_ENGINE)) });
+                    orb = driver.mount(canvas, { ...ORB, clock: () => wall() - epoch, paused: orbPaused || asleep });
+                } catch (error) {
+                    canvas.setAttribute("data-orb", "static");
+                }
+            },
+            //: The orb drawing, or not (a veiled frame's; the host's under
+            //: an unveiled frame).
+            play: () => setOrb(false),
+            pause: () => setOrb(true),
+            //: A last word (`kind` the box's class): the line, and the orb
+            //: standing still behind it.
+            end(text, kind) {
+                this.say(text);
+                const frameBox = box();
+                if (frameBox) {
+                    frameBox.hidden = false;
+                    frameBox.classList.add(kind);
+                }
+                setOrb(true);
+            },
+            //: Out of sight (the app's page over it), nothing drawn; and back.
+            hide() {
+                asleep = true;
+                global.clearTimeout(timer);
+                const frameBox = box();
+                if (frameBox) frameBox.hidden = true;
+                if (orb) orb.pause();
+            },
+            show() {
+                asleep = false;
+                const frameBox = box();
+                if (frameBox) frameBox.hidden = false;
+                setOrb(orbPaused);
+                plan();
+            },
+            //: This document is about to be replaced by the app's page
+            //: (writePage): no timer, animation or frame of the orb outlives it.
+            dispose() {
+                gone = true;
+                global.clearTimeout(timer);
+                still();
+                if (orb) orb.destroy();
+                orb = null;
+            },
+        };
+    }
+
+    //: The app's pages that are not a project's viewer: page_routes.py
+    //: `image_viewer` answers every other single path segment.
+    const NOT_VIEWER = new Set(["open_project", "edit_config", "settings", "figures", "captures",
+                                "connect", "selfcheck", "google-auth.html", "index.html"]);
+    function isViewer(route) {
+        const parts = String(route).split(/[?#]/)[0].split("/").filter(Boolean);
+        return parts.length === 1 && !NOT_VIEWER.has(parts[0]);
+    }
+
+    //: The host's loader, as its frame's loader sees it (frameBoot): the
+    //: clock, the screen's place, the start's steps as they come, the veil.
+    function shareLoader(screen, epoch) {
+        const followers = new Set();
+        let hiding = 0;
+        const frameOf = () => doc.getElementById("plexora-app");
+        const veiled = () => {
+            const frame = frameOf();
+            return Boolean(frame && frame.classList.contains("is-veiled"));
+        };
+        const later = (fn) => {
+            global.clearTimeout(hiding);
+            hiding = global.setTimeout(fn, VEIL_MS + 40);
+        };
+        const api = Object.freeze({
+            epoch,
+            snapshot: () => screen.snapshot(),
+            //: `fn(step)` for every step the start begins; returns its undo.
+            follow(fn) {
+                followers.add(fn);
+                return () => followers.delete(fn);
+            },
+            veiled,
+            //: The frame's own loader has to be seen (a question, a last
+            //: word): unveiled over this one, whose orb then stops.
+            reveal() {
+                if (!veiled()) return;
+                frameOf().classList.remove("is-veiled");
+                later(() => screen.pause());
+            },
+            //: The frame's page is written: faded in over this loader, which
+            //: then goes.
+            shown() {
+                const frame = frameOf();
+                if (frame) frame.classList.remove("is-veiled");
+                later(() => screen.hide());
+            },
+        });
+        return {
+            api,
+            reach(step) {
+                screen.reach(step);
+                for (const fn of [...followers]) {
+                    try {
+                        fn(step);
+                    } catch (error) {
+                        followers.delete(fn);
+                    }
+                }
+            },
+            //: The loader back over a frame that went (Python did not start).
+            restore() {
+                global.clearTimeout(hiding);
+                screen.show();
+                screen.play();
+            },
+        };
+    }
+
+    //: This document's screen: the host's; in the app's frame, one taking
+    //: over from the host's (`continued`: the frame veiled over it) or a
+    //: page's own (`nav`).
+    const shared = host ? host.PlexoraShellLoader || null : null;
+    const continued = Boolean(shared && shared.veiled());
+    const epoch = shared ? shared.epoch : wall();
+    //: The step a page asked for later starts at (see the header above).
+    const settle = (hostStep, route) => (hostStep < ALMOST ? hostStep : isViewer(route) ? VIEWER_STEP : ALMOST);
+    const screen = (() => {
+        if (!host) return bootScreen({ epoch });
+        doc.documentElement.classList.add(continued ? "plexora-boot-continued" : "plexora-boot-nav");
+        const from = shared ? shared.snapshot() : { shown: ALMOST, reached: ALMOST, until: 0 };
+        if (continued) return bootScreen({ step: from.shown, reached: from.reached, until: from.until, epoch, paused: true });
+        return bootScreen({ step: settle(from.reached, inApp(global.location)),
+                            until: wall() + NAV_GRACE_MS + READABLE_MS + HOLD_MS, epoch });
+    })();
+    whenParsed(() => screen.attach());
+    //: The frame's subscription to the host's steps (frameBoot), undone with
+    //: the screen.
+    let unfollow = null;
+
+    //: The loader's line replaced by the app's page (writePage), for good.
+    function loaderGone() {
+        if (unfollow) unfollow();
+        unfollow = null;
+        screen.dispose();
+    }
+
+    //: A veiled frame's loader brought into sight over the host's: the
+    //: host's step and hold taken over, the orb drawing on the same clock.
+    function unveil() {
+        if (!shared || !shared.veiled()) return;
+        screen.adopt(shared.snapshot());
+        screen.play();
+        shared.reveal();
+    }
+
+    const status = (text) => screen.say(text);
     const fail = (text) => {
-        status(text);
-        const box = doc.getElementById("plexora-boot");
-        if (box) box.classList.add("plexora-boot-failed");
+        unveil();
+        screen.end(text, "plexora-boot-failed");
     };
+
+    //: A row of buttons under the line (a question's, a last word's).
+    function actionRow() {
+        const row = doc.createElement("div");
+        row.className = "plexora-boot-actions";
+        const below = doc.querySelector("#plexora-boot .plexora-boot-below") || doc.getElementById("plexora-boot");
+        if (below) below.appendChild(row);
+        return row;
+    }
 
     //: A question in the loader, before the app starts: `text`, then a button
     //: per action; resolves with the chosen action's value. (A click here is
-    //: what lets the page ask the browser for a permission.)
+    //: what lets the page ask the browser for a permission.) The start's
+    //: steps wait for it: the line goes back to them once it is answered.
+    let asking = 0;
     function askInLoader(text, actions) {
         asking += 1;
-        status(text);
-        const box = doc.getElementById("plexora-boot");
-        const row = doc.createElement("div");
-        row.className = "plexora-boot-actions";
+        unveil();
+        screen.say(text);
+        const row = actionRow();
         return new Promise((resolve) => {
             for (const action of actions) {
                 const button = doc.createElement("button");
@@ -106,12 +472,11 @@
                 button.addEventListener("click", () => {
                     row.remove();
                     asking -= 1;
-                    if (!asking && progressText) status(progressText);
+                    if (!asking) screen.resume();
                     resolve(action.value);
                 });
                 row.appendChild(button);
             }
-            box.appendChild(row);
         });
     }
 
@@ -335,9 +700,6 @@
         }
     }
 
-    const LABELS = { core: "Starting Python", packages: "Loading packages",
-                     wheels: "Loading Plexora", ready: "Opening" };
-
     //: The licence this browser holds, restored into Python's files; null
     //: when it cannot start (the site then runs as Free, as a desktop does
     //: with a damaged licence file).
@@ -462,14 +824,12 @@
         return false;
     }
 
-    //: The loader's last word when the site does not start: one line and one
-    //: button. Python never loads.
-    //: The loader's last word: `text`, and its buttons on one row (`more`:
-    //: [{label, act}] after the primary one).
+    //: The loader's last word when the site does not start: `text`, and its
+    //: buttons on one row (`more`: [{label, act}] after the primary one).
+    //: Python never loads, so the orb stands still.
     function stop(text, label, act, more = []) {
-        status(text);
-        const row = doc.createElement("div");
-        row.className = "plexora-boot-actions";
+        screen.end(text, "plexora-boot-stopped");
+        const row = actionRow();
         [{ label, act, primary: true }, ...more].forEach((action) => {
             const button = doc.createElement("button");
             button.type = "button";
@@ -478,11 +838,13 @@
             button.addEventListener("click", action.act);
             row.appendChild(button);
         });
-        doc.getElementById("plexora-boot").appendChild(row);
     }
 
     async function hostBoot() {
         global.PlexoraShellHost = true;
+        // The loader as the app's frame sees it, before there is a frame.
+        const loader = shareLoader(screen, epoch);
+        global.PlexoraShellLoader = loader.api;
         const pairing = takePairingLink();
         browserVariables();
         const shell = await (await global.fetch(at("/client/shell.json"), { cache: "no-cache" })).json();
@@ -520,9 +882,8 @@
         }
         // Python's downloads first -- the longest part of a visit by far --
         // and everything below while they run.
-        global.PlexoraPython.on("mark", ({ mark }) => { if (LABELS[mark]) progress(LABELS[mark]); });
+        global.PlexoraPython.on("mark", ({ mark }) => { if (MARK_STEPS[mark]) loader.reach(MARK_STEPS[mark]); });
         global.PlexoraPython.warm({ base: py, root: at("/") });
-        progress("Starting Python");
         // The page this address shows, as Python last drew it -- or, on a
         // first visit, as the site's build drew it -- looked up now.
         const pages = pageStore(shell, py);
@@ -602,6 +963,8 @@
             await global.PlexoraPicks.restore().catch(() => null);
             // And the pyramidized copies saved in folders beside their originals.
             await global.PlexoraPyramid.restore().catch(() => null);
+            // Everything a page needs is in: only the page is left to draw.
+            loader.reach(ALMOST);
             return info;
         })();
         started.catch(() => null);
@@ -617,12 +980,12 @@
         const frame = doc.createElement("iframe");
         frame.id = "plexora-app";
         frame.title = "Plexora";
-        frame.className = "plexora-app-frame";
+        // Veiled: this loader shows through it until its page is written
+        // (writePage asks for it, PlexoraShellLoader.shown).
+        frame.className = "plexora-app-frame is-veiled";
         frame.src = here(global.location);
         let asked = false;
         frame.addEventListener("load", () => {
-            const box = doc.getElementById("plexora-boot");
-            if (box) box.hidden = true;
             if (!asked) {
                 asked = true;
                 started.then(() => askWhereOnce(frame)).catch(() => null);
@@ -634,8 +997,7 @@
             // Python did not start under a kept page: the page goes, and the
             // loader says why, as it would have without one.
             frame.remove();
-            const box = doc.getElementById("plexora-boot");
-            if (box) box.hidden = false;
+            loader.restore();
             throw error;
         });
         followLicence(frame);
@@ -728,11 +1090,15 @@
             [{ value: false, label: "Skip" }, { value: true, label, primary: true }]);
         if (!go) return false;
         status("Looking for the files");
-        const found = await global.PlexoraPicks.find(missing).catch(() => ({}));
-        if (!Object.keys(found).length) return false;
-        await global.PlexoraPython.fetch(route, { method: "POST", headers: { "Content-Type": "application/json" },
-                                                  body: JSON.stringify({ found }) });
-        return true;
+        try {
+            const found = await global.PlexoraPicks.find(missing).catch(() => ({}));
+            if (!Object.keys(found).length) return false;
+            await global.PlexoraPython.fetch(route, { method: "POST", headers: { "Content-Type": "application/json" },
+                                                      body: JSON.stringify({ found }) });
+            return true;
+        } finally {
+            screen.resume();
+        }
     }
 
     //: Takes this frame out of the host's layout for two of the host's frames,
@@ -780,6 +1146,7 @@
     //: project it shows, or "".
     async function writePage(html, project, address) {
         const shown = await hiddenForOpen();
+        loaderGone();
         doc.open();
         shown();
         // WebKit gives a document opened here the host's address (it takes
@@ -804,6 +1171,22 @@
             if (shown) host.PlexoraHandoff.open(shown, global);
         });
         mirror();
+        reveal();
+    }
+
+    //: The written page faded in over the host's loader, once it can draw:
+    //: its first animation frame (none while its stylesheets still block
+    //: it), or 400 ms in a tab in the background, which draws none.
+    function reveal() {
+        if (!shared) return;
+        let done = false;
+        const go = () => {
+            if (done) return;
+            done = true;
+            shared.shown();
+        };
+        global.requestAnimationFrame(go);
+        global.setTimeout(go, 400);
     }
 
     //: The written page parsed, its deferred scripts run.
@@ -862,6 +1245,11 @@
 
     async function frameBoot() {
         const address = here(global.location);
+        // The start's steps, as the host's loader takes them.
+        if (shared) {
+            const asked = inApp(global.location);
+            unfollow = shared.follow((step) => screen.reach(settle(step, asked)));
+        }
         browserVariables();
         // The host's Python and picks, not a second worker.
         global.PlexoraPython = host.PlexoraPython;
@@ -891,18 +1279,12 @@
         if (early !== null) return earlyPage(route, early, address);
         // A page asked for while Python starts (one opened from a kept page)
         // is drawn once the licence and the picked files are in; this loader
-        // says how far Python has got meanwhile, as the host's would.
-        if (host.PlexoraShellStarted) {
-            if (host.PlexoraShellProgress) progress(host.PlexoraShellProgress);
-            const off = global.PlexoraPython.on("mark", ({ mark }) => { if (LABELS[mark]) progress(LABELS[mark]); });
-            try {
-                await host.PlexoraShellStarted;
-            } finally {
-                off();
-            }
-        }
+        // follows the start's steps meanwhile (`unfollow` above).
+        if (host.PlexoraShellStarted) await host.PlexoraShellStarted;
         const response = await global.PlexoraPython.fetch(route, { headers: { Accept: "text/html" } });
         let html = await response.text();
+        // Only the page is left to draw.
+        screen.reach(ALMOST);
         const project = projectOf(html);
         if (project && await findFiles(project)) {
             html = await (await global.PlexoraPython.fetch(route, { headers: { Accept: "text/html" } })).text();
