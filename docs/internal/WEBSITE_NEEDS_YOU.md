@@ -189,14 +189,14 @@ bundle `py/dev/4f583c3b9745/` and, sharing the flags, no longer shows its
   published and never rewritten, so once the CI secrets
   exist such a Release run's `web_deploy` would refuse its own rebuild of
   that bundle and hold the release.
-- **CI on `main` has been red since 2026-11-04** (48dff7d1, before the
-  website work): `[tool.uv.sources]` points `biocognia-markers` at
+- **CI on `main` was red 2026-11-04 to 11-09** (48dff7d1, before the
+  website work): `[tool.uv.sources]` pointed `biocognia-markers` at
   `../biocognia-markers`, which CI does not have, so `uv lock --check` and
-  every install fail (ci, web, Docs, security). The Docs workflow alone
-  installs with `--no-sources` since 2026-11-09, so the docs deploy again.
-  biocognia-markers is on PyPI now: dropping the override
-  and moving its uv.lock entry to the registry (by hand; uv here rewrites
-  the lock) fixes it. Say so and it gets done.
+  every install failed (ci, web, Docs, security). Fixed 2026-11-09 at your
+  word: the override is gone and uv.lock takes 0.1.0 from PyPI (the sibling's
+  only later commit is `view`, which Plexora does not import). A local
+  checkout no longer installs the sibling editable; put
+  `../biocognia-markers/src` on PYTHONPATH, as for the other siblings.
 - Old merged branches you may delete: `web/client-seams`, `web/node-pair`,
   `web/removals`.
 

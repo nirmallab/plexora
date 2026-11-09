@@ -422,25 +422,15 @@ wheels = [
 [[package]]
 name = "biocognia-markers"
 version = "0.1.0"
-source = { editable = "../biocognia-markers" }
+source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "numpy" },
     { name = "platformdirs" },
     { name = "scipy" },
 ]
-
-[package.metadata]
-requires-dist = [
-    { name = "numpy", specifier = ">=1.26" },
-    { name = "platformdirs", specifier = ">=4" },
-    { name = "scipy", specifier = ">=1.11" },
-]
-
-[package.metadata.requires-dev]
-dev = [
-    { name = "pytest", specifier = ">=9.1.1" },
-    { name = "pytest-timeout", specifier = ">=2.3" },
-    { name = "pyyaml", specifier = ">=6" },
+sdist = { url = "https://files.pythonhosted.org/packages/05/03/cb0abc9c90ad1123a952eb33c4cecf15e970a36bbd3a031f77c3787960f6/biocognia_markers-0.1.0.tar.gz", hash = "sha256:60400ce3064ce86782e024e3a6d461e1bac3860608fa03f0d3143803116760fe", size = 276858, upload-time = "2026-11-05T16:38:37.254Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/42/42/64fca849c291f8b317ce98798c7add3af3defb7af4dbcb38d725956c3420/biocognia_markers-0.1.0-py3-none-any.whl", hash = "sha256:2b866c8e5c17f2b175b098c501641ea5e2bbffd55d21e4b194b3bf4460ddd2e2", size = 233690, upload-time = "2026-11-05T16:38:35.772Z" },
 ]
 
 [[package]]
@@ -2882,7 +2872,7 @@ requires-dist = [
     { name = "anndata", specifier = ">=0.10" },
     { name = "biocognia", specifier = ">=0.1.2,<0.2" },
     { name = "biocognia-intelligence", specifier = ">=0.2.1,<0.4" },
-    { name = "biocognia-markers", editable = "../biocognia-markers" },
+    { name = "biocognia-markers", specifier = ">=0.1,<0.2" },
     { name = "flask", specifier = ">=3.1" },
     { name = "fsspec", specifier = ">=2024.12" },
     { name = "gcsfs", marker = "extra == 'remote'", specifier = ">=2024.12" },

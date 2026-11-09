@@ -56,11 +56,8 @@ jobs:
         with:
           python-version: "3.13"
       - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6.8.0
-      # --no-sources: pyproject's [tool.uv.sources] points biocognia-markers
-      # at a sibling checkout (../biocognia-markers) the runner does not have;
-      # the PyPI release satisfies the same requirement.
       - name: Install Plexora
-        run: uv pip install --system --no-sources -e ".[dev,spatial,jupyter]"
+        run: uv pip install --system -e ".[dev,spatial,jupyter]"
       - name: Reference pages, regenerated
         run: |
           python tools/docs/sync_docs.py generate

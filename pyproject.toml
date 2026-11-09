@@ -308,10 +308,6 @@ plexora = "plexora.proxy:setup_plexora"
 [project.entry-points."biocognia.products"]
 plexora = "plexora_intelligence:PRODUCT"
 
-# Until biocognia-markers is on PyPI: the sibling checkout, as SCIMAP Pro does.
-[tool.uv.sources]
-biocognia-markers = { path = "../biocognia-markers", editable = true }
-
 [tool.setuptools.packages.find]
 include = ["plexora*"]
 # Namespace discovery is ON (the default) and must stay on: plexora/server and
