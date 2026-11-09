@@ -56,7 +56,7 @@ def test_the_loader_names_its_files_from_the_base(built):
     assert loader.count(static_build.BASE_HREF) == 1
     # Every file the loader loads is relative: under any base, never "/client".
     assert not re.search(r'(?:src|href)="/(?!")', loader.replace(static_build.BASE_HREF, ""))
-    assert 'src="client/src/js/services/shell.js"' in loader
+    assert 'src="client/src/js/services/shell.js?v=' in loader
 
 
 @pytest.mark.parametrize("path, base", [
