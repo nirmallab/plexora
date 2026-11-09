@@ -90,16 +90,18 @@ bundle `py/dev/4f583c3b9745/` and, sharing the flags, no longer shows its
   and previews deploy the website themselves (docs/internal/WEBSITE_RELEASE.md).
   The project `plexora-viewer` exists (created 2026-11-07).
 - **The docs move** (your call, 2026-11-09: GitHub Pages with the custom
-  domain plexoraapp.com, not a `plexora-site` Pages project). The code is on
-  `main`: the site is built at the root, `DOCS_URL` is https://plexoraapp.com/,
-  and the Docs workflow installs with `--no-sources`. It needs these records
-  in the plexoraapp.com zone, every one **DNS only** (grey cloud) so GitHub
-  can issue the certificate: `A @` 185.199.108.153, 185.199.109.153,
-  185.199.110.153, 185.199.111.153; `AAAA @` 2606:50c0:8000::153,
-  2606:50c0:8001::153, 2606:50c0:8002::153, 2606:50c0:8003::153;
-  `CNAME www` nirmallab.github.io. Then the repository's Pages custom domain
-  is set to plexoraapp.com and the Docs workflow run again;
-  nirmallab.github.io/plexora/<page> then redirects to plexoraapp.com/<page>.
+  domain, not a `plexora-site` Pages project). **Done 2026-11-09:** the docs
+  are at https://plexoraapp.com/ (www redirects to it), and the old
+  nirmallab.github.io/plexora/<page> and nirmallab.com/plexora/<page>
+  redirect to plexoraapp.com/<page>. The apex and www records are
+  **proxied** (orange cloud), so Cloudflare holds the certificate and GitHub
+  cannot issue one or enforce HTTPS. Still yours: turn on **Always Use
+  HTTPS** (SSL/TLS > Edge Certificates), because GitHub's redirects of the
+  old addresses land on `http://plexoraapp.com/...`, which is served over
+  plain HTTP until then. (Or set the records to DNS only, pointing at
+  GitHub's 185.199.108-111.153 / 2606:50c0:8000-8003::153; GitHub then
+  issues its own certificate and HTTPS is enforced in the repository's Pages
+  settings.)
 - **Done 2026-11-07:** viewer.plexoraapp.com attached (you added the CNAME
   `viewer` -> `plexora-viewer.pages.dev`) and `flags --viewer on`. That
   switch also shows the desktop app's **File > Open on the Website** in
@@ -187,14 +189,14 @@ bundle `py/dev/4f583c3b9745/` and, sharing the flags, no longer shows its
   published and never rewritten, so once the CI secrets
   exist such a Release run's `web_deploy` would refuse its own rebuild of
   that bundle and hold the release.
-- **CI on `main` has been red since 2026-11-04** (48dff7d1, before the
-  website work): `[tool.uv.sources]` points `biocognia-markers` at
+- **CI on `main` was red 2026-11-04 to 11-09** (48dff7d1, before the
+  website work): `[tool.uv.sources]` pointed `biocognia-markers` at
   `../biocognia-markers`, which CI does not have, so `uv lock --check` and
-  every install fail (ci, web, Docs, security). The Docs workflow alone
-  installs with `--no-sources` since 2026-11-09, so the docs deploy again.
-  biocognia-markers is on PyPI now: dropping the override
-  and moving its uv.lock entry to the registry (by hand; uv here rewrites
-  the lock) fixes it. Say so and it gets done.
+  every install failed (ci, web, Docs, security). Fixed 2026-11-09 at your
+  word: the override is gone and uv.lock takes 0.1.0 from PyPI (the sibling's
+  only later commit is `view`, which Plexora does not import). A local
+  checkout no longer installs the sibling editable; put
+  `../biocognia-markers/src` on PYTHONPATH, as for the other siblings.
 - Old merged branches you may delete: `web/client-seams`, `web/node-pair`,
   `web/removals`.
 

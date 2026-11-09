@@ -36,6 +36,12 @@ ldflags = "$(LDFLAGS_BASE) -s SIDE_MODULE=1 -O3"
 [tool.setuptools.exclude-package-data]
 plexora_kernels = ["*.c", "*.pyx", "*.pxi"]
 
+# Its own pytest root: without this table pytest climbs to Plexora's
+# pyproject.toml, takes the repository root as rootdir and loads its
+# conftest.py, which imports Flask (not in cibuildwheel's test environment).
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
 # cibuildwheel (.github/workflows/kernels.yml; v4.3.5 knows Pyodide 314.0.7):
 # CPython 3.12-3.14 on Linux (manylinux x86_64, aarch64), macOS (arm64,
 # x86_64), Windows (AMD64), and Pyodide (`--platform pyodide`) for the Python
@@ -45,7 +51,7 @@ build = "cp312-* cp313-* cp314-*"
 skip = "*-win32 *_i686 *-musllinux_* cp31?t-* cp312-pyodide* cp313-pyodide*"
 build-frontend = "build"
 test-requires = ["pytest", "numpy"]
-test-command = "pytest {project}/tests -q -p no:cacheprovider"
+test-command = "pytest {package}/tests -q -p no:cacheprovider"
 
 [tool.cibuildwheel.pyodide]
 pyodide-version = "314.0.7"
