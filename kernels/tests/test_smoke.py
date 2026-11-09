@@ -103,6 +103,12 @@ def test_a_tetrahedron_has_its_volume():
     assert out[0] == pytest.approx(1 / 6)
 
 
-def test_a_call_no_port_takes_and_no_fallback_says_so():
+def test_a_call_no_port_takes_and_no_fallback_says_so(monkeypatch):
+    # Plexora's jit sets a numba fallback on every kernel it binds, so in a
+    # session that ran Plexora's tests first (kernels.yml's agreement job) one
+    # is already there. This is about the package with none.
+    from plexora_kernels import _kernels
+
+    monkeypatch.delitem(_kernels._FALLBACKS, K + "utils.label_kernels._boundary", raising=False)
     with pytest.raises(TypeError, match="no compiled form"):
         pk.KERNELS[K + "utils.label_kernels._boundary"](np.zeros((2, 2)), 1, np.zeros((2, 2), bool))
