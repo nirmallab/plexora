@@ -119,9 +119,6 @@ def test_parquet_goes_through_pyarrow_where_polars_has_none(tmp_path, monkeypatc
     monkeypatch.setattr(pl.DataFrame, "to_arrow", lambda self, *a, **k: calls.append(1) or real(self, *a, **k))
 
     assert boot.parquet(native=False) is True
-    patched = pl.read_parquet
-    # The polars stage's hook can run twice (stages.StageFinder.arrive): once wrapped.
-    assert boot.parquet(native=False) is True and pl.read_parquet is patched
     native.write_parquet(tmp_path / "arrow.parquet")
     assert calls, "written through pyarrow"
     for path in (tmp_path / "native.parquet", tmp_path / "arrow.parquet"):

@@ -64,14 +64,3 @@ def test_only_optional_imports_ask_for_them(builds):
                       if any("plexora" in frame.replace("\\", "/").split("site-packages")[0]
                              and "site-packages" not in frame for frame in frames)}
     assert plexora_askers <= {"imagecodecs"}, blocked["asked"]
-
-
-def test_nothing_uses_a_deferred_module_while_the_app_is_built(builds):
-    """polars is a stage of its own on the website, loaded at its first use
-    (plexora/browser/stages.py `DEFERRED`): the modules that build the app
-    import it at their top, but reading any of it -- a module-level constant
-    built from `pl.Int64`, an annotation CPython evaluates -- would load the
-    stage inside every visit's start. Read it inside a function instead."""
-    blocked, _open = builds
-    assert blocked["deferred"] == {}, blocked["deferred"]
-

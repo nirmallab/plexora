@@ -699,15 +699,9 @@ def active_gates(ds) -> dict:
 
 #: The plugin store table of versions: a row per (version, gated marker).
 VERSIONS_TABLE = "versions"
-
-
-def _version_columns() -> dict:
-    """That table's columns. Asked for, not a constant: on the website polars
-    is a stage loaded at its first use (plexora/browser/stages.py
-    `DEFERRED`), and building the app must not be that use."""
-    return {"version": pl.Int64, "created": pl.Utf8, "by": pl.Utf8,
-            "session_id": pl.Utf8, "marker": pl.Utf8, "low": pl.Float64,
-            "high": pl.Float64}
+VERSION_COLUMNS = {"version": pl.Int64, "created": pl.Utf8, "by": pl.Utf8,
+                   "session_id": pl.Utf8, "marker": pl.Utf8, "low": pl.Float64,
+                   "high": pl.Float64}
 
 
 def gate_versions(datasource_name) -> list:
@@ -752,10 +746,9 @@ def save_version(ds, by=None, *, session_id=None):
                  "session_id": session_id, "marker": marker, "low": float(low),
                  "high": float(high)} for marker, (low, high) in gates.items()]
         frame = _store(ds.name).get_table(VERSIONS_TABLE)
-        columns = _version_columns()
-        added = pl.DataFrame(rows, schema=columns, orient="row")
+        added = pl.DataFrame(rows, schema=VERSION_COLUMNS, orient="row")
         frame = added if frame is None or frame.height == 0 else pl.concat(
-            [frame.select(list(columns)).cast(columns), added])
+            [frame.select(list(VERSION_COLUMNS)).cast(VERSION_COLUMNS), added])
         _store(ds.name).put_table(VERSIONS_TABLE, frame)
     return {"version": number, "created": created, "by": by, "session_id": session_id,
             "gates": dict(gates)}
@@ -785,7 +778,7 @@ def version_label(version, taken=()) -> str:
     return label
 
 
-def versions_table(ds) -> "pl.DataFrame | None":
+def versions_table(ds) -> pl.DataFrame | None:
     """Markers as rows (every one any version gated, in the table's order),
     a column per version, oldest first (`version_label`), each holding the
     lower gate it kept; empty where a version had none. None with fewer than

@@ -29,7 +29,7 @@ export PLEXORA_BENCH_WORK=<a scratch folder>                                 # f
 |---|---|
 | `bench_startup.mjs --url URL --runs N` | the website cold (fresh profile), on reload, and warm (new launch, same profile): loader paint, frame, home visible, Python's marks |
 | `bench_server_startup.mjs --runs N` | the local server: process start to "Serving", home page, reload, a second tab |
-| `bench_dataset_web.mjs [--fixture DIR] [--files a,b,c] [--tools a,b] [--no-reload] [--input] [--site DIR] [--py-dir DIR]` | import, viewer drawn, tiles p50/p95, a 7-step tour (frame p95), every tool's open, the figure library and back, a reload, memory |
+| `bench_dataset_web.mjs [--fixture DIR] [--files a,b,c] [--tools a,b] [--no-reload] [--input] [--site DIR] [--py-dir DIR]` | import, viewer drawn, tiles p50/p95, a 7-step tour (frame p95), every tool's open, the figure library and back, a reload, memory; which Python stage arrived when and what asked for it (`stages`, the last page's) |
 | `bench_dataset_server.mjs [--fixture DIR] [--tools none] [--no-figures] [--no-reload]` | the same flow on the local server |
 | `bench_packages.mjs` | Python's boot, per package and per import, against a bundle |
 

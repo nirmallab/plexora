@@ -151,55 +151,48 @@ to a worker that says it follows a retry (`bridge.RETRYABLE`). The site's
 `.js` reach browsers with a 4-hour `max-age` from the zone (WEBSITE_NEEDS_YOU.md
 §2), so an older worker can meet a newer bundle.
 
-**polars is a stage of its own, loaded at its first use.** Of the base
-packages' 0.9 s, polars was 0.69 s, and the home page reads no table. Eleven
-modules that build the app import it at their top, and they keep doing so:
-on the desktop, the local server and a data node every C extension is
-imported before a request thread exists (`data_model.prime_hot_code`: a
-dlopen in one thread while threadpoolctl walks the libraries in another froze
-a node's interpreter). On the website `stages.install` puts a stand-in in
-`sys.modules` (`stages.Deferred`); the first attribute anything reads from it
-loads the stage and runs polars in the stand-in's place, as
-`importlib.util.LazyLoader` does, so every module holding it holds polars.
-Building the app reads none of it: gating's version-table columns became a
-function, and `tests/test_browser_imports.py` now fails if anything reads a
-deferred module while the app is built (on CPython 3.13 too, where
-annotations are evaluated). The Parquet shim runs from the stage's hook.
+**Background work waits for quiet after the boot too.** The worker runs
+background work (a stage preload, a cache warm-up) only after 600 ms without
+a request, counted from the last request. At the end of the boot there had
+been none, so the first background task took the worker at once, and a
+reloaded project's first screen, which the page sends a moment after Python
+is ready, waited behind it: `/config` 786–810 ms behind the scipy preload.
+Now the quiet counts from the boot's end (`pythonWorker.js`).
 
-Two scheduling findings came with it:
-- **polars and scipy are fetched together** (`stages-ahead`, one
-  `loadPackage`: 1.35 s for both, against 0.79 + 0.80 one after the other).
-  Loaded one after the other, scipy's turn came after the harness had
-  started importing, and the import's inspect waited for it (641 → 1,759 ms).
-- **Background work waits for quiet after the boot too.** The worker counted
-  its 600 ms of quiet from the last request, and at the end of the boot there
-  had been none, so the first background task took the worker at once, and a
-  reloaded project's first screen, sent a moment later, waited behind it:
-  `/config` 786–810 ms behind round two's scipy preload, 1,444 ms behind both
-  stages. Now the quiet counts from the boot's end (`pythonWorker.js`); on a
-  reload the table's read loads polars itself (651 ms) and `/config` answers
-  in 15 ms.
-
-| ms (`startup_*.jsonl`, `tonsil_web_*.json`) | Round two (2 runs) | polars stage |
+| Tonsil, ms (`tonsil_web_*.json`) | Round two (2 runs) | Quiet after the boot |
 |---|---|---|
-| Python ready, reload | 3,161–3,181 | 2,541–2,683 |
-| Python ready, warm | 3,034–3,113 | 2,528–2,591 |
-| Python ready, cold | 3,266–3,283 | 2,722–2,775 |
-| Base packages (core → packages) | ~935 | ~410 |
-| First visit, bytes before Python is ready (manifest) | 32.8 MB | 22.9 MB |
-| Tonsil: import (inspect + sample) | 1,599–1,652 | 1,509 |
-| Tonsil: viewer drawn / table + mask ready | 1,449–1,538 / 1,650–1,741 | 1,439 / 1,646 |
-| Tonsil: reload → viewer drawn (kept answers) | 438–530 | 582 (488–519 in the runs before the last change) |
-| Tonsil: reload → table and mask ready | 5,152–5,380 | 4,614 |
+| Reload: `/config` | 786–810 | 26 |
+| Reload → table and mask ready | 5,152–5,380 | 4,414 |
+| Import / viewer drawn / table + mask ready | 1,599–1,652 / 1,449–1,538 / 1,650–1,741 | 1,556 / 1,435 / 1,630 |
 
-Home visible is unchanged (warm 0.40 s, reload 0.31 s).
+**Tried and backed out: polars as a stage of its own** (commit 20fd6bee).
+Of the base packages' 0.9 s, polars is 0.69 s, and the home page reads no
+table. The app-building modules kept `import polars as pl` at their top (the
+desktop imports every C extension before a request thread exists:
+`data_model.prime_hot_code`), and on the website a stand-in in `sys.modules`
+loaded the stage at the first attribute read, preloaded with scipy in one
+`loadPackage` once the first page was answered. Python was ready 0.55 s
+sooner (reload 3.17 → 2.54–2.68 s) and a first visit fetched 22.9 MB
+instead of 32.8 before it. But nothing a visitor does next works without
+polars, and polars loaded after the boot costs ~0.7 s where it costs ~0.5 s
+beside the other base packages, so a project opened at once landed later:
+
+| ms (`*_quiet_after_boot.json`, `*_polars_stage.json`) | Quiet after the boot | + polars stage |
+|---|---|---|
+| Python ready, reload (`startup_*.jsonl`; the quiet fix does not touch the boot) | 3,161–3,181 | 2,541–2,683 |
+| LSP11385: import | 2,887 | 4,108 |
+| LSP11385: table + mask ready | 5,593 | 6,485 |
+| LSP11385: ROI / Cell Explorer | 4,315 / 3,941 | 4,850 / 4,495 |
+| Tonsil: reload → table and mask ready | 4,414 | 4,614 |
+
+Worth another look if Pyodide's package loading gets cheaper after the boot,
+or if a visit's first seconds stop needing a table.
 
 **Measured, left as it is:**
-- Python's boot, 0.6 s of it: `create_app` 260 ms, chunk cache 108, buckets
-  56, cooperative 59 ms (`boot.start` returns `timings`). The rest of the
-  2.6 s is Pyodide (1.1 s) and the base packages (0.4 s). The 2.5 s target is
-  30–180 ms away; what is left to defer is the shims' own imports, which
-  `create_app` would then pay.
+- Python's boot, 0.6 s of it: `create_app` 247 ms, chunk cache 107, parquet 75,
+  buckets 53, cooperative 43 ms (`boot.start` now returns `timings`). The rest
+  of the 3.0 s is Pyodide (1.07 s) and the base packages (0.9 s, polars 0.69 s
+  of it; deferring it is above).
 - Warm home, 0.39 s: the frame reloads the loader's five files, then waits two
   animation frames (the pointer-capture guard), then the home page loads 111
   files (`base.html`, ~95 scripts) and runs them. Reaching 0.2 s needs a lighter

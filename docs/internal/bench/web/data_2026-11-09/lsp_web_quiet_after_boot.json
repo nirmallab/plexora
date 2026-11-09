@@ -1,0 +1,1562 @@
+{
+ "arm": "website",
+ "fixture": "$PLEXORA_BENCH_WORK/fixture/lsp",
+ "steps": {
+  "homeMs": 448,
+  "pythonStartedMs": 3282,
+  "fixtureCopyMs": 0,
+  "picked": [
+   "/picked/bench/image.ome.tif",
+   "/picked/bench/mask.labels.pyramid.ome.tiff",
+   "/picked/bench/cells.csv"
+  ],
+  "inspect": {
+   "ms": 1438,
+   "status": 200,
+   "layers": [
+    "image:image.ome.tif",
+    "labels:Segmentation mask",
+    "table:Cells"
+   ],
+   "questions": []
+  },
+  "importSample": {
+   "ms": 1445,
+   "status": 200,
+   "name": "image"
+  },
+  "importTotalMs": 2887,
+  "pyramidBuilds": [],
+  "viewerPageWrittenMs": 202,
+  "viewerFirstItemMs": 2100,
+  "viewerDrawnMs": 2111,
+  "ready": {
+   "ms": 3482,
+   "table": {
+    "error": null,
+    "message": "Cell table ready",
+    "progress": 100,
+    "stage": "ready",
+    "stage_label": "Ready",
+    "status": "ready"
+   },
+   "seg": {
+    "error": null,
+    "message": "Segmentation mask ready",
+    "progress": 100,
+    "scale": 1,
+    "segmentation": "/picked/bench/mask.labels.pyramid.ome.tiff",
+    "stage": "ready",
+    "stage_label": "Ready",
+    "status": "ready"
+   }
+  },
+  "readyTotalMs": 5593,
+  "openTiles": {
+   "n": 0,
+   "p50": null,
+   "p95": null,
+   "max": null,
+   "sumMs": 0,
+   "viaWorker": 0,
+   "local": 0
+  },
+  "openTileFetch": {
+   "requests": 5,
+   "shared": 5,
+   "aborted": 0,
+   "cancelled": 0,
+   "decoded": 5,
+   "failed": 0,
+   "retried": 0,
+   "bytes": 0,
+   "batches": 0,
+   "batchedTiles": 0,
+   "local": 5
+  },
+  "openPython": {
+   "n": 29,
+   "ms": 17679,
+   "py": 525,
+   "routes": {
+    "/get_segmentation_status": {
+     "n": 1,
+     "ms": 3248,
+     "py": 1,
+     "max": 3248
+    },
+    "/telemetry/status": {
+     "n": 1,
+     "ms": 1388,
+     "py": 2,
+     "max": 1388
+    },
+    "/get_load_status": {
+     "n": 3,
+     "ms": 1334,
+     "py": 1,
+     "max": 1207
+    },
+    "/project/image/size": {
+     "n": 1,
+     "ms": 1332,
+     "py": 3,
+     "max": 1332
+    },
+    "/data_places": {
+     "n": 1,
+     "ms": 1300,
+     "py": 1,
+     "max": 1300
+    },
+    "/settings/remotes": {
+     "n": 1,
+     "ms": 1299,
+     "py": 1,
+     "max": 1299
+    },
+    "/datasets": {
+     "n": 1,
+     "ms": 1239,
+     "py": 3,
+     "max": 1239
+    },
+    "/view_transform/image": {
+     "n": 1,
+     "ms": 1207,
+     "py": 15,
+     "max": 1207
+    },
+    "/view_state/image": {
+     "n": 1,
+     "ms": 1207,
+     "py": 1,
+     "max": 1207
+    },
+    "/volume/image/info": {
+     "n": 1,
+     "ms": 1206,
+     "py": 1,
+     "max": 1206
+    },
+    "/config": {
+     "n": 1,
+     "ms": 1194,
+     "py": 1,
+     "max": 1194
+    },
+    "/get_database_description": {
+     "n": 1,
+     "ms": 449,
+     "py": 449,
+     "max": 449
+    },
+    "/init_database": {
+     "n": 1,
+     "ms": 449,
+     "py": 1,
+     "max": 449
+    },
+    "/agent/v1/viewer/sessions": {
+     "n": 1,
+     "ms": 236,
+     "py": 1,
+     "max": 236
+    },
+    "/get_table_status": {
+     "n": 1,
+     "ms": 216,
+     "py": 1,
+     "max": 216
+    },
+    "/save_channel_list": {
+     "n": 1,
+     "ms": 141,
+     "py": 19,
+     "max": 141
+    },
+    "/display_contrast": {
+     "n": 1,
+     "ms": 121,
+     "py": 6,
+     "max": 121
+    },
+    "/display_contrast/compute": {
+     "n": 1,
+     "ms": 66,
+     "py": 4,
+     "max": 66
+    },
+    "/resource_routing": {
+     "n": 1,
+     "ms": 20,
+     "py": 1,
+     "max": 20
+    },
+    "/<page>": {
+     "n": 1,
+     "ms": 15,
+     "py": 4,
+     "max": 15
+    },
+    "/get_channel_names": {
+     "n": 1,
+     "ms": 3,
+     "py": 1,
+     "max": 3
+    },
+    "/get_ome_metadata": {
+     "n": 1,
+     "ms": 3,
+     "py": 3,
+     "max": 3
+    },
+    "/project/image/open_elsewhere": {
+     "n": 1,
+     "ms": 2,
+     "py": 1,
+     "max": 2
+    },
+    "/project/image/files_here": {
+     "n": 1,
+     "ms": 1,
+     "py": 1,
+     "max": 1
+    },
+    "/resource_status": {
+     "n": 1,
+     "ms": 1,
+     "py": 1,
+     "max": 1
+    },
+    "/get_saved_channel_list": {
+     "n": 1,
+     "ms": 1,
+     "py": 1,
+     "max": 1
+    },
+    "/agent/v1/viewer/sessions/<id>/commands": {
+     "n": 1,
+     "ms": 1,
+     "py": 1,
+     "max": 1
+    }
+   }
+  },
+  "items": 2,
+  "pyramidBuildsAfter": [],
+  "tour": [
+   {
+    "label": "zoom_quarter_centre",
+    "fullMs": 2,
+    "frameP50": 16.664999999999964,
+    "frameP95": 16.670000000000073,
+    "frameMax": 16.670000000000073,
+    "long": 0,
+    "tiles": {
+     "n": 5,
+     "p50": 22,
+     "p95": 26,
+     "max": 26,
+     "sumMs": 108,
+     "viaWorker": 0,
+     "local": 5
+    }
+   },
+   {
+    "label": "zoom_full_centre",
+    "fullMs": 3,
+    "frameP50": 16.664999999999964,
+    "frameP95": 16.670000000000073,
+    "frameMax": 16.670000000000982,
+    "long": 0,
+    "tiles": {
+     "n": 8,
+     "p50": 19,
+     "p95": 22,
+     "max": 22,
+     "sumMs": 152,
+     "viaWorker": 0,
+     "local": 8
+    }
+   },
+   {
+    "label": "pan_full_b",
+    "fullMs": 21,
+    "frameP50": 16.665000000000873,
+    "frameP95": 16.670000000000073,
+    "frameMax": 16.670000000000073,
+    "long": 0,
+    "tiles": {
+     "n": 6,
+     "p50": 34,
+     "p95": 47,
+     "max": 47,
+     "sumMs": 199,
+     "viaWorker": 0,
+     "local": 6
+    }
+   },
+   {
+    "label": "pan_full_c",
+    "fullMs": 2,
+    "frameP50": 16.665000000000873,
+    "frameP95": 16.670000000000073,
+    "frameMax": 16.670000000000073,
+    "long": 0,
+    "tiles": {
+     "n": 6,
+     "p50": 21,
+     "p95": 27,
+     "max": 27,
+     "sumMs": 128,
+     "viaWorker": 0,
+     "local": 6
+    }
+   },
+   {
+    "label": "anim_zoom_out",
+    "fullMs": 1218,
+    "frameP50": 16.665000000000873,
+    "frameP95": 16.670000000000073,
+    "frameMax": 16.670000000000073,
+    "long": 0,
+    "tiles": {
+     "n": 24,
+     "p50": 24,
+     "p95": 29,
+     "max": 31,
+     "sumMs": 584,
+     "viaWorker": 0,
+     "local": 24
+    }
+   },
+   {
+    "label": "anim_pan",
+    "fullMs": 1219,
+    "frameP50": 16.665000000000873,
+    "frameP95": 16.670000000000073,
+    "frameMax": 16.670000000000073,
+    "long": 0,
+    "tiles": {
+     "n": 19,
+     "p50": 25,
+     "p95": 94,
+     "max": 94,
+     "sumMs": 707,
+     "viaWorker": 0,
+     "local": 19
+    }
+   },
+   {
+    "label": "fit",
+    "fullMs": 2,
+    "frameP50": 16.665000000000873,
+    "frameP95": 16.670000000000073,
+    "frameMax": 16.670000000000073,
+    "long": 0,
+    "tiles": {
+     "n": 0,
+     "p50": null,
+     "p95": null,
+     "max": null,
+     "sumMs": 0,
+     "viaWorker": 0,
+     "local": 0
+    }
+   }
+  ],
+  "tools": [
+   {
+    "tool": "roi",
+    "ms": 4315,
+    "result": "ok (asked: Set up ROI / Cell ID columnoptional Choose a column… CellID X_centroid Y_centroid Area MajorAxisLength MinorAxisLength Eccentricity Solidity Extent Orientation Nucleus AF1 C)",
+    "scripts": 9,
+    "requests": 16,
+    "panel": [
+     {
+      "n": "/image/tools/roi/panel",
+      "d": 202
+     },
+     {
+      "n": "/image/tools/roi/panel",
+      "d": 12
+     }
+    ],
+    "python": {
+     "n": 9,
+     "ms": 6567,
+     "py": 3847,
+     "routes": {
+      "/image/requirements": {
+       "n": 1,
+       "ms": 3309,
+       "py": 3309,
+       "max": 3309
+      },
+      "/agent/v1/viewer/sessions/<id>/commands": {
+       "n": 1,
+       "ms": 2421,
+       "py": 1,
+       "max": 2421
+      },
+      "/get_database_description": {
+       "n": 1,
+       "ms": 522,
+       "py": 522,
+       "max": 522
+      },
+      "/<ds>/tools/roi/panel": {
+       "n": 2,
+       "ms": 206,
+       "py": 9,
+       "max": 198
+      },
+      "/health": {
+       "n": 1,
+       "ms": 91,
+       "py": 1,
+       "max": 91
+      },
+      "/config": {
+       "n": 1,
+       "ms": 13,
+       "py": 1,
+       "max": 13
+      },
+      "/plugins/roi/api/adapters/destination": {
+       "n": 1,
+       "ms": 3,
+       "py": 2,
+       "max": 3
+      },
+      "/plugins/roi/api/state": {
+       "n": 1,
+       "ms": 2,
+       "py": 2,
+       "max": 2
+      }
+     }
+    }
+   },
+   {
+    "tool": "cell_explorer",
+    "ms": 3941,
+    "result": "ok (asked: Set up Cell Explorer / X coordinate columnoptional Choose a column… CellID X_centroid Y_centroid Area MajorAxisLength MinorAxisLength Eccentricity Solidity Extent Orientation Nucleus )",
+    "scripts": 9,
+    "requests": 19,
+    "panel": [
+     {
+      "n": "/image/tools/cell_explorer/panel",
+      "d": 7
+     },
+     {
+      "n": "/image/tools/cell_explorer/panel",
+      "d": 31
+     }
+    ],
+    "python": {
+     "n": 11,
+     "ms": 3973,
+     "py": 3534,
+     "routes": {
+      "/image/requirements": {
+       "n": 1,
+       "ms": 2608,
+       "py": 2608,
+       "max": 2608
+      },
+      "/get_database_description": {
+       "n": 1,
+       "ms": 467,
+       "py": 467,
+       "max": 467
+      },
+      "/get_all_cells/integer/": {
+       "n": 1,
+       "ms": 373,
+       "py": 82,
+       "max": 373
+      },
+      "/plugins/cell_explorer/api/variables": {
+       "n": 1,
+       "ms": 285,
+       "py": 283,
+       "max": 285
+      },
+      "/plugins/cell_explorer/api/values": {
+       "n": 1,
+       "ms": 163,
+       "py": 80,
+       "max": 163
+      },
+      "/plugins/cell_explorer/api/state": {
+       "n": 2,
+       "ms": 39,
+       "py": 5,
+       "max": 36
+      },
+      "/config": {
+       "n": 1,
+       "ms": 31,
+       "py": 2,
+       "max": 31
+      },
+      "/<ds>/tools/cell_explorer/panel": {
+       "n": 2,
+       "ms": 6,
+       "py": 6,
+       "max": 4
+      },
+      "/agent/v1/viewer/sessions/<id>/commands": {
+       "n": 1,
+       "ms": 1,
+       "py": 1,
+       "max": 1
+      }
+     }
+    }
+   }
+  ],
+  "figuresPageMs": 217,
+  "figuresKeptViewer": true,
+  "backToViewerMs": 116,
+  "viewerBeforeFigures": true,
+  "perfMemory": 1224,
+  "heapMB": 1303,
+  "recentTail": [
+   {
+    "p": "/view_state/image",
+    "ms": 5,
+    "py": 1,
+    "at": 12224
+   },
+   {
+    "p": "/resource_routing",
+    "ms": 1,
+    "py": 1,
+    "at": 12229
+   },
+   {
+    "p": "/resource_status",
+    "ms": 2,
+    "py": 1,
+    "at": 12230
+   },
+   {
+    "p": "/get_saved_channel_list",
+    "ms": 5,
+    "py": 5,
+    "at": 12231
+   },
+   {
+    "p": "/display_contrast",
+    "ms": 8,
+    "py": 8,
+    "at": 12237
+   },
+   {
+    "p": "/agent/v1/viewer/sessions/view_6d3c620cf596/commands",
+    "ms": 26,
+    "py": 2,
+    "at": 13735
+   },
+   {
+    "p": "/get_image_channel_stats",
+    "ms": 8214,
+    "py": 6,
+    "at": 8474
+   },
+   {
+    "p": "/health",
+    "ms": 1,
+    "py": 1,
+    "at": 16694
+   },
+   {
+    "p": "/get_image_channel_stats",
+    "ms": 8294,
+    "py": 1,
+    "at": 8486
+   },
+   {
+    "p": "/get_channel_gmm",
+    "ms": 1097,
+    "py": 1097,
+    "at": 16783
+   },
+   {
+    "p": "/save_channel_list",
+    "ms": 697,
+    "py": 3,
+    "at": 17187
+   },
+   {
+    "p": "/save_channel_list",
+    "ms": 4,
+    "py": 3,
+    "at": 18283
+   },
+   {
+    "p": "/agent/v1/viewer/sessions/view_6d3c620cf596/commands",
+    "ms": 1,
+    "py": 1,
+    "at": 18770
+   },
+   {
+    "p": "/image",
+    "ms": 242,
+    "py": 3,
+    "at": 21292
+   },
+   {
+    "p": "/config",
+    "ms": 4,
+    "py": 1,
+    "at": 21535
+   },
+   {
+    "p": "/view_transform/image",
+    "ms": 5,
+    "py": 1,
+    "at": 21539
+   },
+   {
+    "p": "/view_state/image",
+    "ms": 4,
+    "py": 1,
+    "at": 21544
+   },
+   {
+    "p": "/resource_routing",
+    "ms": 2,
+    "py": 1,
+    "at": 21547
+   },
+   {
+    "p": "/resource_status",
+    "ms": 3,
+    "py": 2,
+    "at": 21549
+   },
+   {
+    "p": "/get_saved_channel_list",
+    "ms": 1,
+    "py": 1,
+    "at": 21552
+   },
+   {
+    "p": "/display_contrast",
+    "ms": 6,
+    "py": 6,
+    "at": 21553
+   },
+   {
+    "p": "/health",
+    "ms": 1,
+    "py": 1,
+    "at": 21697
+   },
+   {
+    "p": "/image/tools/roi/panel",
+    "ms": 198,
+    "py": 1,
+    "at": 22619
+   },
+   {
+    "p": "/image/requirements",
+    "ms": 3309,
+    "py": 3309,
+    "at": 22931
+   },
+   {
+    "p": "/agent/v1/viewer/sessions/view_6d3c620cf596/commands",
+    "ms": 2421,
+    "py": 1,
+    "at": 23819
+   },
+   {
+    "p": "/config",
+    "ms": 13,
+    "py": 1,
+    "at": 26242
+   },
+   {
+    "p": "/get_database_description",
+    "ms": 522,
+    "py": 522,
+    "at": 26264
+   },
+   {
+    "p": "/health",
+    "ms": 91,
+    "py": 1,
+    "at": 26696
+   },
+   {
+    "p": "/image/tools/roi/panel",
+    "ms": 8,
+    "py": 8,
+    "at": 26792
+   },
+   {
+    "p": "/plugins/roi/api/state",
+    "ms": 2,
+    "py": 2,
+    "at": 26847
+   },
+   {
+    "p": "/plugins/roi/api/adapters/destination",
+    "ms": 3,
+    "py": 2,
+    "at": 26864
+   },
+   {
+    "p": "/plugins/roi/api/operations",
+    "ms": 3,
+    "py": 2,
+    "at": 27259
+   },
+   {
+    "p": "/image/tools/cell_explorer/panel",
+    "ms": 2,
+    "py": 2,
+    "at": 27371
+   },
+   {
+    "p": "/image/requirements",
+    "ms": 2608,
+    "py": 2608,
+    "at": 27471
+   },
+   {
+    "p": "/config",
+    "ms": 31,
+    "py": 2,
+    "at": 30108
+   },
+   {
+    "p": "/get_database_description",
+    "ms": 467,
+    "py": 467,
+    "at": 30149
+   },
+   {
+    "p": "/image/tools/cell_explorer/panel",
+    "ms": 4,
+    "py": 4,
+    "at": 30645
+   },
+   {
+    "p": "/plugins/cell_explorer/api/state",
+    "ms": 3,
+    "py": 3,
+    "at": 30680
+   },
+   {
+    "p": "/plugins/cell_explorer/api/variables",
+    "ms": 285,
+    "py": 283,
+    "at": 30680
+   },
+   {
+    "p": "/get_all_cells/integer/",
+    "ms": 373,
+    "py": 82,
+    "at": 30682
+   },
+   {
+    "p": "/plugins/cell_explorer/api/values",
+    "ms": 163,
+    "py": 80,
+    "at": 30969
+   },
+   {
+    "p": "/plugins/cell_explorer/api/state",
+    "ms": 36,
+    "py": 2,
+    "at": 31232
+   },
+   {
+    "p": "/agent/v1/viewer/sessions/view_6d3c620cf596/commands",
+    "ms": 1,
+    "py": 1,
+    "at": 31298
+   },
+   {
+    "p": "/health",
+    "ms": 6,
+    "py": 1,
+    "at": 31696
+   },
+   {
+    "p": "/plugins/figure_builder/figures",
+    "ms": 5,
+    "py": 5,
+    "at": 31729
+   },
+   {
+    "p": "/plugins/figure_builder/api/figures",
+    "ms": 5,
+    "py": 1,
+    "at": 31891
+   },
+   {
+    "p": "/image",
+    "ms": 19,
+    "py": 3,
+    "at": 34275
+   },
+   {
+    "p": "/view_transform/image",
+    "ms": 1,
+    "py": 1,
+    "at": 34294
+   },
+   {
+    "p": "/view_state/image",
+    "ms": 1,
+    "py": 1,
+    "at": 34296
+   },
+   {
+    "p": "/resource_routing",
+    "ms": 1,
+    "py": 0,
+    "at": 34296
+   },
+   {
+    "p": "/resource_status",
+    "ms": 1,
+    "py": 1,
+    "at": 34297
+   },
+   {
+    "p": "/get_saved_channel_list",
+    "ms": 1,
+    "py": 1,
+    "at": 34298
+   },
+   {
+    "p": "/display_contrast",
+    "ms": 4,
+    "py": 4,
+    "at": 34299
+   },
+   {
+    "p": "/config",
+    "ms": 1,
+    "py": 1,
+    "at": 34302
+   },
+   {
+    "p": "/agent/v1/viewer/sessions/view_6d3c620cf596/commands",
+    "ms": 118,
+    "py": 1,
+    "at": 36317
+   },
+   {
+    "p": "/health",
+    "ms": 1,
+    "py": 1,
+    "at": 36696
+   },
+   {
+    "p": "/agent/v1/viewer/sessions/view_6d3c620cf596/commands",
+    "ms": 173,
+    "py": 1,
+    "at": 41437
+   },
+   {
+    "p": "/health",
+    "ms": 1,
+    "py": 1,
+    "at": 41697
+   },
+   {
+    "p": "/agent/v1/viewer/sessions/view_6d3c620cf596/commands",
+    "ms": 154,
+    "py": 1,
+    "at": 46614
+   },
+   {
+    "p": "/health",
+    "ms": 72,
+    "py": 0,
+    "at": 46696
+   }
+  ],
+  "stages": [
+   {
+    "stage": "scipy",
+    "importer": "plexora.agent.evidence.image_qc",
+    "ms": 1159,
+    "at": 11472
+   },
+   {
+    "stage": "fit",
+    "importer": "plexora.server.models.data_model",
+    "ms": 491,
+    "at": 17276
+   }
+  ],
+  "stepsTail": [
+   {
+    "ms": 264,
+    "names": [
+     "warm-get_image_channel_stats-02_AF1"
+    ],
+    "at": 19753
+   },
+   {
+    "ms": 257,
+    "names": [
+     "warm-window-02_AF1"
+    ],
+    "at": 20010
+   },
+   {
+    "ms": 252,
+    "names": [
+     "warm-window-02_AF1"
+    ],
+    "at": 20262
+   },
+   {
+    "ms": 257,
+    "names": [
+     "warm-window-02_AF1"
+    ],
+    "at": 20520
+   },
+   {
+    "ms": 252,
+    "names": [
+     "warm-window-02_AF1"
+    ],
+    "at": 20772
+   },
+   {
+    "ms": 252,
+    "names": [
+     "warm-window-02_AF1"
+    ],
+    "at": 21024
+   },
+   {
+    "ms": 253,
+    "names": [
+     "warm-window-02_AF1"
+    ],
+    "at": 21277
+   },
+   {
+    "ms": 255,
+    "names": [
+     "warm-window-02_AF1"
+    ],
+    "at": 21532
+   },
+   {
+    "ms": 253,
+    "names": [
+     "warm-window-02_AF1"
+    ],
+    "at": 22561
+   },
+   {
+    "ms": 253,
+    "names": [
+     "warm-window-02_AF1"
+    ],
+    "at": 22814
+   },
+   {
+    "ms": 0,
+    "names": [
+     "warm-window-02_AF1"
+    ],
+    "at": 32502
+   },
+   {
+    "ms": 1,
+    "names": [
+     "_warm_datasource_caches"
+    ],
+    "at": 32503
+   },
+   {
+    "ms": 1,
+    "names": [
+     "_warm_datasource_caches"
+    ],
+    "at": 32504
+   },
+   {
+    "ms": 2,
+    "names": [
+     "warm-get_image_channel_stats-01_Nucleus_Hoechst"
+    ],
+    "at": 32506
+   },
+   {
+    "ms": 0,
+    "names": [
+     "warm-get_image_channel_stats-01_Nucleus_Hoechst"
+    ],
+    "at": 32507
+   },
+   {
+    "ms": 0,
+    "names": [
+     "warm-get_image_channel_stats-01_Nucleus_Hoechst"
+    ],
+    "at": 32507
+   },
+   {
+    "ms": 0,
+    "names": [
+     "warm-get_image_channel_stats-01_Nucleus_Hoechst"
+    ],
+    "at": 32507
+   },
+   {
+    "ms": 6,
+    "names": [
+     "warm-get_image_channel_stats-02_AF1"
+    ],
+    "at": 32513
+   },
+   {
+    "ms": 0,
+    "names": [
+     "warm-get_image_channel_stats-02_AF1"
+    ],
+    "at": 32513
+   },
+   {
+    "ms": 253,
+    "names": [
+     "warm-get_image_channel_stats-03_CD45_ArgoFluor520"
+    ],
+    "at": 32767
+   },
+   {
+    "ms": 252,
+    "names": [
+     "warm-get_image_channel_stats-03_CD45_ArgoFluor520"
+    ],
+    "at": 33019
+   },
+   {
+    "ms": 253,
+    "names": [
+     "warm-window-03_CD45_ArgoFluor520"
+    ],
+    "at": 33272
+   },
+   {
+    "ms": 253,
+    "names": [
+     "warm-window-03_CD45_ArgoFluor520"
+    ],
+    "at": 33526
+   },
+   {
+    "ms": 253,
+    "names": [
+     "warm-window-03_CD45_ArgoFluor520"
+    ],
+    "at": 33779
+   },
+   {
+    "ms": 254,
+    "names": [
+     "warm-window-03_CD45_ArgoFluor520"
+    ],
+    "at": 34033
+   },
+   {
+    "ms": 253,
+    "names": [
+     "warm-window-03_CD45_ArgoFluor520"
+    ],
+    "at": 34286
+   },
+   {
+    "ms": 253,
+    "names": [
+     "warm-window-03_CD45_ArgoFluor520"
+    ],
+    "at": 35165
+   },
+   {
+    "ms": 253,
+    "names": [
+     "warm-window-03_CD45_ArgoFluor520"
+    ],
+    "at": 35419
+   },
+   {
+    "ms": 252,
+    "names": [
+     "warm-window-03_CD45_ArgoFluor520"
+    ],
+    "at": 35671
+   },
+   {
+    "ms": 253,
+    "names": [
+     "warm-window-03_CD45_ArgoFluor520"
+    ],
+    "at": 35924
+   },
+   {
+    "ms": 256,
+    "names": [
+     "warm-window-03_CD45_ArgoFluor520"
+    ],
+    "at": 36180
+   },
+   {
+    "ms": 0,
+    "names": [
+     "warm-window-03_CD45_ArgoFluor520"
+    ],
+    "at": 36180
+   },
+   {
+    "ms": 254,
+    "names": [
+     "warm-get_image_channel_stats-04_Ki-67_ArgoFluor555L"
+    ],
+    "at": 36434
+   },
+   {
+    "ms": 253,
+    "names": [
+     "warm-get_image_channel_stats-04_Ki-67_ArgoFluor555L"
+    ],
+    "at": 37556
+   },
+   {
+    "ms": 254,
+    "names": [
+     "warm-window-04_Ki-67_ArgoFluor555L"
+    ],
+    "at": 37810
+   },
+   {
+    "ms": 253,
+    "names": [
+     "warm-window-04_Ki-67_ArgoFluor555L"
+    ],
+    "at": 38063
+   },
+   {
+    "ms": 254,
+    "names": [
+     "warm-window-04_Ki-67_ArgoFluor555L"
+    ],
+    "at": 38317
+   },
+   {
+    "ms": 252,
+    "names": [
+     "warm-window-04_Ki-67_ArgoFluor555L"
+    ],
+    "at": 38569
+   },
+   {
+    "ms": 252,
+    "names": [
+     "warm-window-04_Ki-67_ArgoFluor555L"
+    ],
+    "at": 38822
+   },
+   {
+    "ms": 254,
+    "names": [
+     "warm-window-04_Ki-67_ArgoFluor555L"
+    ],
+    "at": 39075
+   },
+   {
+    "ms": 253,
+    "names": [
+     "warm-window-04_Ki-67_ArgoFluor555L"
+    ],
+    "at": 39329
+   },
+   {
+    "ms": 254,
+    "names": [
+     "warm-window-04_Ki-67_ArgoFluor555L"
+    ],
+    "at": 39582
+   },
+   {
+    "ms": 253,
+    "names": [
+     "warm-window-04_Ki-67_ArgoFluor555L"
+    ],
+    "at": 39836
+   },
+   {
+    "ms": 253,
+    "names": [
+     "warm-window-04_Ki-67_ArgoFluor555L"
+    ],
+    "at": 40088
+   },
+   {
+    "ms": 253,
+    "names": [
+     "warm-window-04_Ki-67_ArgoFluor555L"
+    ],
+    "at": 40342
+   },
+   {
+    "ms": 254,
+    "names": [
+     "warm-window-04_Ki-67_ArgoFluor555L"
+    ],
+    "at": 40596
+   },
+   {
+    "ms": 253,
+    "names": [
+     "warm-window-04_Ki-67_ArgoFluor555L"
+    ],
+    "at": 40849
+   },
+   {
+    "ms": 253,
+    "names": [
+     "warm-window-04_Ki-67_ArgoFluor555L"
+    ],
+    "at": 41102
+   },
+   {
+    "ms": 254,
+    "names": [
+     "warm-window-04_Ki-67_ArgoFluor555L"
+    ],
+    "at": 41356
+   },
+   {
+    "ms": 253,
+    "names": [
+     "warm-window-04_Ki-67_ArgoFluor555L"
+    ],
+    "at": 41610
+   },
+   {
+    "ms": 254,
+    "names": [
+     "warm-window-04_Ki-67_ArgoFluor555L"
+    ],
+    "at": 42553
+   },
+   {
+    "ms": 253,
+    "names": [
+     "warm-window-04_Ki-67_ArgoFluor555L"
+    ],
+    "at": 42806
+   },
+   {
+    "ms": 253,
+    "names": [
+     "warm-window-04_Ki-67_ArgoFluor555L"
+    ],
+    "at": 43059
+   },
+   {
+    "ms": 260,
+    "names": [
+     "warm-window-04_Ki-67_ArgoFluor555L"
+    ],
+    "at": 43318
+   },
+   {
+    "ms": 252,
+    "names": [
+     "warm-window-04_Ki-67_ArgoFluor555L"
+    ],
+    "at": 43570
+   },
+   {
+    "ms": 158,
+    "names": [
+     "warm-window-04_Ki-67_ArgoFluor555L"
+    ],
+    "at": 43728
+   },
+   {
+    "ms": 0,
+    "names": [
+     "warm-window-04_Ki-67_ArgoFluor555L"
+    ],
+    "at": 43728
+   },
+   {
+    "ms": 254,
+    "names": [
+     "warm-get_image_channel_stats-05_CD3e_ArgoFluor548"
+    ],
+    "at": 43982
+   },
+   {
+    "ms": 253,
+    "names": [
+     "warm-get_image_channel_stats-05_CD3e_ArgoFluor548"
+    ],
+    "at": 44235
+   },
+   {
+    "ms": 252,
+    "names": [
+     "warm-window-05_CD3e_ArgoFluor548"
+    ],
+    "at": 44487
+   },
+   {
+    "ms": 253,
+    "names": [
+     "warm-window-05_CD3e_ArgoFluor548"
+    ],
+    "at": 44740
+   },
+   {
+    "ms": 255,
+    "names": [
+     "warm-window-05_CD3e_ArgoFluor548"
+    ],
+    "at": 44995
+   },
+   {
+    "ms": 254,
+    "names": [
+     "warm-window-05_CD3e_ArgoFluor548"
+    ],
+    "at": 45249
+   },
+   {
+    "ms": 252,
+    "names": [
+     "warm-window-05_CD3e_ArgoFluor548"
+    ],
+    "at": 45501
+   },
+   {
+    "ms": 251,
+    "names": [
+     "warm-window-05_CD3e_ArgoFluor548"
+    ],
+    "at": 45752
+   },
+   {
+    "ms": 253,
+    "names": [
+     "warm-window-05_CD3e_ArgoFluor548"
+    ],
+    "at": 46005
+   },
+   {
+    "ms": 253,
+    "names": [
+     "warm-window-05_CD3e_ArgoFluor548"
+    ],
+    "at": 46258
+   },
+   {
+    "ms": 254,
+    "names": [
+     "warm-window-05_CD3e_ArgoFluor548"
+    ],
+    "at": 46512
+   },
+   {
+    "ms": 253,
+    "names": [
+     "warm-window-05_CD3e_ArgoFluor548"
+    ],
+    "at": 46766
+   },
+   {
+    "ms": 253,
+    "names": [
+     "warm-window-05_CD3e_ArgoFluor548"
+    ],
+    "at": 47628
+   },
+   {
+    "ms": 256,
+    "names": [
+     "warm-window-05_CD3e_ArgoFluor548"
+    ],
+    "at": 47885
+   },
+   {
+    "ms": 254,
+    "names": [
+     "warm-window-05_CD3e_ArgoFluor548"
+    ],
+    "at": 48139
+   },
+   {
+    "ms": 253,
+    "names": [
+     "warm-window-05_CD3e_ArgoFluor548"
+    ],
+    "at": 48392
+   },
+   {
+    "ms": 254,
+    "names": [
+     "warm-window-05_CD3e_ArgoFluor548"
+    ],
+    "at": 48645
+   },
+   {
+    "ms": 254,
+    "names": [
+     "warm-window-05_CD3e_ArgoFluor548"
+    ],
+    "at": 48900
+   },
+   {
+    "ms": 251,
+    "names": [
+     "warm-window-05_CD3e_ArgoFluor548"
+    ],
+    "at": 49151
+   },
+   {
+    "ms": 252,
+    "names": [
+     "warm-window-05_CD3e_ArgoFluor548"
+    ],
+    "at": 49403
+   },
+   {
+    "ms": 253,
+    "names": [
+     "warm-window-05_CD3e_ArgoFluor548"
+    ],
+    "at": 49656
+   },
+   {
+    "ms": 253,
+    "names": [
+     "warm-window-05_CD3e_ArgoFluor548"
+    ],
+    "at": 49908
+   },
+   {
+    "ms": 253,
+    "names": [
+     "warm-window-05_CD3e_ArgoFluor548"
+    ],
+    "at": 50161
+   }
+  ],
+  "handoffs": [],
+  "toasts": []
+ },
+ "frameNavigations": [
+  {
+   "ms": 165,
+   "url": "http://127.0.0.1:60253/"
+  },
+  {
+   "ms": 6403,
+   "url": "http://127.0.0.1:60253/image"
+  },
+  {
+   "ms": 26880,
+   "url": "http://127.0.0.1:60253/image?tool=roi"
+  },
+  {
+   "ms": 31186,
+   "url": "http://127.0.0.1:60253/image?tool=cell_explorer"
+  },
+  {
+   "ms": 31921,
+   "url": "http://127.0.0.1:60253/plugins/figure_builder/figures"
+  },
+  {
+   "ms": 31963,
+   "url": "http://127.0.0.1:60253/image?tool=cell_explorer"
+  }
+ ],
+ "workers": [
+  "http://127.0.0.1:60253/client/src/js/workers/pythonWorker.js",
+  "http://127.0.0.1:60253/client/src/js/workers/csvWorker.js",
+  "http://127.0.0.1:60253/client/src/js/workers/csvWorker.js",
+  "http://127.0.0.1:60253/client/src/js/workers/csvWorker.js",
+  "http://127.0.0.1:60253/client/src/js/workers/csvWorker.js",
+  "http://127.0.0.1:60253/client/src/js/workers/csvWorker.js",
+  "http://127.0.0.1:60253/client/src/js/workers/csvWorker.js",
+  "http://127.0.0.1:60253/client/src/js/workers/csvWorker.js",
+  "http://127.0.0.1:60253/client/src/js/workers/csvWorker.js",
+  "http://127.0.0.1:60253/client/dist/tiffWorker_bundle.js",
+  "http://127.0.0.1:60253/client/dist/tiffWorker_bundle.js",
+  "http://127.0.0.1:60253/client/dist/tiffWorker_bundle.js",
+  "http://127.0.0.1:60253/client/dist/tiffWorker_bundle.js",
+  "http://127.0.0.1:60253/client/dist/tiffWorker_bundle.js",
+  "http://127.0.0.1:60253/client/dist/tiffWorker_bundle.js",
+  "http://127.0.0.1:60253/client/dist/tiffWorker_bundle.js",
+  "http://127.0.0.1:60253/client/src/js/workers/tileDecoder.js",
+  "http://127.0.0.1:60253/client/src/js/workers/tileDecoder.js",
+  "http://127.0.0.1:60253/client/src/js/workers/tileDecoder.js",
+  "http://127.0.0.1:60253/client/src/js/workers/tileDecoder.js",
+  "http://127.0.0.1:60253/client/dist/tiffWorker_bundle.js",
+  "http://127.0.0.1:60253/client/dist/tiffWorker_bundle.js",
+  "http://127.0.0.1:60253/client/dist/tiffWorker_bundle.js",
+  "http://127.0.0.1:60253/client/dist/tiffWorker_bundle.js",
+  "http://127.0.0.1:60253/client/dist/tiffWorker_bundle.js",
+  "http://127.0.0.1:60253/client/dist/tiffWorker_bundle.js",
+  "http://127.0.0.1:60253/client/dist/tiffWorker_bundle.js",
+  "http://127.0.0.1:60253/client/dist/tiffWorker_bundle.js",
+  "http://127.0.0.1:60253/client/src/js/workers/csvWorker.js",
+  "http://127.0.0.1:60253/client/src/js/workers/csvWorker.js",
+  "http://127.0.0.1:60253/client/src/js/workers/csvWorker.js",
+  "http://127.0.0.1:60253/client/src/js/workers/csvWorker.js",
+  "http://127.0.0.1:60253/client/src/js/workers/csvWorker.js",
+  "http://127.0.0.1:60253/client/src/js/workers/csvWorker.js",
+  "http://127.0.0.1:60253/client/src/js/workers/csvWorker.js",
+  "http://127.0.0.1:60253/client/src/js/workers/csvWorker.js",
+  "http://127.0.0.1:60253/client/dist/tiffWorker_bundle.js",
+  "http://127.0.0.1:60253/client/dist/tiffWorker_bundle.js",
+  "http://127.0.0.1:60253/client/dist/tiffWorker_bundle.js",
+  "http://127.0.0.1:60253/client/dist/tiffWorker_bundle.js",
+  "http://127.0.0.1:60253/client/dist/tiffWorker_bundle.js",
+  "http://127.0.0.1:60253/client/dist/tiffWorker_bundle.js",
+  "http://127.0.0.1:60253/client/dist/tiffWorker_bundle.js",
+  "http://127.0.0.1:60253/client/dist/tiffWorker_bundle.js",
+  "http://127.0.0.1:60253/client/src/js/workers/csvWorker.js",
+  "http://127.0.0.1:60253/client/src/js/workers/csvWorker.js",
+  "http://127.0.0.1:60253/client/src/js/workers/csvWorker.js",
+  "http://127.0.0.1:60253/client/src/js/workers/csvWorker.js",
+  "http://127.0.0.1:60253/client/src/js/workers/csvWorker.js",
+  "http://127.0.0.1:60253/client/src/js/workers/csvWorker.js",
+  "http://127.0.0.1:60253/client/src/js/workers/csvWorker.js",
+  "http://127.0.0.1:60253/client/src/js/workers/csvWorker.js",
+  "http://127.0.0.1:60253/client/src/js/workers/csvWorker.js",
+  "http://127.0.0.1:60253/client/src/js/workers/csvWorker.js",
+  "http://127.0.0.1:60253/client/src/js/workers/csvWorker.js",
+  "http://127.0.0.1:60253/client/src/js/workers/csvWorker.js",
+  "http://127.0.0.1:60253/client/src/js/workers/csvWorker.js",
+  "http://127.0.0.1:60253/client/src/js/workers/csvWorker.js",
+  "http://127.0.0.1:60253/client/src/js/workers/csvWorker.js",
+  "http://127.0.0.1:60253/client/src/js/workers/csvWorker.js"
+ ],
+ "workerBigLogs": [],
+ "bigLogs": {
+  "frame": [],
+  "host": []
+ },
+ "errors": []
+}

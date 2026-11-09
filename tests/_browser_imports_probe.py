@@ -2,12 +2,9 @@
 
 Run as `python -m tests._browser_imports_probe` (`PLEXORA_PROBE_BLOCK=0`: the
 same build with nothing blocked, to compare against). Every package the website's
-base build does not carry is made unimportable (`BLOCKED`), and every module it
-defers to its first use (polars: plexora/browser/stages.py `DEFERRED`) is the
-website's stand-in, whose first attribute read fails here; then `create_app()`
+base build does not carry is made unimportable (`BLOCKED`), then `create_app()`
 runs with every plugin, and the probe prints JSON: whether it built, its rule
-count, the first failure, which blocked packages anything asked for, and what
-read a deferred module (`deferred`).
+count, the first failure, and which blocked packages anything asked for.
 
 A subprocess for the reason `_plugin_boundary_probe` is one: `create_app()`
 runs once per interpreter, and what it imports is a property of a fresh one.
@@ -52,20 +49,8 @@ class Blocker(importlib.abc.MetaPathFinder):
         return None
 
 
-def _refuse(stage):
-    raise RuntimeError(f"the {stage} stage was asked for while the app was built")
-
-
-deferring = None
 if os.environ.get("PLEXORA_PROBE_BLOCK", "1") != "0":
     sys.meta_path.insert(0, Blocker())
-    from plexora.browser import stages
-
-    # As the website's boot (`stages.install`), without its finder on the
-    # path: `Blocker` answers for the other stages' packages.
-    deferring = stages.StageFinder(_refuse)
-    for _name in stages.DEFERRED:
-        deferring.defer(_name)
 
 out = {"built": False, "rules": 0, "error": None}
 try:
@@ -80,5 +65,4 @@ except BaseException as exc:  # noqa: BLE001 -- reported, not raised
     out["trace"] = [f"{frame.filename}:{frame.lineno}"
                     for frame in traceback.extract_tb(exc.__traceback__)][-6:]
 out["asked"] = asked
-out["deferred"] = dict(deferring.importers) if deferring is not None else {}
 print(json.dumps(out))
