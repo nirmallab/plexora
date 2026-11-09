@@ -4,9 +4,10 @@ Everything the website work (plan `dreamy-brewing-sunset.md`, branch `web/phase0
 is waiting on from you, in one place. Kept current as work lands; the newest
 state is on `web/phase0`. Each item says what to do and what it unblocks.
 **The website is live** at https://viewer.plexoraapp.com since 2026-11-08
-00:40 UTC, now 0.0.40 (`main` at fe331037, no tag; since 2026-11-08
-23:19 UTC: the Lite label's new wording), Pages project `plexora-viewer`
-branch `release`, bundle `py/0.0.40/`, flags `viewer: on`, telemetry on. 0.0.38 was live for under
+00:40 UTC, now 0.0.41 (`main` at dbee41b7, no tag; since 2026-11-09:
+the loader's orb and its four steps; 0.0.40, the Lite label's new wording,
+before it), Pages project `plexora-viewer`
+branch `release`, bundle `py/0.0.41/`, flags `viewer: on`, telemetry on. 0.0.38 was live for under
 an hour and did not start Python on the self-check page, in a second tab or
 without sync access handles; its `py/0.0.38/` stays, as every released
 prefix does, and nothing points at it. Activating a licence and AI do not work there until section 1,
@@ -158,8 +159,8 @@ bundle `py/dev/4f583c3b9745/` and, sharing the flags, no longer shows its
 - The **next desktop release** from `main` carries the removals (Segment in
   3-D, Carry an ROI through planes), the desktop speed-ups and the new
   telemetry values (the Worker that takes them is deployed). Make it
-  **0.0.41** (`release.py ci --bump patch` from 0.0.40), not a tag of a
-  version the website already has: its `py/0.0.37/` to `py/0.0.40/` are
+  **0.0.42** (`release.py ci --bump patch` from 0.0.41), not a tag of a
+  version the website already has: its `py/0.0.37/` to `py/0.0.41/` are
   published and never rewritten, so once the CI secrets
   exist such a Release run's `web_deploy` would refuse its own rebuild of
   that bundle and hold the release.
