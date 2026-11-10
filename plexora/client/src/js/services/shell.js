@@ -932,7 +932,7 @@
         // Python's downloads first -- the longest part of a visit by far --
         // and everything below while they run.
         global.PlexoraPython.on("mark", ({ mark }) => { if (MARK_STEPS[mark]) loader.reach(MARK_STEPS[mark]); });
-        global.PlexoraPython.warm({ base: py, root: at("/") });
+        global.PlexoraPython.warm({ base: py, root: at("/"), tab: true });
         //: Resolves null to go on, or a function that stops the site.
         const halted = flagsRead.then((flags) => {
             global.PlexoraFlags = Object.freeze(flags);
@@ -1003,7 +1003,7 @@
         // `?pydebug` on the address: the worker's test hooks (`run`, `sync`,
         // `trace`), for diagnosing the site in development.
         const debug = new URLSearchParams(global.location.search).has("pydebug");
-        const booting = global.PlexoraPython.start({ base: py, root: at("/"), siteBase: BASE,
+        const booting = global.PlexoraPython.start({ base: py, root: at("/"), siteBase: BASE, tab: true,
                                                      debug, store, telemetry: telemetryOptions(shell) });
         //: Python started, with everything a page's requests may need: the
         //: licence in its files, the store's state, the files picked on
@@ -1339,6 +1339,18 @@
         // On the document, not the button: the app's router swaps pages in
         // place, so the project is the one shown when the item is clicked.
         doc.addEventListener("click", (event) => {
+            const restart = event.target.closest && event.target.closest("#nav_restart_python");
+            if (restart && host.PlexoraPython) {
+                const confirm = global.PlexoraConfirm;
+                const asked = confirm ? confirm.ask({
+                    title: "Restart Plexora in this tab?",
+                    body: "Anything still running here stops (an import, a mask being built). "
+                          + "Your projects are kept.",
+                    confirm: "Restart",
+                }) : Promise.resolve(true);
+                asked.then((go) => { if (go) host.PlexoraPython.restart("Help › Restart"); });
+                return;
+            }
             const item = event.target.closest && event.target.closest("#nav_open_desktop, #nav_open_bundle");
             if (!item || !host.PlexoraHandoff) return;
             if (item.id === "nav_open_bundle") {

@@ -93,7 +93,7 @@
     <script src="{{ data.base_url }}/client/src/js/views/glInit.js?v=20261015_display_contrast"></script>
     <script src="{{ data.base_url }}/client/src/js/views/tileColorize.js?v=20261015_display_contrast"></script>
     <script src="{{ data.base_url }}/client/src/js/views/tileDecode.js?v=20261010_nav3d"></script>
-    <script src="{{ data.base_url }}/client/src/js/views/tileFetch.js?v=20261107_local_browser"></script>
+    <script src="{{ data.base_url }}/client/src/js/views/tileFetch.js?v=20261109_dropped_slot"></script>
     <script src="{{ data.base_url }}/client/src/js/views/labelTile.js?v=20261012_main_merge"></script>
     <script src="{{ data.base_url }}/client/src/js/views/labelGpu.js?v=20261107_label_high_byte"></script>
     <script src="{{ data.base_url }}/client/src/js/services/viewTransform.js?v=20260925_view_transform"></script>
@@ -635,6 +635,12 @@
                         <span class="fas fa-file-lines nav-item-icon"></span>
                         <span class="nav-item-label">Show Logs</span></button>
                     {% endif %}
+                    {# The website keeps a tab's Python across a reload
+                       (services/pythonClient.js): this starts a new one. #}
+                    <div class="dropdown-divider website-only"></div>
+                    <button type="button" class="dropdown-item website-only" id="nav_restart_python">
+                        <span class="fas fa-power-off nav-item-icon"></span>
+                        <span class="nav-item-label">Restart Plexora in This Tab&hellip;</span></button>
                     <div class="dropdown-divider"></div>
                     <button type="button" class="dropdown-item" id="nav_about">
                         <span class="fas fa-circle-info nav-item-icon"></span>

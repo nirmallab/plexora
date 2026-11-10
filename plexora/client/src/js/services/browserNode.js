@@ -178,17 +178,40 @@
                     if (data.ok) entry.resolve(data.result);
                     else entry.reject(new Error(data.error));
                 };
+                // A worker that dies (out of memory, a crash in a decoder)
+                // answers nothing again: what it was asked fails now, and it
+                // is asked nothing more.
+                worker.onerror = (event) => {
+                    event.preventDefault?.();
+                    this.fail((entry) => entry.worker === worker,
+                              `a reader stopped: ${event.message || "worker error"}`);
+                    this.workers = this.workers.filter((w) => w !== worker);
+                    worker.terminate();
+                };
                 this.workers.push(worker);
             }
         }
 
         call(worker, message) {
+            if (!worker) return Promise.reject(new Error("the reader is closed"));
             const id = this.nextId++;
             worker.inflight += 1;
             return new Promise((resolve, reject) => {
-                this.pending.set(id, { resolve, reject });
+                this.pending.set(id, { resolve, reject, worker });
                 worker.postMessage({ id, ...message });
             });
+        }
+
+        /** Fail every read waiting on a worker `which` picks: a tile waited
+         *  on for ever holds one of the viewer's few tile slots for ever
+         *  (views/tileFetch.js), and every tile after it waits behind. */
+        fail(which, why) {
+            for (const [id, entry] of [...this.pending]) {
+                if (!which(entry)) continue;
+                this.pending.delete(id);
+                entry.worker.inflight -= 1;
+                entry.reject(new Error(why));
+            }
         }
 
         /** Open `found` in every worker: `{file}` (a File the user picked),
@@ -222,7 +245,7 @@
         }
 
         least() {
-            return this.workers.reduce((best, w) => (w.inflight < best.inflight ? w : best));
+            return this.workers.reduce((best, w) => (!best || w.inflight < best.inflight ? w : best), null);
         }
 
         tile(channel, level, tx, ty, tw, th, raw = false) {
@@ -244,6 +267,7 @@
         close() {
             for (const w of this.workers) w.terminate();
             this.workers = [];
+            this.fail(() => true, "the reader was closed");
         }
     }
 
@@ -413,14 +437,26 @@
             unwarm();
             return before;
         }
-        if (before) close(before);
+        // A part whose spec and file are as they were stays open, with the
+        // reads it is in the middle of: the mask attached once its pyramid is
+        // built (`labels` served, a new `generation`) leaves the image's
+        // readers alone -- closing them lost the tiles being read then.
+        const keepImage = Boolean(before && !slide && before.image.pool
+            && sameImage(before.spec, spec) && sameFile(before.image, spec.path, files));
+        const keepLabels = Boolean(before && before.labels.pool
+            && sameLabels(before.spec, spec) && sameFile(before.labels, spec.labels && spec.labels.path, files));
+        if (before) {
+            if (!keepImage) closePart(before.image);
+            if (!keepLabels) closePart(before.labels);
+        }
         held.delete(name);
         const [image, labels] = await Promise.all([
             // A whole-slide image the page reads with openslide-js
             // (services/browserSlides.js): no TIFF pool, its tiles are cut there.
-            slide ? Promise.resolve(spec.served ? { slide: spec.slide } : { refused: spec.reason })
-                : openPart(spec, WORKERS, imageDiffers, files, warm.image),
-            openPart(spec.labels, LABEL_WORKERS, labelsDiffer, files, warm.labels),
+            keepImage ? before.image
+                : slide ? Promise.resolve(spec.served ? { slide: spec.slide } : { refused: spec.reason })
+                    : openPart(spec, WORKERS, imageDiffers, files, warm.image),
+            keepLabels ? before.labels : openPart(spec.labels, LABEL_WORKERS, labelsDiffer, files, warm.labels),
         ]);
         //: When the check was asked and answered, the files granted (or
         //: found), and the files open (performance.now), for the diagnostics.
@@ -430,8 +466,41 @@
         return entry;
     }
 
+    function closePart(part) {
+        if (part && part.pool) part.pool.close();
+    }
+
     function close(entry) {
-        for (const part of [entry.image, entry.labels]) if (part && part.pool) part.pool.close();
+        closePart(entry.image);
+        closePart(entry.labels);
+    }
+
+    //: The image's part of a spec, and the mask's: what a part's readers were
+    //: opened from (`generation` counts Python's loads of the project, not
+    //: its files).
+    const imagePart = (spec) => {
+        const { labels, generation, ...rest } = spec || {};
+        return JSON.stringify(rest);
+    };
+    const sameImage = (a, b) => imagePart(a) === imagePart(b);
+    const sameLabels = (a, b) => JSON.stringify((a && a.labels) || null) === JSON.stringify((b && b.labels) || null);
+
+    //: A mask still being prepared, asked about again (RECHECK_MS): the mask
+    //: tile that asks waits for the answer, the channels' tiles go on with
+    //: what is open -- the project's check stays the old one until the new
+    //: one is ready, and a failed recheck leaves it.
+    const rechecks = new Map();
+
+    function recheck(name, entry) {
+        if (!rechecks.has(name)) {
+            const was = checks.get(name);
+            const next = check(name).then((fresh) => {
+                if (checks.get(name) === was) checks.set(name, Promise.resolve(fresh));
+                return fresh;
+            }, () => entry).finally(() => rechecks.delete(name));
+            rechecks.set(name, next);
+        }
+        return rechecks.get(name);
     }
 
     function project(name) {
@@ -520,8 +589,7 @@
             if (!entry.labels.pool && entry.spec.labels.pending && Date.now() - entry.checkedAt > RECHECK_MS) {
                 // The mask was being prepared; the viewer takes it on in
                 // place, so ask Python again, for this tile too.
-                checks.delete(name);
-                entry = await project(name);
+                entry = await recheck(name, entry);
                 if (!entry.spec) return null;
             }
             const part = entry.labels;

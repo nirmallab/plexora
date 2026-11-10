@@ -78,15 +78,17 @@ def test_a_build_steps_back_while_the_page_waits(probe):
     # The build's own job looking in on it is no reason to go faster.
     assert builder["jobLooked"] == [1]
     assert builder["free"] == [1, 8]
-    assert builder["nodeBusy"] == [1, 8, 1]
+    # The browser node reading tiles: half of them (one made a mask built
+    # while the user looked around take four times as long).
+    assert builder["nodeBusy"] == [1, 8, 4]
 
 
 def test_a_request_holding_out_for_the_build_gets_every_hand(probe):
     builder = probe["builder"]
-    assert builder["awaited"] == [1, 8, 1, 8]
-    assert builder["stillAwaited"] == [1, 8, 1, 8]
+    assert builder["awaited"] == [1, 8, 4, 8]
+    assert builder["stillAwaited"] == [1, 8, 4, 8]
     # A second after its last look, the page's waits count again.
-    assert builder["awaitedEnded"] == [1, 8, 1, 8, 1]
+    assert builder["awaitedEnded"] == [1, 8, 4, 8, 4]
     # Done: the pacing stops with the worker.
     assert builder["afterDone"] == {"more": 0, "terminated": True}
     assert "worker" not in builder["listed"] and "pacer" not in builder["listed"]

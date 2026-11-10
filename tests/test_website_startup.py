@@ -125,6 +125,8 @@ def test_the_worker_warms_outside_its_queue_and_boot_takes_over():
     # step run (steps start once `py` is set).
     assert "py =" not in warm.replace("pyodide =", "")
     assert "runPythonAsync" not in warm and "pyimport" not in warm
-    boot = _function(WORKER, "boot")
+    # The first boot (`boot` hands a page of the same tab what it made).
+    boot = _function(WORKER, "firstBoot")
     assert boot.index("await warm(args)") < boot.index("py = warmed.pyodide")
+    assert "firstBoot(args)" in _function(WORKER, "boot")
     assert "warm," in CLIENT and "function warm(" in CLIENT

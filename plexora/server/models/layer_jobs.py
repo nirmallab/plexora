@@ -181,25 +181,33 @@ def _finish(project_name, layer_id, status, *, error=None, install=None):
     carries the message and the install line for the card that is on screen
     now, and the project record carries the bare status so a server that
     restarts tomorrow still knows this layer never finished building.
-    """
-    with _lock:
-        _jobs[(project_name, layer_id)] = _record(
-            status,
-            progress=100 if status == "ready" else 0,
-            stage="ready" if status == "ready" else "failed",
-            stage_label="Ready" if status == "ready" else "Failed",
-            message=None if status == "ready" else error,
-            error=error, install=install)
 
+    The project first: whoever sees the outcome in memory (the card's poll)
+    and then opens the project finds it there too. The other order let a
+    reader in between see "ready" in memory and the layer still pending on
+    the project (tests/test_layer_jobs.py failed about half its runs).
+    """
     def change(project):
         layer = next((l for l in project.spatial_layers if l.id == layer_id), None)
         if layer is None or layer.status == status:
             return project
         return project.with_layer(replace(layer, status=status))
 
-    # The project may have been deleted while the build ran -- `mutate` answers
-    # None for that, which is the state the segmentation job already handles.
-    Project.mutate(project_name, change)
+    try:
+        # The project may have been deleted while the build ran -- `mutate`
+        # answers None for that, which is the state the segmentation job
+        # already handles.
+        Project.mutate(project_name, change)
+    finally:
+        # Said on the card whether or not the project could be written.
+        with _lock:
+            _jobs[(project_name, layer_id)] = _record(
+                status,
+                progress=100 if status == "ready" else 0,
+                stage="ready" if status == "ready" else "failed",
+                stage_label="Ready" if status == "ready" else "Failed",
+                message=None if status == "ready" else error,
+                error=error, install=install)
 
 
 # -- tasks that are not layers ---------------------------------------------
