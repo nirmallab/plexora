@@ -9,7 +9,7 @@ import path from "node:path";
 import { spawn } from "node:child_process";
 import { writeFileSync, mkdtempSync, realpathSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { INIT, launch, post } from "./benchlib.mjs";
+import { INIT, launch, levelWatch, levelsSeen, post } from "./benchlib.mjs";
 
 const args = process.argv.slice(2);
 const opt = (n, f) => (args.includes(n) ? args[args.indexOf(n) + 1] : f);
@@ -92,6 +92,7 @@ try {
   if (opt("--pause", null)) await page.waitForTimeout(Number(opt("--pause")));
     const since = await page.evaluate(() => performance.now());
     const eyes = await page.$$(".channel-slot-eye");
+    await levelWatch(page).catch(() => null);
     let turned = 0;
     for (const e of eyes) {
         if ((await e.getAttribute("aria-pressed")) === "false" && turned < 4) { await e.click(); turned++; await page.waitForTimeout(150); }
@@ -99,6 +100,8 @@ try {
     say(`turned on ${turned}`);
     for (let end = Date.now() + 40000; Date.now() < end;) { await sample("channels"); await page.waitForTimeout(1000); }
     await brightness("2_channels");
+    out.steps.levels = await levelsSeen(page).catch((e) => String(e));
+    say(`levels: fit ${out.steps.levels?.fitMs} ms, calibrated ${out.steps.levels?.calibratedMs} ms after the first click`);
     out.steps.channelRequests = (await stats()).filter((r) => r.start >= since - 500)
         .map((r) => ({ ...r, start: r.start - Math.round(since) }));
     say(`channel stats: ${JSON.stringify(out.steps.channelRequests.filter((r) => r.p.includes("stats")).map((r) => [r.q, r.start + r.ms]))}`);

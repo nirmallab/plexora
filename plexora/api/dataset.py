@@ -1301,6 +1301,20 @@ def _project_data_for(project: Project, table_provider=None, cache=None) -> Proj
     )
 
 
+def _viewer_table(project: Project, fingerprint):
+    """The table provider the viewer holds for `project`, if it was read from
+    the project's table as it is now (`fingerprint`); else None.
+
+    For agent/session.py, which may not reach data_model itself: a session
+    that would read the very file the viewer has already read takes the
+    viewer's provider instead (`data_model.viewer_table` says when that is
+    the same table). Never loads and never waits.
+    """
+    if project.dataset is None or project.resources.get("table") is not None:
+        return None
+    return data_model.viewer_table(project.name, project.dataset, fingerprint)
+
+
 def project_data(name: str) -> ProjectData:
     """Build the handle set for a project.
 

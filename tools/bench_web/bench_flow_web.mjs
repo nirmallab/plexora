@@ -20,7 +20,7 @@
 import path from "node:path";
 import { writeFileSync, mkdtempSync, readdirSync, statSync, readFileSync, unlinkSync, linkSync, openSync, readSync, closeSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { INIT, WORKER_INIT, launch, post, pyRecent, startStatic } from "./benchlib.mjs";
+import { INIT, WORKER_INIT, launch, levelWatch, levelsSeen, post, pyRecent, startStatic } from "./benchlib.mjs";
 const args = process.argv.slice(2);
 const opt = (n, f) => (args.includes(n) ? args[args.indexOf(n) + 1] : f);
 const site = opt("--site", null);
@@ -173,6 +173,7 @@ _w.Task.run = _task_run
   t = Date.now();
   const before = (await sample(frame, "channels")).b;
   const eyes = await frame.$$(".channel-slot-eye");
+  await levelWatch(frame).catch(() => null);
   let turned = 0; for (const e of eyes) { const on = await e.getAttribute("aria-pressed"); if (on === "false" && turned < Number(opt("--turn", "4"))) { await e.click(); turned++; await page.waitForTimeout(150); } }
   out.steps.turnedOn = turned; say(`turned on ${turned} channels`);
   const since = await page.evaluate(() => performance.now());
@@ -201,6 +202,8 @@ _w.Task.run = _task_run
     await page.waitForTimeout(1000);
   }
   await brightness("2_channels");
+  out.steps.levels = await levelsSeen(frame).catch((e) => String(e));
+  say(`levels: fit ${out.steps.levels?.fitMs} ms, calibrated ${out.steps.levels?.calibratedMs} ms after the first click`);
   out.steps.channelRequests = (await pyRecent(page)).filter((r) => r.at >= since - 2000).filter((r) => /channel_stats|gmm|display_contrast/.test(r.path)).map((r) => ({ p: r.path.slice(0, 80), ms: r.ms, py: r.pyMs, at: r.at }));
   out.steps.stepsBeforeReload = await page.evaluate(() => window.PlexoraPython.steps().slice(-500)).catch(() => null);
   out.steps.recentBeforeReload = (await pyRecent(page)).slice(-80).map((r) => ({ p: r.path.slice(0, 80), ms: r.ms, py: r.pyMs, at: r.at, status: r.status }));

@@ -52,6 +52,13 @@ STEP_CHANNELS = 4
 #: four held a click on another channel, and the channel list's polls, up to
 #: 4 s behind a step of work nobody was waiting for.
 AHEAD_CHANNELS = 1
+#: project -> {channel: when (time.monotonic) the website's job calibrated it},
+#: until the viewer has read it (`describe`): a fit for it waits meanwhile
+#: (`calibrating`), at most `SEEN_WAIT_S`.
+_UNSEEN: dict = {}
+#: How long a fit waits for the viewer to read its channel's calibration: the
+#: viewer's longest gap between two reads (viewerSidebar GATING_POLL_*: 8 s).
+SEEN_WAIT_S = 8.0
 
 
 def _session():
@@ -140,6 +147,11 @@ def describe(project, session=None) -> dict:
         record = None
     channels = entries(record)
     calibrated = sorted((record or {}).get("channels") or {})
+    if calibrated:
+        with _LOCK:
+            unseen = _UNSEEN.get(project)
+            for name in calibrated if unseen else ():
+                unseen.pop(name, None)
     rev = calibration.revision(project) if record else None
     if computing:
         state = "computing"
@@ -229,6 +241,7 @@ def _stepped(session, project, wanted, todo):
         if todo is None:
             # As `run`: none of what was asked is the image's, every channel.
             todo = _known(session, project, wanted) or _channel_names(session, project)
+            _still_to_do(project, todo)
             # What every calibration reads first, as a step of its own.
             calibration.prepare(session, project)
             _work.spawn(_stepped, session, project, wanted, todo,
@@ -244,18 +257,66 @@ def _stepped(session, project, wanted, todo):
                     _AHEAD.add(project)
                     break
             todo = _channel_names(session, project) if everything else _known(session, project, queued)
+            _still_to_do(project, todo)
         if not todo:
             if start_ahead:
                 _work.spawn(_ahead, session, project, name=f"display-contrast-ahead:{project}",
                             background=True)
             return
         calibration.calibrate(session, project, todo[:STEP_CHANNELS])
+        now = time.monotonic()
+        with _LOCK:
+            _UNSEEN.setdefault(project, {}).update({name: now for name in todo[:STEP_CHANNELS]})
+        _still_to_do(project, todo[STEP_CHANNELS:])
         _work.spawn(_stepped, session, project, wanted, todo[STEP_CHANNELS:],
                     name=f"display-contrast:{project}")
     except Exception as exc:  # the viewer keeps its own levelling
         with _LOCK:
             _JOBS[project] = {"state": "failed", "finished": time.time(),
                               "error": str(getattr(exc, "message", None) or exc)[:300]}
+
+
+def _still_to_do(project, todo):
+    """Note on the website's job the channels it has yet to calibrate
+    (`calibrating`)."""
+    with _LOCK:
+        job = _JOBS.get(project)
+        if job is not None and job.get("state") == "computing":
+            job["left"] = list(todo)
+
+
+def calibrating(project, channel) -> bool:
+    """Whether a job asked for (`compute`) has `channel` of `project` still to
+    calibrate -- named when it was asked, or queued on it since, and not yet
+    done -- or has calibrated it and the viewer has not read it yet (at most
+    `SEEN_WAIT_S`). A job asked for every channel (none named) does not
+    count -- it is forty channels, not the few a click switched on -- nor
+    does `_ahead`.
+
+    For the website's fit route (data_routes `get_channel_gmm`): the viewer
+    asks for a channel's fit and its calibration at the same moment, and the
+    calibrated window is the one it keeps (a fit landing after it never
+    replaces it, views/viewerSidebar.js `levelChannel`). With one thread the
+    fits, being requests, went first and the calibration waited behind them
+    (four channels: 2.5 s); asked again a moment later, the fit comes after
+    the window the viewer is waiting for -- and after the viewer's read of
+    it, which would otherwise wait behind the fits in turn. The desktop runs
+    both at once.
+    """
+    with _LOCK:
+        seen_by = (_UNSEEN.get(project) or {}).get(channel)
+        if seen_by is not None:
+            if time.monotonic() - seen_by < SEEN_WAIT_S:
+                return True
+            _UNSEEN[project].pop(channel, None)
+        job = _JOBS.get(project)
+        if not job or job.get("state") != "computing" or job.get("everything"):
+            return False
+        named = set(job.get("channels") or ()) | set(job.get("queued") or ())
+        if channel not in named:
+            return False
+        left = job.get("left")
+        return left is None or channel in left or channel in (job.get("queued") or ())
 
 
 #: Projects whose channels the website calibrates ahead (`_ahead`), once a session.
@@ -315,3 +376,4 @@ def reset():
     """Forget every job (tests)."""
     with _LOCK:
         _JOBS.clear()
+        _UNSEEN.clear()

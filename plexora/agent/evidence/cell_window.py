@@ -106,14 +106,19 @@ def _cells(index, ids, xs, ys, values):
              "value": float(values[i])} for i in index]
 
 
-def select_anchor_cells(values, ids, xs, ys, *, seed=0, spec=CELL_WINDOW):
+def select_anchor_cells(values, ids, xs, ys, *, seed=0, spec=CELL_WINDOW, order=None):
     """({"negatives": [{cell_id, x, y, value}]}, info), or (None, info) when
-    the column cannot anchor a window: fewer than `min_cells` in its body."""
+    the column cannot anchor a window: fewer than `min_cells` in its body.
+
+    `order` is the column's body (`_body`) when the caller has already sorted
+    it: `select_display_cells` sorts once for its four bands, not twice (a sort
+    of every cell, a tenth of a second for each channel of a large table)."""
     values = np.asarray(values, dtype=np.float64)
     ids = np.asarray(ids)
     xs = np.asarray(xs, dtype=np.float64)
     ys = np.asarray(ys, dtype=np.float64)
-    order = _body(values, xs, ys)
+    if order is None:
+        order = _body(values, xs, ys)
     info = {"n_body": int(order.size), "seed": int(seed)}
     if order.size < spec["min_cells"]:
         return None, info
@@ -130,14 +135,14 @@ def select_display_cells(values, ids, xs, ys, *, seed=0, spec=CELL_WINDOW):
     """({negatives, low, near, bright}, info), each a list of {cell_id, x, y,
     value}; (None, info) when the column cannot anchor (`select_anchor_cells`,
     whose negatives these are). Each band has its own seeded draw."""
-    anchors, info = select_anchor_cells(values, ids, xs, ys, seed=seed, spec=spec)
-    if anchors is None:
-        return None, info
     values = np.asarray(values, dtype=np.float64)
     ids = np.asarray(ids)
     xs = np.asarray(xs, dtype=np.float64)
     ys = np.asarray(ys, dtype=np.float64)
     order = _body(values, xs, ys)
+    anchors, info = select_anchor_cells(values, ids, xs, ys, seed=seed, spec=spec, order=order)
+    if anchors is None:
+        return None, info
     out = {"negatives": anchors["negatives"]}
     for offset, (band, pct, take) in enumerate((("low", "low_pct", "n_low"),
                                                 ("near", "near_pct", "n_near"),

@@ -313,6 +313,69 @@ LSP11385 with the plain mask, this Mac:
 | mask built while zooming | -- | 77 | 30 |
 | reload while the page builds the mask | -- | Python restarted, build again | Python kept, build again: mask on 26 s later |
 
+## Round five (after 0.0.45): auto-contrast on channels switched on at once
+
+What was left after round four: four channels switched on the moment LSP11385's image appears
+took 8-11 s on the website to show their calibrated windows, 4.7-4.9 s on the local server. The
+website does the same work in one WebAssembly thread; profiled in the page's own Python
+(`?pydebug`, cProfile around the routes' views while a user's clicks ran):
+
+- the calibration's preparation read the cell table a second time (the agent session's own copy,
+  parsed afresh from the page: 1.5 s), though the viewer held the very same table;
+- its image reader walked the 66 GB OME-TIFF's directories again (280 pages, 1,217 reads through
+  the page: about 1 s), though the viewer had opened the same file;
+- each channel's cells were sorted twice (`select_display_cells`);
+- the calibration waited behind the four fits (0.4-0.7 s each: 93 EM iterations a channel on
+  these, not overhead around them), because a request goes before a job's step;
+- and the viewer read the result on a 1.5 s, then 2.4 s, then 3.8 s schedule, so a window ready
+  at 4.5 s was seen at 5.7 or 8.1 s depending only on where it fell between two polls.
+
+Changed, every result the same as before:
+
+- **The session takes the viewer's table** (`data_model.viewer_table`, through
+  `plexora.api.dataset._viewer_table`; agent/session.py `_borrowed`) when it is the table the
+  session would read: the same project, read with the same spec (table correction included) from
+  the file as it is now (its fingerprint taken when the viewer read it), loaded and not still
+  loading, a file this process reads (never a node's, never a zarr store, whose directory's stat
+  misses a rewritten key; on threads, never a wide table read through its adapter on demand). The
+  session only reads it. Desktop too: an agent's first look at the open project no longer reads
+  its table again. tests/test_agent_session_viewer_table.py.
+- **One opened TIFF on the website** (`tiff_series.open_channel_series`): the viewer's image
+  provider and an agent's `SourceImage` share `(TiffFile, channel series)` by path, size and
+  mtime; the reader leaves a shared file open. With threads each keeps its own handle, as before
+  (tifffile reads one handle behind a lock). tests/test_shared_channel_series.py.
+- **One sort per channel** (`select_anchor_cells(order=...)`), the same cells:
+  tests/test_cell_window_sorted_once.py checks them against the two-sort version.
+- **A fit waits for its channel's calibration on the website** (data_routes `_calibration_first`,
+  display_contrast `calibrating`): while the job asked for has the channel still to do, or has
+  done it and the viewer has not read it (at most 8 s), the fit is asked again 250 ms later. The
+  viewer keeps the calibrated window either way (a later fit never replaces it), so only the order
+  changes. Not for a job asked for every channel, not for `_ahead`, not on the desktop.
+  tests/test_fit_after_calibration.py.
+- **The viewer polls for the calibration sooner** (viewerSidebar `GATING_POLL_FIRST_MS` 1500 ->
+  500, each wait 1.3x the last, not 1.6x, up to 8 s as before). Both front ends.
+- The empty SharedWorker that tells whether the browser keeps a worker across a reload closes
+  itself at once (it lived as long as its page).
+
+LSP11385, prepared mask, four channels switched on the moment the image is drawn
+(tools/bench_web/bench_flow_*.mjs `--pause 0`, now with `levels`: when each channel's window
+lands in the viewer), ms after the first click until the last calibrated window is on screen
+(02_AF1, an autofluorescence channel, has none on either):
+
+| | runs |
+|---|---|
+| local server, main | 4,851 / 4,701 |
+| local server, this round (polls sooner) | 2,751 / 2,751 / 2,802 |
+| website 0.0.45 | 11,350 / 8,301 |
+| website, the table, the TIFF and the sort | the calibration's step ends at 6.1-6.2 s (was 9.2-9.5) |
+| website, this round | **5,101 / 4,400 / 4,801** |
+
+What is left on the website (from the requests and steps of those runs): the page's scan of the
+four channels' windows (1.6-2.4 s, already in the page's workers), the preparation (0.4 s), then
+calibrating the four channels (2.0 s, one after another). The local server does the last two on
+threads beside the fits. A pool of helper Pythons for the per-channel work (the plan's step 3) is
+what would close the rest.
+
 ## Rerun
 
 ```bash

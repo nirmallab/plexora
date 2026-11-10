@@ -553,7 +553,6 @@ class LocalImageProvider:
         a multi-gigabyte TIFF three times per load.
         """
         import numpy as np
-        import tifffile as tf
         import zarr
         from ome_types import from_xml
         from plexora.server.utils.blocks import block_reduce
@@ -611,17 +610,17 @@ class LocalImageProvider:
             return (channels, brightfield.overview_plane(channels),
                     brightfield.physical_metadata(self._path))
 
-        channel_io = tf.TiffFile(self._path, is_ome=False)
+        # Reads `series[0].axes` rather than assuming CYX, so an ImageJ
+        # hyperstack's (cycle, channel, y, x) collapses to the channel stack it
+        # is. Identity for every series that was already CYX -- see
+        # server/utils/tiff_series.py. On the website the opened file is the
+        # one an agent's reader of it shares (`open_channel_series`).
+        channel_io, series, _shared = tiff_series.open_channel_series(self._path)
         try:
             xml = channel_io.pages[0].tags['ImageDescription'].value
             metadata = from_xml(xml).images[0].pixels
         except:
             metadata = {}
-        # Reads `series[0].axes` rather than assuming CYX, so an ImageJ
-        # hyperstack's (cycle, channel, y, x) collapses to the channel stack it
-        # is. Identity for every series that was already CYX -- see
-        # server/utils/tiff_series.py.
-        series = tiff_series.channel_series(channel_io)
         channels = zarr.open(series.aszarr())
 
         levels = series.levels

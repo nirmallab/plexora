@@ -4,13 +4,12 @@ Everything the website work (plan `dreamy-brewing-sunset.md`, branch `web/phase0
 is waiting on from you, in one place. Kept current as work lands; the newest
 state is on `web/phase0`. Each item says what to do and what it unblocks.
 **The website is live** at https://viewer.plexoraapp.com since 2026-11-08
-00:40 UTC, now 0.0.45 (`main` at e1f20791, no tag; since 2026-11-10
-00:52 UTC: the website's performance, round four -- tiles that never came,
-the tab's Python kept across a reload, background contrast in smaller steps,
-ROI on mod+D -- docs/internal/bench/web/WEBSITE_PERF_2026-11-09.md; 0.0.44,
-0.0.43 and 0.0.42, rounds three to one, before it), Pages
+00:40 UTC, now 0.0.46 (`main` at c626ad05, no tag; since 2026-11-10
+02:39 UTC: the website's performance, round five -- auto-contrast on channels
+switched on at once -- docs/internal/bench/web/WEBSITE_PERF_2026-11-09.md;
+0.0.45 to 0.0.42, rounds four to one, before it), Pages
 project `plexora-viewer`
-branch `release`, bundle `py/0.0.45/`, flags `viewer: on`, telemetry on. 0.0.38 was live for under
+branch `release`, bundle `py/0.0.46/`, flags `viewer: on`, telemetry on. 0.0.38 was live for under
 an hour and did not start Python on the self-check page, in a second tab or
 without sync access handles; its `py/0.0.38/` stays, as every released
 prefix does, and nothing points at it. Activating a licence and AI do not work there until section 1,
@@ -186,8 +185,8 @@ bundle `py/dev/4f583c3b9745/` and, sharing the flags, no longer shows its
 - The **next desktop release** from `main` carries the removals (Segment in
   3-D, Carry an ROI through planes), the desktop speed-ups and the new
   telemetry values (the Worker that takes them is deployed). Make it
-  **0.0.46** (`release.py ci --bump patch` from 0.0.45), not a tag of a
-  version the website already has: its `py/0.0.37/` to `py/0.0.45/` are
+  **0.0.47 or later** (`release.py ci --bump patch` from the newest), not a
+  tag of a version the website already has: its `py/0.0.37/` to `py/0.0.46/` are
   published and never rewritten, so once the CI secrets
   exist such a Release run's `web_deploy` would refuse its own rebuild of
   that bundle and hold the release.
