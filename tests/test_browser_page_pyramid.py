@@ -95,6 +95,45 @@ def test_a_build_the_page_cannot_finish_says_why(website):
         _build()
 
 
+def test_a_build_whose_page_went_away_is_asked_of_the_page_there_now(website):
+    """The tab reloaded and kept its Python (one per tab, kept across a
+    reload): the page that was building the copy is gone, and the one there
+    now does not know the build. It is asked to build it again, a few times
+    at most."""
+    class Reloaded(Page):
+        def __init__(self, losses):
+            super().__init__(looks=2)
+            self.losses = losses
+
+        def __call__(self, kind, args):
+            if kind == "pyramid_status" and self.losses:
+                self.asked.append((kind, args))
+                self.losses -= 1
+                return {"state": "lost", "error": "no such build in this page"}
+            return super().__call__(kind, args)
+
+    page = Reloaded(losses=1)
+    browser.set_asker(page)
+    path, _ = _build()
+    assert path == "/derived/k/s.pyramid.ome.tiff"
+    assert [k for k, _ in page.asked] == ["pyramid", "pyramid_status", "pyramid", "pyramid_status", "pyramid_status"]
+    # The look itself answered with nothing (the page went while it waited).
+    class Vanished(Reloaded):
+        def __call__(self, kind, args):
+            if kind == "pyramid_status" and self.losses:
+                self.asked.append((kind, args))
+                self.losses -= 1
+                return None
+            return super().__call__(kind, args)
+
+    browser.set_asker(Vanished(losses=1))
+    assert _build()[0] == "/derived/k/s.pyramid.ome.tiff"
+    # A page that keeps losing it: said, not asked for ever.
+    browser.set_asker(Reloaded(losses=10))
+    with pytest.raises(PyramidError, match="no such build in this page"):
+        _build()
+
+
 def test_a_page_that_will_not_build_leaves_it_to_python(website):
     browser.set_asker(Page(start=False))
     assert _build()[0] is None

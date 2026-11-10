@@ -180,6 +180,11 @@ def _plain(value):
     return to_py() if callable(to_py) else value
 
 
+#: A build whose page went away (a reload of the tab), asked of the page
+#: there now at most this many times.
+_LOST_BUILDS = 3
+
+
 def page_pyramid(source, *, name, spec, progress=None, stage=None, adoptable=None, hold=True):
     """The pyramid of the picked flat TIFF `source`, built by the page
     (services/browserPyramid.js; tests/test_tiff_writer.py holds it to
@@ -240,9 +245,20 @@ def page_pyramid(source, *, name, spec, progress=None, stage=None, adoptable=Non
         return None
     if stage is not None:
         stage("building", None)
+    lost = 0
     while True:
         state = _plain(_asker("pyramid_status", {"id": started["id"],
                                                  "wait": 0 if hold else int(_POLL_S * 1000)})) or {}
+        if (not state or state.get("state") == "lost") and lost < _LOST_BUILDS:
+            # The page building it is gone -- the tab reloaded, and kept this
+            # Python (client services/pythonClient.js), which answers what it
+            # had asked that page with nothing -- so the page there now builds
+            # it again.
+            lost += 1
+            started = _plain(_asker("pyramid", asked))
+            if not started or started.get("id") is None:
+                return None
+            continue
         if progress is not None and state.get("total"):
             progress(int(state.get("tiles") or 0), int(state["total"]))
         if state.get("state") == "done" and state.get("existing"):

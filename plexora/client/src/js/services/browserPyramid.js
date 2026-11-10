@@ -32,7 +32,7 @@
  *          a background job looking in, providers/browser.py), or a finished
  *          copy of the same source found
  *   "pyramid_status" {id, wait?}
- *       -> {state: "building"|"done"|"failed", tiles, total, path, where,
+ *       -> {state: "building"|"done"|"failed"|"lost", tiles, total, path, where,
  *           existing, note, error}; the first "done" carries `mount`, which the
  *          worker mounts for Python at /derived/<key>/ before Python sees it.
  *          `wait` (ms): a build still running is answered when it ends or
@@ -120,26 +120,30 @@
     // them: on LSP11385 (Mac, 10 cores) a plain mask's build on eight hands
     // kept the first open of its project waiting 20 s (the local server: 4.8 s),
     // Python opening the 66 GB image in 11 s instead of 1 s and the table read
-    // in 3.8 s instead of 0.6 s. So a build works on one hand while the page
-    // waits on something -- a request Python has taken more than a moment over,
-    // or queued behind one (PlexoraPython.busy: a status poll holds nothing
-    // back), the browser node reading tiles (PlexoraNode.busy) -- and on all
-    // of them otherwise. Not while a request waits on the build itself: an import of
+    // in 3.8 s instead of 0.6 s. So a build works on one hand while Python is
+    // waited on -- a request it has taken more than a moment over, or queued
+    // behind one (PlexoraPython.busy: a status poll holds nothing back) --, on
+    // half of them while the browser node reads tiles (PlexoraNode.busy: on
+    // one, a mask built while the user looked around took four times as
+    // long), and on all of them otherwise. Not while a request waits on the build itself: an import of
     // a plain image looks at its build every quarter second without waiting
     // (providers/browser.py `page_pyramid`, `hold`), and gets every hand.
     const PACE_MS = 100;
     const AWAITED_MS = 1000;
 
-    function waitedOn() {
+    //: The hands a build may use now (of WORKERS).
+    function handsNow() {
         const python = global.PlexoraPython;
         const node = global.PlexoraNode;
-        return Boolean((python && python.busy && python.busy()) || (node && node.busy && node.busy()));
+        if (python && python.busy && python.busy()) return 1;
+        if (node && node.busy && node.busy()) return Math.max(1, Math.floor(WORKERS / 2));
+        return WORKERS;
     }
 
     function pace(build) {
         if (!build.worker) return;
         const awaited = performance.now() - (build.awaitedAt || -Infinity) < AWAITED_MS;
-        const hands = !awaited && waitedOn() ? 1 : WORKERS;
+        const hands = awaited ? WORKERS : handsNow();
         if (hands === build.hands) return;
         build.hands = hands;
         build.worker.postMessage({ op: "pace", hands });
@@ -321,7 +325,9 @@
 
     async function status({ id, wait = 0 }) {
         const build = builds.get(id);
-        if (!build) return { value: { state: "failed", error: "no such build in this page" } };
+        // Begun by a page this tab showed before (a reload, its Python kept):
+        // Python asks this one to build it again (providers/browser.py).
+        if (!build) return { value: { state: "lost", error: "no such build in this page" } };
         // A look that does not wait is a request holding out for the build
         // (`page_pyramid`, `hold`): every hand, while it does (`pace`).
         if (!(Number(wait) > 0)) {

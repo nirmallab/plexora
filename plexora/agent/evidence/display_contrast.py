@@ -48,6 +48,10 @@ RETRY_AFTER_S = 300.0
 #: channels: 7 s on LSP11385) held the page, `/health` and every request
 #: behind it.
 STEP_CHANNELS = 4
+#: The channels nobody has asked about yet (`_ahead`), calibrated one a step:
+#: four held a click on another channel, and the channel list's polls, up to
+#: 4 s behind a step of work nobody was waiting for.
+AHEAD_CHANNELS = 1
 
 
 def _session():
@@ -260,7 +264,7 @@ _AHEAD: set = set()
 
 def _ahead(session, project):
     """The website: the channels nobody has asked about yet calibrated ahead
-    of their click, `STEP_CHANNELS` a background task -- run only once the
+    of their click, `AHEAD_CHANNELS` a background task -- run only once the
     page's requests have been quiet -- so a channel switched on later finds
     its calibration stored, as the desktop's thread makes it in about the
     time the viewer takes to ask. A job asked for meanwhile goes first (it is
@@ -282,8 +286,8 @@ def _ahead(session, project):
         todo = [name for name in _channel_names(session, project) if name not in done]
         if not todo:
             return
-        calibration.calibrate(session, project, todo[:STEP_CHANNELS])
-        if len(todo) > STEP_CHANNELS:
+        calibration.calibrate(session, project, todo[:AHEAD_CHANNELS])
+        if len(todo) > AHEAD_CHANNELS:
             _work.spawn(_ahead, session, project, name=f"display-contrast-ahead:{project}",
                         background=True)
     except Exception:  # noqa: BLE001 -- ahead of need: a failure here is nobody's

@@ -854,6 +854,28 @@ function rasterItem(s, { standby = false, opacity = 1 } = {}) {
 }
 
 {
+    // A page read that never ends (the website's readers closed under it, a
+    // worker that died) holds its slot only until OSD gives up on the tile:
+    // MAX_IN_FLIGHT of them used to stop every tile after for good.
+    const { s, net } = scheduler();
+    s.local = (request) => (request.url.includes("/stuck/") ? new Promise(() => {}) : Promise.resolve(null));
+    const stuck = Array.from({ length: s.maxInFlight }, (_, i) => job(`/generated/data/stuck/st_0/3/${i}_0.png?q=hd`, item()));
+    stuck.forEach((j) => s.start(j));
+    await tick(); await tick();
+    const after = job("/generated/data/ds/ds_0/3/9_9.png?q=hd", item());
+    s.start(after);
+    await tick(); await tick();
+    check("every slot held by a page read that has not answered: the next tile waits",
+          s.inFlight === s.maxInFlight && net.calls.length === 0, JSON.stringify({ inFlight: s.inFlight }));
+    stuck.forEach((j) => s.abort(j));      // OSD's timeout
+    await tick(); await tick(); await tick();
+    check("...and once OSD gives up on them, their slots are free and the next tile goes",
+          net.calls.length === 1 && net.calls[0].url === after.src && s.inFlight === 1,
+          JSON.stringify({ inFlight: s.inFlight, calls: net.calls.length }));
+    check("...the given-up tiles never reach the server", net.calls.every((c) => !c.url.includes("/stuck/")));
+}
+
+{
     const { s, net } = scheduler();
     const label = rasterItem(s);
     const bytes = png();

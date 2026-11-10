@@ -49,10 +49,13 @@ PLUGIN = Plugin(
     endpoint_entitlements={"from_cells": "volume:objects"},
     icon="draw-polygon",
     order=30,
-    # I for Interest. Not mod+R, which reloads the page -- interceptable in
+    # D for Draw. Not mod+I, which is Import Sample's (both answered the same
+    # chord), and not mod+R, which reloads the page -- interceptable in
     # principle, but a shortcut that costs the user their session when this
-    # script has not loaded yet is not worth the better mnemonic.
-    shortcut="mod+i",
+    # script has not loaded yet is not worth the better mnemonic. The
+    # browser's own mod+D (bookmark) is a page's to take; Figure Builder's
+    # mod+D (Duplicate) is on its own page, which has no Tools menu.
+    shortcut="mod+d",
     # Templates are namespaced by plugin name, so two plugins can both ship a
     # "panel.html" without colliding in Flask's shared template lookup.
     panels={"tool_panel_slot": "roi/panel.html"},

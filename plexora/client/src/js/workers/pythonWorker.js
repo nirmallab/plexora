@@ -27,6 +27,10 @@
 //                                  due, the files kept (plexora/browser/telemetry.py)
 //   run {code}                     tests only (boot with debug: true): Python's
 //                                  last expression, as text
+//   cancelJob {id}                 a job the page stopped, without shared memory
+//                                  (never queued: Python reads it at its next yield)
+//   quit                           the store written back, and this worker closed
+//                                  (Help › Restart Python)
 // Events posted to the page, unasked: {event: {kind: "job", job}} as a job's
 // record is written, {event: {kind: "chat", conversation, event}} as an AI
 // conversation records an event, {event: {kind: "wakeup"}} when a held poll
@@ -45,6 +49,100 @@ import { createStore } from "./storeSync.js";
 import { idbFolder } from "./idbFolder.js";
 import { createTelemetryStore, indexedKv } from "./telemetryStore.js";
 import { openCacheFiles } from "./cacheFiles.js";
+
+// -- the page: this worker's own, or one tab's ---------------------------------
+//
+// Where the browser keeps a SharedWorker a while after its last page
+// (services/pythonClient.js `keepsAcrossReload`), this worker is one tab's,
+// named for it, and every page the tab shows connects: a reload connects
+// again to the Python the last page left, its projects loaded. The latest
+// page is the one answered. What the page before asked and was not answered
+// is dropped (its answers would carry ids the new page uses for other
+// things), and what Python had asked it is answered "nothing", the asks' own
+// fallback. Once no page of the tab has come back for PAGE_GONE_MS (the tab
+// closed), the worker closes itself (`watchPage`) rather than hold its heap
+// for the browser's minutes.
+const tabWorker = typeof SharedWorkerGlobalScope === "function" && self instanceof SharedWorkerGlobalScope;
+//: The page answered now (a tab worker's), its number, and what was posted
+//: before the first one connected.
+let page = null;
+let pageNumber = 0;
+const unsent = [];
+const PAGE_GONE_MS = 30000;
+let watching = false;
+let goneTimer = null;
+if (tabWorker) {
+    self.postMessage = (message, transfer) => {
+        if (page) page.postMessage(message, transfer || []);
+        else if (unsent.length < 200) unsent.push([message, transfer || []]);
+    };
+    self.onconnect = (event) => { attach(event.ports[0]); };
+}
+
+function attach(port) {
+    pageNumber += 1;
+    const number = pageNumber;
+    if (page) leftBehind(number);
+    clearTimeout(goneTimer);
+    goneTimer = null;
+    page = port;
+    port.onmessage = (event) => {
+        if (event.data && typeof event.data === "object") event.data.page = number;
+        self.onmessage(event);
+    };
+    port.onmessageerror = () => self.postMessage({ log: "a message from the page could not be read" });
+    port.start();
+    for (const [message, transfer] of unsent.splice(0)) port.postMessage(message, transfer);
+    // Whether the Python this page found was already running (a reload).
+    port.postMessage({ attached: { booted: Boolean(booted), page: number, fatal: fatalTold } });
+    watchPage();
+}
+
+//: The page before `number` is gone: its queued and retried requests are
+//: dropped, and Python's questions to it answered with nothing.
+function leftBehind(number) {
+    for (let i = queue.length - 1; i >= 0; i -= 1) {
+        if (queue[i].page !== undefined && queue[i].page < number) queue.splice(i, 1);
+    }
+    // Every retry waiting is an earlier page's: this one has asked nothing yet.
+    for (const timer of retrying.values()) clearTimeout(timer);
+    retrying.clear();
+    for (const [id, resolve] of [...asks]) {
+        asks.delete(id);
+        resolve(null);
+    }
+}
+
+//: Whether the page that sent `message` is still the one answered.
+const pageNow = (message) => message.page === undefined || message.page === pageNumber;
+
+// The tab's page holds a lock named as this worker for as long as it lives
+// (services/pythonClient.js `holdTab`); the lock coming to this worker means
+// the page let it go -- reloading, or closed. A page of the tab connecting
+// within PAGE_GONE_MS keeps this worker; none, and it closes.
+function watchPage() {
+    if (!tabWorker || watching || !self.navigator || !self.navigator.locks || !self.name) return;
+    watching = true;
+    self.navigator.locks.request(self.name, () => {
+        watching = false;
+        const left = pageNumber;
+        clearTimeout(goneTimer);
+        goneTimer = setTimeout(() => {
+            if (pageNumber === left) quit();
+        }, PAGE_GONE_MS);
+        // Released at once: the page a reload brings takes it next.
+    }).catch(() => { watching = false; });
+}
+
+async function quit() {
+    try {
+        await syncing;
+        if (store) await store.push();
+    } catch (error) {
+        // Closing regardless.
+    }
+    self.close();
+}
 
 let py = null;
 let base = "";
@@ -187,7 +285,11 @@ async function loadStage(name, importer = "?") {
 // The page's cancel flags: job ids it wrote into shared memory while this
 // worker was busy (services/pythonClient.js writes them).
 let cancels = null;
+//: Jobs the page stopped by message (`cancelJob`: a tab worker, which shares
+//: no memory with its page), read at Python's next yield.
+const cancelledJobs = new Set();
 function cancelled(jobId) {
+    if (cancelledJobs.has(jobId)) return true;
     if (!cancels) return false;
     // The page writes the ids and leaves the rest of the buffer zero: the
     // last id ends at the first zero, not at the buffer's end.
@@ -381,7 +483,31 @@ function warm(args) {
     return warming;
 }
 
+//: The first boot's answer, and the boot itself: a page of this tab that
+//: connects again (a reload) is given the Python the last one left.
+let booted = null;
+let booting = null;
+
 async function boot(args) {
+    if (!booting) {
+        booting = firstBoot(args).then((answer) => {
+            booted = answer;
+            return answer;
+        });
+        return booting;
+    }
+    const answer = await booting;
+    if (args.debug) debug = true;
+    if (fatalTold) {
+        // Python failed for good: the tab needs a new one, which the page
+        // starts (services/pythonClient.js `restart`) once this one is gone.
+        setTimeout(() => self.close(), 1000);
+        return { ...answer, dead: true };
+    }
+    return { ...answer, reattached: true, page: pageNumber };
+}
+
+async function firstBoot(args) {
     origin = args.origin;
     siteBase = String(args.siteBase || "");
     if (args.cancels) cancels = args.cancels;
@@ -1044,13 +1170,15 @@ async function drain() {
                                                    ["X-Plexora-Retried", String(queued.retries)]] };
                 retrying.set(id, setTimeout(() => {
                     retrying.delete(id);
+                    if (!pageNow(queued)) return;  // its page is gone (a reload)
                     queue.push(queued);
                     drain();
                 }, result.retry));
                 continue;
             }
             const transfer = result && result.body instanceof Uint8Array ? [result.body.buffer] : [];
-            self.postMessage({ id, ok: true, result }, transfer);
+            // Not to a page that came after the one that asked: its ids are its own.
+            if (pageNow(queued)) self.postMessage({ id, ok: true, result }, transfer);
             if (debug && op === "request") {
                 traced.push({ path: args.path, arrived: Math.round(arrived), began: Math.round(began),
                               done: Math.round(performance.now()), nested, idling });
@@ -1064,7 +1192,7 @@ async function drain() {
                 const heap = py && py._module && py._module.HEAP8 ? py._module.HEAP8.length : 0;
                 self.postMessage({ event: { kind: "fatal", memory: heap >= FATAL_MEMORY_BYTES, heap } });
             }
-            self.postMessage({ id, ok: false, error: message.slice(-6000) });
+            if (pageNow(queued)) self.postMessage({ id, ok: false, error: message.slice(-6000) });
         } finally {
             busy = nested;
             inStep = outerStep;
@@ -1226,6 +1354,14 @@ self.onmessage = ({ data }) => {
     if (data.op === "state") {
         // Answered at once, whatever Python is doing: it reads only JS.
         self.postMessage({ id: data.id, ok: true, result: OPS.state() });
+        return;
+    }
+    if (data.op === "cancelJob") {
+        cancelledJobs.add(String(data.args && data.args.id));
+        return;
+    }
+    if (data.op === "quit") {
+        quit();
         return;
     }
     if (data.op === "cancel") {

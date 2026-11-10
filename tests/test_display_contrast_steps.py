@@ -168,7 +168,11 @@ def test_the_website_calibrates_the_other_channels_ahead_of_their_click(tmp_path
     _work.run_pending(background=False)               # what was asked, only
     assert set(calibration.load("gsynth")["channels"]) < set(display_contrast._channel_names(session, "gsynth"))
     assert _work.pending(background=True) == 1        # ahead, waiting for quiet
+    left = set(display_contrast._channel_names(session, "gsynth")) - set(calibration.load("gsynth")["channels"])
     ran = []
     _work.run_pending(ran=ran)
     assert set(calibration.load("gsynth")["channels"]) == set(display_contrast._channel_names(session, "gsynth"))
     assert set(ran) == {"display-contrast-ahead:gsynth"}
+    # One channel a task (AHEAD_CHANNELS): a click on another channel waits
+    # for one channel's work at most, never four.
+    assert len(ran) == len(left) > 1

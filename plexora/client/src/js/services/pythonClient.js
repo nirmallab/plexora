@@ -80,12 +80,13 @@
     let resolveReady;
     const ready = new Promise((resolve) => { resolveReady = resolve; });
     const shared = typeof SharedArrayBuffer === "function" && global.crossOriginIsolated;
-    const cancels = shared ? new SharedArrayBuffer(CANCEL_BYTES) : null;
+    //: None with a tab's worker (`spawn`): a SharedWorker shares no memory.
+    let cancels = shared ? new SharedArrayBuffer(CANCEL_BYTES) : null;
     //: Requests posted and not yet received by the worker, counted where the
     //: worker can read them while Python runs: a long task lets them in at its
     //: next checkpoint (a message alone cannot say it is waiting until the
     //: worker's event loop delivers it, which a busy loop starves).
-    const inFlight = shared ? new Int32Array(new SharedArrayBuffer(4)) : null;
+    let inFlight = shared ? new Int32Array(new SharedArrayBuffer(4)) : null;
     const cancelled = [];
     //: Saves of picked files Python wrote (plexora/server/utils/source_writes.py),
     //: running: a request's answer waits for the ones its request started,
@@ -278,6 +279,7 @@
             emit(event.kind, event);
             return;
         }
+        if (data.attached) attached(data.attached);
         if (data.syncChannel) syncChannel = data.syncChannel;
         if (data.mark) emit("mark", data);
         if (data.log) console.warn("[python]", data.log);
@@ -287,30 +289,165 @@
     //: the app's routes are under it on the page's side, at "/" in Python.
     let siteBase = "";
 
-    function spawn(root) {
+    // -- one Python per tab, kept across a reload (Chrome, Edge) ------------------
+    //
+    // The worker used to live and die with the page, so a reload of the site
+    // started Python again. Where the browser keeps a SharedWorker a while
+    // after its last page (`extendedLifetime`), the tab's Python is one, named
+    // by an id the tab keeps (sessionStorage): the page a reload brings
+    // connects to the Python the last one left, its projects loaded, and the
+    // worker closes itself once no page of the tab comes back
+    // (workers/pythonWorker.js `watchPage`). Every tab has its own -- one
+    // thread and one heap each, as before -- and holds its id's lock while it
+    // lives, so a duplicated tab (which copies sessionStorage) finds it held
+    // and takes a new id. A SharedWorker shares no memory with its page (it is
+    // not cross-origin isolated): Python reaches the page by JSPI, which every
+    // browser keeping one has, and a job is stopped by message.
+    const TAB_KEY = "plexora-python-tab";
+    //: How long a page waits for its tab's id to be free: the page before it
+    //: (a reload) letting go, or else it is a copy of a live tab.
+    const TAB_WAIT_MS = 1500;
+    //: A reloaded page whose Python says nothing for this long (stuck in
+    //: Python, or gone) starts the tab's Python again.
+    const ATTACH_WAIT_MS = 15000;
+    let mode = null;
+    let attachInfo = null;
+    let attachTimer = null;
+
+    function keepsAcrossReload() {
+        if (typeof SharedWorker !== "function" || !global.navigator || !global.navigator.locks
+            || !global.sessionStorage || typeof WebAssembly !== "object"
+            || typeof WebAssembly.Suspending !== "function") return false;
+        // Whether the browser reads the option at all: a dictionary member it
+        // does not know is never read. Asked of an empty worker, let go at once.
+        let kept = false;
+        try {
+            const url = URL.createObjectURL(new Blob([""], { type: "text/javascript" }));
+            const probe = new SharedWorker(url, {
+                name: `plexora-probe-${Math.random().toString(36).slice(2)}`,
+                get extendedLifetime() { kept = true; return false; },
+            });
+            probe.port.close();
+            URL.revokeObjectURL(url);
+        } catch (error) {
+            return false;
+        }
+        return kept;
+    }
+
+    //: Hold the lock of tab id `id` while this page lives; false if it is
+    //: not free within `ms`.
+    function holdTab(id, ms) {
+        return new Promise((resolve) => {
+            const controller = new AbortController();
+            const timer = setTimeout(() => controller.abort(), ms);
+            global.navigator.locks.request(`plexora-python:${id}`, { signal: controller.signal }, () => {
+                clearTimeout(timer);
+                resolve(true);
+                return new Promise(() => {});
+            }).catch(() => resolve(false));
+        });
+    }
+
+    //: This tab's worker name, its lock held: {name, known} (`known`: an id
+    //: an earlier page of the tab used, whose Python may be running), or null
+    //: if no lock could be had.
+    async function tabName() {
+        let id = null;
+        try { id = global.sessionStorage.getItem(TAB_KEY); } catch (error) { id = null; }
+        if (id && await holdTab(id, TAB_WAIT_MS)) return { name: `plexora-python:${id}`, known: true };
+        id = (global.crypto && typeof global.crypto.randomUUID === "function"
+            ? global.crypto.randomUUID() : Math.random().toString(36).slice(2)).replace(/-/g, "").slice(0, 16);
+        try { global.sessionStorage.setItem(TAB_KEY, id); } catch (error) { /* this page only */ }
+        return await holdTab(id, TAB_WAIT_MS) ? { name: `plexora-python:${id}`, known: false } : null;
+    }
+
+    function spawn(root, { tab = false } = {}) {
         if (worker) return;
-        worker = new Worker(new URL(root + WORKER, global.location.href), { type: "module" });
-        worker.onmessage = onMessage;
-        worker.onerror = (event) => console.error("[python] worker failed:", event.message);
+        const url = new URL(root + WORKER, global.location.href);
+        if (!(tab && keepsAcrossReload())) {
+            mode = "page";
+            worker = new Worker(url, { type: "module" });
+            worker.onmessage = onMessage;
+            worker.onerror = (event) => console.error("[python] worker failed:", event.message);
+            return;
+        }
+        mode = "tab";
+        cancels = null;
+        inFlight = null;
+        // What is posted before the tab's worker is connected waits here.
+        const outbox = [];
+        let target = null;
+        worker = { postMessage: (message, transfer) => (target ? target.postMessage(message, transfer || [])
+            : outbox.push([message, transfer || []])) };
+        tabName().then((tabbed) => {
+            if (tabbed) {
+                const tabWorker = new SharedWorker(url, { type: "module", name: tabbed.name, extendedLifetime: true });
+                tabWorker.onerror = (event) => console.error("[python] worker failed:", event.message);
+                target = tabWorker.port;
+                target.onmessage = onMessage;
+                target.onmessageerror = () => console.error("[python] a message from Python could not be read");
+                target.start();
+                // A Python an earlier page of the tab left that says nothing
+                // (stuck, or gone): a new one, under a new id. Never for a new
+                // id, whose worker may still be downloading on a slow link.
+                if (tabbed.known) {
+                    attachTimer = setTimeout(() => {
+                        if (!attachInfo) restart("its Python did not answer this page");
+                    }, ATTACH_WAIT_MS);
+                }
+            } else {
+                mode = "page";
+                target = new Worker(url, { type: "module" });
+                target.onmessage = onMessage;
+                target.onerror = (event) => console.error("[python] worker failed:", event.message);
+            }
+            for (const [message, transfer] of outbox.splice(0)) target.postMessage(message, transfer);
+        });
+    }
+
+    //: The tab's worker connected this page: whether its Python was running.
+    function attached(info) {
+        attachInfo = info;
+        clearTimeout(attachTimer);
+        if (info.fatal) restart("Python had failed in this tab");
+    }
+
+    //: A new Python for this tab: the one running stops (its projects
+    //: written back first) and the page loads again with an id of its own.
+    //: Help › Restart Python, and a tab whose Python failed or is stuck.
+    function restart(why = "") {
+        if (why) console.warn(`[python] starting this tab's Python again: ${why}`);
+        try { worker && worker.postMessage({ op: "quit" }); } catch (error) { /* gone */ }
+        try { global.sessionStorage.removeItem(TAB_KEY); } catch (error) { /* this page only */ }
+        // A moment for the store to be written back before this page goes.
+        setTimeout(() => global.location.reload(), mode === "tab" ? 300 : 0);
     }
 
     //: The worker started, and Pyodide, the base stage and Plexora's wheels
     //: loading (pythonWorker.js `warm`), while the page gets on with what
     //: start() needs. start() with the same `base` then picks up from there.
-    function warm({ base, root = "/" } = {}) {
-        spawn(root);
+    function warm({ base, root = "/", tab = false } = {}) {
+        spawn(root, { tab });
         worker.postMessage({ op: "warm", args: { base } });
     }
 
     let booted = false;
 
     function start({ base, origin = global.location.origin, root = "/", siteBase: under = "",
-                     debug = false, store = null, telemetry = null, scratch = false } = {}) {
+                     debug = false, store = null, telemetry = null, scratch = false, tab = false } = {}) {
         if (booted) return ready;
         booted = true;
         siteBase = String(under || "").replace(/\/+$/, "");
-        spawn(root);
-        call("boot", { base, origin, siteBase, cancels, inFlight, debug, store, telemetry, scratch }).then(resolveReady, (error) => {
+        spawn(root, { tab: tab && !scratch });
+        call("boot", { base, origin, siteBase, cancels, inFlight, debug, store, telemetry, scratch }).then((info) => {
+            // The tab's Python had failed for good: a new one (the page reloads).
+            if (info && info.dead) {
+                restart("Python had failed in this tab");
+                return;
+            }
+            resolveReady(info);
+        }, (error) => {
             resolveReady({ error: String(error?.message || error) });
         });
         if (telemetry && telemetry.endpoint && global.document) {
@@ -653,6 +790,13 @@
     }
 
     function cancel(id) {
+        if (!cancels && mode === "tab") {
+            // No shared memory with a tab's worker: a message, which Python
+            // reads at its next yield.
+            if (!cancelled.includes(id)) cancelled.push(id);
+            worker.postMessage({ op: "cancelJob", args: { id } });
+            return true;
+        }
         if (!cancels) return false;
         if (!cancelled.includes(id)) cancelled.push(id);
         const bytes = new TextEncoder().encode(cancelled.join("\n"));
@@ -745,6 +889,12 @@
             return false;
         },
         recent: () => recent.slice(),
+        //: "tab" (one SharedWorker per tab, kept across a reload) or "page"
+        //: (a worker of this page's own); whether this page found its tab's
+        //: Python running (a reload); Help › Restart Python.
+        mode: () => mode,
+        reattached: () => Boolean(attachInfo && attachInfo.booted),
+        restart,
         steps: () => steps.slice(),
         tasks: () => tasks.slice(),
         cancel,

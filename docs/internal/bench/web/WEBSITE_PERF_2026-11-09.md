@@ -260,10 +260,58 @@ The same with the plain mask `cell.ome.tif` (its pyramid built on import): viewe
 open, local server 4.5, website 4.3 (17 before pacing); the mask's build 23 (15 alone).
 
 Left: auto-contrast on channels switched on the moment the image appears (one Python thread beside
-the page's tile reads: ~2x the local server), Python's restart on a reload (a SharedWorker with
-Chrome's `extendedLifetime` survives one: Chrome and Edge only, and every tab would share one
-Python), the page's own CSV parse on import, geotiff.js's big-endian predictor tiles (the fast
-scan does not share the bug; the tiles still come from geotiff.js).
+the page's tile reads: ~2x the local server), Python's restart on a reload (done in round four:
+one SharedWorker per tab), the page's own CSV parse on import, geotiff.js's big-endian predictor
+tiles (the fast scan does not share the bug; the tiles still come from geotiff.js).
+
+## Round four (after 0.0.44): tiles that never came, the tab's Python kept
+
+- **Tiles that never came (seen on 0.0.44).** OpenSeadragon gave up on channel tiles after 90 s
+  ("Image load exceeded timeout"), and the mask was slow to sharpen. When the page finishes a mask's
+  pyramid, Python attaches it and loads the project again, so the browser node's spec changes (the
+  mask served, a new `generation`). The node then closed every reader of the project, the image's
+  too, and `TiffPool.close()` terminated its workers without failing the reads they had not
+  answered. Each lost read kept one of the viewer's six tile slots (`views/tileFetch.js`) for good.
+  Reproduced on the live site by loading the project again while zooming: a tile stuck and its slot
+  never freed (`inFlight` 1 for good). Now a part whose spec and file are unchanged keeps its readers,
+  a closed or dead reader fails what it was asked (the tile then comes from Python), a mask still
+  being prepared is asked about again aside (`recheck`) so the image's tiles never wait on Python,
+  and a request OSD gives up on frees its slot (`untilDropped`). Pinned in
+  `tests/js/browser_node_swap_probe.mjs` (fails on 0.0.44) and `tests/js/tile_fetch_probe.mjs`.
+- **A mask built while the user looks around.** The build stepped down to one worker whenever the
+  browser node read tiles: LSP11385's plain mask took 77 s while zooming (23 s alone). Half its
+  workers there instead: 30 s, with tiles at p50 214 ms / p90 323 ms and the open unchanged (image
+  drawn 4.1 s). One worker while Python is waited on stays: half there made the open 1.1 s slower.
+- **One Python per tab, kept across a reload** (Chrome and Edge). The tab's Python is a SharedWorker
+  named for the tab (an id in sessionStorage, its Web Lock held by the page), created with
+  `extendedLifetime`, so the page a reload brings connects to the Python the last one left. Each tab
+  has its own, as before: one thread and one heap each. A duplicated tab finds the id's lock held
+  and takes a new one. The worker answers only the page that asked (a reloaded page numbers its
+  requests from 1 again), answers what Python had asked the old page with nothing (each ask's
+  fallback), and closes itself 30 s after its tab's lock comes free with no page back. Chrome would
+  otherwise keep it 300 s, measured: its blog says 30. A SharedWorker is not cross-origin isolated,
+  so no SharedArrayBuffer: Python reaches the page by JSPI and a job is stopped by message. A page
+  build lost to the reload is asked of the new page (`lost`, at most three times), Help › Restart
+  Plexora in This Tab starts a new one, and a tab whose Python failed or does not answer gets a new
+  one. Firefox and Safari keep the page's own worker.
+- **Background contrast in smaller steps.** The channels nobody asked about yet are calibrated one a
+  step, not four: while that runs, requests waited p50 289 / p90 2,066 / max 3,540 ms, now
+  175 / 700 / 868 (the work itself 21 → 25 s, nobody waiting on it). What remains of auto-contrast
+  on channels switched on the moment the image appears is compute in one WebAssembly thread
+  (in that run ~9.7 s: the project's own load ~2.3 s, four fits ~2.1 s one after another, the
+  calibration's preparation 1.7 s and four channels 3.3 s), which the desktop runs in threads.
+- `layer_jobs._finish` writes the project before the in-memory outcome: a reader between the two saw
+  "ready" with the layer still pending (`tests/test_layer_jobs.py` failed 3 runs in 10 on main, 0 in
+  10 now).
+
+LSP11385 with the plain mask, this Mac:
+
+| | local server | 0.0.44 | round four |
+|---|---|---|---|
+| reload -> image drawn | 0.9-1.0 | 1.6 | 0.47-0.53 |
+| reload -> a request only Python answers | -- | after Python's start (~3 s) | 2 ms |
+| mask built while zooming | -- | 77 | 30 |
+| reload while the page builds the mask | -- | Python restarted, build again | Python kept, build again: mask on 26 s later |
 
 ## Rerun
 

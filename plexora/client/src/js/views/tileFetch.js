@@ -508,6 +508,7 @@
             if (request.state === "done") return;
             request.state = "dropped";
             this.stats.aborted += 1;
+            if (request.onDropped) request.onDropped();
             try {
                 request.controller?.abort();
             } catch (error) {
@@ -739,7 +740,8 @@
             let decoded = null;
             let error = null;
             try {
-                const answered = this.local ? await this.answerLocally(request) : null;
+                const answered = this.local ? await this.untilDropped(request, this.answerLocally(request)) : null;
+                if (request.state === "dropped") return;
                 if (answered) {
                     // The page read it (`local`): decoded pixels, or a raster
                     // tile's bytes, with nothing on the wire.
@@ -784,6 +786,14 @@
                 this.settle(request, decoded, error);
                 this.pump();
             }
+        }
+
+        /** `work`, or null once `request` is dropped (OSD's timeout, its item
+         *  removed): a page read that never ends must not keep its slot, or
+         *  every tile after it waits behind. */
+        untilDropped(request, work) {
+            if (request.state === "dropped") return Promise.resolve(null);
+            return Promise.race([work, new Promise((resolve) => { request.onDropped = () => resolve(null); })]);
         }
 
         /** `local`'s answer for a request, or null (the network's): a raster

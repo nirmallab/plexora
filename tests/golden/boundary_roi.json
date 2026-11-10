@@ -66,6 +66,7 @@
         "nav_open_desktop",
         "nav_quit",
         "nav_report_issue",
+        "nav_restart_python",
         "nav_settings",
         "nav_shortcuts",
         "nav_toggle_scalebar",
@@ -122,7 +123,7 @@
         "/client/src/js/views/glInit.js?v=20261015_display_contrast",
         "/client/src/js/views/tileColorize.js?v=20261015_display_contrast",
         "/client/src/js/views/tileDecode.js?v=20261010_nav3d",
-        "/client/src/js/views/tileFetch.js?v=20261107_local_browser",
+        "/client/src/js/views/tileFetch.js?v=20261109_dropped_slot",
         "/client/src/js/views/labelTile.js?v=20261012_main_merge",
         "/client/src/js/views/labelGpu.js?v=20261107_label_high_byte",
         "/client/src/js/services/viewTransform.js?v=20260925_view_transform",
@@ -213,7 +214,7 @@
             "icon": "draw-polygon",
             "label": "ROI",
             "name": "roi",
-            "shortcut": "mod+i"
+            "shortcut": "mod+d"
           }
         ],
         "base_url": "",
@@ -291,6 +292,7 @@
         "nav_open_desktop",
         "nav_quit",
         "nav_report_issue",
+        "nav_restart_python",
         "nav_settings",
         "nav_shortcuts",
         "nav_toggle_scalebar",
@@ -349,7 +351,7 @@
         "/client/src/js/views/glInit.js?v=20261015_display_contrast",
         "/client/src/js/views/tileColorize.js?v=20261015_display_contrast",
         "/client/src/js/views/tileDecode.js?v=20261010_nav3d",
-        "/client/src/js/views/tileFetch.js?v=20261107_local_browser",
+        "/client/src/js/views/tileFetch.js?v=20261109_dropped_slot",
         "/client/src/js/views/labelTile.js?v=20261012_main_merge",
         "/client/src/js/views/labelGpu.js?v=20261107_label_high_byte",
         "/client/src/js/services/viewTransform.js?v=20260925_view_transform",
@@ -522,7 +524,7 @@
             "icon": "draw-polygon",
             "label": "ROI",
             "name": "roi",
-            "shortcut": "mod+i"
+            "shortcut": "mod+d"
           }
         ],
         "base_url": "",
@@ -600,6 +602,7 @@
         "nav_open_desktop",
         "nav_quit",
         "nav_report_issue",
+        "nav_restart_python",
         "nav_settings",
         "nav_shortcuts",
         "nav_toggle_scalebar",
@@ -683,7 +686,7 @@
         "/client/src/js/views/glInit.js?v=20261015_display_contrast",
         "/client/src/js/views/tileColorize.js?v=20261015_display_contrast",
         "/client/src/js/views/tileDecode.js?v=20261010_nav3d",
-        "/client/src/js/views/tileFetch.js?v=20261107_local_browser",
+        "/client/src/js/views/tileFetch.js?v=20261109_dropped_slot",
         "/client/src/js/views/labelTile.js?v=20261012_main_merge",
         "/client/src/js/views/labelGpu.js?v=20261107_label_high_byte",
         "/client/src/js/services/viewTransform.js?v=20260925_view_transform",
