@@ -49,7 +49,7 @@ function extractMethod(text, name) {
 
 const context = createContext({
     window: { setTimeout }, Promise, Date, Math, Set, Array,
-    GATING_POLL_FIRST_MS: 400, GATING_POLL_LIMIT_MS: 10000,
+    GATING_POLL_FIRST_MS: 400, GATING_POLL_LIMIT_MS: 10000, GATING_POLL_GROWTH: 1.6,
 });
 const SIDEBAR = runInContext(`({\n${extractMethod(sidebarSource, "pollGatingContrast")}\n})`, context);
 

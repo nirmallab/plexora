@@ -231,10 +231,11 @@ class SourceImage:
         # at, not a different slicing of the same file.
         from plexora.server.utils import tiff_series
 
-        self._file = tifffile.TiffFile(source.path, is_ome=False)
+        # On the website the file the viewer opened, not a second walk of
+        # its directory (`open_channel_series`); left open by `close` then.
+        self._file, series, self._shared_file = tiff_series.open_channel_series(source.path)
         self._path = str(source.path)
-        self._zarr = zarr.open(
-            tiff_series.channel_series(self._file).aszarr(), mode="r")
+        self._zarr = zarr.open(series.aszarr(), mode="r")
         self._is_array = hasattr(self._zarr, "shape")
         self.levels = 1 if self._is_array else len(list(self._zarr))
         self._level_shapes = None
@@ -361,7 +362,7 @@ class SourceImage:
                 except Exception:
                     pass
             self._pyramid = None
-        if self._file is None:
+        if self._file is None or getattr(self, "_shared_file", False):
             return
         try:
             self._file.close()

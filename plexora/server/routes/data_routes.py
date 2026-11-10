@@ -322,6 +322,33 @@ def _retry_later(pending):
     return response
 
 
+class _CalibrationFirst:
+    """A fit asked for while the website's calibration job is about to
+    calibrate the same channel: asked again in `retry_ms` (`_retry_later`),
+    so the job's step -- the window the viewer keeps -- runs first
+    (display_contrast `calibrating`)."""
+
+    retry_ms = 250
+
+    def __init__(self, channel):
+        self.channel = channel
+
+    def __str__(self):
+        return str(self.channel)
+
+
+def _calibration_first(datasource, channel):
+    """Whether this fit waits for the calibration of its channel: on the
+    website (`_patient`), when the job asked for has it still to do and the
+    fit is not in hand already. Results unchanged; only their order."""
+    if not datasource or not channel or not _patient():
+        return False
+    from plexora.agent.evidence import display_contrast
+
+    return (display_contrast.calibrating(datasource, channel)
+            and not data_model.gmm_cached(channel, datasource))
+
+
 #: Both routes below take `view=` (a slab projection has statistics of its own;
 #: see data_model._slab_view). Absent is exactly the call it always was.
 @app.route('/get_channel_gmm', methods=['GET'])
@@ -331,6 +358,8 @@ def get_channel_gmm():
     channel = request.args.get('channel')
     datasource = request.args.get('datasource')
     view = request.args.get('view') or ''
+    if not view and _calibration_first(datasource, channel):
+        return _retry_later(_CalibrationFirst(channel))
     try:
         # `patient`: on the website a window the page is still scanning is
         # asked for again later, the page's other requests answered first.

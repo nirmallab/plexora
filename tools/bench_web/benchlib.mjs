@@ -357,6 +357,39 @@ export const get = (frame, route) => frame.evaluate(async (r) => {
     return { status: response.status, ms: Math.round(performance.now() - t), body };
 }, route);
 
+/**
+ * When each channel switched on from now gets its window: `fit` (the mixture
+ * fit's, viewerSidebar `levelChannel` pass 2) and `calibrated` (the
+ * calibration's, `rangeSource` "gating": the window the viewer keeps). In the
+ * app's page (`target`: the frame on the website, the page on the server).
+ * `levelsSeen` answers {fitMs, calibratedMs, slots}: the last channel's, in ms
+ * after `levelWatch`; null while any channel has not had it.
+ */
+export const levelWatch = (target) => target.evaluate(() => {
+    const sidebar = () => window.__plexora && window.__plexora.viewerSidebar;
+    const on = (s) => ((s && s.channelSlots) || []).filter((slot) => slot && slot.enabled && slot.name).map((slot) => slot.name);
+    const levels = window.__plexoraLevels = { t0: performance.now(), before: on(sidebar()), slots: {} };
+    clearInterval(window.__plexoraLevelsTimer);
+    window.__plexoraLevelsTimer = setInterval(() => {
+        const s = sidebar();
+        for (const slot of (s && s.channelSlots) || []) {
+            if (!slot || !slot.enabled || !slot.name || levels.before.includes(slot.name)) continue;
+            const now = Math.round(performance.now() - levels.t0);
+            const row = levels.slots[slot.name] = levels.slots[slot.name] || { on: now, fit: null, calibrated: null };
+            if (slot.autoLeveled && row.fit == null) row.fit = now;
+            if (slot.rangeSource === "gating" && row.calibrated == null) row.calibrated = now;
+        }
+    }, 50);
+});
+
+export const levelsSeen = (target) => target.evaluate(() => {
+    const levels = window.__plexoraLevels;
+    if (!levels) return null;
+    const rows = Object.values(levels.slots);
+    const last = (key) => (rows.length && rows.every((r) => r[key] != null) ? Math.max(...rows.map((r) => r[key])) : null);
+    return { fitMs: last("fit"), calibratedMs: last("calibrated"), slots: levels.slots };
+});
+
 export async function pollReady(frame, name, timeout = 120000) {
     const t0 = Date.now();
     const q = `datasource=${encodeURIComponent(name)}`;

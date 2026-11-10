@@ -74,6 +74,11 @@ _loaded_source = None
 # plexora/server/providers. Set under `load_lock` alongside every other global
 # here, and never read outside a dispatch guard.
 _providers = providers.EMPTY
+#: (provider, spec, Fingerprint) of the last table read started, taken just
+#: before the read: what `viewer_table` compares an agent session's own
+#: identity of the project against, so a session can take the table the
+#: viewer already holds instead of reading the file a second time.
+_table_read_as = None
 # True only while a project with at least one node-backed resource is loaded.
 #
 # Every dispatch guard below tests this global FIRST, and it is False for every
@@ -649,6 +654,65 @@ def loaded_frame_for(datasource_name, spec):
     return frame if current == spec else None
 
 
+def _note_table_read(provider, spec):
+    """Record what `provider` is about to read (see `_table_read_as`)."""
+    global _table_read_as
+    from plexora.server.providers.base import Fingerprint
+
+    src = getattr(spec, "src", None)
+    try:
+        fingerprint = Fingerprint.of_path(src) if src else None
+    except OSError:
+        fingerprint = None
+    _table_read_as = (provider, spec, fingerprint)
+
+
+def viewer_table(datasource_name, spec, fingerprint):
+    """The viewer's table provider, if it holds `datasource_name`'s table, read
+    from `spec` while the file was at `fingerprint`; else None.
+
+    For an agent session (agent/session.py), which otherwise reads the file
+    into a copy of its own: on the website that is a second parse of a CSV the
+    page already parsed once (1.5 s for LSP11385), and on the desktop a second
+    read of the file. The provider is only read from after this -- a session
+    never calls its `load` -- and a reload of the viewer's project replaces
+    `_providers` wholesale, so the session keeps the table it took.
+
+    Never loads anything, and never waits: None means "not this project, not
+    read from this file as it is now, not finished, or not a file this process
+    reads", and the caller reads the table itself, as before. A store directory
+    (zarr) is never shared: its directory's stat does not change when a key
+    inside it is rewritten.
+    """
+    from plexora.server.providers.local import LocalTableProvider
+
+    if fingerprint is None or not getattr(spec, "src", None) or not os.path.isfile(spec.src):
+        return None
+    with load_lock:
+        provider = getattr(_providers, "table", None)
+        read = _table_read_as
+        if (not isinstance(provider, LocalTableProvider) or read is None
+                or read[0] is not provider or not is_loaded(datasource_name)
+                or table_pending(datasource_name) or "table" in _resource_errors):
+            return None
+        frame = provider.frame
+        if frame is None or frame is not globals().get("datasource"):
+            return None
+        if read[1] != spec or read[2] is None or read[2].to_dict() != fingerprint.to_dict():
+            return None
+        try:
+            if _project(datasource_name).dataset != spec:
+                return None
+        except Exception:  # noqa: BLE001 -- unknown here means read it yourself
+            return None
+        if provider.lazy_features and _work.threaded():
+            # A wide table's features are read through the adapter on demand,
+            # and two threads reading one adapter at once is not something
+            # it promises to survive.
+            return None
+        return provider
+
+
 def get_current_config():
     return config
 
@@ -975,6 +1039,7 @@ def _load_table_behind(datasource_name, resolved, project, reload, epoch, event)
     frame, index, error = None, None, None
     try:
         stage("opening")
+        _note_table_read(resolved.table, project.dataset)
         loaded = resolved.table.load(reload=reload, stage=stage, report=report)
         frame = loaded.table if loaded is not None else None
         if frame is not None and project.roles.x and project.roles.y and _work.threaded():
@@ -1137,6 +1202,7 @@ def load_datasource(datasource_name, reload=False, wait_for_table=False, keep_im
                 stage, report = table_progress(datasource_name)
                 stage("opening")
                 table_error = None
+                _note_table_read(resolved.table, project.dataset)
                 try:
                     loaded = attempt(
                         "table",
@@ -3079,6 +3145,11 @@ def _unplaced_cells(project):
         return 0, 0
     points = datasource.select([x, y]).to_numpy().astype(np.float64, copy=False)
     return int(points.shape[0]), int((~np.isfinite(points).all(axis=1)).sum())
+
+
+def gmm_cached(channel_name, datasource_name) -> bool:
+    """Whether the plain fit of `channel_name` is in hand (answered at once)."""
+    return _gmm_cache.get((datasource_name, channel_name)) is not None
 
 
 def get_channel_gmm(channel_name, datasource_name, view="", *, patient=False, provisional=False):

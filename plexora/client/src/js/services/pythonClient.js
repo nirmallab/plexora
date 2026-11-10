@@ -319,10 +319,11 @@
             || !global.sessionStorage || typeof WebAssembly !== "object"
             || typeof WebAssembly.Suspending !== "function") return false;
         // Whether the browser reads the option at all: a dictionary member it
-        // does not know is never read. Asked of an empty worker, let go at once.
+        // does not know is never read. Asked of a worker that closes itself at
+        // once (an empty one lived as long as its page).
         let kept = false;
         try {
-            const url = URL.createObjectURL(new Blob([""], { type: "text/javascript" }));
+            const url = URL.createObjectURL(new Blob(["self.close();"], { type: "text/javascript" }));
             const probe = new SharedWorker(url, {
                 name: `plexora-probe-${Math.random().toString(36).slice(2)}`,
                 get extendedLifetime() { kept = true; return false; },

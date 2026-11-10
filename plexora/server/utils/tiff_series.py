@@ -53,6 +53,8 @@ Masks are **not** routed through this. A label image is a single 2-D plane and
 would break the reader that is currently correct.
 """
 
+import os
+from collections import OrderedDict
 from xml.etree import ElementTree
 
 import tifffile as tf
@@ -207,6 +209,57 @@ def single_plane_series(tiff, index=0, series=None):
     base = built[0]
     base.levels = built
     return base
+
+
+#: On the website, the opened `(TiffFile, channel series)` of the last few
+#: files, by (path, size, mtime): what every reader of one file there shares.
+#: See `open_channel_series`.
+_SHARED = OrderedDict()
+_SHARED_LIMIT = 4
+
+
+def open_channel_series(path):
+    """`(tiff, series, shared)`: `path` opened as `tifffile.TiffFile(path,
+    is_ome=False)` and its `channel_series`.
+
+    On the website (one thread, `_work.threaded()` false) the pair is shared by
+    every reader of the same file as it is now -- the viewer's image provider
+    and an agent's `SourceImage` -- because opening it walks every page's
+    directory, which for a 40-channel, 7-level OME-TIFF picked from disk is
+    1,217 reads through the page and about a second, for an answer identical
+    to the one already held. `shared` is then True and the caller must leave
+    the file open (the garbage collector closes it once nobody reads it).
+
+    Everywhere else each caller gets a handle of its own (`shared` False), as
+    before: tifffile serialises reads of one handle behind a lock, and a
+    shared one would put an agent's reads behind the viewer's tiles.
+    """
+    from plexora import _work
+
+    def opened():
+        tiff = tf.TiffFile(path, is_ome=False)
+        try:
+            return tiff, channel_series(tiff)
+        except Exception:
+            tiff.close()
+            raise
+
+    if _work.threaded():
+        return (*opened(), False)
+    try:
+        stat = os.stat(path)
+    except OSError:
+        return (*opened(), False)
+    key = (os.fspath(path), stat.st_size, stat.st_mtime_ns)
+    held = _SHARED.get(key)
+    if held is not None and not held[0].filehandle.closed:
+        _SHARED.move_to_end(key)
+        return (*held, True)
+    held = opened()
+    _SHARED[key] = held
+    while len(_SHARED) > _SHARED_LIMIT:
+        _SHARED.popitem(last=False)
+    return (*held, True)
 
 
 def channel_series(tiff):

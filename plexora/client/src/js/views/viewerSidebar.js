@@ -87,7 +87,13 @@ const GATING_EASE_MS = 600;
 //: How long the first open waits, at most, for the gating calibration it
 //: asked the server for (startGatingContrast), and its first poll.
 const GATING_POLL_LIMIT_MS = 60000;
-const GATING_POLL_FIRST_MS = 1500;
+//: Then each wait this much longer, up to 8 s. Short at first: a channel's
+//: calibration lands a second or a few after its click, and a poll that
+//: had just missed it (the first at 1.5 s, the next 2.4 s after) showed it
+//: up to 3 s late -- on LSP11385's website 5.7 or 8.1 s depending only on
+//: where between two polls it fell. A poll is a read of the stored record.
+const GATING_POLL_FIRST_MS = 500;
+const GATING_POLL_GROWTH = 1.3;
 //: An auto-contrast pass whose request failed is asked again after each of
 //: these (autoChannel's askAgain), while the channel is still the slot's.
 const LEVEL_RETRY_MS = [500, 1500, 4000];
@@ -2260,7 +2266,7 @@ class ViewerSidebar {
                 this._gatingWake = null;
                 body = await this.fetchGatingContrast();
                 // Woken for new channels: their calibration is a fresh wait.
-                wait = woken ? GATING_POLL_FIRST_MS : Math.min(wait * 1.6, 8000);
+                wait = woken ? GATING_POLL_FIRST_MS : Math.min(wait * GATING_POLL_GROWTH, 8000);
             }
             this.syncGatingContrast();
         } finally {

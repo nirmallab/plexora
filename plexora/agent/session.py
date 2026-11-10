@@ -163,6 +163,29 @@ def _identity(record) -> tuple:
     return identity
 
 
+def _borrowed(record):
+    """The viewer's own provider of `record`'s table, when it holds exactly
+    the table this session would read (same file as it is now, same read
+    spec): taken rather than read again. Only ever read from here -- a
+    session never calls `load` on it -- and the viewer replaces its provider
+    rather than reloading it, so the table taken stays the one it was.
+    """
+    from plexora.api.dataset import _viewer_table
+    from plexora.server.providers.base import Fingerprint
+
+    spec = record.dataset
+    try:
+        fingerprint = Fingerprint.of_path(spec.src) if spec is not None and spec.src else None
+    except OSError:
+        return None
+    if fingerprint is None:
+        return None
+    try:
+        return _viewer_table(record, fingerprint)
+    except Exception:  # noqa: BLE001 -- a refusal here only means read it yourself
+        return None
+
+
 class _NoTable:
     """The table provider of an image-only handle set: refuses every read.
 
@@ -262,11 +285,14 @@ class AgentSession:
                     from plexora.server.providers.node import NodeTableProvider
 
                     provider = NodeTableProvider(binding, record.dataset)
+                    provider.load()
                 else:
-                    from plexora.server.providers.local import LocalTableProvider
+                    provider = _borrowed(record)
+                    if provider is None:
+                        from plexora.server.providers.local import LocalTableProvider
 
-                    provider = LocalTableProvider(record.dataset, record.name)
-                provider.load()
+                        provider = LocalTableProvider(record.dataset, record.name)
+                        provider.load()
             except AgentError:
                 raise
             except Exception as exc:
