@@ -1055,6 +1055,29 @@ PlexoraPage.register(function () {
             },
         });
     }
+    // The website: the file or folder itself, mounted where it lies as a
+    // Browse pick is (attachWebDrop) -- a run folder, an OME-Zarr, a slide of
+    // any size. One opens; several go to the import dialog, as above.
+    if (landing && typeof attachWebDrop === "function") {
+        attachWebDrop(landing, {
+            count: "many",
+            enabled: () => !busy(),
+            onOver: (lit) => {
+                dropping = lit;
+                paint();
+            },
+            onDrop: (paths) => {
+                problem = "";
+                if (menuOpen()) closeMenu(false);
+                if (paths.length > 1) {
+                    window.PlexoraImportSample?.open({paths});
+                    return;
+                }
+                if (isRemote()) location.setWhere(LOCAL, null);
+                take(paths[0]);
+            },
+        });
+    }
 
     paint();
 });

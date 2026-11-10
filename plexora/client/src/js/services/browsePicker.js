@@ -315,6 +315,177 @@ function chooseKind(anchorEl, examples) {
     });
 }
 
+// -- the website ----------------------------------------------------------------
+//
+// A page cannot see a path: the user gives it a file or a folder, by a dialog
+// or a drop, and services/pickedFiles.js mounts what was given where Python
+// can open it. What follows is what every field shares of that.
+
+/** Whether this page is the website (the app's Python in the page). */
+function onWebsite() {
+    return Boolean(window.PlexoraBackend && window.PlexoraBackend.kind === "browser");
+}
+
+/**
+ * The two questions a website pick may need, asked the same way from every
+ * field: `ask`, the one-button question before a slide's folder is chosen
+ * (an MRXS's, a DICOM file's -- the click on its answer is the gesture the
+ * folder dialog needs), and `gate`, where the website keeps its work, asked
+ * on the first pick that would keep something (views/webOnboarding.js) once
+ * the dialog has closed and before anything is mounted: a cancel there is a
+ * cancelled pick, and the image opens once it is answered.
+ */
+function pickQuestions() {
+    const ask = (body) => (window.PlexoraConfirm
+        ? window.PlexoraConfirm.ask({ title: "This slide has a folder", body,
+                                      confirm: "Choose folder", danger: false })
+        : Promise.resolve(true));
+    const onboarding = window.PlexoraOnboarding;
+    const gate = onboarding
+        ? () => onboarding.ensure({ reason: "pick" }).then((answer) => answer === "ready")
+        : null;
+    return {ask, gate};
+}
+
+/** The button that was just pressed, for a menu that must hang under it. */
+function pressedButton() {
+    const focused = document.activeElement;
+    return focused && focused.tagName === "BUTTON" ? focused : null;
+}
+
+//: What the browser's file dialog calls each filter's formats.
+const FILTER_DESCRIPTIONS = {
+    image: "Images",
+    csv: "CSV tables",
+    h5ad: "AnnData",
+    data: "Tables",
+    channels: "Channel lists",
+};
+
+/**
+ * A field's filter as the browser's file dialog takes it (showOpenFilePicker's
+ * `types`; pickedFiles.js turns it into an input's `accept`): its formats as
+ * one extension each -- a dialog knows ".tif", not ".ome.tif" -- and none of a
+ * store's, which is a folder. Null for a field that takes any file. The
+ * dialog still offers "All files".
+ */
+function pickerTypes(filter) {
+    const types = window.PlexoraExplorerTypes;
+    const suffixes = types && types.EXTENSIONS ? types.EXTENSIONS[filter] : null;
+    if (!Array.isArray(suffixes)) return null;
+    const stores = new Set(types.STORE_SUFFIXES || []);
+    const single = Array.from(new Set(suffixes.filter((suffix) => !stores.has(suffix))
+        .map((suffix) => `.${suffix.split(".").pop()}`)))
+        .filter((suffix) => /^\.[a-z0-9]{1,15}$/i.test(suffix));
+    if (!single.length) return null;
+    return [{description: FILTER_DESCRIPTIONS[filter] || "Files",
+             accept: {"application/octet-stream": single}}];
+}
+
+//: Whether a drag carries files from the computer (not text, not a row).
+function carriesFiles(event) {
+    return Array.from((event && event.dataTransfer && event.dataTransfer.types) || []).includes("Files");
+}
+
+/**
+ * @function attachWebDrop - on the website, make an element take a file or a
+ * folder dropped from the computer: mounted where it lies, as a Browse pick
+ * is (PlexoraPicks.take) -- any size, nothing uploaded. Anywhere else it does
+ * nothing and returns a no-op; the desktop app's drops are paths
+ * (attachDropTarget).
+ *
+ * @param count "one" (a drop of several is refused) or "many".
+ * @param refuse ([{name, directory}]) => reason | "": what this box cannot
+ *   take, said at the drop and before anything is read.
+ * @param enabled () => boolean; false and the element is not a target.
+ * @param onOver (lit) for a zone that draws more than its class.
+ * @param onDrop (path), or ([path]) for "many".
+ * The innermost zone under the pointer takes the drop; one around it stands
+ * aside (`defaultPrevented`).
+ */
+function attachWebDrop(zoneEl, {count = "one", refuse = null, enabled = null,
+                                onOver = null, onDrop = null} = {}) {
+    const picks = window.PlexoraPicks;
+    if (!zoneEl || typeof onDrop !== "function" || !onWebsite() || !picks || !picks.take) {
+        return () => {};
+    }
+    const live = (event) => carriesFiles(event) && !event.defaultPrevented && (!enabled || enabled());
+    const light = (on) => {
+        if (zoneEl.classList.contains("is-drop-over") === on) return;
+        zoneEl.classList.toggle("is-drop-over", on);
+        if (onOver) onOver(on);
+    };
+    const over = (event) => {
+        if (!live(event)) return;
+        event.preventDefault();
+        event.dataTransfer.dropEffect = "copy";
+        light(true);
+    };
+    const leave = (event) => {
+        if (!zoneEl.contains(event.relatedTarget)) light(false);
+    };
+    const drop = (event) => {
+        if (!live(event)) return;
+        event.preventDefault();
+        light(false);
+        const items = Array.from(event.dataTransfer.items || []).filter((item) => item.kind === "file");
+        const dropped = items.map((item) => {
+            const entry = typeof item.webkitGetAsEntry === "function" ? item.webkitGetAsEntry() : null;
+            const file = item.getAsFile ? item.getAsFile() : null;
+            return {name: (entry && entry.name) || (file && file.name) || "",
+                    directory: Boolean(entry && entry.isDirectory)};
+        });
+        if (count !== "many" && dropped.length > 1) {
+            refuseDrop(zoneEl, "This box takes one file or folder.");
+            return;
+        }
+        const reason = refuse ? refuse(dropped) : "";
+        if (reason) {
+            refuseDrop(zoneEl, reason);
+            return;
+        }
+        // In this turn: the drop's handles can be read only now.
+        picks.take(event.dataTransfer, pickQuestions())
+            .then((paths) => {
+                if (paths.length) onDrop(count === "many" ? paths : paths[0]);
+            })
+            .catch((error) => {
+                window.PlexoraToast?.show?.({title: "Not dropped", note: error?.message || String(error),
+                                             tone: "warning"});
+            });
+    };
+    zoneEl.addEventListener("dragover", over);
+    zoneEl.addEventListener("dragleave", leave);
+    zoneEl.addEventListener("drop", drop);
+    return () => {
+        light(false);
+        zoneEl.removeEventListener("dragover", over);
+        zoneEl.removeEventListener("dragleave", leave);
+        zoneEl.removeEventListener("drop", drop);
+    };
+}
+
+// A file let go anywhere on the website but a place that takes it would be
+// opened by the browser in place of the app, and everything on screen lost
+// with it: the drag is refused there instead. A zone's own handler runs
+// first and is left alone. The same two listeners however often this file
+// runs in a window (a page written into it runs it again), so adding them
+// again adds nothing.
+if (onWebsite()) {
+    const guard = window.__plexoraDropGuard || (window.__plexoraDropGuard = {
+        over(event) {
+            if (event.defaultPrevented || !carriesFiles(event)) return;
+            event.preventDefault();
+            event.dataTransfer.dropEffect = "none";
+        },
+        drop(event) {
+            if (carriesFiles(event)) event.preventDefault();
+        },
+    });
+    document.addEventListener("dragover", guard.over);
+    document.addEventListener("drop", guard.drop);
+}
+
 /**
  * @function browseForPath - opens the file explorer and calls back with what
  * was chosen.
@@ -350,28 +521,40 @@ async function browseForPath({mode = "file", filter = "any", node = null,
     try {
         // The website: the user's own disk is the browser's to show, and a
         // pick becomes a path Plexora's Python can open (services/pickedFiles.js).
-        if (!node && window.PlexoraPicks && window.PlexoraBackend
-            && window.PlexoraBackend.kind === "browser") {
+        if (!node && onWebsite() && window.PlexoraPicks) {
+            const {ask, gate} = pickQuestions();
+            const many = select === "many";
+            // Chrome and Edge: the explorer, over the folders the user has
+            // given the site (services/localFiles.js), with the browser's own
+            // two dialogs beside its title. What it answers is mounted here.
+            const local = window.PlexoraLocalFiles;
+            const explorer = window.PlexoraFileExplorer;
+            if (local && local.available() && explorer) {
+                const chosen = await explorer.pick({
+                    mode, filter, accept, select, primary, title,
+                    start: local.startFor(start),
+                    systemDialog: local.dialog({mode, filter, accept, many, ask, gate,
+                                                types: pickerTypes(filter),
+                                                startIn: window.PlexoraPicks.startHandle?.(start) || null}),
+                });
+                const picked = chosen ? await local.take(chosen, {ask, gate}) : null;
+                if (picked && onPicked) onPicked(picked);
+                return;
+            }
+            // Firefox and Safari: a dialog takes a file or a folder, never
+            // either, so a field that takes both asks which first -- hung
+            // under the button that was pressed, the one focused if the
+            // caller did not say.
             let kind = mode;
             if (kind === "any") {
-                kind = anchorEl ? await chooseKind(anchorEl, examples || filter) : "file";
+                const anchor = anchorEl || pressedButton();
+                kind = anchor ? await chooseKind(anchor, examples || filter) : "file";
                 if (!kind) return;
             }
-            // An MRXS slide needs the folder beside it too: asked here, where
-            // the click on the answer is the gesture the folder picker needs.
-            const ask = (body) => (window.PlexoraConfirm
-                ? window.PlexoraConfirm.ask({ title: "This slide has a folder", body,
-                                              confirm: "Choose folder", danger: false })
-                : Promise.resolve(true));
-            // The first pick that would keep something asks where the work
-            // is kept (views/webOnboarding.js), once the file dialog has
-            // closed and before anything is mounted: a cancel there is a
-            // cancelled pick, and the image opens once it is answered.
-            const onboarding = window.PlexoraOnboarding;
-            const gate = onboarding
-                ? () => onboarding.ensure({ reason: "pick" }).then((answer) => answer === "ready")
-                : null;
-            const picked = await window.PlexoraPicks.pick({ mode: kind, multiple: select === "many", ask, gate });
+            const picked = await window.PlexoraPicks.pick({
+                mode: kind, multiple: many, ask, gate, types: pickerTypes(filter),
+                startIn: window.PlexoraPicks.startHandle?.(start) || null,
+            });
             if (picked && onPicked) onPicked(picked);
             return;
         }
@@ -516,6 +699,9 @@ function serverDialogs() {
 // A browser tab gets nothing here. An HTML5 drop hands a page the BYTES of a
 // file and never where it lives, and a box that wants a path to a 40 GB slide
 // has no use for its bytes -- so in a browser a path box is exactly what it was.
+// The website is the exception (attachWebDrop above): its Python runs in the
+// page, so the dropped file or folder itself is what it reads, mounted where
+// it lies.
 //
 // One registry and one pair of document listeners for every zone on every
 // page. Zones are keyed by element in a WeakMap, so a view that re-renders, or
@@ -999,29 +1185,46 @@ function attachBrowseButton(buttonEl, inputEl, {mode = "file", filter = "any",
     // (channelNamesUpload.js): a drop there loads the file, not just the box.
     if (!drop) return;
 
+    const enabled = () => !inputEl.disabled && !inputEl.readOnly;
+    // A field that draws its own Remote switch (fileSourceRow, channel
+    // names) has no handle to move back to This computer, so it says what
+    // to do rather than filling a box that means a path on another machine
+    // with one from this one.
+    const elsewhere = () => (!window.PlexoraDataLocation?.handleOf?.(inputEl) && nodeNow()
+        ? "This box is set to another machine. Switch it to This computer to drop a file from here." : "");
+    // A file dragged out of this computer's Explorer or Finder is on this
+    // computer, whatever the switch said. Moving it clears the box, which is
+    // filled straight after.
+    const fill = (path) => {
+        const handle = window.PlexoraDataLocation?.handleOf?.(inputEl);
+        if (handle && !handle.isLocal()) handle.setWhere("local", null);
+        fillPathInput(inputEl, path);
+    };
+
     // The row is the target, not the input alone: the switch and the button
     // beside the box are part of what the pointer is aiming at.
-    attachDropTarget(inputEl.closest?.(".import-field-row") || inputEl.parentElement, {
-        filter, mode, accept, count: "one",
-        enabled: () => !inputEl.disabled && !inputEl.readOnly,
-        accepts: () => {
-            // A field that draws its own Remote switch (fileSourceRow,
-            // channel names) has no handle to move back to This computer, so
-            // it says what to do rather than filling a box that means a path
-            // on another machine with one from this one.
-            const handle = window.PlexoraDataLocation?.handleOf?.(inputEl);
-            if (!handle && nodeNow()) {
-                return "This box is set to another machine. Switch it to This computer to drop a file from here.";
-            }
-            return true;
-        },
-        onDrop: (path) => {
-            // A file dragged out of this computer's Explorer or Finder is on
-            // this computer, whatever the switch said. Moving it clears the
-            // box, which is filled straight after.
-            const handle = window.PlexoraDataLocation?.handleOf?.(inputEl);
-            if (handle && !handle.isLocal()) handle.setWhere("local", null);
-            fillPathInput(inputEl, path);
-        },
+    const rowEl = inputEl.closest?.(".import-field-row") || inputEl.parentElement;
+    attachDropTarget(rowEl, {
+        filter, mode, accept, count: "one", enabled,
+        accepts: () => elsewhere() || true,
+        onDrop: fill,
     });
+    // The website's drop: the file or folder itself, mounted like a pick.
+    attachWebDrop(rowEl, {
+        enabled,
+        refuse: (dropped) => elsewhere() || webRefusal(dropped, {filter, mode, accept}),
+        onDrop: fill,
+    });
+}
+
+/** Why a box will not take what was dropped on the website, or "". Names and
+ *  shapes only: the drop is not read until it is taken. */
+function webRefusal(dropped, spec) {
+    for (const {name, directory} of dropped) {
+        if (directory && spec.mode === "file") return "This box takes a file, not a folder.";
+        if (!directory && spec.mode === "directory") return "This box takes a folder, not a file.";
+        const reason = directory ? "" : suffixRefusal(name, spec);
+        if (reason) return reason;
+    }
+    return "";
 }

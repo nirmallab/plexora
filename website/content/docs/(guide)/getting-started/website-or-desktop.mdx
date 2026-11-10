@@ -19,6 +19,17 @@ The numbers below are the website's benchmark records as of 2026-11-07 (a 12-cor
 | An image in a cloud bucket (S3, Google Cloud Storage) | Opens in about 7 s | Opens in 21–25 s | Opens where the bucket is |
 | Starting up | The home page shows at once. Opening an image waits until the rest has loaded: about 14 s at 50 Mbps on the first visit, about 6 s on later ones; the status at the top right says **Starting** meanwhile | Installed once | — |
 
+## Choosing a file or a folder
+
+The website reads only what you give it, and reads it where it is: nothing is uploaded. In Chrome and Edge, **Browse** opens the same file window as the desktop app, listing the folders you have given the website:
+
+- **Choose folder…** gives it a folder. A folder that is one dataset (an OME-Zarr, a Xenium or Visium run, a SpatialData store, a DICOM slide) is chosen at once; any other folder is kept under **Folders** and opened, so everything in it is a click away next time. **Choose file…** picks one file.
+- **Drop** a file or a folder on the Browse window, the import dialog, a path box or the home page, whatever its size.
+- One file of a DICOM slide brings the rest of the slide's folder with it; outside a folder you have given, the website asks for that folder first.
+- After the browser restarts, Chrome asks again before the website may read a folder: open it and press **Reconnect**. To take a folder away again, right-click it under **Folders** and choose **Remove from Folders**.
+
+Firefox and Safari cannot give a website a folder to keep. There, **Browse** asks **File** or **Folder** first, drops work as in Chrome, and a later visit asks for each file again.
+
 ## What the website tells you
 
 When something is beyond these bounds, a short notice appears in the corner with the measured reason and what to do about it: **Desktop app** opens the project in the desktop app (or offers it, if you do not have it), **Connect a node** pairs a Plexora node running beside your data, and **Continue here** carries on in the browser. A notice appears once per project in a tab; closing it or choosing **Continue here** keeps it away for 30 days. The desktop app shows no notices.

@@ -391,8 +391,11 @@ function fetchStub(url, options = {}) {
     }
     const asked = sent.path;
     const found = listings[asked];
-    const reply = found
-        ? respond(200, typeof found === "function" ? found(sent) : found)
+    const payload = found ? (typeof found === "function" ? found(sent) : found) : null;
+    // A listing may carry its own status (`__status`): the website's 403
+    // for a folder that needs the browser's permission again.
+    const reply = payload
+        ? respond(payload.__status || 200, payload)
         : respond(400, { error: `Not a folder: ${asked}` });
     const delay = listDelay[asked];
     return delay ? new Promise((resolve) => setTimeout(() => resolve(reply), delay))
@@ -2071,6 +2074,154 @@ async function main() {
         menu = menus[menus.length - 1];
         check("a crumb's menu opens, pins or copies that folder",
               menu.items.map((i) => i.label).join("|") === "Open|Pin to Favorites|Copy path");
+        await cancel(dialog);
+    }
+
+    // -- 19. the website: the folders given to the site ----------------------------
+
+    // services/localFiles.js answers the routes; here the answers are drawn.
+    const LAB = "/local/ab12cd34";
+    const labRow = { name: "Lab data", is_dir: true, size: null, mtime: null, kind: "dir", path: LAB };
+    const websiteRoot = (entries) => ({ path: "/local", parent: null, crumbs: [{ label: "Folders", path: "/local" }],
+                                        entries, truncated: false, total: entries.length, partial: false,
+                                        dataset: null, place_root: true });
+    const labListing = { path: LAB, parent: "/local", truncated: false,
+                         crumbs: [{ label: "Folders", path: "/local" }, { label: "Lab data", path: LAB }],
+                         entries: [dir(`${LAB}/run`, { store: { type: "xenium", label: "Xenium run" } }),
+                                   file(`${LAB}/a.tif`, 10)] };
+    const lapsedLab = { __status: 403, error: "Plexora needs your permission to read “Lab data” again.",
+                        reconnect: LAB };
+    const websitePlaces = (folders) => ({ platform: "browser", hostname: "", home: null, known: [], volumes: [],
+                                          cloud: [], project: [], folders, search: false });
+    function websiteDialog() {
+        const hook = {
+            calls: [], answers: {}, app: "", inPage: true,
+            buttons: [{ kind: "file", label: "Choose file…", icon: "fas fa-file" },
+                      { kind: "directory", label: "Choose folder…", icon: "fas fa-folder-open" }],
+            available: () => Promise.resolve("kinds"),
+            open: (kind) => { hook.calls.push(`open:${kind}`); return Promise.resolve(hook.answers[kind] ?? null); },
+            addFolder: () => { hook.calls.push("add"); return Promise.resolve(hook.answers.add ?? null); },
+            reconnect: (path) => { hook.calls.push(`reconnect:${path}`); return Promise.resolve(true); },
+            forget: (path) => { hook.calls.push(`forget:${path}`); return Promise.resolve(true); },
+            drop: () => { hook.calls.push("drop"); return Promise.resolve(hook.answers.drop ?? null); },
+        };
+        return hook;
+    }
+    const chooseLabels = (dialog) => allByClass(dialog, "plx-explorer-choose")
+        .map((b) => byClass(b, "plx-explorer-system-label").textContent);
+    const panelOf = (dialog) => byClass(dialog, "plx-explorer-panel");
+    const placesCalls = () => calls.filter((c) => c.url.indexOf("fs_places") >= 0).length;
+
+    {
+        const systemDialog = websiteDialog();
+        const { dialog } = await open({ mode: "any", systemDialog },
+                                      { filesystem: { "": websiteRoot([]) }, fsPlaces: websitePlaces([]) });
+        check("on the website the title bar offers the browser's two dialogs, not the system file browser",
+              chooseLabels(dialog).join("|") === "Choose file…|Choose folder…"
+              && allByClass(dialog, "plx-explorer-system").filter((b) => !b.classList.contains("plx-explorer-choose"))
+                  .every((b) => b.hidden === true));
+        const panel = panelOf(dialog);
+        check("with no folder given, the listing is a drop area and the same two buttons",
+              panel.hidden === false && panel.classList.contains("is-welcome")
+              && byClass(panel, "plx-explorer-panel-title").textContent === "Drop a file or folder here"
+              && allByClass(panel, "plx-explorer-panel-button").map((b) => byClass(b, "plx-explorer-system-label")
+                  .textContent).join("|") === "Choose file…|Choose folder…"
+              && byClass(dialog, "plx-explorer-listing").hidden === true);
+        check("...and a list of places is no folder to choose",
+              byClass(dialog, "plx-explorer-use-folder").disabled === true);
+        systemDialog.answers.directory = { show: LAB };
+        listings[LAB] = labListing;
+        const before = placesCalls();
+        click(allByClass(dialog, "plx-explorer-choose")[1]);
+        await settled(6);
+        check("Choose folder… that gives a folder goes there, and reads the sidebar again",
+              systemDialog.calls.join(",") === "open:directory" && isOpen(dialog)
+              && rowNames(dialog).join(",") === "run,a.tif" && panel.hidden === true
+              && placesCalls() === before + 1);
+        systemDialog.answers.drop = { error: "This takes one file or folder." };
+        const dropped = { type: "drop", dataTransfer: { types: ["Files"], items: [] } };
+        dialog.dispatchEvent(dropped);
+        check("a drop on the window is handed to the page in the drop's own turn",
+              systemDialog.calls.at(-1) === "drop" && dropped.defaultPrevented === true);
+        await settled(3);
+        check("...and a reason it gives is said in the footer, the explorer still up",
+              summaryOf(dialog) === "This takes one file or folder." && isOpen(dialog));
+        const search = byClass(dialog, "plx-explorer-search-input");
+        search.value = "tif";
+        search.dispatchEvent({ type: "input" });
+        check("the filter narrows the folder, and no search below it is offered",
+              rowNames(dialog).join(",") === "a.tif"
+              && byClass(dialog, "plx-explorer-search-deep").hidden === true);
+        await cancel(dialog);
+    }
+
+    {
+        const systemDialog = websiteDialog();
+        systemDialog.answers.file = "/picked/aa/LSP11385.ome.tif";
+        const { dialog, promise } = await open({ mode: "any", systemDialog },
+                                               { filesystem: { "": websiteRoot([labRow]) },
+                                                 fsPlaces: websitePlaces([]) });
+        click(allByClass(dialog, "plx-explorer-choose")[0]);
+        check("Choose file… that gives a picked file is the explorer's answer",
+              await promise === "/picked/aa/LSP11385.ome.tif");
+        await settle();
+        check("...and a list of places is never remembered as where the explorer was left",
+              !prefCalls("POST").some((c) => c.body.last_dir === "/local" || c.body.add_recent === "/local"));
+    }
+
+    {
+        const systemDialog = websiteDialog();
+        const filesystem = { "": websiteRoot([labRow]), [LAB]: lapsedLab };
+        const { dialog } = await open({ mode: "any", start: LAB, systemDialog },
+                                      { filesystem, fsPlaces: websitePlaces([]) });
+        const panel = panelOf(dialog);
+        check("a folder the browser stopped granting shows Reconnect where it was going",
+              panel.hidden === false && panel.classList.contains("is-reconnect")
+              && /permission/.test(byClass(panel, "plx-explorer-panel-title").textContent)
+              && listCalls().every((c) => c.body.path !== ""));
+        filesystem[LAB] = labListing;
+        click(byText(panel, "Reconnect"));
+        await settled(6);
+        check("...and Reconnect asks the browser from the click, then lists it",
+              systemDialog.calls.join(",") === `reconnect:${LAB}`
+              && rowNames(dialog).join(",") === "run,a.tif" && panel.hidden === true);
+        await cancel(dialog);
+    }
+
+    {
+        const systemDialog = websiteDialog();
+        const folders = [{ id: "ab12cd34", name: "Lab data", path: LAB, state: "granted" },
+                         { id: "ff00ff00", name: "Downloads", path: "/local/ff00ff00", state: "prompt" }];
+        const { dialog } = await open({ mode: "any", systemDialog },
+                                      { filesystem: { "": websiteRoot([labRow]), [LAB]: labListing },
+                                        saved: { last_dir: "", recent: [], pinned: [LAB] },
+                                        fsPlaces: websitePlaces(folders) });
+        await settled(3);
+        const labels = placeLabels(dialog);
+        const lapsed = allByClass(dialog, "plx-explorer-place")
+            .find((p) => p.getAttribute("data-path") === "/local/ff00ff00");
+        check("the sidebar lists the folders given, a lapsed one marked, Add folder… under them, and no Home",
+              labels.slice(0, 3).join("|") === "Lab data|Downloads|Add folder…" && !labels.includes("Home")
+              && lapsed.classList.contains("is-lapsed")
+              && byClass(lapsed, "plx-explorer-place-caption").textContent === "Reconnect");
+        check("...and a pin of a folder given goes by the folder's name, not its id",
+              byClass(allByClass(dialog, "plx-explorer-pinrow")[0], "plx-explorer-place-label").textContent
+                  === "Lab data");
+        systemDialog.answers.add = { show: LAB };
+        click(byClass(dialog, "plx-explorer-add-folder"));
+        await settled(6);
+        check("Add folder… asks the page, and opens what it gave",
+              systemDialog.calls.join(",") === "add" && rowNames(dialog).join(",") === "run,a.tif");
+        const given = allByClass(dialog, "plx-explorer-place")
+            .find((p) => p.getAttribute("data-path") === LAB && !p.classList.contains("is-pin"));
+        given.dispatchEvent({ type: "contextmenu", clientX: 1, clientY: 1 });
+        const menu = menus[menus.length - 1];
+        check("a folder's menu in the sidebar takes it out of Folders",
+              menu.items.map((i) => i.label).join("|") === "Open|Remove from Folders");
+        menu.items[1].onSelect();
+        await settled(6);
+        check("...and the list of places is shown once it is out",
+              systemDialog.calls.at(-1) === `forget:${LAB}` && listCalls().at(-1).body.path === "");
         await cancel(dialog);
     }
 

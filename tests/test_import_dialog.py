@@ -226,7 +226,7 @@ def test_the_first_pick_is_the_home_style_control(dialog):
     assert opened == ['"sample"'], opened
     assert "buildSplitControl(" not in dialog
     assert "plx-import-kind" not in dialog
-    assert 'if (!take()) pickWith("any");' in dialog
+    assert 'if (!take()) pickWith("any", {anchor: go, examples});' in dialog
     css = _read(MAIN_CSS)
     assert ".plx-import-kind" not in css, "the File | Folder pair outlived its markup"
     for rule in (".plx-import-field {", ".plx-import-machine {",
@@ -270,14 +270,15 @@ def test_a_browsed_file_is_read_at_once_and_a_typed_one_waits_for_load(dialog):
     card's pick goes straight to `submitSlot` and never through the box's
     input event -- which is the only thing that shows Load. A typed or pasted
     path shows Load, and is read on Load or Enter."""
-    picked = dialog[dialog.index("function pickWith(mode)"):dialog.index("function startFor(intent)")]
+    picked = dialog[dialog.index("function pickWith(mode,"):dialog.index("function startFor(intent)")]
     assert 'if (intent) submitSlot(path, "browse", intent);' in picked
     row = _inline_pick(dialog)
     assert 'setFace(input.value.trim() ? "load" : "browse");' in row
     assert 'if (typed) submitSlot(typed, "typed", adding);' in row
     # One Browse, taking a file or a folder -- no arrow offering the other
-    # kind, and no "file or folder?" popup: the panel takes both.
-    assert 'browse.addEventListener("click", () => pickWith("any"));' in row
+    # kind. It hands itself over for the one browser that must ask "file or
+    # folder?" first (the website in Firefox or Safari, browsePicker.js).
+    assert 'browse.addEventListener("click", () => pickWith("any", {anchor: browse,' in row
     assert "compact-more" not in row
     assert 'pickWith("directory")' not in dialog
     assert 'pickWith("file")' not in dialog

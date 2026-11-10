@@ -168,6 +168,11 @@
     font-size: 10px;
 }
 
+/* The website's two dialogs, side by side. */
+.plx-explorer-choose + .plx-explorer-choose {
+    margin-left: 6px;
+}
+
 .plx-explorer-title {
     color: var(--text-primary);
     font-size: 13px;
@@ -344,6 +349,90 @@ html[class*="plx-explorer-resizing-"] * {
 
 .plx-explorer-waiting-back {
     margin-top: var(--space-2);
+}
+
+/* In place of the listing on the website: the first visit's drop area (no
+   folder given yet), or a folder the browser wants permission for again. */
+.plx-explorer-panel {
+    align-items: center;
+    display: flex;
+    flex: 1 1 auto;
+    justify-content: center;
+    min-height: 0;
+    padding: var(--space-4);
+}
+
+.plx-explorer-panel[hidden],
+.plx-explorer-listing[hidden] {
+    display: none;
+}
+
+.plx-explorer-panel-card {
+    align-items: center;
+    border: 1px dashed var(--border-strong);
+    border-radius: var(--radius-md);
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    max-width: 420px;
+    padding: var(--space-5) var(--space-5) var(--space-4);
+    text-align: center;
+    width: 100%;
+}
+
+.plx-explorer-panel.is-reconnect .plx-explorer-panel-card {
+    background: var(--surface-2);
+    border-color: var(--border-subtle);
+    border-style: solid;
+}
+
+.plx-explorer-panel-icon {
+    color: var(--text-muted);
+    display: inline-flex;
+    font-size: 22px;
+    margin-bottom: 4px;
+}
+
+.plx-explorer-panel.is-reconnect .plx-explorer-panel-icon {
+    color: var(--accent-warning);
+}
+
+.plx-explorer-panel-title {
+    color: var(--text-primary);
+    font-size: 13px;
+    font-weight: 600;
+    line-height: 1.4;
+}
+
+.plx-explorer-panel-hint {
+    color: var(--text-muted);
+    font-size: 11px;
+    line-height: 1.45;
+}
+
+.plx-explorer-panel-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-2);
+    justify-content: center;
+    margin-top: var(--space-3);
+}
+
+.plx-explorer-panel-button {
+    align-items: center;
+    display: inline-flex;
+    gap: 6px;
+}
+
+/* A file or folder held over the window: the whole of it takes the drop. */
+.plx-explorer-window.is-drop-over {
+    border-color: var(--accent-channel);
+    box-shadow: 0 0 0 3px var(--accent-channel-soft), var(--shadow-lg);
+}
+
+.plx-explorer-window.is-drop-over .plx-explorer-panel-card {
+    background: var(--accent-channel-tint);
+    border-color: var(--accent-channel);
 }
 
 .plx-explorer-description {
@@ -865,6 +954,16 @@ html[class*="plx-explorer-resizing-"] * {
     color: var(--text-muted);
     font-size: 11px;
     padding: 4px var(--space-2);
+}
+
+/* A folder the browser stopped granting: it opens on Reconnect. */
+.plx-explorer-place.is-lapsed .plx-explorer-place-icon,
+.plx-explorer-place.is-lapsed .plx-explorer-place-caption {
+    color: var(--accent-warning);
+}
+
+.plx-explorer-add-folder {
+    color: var(--text-muted);
 }
 
 .plx-explorer-pinrow {

@@ -13,6 +13,10 @@
  * Pins reorder by dragging their grip (SortableJS, when the page has it); the
  * new order is handed back for the server to keep. Collapsed sections are
  * remembered with the rest of the view.
+ *
+ * On the website there is no disk to name places on: Folders lists the
+ * folders the user has given the site (services/localFiles.js), a lapsed one
+ * marked, with "Add folder…" under them; Home is not offered.
  */
 window.PlexoraExplorerSidebar = (function () {
     "use strict";
@@ -20,6 +24,7 @@ window.PlexoraExplorerSidebar = (function () {
     const T = () => window.PlexoraExplorerTypes;
 
     const SECTIONS = [
+        ["folders", "Folders"],
         ["favorites", "Favorites"],
         ["locations", "Locations"],
         ["recent", "Recent"],
@@ -51,11 +56,14 @@ window.PlexoraExplorerSidebar = (function () {
     };
 
     function create({ onGo = () => {}, onReorderPins = () => {}, onContextMenu = () => {},
-                      onCollapse = () => {} } = {}) {
+                      onCollapse = () => {}, onAddFolder = null } = {}) {
         const { el, button, glyph, setIcon, readableSize, shortName } = T();
 
         const state = {
             home: "",
+            //: The website's folders, [{name, path, state}], or null where
+            //: the machine has a disk of its own instead.
+            folders: null,
             known: [],
             volumes: [],
             cloud: [],
@@ -140,13 +148,47 @@ window.PlexoraExplorerSidebar = (function () {
 
         // -- the sections ----------------------------------------------------
 
+        //: What a path is called in a list: a folder given to the website by
+        //: its own name (its path names it by an id), anything else by its
+        //: last part.
+        function labelOf(path) {
+            const given = (state.folders || []).find((entry) => entry.path === path);
+            return given ? given.name : shortName(path);
+        }
+
+        function renderFolders() {
+            const body = bodies.folders;
+            body.replaceChildren();
+            (state.folders || []).forEach((entry) => {
+                const lapsed = entry.state !== "granted";
+                const node = place({ label: entry.name, path: entry.path, kind: "folder",
+                                     icon: lapsed ? "fas fa-lock" : "fas fa-folder",
+                                     caption: lapsed ? "Reconnect" : "",
+                                     title: lapsed ? `${entry.name}: Plexora needs your permission again`
+                                         : entry.name });
+                if (lapsed) node.classList.add("is-lapsed");
+                body.append(node);
+            });
+            if (onAddFolder) {
+                const add = button("plx-explorer-place plx-explorer-add-folder", "", "Add a folder to browse here");
+                add.append(glyph("fas fa-plus", "plx-explorer-place-icon"),
+                           el("span", "plx-explorer-place-label", "Add folder…"));
+                add.addEventListener("click", () => onAddFolder());
+                body.append(add);
+            }
+            heads.folders.section.hidden = state.folders === null;
+        }
+
         function renderFavorites() {
             const body = bodies.favorites;
             body.replaceChildren();
             // Home goes by "" -- the server's word for its user's home -- so it
-            // works before /fs_places has said where that is.
-            body.append(place({ label: "Home", path: state.home, go: "", icon: "fas fa-house",
-                                title: state.home || "Your home folder" }));
+            // works before /fs_places has said where that is. A machine with
+            // no home to offer (the website) says null.
+            if (state.home !== null) {
+                body.append(place({ label: "Home", path: state.home, go: "", icon: "fas fa-house",
+                                    title: state.home || "Your home folder" }));
+            }
             state.known.forEach((entry) => {
                 body.append(place({ label: entry.label, path: entry.path,
                                     icon: KNOWN_ICONS[entry.id] || "fas fa-folder" }));
@@ -155,12 +197,17 @@ window.PlexoraExplorerSidebar = (function () {
             body.append(pinSlot);
         }
 
+        //: Favorites with nothing in it (the website, before a pin) is not drawn.
+        function paintFavoritesShown() {
+            heads.favorites.section.hidden = state.home === null && !state.known.length && !state.pinned.length;
+        }
+
         function renderPins() {
             pinSlot.replaceChildren();
             state.pinned.forEach((path) => {
                 const row = el("div", "plx-explorer-pinrow is-pin");
                 row.setAttribute("data-path", path);
-                const node = place({ label: shortName(path), path, icon: "fas fa-folder",
+                const node = place({ label: labelOf(path), path, icon: "fas fa-folder",
                                      kind: "pin" });
                 node.classList.add("is-pin");
                 const grip = glyph("fas fa-grip-vertical", "plx-explorer-grip");
@@ -169,6 +216,7 @@ window.PlexoraExplorerSidebar = (function () {
                 pinSlot.append(row);
             });
             ensureSortable();
+            paintFavoritesShown();
         }
 
         function ensureSortable() {
@@ -233,7 +281,7 @@ window.PlexoraExplorerSidebar = (function () {
             const body = bodies.recent;
             body.replaceChildren();
             state.recent.forEach((path) => {
-                body.append(place({ label: shortName(path), path, icon: "fas fa-clock-rotate-left",
+                body.append(place({ label: labelOf(path), path, icon: "fas fa-clock-rotate-left",
                                     kind: "recent" }));
             });
             heads.recent.section.hidden = !state.recent.length;
@@ -256,6 +304,7 @@ window.PlexoraExplorerSidebar = (function () {
         }
 
         function renderAll() {
+            renderFolders();
             renderFavorites();
             renderLocations();
             renderRecent();
@@ -276,8 +325,9 @@ window.PlexoraExplorerSidebar = (function () {
                 setIcon(machineGlyph, icon);
             },
             setPlaces({ home = "", known = [], volumes = [], cloud = [], project = [],
-                        unavailable = "" } = {}) {
-                state.home = home || "";
+                        unavailable = "", folders = null } = {}) {
+                state.home = home === null ? null : home || "";
+                state.folders = Array.isArray(folders) ? folders : null;
                 state.known = Array.isArray(known) ? known : [];
                 state.volumes = Array.isArray(volumes) ? volumes : [];
                 state.cloud = Array.isArray(cloud) ? cloud : [];

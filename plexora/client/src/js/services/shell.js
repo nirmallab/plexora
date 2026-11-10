@@ -808,6 +808,8 @@
         const services = scripts([
             at("/client/src/js/services/backend.js"),
             at("/client/src/js/services/pickedFiles.js"),
+            // The explorer's listings of the folders the user gives the site.
+            at("/client/src/js/services/localFiles.js"),
             // Saving into a picked file Python wrote (Settings > Data, off by default).
             at("/client/src/js/services/sourceWrites.js"),
             at("/client/src/js/services/browserNode.js"),
@@ -1410,6 +1412,7 @@
         // The host's Python and picks, not a second worker.
         global.PlexoraPython = host.PlexoraPython;
         global.PlexoraPicks = host.PlexoraPicks;
+        global.PlexoraLocalFiles = host.PlexoraLocalFiles || null;
         global.PlexoraNode = host.PlexoraNode;
         global.PlexoraKept = host.PlexoraKept || null;
         // The host's licence, which it holds only once Python has started: read

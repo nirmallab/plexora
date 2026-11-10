@@ -113,10 +113,21 @@ def test_the_script_is_the_websites_only_and_after_the_dialogs_it_uses():
 
 
 def test_a_website_pick_passes_the_gate():
+    """Both ways a website Browse picks -- the explorer over the folders the
+    user gave the site, and a browser's own dialog -- carry the gate, and so
+    does a drop (attachWebDrop, importSample.js)."""
     browse = _read(JS, "services", "browsePicker.js")
-    branch = browse[browse.index('window.PlexoraBackend.kind === "browser"'):browse.index("const explorer = window.PlexoraFileExplorer")]
-    assert 'ensure({ reason: "pick" })' in branch
-    assert "PlexoraPicks.pick({ mode: kind, multiple: select === \"many\", ask, gate })" in branch
+    questions = browse[browse.index("function pickQuestions()"):browse.index("function pressedButton()")]
+    assert 'ensure({ reason: "pick" })' in questions
+    start = browse.index("async function browseForPath(")
+    branch = browse[start:browse.index("// A page without the explorer", start)]
+    assert "const {ask, gate} = pickQuestions();" in branch
+    assert "local.take(chosen, {ask, gate})" in branch
+    assert "local.dialog({mode, filter, accept, many, ask, gate," in branch
+    assert "mode: kind, multiple: many, ask, gate, types: pickerTypes(filter)," in branch
+    assert "picks.take(event.dataTransfer, pickQuestions())" in browse
+    dialog = _read(JS, "views", "importSample.js")
+    assert "typeof pickQuestions === \"function\" ? pickQuestions() : {}" in dialog
 
 
 def test_the_gate_comes_before_every_mount_and_record():

@@ -181,6 +181,13 @@
                    handoff: row.handoff });
             return json({ success: false, error: row.handoff.why, handoff: row.handoff }, 501);
         }
+        // The explorer over the user's own folders (services/localFiles.js):
+        // listed from the handles the page holds, so a Browse pressed while
+        // Python is still starting is not left waiting for it.
+        if (kindOf === "js" && global.PlexoraLocalFiles) {
+            const answered = await global.PlexoraLocalFiles.answer(request, global).catch(() => null);
+            if (answered) return answered;
+        }
         // A page the website showed before its Python had started (services/
         // shell.js `earlyPage`) asks nothing until it has: the licence and the
         // picked files are in by then, as they are for every page drawn after.

@@ -11,7 +11,7 @@
     <link rel="stylesheet" href="{{ data.base_url }}/client/src/css/main.css?v=20261110_onboarding_bundles">
     {# Here and not in a page block: the explorer opens from every page, and
        appRouter.adoptStyles turns page stylesheets off on navigation. #}
-    <link rel="stylesheet" href="{{ data.base_url }}/client/src/css/explorer.css?v=20261021_explorer_waiting">
+    <link rel="stylesheet" href="{{ data.base_url }}/client/src/css/explorer.css?v=20261110_file_or_folder">
     {% block style %}{% endblock %}
 
 
@@ -45,7 +45,7 @@
          window.fetch). Before appStatus.js and not deferred, so a static
          build's page can put its own transport in place before that file
          wraps window.fetch and anything issues a request. -->
-    <script src="{{ data.base_url }}/client/src/js/services/backend.js?v=20261109_kept_writes" type="text/javascript"></script>
+    <script src="{{ data.base_url }}/client/src/js/services/backend.js?v=20261110_file_or_folder" type="text/javascript"></script>
     <!-- App-wide status indicator. Loaded here, before everything else and not
          deferred, because it wraps window.fetch to detect a dead/erroring
          server and must be installed before any script issues a request. -->
@@ -145,9 +145,9 @@
     <script src="{{ data.base_url }}/client/src/js/services/explorer/floatingWindow.js?v=20261021_explorer_system" defer></script>
     <script src="{{ data.base_url }}/client/src/js/services/explorer/explorerListing.js?v=20261020_file_explorer" defer></script>
     <script src="{{ data.base_url }}/client/src/js/services/explorer/explorerCrumbs.js?v=20261020_file_explorer" defer></script>
-    <script src="{{ data.base_url }}/client/src/js/services/explorer/explorerSidebar.js?v=20261021_explorer_system" defer></script>
-    <script src="{{ data.base_url }}/client/src/js/services/explorer/fileExplorer.js?v=20261023_pin_saved" defer></script>
-    <script src="{{ data.base_url }}/client/src/js/services/browsePicker.js?v=20261110_onboarding_bundles" defer></script>
+    <script src="{{ data.base_url }}/client/src/js/services/explorer/explorerSidebar.js?v=20261110_file_or_folder" defer></script>
+    <script src="{{ data.base_url }}/client/src/js/services/explorer/fileExplorer.js?v=20261110_file_or_folder" defer></script>
+    <script src="{{ data.base_url }}/client/src/js/services/browsePicker.js?v=20261110_file_or_folder" defer></script>
     {# What a file dropped on the window does where it lands (desktop app):
        right after browsePicker, whose drop registry it extends. #}
     <script src="{{ data.base_url }}/client/src/js/services/dropRouter.js?v=20261027_drop_router" defer></script>
@@ -215,7 +215,7 @@
          modal both draw through it, so it is listed before either. -->
     <script src="{{ data.base_url }}/client/src/js/views/jobProgress.js?v=20261014_import_progressive" defer></script>
     <script src="{{ data.base_url }}/client/src/js/views/tableProgress.js?v=20261014_import_progressive" defer></script>
-    <script src="{{ data.base_url }}/client/src/js/views/requirementsModal.js?v=20261027_machine_chip" defer></script>
+    <script src="{{ data.base_url }}/client/src/js/views/requirementsModal.js?v=20261110_file_or_folder" defer></script>
     {# Core's own short-question dialog (ask / tell / choose / prompt). In
        base.html and not on the one page that uses it today, because a modal
        that only existed on one page would be one more thing every other page
@@ -282,7 +282,7 @@
        primary button, the viewer's "+ Add Layer" and the requirements modal's
        layer row all open it, and none of those three shares a stylesheet.
        After datasetPicker.js, whose picker is this dialog's Dataset row. #}
-    <script src="{{ data.base_url }}/client/src/js/views/importSample.js?v=20261109_webperf" defer></script>
+    <script src="{{ data.base_url }}/client/src/js/views/importSample.js?v=20261110_file_or_folder" defer></script>
     <!-- New Dataset: a dataset from a folder (scan, match, create). After
        importSample.js, whose dialog styles it reuses. -->
     <script src="{{ data.base_url }}/client/src/js/views/datasetBuilder.js?v=20261029_bucket_datasets" defer></script>

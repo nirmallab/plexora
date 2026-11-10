@@ -797,7 +797,11 @@ window.PlexoraImportSample = (function () {
         // this state used to carry.
         const pick = buildPickControl({
             examples: "sample",
-            placeholder: "Paste a path, or drop a table here…",
+            // The website takes the file or folder itself, any size
+            // (PlexoraPicks.take); a path typed there would mean nothing.
+            placeholder: window.PlexoraBackend?.kind === "browser"
+                ? "Drop a file or folder here, or paste a link…"
+                : "Paste a path, or drop a table here…",
             onTyped: (typed) => addPick(typed),
         });
         body.appendChild(pick);
@@ -954,7 +958,7 @@ window.PlexoraImportSample = (function () {
             if (event.key === "Enter") take();
         });
         go.addEventListener("click", () => {
-            if (!take()) pickWith("any");
+            if (!take()) pickWith("any", {anchor: go, examples});
         });
 
         // The service's own line -- "Sharing…", "Not connected to hpc yet" --
@@ -984,10 +988,11 @@ window.PlexoraImportSample = (function () {
         foot.append(list, help);
         pick.appendChild(foot);
 
-        // Files dropped on the control. Small tables only, and the placeholder
-        // says so: a browser cannot give a server the PATH of a 40 GB image,
-        // only its bytes, and uploading a slide through a form is not an
-        // import.
+        // Files dropped on the control. Small tables only on a server, and
+        // the placeholder says so: a browser cannot give a server the PATH of
+        // a 40 GB image, only its bytes, and uploading a slide through a form
+        // is not an import. The website takes anything, folders too: its
+        // Python reads the dropped thing where it lies.
         pick.addEventListener("dragover", (event) => {
             event.preventDefault();
             pick.classList.add("is-over");
@@ -1026,6 +1031,39 @@ window.PlexoraImportSample = (function () {
         // (desktopBridge.js -> dropPaths). Uploading the bytes as well would
         // import it twice, and lose where it lives.
         if (window.PlexoraDesktop) return;
+        // Read before the first await: the card's inline row is torn down by
+        // the re-render that follows, and `state.adding` with it.
+        const intent = state.adding;
+        // The website: the dropped files and folders themselves, mounted like
+        // a Browse pick -- read in this turn, while the drop can be read.
+        if (window.PlexoraBackend?.kind === "browser" && window.PlexoraPicks?.take) {
+            const taken = window.PlexoraPicks.take(event.dataTransfer,
+                typeof pickQuestions === "function" ? pickQuestions() : {});
+            setStatus("Reading…");
+            let paths;
+            try {
+                paths = await taken;
+            } catch (error) {
+                setStatus(error?.message || "Could not read what was dropped.", true);
+                return;
+            }
+            setStatus(null);
+            if (!paths.length) return;
+            // A card's row takes one, as its Browse does; the pick state
+            // takes them all.
+            if (intent) {
+                submitSlot(paths[0], "browse", intent);
+                return;
+            }
+            // On this computer, whatever the machine chip says: read once
+            // for all of them, as the upload below does.
+            paths.forEach((path) => { if (!state.picks.includes(path)) state.picks.push(path); });
+            state.adding = null;
+            state.addError = null;
+            state.justPicked = true;
+            inspect();
+            return;
+        }
         const files = Array.from(event.dataTransfer?.files || []);
         if (!files.length) return;
         const big = files.find((file) => file.size > 64 * 1024 * 1024);
@@ -1038,9 +1076,6 @@ window.PlexoraImportSample = (function () {
             });
             return;
         }
-        // Read before the first await: the card's inline row is torn down by
-        // the re-render that follows, and `state.adding` with it.
-        const intent = state.adding;
         setStatus("Uploading…");
         for (const file of files) {
             const form = new FormData();
@@ -1066,7 +1101,13 @@ window.PlexoraImportSample = (function () {
         (state?.pickControls || []).forEach((control) => { control.disabled = busy; });
     }
 
-    function pickWith(mode) {
+    /**
+     * Browse. `anchor` is the button pressed: where a browser that has no
+     * dialog for "a file or a folder" (Firefox, Safari) hangs its File |
+     * Folder menu, labelled with `examples` -- without one it could only
+     * offer a file, and a run folder or an OME-Zarr could not be chosen.
+     */
+    function pickWith(mode, {anchor = null, examples = "sample"} = {}) {
         setStatus("Opening file browser…");
         setBusy(true);
         const settle = setTimeout(() => setStatus(null), 1500);
@@ -1079,6 +1120,8 @@ window.PlexoraImportSample = (function () {
             filter: "any",
             node: browseNode(),
             start: startFor(intent),
+            anchorEl: anchor,
+            examples,
             onPicked: (path) => {
                 clearTimeout(settle);
                 setStatus(null);
@@ -1744,6 +1787,9 @@ window.PlexoraImportSample = (function () {
         table: {label: "Add data", noun: "the data"},
         layer: {label: "Add layer", noun: "the layer"},
     };
+    //: The KIND_EXAMPLES entry (browsePicker.js) each slot's File | Folder
+    //: menu shows: a mask is never a .svs, data is a table.
+    const SLOT_EXAMPLES = {mask: "mask", table: "data", layer: "sample"};
 
     /**
      * The card's own actions: what this sample still wants, offered here.
@@ -1978,7 +2024,8 @@ window.PlexoraImportSample = (function () {
         });
         clear.addEventListener("click", clearBox);
         load.addEventListener("click", take);
-        browse.addEventListener("click", () => pickWith("any"));
+        browse.addEventListener("click", () => pickWith("any", {anchor: browse,
+                                                                examples: SLOT_EXAMPLES[adding.role] || "sample"}));
 
         // The service's own line -- "Sharing…", "Not connected to hpc yet" --
         // under the row it is about. Empty, it takes no room.
