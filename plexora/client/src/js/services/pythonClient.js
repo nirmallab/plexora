@@ -291,6 +291,10 @@
     //: The site's base path ("" at a site's root; see services/shell.js):
     //: the app's routes are under it on the page's side, at "/" in Python.
     let siteBase = "";
+    //: Where Python was started from: the bundle's folder and the site's root
+    //: (`start`); null before. For the page's helper Pythons
+    //: (services/fitHelpers.js), which load from the same bundle.
+    let startedFrom = null;
 
     // -- one Python per tab, kept across a reload (Chrome, Edge) ------------------
     //
@@ -443,6 +447,7 @@
         if (booted) return ready;
         booted = true;
         siteBase = String(under || "").replace(/\/+$/, "");
+        startedFrom = { base, root };
         spawn(root, { tab: tab && !scratch });
         call("boot", { base, origin, siteBase, cancels, inFlight, debug, store, telemetry, scratch }).then((info) => {
             // The tab's Python had failed for good: a new one (the page reloads).
@@ -906,6 +911,8 @@
         //: (a worker of this page's own); whether this page found its tab's
         //: Python running (a reload); Help › Restart Python.
         mode: () => mode,
+        //: {base, root} Python was started with, or null (`startedFrom`).
+        bundle: () => (startedFrom ? { ...startedFrom } : null),
         reattached: () => Boolean(attachInfo && attachInfo.booted),
         restart,
         steps: () => steps.slice(),

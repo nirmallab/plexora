@@ -1534,14 +1534,17 @@ self.plexoraInStep = () => inStep;
 //: What the last step left queued: work someone waits on, and background.
 let pendingWork = 0;
 let pendingBackground = 0;
+//: How long the queued work still waits out a delay (`_work.spawn(after_s)`):
+//: nothing could run in the last step, and nothing will before then.
+let dueInMs = 0;
 function step() {
     if (!py || stepping || busy || queue.length) return;
     stepping = true;
     const now = performance.now();
     const onlyBackground = pendingBackground > 0 && pendingWork === 0;
     const heard = Math.max(lastRequest, lastAnswer);
-    const wait = onlyBackground ? Math.max(0, BACKGROUND_QUIET_MS - (now - heard))
-        : now - lastStep >= MAX_DEFER_MS ? 0 : Math.max(0, QUIET_MS - (now - lastRequest));
+    const wait = Math.max(dueInMs, onlyBackground ? Math.max(0, BACKGROUND_QUIET_MS - (now - heard))
+        : now - lastStep >= MAX_DEFER_MS ? 0 : Math.max(0, QUIET_MS - (now - lastRequest)));
     setTimeout(async () => {
         stepping = false;
         if (busy || queue.length) return;
@@ -1555,6 +1558,7 @@ function step() {
             const outcome = await call(cooperative.step, 50, quiet).finally(() => { inStep = false; });
             pendingWork = outcome.get("pending");
             pendingBackground = outcome.get("background");
+            dueInMs = Number(outcome.get("wait_ms")) || 0;
             const ms = Math.round(performance.now() - began);
             if (outcome.get("ran")) {
                 self.postMessage({ event: { kind: "step", ms, names: outcome.get("names").toJs() } });
@@ -1622,7 +1626,11 @@ self.onmessage = ({ data }) => {
         }
         return;
     }
-    if (data.op === "request") lastRequest = performance.now();
+    if (data.op === "request") {
+        lastRequest = performance.now();
+        // What it queues runs on the usual pace, not after another task's delay.
+        dueInMs = 0;
+    }
     queue.push(data);
     drain();
 };

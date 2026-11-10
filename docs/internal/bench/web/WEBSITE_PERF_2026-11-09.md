@@ -376,6 +376,79 @@ calibrating the four channels (2.0 s, one after another). The local server does 
 threads beside the fits. A pool of helper Pythons for the per-channel work (the plan's step 3) is
 what would close the rest.
 
+## Round six (after 0.0.46): mixture fits in helper Pythons
+
+Traced in the page's Python (a recorder installed at boot: every fit, window look and task, on
+Python's clock), four channels switched on the moment LSP11385's image appears: the open's own
+channel's fit (Hoechst, 2.7 s of EM) was running when the click came, and the click's
+calibration was asked for 2.9 s later, behind it. With one thread, any fit holds everything; the
+desktop fits on threads of its own.
+
+- **Helper Pythons** (services/fitHelpers.js, workers/fitWorker.js): Pyodide with numpy and
+  scikit-learn only, two on a machine with eight cores or more, one with four, none below that
+  or under 4 GB (`navigator.deviceMemory`), loaded one after the other once Python is ready
+  (about 108 MB each).
+- **The same fit, bit for bit.** The fit itself is plexora/server/models/mixture_fit.py (numpy
+  and scikit-learn only, any number of components, in the values' own type), which a helper
+  runs exactly as the main Python imported it: the bundle's compiled file, sent with each fit
+  (the bundle ships no sources), or its text where there is one. In the page: eight LSP11385
+  channels' contrast fits and four markers' gating fits equal the main Python's byte for byte,
+  and the gates the gating route answers are the ones 0.0.46 answered.
+- **Who hands fits over**: the contrast fit route (`get_channel_gmm`), the gating panel's
+  per-marker fit (`/plugins/gating/get_gating_gmm`, through the plugin API's new
+  `api.page_fits()` / `api.fit_mixture` / `api.ask_again`), and the warm-up's fits after an open
+  (`_warm_on_page`, one at a time, so a helper is left for a click; it comes back every 100 ms
+  with a cheap "done?" -- `_work.spawn(after_s=...)`, a task that waits its turn, the worker
+  sleeping until it is due). A request is asked again every 100 ms until the fit is back
+  (`FitPending`). No helper ready, one failed, a reload's unknown job: the fit is made in the
+  main Python, as before. Off the website nothing changes.
+
+The five candidates, measured in the page's Python before choosing (LSP11385 has 202,049 cells;
+synthetic columns for 2 and 5 million, as large slides have; the machine loaded by another
+session's tests, load average 8-27):
+
+| | 202 k cells | 2 M | 5 M | done |
+|---|---|---|---|---|
+| (1) warm-up fits after an open, each | 0.25-0.66 s | same (the overview) | same | helpers |
+| (2) gating's per-marker fit (auto gate) | 1.5-5.6 s | 4.3 s | 4.3 s (100 k sample) | helpers |
+| (3) calibration's cell selection, a channel | 0.06 s | 0.30 s | 1.0 s | no (below) |
+| (4) QC's neighbour context | 0.63 s | 13.3 s | 40.7 s | no (below) |
+| (5) the classifier: fit / scores | 1.05 / 0.13 s | - / 1.2 s | - / 2.9 s | no (below) |
+
+(3), (4) and (5) run inside a job or a calibration step that holds the main Python for its whole
+run, so a helper would not free it; all a helper could add is splitting the work, at 2-5 million
+cells shipping 40-240 MB each way and holding a second copy of the tree. Left as they are. The
+calibration's cost at scale is its stable sort of every cell for four narrow rank bands; an exact
+band-only selection (the same cells, ties broken by row as the sort breaks them) would be about
+2.5x cheaper at 5 million cells and is the follow-up there.
+
+LSP11385, prepared mask, four channels switched on as the image appears, 0.0.46 and this round
+alternated on the same machine, ms after the first click:
+
+| | 0.0.46 | helpers |
+|---|---|---|
+| last calibrated window on screen | 5,450 / 4,401 / 6,250 / 5,250 / 5,152 | 5,101 / 4,300 / 4,001 / 4,050 / 4,001 |
+| last window of any kind | 6,352 / 5,852 / 7,702 / 6,103 / 6,001 | 5,101 / 4,300 / 4,001 / 4,000 / 4,001 |
+| open: image lit | 3,383-4,424 | 3,264-3,655 |
+| warm-up fits on the main Python (25 s after the click) | 1.0-1.1 s, up to 0.49 s at once | 0.54-0.57 s: the first fit, made before the helpers had loaded |
+
+Gating panel, a marker's fit (`/plugins/gating/get_gating_gmm`) with a `/health` every 100 ms
+beside it:
+
+| marker | 0.0.46: fit / longest /health | helpers: fit / longest /health |
+|---|---|---|
+| CD45 | 5,952 / 5,827 ms | 5,718 / 41 ms |
+| Ki67 | 1,373 / 1,272 | 1,327 / 43 |
+| CD3e | 1,820 / 1,717 | 1,756 / 41 |
+| Nucleus | 1,853 / 1,749 | 1,905 / 43 |
+
+Memory of the page's workers (`measureUserAgentSpecificMemory`, the tab's Python not counted):
+129 MB on 0.0.46, 330 MB with two helpers (215 MB theirs).
+
+What is left on the click: the calibration's own step, 2.5 s cold for four channels, three
+quarters of it the cells' crops read through the page (0.84 s a channel, already spread over the
+page's TIFF workers), to be measured on a quiet machine before changing.
+
 ## Rerun
 
 ```bash

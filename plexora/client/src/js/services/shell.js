@@ -811,6 +811,8 @@
             // Saving into a picked file Python wrote (Settings > Data, off by default).
             at("/client/src/js/services/sourceWrites.js"),
             at("/client/src/js/services/browserNode.js"),
+            // Helper Pythons for the contrast fits, off the main Python's thread.
+            at("/client/src/js/services/fitHelpers.js"),
             // Python's answers to a project's first screen, kept for a reload.
             at("/client/src/js/services/keptAnswers.js"),
             at("/client/src/js/services/browserSlides.js"),

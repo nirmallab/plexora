@@ -1,3 +1,4 @@
+import contextlib
 from plexora import app
 from flask import make_response, render_template, request, Response, jsonify, abort, send_file
 import io
@@ -322,6 +323,24 @@ def _retry_later(pending):
     return response
 
 
+def _helped():
+    """Whether this request's mixture fits go to the website's helper Pythons:
+    it can be asked again (`_patient`) and the page has one ready. Never
+    outside a request."""
+    from flask import has_request_context
+
+    return has_request_context() and _patient() and _page.page_fits_ready()
+
+
+@contextlib.contextmanager
+def page_fits():
+    """`plexora.api.page_fits`: this request's mixture fits made by the
+    website's helper Pythons when `_helped`; yields whether they are."""
+    helped = _helped()
+    with data_model.fits_elsewhere(_page.page_fit if helped else None):
+        yield helped
+
+
 class _CalibrationFirst:
     """A fit asked for while the website's calibration job is about to
     calibrate the same channel: asked again in `retry_ms` (`_retry_later`),
@@ -358,14 +377,22 @@ def get_channel_gmm():
     channel = request.args.get('channel')
     datasource = request.args.get('datasource')
     view = request.args.get('view') or ''
-    if not view and _calibration_first(datasource, channel):
+    # On the website, with a helper Python in the page, the fit is made there
+    # (`_page.page_fit`) and this request asked again until it is: the one
+    # Python thread never spends seconds on a fit. Without one, the fit is
+    # made here, after the calibration asked with it (`_calibration_first`).
+    helped = not view and _helped()
+    if not view and not helped and _calibration_first(datasource, channel):
         return _retry_later(_CalibrationFirst(channel))
     try:
         # `patient`: on the website a window the page is still scanning is
         # asked for again later, the page's other requests answered first.
-        resp = (data_model.get_channel_gmm(channel, datasource, view) if view
-                else data_model.get_channel_gmm(channel, datasource, patient=_patient(),
-                                                 provisional=request.args.get('provisional') == '1'))
+        if view:
+            resp = data_model.get_channel_gmm(channel, datasource, view)
+        else:
+            with data_model.fits_elsewhere(_page.page_fit if helped else None):
+                resp = data_model.get_channel_gmm(channel, datasource, patient=_patient(),
+                                                  provisional=request.args.get('provisional') == '1')
     except _page.WindowPending as exc:
         return _retry_later(exc)
     except data_model.UnknownChannelError as exc:

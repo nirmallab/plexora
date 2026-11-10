@@ -1,0 +1,53 @@
+---
+title: "fit_mixture"
+description: "Fit a Gaussian mixture to one column of values, as Plexora fits it."
+generated: true
+symbol: "plexora.api.fit_mixture"
+signature: "fit_mixture(values, components=3)"
+source:
+  end: 218
+  path: "plexora/api/__init__.py"
+  start: 200
+---
+
+{/* GENERATED from plexora.api.fit_mixture. Edit the docstring or tools/docs/manifest.yaml, then run: python tools/docs/sync_docs.py generate */}
+
+```python
+from plexora.api import fit_mixture
+```
+
+```python
+fit_mixture(values, components=3)
+```
+
+`components` Gaussians over `values` (1-D), seeded, in the values' own
+floating type. Within `page_fits()` on the website the fit may be made by
+one of the page's helper Pythons -- the same code and build, so the same
+numbers -- and `AskAgain` is raised while it is being made.
+
+## Parameters
+
+<ParamTable>
+
+<Param name={"values"} type={"numpy.ndarray"} required>
+
+The values, 1-D.
+
+</Param>
+
+<Param name={"components"} type={"int"} default={"3"}>
+
+How many Gaussians. Defaults to 3.
+
+</Param>
+
+</ParamTable>
+
+## Returns
+
+<Returns type={"numpy.ndarray"}>
+
+The means, then the variances, then the weights, each of
+`components`, in the order the fit found them.
+
+</Returns>

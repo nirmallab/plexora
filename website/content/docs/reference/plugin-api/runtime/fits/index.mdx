@@ -1,0 +1,16 @@
+---
+title: "Mixture fits"
+description: "Fit a Gaussian mixture as Plexora does, and on the website let a route's fits be made by the page's helper Pythons."
+generated: true
+---
+
+{/* GENERATED from tools/docs/manifest.yaml. Run: python tools/docs/sync_docs.py generate */}
+
+<Cards>
+
+<Card title={"fit_mixture"} href={"/docs/reference/plugin-api/runtime/fits/fit-mixture"} description={"Fit a Gaussian mixture to one column of values, as Plexora fits it."} />
+<Card title={"page_fits"} href={"/docs/reference/plugin-api/runtime/fits/page-fits"} description={"A with block in which a route's mixture fits (fit_mixture) are made by the website's helper Pythons, when the page has one and the request can be asked again; anywhere else the block changes nothing."} />
+<Card title={"ask_again"} href={"/docs/reference/plugin-api/runtime/fits/ask-again"} description={"The answer to a request that is to be asked again (AskAgain): on the website the worker puts it back in its queue for pending.retry_ms."} />
+<Card title={"AskAgain"} href={"/docs/reference/plugin-api/runtime/fits/ask-again-class"} description={"A request for a channel the page is still scanning, on the website: answered later rather than waited for. Python cannot wait inside a request with the page's other requests answered meanwhile -- one of them taking a lock the suspended one holds, or suspending in turn, freezes the only thread (plexora/_work.py checkpoint) -- so the route says \"again in retry_ms\" (RETRY_HEADER) and the worker puts the request back in its queue, behind whatever arrived meanwhile (workers/pythonWorker.js)."} />
+
+</Cards>

@@ -59,9 +59,10 @@ def step(budget_ms: float = 50.0, background: bool = True) -> dict:
     """Run queued work for about `budget_ms` (a task is never cut short); the
     worker calls this when it has no request waiting, with `background` False
     while requests have not been quiet long enough for work nobody is waiting
-    on. `{ran, pending, background, names}`: the tasks still queued that are
-    not background and those that are, and `names` the tasks that ran (what
-    the page records when a step was long)."""
+    on. `{ran, pending, background, names, wait_ms}`: the tasks still queued
+    that are not background and those that are, `names` the tasks that ran
+    (what the page records when a step was long), and `wait_ms` how long
+    until a queued task that waits out a delay may run (nothing ran)."""
     from plexora.server.utils import source_writes
 
     names = []
@@ -77,5 +78,9 @@ def step(budget_ms: float = 50.0, background: bool = True) -> dict:
             # is only checked between tasks -- let a warm-up's second task
             # start after a request had arrived, and the request waited for it.
             ran = _work.run_pending(budget_s=0.0, ran=names, background=True)
+    # Queued work that waits out a delay (`_work.spawn(after_s=...)`): how long
+    # the worker may sleep before it can run (0 when something can run now).
+    wait_ms = 0 if ran else round(_work.due_in() * 1000)
     return {"ran": ran, "pending": _work.pending(background=False),
-            "background": _work.pending(background=True), "names": names}
+            "background": _work.pending(background=True), "names": names,
+            "wait_ms": wait_ms}
