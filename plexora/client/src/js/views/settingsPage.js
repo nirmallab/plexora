@@ -1,8 +1,9 @@
 /**
  * settingsPage.js
  *
- * Drives settings.html: the left rail, and the Data section's change-directory
- * flow. Loaded only on that page.
+ * Drives settings.html: the left rail, the Data section's locations (the
+ * desktop app's from /settings/locations, the website's from the host page's
+ * PlexoraStore) and its change-directory flow. Loaded only on that page.
  *
  * The flow is deliberately two-step -- Continue, then Save -- and not one. Every
  * question that decides whether this is safe is a question about the SERVER's
@@ -145,36 +146,308 @@
         }
     }
 
-    function drawWebPlace() {
+    //: The website's Python, on the host page: what it lists from each
+    //: folder (/settings/locations), and its mounts made again after a change
+    //: (workers/pythonWorker.js `libraries`).
+    function webPython() {
+        try {
+            return window.parent?.PlexoraPython || null;
+        } catch (error) {
+            return null;
+        }
+    }
+
+    //: Python's own list, for the project counts and for whether a granted
+    //: folder is mounted; null where the page's Python does not answer it.
+    async function webListed() {
+        try {
+            const state = await getJson("settings/locations");
+            return state.ok && Array.isArray(state.locations) ? state.locations : null;
+        } catch (error) {
+            return null;
+        }
+    }
+
+    /**
+     * The website's rows, default first: the folder new work is saved in (or
+     * this browser's own storage), then each folder added beside it. Pure:
+     * `place` is PlexoraStore.current(), `kept` its locations(), `listed`
+     * Python's /settings/locations (or null), `folders` whether this browser
+     * can save into folders at all. Python names /data `data_root` and each
+     * added folder by its mount, /library/<id>, so its ids are the store's.
+     */
+    function webRows(place, kept, listed, folders) {
+        const python = listed || [];
+        const own = python.find((location) => location.kind === "data_root") || null;
+        const home = (kept || []).find((location) => location.isDefault) || null;
+        const rows = [];
+        if (place.kind === "folder" || place.notOpened) {
+            const open = place.kind === "folder";
+            rows.push({
+                id: home ? home.id : "default", kind: "folder", isDefault: true,
+                label: open ? place.label : place.notOpened, handle: home ? home.handle : null,
+                state: open ? "available" : place.missing ? "missing" : "prompt",
+                // This visit's projects are in the browser until it is reconnected.
+                count: open && own ? own.project_count : null,
+                desktopFinds: place.desktopFinds, missing: Boolean(place.missing),
+            });
+        } else {
+            rows.push({
+                id: "browser", kind: "browser", isDefault: true, label: "This browser",
+                state: place.storage === "memory" ? "memory" : "kept",
+                count: own ? own.project_count : null, chosen: Boolean(place.chosen),
+                folders,
+            });
+        }
+        for (const location of kept || []) {
+            if (location.isDefault) continue;
+            const mounted = python.find((other) => other.id === location.id) || null;
+            const granted = location.permission === "granted";
+            rows.push({
+                id: location.id, kind: "folder", isDefault: false, label: location.label,
+                handle: location.handle,
+                state: !granted ? (location.permission === "denied" ? "denied" : "prompt")
+                    : listed && !mounted ? "unmounted" : "available",
+                count: mounted ? mounted.project_count : null,
+            });
+        }
+        return rows;
+    }
+
+    //: How a website row's state reads, and its dot.
+    const WEB_STATES = {
+        available: { key: "available", text: "Connected" },
+        kept: { key: "available", text: "Available" },
+        prompt: { key: "missing", text: "Not connected" },
+        denied: { key: "missing", text: "Not allowed" },
+        missing: { key: "missing", text: "Not found" },
+        unmounted: { key: "missing", text: "Not opened" },
+        memory: { key: "missing", text: "Not kept" },
+    };
+
+    //: What the default row says keeping work there means.
+    function webAbout(row) {
+        if (row.kind === "browser") {
+            if (row.state === "memory") {
+                return "Not kept: this browser lets the site keep nothing, so projects are lost when the tab closes.";
+            }
+            return "Lost if this browser's data is cleared."
+                + (row.folders ? "" : " Chrome and Edge can save projects in a folder on this computer.")
+                + (row.chosen ? "" : " Plexora asks where to keep them the first time something is saved.");
+        }
+        if (row.missing) return "The folder is not where it was: it may have been moved or renamed.";
+        if (row.state !== "available") {
+            return "The browser needs your permission again. Until then, this visit's work is kept in the browser.";
+        }
+        return "Safe on this computer. " + (row.desktopFinds === false
+            ? "The desktop app opens this folder once you add it under its Settings › Data."
+            : "The desktop app finds it too.");
+    }
+
+    let webPlaceBusy = false;
+
+    function webSay(message, tone) {
+        show(el("settings_web_place_error"), false);
+        const box = el("settings_web_place_message");
+        if (box) box.dataset.tone = tone || "done";
+        text(el("settings_web_place_message_body"), message);
+        show(box, Boolean(message));
+    }
+
+    function webFail(message) {
+        show(el("settings_web_place_message"), false);
+        text(el("settings_web_place_error_body"), message);
+        show(el("settings_web_place_error"), Boolean(message));
+    }
+
+    function webClear() {
+        show(el("settings_web_place_message"), false);
+        show(el("settings_web_place_error"), false);
+    }
+
+    /**
+     * One change from a click: the card's buttons held while it runs, the
+     * extra folders mounted again for Python afterwards (an added or removed
+     * one, a default moved), and the card drawn again. `work` must start
+     * with whatever needs the click (a folder dialog, a permission prompt):
+     * it is called before anything here awaits.
+     */
+    async function webChange(work, done) {
+        if (webPlaceBusy) return;
+        webPlaceBusy = true;
+        webClear();
+        document.querySelectorAll("#settings_web_place button").forEach((button) => { button.disabled = true; });
+        let outcome = null;
+        let failed = null;
+        try {
+            outcome = await work();
+        } catch (error) {
+            failed = error;
+        }
+        try {
+            const python = webPython();
+            if (python && typeof python.libraries === "function") await python.libraries();
+        } catch (error) {
+            // Mounted again at the next start.
+        }
+        webPlaceBusy = false;
+        await drawWebStorage();
+        if (failed) webFail(failed.code === "projects-inside"
+            ? `${failed.message} Choose the folder that holds it.` : (failed.message || String(failed)));
+        else if (done) done(outcome);
+    }
+
+    function webRow(row, store) {
+        const status = WEB_STATES[row.state] || WEB_STATES.available;
+        const item = node("div", "plx-locations-row");
+        item.setAttribute("role", "listitem");
+        item.dataset.locationId = row.id;
+        if (row.isDefault) item.classList.add("is-default");
+        if (status.key !== "available") item.classList.add("is-missing");
+        const tile = node("span", "plx-locations-icon");
+        tile.setAttribute("aria-hidden", "true");
+        tile.appendChild(icon(row.kind === "browser" ? "window-maximize" : row.isDefault ? "folder-open" : "folder"));
+        const main = node("div", "plx-locations-main");
+        const title = node("div", "plx-locations-title");
+        title.appendChild(node("span", "plx-locations-label", row.label));
+        const chip = node("span", "plx-locations-kind", row.kind === "browser" ? "Browser" : "Folder");
+        chip.title = row.kind === "browser"
+            ? "This site's own storage in this browser: nothing to choose, kept in this browser only."
+            : "A folder on this computer the browser lets Plexora open.";
+        title.appendChild(chip);
+        if (row.isDefault) {
+            const mark = node("span", "plx-locations-default");
+            mark.appendChild(icon("check"));
+            mark.appendChild(node("span", null, "Default"));
+            mark.title = "New work is saved here.";
+            title.appendChild(mark);
+        }
+        main.appendChild(title);
+        const facts = node("div", "plx-locations-facts");
+        const state = node("span", `plx-locations-state is-${status.key}`);
+        state.appendChild(node("span", "plx-locations-dot"));
+        state.appendChild(node("span", null, status.text));
+        facts.appendChild(state);
+        const count = projectCount(row.count);
+        if (count) facts.appendChild(node("span", "plx-locations-count", count));
+        main.appendChild(facts);
+        if (row.isDefault) main.appendChild(node("div", "plx-locations-about", webAbout(row)));
+
+        const actions = node("div", "plx-locations-actions");
+        const button = (label, glyph, run, done) => {
+            const made = rowButton(label, glyph, null, () => webChange(run, done));
+            actions.appendChild(made);
+            return made;
+        };
+        if (row.isDefault && row.kind === "browser" && row.folders) {
+            // A folder from the click; this browser's projects come along.
+            button("Save on this computer…", "folder-plus",
+                   () => store.switchTo("folder", null, { reload: false }),
+                   (done) => { if (done) webSay(`Your work is saved in ${done.label || "the folder"} from now on.`); });
+        }
+        if (row.isDefault && row.kind === "folder" && row.state !== "available") {
+            button("Reconnect", "plug", () => store.reconnect(), (done) => {
+                if (!done) return;
+                if (done.ok) webSay(`${done.label || row.label} is open again.`);
+                else if (done.reason === "denied") webFail("The browser did not allow Plexora to open it.");
+                else if (done.reason === "missing") webFail("The folder is not where it was. Choose it again with Set up again.");
+                else if (done.reason !== "none") webFail(done.error || "That did not work.");
+            });
+        }
+        if (!row.isDefault) {
+            // Not allowed this visit, or allowed and not mounted: either way
+            // the browser is asked from the click and the worker mounts again.
+            if (row.state !== "available") {
+                button("Reconnect", "plug", () => row.handle.requestPermission({ mode: "readwrite" }), (state) => {
+                    if (state === "granted") webSay(`${row.label} is open again.`);
+                    else webFail(`The browser did not allow Plexora to open ${row.label}.`);
+                });
+            }
+            button("Make default", null, async () => {
+                const place = store.current();
+                if (place.kind === "browser" && !place.notOpened) {
+                    // This browser's storage is no folder to keep beside the
+                    // new default: what it holds comes along instead of
+                    // dropping out of the list.
+                    await row.handle.requestPermission({ mode: "readwrite" });
+                    const done = await store.adoptWorkspace(row.handle, { init: true });
+                    await store.removeLocation(row.id);
+                    return done;
+                }
+                return store.setDefault(row.id);
+            }, () => webSay(`New work is saved in ${row.label} from now on.`));
+            button("Remove", null, () => store.removeLocation(row.id),
+                   () => webSay(`${row.label} is off the list. Nothing in the folder was changed.`));
+        }
+        item.append(tile, main, actions);
+        return item;
+    }
+
+    async function drawWebPlace() {
+        const list = el("settings_web_locations");
+        if (!list) return;
         const store = webStore();
         const place = store ? store.current() : { kind: "browser" };
         const folders = Boolean(store && store.canWriteFolders());
-        text(el("settings_web_place_name"), place.kind === "folder"
-            ? place.label : "This browser");
-        const notes = [];
-        if (place.notOpened) notes.push(`${place.notOpened} was not opened this time; reload to open it.`);
-        notes.push(place.kind === "folder" ? "Safe on this computer."
-            : place.storage === "memory" ? "Not kept: this browser lets the site keep nothing, so they are lost when the tab closes."
-            : "Lost if this browser's data is cleared."
-              + (folders ? "" : " Chrome and Edge can save them on this computer."));
-        if (folders) notes.push("Switching brings your projects along.");
-        if (folders && place.kind !== "folder") {
-            notes.push("Choose Documents › Plexora in the window that opens, where the desktop app finds them too.");
+        let kept = [];
+        try {
+            kept = store && typeof store.locations === "function" ? await store.locations() : [];
+        } catch (error) {
+            kept = [];
         }
-        text(el("settings_web_place_meta"), notes.join(" "));
-        const toFolder = el("settings_web_to_folder");
-        const toBrowser = el("settings_web_to_browser");
-        show(toFolder, folders && place.kind !== "folder");
-        show(toBrowser, folders && place.kind === "folder");
-        const move = async (kind) => {
-            try {
-                await store.switchTo(kind);
-            } catch (error) {
-                text(el("settings_web_place_meta"), `That did not work: ${error?.message || error}`);
+        const listed = await webListed();
+        const rows = webRows(place, kept, listed, folders);
+        const saving = el("settings_web_place_saving");
+        if (saving) {
+            saving.replaceChildren(node("span", null, "New work is saved in "),
+                                   node("strong", null, rows[0].kind === "browser" ? "this browser" : rows[0].label),
+                                   node("span", null, "."));
+        }
+        list.replaceChildren(...rows.map((row) => webRow(row, store || {})));
+        el("settings_web_place")?.setAttribute("aria-busy", "false");
+
+        const add = el("settings_web_add_folder");
+        show(add, folders && Boolean(store && store.addLocation));
+        if (add) add.disabled = webPlaceBusy;
+        if (add) add.onclick = () => webChange(async () => {
+            // The folder dialog first: nothing is awaited before it.
+            let added = await store.addLocation();
+            if (added && !added.added && added.reason === "not-a-workspace") {
+                const look = added.look || {};
+                const answer = await window.PlexoraConfirm?.choose?.({
+                    title: `Make “${look.name || "this folder"}” a workspace?`,
+                    body: [look.kind === "empty"
+                        ? "It is empty. Plexora adds a workspace.json and a projects folder to it, and keeps projects there."
+                        : "It holds other files. Plexora adds a workspace.json and a projects folder beside them "
+                          + "and changes nothing else."],
+                    choices: [{ value: "init", label: "Set it up", kind: "primary", focus: true }],
+                    close: true,
+                });
+                if (answer !== "init") return null;
+                added = await store.addLocation({ handle: added.handle, init: true });
             }
-        };
-        if (toFolder) toFolder.onclick = () => move("folder");
-        if (toBrowser) toBrowser.onclick = () => move("browser");
+            return added;
+        }, (added) => {
+            if (!added) return;
+            if (!added.added && added.reason === "already") {
+                webSay("That folder is already listed.", "info");
+            } else if (added.added) {
+                const count = projectCount(((added.look || {}).projects || []).length);
+                webSay(`Added ${added.location.label}${count ? `: ${count.toLowerCase()}` : ""}.`);
+            }
+        });
+
+        // "Set up again": the onboarding, whatever was chosen before (views/
+        // webOnboarding.js), the way to move back into this browser too.
+        const again = el("settings_web_setup_again");
+        const onboarding = window.PlexoraOnboarding;
+        show(again, Boolean(onboarding && onboarding.open));
+        if (again) {
+            again.disabled = webPlaceBusy;
+            again.title = place.chosen === false ? "Choose where Plexora keeps your work."
+                : "Choose again where Plexora keeps your work: a folder, or this browser.";
+            again.onclick = () => webChange(() => onboarding.open({ reason: "settings" }), null);
+        }
     }
 
     //: Saving into the files the user opened (services/sourceWrites.js, on
@@ -456,10 +729,7 @@
         // Hidden rather than disabled: a form that cannot do anything is not
         // worth the room, and the notice above it already says why.
         show(el("settings_data_form"), !locked);
-
-        const shared = state.shared_roots || [];
-        show(el("settings_shared_card"), shared.length > 0);
-        text(el("settings_shared_list"), shared.join("\n"));
+        // Shared directories are rows of the Locations card (LocationsSection).
     };
 
     DataSection.prototype.check = function () {
@@ -661,6 +931,480 @@
 
     DataSection.prototype.clearError = function () {
         show(el("settings_error"), false);
+    };
+
+    // -- locations ---------------------------------------------------------
+    //
+    // Every folder Plexora lists projects from (server/models/library.py),
+    // one row each, and the default one -- where a new project is saved --
+    // marked. Like the data-directory flow above, nothing here decides what
+    // may be done: each change is the route's to accept or refuse, and the
+    // page draws the state the route answers with. What the page does decide
+    // is what to OFFER, so a button the route would refuse is shown greyed
+    // with the reason on it, rather than offered and then refused.
+
+    //: Each kind as a row names it: the chip, the tile's icon (Font Awesome 7
+    //: names) and what the chip's tooltip says it is. The website draws its
+    //: own rows (WebLocations) and the project cards their own chips
+    //: (openProjectPage.js); the icons are the same three files' choice.
+    const LOCATION_KINDS = {
+        data_root: { chip: "App data", icon: "hard-drive",
+                     about: "Plexora's own data directory." },
+        library: { chip: "Library", icon: "folder-open",
+                   about: "The workspace the desktop app and the website both use." },
+        legacy: { chip: "Older layout", icon: "box-archive",
+                  about: "Where the website used to keep projects, one folder too deep. "
+                         + "Listed so nothing kept there is lost." },
+        workspace: { chip: "Workspace", icon: "folder",
+                     about: "A workspace added here." },
+        shared: { chip: "Shared", icon: "users",
+                  about: "A site-managed folder other people open too: read-only here. "
+                         + "Changed with plexora config set shared-dirs." },
+    };
+
+    function kindOf(location) {
+        return LOCATION_KINDS[location && location.kind] || LOCATION_KINDS.workspace;
+    }
+
+    function projectCount(count) {
+        if (count === null || count === undefined) return "";
+        if (count === 0) return "No projects yet";
+        return count === 1 ? "1 project" : `${count} projects`;
+    }
+
+    //: available / not mounted / read-only, as the row's state says it.
+    function locationState(location) {
+        if (!location.available) return { key: "missing", text: "Not mounted" };
+        if (!location.writable) return { key: "readonly", text: "Read-only" };
+        return { key: "available", text: "Available" };
+    }
+
+    //: The folder a path is in, by whichever separator the server's paths
+    //: use: the page runs on another machine than the files may, so it never
+    //: guesses the platform -- the path says.
+    function parentOf(path) {
+        const text = String(path || "").replace(/[\\/]+$/, "");
+        const cut = Math.max(text.lastIndexOf("/"), text.lastIndexOf("\\"));
+        return cut > 0 ? text.slice(0, cut) : text;
+    }
+
+    function joinPath(dir, name) {
+        const sep = String(dir).includes("\\") && !String(dir).includes("/") ? "\\" : "/";
+        return String(dir).replace(/[\\/]+$/, "") + sep + name;
+    }
+
+    function samePath(a, b) {
+        const norm = (p) => String(p || "").replace(/[\\/]+$/, "").replace(/\\/g, "/");
+        return Boolean(a) && norm(a) === norm(b);
+    }
+
+    //: What Tidy up moves, from where to where: the older nested folder's
+    //: projects/ and pyramids/, one folder up (library.py `tidy`).
+    function tidyMoves(location) {
+        const from = location.workspace || parentOf(location.path);
+        const to = parentOf(from);
+        return ["projects", "pyramids"].map((name) => ({
+            name, from: joinPath(from, name), to: joinPath(to, name) }));
+    }
+
+    /**
+     * What a row offers, and for each offer either null (go ahead) or the
+     * sentence that says why not -- the same refusals the routes give, so a
+     * greyed button explains itself before it is pressed:
+     *   makeDefault  every location but the default; refused for the older
+     *                nested folder, a shared one, one not mounted or one
+     *                Plexora cannot write to;
+     *   remove       workspaces added here only (the others are found, not
+     *                added, and come back on the next start);
+     *   tidy         the older nested folder only, and only while
+     *                Documents/Plexora/projects holds nothing to merge with.
+     * A list `PLEXORA_LIBRARY_PATH` names is the environment's: nothing is
+     * added to it, taken off it or moved here. Where new projects go is still
+     * the settings file's, so Make default stays.
+     */
+    function locationActions(location, state) {
+        const pinned = state && state.env_override
+            ? `${state.env_override} decides which folders are listed.` : null;
+        const listed = (state && state.locations) || [];
+        const makeDefault = { shown: !location.is_default, why: null };
+        if (location.kind === "legacy") {
+            makeDefault.why = "New projects do not go into the older nested folder. Tidy it up first.";
+        } else if (location.kind === "shared") {
+            makeDefault.why = "A shared folder is read-only here.";
+        } else if (!location.available) {
+            makeDefault.why = "This folder is not there right now.";
+        } else if (!location.writable) {
+            makeDefault.why = "Plexora cannot write to this folder.";
+        }
+        const remove = { shown: location.kind === "workspace", why: pinned };
+        const tidy = { shown: location.kind === "legacy", why: pinned };
+        if (tidy.shown && !tidy.why) {
+            if (!location.available) {
+                tidy.why = "This folder is not there right now.";
+            } else {
+                const target = tidyMoves(location)[0].to;
+                const there = listed.find((other) => other !== location && samePath(other.path, target));
+                if (there && there.project_count) {
+                    tidy.why = `${target} already holds projects, so the two are not merged here. `
+                               + "Move what you need by hand.";
+                }
+            }
+        }
+        return { makeDefault, remove, tidy };
+    }
+
+    function node(tag, className, value) {
+        const made = document.createElement(tag);
+        if (className) made.className = className;
+        if (value !== undefined && value !== null) made.textContent = value;
+        return made;
+    }
+
+    function icon(name) {
+        const glyph = node("span", `fas fa-${name}`);
+        glyph.setAttribute("aria-hidden", "true");
+        return glyph;
+    }
+
+    /**
+     * A row's button. One the route would refuse stays focusable and keeps
+     * its tooltip -- a disabled button shows neither -- and is marked
+     * `aria-disabled`; pressing it says why, in the card's own line.
+     */
+    function rowButton(label, glyph, why, run, onRefused) {
+        const button = node("button", "btn btn-sm btn-outline-light plx-locations-action");
+        button.type = "button";
+        if (glyph) button.appendChild(icon(glyph));
+        button.appendChild(node("span", null, label));
+        if (why) {
+            button.setAttribute("aria-disabled", "true");
+            button.classList.add("is-unavailable");
+            button.title = why;
+        }
+        button.addEventListener("click", () => {
+            if (button.getAttribute && button.getAttribute("aria-disabled") === "true") {
+                if (why && onRefused) onRefused(why);
+                return;
+            }
+            run(button);
+        });
+        return button;
+    }
+
+    function LocationsSection() {
+        this.state = null;
+        this.busy = false;
+        this.where = "local";
+        this.place = null;
+    }
+
+    LocationsSection.prototype.start = function () {
+        this.wire();
+        return this.refresh();
+    };
+
+    LocationsSection.prototype.wire = function () {
+        const opener = el("settings_location_open");
+        const form = el("settings_location_form");
+        const input = el("settings_location_path");
+        const add = el("settings_location_add");
+        const browse = el("settings_location_browse");
+        if (opener && form) {
+            opener.addEventListener("click", () => {
+                const opening = form.hidden;
+                show(form, opening);
+                opener.setAttribute("aria-expanded", opening ? "true" : "false");
+                if (opening && input && input.focus) input.focus();
+            });
+        }
+        if (add) add.addEventListener("click", () => this.add());
+        if (input) {
+            input.addEventListener("keydown", (event) => {
+                if (event.key !== "Enter") return;
+                event.preventDefault();
+                this.add();
+            });
+        }
+        if (browse && input && typeof attachBrowseButton === "function") {
+            attachBrowseButton(browse, input, { mode: "directory" });
+        }
+        // Which machine, asked as every path field asks it. A location is a
+        // folder on the computer Plexora runs on: a server's workspace opens
+        // when Plexora runs there, so the field says so rather than taking a
+        // path this Plexora cannot read.
+        const Chip = window.PlexoraMachineChip;
+        if (Chip && input) {
+            const chip = Chip.create({
+                current: () => ({ where: this.where, place: this.place }),
+                onPick: (where, place) => {
+                    this.where = where;
+                    this.place = where === Chip.REMOTE ? place : null;
+                    input.value = "";
+                    this.paintForm();
+                },
+                what: "the workspace",
+            });
+            Chip.wrap(input, chip);
+        }
+    };
+
+    //: The add form as the machine and the environment allow it.
+    LocationsSection.prototype.paintForm = function () {
+        const pinned = Boolean(this.state && this.state.env_override);
+        const away = this.where === "remote";
+        const opener = el("settings_location_open");
+        if (opener) {
+            opener.disabled = pinned;
+            opener.title = pinned ? `${this.state.env_override} decides which folders are listed.` : "";
+        }
+        if (pinned) show(el("settings_location_form"), false);
+        ["settings_location_path", "settings_location_add", "settings_location_browse"].forEach((id) => {
+            const control = el(id);
+            if (control) control.disabled = away || pinned || this.busy;
+        });
+        text(el("settings_location_hint"), away
+            ? `Locations are folders on the computer Plexora runs on. A workspace on ${
+                (this.place && this.place.label) || "a server"} opens when Plexora runs there (Remote servers).`
+            : "A folder with a workspace.json in it, or with a projects folder holding a config.json. "
+              + "Nothing in it is moved or changed.");
+    };
+
+    LocationsSection.prototype.refresh = function () {
+        return getJson("settings/locations").then((state) => {
+            if (state.error || !Array.isArray(state.locations)) {
+                return this.fail(state.error || "The list of locations could not be read.");
+            }
+            this.render(state);
+            return state;
+        }, () => this.fail("Plexora did not answer. Is it still running?"));
+    };
+
+    LocationsSection.prototype.render = function (state) {
+        this.state = state;
+        const card = el("settings_locations");
+        if (card) card.setAttribute("aria-busy", this.busy ? "true" : "false");
+        const saving = el("settings_locations_saving");
+        if (saving) {
+            const chosen = state.default_save || {};
+            saving.replaceChildren(node("span", null, "New projects are saved in "),
+                                   node("strong", null, chosen.label || chosen.path || "the data folder"),
+                                   node("span", null, "."));
+            saving.title = chosen.path || "";
+        }
+        const pinned = Boolean(state.env_override);
+        show(el("settings_locations_env"), pinned);
+        if (pinned) {
+            text(el("settings_locations_env_body"),
+                 `${state.env_override} is set for this server and names the folders listed here, so `
+                 + `none can be added, removed or tidied up. Unset it and restart Plexora to change the list.`);
+        }
+        const list = el("settings_locations_list");
+        if (list) list.replaceChildren(...state.locations.map((location) => this.row(location)));
+        this.paintForm();
+    };
+
+    LocationsSection.prototype.row = function (location) {
+        const kind = kindOf(location);
+        const status = locationState(location);
+        const row = node("div", "plx-locations-row");
+        row.setAttribute("role", "listitem");
+        row.dataset.locationId = location.id;
+        if (location.is_default) row.classList.add("is-default");
+        if (status.key !== "available") row.classList.add(`is-${status.key}`);
+
+        const tile = node("span", "plx-locations-icon");
+        tile.setAttribute("aria-hidden", "true");
+        tile.appendChild(icon(kind.icon));
+
+        const main = node("div", "plx-locations-main");
+        const title = node("div", "plx-locations-title");
+        title.appendChild(node("span", "plx-locations-label", location.label));
+        const chip = node("span", "plx-locations-kind", kind.chip);
+        chip.title = location.kind === "data_root" && location.rule
+            ? `${kind.about} Chosen by ${location.rule}.` : kind.about;
+        title.appendChild(chip);
+        if (location.is_default) {
+            const mark = node("span", "plx-locations-default");
+            mark.appendChild(icon("check"));
+            mark.appendChild(node("span", null, "Default"));
+            mark.title = "New projects are saved here.";
+            title.appendChild(mark);
+        }
+        // The workspace a user picked and recognises; the projects folder
+        // inside it, where config.json is, on hover.
+        const where = node("div", "plx-locations-path", location.workspace || location.path);
+        if (location.workspace) where.title = `Projects listed from ${location.path}`;
+        const facts = node("div", "plx-locations-facts");
+        const state = node("span", `plx-locations-state is-${status.key}`);
+        state.appendChild(node("span", "plx-locations-dot"));
+        state.appendChild(node("span", null, status.text));
+        facts.appendChild(state);
+        const count = projectCount(location.project_count);
+        if (count) facts.appendChild(node("span", "plx-locations-count", count));
+        main.append(title, where, facts);
+
+        const actions = node("div", "plx-locations-actions");
+        const offer = locationActions(location, this.state);
+        const refused = (why) => this.say(why, "info");
+        if (offer.tidy.shown) {
+            actions.appendChild(rowButton("Tidy up…", "broom", offer.tidy.why,
+                                          (button) => this.tidy(location, button), refused));
+        }
+        if (offer.makeDefault.shown) {
+            actions.appendChild(rowButton("Make default", null, offer.makeDefault.why,
+                                          (button) => this.makeDefault(location, button), refused));
+        }
+        if (offer.remove.shown) {
+            actions.appendChild(rowButton("Remove", null, offer.remove.why,
+                                          (button) => this.remove(location, button), refused));
+        }
+        row.append(tile, main, actions);
+        return row;
+    };
+
+    /**
+     * One change, sent and answered: the card's buttons held while it runs
+     * (two changes to one list at once would each be answered with a list
+     * the other has already changed), the new state drawn from the answer,
+     * and the refusal shown as the route wrote it.
+     */
+    LocationsSection.prototype.change = async function (method, path, body, button, working, where) {
+        if (this.busy) return null;
+        this.busy = true;
+        this.clear();
+        const label = button ? button.textContent : "";
+        if (button && working) button.textContent = working;
+        document.querySelectorAll("#settings_locations button").forEach((other) => { other.disabled = true; });
+        let answer;
+        try {
+            answer = await fetch(plexoraUrl(path), {
+                method,
+                headers: { "Content-Type": "application/json" },
+                body: body ? JSON.stringify(body) : undefined,
+            }).then(readJson);
+        } catch (error) {
+            answer = { ok: false, error: "Plexora did not answer. Is it still running?" };
+        }
+        this.busy = false;
+        if (button && working) button.textContent = label;
+        if (!answer.ok || answer.error || !Array.isArray(answer.locations)) {
+            if (this.state) this.render(this.state);
+            this.fail(answer.error || "That did not work.", where);
+            return null;
+        }
+        this.render(answer);
+        return answer;
+    };
+
+    LocationsSection.prototype.makeDefault = async function (location) {
+        const answer = await this.change("POST", "settings/locations/default", { id: location.id },
+                                         null, null);
+        if (answer) this.say(`New projects are saved in ${location.label} from now on.`);
+    };
+
+    LocationsSection.prototype.remove = async function (location) {
+        const answer = await this.change("DELETE", `settings/locations/${encodeURIComponent(location.id)}`,
+                                         null, null, null);
+        if (answer) {
+            this.say(`${location.label} is off the list. Nothing in it was changed; `
+                     + "add it again to list its projects.");
+        }
+    };
+
+    /**
+     * The one change here that moves files, so it says exactly what moves
+     * where before anything does, and runs only on the dialog's own button.
+     * The move is a rename on one disk (the usual case: the two folders are
+     * one level apart) and a copy checked before the original goes otherwise
+     * (library.py `_move`).
+     */
+    LocationsSection.prototype.tidy = async function (location, button) {
+        const confirm = window.PlexoraConfirm;
+        if (!confirm || typeof confirm.choose !== "function") {
+            this.fail("Plexora could not ask first, so nothing was moved.");
+            return;
+        }
+        const moves = tidyMoves(location);
+        const content = node("div", "plx-locations-tidy");
+        const list = node("ul", "plx-locations-moves");
+        moves.forEach((move) => {
+            const item = node("li", "plx-locations-move");
+            item.append(node("span", "plx-locations-move-from", move.from),
+                        icon("arrow-down"),
+                        node("span", "plx-locations-move-to", move.to));
+            list.appendChild(item);
+        });
+        content.append(list, node("p", "plx-confirm-body",
+            "Each one is renamed into place, or copied and checked before the original is "
+            + "removed. A pyramid already in the new folder is kept, and the older copy is left "
+            + "where it is. Your images are not touched."));
+        const answer = await confirm.choose({
+            title: "Tidy up the older folder?",
+            body: [
+                "The website used to keep projects one folder too deep, where the desktop app "
+                + "lists them apart. Tidy up moves them up one level, into the workspace both "
+                + "apps use:",
+            ],
+            content,
+            choices: [{ value: "tidy", label: "Move them", kind: "primary", focus: true }],
+            close: true,
+        });
+        if (answer !== "tidy") return;
+        const done = await this.change("POST", "settings/locations/tidy", { id: location.id },
+                                       button, "Moving…");
+        if (!done || !done.tidied) return;
+        const moved = done.tidied.moved || [];
+        const pyramids = moved.filter((name) => name.startsWith("pyramids/")).length;
+        const where = done.tidied.location ? done.tidied.location.label : parentOf(moves[0].to);
+        const parts = [moved.includes("projects") ? "the projects" : null,
+                       pyramids ? (pyramids === 1 ? "1 pyramid" : `${pyramids} pyramids`) : null]
+            .filter(Boolean);
+        const left = done.tidied.left || [];
+        this.say(`Moved ${parts.length ? parts.join(" and ") : "everything"} into ${where}.`
+                 + (left.length ? ` Left where they were: ${left.join(", ")}.` : ""));
+    };
+
+    LocationsSection.prototype.add = async function () {
+        const input = el("settings_location_path");
+        const wanted = input ? input.value.trim() : "";
+        if (this.where === "remote") return;
+        if (!wanted) {
+            this.fail("Enter the path of a workspace folder, or use Browse to pick one.", "form");
+            return;
+        }
+        const answer = await this.change("POST", "settings/locations", { path: wanted },
+                                         el("settings_location_add"), "Adding…", "form");
+        if (!answer || !answer.location) return;
+        if (input) input.value = "";
+        show(el("settings_location_form"), false);
+        el("settings_location_open")?.setAttribute("aria-expanded", "false");
+        const count = projectCount(answer.location.project_count);
+        this.say(`Added ${answer.location.label}${count ? `: ${count.toLowerCase()}` : ""}.`);
+    };
+
+    //: A plain sentence under the list: what was done, or why a greyed
+    //: button is greyed.
+    LocationsSection.prototype.say = function (message, tone) {
+        this.clear();
+        const box = el("settings_locations_message");
+        if (box) box.dataset.tone = tone || "done";
+        text(el("settings_locations_message_body"), message);
+        show(box, Boolean(message));
+    };
+
+    //: A refusal, as the route wrote it: under the list, or under the add
+    //: form's field when it is about what was typed there (`where` "form").
+    LocationsSection.prototype.fail = function (message, where) {
+        this.clear();
+        const id = where === "form" ? "settings_location_error" : "settings_locations_error";
+        text(el(`${id}_body`), message);
+        show(el(id), true);
+        return null;
+    };
+
+    LocationsSection.prototype.clear = function () {
+        ["settings_locations_message", "settings_locations_error", "settings_location_error"]
+            .forEach((id) => show(el(id), false));
     };
 
     // -- the data nodes section ------------------------------------------
@@ -2983,6 +3727,7 @@
         const section = el("settings_web_storage") ? null : new DataSection();
         if (section) section.start();
         else drawWebStorage();
+        if (el("settings_locations")) new LocationsSection().start();
         // The migration poll is the one thing here that outlives the markup: it
         // reschedules itself, so leaving the Settings page mid-migration would
         // otherwise keep asking the server about a job on behalf of a panel that

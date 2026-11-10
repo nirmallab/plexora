@@ -343,3 +343,40 @@ def test_a_pick_with_anything_to_decide_opens_the_dialog_rather_than_guessing():
 
     dialog = source("src", "js", "views", "importSample.js")
     assert "if (options.proposal) showRead(options.paths, options.proposal);" in dialog
+
+
+# -- the website: a workspace this visit did not open ------------------------
+
+def test_the_website_home_page_has_a_quiet_reconnect_card(empty, monkeypatch):
+    """The site never asks for its folder on load (services/browserStore.js
+    `prepare`): a folder the browser no longer grants is left closed, and the
+    home page offers one click to open it again, so Recent can list what is
+    there without an image being picked first. Hidden until the controller
+    finds the folder closed; between the footer and Recent."""
+    monkeypatch.setenv("PLEXORA_BACKEND", "browser")
+    html = empty.get("/").get_data(as_text=True)
+    card = html[html.index('id="quick_view_reconnect"') - 200:]
+    card = card[:card.index("</section>")]
+    assert 'class="plx-onb-reconnect"' in card and " hidden" in card
+    assert 'data-role="reconnect"' in card and ">Reconnect</button>" in card
+    assert 'data-role="place"' in card
+    assert html.index('class="quick-view-footer"') < html.index('id="quick_view_reconnect"')
+
+
+def test_the_reconnect_card_is_the_websites_only(landing):
+    assert 'id="quick_view_reconnect"' not in landing
+
+
+def test_the_reconnect_card_reopens_from_its_click():
+    text = source("src", "js", "views", "quickViewLanding.js")
+    wire = text[text.index("function wireReconnect(section)"):]
+    wire = wire[:wire.index("\n    }\n")]
+    # Shown only when the host page's store says the folder is closed...
+    assert "store.needsReconnect()" in wire
+    assert "section.hidden = false;" in wire
+    # ...and the browser's question is the first thing the click awaits.
+    click = wire[wire.index('go.addEventListener("click"'):]
+    assert click.index("store.reconnect()") < click.index("await asking")
+    assert "window.location.reload()" in click
+    # A folder that is gone goes to the onboarding's Reconnect screen.
+    assert 'PlexoraOnboarding.ensure({ reason: "home" })' in click

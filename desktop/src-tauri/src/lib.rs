@@ -106,6 +106,7 @@ fn handler(invoke: tauri::ipc::Invoke<tauri::Wry>) -> bool {
     let commands: fn(tauri::ipc::Invoke<tauri::Wry>) -> bool = tauri::generate_handler![
         commands::pick_paths,
         commands::save_bytes,
+        commands::pick_save_path,
         commands::read_file,
         commands::reveal_path,
         commands::open_in_browser,

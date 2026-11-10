@@ -26,7 +26,7 @@ import { execFileSync, spawn } from "node:child_process";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { PYTHON, REPO, appFrame, launch, startServer } from "./lib.mjs";
+import { PYTHON, REPO, appFrame, launch, seedBrowserStore, startServer } from "./lib.mjs";
 
 const args = process.argv.slice(2);
 const headed = args.includes("--headed");
@@ -72,23 +72,6 @@ const server = await startServer(["--site", site]);
 const browser = await launch({ headed });
 const origin = `http://127.0.0.1:${server.port}`;
 
-// The first visit asks where projects go; this test keeps them in the browser.
-async function keepInBrowser(frame) {
-    const until = Date.now() + 5000;
-    while (Date.now() < until) {
-        const clicked = await frame.evaluate(() => {
-            const button = [...document.querySelectorAll(".plx-confirm .plx-button")]
-                .find((node) => node.textContent.trim() === "Keep in browser");
-            if (!button) return false;
-            button.click();
-            return true;
-        }).catch(() => false);
-        if (clicked) return true;
-        await new Promise((resolve) => setTimeout(resolve, 200));
-    }
-    return false;
-}
-
 //: Python in the page's worker (?pydebug): its licence as biocognia resolves it.
 const PYTHON_LICENCE = `
 import json, os
@@ -133,9 +116,9 @@ try {
     // The portal page the device flow opens: no such site here; closed at once.
     page.on("popup", (opened) => { opened.close().catch(() => null); });
     page.on("pageerror", (error) => out.errors.push(`pageerror: ${String(error).slice(0, 300)}`));
+    await seedBrowserStore(context, origin);
     await page.goto(`${origin}/settings?pydebug#license`);
     let frame = await appFrame(page);
-    out.firstVisitAsked = await keepInBrowser(frame);
     await frame.waitForSelector("#settings_license_connect", { timeout: 60000 });
 
     // 1. Free.

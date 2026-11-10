@@ -1,27 +1,37 @@
-// Where the website keeps what it makes: the first import asks where the
-// projects go and where a flat image's pyramidized copy goes, and both are
-// answered "a folder on this computer": the projects in Plexora's folder, and
-// the copy with them (the question's default once the projects are kept
-// there), or with --beside in a folder of its own. The browser's folder picker is a
-// native dialog no driver can answer, so `showDirectoryPicker` hands back
-// folders in the test profile's own storage (OPFS test-folders/<projects |
-// images>); everything after the picker is the product's. Then the page is
+// Where the website keeps what it makes: the first image picked brings up
+// the onboarding (views/webOnboarding.js), answered "a folder on this
+// computer" through lib.mjs's driveOnboarding; the first import then asks where
+// a flat image's pyramidized copy goes, answered with the projects (the
+// question's default once the projects are kept there), or with --beside in a
+// folder of its own. The browser's folder picker is a native dialog no driver
+// can answer, so `showDirectoryPicker` hands back folders in the test
+// profile's own storage (OPFS test-folders/Documents/Plexora, the workspace
+// itself: the folder picked is the root, with no Plexora made inside it, so
+// the stub's folder is named Plexora; test-folders/images for the copy);
+// everything after the picker is the product's. Then the page is
 // reloaded: the projects must be read from that folder again and the copy
 // mounted from it, and the project must open.
 //
-//   node tests/browser/places.mjs --file PATH [--close-pyramid | --beside] [--shots DIR] [--headed]
+//   node tests/browser/places.mjs --file PATH [--close-pyramid | --beside] [--shots DIR] [--headed] [--inject]
+//
+// --inject adds the onboarding (views/webOnboarding.js) to every page through
+// toast.js, for a Python bundle (`static_build --py`) older than this
+// checkout's templates, whose pages do not load it yet (as onboarding.mjs's
+// --inject does). Run node with PW_EXPERIMENTAL_SERVICE_WORKER_NETWORK_EVENTS=1
+// then: the site's worker fetches the files itself.
 //
 // --close-pyramid closes the pyramid's question instead of answering it: the
 // copy then goes with the projects (Plexora's folder).
 //
 // Where the browser has no folder picker (Firefox, Safari: `--browser`), there
-// is no folder to choose: the first visit says the projects stay in the
-// browser ("Keep them" asks it to keep them), the pyramid's question takes its
+// is no folder to choose: the onboarding offers browser storage only and is
+// answered with it, the pyramid's question takes its
 // other form and the copy is kept in the site's storage (OPFS, else IndexedDB,
 // else memory). The reload then asks for the picked file again ("Locate
 // file…": the browser kept no handle to it), answered with the same file.
+import { readFileSync } from "node:fs";
 import path from "node:path";
-import { REPO, appFrame, canWriteFolders, launch, startServer } from "./lib.mjs";
+import { REPO, appFrame, canWriteFolders, driveOnboarding, launch, startServer } from "./lib.mjs";
 
 const args = process.argv.slice(2);
 const opt = (name, fallback) => (args.includes(name) ? args[args.indexOf(name) + 1] : fallback);
@@ -35,9 +45,12 @@ const STUB = () => {
     window.showDirectoryPicker = async (options = {}) => {
         const root = await navigator.storage.getDirectory();
         const top = await root.getDirectoryHandle("test-folders", { create: true });
-        const name = options.id === "plexora-data" ? "Documents" : "images";
+        const workspace = options.id === "plexora-data";
+        const name = workspace ? "Documents/Plexora" : "images";
         window.__folders.push({ id: options.id, mode: options.mode, gave: name });
-        return top.getDirectoryHandle(name, { create: true });
+        let dir = top;
+        for (const part of name.split("/")) dir = await dir.getDirectoryHandle(part, { create: true });
+        return dir;
     };
     window.showOpenFilePicker = undefined; // the file comes through <input type=file>
 };
@@ -69,6 +82,14 @@ const server = await startServer(["--site", site]);
 const browser = await launch({ headed: args.includes("--headed") });
 const out = { pressed: [] };
 try {
+    if (args.includes("--inject")) {
+        const onboarding = readFileSync(path.join(REPO, "plexora/client/src/js/views/webOnboarding.js"), "utf8");
+        await browser.context.route(/\/client\/src\/js\/services\/toast\.js/, async (route) => {
+            const response = await route.fetch();
+            const body = `${await response.text()}\n;if (!window.PlexoraOnboarding) {\n${onboarding}\n}\n`;
+            await route.fulfill({ response, body });
+        });
+    }
     const page = await browser.context.newPage();
     await page.setViewportSize({ width: 1440, height: 900 });
     const errors = [];
@@ -85,27 +106,21 @@ try {
     let frame = await appFrame(page);
     await frame.waitForSelector("#quick_view_go", { timeout: 120000 });
     await frame.evaluate(() => { window.showOpenFilePicker = undefined; });
-    // The first visit asks where the projects go: a folder. (No folder to
-    // choose: they stay in the browser, which is asked to keep them.)
-    const primary = ".plx-confirm .plx-button-primary";
-    out.firstVisit = await frame.waitForSelector(primary, { timeout: 15000 }).then(async (button) => {
-        if (shots) {
-            await page.waitForTimeout(300);
-            await page.screenshot({ path: path.join(shots, "places-first-visit.png") });
-        }
-        const title = await frame.evaluate(() => document.querySelector(".plx-confirm .plx-dialog-title")?.textContent);
-        await button.click();
-        if (out.canWriteFolders) {
-            await page.waitForFunction(() => window.PlexoraStore.current().kind === "folder", null, { timeout: 30000 });
-        }
-        return title;
-    }, () => null);
     await page.waitForTimeout(1000);
-    out.persisted = await page.evaluate(() => navigator.storage.persisted()).catch((error) => String(error));
     const chooser = page.waitForEvent("filechooser", { timeout: 30000 });
     await frame.click("#quick_view_go");
     const picked = Date.now();
     await (await chooser).setFiles(file);
+    // The first image picked asks where the projects go: a folder. (No folder
+    // to choose: browser storage.)
+    await frame.waitForSelector("dialog.plx-onb[open]", { timeout: 30000 });
+    if (shots) {
+        await page.waitForTimeout(300);
+        await page.screenshot({ path: path.join(shots, "places-first-visit.png") });
+    }
+    out.onboarding = await driveOnboarding(frame, out.canWriteFolders ? "folder" : "browser", { timeout: 240000 });
+    out.firstVisit = out.onboarding.title;
+    out.persisted = await page.evaluate(() => navigator.storage.persisted()).catch((error) => String(error));
     const until = Date.now() + 600000;
     let moved = false;
     while (!moved && Date.now() < until) {

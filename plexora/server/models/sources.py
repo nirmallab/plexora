@@ -30,6 +30,12 @@ what lets the desktop app find the same file on this computer
 website built. A mask's pyramid names the mask it was made from (`from`). The desktop app does the same for the files on its disk, but only in
 a registry the website shares (`shared=True`: the website's projects on this
 computer), so the website can match them in a folder the user grants.
+
+A source that is a folder (an OME-Zarr or SpatialData store) has a folder
+identity instead (`folder_identity`: `kind: "folder"`, its file count, bytes,
+newest time and a hash of its listing), which `same_file` matches as a folder.
+A project file (server/models/bundles.py) records one for every folder it
+names, so the computer that imports it can find the store as it finds a file.
 """
 
 from __future__ import annotations
@@ -195,6 +201,93 @@ def file_identity(path) -> Optional[dict]:
             "head": head, "tail": tail}
 
 
+#: How many files a folder's identity walks before it settles for the folder's
+#: own listing: the limit `segmentation_pyramid.source_fingerprint` stops at,
+#: so a store too large to walk is never walked here either.
+FOLDER_SCAN_LIMIT = 20000
+
+
+def folder_identity(path) -> Optional[dict]:
+    """{kind: "folder", name, entries, size, mtime_ms, fingerprint, listing}
+    of a folder source (an OME-Zarr or SpatialData store), from stat calls
+    alone, or None when it is not a folder here.
+
+    `fingerprint` is `segmentation_pyramid.source_fingerprint`'s folder form
+    (`<count>-<bytes>-<newest_ns>`), so the two can be compared; `listing` is
+    a hash of the sorted relative paths and sizes, which a copy keeps when it
+    does not keep the times. A store past FOLDER_SCAN_LIMIT files is known by
+    its top level instead (`entries` None), as the fingerprint falls back to
+    the folder's own time."""
+    path = Path(path)
+    try:
+        stat = path.stat()
+        if not path.is_dir():
+            return None
+    except OSError:
+        return None
+    count = total = newest = 0
+    listing = hashlib.sha256()
+    rows = []
+    for root, folders, files in os.walk(path):
+        folders.sort()
+        for name in files:
+            full = os.path.join(root, name)
+            try:
+                entry = os.stat(full)
+            except OSError:
+                continue
+            count += 1
+            total += entry.st_size
+            newest = max(newest, entry.st_mtime_ns)
+            rows.append(f"{os.path.relpath(full, path).replace(os.sep, '/')}\t{entry.st_size}")
+            if count >= FOLDER_SCAN_LIMIT:
+                try:
+                    top = sorted(os.listdir(path))
+                except OSError:
+                    top = []
+                return {"kind": "folder", "name": path.name, "entries": None, "size": None,
+                        "mtime_ms": int(stat.st_mtime_ns // 1_000_000),
+                        "fingerprint": f"dir-{stat.st_mtime_ns}",
+                        "listing": hashlib.sha256("\n".join(top).encode("utf-8")).hexdigest()}
+    for row in sorted(rows):
+        listing.update(row.encode("utf-8") + b"\n")
+    return {"kind": "folder", "name": path.name, "entries": count, "size": int(total),
+            "mtime_ms": int(newest // 1_000_000), "fingerprint": f"{count}-{total}-{newest}",
+            "listing": listing.hexdigest()}
+
+
+def path_identity(path) -> Optional[dict]:
+    """A file's identity, or a folder's (`folder_identity`)."""
+    try:
+        if Path(path).is_dir():
+            return folder_identity(path)
+    except (OSError, ValueError):
+        return None
+    return file_identity(path)
+
+
+def is_folder(facts) -> bool:
+    """Whether an identity is a folder's."""
+    return isinstance(facts, dict) and facts.get("kind") == "folder"
+
+
+def _same_folder(facts: dict, path) -> bool:
+    """Whether the folder at `path` is the one `facts` describes: the same
+    number of files and bytes, and the same newest time to the millisecond or
+    the same listing. A store too large to walk is matched by its top level."""
+    found = folder_identity(path)
+    if found is None:
+        return False
+    if facts.get("entries") is None or found.get("entries") is None:
+        return (facts.get("entries") is None and found.get("entries") is None
+                and found.get("listing") == facts.get("listing"))
+    if found["entries"] != facts.get("entries") or found["size"] != facts.get("size"):
+        return False
+    if facts.get("mtime_ms") is not None and abs(found["mtime_ms"] - int(facts["mtime_ms"])) <= 1:
+        return True
+    return bool(facts.get("listing")) and found["listing"] == facts.get("listing")
+
+
 #: What `refresh` makes again: the facts a file's contents change.
 _CONTENT_FACTS = ("size", "mtime_ms", "head", "tail")
 
@@ -257,7 +350,10 @@ def identity(path: str) -> Optional[dict]:
 def same_file(facts: dict, path) -> bool:
     """Whether `path` is the file `facts` describes: the same size, and the
     same modification time to the millisecond or the same bytes at both ends
-    (a copy keeps the bytes but not always the time)."""
+    (a copy keeps the bytes but not always the time). A folder identity
+    (`folder_identity`) is matched as a folder."""
+    if is_folder(facts):
+        return _same_folder(facts, path)
     found = file_identity(path)
     if found is None or not facts or found["size"] != facts.get("size"):
         return False

@@ -16,6 +16,9 @@
  *     accelerators never fire while the WebView has focus -- and never on
  *     macOS, where they would fire twice.
  *   - **Bytes go to the Save dialog raw**, the name percent-encoded.
+ *   - **A project file is asked about before anything is added**: a
+ *     `.plexora` opened from Finder or Explorer opens the Import dialog, and
+ *     an export asks where it goes before the server writes a byte.
  *
  * Run directly:  node tests/js/desktop_bridge_probe.mjs
  */
@@ -61,7 +64,7 @@ function makeElement(id, extra = {}) {
 }
 
 function makeWorld({ desktop = true, platform = "windows", router = false,
-                     webview = false } = {}) {
+                     webview = false, answer = null } = {}) {
     const listeners = {};
     const classes = new Set();
     const elements = {
@@ -145,7 +148,9 @@ function makeWorld({ desktop = true, platform = "windows", router = false,
     const context = createContext({
         window, document, CustomEvent, CSS: { escape: (s) => s }, Promise, Uint8Array,
         ArrayBuffer, Blob, File: class {}, sessionStorage: { getItem: () => "1", setItem() {} },
-        fetch: () => Promise.reject(new Error("no network in the probe")),
+        fetch: answer
+            ? () => Promise.resolve({ ok: true, json: () => Promise.resolve(answer) })
+            : () => Promise.reject(new Error("no network in the probe")),
         OffscreenCanvas: function () {}, console, setTimeout, encodeURIComponent,
     });
     runInContext(SOURCE, context);
@@ -327,6 +332,49 @@ const tick = () => new Promise((resolve) => setTimeout(resolve, 0));
           !cmdR.defaultPrevented && world.reloads.length === 0);
     check("and the Full Screen row prints the Mac's chord",
           world.window.PlexoraDesktop._internal.keyHint("fullscreen") === "⌃⌘F");
+}
+
+// -- a project as one `.plexora` file ---------------------------------------------
+
+{
+    const world = makeWorld();
+    const api = world.window.PlexoraDesktop;
+    world.elements["#nav_import_project"] = makeElement("nav_import_project");
+    world.elements["#nav_export_project"] = makeElement("nav_export_project");
+    world.emit("plexora://menu", { id: "page:import_project" });
+    check("File > Import Project... clicks the navbar's Import Project row",
+          world.elements["#nav_import_project"].clicks === 1);
+    world.emit("plexora://menu", { id: "page:export_project" });
+    check("File > Export Project... clicks the navbar's Export Project row",
+          world.elements["#nav_export_project"].clicks === 1);
+    world.elements["#nav_export_project"].closest = (selector) => (selector === ".disabled" ? {} : null);
+    world.emit("plexora://menu", { id: "page:export_project" });
+    check("with no sample on screen, Export Project... says to open one",
+          world.elements["#nav_export_project"].clicks === 1
+          && world.toasts.some((t) => /Open a sample/.test(t.title)));
+
+    const path = await api.pickSavePath({ name: "lsp11385_2.plexora", title: "Export project" });
+    const ask = world.invoked.find((c) => c.command === "pick_save_path");
+    check("pickSavePath asks the shell where a file goes, before anything is written",
+          ask && ask.args.name === "lsp11385_2.plexora" && ask.args.title === "Export project"
+          && ask.args.defaultPath === null && path === null);
+}
+
+{
+    const answer = { open: "bundle", path: "/Volumes/lab/NLU.plexora", project: null, existing: false,
+                     url: "/open_project?bundle=%2FVolumes%2Flab%2FNLU.plexora" };
+    const world = makeWorld({ answer });
+    const opened = [];
+    world.window.PlexoraProjectImport = { open: (options) => opened.push(options) };
+    await world.window.PlexoraDesktop._internal.openPaths(["/Volumes/lab/NLU.plexora"]);
+    check("a .plexora opened from Finder or Explorer opens the Import dialog on it",
+          opened.length === 1 && opened[0].path === "/Volumes/lab/NLU.plexora"
+          && world.navigations.length === 0);
+
+    const bare = makeWorld({ answer });
+    await bare.window.PlexoraDesktop._internal.openPaths(["/Volumes/lab/NLU.plexora"]);
+    check("and a page without the dialog goes to the Samples page that opens it",
+          bare.navigations.length === 1 && bare.navigations[0] === answer.url);
 }
 
 if (failures) {

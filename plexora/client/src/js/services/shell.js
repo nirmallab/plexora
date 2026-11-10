@@ -506,81 +506,6 @@
         return app && app.PlexoraConfirm ? app : null;
     }
 
-    //: The first visit asks once where the projects are kept
-    //: (services/browserStore.js), in the app's own dialog; dismissing it
-    //: keeps them in the browser. Only where the browser can write folders.
-    async function askWhereOnce(frame) {
-        const store = global.PlexoraStore;
-        if (!store || !(store.shouldAsk() || store.shouldWarn())) return;
-        const app = await whenApp(frame);
-        if (!app) return;
-        if (!store.shouldAsk()) {
-            await keepInBrowser(app, store);
-            return;
-        }
-        const chosen = await app.PlexoraConfirm.choose({
-            title: "Save projects on this computer?",
-            // A page is never given Documents itself (services/browserStore.js
-            // `chooseHome`): the user chooses Plexora's folder in it.
-            body: "Your figures, thresholds and gates go in Documents › Plexora, where the desktop app "
-                + "finds them too. Choose that folder in the next window, or make it with New Folder. "
-                + "Kept in the browser, they are lost if its browsing data is cleared.",
-            choices: [{ value: "browser", label: "Keep in browser" },
-                      { value: "folder", label: "Save on this computer", kind: "primary", focus: true }],
-            close: true,
-            inline: true,
-        });
-        if (chosen === "folder") {
-            let why = null;
-            const done = await store.useFolder(null).catch((error) => {
-                why = error && error.message;
-                return null;
-            });
-            if (done) {
-                app.PlexoraToast?.show({ title: `Projects are saved in ${done.label}` });
-                return;
-            }
-            app.PlexoraToast?.show({ title: "Projects kept in this browser",
-                                     note: why ? `${why} Change it in Settings › Data.` : "Change it in Settings › Data." });
-        }
-        await store.useBrowser();
-    }
-
-    //: Where the browser cannot write folders the projects stay in it, which
-    //: may clear them (Safari after a week unused; any browser short of room)
-    //: unless it agrees to keep them (`persist()`, from the click: Firefox
-    //: asks the user). Said once; where nothing is kept, every visit.
-    async function keepInBrowser(app, store) {
-        if (store.current().storage === "memory") {
-            await app.PlexoraConfirm.choose({
-                title: "Projects are not kept",
-                body: "This browser lets the site keep nothing: they are lost when the tab closes.",
-                choices: [{ value: "ok", label: "OK", kind: "primary", focus: true }],
-                close: true,
-                inline: true,
-            });
-            return;
-        }
-        const storage = app.navigator.storage;
-        if (storage && storage.persisted && await storage.persisted().catch(() => false)) {
-            await store.useBrowser();
-            return;
-        }
-        const chosen = await app.PlexoraConfirm.choose({
-            title: "Projects are kept in this browser",
-            body: "It may clear them if the site goes unused. Ask it to keep them?",
-            choices: [{ value: "later", label: "Not now" },
-                      { value: "keep", label: "Keep them", kind: "primary", focus: true }],
-            close: true,
-            inline: true,
-        });
-        await store.useBrowser();
-        if (chosen !== "keep" || !storage || !storage.persist) return;
-        const kept = await storage.persist().catch(() => false);
-        app.PlexoraToast?.show(kept ? { title: "This browser will keep them" }
-            : { title: "This browser may still clear them", note: "Chrome and Edge can save them on this computer." });
-    }
-
     function script(src) {
         return new Promise((resolve, reject) => {
             const node = doc.createElement("script");
@@ -894,6 +819,9 @@
             at("/client/src/js/services/browserPyramid.js"),
             at("/client/src/js/services/browserStore.js"),
             at("/client/src/js/services/desktopHandoff.js"),
+            // A project's `.plexora` file written and read here, so a page
+            // change in the app's frame does not stop it.
+            at("/client/src/js/services/bundleWeb.js"),
             at("/client/src/js/services/handoffNotice.js"),
             at("/client/src/js/services/connectorClient.js"),
             // Connections to servers, held here so they outlive the app
@@ -985,16 +913,14 @@
             }
         });
         // Registered by now on any visit but a first (the worker was already
-        // there); on a first, the store's question below waits for nothing.
+        // there); on a first, the store's preparation below waits for nothing.
         control.catch(() => null);
-        // Where the projects are kept: a folder the user granted, opened again
-        // (after one click when the browser asks), or this browser's storage.
-        // Chrome's answer "Allow on every visit" ends the question for good.
-        const store = await global.PlexoraStore.prepare((record) => askInLoader(
-            `Your projects are in ${global.PlexoraStore.labelOf(record.parent)}. `
-            + "To open it without this question next time, choose “Allow on every visit”.",
-            [{ value: false, label: "Use browser this time" },
-             { value: true, label: "Open folder", primary: true }])).catch(() => null);
+        // Where the projects are kept: a workspace the user granted, opened
+        // again where the browser still grants it, or this browser's storage.
+        // Nothing is asked here: the first save runs the onboarding
+        // (views/webOnboarding.js), and a folder the browser no longer grants
+        // is reconnected from a click there or on the home page.
+        const store = await global.PlexoraStore.prepare().catch(() => null);
         // The copies the page made on earlier visits, found where they are
         // kept while Python starts (services/derivedIndex.js); mounted once it has.
         global.PlexoraDerived.prepare().catch(() => null);
@@ -1048,12 +974,7 @@
         // (writePage asks for it, PlexoraShellLoader.shown).
         frame.className = "plexora-app-frame is-veiled";
         frame.src = here(global.location);
-        let asked = false;
         frame.addEventListener("load", () => {
-            if (!asked) {
-                asked = true;
-                started.then(() => askWhereOnce(frame)).catch(() => null);
-            }
             started.then(() => keepHome(frame, pages)).catch(() => null);
         });
         doc.body.appendChild(frame);

@@ -128,13 +128,14 @@ function hit(descriptor, extra = {}) {
 
 // -- the world the page runs in ---------------------------------------------
 
-function build({ projects, datasets, answers = {}, folder = null, typing = false } = {}) {
+function build({ projects, datasets, answers = {}, folder = null, typing = false, location = null } = {}) {
     const ids = ["project-results", "project-search", "project-sort",
                  "project-view-grid", "project-view-list", "project-count",
                  "project-empty-state", "project-no-results",
                  "dataset-empty-state", "project-crumbs",
                  "project-selection-bar", "project-selection-count",
-                 "project-select-all", "dataset-create"];
+                 "project-select-all", "dataset-create",
+                 "project-location", "project-no-results-text"];
     const elements = new Map(ids.map((id) => [id, makeElement(id)]));
 
     //: Every POST the page makes, in order. The whole point of the probe.
@@ -142,7 +143,8 @@ function build({ projects, datasets, answers = {}, folder = null, typing = false
     //: Every question it asked before making one.
     const asked = [];
 
-    let url = `http://x/open_project${folder ? `?dataset=${folder}` : ""}`;
+    let url = `http://x/open_project${folder ? `?dataset=${folder}` : ""}`
+        + (location ? `${folder ? "&" : "?"}location=${location}` : "");
     let registered = null;
     let teardown = null;
 
@@ -738,6 +740,95 @@ function drag(names) {
     check("and the page takes its listener off when it is torn down",
         (page.doc.listeners.get("keydown") || []).length === 0,
         "it is mounted as a fragment, so this runs on every navigation");
+}
+
+// -- where each project is kept (Settings > Data's locations) --------------
+//
+// A chip on each card and a filter in the toolbar, only once the projects
+// come from more than one place; `shared` keeps its own pill.
+
+{
+    const page = await setup();
+    check("with every project in one place there is no location chip",
+        !page.results.innerHTML.includes("plx-locations-chip"));
+    check("and no location filter",
+        page.el("project-location").hidden === true);
+}
+
+const PLACED = [
+    { name: "kidney_01", shared: false, dataset: { id: "d1", name: "Melanoma" },
+      location: { id: "ws-1", label: "Imaging", kind: "workspace" } },
+    { name: "kidney_02", shared: false, dataset: null,
+      location: { id: "ws-1", label: "Imaging", kind: "workspace" } },
+    { name: "tonsil_01", shared: false, dataset: null,
+      location: { id: "data-1", label: "Data folder", kind: "data_root" } },
+    { name: "lab_tma", shared: true, dataset: null,
+      location: { id: "shared-1", label: "lab", kind: "shared" } },
+];
+
+{
+    const page = await setup({ projects: PLACED });
+    const html = page.results.innerHTML;
+    const card = (name) => html.split(`data-project-name="${name}"`)[1]?.split('class="project-card"')[0] || "";
+    check("with projects in two places each card names its location",
+        card("kidney_02").includes("plx-locations-chip") && card("kidney_02").includes("Imaging")
+        && card("tonsil_01").includes("Data folder"));
+    check("a shared project keeps its pill and carries no location chip",
+        card("lab_tma").includes("project-shared") && !card("lab_tma").includes("plx-locations-chip"));
+    const filter = page.el("project-location");
+    check("the location filter shows, listing each place once with its count",
+        filter.hidden === false
+        && (filter.innerHTML.match(/<option/g) || []).length === 4
+        && filter.innerHTML.includes("Imaging (2)")
+        && filter.innerHTML.includes("lab (shared) (1)"),
+        filter.innerHTML);
+    check("the filter lists the data folder before an added workspace",
+        filter.innerHTML.indexOf("Data folder") < filter.innerHTML.indexOf("Imaging"));
+
+    filter.value = "data-1";
+    await filter.fire("change", {});
+    const narrowed = page.results.innerHTML;
+    check("choosing a location shows only the projects kept there",
+        narrowed.includes('data-project-name="tonsil_01"')
+        && !narrowed.includes('data-project-name="kidney_02"')
+        && !narrowed.includes('data-project-name="lab_tma"'));
+    check("and leaves out a dataset with nothing kept there",
+        !narrowed.includes('data-dataset-id="d1"'));
+    check("and the URL keeps the location for a reload",
+        page.url.includes("location=data-1"), page.url);
+    check("the count says how many are in that location",
+        page.el("project-count").textContent === "1 sample in Data folder",
+        page.el("project-count").textContent);
+
+    filter.value = "";
+    await filter.fire("change", {});
+    check("All locations shows everything again and drops it from the URL",
+        page.results.innerHTML.includes('data-project-name="kidney_02"') && !page.url.includes("location="),
+        page.url);
+}
+
+{
+    const page = await setup({ projects: PLACED, folder: null });
+    page.el("project-location").value = "ws-1";
+    await page.el("project-location").fire("change", {});
+    page.el("project-search").value = "tonsil";
+    await page.el("project-search").fire("input", {});
+    check("a search inside a location looks only there",
+        page.el("project-no-results").hidden === false
+        && page.el("project-no-results-text").textContent === "No projects match your search");
+}
+
+{
+    const page = build({ projects: PLACED, datasets: DATASETS, location: "ws-1" });
+    await page.settle();
+    check("a location named in the URL is where a reload lands",
+        page.results.innerHTML.includes('data-project-name="kidney_02"')
+        && !page.results.innerHTML.includes('data-project-name="tonsil_01"'));
+    const gone = build({ projects: PLACED, datasets: DATASETS, location: "ws-gone" });
+    await gone.settle();
+    check("a location named in the URL but no longer there falls back to all",
+        gone.results.innerHTML.includes('data-project-name="tonsil_01"')
+        && gone.results.innerHTML.includes('data-project-name="kidney_02"'));
 }
 
 console.log(`\n${failures.length ? `FAILURES: ${failures.join(", ")}` : "all checks passed"}`);

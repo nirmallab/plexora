@@ -37,7 +37,7 @@ import { execFileSync, spawnSync } from "node:child_process";
 import { copyFileSync, cpSync, mkdirSync, mkdtempSync, readdirSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { PYTHON, REPO, appFrame, launch, startServer } from "./lib.mjs";
+import { PYTHON, REPO, appFrame, launch, seedBrowserStore, startServer } from "./lib.mjs";
 
 const args = process.argv.slice(2);
 const opt = (name, fallback) => (args.includes(name) ? args[args.indexOf(name) + 1] : fallback);
@@ -179,15 +179,9 @@ async function websiteArm(browser) {
     const server = await startServer(["--site", site]);
     const page = await browser.context.newPage();
     const base = `http://127.0.0.1:${server.port}`;
+    await seedBrowserStore(browser.context, base);
     await page.goto(`${base}/?pydebug`);
     let frame = await appFrame(page);
-    await frame.waitForFunction(() => {
-        const keep = [...document.querySelectorAll(".plx-confirm .plx-button")]
-            .find((button) => button.textContent.trim() === "Keep in browser");
-        if (!keep) return false;
-        keep.click();
-        return true;
-    }, null, { timeout: 5000, polling: 200 }).catch(() => null);
     await page.evaluate(() => window.PlexoraPython.ready);
     const paths = [];
     for (const [i, file] of files.entries()) {

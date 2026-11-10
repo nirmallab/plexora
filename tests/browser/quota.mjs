@@ -7,7 +7,7 @@
 //   node tests/browser/quota.mjs --file <flat tif> [--room 50] [--browser firefox]
 // Prints JSON with `ok`: the import failed within --timeout seconds and said
 // the browser has no room.
-import { appFrame, launch, startServer, REPO } from "./lib.mjs";
+import { appFrame, launch, seedBrowserStore, startServer, REPO } from "./lib.mjs";
 
 const args = process.argv.slice(2);
 const opt = (name, fallback) => (args.includes(name) ? args[args.indexOf(name) + 1] : fallback);
@@ -46,15 +46,10 @@ try {
         if (!/try_table|threadpoolctl|longtask|WebGL/.test(message.text())) logs.push(message.text().slice(0, 300));
     });
     const origin = `http://127.0.0.1:${server.port}`;
+    await seedBrowserStore(browser.context, origin);
     await page.goto(`${origin}/`);
     const frame = await appFrame(page);
     await frame.waitForSelector("#quick_view_go", { timeout: 120000 });
-    await frame.waitForFunction(() => {
-        const keep = [...document.querySelectorAll(".plx-confirm .plx-button")]
-            .find((button) => ["Keep in browser", "Not now"].includes(button.textContent.trim()));
-        if (keep) keep.click();
-        return Boolean(keep);
-    }, null, { timeout: 8000, polling: 200 }).catch(() => null);
     // Fill the site's storage to within `room` of its quota.
     const filled = Date.now();
     out.before = await page.evaluate(() => navigator.storage.estimate());

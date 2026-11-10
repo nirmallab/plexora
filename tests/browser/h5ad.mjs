@@ -16,7 +16,7 @@ import { spawnSync } from "node:child_process";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { PYTHON, REPO, appFrame, launch, startServer } from "./lib.mjs";
+import { PYTHON, REPO, appFrame, launch, seedBrowserStore, startServer } from "./lib.mjs";
 
 const args = process.argv.slice(2);
 const opt = (name, fallback) => (args.includes(name) ? args[args.indexOf(name) + 1] : fallback);
@@ -92,18 +92,10 @@ try {
         watch();
     });
     const started = Date.now();
+    await seedBrowserStore(browser.context, `http://127.0.0.1:${server.port}`);
     await page.goto(`http://127.0.0.1:${server.port}/?pydebug`);
     let frame = await appFrame(page);
     out.homeMs = Date.now() - started;
-    // The first visit asks where projects go (where this Chrome can write
-    // folders): this driver keeps them in the browser, as import.mjs does.
-    out.firstVisit = await frame.waitForFunction(() => {
-        const keep = [...document.querySelectorAll(".plx-confirm .plx-button")]
-            .find((button) => button.textContent.trim() === "Keep in browser");
-        if (!keep) return false;
-        keep.click();
-        return true;
-    }, null, { timeout: 5000, polling: 200 }).then(() => "kept in browser", () => null);
     out.stagesAtBoot = await page.evaluate(() => window.__stages.map((s) => s.stage));
     check("no h5ad stage at boot", !out.stagesAtBoot.includes("h5ad"), out.stagesAtBoot);
 

@@ -18,6 +18,15 @@
             <button type="button" class="btn btn-outline-light" id="dataset-create">
                 <span class="fas fa-folder-plus"></span> New Dataset&hellip;
             </button>
+            {# A `.plexora` file someone sent, or one exported on another
+               computer (views/projectImport.js). "Import Project", not
+               "Import": beside Import Sample, a bare "Import" reads as the
+               same button twice. Hidden by the page where the dialogs cannot
+               run (the website, until it moves the bytes itself). #}
+            <button type="button" class="btn btn-outline-light" id="project-bundle-import"
+                    title="Import a .plexora project file">
+                <span class="fas fa-file-import"></span> Import Project&hellip;
+            </button>
             {# A button rather than a link: importing opens a dialog in place
                instead of navigating to a form. Whoever came here to find a
                sample and found they had not imported it yet should not lose
@@ -65,6 +74,13 @@
             <span class="fas fa-magnifying-glass"></span>
             <input type="text" id="project-search" placeholder="Search projects&hellip;" autocomplete="off">
         </div>
+        {# Where the projects are kept (Settings > Data's locations), one
+           option each. Only when they come from more than one place:
+           openProjectPage.js fills it in and shows it then. #}
+        <select id="project-location" class="open-project-sort open-project-location"
+                aria-label="Location" title="Show the projects kept in one place" hidden>
+            <option value="">All locations</option>
+        </select>
         <select id="project-sort" class="open-project-sort">
             <option value="lastOpenedAt">Recently Opened</option>
             <option value="createdAt">Date Created</option>
@@ -88,6 +104,10 @@
         <div class="project-selection-actions">
             <button type="button" class="btn btn-sm btn-outline-light" data-action="move">
                 <span class="fas fa-folder"></span> Move to&hellip;
+            </button>
+            {# One `.plexora` file for the whole selection (views/projectExport.js). #}
+            <button type="button" class="btn btn-sm btn-outline-light" data-action="export">
+                <span class="fas fa-file-export"></span> Export&hellip;
             </button>
             <button type="button" class="btn btn-sm btn-outline-light" data-action="unassign">
                 <span class="fas fa-arrow-up-from-bracket"></span> Remove from dataset
@@ -121,8 +141,8 @@
 
     <div id="project-no-results" class="open-project-state" hidden>
         <span class="fas fa-magnifying-glass open-project-state-icon"></span>
-        <p>No projects match your search</p>
+        <p id="project-no-results-text">No projects match your search</p>
     </div>
 </div>
-<script src="{{ data.base_url }}/client/src/js/views/openProjectPage.js?v=20261109_csp_handlers" defer></script>
+<script src="{{ data.base_url }}/client/src/js/views/openProjectPage.js?v=20261110_onboarding_bundles" defer></script>
 {% endblock %}

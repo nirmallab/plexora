@@ -5,6 +5,7 @@
 import path from "node:path";
 import { writeFileSync } from "node:fs";
 import { INIT, WORKER_INIT, S, byRoute, get, launch, openTools, pollReady, post, pyRecent, startStatic, tileStats, tour, viewerDrawn, waitViewer } from "./benchlib.mjs";
+import { seedBrowserStore } from "../../tests/browser/lib.mjs";
 
 const args = process.argv.slice(2);
 const opt = (n, f) => (args.includes(n) ? args[args.indexOf(n) + 1] : f);
@@ -39,6 +40,7 @@ try {
     await page.addInitScript(INIT);
     await page.setViewportSize({ width: 1440, height: 900 });
     const origin = `http://127.0.0.1:${server.port}`;
+    await seedBrowserStore(browser.context, origin);
     let t0 = Date.now();
     // `--profile-setup`: the worker's debug hooks (`?pydebug`), for the profile below.
     await page.goto(`${origin}/${PROFILE_SETUP ? "?pydebug" : ""}`);
@@ -51,7 +53,6 @@ try {
     await page.waitForFunction(() => window.PlexoraShellStarted !== undefined, null, { timeout: 120000 });
     await page.evaluate(() => window.PlexoraShellStarted);
     say('pythonStartedMs'); out.steps.pythonStartedMs = Date.now() - t0;
-    await frame.waitForFunction(() => { const b = [...document.querySelectorAll(".plx-confirm .plx-button")].find((x) => ["Keep in browser", "Keep them", "Not now"].includes(x.textContent.trim())); if (b) { b.click(); return true; } return false; }, null, { timeout: 8000, polling: 200 }).catch(() => null);
 
     // Pick as Chrome's real picker would: File System Access handles the
     // page can remember and reopen after a reload. The fixture is copied into

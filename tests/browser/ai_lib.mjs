@@ -7,7 +7,7 @@
 import { execFileSync, spawn } from "node:child_process";
 import { readFileSync } from "node:fs";
 import path from "node:path";
-import { PYTHON, REPO, appFrame } from "./lib.mjs";
+import { PYTHON, REPO, appFrame, seedBrowserStore } from "./lib.mjs";
 
 //: `extra`: more of mock_platform.py's options (`--roots ai,volume,plugin:video_studio`).
 export function startMock(home, extra = []) {
@@ -41,29 +41,12 @@ export function buildSite(site, data, mock) {
                    stdio: ["ignore", "ignore", "inherit"] });
 }
 
-//: The first visit asks where projects go; the tests keep them in the browser.
-export async function keepInBrowser(frame) {
-    const until = Date.now() + 5000;
-    while (Date.now() < until) {
-        const clicked = await frame.evaluate(() => {
-            const button = [...document.querySelectorAll(".plx-confirm .plx-button")]
-                .find((node) => node.textContent.trim() === "Keep in browser");
-            if (!button) return false;
-            button.click();
-            return true;
-        }).catch(() => false);
-        if (clicked) return true;
-        await new Promise((resolve) => setTimeout(resolve, 200));
-    }
-    return false;
-}
-
 //: Settings > Account > Connect this browser, through the mock: Pro.
 export async function connectLicence(page, origin) {
     page.on("popup", (opened) => { opened.close().catch(() => null); });
+    await seedBrowserStore(page.context(), origin);
     await page.goto(`${origin}/settings?pydebug#license`);
     const frame = await appFrame(page);
-    await keepInBrowser(frame);
     await frame.waitForSelector("#settings_license_connect", { timeout: 60000 });
     await frame.click("#settings_license_connect");
     await frame.waitForFunction(() => document.getElementById("settings_license_plan")?.textContent.trim() === "Pro",

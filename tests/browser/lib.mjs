@@ -134,3 +134,95 @@ export async function appFrame(page, { timeout = 120000 } = {}) {
                                 && !document.getElementById("plexora-boot"), null, { timeout });
     return frame;
 }
+
+//: The website's storage choice made before a driver's first page, so the
+//: first-use onboarding (views/webOnboarding.js) never shows: `record` is
+//: written to IndexedDB plexora-store/store/data from a throwaway page of the
+//: site, and awaited -- not an init script, which would race the boot's own
+//: read of it (services/browserStore.js `prepare`). The default keeps the
+//: projects in the browser, as "Use browser storage" does.
+export async function seedBrowserStore(context, origin, record = { kind: "browser", chosen: true, onboarded: true }) {
+    const page = await context.newPage();
+    try {
+        await page.goto(`${origin}/client/shell.json`);
+        await page.evaluate((value) => new Promise((resolve, reject) => {
+            const request = indexedDB.open("plexora-store", 1);
+            request.onupgradeneeded = () => request.result.createObjectStore("store");
+            request.onerror = () => reject(request.error);
+            request.onsuccess = () => {
+                const db = request.result;
+                const tx = db.transaction("store", "readwrite");
+                tx.objectStore("store").put(value, "data");
+                tx.oncomplete = () => { db.close(); resolve(true); };
+                tx.onerror = () => reject(tx.error);
+            };
+        }), record);
+    } finally {
+        await page.close();
+    }
+}
+
+//: The onboarding answered in the app's frame, once it is up:
+//:   "browser"    new, Use browser storage
+//:   "folder"     new, Use a folder on this computer, Choose folder (the
+//:                host's showDirectoryPicker must be stood in for), and Use
+//:                this folder where it already holds something
+//:   "returning"  used before, Locate my Plexora folder, then Continue (or Set
+//:                up this folder where it is not one)
+//:   "reconnect"  Reconnect folder, on the Reconnect screen
+//:   "cancel"     the X
+//: Resolves {screens: [screen names seen, in order], title: the last one's}.
+export async function driveOnboarding(frame, choice = "browser", { timeout = 60000 } = {}) {
+    const screens = [];
+    const live = (selector) => `dialog.plx-onb .plx-onb-screen:not(.is-leaving) ${selector}`;
+    const screen = () => frame.evaluate(() => document.querySelector("dialog.plx-onb")?.dataset.screen || null);
+    const title = () => frame.evaluate(() => document.querySelector(
+        "dialog.plx-onb .plx-onb-screen:not(.is-leaving) .plx-onb-title")?.textContent || null);
+    const press = async (selector) => {
+        const node = await frame.waitForSelector(live(selector), { state: "visible", timeout });
+        screens.push(await screen());
+        await node.click();
+    };
+    //: The first of `selectors` on screen, once one is.
+    const first = async (selectors) => {
+        const handle = await frame.waitForFunction((list) => list.find((one) => document.querySelector(
+            `dialog.plx-onb .plx-onb-screen:not(.is-leaving) ${one}`)) || null, selectors, { timeout, polling: 100 });
+        return handle.jsonValue();
+    };
+    await frame.waitForSelector("dialog.plx-onb[open]", { timeout });
+    if (choice === "cancel") {
+        screens.push(await screen());
+        const shown = await title();
+        await frame.click("dialog.plx-onb .plx-onb-close");
+        await frame.waitForSelector("dialog.plx-onb", { state: "detached", timeout });
+        return { screens, title: shown };
+    }
+    if (choice === "browser") {
+        await press('[data-choice="new"]');
+        await press('[data-choice="browser"]');
+    } else if (choice === "folder") {
+        await press('[data-choice="new"]');
+        await press('[data-choice="folder"]');
+        await press('[data-role="choose"]');
+        if (await first(['[data-role="use"]', '[data-role="continue"]']) === '[data-role="use"]') {
+            await press('[data-role="use"]');
+        }
+    } else if (choice === "returning") {
+        await press('[data-choice="returning"]');
+        await press('[data-role="locate"]');
+        const next = await first(['[data-role="continue"]', '[data-role="init"]']);
+        if (await screen() !== "setup") await press(next);
+    } else if (choice === "reconnect") {
+        await press('[data-role="reconnect"]');
+        await frame.waitForSelector("dialog.plx-onb", { state: "detached", timeout });
+        return { screens, title: null };
+    } else {
+        throw new Error(`driveOnboarding: no choice "${choice}"`);
+    }
+    const go = await frame.waitForSelector('dialog.plx-onb[data-phase="done"] [data-role="continue"]', { timeout });
+    screens.push(await screen());
+    const shown = await title();
+    await go.click();
+    await frame.waitForSelector("dialog.plx-onb", { state: "detached", timeout });
+    return { screens, title: shown };
+}

@@ -4,12 +4,14 @@ Everything the website work (plan `dreamy-brewing-sunset.md`, branch `web/phase0
 is waiting on from you, in one place. Kept current as work lands; the newest
 state is on `web/phase0`. Each item says what to do and what it unblocks.
 **The website is live** at https://viewer.plexoraapp.com since 2026-11-08
-00:40 UTC, now 0.0.46 (`main` at c626ad05, no tag; since 2026-11-10
-02:39 UTC: the website's performance, round five -- auto-contrast on channels
-switched on at once -- docs/internal/bench/web/WEBSITE_PERF_2026-11-09.md;
-0.0.45 to 0.0.42, rounds four to one, before it), Pages
+00:40 UTC, now 0.0.47 (`main` at db8d0be6, no tag; since 2026-11-10
+05:00 UTC: Plexora Lite's first-use onboarding -- asked only when work needs
+saving, the picked folder is the workspace -- Storage & Locations, and
+.plexora export/import of one or many projects, docs/internal/PROJECT_BUNDLES.md;
+0.0.46, the website's performance round five, and 0.0.45 to 0.0.42, rounds
+four to one, before it), Pages
 project `plexora-viewer`
-branch `release`, bundle `py/0.0.46/`, flags `viewer: on`, telemetry on. 0.0.38 was live for under
+branch `release`, bundle `py/0.0.47/`, flags `viewer: on`, telemetry on. 0.0.38 was live for under
 an hour and did not start Python on the self-check page, in a second tab or
 without sync access handles; its `py/0.0.38/` stays, as every released
 prefix does, and nothing points at it. Activating a licence and AI do not work there until section 1,
@@ -147,6 +149,9 @@ bundle `py/dev/4f583c3b9745/` and, sharing the flags, no longer shows its
   is visible now, default Off.) One entry in `settings_routes.DESKTOP_SECTIONS`.
 - **Fresh desktop installs** keep projects in `Documents/Plexora/projects`
   (one library shared with the website)? Existing installs are unaffected.
+  **Resolved (feature/onboarding-bundles):** the desktop creates
+  `Documents/Plexora/{workspace.json, projects/}` on first run and the website
+  picks the same folder in its first-use setup; see Settings > Data > Locations.
 - **Publish plexora-kernels** to PyPI and ship it in the desktop runtime (the
   desktop then never imports numba: start 3.6 s instead of 5.6-15.2 s)?
 - **`.bif`** in both apps' import list (`import_proposal.IMAGE_SUFFIXES`)?
@@ -185,8 +190,8 @@ bundle `py/dev/4f583c3b9745/` and, sharing the flags, no longer shows its
 - The **next desktop release** from `main` carries the removals (Segment in
   3-D, Carry an ROI through planes), the desktop speed-ups and the new
   telemetry values (the Worker that takes them is deployed). Make it
-  **0.0.47 or later** (`release.py ci --bump patch` from the newest), not a
-  tag of a version the website already has: its `py/0.0.37/` to `py/0.0.46/` are
+  **0.0.48 or later** (`release.py ci --bump patch` from the newest), not a
+  tag of a version the website already has: its `py/0.0.37/` to `py/0.0.47/` are
   published and never rewritten, so once the CI secrets
   exist such a Release run's `web_deploy` would refuse its own rebuild of
   that bundle and hold the release.

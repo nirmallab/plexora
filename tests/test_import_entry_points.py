@@ -27,8 +27,9 @@ from plexora.server.models.project import Project
 from tests.helpers import use_data_root
 
 #: Keys that are a fact about WHEN, not about what was imported. Two records of
-#: the same data differ here and nowhere else.
-TIMESTAMPS = ("createdAt", "lastOpenedAt")
+#: the same data differ here and nowhere else -- here and in their ids, which
+#: are each project's own (`Project.id`).
+TIMESTAMPS = ("createdAt", "lastOpenedAt", "id")
 
 
 @pytest.fixture

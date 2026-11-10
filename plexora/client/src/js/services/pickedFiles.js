@@ -16,11 +16,16 @@
  *   silently where the browser still grants access, after one "Reconnect"
  *   where it asks again, by picking it again where it keeps no handle.
  *
- *   pick({mode, multiple, ask}) -> a path, an array of them, or null (cancelled);
+ *   pick({mode, multiple, ask, gate})
+ *                          -> a path, an array of them, or null (cancelled);
  *                             an MRXS slide brings the folder beside it, chosen
  *                             after `ask(text)` (the caller's one-button question)
  *                             and mounted with it (/picked/<id>/<name>.mrxs and
- *                             /picked/<id>/<name>/...)
+ *                             /picked/<id>/<name>/...); `gate()`, when given, is
+ *                             awaited once the files are chosen and before
+ *                             anything is mounted or remembered: false is a
+ *                             cancel that leaves nothing behind (the website's
+ *                             first-use onboarding, views/webOnboarding.js)
  *   restore()              -> {mounted: [id], waiting: [pick]} at boot
  *   reconnect()            -> mounts every waiting pick (call from a click)
  *   list()                 -> every remembered pick
@@ -205,18 +210,30 @@
         return `${ROOT}/${id}/${file.name}`;
     }
 
-    async function pick({ mode = "file", multiple = false, ask = null } = {}) {
+    /**
+     * The files chosen (the browser's dialog first, so the click's activation
+     * is still there for it), then `gate`, then the mount and the record. The
+     * gate is where the website asks where its work is kept, on the first
+     * pick only: before the mount, which waits for Python (a first visit's
+     * pick would otherwise not come back until Python is up), and before the
+     * record, which `restore` would mount again on every later visit. The
+     * chosen files stay in this closure while it is open.
+     */
+    async function pick({ mode = "file", multiple = false, ask = null, gate = null } = {}) {
         const id = newId();
+        const allowed = async () => !gate || Boolean(await gate());
         try {
             if (mode === "directory") {
                 if (global.showDirectoryPicker) {
                     const handle = await global.showDirectoryPicker({ id: "plexora", mode: "read" });
+                    if (!await allowed()) return null;
                     const path = await mountTree(id, handle.name, await walk(handle));
                     await remember({ id, kind: "directory", name: handle.name, handle, picked: Date.now() });
                     return path;
                 }
                 const files = await chooseWithInput({ directory: true });
                 if (!files.length) return null;
+                if (!await allowed()) return null;
                 const name = (files[0].webkitRelativePath || files[0].name).split("/")[0];
                 const entries = files.map((file) => ({
                     path: (file.webkitRelativePath || file.name).split("/").slice(1).join("/") || file.name, file,
@@ -236,6 +253,9 @@
                 files = await chooseWithInput({ multiple });
             }
             if (!files.length) return null;
+            // Before an MRXS's folder is asked for too: its question's click
+            // is the gesture that folder's dialog needs.
+            if (!await allowed()) return null;
             if (files.length === 1 && MRXS.test(files[0].name)) {
                 // An MRXS: its folder too, mounted beside it.
                 const folder = await slideFolder(files[0], handles && handles[0], ask);

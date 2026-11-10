@@ -54,6 +54,12 @@ CHECKS = (
     'and a claimed one does not',
     "drag events are heard on this window's webview, not every window's",
     'and a drop heard there is handled',
+    "File > Import Project... clicks the navbar's Import Project row",
+    "File > Export Project... clicks the navbar's Export Project row",
+    'with no sample on screen, Export Project... says to open one',
+    'pickSavePath asks the shell where a file goes, before anything is written',
+    'a .plexora opened from Finder or Explorer opens the Import dialog on it',
+    'and a page without the dialog goes to the Samples page that opens it',
 )
 
 

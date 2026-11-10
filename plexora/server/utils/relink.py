@@ -21,7 +21,17 @@ Where it looks, cheapest first, and why:
    cloud folders, and the folders this computer's other projects read from),
    for at most WALK_SECONDS, once for every file still missing.
 A candidate is the file only when `sources.same_file` says so: same size, and
-the same time to the millisecond or the same bytes at both ends.
+the same time to the millisecond or the same bytes at both ends. A folder
+source (a .zarr store) is looked for the same way, by its folder identity.
+
+A project file brought from elsewhere (server/models/bundles.py) adds two
+places before these, both from what the bundle recorded: the image's path
+relative to where the bundle was saved (`relative_to_bundle`: a bundle saved
+to /Volumes/lab/exports/ beside /Volumes/lab/images/ finds ../images/a.tif
+again from //server/lab/exports/ on Windows), and the trailing parts of
+its path under this computer's shared roots and Locations (`tail_candidates`).
+"Find missing images..." searches one folder the user picked and nothing else
+(`resolve_in`, `find_in_folder`).
 """
 
 from __future__ import annotations
@@ -165,7 +175,11 @@ def _walk(roots: Iterable[Path], wanted: set, deadline: float) -> dict:
                 for entry in entries:
                     name = entry.name
                     if entry.is_dir(follow_symlinks=False):
-                        if not name.startswith(".") and name.lower() not in _SKIP:
+                        # A folder source (a .zarr store) is wanted by name
+                        # too, and not walked into once found.
+                        if name in wanted:
+                            found.setdefault(name, []).append(Path(entry.path))
+                        elif not name.startswith(".") and name.lower() not in _SKIP:
                             queue.append(Path(entry.path))
                     elif name in wanted:
                         found.setdefault(name, []).append(Path(entry.path))
@@ -174,9 +188,19 @@ def _walk(roots: Iterable[Path], wanted: set, deadline: float) -> dict:
     return found
 
 
+def _present(path, facts=None) -> bool:
+    """Whether `path` is there as what `facts` describes: a folder for a
+    folder identity (`sources.folder_identity`), else a file."""
+    try:
+        candidate = Path(path)
+        return candidate.is_dir() if sources.is_folder(facts) else candidate.is_file()
+    except (OSError, TypeError, ValueError):
+        return False
+
+
 def _first(facts: dict, candidates: Iterable[Path]) -> Optional[Path]:
     for candidate in candidates:
-        if candidate and Path(candidate).is_file() and sources.same_file(facts, candidate):
+        if candidate and _present(candidate, facts) and sources.same_file(facts, candidate):
             return Path(candidate)
     return None
 
@@ -188,13 +212,13 @@ def resolve(entry: dict, me: str, extra_roots: Iterable[Path] = (), *, walk_seco
     known = (entry or {}).get(sources.SOURCES) or {}
     here = {recorded: (info.get("at") or {}).get(me) for recorded, info in known.items()}
     missing = [recorded for recorded, path in here.items()
-               if not (path and Path(path).is_file()) and not (Path(recorded).is_file() and
-                                                               not recorded.startswith(sources.PAGE_ROOTS))]
+               if not (path and _present(path, known[recorded]))
+               and not (_present(recorded, known[recorded]) and not recorded.startswith(sources.PAGE_ROOTS))]
     out: dict = {}
 
     def folders_found():
         return {Path(path).parent for path in list(out.values()) + [p for p in here.values() if p]
-                if path and Path(path).is_file()}
+                if path and Path(path).exists()}
 
     deadline = time.monotonic() + walk_seconds
 
@@ -314,7 +338,11 @@ def missing_here(name: str) -> list:
         info = info or {}
         here = (info.get("at") or {}).get(me) or (recorded if me == "website" and
                                                   recorded.startswith(sources.PAGE_ROOTS) else None)
-        if here and Path(here).is_file():
+        if here and _present(here, info):
+            continue
+        # Where it was recorded, when that is a path here and the file is
+        # there (`resolve` takes it as found for the same reason).
+        if me != "website" and not recorded.startswith(sources.PAGE_ROOTS) and _present(recorded, info):
             continue
         item = {"recorded": recorded, "name": info.get("name") or Path(recorded).name,
                 "size": info.get("size"), "mtime_ms": info.get("mtime_ms"),
@@ -371,3 +399,92 @@ def record_found(name: str, found: dict) -> int:
             config[name] = current
             write_config(path, config)
     return recorded
+
+
+# -- a project brought from elsewhere (server/models/bundles.py) -----------
+
+
+def relative_to_bundle(relative, bundle_path) -> Optional[Path]:
+    """Where a file recorded `relative` to an exported bundle's folder is,
+    relative to where the bundle is now; None when nothing was recorded.
+
+    Written with forward slashes whatever the exporting computer was, so a
+    bundle from a Mac on a share finds its images from Windows."""
+    if not relative or not bundle_path:
+        return None
+    text = str(relative).replace("\\", "/")
+    if text.startswith("/") or (len(text) > 1 and text[1] == ":"):
+        return None
+    try:
+        base = Path(bundle_path)
+        base = base if base.is_dir() else base.parent
+        return Path(os.path.normpath(base.joinpath(*text.split("/"))))
+    except (OSError, TypeError, ValueError):
+        return None
+
+
+#: How many trailing parts of a recorded path are tried under each root.
+TAIL_DEPTH = 6
+
+
+def tail_candidates(recorded, roots: Iterable[Path], depth: int = TAIL_DEPTH) -> list:
+    """`root/<the last k parts of recorded>` for k from `depth` down to 1, for
+    each root: a share mounted at /Volumes/lab on one computer and at
+    //server/lab or L: on another keeps everything below its mount the same.
+    Longest tails first, so the deepest agreement is tried before a bare name."""
+    if not recorded:
+        return []
+    parts = [part for part in str(recorded).replace("\\", "/").split("/") if part and not part.endswith(":")]
+    out = []
+    for root in roots:
+        try:
+            base = Path(root)
+        except TypeError:
+            continue
+        for k in range(min(depth, len(parts)), 0, -1):
+            candidate = base.joinpath(*parts[-k:])
+            if candidate not in out:
+                out.append(candidate)
+    return out
+
+
+def resolve_in(entry: dict, me: str, folder, *, walk_seconds: float = WALK_SECONDS) -> dict:
+    """{recorded path: path here} for the files of `entry` this app has no
+    path for that are under `folder` -- the one folder the user picked, and
+    nowhere else (no index, no other folders)."""
+    known = (entry or {}).get(sources.SOURCES) or {}
+    wanted = {}
+    for recorded, info in known.items():
+        info = info or {}
+        here = (info.get("at") or {}).get(me)
+        if here and _present(here, info):
+            continue
+        if not recorded.startswith(sources.PAGE_ROOTS) and _present(recorded, info):
+            continue
+        wanted.setdefault(info.get("name") or Path(recorded).name, []).append(recorded)
+    if not wanted:
+        return {}
+    walked = _walk([Path(folder)], set(wanted), time.monotonic() + walk_seconds)
+    out = {}
+    for name, recorded_paths in wanted.items():
+        for recorded in recorded_paths:
+            hit = _first(known[recorded] or {}, walked.get(name, ()))
+            if hit is not None:
+                out[recorded] = str(hit)
+    return out
+
+
+def find_in_folder(name: str, folder) -> dict:
+    """Look for project `name`'s missing files in `folder` only, and record
+    where they are. `{found: n, missing: [...]}` (`missing_here`)."""
+    me = sources.app_key()
+    from plexora.server.models.project import Project, read_config
+    from plexora import paths
+
+    root = Project.root_for(name)
+    if root is None:
+        raise KeyError(name)
+    entry = read_config(paths.config_path(root)).get(name) or {}
+    found = resolve_in(entry, me, folder)
+    recorded = record_found(name, found) if found else 0
+    return {"found": recorded, "missing": missing_here(name)}

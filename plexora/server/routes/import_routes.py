@@ -176,20 +176,30 @@ def import_inspect():
 @app.route('/import/sample', methods=['POST'])
 @_json_errors
 def import_sample_route():
-    """Register the sample these paths make, and say where to open it."""
+    """Register the sample these paths make, and say where to open it.
+
+    `location`, optional: the id of one of the user's own locations
+    (`/settings/locations`) to write the sample's record in, instead of where
+    new projects go by default."""
     from plexora.server.models import import_sample as importer
+    from plexora.server.models import library
 
     payload = request.get_json(silent=True) or {}
     try:
-        result = importer.import_sample(
-            _picked(payload), answers=payload.get('answers') or {},
-            name=(payload.get('name') or '').strip() or None,
-            dataset=payload.get('dataset'),
-            node=(payload.get('node') or '').strip() or None,
-            replace=(payload.get('replace') or '').strip() or None,
-            index=int(payload.get('index') or 0),
-            key=(payload.get('key') or '').strip() or None,
-            token=(payload.get('token') or '').strip() or None)
+        saving_to = library.root_for_new_projects(payload.get('location'))
+    except library.LocationError as exc:
+        return jsonify(error=str(exc)), exc.status
+    try:
+        with paths.new_projects_in(saving_to):
+            result = importer.import_sample(
+                _picked(payload), answers=payload.get('answers') or {},
+                name=(payload.get('name') or '').strip() or None,
+                dataset=payload.get('dataset'),
+                node=(payload.get('node') or '').strip() or None,
+                replace=(payload.get('replace') or '').strip() or None,
+                index=int(payload.get('index') or 0),
+                key=(payload.get('key') or '').strip() or None,
+                token=(payload.get('token') or '').strip() or None)
     except importer.NameTaken as exc:
         # 409 with a free name rather than renaming silently: somebody who
         # typed a name meant it, and quietly filing their import under

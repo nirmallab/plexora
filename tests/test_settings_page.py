@@ -21,7 +21,10 @@ install chooses one, through the settings file.
 """
 
 import json
+import shutil
+import subprocess
 import time
+from pathlib import Path
 
 import pytest
 
@@ -409,3 +412,124 @@ def test_write_probes_are_not_carried_into_the_new_root(client, settings_root, t
     assert wait_for_job()["status"] == "done"
 
     assert not list(target.glob(f"{paths._PROBE_PREFIX}*"))
+
+
+# -- Locations (settingsPage.js LocationsSection, WebLocations) -------------
+#
+# What each row of Settings > Data's locations offers, and what a press
+# sends, run in node against the shipped settingsPage.js
+# (tests/js/settings_locations_probe.mjs). The routes themselves are
+# tests/test_settings_locations.py's.
+
+REPO_ROOT = Path(__file__).resolve().parent.parent
+LOCATIONS_PROBE = REPO_ROOT / "tests" / "js" / "settings_locations_probe.mjs"
+
+#: Every line the probe prints, so a check that is deleted or renamed fails
+#: here rather than silently reducing what is covered.
+LOCATION_CHECKS = (
+    'each location is a row',
+    'a row carries its path, its kind and its project count',
+    'a workspace row shows the folder picked, not its projects folder',
+    'the default location is marked, and only it',
+    'the head names where new projects are saved',
+    'a location not mounted says so, and is not counted',
+    'the default row offers no Make default',
+    'Make default is greyed, with the reason, for the older nested folder',
+    'for a shared folder',
+    'and for a folder that is not there',
+    'and is offered plainly for a writable folder of your own',
+    'Remove is offered for added workspaces only',
+    'Tidy up is offered for the older nested folder only',
+    'and is greyed while Documents/Plexora holds projects',
+    'pressing a greyed offer says why, in the card, and sends nothing',
+    "Make default posts that location's id",
+    'and the answer is drawn: the new default marked, the head moved',
+    'and says so in a sentence',
+    'a refusal is shown as the route wrote it, under the list',
+    'Remove sends a DELETE for that location and says nothing in it changed',
+    'with nothing in Documents/Plexora yet, Tidy up is offered',
+    'Tidy up asks first, naming each folder that moves and where to',
+    "with the dialog's X as its only way out",
+    'and dismissed, it sends nothing',
+    "confirmed, Tidy up posts the older folder's id",
+    'and says what moved where',
+    'Add an existing Plexora workspace opens the field',
+    'a refused folder is said under the field, as the route wrote it',
+    'Enter adds the typed folder, and the answer says what was found',
+    'with PLEXORA_LIBRARY_PATH set the card says so',
+    'and nothing can be added, removed or tidied up',
+    'while where new projects go can still be chosen',
+    "the website's default folder is the first row, marked default, with its count",
+    'an added folder Python has mounted shows its count',
+    'a folder the browser has not allowed this visit offers Reconnect',
+    'the default folder offers neither Make default nor Remove',
+    'Add a folder… and Set up again are offered',
+    'Make default asks the store, with no reload, then remounts the folders',
+    'Remove forgets the folder, then remounts, and says nothing in it changed',
+    'Set up again opens the onboarding',
+    "Add a folder… goes straight to the store's folder dialog",
+    'with this browser as the default, its row says so and offers a folder',
+    "and Make default brings this browser's projects along into that folder",
+    'a default folder not opened this visit says so',
+    'and reconnects in place, with no reload',
+    "a store's refusal is shown in plain words",
+)
+
+
+@pytest.fixture(scope="module")
+def locations_probe():
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("node is not installed")
+    return subprocess.run([node, str(LOCATIONS_PROBE)], capture_output=True, text=True,
+                          cwd=REPO_ROOT, timeout=60)
+
+
+def test_the_locations_probe_passes(locations_probe):
+    assert locations_probe.returncode == 0, f"{locations_probe.stdout}\n{locations_probe.stderr}"
+
+
+@pytest.mark.parametrize("line", LOCATION_CHECKS)
+def test_each_locations_check_ran(locations_probe, line):
+    assert f"ok  {line}" in locations_probe.stdout
+
+
+def test_no_locations_check_was_quietly_dropped(locations_probe):
+    assert f"{len(LOCATION_CHECKS)} checks passed" in locations_probe.stdout
+
+
+def test_the_desktop_data_panel_lists_locations_above_the_data_directory(client):
+    """The wider question first: the data directory is one of the locations.
+    Shared directories are rows of the list now, not a card of their own."""
+    body = client.get("/settings").get_data(as_text=True)
+    assert 'id="settings_locations"' in body
+    assert body.index('id="settings_locations"') < body.index('id="settings_data_current"')
+    for element_id in ("settings_locations_list", "settings_location_open", "settings_location_form",
+                       "settings_location_path", "settings_location_add", "settings_location_error"):
+        assert f'id="{element_id}"' in body, element_id
+    assert "Add an existing Plexora workspace" in body
+    assert 'id="settings_shared_card"' not in body
+
+
+def test_the_website_data_panel_draws_its_folders_as_locations(client, monkeypatch):
+    """The website's "Kept in" card is its default location's row now, with
+    Add a folder and Set up again; the desktop's list is not drawn there."""
+    monkeypatch.setenv("PLEXORA_BACKEND", "browser")
+    body = client.get("/settings").get_data(as_text=True)
+    for element_id in ("settings_web_place", "settings_web_locations", "settings_web_add_folder",
+                       "settings_web_setup_again"):
+        assert f'id="{element_id}"' in body, element_id
+    assert 'id="settings_locations"' not in body
+    for gone in ("settings_web_to_folder", "settings_web_to_browser", "settings_web_place_name"):
+        assert gone not in body, gone
+
+
+def test_the_locations_styles_live_in_main_css():
+    """The project cards carry the location chip too, and the app shell turns
+    a page's own stylesheet off when it leaves: the block is main.css's, and
+    every part the scripts toggle with `hidden` is held to it there."""
+    main = (REPO_ROOT / "plexora" / "client" / "src" / "css" / "main.css").read_text(encoding="utf-8")
+    for selector in (".plx-locations-row", ".plx-locations-default", ".plx-locations-chip",
+                     ".plx-locations-add[hidden]", ".plx-locations-error[hidden]",
+                     ".open-project-location[hidden]"):
+        assert selector in main, selector

@@ -345,6 +345,36 @@ const DB = "lung/lung.db";
     check("no links: the folder's copy is not deleted", Boolean(folder.at(PYRAMID)));
 }
 
+// 4. Two stores in one worker (pythonWorker.js: /data, and a folder added
+// beside it at /library/<id>): each mounts its held files under a folder of
+// its own (`heldRoot`), so the second does not mount over the first's /held/1.
+{
+    const FS = fs();
+    const own = createStore(FS, "/data", () => {});
+    const added = createStore(FS, "/library/a1b2c3", () => {}, { heldRoot: "/held/library-1" });
+    const first = new DirHandle("projects");
+    first.put("config.json", "{}");
+    first.put(PYRAMID, "the first pyramid", HELD_BYTES + 1);
+    const second = new DirHandle("projects");
+    second.put("config.json", "{}");
+    second.put(PYRAMID, "the second pyramid", HELD_BYTES + 1);
+    await own.open(first, { shared: true });
+    let failure = null;
+    try {
+        await added.open(second, { shared: true });
+    } catch (error) {
+        failure = error;
+    }
+    check("two stores link their held files side by side", !failure
+          && isLinkAt(FS, `/data/${PYRAMID}`) && isLinkAt(FS, `/library/a1b2c3/${PYRAMID}`),
+          String(failure && failure.message));
+    check("each reads its own folder's file", !failure
+          && text(FS.readFile(`/data/${PYRAMID}`)) === "the first pyramid"
+          && text(FS.readFile(`/library/a1b2c3/${PYRAMID}`)) === "the second pyramid");
+    check("under a held folder of its own", !failure && FS.readlink(`/library/a1b2c3/${PYRAMID}`).startsWith("/held/library-1/"),
+          String(!failure && FS.readlink(`/library/a1b2c3/${PYRAMID}`)));
+}
+
 const failed = results.filter((r) => !r.ok);
 for (const r of results) console.log(`${r.ok ? "ok  " : "FAIL"} ${r.name}${r.ok || !r.detail ? "" : ` -- ${r.detail}`}`);
 if (failed.length) {

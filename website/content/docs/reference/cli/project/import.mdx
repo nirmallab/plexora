@@ -1,6 +1,6 @@
 ---
 title: "plexora project import"
-description: "Add the project in a .plexora file to this computer's projects."
+description: "Add the projects in a .plexora file to this computer's projects."
 generated: true
 symbol: "cli:plexora project import"
 source:
@@ -12,7 +12,7 @@ source:
 ## Usage
 
 ```bash
-plexora project import [-h] [--name NAME] file
+plexora project import [-h] [--into LOCATION] [--keep-both | --replace] [--name NAME] file
 ```
 
 ## Arguments
@@ -27,10 +27,30 @@ plexora project import [-h] [--name NAME] file
 
 <ParamTable>
 
+<Param name={"--into LOCATION"}>
+
+The location to put them in, by its id (Settings > Data lists them); default: where new projects go.
+
+</Param>
+
+<Param name={"--keep-both"}>
+
+A project already here is imported beside it, under the next free name.
+
+</Param>
+
+<Param name={"--replace"}>
+
+A project already here is replaced; its state is kept in .replaced/.
+
+</Param>
+
 <Param name={"--name NAME"}>
 
-A name for it, if not the one it has.
+A name for it, if not the one it has (a file of one project).
 
 </Param>
 
 </ParamTable>
+
+Only one of `--keep-both`, `--replace` may be given.

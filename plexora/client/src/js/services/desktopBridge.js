@@ -57,6 +57,20 @@
         });
     }
 
+    /**
+     * A native Save dialog that only ASKS: the chosen path, or null when the
+     * user cancelled. For a file the server is about to write (an exported
+     * project), so it is written once, straight there -- never staged and
+     * copied the way `saveBlob` and the download handler must.
+     */
+    function pickSavePath({name = null, title = null, defaultPath = null} = {}) {
+        return invoke("pick_save_path", {
+            name: name || null,
+            title: title || null,
+            defaultPath: defaultPath || null,
+        });
+    }
+
     /** Say where a file went, with the way to it. */
     function announceSaved(path, name) {
         toast({
@@ -135,6 +149,7 @@
         /** The shell's dialogs pick one kind at a time on every platform. */
         browseCapability: () => "kinds",
         pickPaths,
+        pickSavePath,
         saveBlob,
         readFile,
         fileFromPath,
@@ -202,6 +217,11 @@
         "page:settings": "#nav_settings",
         "page:export_png": "#nav_export_image_png",
         "page:export_pdf": "#nav_export_image_pdf",
+        // A project as one `.plexora` file (views/projectImport.js and
+        // projectExport.js bind these rows). Export needs a sample on screen;
+        // on the Samples page, the page claims it for its selection first.
+        "page:import_project": "#nav_import_project",
+        "page:export_project": "#nav_export_project",
         "page:scalebar": "#nav_toggle_scalebar",
         "page:check_updates": "#nav_check_updates",
         "page:shortcuts": "#nav_shortcuts",
@@ -339,6 +359,13 @@
                 body: JSON.stringify({paths}),
             });
             const result = await response.json();
+            // A `.plexora` is asked about before anything is added: the
+            // Import dialog, in place. Its `url` (the Samples page, which
+            // opens the same dialog) is for a page without it.
+            if (response.ok && result.open === "bundle" && result.path && window.PlexoraProjectImport) {
+                window.PlexoraProjectImport.open({path: result.path});
+                return;
+            }
             if (response.ok && result.url) {
                 navigate(result.url);
                 return;

@@ -111,11 +111,19 @@ def dataset_scan_create(token):
     only = payload.get("only")
     if only is not None and not isinstance(only, list):
         return jsonify(error="`only` is a list of project ids"), 400
+    # `location`, optional: one of the user's own locations' id
+    # (`/settings/locations`), where the new projects' records are written.
+    from plexora.server.models import library
+
+    try:
+        root = library.root_for_new_projects(payload.get("location"))
+    except library.LocationError as error:
+        return jsonify(error=str(error)), error.status
     try:
         found = dataset_build.start_build(
             token, plan, name=payload.get("name"),
             description=payload.get("description") or "",
-            exist_ok=bool(payload.get("exist_ok")), only=only)
+            exist_ok=bool(payload.get("exist_ok")), only=only, root=root)
     except FileExistsError as error:
         return jsonify(error=str(error), taken=True), 409
     except ValueError as error:

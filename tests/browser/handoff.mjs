@@ -3,14 +3,15 @@
 // desktop app keeps there, never over it -- and the desktop app is asked to
 // open the project (`plexora://open?project=`). No desktop app answers in a
 // headless browser, so the download is offered. The folder picker is stood
-// in by a folder of the profile's storage.
+// in by a folder of the profile's storage named Plexora: the folder picked
+// is the workspace itself, with workspace.json, projects and pyramids in it.
 //
 // Where the browser has no folder picker (Firefox, Safari) a page cannot write
 // that folder: the item says so plainly, and the projects stay where they are.
 //
 //   node tests/browser/handoff.mjs --file <flat or pyramidal tif> [--browser firefox|webkit]
 // Prints JSON with `ok`.
-import { appFrame, canWriteFolders, launch, startServer, REPO } from "./lib.mjs";
+import { appFrame, canWriteFolders, launch, seedBrowserStore, startServer, REPO } from "./lib.mjs";
 
 const args = process.argv.slice(2);
 const file = args[args.indexOf("--file") + 1];
@@ -19,16 +20,22 @@ const STUB = () => {
     window.showDirectoryPicker = async () => {
         const root = await navigator.storage.getDirectory();
         const top = await root.getDirectoryHandle("test-folders", { create: true });
-        return top.getDirectoryHandle("Documents", { create: true });
+        const docs = await top.getDirectoryHandle("Documents", { create: true });
+        return docs.getDirectoryHandle("Plexora", { create: true });
     };
     window.showOpenFilePicker = undefined;
 };
 const LIST = async () => {
     const root = await navigator.storage.getDirectory();
-    const projects = await (await (await (await root.getDirectoryHandle("test-folders")).getDirectoryHandle("Documents"))
-        .getDirectoryHandle("Plexora")).getDirectoryHandle("projects");
+    const workspace = await (await (await root.getDirectoryHandle("test-folders")).getDirectoryHandle("Documents"))
+        .getDirectoryHandle("Plexora");
+    const projects = await workspace.getDirectoryHandle("projects");
     const config = JSON.parse(await (await (await projects.getFileHandle("config.json")).getFile()).text());
-    return { names: Object.keys(config).sort(), desktopEntry: config.desktop_one };
+    const marker = JSON.parse(await (await (await workspace.getFileHandle("workspace.json")).getFile()).text());
+    const pyramids = await workspace.getDirectoryHandle("pyramids").then(() => true, () => false);
+    const inner = await workspace.getDirectoryHandle("Plexora").then(() => true, () => false);
+    return { names: Object.keys(config).sort(), desktopEntry: config.desktop_one,
+             workspaceId: marker.id || null, pyramids, inner };
 };
 
 const server = await startServer(["--site", `${REPO}/plexora/client/dist/static`]);
@@ -39,17 +46,10 @@ try {
     const origin = `http://127.0.0.1:${server.port}`;
     out.folders = await canWriteFolders(browser.context, origin);
     if (out.folders) await page.addInitScript(STUB);
+    await seedBrowserStore(browser.context, origin);
     await page.goto(`${origin}/`);
     let frame = await appFrame(page);
     await frame.waitForSelector("#quick_view_go", { timeout: 120000 });
-    // Projects kept in the browser (the first visit's question, or where
-    // there is no folder to choose, its notice).
-    await frame.waitForFunction((label) => {
-        const keep = [...document.querySelectorAll(".plx-confirm .plx-button")]
-            .find((button) => button.textContent.trim() === label);
-        if (keep) keep.click();
-        return Boolean(keep);
-    }, out.folders ? "Keep in browser" : "Not now", { timeout: 8000, polling: 200 });
     // The desktop app already keeps a project in the folder.
     if (out.folders) await page.evaluate(async () => {
         const root = await navigator.storage.getDirectory();
@@ -111,7 +111,8 @@ try {
 out.ok = out.folders
     ? Boolean(out.menuShown && out.storeBefore === "browser" && out.storeAfter.kind === "folder"
               && out.folder.names.includes("desktop_one") && out.folder.names.includes(out.project)
-              && out.folder.desktopEntry.channelFile === "D:/data/one.tif" && out.offered)
+              && out.folder.desktopEntry.channelFile === "D:/data/one.tif" && out.offered
+              && out.folder.workspaceId && out.folder.pyramids && !out.folder.inner)
     : Boolean(out.menuShown && out.storeBefore === "browser" && out.storeAfter.kind === "browser" && out.offered);
 console.log(JSON.stringify(out, null, 1));
 process.exit(out.ok ? 0 : 1);

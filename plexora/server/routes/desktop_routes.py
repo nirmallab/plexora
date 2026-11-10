@@ -76,16 +76,19 @@ def desktop_open():
         if project:
             return jsonify(project=project, url=_with_context(project, payload),
                            existing=True)
-        # A project as one file, from the website or another computer: put in
-        # this app's projects, its images found when it opens.
+        # Projects as one file, from the website or another computer: never
+        # imported blind. The page opens the import dialog on it, which shows
+        # what is in it and what importing would do (New, Update, Changed on
+        # both) before anything is written: `open: "bundle"` says so, and
+        # `url` is the Open Project page with the dialog asked for, for a page
+        # that only follows `url`.
+        from urllib.parse import quote
+
         from plexora.server.models import bundles
 
         if picked[0].lower().endswith(bundles.SUFFIX) and Path(picked[0]).is_file():
-            try:
-                name = bundles.import_bundle(picked[0])
-            except bundles.BundleError as error:
-                return jsonify(error=str(error), url=f"{_base_url()}/open_project"), 400
-            return jsonify(project=name, url=_with_context(name, payload), existing=False)
+            return jsonify(open="bundle", path=picked[0], project=None, existing=False,
+                           url=f"{_base_url()}/open_project?bundle={quote(picked[0], safe='')}")
 
     missing = [entry for entry in picked
                if not entry.startswith('node://') and '://' not in entry
@@ -168,6 +171,11 @@ def desktop_info():
         settings = str(paths.settings_path())
     except Exception:
         settings = ''
+    libraries = paths.library_root_resolutions()
+    # The website's older nested folder, while it is one of the roots: what
+    # Settings > Data offers to tidy up.
+    legacy = next((str(entry.path) for entry in libraries
+                   if entry.rule == paths.RULE_LEGACY_NESTED), None)
     return jsonify(
         desktop=bool(app.config.get('PLEXORA_DESKTOP')),
         version=_version(),
@@ -178,6 +186,11 @@ def desktop_info():
         data_root=str(paths.data_root()),
         settings_path=settings,
         config_path=str(paths.config_path()),
+        # The workspace both apps share on this computer (Documents/Plexora),
+        # every library root besides the data root, and the older nested one.
+        workspace_root=str(paths.workspace_root()),
+        library_roots=[str(entry.path) for entry in libraries],
+        legacy_nested=legacy,
         log_path=os.environ.get('PLEXORA_DESKTOP_LOG') or None,
         plugins=[plugin.name for plugin in plugin_registry.installed(app)],
         tools=_tools(),

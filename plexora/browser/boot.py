@@ -67,6 +67,10 @@ def environment(origin: str, *, base_url: str = "", data_root: str = "/data",
         "PLEXORA_NO_NUMBA": "1",
         "BIOCOGNIA_DIR": licence_dir,
         "BIOCOGNIA_NO_HEARTBEAT": "1",
+        # No library beside /data until the page mounts one (`set_libraries`):
+        # unset, paths would look for Documents/Plexora and the workspaces
+        # added in a settings file inside the worker's own filesystem.
+        "PLEXORA_LIBRARY_PATH": "",
     })
     for name in ("PLEXORA_SHARED_PATH", "PLEXORA_AUTH_TOKEN", "PLEXORA_TRUSTED_HOSTS",
                  "PLEXORA_PLUGINS", "PLEXORA_TELEMETRY", "PLEXORA_TELEMETRY_ENDPOINT",
@@ -79,6 +83,27 @@ def environment(origin: str, *, base_url: str = "", data_root: str = "/data",
         os.environ["PLEXORA_TELEMETRY"] = "off"
     if telemetry.get("dnt"):
         os.environ["DO_NOT_TRACK"] = "1"
+
+
+def set_libraries(paths: list[str]) -> list[str]:
+    """The extra folders the page has mounted, each at /library/<id> and each
+    that folder's `projects/`, named to Python as the user's libraries beside
+    /data (`PLEXORA_LIBRARY_PATH`, which `paths.library_root_resolutions`
+    reads): their projects are listed and opened in place, and a project can
+    be saved into one (`/import/sample`'s `location`). Called again whenever
+    the page mounts or lets go of one; the list it is given replaces the last.
+    Returns the list in force.
+
+    An empty list means no library rather than none named: the variable is
+    set empty, not removed, for the reason `environment` gives."""
+    from plexora import paths as plexora_paths
+
+    named = [str(path) for path in (paths or []) if str(path or "").strip()]
+    os.environ["PLEXORA_LIBRARY_PATH"] = os.pathsep.join(named)
+    # Every cached root, not only the libraries: a project seen in a folder
+    # that has gone must not be served from it.
+    plexora_paths.reset()
+    return named
 
 
 def codecs() -> bool:

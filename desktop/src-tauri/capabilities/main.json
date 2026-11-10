@@ -13,6 +13,7 @@
     "core:app:default",
     "allow-pick-paths",
     "allow-save-bytes",
+    "allow-pick-save-path",
     "allow-read-file",
     "allow-reveal-path",
     "allow-open-in-browser",

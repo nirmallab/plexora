@@ -74,3 +74,45 @@ def test_listed_as_the_users_own(website_project):
 
     project = Project.load("web_slide")
     assert project is not None and not project.is_shared
+
+
+def test_its_id_and_the_websites_own_keys_survive_the_desktop(website_project):
+    """The desktop opening and saving it keeps the id the website knows it by,
+    and keys only the website writes."""
+    image, config_file = website_project
+    from plexora.server.models import data_model
+    from plexora.server.models.project import Project
+
+    config = json.loads(config_file.read_text(encoding="utf-8"))
+    ident = config["web_slide"]["id"]
+    config["web_slide"]["websiteOnlyKey"] = {"kept": True}
+    config_file.write_text(json.dumps(config), encoding="utf-8")
+
+    data_model.load_datasource("web_slide", reload=True)
+    Project.load("web_slide").with_title("Seen on the desktop").save()
+    stored = json.loads(config_file.read_text(encoding="utf-8"))["web_slide"]
+    assert stored["id"] == ident and stored["websiteOnlyKey"] == {"kept": True}
+    assert stored["title"] == "Seen on the desktop"
+
+
+def test_a_desktop_project_keeps_its_id_through_the_websites_python(website_project, monkeypatch):
+    """The other way: the website's Python, with the shared folder as its
+    data root, reads and writes the desktop's record and keeps its id and
+    the keys only the desktop writes."""
+    image, config_file = website_project
+    from plexora.server.models.project import Project
+
+    config = json.loads(config_file.read_text(encoding="utf-8"))
+    config["web_slide"]["desktopOnlyKey"] = [1, 2]
+    config_file.write_text(json.dumps(config), encoding="utf-8")
+    ident = config["web_slide"]["id"]
+    monkeypatch.setenv("PLEXORA_BACKEND", "browser")
+    monkeypatch.setenv("PLEXORA_DATA_PATH", str(config_file.parent))
+    monkeypatch.setenv("PLEXORA_LIBRARY_PATH", "")
+    monkeypatch.setattr(sources, "app_key", lambda: "website")
+    paths.reset()
+    project = Project.load("web_slide")
+    assert project.id == ident and project.home_root == config_file.parent.resolve()
+    project.with_title("Seen on the website").save()
+    stored = json.loads(config_file.read_text(encoding="utf-8"))["web_slide"]
+    assert stored["id"] == ident and stored["desktopOnlyKey"] == [1, 2]

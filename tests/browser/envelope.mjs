@@ -12,7 +12,7 @@ import { execFileSync } from "node:child_process";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { appFrame, launch, PYTHON, REPO, startServer } from "./lib.mjs";
+import { appFrame, launch, PYTHON, REPO, seedBrowserStore, startServer } from "./lib.mjs";
 
 const headed = process.argv.includes("--headed");
 const shot = process.argv.includes("--shot") ? process.argv[process.argv.indexOf("--shot") + 1] : null;
@@ -28,22 +28,6 @@ execFileSync(PYTHON, ["-m", "plexora.client.static_build", "--out", site],
 const server = await startServer(["--site", site]);
 const origin = `http://127.0.0.1:${server.port}`;
 const browser = await launch({ headed });
-
-async function keepInBrowser(frame) {
-    const until = Date.now() + 5000;
-    while (Date.now() < until) {
-        const clicked = await frame.evaluate(() => {
-            const button = [...document.querySelectorAll(".plx-confirm .plx-button")]
-                .find((node) => node.textContent.trim() === "Keep in browser");
-            if (!button) return false;
-            button.click();
-            return true;
-        }).catch(() => false);
-        if (clicked) return true;
-        await new Promise((resolve) => setTimeout(resolve, 200));
-    }
-    return false;
-}
 
 //: The toast on screen in the frame: its words, its buttons, and whether
 //: they sit on one row inside the card.
@@ -83,9 +67,9 @@ try {
     });
     const page = await browser.context.newPage();
     page.on("pageerror", (error) => out.errors.push(`pageerror: ${String(error).slice(0, 300)}`));
+    await seedBrowserStore(browser.context, origin);
     await page.goto(`${origin}/`);
     const frame = await appFrame(page);
-    await keepInBrowser(frame);
     await page.waitForTimeout(300);
     await frame.evaluate(() => { for (const b of document.querySelectorAll(".plx-toast button[aria-label='Dismiss']")) b.click(); });
 

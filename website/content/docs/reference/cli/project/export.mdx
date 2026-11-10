@@ -1,6 +1,6 @@
 ---
 title: "plexora project export"
-description: "Write a project's own work to one .plexora file (never its images)."
+description: "Write projects to one .plexora file: their own work, their tables, bookmarks and figures; their images only when asked."
 generated: true
 symbol: "cli:plexora project export"
 source:
@@ -12,14 +12,18 @@ source:
 ## Usage
 
 ```bash
-plexora project export [-h] [--out FILE] name
+plexora project export [-h] [--dataset DATASET] [--include PARTS] [-o FILE] [NAME ...]
 ```
 
 ## Arguments
 
 <ParamTable>
 
-<Param name={"name"} required />
+<Param name={"NAME"} kind={"repeatable"}>
+
+Projects, by name or id.
+
+</Param>
 
 </ParamTable>
 
@@ -27,7 +31,19 @@ plexora project export [-h] [--out FILE] name
 
 <ParamTable>
 
-<Param name={"--out FILE"}>
+<Param name={"--dataset DATASET"}>
+
+Every project of this dataset (by name or id), with the dataset itself.
+
+</Param>
+
+<Param name={"--include PARTS"}>
+
+Also carry, comma-separated: images (the images, masks and tables the projects read), derived (files Plexora made that save rebuilding them). Tables, captures and figures always go.
+
+</Param>
+
+<Param name={"-o, --out FILE"}>
 
 Where to write it (default: \<name>.plexora here).
 

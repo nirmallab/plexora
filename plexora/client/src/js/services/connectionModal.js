@@ -2144,6 +2144,14 @@ window.PlexoraConnectionModal = (function () {
         }
 
         async function submitRecipe(recipe, boxes, editing) {
+            // The website: a new server is the first thing some people keep,
+            // so where it is kept is asked first (views/webOnboarding.js).
+            // Closed, nothing is saved and the form stays as filled in.
+            const onboarding = window.PlexoraOnboarding;
+            if (!editing && onboarding && webCloud()
+                && await onboarding.ensure({ reason: "remote" }) !== "ready") {
+                return;
+            }
             try {
                 const answer = await saveRecipe(recipe.id, collect(boxes));
                 name = answer.remote.name;

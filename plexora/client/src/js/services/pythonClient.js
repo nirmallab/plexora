@@ -49,6 +49,9 @@
  *   licence(files)          the page's licence written into Python's /bioc
  *   flush()                 the project store written back now
  *   useStore(folder)        the project store moved to a granted folder
+ *   libraries()             the folders kept beside it mounted again (Settings › Data)
+ *   bundleStores() / adopt(paths) / readFile(path)
+ *                           for a `.plexora` file's bytes (services/bundleWeb.js)
  *   job(id) / cancel(id) / on(kind, fn)
  *   unsupported(nav?)       {browser, version} when this browser cannot run the
  *                           website's Python, else null (start() is not to be called)
@@ -868,6 +871,15 @@
         //: (services/browserStore.js).
         flush: () => ready.then(() => call("flush", {})),
         useStore: (folder) => ready.then(() => call("useStore", { folder })),
+        //: The folders kept beside it (PlexoraStore.locations) read again
+        //: and mounted, after one is added, removed or reconnected.
+        libraries: () => ready.then(() => call("libraries", {})),
+        //: A `.plexora` file's bytes, moved by the page's own worker
+        //: (services/bundleWeb.js): the stores' folders, files it wrote there
+        //: made known to Python, and a small file of Python's own.
+        bundleStores: () => ready.then(() => call("bundleStores", {})),
+        adopt: (paths) => ready.then(() => call("adopt", { paths })),
+        readFile: (path) => ready.then(() => call("readFile", { path })).then((answer) => answer.body),
         //: What another app changed in the store, read in now (tests; the
         //: worker also does it between requests).
         pull: () => ready.then(() => call("pull", {})),

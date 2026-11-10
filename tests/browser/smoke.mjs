@@ -21,7 +21,7 @@
 import { writeFileSync } from "node:fs";
 import path from "node:path";
 import { gzipSync } from "node:zlib";
-import { SWIFTSHADER, appFrame, launch, startServer } from "./lib.mjs";
+import { SWIFTSHADER, appFrame, launch, seedBrowserStore, startServer } from "./lib.mjs";
 
 const args = process.argv.slice(2);
 const opt = (name, fallback) => (args.includes(name) ? args[args.indexOf(name) + 1] : fallback);
@@ -92,6 +92,7 @@ try {
 
     // boot
     const opened = Date.now();
+    await seedBrowserStore(browser.context, origin);
     await page.goto(`${origin}/`);
     const frame = await appFrame(page, { timeout });
     const ready = await page.evaluate(() => window.PlexoraPython.ready.then(
@@ -112,14 +113,11 @@ try {
     if (!out.checks.boot.isolated) fail("boot", "the page is not cross-origin isolated");
     if (ready.error) fail("boot", `Python: ${ready.error}`);
     await frame.waitForSelector("#quick_view_go", { timeout });
-    // A browser that can write folders is asked once where projects are
-    // kept (services/shell.js); the smoke keeps them in the browser.
-    const keep = frame.locator(".plx-confirm button", { hasText: "Keep in browser" });
-    out.checks.boot.asked = await keep.waitFor({ state: "visible", timeout: 15000 }).then(async () => {
-        await keep.click();
-        await keep.waitFor({ state: "detached", timeout: 15000 });
-        return true;
-    }, () => false);
+    // Nothing is asked on load: the dialog of views/webOnboarding.js comes up
+    // with the first local image, and the store was chosen before the first
+    // page (seedBrowserStore). `asked` is whether one showed anyway.
+    out.checks.boot.asked = await frame.evaluate(() => Boolean(document.querySelector("dialog.plx-onb[open]")));
+    if (out.checks.boot.asked) fail("boot", "the onboarding showed on load");
     await Promise.all(pending.splice(0));
     countingShell = false;
     shell.files.sort((a, b) => b[1] - a[1]);

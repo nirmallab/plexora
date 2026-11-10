@@ -1,0 +1,108 @@
+---
+title: "Share a project"
+description: "Export a project, several projects or a dataset as one .plexora file, import one someone sent you, and make your own copy of a shared project."
+aliases: ["export project", "import project", ".plexora", "bundle", "send a project", "share", "colleague", "make a copy", "find missing images", "changed on both", "plexora project export", "plexora project import"]
+---
+
+A **`.plexora` file** carries a project, several projects, or a whole dataset from one Plexora to another: one computer to the next, or one person to another. It holds what you did in Plexora (channels, gates, regions, QC, cell tables you edited, bookmarks and the figures made from the projects), and by default it refers to your images instead of copying them. The file is an ordinary ZIP archive.
+
+Exporting and importing work in the desktop app, in Plexora running on a computer or server, and on the website. The website does the work in your browser: nothing is uploaded. Large files in a folder you gave the website access to go straight into that folder and are not held in the page's memory.
+
+## Export
+
+<Steps>
+<Step>
+### Choose what to export
+
+On the **Samples** page, open a sample's **•••** menu and choose **Export…**. To export several, select them and choose **Export…** in the bar that appears. To export a whole dataset, choose **Export dataset…** on its folder. **File › Export Project…** exports the project you have open.
+</Step>
+
+<Step>
+### Choose what goes into the file
+
+The dialog lists each part with its size:
+
+| Part | Included |
+| --- | --- |
+| **Analysis and settings** | Always. Channels, gates, regions, QC and the project's own settings. |
+| **Cell tables made in Plexora** | On by default. Edited copies of cell tables exist only in the project. |
+| **Bookmarks and figures** | On by default. Bookmarks of these samples, and figures made only from them. |
+| **Images, masks and source tables** | Off by default. |
+| **Ready-to-open files** | Off by default. Converted tables and tiled images, which saves rebuilding them on the other computer. |
+
+Images are left out by default because they are usually most of the bytes, and usually somewhere both computers can already see, such as a shared network drive. The file then records each image's name, size and fingerprint, and the other computer finds it again. Turn **Images, masks and source tables** on when the other person cannot reach your files. Each image is marked **This computer**, **Shared drive**, **Data node** or **Missing**, so you can see which would be reachable. An image on a data node is referenced and opens when that node is connected; node addresses and tokens are never put in the file.
+
+Your computer's own records (saved servers, tokens, licence files) are never included, and neither are caches that Plexora rebuilds when the project opens.
+</Step>
+
+<Step>
+### Save the file
+
+Choose where to save it when the desktop app asks. On the website, Chrome and Edge show the browser's Save dialog and write the file where you choose; Firefox and Safari have no such dialog, so the file is downloaded and your browser keeps it in its downloads. The dialog shows the stages (taking a snapshot, packing, checking the file). You can close it while the file is written and a notice appears when it is done; **Cancel** stops the export and removes the half-written file.
+</Step>
+</Steps>
+
+## Import
+
+<Steps>
+<Step>
+### Open the file
+
+Any of these:
+
+- **File › Import Project…**, or **Import Project…** on the Samples page, then choose the file. On the website the file is read where it is on your computer, not uploaded.
+- Drag a `.plexora` file onto the Plexora window.
+- Double-click a `.plexora` file in Finder or File Explorer.
+</Step>
+
+<Step>
+### Read the preview
+
+Plexora reads only the file's list of contents first, and shows each project with what importing it will do:
+
+| Status | Meaning | What happens |
+| --- | --- | --- |
+| **New** | You have no project like it. | It is imported. If its name is taken, it is imported under a new name, shown as **Imported as** the new name. |
+| **Already here** | You have this version already. | It is skipped. |
+| **Update** | The file holds the next version of a project you have, and yours has not changed. | Yours is updated; the previous version is first moved to a backup folder. |
+| **Changed on both** | You and the sender both changed the project. | Choose **Keep both** (the incoming project is added under a new name and yours stays as it is) or **Replace** (yours is moved to a backup folder, then replaced). |
+
+Under each project the dialog says how many of its images were found on this computer and how many are still to find. It also shows where the projects will go: a location from the list in [Settings › Data](/docs/features/projects), with the default first.
+</Step>
+
+<Step>
+### Import, then find missing images
+
+Choose **Import**. Closing the dialog does not stop the import; **Cancel** does, and leaves nothing behind. When it is done, each project has **Open**. Plexora looks for the images in the places they were recorded and on shared drives. For a project whose images were not found, choose **Find missing images…** and pick the folder that holds them; Plexora searches that folder only. On the website the browser's own folder dialog opens. A project whose images are still missing opens as soon as they are found, and Plexora keeps looking when you open it.
+</Step>
+</Steps>
+
+Files made by older versions of Plexora (format 1) still import.
+
+## Make a copy of a shared project
+
+Projects in a folder your lab shares are read-only: you can open them, and the gates and regions you make are saved in your own projects, not in the shared one. To work on one as your own, open its **•••** menu and choose **Make a copy**. The copy is a new project of yours with the original's analysis, tables and bookmarks, saved where new projects go.
+
+## From the command line
+
+Everything above is done in Plexora itself; you never need a terminal for it. If you prefer one, these do the same:
+
+| To | Run |
+| --- | --- |
+| Export a project | `plexora project export NAME -o project.plexora` |
+| Export several projects | `plexora project export NAME1 NAME2` |
+| Export a dataset | `plexora project export --dataset DATASET` |
+| Include the images, or the ready-to-open files | add `--include images` or `--include derived` (comma-separated for both) |
+| Import a file | `plexora project import project.plexora` |
+| Import into another location | `plexora project import project.plexora --into LOCATION` |
+| Keep both versions, or replace yours, when a project changed on both sides | add `--keep-both` or `--replace` |
+
+See [`plexora project export`](/docs/reference/cli/project/export) and [`plexora project import`](/docs/reference/cli/project/import) for every option.
+
+## Related
+
+<Cards>
+<Card title="Projects and data management" href="/docs/features/projects" description="Datasets, workspaces and where Plexora keeps your projects." />
+<Card title="Opening images and datasets" href="/docs/features/opening-data" description="Import a sample, or a whole folder as a dataset." />
+<Card title="plexora project export" href="/docs/reference/cli/project/export" description="Every option for exporting from a terminal." />
+</Cards>

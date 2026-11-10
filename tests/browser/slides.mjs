@@ -16,7 +16,7 @@
 // <input webkitdirectory> for the folder) is taken by hiding them.
 import { statSync } from "node:fs";
 import path from "node:path";
-import { REPO, appFrame, launch, startServer } from "./lib.mjs";
+import { REPO, appFrame, launch, seedBrowserStore, startServer } from "./lib.mjs";
 
 const args = process.argv.slice(2);
 const opt = (name, fallback) => (args.includes(name) ? args[args.indexOf(name) + 1] : fallback);
@@ -32,16 +32,10 @@ const browser = await launch({ headed: args.includes("--headed") });
 const out = { slides: {} };
 
 async function home(page) {
+    await seedBrowserStore(browser.context, `http://127.0.0.1:${server.port}`);
     await page.goto(`http://127.0.0.1:${server.port}/`);
     const frame = await appFrame(page);
     await frame.waitForSelector("#quick_view_go", { timeout: 120000 });
-    await frame.waitForFunction(() => {
-        const keep = [...document.querySelectorAll(".plx-confirm .plx-button")]
-            .find((button) => button.textContent.trim() === "Keep in browser");
-        if (!keep) return false;
-        keep.click();
-        return true;
-    }, null, { timeout: 5000, polling: 200 }).catch(() => null);
     await page.evaluate(() => { window.showOpenFilePicker = undefined; window.showDirectoryPicker = undefined; });
     return frame;
 }

@@ -2,6 +2,7 @@
 // reload (same tab), against a site URL. Prints one JSON line per run.
 //   node bench_startup.mjs --url https://viewer.plexoraapp.com --profile DIR --runs 2
 import { chromium, CHROME, PY, REPO, PYTHONPATH } from "./benchlib.mjs";
+import { seedBrowserStore } from "../../tests/browser/lib.mjs";
 import { mkdtempSync, rmSync, existsSync, mkdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -89,12 +90,10 @@ for (let i = 0; i < runs; i += 1) {
     let page = await ctx.newPage();
     await page.addInitScript(INIT);
     await page.setViewportSize({ width: 1440, height: 900 });
+    // The storage choice made first (a throwaway page of the site), so no onboarding is asked;
+    // the cold visit is still the first of the site's own pages.
+    await seedBrowserStore(ctx, new URL(url).origin);
     await measure(page, `cold#${i}`, () => page.goto(url));
-    // keep the first visit's dialogs out: answer "Keep in browser" if asked
-    try {
-        const frame = await (await page.$("#plexora-app")).contentFrame();
-        await frame.waitForFunction(() => { const b = [...document.querySelectorAll(".plx-confirm .plx-button")].find((x) => ["Keep in browser", "Keep them", "Not now"].includes(x.textContent.trim())); if (b) { b.click(); return true; } return false; }, null, { timeout: 8000, polling: 200 }).catch(() => null);
-    } catch {}
     await page.waitForTimeout(6000); // let the home page be kept for the next visit (keepHome waits 5 s)
     // reload (same tab)
     await measure(page, `reload#${i}`, () => page.reload());

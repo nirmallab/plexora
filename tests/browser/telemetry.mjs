@@ -15,7 +15,7 @@ import { execFileSync, spawn } from "node:child_process";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { appFrame, launch, PYTHON, REPO, startServer } from "./lib.mjs";
+import { appFrame, launch, PYTHON, REPO, seedBrowserStore, startServer } from "./lib.mjs";
 
 const headed = process.argv.includes("--headed");
 
@@ -50,22 +50,6 @@ execFileSync(PYTHON, ["-m", "plexora.client.static_build", "--out", site, "--tel
 const server = await startServer(["--site", site]);
 const origin = `http://127.0.0.1:${server.port}`;
 
-async function keepInBrowser(frame) {
-    const until = Date.now() + 5000;
-    while (Date.now() < until) {
-        const clicked = await frame.evaluate(() => {
-            const button = [...document.querySelectorAll(".plx-confirm .plx-button")]
-                .find((node) => node.textContent.trim() === "Keep in browser");
-            if (!button) return false;
-            button.click();
-            return true;
-        }).catch(() => false);
-        if (clicked) return true;
-        await new Promise((resolve) => setTimeout(resolve, 200));
-    }
-    return false;
-}
-
 //: The boot's telemetry answer, from the host page.
 const booted = (page) => page.evaluate(async () => (await window.PlexoraPython.ready).info.telemetry || null);
 //: Settings' "Send now": one upload of everything queued, open hour included.
@@ -97,9 +81,9 @@ let other = null;
 try {
     const page = await browser.context.newPage();
     page.on("pageerror", (error) => out.errors.push(`pageerror: ${String(error).slice(0, 300)}`));
+    await seedBrowserStore(browser.context, origin);
     await page.goto(`${origin}/?pydebug`);
     let frame = await appFrame(page);
-    out.firstVisitAsked = await keepInBrowser(frame);
     const first = await booted(page);
     check("a build naming the service starts telemetry, in the default mode, keeping the queue",
           first && first.enabled === true && first.mode === "anonymous" && first.source === "default"
@@ -154,10 +138,10 @@ try {
     await other.context.addInitScript(() => {
         Object.defineProperty(Navigator.prototype, "globalPrivacyControl", { get: () => true, configurable: true });
     });
+    await seedBrowserStore(other.context, origin);
     const quiet = await other.context.newPage();
     await quiet.goto(`${origin}/?pydebug`);
     const quietFrame = await appFrame(quiet);
-    await keepInBrowser(quietFrame);
     const declined = await booted(quiet);
     const before = (await requests()).length;
     const quietSend = await sendNow(quietFrame);

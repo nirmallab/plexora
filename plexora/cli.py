@@ -992,14 +992,30 @@ def _build_project_parser():
     show.add_argument("--json", action="store_true")
 
     export = subs.add_parser(
-        "export", help="Write a project's own work to one .plexora file (never its images).")
-    export.add_argument("name")
-    export.add_argument("--out", metavar="FILE", help="Where to write it (default: <name>.plexora here).")
+        "export", help="Write projects to one .plexora file: their own work, their tables, "
+                       "bookmarks and figures; their images only when asked.")
+    export.add_argument("names", nargs="*", metavar="NAME", help="Projects, by name or id.")
+    export.add_argument("--dataset", help="Every project of this dataset (by name or id), "
+                                          "with the dataset itself.")
+    export.add_argument("--include", default="", metavar="PARTS",
+                        help="Also carry, comma-separated: images (the images, masks and tables the "
+                             "projects read), derived (files Plexora made that save rebuilding them). "
+                             "Tables, captures and figures always go.")
+    export.add_argument("-o", "--out", metavar="FILE",
+                        help="Where to write it (default: <name>.plexora here).")
 
     bring = subs.add_parser(
-        "import", help="Add the project in a .plexora file to this computer's projects.")
+        "import", help="Add the projects in a .plexora file to this computer's projects.")
     bring.add_argument("file")
-    bring.add_argument("--name", help="A name for it, if not the one it has.")
+    bring.add_argument("--into", metavar="LOCATION",
+                       help="The location to put them in, by its id (Settings > Data lists them); "
+                            "default: where new projects go.")
+    how = bring.add_mutually_exclusive_group()
+    how.add_argument("--keep-both", action="store_true",
+                     help="A project already here is imported beside it, under the next free name.")
+    how.add_argument("--replace", action="store_true",
+                     help="A project already here is replaced; its state is kept in .replaced/.")
+    bring.add_argument("--name", help="A name for it, if not the one it has (a file of one project).")
 
     settings = subs.add_parser(
         "set", help="Answer a question about a registered project.")
@@ -2682,15 +2698,38 @@ def _run_project(args):
         if command == "export":
             from plexora.server.models import bundles
 
-            out = Path(args.out or f"{args.name}{bundles.SUFFIX}")
-            out.write_bytes(bundles.export(args.name))
-            print(out)
+            include = {"tables": True, "captures": True, "figures": True, "images": False, "derived": False}
+            for part in filter(None, (item.strip().lower() for item in args.include.split(","))):
+                if part not in include:
+                    print(f"Unknown part to include: {part}. Choose from images, derived.")
+                    return 2
+                include[part] = True
+            names = bundles.resolve_projects(args.names, dataset=args.dataset)
+            default = bundles.file_name(names, args.dataset)
+            out = Path(args.out or default)
+            if out.is_dir():
+                out = out / default
+            result = bundles.export(names, out, include=include, dataset=None)
+            print(result["path"])
+            for item in result["manifest"]["left_out"]:
+                print(f"  left out: {item['path']} ({item['why']})")
             return 0
 
         if command == "import":
             from plexora.server.models import bundles
 
-            print(bundles.import_bundle(args.file, name=args.name))
+            if args.name:
+                print(bundles.import_bundle(args.file, name=args.name, into=args.into))
+                return _said_where(args, mutating=True)
+            manifest = bundles.read_manifest(args.file)
+            force = "keep_both" if args.keep_both else "replace" if args.replace else None
+            choices = {project["id"]: force for project in manifest.get("projects") or ()} if force else None
+            result = bundles.apply(args.file, choices, args.into)
+            for item in result["projects"]:
+                refs = item.get("refs") or {}
+                missing = f", {refs['missing']} image(s) to find" if refs.get("missing") else ""
+                where = f" (previous state kept in {item['backup']})" if item.get("backup") else ""
+                print(f"{item['target']}: {item['action'].replace('_', ' ')}{missing}{where}")
             return _said_where(args, mutating=True)
 
         if command == "show":
@@ -3334,6 +3373,18 @@ def _run_desktop(args):
     except paths.DataRootError as exc:
         print(exc, file=sys.stderr)
         return 2
+
+    # Documents/Plexora as the workspace both apps share, the first time this
+    # account runs the desktop app on its own computer (paths.ensure_workspace
+    # decides which accounts that is, and does nothing for the rest). Said
+    # once, when something was made; a folder that cannot be written is
+    # never a reason not to start.
+    try:
+        workspace = paths.ensure_workspace()
+    except Exception:  # noqa: BLE001 -- see above
+        workspace = None
+    if workspace is not None and workspace.rule != paths.WORKSPACE_FOUND:
+        startup_notices.append(f"Plexora workspace ({workspace.rule}): {workspace.path}")
 
     # Before the announce, so the shell's splash screen covers the slow part
     # rather than the first page view -- see data_model.prime_hot_code.

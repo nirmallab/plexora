@@ -28,7 +28,7 @@ import { execFileSync, spawn } from "node:child_process";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { PYTHON, REPO, appFrame, launch, startServer } from "./lib.mjs";
+import { PYTHON, REPO, appFrame, launch, seedBrowserStore, startServer } from "./lib.mjs";
 
 const args = process.argv.slice(2);
 const headed = args.includes("--headed");
@@ -76,22 +76,6 @@ const server = await startServer(["--site", site]);
 const browser = await launch({ headed });
 const origin = `http://127.0.0.1:${server.port}`;
 
-async function keepInBrowser(frame) {
-    const until = Date.now() + 5000;
-    while (Date.now() < until) {
-        const clicked = await frame.evaluate(() => {
-            const button = [...document.querySelectorAll(".plx-confirm .plx-button")]
-                .find((node) => node.textContent.trim() === "Keep in browser");
-            if (!button) return false;
-            button.click();
-            return true;
-        }).catch(() => false);
-        if (clicked) return true;
-        await new Promise((resolve) => setTimeout(resolve, 200));
-    }
-    return false;
-}
-
 const DIALOG = "dialog.connect-modal[open]";
 //: The trigger of the dialog's dropdown whose label is `label`.
 const fieldTrigger = (label) => `${DIALOG} .connect-field:has(.connect-field-label:text-is("${label}")) .connect-select-button`;
@@ -113,9 +97,9 @@ try {
         popups.push(opened);
         opened.on("console", (message) => popupSaid.push(message.text().slice(0, 200)));
     });
+    await seedBrowserStore(browser.context, origin);
     await page.goto(`${origin}/settings?pydebug#remotes`);
     const frame = await appFrame(page);
-    out.firstVisitAsked = await keepInBrowser(frame);
     // The worker's Python calls the stand-in instead of googleapis.com.
     await page.evaluate((base) => window.PlexoraPython.run(
         `import os\nos.environ["PLEXORA_GOOGLE_API"] = ${JSON.stringify(base)}\n"ok"`), google);
