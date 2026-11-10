@@ -10,7 +10,7 @@ from plexora.server.utils import safe_pickle
 from plexora.server.utils import image_pyramid
 from plexora.server.utils import segmentation_pyramid
 from plexora.server.models.adapters import MetadataColumn, get_adapter
-from plexora.server.models import consistency, database_model, centroid_tiles
+from plexora.server.models import consistency, database_model, centroid_tiles, mixture_fit
 from plexora.server.models.project import (
     IMAGE_TYPE_BRIGHTFIELD, Project, config_transaction, read_config,
     write_config,
@@ -2255,7 +2255,12 @@ _PAGE_WINDOW_LOOK_MS = 100
 _PAGE_WINDOW_REQUEST_LOOK_MS = 100
 
 
-def _warm_on_page(datasource_name, generation, plan, at):
+#: How often a warm-up step whose fit a helper Python is making comes back
+#: for it (`_warm_on_page`): a question to the page each time, nothing more.
+_FIT_LOOK_AGAIN_S = 0.1
+
+
+def _warm_on_page(datasource_name, generation, plan, at, waiting=None):
     """The website's warm-up (`_warm_datasource_caches`): `plan[at]`, then
     itself queued again for the rest -- one short background task at a time,
     each run only once requests have been quiet (plexora/browser/
@@ -2267,12 +2272,23 @@ def _warm_on_page(datasource_name, generation, plan, at):
     `windowOf`, the next channel's queued behind it). Waiting is what held
     the worker for 7-9 s a channel on a 40-channel slide, every request of
     the page behind it, for minutes after the project opened. Stops when
-    the project is unloaded or loaded again (a new load starts its own)."""
+    the project is unloaded or loaded again (a new load starts its own).
+
+    A fit is made by one of the page's helper Pythons when it has one
+    (`fits_elsewhere`; services/fitHelpers.js): the step hands it over and
+    comes back every `_FIT_LOOK_AGAIN_S` (`waiting`: the fit's key), asking
+    only whether it is back until it is. One fit at a time, so a helper is
+    left for the fits someone is waiting on."""
     from plexora.server.providers import browser as page
 
     if at >= len(plan) or generation != load_generation or not is_loaded(datasource_name):
         return
     step, fullname = plan[at]
+    if waiting is not None and not page.page_fit_done(waiting):
+        _work.spawn(_warm_on_page, datasource_name, generation, plan, at, waiting,
+                    background=True, after_s=_FIT_LOOK_AGAIN_S, name=f"warm-fit-wait-{fullname}")
+        return
+    fits = step is _fit_ahead or step is get_channel_gmm
     try:
         if step is not _fit_ahead:
             upcoming = [name for kind, name in plan[at + 1:] if kind is get_image_channel_stats][:1]
@@ -2282,7 +2298,12 @@ def _warm_on_page(datasource_name, generation, plan, at):
                 _work.spawn(_warm_on_page, datasource_name, generation, plan, at, background=True,
                             name=f"warm-window-{fullname}")
                 return
-        step(fullname, datasource_name)
+        with fits_elsewhere(page.page_fit if fits and page.page_fits_ready() else None):
+            step(fullname, datasource_name)
+    except page.FitPending as pending:
+        _work.spawn(_warm_on_page, datasource_name, generation, plan, at, str(pending),
+                    background=True, after_s=_FIT_LOOK_AGAIN_S, name=f"warm-fit-wait-{fullname}")
+        return
     except UnknownChannelError:
         pass
     except providers.ResourceUnavailable as exc:
@@ -3779,8 +3800,39 @@ def gmm_log_window(image_data, mean1, std1, top):
     return {"window": [black, black + float(white_gap)], "cofactor": float(cofactor)}
 
 
-#: The mixture fit's k-means start (`channel_gmm_of`).
-_FIT_SEED = 0
+#: The mixture fit's k-means start (mixture_fit.py, `channel_gmm_of`).
+_FIT_SEED = mixture_fit.FIT_SEED
+#: Who makes a mixture fit other than this thread, for the call in hand
+#: (`fits_elsewhere`): `fit(values, components)` -> the floats `mixture_fit`
+#: makes, None to fit here after all, or `providers.browser.FitPending` to be
+#: asked again later. Unset everywhere but the website's fit routes.
+_FIT_ELSEWHERE = contextvars.ContextVar("plexora_fit_elsewhere", default=None)
+
+
+@contextlib.contextmanager
+def fits_elsewhere(fit):
+    """Within this block, a mixture fit (`fitted`: a channel's contrast fit,
+    the gating plugin's auto gate) is `fit`'s to make (`_FIT_ELSEWHERE`): the
+    website's fit routes hand it to a helper Python (providers/browser.py
+    `page_fit`), so the one Python thread there never spends seconds on a fit
+    while a click waits behind it. `fit` None: made here, as everywhere."""
+    token = _FIT_ELSEWHERE.set(fit)
+    try:
+        yield
+    finally:
+        _FIT_ELSEWHERE.reset(token)
+
+
+def fitted(values, components=3):
+    """`mixture_fit.fit_mixture(values, components)`, made elsewhere when this
+    call may (`fits_elsewhere`) and it can be had there; `plexora.api.fit_mixture`
+    for plugins."""
+    elsewhere = _FIT_ELSEWHERE.get()
+    if elsewhere is not None:
+        params = elsewhere(values, components)
+        if params is not None:
+            return params
+    return mixture_fit.fit_mixture(values, components)
 #: What a stored fit (`_stored_fit`) was made by. Bumped whenever
 #: `channel_gmm_of` or `gmm_log_window` would return something else for the
 #: same plane and window, so a fit stored by an earlier version is a miss.
@@ -3872,7 +3924,6 @@ def channel_gmm_of(image_data, qmin, qmax):
     """
     # Here rather than at module level (see the imports at the top).
     from scipy.stats import norm
-    from sklearn.mixture import GaussianMixture
 
     packet_gmm = {}
 
@@ -3902,21 +3953,17 @@ def channel_gmm_of(image_data, qmin, qmax):
     # rounded one stack's DNA to 268 and 267. In float64 both take the same
     # 120 iterations to the same 266.39.
     img_log = np.log(nonzero.astype(np.float64, copy=False))
-    # Seeded: unseeded, k-means' random start put the same channel's window
-    # in one of two places from one fit to the next (a stack's DNA at 267 or
-    # 1593 one time in ten), so the website and the desktop -- or one app
-    # twice -- opened the same image at different levels.
-    gmm = GaussianMixture(3, max_iter=1000, tol=1e-6, random_state=_FIT_SEED)
-    gmm.fit(img_log.reshape((-1, 1)))
+    # The fit itself (seeded: see mixture_fit.FIT_SEED) -- on the website
+    # perhaps in a helper Python (`fits_elsewhere`), the same file there.
+    means, covars, weights = mixture_fit.mixture_parts(fitted(img_log))
 
-    means = gmm.means_[:, 0]
     i0, i1, i2 = np.argsort(means)
     mean1, mean2 = means[[i1, i2]]
-    std1, std2 = gmm.covariances_[[i1, i2], 0, 0] ** 0.5
+    std1, std2 = covars[[i1, i2]] ** 0.5
 
     x = np.linspace(mean1, mean2, 50)
-    y1 = norm(mean1, std1).pdf(x) * gmm.weights_[i1]
-    y2 = norm(mean2, std2).pdf(x) * gmm.weights_[i2]
+    y1 = norm(mean1, std1).pdf(x) * weights[i1]
+    y2 = norm(mean2, std2).pdf(x) * weights[i2]
 
     lmax = mean2 + 2 * std2
     lmin = x[np.argmin(np.abs(y1 - y2))]
@@ -3940,8 +3987,6 @@ def channel_gmm_of(image_data, qmin, qmax):
     [hist, bin_edges] = np.histogram(img_log.flatten(), bins=50, density=True)
     midpoints = (bin_edges[1:] + bin_edges[:-1]) / 2
 
-    covars = gmm.covariances_[:, 0, 0]
-    weights = gmm.weights_
     pdf_gmm1 = weights[i0] * norm.pdf(midpoints, means[i0], np.sqrt(covars[i0]))
     pdf_gmm2 = weights[i1] * norm.pdf(midpoints, means[i1], np.sqrt(covars[i1]))
     pdf_gmm3 = weights[i2] * norm.pdf(midpoints, means[i2], np.sqrt(covars[i2]))

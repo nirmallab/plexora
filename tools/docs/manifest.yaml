@@ -149,6 +149,14 @@ sections:
         symbols:
           - plexora.api.table_operation
           - plexora.api.table_stream
+      - key: fits
+        title: Mixture fits
+        description: Fit a Gaussian mixture as Plexora does, and on the website let a route's fits be made by the page's helper Pythons.
+        symbols:
+          - plexora.api.fit_mixture
+          - plexora.api.page_fits
+          - plexora.api.ask_again
+          - plexora.api.AskAgain
       - key: drops
         title: Dropped files
         description: Recognise a file kind of the plugin's own when it is dropped on the desktop app's window.
@@ -328,6 +336,13 @@ symbols:
     related: [plexora.api.project_data, plexora.api.ImageHandle, plexora.api.TableHandle, plexora.api.SegHandle]
     exclude_members:
       cached: Internal memo used by the handles; plugins should not depend on it.
+  plexora.api.AskAgain:
+    slug: ask-again-class
+    related: [plexora.api.ask_again, plexora.api.page_fits]
+  plexora.api.ask_again:
+    related: [plexora.api.AskAgain, plexora.api.page_fits]
+  plexora.api.page_fits:
+    related: [plexora.api.fit_mixture, plexora.api.ask_again]
   plexora.api.store:
     related: [plexora.api.PluginStore]
     guides: [/docs/plugins/build-a-plugin]

@@ -82,7 +82,13 @@ def get_gating_gmm():
     channel = post_data['channel']
     datasource = post_data['datasource']
     selection_ids = post_data['selection_ids']
-    resp = gating_model.get_gating_gmm(channel, datasource, selection_ids)
+    # On the website a marker's fit (a second or several over every cell) is
+    # made by a helper Python while this request is asked again (api.page_fits).
+    try:
+        with api.page_fits():
+            resp = gating_model.get_gating_gmm(channel, datasource, selection_ids)
+    except api.AskAgain as exc:
+        return api.ask_again(exc)
     return api.json_response(resp)
 
 

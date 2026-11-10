@@ -60,6 +60,7 @@ from plexora.server.providers.base import (
     ResourceUnavailable,
 )
 from plexora.server.providers.operations import table_operation, table_stream
+from plexora.server.providers.browser import WindowPending as AskAgain
 
 #: Multiplexed panels routinely re-stain the same marker across cycles, so
 #: duplicate names are ordinary rather than exceptional. Suffixes them the way
@@ -196,7 +197,69 @@ def sample(project) -> dict:
     }
 
 
+def fit_mixture(values, components=3):
+    """Fit a Gaussian mixture to one column of values, as Plexora fits it.
+
+    `components` Gaussians over `values` (1-D), seeded, in the values' own
+    floating type. Within `page_fits()` on the website the fit may be made by
+    one of the page's helper Pythons -- the same code and build, so the same
+    numbers -- and `AskAgain` is raised while it is being made.
+
+    Args:
+        values (numpy.ndarray): The values, 1-D.
+        components (int, optional): How many Gaussians. Defaults to 3.
+
+    Returns:
+        numpy.ndarray: The means, then the variances, then the weights, each of
+        `components`, in the order the fit found them.
+    """
+    from plexora.server.models import data_model
+
+    return data_model.fitted(values, components)
+
+
+def page_fits():
+    """A `with` block in which a route's mixture fits (`fit_mixture`) are made
+    by the website's helper Pythons, when the page has one and the request can
+    be asked again; anywhere else the block changes nothing.
+
+    A fit handed to a helper raises `AskAgain`; the route answers it with
+    `ask_again(exc)`, and the website's worker asks the same request again a
+    moment later, the one Python thread free meanwhile.
+
+    Example:
+        ```python
+        from plexora import api
+
+        try:
+            with api.page_fits():
+                answer = compute_the_fit()
+        except api.AskAgain as exc:
+            return api.ask_again(exc)
+        ```
+    """
+    from plexora.server.routes import data_routes
+
+    return data_routes.page_fits()
+
+
+def ask_again(pending):
+    """The answer to a request that is to be asked again (`AskAgain`): on the
+    website the worker puts it back in its queue for `pending.retry_ms`.
+
+    Args:
+        pending (AskAgain): What was raised.
+
+    Returns:
+        flask.Response: A 503 saying when to ask again.
+    """
+    from plexora.server.routes import data_routes
+
+    return data_routes._retry_later(pending)
+
+
 __all__ = [
+    "AskAgain",
     "Dataset",
     "DatasetSchema",
     "ImageHandle",
@@ -215,8 +278,10 @@ __all__ = [
     "SegHandle",
     "TableHandle",
     "TableSource",
+    "ask_again",
     "dataset",
     "deduplicate_names",
+    "fit_mixture",
     "json_response",
     "layer",
     "layer_requirement",
@@ -224,6 +289,7 @@ __all__ = [
     "manifest",
     "normalize_shortcut",
     "notify_viewers",
+    "page_fits",
     "project_data",
     "register_drop_sniffer",
     "requirement",

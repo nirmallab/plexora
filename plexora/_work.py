@@ -58,13 +58,16 @@ class Task:
     """Queued work standing in for a `threading.Thread`: `join`, `is_alive`,
     `name` and `daemon` mean what they mean there."""
 
-    def __init__(self, target, args=(), kwargs=None, name=None, daemon=True, background=False):
+    def __init__(self, target, args=(), kwargs=None, name=None, daemon=True, background=False,
+                 due=0.0):
         self._target = target
         self._args = tuple(args)
         self._kwargs = dict(kwargs or {})
         self.name = name or getattr(target, "__name__", "task")
         self.daemon = daemon
         self.background = background
+        #: Not run before this `time.monotonic()` (`spawn(after_s=...)`).
+        self.due = due
         self.state = "queued"
 
     def run(self):
@@ -107,23 +110,48 @@ _queue_lock = threading.Lock()
 _depth = 0
 
 
-def spawn(target, *args, name=None, daemon=True, background=False, **kwargs):
+def spawn(target, *args, name=None, daemon=True, background=False, after_s=0.0, **kwargs):
     """Start `target(*args, **kwargs)` in the background and return its handle:
     a started `threading.Thread`, or a queued `Task`.
 
     `background` marks work nobody is waiting for (a cache warmed ahead of
     being asked): queued, it runs only when the runner says requests have been
     quiet (`run_pending(background=...)`), so a page that is opening is not
-    held behind it. On threads it is an ordinary thread."""
+    held behind it. On threads it is an ordinary thread.
+
+    `after_s`: queued, not run before that many seconds from now -- a task
+    coming back for something made elsewhere meanwhile (a fit in the website's
+    helper Python) without asking again and again. On threads the thread waits
+    that long first."""
     if threaded():
+        if after_s > 0:
+            body, args, kwargs = target, args, kwargs
+
+            def target(*a, **k):  # noqa: F811 -- the same work, a moment later
+                time.sleep(after_s)
+                return body(*a, **k)
         thread = threading.Thread(target=target, args=args, kwargs=kwargs,
                                   name=name, daemon=daemon)
         thread.start()
         return thread
-    task = Task(target, args, kwargs, name=name, daemon=daemon, background=background)
+    task = Task(target, args, kwargs, name=name, daemon=daemon, background=background,
+                due=time.monotonic() + after_s if after_s > 0 else 0.0)
     with _queue_lock:
         _queue.append(task)
     return task
+
+
+def due_in(background: bool | None = None) -> float:
+    """Seconds until the earliest queued task waiting out its `after_s` may
+    run (0.0 when one may run now, or none waits): how long a runner with
+    nothing else to do can sleep."""
+    now = time.monotonic()
+    with _queue_lock:
+        waits = [t.due - now for t in _queue
+                 if background is None or t.background == background]
+    if not waits or min(waits) <= 0:
+        return 0.0
+    return min(waits)
 
 
 def pending(background: bool | None = None) -> int:
@@ -146,8 +174,10 @@ def run_pending(budget_s: float | None = None, ran: list | None = None,
     started = time.monotonic()
     ran = 0
     while True:
+        now = time.monotonic()
         with _queue_lock:
-            task = next((t for t in _queue if background or not t.background), None)
+            task = next((t for t in _queue
+                         if (background or not t.background) and t.due <= now), None)
             if task is None:
                 return ran
             _queue.remove(task)

@@ -61,9 +61,11 @@ _asker = None
 def set_asker(ask) -> None:
     """`ask(kind, args)` -> what the page answers, or None. Installed by the
     website's worker at boot; None removes it."""
-    global _asker
+    global _asker, _fits_ready
     _asker = ask
     _slides.clear()
+    _page_fits.clear()
+    _fits_ready = (float("-inf"), False)
 
 
 #: `page_window(..., wait_ms=...)`'s answer while the page is still scanning.
@@ -79,12 +81,143 @@ class WindowPending(Exception):
     in `retry_ms`" (`RETRY_HEADER`) and the worker puts the request back in
     its queue, behind whatever arrived meanwhile (workers/pythonWorker.js)."""
 
+    #: How long the worker waits before asking the request again, in ms.
     retry_ms = 200
 
 
 #: The header a route's answer carries to be asked again later on the
 #: website (plexora/browser/bridge.py `handle`); never seen anywhere else.
 RETRY_HEADER = "X-Plexora-Retry-Ms"
+
+
+class FitPending(WindowPending):
+    """A channel's mixture fit a helper Python is making (`page_fit`): the
+    request is asked again in `retry_ms`, the one Python thread free
+    meanwhile."""
+
+    #: How long the worker waits before asking the request again, in ms.
+    retry_ms = 100
+
+
+#: Fits handed to the page's helpers: digest of the values -> the page's job
+#: id. Bounded: a fit nobody asks for again (the viewer moved on) is dropped
+#: here, and the page drops its result on its own.
+_page_fits: "dict[str, str]" = {}
+_PAGE_FITS_KEPT = 64
+
+
+def _mixture_code():
+    """(kind, bytes, digest) of mixture_fit as this Python runs it, for the
+    page's helpers to run the same: its compiled file ("pyc") where that is
+    what was imported -- the website's bundle ships no sources -- else its
+    text ("source")."""
+    global _MIXTURE_CODE
+    if _MIXTURE_CODE is None:
+        import hashlib
+        from pathlib import Path
+
+        from plexora.server.models import mixture_fit
+
+        path = str(getattr(mixture_fit, "__file__", "") or "")
+        if path.endswith(".pyc"):
+            kind, data = "pyc", Path(path).read_bytes()
+        else:
+            import inspect
+
+            kind, data = "source", inspect.getsource(mixture_fit).encode("utf-8")
+        _MIXTURE_CODE = (kind, data, hashlib.blake2b(data, digest_size=8).hexdigest())
+    return _MIXTURE_CODE
+
+
+_MIXTURE_CODE = None
+
+#: (when asked, time.monotonic; whether the page had a helper ready).
+_fits_ready = (float("-inf"), False)
+#: How long `page_fits_ready`'s answer is taken as still true.
+_FITS_READY_FOR_S = 2.0
+
+
+def page_fits_ready() -> bool:
+    """Whether the page has a helper Python ready for a fit (`page_fit`):
+    asked at most every `_FITS_READY_FOR_S`. False anywhere but the website."""
+    global _fits_ready
+    if _asker is None or os.environ.get("PLEXORA_BACKEND") != "browser":
+        return False
+    import time
+
+    asked, ready = _fits_ready
+    now = time.monotonic()
+    if now - asked < _FITS_READY_FOR_S:
+        return ready
+    found = _plain(_asker("fit", {"op": "ready"}))
+    ready = bool(isinstance(found, dict) and found.get("ready"))
+    _fits_ready = (now, ready)
+    return ready
+
+
+def page_fit_done(key) -> bool:
+    """Whether the fit handed over as `key` (`FitPending`'s) is back, or will
+    never be (failed, forgotten): a task coming back for it asks this first,
+    a question cheaper than redoing what led to the fit."""
+    job = _page_fits.get(str(key))
+    if job is None or _asker is None:
+        return True
+    found = _plain(_asker("fit", {"op": "peek", "id": job}))
+    return not (isinstance(found, dict) and found.get("done") is False)
+
+
+def page_fit(values, components=3):
+    """`mixture_fit.fit_mixture(values, components)` made by one of the page's helper
+    Pythons (services/fitHelpers.js, workers/fitWorker.js): its floats
+    when it is done; `FitPending` while it is being made (the first call hands
+    it over); None when the page has no helper to give it to, or the helper
+    failed or went away (a reload) -- the caller then fits here, as always.
+
+    The helper runs mixture_fit as this Python does (`_mixture_code`: its
+    compiled file) with the same numpy and scikit-learn builds over the same
+    bytes, so its fit is the one this thread would make
+    (tests/test_page_fit.py; measured bit for bit on six LSP11385 channels)."""
+    if _asker is None or os.environ.get("PLEXORA_BACKEND") != "browser":
+        return None
+    import hashlib
+
+    import numpy as np
+
+    values = np.asarray(values)
+    if values.dtype != np.float64 or values.ndim != 1:
+        return None          # fitted in its own type, here (mixture_fit)
+    values = np.ascontiguousarray(values)
+    components = int(components)
+    digest = hashlib.blake2b(values.view(np.uint8).reshape(-1), digest_size=16)
+    digest.update(f"|{components}".encode())
+    key = digest.hexdigest()
+    job = _page_fits.get(key)
+    if job is None:
+        # An array crosses as {dtype, shape, data} (workers/pythonWorker.js
+        # `_ask`: its bytes copied out of Python's memory, then moved).
+        kind, code, code_id = _mixture_code()
+        started = _plain(_asker("fit", {"op": "start", "values": values,
+                                        "components": components,
+                                        "code": np.frombuffer(code, dtype=np.uint8),
+                                        "code_kind": kind, "code_id": code_id}))
+        if not isinstance(started, dict) or not started.get("id"):
+            return None
+        _page_fits[key] = str(started["id"])
+        while len(_page_fits) > _PAGE_FITS_KEPT:
+            _page_fits.pop(next(iter(_page_fits)))
+        raise FitPending(key)
+    found = _plain(_asker("fit", {"op": "result", "id": job}))
+    if isinstance(found, dict) and found.get("pending"):
+        raise FitPending(key)
+    _page_fits.pop(key, None)
+    params = found.get("params") if isinstance(found, dict) else None
+    if not isinstance(params, str):
+        return None
+    try:
+        out = np.frombuffer(bytes.fromhex(params), dtype=np.float64)
+    except ValueError:
+        return None
+    return out.copy() if out.size == 3 * components else None
 
 
 def page_window(provider, pyramid, index, *, wait_ms=None, urgent=True, ahead=()):

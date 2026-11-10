@@ -296,17 +296,15 @@ def _fit_mixture(values, components):
         sample = sample[rng.choice(sample.shape[0], size=_GMM_FIT_SAMPLE_CAP,
                                    replace=False)]
 
-    # Imported here, not with the module: on the website scikit-learn is a
-    # stage of its own (`fit`, plexora/browser/stages.py) that arrives with the
-    # first fit, not with the app every visit.
-    from sklearn.mixture import GaussianMixture
-
-    gmm = GaussianMixture(components, max_iter=1000, tol=1e-6, random_state=0)
-    gmm.fit(sample.reshape(-1, 1))
-    order = np.argsort(gmm.means_[:, 0])
-    return (gmm.means_[order, 0],
-            np.sqrt(gmm.covariances_[order, 0, 0]),
-            gmm.weights_[order])
+    # Plexora's own mixture fit (seeded, as this always was): on the website,
+    # inside `api.page_fits()`, made by one of the page's helper Pythons with
+    # the same code and build -- the same numbers -- while this request is
+    # asked again (routes.py `get_gating_gmm`).
+    params = api.fit_mixture(sample, components)
+    means, variances, weights = (params[0:components], params[components:2 * components],
+                                 params[2 * components:3 * components])
+    order = np.argsort(means)
+    return means[order], np.sqrt(variances[order]), weights[order]
 
 
 def _populations(fitted, x):

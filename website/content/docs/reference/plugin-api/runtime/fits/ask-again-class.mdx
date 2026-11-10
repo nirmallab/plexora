@@ -1,0 +1,39 @@
+---
+title: "AskAgain"
+description: "A request for a channel the page is still scanning, on the website: answered later rather than waited for. Python cannot wait inside a request with the page's other requests answered meanwhile -- one of them taking a lock the suspended one holds, or suspending in turn, freezes the only thread (plexora/_work.py checkpoint) -- so the route says \"again in retry_ms\" (RETRY_HEADER) and the worker puts the request back in its queue, behind whatever arrived meanwhile (workers/pythonWorker.js)."
+generated: true
+symbol: "plexora.api.AskAgain"
+signature: "WindowPending"
+badge: "exception"
+source:
+  end: 85
+  path: "plexora/server/providers/browser.py"
+  start: 75
+---
+
+{/* GENERATED from plexora.server.providers.browser.AskAgain. Edit the docstring or tools/docs/manifest.yaml, then run: python tools/docs/sync_docs.py generate */}
+
+```python
+from plexora.api import AskAgain
+```
+
+Subclass of `Exception`.
+
+## Properties
+
+### retry_ms
+
+```python
+retry_ms = 200
+```
+
+How long the worker waits before asking the request again, in ms.
+
+## Related
+
+<Cards>
+
+<Card title={"ask_again"} href={"/docs/reference/plugin-api/runtime/fits/ask-again"} description={"The answer to a request that is to be asked again (AskAgain): on the website the worker puts it back in its queue for pending.retry_ms."} />
+<Card title={"page_fits"} href={"/docs/reference/plugin-api/runtime/fits/page-fits"} description={"A with block in which a route's mixture fits (fit_mixture) are made by the website's helper Pythons, when the page has one and the request can be asked again; anywhere else the block changes nothing."} />
+
+</Cards>
