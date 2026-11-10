@@ -1,6 +1,6 @@
 [package]
 name = "plexora-desktop"
-version = "0.0.47"
+version = "0.0.48"
 description = "The Plexora desktop app: a native window around the Plexora server."
 authors = ["BioCognia"]
 license-file = "../../LICENSE"
