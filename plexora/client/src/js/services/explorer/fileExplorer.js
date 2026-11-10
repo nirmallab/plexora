@@ -144,6 +144,13 @@ window.PlexoraFileExplorer = (function () {
      *   browsePicker.js: the machine's own file dialog, offered as "System
      *   file browser" beside the title where one exists. `open` calls
      *   `onChosen` just before the dialog shows, and the explorer closes then.
+     *   With `inPage` (the website, services/localFiles.js `dialog`) the
+     *   dialogs answer in the page and the explorer stays open behind them:
+     *   `buttons` [{kind, label, icon}] go beside the title, and `open(kind)`,
+     *   `addFolder()` and `drop(dataTransfer)` answer null (nothing), a path
+     *   or paths (chosen), `{show: path}` (go there) or `{error}`;
+     *   `reconnect(path)` asks again for a folder whose listing said
+     *   `reconnect`, and `forget(path)` takes one out of the sidebar.
      * @param windowId - names the remembered window size and position.
      * @returns Promise<string | string[] | null>
      */
@@ -199,6 +206,11 @@ window.PlexoraFileExplorer = (function () {
             //: takes the focus (or answers, or the user stops waiting).
             waiting: false,
             waitingTimer: null,
+            //: The listing on screen is a list of places (the website's
+            //: folders), not a folder: nothing to choose by standing in it.
+            placeRoot: false,
+            //: An in-page dialog (or a drop) is being answered.
+            inPageBusy: false,
         };
 
         //: What `pick` resolves with. Held here rather than passed to
@@ -235,6 +247,20 @@ window.PlexoraFileExplorer = (function () {
         systemButton.hidden = true;
         win.titleActions.append(systemButton);
 
+        //: The website's dialogs, which answer in the page: one button each
+        //: ("Choose file…", "Choose folder…") in place of the one above.
+        const inPage = Boolean(systemDialog && systemDialog.inPage);
+        const chooseSpecs = inPage && Array.isArray(systemDialog.buttons) ? systemDialog.buttons : [];
+        function chooseButton(spec, className) {
+            const node = button(className, "", spec.label);
+            node.setAttribute("data-kind", spec.kind);
+            node.append(glyph(spec.icon || "fas fa-file", "plx-explorer-system-icon"),
+                        el("span", "plx-explorer-system-label", spec.label));
+            node.addEventListener("click", () => runInPage(() => systemDialog.open(spec.kind, { multiple: want.many })));
+            return node;
+        }
+        chooseSpecs.forEach((spec) => win.titleActions.append(chooseButton(spec, "plx-explorer-system plx-explorer-choose")));
+
         function entryPath(entry) {
             if (entry && typeof entry.path === "string" && entry.path) return entry.path;
             // The one tolerated join: a node too old to send `entry.path`. It
@@ -264,6 +290,8 @@ window.PlexoraFileExplorer = (function () {
             },
             onContextMenu: (item, point) => placeMenu(item, point),
             onCollapse: (collapsed) => saveView({ sidebar: { collapsed } }),
+            onAddFolder: inPage && typeof systemDialog.addFolder === "function"
+                ? () => runInPage(() => systemDialog.addFolder()) : null,
         });
 
         const listing = window.PlexoraExplorerListing.create({
@@ -335,8 +363,13 @@ window.PlexoraFileExplorer = (function () {
         const searchBar = el("div", "plx-explorer-searchbar");
         searchBar.setAttribute("aria-live", "polite");
         searchBar.hidden = true;
+        //: In place of the listing when there is nothing to list yet (the
+        //: website's first visit: no folder given) or a folder needs the
+        //: browser's permission again (Reconnect).
+        const panel = el("div", "plx-explorer-panel");
+        panel.hidden = true;
         const content = el("div", "plx-explorer-content");
-        content.append(banner, searchBar, listing.element);
+        content.append(banner, searchBar, panel, listing.element);
         const main = el("div", "plx-explorer-main");
         main.append(sidebar.element, content);
         win.body.append(main);
@@ -378,8 +411,11 @@ window.PlexoraFileExplorer = (function () {
         // -- what is chosen ----------------------------------------------------
 
         function currentAnswer() {
-            // Standing in a folder IS choosing it in directory mode.
-            if (want.kind === "directory") return state.listed && state.here ? state.here : null;
+            // Standing in a folder IS choosing it in directory mode -- but not
+            // in a list of places, which is no folder.
+            if (want.kind === "directory") {
+                return state.listed && state.here && !state.placeRoot ? state.here : null;
+            }
             const chosen = listing.selection().map(entryPath);
             if (want.many) return chosen.length ? chosen : null;
             return chosen[0] || null;
@@ -449,7 +485,7 @@ window.PlexoraFileExplorer = (function () {
         function paintFooter() {
             primaryButton.textContent = primaryLabel();
             primaryButton.disabled = currentAnswer() === null;
-            if (useFolder) useFolder.disabled = !state.here || !state.listed;
+            if (useFolder) useFolder.disabled = !state.here || !state.listed || state.placeRoot;
             if (state.explainTimer) return;
             summary.textContent = summaryText();
         }
@@ -475,7 +511,8 @@ window.PlexoraFileExplorer = (function () {
         // -- drawing the rest --------------------------------------------------
 
         function paintPin() {
-            crumbs.setPinned(state.prefs.pinned.indexOf(state.here) >= 0, Boolean(state.here));
+            // A list of places (the website's folders) is not a folder to pin.
+            crumbs.setPinned(state.prefs.pinned.indexOf(state.here) >= 0, Boolean(state.here) && !state.placeRoot);
         }
 
         function paintSidebarLists() {
@@ -535,6 +572,65 @@ window.PlexoraFileExplorer = (function () {
 
         function paintEmpty() {
             listing.setStatus({ empty: state.listed ? emptyText() : "" });
+        }
+
+        /** The panel in place of the listing, or the listing back (null). */
+        function paintPanel(kind, { text = "", reconnect = "", asked = "" } = {}) {
+            panel.replaceChildren();
+            panel.hidden = !kind;
+            listing.element.hidden = Boolean(kind);
+            panel.className = kind ? `plx-explorer-panel is-${kind}` : "plx-explorer-panel";
+            if (!kind) return;
+            const card = el("div", "plx-explorer-panel-card");
+            const actions = el("div", "plx-explorer-panel-actions");
+            if (kind === "welcome") {
+                card.append(glyph("fas fa-folder-plus", "plx-explorer-panel-icon"),
+                            el("div", "plx-explorer-panel-title", "Drop a file or folder here"),
+                            el("div", "plx-explorer-panel-hint", "Folders you choose stay here for next time."));
+                chooseSpecs.forEach((spec) => actions.append(chooseButton(spec, "plx-button plx-explorer-panel-button")));
+            } else {
+                card.append(glyph("fas fa-lock", "plx-explorer-panel-icon"),
+                            el("div", "plx-explorer-panel-title", text));
+                const again = button("plx-button plx-button-primary plx-explorer-panel-button", "Reconnect");
+                again.addEventListener("click", () => runInPage(async () => (
+                    await systemDialog.reconnect(reconnect)
+                        ? { show: asked || reconnect }
+                        : { error: "Plexora cannot read that folder without your permission." })));
+                actions.append(again);
+            }
+            card.append(actions);
+            panel.append(card);
+        }
+
+        /**
+         * One of the website's in-page dialogs, or a drop, and what it
+         * answered: nothing, a path to finish with, a folder to go to (the
+         * sidebar is read again: it may be a folder just given), or why not.
+         */
+        async function runInPage(task) {
+            if (closed || state.inPageBusy) return;
+            state.inPageBusy = true;
+            let result;
+            try {
+                result = await task();
+            } catch (error) {
+                if (!closed) crumbs.setError((error && error.message) || "That could not be read.");
+                return;
+            } finally {
+                state.inPageBusy = false;
+            }
+            if (closed || result === null || result === undefined) return;
+            if (result.error) {
+                explain(result.error);
+                return;
+            }
+            if (typeof result.show === "string") {
+                loadPlaces().then(paintPlaces);
+                show(result.show);
+                return;
+            }
+            const list = Array.isArray(result) ? result : [result];
+            if (list.length) finish(want.many ? list : list[0]);
         }
 
         function setBusy(busy, path) {
@@ -601,6 +697,17 @@ window.PlexoraFileExplorer = (function () {
             setBusy(false);
 
             if (failure) {
+                // A folder the browser stopped granting (the website, after a
+                // restart): asked again from a click, where it was going --
+                // not hidden behind somewhere it was not.
+                const lapsed = payload && payload.reconnect && systemDialog
+                    && typeof systemDialog.reconnect === "function" ? payload.reconnect : "";
+                if (lapsed) {
+                    crumbs.setError("");
+                    paintPanel("reconnect", { text: failure, reconnect: lapsed, asked: path });
+                    paintFooter();
+                    return;
+                }
                 if (fallbackHome) {
                     await show("", { history, fallbackHome: false });
                     if (state.here) {
@@ -632,6 +739,8 @@ window.PlexoraFileExplorer = (function () {
             state.truncated = Boolean(payload.truncated);
             state.total = Number.isFinite(payload.total) ? payload.total : null;
             state.listed = true;
+            state.placeRoot = Boolean(payload.place_root);
+            paintPanel(state.placeRoot && !(payload.entries || []).length && chooseSpecs.length ? "welcome" : null);
 
             if (history === "push") {
                 if (previous && previous !== state.here) {
@@ -743,7 +852,9 @@ window.PlexoraFileExplorer = (function () {
 
         function paintSearchControls() {
             const query = searchInput.value.trim();
-            deepButton.hidden = !query || !state.listed;
+            // A machine that says it has no search below a folder (the
+            // website) offers the filter alone.
+            deepButton.hidden = !query || !state.listed || Boolean(state.places && state.places.search === false);
             deepButton.setAttribute("aria-pressed", state.deep ? "true" : "false");
             const deepTitle = state.deep
                 ? "Search this folder only"
@@ -789,6 +900,7 @@ window.PlexoraFileExplorer = (function () {
 
         function enterSearch() {
             if (!searchInput.value.trim() || !state.listed) return;
+            if (state.places && state.places.search === false) return;
             state.deep = true;
             paintSearchControls();
             clearTimeout(state.searchTimer);
@@ -1006,7 +1118,10 @@ window.PlexoraFileExplorer = (function () {
             win.setSubtitle(node ? `on ${node}${host && host !== node ? ` — ${host}` : ""}`
                 : host ? `on ${host}` : "");
             sidebar.setPlaces({
-                home: typeof record.home === "string" ? record.home : "",
+                // null: a machine with no home folder to offer (the website).
+                home: record.home === null ? null : typeof record.home === "string" ? record.home : "",
+                // The website's folders given to it, each with its state.
+                folders: Array.isArray(record.folders) ? record.folders : null,
                 known: Array.isArray(record.known) ? record.known : [],
                 volumes: Array.isArray(record.volumes) ? record.volumes : [],
                 // A node older than the cloud list sends none: nothing drawn.
@@ -1063,7 +1178,8 @@ window.PlexoraFileExplorer = (function () {
         function remember() {
             const view = takeView();
             const change = {};
-            if (state.here) {
+            // A list of places is not a folder to come back to.
+            if (state.here && !state.placeRoot) {
                 const chose = answer !== null && answer !== undefined;
                 if (chose) {
                     change.last_dir = state.here;
@@ -1108,7 +1224,8 @@ window.PlexoraFileExplorer = (function () {
         }
 
         function paintSystemButton() {
-            systemButton.hidden = !state.systemDialog;
+            // In-page dialogs have buttons of their own (`chooseSpecs`).
+            systemButton.hidden = !state.systemDialog || inPage;
             const app = systemDialog && systemDialog.app;
             systemButton.setAttribute("title", app
                 ? `Close this and choose in ${app}`
@@ -1276,6 +1393,14 @@ window.PlexoraFileExplorer = (function () {
 
         function placeMenu(item, point) {
             const items = [{ label: "Open", onSelect: () => show(item.kind === "place" && !item.path ? "" : item.path) }];
+            if (item.kind === "folder" && systemDialog && typeof systemDialog.forget === "function") {
+                // One of the website's folders: taken out of the list, and
+                // the list shown, since it may be where this is standing.
+                items.push({ label: "Remove from Folders", onSelect: () => runInPage(async () => (
+                    await systemDialog.forget(item.path) ? { show: "" } : null)) });
+                openMenu(menuAt(point), items);
+                return;
+            }
             if (item.path) items.push(...pinItems(item.path));
             if (item.path) items.push({ label: "Copy path", onSelect: () => copyPath(item.path) });
             openMenu(menuAt(point), items);
@@ -1500,6 +1625,29 @@ window.PlexoraFileExplorer = (function () {
             listing.focus();
         });
         dialog.addEventListener("keydown", onKeydown);
+        // A file or folder dropped on the window, where the page can take
+        // one (the website): answered as its "Choose…" buttons answer. The
+        // drop is handed over in its own turn, the only one it can be read in.
+        if (systemDialog && typeof systemDialog.drop === "function") {
+            const carries = (event) => Array.from((event.dataTransfer && event.dataTransfer.types) || [])
+                .indexOf("Files") >= 0;
+            dialog.addEventListener("dragover", (event) => {
+                if (!carries(event)) return;
+                event.preventDefault();
+                event.dataTransfer.dropEffect = "copy";
+                dialog.classList.add("is-drop-over");
+            });
+            dialog.addEventListener("dragleave", (event) => {
+                if (!dialog.contains(event.relatedTarget)) dialog.classList.remove("is-drop-over");
+            });
+            dialog.addEventListener("drop", (event) => {
+                if (!carries(event)) return;
+                event.preventDefault();
+                dialog.classList.remove("is-drop-over");
+                const pending = systemDialog.drop(event.dataTransfer);
+                runInPage(() => pending);
+            });
+        }
         dialog.addEventListener("cancel", (event) => {
             const menuOpen = window.PlexoraMenu && window.PlexoraMenu.isOpen
                 && window.PlexoraMenu.isOpen();

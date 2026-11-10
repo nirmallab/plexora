@@ -116,8 +116,9 @@ window.PlexoraRequirements = (function () {
         if (typeof attachBrowseButton === "function") {
             attachBrowseButton(button, input, {
                 // "any": a .zarr mask is a directory, and a file-only dialog
-                // left no way to point at one.
-                mode: "any", filter: "image",
+                // left no way to point at one. A mask's own examples where
+                // the File | Folder menu shows: no .svs.
+                mode: "any", filter: "image", examples: "mask",
                 node: () => (location ? location.browseNode() : null),
             });
         }

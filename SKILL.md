@@ -5815,6 +5815,25 @@ deliberately left out and what should be built next.
   and handed to `onDrop` as well. Covered by
   `tests/js/path_drop_probe.mjs`, run and pinned line by line by
   `tests/test_path_drop.py`.
+
+  **The website's drops are the file itself, not a path.** Its Python runs in
+  the page, so `attachWebDrop(zoneEl, {count, refuse, enabled, onOver,
+  onDrop})` (a no-op off the website) hands the drop's `DataTransfer` to
+  `PlexoraPicks.take` in the drop event's own turn -- the only turn its
+  handles can be read in -- and the field gets the `/picked/...` path, any
+  size, nothing uploaded. `attachBrowseButton` registers both on the same row;
+  the innermost zone takes the drop and one around it stands aside
+  (`defaultPrevented`); `refuse` judges names and shapes only, before anything
+  is read. A document-level guard (`window.__plexoraDropGuard`, added once per
+  window) refuses a file let go anywhere else, because the browser would open
+  it in place of the app. Browse on the website opens the explorer over the
+  user's folders where `PlexoraLocalFiles.available()` (Chrome, Edge), with
+  `local.dialog(...)` as its `systemDialog` and `local.take` mounting the
+  answer; elsewhere (Firefox, Safari, whose dialogs take one kind) a field
+  that takes either asks File | Folder under the pressed button first.
+  `pickerTypes(filter)` turns a filter into `showOpenFilePicker`'s `types`
+  (one extension per format, no store suffixes), and `pickQuestions()` is the
+  `ask`/`gate` pair every website pick shares.
 - `services/dropRouter.js` — `window.PlexoraDropRouter` (`unclaimed`,
   `runPlan`, `planFor`, `claims`, `takeHandoff`, `registerExecutor`): what a
   file dropped on the window does where no field claimed it, in the desktop
@@ -5841,7 +5860,10 @@ deliberately left out and what should be built next.
   `supports(feature)`, `verify(path)`, `fetch`): who answers the page's
   requests. In server mode (every page a Plexora serves) a pass-through --
   `fetch` is `window.fetch` read at call time, no route table -- loaded right
-  before `appStatus.js` in `base.html`. Probe: `tests/js/backend_shim_probe.mjs`
+  before `appStatus.js` in `base.html`. On the website it asks
+  `PlexoraLocalFiles.answer` (below) before the start gate, so a Browse
+  pressed while Python is still starting lists the user's folders without
+  waiting for it. Probe: `tests/js/backend_shim_probe.mjs`
   (`tests/test_backend_shim_js.py`).
 - `services/appStatus.js` — `window.PlexoraStatus`, the app-wide status
   indicator. See its own section below.
@@ -6588,7 +6610,9 @@ deliberately left out and what should be built next.
   when you add it" is the machine chip's job now — still nothing configured in
   advance.
 - `services/explorer/` — **the file explorer every Browse opens**, on this
-  machine or a node, in a tab and in the desktop app: a floating window that
+  machine or a node, in a tab and in the desktop app, and on the website in
+  Chrome and Edge over the folders the user gave it (`services/localFiles.js`
+  answers the same routes there): a floating window that
   lists one directory at a time (`POST /list_dir`, optionally `{node}`), never
   bytes. It replaced `pathPicker.js`, a fixed modal that showed 2,000 entries
   and appeared only where no OS dialog could. Not a file manager -- no rename,
@@ -6632,7 +6656,12 @@ deliberately left out and what should be built next.
     with SortableJS and posted back as `pinned_order`), Locations (`GET
     /fs_places`: the machine's drives and volumes by their own names, with
     free space, then project storage) and Recent. Nothing is hardcoded: a
-    cluster's mounts appear because they are mounted.
+    cluster's mounts appear because they are mounted. On the website a
+    Folders section comes first (`setPlaces({folders})`: the folders given
+    to the site, a lapsed one locked with "Reconnect", and "Add folder…"
+    under them), and `home: null` drops Home, since a page has no home
+    folder to offer; a given folder's rows are labelled by its own name, not
+    its `/local/<id>` path.
   - `fileExplorer.js` (`window.PlexoraFileExplorer`, and
     `window.PlexoraPathPicker` as an alias of the same object, so every caller
     written for the old picker -- `pick({mode, filter, start, title, node,
@@ -6649,6 +6678,14 @@ deliberately left out and what should be built next.
     and the backdrop close too and browsing is the part that cost the effort;
     `add_recent` rides only on a real pick, a close that never moved writes
     nothing, and view changes (a sort, a column width) batch into one write.
+    A `systemDialog` with `inPage` (the website's) answers in the page with
+    the explorer still open behind it: its `buttons` ("Choose file…",
+    "Choose folder…") replace the "System file browser" button, `open`/
+    `addFolder`/`drop` answer null, a path, `{show: path}` or `{error}`, a
+    listing that says `reconnect` paints a Reconnect panel, and a
+    `place_root` listing (the list of folders, which is no folder) is never
+    chosen, pinned or remembered as `last_dir`; empty, it is the first
+    visit's welcome panel.
   Rules the rest of the explorer follows (`tests/test_file_explorer.py` pins
   them): **the client does no path arithmetic** -- every path it navigates to
   came from the server (`entry.path`, `crumbs[i].path`, `parent`, a place's
@@ -6676,6 +6713,37 @@ deliberately left out and what should be built next.
   `browsePicker.js` passes `start` (the field's current value, read at click
   time) and relays `node` so the explorer lists the SAME machine the native
   dialog would have opened on.
+- `services/localFiles.js` — `window.PlexoraLocalFiles`, **the explorer's
+  disk on the website**. A page has no disk to list; in Chrome and Edge it can
+  have folders the user gives it ("Choose folder…", "Add folder…"), kept as
+  read-only handles in IndexedDB `plexora-folders`. `answer(request)` answers
+  the explorer's own routes in the page -- `/list_dir`, `/stat_entries`,
+  `/fs_places`, `/picker_prefs`, and `/search_dir` as `unsupported` (the
+  explorer then offers the filter alone) -- in `dir_listing.py`'s shape and
+  under its limits, so the explorer itself needs no website branch beyond
+  `inPage`. Paths are virtual (`/local` the list of folders, a `place_root`
+  listing; `/local/<id>/a/b` inside one), and every one the explorer goes to
+  came from an answer here, keeping the no-path-arithmetic rule. A folder the
+  browser stopped granting (Chrome asks again after a restart) answers 403
+  with `reconnect`. Datasets are marked by names alone, a port of
+  `dataset_marks.store_by_names` (see Key Invariants), so a listing never
+  waits behind Python's one thread; the open folder is not confirmed by its
+  manifest as on the desktop, and the importer still reads it. `dialog({...})`
+  is the explorer's in-page `systemDialog` (Choose file…, Choose folder…,
+  Add folder…, Reconnect, Remove from Folders, a drop on its window);
+  `take(chosen, {ask, gate})` mounts what the explorer answered through
+  `PlexoraPicks.mountHandle`, and that `/picked/...` path is what the field
+  gets; `startFor(start)` opens a field at the `/local/...` folder its pick
+  came from (`PlexoraPicks.originOf`). Loaded in the site's host page by
+  `services/shell.js` after `pickedFiles.js` and borrowed by the app frame,
+  as `PlexoraPicks` is. `services/pickedFiles.js` (`window.PlexoraPicks`)
+  grew with it: `pick` takes `types` and `startIn`; a lone `.dcm` asks for its
+  folder and mounts that folder's DICOM instances (record `only: "dicom"`);
+  `take(dataTransfer)` mounts a drop (handles in Chromium, entries in
+  Firefox and Safari, an MRXS paired with its folder); `mountHandle`,
+  `startHandle` and `originOf` (record `from`) serve the explorer. Probe:
+  `tests/js/website_pick_probe.mjs`, run by `tests/test_website_pick.py`;
+  website cases in `tests/js/file_explorer_probe.mjs`.
 - `views/channelNamesUpload.js` — `window.PlexoraChannelNames`, the dialog
   behind the sidebar's channel-rename button. One `<dialog>` with three stages
   (which file → which column → the count did not match); the server decides
@@ -7881,7 +7949,9 @@ project to open, a mask belonging to a sample already here), which
 disabled while `busy()`, so that drop falls through to the drop router
 rather than starting a second load over the first;
 while a drag is over it the `dropping` state paints
-`.quick-view-card.is-drop-over` and the line "Drop to open it.".
+`.quick-view-card.is-drop-over` and the line "Drop to open it.". On the
+website the landing is the same `count: "many"` target through
+`attachWebDrop`, the dropped file or folder mounted where it lies.
 `tests/test_home_landing.py` holds both halves — that the page is
 its own controls, and that the engine under it is the shared one. `POST /import/inspect` runs `import_proposal.inspect_paths` and answers
 with a `Proposal`; the dialog draws whatever comes back and decides nothing
@@ -8027,12 +8097,19 @@ browsed way in never look like two routes; that button is `autofocus` so
 whether a format is a file or a folder (an OME-Zarr store is a folder, an
 OME-TIFF a file) is a fact about the format, and `browsePicker.js` opens a
 panel that takes either. Under the row, format chips and "What's supported"
-(`importHelp.js` on its Formats tab). Unlike `quickViewLanding.js`, which never
-took a drop, the control is an actual dropzone: `dragover`/`drop` upload small
+(`importHelp.js` on its Formats tab). The control is an actual dropzone: on a
+server `dragover`/`drop` upload small
 files (under 64 MB) through `/upload_data_file` and refuse anything bigger with
 a `PlexoraConfirm.tell` explaining that a browser can hand Plexora a dropped
 file's bytes but never its path, which is fine for a table and wrong for a
-slide. **Scoped, the pick state is a card's compact add row and nothing else**
+slide. The website has no such limit: its Python reads the dropped file or
+folder where it lies, so a drop is mounted by `PlexoraPicks.take`, read in
+the drop's own turn, and never uploaded. Browse is `pickWith(mode, {anchor,
+examples})`: `anchor` is the button the File | Folder menu hangs under in a
+browser with no "file or folder" dialog, and `examples` labels it per slot
+(`SLOT_EXAMPLES`: a mask's are `"mask"`, never a `.svs`; a table's `"data"`).
+`projectEdit.js`'s and `requirementsModal.js`'s mask fields pass `examples:
+"mask"` to `attachBrowseButton` for the same reason. **Scoped, the pick state is a card's compact add row and nothing else**
 (`renderScopedPick`): the sample already exists, so the one thing to ask for is
 a path, asked the way that sample's card would ask it; a read that fails with
 no card to hold the row goes back to being the whole pick state.
@@ -10983,6 +11060,17 @@ in **5.6 s**.
   `KEPT_OUT` and `KEPT_OUT_PREFIXES` (`.importing-`, `.bundles`) are repeated,
   and `tests/test_browser_store.py` `test_kept_out_matches_the_store_sync` parses
   both lists and fails when they differ. Change both together.
+- **The website marks datasets by a JS port of `dataset_marks.store_by_names`,
+  and a test keeps the two in step.** `services/localFiles.js` lists the
+  user's folders in the page, without Python, so a listing never waits behind
+  Python's one thread; it repeats the name rules (and `dir_listing.py`'s
+  limits) by hand. `tests/test_website_pick.py` compares it rule by rule
+  against Python, with the names read from the constants Python reads, so a
+  rule changed on one side only fails there. Change both together.
+- **A website drop is read in the drop event's own turn.** A `DataTransfer`'s
+  handles and entries are unreadable after it, so `attachWebDrop`, the
+  explorer's window drop and Import Sample hand it to `PlexoraPicks.take`
+  before their first `await`.
 
 ## Validation
 
@@ -11017,6 +11105,20 @@ and the browser tests `tests/browser/{onboarding,bundles}.mjs`. Every other
 boundary goldens were regenerated for the new routes. **The pass/fail baseline
 after this work has not been recorded here**: no full run was reported to
 whoever updated this file, so no count above is current for it.
+
+**Choosing a file or a folder on the website added tests** (branch
+`feature/website-file-or-folder`): `tests/test_website_pick.py` with its probe
+`tests/js/website_pick_probe.mjs`, website cases in
+`tests/js/file_explorer_probe.mjs` and `tests/test_file_explorer.py`, and the
+browser driver `tests/browser/website_pick.mjs`, which needs playwright-core
+(`PLEXORA_PLAYWRIGHT_CORE`) and a static build:
+`node tests/browser/website_pick.mjs --site <static_build --out dir>
+--fixtures <dir>`, the fixtures dir holding `smoke.ome.tif` and
+`zarr_v3_sharded.ome.zarr` (`tests/browser/smoke_fixture.py`,
+`node_fixtures.py`). A build with `--py
+https://assets.plexoraapp.com/py/<released version>/` works when this
+checkout's Python matches that release. No full-suite baseline for this work
+has been reported either.
 
 **The desktop app has its own validation, outside pytest:**
 

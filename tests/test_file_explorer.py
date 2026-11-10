@@ -49,7 +49,8 @@ def probe():
         pytest.skip("node is not installed")
 
     proc = subprocess.run(
-        [node, str(PROBE)], capture_output=True, text=True, cwd=REPO_ROOT, timeout=60
+        [node, str(PROBE)], capture_output=True, text=True, encoding="utf-8", cwd=REPO_ROOT,
+        timeout=60
     )
     assert proc.returncode == 0, f"{proc.stdout}\n{proc.stderr}"
     return proc.stdout
@@ -385,25 +386,27 @@ def test_every_browse_button_is_somewhere_for_the_menu_to_hang():
     assert "anchorEl: buttonEl" in browse
 
 
-def test_the_import_dialog_never_needs_an_anchor_because_it_never_asks_late():
-    """The one caller that has no anchor to give, and needs none.
+def test_the_import_dialog_hands_its_browse_button_to_a_browser_that_must_ask():
+    """The import dialog's Browse takes a file or a folder in one go -- the
+    explorer does, on every machine with one -- so it asks nothing first.
 
-    "kinds" comes back only for mode "any" (see native_dialog.py), and the
-    Import Sample dialog never sends it: each half of its Select File / Select
-    Folder pair passes its own kind straight through. So the popup that would
-    need somewhere to hang cannot arise -- which is the point. It used to arise
-    on every machine but a Mac, and it opened where the swapped-out control had
-    been rather than where the eye was.
+    Firefox and Safari on the website have no explorer to open (no folder
+    handles to list) and no dialog that takes either kind, so there Browse
+    asks File or Folder, hung under the button that was pressed. Without the
+    button the website could offer only a file, and no OME-Zarr, DICOM,
+    Xenium or SpatialData folder could be chosen from Import Sample or any of
+    the places that open it. Each Browse passes itself and its examples: the
+    pick state's and a card's inline row alike.
     """
     dialog = source("src", "js", "views", "importSample.js")
-    # The passed property, not the word -- which this file's own comments use
-    # to explain why it is absent.
-    assert "anchorEl:" not in dialog
-    assert "function pickWith(mode)" in dialog
+    assert "function pickWith(mode, {anchor = null, examples = \"sample\"} = {})" in dialog
+    assert "anchorEl: anchor," in dialog
+    assert 'pickWith("any", {anchor: go, examples})' in dialog
+    assert 'pickWith("any", {anchor: browse,' in dialog
+    assert 'const SLOT_EXAMPLES = {mask: "mask", table: "data", layer: "sample"};' in dialog
 
-    # The home page is the other one, for the same reason: its File / Folder
-    # tabs pass their own kind straight through. It is a separate surface, so
-    # it is separately asserted.
+    # The home page asks up front instead: its File / Folder tabs pass their
+    # own kind straight through, so nothing is left to hang a menu under.
     landing = source("src", "js", "views", "quickViewLanding.js")
     assert "anchorEl:" not in landing
     assert "async function browseForImage(mode)" in landing
@@ -444,7 +447,7 @@ def test_the_home_page_asks_up_front_and_the_dialog_does_not_ask_at_all():
     dialog = source("src", "js", "views", "importSample.js")
     css = source("src", "css", "main.css")
     assert "plx-import-kind" not in dialog
-    assert 'pickWith("any")' in dialog
+    assert 'pickWith("any", {anchor: go, examples})' in dialog
     assert "KIND_EXAMPLES[examples]" in dialog
     assert "applyCapability" not in dialog
     assert ".plx-import-pick[data-kind=\"any\"] .plx-import-chip {" in css
@@ -734,5 +737,33 @@ def test_the_new_checks_are_there(probe):
         "a file's menu chooses it or copies its path",
         "a pin's menu unpins it",
         "...and its document listeners",
+    ):
+        assert f"ok  {label}" in probe, label
+
+
+def test_on_the_website_it_browses_the_folders_given_to_the_site(probe):
+    """The website has no disk to list: the page answers the explorer's routes
+    from the folders the user gives the site (services/localFiles.js,
+    tests/test_website_pick.py), and the explorer draws them -- the browser's
+    own two dialogs beside the title, answered in the page with the explorer
+    still up behind them; a first visit's drop area; Reconnect for a folder
+    the browser stopped granting; the folders in the sidebar."""
+    for label in (
+        "on the website the title bar offers the browser's two dialogs, not the system file browser",
+        "with no folder given, the listing is a drop area and the same two buttons",
+        "...and a list of places is no folder to choose",
+        "Choose folder… that gives a folder goes there, and reads the sidebar again",
+        "a drop on the window is handed to the page in the drop's own turn",
+        "...and a reason it gives is said in the footer, the explorer still up",
+        "the filter narrows the folder, and no search below it is offered",
+        "Choose file… that gives a picked file is the explorer's answer",
+        "...and a list of places is never remembered as where the explorer was left",
+        "a folder the browser stopped granting shows Reconnect where it was going",
+        "...and Reconnect asks the browser from the click, then lists it",
+        "the sidebar lists the folders given, a lapsed one marked, Add folder… under them, and no Home",
+        "...and a pin of a folder given goes by the folder's name, not its id",
+        "Add folder… asks the page, and opens what it gave",
+        "a folder's menu in the sidebar takes it out of Folders",
+        "...and the list of places is shown once it is out",
     ):
         assert f"ok  {label}" in probe, label

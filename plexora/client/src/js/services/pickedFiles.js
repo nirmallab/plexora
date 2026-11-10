@@ -16,16 +16,32 @@
  *   silently where the browser still grants access, after one "Reconnect"
  *   where it asks again, by picking it again where it keeps no handle.
  *
- *   pick({mode, multiple, ask, gate})
+ *   pick({mode, multiple, ask, gate, types, startIn})
  *                          -> a path, an array of them, or null (cancelled);
  *                             an MRXS slide brings the folder beside it, chosen
  *                             after `ask(text)` (the caller's one-button question)
  *                             and mounted with it (/picked/<id>/<name>.mrxs and
- *                             /picked/<id>/<name>/...); `gate()`, when given, is
+ *                             /picked/<id>/<name>/...), and a DICOM file the
+ *                             folder it is in (the slide's other instances);
+ *                             `gate()`, when given, is
  *                             awaited once the files are chosen and before
  *                             anything is mounted or remembered: false is a
  *                             cancel that leaves nothing behind (the website's
- *                             first-use onboarding, views/webOnboarding.js)
+ *                             first-use onboarding, views/webOnboarding.js);
+ *                             `types` narrows the file dialog (showOpenFilePicker's
+ *                             own shape) and `startIn` is a handle it opens beside
+ *   take(dataTransfer, {gate, ask})
+ *                          -> a promise of [path]: a drop, mounted where it lies
+ *                             like a pick -- a folder with its tree, any size;
+ *                             called in the drop event's own turn
+ *   mountHandle(handle, {parent, from, ask, gate})
+ *                          -> a handle the page holds (a row of a folder the user
+ *                             gave the site, services/localFiles.js) mounted and
+ *                             remembered like a pick; its path, or null
+ *   startHandle(path)      -> the handle a dialog for a field holding `path` opens
+ *                             beside, or null
+ *   originOf(path)         -> where a mounted path was chosen from (a `/local/...`
+ *                             path, services/localFiles.js), or ""
  *   restore()              -> {mounted: [id], waiting: [pick]} at boot
  *   reconnect()            -> mounts every waiting pick (call from a click)
  *   list()                 -> every remembered pick
@@ -53,6 +69,9 @@
     //: The handle behind a mounted file, where the browser gave one: what a
     //: folder picker can open beside (services/browserPyramid.js).
     const handles = new Map();
+    //: record id -> where it was chosen (`from`): a pick out of a folder the
+    //: user gave the site, which the next Browse of the same field opens at.
+    const origins = new Map();
 
     function database() {
         return new Promise((resolve, reject) => {
@@ -97,12 +116,13 @@
     }
 
     //: `<input type=file>`, for a browser without the File System Access API.
-    function chooseWithInput({ directory = false, multiple = false } = {}) {
+    function chooseWithInput({ directory = false, multiple = false, accept = "" } = {}) {
         return new Promise((resolve) => {
             const input = global.document.createElement("input");
             input.type = "file";
             input.multiple = multiple;
             if (directory) input.webkitdirectory = true;
+            else if (accept) input.accept = accept;
             input.style.display = "none";
             let done = false;
             const finish = (files) => {
@@ -210,6 +230,129 @@
         return `${ROOT}/${id}/${file.name}`;
     }
 
+    //: An MRXS's folder read out of the folder the .mrxs is in, where the page
+    //: holds that folder's handle: no question. Null where it is not there.
+    async function besideFolder(parent, file) {
+        const stem = file.name.replace(MRXS, "");
+        let handle;
+        try {
+            handle = await parent.getDirectoryHandle(stem);
+        } catch (error) {
+            return null;
+        }
+        const entries = await walk(handle);
+        return entries.some((e) => /^slidedat\.ini$/i.test(e.path)) ? { name: stem, entries, handle } : null;
+    }
+
+    //: A DICOM slide is a folder of instances, one per level and more
+    //: (dicom_wsi.py `_is_dicom_name`). On the desktop Python reads the rest
+    //: from the folder a picked instance is in; here that folder has to be
+    //: mounted with it.
+    const DICOM = /\.(dcm|dicom)$/i;
+    const isDicomName = (name) => DICOM.test(name) || String(name).toUpperCase() === "DICOMDIR";
+
+    /**
+     * A folder's DICOM instances, at its top and one level down (where an
+     * export files them by series), with their paths inside it: what is
+     * mounted of the folder a .dcm came from -- not the rest of it, which may
+     * be somebody's whole Documents folder.
+     */
+    async function walkDicom(directory) {
+        const found = [];
+        for await (const [name, child] of directory.entries()) {
+            if (child.kind === "directory") {
+                for await (const [inner, grandchild] of child.entries()) {
+                    if (grandchild.kind === "file" && isDicomName(inner)) {
+                        found.push({ path: `${name}/${inner}`, file: await grandchild.getFile(), handle: grandchild });
+                    }
+                }
+            } else if (isDicomName(name)) {
+                found.push({ path: name, file: await child.getFile(), handle: child });
+            }
+        }
+        return found;
+    }
+
+    /**
+     * The folder a DICOM file picked alone is in, from the user, as for an
+     * MRXS (`slideFolder`). -> {name, entries, handle} or null.
+     */
+    async function dicomFolder(file, fileHandle, ask) {
+        if (ask && !await ask(`A DICOM slide is every file in its folder. Choose the folder ${file.name} is in.`)) {
+            return null;
+        }
+        let folder;
+        if (global.showDirectoryPicker) {
+            const options = { id: "plexora-slide", mode: "read" };
+            if (fileHandle) options.startIn = fileHandle;
+            const handle = await global.showDirectoryPicker(options);
+            folder = { name: handle.name, entries: await walkDicom(handle), handle };
+        } else {
+            const files = await chooseWithInput({ directory: true });
+            if (!files.length) return null;
+            const inside = (f) => (f.webkitRelativePath || f.name).split("/").slice(1);
+            folder = {
+                name: (files[0].webkitRelativePath || files[0].name).split("/")[0],
+                entries: files.filter((f) => inside(f).length <= 2 && isDicomName(f.name))
+                    .map((f) => ({ path: inside(f).join("/") || f.name, file: f, handle: null })),
+                handle: null,
+            };
+        }
+        if (!folder.entries.length) {
+            throw new Error(`That folder has no DICOM files; choose the folder ${file.name} is in`);
+        }
+        return folder;
+    }
+
+    //: What a record keeps of each file, where the browser kept no handle.
+    const facts = (file) => ({ name: file.name, size: file.size, modified: file.lastModified });
+
+    /**
+     * One file, mounted and remembered under `id`, with what it needs beside
+     * it: an MRXS's folder, a DICOM file's neighbours. `parent` is the folder
+     * it is in where the page holds it (a folder the user gave the site), and
+     * then neither is asked for. `from`: where it was chosen, kept with the
+     * record. -> its path, or null when the folder's question was cancelled.
+     */
+    async function mountOne(id, file, handle = null, { parent = null, ask = null, from = "" } = {}) {
+        if (MRXS.test(file.name)) {
+            const folder = (parent && await besideFolder(parent, file)) || await slideFolder(file, handle, ask);
+            if (!folder) return null;
+            const path = await mountSlide(id, file, folder);
+            await remember({ id, kind: "slide", handles: handle ? [handle] : null, folder: folder.handle,
+                             name: folder.name, from, picked: Date.now(), count: folder.entries.length,
+                             files: [facts(file)] });
+            origins.set(id, from);
+            return path;
+        }
+        if (DICOM.test(file.name)) {
+            const series = parent
+                ? { name: parent.name, entries: await walkDicom(parent), handle: parent }
+                : await dicomFolder(file, handle, ask);
+            if (!series) return null;
+            const folderPath = await mountTree(id, series.name, series.entries);
+            await remember({ id, kind: "directory", only: "dicom", name: series.name, handle: series.handle,
+                             from, picked: Date.now(),
+                             files: series.entries.map(({ path, file: f }) => ({ path, size: f.size,
+                                                                                 modified: f.lastModified })) });
+            origins.set(id, from);
+            // The file chosen, inside its folder, where it is at its top: the
+            // slide it is part of, as Python reads it from a desktop path.
+            return series.entries.some((entry) => entry.path === file.name) ? `${folderPath}/${file.name}` : folderPath;
+        }
+        const [path] = await mountFiles(id, [file], handle ? [handle] : null);
+        await remember({ id, kind: "files", handles: handle ? [handle] : null, from, picked: Date.now(),
+                         files: [facts(file)] });
+        origins.set(id, from);
+        return path;
+    }
+
+    //: A file dialog's `types` as an input's `accept`: ".tif,.svs,...".
+    function acceptOf(types) {
+        if (!Array.isArray(types)) return "";
+        return types.flatMap((type) => Object.values((type && type.accept) || {}).flat()).join(",");
+    }
+
     /**
      * The files chosen (the browser's dialog first, so the click's activation
      * is still there for it), then `gate`, then the mount and the record. The
@@ -218,14 +361,21 @@
      * pick would otherwise not come back until Python is up), and before the
      * record, which `restore` would mount again on every later visit. The
      * chosen files stay in this closure while it is open.
+     *
+     * `types` narrows the file dialog to the field's formats (the browser
+     * still offers "All files"); `startIn` is a handle the dialog opens
+     * beside -- a mask's, beside its image. Without one the browser opens
+     * where this site's last dialog was.
      */
-    async function pick({ mode = "file", multiple = false, ask = null, gate = null } = {}) {
+    async function pick({ mode = "file", multiple = false, ask = null, gate = null,
+                          types = null, startIn = null } = {}) {
         const id = newId();
         const allowed = async () => !gate || Boolean(await gate());
+        const opening = startIn && startIn.kind ? { startIn } : {};
         try {
             if (mode === "directory") {
                 if (global.showDirectoryPicker) {
-                    const handle = await global.showDirectoryPicker({ id: "plexora", mode: "read" });
+                    const handle = await global.showDirectoryPicker({ id: "plexora", mode: "read", ...opening });
                     if (!await allowed()) return null;
                     const path = await mountTree(id, handle.name, await walk(handle));
                     await remember({ id, kind: "directory", name: handle.name, handle, picked: Date.now() });
@@ -247,35 +397,176 @@
             let handles = null;
             let files;
             if (global.showOpenFilePicker) {
-                handles = await global.showOpenFilePicker({ id: "plexora", multiple });
+                const options = { id: "plexora", multiple, ...opening };
+                if (Array.isArray(types) && types.length) options.types = types;
+                handles = await global.showOpenFilePicker(options);
                 files = await Promise.all(handles.map((handle) => handle.getFile()));
             } else {
-                files = await chooseWithInput({ multiple });
+                files = await chooseWithInput({ multiple, accept: acceptOf(types) });
             }
             if (!files.length) return null;
-            // Before an MRXS's folder is asked for too: its question's click
-            // is the gesture that folder's dialog needs.
+            // Before an MRXS's or a DICOM file's folder is asked for too: its
+            // question's click is the gesture that folder's dialog needs.
             if (!await allowed()) return null;
-            if (files.length === 1 && MRXS.test(files[0].name)) {
-                // An MRXS: its folder too, mounted beside it.
-                const folder = await slideFolder(files[0], handles && handles[0], ask);
-                if (!folder) return null;
-                const path = await mountSlide(id, files[0], folder);
-                await remember({ id, kind: "slide", handles, folder: folder.handle, name: folder.name,
-                                 picked: Date.now(), count: folder.entries.length,
-                                 files: [{ name: files[0].name, size: files[0].size,
-                                           modified: files[0].lastModified }] });
+            if (files.length === 1) {
+                const path = await mountOne(id, files[0], handles && handles[0], { ask });
+                if (path === null) return null;
                 return multiple ? [path] : path;
             }
             const paths = await mountFiles(id, files, handles);
-            await remember({ id, kind: "files", handles, picked: Date.now(),
-                             files: files.map((file) => ({ name: file.name, size: file.size,
-                                                           modified: file.lastModified })) });
+            await remember({ id, kind: "files", handles, picked: Date.now(), files: files.map(facts) });
             return multiple ? paths : paths[0];
         } catch (error) {
             if (error && error.name === "AbortError") return null; // cancelled
             throw error;
         }
+    }
+
+    /**
+     * A handle the page already holds -- a row of a folder the user gave the
+     * site (services/localFiles.js) -- mounted and remembered like a pick:
+     * a folder with its tree, a file with what it needs beside it, read from
+     * `parent` (the folder it is in) without a question. `gate` as for
+     * `pick`. -> its path, or null for a no.
+     */
+    async function mountHandle(handle, { parent = null, from = "", ask = null, gate = null } = {}) {
+        try {
+            if (gate && !await gate()) return null;
+            const id = newId();
+            if (handle.kind === "directory") {
+                const path = await mountTree(id, handle.name, await walk(handle));
+                await remember({ id, kind: "directory", name: handle.name, handle, from, picked: Date.now() });
+                origins.set(id, from);
+                return path;
+            }
+            return await mountOne(id, await handle.getFile(), handle, { parent, ask, from });
+        } catch (error) {
+            if (error && error.name === "AbortError") return null;
+            throw error;
+        }
+    }
+
+    //: A dropped folder's files where the browser gave an entry and no handle
+    //: (Firefox, Safari): read in the batches `readEntries` hands out, until
+    //: it hands out none.
+    async function readEntries(directory, prefix = "") {
+        const found = [];
+        const reader = directory.createReader();
+        for (;;) {
+            const batch = await new Promise((resolve, reject) => reader.readEntries(resolve, reject));
+            if (!batch.length) return found;
+            for (const entry of batch) {
+                if (entry.isDirectory) {
+                    found.push(...await readEntries(entry, `${prefix}${entry.name}/`));
+                } else {
+                    const file = await new Promise((resolve, reject) => entry.file(resolve, reject));
+                    found.push({ path: `${prefix}${entry.name}`, file, handle: null });
+                }
+            }
+        }
+    }
+
+    //: One dropped thing's files, whichever way the browser gave them.
+    const treeOf = (one) => (one.handle ? walk(one.handle) : readEntries(one.entry));
+
+    async function fileOf(one) {
+        if (one.file && !one.entry && !one.handle) return one.file;
+        if (one.handle) return one.handle.getFile();
+        return new Promise((resolve, reject) => one.entry.file(resolve, reject));
+    }
+
+    //: A dropped item's handle, asked for now; null where the browser has none.
+    function handleOf(item) {
+        if (typeof item.getAsFileSystemHandle !== "function") return null;
+        try {
+            return Promise.resolve(item.getAsFileSystemHandle()).catch(() => null);
+        } catch (error) {
+            return null;
+        }
+    }
+
+    /** One dropped file or folder, mounted and remembered. `partner`: an
+     *  MRXS's folder, when it was dropped with it. */
+    async function mountDropped(one, partner, ask) {
+        const id = newId();
+        if (one.directory) {
+            const entries = await treeOf(one);
+            const path = await mountTree(id, one.name, entries);
+            await remember({ id, kind: "directory", name: one.name, handle: one.handle || null, picked: Date.now(),
+                             ...(one.handle ? {} : { files: entries.map(({ path: p, file }) => ({
+                                 path: p, size: file.size, modified: file.lastModified })) }) });
+            return path;
+        }
+        const file = await fileOf(one);
+        if (partner) {
+            const entries = await treeOf(partner);
+            if (entries.some((e) => /^slidedat\.ini$/i.test(e.path))) {
+                // Named as the slide names it: OpenSlide looks for the
+                // folder by the .mrxs's own stem.
+                const path = await mountSlide(id, file, { name: file.name.replace(MRXS, ""), entries });
+                await remember({ id, kind: "slide", handles: one.handle ? [one.handle] : null,
+                                 folder: partner.handle || null, name: partner.name, picked: Date.now(),
+                                 count: entries.length, files: [facts(file)] });
+                return path;
+            }
+        }
+        return mountOne(id, file, one.handle || null, { ask });
+    }
+
+    /**
+     * A drop, as picks: each file or folder dropped mounted where it lies,
+     * whatever its size -- nothing is uploaded -- and remembered like a pick.
+     * An MRXS dropped with its folder is one slide; alone, its folder is
+     * asked for, as a DICOM file's is.
+     *
+     * Called in the drop event's own turn: a page may read a DataTransfer
+     * only then, so every item's handle (Chromium: kept, like a pick's) and
+     * entry (every browser) is asked for before anything is awaited. `gate`
+     * as for `pick`, once the drop is read and before anything is mounted.
+     * -> a promise of [path]; [] when nothing was taken.
+     */
+    function take(dataTransfer, { gate = null, ask = null } = {}) {
+        const items = Array.from((dataTransfer && dataTransfer.items) || []).filter((item) => item.kind === "file");
+        const dropped = items.map((item) => ({
+            handle: handleOf(item),
+            entry: typeof item.webkitGetAsEntry === "function" ? item.webkitGetAsEntry() : null,
+            file: typeof item.getAsFile === "function" ? item.getAsFile() : null,
+        }));
+        if (!items.length) {
+            Array.from((dataTransfer && dataTransfer.files) || [])
+                .forEach((file) => dropped.push({ handle: null, entry: null, file }));
+        }
+        return (async () => {
+            const got = [];
+            for (const one of dropped) {
+                const handle = one.handle ? await one.handle : null;
+                if (handle) got.push({ name: handle.name, directory: handle.kind === "directory", handle });
+                else if (one.entry) got.push({ name: one.entry.name, directory: one.entry.isDirectory, entry: one.entry });
+                else if (one.file) got.push({ name: one.file.name, directory: false, file: one.file });
+            }
+            if (!got.length) return [];
+            try {
+                if (gate && !await gate()) return [];
+                const paired = new Set();
+                const pairs = new Map();
+                for (const one of got) {
+                    if (one.directory || !MRXS.test(one.name)) continue;
+                    const stem = one.name.replace(MRXS, "").toLowerCase();
+                    const folder = got.find((o) => o.directory && o.name.toLowerCase() === stem);
+                    if (folder) { pairs.set(one, folder); paired.add(folder); }
+                }
+                const paths = [];
+                for (const one of got) {
+                    if (paired.has(one)) continue;
+                    const path = await mountDropped(one, pairs.get(one) || null, ask);
+                    if (path) paths.push(path);
+                }
+                return paths;
+            } catch (error) {
+                if (error && error.name === "AbortError") return [];
+                throw error;
+            }
+        })();
     }
 
     async function sha256(blob) {
@@ -348,6 +639,13 @@
     }
 
     async function mountRecord(record, ask, python = global.PlexoraPython) {
+        if (record.from) origins.set(record.id, record.from);
+        if (record.kind === "directory" && record.handle && record.only === "dicom") {
+            // A DICOM file's folder: its instances, not the rest of it.
+            if (!await granted(record.handle, ask)) return false;
+            await mountTree(record.id, record.name, await walkDicom(record.handle), python);
+            return true;
+        }
         if (record.kind === "slide" && record.handles && record.folder) {
             if (!await granted(record.handles[0], ask) || !await granted(record.folder, ask)) return false;
             const entries = slideEntries(record.name, await walkNamed(record.folder));
@@ -454,7 +752,31 @@
         return { mounted: done, waiting: waiting.slice() };
     }
 
-    global.PlexoraPicks = Object.freeze({ pick, reopen, restore, reconnect, list,
+    //: The id of the pick a mounted path belongs to: /picked/<id>/...
+    const idOf = (path) => (String(path || "").startsWith(`${ROOT}/`) ? String(path).split("/")[2] || "" : "");
+
+    /**
+     * Where a browser's file dialog opens for a field holding `path`: beside
+     * the file mounted there, or beside a file directly in the folder it
+     * names (a card's Browse is handed the folder of its image, and a mask is
+     * almost always next to its image). Never from inside a picked folder's
+     * tree: a dialog that opens in an OME-Zarr's chunks helps nobody.
+     */
+    function startHandle(path) {
+        const text = String(path || "");
+        if (!idOf(text)) return null;
+        if (handles.has(text)) return handles.get(text);
+        const prefix = text.endsWith("/") ? text : `${text}/`;
+        for (const [at, handle] of handles) {
+            if (at.startsWith(prefix) && !at.slice(prefix.length).includes("/")) return handle;
+        }
+        return null;
+    }
+
+    global.PlexoraPicks = Object.freeze({ pick, take, mountHandle, startHandle, reopen, restore, reconnect, list,
+                                          //: Where the pick behind a mounted path was chosen
+                                          //: (services/localFiles.js), or "".
+                                          originOf: (path) => origins.get(idOf(path)) || "",
                                           waiting: () => waiting.slice(),
                                           fileFor: (path) => mounted.get(path) || null,
                                           //: Every mounted file under the folder `prefix`
