@@ -4,14 +4,15 @@ Everything the website work (plan `dreamy-brewing-sunset.md`, branch `web/phase0
 is waiting on from you, in one place. Kept current as work lands; the newest
 state is on `web/phase0`. Each item says what to do and what it unblocks.
 **The website is live** at https://viewer.plexoraapp.com since 2026-11-08
-00:40 UTC, now 0.0.47 (`main` at db8d0be6, no tag; since 2026-11-10
-05:00 UTC: Plexora Lite's first-use onboarding -- asked only when work needs
-saving, the picked folder is the workspace -- Storage & Locations, and
-.plexora export/import of one or many projects, docs/internal/PROJECT_BUNDLES.md;
-0.0.46, the website's performance round five, and 0.0.45 to 0.0.42, rounds
-four to one, before it), Pages
+00:40 UTC, now 0.0.48 (`main` at 2832635c, no tag; since 2026-11-10
+05:50 UTC: the website's performance, round six -- mixture fits in helper
+Pythons, docs/internal/bench/web/WEBSITE_PERF_2026-11-09.md -- on 0.0.47,
+Plexora Lite's first-use onboarding -- asked only when work needs saving, the
+picked folder is the workspace -- Storage & Locations, and .plexora
+export/import of one or many projects, docs/internal/PROJECT_BUNDLES.md;
+0.0.46 to 0.0.42, the performance rounds five to one, before it), Pages
 project `plexora-viewer`
-branch `release`, bundle `py/0.0.47/`, flags `viewer: on`, telemetry on. 0.0.38 was live for under
+branch `release`, bundle `py/0.0.48/`, flags `viewer: on`, telemetry on. 0.0.38 was live for under
 an hour and did not start Python on the self-check page, in a second tab or
 without sync access handles; its `py/0.0.38/` stays, as every released
 prefix does, and nothing points at it. Activating a licence and AI do not work there until section 1,
@@ -190,8 +191,8 @@ bundle `py/dev/4f583c3b9745/` and, sharing the flags, no longer shows its
 - The **next desktop release** from `main` carries the removals (Segment in
   3-D, Carry an ROI through planes), the desktop speed-ups and the new
   telemetry values (the Worker that takes them is deployed). Make it
-  **0.0.48 or later** (`release.py ci --bump patch` from the newest), not a
-  tag of a version the website already has: its `py/0.0.37/` to `py/0.0.47/` are
+  **0.0.49 or later** (`release.py ci --bump patch` from the newest), not a
+  tag of a version the website already has: its `py/0.0.37/` to `py/0.0.48/` are
   published and never rewritten, so once the CI secrets
   exist such a Release run's `web_deploy` would refuse its own rebuild of
   that bundle and hold the release.
