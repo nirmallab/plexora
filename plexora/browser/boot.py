@@ -22,10 +22,15 @@ arrive as callables -- so the same boot runs under CPython in the tests
   served;
 - `deliver(source, staged)`: a picked file Python wrote, as a staged copy,
   handed to the page to save over the original (server/utils/
-  source_writes.py; the worker's `plexoraSourceWrite`).
+  source_writes.py; the worker's `plexoraSourceWrite`);
+- `read_ahead(path, pieces)`: pieces of `read_piece` bytes of a picked file,
+  by index, read at once and held for the reads that follow (the worker's
+  `blockReads`): how many it read, negative for a file that is not a pick or
+  where Python cannot wait on the reads (plexora/browser/tiff_ahead.py).
 
 What it does, in order: the environment the app reads at build; the
-`imagecodecs` stand-in, before anything imports tifffile; the standard
+`imagecodecs` stand-in, before anything imports tifffile, and a picked TIFF's
+directories read ahead of tifffile's walk; the standard
 library's urllib over the page's `fetch` (plexora/browser/fetch.py: streamed,
 with urllib's errors); cooperative work, spatialagents' threads and sleeps
 through it (plexora/browser/agents.py) and conversations' events to the page;
@@ -118,6 +123,17 @@ def codecs() -> bool:
         imagecodecs_shim.install()
         return True
     return False
+
+
+def tiff_reads(read_ahead=None, piece: int = 64 << 10) -> bool:
+    """A picked TIFF's directories read ahead of tifffile's walk, every piece
+    a step of it names read at once (plexora/browser/tiff_ahead.py). True if
+    installed."""
+    if read_ahead is None:
+        return False
+    from plexora.browser import tiff_ahead
+
+    return tiff_ahead.install(read_ahead, piece)
 
 
 def http(wait_on=None) -> bool:
@@ -321,7 +337,7 @@ def without_jspi(sleep=time.sleep) -> bool:
 
 def start(origin: str, *, base_url: str = "", post=None, cancelled=None, idle=None, waiting=None,
           columns=None, ask=None, wait_on=None, jspi: bool = True, sleep=None,
-          deliver=None, data_root: str = "/data",
+          deliver=None, read_ahead=None, read_piece: int = 64 << 10, data_root: str = "/data",
           licence_dir: str = "/bioc", telemetry: dict | None = None) -> dict:
     """Boot once; returns what the page shows in its status chip and records:
     `{version, rules, seconds, shims}`. `jspi` False: the browser has no JSPI,
@@ -349,6 +365,8 @@ def start(origin: str, *, base_url: str = "", post=None, cancelled=None, idle=No
     lap("environment")
     shims = {"imagecodecs": codecs()}
     lap("codecs")
+    shims["tiff_ahead"] = tiff_reads(read_ahead, read_piece)
+    lap("tiff_ahead")
     shims["fetch"] = http(wait_on)
     lap("fetch")
     shims["parquet"] = parquet()

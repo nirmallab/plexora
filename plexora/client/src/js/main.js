@@ -557,6 +557,7 @@ async function init(config, savedViewTransform = null) {
         try {
             const node = await attachingLocal;
             seaDragonViewer.tileFetch.local = (request) => node.decoded(request.url, { raster: request.raster });
+            if (typeof node.group === "function") seaDragonViewer.tileFetch.localGroup = node.group;
             seaDragonViewer.localTiles = Boolean(localRoute.image);
         } catch (error) {
             console.warn("main: browser rendering is unavailable, the server reads every tile:", error);
@@ -572,6 +573,8 @@ async function init(config, savedViewTransform = null) {
         // declines, and that tile goes the network path as before.
         const node = window.PlexoraNode;
         seaDragonViewer.tileFetch.local = (request) => node.decoded(request.url, { raster: request.raster });
+        // Tiles side by side in the file go together, read in one go.
+        seaDragonViewer.tileFetch.localGroup = node.group;
         seaDragonViewer.localTiles = true;
     }
     // Before init() adds a single channel, so the first tile is drawn turned.

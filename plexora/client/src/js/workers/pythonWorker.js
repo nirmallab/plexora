@@ -189,9 +189,17 @@ const mark = (name) => self.postMessage({ mark: name, at: at() });
 // WORKERFS reads a picked file with one FileReaderSync slice per read() call,
 // about 0.4 ms each however small, and tifffile reads a header in thousands of
 // small reads. Picked files are read in 1 MiB blocks instead, the last 64 kept,
-// and reads over 4 MiB go straight through (P9).
+// and reads over 4 MiB go straight through (P9). A read that misses is one
+// round trip to wherever the file lies, after the last, and from a share it is
+// the bytes that cost (Chrome, the lab share, a block not read lately: 64 KiB
+// ~20 ms, 1 MiB ~220 ms). What a TIFF's open will read is read ahead instead,
+// in 64 KiB pieces, every piece a step of its walk names at once
+// (plexora/browser/tiff_ahead.py, through `plexoraReadAhead`).
 const BLOCK = 1 << 20;
 const KEEP = 64;
+const PIECE = 64 << 10;
+//: Pieces read ahead held at most (16 MiB), and read by one read ahead.
+const PIECES = 256;
 
 // Python lets go of its lock around a file read, as around any blocking call.
 // WebKit runs FinalizationRegistry callbacks inside FileReaderSync's read
@@ -208,9 +216,13 @@ function withGil(module, read) {
     }
 }
 
+//: -> readAhead(node, indexes): those pieces of the picked file `node` not
+//: held, read at once -- each run of neighbours as one slice -- and held;
+//: resolves how many were read.
 function blockReads(workerfs, module) {
     const reader = new FileReaderSync();
     const blocks = new Map();
+    const pieces = new Map();
     const slice = (node, from, to) => withGil(module,
         () => new Uint8Array(reader.readAsArrayBuffer(node.contents.slice(from, to))));
     const block = (node, index) => {
@@ -222,10 +234,31 @@ function blockReads(workerfs, module) {
         if (blocks.size > KEEP) blocks.delete(blocks.keys().next().value);
         return data;
     };
+    // What pieces hold from `position` on, up to `end`, copied into `buffer`:
+    // how many bytes (none when `position` is in no piece).
+    const held = (node, buffer, offset, position, end) => {
+        let p = position;
+        while (p < end) {
+            const index = Math.floor(p / PIECE);
+            const data = pieces.get(`${node.id}:${index}`);
+            const from = p - index * PIECE;
+            if (!data || from >= data.length) break;
+            const n = Math.min(data.length - from, end - p);
+            buffer.set(data.subarray(from, from + n), offset + (p - position));
+            p += n;
+        }
+        return p - position;
+    };
     workerfs.stream_ops.read = (stream, buffer, offset, length, position) => {
         const node = stream.node;
         const end = Math.min(node.size, position + length);
         if (position >= end) return 0;
+        // A read that starts in what was read ahead is answered from it alone,
+        // short when it runs on past: a buffered reader asks for more than it
+        // was asked, and asks again for what it wanted, as of any file that
+        // answers short -- no block is read for what nobody wanted.
+        const ahead = pieces.size ? held(node, buffer, offset, position, end) : 0;
+        if (ahead) return ahead;
         if (end - position > 4 * BLOCK) {
             buffer.set(slice(node, position, end), offset);
             return end - position;
@@ -239,6 +272,29 @@ function blockReads(workerfs, module) {
             p += n;
         }
         return end - position;
+    };
+    return async (node, indexes) => {
+        const wanted = [...new Set(Array.from(indexes, Number))]
+            .filter((index) => Number.isInteger(index) && index >= 0 && index * PIECE < node.size
+                    && !pieces.has(`${node.id}:${index}`))
+            .sort((a, b) => a - b)
+            .slice(0, PIECES);
+        const runs = [];
+        for (const index of wanted) {
+            const last = runs[runs.length - 1];
+            if (last && last.end === index) last.end += 1;
+            else runs.push({ start: index, end: index + 1 });
+        }
+        const read = await Promise.all(runs.map(({ start, end }) =>
+            node.contents.slice(start * PIECE, Math.min(end * PIECE, node.size)).arrayBuffer()));
+        runs.forEach(({ start, end }, i) => {
+            const bytes = new Uint8Array(read[i]);
+            for (let index = start; index < end; index += 1) {
+                pieces.set(`${node.id}:${index}`, bytes.subarray((index - start) * PIECE, (index - start + 1) * PIECE));
+                if (pieces.size > PIECES) pieces.delete(pieces.keys().next().value);
+            }
+        });
+        return wanted.length;
     };
 }
 
@@ -643,6 +699,8 @@ async function mountLibraries() {
 // package is imported, and the environment it reads is boot's. The instance
 // stays out of `py` until boot takes it, so no step runs before then.
 let warming = null;
+//: `blockReads`' read ahead, once Pyodide is loaded.
+let readAhead = null;
 
 function warm(args) {
     if (warming) return warming;
@@ -653,7 +711,7 @@ function warm(args) {
         const wheels = Promise.all(stagesInfo.base.wheels.map(fetchWheel));
         const { loadPyodide } = await import(`${base}pyodide/pyodide.mjs`);
         const pyodide = await loadPyodide({ indexURL: `${base}pyodide/` });
-        blockReads(pyodide.FS.filesystems.WORKERFS, pyodide._module);
+        readAhead = blockReads(pyodide.FS.filesystems.WORKERFS, pyodide._module);
         phases.core = at(); mark("core");
         await pyodide.loadPackage(stagesInfo.base.pyodide, { messageCallback: () => {} });
         phases.packages = at(); mark("packages");
@@ -747,6 +805,21 @@ async function firstBoot(args) {
     self.plexoraJspi = jspi;
     self.plexoraStagesLoaded = loaded;
     self.plexoraWaiting = () => queue.length > 0 || (inFlight !== null && Atomics.load(inFlight, 0) > 0);
+    // A picked file's pieces read at once (plexora/browser/tiff_ahead.py): a
+    // promise of how many were read, or -1 for a path that is not a picked
+    // file -- and while a job waits with requests let in (`idling`), when a
+    // request could start in the read's wait, inside the one reading.
+    self.plexoraReadAhead = (path, indexes) => {
+        if (!readAhead || idling > 0) return -1;
+        let node = null;
+        try {
+            node = py.FS.lookupPath(String(path), { follow: true }).node;
+        } catch (error) {
+            return -1;
+        }
+        return node && node.contents instanceof Blob ? readAhead(node, indexes) : -1;
+    };
+    self.plexoraReadPiece = PIECE;
     py.globals.set("ORIGIN", origin);
     py.globals.set("SITE_BASE", siteBase);
     py.globals.set("TELEMETRY", JSON.stringify(args.telemetry || null));
@@ -859,11 +932,22 @@ def _load_stage(name):
         raise ImportError(f"the {name} stage could not be loaded in this browser")
     run_sync(js.plexoraLoadStage(name, _finder.importers.get(name, "?")))
 
+def _read_ahead(path, pieces):
+    # A picked TIFF's pieces, read at once (plexora/browser/tiff_ahead.py):
+    # only where Python can wait on the reads; elsewhere tifffile reads them
+    # one after another, as before.
+    from pyodide.ffi import can_run_sync, to_js
+    if not JSPI or not can_run_sync():
+        return -1
+    answer = js.self.plexoraReadAhead(path, to_js(list(pieces)))
+    return int(answer if isinstance(answer, (int, float)) else run_sync(answer))
+
 _finder = stages.install(_load_stage, loaded=tuple(js.plexoraStagesLoaded.to_py()))
 json.dumps(boot.start(ORIGIN, base_url=SITE_BASE, post=_post, cancelled=lambda job: bool(js.plexoraCancelled(job)),
                       idle=_idle, waiting=lambda: bool(js.plexoraWaiting()), columns=_columns,
                       ask=_ask, wait_on=_wait_on, jspi=JSPI, sleep=lambda seconds: js.self.plexoraSleep(seconds),
                       deliver=lambda source, staged: bool(js.self.plexoraSourceWrite(source, staged)),
+                      read_ahead=_read_ahead, read_piece=int(js.self.plexoraReadPiece),
                       telemetry=json.loads(TELEMETRY)))
 `));
     phases.ready = at(); mark("ready");

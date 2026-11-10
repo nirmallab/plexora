@@ -262,6 +262,28 @@ def open_channel_series(path):
     return (*held, True)
 
 
+def held_ifds(path) -> list[int] | None:
+    """The offsets of `path`'s main IFDs, in the order the file chains them,
+    from the open the website shares (`open_channel_series`), which walked
+    them; None when that open is not held or did not reach the chain's end.
+    Reads nothing: the page's reader takes them to read its own open's IFDs
+    at once instead of one after another (plexora/browser/node_spec.py
+    `ifds`)."""
+    try:
+        stat = os.stat(path)
+    except OSError:
+        return None
+    held = _SHARED.get((os.fspath(path), stat.st_size, stat.st_mtime_ns))
+    if held is None or held[0].filehandle.closed:
+        return None
+    pages = held[0].pages
+    # What tifffile walked; `_indexed` once it reached the last IFD's 0.
+    offsets = getattr(pages, "_offsets", None)
+    if not getattr(pages, "_indexed", False) or not offsets:
+        return None
+    return [int(offset) for offset in offsets]
+
+
 def channel_series(tiff):
     """`tiff.series[0]` as a series indexed (channel, y, x).
 

@@ -32,6 +32,8 @@
  *                      the HD PNG decodes to, with no PNG between -- or, for
  *                      a mask's raster tile, {raster: PNG bytes, status}; or
  *                      null (Python's to answer)
+ *   group(url, urls)  -> which of `urls` to read with `url`: its row
+ *                      neighbours, read in one go (tileFetch.js `localGroup`)
  *   project(name)   -> a promise of {spec, image, labels}, each part {file,
  *                      geometry, pool} once checked or {refused} saying why
  *                      Python answers instead
@@ -64,6 +66,12 @@
     //: Workers for a whole-plane scan (`windowOf`), which nothing else waits beside.
     const SCAN_WORKERS = Math.min(16, Math.max(2, (global.navigator.hardwareConcurrency || 4) - 2));
     const TILE = /^\/generated\/data\/([^/]+)\/([^/]+)\/(\d+)\/(\d+)_(\d+)\.png$/;
+    //: Tiles of one row a pool reads in one go at most (`tiles`): a view's
+    //: width at full resolution, ~8 MB of 16-bit samples. One large read
+    //: costs a file share about what one tile's does: a 4-channel view's
+    //: reads, 24 tiles one at a time from six workers, took 740-1040 ms on
+    //: the lab's share; as a row of three each, eight at a time, 430-500.
+    const RUN_MAX = 4;
 
     // -- the PNG ----------------------------------------------------------------
 
@@ -160,6 +168,14 @@
             this.workers = [];
             this.pending = new Map();
             this.nextId = 1;
+            //: Tile asks of this turn, read together where they sit side by
+            //: side (`flush`), and its timer; a TIFF's tiles only (`together`).
+            this.asked = [];
+            this.flushing = null;
+            this.together = false;
+            //: "channel/level" -> a promise, settled once one worker has
+            //: parsed that level and handed its reads to the others (`indexed`).
+            this.levels = new Map();
             for (let i = 0; i < size; i += 1) {
                 const worker = new Worker(WORKER);
                 worker.inflight = 0;
@@ -220,7 +236,7 @@
          *  {base}, zarr}` (node/zarrReader.js). One worker reads the header and IFDs from
          *  the file -- a chain of small reads, one after another, scattered
          *  over the file, or all at once at `ifds` (the main IFDs' offsets,
-         *  from the desktop's spec, checked there against the chain) -- and
+         *  from Python's spec, checked there against the chain) -- and
          *  records them; the others open from what it read (node/
          *  tiffReader.js `seed`), with no read of their own. */
         /** A picked file under the store this pool opened (`store.page`),
@@ -241,7 +257,9 @@
             const seed = opened.seed || null;
             await Promise.all(rest.map((w) => this.call(w, { op: "open", ...found, seed })));
             this.timing = { ...opened.timing, firstMs: tFirst - t0, allMs: performance.now() - t0 };
-            return opened.geometry;
+            const { geometry } = opened;
+            this.together = Boolean(geometry && geometry.layout !== "zarr" && geometry.fileTile && geometry.fileTile.tiled);
+            return geometry;
         }
 
         least() {
@@ -249,7 +267,69 @@
         }
 
         tile(channel, level, tx, ty, tw, th, raw = false) {
-            return this.call(this.least(), { op: "tile", channel, level, tx, ty, tw, th, raw });
+            if (!this.together) return this.call(this.least(), { op: "tile", channel, level, tx, ty, tw, th, raw });
+            return new Promise((resolve, reject) => {
+                this.asked.push({ channel, level, tx, ty, tw, th, raw, resolve, reject });
+                if (!this.flushing) this.flushing = setTimeout(() => this.flush(), 0);
+            });
+        }
+
+        /** This turn's asks as runs of tiles side by side in a row (RUN_MAX
+         *  at most), each read in one go (`readRun`), in the order asked. */
+        flush() {
+            this.flushing = null;
+            const asked = this.asked;
+            this.asked = [];
+            const key = (ask) => `${ask.channel}/${ask.level}/${ask.ty}/${ask.tw}/${ask.th}/${ask.raw}`;
+            const order = new Map(asked.map((ask, i) => [ask, i]));
+            const sorted = [...asked].sort((a, b) => (key(a) === key(b) ? a.tx - b.tx : (key(a) < key(b) ? -1 : 1)));
+            const runs = [];
+            for (const ask of sorted) {
+                const run = runs[runs.length - 1];
+                if (run && run.length < RUN_MAX && key(run[0]) === key(ask) && ask.tx === run[run.length - 1].tx + 1) {
+                    run.push(ask);
+                } else {
+                    runs.push([ask]);
+                }
+            }
+            runs.sort((a, b) => Math.min(...a.map((ask) => order.get(ask))) - Math.min(...b.map((ask) => order.get(ask))));
+            for (const run of runs) this.readRun(run);
+        }
+
+        async readRun(run) {
+            const [first] = run;
+            try {
+                await this.indexed(first.channel, first.level);
+                const { tiles } = await this.call(this.least(), {
+                    op: "tiles", channel: first.channel, level: first.level, tx0: first.tx, ty: first.ty,
+                    count: run.length, tw: first.tw, th: first.th, raw: first.raw,
+                });
+                run.forEach((ask, k) => ask.resolve(tiles[k]));
+            } catch (error) {
+                for (const ask of run) ask.reject(error);
+            }
+        }
+
+        /**
+         * Settled once `channel`'s `level` is parsed by one worker and what
+         * that read is handed to the others (node/tiffReader.js `index`,
+         * `seed`): each worker parsing it from the file was a chain of small
+         * reads per worker per level -- on a file share, as dear as a tile.
+         * A failure settles it too: each worker then reads it itself.
+         */
+        indexed(channel, level) {
+            const key = `${channel}/${level}`;
+            if (!this.levels.has(key)) {
+                this.levels.set(key, (async () => {
+                    const worker = this.least();
+                    const { seed } = await this.call(worker, { op: "index", channel, level });
+                    if (!seed || !seed.length) return;
+                    for (const other of this.workers) {
+                        if (other !== worker) this.call(other, { op: "seed", slices: seed }).catch(() => {});
+                    }
+                })().catch(() => {}));
+            }
+            return this.levels.get(key);
         }
 
         /** The largest sample of a channel's level, its plane cut into
@@ -268,6 +348,10 @@
             for (const w of this.workers) w.terminate();
             this.workers = [];
             this.fail(() => true, "the reader was closed");
+            clearTimeout(this.flushing);
+            this.flushing = null;
+            for (const ask of this.asked) ask.reject(new Error("the reader was closed"));
+            this.asked = [];
         }
     }
 
@@ -609,6 +693,63 @@
         return { label: false, tile };
     }
 
+    //: `tileOf`'s answers: `group` takes apart every queued address each
+    //: time a slot frees, and the viewer queues a few hundred at most.
+    const parsed = new Map();
+
+    /** A tile address as `read` takes it apart: {row, tx}, `row` naming its
+     *  project, channel (or mask), level, tile row and quality; null for an
+     *  address `read` never reads. */
+    function tileOf(href) {
+        if (parsed.has(href)) return parsed.get(href);
+        let found = null;
+        try {
+            const url = new URL(href, global.location.href);
+            const match = url.pathname.match(TILE);
+            if (match && !url.searchParams.get("view")) {
+                const [, name, channel, level, tx, ty] = match;
+                found = { row: `${name}/${channel}/${level}/${ty}/${url.searchParams.get("q") || ""}`, tx: Number(tx) };
+            }
+        } catch (error) {
+            found = null;
+        }
+        if (parsed.size >= 4096) parsed.clear();
+        parsed.set(href, found);
+        return found;
+    }
+
+    /**
+     * Which of `others` (tile addresses) to read with `href` (views/tileFetch.js
+     * `localGroup`): the tiles beside it in its row of the same channel's
+     * level, an unbroken run of RUN_MAX at most with it. They are handed over
+     * at once, so the pool reads them in one go (TiffPool `flush`). Indexes
+     * into `others`; none for an address the page never reads.
+     */
+    function group(href, others) {
+        const at = tileOf(href);
+        if (!at) return [];
+        const beside = new Map();
+        (others || []).forEach((other, i) => {
+            const one = tileOf(other);
+            if (one && one.row === at.row && !beside.has(one.tx)) beside.set(one.tx, i);
+        });
+        // Out from it a side at a time, so the run stays about the tile the
+        // scheduler put first (the one nearest the view's centre).
+        const picked = [];
+        let left = at.tx;
+        let right = at.tx;
+        let rightNext = true;
+        while (picked.length + 1 < RUN_MAX) {
+            const canRight = beside.has(right + 1);
+            const canLeft = beside.has(left - 1);
+            if (!canRight && !canLeft) break;
+            if (canRight && (rightNext || !canLeft)) picked.push(beside.get(++right));
+            else picked.push(beside.get(--left));
+            rightNext = !rightNext;
+        }
+        return picked;
+    }
+
     // -- what someone is waiting for, ahead of the warm-up's scans ---------------
     //
     // The warm-up's scans of whole planes (`windowOf`, not urgent) keep every
@@ -923,5 +1064,5 @@
     //: `quietMs` ago (services/browserPyramid.js paces its build by it).
     const busy = (quietMs = FOREGROUND_QUIET_MS) => foreground > 0 || performance.now() - foregroundEnded < quietMs;
 
-    global.PlexoraNode = Object.freeze({ answer, decoded, project, revalidate, forget, use, png, windowOf, busy });
+    global.PlexoraNode = Object.freeze({ answer, decoded, group, project, revalidate, forget, use, png, windowOf, busy });
 })(window);

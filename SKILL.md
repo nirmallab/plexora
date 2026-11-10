@@ -397,6 +397,24 @@ Entry points:
   tab (a sync access handle is exclusive), a browser without sync handles, or a
   scratch boot gets a plain `CacheIndex` in memory of 256 MiB (`MEMORY_BUDGET`).
   `install()` says which; `tests/test_browser_cachefiles.py`.
+- `plexora/browser/tiff_ahead.py` — **a picked TIFF's directories read ahead
+  of tifffile's walk**, because each step of that walk reads what the one
+  before named, and on the website a miss is one synchronous 1 MiB block read
+  after the last (`workers/pythonWorker.js` `blockReads`), ~220 ms cold from
+  a share against ~20 ms for 64 KiB. `install(read_ahead, piece)` wraps
+  tifffile's `FileHandle.open`: a file opened to read (mode `rb`, a path, no
+  offset) is first `walk`ed as tifffile will open it -- header, main IFD
+  chain, SubIFDs lists and their IFDs, the out-of-line values of the tags in
+  `TIFF.TAG_LOAD`/`TIFF.TAG_READERS` -- and every 64 KiB piece a step names is
+  asked of the page in one round (`read_ahead(path, pieces)`). The first round
+  takes piece 0 and the file's last piece, where Bio-Formats keeps the SubIFDs
+  lists (a file of at most `WHOLE` 16 pieces is read whole); a main chain whose
+  IFDs sit within `DENSE` 64 KiB of each other is read twice as far ahead as it
+  has come (`_Walk.chain`), so 19 IFDs are not 19 rounds. `BUDGET` 8 MiB and
+  `ROUNDS` 8 bound a walk, past which tifffile reads as before; `walks` keeps
+  the last eight. A walk that fails is no walk, never the open's failure. The
+  boot installs it as the `tiff_ahead` shim (`boot.tiff_reads`, right after
+  the `imagecodecs` stand-in) when `start` is given `read_ahead`.
 - `server/utils/sftp.py` — **SFTP as a fourth remote transport, with nothing
   running on the far side** (first case: HMS O2's transfer node). `SFTPClient`
   speaks SFTP v3 over the stdin/stdout of a system `ssh -s <target> sftp`, so
@@ -6882,7 +6900,14 @@ the rest of the 3-D view is not mapped here yet, see `docs/internal/3d/`).
   `tileRequest`, which `tileDecode.js` decodes a label tile from); a raster
   attach does not raise the loader's job limit, so a planar image's channel
   tiles keep OSD's path and its 10. `addressSpace(url)` puts a
-  `targetAddressSpace` on a request (none in server mode).
+  `targetAddressSpace` on a request (none in server mode). Where the page
+  reads tiles itself (`local`, and `localGroup` = `services/browserNode.js`
+  `group`, both set in `main.js` on the website and the desktop's Browser
+  rendering), a tile's queued row neighbours of the same tier go with it in
+  one slot (`localGroupOf`, `runLocal`), because a file share answers one
+  large read in about what one tile's costs; so that there are neighbours to
+  hand over, the pump waits a microtask and such an item asks for
+  `maxTilesPerFrame` 16 (and OSD's private `_currentMaxTilesPerFrame`).
   `ViewerManager.prepareStandby`/`takeStandby`
   keep the next planes in the direction of travel built invisibly, so a step
   to one is an opacity flip. A plane swap does not wait for full resolution:
@@ -9870,6 +9895,57 @@ in **5.6 s**.
   exposes neither `Content-Range` nor `ETag`; a bucket that will not list is
   sized from a GET's headers with the body left unread (`bytes=0-0` without
   JSPI). `tests/test_browser_buckets.py` pins all three.
+- **A page-read TIFF's tiles go through `tiles`, which must equal `tile`
+  byte for byte.** `services/browserNode.js` `TiffPool` collects a turn's
+  tile asks into runs side by side in a row (`RUN_MAX` 4) and reads each with
+  `node/tiffReader.js` `tiles`: the file's tiles under the run in one slice,
+  primed (`SeededSource.primed`) for geotiff.js, which then decodes each as
+  `tile` does. A level is parsed once a pool (`indexed`: one worker's `index`
+  records its reads, the others get them by `seed`), because a chain of small
+  reads per worker per level costs on a file share what a tile does; image
+  bytes are fetched `quiet`, so no recording takes them. A Zarr or a file in
+  strips keeps `tile`, one at a time. The pool's open is cut the same way:
+  the website's served TIFF image carries `ifds` too (`browser/node_spec.py`
+  `describe`, from `server/utils/tiff_series.py` `held_ifds` -- the offsets
+  the shared `open_channel_series` already walked, None when that open is not
+  held or did not reach the chain's end; no read of the file), where only the
+  desktop's (`local`, `main_ifds`) did, and `mainIfdsAt` reads IFDs that sit
+  together (`ifdWindows`: each within `IFD_GAP` 256 KiB of the one before, at
+  most `IFD_WINDOW_MAX` 4 MiB a read) in one read held as seed
+  (`SeededSource.hold`) and recorded for the pool's other workers, because a
+  Bio-Formats pyramid keeps every channel's IFD, OME-XML and level-0 tile
+  offsets in one stretch after the full-resolution planes: LSP20329's open
+  went from 28 reads (23 in a row) to 9 (4 in a row). The website's mask
+  still carries no `ifds` (its chain is usually one IFD). Pinned by
+  `tests/test_tiff_writer.py`'s `runs` and `_close_ifds` (`hints.*.reads`,
+  `tests/js/tiff_seed_probe.mjs`), `tests/test_browser_node_runs.py`,
+  `tests/test_shared_channel_series.py::test_the_shared_open_knows_where_the_main_ifds_are`
+  and `tests/test_browser_node_spec.py::test_a_picked_pyramid_carries_the_ifds_python_walked`;
+  measured by `tools/bench_web/bench_tile_path.mjs` on a file where it is, a
+  share included (`docs/internal/bench/web/WEBSITE_PERF_2026-11-09.md`,
+  "Round seven").
+- **Python's open of a picked TIFF on the website is read ahead, and only
+  where Python can wait on the page.** `browser/tiff_ahead.py` walks the file
+  first and asks for each step's 64 KiB pieces at once; the worker's
+  `blockReads` now also holds those pieces (`PIECE` 64 KiB, at most `PIECES`
+  256) and returns `readAhead(node, indexes)`, which reads each run of
+  neighbouring pieces as one Blob slice, the runs in parallel. A read that
+  starts in a held piece is answered from the pieces alone, short where it
+  runs past them, because a buffered reader asks again for what it wanted and
+  no block is read for what nobody wanted. Splitting one block into parallel
+  slices was measured slower and dropped. `self.plexoraReadAhead(path,
+  indexes)` answers -1 for a path that is not a picked file, before Pyodide
+  is loaded, or while `idling > 0` (a job's wait lets requests in, and one
+  could start inside the read); the boot snippet's `_read_ahead` answers -1
+  without JSPI or when `can_run_sync()` is false, and tifffile then reads
+  block by block as before. **The worker JS and the Python bundle ship
+  together**: the worker calls `boot.start(read_ahead=..., read_piece=...)`,
+  which an older bundle's `start` refuses. On eight 19-channel LSP files no
+  trial had read, Python's open went from 1.3-1.8 s alone (8 reads of 1 MiB in
+  a row) to 0.34-0.68 s read ahead (5-6 rounds); in a CPython replay of the
+  worker (LSP20329, LSP20259) tifffile then read no block of its own. Measured by `tools/bench_web/bench_python_open.mjs` (the real
+  worker, read ahead and not alternating, one fresh file a trial; same
+  document, "Round seven", "Python's open, after these runs.").
 - **All chunk-cache value IO goes through `CacheIndex.read_value`/
   `write_value`/`drop_value`.** The website's `PackedCacheIndex` keeps the
   bytes in OPFS segments and has no file at `value_path`, so a caller that
@@ -11017,6 +11093,24 @@ and the browser tests `tests/browser/{onboarding,bundles}.mjs`. Every other
 boundary goldens were regenerated for the new routes. **The pass/fail baseline
 after this work has not been recorded here**: no full run was reported to
 whoever updated this file, so no count above is current for it.
+
+**Tile runs on the website added tests** (branch `feature/website-tile-reads`):
+`tests/test_browser_node_runs.py` with `tests/js/browser_node_runs_probe.mjs`,
+a `runs` section, an LZW-with-predictor fixture and a `_close_ifds` fixture in
+`tests/test_tiff_writer.py` (`tests/js/tiff_seed_probe.mjs`), the `held_ifds`
+tests in `tests/test_shared_channel_series.py` and
+`tests/test_browser_node_spec.py`, and `localGroup` checks in
+`tests/js/tile_fetch_probe.mjs`. `dist/tiffWorker_bundle.js` is rebuilt by
+`npm run build:worker`. The boundary goldens were regenerated for the
+`20261110_tile_rows` tags. The open's read ahead added
+`tests/test_tiff_ahead.py`: a CPython replay of the worker's pieces and blocks
+at scaled sizes (`PIECE` 1 KiB, `BLOCK` 16 KiB, buffered readers of 2 KiB and
+128 B standing for Python 3.14's 128 KiB and 3.13's 8 KiB) on a tifffile
+pyramid, a contiguous stack and a packed spread stack, a 40-page spread stack
+for the budget, the install hook, and a run of
+`tests/js/block_reads_ahead_probe.mjs`, which takes `blockReads` out of
+`pythonWorker.js` by regex, so renaming its constants or reshaping the
+function breaks the probe. No full run was reported for this work either.
 
 **The desktop app has its own validation, outside pytest:**
 

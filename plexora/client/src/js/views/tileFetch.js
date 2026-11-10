@@ -67,7 +67,10 @@
  *   the network for every request and gives a channel tile's decoded pixels
  *   (no fetch, no PNG, no decode) or a raster tile's bytes; null sends the
  *   request on to the server as before. Unset -- everywhere else -- nothing
- *   here changes.
+ *   here changes. Where `localGroup` says which queued tiles sit beside one
+ *   in its file (a row of a channel's level), they go with it in one slot
+ *   and the page reads them in one go: on a file share one large read costs
+ *   about what one tile's does.
  *
  * Classic script, `window.PlexoraTileFetch`; loaded before imageViewer.js.
  */
@@ -128,6 +131,13 @@
     //: How many times OSD asks again for a failed tile when its viewer does
     //: not say (`tileRetryMax`; the plane and the panes both set 3).
     const RETRY_MAX = 3;
+    //: How many tiles one update of an item the page reads and groups
+    //: (`localGroup`) may ask for: a view at once, as a volume's and a
+    //: pane's do (imageViewer.js, sectionPanes.js). A planar image's items
+    //: ask for one an update, nearest the centre first, so each row's middle
+    //: tile left alone before its neighbours were asked for, and nothing
+    //: was left to read together.
+    const LOCAL_TILES_PER_FRAME = 16;
 
     function now() {
         return global.performance?.now?.() ?? Date.now();
@@ -160,6 +170,11 @@
             //: (request: {url, raster}). Null everywhere but the desktop app
             //: with Browser rendering on (services/resourceRouting.js).
             this.local = null;
+            //: Which queued tiles `local` reads together with one:
+            //: `(url, urls) => indexes into urls` (services/browserNode.js
+            //: `group`: its row neighbours, side by side in the file). They
+            //: go with it, one slot for them all (`runLocal`).
+            this.localGroup = null;
             this.maxInFlight = maxInFlight;
             this.decodeInline = decodeInline;
             this._makeContext = makeContext;
@@ -480,9 +495,20 @@
             }
             request.jobs.add(job);
             job.userData.plexoraRequest = request;
-            if (request.link?.batching && this.batching && !this.local) {
+            const grouping = Boolean(this.local && this.localGroup);
+            const item = job.tile?.tiledImage;
+            if (grouping && item && !(item.maxTilesPerFrame >= LOCAL_TILES_PER_FRAME)) {
+                item.maxTilesPerFrame = LOCAL_TILES_PER_FRAME;
+                // What an update asks for (OSD 6's TiledImage): brought down
+                // to maxTilesPerFrame after a boost, never up to it.
+                if (!(item._currentMaxTilesPerFrame >= LOCAL_TILES_PER_FRAME)) {
+                    item._currentMaxTilesPerFrame = LOCAL_TILES_PER_FRAME;
+                }
+            }
+            if (grouping || (request.link?.batching && this.batching && !this.local)) {
                 // OSD starts a frame's tiles one call at a time: on a batched
-                // link, line them all up before any batch is cut.
+                // link, or where the page reads tiles side by side together,
+                // line them all up before any batch or group is cut.
                 if (!this._pumpSoon) {
                     this._pumpSoon = true;
                     Promise.resolve().then(() => {
@@ -609,6 +635,11 @@
                     this.drop(request);
                     continue;
                 }
+                const group = this.localGroupOf(request);
+                if (group) {
+                    this.runLocal(group);
+                    continue;
+                }
                 // Never with a `local` answerer: a batch would take the tiles
                 // the page reads itself past it, to the server.
                 if (this.batching && !this.local && request.link?.batching && !request.link.unbatchable) {
@@ -630,6 +661,69 @@
                     continue;
                 }
                 this.run(request);
+            }
+        }
+
+        /**
+         * `request` and the queued tiles `local` reads together with it
+         * (`localGroup`), taken out of line; null when there are none -- no
+         * `localGroup`, a tile the page declined (`localDeclined`), or no
+         * neighbour waiting. Only tiles of the same tier the hand does not
+         * hold, so nothing goes sooner than it would have gone alone by much.
+         */
+        localGroupOf(request) {
+            if (!this.local || !this.localGroup || request.localDeclined) return null;
+            const tier = request.key ? request.key[0] : TIER.visible;
+            const candidates = this.queue.filter((other) => other.jobs.size && !other.held && !other.localDeclined
+                && other.raster === request.raster && (other.key ? other.key[0] : TIER.visible) === tier);
+            if (!candidates.length) return null;
+            let picked;
+            try {
+                picked = this.localGroup(request.url, candidates.map((other) => other.url)) || [];
+            } catch (error) {
+                return null;
+            }
+            const group = [request];
+            for (const i of picked) {
+                const other = candidates[i];
+                if (other && !group.includes(other)) group.push(other);
+            }
+            if (group.length < 2) return null;
+            for (const other of group.slice(1)) this.queue.splice(this.queue.indexOf(other), 1);
+            return group;
+        }
+
+        /**
+         * Tiles the page reads together (`localGroupOf`), in one slot -- as a
+         * batch takes one on a slow link -- each settled as its answer comes.
+         * One the page declines goes back in line for the network (`run`).
+         */
+        async runLocal(requests) {
+            this.inFlight += 1;
+            const tier = requests[0].key ? requests[0].key[0] : TIER.visible;
+            const standby = tier === TIER.standby;
+            if (standby) this.standbyInFlight += 1;
+            this.stats.localGroups = (this.stats.localGroups || 0) + 1;
+            try {
+                await Promise.all(requests.map(async (request) => {
+                    request.state = "fetching";
+                    const answered = await this.untilDropped(request, this.answerLocally(request));
+                    if (request.state === "dropped") return;
+                    if (!answered) {
+                        request.localDeclined = true;
+                        request.state = "queued";
+                        this.queue.push(request);
+                        return;
+                    }
+                    this.stats.local = (this.stats.local || 0) + 1;
+                    if (answered.raster) this.stats.raster = (this.stats.raster || 0) + 1;
+                    else this.stats.decoded += 1;
+                    this.settle(request, answered, null);
+                }));
+            } finally {
+                this.inFlight -= 1;
+                if (standby) this.standbyInFlight -= 1;
+                this.pump();
             }
         }
 
@@ -740,7 +834,8 @@
             let decoded = null;
             let error = null;
             try {
-                const answered = this.local ? await this.untilDropped(request, this.answerLocally(request)) : null;
+                const answered = this.local && !request.localDeclined
+                    ? await this.untilDropped(request, this.answerLocally(request)) : null;
                 if (request.state === "dropped") return;
                 if (answered) {
                     // The page read it (`local`): decoded pixels, or a raster

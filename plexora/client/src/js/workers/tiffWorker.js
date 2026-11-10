@@ -4,8 +4,11 @@
  * store per worker (services/browserNode.js runs several over a file;
  * workers/pyramidWorker.js runs several as a pyramid build's hands).
  *
- * {id, op: "open"|"tile"|"level"|"region"|"max", ...args} -> {id, ok, result|error}.
- * A result's `array` is transferred, never copied. Bundled by webpack
+ * {id, op: "open"|"tile"|"tiles"|"index"|"seed"|"level"|"region"|"max", ...args}
+ * -> {id, ok, result|error}. A result's `array` (each of `tiles`') is
+ * transferred, never copied. `tiles`, `index` and `seed` are a TIFF's only
+ * (services/browserNode.js TiffPool: tiles side by side in one read, a level
+ * parsed once a pool). Bundled by webpack
  * (dist/tiffWorker_bundle.js): geotiff.js comes with it.
  *
  * An `open` with `store` and `zarr` opens the OME-Zarr reader (`tile` then
@@ -49,6 +52,9 @@ const OPS = {
         return reader.open(args);
     },
     tile: (args) => reader.tile(args),
+    tiles: (args) => tiff.tiles(args),
+    index: (args) => tiff.index(args),
+    seed: (args) => tiff.seed(args),
     level: (args) => tiff.level(args),
     region: (args) => tiff.region(args),
     max: (args) => tiff.max(args),
@@ -61,6 +67,7 @@ function transfers(result) {
     // Rectangles for Python: each its own buffer (once each: a list may not name one twice).
     if (result?.regions) return [...new Set(result.regions.map((one) => one.values?.buffer).filter(Boolean))];
     if (result?.parts) return result.parts.map((part) => part.buffer);
+    if (result?.tiles) return [...new Set(result.tiles.map((one) => one.array?.buffer).filter(Boolean))];
     // An open's recorded reads (`record`): copies, nothing here reads them again.
     if (result?.seed) return result.seed.map((slice) => slice.buffer).filter(Boolean);
     const buffer = result?.array?.buffer || result?.values?.buffer || result?.bytes?.buffer;

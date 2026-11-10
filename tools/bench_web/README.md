@@ -34,6 +34,8 @@ export PLEXORA_BENCH_WORK=<a scratch folder>                                 # f
 | `bench_packages.mjs` | Python's boot, per package and per import, against a bundle |
 | `bench_flow_web.mjs --site DIR --py-dir DIR --fixture DIR [--files a,b,c] [--pause MS]` (or `--origin URL`) | the user's flow with real file handles: import, open (drawn, lit), four channels on (their stats, fit and auto-contrast as they land), a reload restored from kept answers; the page's pyramid builds |
 | `bench_flow_server.mjs --repo DIR --fixture DIR [--files a,b,c] [--pause MS]` | the same flow on the local server |
+| `bench_tile_path.mjs --file TIFF [--checkout REPO] [--channels a,b] [--regions "x,y;x,y"] [--detail] [--out F]` | a checkout's own tile path (tileFetch.js, browserNode.js, the worker bundle) on a file where it is -- a share included, which the fixture benches cannot do: every view of a zoom-and-pan tour, ms; `--detail`, the reads the workers made. Compare two checkouts by alternating them, each run on a region and channels nothing read before |
+| `bench_python_open.mjs --site DIR --py DIR [--ahead-first] FILE [FILE ...]` | Python's open of picked TIFFs in the website's own worker (a build of the checkout), with the read ahead (plexora/browser/tiff_ahead.py) and without, alternating, one file a trial: ms, rounds and pieces read ahead. Prints lines; give files of one kind not read lately |
 
 Each writes one JSON record to `$PLEXORA_BENCH_WORK/out/`. Results so far are in
 `docs/internal/bench/web/`.

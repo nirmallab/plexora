@@ -6,11 +6,14 @@
  *
  *   node tests/js/tiff_seed_probe.mjs FILE.tif
  *
- * Prints {first, seeded, geometrySame, tiles, differ} as JSON: the reads each
- * open made, whether the two geometries are equal, and how many tiles (the
- * first and the last of every channel's every level, HD and raw) were read by
- * both readers and how many differ. tests/test_tiff_writer.py holds it to
- * "the seeded open reads nothing and every tile is the same".
+ * Prints {first, seeded, geometrySame, tiles, differ, runs} as JSON: the reads
+ * each open made, whether the two geometries are equal, and how many tiles
+ * (the first and the last of every channel's every level, HD and raw) were
+ * read by both readers and how many differ; `runs`, the first and last rows
+ * of every level read as rows (`tiles`) by a reader seeded with another's
+ * `index` of each level: rows, tiles, how many differ, and the file reads
+ * they took. tests/test_tiff_writer.py holds it to "the seeded open reads
+ * nothing, every tile is the same, and a row of a tiled level is one read".
  */
 
 import { closeSync, fstatSync, openSync, readSync } from "node:fs";
@@ -82,8 +85,46 @@ for (const ask of tiles) {
     if (a.width !== b.width || a.height !== b.height || a.format !== b.format
         || Buffer.compare(Buffer.from(a.array), Buffer.from(b.array)) !== 0) differ += 1;
 }
+// Tiles side by side in one read (`tiles`), by a reader that parses no level
+// from the file: each level is parsed once by another (`index`, its reads
+// recorded) and handed over (`seed`), as a pool of the page's workers does.
+// A row's tiles sit back to back in these files, so each row is one read.
+const indexer = createTiffReader();
+const indexSource = new FileSource(file);
+await indexer.open({ source: indexSource, seed: structuredClone(first.seed) });
+const three = createTiffReader();
+const runSource = new FileSource(file);
+await three.open({ source: runSource, seed: structuredClone(first.seed) });
+const runs = { rows: 0, tiles: 0, differ: 0, reads: 0, recorded: 0 };
+for (let channel = 0; channel < geometry.numChannels; channel += 1) {
+    for (let level = 0; level < geometry.levels.length; level += 1) {
+        const { seed: recorded } = await indexer.index({ channel, level });
+        runs.recorded += recorded.length;
+        three.seed({ slices: structuredClone(recorded) });
+        const { width, height } = geometry.levels[level];
+        const across = Math.ceil(width / TILE);
+        const before = runSource.reads;
+        for (const ty of [...new Set([0, Math.ceil(height / TILE) - 1])]) {
+            for (const raw of [false, true]) {
+                const { tiles: row } = await three.tiles({ channel, level, tx0: 0, ty, count: across, tw: TILE, th: TILE, raw });
+                runs.rows += 1;
+                for (let tx = 0; tx < across; tx += 1) {
+                    const a = await one.tile({ channel, level, tx, ty, tw: TILE, th: TILE, raw });
+                    const b = row[tx];
+                    runs.tiles += 1;
+                    if (a.width !== b.width || a.height !== b.height || a.format !== b.format
+                        || Buffer.compare(Buffer.from(a.array), Buffer.from(b.array)) !== 0) runs.differ += 1;
+                }
+            }
+        }
+        runs.reads += runSource.reads - before;
+    }
+}
+indexSource.close();
+runSource.close();
 // The main IFDs' offsets as Python gives them (node_spec.main_ifds), and the
-// same list spoiled: the first is taken, the second is not.
+// same list spoiled: the first is taken, the second is not; the reads each
+// open made.
 const hints = {};
 if (process.argv[3]) {
     const ifds = JSON.parse(process.argv[3]);
@@ -95,7 +136,8 @@ if (process.argv[3]) {
         const opened = await reader.open({ source, ifds: list });
         const a = await reader.tile({ channel: geometry.numChannels - 1, level: 0, tx: 0, ty: 0, tw: TILE, th: TILE });
         const b = await one.tile({ channel: geometry.numChannels - 1, level: 0, tx: 0, ty: 0, tw: TILE, th: TILE });
-        hints[name] = { hinted: opened.timing.hinted, geometrySame: isDeepStrictEqual(opened.geometry, geometry),
+        hints[name] = { hinted: opened.timing.hinted, reads: opened.timing.reads,
+                        geometrySame: isDeepStrictEqual(opened.geometry, geometry),
                         tileSame: Buffer.compare(Buffer.from(a.array), Buffer.from(b.array)) === 0 };
         source.close();
     }
@@ -110,5 +152,6 @@ console.log(JSON.stringify({
     levels: geometry.levels.length,
     tiles: tiles.length,
     differ,
+    runs,
     hints,
 }));
