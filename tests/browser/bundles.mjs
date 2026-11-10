@@ -138,8 +138,10 @@ try {
     await frame.click(".plx-bundle-import [data-act='import']");
     out.imported = await frame.waitForSelector(".plx-bundle-import .plx-bundle-results", { timeout: 300000 })
         .then(() => true, () => false);
+    // One project imported: its Open is the dialog's primary action, in the
+    // foot (several: each row's .plx-bundle-open).
     out.target = await frame.evaluate(() => {
-        const open = document.querySelector(".plx-bundle-import .plx-bundle-open");
+        const open = document.querySelector(".plx-bundle-import [data-act='open'][data-target]");
         return open ? open.dataset.target : null;
     });
     out.missingOffered = await frame.evaluate(() => Boolean(document.querySelector(".plx-bundle-import [data-act='find']")));
