@@ -334,7 +334,7 @@ window.PlexoraRouting = (function () {
     //: The browser node's script and its tag, loaded once into a page that
     //: chose `local-browser` -- nowhere else (the website's shell loads its own).
     const NODE_SCRIPT = "client/src/js/services/browserNode.js";
-    const NODE_SCRIPT_TAG = "20261107_label_high_byte";
+    const NODE_SCRIPT_TAG = "20261110_tile_rows";
     let nodeScript = null;
 
     function loadNode() {

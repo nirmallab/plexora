@@ -37,7 +37,12 @@
  *   reads `tileRequest.response` -- and attaching one leaves the loader's job
  *   limit alone;
  * - a request says which address space it goes to (`targetAddressSpace`)
- *   only when `addressSpace` names one: by default it is what it always was.
+ *   only when `addressSpace` names one: by default it is what it always was;
+ * - where the page reads tiles and says which sit beside one in its file
+ *   (`localGroup`), a frame's tiles are lined up first, a tile goes with its
+ *   neighbours of the same tier in one slot, each is delivered as it is read,
+ *   one the page declines goes to the server once, and an item it serves asks
+ *   for a view an update; a page answerer alone changes none of that.
  *
  * Run directly:  node tests/js/tile_fetch_probe.mjs
  */
@@ -895,6 +900,55 @@ function rasterItem(s, { standby = false, opacity = 1 } = {}) {
     await tick(); await tick();
     check("...and decoded pixels offered for a raster are refused (the server's)",
           other.net.calls.length === 1);
+}
+
+// -- tiles the page reads side by side go together (`localGroup`) --------------------------
+
+{
+    const { s, net } = scheduler();
+    const reads = [];
+    s.local = (request) => new Promise((resolve) => reads.push({ request, resolve }));
+    // As browserNode.js `group`: the tiles of the same row (here row 0 of ds_0's level 3).
+    const inRow = (u) => /\/ds_0\/3\/\d+_0\.png/.test(u);
+    s.localGroup = (url, urls) => (inRow(url) ? urls.map((u, i) => (inRow(u) ? i : -1)).filter((i) => i >= 0) : []);
+    const plane = { array: new Uint8Array(8), width: 2, height: 2, format: "u16" };
+    const it = item();
+    const hidden = item({ opacity: 0 });
+    const row = [0, 1, 2].map((x) => job(`/generated/data/ds/ds_0/3/${x}_0.png?q=hd`, it, { distance: Math.abs(1 - x) }));
+    const far = job("/generated/data/ds/ds_0/3/0_5.png?q=hd", it, { distance: 9 });
+    const handover = job("/generated/data/ds/ds_0/3/3_0.png?q=hd", hidden, { distance: 0 });
+    for (const j of [...row, far, handover]) s.start(j);
+    check("with a group answerer a frame's tiles are lined up before any goes", reads.length === 0);
+    await tick();
+    const asked = reads.map((r) => r.request.url);
+    check("...then a tile and its row neighbours are asked together, one slot for them",
+          s.stats.localGroups === 1 && row.every((j) => asked.includes(j.src)) && s.inFlight === 3,
+          JSON.stringify({ asked, inFlight: s.inFlight, stats: s.stats }));
+    check("...never with a tile of another tier (a handover's)", asked.includes(handover.src)
+          && reads.filter((r) => r.request.url === handover.src).length === 1);
+    check("...and an item it serves asks for a view an update, as a volume's does",
+          it.maxTilesPerFrame === 16 && it._currentMaxTilesPerFrame === 16);
+    // The group's answers: one tile declined (Python's), the others the page's.
+    for (const r of reads) r.resolve(r.request.url === row[2].src ? null : plane);
+    await tick(); await tick(); await tick();
+    check("...each answered tile delivered as it is read",
+          row[0].tile._array === plane.array && row[1].tile._array === plane.array && far.tile._array === plane.array);
+    check("...and a tile it declines goes to the server, once, not to the page again",
+          net.calls.length === 1 && net.calls[0].url === row[2].src
+          && reads.filter((r) => r.request.url === row[2].src).length === 1, JSON.stringify(net.calls.map((c) => c.url)));
+    net.calls[0].respond(png());
+    await tick(); await tick();
+    check("...the group's slot freed with its tiles", s.inFlight === 0 && s.idle(), JSON.stringify({ inFlight: s.inFlight }));
+}
+
+{
+    // Without a group answerer an item keeps the tiles an update it was given.
+    const { s } = scheduler();
+    s.local = async () => ({ array: new Uint8Array(8), width: 2, height: 2, format: "u16" });
+    const it = item();
+    s.start(job("/generated/data/ds/ds_0/3/0_0.png?q=hd", it));
+    await tick();
+    check("a page answerer alone leaves an item's tiles an update alone", it.maxTilesPerFrame === undefined);
 }
 
 {

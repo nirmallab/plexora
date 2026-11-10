@@ -51,6 +51,22 @@ def test_a_picked_pyramid_is_described_as_python_reads_it(info, monkeypatch):
     assert spec["generation"] == data_model.load_generation
 
 
+def test_a_picked_pyramid_carries_the_ifds_python_walked(info, monkeypatch):
+    """The page reads its open's main IFDs at once at the offsets of the
+    open Python holds (tiff_series.held_ifds), not one after another."""
+    from plexora.browser import node_spec
+    from plexora.server.models import data_model
+    from plexora.server.utils import tiff_series
+
+    data_model.ensure_loaded(info["name"])
+    monkeypatch.setattr(data_model._providers.image, "_path", "/picked/ab12cd/image.ome.tif")
+    asked = []
+    monkeypatch.setattr(tiff_series, "held_ifds", lambda path: asked.append(path) or [16, 4096])
+    spec = node_spec.describe(info["name"])
+    assert spec["served"] is True and spec["ifds"] == [16, 4096]
+    assert asked == ["/picked/ab12cd/image.ome.tif"]
+
+
 def test_a_picked_file_that_is_not_a_tiff_is_left_to_python(info, monkeypatch):
     from plexora.browser import node_spec
     from plexora.server.models import data_model

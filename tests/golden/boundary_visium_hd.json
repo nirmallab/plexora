@@ -110,7 +110,7 @@
         "/client/src/js/services/appStatus.js?v=20260926_help_menu",
         "/client/src/js/services/telemetry.js?v=20260928_qc_owner",
         "/client/src/js/services/errors.js?v=20260927_telemetry",
-        "/client/src/js/services/resourceRouting.js?v=20261107_label_high_byte",
+        "/client/src/js/services/resourceRouting.js?v=20261110_tile_rows",
         "/client/src/js/services/resourceStatus.js?v=20261020_sftp_files",
         "/client/src/js/services/performanceTelemetry.js?v=20260927_telemetry",
         "/client/dist/vendor_bundle.js?v=20261107_label_high_byte",
@@ -128,7 +128,7 @@
         "/client/src/js/views/glInit.js?v=20261015_display_contrast",
         "/client/src/js/views/tileColorize.js?v=20261015_display_contrast",
         "/client/src/js/views/tileDecode.js?v=20261010_nav3d",
-        "/client/src/js/views/tileFetch.js?v=20261109_dropped_slot",
+        "/client/src/js/views/tileFetch.js?v=20261110_tile_rows",
         "/client/src/js/views/labelTile.js?v=20261012_main_merge",
         "/client/src/js/views/labelGpu.js?v=20261107_label_high_byte",
         "/client/src/js/services/viewTransform.js?v=20260925_view_transform",
@@ -334,7 +334,7 @@
         "/client/src/js/services/appStatus.js?v=20260926_help_menu",
         "/client/src/js/services/telemetry.js?v=20260928_qc_owner",
         "/client/src/js/services/errors.js?v=20260927_telemetry",
-        "/client/src/js/services/resourceRouting.js?v=20261107_label_high_byte",
+        "/client/src/js/services/resourceRouting.js?v=20261110_tile_rows",
         "/client/src/js/services/resourceStatus.js?v=20261020_sftp_files",
         "/client/src/js/services/performanceTelemetry.js?v=20260927_telemetry",
         "/client/dist/vendor_bundle.js?v=20261107_label_high_byte",
@@ -352,7 +352,7 @@
         "/client/src/js/views/glInit.js?v=20261015_display_contrast",
         "/client/src/js/views/tileColorize.js?v=20261015_display_contrast",
         "/client/src/js/views/tileDecode.js?v=20261010_nav3d",
-        "/client/src/js/views/tileFetch.js?v=20261109_dropped_slot",
+        "/client/src/js/views/tileFetch.js?v=20261110_tile_rows",
         "/client/src/js/views/labelTile.js?v=20261012_main_merge",
         "/client/src/js/views/labelGpu.js?v=20261107_label_high_byte",
         "/client/src/js/services/viewTransform.js?v=20260925_view_transform",
@@ -479,7 +479,7 @@
         "/client/src/js/views/chatPanel.js?v=20261012_merge_main",
         "/client/src/js/services/agentBridge.js?v=20261109_session_resumed",
         "/client/src/js/services/launchContext.js?v=20261005_bridge",
-        "/client/src/js/main.js?v=20261109_webperf"
+        "/client/src/js/main.js?v=20261110_tile_rows"
       ],
       "status": 200,
       "styles": [
@@ -626,7 +626,7 @@
         "/client/src/js/services/appStatus.js?v=20260926_help_menu",
         "/client/src/js/services/telemetry.js?v=20260928_qc_owner",
         "/client/src/js/services/errors.js?v=20260927_telemetry",
-        "/client/src/js/services/resourceRouting.js?v=20261107_label_high_byte",
+        "/client/src/js/services/resourceRouting.js?v=20261110_tile_rows",
         "/client/src/js/services/resourceStatus.js?v=20261020_sftp_files",
         "/client/src/js/services/performanceTelemetry.js?v=20260927_telemetry",
         "/client/dist/vendor_bundle.js?v=20261107_label_high_byte",
@@ -644,7 +644,7 @@
         "/client/src/js/views/glInit.js?v=20261015_display_contrast",
         "/client/src/js/views/tileColorize.js?v=20261015_display_contrast",
         "/client/src/js/views/tileDecode.js?v=20261010_nav3d",
-        "/client/src/js/views/tileFetch.js?v=20261109_dropped_slot",
+        "/client/src/js/views/tileFetch.js?v=20261110_tile_rows",
         "/client/src/js/views/labelTile.js?v=20261012_main_merge",
         "/client/src/js/views/labelGpu.js?v=20261107_label_high_byte",
         "/client/src/js/services/viewTransform.js?v=20260925_view_transform",
@@ -771,7 +771,7 @@
         "/client/src/js/views/chatPanel.js?v=20261012_merge_main",
         "/client/src/js/services/agentBridge.js?v=20261109_session_resumed",
         "/client/src/js/services/launchContext.js?v=20261005_bridge",
-        "/client/src/js/main.js?v=20261109_webperf"
+        "/client/src/js/main.js?v=20261110_tile_rows"
       ],
       "status": 200,
       "styles": [

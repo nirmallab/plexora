@@ -141,7 +141,9 @@ def describe(name: str, local: bool = False) -> dict:
     ...]}`, with `tile: [w, h]` (the grid of every tile route), `generation`
     and `labels` (the mask, `_labels`) beside it. `local`: the desktop app's
     question -- a file on this computer instead of one the website's page
-    holds -- whose served image and mask also carry `ifds` (`main_ifds`)."""
+    holds -- whose served image and mask also carry `ifds` (`main_ifds`).
+    The website's served TIFF image carries them too, from the open Python
+    already walked (`tiff_series.held_ifds`, no read of the file)."""
     from plexora.server.models import data_model
     from plexora.server.models.project import IMAGE_TYPE_BRIGHTFIELD, Project
     from plexora.server.providers.browser import PAGE_ROOTS
@@ -210,6 +212,10 @@ def describe(name: str, local: bool = False) -> dict:
                channels=[c.get("fullname") or c.get("name") for c in config["imageData"]])
     if local:
         out["ifds"] = main_ifds(path)
+    else:
+        from plexora.server.utils import tiff_series
+
+        out["ifds"] = tiff_series.held_ifds(path)
     return out
 
 

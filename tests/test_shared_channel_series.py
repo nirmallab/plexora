@@ -55,6 +55,26 @@ def test_a_changed_file_is_opened_again(tmp_path, monkeypatch):
     assert second is not first
 
 
+def test_the_shared_open_knows_where_the_main_ifds_are(tmp_path, monkeypatch):
+    """What the page's reader is handed to read its own open's IFDs at once
+    (plexora/browser/node_spec.py `ifds`): the chain this open walked, with
+    no read of the file, and only for the file as it was opened."""
+    from plexora.browser import node_spec
+
+    monkeypatch.setenv("PLEXORA_WORK", "cooperative")
+    path = tmp_path / "image.ome.tif"
+    _pyramid(path)
+    assert tiff_series.held_ifds(path) is None
+    tiff_series.open_channel_series(path)
+    walked = tiff_series.held_ifds(path)
+    assert walked == node_spec.main_ifds(str(path)) and len(walked) == 3
+    _pyramid(path, seed=1)
+    stat = os.stat(path)
+    os.utime(path, ns=(stat.st_atime_ns, stat.st_mtime_ns + 10_000_000))
+    assert tiff_series.held_ifds(path) is None
+    assert tiff_series.held_ifds(tmp_path / "missing.tif") is None
+
+
 def test_with_threads_each_reader_has_its_own_handle(tmp_path, monkeypatch):
     monkeypatch.setenv("PLEXORA_WORK", "threads")
     path = tmp_path / "image.ome.tif"

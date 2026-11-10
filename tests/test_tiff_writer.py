@@ -350,6 +350,36 @@ def _classic_subifd_pyramid(tmp_path):
     return out
 
 
+def _lzw_pyramid(tmp_path):
+    """LZW with the horizontal predictor, as Bio-Formats writes an ORION
+    slide (LSP20329): the codec the page decodes in JavaScript (node/lzw.js)."""
+    out = tmp_path / "lzw.ome.tiff"
+    data = _pixels("uint16", (3, 900, 1100), seed=11)
+    with tifffile.TiffWriter(out, bigtiff=True, ome=True) as tiff:
+        tiff.write(data, subifds=2, tile=(TILE, TILE), metadata={"axes": "CYX"}, compression="lzw", predictor=True)
+        level = data
+        for _ in range(2):
+            level = level[:, ::2, ::2]
+            tiff.write(level, subfiletype=1, tile=(TILE, TILE), compression="lzw", predictor=True)
+    return out
+
+
+def _close_ifds(tmp_path):
+    """Main IFDs that sit together, as a Bio-Formats pyramid keeps them
+    (LSP20329's nineteen within 0.4 MB): small planes of two bits of noise
+    put them within node/tiffReader.js IFD_GAP of each other, while a row
+    of tiles is still more than the 4 KB read at each IFD."""
+    out = tmp_path / "close.ome.tiff"
+    rng = np.random.default_rng(13)
+    y, x = np.mgrid[0:500, 0:600]
+    data = np.stack([((y // 64 + x // 64 + c) % 7 * 300 + rng.integers(0, 4, size=y.shape)).astype(np.uint16)
+                     for c in range(5)])
+    with tifffile.TiffWriter(out, bigtiff=True, ome=True) as tiff:
+        tiff.write(data, subifds=1, tile=(TILE, TILE), metadata={"axes": "CYX"}, compression="zlib")
+        tiff.write(data[:, ::2, ::2], subfiletype=1, tile=(TILE, TILE), compression="zlib")
+    return out
+
+
 def _series_pyramid(tmp_path):
     out = tmp_path / "series.tif"
     data = _pixels("uint16", (2, 700, 900), seed=6)
@@ -368,6 +398,7 @@ def _flat(tmp_path):
 
 
 @pytest.mark.parametrize("make, layout", [(_subifd_pyramid, "subifd"), (_classic_subifd_pyramid, "subifd"),
+                                          (_lzw_pyramid, "subifd"), (_close_ifds, "subifd"),
                                           (_series_pyramid, "series"), (_flat, "flat")])
 def test_a_pool_opens_its_file_once(tmp_path, make, layout):
     from plexora.browser import node_spec
@@ -382,10 +413,30 @@ def test_a_pool_opens_its_file_once(tmp_path, make, layout):
     assert found["seeded"]["reads"] == 0, "the seeded open read the file"
     assert found["geometrySame"]
     assert found["tiles"] > 0 and found["differ"] == 0
+    # A row of tiles in one read (`tiles`), the same pixels as one at a time,
+    # by a reader that parsed no level itself: each level's reads came from
+    # another reader's `index` (a pool parses a level once, not per worker).
+    runs = found["runs"]
+    assert runs["tiles"] > 0 and runs["differ"] == 0
+    if layout == "subifd":
+        # A reduced level's IFD is parsed on first use, so `index` reads it
+        # (a series' and a flat file's are all read, and seeded, at the open).
+        assert runs["recorded"] > 0
+    if layout != "flat":   # strips are read as they always were
+        assert runs["reads"] == runs["rows"], "a row of tiles took more than one read, or a level was parsed again"
     # Python's offsets are the chain, so they are taken; a spoiled list is
     # not, and the chain is walked instead: the same file either way.
     hints = found["hints"]
-    assert hints["right"] == {"hinted": True, "geometrySame": True, "tileSame": True}
+    assert {key: hints["right"][key] for key in ("hinted", "geometrySame", "tileSame")} == {
+        "hinted": True, "geometrySame": True, "tileSame": True}
+    # IFDs that sit together are read together: a run of them, each within
+    # IFD_GAP (256 KiB) of the one before, in one read where the walk took
+    # one each.
+    ordered = sorted(ifds)
+    together = sum(1 for a, b in zip(ordered, ordered[1:]) if b - a <= 256 * 1024)
+    if make is _close_ifds:
+        assert together == len(ifds) - 1
+    assert hints["right"]["reads"] <= found["first"]["reads"] - together
     assert len(ifds) > 2 and hints["spoiled"]["hinted"] is False
     assert hints["wrongFirst"]["hinted"] is False
     for name in ("spoiled", "wrongFirst"):

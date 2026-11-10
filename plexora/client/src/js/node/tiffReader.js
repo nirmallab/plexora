@@ -19,13 +19,17 @@
  *    node's label PNG (alpha the high byte: 0 for ids < 2^24).
  *  - an edge tile is the clipped size, as `read_tile` slices it.
  *
- * createTiffReader() -> {open, tile, level, region}; workers/tiffWorker.js puts
- * it behind messages.
+ * createTiffReader() -> {open, tile, tiles, index, seed, level, region, ...};
+ * workers/tiffWorker.js puts it behind messages.
  *   open({file|url, size, decoder: "native"|"native-blob"|"pako", prefetchOffsets,
  *         record, seed})                         -- `record`: the result's `seed` is
  *                                                 every slice the open read; `seed`:
  *                                                 open from such slices (SeededSource)
  *   tile({channel, level, tx, ty, tw, th, raw})  -- `timing` says where it went
+ *   tiles({channel, level, tx0, ty, count, tw, th, raw}) -- `count` tiles side by side,
+ *                                                 their bytes in one read: {tiles}
+ *   index({channel, level}) -> {seed}            -- a level parsed, its reads recorded
+ *   seed({slices})                               -- another worker's `index` reads
  *   region({channel, level, x0, y0, x1, y1})     -- a window as native values
  *   level({channel, level})                      -- a whole (small) level, raw
  *   max({channel, level, windows})               -- the largest sample over windows
@@ -195,6 +199,13 @@ class SeededSource {
         this.inner = inner;
         this.seed = Array.isArray(seed) ? seed.filter((s) => s && s.buffer) : [];
         this.recorded = null;
+        //: Arrays each slice read from the file is added to while they are
+        //: here (`index`: what parsing a level read, for the pool's other
+        //: workers), slices up to RECORD_MAX: a level's offsets, not a tile.
+        this.recorders = new Set();
+        //: Tiles side by side read in one go (`tiles`), {offset, length,
+        //: buffer} each, answered from while those tiles are decoded.
+        this.primed = new Set();
     }
 
     get fileSize() { return this.inner.fileSize; }
@@ -202,8 +213,14 @@ class SeededSource {
     get reads() { return this.inner.reads; }
     get readMs() { return this.inner.readMs; }
 
-    /** The seeded bytes of one asked slice, or null. */
+    /** The primed or seeded bytes of one asked slice, or null. */
     fromSeed({ offset, length }) {
+        for (const s of this.primed) {
+            if (offset >= s.offset && offset + length <= s.offset + s.length) {
+                const from = offset - s.offset;
+                return s.buffer.slice(from, from + length);
+            }
+        }
         for (const s of this.seed) {
             if (offset >= s.offset && offset + length <= s.offset + s.length) {
                 const from = offset - s.offset;
@@ -213,22 +230,37 @@ class SeededSource {
         return null;
     }
 
-    async fetch(slices, signal) {
-        const out = slices.map((slice) => (this.seed.length ? this.fromSeed(slice) : null));
+    /** Read `slices` and answer from them from now on, as from a seed:
+     *  the stretch a chain of IFDs sits in (`mainIfdsAt`). Recorded as any
+     *  read is, so the pool's other workers open with them too. */
+    async hold(slices) {
+        const got = await this.fetch(slices);
+        slices.forEach(({ offset, length }, i) => this.seed.push({ offset, length, buffer: got[i] }));
+    }
+
+    /** `quiet`: a read no recording takes (a tile's bytes, never an IFD's). */
+    async fetch(slices, signal, quiet = false) {
+        const out = slices.map((slice) => (this.seed.length || this.primed.size ? this.fromSeed(slice) : null));
         const missing = [];
         out.forEach((buffer, i) => { if (!buffer) missing.push(i); });
         if (missing.length) {
             const got = await this.inner.fetch(missing.map((i) => slices[i]), signal);
             missing.forEach((i, k) => {
                 out[i] = got[k];
-                if (this.recorded) {
-                    this.recorded.push({ offset: slices[i].offset, length: slices[i].length, buffer: got[k].slice(0) });
-                }
+                if (quiet) return;
+                const { offset, length } = slices[i];
+                if (this.recorded) this.recorded.push({ offset, length, buffer: got[k].slice(0) });
+                if (length > RECORD_MAX) return;
+                for (const recorder of this.recorders) recorder.push({ offset, length, buffer: got[k].slice(0) });
             });
         }
         return out;
     }
 }
+
+//: The largest slice an `index` records: a level's tile offsets (8 bytes a
+//: tile: 131,072 tiles a level), never a whole tile of image data.
+const RECORD_MAX = 1 << 20;
 
 /** Channel names and pixel size out of the OME-XML, when there is one. */
 function parseOme(xml) {
@@ -252,6 +284,43 @@ async function tagValue(ifd, tag) {
     return ifd.loadValue(tag);
 }
 
+//: Main IFDs this close to the one before are read with it (`ifdWindows`)...
+const IFD_GAP = 256 * 1024;
+//: ...in reads of this much at most.
+const IFD_WINDOW_MAX = 4 << 20;
+
+/**
+ * `offsets` as reads that each take several IFDs: runs of IFDs each within
+ * IFD_GAP of the one before, from the first to past the last by the run's
+ * widest gap (4 KB at least: an IFD and what it keeps beside it). A
+ * Bio-Formats pyramid keeps every channel's IFD, its OME-XML and its
+ * level-0 tile offsets in one stretch after the full-resolution planes
+ * (19 channels: 0.4-0.7 MB), one read where nineteen were; an IFD alone
+ * is left to its own parse.
+ */
+function ifdWindows(offsets, fileSize) {
+    const sorted = [...new Set(offsets)].sort((a, b) => a - b);
+    const windows = [];
+    let run = [];
+    const close = () => {
+        if (run.length < 2) return;
+        let gap = 4096;
+        for (let i = 1; i < run.length; i += 1) gap = Math.max(gap, run[i] - run[i - 1]);
+        const end = Math.min(run[run.length - 1] + gap, fileSize || Infinity);
+        windows.push({ offset: run[0], length: end - run[0] });
+    };
+    for (const offset of sorted) {
+        if (run.length && offset - run[run.length - 1] <= IFD_GAP && offset + IFD_GAP - run[0] <= IFD_WINDOW_MAX) {
+            run.push(offset);
+        } else {
+            close();
+            run = [offset];
+        }
+    }
+    close();
+    return windows;
+}
+
 /**
  * The file's main IFDs parsed at `offsets` all at once, or null. A file's
  * IFDs are a chain, each saying where the next is, so walking it is one read
@@ -260,7 +329,9 @@ async function tagValue(ifd, tag) {
  * node_spec.py `ifds`); they are taken only when they ARE the chain: the
  * first is the header's, each IFD's next is the following offset, the last
  * IFD's next is 0. Anything else -- or a parse that fails -- is null, and
- * the chain is walked.
+ * the chain is walked. IFDs that sit together are read together
+ * (`ifdWindows`) and kept: the reader answers from them for as long as it
+ * is open.
  */
 async function mainIfdsAt(tiff, offsets) {
     if (!Array.isArray(offsets) || !offsets.length || offsets.length > 4096) return null;
@@ -270,6 +341,8 @@ async function mainIfdsAt(tiff, offsets) {
                      || (size && Number(offset) >= size))) return null;
     let parsed;
     try {
+        const windows = ifdWindows(offsets.map(Number), size);
+        if (windows.length) await tiff.source.hold(windows);
         parsed = await Promise.all(offsets.map((offset) => tiff.parser.parseFileDirectoryAt(Number(offset))));
     } catch (error) {
         return null;
@@ -445,6 +518,91 @@ export function createTiffReader() {
         return img;
     }
 
+    /**
+     * A channel's level parsed and its tile offsets loaded (`image`), with
+     * what that read from the file recorded: the pool hands it to its other
+     * workers (`seed`), so a level is parsed from the file once a pool rather
+     * than once a worker -- a chain of small reads each, which on a file
+     * share costs as much as a tile. `{seed}`: nothing when this worker had
+     * the level already.
+     */
+    async function index({ channel, level: at }) {
+        const recorder = [];
+        state.source.recorders.add(recorder);
+        try {
+            await image(channel, at);
+        } finally {
+            state.source.recorders.delete(recorder);
+        }
+        return { seed: recorder };
+    }
+
+    /** Another worker's `index` reads, answered from here on. */
+    function seed({ slices }) {
+        for (const slice of slices || []) if (slice && slice.buffer) state.source.seed.push(slice);
+        return {};
+    }
+
+    /**
+     * The file's tiles under a window of a tiled image read in as few reads
+     * as they sit back to back in the file -- a row of a Bio-Formats or
+     * tifffile pyramid is one -- and primed (`SeededSource.primed`) for
+     * geotiff.js to decode from. The primed slices, to let go once their
+     * tiles are decoded; null for an image not read this way.
+     */
+    async function primeWindow(img, x0, y0, x1, y1) {
+        if (!img.isTiled || Number(img.getSamplesPerPixel()) !== 1) return null;
+        const tw = img.getTileWidth();
+        const th = img.getTileHeight();
+        const across = Math.ceil(img.getWidth() / tw);
+        const down = Math.ceil(img.getHeight() / th);
+        const offsets = await img.fileDirectory.loadValue("TileOffsets");
+        const counts = await img.fileDirectory.loadValue("TileByteCounts");
+        const reads = [];
+        // A run goes on into the next row of file tiles where the file does
+        // (a window as wide as the plane, or file tiles smaller than ours).
+        let run = null;
+        for (let fy = Math.floor(y0 / th); fy * th < y1 && fy < down; fy += 1) {
+            for (let fx = Math.floor(x0 / tw); fx * tw < x1 && fx < across; fx += 1) {
+                const i = fy * across + fx;
+                const at = Number(offsets[i]);
+                const n = Number(counts[i]);
+                if (!n) continue;   // an empty tile: geotiff.js reads nothing for it
+                if (run && at === run.offset + run.length) run.length += n;
+                else reads.push(run = { offset: at, length: n });
+            }
+        }
+        if (!reads.length) return null;
+        const buffers = await state.source.fetch(reads, undefined, true);
+        const primed = reads.map((read, k) => ({ ...read, buffer: buffers[k] }));
+        for (const slice of primed) state.source.primed.add(slice);
+        return primed;
+    }
+
+    /**
+     * `count` tiles of the Plexora grid side by side (tx0, tx0 + 1, ... in row
+     * `ty`), each as `tile` answers it: the file's tiles under all of them read
+     * in one go where they sit back to back (`primeWindow`), then each decoded
+     * by geotiff.js from those bytes exactly as `tile` decodes it. `{tiles}`
+     * in order.
+     */
+    async function tiles({ channel, level: at, tx0, ty, count, tw = 1024, th = 1024, raw = false }) {
+        const img = await image(channel, at);
+        const W = img.getWidth();
+        const H = img.getHeight();
+        const x0 = tx0 * tw;
+        const y0 = ty * th;
+        const primed = x0 < W && y0 < H
+            ? await primeWindow(img, x0, y0, Math.min(W, (tx0 + count) * tw), Math.min(H, y0 + th)) : null;
+        try {
+            const out = await Promise.all(Array.from({ length: count },
+                                                      (_, k) => tile({ channel, level: at, tx: tx0 + k, ty, tw, th, raw })));
+            return { tiles: out };
+        } finally {
+            for (const slice of primed || []) state.source.primed.delete(slice);
+        }
+    }
+
     /** Native little-endian uint16 -> the big-endian bytes frag.glsl reads. */
     function toBigEndian16(values) {
         const out = new Uint16Array(values.length);
@@ -548,7 +706,7 @@ export function createTiffReader() {
             const r1 = Math.min(y1, (s + 1) * rps);
             slices.push({ offset: Number(offsets[s]) + (r0 - s * rps) * rowBytes, length: (r1 - r0) * rowBytes, r0, r1 });
         }
-        const buffers = await state.source.fetch(slices.map(({ offset, length }) => ({ offset, length })));
+        const buffers = await state.source.fetch(slices.map(({ offset, length }) => ({ offset, length })), undefined, true);
         const w = x1 - x0;
         const out = new Kind(w * (y1 - y0));
         slices.forEach((s, i) => {
@@ -586,13 +744,13 @@ export function createTiffReader() {
         // One read when the strips are (nearly) contiguous; else one per strip.
         let pieces;
         if (hi - lo <= 1.5 * sum) {
-            const [all] = await state.source.fetch([{ offset: lo, length: hi - lo }]);
+            const [all] = await state.source.fetch([{ offset: lo, length: hi - lo }], undefined, true);
             pieces = [];
             for (let s = s0; s < s1; s += 1) pieces.push(new Uint8Array(all, Number(offsets[s]) - lo, Number(counts[s])));
         } else {
             const slices = [];
             for (let s = s0; s < s1; s += 1) slices.push({ offset: Number(offsets[s]), length: Number(counts[s]) });
-            pieces = (await state.source.fetch(slices)).map((b) => new Uint8Array(b));
+            pieces = (await state.source.fetch(slices, undefined, true)).map((b) => new Uint8Array(b));
         }
         const t0 = now();
         const inflated = await Promise.all(pieces.map((bytes) => throughStream(bytes, new DecompressionStream("deflate"))));
@@ -712,7 +870,7 @@ export function createTiffReader() {
     function fetchTiles(plan, window) {
         const reads = readsOf(plan, window);
         const real = reads.filter((read) => read.length > 0);
-        return state.source.fetch(real.map(({ offset, length }) => ({ offset, length })))
+        return state.source.fetch(real.map(({ offset, length }) => ({ offset, length })), undefined, true)
             .then((buffers) => ({ reads, real, buffers }));
     }
 
@@ -866,5 +1024,5 @@ export function createTiffReader() {
         return { max: top, windows: windows.length, timing: { totalMs: now() - t0 } };
     }
 
-    return { open, tile, level, region, max, regions };
+    return { open, tile, tiles, index, seed, level, region, max, regions };
 }

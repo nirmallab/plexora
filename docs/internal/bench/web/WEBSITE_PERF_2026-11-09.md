@@ -449,6 +449,112 @@ What is left on the click: the calibration's own step, 2.5 s cold for four chann
 quarters of it the cells' crops read through the page (0.84 s a channel, already spread over the
 page's TIFF workers), to be measured on a quiet machine before changing.
 
+## Round seven (after 0.0.48): a row of tiles in one read, on a file share
+
+Reported on the live site (Windows, 2026-11-10): LSP20329 (19-ch uint16 OME-TIFF, 46.8 GB, LZW,
+1024 tiles, Bio-Formats) picked from the lab's SMB share (`\\eristwofs`), slow to render where an
+earlier Mac test was fast. Two causes, one temporary:
+
+- **That file, that half hour.** From about 09:55 to 10:20 every request to this one file cost
+  ~10x what any other file on the share cost (64 KB reads 9.9 ms against 1.0, opens 0.25-1.2 s
+  against 2-4 ms, re-reads uncached), and a 4-channel tour took 14-77 s. At 10:35 it read like
+  the rest. The file had been untouched for months and was opened at 09:49; nothing the client
+  can see says why (attributes normal, fully allocated, nobody else holding it). Not the page's.
+- **The page reads one tile per request.** On the healthy share a 4-channel view (24 tiles,
+  40-50 MB) still took 1.5-3.4 s, about 20 MB/s, where raw reads of the same bytes merged by row
+  reached 100 MB/s. A share answers one large request in about what a tile's costs. The Mac
+  measurements read from local disk, where none of this shows.
+
+LZW was not the cause: node/lzw.js decodes a 1024² uint16 tile in ~15 ms (imagecodecs: 11.5).
+
+What changed:
+
+- **A row's tiles in one read** (node/tiffReader.js `tiles`): the file's tiles under a run of the
+  Plexora grid, side by side in the file, read in one slice and primed for geotiff.js, which then
+  decodes each exactly as `tile` does. Byte for byte against `tile` on LSP20329 (LZW), LSP26257
+  (uncompressed) and the website's own label pyramid (deflate, uint32), 919 tiles with edges.
+- **A level parsed once a pool** (`index`, `seed`): one worker parses a channel's level, its reads
+  recorded, and the others are handed them. Each worker parsing every level for itself was a
+  chain of small reads per worker per level: on main, a second region at levels already parsed
+  toured about a fifth faster than the first (LSP20329, the home view left out).
+- **The scheduler hands a tile's row neighbours over with it** (views/tileFetch.js `localGroup`,
+  services/browserNode.js `group`): the same tier, an unbroken run of four at most about the tile
+  it put first, one slot for them all, each delivered as read; one the page declines goes to the
+  network as before. For there to be neighbours to hand over, a frame's tiles are lined up
+  before any goes (as on a batched link), and an item the page reads asks for a view an update
+  (`maxTilesPerFrame` 16, as a volume's and a pane's): a planar image's asked for one, nearest the
+  centre first, so each row's middle tile left alone. Only where the page reads tiles; nothing
+  changes for the desktop's own server or the network path.
+
+`tools/bench_web/bench_tile_path.mjs`, this Windows machine, the share in its healthy state,
+4 channels, main and this round alternated (A B B A A B), each run on a region and channels no
+run had read, total of 7 views (home, zoom to L3..L0, two pans), s:
+
+| | main (0.0.48) | this round | |
+|---|---|---|---|
+| LSP20329 (LZW), 6 runs each | 10.3 / 10.6 / 10.5 / 9.7 / 7.8 / 10.5 | 5.9 / 6.7 / 7.8 / 6.1 / 6.9 / 6.3 | 1.5x |
+| LSP26257 (uncompressed, 115 GB), 5 each | 12.2 / 15.0 / 15.9 / 13.7 / 14.1 | 8.3 / 8.3 / 10.2 / 6.8 / 8.6 | 1.7x |
+
+A full-resolution view went from 1.7-3.4 s to 0.8-1.7 s; its first tile can come later (it comes
+with its row, 250-960 ms against 90-910), while the coarser level stays on screen. From local
+disk the two are level (a 3-channel tour of pyr16_zlib: 410 vs 440 ms).
+
+Tried and dropped: one tile's slice split into four parallel reads, 3x faster one tile at a time,
+2x slower with six tiles in flight.
+
+The open, after these runs. The website's spec carried no `ifds` (the desktop's did), so a pool's
+open walked the main IFDs one read after another. Now it carries them from the open Python has
+already walked (`tiff_series.held_ifds`, no read of the file), and the page reads IFDs that sit
+together in one read and keeps it (node/tiffReader.js `ifdWindows`). Both files keep their 19
+channels' IFDs, OME-XML and level-0 tile offsets in one stretch (0.4 and 0.7 MB) after the
+full-resolution planes, as Bio-Formats writes them. A pool's open on the share, 3 runs each
+alternated, ms:
+
+| | reads | in a row | main IFDs | pool open |
+|---|---|---|---|---|
+| LSP20329, walked | 28 | 23 | 27-51 | 85-120 |
+| LSP20329, at Python's offsets | 9 | 4 | 5-17 | 59-75 |
+| LSP26257, walked | 28 | 23 | 40-54 | 90-128 |
+| LSP26257, at Python's offsets | 9 | 4 | 6-23 | 65-83 |
+
+Nine reads: the header, the stretch, the SubIFDs list, then the six reduced levels at once. The
+rest of the pool open is the five seeded workers' (about 25 ms, no reads). The stretch, kept,
+also holds every channel's level-0 tile offsets and counts, two reads a channel fewer the first
+time its full resolution is drawn (38 over the 19). Pixels: 798 tiles a file (every channel and
+level, HD and raw) read both ways, none differ. On a healthy share
+that is about 30 ms sooner; in a spell like LSP20329's (about 0.9 s a read, the walk 21 s) it is 4 reads in
+a row instead of 23, about 4 s (estimated: the spell could not be had again).
+
+Python's open, after these runs. The page's open waits for Python's, which read the file through
+WORKERFS (workers/pythonWorker.js `blockReads`: 1 MiB blocks, a miss read alone): 8 blocks one
+after another on both files -- the header, the block of the 19 IFDs, the SubIFDs lists in the
+file's last block, a block for each of five levels the lists had named together. 0.2 s where the
+share had them lately; from the share cold it is the bytes that cost. Chrome's worker, blocks no
+trial had read, ms each:
+
+| read | 4 KB | 64 KB | 256 KB | 1 MiB |
+|---|---|---|---|---|
+| one at a time | 18-21 | 18-27 | 73-101 | 218-257 |
+
+Reads in parallel add up across blocks (five 1 MiB blocks at once 283-402, not ~1100) but not
+within one (1 MiB as 16 parallel slices 218-305, five as 80 slices 1084-1257: dropped, as the
+tile split was). So the open reads ahead (plexora/browser/tiff_ahead.py, installed at boot on
+tifffile's `FileHandle.open`): the same walk tifffile makes, every 64 KiB piece a step names asked
+at once (`plexoraReadAhead`; neighbours as one slice), the file's last piece with its header, and
+a main chain whose IFDs sit together read twice as far ahead as it has come; a read that starts in
+a piece is answered from it, short where it runs past. Only with JSPI; elsewhere as before. The
+real worker (a build of the branch), each file opened once, alternating, files no trial had
+touched (LSP20234...20304, 19 channels, 63-118 GB):
+
+| | Python's open, ms | rounds | read ahead |
+|---|---|---|---|
+| alone (4 files) | 1305, 1500, 1701, 1835 | 8 reads of 1 MiB in a row | |
+| read ahead (4 files) | 344, 390, 404, 683 | 5-6 | 19-44 pieces (1.2-2.9 MB) |
+
+tifffile then read no block of its own on any of them (CPython replay of the worker, LSP20329 and
+LSP20259; tests/test_tiff_ahead.py). Rerun: `node tools/bench_web/bench_python_open.mjs --site S
+--py P FILE...` (alternates; give files not read lately; `--ahead-first` swaps the order).
+
 ## Rerun
 
 ```bash
