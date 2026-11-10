@@ -5,6 +5,7 @@
 const COMMANDS: &[&str] = &[
     "pick_paths",
     "save_bytes",
+    "pick_save_path",
     "read_file",
     "reveal_path",
     "open_in_browser",

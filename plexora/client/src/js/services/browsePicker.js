@@ -363,7 +363,15 @@ async function browseForPath({mode = "file", filter = "any", node = null,
                 ? window.PlexoraConfirm.ask({ title: "This slide has a folder", body,
                                               confirm: "Choose folder", danger: false })
                 : Promise.resolve(true));
-            const picked = await window.PlexoraPicks.pick({ mode: kind, multiple: select === "many", ask });
+            // The first pick that would keep something asks where the work
+            // is kept (views/webOnboarding.js), once the file dialog has
+            // closed and before anything is mounted: a cancel there is a
+            // cancelled pick, and the image opens once it is answered.
+            const onboarding = window.PlexoraOnboarding;
+            const gate = onboarding
+                ? () => onboarding.ensure({ reason: "pick" }).then((answer) => answer === "ready")
+                : null;
+            const picked = await window.PlexoraPicks.pick({ mode: kind, multiple: select === "many", ask, gate });
             if (picked && onPicked) onPicked(picked);
             return;
         }

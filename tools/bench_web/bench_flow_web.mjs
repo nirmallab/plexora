@@ -21,6 +21,7 @@ import path from "node:path";
 import { writeFileSync, mkdtempSync, readdirSync, statSync, readFileSync, unlinkSync, linkSync, openSync, readSync, closeSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { INIT, WORKER_INIT, launch, levelWatch, levelsSeen, post, pyRecent, startStatic } from "./benchlib.mjs";
+import { seedBrowserStore } from "../../tests/browser/lib.mjs";
 const args = process.argv.slice(2);
 const opt = (n, f) => (args.includes(n) ? args[args.indexOf(n) + 1] : f);
 const site = opt("--site", null);
@@ -83,6 +84,8 @@ function findMarked(dir, marker, found = []) {
   return found;
 }
 try {
+  // The storage choice made first, so the onboarding (a local image's, or a save's) never shows.
+  await seedBrowserStore(browser.context, origin);
   await page.goto(`${origin}/${args.includes("--trace") ? "?pydebug" : ""}`);
   let frame = await frameOf();
   await frame.waitForFunction(() => document.getElementById("quick_view_go") && !document.getElementById("plexora-boot"), null, { timeout: 120000, polling: 50 });
@@ -133,7 +136,6 @@ _w.Task.run = _task_run
 `).catch((e) => String(e));
     say("trace " + out.traceInstall);
   }
-  await frame.waitForFunction(() => { const b = [...document.querySelectorAll(".plx-confirm .plx-button")].find((x) => ["Keep in browser", "Keep them", "Not now"].includes(x.textContent.trim())); if (b) { b.click(); return true; } return false; }, null, { timeout: 8000, polling: 200 }).catch(() => null);
   // Marked stand-ins in OPFS, then the real files hard-linked over them.
   const tag = Math.random().toString(36).slice(2);
   await page.evaluate(async ([names, tag]) => {

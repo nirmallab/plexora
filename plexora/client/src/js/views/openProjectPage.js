@@ -91,6 +91,8 @@
         const barCountEl = document.getElementById("project-selection-count");
         const selectAllEl = document.getElementById("project-select-all");
         const createDatasetButton = document.getElementById("dataset-create");
+        const locationSelect = document.getElementById("project-location");
+        const noResultsText = document.getElementById("project-no-results-text");
 
         const state = {
             projects: [],
@@ -109,6 +111,12 @@
             //: extends over THIS rather than over the unfiltered list, because
             //: what a range means is "everything between these two on screen".
             order: [],
+            //: The location shown (Settings > Data's id), or "" for all.
+            location: "",
+            //: Where the projects are kept, each place once (`placesOf`).
+            places: [],
+            //: The website's own names for its places, or null (`websiteNames`).
+            placeNames: null,
         };
 
         // ------------------------------------------------------------------
@@ -136,6 +144,124 @@
             const url = new URL(window.location.href);
             if (state.folder) url.searchParams.set("dataset", state.folder);
             else url.searchParams.delete("dataset");
+            window.history.replaceState(null, "", url);
+            render();
+        }
+
+        // ------------------------------------------------------------------
+        // Where each project is kept
+        // ------------------------------------------------------------------
+        //
+        // Every card carries the location it was listed from (`/projects`'
+        // `location`, Settings > Data's list). A chip names it, and a filter
+        // shows one place's projects -- both only once the projects come from
+        // more than one place, so a single library looks as it always did.
+        // `shared` keeps its own pill and its own meaning: a shared card
+        // carries no chip, and its place is in the filter like any other.
+
+        //: The kinds in the order the filter lists them, and each one's icon
+        //: (Settings > Data draws the same, settingsPage.js LOCATION_KINDS).
+        const PLACE_ORDER = ["data_root", "library", "workspace", "legacy", "shared"];
+        const PLACE_ICONS = {
+            data_root: "hard-drive", library: "folder-open", workspace: "folder",
+            legacy: "box-archive", shared: "users",
+        };
+
+        /** How a place is named: the website's own name for it when it has
+         *  one -- its Python knows an added folder only by its mount, and
+         *  /data as "Data folder" -- else the name Settings gives it. */
+        function placeName(place) {
+            const names = state.placeNames;
+            const own = names && (names.get(place.id) || (place.kind === "data_root" ? names.get("data_root") : null));
+            return (own && own.label) || place.label || "Unnamed";
+        }
+
+        function placeIcon(place) {
+            const names = state.placeNames;
+            const own = names && place.kind === "data_root" ? names.get("data_root") : null;
+            return (own && own.icon) || PLACE_ICONS[place.kind] || "folder";
+        }
+
+        /** The places the projects are kept, each once, with its count, in
+         *  Settings' order. A project with no place (a root not in the list)
+         *  is in none of them, and only under "All locations". */
+        function placesOf(projects) {
+            const byId = new Map();
+            for (const project of projects) {
+                const place = project.location;
+                if (!place || !place.id) continue;
+                const seen = byId.get(place.id);
+                if (seen) {
+                    seen.count += 1;
+                } else {
+                    byId.set(place.id, { id: place.id, kind: place.kind, label: placeName(place),
+                                         icon: placeIcon(place), count: 1 });
+                }
+            }
+            const rank = (kind) => {
+                const at = PLACE_ORDER.indexOf(kind);
+                return at < 0 ? PLACE_ORDER.length : at;
+            };
+            return Array.from(byId.values()).sort(
+                (a, b) => rank(a.kind) - rank(b.kind) || a.label.localeCompare(b.label));
+        }
+
+        /** Whether a project is in the place the filter shows. */
+        function inPlace(project) {
+            return !state.location || Boolean(project.location && project.location.id === state.location);
+        }
+
+        /** On the website: the host page's names for its places -- its
+         *  default folder (or this browser) and each folder added beside it
+         *  (services/browserStore.js). Null anywhere else. */
+        async function websiteNames() {
+            let store = null;
+            try {
+                store = window.parent && window.parent !== window ? window.parent.PlexoraStore : null;
+            } catch (error) {
+                store = null;
+            }
+            if (!store || typeof store.locations !== "function") return null;
+            const names = new Map();
+            const place = store.current();
+            names.set("data_root", place.kind === "folder"
+                ? { label: place.label, icon: "folder-open" }
+                : { label: "This browser", icon: "window-maximize" });
+            try {
+                for (const kept of await store.locations()) {
+                    if (!kept.isDefault) names.set(kept.id, { label: kept.label, icon: "folder" });
+                }
+            } catch (error) {
+                // The default alone.
+            }
+            return names;
+        }
+
+        /** The filter's options, drawn again whenever the places change; the
+         *  filter itself only when there are two places or more. */
+        function paintPlaces() {
+            const several = state.places.length > 1;
+            // A place that has gone -- its last project deleted, its folder
+            // taken off the list -- is not somewhere to stand.
+            if (!several || !state.places.some((place) => place.id === state.location)) state.location = "";
+            if (!locationSelect) return;
+            locationSelect.hidden = !several;
+            locationSelect.innerHTML = [`<option value="">All locations</option>`].concat(
+                state.places.map((place) => `<option value="${escapeHtml(place.id)}">${escapeHtml(
+                    `${place.label}${place.kind === "shared" ? " (shared)" : ""} (${place.count})`)}</option>`),
+            ).join("");
+            locationSelect.value = state.location;
+        }
+
+        /** Show one place's projects (or all), and keep it in the URL for a
+         *  reload, as the folder is kept. */
+        function setPlace(id) {
+            state.location = id || "";
+            state.selection.clear();
+            state.anchor = null;
+            const url = new URL(window.location.href);
+            if (state.location) url.searchParams.set("location", state.location);
+            else url.searchParams.delete("location");
             window.history.replaceState(null, "", url);
             render();
         }
@@ -174,16 +300,20 @@
          */
         function visible() {
             const query = state.query.trim().toLowerCase();
+            // A location shown narrows everything, folders included: a
+            // dataset with nothing kept there is not on the way to anything.
+            const holds = (d) => !state.location || state.projects.some(
+                (p) => inPlace(p) && p.dataset && p.dataset.id === d.id);
             if (query) {
                 return {
                     // Folders only at the top level: a folder card inside
                     // another folder is a place the user cannot be, since
                     // datasets do not nest.
                     folders: state.folder ? [] : state.datasets.filter(
-                        (d) => d.name.toLowerCase().includes(query)),
+                        (d) => d.name.toLowerCase().includes(query) && holds(d)),
                     projects: sorted(state.projects.filter(
-                        (p) => p.name.toLowerCase().includes(query)
-                            || shownName(p).toLowerCase().includes(query))),
+                        (p) => inPlace(p) && (p.name.toLowerCase().includes(query)
+                            || shownName(p).toLowerCase().includes(query)))),
                     flattened: true,
                 };
             }
@@ -191,14 +321,14 @@
                 return {
                     folders: [],
                     projects: sorted(state.projects.filter(
-                        (p) => p.dataset && p.dataset.id === state.folder)),
+                        (p) => inPlace(p) && p.dataset && p.dataset.id === state.folder)),
                     flattened: false,
                 };
             }
             return {
-                folders: state.datasets.slice().sort(
+                folders: state.datasets.filter(holds).sort(
                     (a, b) => a.name.localeCompare(b.name)),
-                projects: sorted(state.projects.filter((p) => !p.dataset)),
+                projects: sorted(state.projects.filter((p) => inPlace(p) && !p.dataset)),
                 flattened: false,
             };
         }
@@ -285,8 +415,22 @@
                     title="A data file is registered but Plexora still needs to know which table or image to read. It will ask when a tool needs it."
                     ><span class="fas fa-triangle-exclamation"></span>Needs setup</span>`);
             }
+            const where = placeMarkup(project);
+            if (where) badges.push(where);
             return badges.length
                 ? `<span class="project-badges">${badges.join("")}</span>` : "";
+        }
+
+        /** Which location a project is kept in, once there is more than one.
+         *  Last among the badges: what the project has leads, where it is
+         *  follows. A shared project's pill already says where it is. */
+        function placeMarkup(project) {
+            const place = project.location;
+            if (state.places.length < 2 || !place || !place.id || project.shared) return "";
+            const name = placeName(place);
+            return `<span class="plx-locations-chip" title="${escapeHtml(`Kept in ${name}`)}"
+                ><span class="fas fa-${escapeHtml(placeIcon(place))}"></span><span
+                class="plx-locations-chip-text">${escapeHtml(name)}</span></span>`;
         }
 
         /** Where a project lives, shown only in a flattened search result. */
@@ -299,13 +443,16 @@
         function actionsMarkup(project) {
             const editUrl = plexoraUrl("edit_config/" + encodeURIComponent(project.name));
             const name = escapeHtml(project.name);
+            const more = moreMarkup(project);
             // A shared project belongs to whoever provisioned the root it sits
             // on. The server refuses both of these with a 403 regardless; not
             // offering them is what stops the user finding that out only after
-            // confirming a delete dialog.
-            if (project.shared) return "";
+            // confirming a delete dialog. Exporting it, or copying it into
+            // the user's own projects, is still theirs to do.
+            if (project.shared) return more ? `<span class="project-actions">${more}</span>` : "";
             return `<span class="project-actions">
                 <a href="${editUrl}" class="project-action" title="Edit"><span class="fas fa-pencil"></span></a>
+                ${more}
                 <a href="#" class="project-action project-action-danger" title="Delete"
                    data-delete-project="${name}"><span class="fas fa-trash"></span></a>
             </span>`;
@@ -403,6 +550,7 @@
                 <span class="project-actions">
                     <a href="#" class="project-action" title="Rename"
                        data-rename-dataset="${escapeHtml(dataset.id)}"><span class="fas fa-pencil"></span></a>
+                    ${datasetExportMarkup(dataset)}
                     <a href="#" class="project-action project-action-danger" title="Delete dataset"
                        data-delete-dataset="${escapeHtml(dataset.id)}"><span class="fas fa-trash"></span></a>
                 </span>
@@ -453,8 +601,10 @@
         function render() {
             const total = state.projects.length;
             const folder = currentFolder();
+            const place = state.location ? state.places.find((p) => p.id === state.location) : null;
             countEl.textContent = folder
                 ? `${escapeHtml(folder.name)} — ${countPhrase(folder.projectCount || 0, "sample")}`
+                : place ? `${countPhrase(place.count, "sample")} in ${place.label}`
                 : countPhrase(total, "sample");
             crumbsEl.innerHTML = crumbsMarkup();
 
@@ -481,7 +631,13 @@
             const nothingAtAll = total === 0 && !state.datasets.length;
             const nothingHere = !folders.length && !projects.length;
             emptyStateEl.hidden = !nothingAtAll;
-            noResultsEl.hidden = !(nothingHere && !nothingAtAll && state.query.trim());
+            const narrowed = Boolean(state.query.trim() || state.location);
+            noResultsEl.hidden = !(nothingHere && !nothingAtAll && narrowed);
+            if (noResultsText) {
+                noResultsText.textContent = state.query.trim()
+                    ? "No projects match your search"
+                    : `Nothing here is kept in ${place ? place.label : "that location"}`;
+            }
             // An emptied folder still has to be a drop target, which is the
             // whole reason this state has a panel of its own rather than
             // reusing "no projects match". The panel says "drag projects
@@ -489,7 +645,7 @@
             // this it is a sentence that invites a gesture and then ignores
             // it, which is worse than not offering it.
             folderEmptyEl.hidden = !(nothingHere && !nothingAtAll
-                                     && !state.query.trim() && folder);
+                                     && !narrowed && folder);
             if (folder) folderEmptyEl.dataset.dropDataset = folder.id;
             else delete folderEmptyEl.dataset.dropDataset;
 
@@ -507,6 +663,7 @@
             barEl.hidden = n === 0;
             if (!n) return;
             barCountEl.textContent = `${countPhrase(n, "sample")} selected`;
+            paintExportAction();
             const chosen = selectedProjects();
             // "Remove from dataset" only when every one of them is in one:
             // offered on a mixed selection it would look like it had failed on
@@ -544,6 +701,9 @@
             ]);
             state.projects = Array.isArray(projects) ? projects : [];
             state.datasets = (datasets && datasets.datasets) || [];
+            state.placeNames = await websiteNames();
+            state.places = placesOf(state.projects);
+            paintPlaces();
             // A folder that has been deleted in another tab is not somewhere
             // to stand; the crumb would name nothing and the view would be
             // permanently empty.
@@ -796,6 +956,120 @@
         }
 
         // ------------------------------------------------------------------
+        // Export, import and copies (views/projectExport.js, projectImport.js)
+        // ------------------------------------------------------------------
+
+        //: Where these dialogs can run: the desktop app and its server, and the
+        //: website through its own transport (services/bundleWeb.js), which moves
+        //: a project's bytes in the browser. Asked each time, because the
+        //: website installs its transport after this page.
+        function bundlesAvailable() {
+            return Boolean(window.PlexoraProjectExport?.available?.());
+        }
+
+        /**
+         * A card's ••• menu: Export… and Make a copy. A menu rather than two
+         * more icons, because a card already carries Edit and Delete over its
+         * thumbnail and four chips there cover the picture they sit on. On a
+         * shared project it is the only chip: both are things a read-only
+         * project can still have done to it.
+         */
+        function moreMarkup(project) {
+            if (!bundlesAvailable()) return "";
+            return `<a href="#" class="project-action" title="More" aria-haspopup="menu"
+                       aria-expanded="false" data-project-more="${escapeHtml(project.name)}"
+                       ><span class="fas fa-ellipsis"></span></a>`;
+        }
+
+        function datasetExportMarkup(dataset) {
+            if (!bundlesAvailable()) return "";
+            return `<a href="#" class="project-action" title="Export dataset…"
+                       data-export-dataset="${escapeHtml(dataset.id)}"><span class="fas fa-file-export"></span></a>`;
+        }
+
+        function paintExportAction() {
+            const button = barEl.querySelector('[data-action="export"]');
+            if (button) button.hidden = !bundlesAvailable();
+        }
+
+        function exportProjects(names) {
+            if (!names.length || !window.PlexoraProjectExport) return;
+            window.PlexoraProjectExport.open({names});
+        }
+
+        function exportDataset(id) {
+            const dataset = state.datasets.find((d) => d.id === id);
+            if (!dataset || !window.PlexoraProjectExport) return;
+            window.PlexoraProjectExport.open({dataset: dataset.id, datasetName: dataset.name});
+        }
+
+        function makeCopy(name) {
+            window.PlexoraProjectImport?.copy?.(name);
+        }
+
+        function openMore(anchor, name) {
+            if (!window.PlexoraMenu) return;
+            window.PlexoraMenu.open(anchor, [
+                {label: "Export…", onSelect: () => exportProjects([name])},
+                {label: "Make a copy", onSelect: () => makeCopy(name),
+                 title: "A new project of your own, with this one's analysis, tables and bookmarks"},
+            ]);
+        }
+
+        /** The card and folder clicks that belong to export: true when
+         *  handled, so the card does not also open or select. */
+        function bundleClick(event) {
+            const more = event.target.closest?.("[data-project-more]");
+            if (more) {
+                event.preventDefault();
+                openMore(more, more.dataset.projectMore);
+                return true;
+            }
+            const dataset = event.target.closest?.("[data-export-dataset]");
+            if (dataset) {
+                event.preventDefault();
+                exportDataset(dataset.dataset.exportDataset);
+                return true;
+            }
+            return false;
+        }
+
+        /**
+         * File > Export Project… (the desktop menu, or the navbar row) on this
+         * page, where no sample is open: the selection, or else the dataset
+         * being looked inside. With neither, the row's own answer stands.
+         */
+        function onMenu(event) {
+            if (event.detail?.id !== "page:export_project" || !bundlesAvailable()) return;
+            if (state.selection.size) {
+                event.preventDefault();
+                exportProjects(Array.from(state.selection));
+            } else if (state.folder) {
+                event.preventDefault();
+                exportDataset(state.folder);
+            }
+        }
+        document.addEventListener("plexora:menu", onMenu);
+
+        /**
+         * `/open_project?bundle=<path>`: a `.plexora` double-clicked in Finder or
+         * Explorer, or opened from another launch (`/desktop/open`). The import
+         * dialog asks before anything is added; the parameter goes from the
+         * address so a reload does not ask again.
+         */
+        function importFromUrl() {
+            const here = new URL(window.location.href);
+            const path = here.searchParams.get("bundle");
+            if (!path) return;
+            here.searchParams.delete("bundle");
+            window.history.replaceState(null, "", here);
+            window.PlexoraProjectImport?.open?.({path});
+        }
+
+        const bundleImportButton = document.getElementById("project-bundle-import");
+        if (bundleImportButton) bundleImportButton.hidden = !bundlesAvailable();
+
+        // ------------------------------------------------------------------
         // Events
         // ------------------------------------------------------------------
 
@@ -812,6 +1086,8 @@
 
         resultsEl.addEventListener("click", (event) => {
             const target = event.target;
+
+            if (bundleClick(event)) return;
 
             const tick = target.closest?.("[data-select-project]");
             if (tick) {
@@ -985,6 +1261,7 @@
             const names = Array.from(state.selection);
             const action = button.dataset.action;
             if (action === "move") return void moveSelection();
+            if (action === "export") return void exportProjects(names);
             if (action === "unassign") return void assign(names, null);
             if (action === "delete") return void deleteProjects(names);
             if (action === "clear") return clearSelection();
@@ -1011,6 +1288,7 @@
             state.sort = sortSelect.value;
             render();
         });
+        locationSelect?.addEventListener("change", () => setPlace(locationSelect.value));
         gridButton.addEventListener("click", () => {
             state.view = "grid";
             localStorage.setItem("plexora.openProjectView", "grid");
@@ -1058,12 +1336,17 @@
 
         // Where we were, if this is a reload or a pasted link.
         state.folder = new URL(window.location.href).searchParams.get("dataset") || null;
+        state.location = new URL(window.location.href).searchParams.get("location") || "";
         updateViewButtons();
         void reload();
+        importFromUrl();
 
         // The page is mounted as a fragment by the app shell, so it is torn
         // down and re-registered on every navigation. Everything else here is
-        // bound to an element that goes with the fragment; this one is not.
-        return () => document.removeEventListener("keydown", onKeydown);
+        // bound to an element that goes with the fragment; these are not.
+        return () => {
+            document.removeEventListener("keydown", onKeydown);
+            document.removeEventListener("plexora:menu", onMenu);
+        };
     });
 })();

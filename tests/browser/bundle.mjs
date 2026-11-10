@@ -6,7 +6,7 @@
 //
 //   node tests/browser/bundle.mjs --file <tif>
 // Prints JSON with `ok`.
-import { appFrame, launch, startServer, REPO } from "./lib.mjs";
+import { appFrame, launch, seedBrowserStore, startServer, REPO } from "./lib.mjs";
 
 const args = process.argv.slice(2);
 const file = args[args.indexOf("--file") + 1];
@@ -24,15 +24,10 @@ const out = {};
 try {
     const page = await browser.context.newPage();
     const origin = `http://127.0.0.1:${server.port}`;
+    await seedBrowserStore(browser.context, origin);
     await page.goto(`${origin}/`);
     let frame = await appFrame(page);
     await frame.waitForSelector("#quick_view_go", { timeout: 120000 });
-    await frame.waitForFunction(() => {
-        const keep = [...document.querySelectorAll(".plx-confirm .plx-button")]
-            .find((button) => button.textContent.trim() === "Keep in browser");
-        if (keep) keep.click();
-        return Boolean(keep);
-    }, null, { timeout: 8000, polling: 200 }).catch(() => null);
     await page.evaluate(() => { window.showOpenFilePicker = undefined; window.showDirectoryPicker = undefined; });
     const chooser = page.waitForEvent("filechooser", { timeout: 30000 });
     await frame.click("#quick_view_go");

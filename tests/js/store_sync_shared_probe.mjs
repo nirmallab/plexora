@@ -365,8 +365,67 @@ function desktopFolder() {
           !folder.at("ghost/ghost.db") && ghost.syncReads === 0);
 }
 
+// Files another worker wrote straight into the folder (an import's large
+// members, services/bundleWeb.js): adopted, they are there for Python without
+// a read, and neither the next push nor the next pull touches them.
+for (const shared of [true, false]) {
+    const FS = memfs();
+    const store = createStore(FS, "/data", () => {}, { readSync: (file) => file.sync() });
+    const folder = new DirHandle("projects");
+    folder.put("config.json", "{}");
+    await store.open(folder, { shared });
+    const table = folder.put("lung/cells.csv", new Uint8Array(LAZY_BYTES * 2).fill(3));
+    const note = folder.put("lung/plugins/note.json", "{}");
+    const slide = folder.put("lung/media/k/slide.ome.tif", "pixels", HELD_BYTES + 1);
+    const adopted = await store.adopt(["lung/cells.csv", "lung/plugins/note.json", "lung/media/k/slide.ome.tif",
+                                       "lung/gone.csv"]);
+    const how = shared ? "shared" : "own";
+    check(`adopt (${how}): present to Python, nothing read`,
+          FS.exists("/data/lung/cells.csv") && FS.stat("/data/lung/cells.csv").size === LAZY_BYTES * 2
+          && FS.exists("/data/lung/plugins/note.json") && table.reads + table.syncReads + note.reads === 0,
+          JSON.stringify(adopted));
+    check(`adopt (${how}): a missing one is said`, JSON.stringify(adopted.missing) === JSON.stringify(["lung/gone.csv"]));
+    check(`adopt (${how}): one too big to hold is held only in a shared folder`,
+          shared ? store.held().includes("lung/media/k/slide.ome.tif") && !FS.exists("/data/lung/media/k/slide.ome.tif")
+                 : FS.exists("/data/lung/media/k/slide.ome.tif") && slide.reads + slide.syncReads === 0,
+          JSON.stringify(store.held()));
+    const writes = table.writes + note.writes;
+    await store.push();
+    await store.pull();
+    await store.push();
+    check(`adopt (${how}): neither written back nor read again nor deleted`,
+          table.writes + note.writes === writes && table.reads + table.syncReads === 0
+          && folder.at("lung/cells.csv") && folder.at("lung/plugins/note.json") && FS.exists("/data/lung/cells.csv"));
+    check(`adopt (${how}): read when Python reads it`, FS.readFile("/data/lung/cells.csv")[0] === 3 && table.syncReads === 1);
+    // Python taking one back (an import undone): gone from the folder too.
+    FS.unlink("/data/lung/plugins/note.json");
+    await store.push();
+    check(`adopt (${how}): removed in memory, removed in the folder`, !folder.at("lung/plugins/note.json"));
+}
+
+// What project bundles keep beside the projects stays out of a shared folder's sync.
+{
+    const FS = memfs();
+    const store = createStore(FS, "/data", () => {}, { readSync: (file) => file.sync() });
+    const folder = new DirHandle("projects");
+    folder.put("config.json", "{}");
+    folder.put(".importing-ab12/projects/x/entry.json", "{}");
+    folder.put(".replaced/lung-20261109/state/lung.db", "old");
+    folder.put(".bundles/tok/lung.plexora", "PK");
+    await store.open(folder, { shared: true });
+    check("bundles' staging and exports not read in",
+          !FS.exists("/data/.importing-ab12") && !FS.exists("/data/.bundles"));
+    check("an Update's or Replace's backup is read in", FS.exists("/data/.replaced/lung-20261109/state/lung.db"));
+    FS.mkdirTree("/data/.importing-cd34/projects");
+    FS.writeFile("/data/.importing-cd34/projects/y.json", "{}");
+    await store.push();
+    check("an import's staging in memory is not written to the folder", !folder.at(".importing-cd34"));
+}
+
 check("keptOut names only the top level", keptOut(".models/x") && keptOut("server_token.json")
       && !keptOut("lung/.models") && !keptOut("lung/server_token.json") && !keptOut("config.json"));
+check("keptOut takes bundles' prefixes", keptOut(".importing-1f2e/x") && !keptOut(".replaced/lung-1/state")
+      && keptOut(".bundles/a/b.plexora") && !keptOut("lung/.replaced") && !keptOut("importing-x"));
 
 const failed = results.filter((r) => !r.ok);
 for (const r of results) console.log(`${r.ok ? "ok  " : "FAIL"} ${r.name}${r.ok || !r.detail ? "" : ` -- ${r.detail}`}`);

@@ -8,7 +8,7 @@
     <link rel="apple-touch-icon" href="{{ data.base_url }}/client/src/img/apple-touch-icon.png">
     <!-- Styles -->
     <link rel="stylesheet" href="{{ data.base_url }}/client/src/css/tokens.css?v=20261027_sidebar_radius">
-    <link rel="stylesheet" href="{{ data.base_url }}/client/src/css/main.css?v=20261108_lite_badge">
+    <link rel="stylesheet" href="{{ data.base_url }}/client/src/css/main.css?v=20261109_onboarding">
     {# Here and not in a page block: the explorer opens from every page, and
        appRouter.adoptStyles turns page stylesheets off on navigation. #}
     <link rel="stylesheet" href="{{ data.base_url }}/client/src/css/explorer.css?v=20261021_explorer_waiting">
@@ -39,7 +39,7 @@
          window, null in any browser. Early and not deferred, so its
          subscriptions to the shell exist before a menu or a drop can arrive,
          and so every later script can feature-test it synchronously. -->
-    <script src="{{ data.base_url }}/client/src/js/services/desktopBridge.js?v=20261107_open_website" type="text/javascript"></script>
+    <script src="{{ data.base_url }}/client/src/js/services/desktopBridge.js?v=20261109_bundles" type="text/javascript"></script>
     <!-- Who answers this page's requests: window.PlexoraBackend. Here the
          Plexora that served it, and the file is a pass-through (its fetch is
          window.fetch). Before appStatus.js and not deferred, so a static
@@ -147,7 +147,7 @@
     <script src="{{ data.base_url }}/client/src/js/services/explorer/explorerCrumbs.js?v=20261020_file_explorer" defer></script>
     <script src="{{ data.base_url }}/client/src/js/services/explorer/explorerSidebar.js?v=20261021_explorer_system" defer></script>
     <script src="{{ data.base_url }}/client/src/js/services/explorer/fileExplorer.js?v=20261023_pin_saved" defer></script>
-    <script src="{{ data.base_url }}/client/src/js/services/browsePicker.js?v=20261107_slide_folder" defer></script>
+    <script src="{{ data.base_url }}/client/src/js/services/browsePicker.js?v=20261109_onboarding" defer></script>
     {# What a file dropped on the window does where it lands (desktop app):
        right after browsePicker, whose drop registry it extends. #}
     <script src="{{ data.base_url }}/client/src/js/services/dropRouter.js?v=20261027_drop_router" defer></script>
@@ -171,7 +171,7 @@
        views/settingsPage.js too, which settings.html loads at the end of its
        own body, well after everything here. #}
     <script src="{{ data.base_url }}/client/src/js/services/failureMessage.js?v=20260923_failure_layout" defer></script>
-    <script src="{{ data.base_url }}/client/src/js/services/connectionModal.js?v=20261108_sftp_web" defer></script>
+    <script src="{{ data.base_url }}/client/src/js/services/connectionModal.js?v=20261109_onboarding" defer></script>
     <script src="{{ data.base_url }}/client/src/js/services/placePicker.js?v=20261020_sftp_files" defer></script>
     {# The navbar's connection icon. Deferred like the rest, which still runs
        it after pageBoot.js below (a normal script beats every deferred one),
@@ -230,6 +230,14 @@
        nothing until something calls show(): there is no host element until
        then. #}
     <script src="{{ data.base_url }}/client/src/js/services/toast.js?v=20260924_ui_pass" defer></script>
+    {% if data.backend == 'browser' %}
+    {# The website's first-use onboarding (PlexoraOnboarding): where the
+       user's work is kept, asked at the first action that keeps something,
+       never on load. After confirmDialog.js and toast.js, on the same terms
+       (a <dialog> of its own, its CSS in main.css); the website only, and
+       inert there without the host page's PlexoraStore. #}
+    <script src="{{ data.base_url }}/client/src/js/views/webOnboarding.js?v=20261109_onboarding" defer></script>
+    {% endif %}
     {# What the website says where only the desktop app could act -- an SSH
        connection, the Google Cloud CLI, a data folder (PlexoraWebHandoff):
        a notice in the panel that asked, or in the corner. After toast.js and
@@ -278,6 +286,18 @@
     <!-- New Dataset: a dataset from a folder (scan, match, create). After
        importSample.js, whose dialog styles it reuses. -->
     <script src="{{ data.base_url }}/client/src/js/views/datasetBuilder.js?v=20261029_bucket_datasets" defer></script>
+    {# A project as one `.plexora` file: Export, then Import (which draws with
+       what the first sets up, PlexoraBundleKit and PlexoraBundleTransport).
+       After dropRouter.js, whose executor registry the import joins. #}
+    <script src="{{ data.base_url }}/client/src/js/views/projectExport.js?v=20261109_bundles" defer></script>
+    <script src="{{ data.base_url }}/client/src/js/views/projectImport.js?v=20261109_bundles" defer></script>
+    {% if data.backend == 'browser' %}
+    {# The website's transport for those two (PlexoraBundleWeb): its Python
+       decides, and the bytes move in a worker of the page's own
+       (workers/bundleWorker.js). After both, whose server transport it
+       replaces; its jobs run in the host page (services/shell.js). #}
+    <script src="{{ data.base_url }}/client/src/js/services/bundleWeb.js?v=20261109_bundles" defer></script>
+    {% endif %}
     <script src="{{ data.base_url }}/client/src/js/views/toolLoader.js?v=20261109_webperf" defer></script>
     {# Not deferred: every page controller below calls PlexoraPage.register at
        the top level of its own file, so the registry has to exist before any of
@@ -402,12 +422,21 @@
                                 <span class="nav-item-label">PDF&hellip;</span></button>
                         </div>
                     </div>
-                    {# The project as one file (server/models/bundles.py): its own
-                       work, never its images, for another computer or the other app. #}
+                    {# A project as one `.plexora` file (server/models/bundles.py), both
+                       ways. Export opens views/projectExport.js's dialog for the
+                       project on screen; the link under it is the one-step
+                       download, kept for where that dialog cannot run yet (the
+                       website, until it moves the bytes itself). Import is the
+                       website's "Open Project File…" below, so here it is the
+                       desktop's and its server's alone. File > Import/Export
+                       Project… in the desktop menu click these two. #}
+                    <button type="button" class="dropdown-item not-website" id="nav_import_project">
+                        <span class="fas fa-file-import nav-item-icon"></span>
+                        <span class="nav-item-label">Import Project&hellip;</span></button>
                     <a class="dropdown-item{% if not data.datasource %} disabled{% endif %}" id="nav_export_project"
                        {% if data.datasource %}href="{{ data.base_url }}/project/{{ data.datasource|urlencode }}/bundle" download{% endif %}>
                         <span class="fas fa-box-archive nav-item-icon"></span>
-                        <span class="nav-item-label">Export Project</span></a>
+                        <span class="nav-item-label">Export Project&hellip;</span></a>
                     {# The website only: a project file opened (on the desktop app, File >
                        Open takes one, as does a drop on the window). #}
                     <button type="button" id="nav_open_bundle" class="dropdown-item website-only">

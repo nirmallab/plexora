@@ -71,13 +71,16 @@ streams each member into `<dest>.part` and renames it when the central
 directory reads back right; `ZipSource` reads a member at a time by random
 access. Nothing holds a bundle in memory. The website's Python cannot (its
 heap is 4 GiB and its large files are not in it), so there Python only
-decides -- `plan_for_page` lists every member with its source path, and
-`preview_manifest` previews from a manifest the page read itself -- and the
-page's own worker moves the bytes. Export, import and "Make a copy" run as
-background tasks (`start_export`, `start_import`, `start_copy`: stages
-Snapshot, Pack, Verify; Verify, Unpack, Place), mirrored to the website's page
-like every long task (`layer_jobs`). The format and the later cloud sync are
-written up in docs/internal/PROJECT_BUNDLES.md.
+decides -- `plan_for_page` lists every member with its source path and
+`finish_manifest` turns the page's sums into the manifest; an import reads the
+picked file where it is (the page mounts it read-only, so `ZipSource` reads a
+slice at a time), `placements` says where each large member goes, and
+`apply(..., placed=...)` takes those the page wrote there -- and the page's
+own worker (client workers/bundleWorker.js) moves the bytes. Export, import
+and "Make a copy" run as background tasks (`start_export`, `start_import`,
+`start_copy`: stages Snapshot, Pack, Verify; Verify, Unpack, Place), mirrored
+to the website's page like every long task (`layer_jobs`). The format and the
+later cloud sync are written up in docs/internal/PROJECT_BUNDLES.md.
 
     plan(ids, include) -> Plan             estimate(ids, include) -> sizes
     export(ids, dest, include) -> manifest preview(path) -> per-project status
@@ -1085,14 +1088,30 @@ def plan_for_page(ids: Iterable[str] = (), include=None, *, dataset: Optional[st
     out = built.to_json(work)
     out["work_dir"] = str(work)
     out["stamps"] = {pid: value["stamp"] for pid, value in built.stamps.items()}
+    # The manifest's room, kept first and filled in at the end (ZipSink.start).
+    out["reserve"] = _reserve(built.manifest)
     return out
 
 
-def finish_manifest(manifest: dict, sums: dict) -> dict:
+def finish_manifest(manifest: dict, sums: dict, *, entries: Optional[dict] = None,
+                    left_out: Optional[list] = None) -> dict:
     """The manifest with every file's sha256 (and size) from `sums`
-    ({bundle_path: sha256 | {sha256, size}}), and each project's revision.
-    What the page's worker writes first, once it has streamed the rest."""
+    ({bundle_path: sha256 | {sha256, size}}), what the page could not read
+    (`left_out`: [{path, why}]) taken out of it, and -- given the plan's
+    tokenised `entries` -- each project's revision and parent, as `export`
+    sets them. What the page's worker writes first, once it has streamed the
+    rest."""
     out = json.loads(json.dumps(manifest))
+    for gone in left_out or ():
+        path = str((gone or {}).get("path") or "")
+        record = next((record for record in _records(out) if record.get("path") == path), None)
+        if record is None:
+            continue
+        _drop_record(out, record)
+        parts = path.split("/")
+        project = parts[1] if parts[0] == "projects" and len(parts) > 1 else None
+        out.setdefault("left_out", []).append({"project": project, "path": path,
+                                               "why": str(gone.get("why") or "not read")})
     for record in _records(out):
         found = sums.get(record["path"])
         if isinstance(found, dict):
@@ -1101,7 +1120,36 @@ def finish_manifest(manifest: dict, sums: dict) -> dict:
                 record["size"] = int(found["size"])
         elif isinstance(found, str):
             record["sha256"] = found
+    for project in out.get("projects") or ():
+        entry = (entries or {}).get(project.get("id"))
+        if not isinstance(entry, dict):
+            continue
+        own = [(record["path"].split("/", 2)[2], record.get("sha256")) for record in project.get("files") or ()
+               if record.get("kind") in ("state", "table")]
+        project["revision"] = revision_of(entry, own)
+        # Exported again unchanged: the same revision, so the same parent.
+        try:
+            previous = _local(str(project.get("name") or ""), assign=False).entry.get("bundleRevision")
+        except (KeyError, ValueError):
+            previous = None
+        if isinstance(previous, dict) and previous.get("id") == project["revision"]:
+            project["parent"] = previous.get("parent")
     return out
+
+
+def record_export(manifest: dict, stamps: dict) -> None:
+    """Note in each exported project's entry the revision it went out at (as
+    `export` does once its file is written), so a later version coming back
+    is an Update. `stamps`: the plan's {project id: stat stamp}."""
+    for project in manifest.get("projects") or ():
+        if not project.get("revision") or project.get("id") not in (stamps or {}):
+            continue
+        try:
+            local = _local(str(project.get("name") or ""), assign=False)
+        except (KeyError, ValueError):
+            continue
+        if local.id == project.get("id"):
+            _record_revision(local, project["revision"], project.get("parent"), stamps[project["id"]])
 
 
 def _records(manifest: dict):
@@ -1641,20 +1689,27 @@ def _target_root(into=None, name=None) -> Path:
     return paths.new_projects_root(name)
 
 
-def _occupied(folder: Path) -> bool:
+def _occupied(folder: Path, ignore=frozenset()) -> bool:
+    """Whether `folder` holds anything -- but the files in `ignore`, which
+    this import's page put there itself (`placed`)."""
     try:
-        return folder.is_dir() and any(folder.iterdir())
+        if not ignore:
+            return folder.is_dir() and any(folder.iterdir())
+        if not folder.is_dir():
+            return False
+        return any(not child.is_dir() and str(child) not in ignore for child in folder.rglob("*"))
     except OSError:
         return True
 
 
-def _free_name(wanted: str, root: Path, taken: set) -> str:
+def _free_name(wanted: str, root: Path, taken: set, ignore=frozenset()) -> str:
     """`wanted`, or the next `wanted_<n>` that no registry holds, no other
-    import of this file takes, and whose folder is free in `root`."""
+    import of this file takes, and whose folder is free in `root` (but for
+    the files of `ignore`, this import's own)."""
     wanted = _safe_name(wanted)
 
     def free(candidate):
-        return candidate not in taken and not _occupied(Path(root) / candidate)
+        return candidate not in taken and not _occupied(Path(root) / candidate, ignore)
 
     if free(wanted):
         return wanted
@@ -1698,12 +1753,14 @@ ACTIONS = ("import", "skip", "update", "replace", "keep_both")
 
 
 def _decide(manifest: dict, root: Path, choices=None, *, rename: Optional[dict] = None,
-            force: Optional[str] = None) -> list:
+            force: Optional[str] = None, placed: Optional[dict] = None) -> list:
     """Per project: status, action, target name and the local project it
-    meets (by id)."""
+    meets (by id). Files the page `placed` for this import do not make a
+    folder taken: they are in the folder `placements` named for it."""
     module = _project_module()
     choices = choices or {}
     rename = rename or {}
+    ignore = frozenset(str(Path(path)) for path in (placed or {}).values())
     local = _local_projects()
     taken = set(module.Project.load_all())
     decided = []
@@ -1732,7 +1789,7 @@ def _decide(manifest: dict, root: Path, choices=None, *, rename: Optional[dict] 
         elif action == "skip":
             target = local_name or name
         else:
-            target = _free_name(name, root, taken)
+            target = _free_name(name, root, taken, ignore)
             if mine is None and target != name:
                 status = "renamed" if status == "new" else status
             taken.add(target)
@@ -1798,6 +1855,68 @@ def preview_manifest(manifest: dict, into=None, *, bundle_path=None) -> dict:
     if isinstance(manifest, dict) and manifest.get("format") == FORMAT_1:
         raise BundleError("Open this older project file itself to see what is in it.")
     return _preview(ManifestSource(manifest).manifest(), into, bundle_path)
+
+
+def placements(source, choices=None, into=None, *, at_least: int = 0) -> list:
+    """The website's seam for an import: the members its page writes itself,
+    straight into the project store, before `apply(..., placed=...)` does the
+    rest -- so a bundle's large files never pass through its Python's heap.
+    `[{path, target, size, sha256}]`: each member of `at_least` bytes or more,
+    and the file `apply` would move it to.
+
+    Only projects imported into a folder of their own (import, keep both): an
+    update's folder is moved aside first, so its members are unpacked here.
+    Never the entry, the project's database (its rows are renamed), captures
+    or figures (merged into stores of their own). An image two projects
+    include goes where `apply` puts it: with the first of them."""
+    opened = open_source(source)
+    try:
+        manifest = opened.manifest()
+        if manifest.get("format") != FORMAT:
+            return []
+        root = _target_root(into)
+        decided = _decide(manifest, root, choices)
+        chosen = [item for item in decided if item["action"] != "skip"]
+        _validate(opened, manifest, chosen, root)
+    finally:
+        if opened is not source:
+            opened.close()
+    media = {record["path"]: record for record in manifest.get("media") or ()}
+    out, claimed = [], set()
+
+    def add(record, target):
+        if int(record.get("size") or 0) >= at_least:
+            out.append({"path": record["path"], "target": str(target), "size": int(record.get("size") or 0),
+                        "sha256": record.get("sha256")})
+
+    for item in chosen:
+        project, pid, target = item["project"], item["id"], item["target"]
+        mine = item["action"] in ("import", "keep_both")
+        state_dir = paths.project_dir(target, item["root"])
+        derived_dir = paths.derived_root(target, home_root=item["root"])
+        head = f"projects/{pid}/"
+        for record in (project.get("files") or []) if mine else []:
+            path = record["path"]
+            place, _, rel = path[len(head):].partition("/") if path.startswith(head) else ("", "", "")
+            if place not in ("state", "derived") or not rel:
+                continue
+            if place == "state" and rel == f"{project.get('name') or ''}.db":
+                continue
+            add(record, (state_dir if place == "state" else derived_dir).joinpath(*rel.split("/")))
+        for ref in project.get("refs") or ():
+            prefix = ref.get("included")
+            if not prefix or prefix in claimed:
+                continue
+            claimed.add(prefix)
+            if not mine:
+                continue
+            if ref.get("kind") == "folder":
+                for path, record in media.items():
+                    if path.startswith(prefix + "/"):
+                        add(record, state_dir.joinpath(*path.split("/")))
+            elif prefix in media:
+                add(media[prefix], state_dir.joinpath(*prefix.split("/")))
+    return out
 
 
 def _preview(manifest: dict, into, bundle_path) -> dict:
@@ -2092,22 +2211,29 @@ _IMPORTING_LOCK = threading.Lock()
 
 
 def apply(source, choices=None, into=None, *, progress=None, cancel=None, stage=None,
-          rename: Optional[dict] = None, search: bool = True, new_ids: bool = False) -> dict:
+          rename: Optional[dict] = None, search: bool = True, new_ids: bool = False,
+          placed: Optional[dict] = None) -> dict:
     """Import a bundle: the projects `choices` ({id: action}) names, each by
     its status's default otherwise (DEFAULT_ACTION), into the Location `into`
     (else where new projects go). Returns `{projects: [{id, name, status,
     action, target, backup?, refs: {found, included, missing, node}}],
     datasets, figures, captures}`.
 
+    `placed` ({member path: file}): members the website's page has already
+    written where `placements` said they go, checked by their size and never
+    unpacked again; a failure removes them with the rest.
+
     Nothing is written to the registry until every file is in place, and a
     failure or a cancel puts everything back as it was."""
     stage = stage or (lambda key: None)
+    placed = {str(path): str(where) for path, where in (placed or {}).items()}
     opened = open_source(source)
     try:
         stage("verify")
         manifest = opened.manifest()
         root = _target_root(into)
-        decided = _decide(manifest, root, choices, rename=rename, force="keep_both" if new_ids else None)
+        decided = _decide(manifest, root, choices, rename=rename, force="keep_both" if new_ids else None,
+                          placed=placed)
         chosen = [item for item in decided if item["action"] != "skip"]
         wanted = _validate(opened, manifest, chosen, root)
         bundle_id = re.sub(r"[^A-Za-z0-9_-]", "", str((manifest.get("bundle") or {}).get("id") or "")) or uuid.uuid4().hex
@@ -2116,19 +2242,66 @@ def apply(source, choices=None, into=None, *, progress=None, cancel=None, stage=
                 raise BundleError("This project file is being imported already.")
             _IMPORTING.add(bundle_id)
         try:
-            return _apply(opened, manifest, decided, chosen, wanted, root, bundle_id,
-                          progress=progress, cancel=cancel, stage=stage, search=search)
+            taken = {record["path"] for record in wanted}
+            result = _apply(opened, manifest, decided, chosen, wanted, root, bundle_id,
+                            progress=progress, cancel=cancel, stage=stage, search=search,
+                            placed={path: where for path, where in placed.items() if path in taken})
+            for path, where in placed.items():
+                if path not in taken:
+                    Path(where).unlink(missing_ok=True)
+            return result
         finally:
             with _IMPORTING_LOCK:
                 _IMPORTING.discard(bundle_id)
+    except BaseException:
+        # What the page wrote for an import that did not happen goes too, and
+        # the folders it made for it where they are left empty.
+        try:
+            top = _target_root(into) if placed else None
+        except BundleError:
+            top = None
+        for where in placed.values():
+            try:
+                Path(where).unlink(missing_ok=True)
+            except OSError:
+                continue
+            for folder in Path(where).parents:
+                if top is None or folder == Path(top) or Path(top) not in folder.parents:
+                    break
+                try:
+                    folder.rmdir()
+                except OSError:
+                    break
+        raise
     finally:
         if opened is not source:
             opened.close()
 
 
-def _apply(opened, manifest, decided, chosen, wanted, root, bundle_id, *, progress, cancel, stage, search):
+def _take_placed(where: str, destination: Path, record: dict, undo: list) -> None:
+    """A member the page wrote itself, where `placements` said (or, should
+    this import have decided otherwise since, moved there)."""
+    where = Path(where)
+    try:
+        size = where.stat().st_size
+    except OSError:
+        size = None
+    # The website leaves a file too large to hold in its folder, unseen here
+    # (storeSync.js HELD_BYTES): its page checked its CRC and sha256.
+    if size is not None and size != int(record.get("size") or 0):
+        raise BundleError(f"This Plexora project file did not unpack whole ({record['path']}).")
+    undo.append(lambda d=destination: d.unlink(missing_ok=True))
+    if size is not None and os.path.normcase(str(where)) != os.path.normcase(str(destination)):
+        if destination.exists():
+            raise BundleError(f"{destination} is in the way.")
+        _move(where, destination)
+
+
+def _apply(opened, manifest, decided, chosen, wanted, root, bundle_id, *, progress, cancel, stage, search,
+           placed=None):
     module = _project_module()
     me = sources.app_key()
+    placed = placed or {}
     stage_dir = Path(root) / f".importing-{bundle_id}"
     meter = _Progress(sum(int(record.get("size") or 0) for record in wanted), progress, cancel)
     undo: list = []
@@ -2141,6 +2314,9 @@ def _apply(opened, manifest, decided, chosen, wanted, root, bundle_id, *, progre
         stage("unpack")
         staged = {}
         for record in wanted:
+            if record["path"] in placed:
+                meter.advance(int(record.get("size") or 0))
+                continue
             target = stage_dir.joinpath(*record["path"].split("/"))
             _extract(opened, record, target, meter)
             staged[record["path"]] = target
@@ -2164,9 +2340,10 @@ def _apply(opened, manifest, decided, chosen, wanted, root, bundle_id, *, progre
                 undo.append(lambda backup=backup, folder=paths.project_state_dir(target): _restore(backup, folder))
                 state_dir = paths.project_state_dir(target)
             # Its own folder: state and tables. A new project's folder is
-            # made here and removed whole on the way back; an update's was
-            # moved aside above.
-            if not state_dir.exists():
+            # made here and removed whole on the way back (one holding only
+            # what the page placed for it is new too); an update's was moved
+            # aside above.
+            if not _occupied(state_dir, frozenset(str(Path(where)) for where in placed.values())):
                 undo.append(lambda d=state_dir: shutil.rmtree(d, ignore_errors=True))
             for record in project.get("files") or ():
                 path = record["path"]
@@ -2185,6 +2362,9 @@ def _apply(opened, manifest, decided, chosen, wanted, root, bundle_id, *, progre
                         rename_rows(staged[path], original, target)
                 folder = state_dir if place == "state" else derived_dir
                 destination = folder.joinpath(*rel.split("/"))
+                if path in placed:
+                    _take_placed(placed[path], destination, record, undo)
+                    continue
                 if destination.exists():
                     if place == "state":
                         raise BundleError(f"{destination} is in the way.")
@@ -2204,9 +2384,17 @@ def _apply(opened, manifest, decided, chosen, wanted, root, bundle_id, *, progre
                 destination = state_dir.joinpath(*prefix.split("/"))
                 if ref.get("kind") == "folder":
                     for record in manifest.get("media") or ():
-                        if record["path"].startswith(prefix + "/") and record["path"] in staged:
-                            final = state_dir.joinpath(*record["path"].split("/"))
+                        if not record["path"].startswith(prefix + "/"):
+                            continue
+                        final = state_dir.joinpath(*record["path"].split("/"))
+                        if record["path"] in placed:
+                            _take_placed(placed[record["path"]], final, record, undo)
+                        elif record["path"] in staged:
                             _move(staged[record["path"]], final)
+                elif prefix in placed:
+                    record = next((item for item in manifest.get("media") or () if item["path"] == prefix),
+                                  {"path": prefix})
+                    _take_placed(placed[prefix], destination, record, undo)
                 elif prefix in staged:
                     _move(staged[prefix], destination)
                 placed_media[prefix] = str(destination)
@@ -2667,9 +2855,10 @@ def start_export(ids: Iterable[str] = (), include=None, dest=None, *, dataset: O
     return job_status(token)
 
 
-def start_import(path, choices=None, into=None, *, cleanup: bool = False) -> dict:
+def start_import(path, choices=None, into=None, *, cleanup: bool = False, placed: Optional[dict] = None) -> dict:
     """Import as a background task; its first status. `cleanup`: `path` is
-    an upload of this server's, removed when the task ends."""
+    an upload of this server's, removed when the task ends. `placed`: what the
+    website's page has written itself (`apply`)."""
     path = Path(path)
     opened = open_source(path)
     opened.close()
@@ -2684,7 +2873,8 @@ def start_import(path, choices=None, into=None, *, cleanup: bool = False) -> dic
             report(done, total)
 
         try:
-            state["result"] = apply(path, choices, into, progress=progress, cancel=cancel, stage=stage)
+            state["result"] = apply(path, choices, into, progress=progress, cancel=cancel, stage=stage,
+                                    placed=placed)
         except Cancelled:
             return
         except Exception as error:

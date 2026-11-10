@@ -618,6 +618,25 @@ Three rules carry both:
   came from; mid-write it says Saving; on a bad entry it turns Alert Red.
   `:empty { display: none }`, so a silent state costs no gap.
 
+### Setup and bundle dialogs
+
+Three native `<dialog>` flows share the `.plx-dialog` glass: the website's
+first-use setup (`views/webOnboarding.js`) and the project Export and Import
+dialogs (`views/projectExport.js`, `views/projectImport.js`).
+
+- **The setup is multi-step in one dialog.** Screens replace one another inside
+  the same element, with focus held in it and a "Step n of 3" line only while
+  work is in progress. It closes with an X (Escape is the same cancel), which
+  stops the action that asked for it with nothing left behind; there is no
+  Cancel button beside the primary one. Its confetti and screen transitions use
+  the motion tokens, so they are zeroed under reduced motion.
+- **Export and Import close with an X as well.** Their only Cancel stops a
+  running job, and closing the dialog does not.
+- **Every request goes through `window.PlexoraBundleTransport`** (documented in
+  `projectExport.js`). The dialogs never call a route directly, so the website
+  can replace the transport with one that moves the bytes in its own worker;
+  `available()` hides the buttons where it says no.
+
 ### Scrollbars
 
 Scoped to the viewer shell and to the modals that sit outside it, in both the

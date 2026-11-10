@@ -134,6 +134,10 @@ fn filter_for(name: &str) -> Option<(&'static str, &'static [&'static str])> {
         "h5ad" => Some(("AnnData files", &["h5ad"])),
         "data" => Some(("Single-cell data", &["csv", "tsv", "txt", "parquet", "h5ad"])),
         "channels" => Some(("Channel names", &["csv", "tsv", "txt", "xlsx", "xlsm"])),
+        // The shell's own: the server never opens a dialog for a project file
+        // (a browser tab of it uploads one instead), so native_dialog.py has
+        // no name for it.
+        "plexora" => Some(("Plexora project files", &["plexora"])),
         _ => None,
     }
 }
@@ -250,6 +254,62 @@ pub async fn save_bytes(app: AppHandle, window: WebviewWindow, request: Request<
         hand(&app, std::slice::from_ref(path));
     }
     Ok(saved)
+}
+
+/// `chosen`, with `name`'s extension added when the dialog left it off: GTK's
+/// Save dialog does not add one, and the server would add it anyway -- after
+/// which the path the page reveals would not be the one handed over here.
+fn with_extension_of(chosen: PathBuf, name: &str) -> PathBuf {
+    let Some(ext) = Path::new(name).extension().and_then(|e| e.to_str()) else { return chosen };
+    let has = chosen.extension().and_then(|e| e.to_str()).is_some_and(|e| e.eq_ignore_ascii_case(ext));
+    if has {
+        return chosen;
+    }
+    let mut text = chosen.into_os_string();
+    text.push(format!(".{ext}"));
+    PathBuf::from(text)
+}
+
+/// Where a file the SERVER is about to write should go: the native Save
+/// dialog asked before the work starts (an exported project, File > Export
+/// Project). `save_bytes` and the download handler both stage the file and
+/// ask afterwards, which for a multi-gigabyte `.plexora` would mean writing it
+/// twice -- once to the cache, once where it goes. This writes nothing:
+/// it returns the chosen path, or None when the user cancelled.
+#[tauri::command]
+pub async fn pick_save_path(
+    app: AppHandle,
+    window: WebviewWindow,
+    name: Option<String>,
+    title: Option<String>,
+    default_path: Option<String>,
+) -> Result<Option<String>, String> {
+    let name = name.map(|n| safe_name(&n)).unwrap_or_else(|| "download".into());
+    let mut dialog = window.dialog().file().set_parent(&window).set_file_name(&name);
+    if let Some(title) = title {
+        dialog = dialog.set_title(title);
+    }
+    if let Some(dir) = default_path.map(PathBuf::from).filter(|dir| dir.is_dir()) {
+        dialog = dialog.set_directory(dir);
+    }
+    if let Some(ext) = Path::new(&name).extension().and_then(|e| e.to_str()) {
+        let label = filter_for(ext).map(|(label, _)| label.to_string())
+            .unwrap_or_else(|| format!("{} file", ext.to_uppercase()));
+        dialog = dialog.add_filter(label, &[ext]);
+    }
+    let picked = tauri::async_runtime::spawn_blocking(move || -> Result<Option<String>, String> {
+        let Some(target) = dialog.blocking_save_file() else { return Ok(None) };
+        let target = with_extension_of(target.into_path().map_err(|e| e.to_string())?, &name);
+        Ok(Some(target.to_string_lossy().to_string()))
+    })
+    .await
+    .map_err(|e| e.to_string())??;
+    if let Some(path) = &picked {
+        // "Show in folder" once the server has written it, wherever it is --
+        // a network share included, which `reveal_path` takes only when handed.
+        hand(&app, std::slice::from_ref(path));
+    }
+    Ok(picked)
 }
 
 /// The bytes of a file the user dropped on the window (the figure canvas
@@ -538,6 +598,17 @@ mod tests {
             assert!(filter_for(name).is_some(), "{name}");
         }
         assert!(filter_for("any").is_none());
+        // The shell's own, for the Import Project picker.
+        assert_eq!(filter_for("plexora").map(|(_, ext)| ext), Some(&["plexora"][..]));
+    }
+
+    #[test]
+    fn a_save_path_keeps_the_extension_the_name_proposed() {
+        let name = "lsp11385_2.plexora";
+        assert_eq!(with_extension_of(PathBuf::from("/x/out"), name), PathBuf::from("/x/out.plexora"));
+        assert_eq!(with_extension_of(PathBuf::from("/x/out.PLEXORA"), name), PathBuf::from("/x/out.PLEXORA"));
+        assert_eq!(with_extension_of(PathBuf::from("/x/out.v2"), name), PathBuf::from("/x/out.v2.plexora"));
+        assert_eq!(with_extension_of(PathBuf::from("/x/out"), "noext"), PathBuf::from("/x/out"));
     }
 
     #[test]

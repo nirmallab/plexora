@@ -29,6 +29,10 @@ figures/<figure id>/...             a figure whose images all come from projects
 
 `<id>` is the project's id: `id` in its registry entry, `uuid4().hex`.
 
+The website's worker writes no data descriptors: it patches each member's CRC
+and sizes into its local header once the member has streamed (see "The
+website").
+
 `<key>` is the first 16 hex characters of the sha256 of the image's
 identity: its name, size and the hashes of its two ends (`sources.file_identity`),
 or a folder's listing hash. It is not the sha256 of the image's bytes, which
@@ -264,9 +268,27 @@ filesystem: `/data/...`, `/picked/<id>/...`, or the work folder. With the
 members come the tokenised entries and the manifest skeleton. The page's
 worker streams each member, computing CRC32 and SHA-256 as it goes, then asks
 `finish_manifest(manifest, sums)` (`POST /projects/export/manifest`) for the
-manifest it writes first. For import, the worker reads the central directory
-itself and sends the manifest to `preview_manifest`. The plan's Phase 7 has
-the rest.
+manifest it writes first. `finish_manifest` also computes each project's
+revision and parent, as `export` does, from the plan's tokenised entries, and
+takes out what the page could not read (`left_out`).
+
+The worker writes no data descriptors: it writes each member's local header
+with zeros, streams the data, then patches the CRC and sizes into that header
+once they are known. The manifest is written first, with its own header
+patched the same way, and goes back at the end.
+
+Import reads the picked file through WORKERFS, mounted read-only at
+`/picked/<id>`, so Python's `zipfile` reads the central directory and the
+members it needs a slice at a time, and the preview is Python's own. On
+Import, `POST /projects/import/preview` with `place_from` returns
+`placements`: every member of 64 KiB or more, which the worker unpacks
+straight into the store's folder, checking each CRC and sha256. Python is then
+told they are there (`POST /projects/import` with `placed`) and unpacks the
+rest. A failed or cancelled import takes back what the worker placed.
+
+Update and Replace write their backup to `<root>/.replaced/<name>-<stamp>/`
+like any other file, so in a granted folder it is synced to disk. Only
+`.importing-*` and `.bundles` stay out of the sync.
 
 ## Sync later
 

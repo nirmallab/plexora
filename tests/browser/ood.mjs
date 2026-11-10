@@ -21,7 +21,7 @@ import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import net from "node:net";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { appFrame, launch, startServer, PYTHON, REPO } from "./lib.mjs";
+import { appFrame, launch, seedBrowserStore, startServer, PYTHON, REPO } from "./lib.mjs";
 
 const args = process.argv.slice(2);
 const option = (name, fallback) => (args.includes(name) ? args[args.indexOf(name) + 1] : fallback);
@@ -90,15 +90,6 @@ async function startNode(port, portalOrigin, prefix) {
     return { link, stop: () => { child.kill(); try { rmSync(home, { recursive: true, force: true }); } catch { /* held */ } } };
 }
 
-async function keepInBrowser(frame) {
-    await frame.waitForFunction(() => {
-        const keep = [...document.querySelectorAll(".plx-confirm .plx-button")]
-            .find((button) => button.textContent.trim() === "Keep in browser");
-        if (keep) keep.click();
-        return Boolean(keep);
-    }, null, { timeout: 15000, polling: 200 }).catch(() => null);
-}
-
 const dev = await startServer([]);
 const nodePort = await freePort();
 const portalPort = await freePort();
@@ -116,9 +107,9 @@ try {
         const url = new URL(response.url());
         if (url.origin === portalOrigin && response.status() >= 400) failed.push(`${response.status()} ${url.pathname}`);
     });
+    await seedBrowserStore(browser.context, `${portalOrigin}${base}`);
     await page.goto(`${portalOrigin}${base}/`);
     let frame = await appFrame(page, { timeout: 180000 });
-    await keepInBrowser(frame);
     out.boot = await frame.evaluate(() => ({
         base: window.PLEXORA_SITE_BASE, baseUrl: window.flaskVariables?.base_url,
         at: location.pathname, home: Boolean(document.getElementById("quick_view_go")),
@@ -145,7 +136,6 @@ try {
     await page.goto(node.link);
     out.pair.address = await page.evaluate(() => location.href);
     frame = await appFrame(page, { timeout: 180000 });
-    await keepInBrowser(frame);
     out.pair.toast = await frame.waitForFunction(() => {
         const toast = document.querySelector(".plx-toast-title");
         return toast && /Paired with|Could not pair|not complete/.test(toast.textContent) ? toast.textContent : null;

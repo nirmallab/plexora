@@ -158,6 +158,33 @@ def test_the_page_cleans_up_after_itself(probe):
 
 
 # --------------------------------------------------------------------------
+# Where each project is kept (Settings > Data's locations)
+# --------------------------------------------------------------------------
+
+def test_a_card_names_its_location_only_when_there_is_more_than_one(probe):
+    """A single library looks as it always did; with several, each card says
+    which it is in. `shared` keeps its own pill and meaning."""
+    assert "with every project in one place there is no location chip" in probe, probe
+    assert "and no location filter" in probe, probe
+    assert "with projects in two places each card names its location" in probe, probe
+    assert "a shared project keeps its pill and carries no location chip" in probe, probe
+
+
+def test_the_location_filter_narrows_everything_and_survives_a_reload(probe):
+    for line in ("the location filter shows, listing each place once with its count",
+                 "the filter lists the data folder before an added workspace",
+                 "choosing a location shows only the projects kept there",
+                 "and leaves out a dataset with nothing kept there",
+                 "and the URL keeps the location for a reload",
+                 "the count says how many are in that location",
+                 "All locations shows everything again and drops it from the URL",
+                 "a search inside a location looks only there",
+                 "a location named in the URL is where a reload lands",
+                 "a location named in the URL but no longer there falls back to all"):
+        assert line in probe, line
+
+
+# --------------------------------------------------------------------------
 # The contract with the pages that borrow these classes
 # --------------------------------------------------------------------------
 

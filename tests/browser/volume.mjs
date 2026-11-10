@@ -22,7 +22,7 @@
 import { spawn, spawnSync } from "node:child_process";
 import { mkdirSync, readdirSync, statSync, writeFileSync } from "node:fs";
 import path from "node:path";
-import { PYTHON, REPO, appFrame, launch, startServer } from "./lib.mjs";
+import { PYTHON, REPO, appFrame, launch, seedBrowserStore, startServer } from "./lib.mjs";
 
 const args = process.argv.slice(2);
 const opt = (name, fallback) => (args.includes(name) ? args[args.indexOf(name) + 1] : fallback);
@@ -78,15 +78,9 @@ async function websiteArm() {
         watch();
     });
     const base = `http://127.0.0.1:${server.port}`;
+    await seedBrowserStore(browser.context, base);
     await page.goto(`${base}/?pydebug`);
     let frame = await appFrame(page);
-    await frame.waitForFunction(() => {
-        const keep = [...document.querySelectorAll(".plx-confirm .plx-button")]
-            .find((button) => button.textContent.trim() === "Keep in browser");
-        if (!keep) return false;
-        keep.click();
-        return true;
-    }, null, { timeout: 5000, polling: 200 }).catch(() => null);
     await page.evaluate(() => window.PlexoraPython.ready);
     // The picks: files mounted as PlexoraPicks.pick mounts them, a folder as
     // its tree (pickedFiles.mountTree), each adopted so the page can find it.

@@ -5,7 +5,7 @@
 //
 //   node tests/browser/import.mjs --file PATH [--shots DIR] [--headed]
 import path from "node:path";
-import { REPO, appFrame, launch, startServer } from "./lib.mjs";
+import { REPO, appFrame, launch, seedBrowserStore, startServer } from "./lib.mjs";
 
 const args = process.argv.slice(2);
 const opt = (name, fallback) => (args.includes(name) ? args[args.indexOf(name) + 1] : fallback);
@@ -44,20 +44,11 @@ try {
         page.on("worker", (worker) => worker.on("console", (message) => say("[worker]", message.text())));
         page.on("crash", () => say("[crash]", "the page crashed"));
     }
+    await seedBrowserStore(browser.context, `http://127.0.0.1:${server.port}`);
     await page.goto(`http://127.0.0.1:${server.port}/`);
     const frame = await appFrame(page);
     await frame.waitForSelector("#quick_view_go", { timeout: 120000 });
     out.homeMs = Date.now() - started;
-    // The first visit asks where projects go, where this browser can write
-    // folders: this driver keeps them in the browser. Where it cannot, it says
-    // they stay in the browser: "Keep them" asks the browser to keep them.
-    out.firstVisit = await frame.waitForFunction(() => {
-        const keep = [...document.querySelectorAll(".plx-confirm .plx-button")]
-            .find((button) => ["Keep in browser", "Keep them"].includes(button.textContent.trim()));
-        if (!keep) return false;
-        keep.click();
-        return keep.textContent.trim();
-    }, null, { timeout: 8000, polling: 200 }).then((answer) => answer.jsonValue(), () => null);
     out.store = await page.evaluate(() => window.PlexoraStore.current());
     out.persisted = await page.evaluate(() => navigator.storage.persisted()).catch((error) => String(error));
     await page.evaluate(() => { window.showOpenFilePicker = undefined; window.showDirectoryPicker = undefined; });

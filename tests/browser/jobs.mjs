@@ -26,8 +26,8 @@ import { execFileSync } from "node:child_process";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { PYTHON, REPO, appFrame, launch, startServer } from "./lib.mjs";
-import { keepInBrowser, py, shipFixtures } from "./ai_lib.mjs";
+import { PYTHON, REPO, appFrame, launch, seedBrowserStore, startServer } from "./lib.mjs";
+import { py, shipFixtures } from "./ai_lib.mjs";
 
 const args = process.argv.slice(2);
 const opt = (name, fallback) => (args.includes(name) ? args[args.indexOf(name) + 1] : fallback);
@@ -110,9 +110,9 @@ try {
     await page.setViewportSize({ width: 1440, height: 900 });
     page.on("pageerror", (error) => out.errors.push(`pageerror: ${String(error).slice(0, 300)}`));
     page.on("crash", () => out.errors.push("the page crashed"));
+    await seedBrowserStore(browser.context, origin);
     await page.goto(`${origin}/?pydebug`);
     const frame = await appFrame(page);
-    await keepInBrowser(frame);
     await page.evaluate(() => window.PlexoraPython.ready);
     await shipFixtures(page);
     const made = await py(page, MAKE);

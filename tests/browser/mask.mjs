@@ -21,7 +21,7 @@
 // worker every 300 ms until the mask is ready (busy, idling, queued, or
 // `held` when it did not answer within 2 s).
 import path from "node:path";
-import { REPO, appFrame, launch, startServer } from "./lib.mjs";
+import { REPO, appFrame, launch, seedBrowserStore, startServer } from "./lib.mjs";
 
 const args = process.argv.slice(2);
 const opt = (name, fallback) => (args.includes(name) ? args[args.indexOf(name) + 1] : fallback);
@@ -59,23 +59,10 @@ try {
                                  () => failed.push(where));
         }
     });
+    await seedBrowserStore(browser.context, `http://127.0.0.1:${server.port}`);
     await page.goto(`http://127.0.0.1:${server.port}/?pydebug`);
     let frame = await appFrame(page);
     await frame.waitForSelector("#quick_view_go", { timeout: 120000 });
-    // The first visit asks where projects go ("Save projects on this
-    // computer?"), in front of the home card: kept in the browser, as
-    // import.mjs answers it (tests/browser/places.mjs takes the folder).
-    const keepUntil = Date.now() + 5000;
-    while (Date.now() < keepUntil) {
-        const kept = await frame.evaluate(() => {
-            const keep = [...document.querySelectorAll(".plx-confirm .plx-button")]
-                .find((button) => button.textContent.trim() === "Keep in browser" && button.offsetParent !== null);
-            if (keep) keep.click();
-            return Boolean(keep);
-        }).catch(() => false);
-        if (kept) { out.firstVisit = "Keep in browser"; break; }
-        await page.waitForTimeout(200);
-    }
     await page.evaluate(() => { window.showOpenFilePicker = undefined; window.showDirectoryPicker = undefined; });
     if (shots) await page.screenshot({ path: path.join(shots, "mask-home.png") });
 

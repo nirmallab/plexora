@@ -3,7 +3,11 @@
 // open must survive the tab's write-back and reach the tab's Python, and the
 // tab's own deletions must reach the folder -- but never delete what the other
 // app changed (workers/storeSync.js). The folder is the test profile's own
-// storage standing in for the granted one (no driver can answer the picker).
+// storage standing in for the granted one (no driver can answer the picker): a
+// folder named Plexora, which as the folder picked is the workspace itself,
+// with workspace.json, projects and pyramids directly in it. The workspace is
+// made as the onboarding's folder choice makes it (PlexoraStore.useFolder), not
+// through its dialog, which needs an image to be picked (onboarding.mjs).
 // Prints JSON with `ok` and each check; exits 1 when one fails.
 //
 // Where the browser has no folder picker (Firefox, Safari) there is no shared
@@ -17,11 +21,18 @@ const STUB = () => {
     window.showDirectoryPicker = async () => {
         const root = await navigator.storage.getDirectory();
         const top = await root.getDirectoryHandle("test-folders", { create: true });
-        return top.getDirectoryHandle("Documents", { create: true });
+        const docs = await top.getDirectoryHandle("Documents", { create: true });
+        return docs.getDirectoryHandle("Plexora", { create: true });
     };
 };
 
-//: In the page: the projects folder, as the other app would reach it.
+//: In the page: the workspace folder (the one picked), as the other app would reach it.
+const WORKSPACE = async () => {
+    const root = await navigator.storage.getDirectory();
+    const docs = await (await root.getDirectoryHandle("test-folders")).getDirectoryHandle("Documents");
+    return docs.getDirectoryHandle("Plexora");
+};
+//: In the page: its projects folder.
 const FOLDER = async () => {
     const root = await navigator.storage.getDirectory();
     const docs = await (await root.getDirectoryHandle("test-folders")).getDirectoryHandle("Documents");
@@ -67,7 +78,8 @@ try {
     await page.addInitScript(STUB);
     await page.goto(`${origin}/?pydebug`);
     const frame = await appFrame(page);
-    await (await frame.waitForSelector(".plx-confirm .plx-button-primary", { timeout: 20000 })).click();
+    await page.evaluate(() => window.PlexoraPython.ready);
+    await page.evaluate(() => window.PlexoraStore.useFolder(null));
     await page.waitForFunction(() => window.PlexoraStore.current().kind === "folder", null, { timeout: 30000 });
     const inFolder = (rel) => page.evaluate(async ([folderFn, path]) => {
         // eslint-disable-next-line no-new-func
@@ -90,6 +102,16 @@ try {
         await writable.close();
     }, [FOLDER.toString(), rel, text]);
 
+    // The folder picked is the workspace: no Plexora inside it.
+    checks.workspaceIsTheFolderPicked = await page.evaluate(async (workspaceFn) => {
+        // eslint-disable-next-line no-new-func
+        const dir = await (new Function(`return (${workspaceFn})()`))();
+        const has = async (name, kind) => (kind === "file" ? dir.getFileHandle(name) : dir.getDirectoryHandle(name))
+            .then(() => true, () => false);
+        return await has("workspace.json", "file") && await has("projects") && await has("pyramids")
+            && !await has("Plexora");
+    }, WORKSPACE.toString());
+
     // The website writes a file of its own; it reaches the folder.
     await py("import pathlib\npathlib.Path('/data/web_note.json').write_text('one')");
     await page.evaluate(() => window.PlexoraPython.flush());
@@ -102,11 +124,16 @@ try {
     checks.otherAppsProjectSurvives = (await inFolder("desktop_made/desktop_made.db")) === "desktop";
     checks.websiteChangeWritten = (await inFolder("web_note.json")) === "two";
 
-    // The tab reads the other app's project in.
-    // Between requests, every two seconds: a request Python answers.
-    await page.waitForTimeout(2200);
-    await frame.evaluate(() => fetch("/projects"));
-    checks.otherAppsProjectReadIn = (await py("import pathlib\np = pathlib.Path('/data/desktop_made/desktop_made.db')\np.read_text() if p.exists() else None")).replace(/'/g, "") === "desktop";
+    // The tab reads the other app's project in, in the pauses between requests
+    // (the idle pulls back off while nothing comes in, so the wait is bounded
+    // by the longest pause, not by the base two seconds).
+    const readIn = () => py("import pathlib\np = pathlib.Path('/data/desktop_made/desktop_made.db')\np.read_text() if p.exists() else None");
+    let seen = null;
+    for (let tries = 0; tries < 20 && seen === null; tries += 1) {
+        await page.waitForTimeout(1500);
+        seen = await readIn();
+    }
+    checks.otherAppsProjectReadIn = (seen || "").replace(/'/g, "") === "desktop";
 
     // The tab deletes its own file: deleted in the folder.
     await py("import pathlib\npathlib.Path('/data/web_note.json').unlink()");
@@ -127,6 +154,6 @@ try {
     await browser.close();
     server.stop();
 }
-const ok = Object.values(checks).every(Boolean) && Object.keys(checks).length === (folders ? 6 : 3);
+const ok = Object.values(checks).every(Boolean) && Object.keys(checks).length === (folders ? 7 : 3);
 console.log(JSON.stringify({ ok, folders, storage, checks }, null, 1));
 process.exit(ok ? 0 : 1);

@@ -14,7 +14,7 @@
 // Prints JSON with `ok`.
 import path from "node:path";
 import { readFileSync } from "node:fs";
-import { appFrame, canWriteFolders, launch, startServer, REPO } from "./lib.mjs";
+import { appFrame, canWriteFolders, launch, seedBrowserStore, startServer, REPO } from "./lib.mjs";
 
 const args = process.argv.slice(2);
 const opt = (name) => args[args.indexOf(name) + 1];
@@ -39,16 +39,9 @@ try {
             };
         });
     }
+    await seedBrowserStore(browser.context, origin);
     await page.goto(`${origin}/?pydebug`);
     let frame = await appFrame(page);
-    // Keep the projects in the browser (the first visit's question, or where
-    // there is no folder to choose, its notice).
-    await frame.waitForFunction((label) => {
-        const keep = [...document.querySelectorAll(".plx-confirm .plx-button")]
-            .find((button) => button.textContent.trim() === label);
-        if (keep) keep.click();
-        return Boolean(keep);
-    }, out.folders ? "Keep in browser" : "Not now", { timeout: 8000, polling: 200 }).catch(() => null);
     // The desktop's project, in the website's store; the image's copy in the
     // folder the picker will give.
     if (out.folders) await page.evaluate(async ([fileName, url]) => {

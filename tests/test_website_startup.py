@@ -130,3 +130,20 @@ def test_the_worker_warms_outside_its_queue_and_boot_takes_over():
     assert boot.index("await warm(args)") < boot.index("py = warmed.pyodide")
     assert "firstBoot(args)" in _function(WORKER, "boot")
     assert "warm," in CLIENT and "function warm(" in CLIENT
+
+
+def test_the_start_asks_nothing_about_storage():
+    """The first visit no longer asks where projects go once Python has started
+    (`askWhereOnce`, removed 2026-11-09), and a later visit no longer asks in
+    the loader for a folder the browser stopped granting: the store is
+    prepared without a question, and the first save runs the onboarding
+    (views/webOnboarding.js). The frame's first load does nothing but keep the
+    home page."""
+    boot = _function(SHELL, "hostBoot")
+    assert "await global.PlexoraStore.prepare().catch(() => null);" in boot
+    assert "askWhereOnce" not in SHELL and "keepInBrowser" not in SHELL
+    load = boot[boot.index('frame.addEventListener("load"'):]
+    load = load[:load.index("});")]
+    assert "keepHome(frame, pages)" in load and "PlexoraStore" not in load
+    # The store is prepared before Python starts, which it hands the folder to.
+    assert boot.index("PlexoraStore.prepare(") < boot.index("PlexoraPython.start(")

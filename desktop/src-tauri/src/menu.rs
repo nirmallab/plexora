@@ -52,6 +52,11 @@ pub fn build(app: &AppHandle, info: &serde_json::Value) -> tauri::Result<Menu<Wr
         .item(&item("page:import", "Import Sample…")?)
         .item(&item("page:open", "Samples…")?)
         .separator()
+        // A project as one `.plexora` file, both ways: the page's own dialogs
+        // (views/projectImport.js, views/projectExport.js), reached through
+        // the navbar rows desktopBridge.js clicks for these ids.
+        .item(&item("page:import_project", "Import Project…")?)
+        .item(&item("page:export_project", "Export Project…")?)
         .item(
             &SubmenuBuilder::new(app, "Export Image")
                 .item(&item("page:export_png", "PNG…")?)

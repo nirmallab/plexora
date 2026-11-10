@@ -9378,6 +9378,2053 @@ html.is-native-dragging.has-drop-target body::after {
     }
 }
 
+/* --------------------------------------------------------------------------
+   .plx-onb -- the website's first-use onboarding (views/webOnboarding.js)
+   and the home page's Reconnect card (views/quickViewLanding.js).
+
+   Start of the onboarding block. The import dialog's glass (`.plx-import`,
+   above), tinted in the Lite edition's two colours, with one screen at a
+   time. One type scale for every screen (the custom properties below): the
+   welcome screen's name, a screen's title, its lead, the quieter lines, and
+   the small uppercase labels over a group. Its CSS is here and not in a page
+   stylesheet because the app shell turns those off on navigation, and the
+   dialog opens from any page that saves something.
+   -------------------------------------------------------------------------- */
+
+.plx-onb {
+    --plx-lite-cyan: #22d3ee;
+    --plx-lite-violet: #a78bfa;
+    --plx-lite-text: linear-gradient(90deg, #8be9fd 0%, #b8b5ff 58%, #d8b4fe 100%);
+    --plx-onb-ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+    --plx-onb-spring: cubic-bezier(0.3, 1.25, 0.5, 1);
+    /* The type scale. */
+    --plx-onb-name-size: 36px;
+    --plx-onb-title-size: 23px;
+    --plx-onb-lead-size: 15px;
+    --plx-onb-item-size: 14px;
+    --plx-onb-small-size: 13px;
+    --plx-onb-eyebrow-size: 11px;
+    /* Colours of text, strongest first. */
+    --plx-onb-ink: #eef3fa;
+    --plx-onb-text: var(--text-secondary);
+    --plx-onb-quiet: var(--text-muted);
+    /* Motion, from tokens.css's: zero under reduced motion, as those are.
+       About 270 ms for a screen or a rise, 450 ms for a drawn icon or the
+       name's entrance, 50 ms between the items of a list. */
+    --plx-onb-slow: calc(var(--duration-base) * 1.5);
+    --plx-onb-slower: calc(var(--duration-base) * 2.5);
+    --plx-onb-stagger: calc(var(--duration-base) * 0.28);
+    /* Space: within a group, and between the groups of a screen. */
+    --plx-onb-gap: 10px;
+    --plx-onb-section: 22px;
+    padding: 18px 24px 22px;
+    width: min(660px, 94vw);
+}
+
+/* `display` beats `[hidden]` in Plexora: every part this dialog toggles. */
+.plx-onb [hidden],
+.plx-onb-reconnect[hidden] {
+    display: none !important;
+}
+
+/* The glass's sheen, lit from both top corners in the edition's colours. */
+.plx-onb::after {
+    background:
+        linear-gradient(180deg, rgba(255, 255, 255, 0.05) 0%, rgba(255, 255, 255, 0) 36%),
+        radial-gradient(85% 55% at 0% 0%, rgba(34, 211, 238, 0.10), rgba(34, 211, 238, 0) 62%),
+        radial-gradient(70% 50% at 100% 0%, rgba(167, 139, 250, 0.09), rgba(167, 139, 250, 0) 60%);
+}
+
+/* In: the glass fades and grows to its size, the backdrop fades. */
+.plx-onb[open] {
+    animation: plx-onb-enter var(--plx-onb-slow) var(--plx-onb-ease-out) backwards;
+}
+
+.plx-onb[open]::backdrop {
+    animation: plx-onb-fade var(--plx-onb-slow) var(--ease-standard) backwards;
+}
+
+@keyframes plx-onb-enter {
+    from { opacity: 0; transform: translateY(6px) scale(0.96); }
+}
+
+@keyframes plx-onb-fade {
+    from { opacity: 0; }
+}
+
+/* The import dialog's beam round the rim, still: it runs only while work is
+   under way, the one motion that loops. */
+.plx-onb::before {
+    animation: none;
+}
+
+.plx-onb[data-phase="working"]::before {
+    animation: plx-import-beam 14s linear infinite;
+    opacity: 1;
+}
+
+/* The welcome screen is lit from its centre, behind the name. */
+.plx-onb[data-screen="welcome"]::after {
+    background:
+        linear-gradient(180deg, rgba(255, 255, 255, 0.05) 0%, rgba(255, 255, 255, 0) 30%),
+        radial-gradient(60% 34% at 50% 8%, rgba(34, 211, 238, 0.12), rgba(167, 139, 250, 0.06) 55%, rgba(0, 0, 0, 0) 100%);
+}
+
+.plx-onb-defs {
+    height: 0;
+    overflow: hidden;
+    position: absolute;
+    width: 0;
+}
+
+.plx-onb-sr {
+    border: 0;
+    clip: rect(0 0 0 0);
+    height: 1px;
+    margin: -1px;
+    overflow: hidden;
+    padding: 0;
+    position: absolute;
+    white-space: nowrap;
+    width: 1px;
+}
+
+/* -- The icons: one family, stroked in the gradient, washed under it. */
+.plx-onb svg .d {
+    fill: url(#plx-onb-wash);
+    stroke: none;
+}
+
+.plx-onb svg .dot {
+    stroke-width: 2.6;
+}
+
+/* -- The header: the name, the edition, the version; the steps; the X. */
+.plx-onb-head {
+    align-items: center;
+    display: flex;
+    gap: var(--space-3);
+    margin: 0 0 var(--plx-onb-section);
+    min-height: 28px;
+}
+
+.plx-onb-brand {
+    align-items: center;
+    display: flex;
+    flex: 1 1 auto;
+    flex-wrap: wrap;
+    gap: 2px 6px;
+    margin: 0;
+    min-width: 0;
+}
+
+/* The welcome screen says the name itself, large: the header keeps only
+   the steps and the X there. */
+.plx-onb[data-screen="welcome"] .plx-onb-brand {
+    visibility: hidden;
+}
+
+.plx-onb[data-screen="welcome"] .plx-onb-head {
+    margin-bottom: 4px;
+}
+
+.plx-onb-logo {
+    height: 20px;
+    width: auto;
+}
+
+.plx-onb-wordmark {
+    color: var(--plx-onb-ink);
+    font-size: 15px;
+    font-weight: 700;
+    letter-spacing: -0.01em;
+}
+
+.plx-onb-version {
+    border-left: 1px solid rgba(255, 255, 255, 0.10);
+    color: var(--plx-onb-quiet);
+    font-size: 11.5px;
+    font-variant-numeric: tabular-nums;
+    letter-spacing: 0.02em;
+    margin-left: 4px;
+    opacity: 0.85;
+    padding-left: 10px;
+}
+
+.plx-onb-steps-at {
+    align-items: center;
+    display: flex;
+    flex: none;
+    gap: 10px;
+}
+
+.plx-onb-step-label {
+    color: var(--plx-onb-quiet);
+    font-size: 12px;
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+}
+
+.plx-onb-track {
+    display: inline-flex;
+    position: relative;
+}
+
+.plx-onb-progress {
+    align-items: center;
+    display: flex;
+    gap: 8px;
+    list-style: none;
+    margin: 0;
+    padding: 0 6px;
+}
+
+.plx-onb-dot {
+    background: rgba(255, 255, 255, 0.14);
+    border-radius: 999px;
+    height: 6px;
+    transition: background-color var(--plx-onb-slow) var(--ease-standard);
+    width: 6px;
+}
+
+.plx-onb-dot.is-done {
+    background: rgba(34, 211, 238, 0.55);
+}
+
+/* The step now: a pill over its dot, sliding (with a little overshoot,
+   so it reads as moving, not jumping) to the next one. */
+.plx-onb-dot-thumb {
+    background: linear-gradient(90deg, var(--plx-lite-cyan), var(--plx-lite-violet));
+    border-radius: 999px;
+    box-shadow: 0 0 10px rgba(34, 211, 238, 0.4);
+    height: 6px;
+    left: 0;
+    pointer-events: none;
+    position: absolute;
+    top: calc(50% - 3px);
+    transform: translateX(calc(var(--at, 0) * 14px));
+    transition: transform var(--plx-onb-slow) var(--plx-onb-spring),
+                opacity var(--duration-base) var(--ease-standard);
+    width: 18px;
+}
+
+.plx-onb-track[data-done="true"] .plx-onb-dot-thumb {
+    opacity: 0;
+}
+
+.plx-onb-close {
+    align-items: center;
+    border-radius: var(--radius-control);
+    display: inline-flex;
+    flex: none;
+    height: 28px;
+    justify-content: center;
+    margin-right: -6px;
+    padding: 0;
+    transition: background-color var(--duration-fast) var(--ease-standard),
+                color var(--duration-fast) var(--ease-standard);
+    width: 28px;
+}
+
+.plx-onb-close svg {
+    height: 16px;
+    width: 16px;
+}
+
+.plx-onb-close:hover:not(:disabled) {
+    background: var(--panel-hover-ground);
+}
+
+.plx-onb-close:disabled {
+    cursor: default;
+    opacity: 0.35;
+}
+
+/* -- One screen at a time, slid in from the side it comes from. */
+.plx-onb-stage {
+    position: relative;
+}
+
+.plx-onb-stage.is-moving {
+    overflow: hidden;
+    transition: height var(--plx-onb-slow) var(--ease-standard);
+}
+
+.plx-onb-screen {
+    display: flex;
+    flex-direction: column;
+    gap: var(--plx-onb-section);
+}
+
+/* Forward comes in from the right and goes out to the left; Back the other
+   way. The two cross-fade, and the stage's height follows (webOnboarding.js
+   `show`, `.is-moving` above). */
+.plx-onb-screen.is-leaving {
+    animation: plx-onb-out var(--plx-onb-slow) var(--ease-standard) forwards;
+    inset: 0 0 auto 0;
+    pointer-events: none;
+    position: absolute;
+}
+
+.plx-onb-screen.is-leaving-back {
+    animation-name: plx-onb-out-back;
+}
+
+.plx-onb-screen.is-entering {
+    animation: plx-onb-in var(--plx-onb-slow) var(--plx-onb-ease-out) backwards;
+}
+
+.plx-onb-screen.is-entering-back {
+    animation: plx-onb-in-back var(--plx-onb-slow) var(--plx-onb-ease-out) backwards;
+}
+
+@keyframes plx-onb-in {
+    from { opacity: 0; transform: translateX(14px); }
+}
+
+@keyframes plx-onb-in-back {
+    from { opacity: 0; transform: translateX(-14px); }
+}
+
+@keyframes plx-onb-out {
+    to { opacity: 0; transform: translateX(-12px); }
+}
+
+@keyframes plx-onb-out-back {
+    to { opacity: 0; transform: translateX(12px); }
+}
+
+@keyframes plx-onb-rise {
+    from { opacity: 0; transform: translateY(6px); }
+}
+
+/* -- A screen's head: its icon, its title, the line under it. */
+.plx-onb-hero {
+    align-items: center;
+    column-gap: 16px;
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    row-gap: 5px;
+}
+
+.plx-onb-tile {
+    align-items: center;
+    background: radial-gradient(120% 120% at 0% 0%, rgba(34, 211, 238, 0.16), rgba(167, 139, 250, 0.10) 55%,
+                rgba(12, 16, 22, 0.6));
+    border-radius: 15px;
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08), 0 12px 28px -14px rgba(34, 211, 238, 0.55);
+    display: inline-flex;
+    grid-row: 1 / span 2;
+    height: 52px;
+    justify-content: center;
+    position: relative;
+    width: 52px;
+}
+
+/* The capsule's hairline: a gradient ring masked out of a full layer. */
+.plx-onb-tile::before {
+    background: linear-gradient(135deg, var(--plx-lite-cyan), var(--plx-lite-violet));
+    border-radius: inherit;
+    content: "";
+    inset: 0;
+    -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+    -webkit-mask-composite: xor;
+    mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+    mask-composite: exclude;
+    opacity: 0.6;
+    padding: 1px;
+    pointer-events: none;
+    position: absolute;
+}
+
+.plx-onb-tile svg {
+    height: 26px;
+    stroke: url(#plx-onb-ink);
+    width: 26px;
+}
+
+.plx-onb-tile.tone-ok {
+    background: radial-gradient(120% 120% at 0% 0%, rgba(52, 211, 153, 0.20), rgba(34, 211, 238, 0.08) 60%,
+                rgba(12, 16, 22, 0.6));
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08), 0 12px 28px -14px rgba(52, 211, 153, 0.6);
+}
+
+.plx-onb-tile.tone-ok::before {
+    background: linear-gradient(135deg, #34d399, var(--plx-lite-cyan));
+}
+
+.plx-onb-tile.tone-ok svg {
+    stroke: #34d399;
+}
+
+.plx-onb-tile.tone-ok svg .d {
+    fill: rgba(52, 211, 153, 0.18);
+}
+
+.plx-onb-tile.tone-warn {
+    background: radial-gradient(120% 120% at 0% 0%, rgba(243, 184, 69, 0.18), rgba(12, 16, 22, 0.6) 70%);
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08), 0 12px 28px -16px rgba(243, 184, 69, 0.5);
+}
+
+.plx-onb-tile.tone-warn::before {
+    background: linear-gradient(135deg, var(--accent-warning), rgba(243, 184, 69, 0.3));
+}
+
+.plx-onb-tile.tone-warn svg {
+    stroke: var(--accent-warning);
+}
+
+.plx-onb-tile.tone-warn svg .d {
+    fill: rgba(243, 184, 69, 0.18);
+}
+
+.plx-onb-tile.tone-danger {
+    background: radial-gradient(120% 120% at 0% 0%, rgba(248, 113, 113, 0.18), rgba(12, 16, 22, 0.6) 70%);
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08), 0 12px 28px -16px rgba(248, 113, 113, 0.5);
+}
+
+.plx-onb-tile.tone-danger::before {
+    background: linear-gradient(135deg, var(--accent-danger), rgba(248, 113, 113, 0.3));
+}
+
+.plx-onb-tile.tone-danger svg {
+    stroke: var(--accent-danger);
+}
+
+.plx-onb-tile.tone-danger svg .d {
+    fill: rgba(248, 113, 113, 0.18);
+}
+
+.plx-onb-tile.tone-neutral {
+    background: radial-gradient(120% 120% at 0% 0%, rgba(255, 255, 255, 0.08), rgba(12, 16, 22, 0.6) 70%);
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08);
+}
+
+.plx-onb-tile.tone-neutral::before {
+    background: linear-gradient(135deg, rgba(255, 255, 255, 0.35), rgba(255, 255, 255, 0.08));
+}
+
+.plx-onb-tile.tone-neutral svg {
+    stroke: var(--text-secondary);
+}
+
+.plx-onb-tile.tone-neutral svg .d {
+    fill: rgba(255, 255, 255, 0.08);
+}
+
+/* A screen's head icon draws itself on as the screen arrives: every stroke
+   has a length of 1 (webOnboarding.js `svg(name, true)`), the wash fades in
+   under it. */
+.plx-onb-tile svg [pathLength] {
+    animation: plx-onb-draw var(--plx-onb-slower) var(--plx-onb-ease-out) backwards;
+    animation-delay: calc(var(--duration-base) * 0.6);
+    stroke-dasharray: 1;
+    stroke-dashoffset: 0;
+}
+
+.plx-onb-tile svg .d {
+    animation: plx-onb-fade var(--plx-onb-slower) var(--ease-standard) backwards;
+    animation-delay: calc(var(--duration-base) * 0.9);
+}
+
+@keyframes plx-onb-draw {
+    0% { opacity: 0; stroke-dashoffset: 1; }
+    15% { opacity: 1; }
+    100% { stroke-dashoffset: 0; }
+}
+
+/* The finish: the tile settles, its folder draws, then the check in it,
+   then the confetti (below). */
+.plx-onb-tile.is-done {
+    animation: plx-onb-pop var(--plx-onb-slower) var(--plx-onb-spring) backwards;
+}
+
+.plx-onb-tile.is-done svg [pathLength]:last-child {
+    animation-delay: calc(var(--duration-base) * 2);
+}
+
+@keyframes plx-onb-pop {
+    0% { opacity: 0; transform: scale(0.82); }
+    100% { opacity: 1; transform: scale(1); }
+}
+
+/* Something went wrong: the tile shakes its head, once. */
+.plx-onb-screen.is-error .plx-onb-tile {
+    animation: plx-onb-shake calc(var(--duration-base) * 1.7) var(--ease-standard) backwards;
+    animation-delay: var(--duration-base);
+}
+
+@keyframes plx-onb-shake {
+    0%, 100% { transform: translateX(0); }
+    20% { transform: translateX(-5px); }
+    40% { transform: translateX(5px); }
+    60% { transform: translateX(-3px); }
+    80% { transform: translateX(3px); }
+}
+
+.plx-onb .plx-onb-title {
+    color: var(--plx-onb-ink);
+    font-size: var(--plx-onb-title-size);
+    font-weight: 650;
+    letter-spacing: -0.018em;
+    line-height: 1.2;
+    margin: 0;
+    outline: none;
+    overflow-wrap: anywhere;
+}
+
+.plx-onb-lead {
+    color: var(--plx-onb-text);
+    font-size: var(--plx-onb-lead-size);
+    line-height: 1.45;
+    margin: 0;
+}
+
+.plx-onb-lead strong,
+.plx-onb-note strong,
+.plx-onb-hint-text strong,
+.plx-onb-stepline strong,
+.plx-onb-footnote strong {
+    color: var(--plx-onb-ink);
+    font-weight: 600;
+}
+
+/* The small uppercase label over a group. */
+.plx-onb-eyebrow {
+    color: var(--plx-onb-quiet);
+    font-size: var(--plx-onb-eyebrow-size);
+    font-weight: 650;
+    letter-spacing: 0.09em;
+    line-height: 1.2;
+    margin: 0;
+    text-transform: uppercase;
+}
+
+.plx-onb-body {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-4);
+}
+
+.plx-onb-note {
+    color: var(--plx-onb-quiet);
+    font-size: var(--plx-onb-small-size);
+    line-height: 1.5;
+    margin: 0;
+}
+
+.plx-onb-footnote {
+    color: var(--plx-onb-quiet);
+    font-size: 12px;
+    margin: -8px 0 0;
+    text-align: center;
+}
+
+.plx-onb-detail {
+    background: rgba(5, 7, 10, 0.5);
+    border: 1px solid var(--panel-rule);
+    border-radius: var(--radius-control);
+    color: var(--plx-onb-quiet);
+    font-family: var(--plx-import-mono);
+    font-size: 11.5px;
+    line-height: 1.5;
+    margin: 0;
+    overflow-wrap: anywhere;
+    padding: 8px 10px;
+}
+
+/* -- The welcome screen: who this is, what it does, then where to start. */
+.plx-onb-brand-hero {
+    align-items: center;
+    display: flex;
+    flex-direction: column;
+    margin-top: -6px;
+    text-align: center;
+}
+
+/* The mark eases in, with one soft pulse of light behind it; the name, the
+   version and the line under them rise after it. */
+.plx-onb-mark-wrap {
+    display: inline-flex;
+    isolation: isolate;
+    margin-bottom: 12px;
+    position: relative;
+}
+
+.plx-onb-mark-wrap::before {
+    animation: plx-onb-glow var(--plx-onb-slower) var(--plx-onb-ease-out) backwards;
+    animation-delay: calc(var(--duration-base) * 0.8);
+    background: radial-gradient(closest-side, rgba(34, 211, 238, 0.32), rgba(167, 139, 250, 0.16) 55%, rgba(0, 0, 0, 0));
+    border-radius: 50%;
+    content: "";
+    inset: -45%;
+    opacity: 0.6;
+    pointer-events: none;
+    position: absolute;
+    z-index: -1;
+}
+
+@keyframes plx-onb-glow {
+    0% { opacity: 0; transform: scale(0.6); }
+    55% { opacity: 1; transform: scale(1.15); }
+    100% { opacity: 0.6; transform: scale(1); }
+}
+
+.plx-onb-mark {
+    animation: plx-onb-arrive var(--plx-onb-slower) var(--plx-onb-spring) backwards;
+    animation-delay: calc(var(--duration-base) * 0.5);
+    filter: drop-shadow(0 10px 26px rgba(34, 211, 238, 0.28)) drop-shadow(0 6px 18px rgba(167, 139, 250, 0.22));
+    height: 60px;
+    width: auto;
+}
+
+@keyframes plx-onb-arrive {
+    from { opacity: 0; transform: scale(0.86); }
+}
+
+.plx-onb-brand-hero .plx-onb-name,
+.plx-onb-brand-hero .plx-onb-name-version,
+.plx-onb-brand-hero .plx-onb-lead {
+    animation: plx-onb-rise var(--plx-onb-slow) var(--plx-onb-ease-out) backwards;
+}
+
+.plx-onb-brand-hero .plx-onb-name {
+    animation-delay: calc(var(--duration-base) * 1.2);
+}
+
+.plx-onb-brand-hero .plx-onb-name-version {
+    animation-delay: calc(var(--duration-base) * 1.45);
+}
+
+.plx-onb-brand-hero .plx-onb-lead {
+    animation-delay: calc(var(--duration-base) * 1.7);
+}
+
+/* Lists rise one item after another (`--i`, set by webOnboarding.js): the
+   welcome screen's points, then its two cards; a folder's reasons, then
+   the two places. */
+.plx-onb-feature,
+.plx-onb-benefit,
+.plx-onb-cards .plx-onb-card,
+.plx-onb-start-head,
+.plx-onb-start-note {
+    animation: plx-onb-rise var(--plx-onb-slow) var(--plx-onb-ease-out) backwards;
+    animation-delay: calc(var(--plx-onb-stagger) * var(--i, 0) + var(--duration-base));
+}
+
+.plx-onb-feature {
+    animation-delay: calc(var(--plx-onb-stagger) * var(--i, 0) + var(--duration-base) * 1.9);
+}
+
+.plx-onb-start-head {
+    animation-delay: calc(var(--plx-onb-stagger) * 4 + var(--duration-base) * 1.9);
+}
+
+.plx-onb-cards.is-start .plx-onb-card {
+    animation-delay: calc(var(--plx-onb-stagger) * (var(--i, 0) + 5) + var(--duration-base) * 1.9);
+}
+
+.plx-onb-start-note {
+    animation-delay: calc(var(--plx-onb-stagger) * 7 + var(--duration-base) * 1.9);
+}
+
+.plx-onb .plx-onb-name {
+    font-size: var(--plx-onb-name-size);
+    font-weight: 700;
+    letter-spacing: -0.025em;
+    line-height: 1.05;
+}
+
+.plx-onb-name-version {
+    color: var(--plx-onb-quiet);
+    font-size: 12px;
+    font-variant-numeric: tabular-nums;
+    letter-spacing: 0.03em;
+    margin: 6px 0 0;
+}
+
+.plx-onb-brand-hero .plx-onb-lead {
+    margin-top: 12px;
+    max-width: 30em;
+}
+
+.plx-onb-features {
+    display: grid;
+    gap: 16px 22px;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    list-style: none;
+    margin: 2px 0 0;
+    padding: 0;
+}
+
+.plx-onb-feature {
+    align-items: flex-start;
+    display: flex;
+    gap: 12px;
+}
+
+.plx-onb-feature-icon {
+    align-items: center;
+    background: radial-gradient(120% 120% at 0% 0%, rgba(34, 211, 238, 0.14), rgba(167, 139, 250, 0.08) 60%,
+                rgba(12, 16, 22, 0.5));
+    border-radius: 11px;
+    box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.07);
+    display: inline-flex;
+    flex: none;
+    height: 38px;
+    justify-content: center;
+    width: 38px;
+}
+
+.plx-onb-feature-icon svg {
+    height: 21px;
+    stroke: url(#plx-onb-ink);
+    width: 21px;
+}
+
+.plx-onb-feature-words {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 0;
+    padding-top: 1px;
+}
+
+.plx-onb-feature-title {
+    color: var(--plx-onb-ink);
+    font-size: var(--plx-onb-item-size);
+    font-weight: 650;
+    line-height: 1.3;
+}
+
+.plx-onb-feature-text {
+    color: var(--plx-onb-quiet);
+    font-size: var(--plx-onb-small-size);
+    line-height: 1.45;
+}
+
+.plx-onb-start {
+    border-top: 1px solid var(--panel-rule);
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    margin-top: 2px;
+    padding-top: 18px;
+}
+
+.plx-onb-start-head {
+    align-items: center;
+    display: flex;
+    gap: 10px;
+    justify-content: space-between;
+}
+
+/* Said once, quietly, beside where the choice is made. */
+.plx-onb-once-pill {
+    align-items: center;
+    background: rgba(34, 211, 238, 0.08);
+    border: 1px solid rgba(34, 211, 238, 0.22);
+    border-radius: 999px;
+    color: #a5f3fc;
+    display: inline-flex;
+    flex: none;
+    font-size: 11.5px;
+    font-weight: 600;
+    gap: 5px;
+    margin: 0;
+    padding: 3px 9px 3px 7px;
+}
+
+.plx-onb-once-icon {
+    display: inline-flex;
+}
+
+.plx-onb-once-icon svg {
+    height: 13px;
+    width: 13px;
+}
+
+.plx-onb-start-note {
+    color: var(--plx-onb-quiet);
+    font-size: 12px;
+    margin: 0;
+    text-align: center;
+}
+
+/* -- Choices as cards: the whole card is the button. */
+.plx-onb-cards {
+    display: grid;
+    gap: var(--space-3);
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.plx-onb-card {
+    align-items: center;
+    background: linear-gradient(180deg, rgba(255, 255, 255, 0.035), rgba(255, 255, 255, 0.012));
+    border: 1px solid rgba(255, 255, 255, 0.09);
+    border-radius: var(--radius-card);
+    color: var(--text-primary);
+    column-gap: 14px;
+    cursor: pointer;
+    display: grid;
+    font: inherit;
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    padding: 16px 14px 16px 16px;
+    position: relative;
+    text-align: left;
+    transition: transform var(--duration-base) var(--ease-standard),
+                background var(--duration-base) var(--ease-standard),
+                border-color var(--duration-base) var(--ease-standard),
+                box-shadow var(--duration-base) var(--ease-standard);
+}
+
+.plx-onb-card::before {
+    background: linear-gradient(135deg, rgba(34, 211, 238, 0.85), rgba(167, 139, 250, 0.85));
+    border-radius: inherit;
+    content: "";
+    inset: -1px;
+    -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+    -webkit-mask-composite: xor;
+    mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+    mask-composite: exclude;
+    opacity: 0;
+    padding: 1px;
+    pointer-events: none;
+    position: absolute;
+    transition: opacity var(--duration-base) var(--ease-standard);
+}
+
+.plx-onb-card:hover:not(:disabled) {
+    background: linear-gradient(180deg, rgba(34, 211, 238, 0.06), rgba(167, 139, 250, 0.035));
+    box-shadow: 0 16px 34px -18px rgba(34, 211, 238, 0.6);
+    transform: translateY(-2px);
+}
+
+.plx-onb-card:active:not(:disabled) {
+    transform: translateY(-1px) scale(0.98);
+    transition-duration: var(--duration-fast);
+}
+
+.plx-onb-card:hover:not(:disabled)::before,
+.plx-onb-card:focus-visible::before {
+    opacity: 1;
+}
+
+.plx-onb-card:disabled {
+    cursor: default;
+    opacity: 0.6;
+}
+
+.plx-onb-card-icon {
+    align-items: center;
+    background: radial-gradient(120% 120% at 0% 0%, rgba(34, 211, 238, 0.14), rgba(167, 139, 250, 0.08) 60%,
+                rgba(5, 7, 10, 0.5));
+    border-radius: 12px;
+    box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.08);
+    display: inline-flex;
+    height: 44px;
+    justify-content: center;
+    width: 44px;
+}
+
+.plx-onb-card-icon svg {
+    height: 23px;
+    stroke: url(#plx-onb-ink);
+    width: 23px;
+}
+
+.plx-onb-card-words {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    min-width: 0;
+}
+
+.plx-onb-card-head {
+    align-items: center;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px 10px;
+}
+
+.plx-onb-card-title {
+    color: var(--plx-onb-ink);
+    font-size: 15.5px;
+    font-weight: 650;
+    line-height: 1.3;
+}
+
+.plx-onb-card-text {
+    color: var(--plx-onb-quiet);
+    font-size: var(--plx-onb-small-size);
+    line-height: 1.45;
+}
+
+.plx-onb-card-notes {
+    display: flex;
+    flex-flow: row wrap;
+    gap: 3px 16px;
+    margin-top: 6px;
+}
+
+.plx-onb-card-note {
+    color: var(--plx-onb-quiet);
+    font-size: 12px;
+    line-height: 1.4;
+    padding-left: 12px;
+    position: relative;
+}
+
+.plx-onb-card-note::before {
+    background: rgba(243, 184, 69, 0.75);
+    border-radius: 50%;
+    content: "";
+    height: 4px;
+    left: 2px;
+    position: absolute;
+    top: 0.55em;
+    width: 4px;
+}
+
+.plx-onb-card-go {
+    color: var(--plx-onb-quiet);
+    display: inline-flex;
+    transition: transform var(--duration-base) var(--ease-standard),
+                color var(--duration-base) var(--ease-standard);
+}
+
+.plx-onb-card-go svg {
+    height: 18px;
+    width: 18px;
+}
+
+.plx-onb-card:hover:not(:disabled) .plx-onb-card-go {
+    color: var(--plx-lite-cyan);
+    transform: translateX(2px);
+}
+
+.plx-onb-chip {
+    background: rgba(34, 211, 238, 0.14);
+    border: 1px solid rgba(34, 211, 238, 0.45);
+    border-radius: 999px;
+    color: #67e8f9;
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    line-height: 1;
+    padding: 4px 8px;
+    text-transform: uppercase;
+}
+
+/* The start cards on the welcome screen: lighter, so the name leads. */
+.plx-onb-cards.is-start .plx-onb-card {
+    background: rgba(255, 255, 255, 0.02);
+    border-color: rgba(255, 255, 255, 0.08);
+    column-gap: 12px;
+    padding: 12px 12px 12px 12px;
+}
+
+.plx-onb-cards.is-start .plx-onb-card-icon {
+    border-radius: 10px;
+    height: 36px;
+    width: 36px;
+}
+
+.plx-onb-cards.is-start .plx-onb-card-icon svg {
+    height: 20px;
+    width: 20px;
+}
+
+.plx-onb-cards.is-start .plx-onb-card-title {
+    font-size: var(--plx-onb-item-size);
+}
+
+.plx-onb-cards.is-start .plx-onb-card-text {
+    font-size: 12.5px;
+}
+
+/* The two places on Give your work a home: what the screen is for, one per
+   line, the recommended one lit. */
+.plx-onb-cards.is-options {
+    grid-template-columns: 1fr;
+}
+
+.plx-onb-card.is-recommended {
+    background: linear-gradient(180deg, rgba(34, 211, 238, 0.09), rgba(167, 139, 250, 0.04));
+    border-color: rgba(34, 211, 238, 0.42);
+    box-shadow: 0 16px 36px -22px rgba(34, 211, 238, 0.6);
+}
+
+.plx-onb-card.is-recommended .plx-onb-card-go {
+    color: var(--plx-lite-cyan);
+}
+
+/* Its gradient rim lights once as it arrives, then rests half lit. */
+.plx-onb-card.is-recommended::before {
+    animation: plx-onb-ring calc(var(--duration-base) * 5) var(--ease-standard) backwards;
+    animation-delay: calc(var(--plx-onb-stagger) * var(--i, 0) + var(--duration-base) * 2);
+    opacity: 0.5;
+}
+
+@keyframes plx-onb-ring {
+    0% { opacity: 0; }
+    45% { opacity: 1; }
+    100% { opacity: 0.5; }
+}
+
+/* -- What a folder gives (Give your work a home): the reason for the
+   choice, read before it, in two columns. */
+.plx-onb-benefits {
+    background: rgba(5, 7, 10, 0.35);
+    border: 1px solid var(--panel-rule);
+    border-radius: var(--radius-card);
+    display: grid;
+    gap: 12px 20px;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    list-style: none;
+    margin: 0;
+    padding: 14px 16px;
+}
+
+.plx-onb-benefit {
+    align-items: center;
+    color: var(--plx-onb-text);
+    display: flex;
+    font-size: var(--plx-onb-item-size);
+    gap: 10px;
+    line-height: 1.35;
+}
+
+.plx-onb-benefit-icon {
+    align-items: center;
+    background: radial-gradient(120% 120% at 0% 0%, rgba(34, 211, 238, 0.14), rgba(167, 139, 250, 0.08) 60%,
+                rgba(12, 16, 22, 0.5));
+    border-radius: 8px;
+    box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.07);
+    display: inline-flex;
+    flex: none;
+    height: 28px;
+    justify-content: center;
+    width: 28px;
+}
+
+.plx-onb-benefit-icon svg {
+    height: 16px;
+    stroke: url(#plx-onb-ink);
+    width: 16px;
+}
+
+/* The browser's storage, under the recommended folder: a step quieter. */
+.plx-onb-card.is-quiet {
+    background: rgba(255, 255, 255, 0.015);
+    border-color: rgba(255, 255, 255, 0.07);
+    padding-bottom: 13px;
+    padding-top: 13px;
+}
+
+.plx-onb-card.is-quiet .plx-onb-card-icon {
+    height: 38px;
+    width: 38px;
+}
+
+.plx-onb-card.is-quiet .plx-onb-card-icon svg {
+    height: 20px;
+    width: 20px;
+}
+
+.plx-onb-card.is-quiet .plx-onb-card-title {
+    color: var(--plx-onb-text);
+    font-size: var(--plx-onb-item-size);
+}
+
+/* -- A quiet box: what to look for, or why a choice is missing. */
+.plx-onb-hint {
+    align-items: flex-start;
+    background: rgba(5, 7, 10, 0.35);
+    border: 1px solid var(--panel-rule);
+    border-radius: var(--radius-card);
+    display: flex;
+    gap: 12px;
+    padding: 12px 14px;
+}
+
+.plx-onb-hint.is-warn {
+    background: var(--accent-warning-soft);
+    border-color: rgba(243, 184, 69, 0.28);
+    grid-column: 1 / -1;
+}
+
+.plx-onb-hint-icon {
+    display: inline-flex;
+    flex: none;
+    margin-top: 1px;
+}
+
+.plx-onb-hint-icon svg {
+    height: 18px;
+    stroke: var(--plx-onb-quiet);
+    width: 18px;
+}
+
+.plx-onb-hint-icon svg .d {
+    fill: none;
+}
+
+.plx-onb-hint.is-warn .plx-onb-hint-icon svg {
+    stroke: var(--accent-warning);
+}
+
+.plx-onb-hint-text {
+    color: var(--plx-onb-text);
+    font-size: var(--plx-onb-small-size);
+    line-height: 1.5;
+    margin: 0;
+}
+
+/* -- A workspace found: its name, what is in it, a few of its projects. */
+.plx-onb-summary {
+    align-items: flex-start;
+    background: linear-gradient(180deg, rgba(52, 211, 153, 0.06), rgba(52, 211, 153, 0.015));
+    border: 1px solid rgba(52, 211, 153, 0.24);
+    border-radius: var(--radius-card);
+    display: flex;
+    gap: 14px;
+    padding: 14px;
+}
+
+.plx-onb-summary-icon {
+    align-items: center;
+    background: rgba(52, 211, 153, 0.10);
+    border-radius: 10px;
+    display: inline-flex;
+    flex: none;
+    height: 40px;
+    justify-content: center;
+    width: 40px;
+}
+
+.plx-onb-summary-icon svg {
+    height: 22px;
+    stroke: #34d399;
+    width: 22px;
+}
+
+.plx-onb-summary-icon svg .d {
+    fill: rgba(52, 211, 153, 0.18);
+}
+
+.plx-onb-summary-words {
+    min-width: 0;
+}
+
+.plx-onb-summary-name {
+    color: var(--plx-onb-ink);
+    font-size: 15.5px;
+    font-weight: 650;
+    margin: 0;
+    overflow-wrap: anywhere;
+}
+
+.plx-onb-summary-meta {
+    color: var(--plx-onb-text);
+    font-size: var(--plx-onb-small-size);
+    margin: 2px 0 0;
+}
+
+.plx-onb-summary-projects {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    list-style: none;
+    margin: 10px 0 0;
+    padding: 0;
+}
+
+.plx-onb-pill {
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 999px;
+    color: var(--plx-onb-text);
+    font-size: 12px;
+    max-width: 200px;
+    overflow: hidden;
+    padding: 3px 9px;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.plx-onb-pill.is-more {
+    background: none;
+    border-style: dashed;
+    color: var(--plx-onb-quiet);
+}
+
+/* -- Create your Plexora folder: the steps beside the folder they make. */
+.plx-onb-create {
+    align-items: center;
+    display: grid;
+    gap: 22px;
+    grid-template-columns: minmax(0, 1fr) 200px;
+}
+
+.plx-onb-steps {
+    counter-reset: plx-onb-step;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    list-style: none;
+    margin: 0;
+    padding: 0;
+}
+
+.plx-onb-stepline {
+    align-items: center;
+    color: var(--plx-onb-text);
+    counter-increment: plx-onb-step;
+    display: grid;
+    font-size: var(--plx-onb-item-size);
+    gap: 12px;
+    grid-template-columns: 26px minmax(0, 1fr);
+    line-height: 1.45;
+}
+
+.plx-onb-stepline::before {
+    align-items: center;
+    background: radial-gradient(100% 100% at 30% 20%, rgba(34, 211, 238, 0.22), rgba(167, 139, 250, 0.12));
+    border-radius: 50%;
+    box-shadow: inset 0 0 0 1px rgba(34, 211, 238, 0.45);
+    color: #cffafe;
+    content: counter(plx-onb-step);
+    display: inline-flex;
+    font-size: 12px;
+    font-weight: 700;
+    height: 26px;
+    justify-content: center;
+    width: 26px;
+}
+
+.plx-onb-tree {
+    background: rgba(5, 7, 10, 0.55);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 10px;
+    box-shadow: 0 18px 36px -22px rgba(0, 0, 0, 0.85);
+    font-size: 12px;
+    overflow: hidden;
+}
+
+.plx-onb-tree-bar {
+    align-items: center;
+    background: rgba(255, 255, 255, 0.04);
+    border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+    display: flex;
+    gap: 5px;
+    padding: 7px 10px;
+}
+
+.plx-onb-tree-dot {
+    background: rgba(255, 255, 255, 0.18);
+    border-radius: 50%;
+    height: 7px;
+    width: 7px;
+}
+
+.plx-onb-tree-title {
+    color: var(--plx-onb-quiet);
+    font-size: 11px;
+    margin-left: 6px;
+}
+
+.plx-onb-tree-rows {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    padding: 6px;
+}
+
+.plx-onb-tree-row {
+    align-items: center;
+    border-radius: 6px;
+    color: var(--plx-onb-quiet);
+    display: flex;
+    gap: 7px;
+    padding: 5px 8px;
+}
+
+.plx-onb-tree-row.is-parent {
+    color: var(--plx-onb-text);
+    font-weight: 600;
+}
+
+.plx-onb-tree-row.is-child {
+    padding-left: 24px;
+}
+
+.plx-onb-tree-icon {
+    display: inline-flex;
+}
+
+.plx-onb-tree-icon svg {
+    height: 14px;
+    stroke: var(--plx-onb-quiet);
+    width: 14px;
+}
+
+.plx-onb-tree-icon svg .d {
+    fill: none;
+}
+
+.plx-onb-tree-row.is-target {
+    background: linear-gradient(90deg, rgba(34, 211, 238, 0.16), rgba(167, 139, 250, 0.12));
+    box-shadow: inset 0 0 0 1px rgba(34, 211, 238, 0.42);
+    color: #f0fdff;
+    font-weight: 600;
+}
+
+.plx-onb-tree-row.is-target .plx-onb-tree-icon svg {
+    stroke: url(#plx-onb-ink);
+}
+
+.plx-onb-tree-row.is-target .plx-onb-tree-icon svg .d {
+    fill: url(#plx-onb-wash);
+}
+
+.plx-onb-tree-tag {
+    background: rgba(34, 211, 238, 0.14);
+    border-radius: 999px;
+    color: #a5f3fc;
+    font-size: 9px;
+    font-weight: 650;
+    letter-spacing: 0.06em;
+    margin-left: auto;
+    padding: 2px 6px;
+    text-transform: uppercase;
+    white-space: nowrap;
+}
+
+/* -- Setting up: each step, waiting, under way, done. */
+.plx-onb-tasks {
+    background: rgba(5, 7, 10, 0.35);
+    border: 1px solid var(--panel-rule);
+    border-radius: var(--radius-card);
+    display: flex;
+    flex-direction: column;
+    gap: 11px;
+    list-style: none;
+    margin: 0;
+    padding: 14px 16px;
+}
+
+.plx-onb-task {
+    align-items: center;
+    color: var(--plx-onb-quiet);
+    display: flex;
+    font-size: var(--plx-onb-item-size);
+    gap: 11px;
+    transition: color var(--duration-base) var(--ease-standard);
+}
+
+.plx-onb-task.is-running {
+    color: var(--text-primary);
+}
+
+.plx-onb-task.is-done {
+    color: var(--plx-onb-text);
+}
+
+.plx-onb-task.is-failed {
+    color: var(--accent-danger);
+}
+
+.plx-onb-task-mark {
+    border-radius: 50%;
+    box-shadow: inset 0 0 0 1.5px rgba(255, 255, 255, 0.18);
+    flex: none;
+    height: 18px;
+    position: relative;
+    width: 18px;
+}
+
+.plx-onb-task.is-running .plx-onb-task-mark {
+    box-shadow: inset 0 0 0 1.5px rgba(34, 211, 238, 0.22);
+}
+
+.plx-onb-task.is-running .plx-onb-task-mark::after {
+    animation: plx-onb-spin 0.8s linear infinite;
+    border: 2px solid transparent;
+    border-radius: 50%;
+    border-right-color: var(--plx-lite-violet);
+    border-top-color: var(--plx-lite-cyan);
+    content: "";
+    inset: 0;
+    position: absolute;
+}
+
+.plx-onb-task.is-done .plx-onb-task-mark {
+    animation: plx-onb-tick var(--plx-onb-slow) var(--plx-onb-spring) backwards;
+    background: linear-gradient(135deg, var(--plx-lite-cyan), var(--plx-lite-violet));
+    box-shadow: none;
+}
+
+@keyframes plx-onb-tick {
+    from { opacity: 0; transform: scale(0.4); }
+}
+
+.plx-onb-task.is-done .plx-onb-task-mark::after {
+    border-bottom: 2px solid #05070a;
+    border-right: 2px solid #05070a;
+    content: "";
+    height: 8px;
+    left: 6.5px;
+    position: absolute;
+    top: 3.5px;
+    transform: rotate(45deg);
+    width: 4px;
+}
+
+.plx-onb-task.is-failed .plx-onb-task-mark {
+    background: var(--accent-danger);
+    box-shadow: none;
+}
+
+.plx-onb-task.is-failed .plx-onb-task-mark::after {
+    color: #05070a;
+    content: "!";
+    font-size: 12px;
+    font-weight: 800;
+    inset: 0;
+    line-height: 18px;
+    position: absolute;
+    text-align: center;
+}
+
+@keyframes plx-onb-spin {
+    to { transform: rotate(360deg); }
+}
+
+/* -- Done: a finish. The check large and centred, where the work is kept
+   now under it, and the way on. */
+.plx-onb-screen.is-finish .plx-onb-hero {
+    display: flex;
+    flex-direction: column;
+    text-align: center;
+}
+
+.plx-onb-screen.is-finish .plx-onb-tile {
+    border-radius: 22px;
+    height: 76px;
+    margin-bottom: 10px;
+    width: 76px;
+}
+
+.plx-onb-screen.is-finish .plx-onb-tile svg {
+    height: 38px;
+    width: 38px;
+}
+
+.plx-onb-screen.is-finish .plx-onb-lead {
+    max-width: 32em;
+}
+
+.plx-onb-done {
+    align-items: stretch;
+    animation: plx-onb-rise var(--plx-onb-slow) var(--plx-onb-ease-out) backwards;
+    animation-delay: var(--duration-base);
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.plx-onb-place {
+    align-items: center;
+    background: linear-gradient(90deg, rgba(34, 211, 238, 0.09), rgba(167, 139, 250, 0.07));
+    border: 1px solid rgba(34, 211, 238, 0.3);
+    border-radius: var(--radius-card);
+    display: flex;
+    gap: 14px;
+    padding: 14px 16px;
+}
+
+.plx-onb-place-icon {
+    align-items: center;
+    background: rgba(5, 7, 10, 0.5);
+    border-radius: 12px;
+    box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.08);
+    display: inline-flex;
+    flex: none;
+    height: 44px;
+    justify-content: center;
+    width: 44px;
+}
+
+.plx-onb-place-icon svg {
+    height: 24px;
+    stroke: url(#plx-onb-ink);
+    width: 24px;
+}
+
+.plx-onb-place-words {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    min-width: 0;
+    text-align: left;
+}
+
+.plx-onb-place-caption {
+    color: var(--plx-onb-quiet);
+    font-size: var(--plx-onb-eyebrow-size);
+    font-weight: 650;
+    letter-spacing: 0.09em;
+    text-transform: uppercase;
+}
+
+.plx-onb-place-name {
+    color: var(--plx-onb-ink);
+    font-size: 18px;
+    font-weight: 650;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.plx-onb-once {
+    color: var(--plx-onb-text);
+    font-size: var(--plx-onb-small-size);
+    margin: 2px 0 0;
+    text-align: center;
+}
+
+.plx-onb-done .plx-onb-note {
+    text-align: center;
+}
+
+/* The finish's way on: centred, under it. */
+.plx-onb-screen.is-finish .plx-onb-foot {
+    border-top: none;
+    justify-content: center;
+    padding-top: 0;
+}
+
+.plx-onb-screen.is-finish .plx-onb-foot-spacer {
+    display: none;
+}
+
+.plx-onb-screen.is-finish .plx-onb-actions {
+    justify-content: center;
+    margin-left: 0;
+}
+
+.plx-onb-screen.is-finish .plx-button-primary {
+    height: 42px;
+    min-width: 240px;
+    padding: 0 22px;
+}
+
+/* A burst round the tile once the workspace is ready: 14 bits, 900 ms, and
+   none at all under reduced motion (webOnboarding.js draws none either). */
+.plx-onb-confetti {
+    height: 0;
+    left: 50%;
+    pointer-events: none;
+    position: absolute;
+    top: 50%;
+    width: 0;
+    z-index: 2;
+}
+
+.plx-onb-confetti i {
+    animation: plx-onb-confetti 900ms cubic-bezier(0.16, 1, 0.3, 1) forwards;
+    animation-delay: calc(var(--d, 0ms) + var(--duration-base) * 2.6);
+    background: var(--c, var(--plx-lite-cyan));
+    border-radius: 1px;
+    height: 3px;
+    left: -3px;
+    opacity: 0;
+    position: absolute;
+    top: -1.5px;
+    width: 7px;
+}
+
+.plx-onb-confetti i.is-dot {
+    border-radius: 50%;
+    height: 5px;
+    left: -2.5px;
+    top: -2.5px;
+    width: 5px;
+}
+
+@keyframes plx-onb-confetti {
+    0% { opacity: 1; transform: translate(0, 0) rotate(0deg) scale(0.5); }
+    70% { opacity: 1; }
+    100% { opacity: 0; transform: translate(var(--x), calc(var(--y) + 12px)) rotate(var(--r)) scale(1); }
+}
+
+/* -- The footer: Back on the left, the answers on the right, the
+   affirmative one last. */
+.plx-onb-foot {
+    align-items: center;
+    border-top: 1px solid var(--panel-rule);
+    display: flex;
+    gap: var(--space-3);
+    justify-content: space-between;
+    padding-top: var(--space-4);
+}
+
+/* The quiet way out, under the content (webOnboarding.js `links`). */
+.plx-onb-alt {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 2px 14px;
+    margin-top: -10px;
+}
+
+.plx-onb-alt .plx-onb-link {
+    padding-left: 0;
+}
+
+/* Only Back: no rule over it, and less room. */
+.plx-onb-foot.is-back-only {
+    border-top: none;
+    padding-top: 0;
+}
+
+.plx-onb-actions {
+    align-items: center;
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-2);
+    justify-content: flex-end;
+    margin-left: auto;
+}
+
+.plx-onb .plx-button {
+    align-items: center;
+    border-radius: var(--radius-control);
+    display: inline-flex;
+    font-size: var(--plx-onb-small-size);
+    font-weight: 500;
+    gap: 8px;
+    height: 38px;
+    justify-content: center;
+    padding: 0 16px;
+    white-space: nowrap;
+}
+
+.plx-onb .plx-onb-secondary {
+    background: rgba(255, 255, 255, 0.04);
+    border-color: rgba(255, 255, 255, 0.14);
+}
+
+.plx-onb .plx-onb-secondary:hover:not(:disabled) {
+    background: rgba(255, 255, 255, 0.07);
+    border-color: rgba(255, 255, 255, 0.28);
+}
+
+/* The home page's Load face, as the import dialog's affirmative button has
+   it: near-black text on the cyan, never white (4.5:1). */
+.plx-onb .plx-button-primary:not(:disabled) {
+    background: linear-gradient(180deg, #5cc9fb 0%, var(--accent-channel) 100%);
+    border-color: rgba(56, 189, 248, 0.9);
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.35), 0 8px 22px -10px rgba(56, 189, 248, 0.55);
+    color: #05070a;
+    font-weight: 650;
+}
+
+.plx-onb .plx-button-primary:not(:disabled):hover {
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.4), 0 10px 26px -10px rgba(56, 189, 248, 0.75);
+    filter: brightness(1.05);
+}
+
+.plx-onb .plx-button-primary.is-working .plx-onb-button-icon svg {
+    animation: plx-onb-spin 0.9s linear infinite;
+}
+
+.plx-onb-button-icon {
+    display: inline-flex;
+}
+
+.plx-onb-button-icon svg {
+    height: 16px;
+    width: 16px;
+}
+
+.plx-onb-button-icon svg .d {
+    fill: none;
+}
+
+.plx-onb .plx-button-primary .plx-onb-button-icon.is-trailing {
+    transition: transform var(--duration-base) var(--ease-standard);
+}
+
+.plx-onb .plx-button-primary:hover .plx-onb-button-icon.is-trailing {
+    transform: translateX(2px);
+}
+
+.plx-onb-back {
+    align-items: center;
+    background: none;
+    border: none;
+    border-radius: var(--radius-control);
+    color: var(--plx-onb-quiet);
+    display: inline-flex;
+    font-size: var(--plx-onb-small-size);
+    gap: 6px;
+    height: 32px;
+    margin-left: -8px;
+    padding: 0 10px 0 8px;
+    transition: color var(--duration-fast) var(--ease-standard),
+                background-color var(--duration-fast) var(--ease-standard);
+}
+
+.plx-onb-back:hover:not(:disabled) {
+    background: var(--panel-hover-ground);
+    color: var(--text-primary);
+}
+
+.plx-onb-link {
+    align-items: center;
+    background: none;
+    border: none;
+    color: #7dd3fc;
+    display: inline-flex;
+    font-size: var(--plx-onb-small-size);
+    gap: 6px;
+    padding: 6px 6px;
+    text-decoration: underline;
+    text-decoration-color: transparent;
+    text-underline-offset: 3px;
+    transition: color var(--duration-fast) var(--ease-standard),
+                text-decoration-color var(--duration-fast) var(--ease-standard);
+}
+
+.plx-onb-link:hover:not(:disabled) {
+    color: #bae6fd;
+    text-decoration-color: currentColor;
+}
+
+a.plx-onb-link {
+    align-self: flex-start;
+    padding-left: 0;
+}
+
+.plx-onb button:disabled {
+    cursor: default;
+}
+
+.plx-onb-close:focus-visible,
+.plx-onb-card:focus-visible,
+.plx-onb .plx-button:focus-visible,
+.plx-onb-back:focus-visible,
+.plx-onb-link:focus-visible,
+.plx-onb-reconnect-button:focus-visible {
+    box-shadow: 0 0 0 3px var(--accent-channel-soft);
+    outline: none;
+}
+
+/* -- Under 560 px: one column, the name a size down, the answers full width
+   with the affirmative one on top. */
+@media (max-width: 560px) {
+    .plx-onb {
+        --plx-onb-name-size: 30px;
+        --plx-onb-title-size: 20px;
+        --plx-onb-lead-size: 14.5px;
+        --plx-onb-section: 18px;
+        padding: 16px 16px 18px;
+    }
+
+    .plx-onb-features,
+    .plx-onb-cards,
+    .plx-onb-create {
+        grid-template-columns: 1fr;
+    }
+
+    /* A phone's screen holds the welcome screen whole, or nearly. */
+    .plx-onb.plx-dialog {
+        max-height: 92vh;
+    }
+
+    .plx-onb-features {
+        gap: 12px;
+    }
+
+    .plx-onb-feature-icon {
+        border-radius: 10px;
+        height: 32px;
+        width: 32px;
+    }
+
+    .plx-onb-feature-icon svg {
+        height: 18px;
+        width: 18px;
+    }
+
+    .plx-onb-feature-text {
+        font-size: 12.5px;
+    }
+
+    .plx-onb-mark {
+        height: 44px;
+    }
+
+    .plx-onb-mark-wrap {
+        margin-bottom: 8px;
+    }
+
+    .plx-onb-benefits {
+        gap: 10px;
+        grid-template-columns: 1fr;
+        padding: 12px 14px;
+    }
+
+    .plx-onb-brand-hero .plx-onb-lead {
+        margin-top: 8px;
+    }
+
+    .plx-onb-start {
+        gap: 10px;
+        padding-top: 14px;
+    }
+
+    .plx-onb-start-head {
+        gap: 8px;
+    }
+
+    .plx-onb-start-head .plx-onb-eyebrow {
+        font-size: 10.5px;
+        letter-spacing: 0.03em;
+        white-space: nowrap;
+    }
+
+    .plx-onb-once-pill {
+        font-size: 11px;
+        gap: 4px;
+        padding: 3px 8px 3px 6px;
+    }
+
+    .plx-onb-cards.is-start .plx-onb-card {
+        padding: 10px 10px 10px 12px;
+    }
+
+    .plx-onb-card {
+        padding: 14px 12px 14px 14px;
+    }
+
+    .plx-onb-card-icon {
+        border-radius: 10px;
+        height: 38px;
+        width: 38px;
+    }
+
+    .plx-onb-tree {
+        display: none;
+    }
+}
+
+@media (max-width: 520px) {
+    /* Under the name when the row wraps: no rule before it there. */
+    .plx-onb-version {
+        border-left: none;
+        margin-left: 0;
+        padding-left: 0;
+    }
+
+    .plx-onb-hero {
+        grid-template-columns: 1fr;
+        row-gap: 6px;
+    }
+
+    .plx-onb-tile {
+        grid-row: auto;
+        height: 46px;
+        margin-bottom: 6px;
+        width: 46px;
+    }
+
+    .plx-onb-foot {
+        align-items: stretch;
+        flex-direction: column-reverse;
+    }
+
+    .plx-onb-actions {
+        flex-direction: column-reverse;
+        flex-wrap: nowrap;
+        margin-left: 0;
+    }
+
+    .plx-onb .plx-button,
+    .plx-onb-actions .plx-onb-link {
+        justify-content: center;
+        width: 100%;
+    }
+
+    .plx-onb-screen.is-finish .plx-button-primary {
+        min-width: 0;
+    }
+
+    .plx-onb-back {
+        align-self: flex-start;
+    }
+}
+
+/* Reduced motion: nothing moves. Every selector above that animates is
+   named here (tests/test_web_onboarding.py checks), and the timing tokens
+   it is built from are zero there anyway. */
+@media (prefers-reduced-motion: reduce) {
+    .plx-onb[open],
+    .plx-onb[open]::backdrop,
+    .plx-onb[data-phase="working"]::before,
+    .plx-onb-screen.is-leaving,
+    .plx-onb-screen.is-leaving-back,
+    .plx-onb-screen.is-entering,
+    .plx-onb-screen.is-entering-back,
+    .plx-onb-tile svg [pathLength],
+    .plx-onb-tile svg .d,
+    .plx-onb-tile.is-done,
+    .plx-onb-tile.is-done svg [pathLength]:last-child,
+    .plx-onb-screen.is-error .plx-onb-tile,
+    .plx-onb-mark-wrap::before,
+    .plx-onb-mark,
+    .plx-onb-brand-hero .plx-onb-name,
+    .plx-onb-brand-hero .plx-onb-name-version,
+    .plx-onb-brand-hero .plx-onb-lead,
+    .plx-onb-feature,
+    .plx-onb-benefit,
+    .plx-onb-cards .plx-onb-card,
+    .plx-onb-start-head,
+    .plx-onb-start-note,
+    .plx-onb-cards.is-start .plx-onb-card,
+    .plx-onb-card.is-recommended::before,
+    .plx-onb-task.is-done .plx-onb-task-mark,
+    .plx-onb-done,
+    .plx-onb-confetti i,
+    .plx-onb-task.is-running .plx-onb-task-mark::after,
+    .plx-onb .plx-button-primary.is-working .plx-onb-button-icon svg {
+        animation: none;
+    }
+
+    .plx-onb-dot,
+    .plx-onb-dot-thumb,
+    .plx-onb-stage.is-moving,
+    .plx-onb-card,
+    .plx-onb-card-go {
+        transition: none;
+    }
+
+    .plx-onb-confetti {
+        display: none;
+    }
+
+    .plx-onb-card:hover:not(:disabled),
+    .plx-onb-card:active:not(:disabled) {
+        transform: none;
+    }
+}
+
+/* -- The home page, on the website: the workspace this visit did not open,
+   one click from open again (views/quickViewLanding.js). Quiet, like the
+   Recent rows under it: the card above is what the page is for. */
+.plx-onb-reconnect {
+    align-items: center;
+    animation: plx-onb-rise calc(var(--duration-base) * 1.8) cubic-bezier(0.16, 1, 0.3, 1) backwards;
+    background: linear-gradient(180deg, rgba(23, 30, 41, 0.72), rgba(12, 16, 22, 0.72));
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: var(--radius-card);
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.05);
+    display: flex;
+    gap: 12px;
+    margin-top: var(--space-3);
+    padding: 12px 14px;
+    position: relative;
+    z-index: 1;
+}
+
+.plx-onb-reconnect-tile {
+    align-items: center;
+    background: radial-gradient(120% 120% at 0% 0%, rgba(34, 211, 238, 0.16), rgba(167, 139, 250, 0.10) 60%,
+                rgba(12, 16, 22, 0.6));
+    border-radius: 10px;
+    box-shadow: inset 0 0 0 1px rgba(34, 211, 238, 0.3);
+    color: #67e8f9;
+    display: inline-flex;
+    flex: none;
+    height: 36px;
+    justify-content: center;
+    width: 36px;
+}
+
+.plx-onb-reconnect-tile svg {
+    height: 19px;
+    width: 19px;
+}
+
+.plx-onb-reconnect-text {
+    flex: 1 1 auto;
+    min-width: 0;
+}
+
+.plx-onb-reconnect-line {
+    color: var(--text-secondary);
+    font-size: 13.5px;
+    margin: 0;
+}
+
+.plx-onb-reconnect-line strong {
+    color: var(--text-primary);
+    font-weight: 600;
+}
+
+.plx-onb-reconnect-note {
+    color: var(--text-muted);
+    font-size: 12px;
+    margin: 2px 0 0;
+}
+
+.plx-onb-reconnect-note.is-problem {
+    color: var(--accent-warning);
+}
+
+.plx-onb-reconnect-button {
+    background: rgba(34, 211, 238, 0.12);
+    border: 1px solid rgba(34, 211, 238, 0.42);
+    border-radius: var(--radius-control);
+    color: #a5f3fc;
+    flex: none;
+    font-size: 13px;
+    font-weight: 600;
+    height: 32px;
+    padding: 0 14px;
+    transition: background-color var(--duration-fast) var(--ease-standard),
+                border-color var(--duration-fast) var(--ease-standard);
+}
+
+.plx-onb-reconnect-button:hover:not(:disabled) {
+    background: rgba(34, 211, 238, 0.2);
+    border-color: rgba(34, 211, 238, 0.7);
+}
+
+.plx-onb-reconnect-button:disabled {
+    cursor: default;
+    opacity: 0.6;
+}
+
+@media (max-width: 520px) {
+    .plx-onb-reconnect {
+        flex-wrap: wrap;
+    }
+
+    .plx-onb-reconnect-button {
+        width: 100%;
+    }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .plx-onb-reconnect {
+        animation: none;
+    }
+}
+
+/* End of the onboarding block (.plx-onb). */
+
 /* The state line on a layer card: what it is still doing, and what it is
    waiting to be told. Absent for a layer that is ready and has nothing
    outstanding, which is nearly all of them. */
@@ -11740,4 +13787,1573 @@ html.is-native-dragging.has-drop-target body::after {
     line-height: 16px;
     text-transform: uppercase;
     vertical-align: middle;
+}
+
+/* ------------------------------------------------------------------ */
+/* Storage & Locations (.plx-locations*). Settings › Data's list of    */
+/* the folders projects are listed from -- the desktop app's           */
+/* (settingsPage.js LocationsSection, from /settings/locations) and    */
+/* the website's (WebLocations, from the host page's PlexoraStore) --  */
+/* and the location chip and filter of the project browser            */
+/* (openProjectPage.js). Here rather than in settings.css because the  */
+/* project cards carry the chip too, and the app shell turns a page's  */
+/* own stylesheet off when it leaves (appRouter.adoptStyles).          */
+/*                                                                      */
+/* One card, rows ruled inside it: the list reads as one thing with    */
+/* parts, the default row marked by an accent edge and tint rather     */
+/* than by order alone, since the server lists in search order.        */
+/* ------------------------------------------------------------------ */
+
+.plx-locations {
+    background: var(--surface-1);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-lg);
+    margin-bottom: var(--space-6);
+    overflow: hidden;
+}
+
+/* `display:` beats [hidden] in Plexora (no global guard): every part of
+   the card the scripts toggle is held to it here. */
+.plx-locations-note[hidden],
+.plx-locations-message[hidden],
+.plx-locations-error[hidden],
+.plx-locations-add[hidden],
+.plx-locations-foot > [hidden],
+.plx-locations-action[hidden],
+.open-project-location[hidden] {
+    display: none;
+}
+
+.plx-locations-head {
+    border-bottom: 1px solid var(--border-subtle);
+    color: var(--text-secondary);
+    font-size: 0.86rem;
+    padding: var(--space-3) var(--space-4);
+}
+
+.plx-locations-head strong {
+    color: var(--text-primary);
+    font-weight: 600;
+}
+
+.plx-locations-note {
+    align-items: flex-start;
+    background: var(--accent-warning-soft);
+    border-bottom: 1px solid var(--border-subtle);
+    color: var(--text-secondary);
+    display: flex;
+    font-size: 0.84rem;
+    gap: var(--space-2);
+    line-height: 1.45;
+    padding: var(--space-3) var(--space-4);
+}
+
+.plx-locations-note .fas,
+.plx-locations-note svg {
+    color: var(--accent-warning);
+    flex: none;
+    margin-top: 3px;
+}
+
+.plx-locations-list {
+    display: flex;
+    flex-direction: column;
+}
+
+/* Tile, text, actions. The middle column is `minmax(0, 1fr)`, not `1fr`:
+   a path is one unbreakable token as far as the grid's sizing is
+   concerned, and a bare `1fr` would let it set the row's width. */
+.plx-locations-row {
+    align-items: center;
+    display: grid;
+    gap: var(--space-3);
+    grid-template-columns: 36px minmax(0, 1fr) auto;
+    padding: 14px var(--space-4);
+    position: relative;
+    transition: background-color var(--duration-fast) var(--ease-standard);
+}
+
+.plx-locations-row + .plx-locations-row {
+    border-top: 1px solid var(--panel-rule, rgba(255, 255, 255, 0.07));
+}
+
+.plx-locations-row:hover {
+    background: var(--panel-hover-ground, rgba(255, 255, 255, 0.03));
+}
+
+.plx-locations-row.is-default {
+    background: var(--accent-channel-tint, rgba(56, 189, 248, 0.10));
+}
+
+.plx-locations-row.is-default::before {
+    background: var(--accent-channel);
+    bottom: 0;
+    content: "";
+    left: 0;
+    position: absolute;
+    top: 0;
+    width: 3px;
+}
+
+.plx-locations-icon {
+    align-items: center;
+    align-self: start;
+    background: var(--surface-2);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-md);
+    color: var(--text-secondary);
+    display: inline-flex;
+    font-size: 15px;
+    height: 36px;
+    justify-content: center;
+    width: 36px;
+}
+
+.plx-locations-row.is-default .plx-locations-icon {
+    background: rgba(56, 189, 248, 0.14);
+    border-color: var(--accent-channel-soft);
+    color: var(--accent-channel);
+}
+
+/* Not there today: still listed, so nothing seems lost, but quieter. */
+.plx-locations-row.is-missing .plx-locations-icon,
+.plx-locations-row.is-missing .plx-locations-label,
+.plx-locations-row.is-missing .plx-locations-path {
+    opacity: 0.6;
+}
+
+.plx-locations-main {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    min-width: 0;
+}
+
+.plx-locations-title {
+    align-items: center;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px var(--space-2);
+}
+
+.plx-locations-label {
+    color: var(--text-primary);
+    font-size: 0.95rem;
+    font-weight: 600;
+    overflow-wrap: anywhere;
+}
+
+.plx-locations-kind,
+.plx-locations-default {
+    align-items: center;
+    border: 1px solid var(--border-subtle);
+    border-radius: 999px;
+    color: var(--text-muted);
+    display: inline-flex;
+    font-size: 10px;
+    font-weight: 600;
+    gap: 4px;
+    letter-spacing: 0.05em;
+    line-height: 16px;
+    padding: 0 7px;
+    text-transform: uppercase;
+    white-space: nowrap;
+}
+
+.plx-locations-kind {
+    cursor: help;
+}
+
+.plx-locations-default {
+    background: rgba(56, 189, 248, 0.14);
+    border-color: var(--accent-channel-soft);
+    color: var(--accent-channel);
+}
+
+.plx-locations-default svg,
+.plx-locations-default .fas {
+    font-size: 9px;
+}
+
+/* A path is the one thing here somebody may copy character by character:
+   monospace, broken anywhere, and selectable however the row is styled. */
+.plx-locations-path {
+    color: var(--text-secondary);
+    cursor: text;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 0.8rem;
+    overflow-wrap: anywhere;
+    user-select: text;
+    -webkit-user-select: text;
+}
+
+.plx-locations-facts {
+    align-items: center;
+    color: var(--text-muted);
+    display: flex;
+    flex-wrap: wrap;
+    font-size: 0.8rem;
+    gap: 2px 14px;
+}
+
+.plx-locations-state {
+    align-items: center;
+    display: inline-flex;
+    gap: 6px;
+}
+
+.plx-locations-dot {
+    background: currentColor;
+    border-radius: 50%;
+    flex: none;
+    height: 7px;
+    width: 7px;
+}
+
+.plx-locations-state.is-available .plx-locations-dot {
+    background: var(--accent-success);
+    box-shadow: 0 0 0 3px var(--accent-success-soft);
+}
+
+/* Amber, as an unreachable node is: a disk that is not plugged in today
+   is a thing to notice, not a fault. */
+.plx-locations-state.is-missing {
+    color: var(--accent-warning);
+}
+
+.plx-locations-state.is-readonly .plx-locations-dot {
+    background: transparent;
+    border: 1.5px solid var(--text-muted);
+}
+
+/* One line under the facts, for the website's rows: what keeping the
+   projects there means. */
+.plx-locations-about {
+    color: var(--text-muted);
+    font-size: 0.8rem;
+    line-height: 1.45;
+}
+
+.plx-locations-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-2);
+    justify-content: flex-end;
+}
+
+/* Two classes: Bootstrap's `.btn` arrives after main.css (the bundle adds
+   it at run time) and would set the display back to inline-block. */
+.btn.plx-locations-action {
+    align-items: center;
+    display: inline-flex;
+    gap: 6px;
+    white-space: nowrap;
+}
+
+.plx-locations-action svg,
+.plx-locations-action .fas {
+    font-size: 11px;
+}
+
+/* A change the route would refuse: still focusable, so its tooltip and
+   its reason (said in the card when pressed) can be reached. */
+.plx-locations-action.is-unavailable {
+    cursor: not-allowed;
+    opacity: 0.45;
+}
+
+.plx-locations-action.is-unavailable:hover,
+.plx-locations-action.is-unavailable:focus-visible {
+    opacity: 0.6;
+}
+
+.plx-locations-message,
+.plx-locations-error {
+    align-items: flex-start;
+    border: 1px solid transparent;
+    border-radius: var(--radius-md);
+    display: flex;
+    font-size: 0.84rem;
+    gap: var(--space-2);
+    line-height: 1.45;
+    margin: 0 var(--space-4) var(--space-3);
+    overflow-wrap: anywhere;
+    padding: 10px 12px;
+}
+
+.plx-locations-message > svg,
+.plx-locations-message > .fas,
+.plx-locations-error > svg,
+.plx-locations-error > .fas {
+    flex: none;
+    margin-top: 3px;
+}
+
+.plx-locations-list:not(:empty) + .plx-locations-message,
+.plx-locations-list:not(:empty) + .plx-locations-message + .plx-locations-error,
+.plx-locations-list:not(:empty) + .plx-locations-error {
+    margin-top: var(--space-1);
+}
+
+.plx-locations-message {
+    background: var(--accent-success-soft);
+    border-color: rgba(52, 211, 153, 0.32);
+    color: var(--text-secondary);
+}
+
+.plx-locations-message > .plx-locations-done {
+    color: var(--accent-success);
+}
+
+.plx-locations-message > .plx-locations-info {
+    color: var(--accent-channel);
+    display: none;
+}
+
+.plx-locations-message[data-tone="info"] {
+    background: rgba(56, 189, 248, 0.08);
+    border-color: var(--accent-channel-soft);
+}
+
+.plx-locations-message[data-tone="info"] > .plx-locations-done {
+    display: none;
+}
+
+.plx-locations-message[data-tone="info"] > .plx-locations-info {
+    display: inline-block;
+}
+
+.plx-locations-error {
+    background: var(--accent-danger-soft);
+    border-color: rgba(248, 113, 113, 0.4);
+    color: var(--text-primary);
+}
+
+.plx-locations-error > svg,
+.plx-locations-error > .fas {
+    color: var(--accent-danger);
+}
+
+.plx-locations-foot {
+    align-items: center;
+    border-top: 1px solid var(--border-subtle);
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-2);
+    padding: var(--space-3) var(--space-4);
+}
+
+.plx-locations-foot .btn {
+    align-items: center;
+    display: inline-flex;
+    gap: 8px;
+}
+
+.plx-locations-foot .btn svg,
+.plx-locations-foot .btn .fas {
+    font-size: 12px;
+}
+
+/* The website's "Set up again": the quiet one, at the far end, in the
+   page's own muted text rather than a browser-blue link. */
+.plx-locations-foot .btn.plx-locations-again {
+    border: 0;
+    color: var(--text-muted);
+    font-size: 0.86rem;
+    margin-left: auto;
+    padding: 6px 8px;
+    text-decoration: none;
+}
+
+.plx-locations-foot .btn.plx-locations-again:hover,
+.plx-locations-foot .btn.plx-locations-again:focus-visible {
+    color: var(--text-primary);
+}
+
+.plx-locations-add {
+    padding: 0 var(--space-4) var(--space-4);
+}
+
+.plx-locations-add .settings-field-label {
+    margin-top: var(--space-1);
+}
+
+.plx-locations-add .plx-locations-form-error {
+    margin: var(--space-2) 0 0;
+}
+
+/* The machine chip floats over the path box's left padding, as in every
+   path field (machineChip.wrap); the box keeps the page's own look. */
+.plx-locations-add .plx-machine-field {
+    flex: 1 1 320px;
+}
+
+.plx-locations-add .plx-machine-field > .settings-input {
+    padding-left: calc(var(--plx-machine-chip-width, 78px) + 12px);
+    width: 100%;
+}
+
+.plx-locations-add .plx-machine-field > .plx-machine-chip {
+    bottom: 4px;
+    top: 4px;
+}
+
+/* The data-directory card, after the locations: one more step down. */
+.plx-locations-after {
+    margin-top: var(--space-2);
+}
+
+/* Tidy up's question: each folder as it moves, from over to. */
+.plx-locations-moves {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2);
+    list-style: none;
+    margin: 0 0 var(--space-3);
+    padding: 0;
+}
+
+.plx-locations-move {
+    align-items: flex-start;
+    background: rgba(255, 255, 255, 0.04);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-md);
+    display: flex;
+    flex-direction: column;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 11.5px;
+    gap: 3px;
+    overflow-wrap: anywhere;
+    padding: 8px 10px;
+}
+
+.plx-locations-move svg,
+.plx-locations-move .fas {
+    color: var(--text-muted);
+    font-size: 10px;
+    margin-left: 2px;
+}
+
+.plx-locations-move-from {
+    color: var(--text-muted);
+}
+
+.plx-locations-move-to {
+    color: var(--text-primary);
+}
+
+/* A project card's location (openProjectPage.js), shown only when the
+   projects come from more than one: a badge's size, a dashed edge, so it
+   reads as where the project is rather than what it has. */
+.plx-locations-chip {
+    align-items: center;
+    border: 1px dashed var(--border-strong);
+    border-radius: var(--radius-sm);
+    color: var(--text-muted);
+    display: inline-flex;
+    font-size: 10px;
+    gap: 4px;
+    letter-spacing: 0.02em;
+    line-height: 1;
+    max-width: 100%;
+    min-width: 0;
+    overflow: hidden;
+    padding: 3px 6px;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.plx-locations-chip svg,
+.plx-locations-chip .fas {
+    flex: none;
+    font-size: 9px;
+}
+
+.plx-locations-chip-text {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+/* Phone width: the actions go under the text, starting where it starts. */
+@media (max-width: 600px) {
+    .plx-locations-row {
+        align-items: start;
+        grid-template-columns: 32px minmax(0, 1fr);
+        padding: 12px var(--space-3);
+    }
+
+    .plx-locations-icon {
+        font-size: 13px;
+        height: 32px;
+        width: 32px;
+    }
+
+    .plx-locations-actions {
+        grid-column: 2 / -1;
+        justify-content: flex-start;
+    }
+
+    .plx-locations-head,
+    .plx-locations-note,
+    .plx-locations-foot {
+        padding-left: var(--space-3);
+        padding-right: var(--space-3);
+    }
+
+    .plx-locations-message,
+    .plx-locations-error {
+        margin-left: var(--space-3);
+        margin-right: var(--space-3);
+    }
+
+    .plx-locations-add {
+        padding: 0 var(--space-3) var(--space-3);
+    }
+
+    .plx-locations-foot .plx-locations-again {
+        margin-left: 0;
+    }
+}
+
+/* ==========================================================================
+   Project bundles: the Export and Import dialogs (views/projectExport.js,
+   views/projectImport.js). `.plx-bundle*` only, on the `.plx-dialog
+   .plx-import` glass every dialog here shares.
+
+   One vocabulary for both: a framed list of rows on the dialog's darker
+   ground, sizes in tabular figures down the right edge, chips for where a
+   file is and what will happen to a project, and the jobProgress.js panel
+   for the running job. Colour is spent only where it says something: the
+   accent on a tick and the primary button, green for done and for a file
+   on a shared drive, amber for what still needs the user.
+   ========================================================================== */
+
+.plx-bundle {
+    width: min(600px, 94vw);
+}
+
+.plx-bundle .plx-import-body {
+    gap: var(--space-3);
+}
+
+.plx-bundle-foot {
+    align-items: center;
+    min-height: 0;
+}
+
+.plx-bundle-foot:empty,
+.plx-bundle-pinned:empty {
+    display: none;
+}
+
+/* Under the scrolling body, always in view: where an import goes. */
+.plx-bundle-pinned {
+    margin-top: var(--space-3);
+}
+
+/* The one button inside the body (Choose file…) lit as the foot's is. */
+.plx-bundle-pick .plx-button-primary:not(:disabled) {
+    background: linear-gradient(180deg, #5cc9fb 0%, var(--accent-channel) 100%);
+    border-color: rgba(56, 189, 248, 0.9);
+    box-shadow:
+        inset 0 1px 0 rgba(255, 255, 255, 0.35),
+        0 8px 22px -10px rgba(56, 189, 248, 0.55);
+    color: #05070a;
+}
+
+/* What sits at the left of the foot: the total, or a sentence about the job. */
+.plx-bundle-total,
+.plx-bundle-foot-note {
+    color: var(--text-muted);
+    font-size: 12px;
+    margin-right: auto;
+}
+
+.plx-bundle-total {
+    align-items: baseline;
+    cursor: help;
+    display: inline-flex;
+    gap: 6px;
+}
+
+.plx-bundle-total-size {
+    color: var(--text-primary);
+    font-size: 16px;
+    font-variant-numeric: tabular-nums;
+    font-weight: 700;
+    letter-spacing: -0.01em;
+}
+
+.plx-bundle-size {
+    color: var(--text-secondary);
+    font-size: 12.5px;
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+}
+
+.plx-bundle-small {
+    border-radius: var(--radius-sm);
+    font-size: 12px;
+    padding: 4px 10px;
+    white-space: nowrap;
+}
+
+/* -- the parts of the file (export) ---------------------------------------- */
+
+.plx-bundle-rows {
+    background: rgba(5, 7, 10, 0.45);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-md);
+    overflow: hidden;
+}
+
+.plx-bundle-row {
+    column-gap: var(--space-4);
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    padding: 12px 14px;
+    transition: background-color var(--duration-fast) var(--ease-standard);
+}
+
+.plx-bundle-row + .plx-bundle-row {
+    border-top: 1px solid var(--panel-rule);
+}
+
+.plx-bundle-row:not(.is-disabled):hover {
+    background: var(--panel-hover-ground);
+}
+
+.plx-bundle-row-main {
+    align-items: flex-start;
+    cursor: pointer;
+    display: flex;
+    gap: var(--space-3);
+    margin: 0;
+    min-width: 0;
+}
+
+.plx-bundle-row.is-disabled .plx-bundle-row-main {
+    cursor: default;
+}
+
+.plx-bundle-row-text {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    min-width: 0;
+}
+
+.plx-bundle-row-title {
+    color: var(--text-primary);
+    font-size: 13.5px;
+    font-weight: 600;
+    line-height: 1.3;
+}
+
+.plx-bundle-row-note {
+    color: var(--text-muted);
+    font-size: 12px;
+    line-height: 1.45;
+}
+
+.plx-bundle-row-hint {
+    align-items: baseline;
+    color: var(--accent-warning);
+    display: flex;
+    font-size: 12px;
+    gap: 6px;
+    line-height: 1.45;
+    margin-top: 3px;
+}
+
+.plx-bundle-row-hint :is(.fas, svg) {
+    flex: 0 0 auto;
+    font-size: 11px;
+    transform: translateY(1px);
+}
+
+.plx-bundle-row-side {
+    align-items: flex-end;
+    display: flex;
+    flex-direction: column;
+    gap: 7px;
+    padding-top: 1px;
+}
+
+/* A part left out still says its size, quieter: it is what ticking adds. */
+.plx-bundle-row:not(.is-on) .plx-bundle-size {
+    color: var(--text-muted);
+}
+
+.plx-bundle-row.is-disabled:not(.is-locked) .plx-bundle-row-title {
+    color: var(--text-secondary);
+}
+
+/* The tick: the native checkbox, drawn in the dialog's own terms. Still the
+   input itself (focusable, labelled by its row, Space toggles it), with the
+   check drawn by its ::after. */
+.plx-bundle-tick {
+    -webkit-appearance: none;
+    appearance: none;
+    background: rgba(5, 7, 10, 0.55);
+    border: 1.5px solid var(--border-strong);
+    border-radius: 5px;
+    cursor: pointer;
+    display: grid;
+    flex: 0 0 auto;
+    height: 18px;
+    margin: 0;
+    place-content: center;
+    transition:
+        background-color var(--duration-fast) var(--ease-standard),
+        border-color var(--duration-fast) var(--ease-standard),
+        box-shadow var(--duration-fast) var(--ease-standard);
+    width: 18px;
+}
+
+.plx-bundle-tick::after {
+    border: solid #05070a;
+    border-width: 0 0 2px 2px;
+    content: "";
+    height: 5px;
+    transform: translateY(-1px) rotate(-45deg) scale(0);
+    transition: transform var(--duration-fast) var(--ease-standard);
+    width: 9px;
+}
+
+.plx-bundle-tick:checked {
+    background: var(--accent-channel);
+    border-color: var(--accent-channel);
+}
+
+.plx-bundle-tick:checked::after {
+    transform: translateY(-1px) rotate(-45deg) scale(1);
+}
+
+.plx-bundle-row:not(.is-disabled):hover .plx-bundle-tick:not(:checked) {
+    border-color: var(--text-secondary);
+}
+
+.plx-bundle-tick:focus-visible {
+    outline: 2px solid var(--accent-channel);
+    outline-offset: 2px;
+}
+
+.plx-bundle-tick:disabled {
+    cursor: default;
+}
+
+/* Always included: ticked, and visibly not a choice. */
+.plx-bundle-tick:disabled:checked {
+    background: color-mix(in srgb, var(--accent-channel) 38%, var(--surface-2));
+    border-color: transparent;
+}
+
+.plx-bundle-tick:disabled:not(:checked) {
+    opacity: 0.4;
+}
+
+.plx-bundle-expand {
+    align-items: center;
+    background: none;
+    border: 1px solid var(--border-subtle);
+    border-radius: 999px;
+    color: var(--text-secondary);
+    display: inline-flex;
+    font-size: 11.5px;
+    gap: 6px;
+    line-height: 1;
+    padding: 4px 8px 4px 10px;
+    transition:
+        border-color var(--duration-fast) var(--ease-standard),
+        color var(--duration-fast) var(--ease-standard);
+    white-space: nowrap;
+}
+
+.plx-bundle-expand:hover,
+.plx-bundle-expand[aria-expanded="true"] {
+    border-color: var(--border-strong);
+    color: var(--text-primary);
+}
+
+.plx-bundle-expand:focus-visible {
+    outline: 2px solid var(--accent-channel);
+    outline-offset: 1px;
+}
+
+.plx-bundle-expand :is(.fas, svg) {
+    font-size: 9px;
+    transition: transform var(--duration-base) var(--ease-standard);
+}
+
+.plx-bundle-expand[aria-expanded="true"] :is(.fas, svg) {
+    transform: rotate(180deg);
+}
+
+/* The files behind Images and Ready-to-open: what each is, where it is,
+   what it would add. Indented under the row's text, not its tick. */
+.plx-bundle-files {
+    background: rgba(255, 255, 255, 0.02);
+    border: 1px solid var(--panel-rule);
+    border-radius: var(--radius-sm);
+    grid-column: 1 / -1;
+    list-style: none;
+    margin: 10px 0 0 30px;
+    padding: 0;
+}
+
+.plx-bundle-files[hidden] {
+    display: none;
+}
+
+.plx-bundle-file {
+    align-items: center;
+    column-gap: 10px;
+    display: grid;
+    font-size: 12px;
+    grid-template-columns: 14px minmax(0, 1fr) auto 56px;
+    padding: 7px 10px;
+}
+
+.plx-bundle-file + .plx-bundle-file {
+    border-top: 1px solid var(--panel-rule);
+}
+
+.plx-bundle-file-icon {
+    color: var(--text-muted);
+    font-size: 12px;
+}
+
+.plx-bundle-file-text {
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+    min-width: 0;
+}
+
+.plx-bundle-file-name {
+    color: var(--text-primary);
+    font-family: var(--plx-import-mono);
+    font-size: 11.5px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.plx-bundle-file.is-staying .plx-bundle-file-name {
+    color: var(--text-secondary);
+}
+
+.plx-bundle-file-sub {
+    color: var(--text-muted);
+    font-size: 11px;
+}
+
+.plx-bundle-file-size {
+    color: var(--text-secondary);
+    font-variant-numeric: tabular-nums;
+    text-align: right;
+    white-space: nowrap;
+}
+
+/* Where a file is. */
+.plx-bundle-where {
+    align-items: center;
+    border: 1px solid transparent;
+    border-radius: 999px;
+    display: inline-flex;
+    font-size: 11px;
+    font-weight: 600;
+    gap: 5px;
+    line-height: 1;
+    padding: 4px 8px;
+    white-space: nowrap;
+}
+
+.plx-bundle-where :is(.fas, svg) {
+    font-size: 10px;
+}
+
+.plx-bundle-where.is-here {
+    background: rgba(255, 255, 255, 0.04);
+    border-color: var(--border-subtle);
+    color: var(--text-secondary);
+}
+
+.plx-bundle-where.is-shared {
+    background: var(--accent-success-soft);
+    color: var(--accent-success);
+}
+
+.plx-bundle-where.is-node {
+    background: var(--accent-channel-tint);
+    color: var(--accent-channel);
+}
+
+.plx-bundle-where.is-missing {
+    background: var(--accent-warning-soft);
+    color: var(--accent-warning);
+}
+
+/* While the sizes are read: the rows' shape, shimmering. */
+.plx-bundle-row.plx-bundle-skeleton {
+    align-items: center;
+    column-gap: var(--space-3);
+    grid-template-columns: auto minmax(0, 1fr) auto;
+}
+
+.plx-bundle-skel {
+    animation: plx-bundle-shimmer 1.4s linear infinite;
+    background: linear-gradient(90deg, rgba(255, 255, 255, 0.04) 0%,
+        rgba(255, 255, 255, 0.10) 50%, rgba(255, 255, 255, 0.04) 100%);
+    background-size: 200% 100%;
+    border-radius: 4px;
+    display: block;
+    height: 10px;
+}
+
+.plx-bundle-skel-box {
+    border-radius: 5px;
+    height: 18px;
+    width: 18px;
+}
+
+.plx-bundle-skel-lines {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.plx-bundle-skel.is-short {
+    width: 62%;
+}
+
+.plx-bundle-skel.is-size {
+    width: 46px;
+}
+
+@keyframes plx-bundle-shimmer {
+    from { background-position: 100% 0; }
+    to { background-position: -100% 0; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .plx-bundle-skel { animation: none; }
+}
+
+/* -- a running job: jobProgress.js's panel, framed like the rows ------------ */
+
+.plx-bundle-progress {
+    background: rgba(5, 7, 10, 0.45);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-md);
+    padding: 14px 16px 12px;
+}
+
+.plx-bundle-progress .segmentation-progress-title {
+    color: var(--text-primary);
+    font-family: var(--plx-import-mono);
+    font-size: 12.5px;
+    font-weight: 600;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.plx-bundle-progress .segmentation-progress-detail {
+    font-variant-numeric: tabular-nums;
+}
+
+.plx-bundle-progress .segmentation-progress-track {
+    background: rgba(255, 255, 255, 0.06);
+    border-radius: 999px;
+    height: 6px;
+    margin-top: var(--space-3);
+}
+
+.plx-bundle-progress .segmentation-progress-fill {
+    background: linear-gradient(90deg, #5cc9fb, var(--accent-channel));
+    border-radius: 999px;
+    box-shadow: 0 0 12px -2px rgba(56, 189, 248, 0.6);
+}
+
+.plx-bundle-progress .job-progress-stages {
+    margin-top: var(--space-3);
+}
+
+/* -- finished, and failed -------------------------------------------------- */
+
+.plx-bundle-done {
+    align-items: flex-start;
+    background: linear-gradient(180deg, rgba(52, 211, 153, 0.08), rgba(52, 211, 153, 0.02));
+    border: 1px solid rgba(52, 211, 153, 0.28);
+    border-radius: var(--radius-md);
+    display: flex;
+    gap: 14px;
+    padding: 16px;
+}
+
+.plx-bundle-done-mark,
+.plx-bundle-result-mark {
+    align-items: center;
+    background: var(--accent-success);
+    border-radius: 50%;
+    color: #05070a;
+    display: flex;
+    flex: 0 0 auto;
+    justify-content: center;
+}
+
+.plx-bundle-done-mark {
+    box-shadow: 0 0 0 5px var(--accent-success-soft);
+    font-size: 15px;
+    height: 34px;
+    width: 34px;
+}
+
+.plx-bundle-done-text {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    min-width: 0;
+    padding-top: 1px;
+}
+
+.plx-bundle-done-title {
+    color: var(--text-secondary);
+    font-size: 14px;
+    line-height: 1.4;
+    margin: 0;
+}
+
+.plx-bundle-done-title strong {
+    color: var(--text-primary);
+    font-weight: 700;
+    overflow-wrap: anywhere;
+}
+
+.plx-bundle-done-size {
+    color: var(--text-muted);
+    font-variant-numeric: tabular-nums;
+}
+
+.plx-bundle-result-backup {
+    color: var(--text-muted);
+    font-size: 12px;
+    line-height: 1.5;
+    margin: 0;
+}
+
+.plx-bundle-result-note {
+    display: block;
+}
+
+.plx-bundle-done-path,
+.plx-bundle-result-note {
+    color: var(--text-muted);
+    font-family: var(--plx-import-mono);
+    font-size: 11.5px;
+    line-height: 1.5;
+    margin: 0;
+    overflow-wrap: anywhere;
+}
+
+.plx-bundle-done-path.is-prose {
+    font-family: inherit;
+    font-size: 12px;
+}
+
+.plx-bundle-done-note {
+    color: var(--accent-warning);
+    font-size: 12px;
+    margin: 4px 0 0;
+}
+
+.plx-bundle-failed {
+    align-items: flex-start;
+    background: var(--accent-danger-soft);
+    border: 1px solid rgba(248, 113, 113, 0.35);
+    border-radius: var(--radius-md);
+    display: flex;
+    gap: 12px;
+    padding: 14px 16px;
+}
+
+.plx-bundle-failed-mark {
+    color: var(--accent-danger);
+    flex: 0 0 auto;
+    font-size: 18px;
+    margin-top: 1px;
+}
+
+.plx-bundle-failed p {
+    color: var(--text-primary);
+    font-size: 13px;
+    line-height: 1.5;
+    margin: 0;
+    overflow-wrap: anywhere;
+}
+
+/* -- choosing a file (import) ------------------------------------------------ */
+
+.plx-bundle-pick {
+    align-items: center;
+    background: rgba(5, 7, 10, 0.4);
+    border: 1.5px dashed var(--border-strong);
+    border-radius: var(--radius-lg);
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    padding: 30px 20px 26px;
+    text-align: center;
+    transition:
+        border-color var(--duration-base) var(--ease-standard),
+        background-color var(--duration-base) var(--ease-standard);
+}
+
+.plx-bundle.is-drop-over .plx-bundle-pick {
+    background: var(--accent-channel-tint);
+    border-color: var(--accent-channel);
+}
+
+.plx-bundle-pick-icon {
+    align-items: center;
+    background: rgba(56, 189, 248, 0.08);
+    border: 1px solid rgba(56, 189, 248, 0.32);
+    border-radius: 14px;
+    box-shadow: 0 12px 30px -14px rgba(56, 189, 248, 0.55);
+    color: var(--accent-channel);
+    display: flex;
+    font-size: 22px;
+    height: 54px;
+    justify-content: center;
+    margin-bottom: 8px;
+    width: 54px;
+}
+
+.plx-bundle-pick-title {
+    color: var(--text-primary);
+    font-size: 15px;
+    font-weight: 700;
+    margin: 0;
+}
+
+.plx-bundle-pick-note {
+    color: var(--text-muted);
+    font-size: 12.5px;
+    line-height: 1.5;
+    margin: 0 0 12px;
+    max-width: 38ch;
+}
+
+/* -- the projects in a file, and what became of them (import) --------------- */
+
+.plx-bundle-projects,
+.plx-bundle-results {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2);
+    list-style: none;
+    margin: 0;
+    padding: 0;
+}
+
+.plx-bundle-project,
+.plx-bundle-result {
+    background: rgba(5, 7, 10, 0.45);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-md);
+    display: flex;
+    gap: var(--space-3);
+    padding: 12px 14px;
+    transition: opacity var(--duration-base) var(--ease-standard);
+}
+
+.plx-bundle-project-icon {
+    align-items: center;
+    background: rgba(255, 255, 255, 0.04);
+    border: 1px solid var(--panel-rule);
+    border-radius: 9px;
+    color: var(--text-secondary);
+    display: flex;
+    flex: 0 0 auto;
+    font-size: 14px;
+    height: 34px;
+    justify-content: center;
+    width: 34px;
+}
+
+.plx-bundle-project-main,
+.plx-bundle-result-main {
+    display: flex;
+    flex: 1 1 auto;
+    flex-direction: column;
+    gap: 6px;
+    min-width: 0;
+}
+
+.plx-bundle-project-head,
+.plx-bundle-result-head {
+    align-items: center;
+    display: flex;
+    gap: 8px;
+    min-height: 26px;
+    min-width: 0;
+}
+
+.plx-bundle-project-name {
+    color: var(--text-primary);
+    flex: 0 1 auto;
+    font-size: 14px;
+    font-weight: 700;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.plx-bundle-project-alt {
+    color: var(--text-muted);
+    flex: 0 1 auto;
+    font-family: var(--plx-import-mono);
+    font-size: 11px;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.plx-bundle-project-head .plx-bundle-size {
+    flex: 0 0 auto;
+    margin-left: auto;
+}
+
+.plx-bundle-project-meta {
+    align-items: baseline;
+    color: var(--text-muted);
+    display: flex;
+    font-size: 12px;
+    gap: 6px;
+    line-height: 1.45;
+    margin: 0;
+}
+
+.plx-bundle-project-meta :is(.fas, svg) {
+    flex: 0 0 auto;
+    font-size: 11px;
+}
+
+.plx-bundle-project-note {
+    color: var(--text-muted);
+    font-size: 12px;
+    line-height: 1.45;
+    margin: 0;
+}
+
+/* Skipped: still listed, so the choice can be undone where it was made. */
+.plx-bundle-project.is-skipped .plx-bundle-project-icon,
+.plx-bundle-project.is-skipped .plx-bundle-project-name,
+.plx-bundle-project.is-skipped .plx-bundle-project-meta,
+.plx-bundle-project.is-skipped .plx-bundle-size {
+    opacity: 0.55;
+}
+
+/* What importing does to a project. */
+.plx-bundle-badge {
+    align-items: center;
+    border: 1px solid transparent;
+    border-radius: 999px;
+    display: inline-flex;
+    flex: 0 1 auto;
+    font-size: 11px;
+    font-weight: 600;
+    line-height: 1;
+    min-width: 0;
+    overflow: hidden;
+    padding: 4px 9px;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.plx-bundle-badge.is-new {
+    background: var(--accent-success-soft);
+    color: var(--accent-success);
+}
+
+.plx-bundle-badge.is-renamed,
+.plx-bundle-badge.is-update {
+    background: var(--accent-channel-tint);
+    color: var(--accent-channel);
+}
+
+.plx-bundle-badge.is-same {
+    border-color: var(--border-subtle);
+    color: var(--text-muted);
+}
+
+.plx-bundle-badge.is-conflict {
+    background: var(--accent-warning-soft);
+    color: var(--accent-warning);
+}
+
+/* Keep both / Replace: a segmented control, the current one raised. */
+.plx-bundle-choice {
+    align-self: flex-start;
+    background: rgba(5, 7, 10, 0.6);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-md);
+    display: inline-flex;
+    gap: 2px;
+    padding: 2px;
+}
+
+.plx-bundle-choice-option {
+    background: none;
+    border: 0;
+    border-radius: var(--radius-sm);
+    color: var(--text-muted);
+    font-size: 12px;
+    font-weight: 600;
+    padding: 5px 12px;
+    transition:
+        background-color var(--duration-fast) var(--ease-standard),
+        color var(--duration-fast) var(--ease-standard);
+}
+
+.plx-bundle-choice-option:hover {
+    background: var(--panel-hover-ground);
+    color: var(--text-primary);
+}
+
+.plx-bundle-choice-option.is-on {
+    background: var(--surface-2);
+    box-shadow: inset 0 0 0 1px var(--border-strong), 0 1px 2px rgba(0, 0, 0, 0.45);
+    color: var(--text-primary);
+}
+
+.plx-bundle-choice-option:focus-visible {
+    outline: 2px solid var(--accent-channel);
+    outline-offset: 1px;
+}
+
+.plx-bundle-also {
+    color: var(--text-muted);
+    font-size: 12px;
+    margin: 0 2px;
+}
+
+/* Where the projects go, and whether they fit. */
+.plx-bundle-dest {
+    align-items: center;
+    background: rgba(5, 7, 10, 0.35);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-md);
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px 10px;
+    padding: 9px 12px;
+}
+
+.plx-bundle-dest-label {
+    align-items: center;
+    color: var(--text-muted);
+    display: inline-flex;
+    font-size: 12px;
+    gap: 7px;
+}
+
+.plx-bundle-dest-place {
+    color: var(--text-primary);
+    font-size: 13px;
+    font-weight: 600;
+}
+
+.plx-bundle-select {
+    background: var(--surface-2);
+    border: 1px solid var(--border-strong);
+    border-radius: var(--radius-sm);
+    color: var(--text-primary);
+    font-size: 13px;
+    height: 30px;
+    max-width: 100%;
+    padding: 0 8px;
+}
+
+.plx-bundle-select:focus-visible {
+    outline: 2px solid var(--accent-channel);
+    outline-offset: 1px;
+}
+
+.plx-bundle-dest-space {
+    align-items: center;
+    color: var(--text-muted);
+    display: inline-flex;
+    font-size: 12px;
+    font-variant-numeric: tabular-nums;
+    gap: 6px;
+    margin-left: auto;
+}
+
+.plx-bundle-dest.is-short {
+    background: var(--accent-danger-soft);
+    border-color: rgba(248, 113, 113, 0.45);
+}
+
+.plx-bundle-dest.is-short .plx-bundle-dest-space {
+    align-items: baseline;
+    color: var(--accent-danger);
+    flex-basis: 100%;
+    font-weight: 600;
+    margin-left: 0;
+}
+
+.plx-bundle-dest.is-short .plx-bundle-dest-space :is(.fas, svg) {
+    flex: 0 0 auto;
+    transform: translateY(1px);
+}
+
+.plx-bundle-result-mark {
+    font-size: 12px;
+    height: 26px;
+    margin-top: 0;
+    width: 26px;
+}
+
+.plx-bundle-result-mark.is-skipped {
+    background: rgba(255, 255, 255, 0.06);
+    color: var(--text-muted);
+}
+
+.plx-bundle-result-what {
+    color: var(--text-muted);
+    flex: 0 1 auto;
+    font-size: 12px;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.plx-bundle-open {
+    flex: 0 0 auto;
+    margin-left: auto;
+}
+
+/* Images not found yet: amber, with the one thing to do about it. */
+.plx-bundle-missing {
+    align-items: center;
+    background: var(--accent-warning-soft);
+    border: 1px solid rgba(243, 184, 69, 0.3);
+    border-radius: var(--radius-sm);
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px 10px;
+    padding: 7px 8px 7px 10px;
+}
+
+.plx-bundle-missing-text {
+    align-items: center;
+    color: var(--accent-warning);
+    display: inline-flex;
+    font-size: 12px;
+    gap: 7px;
+    margin-right: auto;
+}
+
+.plx-bundle-found {
+    align-items: center;
+    color: var(--accent-success);
+    display: flex;
+    font-size: 12px;
+    gap: 7px;
+    margin: 0;
+}
+
+.plx-bundle-datasets {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-2);
+}
+
+.plx-bundle-datasets .plx-button :is(.fas, svg) {
+    color: var(--text-muted);
+    margin-right: 4px;
+}
+
+/* -- a phone's width ----------------------------------------------------------- */
+
+@media (max-width: 560px) {
+    .plx-bundle {
+        padding: var(--space-4) var(--space-4) var(--space-4);
+    }
+
+    .plx-bundle-row {
+        column-gap: var(--space-3);
+    }
+
+    .plx-bundle-files {
+        margin-left: 0;
+    }
+
+    /* Where it is moves under the name, so the name keeps the width. */
+    .plx-bundle-file {
+        grid-template-columns: 14px minmax(0, 1fr) auto;
+        row-gap: 5px;
+    }
+
+    .plx-bundle-file .plx-bundle-where {
+        grid-column: 2 / 4;
+        grid-row: 2;
+        justify-self: start;
+    }
+
+    .plx-bundle-file-size {
+        grid-column: 3;
+        grid-row: 1;
+    }
+
+    .plx-bundle-project,
+    .plx-bundle-result {
+        padding: 12px;
+    }
+
+    .plx-bundle-project-icon {
+        display: none;
+    }
+
+    .plx-bundle-project-head {
+        flex-wrap: wrap;
+        row-gap: 6px;
+    }
+
+    .plx-bundle-dest-space {
+        flex-basis: 100%;
+        margin-left: 0;
+    }
+
+    /* A finished project's name keeps the room before Open; what happened
+       to it goes on a line of its own. */
+    .plx-bundle-result-head {
+        flex-wrap: wrap;
+        row-gap: 2px;
+    }
+
+    .plx-bundle-result-head .plx-bundle-project-name {
+        flex: 1 1 0;
+    }
+
+    .plx-bundle-result-what {
+        flex-basis: 100%;
+        order: 3;
+        white-space: normal;
+    }
+
+    .plx-bundle-foot-note {
+        flex-basis: 100%;
+    }
+
+    .plx-bundle-foot {
+        flex-wrap: wrap;
+    }
 }

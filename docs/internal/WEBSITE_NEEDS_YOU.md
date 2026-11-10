@@ -147,6 +147,9 @@ bundle `py/dev/4f583c3b9745/` and, sharing the flags, no longer shows its
   is visible now, default Off.) One entry in `settings_routes.DESKTOP_SECTIONS`.
 - **Fresh desktop installs** keep projects in `Documents/Plexora/projects`
   (one library shared with the website)? Existing installs are unaffected.
+  **Resolved (feature/onboarding-bundles):** the desktop creates
+  `Documents/Plexora/{workspace.json, projects/}` on first run and the website
+  picks the same folder in its first-use setup; see Settings > Data > Locations.
 - **Publish plexora-kernels** to PyPI and ship it in the desktop runtime (the
   desktop then never imports numba: start 3.6 s instead of 5.6-15.2 s)?
 - **`.bif`** in both apps' import list (`import_proposal.IMAGE_SUFFIXES`)?

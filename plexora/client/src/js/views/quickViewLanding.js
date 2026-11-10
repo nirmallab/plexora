@@ -946,6 +946,60 @@ PlexoraPage.register(function () {
         });
     }
 
+    // -- the website: a workspace this visit did not open ------------------
+    //
+    // The browser asks again for a folder it does not keep granted, and the
+    // site never asks on load (services/browserStore.js `prepare`), so the
+    // projects there are one click away: this card's. Reconnect opens the
+    // folder from the click, moves this visit's work into it, and the page is
+    // drawn again so Recent lists what is there. A folder that is gone opens
+    // the onboarding's Reconnect screen instead, to choose another.
+    const reconnectCard = document.getElementById("quick_view_reconnect");
+    if (reconnectCard) wireReconnect(reconnectCard);
+
+    function wireReconnect(section) {
+        let store = null;
+        try {
+            store = window.parent?.PlexoraStore || null;
+        } catch (error) {
+            store = null;
+        }
+        if (!store || typeof store.needsReconnect !== "function" || !store.needsReconnect()) return;
+        const where = store.current();
+        const placeName = section.querySelector('[data-role="place"]');
+        const note = section.querySelector('[data-role="note"]');
+        const go = section.querySelector('[data-role="reconnect"]');
+        if (placeName) placeName.textContent = where.notOpened || "your Plexora folder";
+        if (where.missing && note) {
+            note.textContent = "It could not be found. It may have been moved or renamed.";
+            note.classList.add("is-problem");
+        }
+        section.hidden = false;
+        go.addEventListener("click", async () => {
+            if (store.current().missing && window.PlexoraOnboarding) {
+                if (await window.PlexoraOnboarding.ensure({ reason: "home" }) === "ready") window.location.reload();
+                return;
+            }
+            // From the click: the browser's question comes first.
+            const asking = store.reconnect();
+            go.disabled = true;
+            go.textContent = "Reconnecting…";
+            const done = await asking.catch((error) => ({ ok: false, reason: "failed", error: error?.message }));
+            if (done.ok) {
+                window.location.reload();
+                return;
+            }
+            go.disabled = false;
+            go.textContent = "Reconnect";
+            if (!note) return;
+            note.classList.add("is-problem");
+            note.textContent = done.reason === "denied"
+                ? "The browser did not allow it. Try again and choose Allow."
+                : done.reason === "missing" ? "It could not be found. It may have been moved or renamed."
+                : `It could not be opened${done.error ? `: ${done.error}` : "."}`;
+        });
+    }
+
     // What the import dialog's own `?` opens, from the surface that asks the
     // same question first. No controller of its own: the modal is a classic
     // script on `window`, loaded by base.html everywhere.

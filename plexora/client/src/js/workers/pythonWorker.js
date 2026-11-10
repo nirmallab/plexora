@@ -15,6 +15,11 @@
 //   mountTree {dir, blobs}         a picked folder: [{name: "<folder>/<path>", data: File}]
 //   flush                          the project store written back now
 //   useStore {folder}              the project store moved to a granted folder
+//   libraries                      the folders added beside it mounted again
+//                                  -> [{id, label, path, files, error}]
+//   bundleStores / adopt {paths} / readFile {path}
+//                                  a `.plexora` file's bytes, moved by the page's
+//                                  own worker (BUNDLE_OPS, services/bundleWeb.js)
 //   answer {id, value, failed}     the page's answer to Python's question `id`
 //                                  (handled at once, never queued: Python waits);
 //                                  a `mount` {dir, files} in it is mounted first
@@ -138,6 +143,7 @@ async function quit() {
     try {
         await syncing;
         if (store) await store.push();
+        await pushLibraries();
     } catch (error) {
         // Closing regardless.
     }
@@ -383,6 +389,7 @@ async function mountState(folder) {
         // Plexora's folder on the computer is the desktop app's too: what is
         // only one machine's, or too big to hold, stays there (storeSync.js).
         await store.open(handle, { shared: kind === "folder" });
+        storeHandle = handle;
         lastPull = performance.now();
         return kind;
     } catch (error) {
@@ -421,6 +428,7 @@ function scheduleSync(delay = SYNC_DELAY_MS) {
         syncing = syncing.then(async () => {
             syncPending = false;
             try { await store.push(); } catch (error) { self.postMessage({ log: `store: ${error}` }); }
+            await pushLibraries();
         });
     }, delay);
 }
@@ -448,6 +456,182 @@ function scheduleKeep() {
             module?.destroy();
         }
     }, KEEP_MS);
+}
+
+
+// -- the folders added beside the store (Settings › Data) -----------------------
+//
+// The workspaces the user added beside the one their projects are kept in
+// (services/browserStore.js keeps their handles in its IndexedDB record,
+// `locations`): each one's projects/ read into /library/<id> by a store of
+// its own -- the same kind as /data's, shared with the desktop app, written
+// back and read in with it -- and named to Python (`boot.set_libraries`),
+// whose /projects then lists their projects where they are. Read again at
+// boot, when the store moves (`useStore`) and when the page says the list
+// changed (`libraries`). The record is read here rather than sent, so a
+// reload, or a store moved by the onboarding, finds the same list. A folder
+// this browser does not let the page open today is left out, not forgotten:
+// the page's Reconnect asks for it, then says so.
+const LIBRARY_ROOT = "/library";
+//: id -> {store, handle (its projects/), path, label}.
+const libraries = new Map();
+let libraryMounts = 0;
+//: The folder /data is read from (`mountState`, `useStore`): one added
+//: beside it too is not mounted twice.
+let storeHandle = null;
+
+//: The record's `locations` ([{id, handle, label}]), or none.
+function keptFolders() {
+    return new Promise((resolve) => {
+        if (typeof indexedDB === "undefined") { resolve([]); return; }
+        let request;
+        try {
+            request = indexedDB.open("plexora-store", 1);
+        } catch (error) {
+            resolve([]);
+            return;
+        }
+        // Made as browserStore.js makes it, should this be the first to ask.
+        request.onupgradeneeded = () => request.result.createObjectStore("store");
+        request.onerror = () => resolve([]);
+        request.onblocked = () => resolve([]);
+        request.onsuccess = () => {
+            const db = request.result;
+            const done = (value) => { db.close(); resolve(value); };
+            try {
+                const get = db.transaction("store", "readonly").objectStore("store").get("data");
+                get.onsuccess = () => {
+                    const kept = get.result && Array.isArray(get.result.locations) ? get.result.locations : [];
+                    // The id names a folder in Python's files: nothing else.
+                    done(kept.filter((loc) => loc && loc.handle && typeof loc.handle.getDirectoryHandle === "function"
+                                              && /^[A-Za-z0-9_-]{1,64}$/.test(String(loc.id || ""))));
+                };
+                get.onerror = () => done([]);
+            } catch (error) {
+                done([]);
+            }
+        };
+    });
+}
+
+async function sameFolder(a, b) {
+    try {
+        return Boolean(a && b && typeof a.isSameEntry === "function" && await a.isSameEntry(b));
+    } catch (error) {
+        return false;
+    }
+}
+
+//: A library's files gone from memory. Links are unlinked, never followed.
+function removeTree(path) {
+    let names;
+    try {
+        names = py.FS.readdir(path);
+    } catch (error) {
+        return;
+    }
+    for (const name of names) {
+        if (name === "." || name === "..") continue;
+        const child = `${path}/${name}`;
+        try {
+            if (py.FS.isDir(py.FS.lstat(child).mode)) {
+                removeTree(child);
+                py.FS.rmdir(child);
+            } else {
+                py.FS.unlink(child);
+            }
+        } catch (error) {
+            // Open in Python: left, and gone with the worker.
+        }
+    }
+}
+
+async function pushLibraries() {
+    for (const [id, lib] of [...libraries]) {
+        try { await lib.store.push(); } catch (error) { self.postMessage({ log: `library ${id}: ${error}` }); }
+    }
+}
+
+//: Whether any library read anything in or dropped anything.
+async function pullLibraries() {
+    let changed = false;
+    for (const [id, lib] of [...libraries]) {
+        try {
+            const done = await lib.store.pull();
+            changed = changed || Boolean(done && (done.read || done.dropped));
+        } catch (error) {
+            self.postMessage({ log: `library ${id}: ${error}` });
+        }
+    }
+    return changed;
+}
+
+//: The record's folders mounted, those it no longer has (or this browser no
+//: longer opens) let go, and Python told which are there.
+async function mountLibraries() {
+    if (!py) return [];
+    const wanted = [];
+    for (const loc of await keptFolders()) {
+        const id = String(loc.id);
+        const label = String(loc.label || loc.handle.name || id);
+        let projects = null;
+        let error = null;
+        try {
+            // Refused without the browser's permission this visit.
+            projects = await loc.handle.getDirectoryHandle("projects", { create: true });
+        } catch (failure) {
+            error = failure && (failure.name === "NotAllowedError" || failure.name === "SecurityError")
+                ? "permission" : String(failure?.message || failure);
+        }
+        if (projects && await sameFolder(projects, storeHandle)) {
+            projects = null;
+            error = "default";
+        }
+        wanted.push({ id, label, projects, error });
+    }
+    // Let go: out of the map first, so no write-back or read-in is started
+    // on it again -- a store whose memory is gone would delete the folder's
+    // files on its next write-back -- then written back once, then cleared.
+    await syncing;
+    for (const [id, lib] of [...libraries]) {
+        const next = wanted.find((want) => want.id === id && want.projects);
+        if (next && await sameFolder(next.projects, lib.handle)) continue;
+        libraries.delete(id);
+        try { await lib.store.push(); } catch (error) { self.postMessage({ log: `library ${id}: ${error}` }); }
+        removeTree(lib.path);
+        try { py.FS.rmdir(lib.path); } catch (error) { /* still holds what Python has open */ }
+    }
+    for (const want of wanted) {
+        if (!want.projects || libraries.has(want.id)) continue;
+        const path = `${LIBRARY_ROOT}/${want.id}`;
+        libraryMounts += 1;
+        const opened = createStore(py.FS, path, (line) => self.postMessage({ log: `library ${want.id}: ${line}` }),
+                                   { heldRoot: `/held/library-${libraryMounts}` });
+        try {
+            await opened.open(want.projects, { shared: true });
+            libraries.set(want.id, { store: opened, handle: want.projects, path, label: want.label });
+        } catch (failure) {
+            want.error = String(failure?.message || failure);
+            removeTree(path);
+        }
+    }
+    let module = null;
+    let named = null;
+    try {
+        module = py.pyimport("plexora.browser.boot");
+        named = py.toPy([...libraries.values()].map((lib) => lib.path));
+        module.set_libraries(named)?.destroy?.();
+    } catch (failure) {
+        self.postMessage({ log: `libraries: ${failure?.message || failure}` });
+    } finally {
+        named?.destroy?.();
+        module?.destroy?.();
+    }
+    return wanted.map((want) => {
+        const lib = libraries.get(want.id);
+        return { id: want.id, label: want.label, path: lib ? lib.path : null,
+                 files: lib ? lib.store.files() : 0, error: lib ? null : want.error };
+    });
 }
 
 
@@ -683,13 +867,16 @@ json.dumps(boot.start(ORIGIN, base_url=SITE_BASE, post=_post, cancelled=lambda j
                       telemetry=json.loads(TELEMETRY)))
 `));
     phases.ready = at(); mark("ready");
+    // The folders added beside the store, once Python can be told of them
+    // (boot.start sets the environment set_libraries changes).
+    const libraryList = args.scratch ? [] : await mountLibraries();
     // The quiet background work waits for counts from here: the page sends
     // what it held for Python a moment after this (a reloaded project's
     // first screen), and a stage preload started in that moment held all of
     // it (/config waited 0.8 s behind the scipy stage).
     lastAnswer = performance.now();
     if (args.telemetry && args.telemetry.endpoint) info.telemetry = await startTelemetry(args.telemetry);
-    return { phases, info, store, derived, stages: Object.fromEntries(
+    return { phases, info, store, derived, libraries: libraryList, stages: Object.fromEntries(
         Object.entries(stagesInfo).map(([name, stage]) => [name, stage.bytes])),
              transport: jspi ? "jspi" : syncChannel ? "shared memory" : "none", loaded };
 }
@@ -1063,6 +1250,51 @@ async function telemetryTurn({ hidden = false } = {}) {
     return answer;
 }
 
+// A project's `.plexora` file on the website (services/bundleWeb.js): the
+// bytes move in the page's own worker (workers/bundleWorker.js), which reads
+// and writes the stores' folders itself, never through Python's heap. These
+// three are what it needs from here: where each store's folder is, files it
+// wrote there made known (storeSync `adopt`), and the small files an export
+// makes in Python's own files (its database snapshots and entries).
+const BUNDLE_OPS = {
+    //: {"/data": {kind, handle?, opfs?}, "/library/<id>": ...}: a granted
+    //: folder's handle, or this site's storage by its path (the worker opens
+    //: it itself); `kind` alone where only Python reads the files (memory,
+    //: IndexedDB).
+    bundleStores: async () => {
+        const describe = async (handle) => {
+            if (!handle || typeof handle.getDirectoryHandle !== "function" || typeof handle.isSameEntry !== "function") {
+                return { kind: handle ? "indexeddb" : "memory" };
+            }
+            try {
+                const opfs = await (await navigator.storage.getDirectory()).resolve(handle);
+                if (Array.isArray(opfs)) return { kind: "opfs", opfs };
+            } catch (error) {
+                // Not this site's storage.
+            }
+            return { kind: "folder", handle };
+        };
+        const out = { "/data": store ? await describe(storeHandle) : { kind: "memory" } };
+        for (const lib of libraries.values()) out[lib.path] = await describe(lib.handle);
+        return out;
+    },
+    //: Files the bundle worker wrote into a store, by their paths in
+    //: Python's files: {placed, held, linked, missing} per store.
+    adopt: async ({ paths }) => {
+        await syncing;
+        const roots = [["/data", store], ...[...libraries.values()].map((lib) => [lib.path, lib.store])];
+        const out = {};
+        for (const [root, owner] of roots) {
+            const mine = (paths || []).filter((path) => String(path).startsWith(`${root}/`))
+                .map((path) => String(path).slice(root.length + 1));
+            if (owner && mine.length) out[root] = await owner.adopt(mine);
+        }
+        return out;
+    },
+    //: A file of Python's, its bytes (transferred, never copied twice).
+    readFile: ({ path }) => ({ body: py.FS.readFile(String(path)) }),
+};
+
 const OPS = {
     boot,
     request,
@@ -1095,18 +1327,29 @@ const OPS = {
     flush: async () => {
         await syncing;
         if (store) await store.push();
+        await pushLibraries();
         return true;
     },
+    ...BUNDLE_OPS,
     //: Keep the projects in `folder` from now on (services/browserStore.js
     //: has copied them there): the store written back, /data read from it.
     useStore: async ({ folder }) => {
         await syncing;
         if (store) await store.push();
         else store = createStore(py.FS, "/data", (line) => self.postMessage({ log: line }));
+        // An added folder about to become the store has nothing left unwritten.
+        await pushLibraries();
         await store.open(folder, { shared: true });
+        storeHandle = folder;
         lastPull = performance.now();
+        // The old store may be an added folder now, and the new one may have
+        // been one (Settings' Make default).
+        await mountLibraries();
         return "folder";
     },
+    //: The page added or removed a folder, or the browser let it open one
+    //: again (Settings › Data): the list read again and mounted.
+    libraries: () => mountLibraries(),
     sync: async () => {
         if (!debug) throw new Error("sync is for tests: boot with debug: true");
         const started = performance.now();
@@ -1119,7 +1362,9 @@ const OPS = {
         if (!store) return null;
         lastPull = performance.now();
         pullEvery = PULL_MS;
-        return store.pull();
+        const done = await store.pull();
+        await pullLibraries();
+        return done;
     },
     trace: () => (debug ? traced.splice(0) : null),
     //: What the worker is doing, for the status chip and diagnostics.
@@ -1221,6 +1466,7 @@ async function pullNow() {
     } catch (error) {
         self.postMessage({ log: `store: ${error}` });
     }
+    changed = (await pullLibraries()) || changed;
     busy = false;
     return changed;
 }

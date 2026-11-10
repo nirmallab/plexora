@@ -27,7 +27,7 @@ import net from "node:net";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { PYTHON, REPO, appFrame, launch, startServer } from "./lib.mjs";
-import { buildSite, connectLicence, keepInBrowser, startMock } from "./ai_lib.mjs";
+import { buildSite, connectLicence, startMock } from "./ai_lib.mjs";
 
 const args = process.argv.slice(2);
 const opt = (name, fallback) => (args.includes(name) ? args[args.indexOf(name) + 1] : fallback);
@@ -253,7 +253,6 @@ async function runArm(arm) {
             await connectLicence(page, origin);
             await page.goto(`${origin}/`);
             frame = await appFrame(page);
-            await keepInBrowser(frame);
             await page.evaluate(() => window.PlexoraPython.ready);
         } else {
             await page.goto(`${origin}/`);

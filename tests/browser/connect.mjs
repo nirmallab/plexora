@@ -29,7 +29,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import net from "node:net";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { appFrame, launch, startServer, PYTHON, REPO } from "./lib.mjs";
+import { appFrame, launch, seedBrowserStore, startServer, PYTHON, REPO } from "./lib.mjs";
 
 const args = process.argv.slice(2);
 const option = (name, fallback) => (args.includes(name) ? args[args.indexOf(name) + 1] : fallback);
@@ -83,16 +83,6 @@ async function startNode(site) {
              stop: () => { child.kill(); try { rmSync(home, { recursive: true, force: true }); } catch { /* held */ } } };
 }
 
-//: The first visit's question, answered "Keep in browser" when it comes.
-async function keepInBrowser(frame) {
-    await frame.waitForFunction(() => {
-        const keep = [...document.querySelectorAll(".plx-confirm .plx-button")]
-            .find((button) => button.textContent.trim() === "Keep in browser");
-        if (keep) keep.click();
-        return Boolean(keep);
-    }, null, { timeout: 15000, polling: 200 }).catch(() => null);
-}
-
 //: The app's page at `route`, through the app's own navigation.
 async function visit(page, route) {
     const frame = await appFrame(page);
@@ -116,9 +106,9 @@ try {
         const url = new URL(request.url());
         if (url.origin === site) requests.push(`${request.method()} ${url.pathname}`);
     });
+    await seedBrowserStore(browser.context, site);
     await page.goto(`${site}/`);
     let frame = await appFrame(page);
-    await keepInBrowser(frame);
 
     step("quit");
     // -- quit ---------------------------------------------------------------
@@ -247,7 +237,6 @@ try {
     out.pair = { addressAfter: null };
     out.pair.addressAfter = await page.evaluate(() => location.href);
     frame = await appFrame(page);
-    await keepInBrowser(frame);
     out.pair.toast = await frame.waitForFunction(() => {
         const toast = document.querySelector(".plx-toast-title");
         return toast && /Paired with|Could not pair|not complete/.test(toast.textContent) ? toast.textContent : null;

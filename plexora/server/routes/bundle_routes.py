@@ -9,9 +9,10 @@ views/projectImport.js) work through these:
     DELETE /projects/export/<job>  (POST .../cancel)                stop; the .part goes
     GET    /projects/export/<job>/file                              the file, with Range
     POST   /projects/export/plan {ids, include}                     the website's members
-    POST   /projects/export/manifest {manifest, sums}               ... and its manifest
+    POST   /projects/export/manifest {manifest, sums, entries?}     ... and its manifest
     POST   /projects/import/preview {path} | {upload} | {manifest} | a file
-    POST   /projects/import {path|upload, choices, location}        -> {job, ...}
+                                    [{choices, place_from}: + the page's placements]
+    POST   /projects/import {path|upload, choices, location, placed?}  -> {job, ...}
     GET    /projects/import/<job>, DELETE (POST .../cancel)
     POST   /projects/<name>/copy {location?}                        "Make a copy" -> {job}
     POST   /projects/<name>/find_missing {folder}                   one folder searched
@@ -20,6 +21,9 @@ Long work is a background task (`layer_jobs`), polled; the website's page
 answers the polls itself while its Python works (the task's `mirror`), which
 is why each cancel has a POST form too. A bundle is never read into memory:
 an upload is streamed to a file first, and a download is served from one.
+
+A `.plexora` dropped on the desktop app's window is claimed here too
+(`_dropped_bundle`, a drop sniffer): the page opens the Import dialog on it.
 """
 
 from __future__ import annotations
@@ -144,14 +148,33 @@ def projects_export_plan():
 
 @app.route('/projects/export/manifest', methods=['POST'])
 def projects_export_manifest():
-    """`{manifest, sums: {bundle_path: sha256}}` -> the finished manifest the
-    page writes first (bundles.finish_manifest)."""
+    """`{manifest, sums: {bundle_path: sha256}, entries?, left_out?, stamps?,
+    work_dir?}` -> the finished manifest the page writes first
+    (bundles.finish_manifest): with the plan's `entries`, each project's
+    revision, which `stamps` then records in its entry (`record_export`). The
+    plan's `work_dir` is removed: the page has read what was in it."""
     from plexora.server.models import bundles
 
     body = request.get_json(silent=True) or {}
     if not isinstance(body.get('manifest'), dict) or not isinstance(body.get('sums'), dict):
         return _refused("Send the manifest and the sums.")
-    return jsonify(bundles.finish_manifest(body['manifest'], body['sums']))
+    entries = body.get('entries') if isinstance(body.get('entries'), dict) else None
+    left_out = body.get('left_out') if isinstance(body.get('left_out'), list) else None
+    finished = bundles.finish_manifest(body['manifest'], body['sums'], entries=entries, left_out=left_out)
+    if isinstance(body.get('stamps'), dict):
+        bundles.record_export(finished, body['stamps'])
+    _remove_work_dir(body.get('work_dir'))
+    return jsonify(finished)
+
+
+def _remove_work_dir(value):
+    """A plan's work folder (`plan_for_page`), and nothing else: one this
+    process made under its temporary folder."""
+    if not isinstance(value, str) or not value:
+        return
+    folder = Path(value)
+    if folder.name.startswith("plexora-bundle-") and folder.parent == Path(tempfile.gettempdir()):
+        shutil.rmtree(folder, ignore_errors=True)
 
 
 @app.route('/projects/export/<string:job>', methods=['GET'])
@@ -224,6 +247,12 @@ def projects_import_preview():
             if path is None:
                 return _refused("Send a path, an upload, a manifest or the file.")
         answer = bundles.preview(path, location)
+        # The website's page writes an import's large members itself
+        # (`place_from` bytes or more): where each one goes, for these choices.
+        if body.get('place_from') is not None:
+            choices = body.get('choices') if isinstance(body.get('choices'), dict) else None
+            answer['placements'] = bundles.placements(path, choices, location,
+                                                      at_least=max(0, int(body['place_from'])))
     except ValueError as error:
         if token and not body.get('upload'):
             shutil.rmtree(bundles.staging_root() / f"upload-{token}", ignore_errors=True)
@@ -256,8 +285,13 @@ def projects_import_start():
     else:
         return _refused("Send a path, an upload or the file.")
     choices = body.get('choices') if isinstance(body.get('choices'), dict) else None
+    # What the website's page has written itself, where `placements` said.
+    placed = body.get('placed') if isinstance(body.get('placed'), dict) else None
+    if placed and not all(isinstance(key, str) and isinstance(value, str) for key, value in placed.items()):
+        return _refused("Send each placed member as a path.")
     try:
-        status = bundles.start_import(path, choices, body.get('location') or None, cleanup=bool(upload))
+        status = bundles.start_import(path, choices, body.get('location') or None, cleanup=bool(upload),
+                                      placed=placed)
     except ValueError as error:
         return _refused(error)
     return jsonify(status), 202
@@ -326,3 +360,31 @@ def project_find_missing(name):
         return jsonify(relink.find_in_folder(name, Path(folder).expanduser()))
     except KeyError:
         return _refused(f"There is no project called {name}.", 404)
+
+
+# -- a `.plexora` dropped on the window ----------------------------------------
+
+
+def _dropped_bundle(path, context):
+    """A `.plexora` dropped on the desktop app's window is a project file to
+    import, never a table or an image to add (drop_plan's engine would refuse
+    it as a kind it does not know). Claimed by its suffix alone, which is
+    cheap, and handed to the page's `import_bundle` executor
+    (views/projectImport.js): the Import dialog, with the file already in it,
+    which asks before anything is added -- so `auto`, wherever it lands."""
+    from plexora.server.models import bundles
+
+    name = str(path).replace("\\", "/").rsplit("/", 1)[-1]
+    if not name.lower().endswith(bundles.SUFFIX):
+        return None
+    return {"kind": "plexora_bundle", "label": name, "detail": "Plexora project file",
+            "action": {"kind": "import_bundle", "status": "auto", "message": f"Import {name}"}}
+
+
+def _register_drop_sniffer():
+    from plexora import api
+
+    api.register_drop_sniffer(_dropped_bundle)
+
+
+_register_drop_sniffer()

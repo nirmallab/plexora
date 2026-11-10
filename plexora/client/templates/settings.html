@@ -1,6 +1,6 @@
 {% extends layout|default('base.html', true) %}
 {% block style %}
-    <link rel="stylesheet" href="{{ data.base_url }}/client/src/css/settings.css?v=20261109_webperf">
+    <link rel="stylesheet" href="{{ data.base_url }}/client/src/css/settings.css?v=20261109_locations">
 {% endblock %}
 {% block content %}
 <title>Plexora - Settings</title>
@@ -41,21 +41,40 @@
                      data-section="data" aria-label="Data">
                 {% if website %}
                 {# The website keeps projects in this site's storage in the
-                   browser or in a folder the user granted (services/
-                   browserStore.js); settingsPage.js fills both cards in. #}
+                   browser or in workspace folders the user granted (services/
+                   browserStore.js, on the host page): the default one, where
+                   new work is saved, and any others added here, each mounted
+                   for Python at /library/<id> (workers/pythonWorker.js).
+                   settingsPage.js's WebLocations draws the rows. #}
                 <h2 class="settings-panel-title">Where your projects are</h2>
                 <p class="settings-panel-lead">
                     Your figures, thresholds and gates. Your images stay where they are.
                 </p>
-                <div class="settings-card" id="settings_web_place">
-                    <div class="settings-field-label">Kept in</div>
-                    <div class="settings-path" id="settings_web_place_name">Loading&hellip;</div>
-                    <div class="settings-meta" id="settings_web_place_meta"></div>
-                    <div class="settings-actions">
-                        <button type="button" class="btn btn-primary" id="settings_web_to_folder" hidden>
-                            Save on this computer</button>
-                        <button type="button" class="btn btn-outline-light" id="settings_web_to_browser" hidden>
-                            Keep in browser</button>
+                <div class="plx-locations" id="settings_web_place" aria-busy="true">
+                    <div class="plx-locations-head">
+                        <span class="plx-locations-saving" id="settings_web_place_saving">Loading&hellip;</span>
+                    </div>
+                    <div class="plx-locations-list" id="settings_web_locations" role="list"></div>
+                    {# Both icons from the start: Font Awesome swaps each span
+                       for an svg once, so the tone (data-tone) picks one in CSS. #}
+                    <div class="plx-locations-message" id="settings_web_place_message" role="status" hidden>
+                        <span class="fas fa-circle-check plx-locations-done" aria-hidden="true"></span>
+                        <span class="fas fa-circle-info plx-locations-info" aria-hidden="true"></span>
+                        <span id="settings_web_place_message_body"></span>
+                    </div>
+                    <div class="plx-locations-error" id="settings_web_place_error" role="alert" hidden>
+                        <span class="fas fa-triangle-exclamation" aria-hidden="true"></span>
+                        <span id="settings_web_place_error_body"></span>
+                    </div>
+                    <div class="plx-locations-foot">
+                        <button type="button" class="btn btn-outline-light" id="settings_web_add_folder" hidden>
+                            <span class="fas fa-folder-plus" aria-hidden="true"></span>
+                            Add a folder&hellip;
+                        </button>
+                        <button type="button" class="btn btn-link plx-locations-again" id="settings_web_setup_again" hidden>
+                            <span class="fas fa-rotate-right" aria-hidden="true"></span>
+                            Set up again
+                        </button>
                     </div>
                 </div>
                 <div class="settings-card" id="settings_web_storage">
@@ -87,11 +106,85 @@
                 </div>
                 {% else %}
 
-                <h2 class="settings-panel-title">Data directory</h2>
+                {# Every folder Plexora finds projects in (server/models/
+                   library.py): the data directory, Documents/Plexora that the
+                   website shares, its older nested folder, workspaces added
+                   here and shared roots. Drawn by settingsPage.js's
+                   LocationsSection from /settings/locations, for the reason
+                   the data-directory card below is: one renderer, redrawn from
+                   each change's answer. Above that card because it is the
+                   wider question -- the data directory is one of these. #}
+                <h2 class="settings-panel-title">Locations</h2>
                 <p class="settings-panel-lead">
-                    Every project you import, and every figure you build, is written
-                    here. Plexora reads this once when it starts, so a change takes
-                    effect the next time it is launched.
+                    The folders Plexora lists projects from. New projects are saved
+                    in the default one; your images stay where they are.
+                </p>
+
+                <div class="plx-locations" id="settings_locations" aria-busy="true">
+                    <div class="plx-locations-head">
+                        <span class="plx-locations-saving" id="settings_locations_saving">Loading&hellip;</span>
+                    </div>
+                    <div class="plx-locations-note" id="settings_locations_env" hidden>
+                        <span class="fas fa-lock" aria-hidden="true"></span>
+                        <span id="settings_locations_env_body"></span>
+                    </div>
+                    <div class="plx-locations-list" id="settings_locations_list" role="list"></div>
+                    {# Both icons from the start: Font Awesome swaps each span
+                       for an svg once, so the tone (data-tone) picks one in CSS. #}
+                    <div class="plx-locations-message" id="settings_locations_message" role="status" hidden>
+                        <span class="fas fa-circle-check plx-locations-done" aria-hidden="true"></span>
+                        <span class="fas fa-circle-info plx-locations-info" aria-hidden="true"></span>
+                        <span id="settings_locations_message_body"></span>
+                    </div>
+                    <div class="plx-locations-error" id="settings_locations_error" role="alert" hidden>
+                        <span class="fas fa-triangle-exclamation" aria-hidden="true"></span>
+                        <span id="settings_locations_error_body"></span>
+                    </div>
+                    <div class="plx-locations-foot">
+                        <button type="button" class="btn btn-outline-light plx-locations-add-open"
+                                id="settings_location_open" aria-expanded="false"
+                                aria-controls="settings_location_form">
+                            <span class="fas fa-folder-plus" aria-hidden="true"></span>
+                            Add an existing Plexora workspace&hellip;
+                        </button>
+                    </div>
+                    {# A folder somebody already has -- made by the website, by
+                       another computer, or copied from a colleague. Nothing in
+                       it is moved; only a missing workspace.json is written. #}
+                    <div class="plx-locations-add" id="settings_location_form" hidden>
+                        <label class="settings-field-label" for="settings_location_path">
+                            Workspace folder
+                        </label>
+                        <div class="settings-input-row">
+                            <input type="text" id="settings_location_path" class="settings-input"
+                                   placeholder="/path/to/workspace" autocomplete="off"
+                                   spellcheck="false">
+                            {% if not data.notebook_mode %}
+                            <button type="button" class="btn btn-outline-light"
+                                    id="settings_location_browse">Browse&hellip;</button>
+                            {% endif %}
+                            <button type="button" class="btn btn-primary"
+                                    id="settings_location_add">Add</button>
+                        </div>
+                        <p class="settings-hint" id="settings_location_hint">
+                            A folder with a workspace.json in it, or with a projects folder
+                            holding a config.json. Nothing in it is moved or changed.
+                        </p>
+                        {# Under the field it is about, not under the list. #}
+                        <div class="plx-locations-error plx-locations-form-error"
+                             id="settings_location_error" role="alert" hidden>
+                            <span class="fas fa-triangle-exclamation" aria-hidden="true"></span>
+                            <span id="settings_location_error_body"></span>
+                        </div>
+                    </div>
+                </div>
+
+                <h2 class="settings-panel-title plx-locations-after">Data directory</h2>
+                <p class="settings-panel-lead">
+                    Plexora's own folder, listed above as Data folder: its settings,
+                    its caches, and the projects and figures saved in it. Plexora
+                    reads this once when it starts, so a change takes effect the next
+                    time it is launched.
                 </p>
 
                 {# Filled by settingsPage.js from /settings/data. Rendered empty
@@ -226,15 +319,7 @@
                     </div>
                 </div>
 
-                <div class="settings-card settings-card-quiet" id="settings_shared_card" hidden>
-                    <div class="settings-field-label">Shared directories (read-only)</div>
-                    <div class="settings-meta" id="settings_shared_list"></div>
-                    <p class="settings-hint">
-                        Site-managed locations holding projects other people can open
-                        too. Change these with
-                        <code>plexora config set shared-dirs</code>.
-                    </p>
-                </div>
+                {# Shared directories are rows of the Locations card above. #}
                 {% endif %}
             </section>
 
@@ -991,5 +1076,5 @@
 {# remoteState.js is loaded by base.html, above and deferred, so it is parsed
    before this file runs -- the Remote servers section is one of its
    subscribers rather than a poller of its own. #}
-<script src="{{ data.base_url }}/client/src/js/views/settingsPage.js?v=20261109_webperf" defer></script>
+<script src="{{ data.base_url }}/client/src/js/views/settingsPage.js?v=20261109_locations" defer></script>
 {% endblock %}

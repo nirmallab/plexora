@@ -59,6 +59,14 @@
     top: var(--space-4);
 }
 
+/* Stacked above the panel, a sticky rail with no ground of its own stays
+   put while the panel scrolls up underneath it. */
+@media (max-width: 720px) {
+    .settings-rail {
+        position: static;
+    }
+}
+
 .settings-tab {
     display: flex;
     gap: var(--space-3);

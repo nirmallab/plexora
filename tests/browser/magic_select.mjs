@@ -22,7 +22,7 @@
 import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
-import { PYTHON, REPO, appFrame, launch, startServer } from "./lib.mjs";
+import { PYTHON, REPO, appFrame, launch, seedBrowserStore, startServer } from "./lib.mjs";
 
 const args = process.argv.slice(2);
 const opt = (name, fallback) => (args.includes(name) ? args[args.indexOf(name) + 1] : fallback);
@@ -71,16 +71,10 @@ try {
     page.on("console", (message) => {
         if (message.type() === "error") errors.push(message.text().slice(0, 300));
     });
+    await seedBrowserStore(browser.context, `http://127.0.0.1:${server.port}`);
     await page.goto(`http://127.0.0.1:${server.port}/?pydebug`);
     const frame = await appFrame(page);
     await frame.waitForSelector("#quick_view_go", { timeout: 120000 });
-    await frame.waitForFunction(() => {
-        const keep = [...document.querySelectorAll(".plx-confirm .plx-button")]
-            .find((button) => button.textContent.trim() === "Keep in browser");
-        if (!keep) return false;
-        keep.click();
-        return true;
-    }, null, { timeout: 5000, polling: 200 }).catch(() => null);
 
     // -- the image, as a user opens it (tests/browser/import.mjs) --
     await page.evaluate(() => { window.showOpenFilePicker = undefined; window.showDirectoryPicker = undefined; });

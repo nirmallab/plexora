@@ -41,8 +41,8 @@
  * `LAZY_BYTES` or more is read when Python first reads it, not when the folder
  * is opened (`placeLazy`); one never read is never written back.
  *
- *   createStore(FS, root = "/data", log, {readSync}) ->
- *       {open(handle, {shared}), push(), pull(), files(), held(), linked(), unread()}
+ *   createStore(FS, root = "/data", log, {readSync, heldRoot}) ->
+ *       {open(handle, {shared}), push(), pull(), adopt(paths), files(), held(), linked(), unread()}
  */
 
 const now = () => performance.now();
@@ -53,6 +53,13 @@ const now = () => performance.now();
 //: queue), often gigabytes and each made again where it is needed; the
 //: desktop's server token; and write probes.
 const KEPT_OUT = new Set([".remote_cache", ".ims_index", ".models", ".telemetry", "server_token.json"]);
+//: ... and every name that begins with one of these: what project bundles
+//: keep beside the projects (server/models/bundles.py) -- an import's staging
+//: folder (`.importing-<bundle>`) and exports waiting to be fetched
+//: (`.bundles`), each a whole project or more. The previous versions an
+//: Update or a Replace moved aside (`.replaced`) are NOT here: they are the
+//: user's only copy of the old project and must reach the folder.
+const KEPT_OUT_PREFIXES = [".importing-", ".bundles"];
 const PROBE_PREFIX = ".plexora-write-probe";
 //: A file at least this big in a shared folder is left there unread: the
 //: page holds the whole store in memory.
@@ -88,7 +95,7 @@ function datedFiles(workerfs) {
 
 export function keptOut(rel) {
     const top = String(rel).split("/")[0];
-    return KEPT_OUT.has(top) || top.startsWith(PROBE_PREFIX);
+    return KEPT_OUT.has(top) || top.startsWith(PROBE_PREFIX) || KEPT_OUT_PREFIXES.some((prefix) => top.startsWith(prefix));
 }
 
 //: FNV-1a over a file's bytes: whether a file rewritten within the same
@@ -106,6 +113,10 @@ export function createStore(FS, root = "/data", log = () => {}, options = {}) {
     //: A File's bytes, now: the worker can wait on nothing while Python reads.
     const readSync = options.readSync
         || ((file) => new Uint8Array(new FileReaderSync().readAsArrayBuffer(file)));
+    //: Where this store mounts its held files: a folder of its own when the
+    //: worker keeps more than one store (pythonWorker.js `libraries`), or
+    //: two would both mount /held/1.
+    const heldRoot = options.heldRoot || HELD_ROOT;
     let handle = null;
     //: Files placed in memory whose bytes are still in the folder (rel -> node).
     const unread = new Map();
@@ -219,9 +230,9 @@ export function createStore(FS, root = "/data", log = () => {}, options = {}) {
         const WORKERFS = FS.filesystems && FS.filesystems.WORKERFS;
         if (!WORKERFS || typeof FS.symlink !== "function" || typeof FS.mount !== "function"
             || typeof FS.lstat !== "function" || typeof File === "undefined") return false;
-        const dir = `${HELD_ROOT}/probe`;
-        const link = `${HELD_ROOT}/probe-link`;
-        const fresh = `${HELD_ROOT}/probe-fresh`;
+        const dir = `${heldRoot}/probe`;
+        const link = `${heldRoot}/probe-link`;
+        const fresh = `${heldRoot}/probe-fresh`;
         try {
             FS.mkdirTree(dir);
             FS.mount(datedFiles(WORKERFS), { files: [new File([new Uint8Array([1, 2, 3])], "probe.bin")] }, dir);
@@ -250,7 +261,7 @@ export function createStore(FS, root = "/data", log = () => {}, options = {}) {
             // The file it read before: nothing reads it through this path now.
             try { FS.unmount(before.dir); } catch (error) { /* still open somewhere */ }
         }
-        const dir = `${HELD_ROOT}/${nextHeld++}`;
+        const dir = `${heldRoot}/${nextHeld++}`;
         FS.mkdirTree(dir);
         FS.mount(datedFiles(FS.filesystems.WORKERFS), { files: [file] }, dir);
         FS.mkdirTree(path.slice(0, path.lastIndexOf("/")));
@@ -574,10 +585,60 @@ export function createStore(FS, root = "/data", log = () => {}, options = {}) {
         });
     }
 
+    /**
+     * Files another worker wrote straight into the folder (services/
+     * bundleWeb.js: an import's large members, unpacked by its own worker so
+     * they never pass through Python's heap), known from now on as a pull
+     * would have read them -- present to Python, their bytes left in the
+     * folder until it reads them (`placeLazy`), or held there when too big
+     * to hold -- so the next push neither writes them back nor deletes them,
+     * and the next pull does not read them again. Paths relative to the
+     * store; one not in the folder is `missing`. -> {placed, held, linked, missing}.
+     */
+    function adopt(paths) {
+        return queue(async () => {
+            if (!handle) return null;
+            let placed = 0;
+            const missing = [];
+            const big = new Map();
+            for (const rel of paths || []) {
+                if (shared && keptOut(rel)) continue;
+                let file = null;
+                try {
+                    const dir = await folderOf(rel, false);
+                    file = await (await dir.getFileHandle(rel.split("/").pop())).getFile();
+                } catch (error) {
+                    missing.push(rel);
+                    continue;
+                }
+                const parts = rel.split("/");
+                for (let i = 1; i < parts.length; i += 1) {
+                    const dir = parts.slice(0, i).join("/");
+                    FS.mkdirTree(full(dir));
+                    knownDirs.add(dir);
+                }
+                if (shared && file.size >= HELD_BYTES) {
+                    held.set(rel, file.size);
+                    big.set(rel, file);
+                    continue;
+                }
+                const was = known.get(rel);
+                if (was && was.remote === file.lastModified && was.size === file.size) continue; // a pull came first
+                if (isOpen(rel)) continue; // the next pull places it
+                placeLazy(rel, file, file.lastModified, file.size);
+                known.set(rel, { local: file.lastModified, remote: file.lastModified, size: file.size, hash: null });
+                placed += 1;
+            }
+            const linked = linkAll(big);
+            return { placed, held: big.size, linked, missing };
+        });
+    }
+
     return {
         open,
         push,
         pull,
+        adopt,
         get attached() { return Boolean(handle); },
         files: () => known.size,
         //: The files of a shared folder left there for their size.
