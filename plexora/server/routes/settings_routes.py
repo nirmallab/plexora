@@ -266,6 +266,90 @@ def settings_data_migration():
     return jsonify(data_migration.status())
 
 
+# -- locations ----------------------------------------------------------------
+#
+# Every place projects are kept (server/models/library.py): the data root, the
+# workspace this computer shares with the website, its older nested folder,
+# the workspaces the user added, and shared roots. Adding or removing one
+# re-reads the list of libraries and nothing else (`paths.reset_libraries`),
+# so the data root stays what this process is serving from, for the reason in
+# the module docstring.
+
+
+def _locations_state():
+    from plexora.server.models import library
+
+    listed = library.locations()
+    default = next((place for place in listed if place.is_default), None)
+    if default is not None:
+        default_save = {"id": default.id, "label": default.label, "path": str(default.path)}
+    else:
+        default_save = library.default_save()
+    return {
+        "default_save": default_save,
+        "locations": [place.to_dict() for place in listed],
+        "website": library.on_the_website(),
+        "env_override": paths.ENV_LIBRARY_PATH
+        if os.environ.get(paths.ENV_LIBRARY_PATH) is not None else "",
+    }
+
+
+def _location_call(change):
+    """Run one change to the list and answer with the new state, or with the
+    refusal as `{error}` and its status (400, 404 or 409)."""
+    from plexora.server.models import library
+
+    try:
+        result = change()
+    except library.LocationError as exc:
+        return jsonify(error=str(exc)), exc.status
+    return jsonify({**_locations_state(), **result})
+
+
+@app.route('/settings/locations')
+def settings_locations():
+    """`{default_save: {id, label, path}, locations: [...], website,
+    env_override}`. On the website: its /data and the folders it mounted."""
+    return jsonify(_locations_state())
+
+
+@app.route('/settings/locations', methods=['POST'])
+def settings_locations_add():
+    """`{path}`: add an existing workspace (a folder with a workspace.json, or
+    with projects/config.json) to the list."""
+    from plexora.server.models import library
+
+    payload = request.get_json(silent=True) or {}
+    return _location_call(lambda: {"location": library.register(payload.get('path')).to_dict()})
+
+
+@app.route('/settings/locations/<location_id>', methods=['DELETE'])
+def settings_locations_remove(location_id):
+    """Take a workspace the user added off the list. No file is touched."""
+    from plexora.server.models import library
+
+    return _location_call(lambda: {"removed": library.unregister(location_id)})
+
+
+@app.route('/settings/locations/default', methods=['POST'])
+def settings_locations_default():
+    """`{id}`: where new projects go from now on."""
+    from plexora.server.models import library
+
+    payload = request.get_json(silent=True) or {}
+    return _location_call(lambda: {"location": library.set_default(payload.get('id')).to_dict()})
+
+
+@app.route('/settings/locations/tidy', methods=['POST'])
+def settings_locations_tidy():
+    """`{id}` of the older nested folder: move its projects and pyramids up
+    into Documents/Plexora, when nothing is there yet."""
+    from plexora.server.models import library
+
+    payload = request.get_json(silent=True) or {}
+    return _location_call(lambda: {"tidied": library.tidy(payload.get('id'))})
+
+
 # -- remote servers ---------------------------------------------------------
 #
 # The same thing `plexora connect` does, driven from a page instead of a

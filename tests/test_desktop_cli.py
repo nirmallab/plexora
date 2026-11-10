@@ -211,6 +211,32 @@ def test_notices_go_to_stderr_never_stdout(rig):
     assert "will keep your projects" not in rig.stdout.getvalue()
 
 
+def test_the_shared_workspace_is_made_once_and_said_on_stderr(rig, tmp_path):
+    """`paths.ensure_workspace` at start (it decides which accounts): what it
+    made is a notice; a workspace already there says nothing; and one that
+    cannot be made never stops the app starting."""
+    fake_paths = sys.modules["plexora"].paths
+    fake_paths.WORKSPACE_FOUND = "already a workspace"
+    made = types.SimpleNamespace(path=tmp_path / "Documents" / "Plexora", rule="created")
+    fake_paths.ensure_workspace = lambda: made
+    assert run(rig, ["--desktop", "--port", "0"]) == 0
+    assert f"Plexora workspace (created): {made.path}" in rig.stderr.getvalue()
+    assert set(_ready(rig)) == READY_KEYS
+
+    rig.stdout, rig.stderr = io.StringIO(), io.StringIO()
+    made.rule = "already a workspace"
+    assert run(rig, ["--desktop", "--port", "0"]) == 0
+    assert "Plexora workspace" not in rig.stderr.getvalue()
+
+    def refused():
+        raise PermissionError("Documents is not writable")
+
+    rig.stdout, rig.stderr = io.StringIO(), io.StringIO()
+    fake_paths.ensure_workspace = refused
+    assert run(rig, ["--desktop", "--port", "0"]) == 0
+    assert set(_ready(rig)) == READY_KEYS
+
+
 def test_the_life_is_tied_to_stdin_and_the_polite_signals(rig):
     run(rig, ["--desktop", "--port", "0"])
     assert len(rig.watched) == 1

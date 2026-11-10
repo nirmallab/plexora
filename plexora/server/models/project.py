@@ -28,8 +28,10 @@ from __future__ import annotations
 import copy
 import json
 import os
+import re
 import threading
 import unicodedata
+import uuid
 from contextlib import contextmanager
 from dataclasses import dataclass, field, replace
 from pathlib import Path
@@ -1017,8 +1019,30 @@ _MODELLED_KEYS = frozenset({
     "resources", "spatialLayers", "imageRender", "imageDepth",
     "imageAxes", "imageShape", "imageDefaultView", "imageZSemantics",
     "imageTSemantics", "pixelSizeZ", "frameInterval", "imageViews",
-    "title",
+    "title", "id",
 })
+
+
+#: What a stored project id may look like. Plexora writes 32 hex characters
+#: (`new_project_id`); anything of this shape that another app or a bundle
+#: wrote is kept as it is, and anything else is treated as no id, so the next
+#: write gives the project a proper one.
+_ID_SHAPE = re.compile(r"^[0-9A-Za-z_-]{8,64}$")
+
+
+def new_project_id() -> str:
+    """A project id: `uuid4().hex`, 32 hex characters. Long enough to be
+    unique between users and machines, because a bundle carries it from one
+    person's library to another's and a later sync keys on it."""
+    return uuid.uuid4().hex
+
+
+def clean_project_id(value: Any) -> str | None:
+    """A stored id as it is, or None when there is none or it is not one."""
+    if isinstance(value, str) and _ID_SHAPE.match(value.strip()):
+        return value.strip()
+    return None
+
 
 #: Requirement keys that describe the feature table rather than the project.
 #: Swapping the data file invalidates the answers to these -- the columns they
@@ -1584,6 +1608,20 @@ class Project:
     #: every URL -- so renaming is this field and nothing else. Read
     #: `display_name` rather than this: that resolves the fallback.
     title: str | None = None
+    #: The project's identity, beside its name: `uuid4().hex`, stored under
+    #: `id`. `name` stays the key of everything -- config.json, the folder,
+    #: every URL -- and this is what recognises the same project through two
+    #: locations, in a bundle, and in a dataset that recorded it.
+    #:
+    #: Always set. A record whose entry has none -- one written before ids
+    #: existed, or one being built for a registration -- is given one when it
+    #: is made, and copies made from it (`patch`) carry the same one, so every
+    #: registry gains ids on its next write with no migration pass and a
+    #: record reports one id however it is copied before it is saved. Kept
+    #: from then on; a project registered again under the same name keeps the
+    #: one it had (`save`). `recorded_id` says whether config.json holds it
+    #: yet. Not compared: two reads of one entry are the same record.
+    id: str | None = field(default=None, compare=False)
     #: Keys this module does not model, preserved verbatim across a save.
     extra: Mapping[str, Any] = field(default_factory=dict)
     #: The root this project's registry entry was read from, and therefore
@@ -1597,6 +1635,22 @@ class Project:
     #: field of the entry, and writing it would freeze one machine's layout
     #: into a file that another machine reads.
     home_root: Path | None = None
+    #: Whether `id` was made for this record rather than read or given --
+    #: what `save` and `recorded_id` ask. An init field so `patch` carries
+    #: it with the id.
+    _id_made: bool = field(default=False, compare=False, repr=False)
+
+    def __post_init__(self):
+        if clean_project_id(self.id) is None:
+            object.__setattr__(self, "id", new_project_id())
+            object.__setattr__(self, "_id_made", True)
+
+    @property
+    def recorded_id(self) -> str | None:
+        """The id as config.json records it, or None for an entry not
+        written since ids existed (its `id` is then the one its next write
+        will record)."""
+        return None if self._id_made else self.id
 
     # -- construction ----------------------------------------------------
 
@@ -1621,11 +1675,13 @@ class Project:
             image_depth=_repair_depth(entry.get("imageDepth")),
             bundles=_bundles_from_entry(entry),
             title=read_title(entry.get("title"), name),
+            id=clean_project_id(entry.get("id")),
             extra={k: v for k, v in entry.items() if k not in _MODELLED_KEYS},
         )
 
     def to_entry(self) -> dict:
         entry = dict(self.extra)
+        entry["id"] = self.id
         entry.update(self.image.to_entry())
         entry.update(self.segmentation.to_entry())
         entry.update(_clean({
@@ -1674,6 +1730,9 @@ class Project:
     def patch(self, **changes) -> "Project":
         """Copy with the named fields replaced. Merge semantics: a field not
         named is carried across untouched, `extra` included."""
+        if "id" in changes and "_id_made" not in changes:
+            # An id somebody names is the project's, not one made for it.
+            changes["_id_made"] = False
         return replace(self, **changes)
 
     @property
@@ -2627,7 +2686,13 @@ class Project:
         path = paths.config_path(root)
         with _CONFIG_LOCK:
             config = read_config(path)
-            config[self.name] = self.to_entry()
+            entry = self.to_entry()
+            # A record built afresh for a name already here -- registering the
+            # same project again -- is the same project, and keeps its id.
+            stored = config.get(self.name)
+            if self._id_made and isinstance(stored, Mapping):
+                entry["id"] = clean_project_id(stored.get("id")) or self.id
+            config[self.name] = entry
             write_config(path, config)
             return config[self.name]
 
@@ -2657,6 +2722,38 @@ class Project:
             config = read_config(path)
             config.pop(self.name, None)
             write_config(path, config)
+
+
+def ensure_id(name: str, data_root=None) -> str:
+    """Project `name`'s id, given one and written now if it has none yet.
+
+    For a caller that needs the id before anything else would write the
+    record -- a bundle being exported. Only the `id` key of the entry is
+    added; nothing else in it is rebuilt. Raises KeyError for a name that is
+    not registered (in `data_root`, or in any root).
+
+    A project on a root this user cannot write -- a shared one -- cannot keep
+    an id, so it is given one derived from where it is and its name: the same
+    every time it is asked for here, and never written.
+    """
+    with config_transaction():
+        root = Path(data_root) if data_root is not None else Project.root_for(name)
+        if root is None:
+            raise KeyError(f"Unknown datasource: {name!r}")
+        path = paths.config_path(root)
+        config = read_config(path)
+        entry = config.get(name)
+        if not isinstance(entry, dict):
+            raise KeyError(f"Unknown datasource: {name!r}")
+        existing = clean_project_id(entry.get("id"))
+        if existing:
+            return existing
+        if not paths.is_writable(root):
+            return uuid.uuid5(uuid.NAMESPACE_URL,
+                              f"{Path(root).resolve().as_uri()}#{name}").hex
+        entry["id"] = new_project_id()
+        write_config(path, config)
+        return entry["id"]
 
 
 def all_projects(data_root=None) -> list[Project]:

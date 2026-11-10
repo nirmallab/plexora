@@ -36,6 +36,15 @@ in the data root, and one kept in the library never moves back: a library
 whose config.json cannot be read for a moment must not take a grouping off the
 website.
 
+**Members are recorded by name and by id.** `projects` lists names, as it
+always has, and `projectIds` maps each name to its project's id
+(`Project.id`) once the project has one. Names stay what everything reads;
+the id is what recognises a member that is listed under another name where
+it is seen now -- the same project through another location, or brought in
+by a bundle. A reader that knows only names reads the file as before, and a
+member recorded only by id (under `projectIds[""]`, or `projectIds` as a bare
+list) is read too, and kept as it was on every write.
+
 **Membership is pruned in the view and never on read.** A shared root that is
 not mounted this morning makes its projects vanish from `Project.load_all()`.
 If reading the file rewrote it to match, one unmounted drive would permanently
@@ -94,6 +103,10 @@ class Dataset:
     #: whatever writes it first does not have to teach this module about it.
     meta: Mapping[str, Any] = field(default_factory=dict)
     projects: tuple[str, ...] = ()
+    #: Project name -> its id, for the members whose id is known; and the
+    #: ids of members recorded by id alone, under "" (see the module
+    #: docstring). Written beside `projects`, never instead of it.
+    project_ids: Mapping[str, Any] = field(default_factory=dict)
 
     @classmethod
     def from_dict(cls, dataset_id: str, raw: Mapping[str, Any] | None) -> "Dataset | None":
@@ -124,10 +137,17 @@ class Dataset:
             description=str(raw.get("description") or ""),
             meta=dict(meta) if isinstance(meta, Mapping) else {},
             projects=tuple(ordered),
+            project_ids=_read_ids(raw.get("projectIds"), ordered),
         )
 
     def to_dict(self) -> dict:
         out: dict[str, Any] = {"name": self.name, "projects": list(self.projects)}
+        ids: dict[str, Any] = {name: self.project_ids[name] for name in self.projects
+                               if isinstance(self.project_ids.get(name), str)}
+        if self.unnamed_ids:
+            ids[""] = list(self.unnamed_ids)
+        if ids:
+            out["projectIds"] = ids
         if self.created_at:
             out["createdAt"] = self.created_at
         if self.description:
@@ -150,6 +170,37 @@ class Dataset:
 
     def with_projects(self, projects: Iterable[str]) -> "Dataset":
         return replace(self, projects=tuple(projects))
+
+    @property
+    def unnamed_ids(self) -> tuple:
+        """Ids of members recorded by id alone, with no name beside them."""
+        return tuple(self.project_ids.get("") or ())
+
+
+def _read_ids(raw, names) -> dict:
+    """`projectIds` as read: `{name: id}`, plus `{"": [id, ...]}` for ids
+    with no name -- a bare list, or a name the record does not list."""
+    ids: dict[str, Any] = {}
+    loose: list = []
+    listed = set(names)
+    if isinstance(raw, Mapping):
+        for name, ident in raw.items():
+            if name == "" and isinstance(ident, (list, tuple)):
+                loose.extend(str(each).strip() for each in ident
+                             if isinstance(each, str) and each.strip())
+                continue
+            if not isinstance(ident, str) or not ident.strip():
+                continue
+            if str(name) in listed:
+                ids[str(name)] = ident.strip()
+            else:
+                loose.append(ident.strip())
+    elif isinstance(raw, (list, tuple)):
+        loose.extend(str(ident).strip() for ident in raw
+                     if isinstance(ident, str) and ident.strip())
+    if loose:
+        ids[""] = tuple(dict.fromkeys(loose))
+    return ids
 
 
 def datasets_path(root=None) -> Path:
@@ -242,6 +293,7 @@ def _store(records: Mapping[str, Dataset], files: _Files) -> None:
     library before it is taken out of the data root, so a write that fails
     between the two leaves it in both files, where reading finds it once.
     """
+    records = _with_ids(records)
     members = {library: set(read_config(paths.config_path(library)))
                for library in files.roots[1:]}
     placed: dict = {home: {} for home in files.roots}
@@ -260,6 +312,45 @@ def _write(records: Mapping[str, Dataset], root=None) -> None:
     })
 
 
+def _project_ids() -> dict:
+    """Project name -> id, for every visible project that has one; the
+    user's own root first, as `Project.load_all` merges them. Read through
+    the registry cache, so a listing that needs it twice parses nothing
+    again."""
+    from plexora.server.models.project import _parsed, clean_project_id
+
+    out: dict = {}
+    seen: set = set()
+    for root in paths.roots():
+        for name, entry in _parsed(paths.config_path(root)).items():
+            if name in seen:
+                continue
+            seen.add(name)
+            ident = clean_project_id(entry.get("id")) if isinstance(entry, Mapping) else None
+            if ident:
+                out[name] = ident
+    return out
+
+
+def _with_ids(records: Mapping[str, Dataset]) -> dict:
+    """Every record with its members' ids filled in from the projects as
+    they are now. An id already recorded for a member whose project cannot be
+    read today (a root not mounted) is kept, for the reason membership is
+    never pruned on read."""
+    if not any(ds.projects for ds in records.values()):
+        return dict(records)
+    known = _project_ids()
+    out = {}
+    for dataset_id, dataset in records.items():
+        ids = {name: known.get(name) or dataset.project_ids.get(name)
+               for name in dataset.projects}
+        ids = {name: ident for name, ident in ids.items() if ident}
+        if dataset.unnamed_ids:
+            ids[""] = dataset.unnamed_ids
+        out[dataset_id] = replace(dataset, project_ids=ids)
+    return out
+
+
 def load_all(root=None, known: Iterable[str] | None = None) -> dict:
     """Every dataset, keyed by id, newest membership pruned to `known`.
 
@@ -273,9 +364,25 @@ def load_all(root=None, known: Iterable[str] | None = None) -> dict:
     records, _ = _open(root)
     if names is None:
         return records
-    return {dataset_id: dataset.with_projects(
-                [name for name in dataset.projects if name in names])
-            for dataset_id, dataset in records.items()}
+    by_id = None
+    out = {}
+    for dataset_id, dataset in records.items():
+        members = [name for name in dataset.projects if name in names]
+        # A member not seen under its recorded name, or recorded by id
+        # alone: found by its id when a visible project has it. Only looked
+        # up when there is one, so the ordinary listing reads no registry.
+        missing = [dataset.project_ids[name] for name in dataset.projects
+                   if name not in names and isinstance(dataset.project_ids.get(name), str)]
+        missing.extend(dataset.unnamed_ids)
+        if missing:
+            if by_id is None:
+                by_id = {ident: name for name, ident in _project_ids().items()}
+            for ident in missing:
+                name = by_id.get(ident)
+                if name is not None and name in names and name not in members:
+                    members.append(name)
+        out[dataset_id] = dataset.with_projects(members)
+    return out
 
 
 def find(dataset_id: str, root=None, known: Iterable[str] | None = None) -> "Dataset | None":
@@ -503,8 +610,11 @@ def _released(records: Mapping[str, Dataset], names: Iterable[str]) -> dict:
     if not dropped:
         return dict(records)
     return {
-        dataset_id: dataset.with_projects(
-            [name for name in dataset.projects if name not in dropped])
+        dataset_id: replace(
+            dataset,
+            projects=tuple(name for name in dataset.projects if name not in dropped),
+            project_ids={name: ident for name, ident in dataset.project_ids.items()
+                         if name not in dropped})
         for dataset_id, dataset in records.items()
     }
 

@@ -35,11 +35,15 @@ of, and it is safe to call from anywhere including the CLI.
 
 from __future__ import annotations
 
+import contextvars
 import json
 import os
 import re
 import threading
 import time
+import uuid
+from contextlib import contextmanager
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import NamedTuple
 
@@ -83,6 +87,17 @@ RULE_PLATFORM_DEFAULT = "platform default"
 #: root also holds what is one machine's (servers, node tokens, the agent's
 #: sessions, caches), and the website reads that whole folder.
 RULE_WEBSITE_LIBRARY = "the website's projects on this computer"
+
+#: Why the website's projects in their older place are one of the user's own
+#: roots: Documents/Plexora/Plexora/projects, the folder the website made
+#: inside the one the user picked before it learned to take the pick as the
+#: workspace itself. Listed so nothing made there disappears from the desktop
+#: app; never where a new project goes (`new_projects_root`), and moved up
+#: beside the rest only when the user asks (Settings > Data, `library.tidy`).
+RULE_LEGACY_NESTED = "the website's projects in their older nested folder"
+
+#: Why a workspace somebody added in Settings > Data is one of their roots.
+RULE_REGISTERED_WORKSPACE = "a workspace added in Settings"
 
 #: The first line of the two-used-directories refusal, fixed so that
 #: `plexora connect` can recognise it in a remote's dying output and relay the
@@ -625,70 +640,276 @@ def data_root_notices() -> list[str]:
     return lines
 
 
-# -- the website's projects on this computer -----------------------------
+# -- the workspace: Documents/Plexora ------------------------------------
+#
+# A workspace is a folder holding `projects/` (a root: config.json and the
+# projects' folders) and, beside it, `pyramids/` (the website's copies of
+# images it could not read in place) and `workspace.json`. Both apps share
+# one: the website's /data is its `projects/`, and the desktop lists that
+# same folder as one of the user's roots.
+
+#: The marker at a workspace's root, above `projects/`: which workspace this
+#: is (`id`), who made it and when. Above `projects/` on purpose: on the
+#: website `projects/` is Python's /data, copied into the page's store, and
+#: the marker is the folder's identity rather than one of its projects.
+#: Neither app requires it -- a `projects/config.json` alone is still a
+#: workspace, as every folder made before the marker is.
+WORKSPACE_FILENAME = "workspace.json"
+WORKSPACE_SCHEMA = 1
+PROJECTS_DIRNAME = "projects"
+
+#: What `ensure_workspace` did, as the rule of the Resolution it returns.
+WORKSPACE_FOUND = "already a workspace"
+WORKSPACE_MARKED = "marked as a workspace"
+WORKSPACE_CREATED = "created"
+
+#: settings.json keys Settings > Data writes (server/models/library.py):
+#: the workspaces the user added, and where new projects go.
+LOCATIONS_KEY = "locations"
+NEW_PROJECTS_KEY = "new_projects_dir"
+
+
+def _documents_dir() -> Path:
+    try:
+        from platformdirs import user_documents_dir
+
+        return Path(user_documents_dir())
+    except Exception:  # noqa: BLE001 -- platformdirs is a dependency; home is the fallback
+        return Path.home() / "Documents"
 
 
 def website_library() -> Path:
     """Where the website keeps its projects on this computer when the user
-    lets it (client services/browserStore.js): Documents/Plexora/projects."""
-    try:
-        from platformdirs import user_documents_dir
+    lets it (client services/browserStore.js): Documents/Plexora/projects,
+    `workspace_root()/projects`."""
+    return _documents_dir() / "Plexora" / PROJECTS_DIRNAME
 
-        documents = Path(user_documents_dir())
-    except Exception:  # noqa: BLE001 -- platformdirs is a dependency; home is the fallback
-        documents = Path.home() / "Documents"
-    return documents / "Plexora" / "projects"
+
+def workspace_root() -> Path:
+    """The workspace both apps share on this computer: Documents/Plexora.
+
+    Derived from `website_library` rather than the other way round, so a test
+    (or anything else) that moves the library moves the workspace and the
+    older nested folder with it."""
+    return website_library().parent
+
+
+def legacy_nested_library() -> Path:
+    """Where the website kept its projects before it took the picked folder
+    as the workspace: Documents/Plexora/Plexora/projects. It made a `Plexora`
+    folder inside whatever the user picked unless the pick was already named
+    so, and a pick of Documents/Plexora itself therefore nested one."""
+    return workspace_root() / "Plexora" / PROJECTS_DIRNAME
+
+
+def read_workspace(root) -> dict | None:
+    """The marker of the workspace at `root` (the folder above `projects/`),
+    or None when there is none or it does not read as one."""
+    try:
+        data = json.loads((Path(root) / WORKSPACE_FILENAME).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    if not isinstance(data, dict):
+        return None
+    ident = data.get("id")
+    if not isinstance(ident, str) or not ident.strip():
+        return None
+    return data
+
+
+def _utc_now() -> str:
+    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def write_workspace(root, created_by: str) -> dict | None:
+    """Mark `root` as a workspace unless it is one already; the marker in
+    force, or None when a damaged one is in the way.
+
+    Never overwrites: the id is how either app recognises the folder again,
+    through another location or after a reconnect, so a second id for the
+    same folder would make it two workspaces. Created exclusively, so the
+    website and the desktop app marking one folder at the same moment end up
+    with the first one's marker, not a mixture.
+    """
+    root = Path(root)
+    existing = read_workspace(root)
+    if existing is not None:
+        return existing
+    marker = {
+        "schema": WORKSPACE_SCHEMA,
+        "id": uuid.uuid4().hex,
+        "createdAt": _utc_now(),
+        "createdBy": str(created_by),
+        "name": root.name,
+    }
+    root.mkdir(parents=True, exist_ok=True)
+    try:
+        with (root / WORKSPACE_FILENAME).open("x", encoding="utf-8") as handle:
+            json.dump(marker, handle, indent=2)
+    except FileExistsError:
+        return read_workspace(root)
+    return marker
+
+
+def ensure_workspace() -> Resolution | None:
+    """Make Documents/Plexora a workspace, the first time the desktop app runs.
+
+    Creates `workspace.json` and `projects/` when the folder is absent, and
+    adds `workspace.json` to one that lacks it; a folder that has one is not
+    touched. Never makes a `Plexora` inside it and never moves anything: an
+    older nested `Plexora/Plexora` stays where it is, listed
+    (`RULE_LEGACY_NESTED`), until the user tidies it up.
+
+    Only for an account on its own computer at the platform default, the
+    same accounts whose new projects go there (`new_projects_root`): a data
+    directory somebody chose, libraries named by PLEXORA_LIBRARY_PATH, a
+    server reached from elsewhere and a notebook's server are left alone.
+    None then, and when the folder cannot be written; otherwise the workspace
+    and what was done (`WORKSPACE_FOUND`, `WORKSPACE_MARKED`,
+    `WORKSPACE_CREATED`). Idempotent.
+    """
+    if _served_from_elsewhere() or os.environ.get(ENV_LIBRARY_PATH) is not None:
+        return None
+    try:
+        if data_root_resolution().rule != RULE_PLATFORM_DEFAULT:
+            return None
+    except DataRootError:
+        return None
+    root = workspace_root()
+    try:
+        # A marker that will not parse is still somebody's marker: left alone.
+        if read_workspace(root) is not None or (root / WORKSPACE_FILENAME).exists():
+            return Resolution(root, WORKSPACE_FOUND)
+        existed = root.is_dir()
+        (root / PROJECTS_DIRNAME).mkdir(parents=True, exist_ok=True)
+        if write_workspace(root, "desktop") is None:
+            return None
+    except OSError:
+        return None
+    return Resolution(root, WORKSPACE_MARKED if existed else WORKSPACE_CREATED)
+
+
+def registered_locations() -> list[dict]:
+    """The workspaces added in Settings > Data, as settings.json records them:
+    `{"version": 1, "locations": [{id, kind, path, label, addedAt}]}`, `path`
+    being the workspace (the folder above `projects/`). In the settings file
+    because the list is the user's on this computer, not any workspace's.
+    Records without a path are skipped; nothing here writes."""
+    raw = read_settings().get(LOCATIONS_KEY)
+    if isinstance(raw, dict):
+        raw = raw.get("locations")
+    if not isinstance(raw, list):
+        return []
+    return [dict(item) for item in raw
+            if isinstance(item, dict) and isinstance(item.get("path"), str)
+            and item["path"].strip()]
+
+
+class _Candidate:
+    """A folder that is one of the user's libraries once it holds a registry.
+
+    `found` is remembered and a miss is not: the website may make its folder,
+    or a drive be mounted, while this process runs, and looking again is one
+    stat."""
+
+    __slots__ = ("path", "rule", "found")
+
+    def __init__(self, path: Path, rule: str):
+        self.path = path
+        self.rule = rule
+        self.found = False
+
+
+def _library_candidates() -> list[_Candidate]:
+    """Every folder that may be one of the user's libraries, in precedence
+    order: Documents/Plexora/projects, the older nested folder, then the
+    workspaces added in Settings. `PLEXORA_LIBRARY_PATH` names them instead
+    (os.pathsep-separated; empty for none). Cached; `reset` and
+    `reset_libraries` forget it."""
+    with _cache_lock:
+        cached = _cache.get("library_candidates")
+        if cached is not None:
+            return cached  # type: ignore[return-value]
+    from_env = os.environ.get(ENV_LIBRARY_PATH)
+    if from_env is not None:
+        named = [(Path(entry).expanduser(), f"{ENV_LIBRARY_PATH} environment variable")
+                 for entry in from_env.split(os.pathsep) if entry.strip()]
+    else:
+        named = [(website_library(), RULE_WEBSITE_LIBRARY),
+                 (legacy_nested_library(), RULE_LEGACY_NESTED)]
+        named.extend((Path(record["path"]).expanduser() / PROJECTS_DIRNAME,
+                      RULE_REGISTERED_WORKSPACE) for record in registered_locations())
+    out: list[_Candidate] = []
+    seen: set[Path] = set()
+    for path, rule in named:
+        try:
+            path = path.resolve()
+        except (OSError, RuntimeError):
+            continue
+        if path not in seen:
+            seen.add(path)
+            out.append(_Candidate(path, rule))
+    with _cache_lock:
+        return _cache.setdefault("library_candidates", out)  # type: ignore[return-value]
+
+
+def library_candidates() -> list[Resolution]:
+    """Every folder that may be one of the user's libraries, in precedence
+    order, whether or not it holds a registry today -- for Settings > Data,
+    which lists a workspace that is not mounted rather than forgetting it.
+    `library_root_resolutions` is the ones that are roots now."""
+    return [Resolution(candidate.path, candidate.rule) for candidate in _library_candidates()]
+
+
+def reset_libraries() -> None:
+    """Look for the user's libraries again, keeping the data root.
+
+    For Settings > Data adding or removing a workspace: `reset()` would also
+    re-resolve the data root under a running server, which the settings
+    routes deliberately never do (settings_routes' module docstring)."""
+    with _cache_lock:
+        _cache.pop("library_candidates", None)
+        _cache.pop("shared_roots", None)
 
 
 def is_website_library(root) -> bool:
     """Whether `root` is a folder of projects the website shares: Plexora's
-    folder in Documents, or a library named by PLEXORA_LIBRARY_PATH."""
+    folder in Documents (or its older nested one), a workspace added in
+    Settings, or a library named by PLEXORA_LIBRARY_PATH -- each a folder a
+    browser can be given."""
     try:
         root = Path(root).resolve()
-        named = os.environ.get(ENV_LIBRARY_PATH)
-        if named is not None:
-            return any(root == Path(entry).expanduser().resolve()
-                       for entry in named.split(os.pathsep) if entry.strip())
-        return root == website_library().resolve()
     except (OSError, RuntimeError):
         return False
+    return any(root == candidate.path for candidate in _library_candidates())
 
 
 def library_root_resolutions() -> list[Resolution]:
     """Roots the user owns besides their data root, read and written as their
-    own: the website's projects on this computer (`website_library`), when it
-    holds a project registry and is not already the data root. So a project
-    made on the website opens in the desktop app in place, and either app's
-    changes are the other's on its next load.
+    own: the website's projects on this computer (`website_library`), its
+    older nested folder (`legacy_nested_library`) and the workspaces added in
+    Settings (their `projects/`), each when it holds a project registry and
+    is not already the data root. So a project made on the website opens in
+    the desktop app in place, and either app's changes are the other's on its
+    next load.
 
-    `PLEXORA_LIBRARY_PATH` names them instead (os.pathsep-separated; empty for
-    none). Cached like `shared_roots`.
+    A workspace that is not mounted today is skipped, never forgotten: it is
+    listed again once its registry can be seen. `PLEXORA_LIBRARY_PATH` names
+    the libraries instead (os.pathsep-separated; empty for none) -- on the
+    website, the extra folders the page mounts at /library/<id>
+    (browser/boot.py `set_libraries`).
     """
-    with _cache_lock:
-        cached = _cache.get("library_roots")
-        if cached is not None:
-            return list(cached)  # type: ignore[arg-type]
-    from_env = os.environ.get(ENV_LIBRARY_PATH)
-    if from_env is not None:
-        candidates = [(Path(entry).expanduser(), f"{ENV_LIBRARY_PATH} environment variable")
-                      for entry in from_env.split(os.pathsep) if entry.strip()]
-    else:
-        candidates = [(website_library(), RULE_WEBSITE_LIBRARY)]
     own = data_root()
     resolved = []
-    for path, rule in candidates:
-        try:
-            path = path.resolve()
-        except OSError:
-            continue
-        if path != own and (path / CONFIG_FILENAME).exists():
-            resolved.append(Resolution(path, rule))
-    # None is not remembered: the website may make its folder while this
-    # process runs, and looking again is one stat.
-    if resolved:
-        with _cache_lock:
-            _cache["library_roots"] = resolved
-    return list(resolved)
+    for candidate in _library_candidates():
+        if not candidate.found:
+            try:
+                candidate.found = (candidate.path / CONFIG_FILENAME).exists()
+            except OSError:
+                continue
+        if candidate.found and candidate.path != own:
+            resolved.append(Resolution(candidate.path, candidate.rule))
+    return resolved
 
 
 def library_roots() -> list[Path]:
@@ -712,20 +933,75 @@ def _served_from_elsewhere() -> bool:
                for name in (ENV_SERVER_IS_REMOTE, ENV_NOTEBOOK_MODE))
 
 
+#: Where new projects go for the rest of one request or job, when it named a
+#: location (`/import/sample`'s `location`, the dataset builder's): a root
+#: the caller has already checked is the user's own and writable
+#: (server/models/library.py `root_for_new_projects`). A context variable,
+#: so it reaches `new_projects_root` through every registration function
+#: without each growing a parameter, and stays with the request's thread.
+_new_projects_override: contextvars.ContextVar = contextvars.ContextVar(
+    "plexora_new_projects_root", default=None)
+
+
+@contextmanager
+def new_projects_in(root):
+    """New projects registered inside this block are written in `root`.
+
+    None leaves the usual answer in force. A name already registered in one
+    of the user's roots still stays where it is."""
+    token = _new_projects_override.set(Path(root) if root is not None else None)
+    try:
+        yield
+    finally:
+        _new_projects_override.reset(token)
+
+
+def _chosen_new_projects_dir(own: Path) -> Path | None:
+    """The default save location chosen in Settings > Data
+    (`settings["new_projects_dir"]`), while it can be used: the data root or
+    one of the user's libraries, mounted today and writable. Never the older
+    nested folder, which is listed so nothing in it is lost, not to be added
+    to."""
+    raw = read_settings().get(NEW_PROJECTS_KEY)
+    if not isinstance(raw, str) or not raw.strip():
+        return None
+    try:
+        chosen = Path(raw).expanduser().resolve()
+        legacy = legacy_nested_library().resolve()
+    except (OSError, RuntimeError):
+        return None
+    if chosen == own:
+        return own
+    if chosen == legacy or not any(chosen == candidate.path
+                                   for candidate in _library_candidates()):
+        return None
+    # The workspace must be there before anything is probed: `is_writable`
+    # makes the folder it asks about, and a drive that is not mounted would
+    # gain an empty local folder at its mount point.
+    if not chosen.parent.is_dir() or not is_writable(chosen):
+        return None
+    return chosen
+
+
 def new_projects_root(name=None) -> Path:
     """Where a project registered now is written: its registry entry, and so
     the user's state for it (`project_state_dir`).
 
     The user's own root that already holds `name`, when one does: a project
-    registered again stays where it is. Otherwise the library this computer
-    shares with the website (`website_library`: Documents/Plexora/projects),
-    made if missing, so a project made in the desktop app opens on the website
-    too -- a browser can reach that folder and never the data root (Chromium
-    refuses ~/Library, AppData and ~/.local/share). Only on the user's own
-    computer with the data root at its platform default: a data directory
-    somebody chose, a library list named by PLEXORA_LIBRARY_PATH (empty for
-    none), a server reached from elsewhere and a notebook's server keep new
-    projects in the data root, as does a library that cannot be written.
+    registered again stays where it is (in the older nested folder too, so
+    its state is not left behind). Then the location this request or job
+    named (`new_projects_in`). Then the default save location chosen in
+    Settings > Data (`settings["new_projects_dir"]`), while it is mounted and
+    writable. Otherwise the library this computer shares with the website
+    (`website_library`: Documents/Plexora/projects), made if missing, so a
+    project made in the desktop app opens on the website too -- a browser can
+    reach that folder and never the data root (Chromium refuses ~/Library,
+    AppData and ~/.local/share). Only on the user's own computer with the data
+    root at its platform default: a data directory somebody chose, a library
+    list named by PLEXORA_LIBRARY_PATH (empty for none), a server reached from
+    elsewhere and a notebook's server keep new projects in the data root, as
+    does a library that cannot be written. The older nested folder is never
+    where a new project goes.
 
     The files a registration makes -- copies, pyramids, caches -- are not
     written here but in the data root (`derived_root`).
@@ -735,7 +1011,15 @@ def new_projects_root(name=None) -> Path:
         for root in owned_roots():
             if name in _registered(root):
                 return root
-    if (os.environ.get(ENV_LIBRARY_PATH) is not None or _served_from_elsewhere()
+    override = _new_projects_override.get()
+    if override is not None:
+        return override
+    if _served_from_elsewhere():
+        return own
+    chosen = _chosen_new_projects_dir(own)
+    if chosen is not None:
+        return chosen
+    if (os.environ.get(ENV_LIBRARY_PATH) is not None
             or data_root_resolution().rule != RULE_PLATFORM_DEFAULT):
         return own
     try:

@@ -207,6 +207,13 @@ PYTHON = (
     "project_update_layer", "project_order_layers", "project_manifest", "project_resources",
     "project_files_here", "project_files_found", "project_open_elsewhere",
     "project_bundle", "projects_import_bundle", "project_size",
+    # Projects as one .plexora file (server/routes/bundle_routes.py): Python
+    # decides; on the website the page's worker moves the bytes from the plan.
+    "projects_export_estimate", "projects_export_start", "projects_export_plan",
+    "projects_export_manifest", "projects_export_status", "projects_export_cancel",
+    "projects_export_cancel_post", "projects_export_file", "projects_import_preview",
+    "projects_import_start", "projects_import_status", "projects_import_cancel",
+    "projects_import_cancel_post", "project_make_copy", "project_find_missing",
     "project_attach_resource", "project_thumbnail", "list_projects", "assign_projects", "put_file",
     "reload_datasource", "remote_health", "rename_channels_json", "set_pixel_size",
     # File > Open on the Website (plexora/website_link.py): `shown: false` here,
@@ -242,6 +249,11 @@ PYTHON = (
     # The desktop app's Advanced settings (plexora/browser_rendering.py): off
     # the desktop app Python says there is nothing to set.
     "settings_advanced", "settings_advanced_set",
+    # Where projects are kept (server/models/library.py): on the website the
+    # list is /data and the folders the page mounted; the page adds, removes
+    # and chooses its folders itself, and Python says so to a change.
+    "settings_locations", "settings_locations_add", "settings_locations_remove",
+    "settings_locations_default", "settings_locations_tidy",
 )
 
 

@@ -71,15 +71,24 @@ def list_projects():
     # root is not mounted today does not appear inside a folder it cannot be
     # opened from. Pruned in the VIEW only -- nothing is rewritten here.
     holders = datasets.membership(known=config.keys())
-    return jsonify([_project_card(name, entry, homes, holders, own)
+    # And where each root is, as Settings > Data names it -- once per listing.
+    from plexora.server.models import library
+
+    places = library.summaries()
+    return jsonify([_project_card(name, entry, homes, holders, own, places)
                     for name, entry in config.items()])
 
 
-def _project_card(name, entry, homes, holders, own):
-    """One `/projects` card. `homes`, `holders` and `own` are read once by the
-    caller for the whole listing -- see `list_projects`."""
+def _project_card(name, entry, homes, holders, own, places=None):
+    """One `/projects` card. `homes`, `holders`, `own` and `places` are read
+    once by the caller for the whole listing -- see `list_projects`; `places`
+    is read here when the caller did not."""
     entry = entry or {}
     home_root = homes.get(name)
+    if places is None:
+        from plexora.server.models import library
+
+        places = library.summaries()
     created_at = entry.get('createdAt') or _fallback_timestamp(name, home_root)
     last_opened_at = entry.get('lastOpenedAt') or created_at
     project = Project.from_entry(name, entry, home_root=home_root)
@@ -97,6 +106,11 @@ def _project_card(name, entry, homes, holders, own):
         # Name as well as id, so a card in a flattened search result can say
         # where it lives without a second lookup.
         'dataset': ({'id': holder.id, 'name': holder.name} if holder else None),
+        # The project's id (null until its record is next written, which gives
+        # it one) and the location it is kept in: `{id, label, kind}` from
+        # Settings > Data's list, or null for a root that is not in it.
+        'id': project.recorded_id,
+        'location': places.get(home_root) if home_root is not None else None,
         # The badges, from the one manifest reader -- so "has data" means
         # here exactly what it means to a plugin deciding whether to open.
         **manifest.summary(project),
@@ -1115,29 +1129,42 @@ def project_open_elsewhere(name):
 
 @app.route('/project/<string:name>/bundle')
 def project_bundle(name):
-    """The project as a `.plexora` file: its own work, never its images."""
-    import io
+    """The project as a `.plexora` file, with what the export dialog carries
+    by default (its own work, its tables, bookmarks and figures; never its
+    images). Written to a file of its own and served from it, never held in
+    memory; the dialog's job routes (bundle_routes.py) are the way for a large
+    project, with progress and a cancel."""
+    import tempfile
 
     from plexora.server.models import bundles
 
+    folder = Path(tempfile.mkdtemp(prefix="plexora-bundle-"))
     try:
-        data = bundles.export(name)
+        result = bundles.export([name], folder / f"{name}{bundles.SUFFIX}")
     except KeyError:
+        shutil.rmtree(folder, ignore_errors=True)
         abort(404)
-    return send_file(io.BytesIO(data), mimetype="application/zip", as_attachment=True,
-                     download_name=f"{name}{bundles.SUFFIX}")
+    except Exception:
+        shutil.rmtree(folder, ignore_errors=True)
+        raise
+    response = send_file(result["path"], mimetype="application/zip", as_attachment=True,
+                         download_name=f"{name}{bundles.SUFFIX}")
+    response.call_on_close(lambda: shutil.rmtree(folder, ignore_errors=True))
+    return response
 
 
 @app.route('/projects/bundle', methods=['POST'])
 def projects_import_bundle():
-    """Register the project in a `.plexora` file (the request's body, or its
-    `file` field) and say its name; its images are found when it opens."""
+    """Register the projects in a `.plexora` file (the request's body, or its
+    `file` field) as new ones and say the first one's name; their images are
+    found when they open. Streamed to a file first, never read into memory;
+    the import dialog previews first (bundle_routes.py)."""
     from plexora.server.models import bundles
 
     upload = request.files.get('file')
-    data = upload.read() if upload is not None else request.get_data()
     try:
-        name = bundles.import_bundle(data, name=(request.args.get('name') or '').strip() or None)
+        name = bundles.import_bundle(upload.stream if upload is not None else request.stream,
+                                     name=(request.args.get('name') or '').strip() or None)
     except bundles.BundleError as error:
         return jsonify(error=str(error)), 400
     return jsonify(project=name, url=f"/{name}")

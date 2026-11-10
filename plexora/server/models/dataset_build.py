@@ -325,8 +325,13 @@ def check_name(name, *, exist_ok=False) -> None:
 
 
 def start_build(token, plan, *, name, description="", exist_ok=False,
-                only=None) -> dict:
-    """Run `build` as a background task filed under `token`; its first status."""
+                only=None, root=None) -> dict:
+    """Run `build` as a background task filed under `token`; its first status.
+
+    `root`: where the new projects' records are written, when the request
+    named one of the user's locations (library.root_for_new_projects) --
+    carried into the task's own thread, which a request's context is not."""
+    from plexora import paths
     from plexora.server.models import dataset_plan, layer_jobs
 
     check_name(name, exist_ok=exist_ok)
@@ -346,9 +351,10 @@ def start_build(token, plan, *, name, description="", exist_ok=False,
             report(done, total)
 
         try:
-            result = build(plan, name=state["name"], description=description,
-                           exist_ok=exist_ok, only=only, cancel=cancel,
-                           on_progress=progress, report_to=state)
+            with paths.new_projects_in(root):
+                result = build(plan, name=state["name"], description=description,
+                               exist_ok=exist_ok, only=only, cancel=cancel,
+                               on_progress=progress, report_to=state)
         except Exception as error:
             state["error"] = str(error)
             raise

@@ -9,6 +9,7 @@ data root, which is never that folder.
 """
 
 import json
+import os
 
 import pytest
 
@@ -246,3 +247,185 @@ def test_a_dataset_made_on_the_desktop_is_grouped_on_the_website(laptop):
     lib = lib.resolve()
     assert datasets._read(lib)[cohort.id]["projects"] == ["sample_1"]
     assert cohort.id not in datasets._read(default)
+
+
+# -- the workspace: Documents/Plexora ------------------------------------------
+
+
+def _legacy(lib):
+    """Documents/Plexora/Plexora/projects, where the website used to nest its
+    projects, for the tmp library `lib`."""
+    return lib.parent / "Plexora" / "projects"
+
+
+def test_the_older_nested_folder_is_listed_after_the_library(laptop):
+    default, lib = laptop
+    _root(lib, "web_project")
+    old = _root(_legacy(lib), "old_project")
+    assert paths.legacy_nested_library() == _legacy(lib)
+    assert [(entry.path, entry.rule) for entry in paths.library_root_resolutions()] == [
+        (lib.resolve(), paths.RULE_WEBSITE_LIBRARY),
+        (old.resolve(), paths.RULE_LEGACY_NESTED)]
+    assert paths.roots()[:3] == [default, lib.resolve(), old.resolve()]
+    assert Project.load("old_project").home_root == old.resolve()
+    assert paths.project_state_dir("old_project") == old.resolve() / "old_project"
+    # Never where a new project goes; one already there stays there.
+    assert paths.new_projects_root() == lib.resolve()
+    assert paths.new_projects_root("old_project") == old.resolve()
+
+
+def test_a_library_made_after_the_older_one_is_found_without_a_restart(laptop):
+    """The older folder found first must not hide Documents/Plexora/projects
+    once the desktop app's first project makes it."""
+    default, lib = laptop
+    old = _root(_legacy(lib), "old_project")
+    assert paths.library_roots() == [old.resolve()]
+    _root(lib, "made_now")
+    assert paths.library_roots() == [lib.resolve(), old.resolve()]
+
+
+def test_ensure_workspace_is_idempotent_and_never_nests(laptop):
+    default, lib = laptop
+    workspace = lib.parent
+    made = paths.ensure_workspace()
+    assert made == (workspace, paths.WORKSPACE_CREATED)
+    marker = json.loads((workspace / "workspace.json").read_text(encoding="utf-8"))
+    assert marker["schema"] == 1 and len(marker["id"]) == 32 and marker["createdBy"] == "desktop"
+    assert marker["name"] == "Plexora" and marker["createdAt"].endswith("Z")
+    assert lib.is_dir() and not (workspace / "Plexora").exists()
+    assert paths.read_workspace(workspace) == marker
+
+    again = paths.ensure_workspace()
+    assert again == (workspace, paths.WORKSPACE_FOUND)
+    assert json.loads((workspace / "workspace.json").read_text(encoding="utf-8")) == marker
+    assert sorted(entry.name for entry in workspace.iterdir()) == ["projects", "workspace.json"]
+
+
+def test_ensure_workspace_marks_an_existing_folder_and_moves_nothing(laptop):
+    default, lib = laptop
+    old = _root(_legacy(lib), "old_project")
+    assert paths.ensure_workspace() == (lib.parent, paths.WORKSPACE_MARKED)
+    assert (lib.parent / "workspace.json").is_file()
+    assert (old / "config.json").is_file() and not (old.parent / "workspace.json").exists()
+    # A marker somebody else wrote is never replaced, even one that does not parse.
+    (lib.parent / "workspace.json").write_text("{not json", encoding="utf-8")
+    assert paths.ensure_workspace() == (lib.parent, paths.WORKSPACE_FOUND)
+    assert (lib.parent / "workspace.json").read_text(encoding="utf-8") == "{not json"
+
+
+@pytest.mark.parametrize("env", [("PLEXORA_SERVER_IS_REMOTE", "1"), ("PLEXORA_NOTEBOOK_MODE", "1"),
+                                 ("PLEXORA_LIBRARY_PATH", ""), ("PLEXORA_DATA_PATH", "chosen")])
+def test_ensure_workspace_leaves_other_accounts_alone(laptop, tmp_path, monkeypatch, env):
+    name, value = env
+    monkeypatch.setenv(name, str(tmp_path / value) if value == "chosen" else value)
+    paths.reset()
+    assert paths.ensure_workspace() is None
+    assert not laptop[1].parent.exists()
+
+
+def test_write_workspace_never_overwrites(tmp_path):
+    first = paths.write_workspace(tmp_path / "ws", "website")
+    second = paths.write_workspace(tmp_path / "ws", "desktop")
+    assert second == first and first["createdBy"] == "website" and first["name"] == "ws"
+
+
+def _settings(**values):
+    with paths.settings_lock():
+        settings = paths.read_settings()
+        settings.update(values)
+        paths.write_settings(settings)
+    paths.reset()
+
+
+def test_the_chosen_default_save_location_is_honoured(laptop, tmp_path):
+    default, lib = laptop
+    _root(lib, "web_project")
+    _settings(new_projects_dir=str(default))
+    assert paths.new_projects_root() == default
+    assert paths.new_projects_root("web_project") == lib.resolve()     # stays where it is
+    # A registered workspace, chosen.
+    other = _root(tmp_path / "Lab" / "projects", "lab_project")
+    _settings(locations={"version": 1, "locations": [{"id": "lab", "kind": "workspace",
+                                                     "path": str(other.parent), "label": "Lab"}]},
+              new_projects_dir=str(other))
+    assert paths.new_projects_root() == other.resolve()
+
+
+@pytest.mark.parametrize("chosen", ["legacy", "elsewhere", "unmounted"])
+def test_a_default_that_cannot_be_used_is_passed_over(laptop, tmp_path, chosen):
+    default, lib = laptop
+    old = _root(_legacy(lib), "old_project")
+    target = {"legacy": old, "elsewhere": tmp_path / "random",
+              "unmounted": tmp_path / "Volumes" / "Lab" / "projects"}[chosen]
+    _settings(locations={"version": 1, "locations": [
+        {"id": "lab", "kind": "workspace", "path": str(tmp_path / "Volumes" / "Lab")}]},
+        new_projects_dir=str(target))
+    assert paths.new_projects_root() == lib.resolve()
+    assert not (tmp_path / "Volumes").exists()                       # nothing made at a mount point
+
+
+def test_new_projects_dir_is_not_honoured_on_a_server_reached_from_elsewhere(laptop, monkeypatch):
+    default, lib = laptop
+    _root(lib, "web_project")
+    _settings(new_projects_dir=str(lib))
+    monkeypatch.setenv("PLEXORA_SERVER_IS_REMOTE", "1")
+    paths.reset()
+    assert paths.new_projects_root() == default
+
+
+def test_a_registered_workspace_is_one_of_the_roots(laptop, tmp_path, monkeypatch):
+    default, lib = laptop
+    _root(lib, "web_project")
+    lab = _root(tmp_path / "Lab" / "projects", "lab_project")
+    shared = _root(tmp_path / "site", "site_project")
+    monkeypatch.setenv("PLEXORA_SHARED_PATH", str(shared))
+    _settings(locations={"version": 1, "locations": [
+        {"id": "lab", "kind": "workspace", "path": str(lab.parent), "label": "Lab"}]})
+    assert paths.roots() == [default, lib.resolve(), lab.resolve(), shared.resolve()]
+    assert paths.library_root_resolutions()[-1].rule == paths.RULE_REGISTERED_WORKSPACE
+    project = Project.load("lab_project")
+    assert project.home_root == lab.resolve() and not project.is_shared
+    assert paths.is_website_library(lab)
+
+
+def test_an_unavailable_location_is_skipped_not_removed(laptop, tmp_path):
+    from plexora.server.models import library
+
+    default, lib = laptop
+    away = tmp_path / "Volumes" / "Lab"
+    _settings(locations={"version": 1, "locations": [
+        {"id": "lab", "kind": "workspace", "path": str(away), "label": "Lab"}]})
+    assert away / "projects" not in paths.roots()
+    listed = {place.id: place for place in library.locations()}
+    assert listed["lab"].available is False and listed["lab"].label == "Lab"
+    assert listed["lab"].project_count is None and not listed["lab"].writable
+    assert paths.registered_locations()[0]["id"] == "lab"            # still recorded
+    assert not away.exists()
+    # Mounted again: listed as a root, with no restart.
+    _root(away / "projects", "lab_project")
+    assert (away / "projects").resolve() in paths.roots()
+    assert {place.id: place for place in library.locations()}["lab"].available is True
+
+
+def test_the_websites_extra_folders_are_its_libraries(tmp_path, monkeypatch):
+    """boot.set_libraries: each folder the page mounted at /library/<id> is a
+    library beside /data, and an empty list leaves none."""
+    from plexora.browser import boot
+
+    data = tmp_path / "data"
+    data.mkdir()
+    one = _root(tmp_path / "library" / "abc", "in_abc")
+    two = tmp_path / "library" / "def"
+    two.mkdir()
+    monkeypatch.setenv("PLEXORA_DATA_PATH", str(data))
+    monkeypatch.setenv("PLEXORA_BACKEND", "browser")
+    assert boot.set_libraries([str(one), str(two)]) == [str(one), str(two)]
+    assert paths.library_roots() == [one.resolve()]                  # two has no projects yet
+    assert Project.load("in_abc").home_root == one.resolve()
+    from plexora.server.models import library
+
+    places = {place.id: place for place in library.locations()}
+    assert places["abc"].kind == "workspace" and places["def"].available
+    assert library.root_for_new_projects("def") == two.resolve()
+    assert boot.set_libraries([]) == []
+    assert os.environ["PLEXORA_LIBRARY_PATH"] == "" and paths.library_roots() == []
