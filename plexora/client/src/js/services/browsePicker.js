@@ -335,14 +335,16 @@ function onWebsite() {
  * the dialog has closed and before anything is mounted: a cancel there is a
  * cancelled pick, and the image opens once it is answered.
  */
-function pickQuestions() {
+function pickQuestions({quiet = false} = {}) {
     const ask = (body) => (window.PlexoraConfirm
         ? window.PlexoraConfirm.ask({ title: "This slide has a folder", body,
                                       confirm: "Choose folder", danger: false })
         : Promise.resolve(true));
     const onboarding = window.PlexoraOnboarding;
+    // `quiet` (the home page's one-press open): a first visit's question
+    // waits until the image is open (views/webOnboarding.js `ensure`).
     const gate = onboarding
-        ? () => onboarding.ensure({ reason: "pick" }).then((answer) => answer === "ready")
+        ? () => onboarding.ensure({ reason: "pick", quiet }).then((answer) => answer === "ready")
         : null;
     return {ask, gate};
 }
@@ -400,11 +402,16 @@ function carriesFiles(event) {
  * @param enabled () => boolean; false and the element is not a target.
  * @param onOver (lit) for a zone that draws more than its class.
  * @param onDrop (path), or ([path]) for "many".
+ * @param onFiles ([File]) in the drop's own turn, before anything is asked or
+ *   mounted: the dropped files themselves (the home page's first view,
+ *   services/firstView.js).
+ * @param quiet a first visit's where-to-keep-work question after the image
+ *   opens rather than before (`pickQuestions`).
  * The innermost zone under the pointer takes the drop; one around it stands
  * aside (`defaultPrevented`).
  */
 function attachWebDrop(zoneEl, {count = "one", refuse = null, enabled = null,
-                                onOver = null, onDrop = null} = {}) {
+                                onOver = null, onDrop = null, onFiles = null, quiet = false} = {}) {
     const picks = window.PlexoraPicks;
     if (!zoneEl || typeof onDrop !== "function" || !onWebsite() || !picks || !picks.take) {
         return () => {};
@@ -444,8 +451,15 @@ function attachWebDrop(zoneEl, {count = "one", refuse = null, enabled = null,
             refuseDrop(zoneEl, reason);
             return;
         }
+        if (onFiles) {
+            try {
+                onFiles(Array.from(event.dataTransfer.files || []));
+            } catch (error) {
+                // A preview's failure is never the drop's.
+            }
+        }
         // In this turn: the drop's handles can be read only now.
-        picks.take(event.dataTransfer, pickQuestions())
+        picks.take(event.dataTransfer, pickQuestions({quiet}))
             .then((paths) => {
                 if (paths.length) onDrop(count === "many" ? paths : paths[0]);
             })
@@ -528,12 +542,12 @@ async function browseForPath({mode = "file", filter = "any", node = null,
                               start = "", anchorEl = null, examples = null,
                               onPicked, onUnavailable,
                               accept = null, select = null, primary = "",
-                              title = ""} = {}) {
+                              title = "", quiet = false} = {}) {
     try {
         // The website: the user's own disk is the browser's to show, and a
         // pick becomes a path Plexora's Python can open (services/pickedFiles.js).
         if (!node && onWebsite() && window.PlexoraPicks) {
-            const {ask, gate} = pickQuestions();
+            const {ask, gate} = pickQuestions({quiet});
             const many = select === "many";
             // Chrome and Edge: the explorer, over the folders the user has
             // given the site (services/localFiles.js), with the browser's own

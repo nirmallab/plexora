@@ -173,6 +173,66 @@ def import_inspect():
     return jsonify(proposal.to_dict())
 
 
+#: The largest smallest-level a preview reads (pixels a side): a file whose
+#: pyramid stops above it has no preview, rather than a slow one.
+_PREVIEW_MAX_SIDE = 4096
+
+
+@app.route('/import/preview', methods=['GET'])
+def import_preview():
+    """The first channel of a local TIFF at its smallest pyramid level, as an
+    8-bit PNG windowed from its own values (0.5th to 99.8th percentile of the
+    non-zero pixels): what the home page shows the moment Load is pressed,
+    while the import goes on (services/firstView.js). 204 for anything it
+    does not read -- not a TIFF on this machine, a pyramid that stops large,
+    samples it cannot window -- and the page then shows the import's own
+    progress, as before. Reads the file's directories and one small plane:
+    0.1-0.5 s for a 106 GB slide, local or on a file share."""
+    import io
+
+    import numpy as np
+    import zarr
+    from flask import Response
+
+    from plexora.server.utils import tiff_region, tiff_series
+
+    raw = (request.args.get('path') or '').strip()
+    if not raw or '://' in raw or not raw.lower().endswith(('.tif', '.tiff')) or not os.path.isfile(raw):
+        return Response(status=204)
+    try:
+        with tiff_region.opened(raw) as tiff:
+            series = tiff_series.channel_series(tiff)
+            levels = list(getattr(series, 'levels', None) or [series])
+            level = levels[-1]
+            shape = tuple(int(side) for side in level.shape)
+            if len(shape) < 2 or max(shape[-2:]) > _PREVIEW_MAX_SIDE:
+                return Response(status=204)
+            index = len(levels) - 1
+            array = zarr.open(series.aszarr(level=index) if len(levels) > 1 else series.aszarr(), mode='r')
+            if len(shape) == 3 and shape[-1] in (3, 4) and str(level.dtype) == 'uint8':
+                picture = np.asarray(array[..., :3])
+            else:
+                plane = np.asarray(array[0] if len(shape) >= 3 else array[...])
+                while plane.ndim > 2:
+                    plane = plane[0]
+                values = plane[plane > 0]
+                if values.size:
+                    low, high = np.percentile(values, [0.5, 99.8])
+                else:
+                    low, high = 0.0, 1.0
+                high = max(float(high), float(low) + 1.0)
+                picture = np.clip((plane.astype(np.float32) - float(low)) * (255.0 / (high - float(low))),
+                                  0, 255).astype(np.uint8)
+    except Exception:  # noqa: BLE001 -- no preview; the import reports what is wrong
+        logging.getLogger(__name__).debug("No preview of %s", raw, exc_info=True)
+        return Response(status=204)
+    from PIL import Image
+
+    out = io.BytesIO()
+    Image.fromarray(picture).save(out, format='PNG', compress_level=1)
+    return Response(out.getvalue(), mimetype='image/png', headers={'Cache-Control': 'no-store'})
+
+
 @app.route('/import/sample', methods=['POST'])
 @_json_errors
 def import_sample_route():

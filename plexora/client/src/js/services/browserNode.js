@@ -848,6 +848,11 @@
     //: Windows per scan worker per round: ~0.5 s of reading on this Mac, the
     //: longest an urgent scan waits for the one in front of it to give way.
     const ROUND_PER_WORKER = 2;
+    //: Samples a round of the warm-up's (not urgent) scan reads at most: a
+    //: window of an uncompressed 16-bit plane is 32 MB, and two a worker
+    //: was ~640 MB a round -- 20 s from a file share, which the tiles of a
+    //: zoom waited behind. At least one window; an urgent round as before.
+    const ROUND_BACKGROUND_SAMPLES = 32 << 20;
     //: key -> {args, file, urgent, state: queued|scanning|done|failed, top, at, windows, value, error, promise}
     const scans = new Map();
     //: The scans not finished, urgent first, each class in the order asked.
@@ -913,7 +918,18 @@
             entry.windows = planeWindows(geometry.levels[0], geometry.fileTile);
         }
         entry.state = "scanning";
-        const round = entry.windows.slice(entry.at, entry.at + pool.workers.length * ROUND_PER_WORKER);
+        let count = pool.workers.length * ROUND_PER_WORKER;
+        if (!entry.urgent) {
+            let samples = 0;
+            let fit = 0;
+            for (const [x0, y0, x1, y1] of entry.windows.slice(entry.at, entry.at + count)) {
+                samples += (x1 - x0) * (y1 - y0);
+                if (fit && samples > ROUND_BACKGROUND_SAMPLES) break;
+                fit += 1;
+            }
+            count = Math.max(1, fit);
+        }
+        const round = entry.windows.slice(entry.at, entry.at + count);
         entry.at += round.length;
         if (round.length) {
             const top = await pool.max(entry.args.channel, 0, geometry.levels[0], geometry.fileTile, round);

@@ -617,7 +617,9 @@ def looks_like_label_image(path):
             return _zarr_label_verdict(path)
         import tifffile as tf
 
-        with tf.TiffFile(str(path), is_ome=False) as handle:
+        from plexora.server.utils import tiff_region
+
+        with tiff_region.opened(path) as handle:
             series = handle.series[0]
             shape = tuple(int(d) for d in series.shape)
             dtype = np.dtype(series.dtype)
@@ -628,6 +630,17 @@ def looks_like_label_image(path):
                 # samples as planes.
                 return False
             if planes > 1:
+                # A file that says it is three channels or more of one focal
+                # plane is a panel, not a label volume (whose planes are depths
+                # of ONE channel of ids) nor a nuclei-and-cells pair: answered
+                # from its own words, without the middle plane's
+                # full-resolution windows -- on a 106 GB slide from a file
+                # share those reads were seconds of an import nobody needed.
+                from plexora.server.utils import tiff_series
+
+                stated = tiff_series.plane_sizes(handle)
+                if stated and stated.get("SizeC", 1) > 2 and stated.get("SizeZ", 1) == 1:
+                    return False
                 # A stack of integer planes can be a 3-D label volume -- one id
                 # per cell across every plane it spans (plexora/server/volume/
                 # labels.py). Said so by the middle plane looking like ids
@@ -915,7 +928,9 @@ def _focal_note(path) -> str:
 
         from plexora.server.volume.sources import tiff as tiff_volume
 
-        with tf.TiffFile(str(path), is_ome=False) as handle:
+        from plexora.server.utils import tiff_region
+
+        with tiff_region.opened(path) as handle:
             series = handle.series[0]
             described = tiff_volume.describe(handle, series, new_import=True)
             found = None if described else tiff_volume.page_layout(handle, series)
@@ -3385,7 +3400,90 @@ def _attached(raw, answers) -> str | None:
 
 # -- the entry point -------------------------------------------------------
 
+#: The proposal each recent inspect of plain local files made, for the import
+#: that follows it (`inspected`): the home page inspects, then imports the same
+#: paths a moment later, and the import used to inspect them all over again --
+#: on a 106 GB OME-TIFF from a file share, as long again as the first. Keyed
+#: by every file's path, size and modification time, so a file changed since
+#: is inspected afresh; taken once; and dropped whenever a sample is
+#: registered (`forget_inspected`), so an `existing` it says is never stale.
+_INSPECTED: dict = {}
+_INSPECTED_KEPT = 8
+_INSPECTED_SECONDS = 30.0
+_inspected_lock = threading.Lock()
+
+
+def _inspected_key(paths, node, answers, sample):
+    """The memo's key for these paths, or None when they are not all plain
+    local files (a folder's content, a node's resource or a URL is not told
+    by its own stat)."""
+    import os
+    import stat as stat_mod
+
+    if node or sample:
+        return None
+    files = []
+    for raw in paths or []:
+        text = str(raw).strip()
+        if not text:
+            continue
+        if is_remote_locator(text) or "://" in text:
+            return None
+        try:
+            found = os.stat(text)
+        except OSError:
+            return None
+        if not stat_mod.S_ISREG(found.st_mode):
+            return None
+        files.append((text, int(found.st_size), int(found.st_mtime_ns)))
+    if not files:
+        return None
+    return (tuple(files), json.dumps(dict(answers or {}), sort_keys=True, default=str))
+
+
+def inspected(paths, *, node=None, answers=None):
+    """The proposal the last inspect of exactly these unchanged files made,
+    taken (so once), or None: `import_sample` registers from it rather than
+    reading the files again."""
+    import time
+
+    key = _inspected_key(paths, node, answers, None)
+    if key is None:
+        return None
+    with _inspected_lock:
+        held = _INSPECTED.pop(key, None)
+    if held is None or time.monotonic() - held[0] > _INSPECTED_SECONDS:
+        return None
+    return held[1]
+
+
+def forget_inspected():
+    """Every remembered proposal dropped (a sample was registered: whether
+    data is `existing` may have changed)."""
+    with _inspected_lock:
+        _INSPECTED.clear()
+
+
 def inspect_paths(paths, *, node=None, answers=None, sample=None) -> Proposal:
+    """`_inspect_paths`, remembered for the import that follows (`inspected`)."""
+    import copy
+    import time
+
+    proposal = _inspect_paths(paths, node=node, answers=answers, sample=sample)
+    key = _inspected_key(paths, node, answers, sample)
+    if key is not None:
+        try:
+            held = copy.deepcopy(proposal)
+        except Exception:  # noqa: BLE001 -- not remembered; the import inspects again
+            return proposal
+        with _inspected_lock:
+            _INSPECTED[key] = (time.monotonic(), held)
+            while len(_INSPECTED) > _INSPECTED_KEPT:
+                _INSPECTED.pop(next(iter(_INSPECTED)))
+    return proposal
+
+
+def _inspect_paths(paths, *, node=None, answers=None, sample=None) -> Proposal:
     """What these paths hold, and what sample they would make.
 
     @param answers - question id -> the user's answer, applied on this pass.

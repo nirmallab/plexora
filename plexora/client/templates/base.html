@@ -49,7 +49,7 @@
     <!-- App-wide status indicator. Loaded here, before everything else and not
          deferred, because it wraps window.fetch to detect a dead/erroring
          server and must be installed before any script issues a request. -->
-    <script src="{{ data.base_url }}/client/src/js/services/appStatus.js?v=20260926_help_menu" type="text/javascript"></script>
+    <script src="{{ data.base_url }}/client/src/js/services/appStatus.js?v=20261110_instant_first_view" type="text/javascript"></script>
     <!-- Optional, anonymous telemetry (plexora/telemetry): the tab's aggregate
          and its error fingerprints. Right after appStatus.js and not deferred,
          so the first tiles are timed and an early failure is caught; both are
@@ -147,7 +147,7 @@
     <script src="{{ data.base_url }}/client/src/js/services/explorer/explorerCrumbs.js?v=20261020_file_explorer" defer></script>
     <script src="{{ data.base_url }}/client/src/js/services/explorer/explorerSidebar.js?v=20261110_file_or_folder" defer></script>
     <script src="{{ data.base_url }}/client/src/js/services/explorer/fileExplorer.js?v=20261110_file_or_folder" defer></script>
-    <script src="{{ data.base_url }}/client/src/js/services/browsePicker.js?v=20261110_local_drop_guard" defer></script>
+    <script src="{{ data.base_url }}/client/src/js/services/browsePicker.js?v=20261110_instant_first_view" defer></script>
     {# What a file dropped on the window does where it lands (desktop app):
        right after browsePicker, whose drop registry it extends. #}
     <script src="{{ data.base_url }}/client/src/js/services/dropRouter.js?v=20261027_drop_router" defer></script>
@@ -236,7 +236,7 @@
        never on load. After confirmDialog.js and toast.js, on the same terms
        (a <dialog> of its own, its CSS in main.css); the website only, and
        inert there without the host page's PlexoraStore. #}
-    <script src="{{ data.base_url }}/client/src/js/views/webOnboarding.js?v=20261110_onboarding_bundles" defer></script>
+    <script src="{{ data.base_url }}/client/src/js/views/webOnboarding.js?v=20261110_instant_first_view" defer></script>
     {% endif %}
     {# What the website says where only the desktop app could act -- an SSH
        connection, the Google Cloud CLI, a data folder (PlexoraWebHandoff):

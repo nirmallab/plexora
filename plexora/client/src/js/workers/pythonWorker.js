@@ -198,8 +198,22 @@ const mark = (name) => self.postMessage({ mark: name, at: at() });
 const BLOCK = 1 << 20;
 const KEEP = 64;
 const PIECE = 64 << 10;
-//: Pieces read ahead held at most (16 MiB), and read by one read ahead.
-const PIECES = 256;
+//: Pieces held at most (64 MiB), and read by one read ahead: the read
+//: ahead's, the small reads' (`SMALL`) and the page's prefetch.
+const PIECES = 1024;
+//: A read this small that misses, and does not go on from where the last
+//: read of the file ended, is answered from the 64 KiB piece around it,
+//: kept, not from a 1 MiB block. Python's buffered reader asks for its
+//: whole buffer (128 KiB in Pyodide's 3.14) after every seek, and what a
+//: TIFF's open seeks to is directories
+//: and their tile tables, a few hundred bytes to a few KB each, and where
+//: they lie across a whole file -- a 40-channel, 7-level OME-TIFF of 106 GB
+//: has 280 of them, each beside its own plane -- every one cost a 1 MiB read
+//: (~0.25 s from a file share), and 280 blocks were more than the 64 kept,
+//: so each of an import's opens read them all again: 642 s of /import/inspect.
+//: A piece costs about what a 4 KB read does (~20 ms there). A read that
+//: goes on from the last (a table read start to end) keeps its blocks.
+const SMALL = 128 << 10;
 
 // Python lets go of its lock around a file read, as around any blocking call.
 // WebKit runs FinalizationRegistry callbacks inside FileReaderSync's read
@@ -223,6 +237,8 @@ function blockReads(workerfs, module) {
     const reader = new FileReaderSync();
     const blocks = new Map();
     const pieces = new Map();
+    //: Where the last read of each file ended: a read from there is sequential.
+    const lastEnd = new Map();
     const slice = (node, from, to) => withGil(module,
         () => new Uint8Array(reader.readAsArrayBuffer(node.contents.slice(from, to))));
     const block = (node, index) => {
@@ -233,6 +249,11 @@ function blockReads(workerfs, module) {
         blocks.set(key, data);
         if (blocks.size > KEEP) blocks.delete(blocks.keys().next().value);
         return data;
+    };
+    //: A piece held, the oldest let go past PIECES.
+    const keep = (node, index, data) => {
+        pieces.set(`${node.id}:${index}`, data);
+        if (pieces.size > PIECES) pieces.delete(pieces.keys().next().value);
     };
     // What pieces hold from `position` on, up to `end`, copied into `buffer`:
     // how many bytes (none when `position` is in no piece).
@@ -257,8 +278,20 @@ function blockReads(workerfs, module) {
         // short when it runs on past: a buffered reader asks for more than it
         // was asked, and asks again for what it wanted, as of any file that
         // answers short -- no block is read for what nobody wanted.
+        const sequential = lastEnd.get(node.id) === position;
         const ahead = pieces.size ? held(node, buffer, offset, position, end) : 0;
-        if (ahead) return ahead;
+        if (ahead) {
+            lastEnd.set(node.id, position + ahead);
+            return ahead;
+        }
+        lastEnd.set(node.id, end);
+        if (end - position <= SMALL && !sequential) {
+            const index = Math.floor(position / PIECE);
+            keep(node, index, slice(node, index * PIECE, Math.min((index + 1) * PIECE, node.size)));
+            const answered = held(node, buffer, offset, position, end);
+            lastEnd.set(node.id, position + answered);
+            return answered;
+        }
         if (end - position > 4 * BLOCK) {
             buffer.set(slice(node, position, end), offset);
             return end - position;
@@ -290,8 +323,7 @@ function blockReads(workerfs, module) {
         runs.forEach(({ start, end }, i) => {
             const bytes = new Uint8Array(read[i]);
             for (let index = start; index < end; index += 1) {
-                pieces.set(`${node.id}:${index}`, bytes.subarray((index - start) * PIECE, (index - start + 1) * PIECE));
-                if (pieces.size > PIECES) pieces.delete(pieces.keys().next().value);
+                keep(node, index, bytes.subarray((index - start) * PIECE, (index - start + 1) * PIECE));
             }
         });
         return wanted.length;
@@ -1377,6 +1409,23 @@ const BUNDLE_OPS = {
     },
     //: A file of Python's, its bytes (transferred, never copied twice).
     readFile: ({ path }) => ({ body: py.FS.readFile(String(path)) }),
+    //: Where a picked file's directories are, as the page found them
+    //: (services/firstView.js, which read them for the first view): their
+    //: pieces read at once, side by side, so Python's open of the file finds
+    //: every directory held instead of walking them one read after another.
+    prefetch: async ({ path, offsets }) => {
+        if (!readAhead || !py) return { read: 0 };
+        let node = null;
+        try {
+            node = py.FS.lookupPath(String(path), { follow: true }).node;
+        } catch (error) {
+            return { read: 0 };
+        }
+        if (!node || !(node.contents instanceof Blob)) return { read: 0 };
+        const indexes = Array.from(offsets || [], (at) => Math.floor(Number(at) / PIECE))
+            .filter((index) => Number.isFinite(index));
+        return { read: await readAhead(node, indexes) };
+    },
 };
 
 const OPS = {

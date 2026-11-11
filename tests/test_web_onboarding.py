@@ -117,17 +117,31 @@ def test_a_website_pick_passes_the_gate():
     user gave the site, and a browser's own dialog -- carry the gate, and so
     does a drop (attachWebDrop, importSample.js)."""
     browse = _read(JS, "services", "browsePicker.js")
-    questions = browse[browse.index("function pickQuestions()"):browse.index("function pressedButton()")]
-    assert 'ensure({ reason: "pick" })' in questions
+    questions = browse[browse.index("function pickQuestions("):browse.index("function pressedButton()")]
+    assert 'ensure({ reason: "pick", quiet })' in questions
     start = browse.index("async function browseForPath(")
     branch = browse[start:browse.index("// A page without the explorer", start)]
-    assert "const {ask, gate} = pickQuestions();" in branch
+    assert "const {ask, gate} = pickQuestions({quiet});" in branch
     assert "local.take(chosen, {ask, gate})" in branch
     assert "local.dialog({mode, filter, accept, many, ask, gate," in branch
     assert "mode: kind, multiple: many, ask, gate, types: pickerTypes(filter)," in branch
-    assert "picks.take(event.dataTransfer, pickQuestions())" in browse
+    assert "picks.take(event.dataTransfer, pickQuestions({quiet}))" in browse
     dialog = _read(JS, "views", "importSample.js")
     assert "typeof pickQuestions === \"function\" ? pickQuestions() : {}" in dialog
+
+
+def test_the_home_page_opens_a_first_image_before_the_question():
+    """The home page's one-press open (a drop, Browse) asks `quiet`: a first
+    visit's where-to-keep-work question waits until the image is open (browser
+    storage made ready as its button makes it, the choice offered after) --
+    never a folder to reconnect, whose files are the ones to open."""
+    home = _read(JS, "views", "quickViewLanding.js")
+    assert home.count("quiet: true") == 2
+    onboarding = _read(JS, "views", "webOnboarding.js")
+    assert 'quiet && start === "welcome"' in onboarding
+    quietly = onboarding[onboarding.index("async function quietly("):onboarding.index("function ensure(")]
+    assert "store.prepareBrowser()" in quietly and "store.useBrowser()" in quietly
+    assert 'run({ reason, start: "welcome" })' in quietly
 
 
 def test_the_gate_comes_before_every_mount_and_record():

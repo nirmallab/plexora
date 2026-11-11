@@ -2202,9 +2202,18 @@ def _warm_datasource_caches(datasource_name):
                 # no request can interrupt, and one for each of 59 channels
                 # nobody had turned on kept every click waiting seconds for
                 # minutes. A channel turned on later is drawn at once from its
-                # stats (warmed here, cheap) and fitted when it asks.
-                shown = _saved_active_channels(datasource_name, to_warm)
-                plan = ([(get_image_channel_stats, fullname) for fullname in to_warm]
+                # provisional stats (of the overview, cheap) and its fit made
+                # ahead below (`_fit_ahead`).
+                # The exact windows too only for the channels switched on (the
+                # first, for a project never opened): each is the page's scan
+                # of a whole full-resolution plane (1.9 GB a channel on a
+                # 40-channel, 106 GB slide), and one for every channel kept
+                # the file busy for minutes after an open -- from a file share,
+                # every tile a zoom asked for waited behind them. A channel
+                # switched on later is drawn at once with its provisional
+                # window and scanned then.
+                shown = _saved_active_channels(datasource_name, to_warm) or set(to_warm[:1])
+                plan = ([(get_image_channel_stats, fullname) for fullname in to_warm if fullname in shown]
                         + [(get_channel_gmm, fullname) for fullname in to_warm if fullname in shown])
                 if plan:
                     _work.spawn(_warm_on_page, datasource_name, load_generation, plan, 0,
@@ -2221,18 +2230,32 @@ def _warm_datasource_caches(datasource_name):
                     _work.spawn(_warm_on_page, datasource_name, load_generation, ahead, 0,
                                 background=True, name=f"warm-fit-{ahead[0][1]}")
                 return
+            planar = volume_source is None or volume_source.volume.is_planar
+            # A planar image's exact windows (every full-resolution pixel of
+            # a channel: 2.6 s a channel of a 106 GB slide on a local disk,
+            # 18.7 s from a file share) only for the channels switched on
+            # (the first, for a project never opened): a pass over all of
+            # them kept the disk or the share busy for minutes after an open,
+            # under every tile a zoom asked for. The rest get their fit of the
+            # overview (`_provisional_gmm`, no plane read), so one switched on
+            # is drawn at once and made exact then (`_window_behind`).
+            shown = (_saved_active_channels(datasource_name, to_warm) or set(to_warm[:1])
+                     if planar else set(to_warm))
+            exact = [fullname for fullname in to_warm if fullname in shown]
             # Pass 1 -- everything the first paint blocks on.
-            for fullname in to_warm:
+            for fullname in exact:
                 warm(get_image_channel_stats, fullname)
             # A volume's exact windows, in the same order, on their own
             # worker (a channel the viewer asks for jumps the line).
-            if volume_source is not None and not volume_source.volume.is_planar \
-                    and not _WINDOW_SCANS_INLINE:
+            if not planar and not _WINDOW_SCANS_INLINE:
                 for fullname in to_warm:
                     queue_exact_window(fullname, datasource_name)
             # Pass 2 -- the expensive refinement nothing blocks on.
-            for fullname in to_warm:
+            for fullname in exact:
                 warm(get_channel_gmm, fullname)
+            for fullname in to_warm:
+                if fullname not in shown:
+                    warm(_provisional_gmm, fullname)
     except providers.ResourceUnavailable as exc:
         # Not a failure, and it must not read like one. The machine this
         # project reads from is gone -- usually because the user just
@@ -2376,14 +2399,18 @@ def _page_window_or_retry(channel_name, datasource_name, wait_ms=None):
     worker froze (plexora/_work.py `checkpoint`). Only from the two routes
     (`patient=True`), which answer the exception with a retry. `wait_ms` 0:
     an ask that takes a provisional window instead, which only says the scan
-    is wanted now (urgent) and does not wait for it."""
+    is wanted and does not wait for it -- so not urgent: the channel is drawn
+    with its provisional window, and a whole full-resolution plane's scan
+    (1.9 GB a channel of a 106 GB slide) read ahead of the tiles the person is
+    zooming into made the zoom wait for it; the page's scans give way to the
+    reads somebody waits on (services/browserNode.js `inForeground`)."""
     from plexora.server.providers import browser as page
 
     if _work.threaded():
         return
     wait = _PAGE_WINDOW_REQUEST_LOOK_MS if wait_ms is None else wait_ms
     if _page_window_look(channel_name, datasource_name, wait_ms=wait,
-                         urgent=True) is page.WINDOW_PENDING:
+                         urgent=wait != 0) is page.WINDOW_PENDING:
         raise page.WindowPending(channel_name)
 
 
@@ -3206,6 +3233,8 @@ def get_channel_gmm(channel_name, datasource_name, view="", *, patient=False, pr
         cached = _gmm_cache.get(cache_key)
         if cached is not None:
             return cached
+    if provisional and slab is None and _window_behind(channel_name, datasource_name):
+        return _provisional_gmm(channel_name, datasource_name)
     # Single-flight. encode_tile() calls this for every default-quality tile,
     # and a cold entry costs ~0.7 s: a GaussianMixture(3) fit plus a .max()
     # over the entire full-resolution channel plane (~218 MB, see the comment
@@ -4097,6 +4126,8 @@ def get_image_channel_stats(channel_name, datasource_name, view="", *, patient=F
             return _provisional_stats(channel_name, datasource_name)
         if cache_key in _image_stats_cache:
             return _image_stats_cache[cache_key]
+    if provisional and _window_behind(channel_name, datasource_name):
+        return _provisional_stats(channel_name, datasource_name)
 
     remote = _remote_image()
     if remote is not None:
@@ -4125,6 +4156,60 @@ def get_image_channel_stats(channel_name, datasource_name, view="", *, patient=F
     if exact:
         _image_stats_cache[cache_key] = stats
     return stats
+
+
+#: Exact windows the desktop is making on a thread of their own behind a
+#: provisional answer (`_window_behind`), and those that failed there (asked
+#: again inline, where the failure is the request's to report).
+_windows_behind: set = set()
+_windows_behind_failed: set = set()
+_windows_behind_lock = threading.Lock()
+
+
+def _window_behind(channel_name, datasource_name):
+    """On the desktop: whether a viewer's provisional ask for a planar
+    channel's stats or fit is answered now with the provisional packet
+    (`_provisional_stats`, `_provisional_gmm`: of the overview, `window_exact`
+    False), the exact window -- every full-resolution pixel read
+    (`get_channel_quantization_window`: 2.6 s for a 40-channel slide on a
+    local disk, 18.7 s from a file share) -- made meanwhile on a thread of its
+    own. The viewer draws the channel at once and asks again until the window
+    is exact (views/channelList.js `awaitExactWindow`), as on the website, so
+    a channel no longer waits dark for its scan. True when that is how this
+    ask is answered; False when the window is known, or not this path's to
+    make (a remote image, a volume), or failed behind once: the request then
+    makes it as it always did."""
+    if not _work.threaded():
+        return False
+    key = ('qwindow', datasource_name, channel_name)
+    if _gmm_cache.get(key) is not None:
+        return False
+    if _remote_image() is not None or getattr(_providers.image, "quantization_window", None) is not None:
+        return False
+    if volume_source is not None and not volume_source.volume.is_planar:
+        return False
+    if _quantization_windows(datasource_name).get(channel_name) is not None:
+        return False
+    with _windows_behind_lock:
+        if key in _windows_behind_failed:
+            return False
+        if key in _windows_behind:
+            return True
+        _windows_behind.add(key)
+
+    def make():
+        try:
+            get_channel_quantization_window(channel_name, datasource_name)
+        except Exception as exc:  # noqa: BLE001 -- the next ask makes it inline and reports it
+            _log.debug("Exact window of %s in %s failed behind: %s", channel_name, datasource_name, exc)
+            with _windows_behind_lock:
+                _windows_behind_failed.add(key)
+        finally:
+            with _windows_behind_lock:
+                _windows_behind.discard(key)
+
+    threading.Thread(target=make, name=f"window-{channel_name}", daemon=True).start()
+    return True
 
 
 def _provisional_stats(channel_name, datasource_name):
@@ -5925,7 +6010,7 @@ def convertOmeTiff(filePath, channelFilePath=None, dataDirectory=None, isLabelIm
             return _convert_brightfield_image(
                 filePath, dataDirectory, progress_callback, detection=detection,
                 as_fluorescence=(effective != brightfield.BRIGHTFIELD))
-        from plexora.server.utils import tiff_series
+        from plexora.server.utils import tiff_region, tiff_series
 
         if providers.is_remote_locator(filePath):
             # A TIFF at a web address: the same decisions, read tile by tile
@@ -5936,7 +6021,9 @@ def convertOmeTiff(filePath, channelFilePath=None, dataDirectory=None, isLabelIm
 
         stage, report = _image_pyramid_reporter(stage_callback, progress_callback)
         stage("opening")
-        channel_io = tf.TiffFile(str(filePath), is_ome=False)
+        # The website's shared open (`tiff_region.open_tiff`): the import's
+        # inspection walked this file's directories already.
+        channel_io = tiff_region.open_tiff(filePath)
         try:
             # Axes-aware, so an ImageJ hyperstack registers as the channel
             # stack it is rather than as `shape[0]` channels of height
@@ -5953,7 +6040,7 @@ def convertOmeTiff(filePath, channelFilePath=None, dataDirectory=None, isLabelIm
                 # interleaved ones. Guarded on the plane count because a
                 # brightfield reading of a two-plane image has nothing to put
                 # in the third sample.
-                channel_io.close()
+                tiff_region.close_tiff(channel_io)
                 return _convert_brightfield_image(
                     filePath, dataDirectory, progress_callback, detection=detection)
 
@@ -6002,7 +6089,7 @@ def convertOmeTiff(filePath, channelFilePath=None, dataDirectory=None, isLabelIm
                     if sizes["t"] > 1:
                         channel_info['imageTSemantics'] = 'cycle'
         finally:
-            channel_io.close()
+            tiff_region.close_tiff(channel_io)
 
         if gaps and pyramidize is not False:
             copy = _pyramidized_copy(filePath, dataDirectory, stage, report,
