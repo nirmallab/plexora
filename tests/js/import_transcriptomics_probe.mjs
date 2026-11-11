@@ -96,7 +96,9 @@ function sandbox(license) {
     const body = makeElement("body");
     const ctx = {
         console, Object, Array, JSON, String, Set, Map, Boolean, Promise,
-        document: { body, createElement: makeElement },
+        //: addEventListener for browsePicker's drop guard, which every
+        //: browser tab installs.
+        document: { body, createElement: makeElement, addEventListener() {} },
         plexoraUrl: (path) => `/base/${path}`,
     };
     ctx.window = ctx;

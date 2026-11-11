@@ -465,21 +465,32 @@ function attachWebDrop(zoneEl, {count = "one", refuse = null, enabled = null,
     };
 }
 
-// A file let go anywhere on the website but a place that takes it would be
+// A file let go in a browser tab anywhere but a place that takes it would be
 // opened by the browser in place of the app, and everything on screen lost
-// with it: the drag is refused there instead. A zone's own handler runs
-// first and is left alone. The same two listeners however often this file
-// runs in a window (a page written into it runs it again), so adding them
-// again adds nothing.
-if (onWebsite()) {
+// with it: the drag is refused there instead. That is the website and the
+// local app opened in a browser alike; the desktop app's window hands its
+// drops to desktopBridge.js as paths, and the browser never opens one there.
+// A zone's own handler runs first and is left alone, and so is a file input
+// the browser fills from a drop itself (the licence box in Settings). The
+// same two listeners however often this file runs in a window (a page written
+// into it runs it again), so adding them again adds nothing.
+
+/** Whether a drag is over a file input, which takes a drop with no handler. */
+function overFileInput(event) {
+    const target = event && event.target;
+    return Boolean(target && String(target.tagName || "").toUpperCase() === "INPUT"
+                   && String(target.type || "").toLowerCase() === "file");
+}
+
+if (!window.PlexoraDesktop) {
     const guard = window.__plexoraDropGuard || (window.__plexoraDropGuard = {
         over(event) {
-            if (event.defaultPrevented || !carriesFiles(event)) return;
+            if (event.defaultPrevented || !carriesFiles(event) || overFileInput(event)) return;
             event.preventDefault();
             event.dataTransfer.dropEffect = "none";
         },
         drop(event) {
-            if (carriesFiles(event)) event.preventDefault();
+            if (carriesFiles(event) && !overFileInput(event)) event.preventDefault();
         },
     });
     document.addEventListener("dragover", guard.over);
@@ -698,7 +709,8 @@ function serverDialogs() {
 //
 // A browser tab gets nothing here. An HTML5 drop hands a page the BYTES of a
 // file and never where it lives, and a box that wants a path to a 40 GB slide
-// has no use for its bytes -- so in a browser a path box is exactly what it was.
+// has no use for its bytes -- so in a browser a path box is exactly what it
+// was, and a file let go on it is refused (the guard above).
 // The website is the exception (attachWebDrop above): its Python runs in the
 // page, so the dropped file or folder itself is what it reads, mounted where
 // it lies.
