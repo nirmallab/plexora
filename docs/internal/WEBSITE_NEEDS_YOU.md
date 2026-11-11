@@ -4,8 +4,13 @@ Everything the website work (plan `dreamy-brewing-sunset.md`, branch `web/phase0
 is waiting on from you, in one place. Kept current as work lands; the newest
 state is on `web/phase0`. Each item says what to do and what it unblocks.
 **The website is live** at https://viewer.plexoraapp.com since 2026-11-08
-00:40 UTC, now 0.0.49 (`main` at d64ce0bf, no tag; since 2026-11-10
-22:50 UTC: choosing a file or a folder the way the desktop does -- Browse
+00:40 UTC, now 0.0.50 (`main` at 39f4c360, no tag; since 2026-11-11
+14:00 UTC: an image on screen the moment it is given -- the page reads channel
+0's smallest pyramid level from the dropped file and shows it while the import
+goes on -- and opening it reads the file once,
+docs/internal/bench/web/WEBSITE_FIRST_VIEW_2026-11-10.md; live, LSP11385 from
+Downloads on a Mac: the first view 0.18 s after the drop, the view loaded in
+2.6 s; 0.0.49, choosing a file or a folder the way the desktop does -- Browse
 opens Plexora's file window over the folders you gave the site in Chrome and
 Edge, a dropped file is the file itself, Firefox and Safari ask File | Folder
 -- and the reads of a picked TIFF on a file share: a row of tiles in one
@@ -16,7 +21,7 @@ asked only when work needs saving, the picked folder is the workspace --
 Storage & Locations, and .plexora export/import of one or many projects,
 docs/internal/PROJECT_BUNDLES.md; 0.0.46 to 0.0.42, the performance rounds
 five to one, before it), Pages project `plexora-viewer`
-branch `release`, bundle `py/0.0.49/`, flags `viewer: on`, telemetry on. 0.0.38 was live for under
+branch `release`, bundle `py/0.0.50/`, flags `viewer: on`, telemetry on. 0.0.38 was live for under
 an hour and did not start Python on the self-check page, in a second tab or
 without sync access handles; its `py/0.0.38/` stays, as every released
 prefix does, and nothing points at it. Activating a licence and AI do not work there until section 1,
@@ -187,16 +192,12 @@ bundle `py/dev/4f583c3b9745/` and, sharing the flags, no longer shows its
 
 ## 6. Git
 
-- **The instant first view is on `main`, not on the website yet**
-  (`feature/instant-first-view`, docs/internal/bench/web/WEBSITE_FIRST_VIEW_2026-11-10.md:
-  the image on screen 0.3-0.5 s after a drop, the import reading the file
-  once). Its Python changed, so it needs a bundle of its own: release it as
-  **0.0.50 or later** (`py/0.0.49/` is never rewritten). Only Plexora's own
-  Python changed since 0.0.49 (nothing under `kernels/`, `uv.lock`,
-  `tools/browser_build/`, `plexora/browser/stages.py`), so `build.py
-  --plexora-only --no-kernels` over a copy of 0.0.49's bundle is enough
-  (WEBSITE_RELEASE.md). Before the upload, `tools/bench_web/bench_first_view.mjs`
-  against the site served here shows the first view in a fresh profile.
+- **The instant first view is on the website** as 0.0.50 (2026-11-11, from
+  this Mac): `py/0.0.50/` is 0.0.49's bundle, read back from the bucket
+  byte-identical, with Plexora's wheel rebuilt (`build.py --plexora-only
+  --no-kernels`). Before the upload the smoke test, the import check and the
+  self-check passed against it served here; after it the live self-check
+  passes all but the Cloudflare analytics beacon's CSP check (section 2).
 
 - `web/phase0` was merged into `main` (a fast-forward) and pushed on
   2026-11-07, at your word. Work goes on on `web/phase0`; each later wave is
@@ -206,8 +207,8 @@ bundle `py/dev/4f583c3b9745/` and, sharing the flags, no longer shows its
 - The **next desktop release** from `main` carries the removals (Segment in
   3-D, Carry an ROI through planes), the desktop speed-ups and the new
   telemetry values (the Worker that takes them is deployed). Make it
-  **0.0.50 or later** (`release.py ci --bump patch` from the newest), not a
-  tag of a version the website already has: its `py/0.0.37/` to `py/0.0.49/` are
+  **0.0.51 or later** (`release.py ci --bump patch` from the newest), not a
+  tag of a version the website already has: its `py/0.0.37/` to `py/0.0.50/` are
   published and never rewritten, so once the CI secrets
   exist such a Release run's `web_deploy` would refuse its own rebuild of
   that bundle and hold the release.
