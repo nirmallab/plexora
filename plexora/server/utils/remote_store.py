@@ -53,6 +53,7 @@ import hashlib
 import io
 import json
 import logging
+import math
 import os
 import re
 import shutil
@@ -1173,6 +1174,169 @@ def _default_prototype():
     return default_buffer_prototype()
 
 
+# -- Zarr v2 as zarr-python 2 era writers left it -----------------------------
+#
+# zarr-python 3 parses v2 metadata more strictly than the writers of 2016-2021
+# wrote it. Two failures matter for images, and both are fixed here, at the
+# store boundary -- every byte a reader sees passes through `LegacyV2.note` or
+# `LegacyV2.pending` -- so a local folder (ome_zarr's `_LegacyV2LocalStore`)
+# and a web address (`ChunkCacheStore`) read the same, and the user's files are
+# never rewritten:
+#
+# * metadata zarr 3 refuses outright: a 1-byte dtype with a byte order (">u1",
+#   old bioformats2raw wrote every 8-bit image that way), a typestr with none
+#   ("u2"), no `order` / `fill_value` key, a null `dimension_separator`, an
+#   integer fill value the dtype cannot hold (-1 for uint8, 0.5 for uint16);
+# * chunks stored nested ("0/0/0") by NestedDirectoryStore before zarr 2.8,
+#   whose `.zarray` has no `dimension_separator` at all. zarr 3 reads "." for
+#   it, finds no chunk, and draws the fill value: a black image, no error. The
+#   spelling is decided once per array by looking (`decide`), never per chunk.
+
+_LEGACY_CHUNK_NAME = re.compile(r"^\d+(?:\.\d+)*$")
+_ONE_BYTE_TYPESTR = re.compile(r"^[<>]([uib]1)$")
+
+
+def _canonical_typestr(dtype: str) -> str:
+    """`dtype` as zarr 3 accepts it: "|u1" for ">u1", "<u2" for "u2"."""
+    one_byte = _ONE_BYTE_TYPESTR.match(dtype)
+    if one_byte:
+        return "|" + one_byte.group(1)
+    if dtype[:1] in "<>|":
+        return dtype
+    try:
+        import numpy as np
+
+        parsed = np.dtype(dtype)
+    except (TypeError, ValueError):
+        return dtype
+    return parsed.str if parsed.fields is None and parsed.kind in "biuf" else dtype
+
+
+def _castable_fill(fill, typestr: str):
+    """An integer fill value the dtype can hold, cast the way zarr 2 cast it."""
+    import numpy as np
+
+    try:
+        dtype = np.dtype(typestr)
+    except (TypeError, ValueError):
+        return fill
+    if dtype.kind not in "iu" or isinstance(fill, bool) or not isinstance(fill, (int, float)):
+        return fill
+    info = np.iinfo(dtype)
+    if float(fill).is_integer() and info.min <= fill <= info.max:
+        return int(fill) if isinstance(fill, float) else fill
+    if not math.isfinite(float(fill)):
+        return None
+    return np.array(int(fill)).astype(dtype).item()
+
+
+def fix_v2_array_metadata(doc: dict) -> bool:
+    """Normalise one `.zarray` document in place; True when anything changed."""
+    before = json.dumps(doc, sort_keys=True)
+    dtype = doc.get("dtype")
+    if isinstance(dtype, str):
+        doc["dtype"] = _canonical_typestr(dtype)
+    doc.setdefault("order", "C")
+    doc.setdefault("fill_value", None)
+    if "dimension_separator" in doc and doc["dimension_separator"] is None:
+        del doc["dimension_separator"]
+    if isinstance(doc.get("dtype"), str) and doc.get("fill_value") is not None:
+        doc["fill_value"] = _castable_fill(doc["fill_value"], doc["dtype"])
+    return json.dumps(doc, sort_keys=True) != before
+
+
+class LegacyV2:
+    """What one store's v2 metadata needed: the fixes, and the chunk spelling.
+
+    `note` sees every `.zarray`/`.zmetadata` the store hands out, and remembers
+    each array that names no `dimension_separator` (path -> ndim). `pending`
+    picks out a dotted chunk key of one of those; `spell` rewrites it once
+    `decide` (or the store's own look, through `decide`) has said how that
+    array's chunks are stored. An array with one dimension has nothing to
+    decide and is never remembered, so ordinary stores pay a dict lookup.
+    """
+
+    def __init__(self):
+        self.ndim: dict[str, int] = {}
+        self.separator: dict[str, str] = {}
+        #: Looks in progress, by array (a remote store's, on zarr's loop).
+        self.deciding: dict = {}
+
+    def note(self, key: str, data: bytes) -> bytes:
+        """`data` (the bytes stored under `key`) as zarr 3 will read them."""
+        parent, _, name = key.rpartition("/")
+        if name not in (".zarray", ".zmetadata"):
+            return data
+        try:
+            doc = json.loads(data)
+        except ValueError:
+            return data
+        if not isinstance(doc, dict):
+            return data
+        changed = False
+        if name == ".zarray":
+            changed = self._array(parent, doc)
+        elif isinstance(doc.get("metadata"), dict):
+            for inner, value in doc["metadata"].items():
+                node, _, leaf = str(inner).rpartition("/")
+                if leaf == ".zarray" and isinstance(value, dict):
+                    path = "/".join(p for p in (parent, node) if p)
+                    changed = self._array(path, value) or changed
+        return json.dumps(doc).encode() if changed else data
+
+    def _array(self, path: str, doc: dict) -> bool:
+        changed = fix_v2_array_metadata(doc)
+        shape = doc.get("shape")
+        if ("dimension_separator" not in doc and isinstance(shape, list)
+                and len(shape) > 1 and path not in self.ndim):
+            self.ndim[path] = len(shape)
+        return changed
+
+    def pending(self, key: str) -> Optional[tuple[str, str]]:
+        """(array path, dotted name) when `key` is a chunk whose spelling is in doubt."""
+        if not self.ndim:
+            return None
+        parent, _, last = key.rpartition("/")
+        ndim = self.ndim.get(parent)
+        if ndim is None or not _LEGACY_CHUNK_NAME.match(last) or last.count(".") != ndim - 1:
+            return None
+        return parent, last
+
+    def first_chunk(self, parent: str) -> tuple[str, str]:
+        """The first chunk's key in each spelling: ("p/0.0.0", "p/0/0/0")."""
+        ndim = self.ndim[parent]
+        base = parent + "/" if parent else ""
+        return base + ".".join("0" * ndim), base + "/".join("0" * ndim)
+
+    def decide(self, parent: str, dotted: bool, nested: bool, names=()) -> str:
+        """Remember and return the array's separator, from what exists.
+
+        The first chunk in either spelling settles it. Without one (a sparse
+        or never-written array), a listing of the array's directory does: a
+        bare number is a nested chunk's first directory, a dotted name is a
+        flat chunk. Nothing at all means nothing to read either way; "." is
+        what the metadata says.
+        """
+        if dotted:
+            separator = "."
+        elif nested:
+            separator = "/"
+        else:
+            separator = "."
+            for name in names:
+                name = str(name).strip("/").rsplit("/", 1)[-1]
+                if not _LEGACY_CHUNK_NAME.match(name):
+                    continue
+                separator = "." if "." in name else "/"
+                break
+        self.separator[parent] = separator
+        return separator
+
+    def spell(self, parent: str, last: str, separator: str) -> str:
+        name = last if separator == "." else last.replace(".", "/")
+        return f"{parent}/{name}" if parent else name
+
+
 class ChunkCacheStore(WrapperStore):
     """A remote zarr store read through the on-disk chunk cache.
 
@@ -1204,12 +1368,16 @@ class ChunkCacheStore(WrapperStore):
         self._listings: dict[str, list[str]] = {}
         #: File lengths learned so far, by key (see `size_of`).
         self.sizes: dict[str, int] = {}
+        #: Zarr v2 metadata fixes and nested-chunk spellings (`LegacyV2`).
+        self.legacy = LegacyV2()
         self._registered = False
         self.stats = {"hits": 0, "misses": 0, "fetches": 0, "negative_hits": 0,
                       "bytes_fetched": 0}
 
     def _with_store(self, store):
-        return type(self)(store, self.root_url, self._index)
+        clone = type(self)(store, self.root_url, self._index)
+        clone.legacy = self.legacy
+        return clone
 
     def __eq__(self, other) -> bool:
         return isinstance(other, ChunkCacheStore) and other.root_url == self.root_url
@@ -1353,7 +1521,50 @@ class ChunkCacheStore(WrapperStore):
             f"{host_of(self.root_url)} cannot be reached right now ({last_exc})",
             self.root_url) from last_exc
 
+    async def _chunk_key(self, key: str) -> str:
+        """`key` as this store spells it (`LegacyV2`: nested v2 chunks)."""
+        found = self.legacy.pending(key)
+        if found is None:
+            return key
+        parent, last = found
+        separator = self.legacy.separator.get(parent)
+        if separator is None:
+            # zarr reads a selection's chunks concurrently: one look per
+            # array, however many chunks ask at once.
+            deciding = self.legacy.deciding
+            if parent not in deciding:
+                deciding[parent] = asyncio.ensure_future(self._decide_separator(parent))
+            pending = deciding[parent]
+            try:
+                separator = await asyncio.shield(pending)
+            finally:
+                # Settled either way: a failed look (host down) is retried
+                # by the next read rather than remembered.
+                if pending.done() and deciding.get(parent) is pending:
+                    deciding.pop(parent, None)
+        return self.legacy.spell(parent, last, separator)
+
+    async def _decide_separator(self, parent: str) -> str:
+        # The first chunk itself, through the cache: it is what the viewer
+        # reads first anyway, so the look costs the dotted 404 and no more.
+        dotted, nested = self.legacy.first_chunk(parent)
+        found_dotted, found_nested = await asyncio.gather(
+            self._get_raw(dotted), self._get_raw(nested))
+        names: list = []
+        if found_dotted is None and found_nested is None:
+            names = [name async for name in self.list_dir(parent)]
+        return self.legacy.decide(parent, found_dotted is not None,
+                                  found_nested is not None, names)
+
     async def _get_bytes(self, key: str, byte_range=None) -> Optional[bytes]:
+        key = await self._chunk_key(key)
+        data = await self._get_raw(key, byte_range)
+        if data is not None and byte_range is None \
+                and key.rsplit("/", 1)[-1] in (".zarray", ".zmetadata"):
+            data = self.legacy.note(key, data)
+        return data
+
+    async def _get_raw(self, key: str, byte_range=None) -> Optional[bytes]:
         state, data = await asyncio.to_thread(self._read_cached, key, byte_range)
         if state == "hit":
             self.stats["hits"] += 1
@@ -1413,6 +1624,9 @@ class ChunkCacheStore(WrapperStore):
             yield [(index, buffer)]
 
     async def exists(self, key) -> bool:
+        return await self._exists_raw(await self._chunk_key(key))
+
+    async def _exists_raw(self, key) -> bool:
         state, _ = await asyncio.to_thread(self._read_cached, key, None)
         if state == "hit":
             return True

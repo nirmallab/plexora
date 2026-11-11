@@ -93,7 +93,7 @@ CORE = ("pyodide.js", "pyodide.mjs", "pyodide.asm.mjs", "pyodide.asm.wasm", "pyt
         "package.json")
 
 sys.path.insert(0, str(REPO))
-from plexora.browser.stages import DROP_DEPENDS, NEWER_THAN_PYODIDE, STAGES  # noqa: E402
+from plexora.browser.stages import DROP_DEPENDS, NEWER_THAN_PYODIDE, PROVIDED, STAGES  # noqa: E402
 
 
 def sha256(path: Path) -> str:
@@ -403,7 +403,8 @@ def unmet(lock: dict, found: dict, stages: dict | None = None) -> dict:
                "sys_platform": "emscripten", "platform_system": "Emscripten", "os_name": "posix",
                "implementation_name": "cpython", "platform_python_implementation": "CPython",
                "platform_machine": "wasm32"}
-    base = set(closure(lock, stages["base"]["pyodide"])) | {_norm(w) for w in stages["base"]["wheels"]}
+    base = (set(closure(lock, stages["base"]["pyodide"])) | {_norm(w) for w in stages["base"]["wheels"]}
+            | {_norm(name) for name in PROVIDED})
     out = {}
     for stage_name, stage in stages.items():
         if stage_name == "base":

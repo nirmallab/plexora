@@ -115,6 +115,30 @@ STAGES = {
         "wheels": ["pydicom", "wsidicom", "dicomweb-client", "marshmallow", "cachetools"],
         "modules": ["pydicom", "wsidicom"],
     },
+    "microscope": {
+        # A microscope's or slide scanner's own format (server/utils/formats/):
+        # the pure-Python readers its desktop reads them with, loaded when one
+        # is first opened. czifile decodes through imagecodecs_shim: JPEG, LZW,
+        # zstd and ZSTD1 (the stdlib's compression.zstd), JPEG XR by the
+        # worker's jxrlib (workers/jpegxr.js); CZI's experimental "chunked"
+        # compression is refused. nd2 imports
+        # dask and resource-backed-dask-array at module level, and dask's own
+        # pure dependencies come with it (toolz and cloudpickle are Pyodide's).
+        # Olympus VSI, Hamamatsu NDPIS and DeltaVision are Plexora's own code
+        # and need none of this.
+        "pyodide": ["toolz", "cloudpickle"],
+        "wheels": ["czifile", "liffile", "oiffile", "oirfile", "nd2",
+                   "resource-backed-dask-array", "dask", "partd", "locket"],
+        "modules": ["czifile", "liffile", "oiffile", "oirfile", "nd2"],
+    },
+    "imc": {
+        # Hyperion MCD (server/utils/formats/mcd.py): readimc imports imageio
+        # and pandas at module level, though its wheel declares neither -- so
+        # its own stage, and a CZI or a LIF never loads pandas.
+        "pyodide": ["imageio", "pandas"],
+        "wheels": ["readimc"],
+        "modules": ["readimc"],
+    },
     "parquet": {
         "pyodide": ["pyarrow"],
         "wheels": [],
@@ -143,6 +167,11 @@ STAGES = {
 #: typing_extensions.sentinel (new in 4.16), and Pyodide 314.0.7 has 4.15.0 --
 #: `import anndata` failed on the website (tests/browser/import_check.mjs).
 NEWER_THAN_PYODIDE = ("typing-extensions",)
+
+#: Packages a stage's wheels require that the website provides another way:
+#: imagecodecs is `plexora.browser.imagecodecs_shim`, installed under that
+#: name at boot (it has no WebAssembly build).
+PROVIDED = ("imagecodecs",)
 
 #: Lockfile dependencies a stage does not take: imported only by code Plexora
 #: never reaches (pyarrow's pandas conversions; networkx's drawing).

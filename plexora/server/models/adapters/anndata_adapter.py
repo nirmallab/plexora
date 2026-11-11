@@ -115,9 +115,19 @@ def _child_keys(group, name) -> list[str]:
 
 
 def _encoding_of(node) -> str:
-    """anndata's own label for how a node is stored: '', 'csr_matrix', 'csc_matrix'."""
+    """anndata's own label for how a node is stored: '', 'csr_matrix', 'csc_matrix'.
+
+    A sparse matrix written before anndata 0.7 carries no `encoding-type`; it
+    says `h5sparse_format` = 'csr'/'csc' instead (the h5sparse convention), and
+    is the same three arrays underneath -- anndata's `sparse_dataset` reads it.
+    """
     try:
-        return str(node.attrs.get("encoding-type") or "")
+        encoding = node.attrs.get("encoding-type")
+        if not encoding:
+            legacy = node.attrs.get("h5sparse_format")
+            if legacy is not None and len(_text(legacy)):
+                return f"{_text(legacy)}_matrix"
+        return _text(encoding) if encoding else ""
     except (AttributeError, TypeError):
         return ""
 
@@ -126,12 +136,15 @@ def _matrix_shape(node):
     """(rows, columns) of an on-disk matrix, from metadata only.
 
     A dense matrix carries its shape on the array; a sparse one is a GROUP and
-    carries it in an attr. Neither read costs a value.
+    carries it in an attr (`shape`, or `h5sparse_shape` before anndata 0.7).
+    Neither read costs a value.
     """
     shape = getattr(node, "shape", None)
     if shape is None:
         try:
             shape = node.attrs.get("shape")
+            if shape is None:
+                shape = node.attrs.get("h5sparse_shape")
         except (AttributeError, TypeError):
             shape = None
     if shape is None or len(shape) < 2:
@@ -196,15 +209,18 @@ def _describe_obsm_mapping(obsm) -> list[dict]:
     entries = []
     if obsm is None:
         return entries
-    try:
-        keys = list(obsm.keys())
-    except (AttributeError, TypeError):
-        return entries
+    if _is_compound(obsm):
+        keys = list(obsm.dtype.names)
+    else:
+        try:
+            keys = list(obsm.keys())
+        except (AttributeError, TypeError):
+            return entries
     for name in keys:
         if not name:
             continue
         entry = {"name": str(name)}
-        shape = getattr(obsm[name], "shape", None)
+        shape = getattr(_member(obsm, name), "shape", None)
         if shape is not None:
             entry["shape"] = [int(dim) for dim in shape]
         entries.append(entry)
@@ -319,6 +335,152 @@ def _deduplicate_names(names: list[str]) -> list[str]:
     return result
 
 
+# -- layouts written before anndata 0.7 ---------------------------------------
+#
+# Three things changed under the readers above, and a file from before each
+# change is still a file a user has:
+#
+# * anndata < 0.7 (0.5, 0.6) wrote `obs`, `var` and `obsm` as ONE compound
+#   (structured) HDF5 dataset, not a group: a field per column, the index as
+#   the first field ("index"; "obs_names"/"var_names" in older scanpy files). A
+#   categorical column is its integer codes, its labels in
+#   `uns/<column>_categories`.
+# * anndata 0.7.x wrote groups, but a categorical column is a plain dataset of
+#   codes whose `categories` attr REFERENCES `__categories/<column>` -- read as
+#   a plain array it is the codes, which is what a viewer used to show.
+# * a sparse matrix before 0.7 says `h5sparse_format`/`h5sparse_shape`, not
+#   `encoding-type`/`shape` (handled in `_encoding_of`/`_matrix_shape`).
+#
+# All three are read lazily here, column by column, exactly as current files
+# are; `anndata.read_h5ad` is the reference they are tested against.
+
+#: Field names an index has gone by in a compound dataframe. anndata itself
+#: takes the FIRST field whatever it is called (`read_dataframe_legacy`), so
+#: these only decide which field when more than one could be it.
+_LEGACY_INDEX_FIELDS = ("index", "_index", "obs_names", "var_names",
+                        "row_names", "col_names", "smp_names")
+
+
+class LegacyAnnDataError(ValueError):
+    """An .h5ad whose layout this reader does not understand.
+
+    A ValueError, so every route that shows a read-spec error shows this one,
+    and its message is the whole explanation a user needs.
+    """
+
+
+def _legacy_layout_error(node, what) -> LegacyAnnDataError:
+    version = None
+    try:
+        version = node.file.attrs.get("encoding-version")
+    except (AttributeError, TypeError):
+        version = None
+    written = (f"written in anndata's on-disk format {_text(version)}" if version
+               else "written by an old anndata (before 0.7)")
+    return LegacyAnnDataError(
+        f"This .h5ad file was {written}, and its `{what}` is stored in a layout "
+        "Plexora cannot read directly. Re-save it with a current anndata -- in "
+        "Python: `import anndata; anndata.read_h5ad('in.h5ad')"
+        ".write_h5ad('out.h5ad')` -- and import the new file.")
+
+
+def _is_compound(node) -> bool:
+    """Whether a node is a compound (structured) dataset -- a pre-0.7 frame."""
+    if node is None or hasattr(node, "keys"):
+        return False
+    dtype = getattr(node, "dtype", None)
+    return dtype is not None and getattr(dtype, "names", None) is not None
+
+
+class _Field:
+    """One field of a compound dataset, sliced like an array of its own.
+
+    `dataset.fields(name)[rows]` reads that field alone from disk (h5py); a
+    store without `fields` reads the rows and picks the field.
+    """
+
+    attrs: dict = {}
+
+    def __init__(self, dataset, name):
+        self._dataset = dataset
+        self._name = name
+        sub = dataset.dtype.fields[name][0]
+        self.dtype = sub.base
+        self.shape = (int(dataset.shape[0]),) + tuple(sub.shape)
+
+    def __getitem__(self, key):
+        rest = ()
+        if isinstance(key, tuple):
+            key, rest = key[0], key[1:]
+        if isinstance(key, np.ndarray):
+            key = key.tolist() if key.size else slice(0, 0)
+        fields = getattr(self._dataset, "fields", None)
+        if fields is not None:
+            values = np.asarray(fields(self._name)[key])
+        else:
+            values = np.asarray(self._dataset[key][self._name])
+        return values[(slice(None),) + tuple(rest)] if rest else values
+
+
+def _member(node, name):
+    """`node[name]`, for a group or for a compound dataset's field."""
+    if _is_compound(node):
+        return _Field(node, name)
+    return node[name]
+
+
+def _has_member(node, name) -> bool:
+    if node is None:
+        return False
+    if _is_compound(node):
+        return name in node.dtype.names
+    try:
+        return name in node
+    except (KeyError, TypeError):
+        return False
+
+
+def _labels(values) -> list:
+    """Category labels as stored, with HDF5's bytes decoded."""
+    values = np.asarray(values)
+    if values.ndim == 0:
+        values = values.reshape(1)
+    return [value.decode() if isinstance(value, bytes) else value
+            for value in values.tolist()]
+
+
+def _is_integer(node) -> bool:
+    try:
+        return np.issubdtype(np.dtype(node.dtype), np.integer)
+    except (AttributeError, TypeError):
+        return False
+
+
+def _codes_to_categorical(codes, labels, ordered=False):
+    import pandas as pd
+
+    codes = np.asarray(codes).astype(np.int64, copy=False)
+    # A code outside the labels is missing, as -1 is; from_codes refuses it.
+    codes = np.where((codes < 0) | (codes >= len(labels)), -1, codes)
+    return pd.Series(pd.Categorical.from_codes(codes, categories=labels,
+                                               ordered=bool(ordered)))
+
+
+def var_names(group) -> list[str]:
+    """The var index as text, for any layout the frame readers know.
+
+    A current file's `var` goes through anndata's own reader, as it always has;
+    a pre-0.7 compound one is the index field, read on its own.
+    """
+    var = _child(group, "var")
+    if var is None:
+        return []
+    if _is_compound(var):
+        return [str(name) for name in _LazyObs(group, "var").index_take(None)]
+    if not hasattr(var, "keys"):
+        raise _legacy_layout_error(var, "var")
+    return [str(name) for name in _read_elem(var).index]
+
 
 class _LazyObs:
     """The obs frame, read one column at a time.
@@ -337,9 +499,26 @@ class _LazyObs:
     DataFrame -- both are also called with a real one from elsewhere.
     """
 
-    def __init__(self, group):
-        self._node = group["obs"]
-        self._index_key = str(self._node.attrs.get("_index", "_index"))
+    def __init__(self, group, axis="obs"):
+        self._root = group
+        self._node = group[axis]
+        self._compound = _is_compound(self._node)
+        self._categories = {}
+        self._cache = {}
+        if self._compound:
+            # anndata < 0.7: one structured dataset, the index its first field.
+            names = [str(name) for name in self._node.dtype.names]
+            self._index_key = next(
+                (name for name in _LEGACY_INDEX_FIELDS if name in names),
+                names[0] if names else "index")
+            self.columns = [name for name in names if name != self._index_key]
+            return
+        if not hasattr(self._node, "keys"):
+            # A plain array where a frame should be: no layout anndata ever
+            # wrote that this reader knows, so say what to do rather than fail
+            # on the first `.keys()`.
+            raise _legacy_layout_error(self._node, axis)
+        self._index_key = _text(self._node.attrs.get("_index", "_index"))
         # The file's own column order when it records one, which is what a user
         # picking from a dropdown expects to see; the group's key order is the
         # fallback and is arbitrary.
@@ -349,11 +528,79 @@ class _LazyObs:
         except (AttributeError, TypeError):
             order = None
         if order is not None and len(order):
-            self.columns = [str(name) for name in order]
+            self.columns = [_text(name) for name in order]
         else:
+            # `__categories` is anndata 0.7's store of category labels, not a
+            # column.
             self.columns = [str(key) for key in self._node.keys()
-                            if str(key) != self._index_key]
-        self._cache = {}
+                            if str(key) not in (self._index_key, "__categories")]
+
+    def _column(self, key):
+        """The on-disk node for one column (or the index), any layout."""
+        return _member(self._node, key)
+
+    def _categories_of(self, key, node):
+        """(labels, ordered) when a column is a categorical stored the old way
+        -- codes in a plain dataset -- else None. Cached per column."""
+        if key in self._categories:
+            return self._categories[key]
+        found = None
+        if getattr(node, "shape", None) is not None and _is_integer(node):
+            found = (self._uns_categories(key, node) if self._compound
+                     else self._referenced_categories(node))
+        self._categories[key] = found
+        return found
+
+    def _referenced_categories(self, node):
+        """anndata 0.7.x: the column's `categories` attr points at
+        `__categories/<column>` -- an HDF5 object reference, or a path in a
+        store that has none. Resolved against this frame's group, as anndata's
+        own `read_series` resolves it against the column's parent."""
+        try:
+            pointer = node.attrs.get("categories")
+        except (AttributeError, TypeError):
+            return None
+        if pointer is None:
+            return None
+        try:
+            target = self._node[_text(pointer) if isinstance(pointer, (str, bytes))
+                                else pointer]
+            ordered = bool(target.attrs.get("ordered", False))
+            return _labels(target[()]), ordered
+        except (KeyError, TypeError, ValueError, AttributeError):
+            return None
+
+    def _uns_categories(self, key, node):
+        """anndata < 0.7: labels in `uns/<column>_categories`, applied only
+        when every code fits them -- `anndata.compat._clean_uns`'s own test,
+        because obs and var columns of one name shared that one entry."""
+        uns = _child(self._root, "uns")
+        stored = _child(uns, f"{key}_categories") if uns is not None else None
+        if stored is None or getattr(stored, "shape", None) is None:
+            return None
+        labels = _labels(stored[()])
+        codes = np.asarray(node[:])
+        if codes.size and int(codes.max()) >= len(labels):
+            return None
+        return labels, False
+
+    def _read_column(self, key, row_indices):
+        """One column in a layout `_node_take` does not cover, or None."""
+        node = self._column(key)
+        categories = self._categories_of(key, node)
+        if categories is not None:
+            labels, ordered = categories
+            return _codes_to_categorical(_rows(node, row_indices), labels, ordered)
+        if self._compound:
+            import pandas as pd
+
+            values = np.asarray(_rows(node, row_indices))
+            if values.dtype.kind == "S":
+                # `tolist` hands back Python bytes (not numpy's), which
+                # `_decoded` decodes as UTF-8.
+                return pd.Series(_decoded(values.tolist()), dtype=object)
+            return pd.Series(values)
+        return None
 
     def take(self, name, row_indices):
         """One obs column, restricted to the planned rows, read on disk.
@@ -367,7 +614,10 @@ class _LazyObs:
         key = str(name)
         if key in self._cache:
             return _take(self._cache[key], row_indices)
-        taken = _node_take(self._node[key], row_indices)
+        taken = self._read_column(key, row_indices)
+        if taken is not None:
+            return taken
+        taken = _node_take(self._column(key), row_indices)
         if taken is None:
             return _take(self[key], row_indices)
         return taken
@@ -380,7 +630,10 @@ class _LazyObs:
 
         key = str(name)
         if key not in self._cache:
-            self._cache[key] = pd.Series(_read_elem(self._node[key]))
+            column = self._read_column(key, None)
+            if column is None:
+                column = pd.Series(_read_elem(self._column(key)))
+            self._cache[key] = column
         return self._cache[key]
 
     def index_take(self, row_indices):
@@ -397,7 +650,7 @@ class _LazyObs:
         one, encoded as a group), where `read_elem` is the only reader that
         understands the encoding.
         """
-        node = self._node[self._index_key]
+        node = self._column(self._index_key)
         taken = _node_take(node, row_indices)
         if taken is None:
             taken = _take(_read_elem(node), row_indices)
@@ -409,6 +662,8 @@ class _LazyObs:
     @property
     def n_rows(self) -> int:
         """Row count from array metadata, without reading a column."""
+        if self._compound:
+            return int(self._node.shape[0])
         for key in ([self._index_key] + self.columns):
             try:
                 node = self._node[key]
@@ -474,9 +729,14 @@ def _node_take(node, row_indices):
             return None
         # Categories are the distinct levels, not one entry per row, so they are
         # read whole -- that is the point of the encoding.
+        try:
+            ordered = bool(node.attrs.get("ordered", False))
+        except (AttributeError, TypeError):
+            ordered = False
         return pd.Series(pd.Categorical.from_codes(
             np.asarray(rows(codes)),
-            categories=[_text(value) for value in _read_elem(categories)]))
+            categories=[_text(value) for value in _read_elem(categories)],
+            ordered=ordered))
 
     if encoding.startswith("nullable-"):
         values = _child(node, "values")
@@ -931,8 +1191,7 @@ class AnnDataAdapter:
         else:
             raise ValueError(f"Unknown features.source: {source!r}")
 
-        var = _read_elem(group["var"])
-        names = [str(v) for v in var.index]
+        names = var_names(group)
         width = _matrix_shape(node)[1]
         if width is not None and width != len(names):
             raise ValueError(
@@ -1217,6 +1476,8 @@ class AnnDataAdapter:
         with self._open_group() as group:
             var = _child(group, "var")
             varm = _child(group, "varm")
+            if var is not None and not hasattr(var, "keys"):
+                return None  # a pre-0.7 compound var: no stored statistics
             keys = set(var.keys()) if var is not None else set()
             hist_key = "plx_log_hist" if self.apply_log_transform else "plx_hist"
             if (varm is None or hist_key not in _child_keys(group, "varm")
@@ -1257,10 +1518,8 @@ class AnnDataAdapter:
         def has_obsm(name):
             # Asked by name rather than looked up in `keys()`: a store at a web
             # address whose host cannot list answers a name it cannot enumerate.
-            try:
-                return obsm_node is not None and name in obsm_node
-            except (KeyError, TypeError):
-                return False
+            # (A pre-0.7 obsm is one compound dataset; its names are fields.)
+            return _has_member(obsm_node, name)
 
         if source is None:
             if not has_obsm('spatial'):
@@ -1277,7 +1536,7 @@ class AnnDataAdapter:
             obsm_key = obsm_key or 'spatial'
             if not has_obsm(obsm_key):
                 raise ValueError(f"obsm key {obsm_key!r} not found in adata.obsm")
-            node = obsm_node[obsm_key]
+            node = _member(obsm_node, obsm_key)
             shape = getattr(node, "shape", None)
             if shape is None or len(shape) != 2 or shape[1] < 2:
                 raise ValueError(f"adata.obsm[{obsm_key!r}] must be 2D with at least 2 columns")

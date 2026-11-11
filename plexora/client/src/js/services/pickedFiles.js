@@ -18,11 +18,13 @@
  *
  *   pick({mode, multiple, ask, gate, types, startIn})
  *                          -> a path, an array of them, or null (cancelled);
- *                             an MRXS slide brings the folder beside it, chosen
- *                             after `ask(text)` (the caller's one-button question)
- *                             and mounted with it (/picked/<id>/<name>.mrxs and
- *                             /picked/<id>/<name>/...), and a DICOM file the
- *                             folder it is in (the slide's other instances);
+ *                             an MRXS or VSI slide brings the folder beside it,
+ *                             chosen after `ask(text)` (the caller's one-button
+ *                             question) and mounted with it (/picked/<id>/<name>.mrxs
+ *                             and /picked/<id>/<name>/..., /picked/<id>/<name>.vsi
+ *                             and /picked/<id>/_<name>_/...), a DICOM file the
+ *                             folder it is in (the slide's other instances), and
+ *                             an NDPIS the .ndpi files it names, from its folder;
  *                             `gate()`, when given, is
  *                             awaited once the files are chosen and before
  *                             anything is mounted or remembered: false is a
@@ -165,21 +167,34 @@
         return `${ROOT}/${id}/${name}`;
     }
 
-    //: An MRXS slide is its .mrxs and the folder of the same name beside it,
-    //: where the pixels are (OpenSlide's MIRAX layout).
-    const MRXS = /\.mrxs$/i;
+    //: Slides whose pixels are in a folder beside the file picked, which is
+    //: mounted with it under the name the scanner gave it: an MRXS's folder
+    //: is named after the slide and holds its Slidedat.ini (OpenSlide's MIRAX
+    //: layout); an Olympus VSI's is "_<name>_" and holds the .ets files of
+    //: its scans (server/utils/formats/vsi.py).
+    const SLIDES = [
+        { suffix: /\.mrxs$/i, ext: ".mrxs", folder: (stem) => stem,
+          holds: (path) => /^slidedat\.ini$/i.test(path), lacks: "has no Slidedat.ini" },
+        { suffix: /\.vsi$/i, ext: ".vsi", folder: (stem) => `_${stem}_`,
+          holds: (path) => /\.ets$/i.test(path), lacks: "has no .ets files" },
+    ];
+    const slideKind = (name) => SLIDES.find((kind) => kind.suffix.test(String(name))) || null;
+    //: The name of the folder a slide's pixels are in.
+    const slideFolderName = (kind, name) => kind.folder(String(name).replace(kind.suffix, ""));
 
     /**
-     * The folder an MRXS's pixels are in, from the user: the folder named
-     * after the slide, or the one holding both (the folder of that name is
-     * then taken from inside it). `ask(text)` is the caller's one-button
-     * question (a click on it is the gesture the folder picker needs); with
-     * none, the picker is opened straight away, which a browser may refuse.
+     * The folder a slide's pixels are in, from the user: the folder named
+     * as the scanner names it, or the one holding both (the folder of that
+     * name is then taken from inside it). `ask(text)` is the caller's
+     * one-button question (a click on it is the gesture the folder picker
+     * needs); with none, the picker is opened straight away, which a browser
+     * may refuse.
      * -> {name, entries: [{path inside the slide's folder, file, handle}], handle} or null.
      */
     async function slideFolder(file, fileHandle, ask) {
-        const stem = file.name.replace(MRXS, "");
-        if (ask && !await ask(`Choose the folder "${stem}" that sits beside ${file.name}.`)) return null;
+        const kind = slideKind(file.name);
+        const folderName = slideFolderName(kind, file.name);
+        if (ask && !await ask(`Choose the folder "${folderName}" that sits beside ${file.name}.`)) return null;
         let entries;
         let handle = null;
         if (global.showDirectoryPicker) {
@@ -192,12 +207,12 @@
             if (!files.length) return null;
             entries = files.map((f) => ({ path: f.webkitRelativePath || f.name, file: f, handle: null }));
         }
-        const inside = slideEntries(stem, entries);
+        const inside = slideEntries(kind, folderName, entries);
         if (!inside) {
-            throw new Error(`${file.name}: that folder has no Slidedat.ini; choose the folder "${stem}" `
-                            + "the scanner wrote beside the .mrxs");
+            throw new Error(`${file.name}: that folder ${kind.lacks}; choose the folder "${folderName}" `
+                            + `the scanner wrote beside the ${kind.ext}`);
         }
-        return { name: stem, entries: inside, handle };
+        return { name: folderName, entries: inside, handle };
     }
 
     //: A folder's files as "<folder>/<path>", as `<input webkitdirectory>` names them.
@@ -206,14 +221,14 @@
     }
 
     /**
-     * An MRXS's files out of a chosen folder's ("<chosen>/<path>" each): the
-     * folder itself, or the folder named `stem` inside it -- with paths inside
-     * that folder; null when neither holds a Slidedat.ini.
+     * A slide's files out of a chosen folder's ("<chosen>/<path>" each): the
+     * folder itself, or the folder named `folderName` inside it -- with paths
+     * inside that folder; null when neither holds what `kind`'s folder holds.
      */
-    function slideEntries(stem, entries) {
-        const lower = stem.toLowerCase();
+    function slideEntries(kind, folderName, entries) {
+        const lower = folderName.toLowerCase();
         const split = (path) => path.split("/");
-        const hasIndex = (list) => list.some((e) => /^slidedat\.ini$/i.test(e.path));
+        const hasIndex = (list) => list.some((e) => kind.holds(e.path));
         const nested = entries.filter((e) => split(e.path).length > 2 && split(e.path)[1].toLowerCase() === lower)
             .map((e) => ({ ...e, path: split(e.path).slice(2).join("/") }));
         if (hasIndex(nested)) return nested;
@@ -221,7 +236,8 @@
         return hasIndex(itself) ? itself : null;
     }
 
-    //: The .mrxs at /picked/<id>/<name>.mrxs and its folder at /picked/<id>/<stem>/.
+    //: The slide's file at /picked/<id>/<name> and its folder at
+    //: /picked/<id>/<folder name>/, where its reader looks for it.
     async function mountSlide(id, file, folder, python = global.PlexoraPython) {
         const blobs = [{ name: file.name, data: file },
                        ...folder.entries.map(({ path, file: f }) => ({ name: `${folder.name}/${path}`, data: f }))];
@@ -230,18 +246,99 @@
         return `${ROOT}/${id}/${file.name}`;
     }
 
-    //: An MRXS's folder read out of the folder the .mrxs is in, where the page
-    //: holds that folder's handle: no question. Null where it is not there.
+    //: A slide's folder read out of the folder the slide's file is in, where
+    //: the page holds that folder's handle: no question. Null where it is not there.
     async function besideFolder(parent, file) {
-        const stem = file.name.replace(MRXS, "");
+        const kind = slideKind(file.name);
+        const folderName = slideFolderName(kind, file.name);
         let handle;
         try {
-            handle = await parent.getDirectoryHandle(stem);
+            handle = await parent.getDirectoryHandle(folderName);
         } catch (error) {
             return null;
         }
         const entries = await walk(handle);
-        return entries.some((e) => /^slidedat\.ini$/i.test(e.path)) ? { name: stem, entries, handle } : null;
+        return entries.some((e) => kind.holds(e.path)) ? { name: folderName, entries, handle } : null;
+    }
+
+    //: A Hamamatsu NDPIS is a short list of .ndpi files, one per channel,
+    //: that sit beside it (server/utils/formats/ndpis.py): it is mounted with
+    //: the folder it is in -- that list of files, not the rest of the folder.
+    const NDPIS = /\.ndpis$/i;
+
+    //: The .ndpi files an .ndpis names ("Image0=<name>.ndpi", "NoImages=3").
+    async function ndpisMembers(file) {
+        const named = new Map();
+        let count = null;
+        for (const line of (await file.text()).split(/\r?\n/)) {
+            const at = line.indexOf("=");
+            if (at < 0) continue;
+            const key = line.slice(0, at).trim().toLowerCase();
+            const value = line.slice(at + 1).trim();
+            if (key === "noimages") count = Number.parseInt(value, 10);
+            else if (/^image\d+$/.test(key)) named.set(Number(key.slice(5)), value.split(/[\\/]/).pop());
+        }
+        const names = [...named.keys()].sort((a, b) => a - b).map((key) => named.get(key));
+        return Number.isFinite(count) ? names.slice(0, count) : names;
+    }
+
+    //: An NDPIS's files out of the folder it is in (a handle): itself and
+    //: the .ndpi files it names, with their paths inside it; null when the
+    //: folder lacks any of them.
+    async function ndpisEntries(directory, setName) {
+        let setHandle;
+        try {
+            setHandle = await directory.getFileHandle(setName);
+        } catch (error) {
+            return null;
+        }
+        const set = await setHandle.getFile();
+        const entries = [{ path: setName, file: set, handle: setHandle }];
+        for (const name of await ndpisMembers(set)) {
+            try {
+                const handle = await directory.getFileHandle(name);
+                entries.push({ path: name, file: await handle.getFile(), handle });
+            } catch (error) {
+                return null;
+            }
+        }
+        return entries;
+    }
+
+    /**
+     * The folder an NDPIS is in, from the user, as for a DICOM file
+     * (`dicomFolder`). -> {name, entries, handle} or null.
+     */
+    async function ndpisFolder(file, fileHandle, ask) {
+        const members = await ndpisMembers(file);
+        if (ask && !await ask(`${file.name} is a set of ${members.length} .ndpi files, one per channel. `
+                              + `Choose the folder ${file.name} is in.`)) {
+            return null;
+        }
+        let folder;
+        if (global.showDirectoryPicker) {
+            const options = { id: "plexora-slide", mode: "read" };
+            if (fileHandle) options.startIn = fileHandle;
+            const handle = await global.showDirectoryPicker(options);
+            folder = { name: handle.name, entries: await ndpisEntries(handle, file.name), handle };
+        } else {
+            const files = await chooseWithInput({ directory: true });
+            if (!files.length) return null;
+            const inside = (f) => (f.webkitRelativePath || f.name).split("/").slice(1);
+            const top = new Map(files.filter((f) => inside(f).length === 1).map((f) => [f.name, f]));
+            top.set(file.name, file);
+            const found = [file.name, ...members].map((name) => top.get(name));
+            folder = {
+                name: (files[0].webkitRelativePath || files[0].name).split("/")[0],
+                entries: found.every(Boolean) ? found.map((f) => ({ path: f.name, file: f, handle: null })) : null,
+                handle: null,
+            };
+        }
+        if (!folder.entries) {
+            throw new Error(`${file.name} names ${members.join(", ")}; that folder does not have them all. `
+                            + `Choose the folder ${file.name} is in`);
+        }
+        return folder;
     }
 
     //: A DICOM slide is a folder of instances, one per level and more
@@ -309,13 +406,28 @@
 
     /**
      * One file, mounted and remembered under `id`, with what it needs beside
-     * it: an MRXS's folder, a DICOM file's neighbours. `parent` is the folder
-     * it is in where the page holds it (a folder the user gave the site), and
-     * then neither is asked for. `from`: where it was chosen, kept with the
-     * record. -> its path, or null when the folder's question was cancelled.
+     * it: an MRXS's or a VSI's folder, a DICOM file's neighbours, an NDPIS's
+     * .ndpi files. `parent` is the folder it is in where the page holds it (a
+     * folder the user gave the site), and then none is asked for. `from`:
+     * where it was chosen, kept with the record. -> its path, or null when
+     * the folder's question was cancelled.
      */
     async function mountOne(id, file, handle = null, { parent = null, ask = null, from = "" } = {}) {
-        if (MRXS.test(file.name)) {
+        if (NDPIS.test(file.name)) {
+            const set = parent
+                ? { name: parent.name, entries: await ndpisEntries(parent, file.name), handle: parent }
+                : await ndpisFolder(file, handle, ask);
+            if (!set) return null;
+            if (!set.entries) throw new Error(`${file.name}: the .ndpi files it names are not beside it`);
+            const folderPath = await mountTree(id, set.name, set.entries);
+            await remember({ id, kind: "directory", only: "ndpis", set: file.name, name: set.name,
+                             handle: set.handle, from, picked: Date.now(),
+                             files: set.entries.map(({ path, file: f }) => ({ path, size: f.size,
+                                                                              modified: f.lastModified })) });
+            origins.set(id, from);
+            return `${folderPath}/${file.name}`;
+        }
+        if (slideKind(file.name)) {
             const folder = (parent && await besideFolder(parent, file)) || await slideFolder(file, handle, ask);
             if (!folder) return null;
             const path = await mountSlide(id, file, folder);
@@ -509,12 +621,13 @@
             return path;
         }
         const file = await fileOf(one);
-        if (partner) {
+        const kind = slideKind(file.name);
+        if (partner && kind) {
             const entries = await treeOf(partner);
-            if (entries.some((e) => /^slidedat\.ini$/i.test(e.path))) {
-                // Named as the slide names it: OpenSlide looks for the
-                // folder by the .mrxs's own stem.
-                const path = await mountSlide(id, file, { name: file.name.replace(MRXS, ""), entries });
+            if (entries.some((e) => kind.holds(e.path))) {
+                // Named as the slide names it: its reader looks for the
+                // folder by the slide file's own name.
+                const path = await mountSlide(id, file, { name: slideFolderName(kind, file.name), entries });
                 await remember({ id, kind: "slide", handles: one.handle ? [one.handle] : null,
                                  folder: partner.handle || null, name: partner.name, picked: Date.now(),
                                  count: entries.length, files: [facts(file)] });
@@ -527,8 +640,9 @@
     /**
      * A drop, as picks: each file or folder dropped mounted where it lies,
      * whatever its size -- nothing is uploaded -- and remembered like a pick.
-     * An MRXS dropped with its folder is one slide; alone, its folder is
-     * asked for, as a DICOM file's is.
+     * An MRXS or VSI dropped with its folder is one slide, and an NDPIS
+     * dropped with its .ndpi files one set; alone, the folder is asked for,
+     * as a DICOM file's is.
      *
      * Called in the drop event's own turn: a page may read a DataTransfer
      * only then, so every item's handle (Chromium: kept, like a pick's) and
@@ -567,12 +681,30 @@
                 const paired = new Set();
                 const pairs = new Map();
                 for (const one of got) {
-                    if (one.directory || !MRXS.test(one.name)) continue;
-                    const stem = one.name.replace(MRXS, "").toLowerCase();
-                    const folder = got.find((o) => o.directory && o.name.toLowerCase() === stem);
+                    const kind = one.directory ? null : slideKind(one.name);
+                    if (!kind) continue;
+                    const folderName = slideFolderName(kind, one.name).toLowerCase();
+                    const folder = got.find((o) => o.directory && o.name.toLowerCase() === folderName);
                     if (folder) { pairs.set(one, folder); paired.add(folder); }
                 }
                 const paths = [];
+                // An NDPIS dropped with the .ndpi files it names: one set,
+                // mounted side by side (alone, its folder is asked for).
+                for (const one of got) {
+                    if (one.directory || !NDPIS.test(one.name)) continue;
+                    const set = await fileOf(one);
+                    const names = (await ndpisMembers(set)).map((name) => name.toLowerCase());
+                    const members = names.map((name) => got.find((o) => !o.directory && o.name.toLowerCase() === name));
+                    if (!names.length || !members.every(Boolean)) continue;
+                    const id = newId();
+                    const files = [set, ...await Promise.all(members.map(fileOf))];
+                    const kept = [one, ...members].map((o) => o.handle || null);
+                    const [path] = await mountFiles(id, files, kept.every(Boolean) ? kept : null);
+                    await remember({ id, kind: "files", handles: kept.every(Boolean) ? kept : null,
+                                     picked: Date.now(), files: files.map(facts) });
+                    paths.push(path);
+                    [one, ...members].forEach((o) => paired.add(o));
+                }
                 for (const one of got) {
                     if (paired.has(one)) continue;
                     const path = await mountDropped(one, pairs.get(one) || null, ask);
@@ -663,11 +795,22 @@
             await mountTree(record.id, record.name, await walkDicom(record.handle), python);
             return true;
         }
+        if (record.kind === "directory" && record.handle && record.only === "ndpis") {
+            // An NDPIS's folder: the set and its .ndpi files, not the rest of it.
+            if (!await granted(record.handle, ask)) return false;
+            const entries = await ndpisEntries(record.handle, record.set);
+            if (!entries) return false;
+            await mountTree(record.id, record.name, entries, python);
+            return true;
+        }
         if (record.kind === "slide" && record.handles && record.folder) {
             if (!await granted(record.handles[0], ask) || !await granted(record.folder, ask)) return false;
-            const entries = slideEntries(record.name, await walkNamed(record.folder));
+            const file = await record.handles[0].getFile();
+            // Records from before VSI slides are all MRXS.
+            const kind = slideKind(file.name) || SLIDES[0];
+            const entries = slideEntries(kind, record.name, await walkNamed(record.folder));
             if (!entries) return false;
-            await mountSlide(record.id, await record.handles[0].getFile(), { name: record.name, entries }, python);
+            await mountSlide(record.id, file, { name: record.name, entries }, python);
             return true;
         }
         if (record.kind === "directory" && record.handle) {

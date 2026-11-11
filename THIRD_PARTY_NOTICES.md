@@ -57,3 +57,16 @@ under the **MIT License**, compiled from OpenJPEG (https://github.com/uclouvain/
 under the **2-clause BSD License**. The WebAssembly file is as published; the
 JavaScript file has one line appended to make it an ES module. Both licences
 and the published files' sha256 are in that directory's `LICENSE`.
+
+## jxrlib, as the npm package jpegxr 0.3.0 (website)
+
+`plexora/client/external/jpegxr-0.3.0/`, the JPEG XR decoder the website's
+Python worker uses for czifile's JPEG XR subblocks (most Zeiss Axioscan CZI
+scans) and tifffile's JPEG XR tiles, is the WebAssembly build in Brion
+Vibber's npm package `jpegxr` (https://github.com/brion/jpegxr): Microsoft's
+jxrlib under the **2-clause BSD License**, his wrapper under the **3-clause
+BSD License**, and Emscripten's C runtime (musl, dlmalloc) under the **MIT
+License**. The `.wasm` is the module the package carries inline, decoded and
+unchanged; its JavaScript glue is not used (`client/src/js/workers/jpegxr.js`
+starts the module). The licences, and the package's and the file's sha256,
+are in that directory's `LICENSE`.

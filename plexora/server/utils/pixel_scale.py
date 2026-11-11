@@ -84,15 +84,41 @@ def _local_metadata(path: str):
         return ome_zarr.physical_metadata(ome_zarr.open_image(path))
     if dicom_wsi.is_dicom_path(path):
         return dicom_wsi.physical_metadata(dicom_wsi.open_image(path))
+    from plexora.server.utils import formats
+
+    if formats.handles(path):
+        return formats.physical_metadata(path)
     if brightfield.is_rgb_layout(path):
         return brightfield.physical_metadata(path)
 
     import tifffile as tf
     from ome_types import from_xml
 
-    with tf.TiffFile(path, is_ome=False) as handle:
+    from plexora.server.utils.tiff_series import ImageTiff
+
+    with ImageTiff(path) as handle:
         xml = handle.pages[0].tags["ImageDescription"].value
-    return from_xml(xml).images[0].pixels
+    try:
+        return from_xml(xml).images[0].pixels
+    except Exception:
+        # A schema before 2016-06 (ome_types converts those with lxml, which
+        # is not shipped), or a document it finds invalid: the scale is read
+        # all the same. Empty, and so "uncalibrated", only when the file
+        # states none.
+        from plexora.server.utils import ome_xml
+
+        return ome_xml.pixels(xml)
+
+
+def _image_metadata(path: str, index: int):
+    """`_local_metadata` for image `index` of a microscope file holding
+    several (server/utils/formats): each image states its own scale, and the
+    package remembers what it read per file version and image -- the per-file
+    cache above is keyed by the path alone, which would hand one scene's
+    answer to the next."""
+    from plexora.server.utils import formats
+
+    return formats.physical_metadata(path, index=index)
 
 
 def pixel_size(project) -> dict | None:
@@ -120,6 +146,11 @@ def pixel_size(project) -> dict | None:
             return _from_metadata(NodeImageProvider(binding).ome_metadata())
         if not project.image.src:
             return None
+        # An image's position in a file holding several (`ImageSpec.index`);
+        # a stand-in project without one (the website's import check) is image 0.
+        index = getattr(project.image, "index", 0)
+        if index:
+            return _from_metadata(_image_metadata(str(project.image.src), index))
         return _from_metadata(_local_metadata(str(project.image.src)))
     except ImportError as exc:
         # Not an answer about the image: a reader this environment lacks. Said

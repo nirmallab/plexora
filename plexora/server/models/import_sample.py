@@ -242,6 +242,26 @@ def _pyramidize_on_node(node, resource_id, answers, address):
                                      stage="registering")
 
 
+def _share_image_on_node(node, reference, index):
+    """Have the node serve image `index` of the file `reference` was picked
+    as, and return its resource id. The file's path is the pick's own
+    (`node://<node>/<path>`): a row offered for one image of a browsed file
+    carries the id that image will be served under, not yet served."""
+    from plexora import nodes as node_api
+    from plexora.server.models.import_proposal import _looks_like_a_path
+    from plexora.server.routes.import_routes import _node_locator
+
+    said = str(reference.said or "").strip()
+    # A `node://<node>/<path>` pick, or a bare path picked with `node=`.
+    located = _node_locator(said) if said.startswith("node://") else (node, said)
+    if not located or not located[1] or not _looks_like_a_path(located[1]):
+        raise ImportError_(
+            f"Image {index + 1} of {reference.filename or reference.label} can only be "
+            "opened from the file itself on the node: pick the file there.")
+    described = node_api.share_path(node, "image", located[1], index=index)
+    return str(described.get("id"))
+
+
 def _register_reference(name, reference, frame, layers, answers=None):
     """Write the sample's coordinate system. Returns the project entry.
 
@@ -267,13 +287,22 @@ def _register_reference(name, reference, frame, layers, answers=None):
         from plexora.server.routes.import_routes import _node_locator
 
         node, resource_id = _node_locator(reference.src)
+        index = int(reference.image_index or 0)
+        if index:
+            # Another image of a file holding several, which inspection did
+            # not share (it shares the file, which is its first image): served
+            # now as a resource of its own, under the id the row carries.
+            resource_id = _share_image_on_node(node, reference, index)
         # An empty record first, then the node fills it in. `attach_image`
         # points an EXISTING project's image at a node -- the geometry, the
         # channel names and the pyramid depth all come back from the machine
         # that can open the file -- so there has to be a project for it to
         # point at.
         _pyramidize_on_node(node, resource_id, answers, reference.src)
-        Project(name=name, image=ImageSpec()).save()
+        # Which image of a file holding several it is, kept through the attach
+        # (the node's resource is that image; the record says so too).
+        Project(name=name, image=ImageSpec(
+            image_index=index if reference.images else None)).save()
         node_api.attach_image(name, node=node, resource_id=resource_id)
         return Project.load(name).to_entry()
 
@@ -307,9 +336,12 @@ def _register_reference(name, reference, frame, layers, answers=None):
     image_type = "brightfield" if (reference.render or {}).get("rgb") else None
     said = _said(answers or {}, "pyramidize:", reference.src)
     pyramidize = None if said is None else str(said).lower() not in ("no", "false")
+    # Which image of a microscope file holding several this sample is
+    # (`import_proposal._each_image_a_sample`); 0 for every other file.
     return register_image_datasource(name=name, image=source,
                                      image_type=image_type,
-                                     pyramidize=pyramidize)
+                                     pyramidize=pyramidize,
+                                     image_index=reference.image_index or 0)
 
 
 def _name_reference_channels(name, reference):

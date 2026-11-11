@@ -278,8 +278,8 @@ def _looks_like_rgb_names(names: Sequence[str]) -> bool:
 
 
 class _opened:
-    """`with _opened(path) as tiff:` -- `tf.TiffFile(str(path), is_ome=False)`
-    for a file, `tiff_region.open_tiff` (and its stream) for a web address."""
+    """`with _opened(path) as tiff:` -- `tiff_region.open_tiff` for a file
+    (a `tiff_series.ImageTiff`) and for a web address (with its stream)."""
 
     def __init__(self, path):
         from plexora.server.utils import tiff_region
@@ -313,6 +313,14 @@ def _tiff_layout(path) -> Optional[dict]:
                 description = str(page.tags["ImageDescription"].value)
             except Exception:
                 description = ""
+            # The storage facts are the IMAGE's first page, which is not the
+            # file's when the file opens with something else (a Leica SCN's
+            # macro, a preview directory: `tiff_series.arrange_series`); the
+            # description is the file's, where a format keeps its one document.
+            try:
+                page = series.pages[0] or page
+            except Exception:
+                pass
             return {
                 "photometric": int(getattr(page, "photometric", 0) or 0),
                 "samples": int(getattr(page, "samplesperpixel", 1) or 1),
@@ -450,7 +458,9 @@ def _thumbnail(path, layout, longest: int = 512) -> Optional[np.ndarray]:
 
         return tiff_region.thumbnail(path, longest)
     try:
-        with tf.TiffFile(str(path), is_ome=False) as handle:
+        from plexora.server.utils.tiff_series import ImageTiff
+
+        with ImageTiff(str(path)) as handle:
             series = handle.series[0]
             level = series.levels[-1] if series.levels else series
             array = zarr.open(level.aszarr(), mode="r")
@@ -587,6 +597,28 @@ def _channel_correlation(sample: np.ndarray) -> float:
     return float(min(matrix[0, 1], matrix[0, 2], matrix[1, 2]))
 
 
+def _wsi_holds_channels(path) -> bool:
+    """Whether a file with a whole-slide suffix holds FLUORESCENCE channels:
+    its image is single-sample grey pages rather than colour ones.
+
+    The whole-slide suffixes were taken as brightfield by name, which is right
+    for nearly every such file and wrong for the scanners' fluorescence
+    modes -- a Leica SCN400F scan (one grey JPEG page a channel), an Aperio FL
+    channel file -- which then went to the RGB reader and were drawn as a
+    colour picture of three markers, or not at all. Asked of the file only
+    for a TIFF-based slide; an OpenSlide-only one (.mrxs, .svslide) stays
+    brightfield, as OpenSlide composes it.
+    """
+    if is_openslide_format(path):
+        return False
+    layout = _tiff_layout(path)
+    if layout is None:
+        return False
+    colour = (layout["photometric"] in (_PHOTOMETRIC_RGB, _PHOTOMETRIC_YCBCR)
+              and layout["samples"] >= 3)
+    return not colour and layout["samples"] == 1 and not layout["axes"].endswith("S")
+
+
 def detect_image_type(path) -> Detection:
     """Whether the image at `path` is brightfield or fluorescence.
 
@@ -597,7 +629,7 @@ def detect_image_type(path) -> Detection:
     """
     path = path if _is_remote(path) else Path(path)
 
-    if is_wsi_path(path):
+    if is_wsi_path(path) and not _wsi_holds_channels(path):
         return _brightfield(
             "high",
             f"{_suffix(path)} is a whole-slide format that only holds "
@@ -612,6 +644,13 @@ def detect_image_type(path) -> Detection:
     if layout is None:
         return _fluorescence(
             "low", "the file could not be inspected, so the default was kept")
+    if is_wsi_path(path):
+        return _fluorescence(
+            "high",
+            f"this {_suffix(path)} stores one grey plane per channel, which is "
+            "how a fluorescence scan is written and a colour camera's is not")
+    if layout["description"].lstrip().startswith("[ImarisDataSet]"):
+        return _fluorescence("high", "an Imaris file holds fluorescence channels")
 
     facts = _ome_channel_facts(layout["description"])
 
@@ -736,7 +775,7 @@ def is_rgb_layout(path) -> bool:
     """
     path = path if _is_remote(path) else Path(path)
     if is_wsi_path(path):
-        return True
+        return not _wsi_holds_channels(path)
     layout = _tiff_layout(path)
     if layout is None:
         return False
@@ -746,6 +785,22 @@ def is_rgb_layout(path) -> bool:
 
 
 # -- native sources ------------------------------------------------------
+
+
+def colour_bytes(block) -> np.ndarray:
+    """Colour samples as the 8 bits a tile carries.
+
+    A 48-bit colour TIFF (16 bits a sample: flatbed and camera exports, some
+    slide scanners' archival mode) reached the tile encoder as uint16 and
+    failed there ("Cannot handle this data type"), so the image never opened.
+    The high byte is the picture; anything that is neither 8- nor 16-bit
+    unsigned is clipped to 0-255 rather than wrapped.
+    """
+    if block.dtype == np.uint8:
+        return block
+    if block.dtype == np.uint16:
+        return (block >> 8).astype(np.uint8)
+    return np.clip(block, 0, 255).astype(np.uint8)
 
 
 class _InterleavedSource:
@@ -759,7 +814,7 @@ class _InterleavedSource:
         self.width = int(array.shape[1])
 
     def read(self, y0, y1, x0, x1) -> np.ndarray:
-        return np.asarray(self._array[y0:y1, x0:x1, :3])
+        return colour_bytes(np.asarray(self._array[y0:y1, x0:x1, :3]))
 
 
 class _PlanarSource:
@@ -774,7 +829,7 @@ class _PlanarSource:
         self.width = int(array.shape[-1])
 
     def read(self, y0, y1, x0, x1) -> np.ndarray:
-        block = np.asarray(self._array[:3, y0:y1, x0:x1])
+        block = colour_bytes(np.asarray(self._array[:3, y0:y1, x0:x1]))
         return np.ascontiguousarray(np.moveaxis(block, 0, -1))
 
 
@@ -1013,7 +1068,9 @@ def _native_sources(path):
     import tifffile as tf
     import zarr
 
-    handle = tf.TiffFile(str(path), is_ome=False)
+    from plexora.server.utils.tiff_series import ImageTiff
+
+    handle = ImageTiff(str(path))
     series = handle.series[0]
     interleaved = str(getattr(series, "axes", "") or "").endswith("S")
     store = zarr.open(series.aszarr(), mode="r")
@@ -1255,6 +1312,10 @@ _APERIO_MPP = re.compile(r"\|\s*MPP\s*=\s*([0-9.]+)", re.IGNORECASE)
 #: `<pixelSize>` / `sizeX` in the Leica XML an SCN carries.
 _LEICA_SIZE = re.compile(r"<sizeX>\s*([0-9.]+)\s*</sizeX>", re.IGNORECASE)
 
+_PHILIPS_SPACING = re.compile(
+    r'Name="DICOM_PIXEL_SPACING"[^>]*>\s*(?:&quot;|")([0-9.eE+-]+)(?:&quot;|")'
+    r'\s*(?:&quot;|")([0-9.eE+-]+)(?:&quot;|")')
+
 # TIFF ResolutionUnit -> how many micrometres one unit is.
 _RESOLUTION_UNIT_UM = {2: 25400.0, 3: 10000.0}
 
@@ -1307,7 +1368,9 @@ def physical_metadata(path) -> dict:
                 return {"physical_size_x": size, "physical_size_x_unit": "µm",
                         "physical_size_y": size, "physical_size_y_unit": "µm"}
 
-            if "<OME" in description:
+            from plexora.server.utils import ome_xml
+
+            if ome_xml.is_ome_xml(description):
                 found = _ome_pixel_size(description)
                 if found:
                     return found
@@ -1318,11 +1381,30 @@ def physical_metadata(path) -> dict:
                 return {"physical_size_x": size, "physical_size_x_unit": "µm",
                         "physical_size_y": size, "physical_size_y_unit": "µm"}
 
+            if "DICOM_PIXEL_SPACING" in description:
+                # Philips TIFF: millimetres, row spacing then column spacing,
+                # stated for the slide and again for each level and for the
+                # macro. The finest is the image's.
+                spacings = [(float(row), float(column))
+                            for row, column in _PHILIPS_SPACING.findall(description)]
+                spacings = [pair for pair in spacings if pair[0] > 0 and pair[1] > 0]
+                if spacings:
+                    row, column = min(spacings)
+                    return {"physical_size_x": column * 1000.0, "physical_size_x_unit": "µm",
+                            "physical_size_y": row * 1000.0, "physical_size_y_unit": "µm"}
+
+            # The image's own page, not the file's first: a Leica SCN opens
+            # with the slide's macro (16 um a pixel), an Imaris classic file
+            # with a thumbnail.
+            try:
+                page = handle.series[0].pages[0] or page
+            except Exception:
+                pass
             unit = int(getattr(page.tags.get("ResolutionUnit"), "value", 0) or 0)
             scale = _RESOLUTION_UNIT_UM.get(unit)
             x = _ratio(getattr(page.tags.get("XResolution"), "value", None))
             y = _ratio(getattr(page.tags.get("YResolution"), "value", None)) or x
-            if scale and x:
+            if scale and x and scale / x <= _RESOLUTION_TAG_CEILING_UM:
                 return {"physical_size_x": scale / x, "physical_size_x_unit": "µm",
                         "physical_size_y": scale / (y or x),
                         "physical_size_y_unit": "µm"}
@@ -1331,23 +1413,77 @@ def physical_metadata(path) -> dict:
     return {}
 
 
-_OME_PIXEL_SIZE = re.compile(
-    r'PhysicalSize([XY])="([0-9.eE+-]+)"(?:[^>]*?PhysicalSize\1Unit="([^"]*)")?')
+#: The first `Pixels` start tag, and the 2003-FC `Image` one, for a document
+#: too damaged to parse: attributes are then read off the tag one by one.
+_OME_PIXELS_TAG = re.compile(r"<(?:[A-Za-z_][\w.-]*:)?Pixels\b[^>]*>")
+_OME_IMAGE_TAG = re.compile(r"<(?:[A-Za-z_][\w.-]*:)?Image\b[^>]*>")
+
+
+def _attribute(tag, name):
+    found = re.search(rf'\b{name}="([^"]*)"', tag)
+    return found.group(1) if found else None
 
 
 def _ome_pixel_size(description) -> dict:
+    """The FIRST image's pixel size, in microns; `{}` when it states none.
+
+    The first, because a document's later `Pixels` are other images: a label,
+    a macro, or -- in a file written before the 2019 pyramid specification --
+    the same image at each lower resolution, whose pixel size is that level's.
+    A scan of the whole document used to answer, last match winning, which
+    gave a five-level export a pixel size sixteen times too large, and gave
+    an uncalibrated scan its macro's. In microns, because every reader of
+    this takes the number as microns and a schema from 2015-01 on may state
+    another unit -- in an attribute that may come before or after the value.
+
+    Read by `ome_xml` (any schema, stops after the first image); a document
+    it cannot parse is read off its first `Pixels` tag instead.
+    """
+    from plexora.server.utils import ome_xml
+    from plexora.server.utils.pixel_scale import to_microns
+
+    stated: dict[str, tuple] = {}
+    document = ome_xml.read(description)
+    if document is not None and document.images:
+        stated = dict(document.images[0].physical_size)
+    elif document is None:
+        pixels = _OME_PIXELS_TAG.search(description)
+        image = _OME_IMAGE_TAG.search(description)
+        for axis in "xy":
+            upper = axis.upper()
+            value = _attribute(pixels.group(0), f"PhysicalSize{upper}") if pixels else None
+            unit = _attribute(pixels.group(0), f"PhysicalSize{upper}Unit") if pixels else None
+            if value is None and image:
+                value, unit = _attribute(image.group(0), f"PixelSize{upper}"), None
+            if value is not None:
+                stated[axis] = (value, unit or "µm")
     out: dict[str, Any] = {}
-    for axis, value, unit in _OME_PIXEL_SIZE.findall(description):
+    for axis in "xy":
+        if axis not in stated:
+            continue
+        value, unit = stated[axis]
         try:
-            size = float(value)
-        except ValueError:
+            size = to_microns(float(value), unit or "µm")
+        except (TypeError, ValueError):
             continue
-        if not size:
+        if not size or size < _SMALLEST_PIXEL_UM:
             continue
-        key = f"physical_size_{axis.lower()}"
-        out[key] = size
-        out[f"{key}_unit"] = unit or "µm"
+        out[f"physical_size_{axis}"] = size
+        out[f"physical_size_{axis}_unit"] = "µm"
     return out
+
+
+#: Below a picometre a stated pixel size is a unit mistake or an unset field
+#: (2003-FC samples carry 1.27e-12), not a calibration.
+_SMALLEST_PIXEL_UM = 1e-6
+
+#: The largest pixel a TIFF's XResolution/YResolution is believed about, in
+#: microns. Those tags are a print resolution first, and most writers fill
+#: them with a placeholder when they know no scale: 1 per inch or centimetre
+#: (25.4 mm, 10 mm), libvips' 1 pixel/mm, 72 or 96 dpi (353, 265 µm). A
+#: microscope or slide scanner states well under a tenth of this; a number
+#: above it is not a calibration and the image is uncalibrated.
+_RESOLUTION_TAG_CEILING_UM = 200.0
 
 
 __all__ = [

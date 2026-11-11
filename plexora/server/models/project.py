@@ -714,6 +714,19 @@ class ImageSpec:
     frame_interval: Mapping[str, Any] | None = None
     #: Projections pinned to disk as layers: `[{token, layer, path, key, pinnedAt}]`.
     views: tuple[Mapping[str, Any], ...] = ()
+    #: Which image inside `src` this is, for a file that holds several (a
+    #: CZI's scenes, an ND2's positions, a LIF's images, an MCD's
+    #: acquisitions, a VSI's scan areas: server/utils/formats): the position
+    #: in what the file lists. Not part of `src`, which stays the real path
+    #: everything that stats, relinks or ships the file reads. Written only
+    #: for a file holding more than one image, so every other project is
+    #: written back byte for byte; absent reads as the first (`index`).
+    image_index: int | None = None
+
+    @property
+    def index(self) -> int:
+        """`image_index`, with absent read as 0: the first image of the file."""
+        return int(self.image_index or 0)
 
     @classmethod
     def from_entry(cls, entry: Mapping[str, Any]) -> "ImageSpec":
@@ -744,6 +757,7 @@ class ImageSpec:
             pixel_size_z=normalize_pixel_size(entry.get("pixelSizeZ")),
             frame_interval=_frame_interval(entry.get("frameInterval")),
             views=tuple(v for v in (entry.get("imageViews") or ()) if isinstance(v, Mapping)),
+            image_index=_image_index(entry.get("imageIndex")),
         )
 
     def to_entry(self) -> dict:
@@ -774,6 +788,7 @@ class ImageSpec:
             "pixelSizeZ": dict(self.pixel_size_z) if self.pixel_size_z else None,
             "frameInterval": dict(self.frame_interval) if self.frame_interval else None,
             "imageViews": [dict(v) for v in self.views] if self.views else None,
+            "imageIndex": self.image_index,
         })
 
     @property
@@ -831,6 +846,17 @@ def _volume_shape(value) -> dict | None:
             return None
         out[axis] = size
     return out
+
+
+def _image_index(value) -> int | None:
+    """A stored `imageIndex`: a position, or None for absent or unusable."""
+    if value is None or isinstance(value, bool):
+        return None
+    try:
+        index = int(value)
+    except (TypeError, ValueError):
+        return None
+    return index if index >= 0 else None
 
 
 def _frame_interval(raw) -> dict | None:
@@ -1018,7 +1044,7 @@ _MODELLED_KEYS = frozenset({
     "dataset", "createdAt", "lastOpenedAt", "cellLayer", "confirmed",
     "resources", "spatialLayers", "imageRender", "imageDepth",
     "imageAxes", "imageShape", "imageDefaultView", "imageZSemantics",
-    "imageTSemantics", "pixelSizeZ", "frameInterval", "imageViews",
+    "imageTSemantics", "pixelSizeZ", "frameInterval", "imageViews", "imageIndex",
     "title", "id",
 })
 

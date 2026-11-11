@@ -479,7 +479,9 @@ def open_tiff_volume(path, *, z_choice=None, t_choice=None, new_import=False):
 
         tiff = tiff_region.open_tiff(path)
     else:
-        tiff = tf.TiffFile(str(path), is_ome=False)
+        from plexora.server.utils.tiff_series import ImageTiff
+
+        tiff = ImageTiff(str(path))
     try:
         series = tiff.series[0]
         described = describe(tiff, series, path=path, z_choice=z_choice,

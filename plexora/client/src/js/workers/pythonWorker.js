@@ -54,6 +54,7 @@ import { createStore } from "./storeSync.js";
 import { idbFolder } from "./idbFolder.js";
 import { createTelemetryStore, indexedKv } from "./telemetryStore.js";
 import { openCacheFiles } from "./cacheFiles.js";
+import { jpegxrDecode } from "./jpegxr.js";
 
 // -- the page: this worker's own, or one tab's ---------------------------------
 //
@@ -831,6 +832,7 @@ async function firstBoot(args) {
     self.plexoraAsk = ask;
     self.plexoraJ2KReady = j2kReady;
     self.plexoraJ2K = j2kDecode;
+    self.plexoraJXR = jpegxrDecode;
     self.plexoraAskSync = syncAsk;
     self.plexoraSourceWrite = sourceWrite;
     self.plexoraSleep = sleep;
@@ -956,8 +958,20 @@ def _j2k(data):
     shape = (int(found.height), int(found.width)) + ((components,) if components > 1 else ())
     return pixels.reshape(shape)
 
+def _jxr(data):
+    # JPEG XR for czifile and tifffile (imagecodecs_shim's set_jpegxr): jxrlib
+    # in WebAssembly in this worker (workers/jpegxr.js), fetched and compiled
+    # synchronously the first time a tile needs it, with or without JSPI.
+    from pyodide.ffi import to_js
+    found = js.self.plexoraJXR(to_js(memoryview(bytes(data))))
+    return {"width": int(found.width), "height": int(found.height), "channels": int(found.channels),
+            "colorformat": str(found.colorFormat), "bitdepth": str(found.bitDepth),
+            "bitsperpixel": int(found.bitsPerPixel), "alpha": bool(found.alpha),
+            "bgr": bool(found.bgr), "data": found.data.to_py()}
+
 from plexora.browser import imagecodecs_shim as _codecs
 _codecs.set_jpeg2k(_j2k)
+_codecs.set_jpegxr(_jxr)
 
 def _load_stage(name):
     if not JSPI:

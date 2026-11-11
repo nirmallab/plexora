@@ -141,7 +141,7 @@
        drawing helpers first, the controller (PlexoraFileExplorer, alias
        PlexoraPathPicker) last -- and all before browsePicker. All deferred,
        so all are parsed before any runs; the order is for readers. #}
-    <script src="{{ data.base_url }}/client/src/js/services/explorer/explorerTypes.js?v=20261020_file_explorer" defer></script>
+    <script src="{{ data.base_url }}/client/src/js/services/explorer/explorerTypes.js?v=20261111_formats_more" defer></script>
     <script src="{{ data.base_url }}/client/src/js/services/explorer/floatingWindow.js?v=20261021_explorer_system" defer></script>
     <script src="{{ data.base_url }}/client/src/js/services/explorer/explorerListing.js?v=20261020_file_explorer" defer></script>
     <script src="{{ data.base_url }}/client/src/js/services/explorer/explorerCrumbs.js?v=20261020_file_explorer" defer></script>
@@ -268,7 +268,7 @@
        their CSS in main.css, like importHelp below. #}
     <script src="{{ data.base_url }}/client/src/js/views/updateDialog.js?v=20261107_website" defer></script>
     <script src="{{ data.base_url }}/client/src/js/views/helpMenu.js?v=20261109_docsdomain" defer></script>
-    <script src="{{ data.base_url }}/client/src/js/views/importHelp.js?v=20261021_pro" defer></script>
+    <script src="{{ data.base_url }}/client/src/js/views/importHelp.js?v=20261111_formats_more" defer></script>
     {# What kind of address a string is: a web address, a `node://` locator
        or a plain path. Read by importSample.js and quickViewLanding.js, so
        both agree about an `s3://` URL instead of each testing for one its own
@@ -282,7 +282,7 @@
        primary button, the viewer's "+ Add Layer" and the requirements modal's
        layer row all open it, and none of those three shares a stylesheet.
        After datasetPicker.js, whose picker is this dialog's Dataset row. #}
-    <script src="{{ data.base_url }}/client/src/js/views/importSample.js?v=20261110_file_or_folder" defer></script>
+    <script src="{{ data.base_url }}/client/src/js/views/importSample.js?v=20261111_formats_more" defer></script>
     <!-- New Dataset: a dataset from a folder (scan, match, create). After
        importSample.js, whose dialog styles it reuses. -->
     <script src="{{ data.base_url }}/client/src/js/views/datasetBuilder.js?v=20261029_bucket_datasets" defer></script>

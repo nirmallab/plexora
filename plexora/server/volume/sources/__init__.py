@@ -30,7 +30,9 @@ def is_volume_only_path(path) -> bool:
 
 def open_volume(path, *, extension: Optional[str] = None, rgb: bool = False,
                 z_semantics: Optional[str] = None, t_semantics: Optional[str] = None,
-                new_import: bool = False) -> Optional[VolumeSource]:
+                new_import: bool = False, image_index: int = 0) -> Optional[VolumeSource]:
+    """`image_index`: which image of a microscope file holding several
+    (server/utils/formats); every other format holds one and ignores it."""
     if not path:
         return None
     from plexora.server.providers.base import is_remote_locator
@@ -71,6 +73,18 @@ def open_volume(path, *, extension: Optional[str] = None, rgb: bool = False,
             return open_dicom_volume(path, extension=extension, rgb=rgb)
         except Exception:
             # The 2-D reader is the authority on whether the slide opens at
+            # all; it is asked next and says why if it does not.
+            return None
+    from plexora.server.utils import formats
+
+    if formats.handles(path):
+        from plexora.server.volume.sources.formats import open_format_volume
+
+        try:
+            return open_format_volume(path, extension=extension, rgb=rgb,
+                                      index=image_index)
+        except Exception:
+            # The 2-D reader is the authority on whether the file opens at
             # all; it is asked next and says why if it does not.
             return None
     if ims.is_ims_path(path):

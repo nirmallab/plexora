@@ -39,6 +39,7 @@ from __future__ import annotations
 
 import json
 import math
+import os
 import re
 from pathlib import Path
 from typing import Any, Mapping, Optional, Sequence
@@ -654,10 +655,89 @@ def _suggest_remote_name(url) -> Optional[str]:
     return None
 
 
+class _LegacyV2LocalStore(zarr.storage.WrapperStore):
+    """A local store read the way `ChunkCacheStore` reads a remote one.
+
+    Zarr v2 metadata from zarr-python 2 era writers -- a ">u1" dtype, chunks
+    stored nested under a `.zarray` that names no separator -- is normalised
+    by `remote_store.LegacyV2` as it is read, so the folder opens in zarr 3
+    exactly as zarr 2 opened it, and is never written to. The separator of a
+    nested array is decided once, by looking at the folder (`_separator`).
+    Everything else, the sync fast path included, goes straight through.
+    """
+
+    def __init__(self, store, legacy=None):
+        from plexora.server.utils.remote_store import LegacyV2
+
+        super().__init__(store)
+        self.legacy = legacy if legacy is not None else LegacyV2()
+
+    def _with_store(self, store):
+        return type(self)(store, self.legacy)
+
+    def _separator(self, parent: str) -> str:
+        dotted, nested = self.legacy.first_chunk(parent)
+        root = Path(self._store.root)
+        has_dotted, has_nested = (root / dotted).is_file(), (root / nested).is_file()
+        names = []
+        if not has_dotted and not has_nested:
+            # A sparse array: the first chunk-shaped name in its folder.
+            try:
+                with os.scandir(root / parent) as entries:
+                    for entry in entries:
+                        if entry.name[:1].isdigit():
+                            names.append(entry.name)
+                            break
+            except OSError:
+                pass
+        return self.legacy.decide(parent, has_dotted, has_nested, names)
+
+    def _key(self, key: str) -> str:
+        found = self.legacy.pending(key)
+        if found is None:
+            return key
+        parent, last = found
+        separator = self.legacy.separator.get(parent) or self._separator(parent)
+        return self.legacy.spell(parent, last, separator)
+
+    def _fixed(self, key, buffer, prototype, byte_range):
+        if buffer is None or byte_range is not None \
+                or key.rsplit("/", 1)[-1] not in (".zarray", ".zmetadata"):
+            return buffer
+        data = buffer.to_bytes()
+        fixed = self.legacy.note(key, data)
+        if fixed is data:
+            return buffer
+        if prototype is None:
+            from zarr.core.buffer import default_buffer_prototype
+
+            prototype = default_buffer_prototype()
+        return prototype.buffer.from_bytes(fixed)
+
+    async def get(self, key, prototype, byte_range=None):
+        key = self._key(key)
+        return self._fixed(key, await self._store.get(key, prototype, byte_range),
+                           prototype, byte_range)
+
+    def get_sync(self, key, *, prototype=None, byte_range=None):
+        key = self._key(key)
+        return self._fixed(key, self._store.get_sync(key, prototype=prototype,
+                                                      byte_range=byte_range),
+                           prototype, byte_range)
+
+    async def get_partial_values(self, prototype, key_ranges):
+        return await self._store.get_partial_values(
+            prototype, [(self._key(key), byte_range) for key, byte_range in key_ranges])
+
+    async def exists(self, key) -> bool:
+        return await self._store.exists(self._key(key))
+
+
 def _open_group(path):
     if _is_remote(path):
         return _RemoteView.of(path).group()
-    return zarr.open_group(str(path), mode="r")
+    store = _LegacyV2LocalStore(zarr.storage.LocalStore(str(path), read_only=True))
+    return zarr.open_group(store, mode="r")
 
 
 def _source_key(path) -> Optional[str]:

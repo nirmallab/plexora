@@ -254,8 +254,10 @@ def client_node():
     return None
 
 
-def resource_id_for(path) -> str:
-    """The id a node will serve `path` under.
+def resource_id_for(path, index=0) -> str:
+    """The id a node will serve `path` under -- image `index` of it, for a
+    microscope file holding several (each image is a resource of its own; the
+    first keeps the id the file always had).
 
     Derived from the path rather than generated, and that is the whole point:
     it has to come out the same next week. A project records the id in its
@@ -276,6 +278,10 @@ def resource_id_for(path) -> str:
     # `.ome.tif`, `.h5ad`, `.zarr` -- one suffix strip, so `cells.h5ad` and
     # `cells.csv` stay distinguishable by the hash rather than colliding here.
     slug = re.sub(r"[^A-Za-z0-9]+", "-", Path(stem).stem).strip("-").lower()
+    index = int(index or 0)
+    if index:
+        text = f"{text}#image{index}"
+        slug = f"{slug or 'file'}-image{index + 1}"
     digest = hashlib.sha256(text.encode("utf-8")).hexdigest()[:8]
     return f"{slug or 'file'}-{digest}"
 
@@ -299,8 +305,13 @@ def detect_on_node(node, path):
     return dict(answer.get("detected") or {})
 
 
-def share_path(node, kind, path):
+def share_path(node, kind, path, index=0):
     """Have a node start serving a file on ITS machine, and say what it is.
+
+    `index` is which image of a microscope file holding several (a CZI's
+    scenes, ...): each is served as a resource of its own, under
+    `resource_id_for(path, index)`. A node too old to know is refused rather
+    than left serving the first image under the other's id.
 
     The counterpart of `--serve` for a node that is already running: the user
     picks a file on their own computer from a form in a browser, long after the
@@ -316,12 +327,22 @@ def share_path(node, kind, path):
     back is what gets recorded.
     """
     entry = node_registry.get(str(node))
-    resource_id = resource_id_for(path)
+    index = int(index or 0)
+    resource_id = resource_id_for(path, index)
+    body = {"kind": str(kind), "id": resource_id, "path": str(path)}
+    if index:
+        body["index"] = index
     answer = http.json_request(
-        entry, "POST", "/node/v1/resources",
-        body={"kind": str(kind), "id": resource_id, "path": str(path)},
+        entry, "POST", "/node/v1/resources", body=body,
         timeout=120.0, expected_api=node_registry.API_VERSION)
     described = dict(answer.get("resource") or {})
+    if index and described.get("image_index") != index:
+        from plexora.server.providers.base import ResourceError
+
+        unshare_path(node, resource_id)
+        raise ResourceError(
+            f"{entry.name} cannot open one image of a file holding several "
+            f"({Path(str(path)).name}, image {index + 1}). Update Plexora there.")
     described.setdefault("id", resource_id)
     described["locator"] = f"node://{entry.name}/{described['id']}"
     return described
@@ -1255,7 +1276,10 @@ def detach(project, kind, path=None):
         from plexora.server.providers import local as local_providers
 
         try:
-            _same_image(project, local_providers.image_geometry(path))
+            # The project's own image of a file holding several, which the
+            # copy here keeps reading (`image_index` survives the patch).
+            _same_image(project, local_providers.image_geometry(
+                path, index=project.image.index))
         except (OSError, KeyError, ValueError) as exc:
             if isinstance(exc, ValueError):
                 raise

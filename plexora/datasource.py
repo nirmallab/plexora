@@ -124,6 +124,8 @@ def _image_spec(name, image_path, channel_info, channel_names, segmentation_path
         image_type_choice=image_type or None,
         image_type_detected=channel_info.get("imageTypeDetected"),
         image_type_reason=channel_info.get("imageTypeReason"),
+        # Which image of a file holding several; absent for every other file.
+        image_index=channel_info.get("imageIndex"),
         **_volume_spec_fields(channel_info),
     )
 
@@ -343,21 +345,33 @@ def _derive_dataset_name_from_path(path):
         stem = re.split(r"[\\/]", str(path).rstrip("\\/"))[-1]
     return re.sub(
         r"\.(ome\.tiff|ome\.tif|ome\.zarr|tiff|tif|svs|zarr|png|jpg|jpeg|qptiff"
-        r"|ndpi|mrxs|scn|bif|svslide|dcm|dicom|ims)$",
+        r"|ndpi|mrxs|scn|bif|svslide|dcm|dicom|ims"
+        r"|czi|nd2|lif|lof|xlef|vsi|oir|oib|oif|ndpis|dv|r3d|mcd|zvi|lsm|kfb)$",
         "",
         stem,
         flags=re.IGNORECASE,
     )
 
 
-def _find_existing_datasource_for_image(image_path, config):
+def _find_existing_datasource_for_image(image_path, config, index=0):
     """Return the name of an already-registered datasource pointing at the
     same on-disk image file, or None. Every registration path (quick view,
     the full import wizard, anndata) stamps config[name]['channelFile'] with
     the image path it was given, so resolving both sides (expanduser,
     symlinks, '..', relative vs. absolute) catches the same file being
-    quick-viewed twice, or quick-viewed after already being imported."""
+    quick-viewed twice, or quick-viewed after already being imported.
+
+    `index` is which image of a file holding several (`imageIndex`, absent
+    read as 0): two scenes of one CZI are two samples, not one twice."""
     from plexora.server.providers.base import is_remote_locator
+
+    wanted = int(index or 0)
+
+    def same_image(entry):
+        try:
+            return int((entry or {}).get("imageIndex") or 0) == wanted
+        except (TypeError, ValueError):
+            return wanted == 0
 
     if is_remote_locator(image_path):
         from plexora.server.utils import remote_store
@@ -374,6 +388,8 @@ def _find_existing_datasource_for_image(image_path, config):
     except OSError:
         return None
     for name, entry in (config or {}).items():
+        if not same_image(entry):
+            continue
         # `imageSource` is the original a pyramidized copy was made from: the
         # project serves the copy, but re-picking the original is still the
         # same image.
@@ -424,6 +440,14 @@ def _sniff_quick_view_kind(path):
     if suffix == ".ims":
         # An Imaris file: fluorescence channels, read by the volume layer
         # (plexora/server/volume/sources/ims.py) through the same pipeline.
+        return "ome_tiff"
+    from plexora.server.utils import formats
+
+    if formats.handles(path):
+        # A microscope's or slide scanner's own format (server/utils/formats).
+        # Described here, so a missing reader package or a VSI without its
+        # pixel folder is reported while the user is still choosing.
+        formats.describe(path)
         return "ome_tiff"
     if dicom_wsi.is_dicom_path(path):
         # One instance of a slide selects that slide; its siblings are gathered
@@ -624,31 +648,30 @@ def _channel_names_from_ome_xml(image_path, n_channels):
     """Channel names embedded in the image's own OME-XML metadata, if
     present and if the count matches -- returns None otherwise. Shared by
     derive_anndata_channel_names (tier 2 there) and derive_image_channel_names
-    (tier 2 here); a pure extraction, same tifffile/ome_types read as before."""
-    import tifffile as tf
-    from ome_types import from_xml
+    (tier 2 here); a pure extraction.
 
+    Read by `tiff_series.embedded_channel_names`, which knows where each
+    TIFF flavour keeps its names: OME-XML of any schema version (2003-FC on,
+    server/utils/ome_xml.py -- `ome_types` reads 2016-06 only without lxml,
+    so every older export used to arrive as "Channel 1, Channel 2"), a
+    PerkinElmer/Akoya page description (QPTIFF, inForm component data), and
+    an ImageJ hyperstack's slice labels."""
     from plexora.server.providers.base import is_remote_locator
+    from plexora.server.utils import tiff_region, tiff_series
 
     try:
         if is_remote_locator(image_path):
             # The first page's description, read through the chunk cache.
-            from plexora.server.utils import tiff_region
-
             tiff = tiff_region.open_tiff(image_path)
             try:
-                xml = tiff.pages[0].tags['ImageDescription'].value
+                names = tiff_series.embedded_channel_names(tiff, n_channels)
             finally:
                 tiff_region.close_tiff(tiff)
         else:
-            from plexora.server.utils import tiff_region
-
             with tiff_region.opened(image_path) as tiff:
-                xml = tiff.pages[0].tags['ImageDescription'].value
-        ome_channels = from_xml(xml).images[0].pixels.channels
-        ome_names = [c.name for c in ome_channels]
-        if len(ome_names) == n_channels and all(ome_names):
-            return [str(n) for n in ome_names]
+                names = tiff_series.embedded_channel_names(tiff, n_channels)
+        if names and len(names) == n_channels and all(names):
+            return [str(n) for n in names]
     except Exception:
         pass
     return None
@@ -751,7 +774,7 @@ def _channel_names_from_sidecar(image_path, n_channels):
     return None
 
 
-def _channel_names_from_image_metadata(image_path, n_channels):
+def _channel_names_from_image_metadata(image_path, n_channels, index=0):
     """Channel names the image file carries about itself, whatever format it is.
 
     One dispatcher rather than two call sites choosing, so the tier order below
@@ -760,7 +783,10 @@ def _channel_names_from_image_metadata(image_path, n_channels):
 
     The sidecar list is consulted **last**, and only where the answer was
     previously None: metadata inside the file outranks a text file next to it,
-    so no project that already resolved names can have them change."""
+    so no project that already resolved names can have them change.
+
+    `index` is which image of a microscope file holding several (a LIF's
+    images need not share a panel); every other format holds one."""
     from plexora.server.utils import dicom_wsi, ome_zarr, xenium_focus
 
     if xenium_focus.is_focus_dir(image_path):
@@ -777,6 +803,10 @@ def _channel_names_from_image_metadata(image_path, n_channels):
         names = names if names and len(names) == n_channels else None
     elif _is_ims(image_path):
         names = _channel_names_from_ims(image_path, n_channels)
+    elif _is_format(image_path):
+        # A microscope's own format names its channels in its own metadata
+        # (server/utils/formats): the dye, the laser line, the marker.
+        names = _channel_names_from_format(image_path, n_channels, index)
     else:
         names = _channel_names_from_ome_xml(image_path, n_channels)
     if names is not None:
@@ -784,7 +814,28 @@ def _channel_names_from_image_metadata(image_path, n_channels):
     return _channel_names_from_sidecar(image_path, n_channels)
 
 
-def derive_image_channel_names(image_path, n_channels):
+def _is_format(path) -> bool:
+    from plexora.server.utils import formats
+
+    try:
+        return formats.handles(path)
+    except Exception:
+        return False
+
+
+def _channel_names_from_format(image_path, n_channels, index=0):
+    from plexora.server.utils import formats
+
+    try:
+        names = formats.channel_names(image_path, index=index)
+    except Exception:
+        return None
+    if names and len(names) == n_channels and any(str(name).strip() for name in names):
+        return [str(name) for name in names]
+    return None
+
+
+def derive_image_channel_names(image_path, n_channels, index=0):
     """Resolve display names for a quick-view (no feature table) image:
     the image's own channel names if present and complete, else generic
     "Channel N". Same tier-2/tier-4 logic as derive_anndata_channel_names,
@@ -795,8 +846,10 @@ def derive_image_channel_names(image_path, n_channels):
     last, a `channelNames.txt` written beside it -- see
     `_channel_names_from_image_metadata`. The `"image metadata"` label covers
     all of them; both callers of this function discard it.
+
+    `index` is which image of a microscope file holding several.
     """
-    ome_names = _channel_names_from_image_metadata(image_path, n_channels)
+    ome_names = _channel_names_from_image_metadata(image_path, n_channels, index)
     if ome_names is not None:
         return ome_names, "image metadata"
     return [f"Channel {i + 1}" for i in range(n_channels)], "generic"
@@ -1690,7 +1743,8 @@ def register_spatialdata_datasource(
 
 
 def register_image_datasource(name, image, channel_names=None, copy=False,
-                              data_dir=None, image_type=None, pyramidize=None):
+                              data_dir=None, image_type=None, pyramidize=None,
+                              image_index=0):
     """Register an image alone as a project -- no cell table, no mask.
 
     Writes directly to Plexora's project registry. The project opens
@@ -1729,6 +1783,11 @@ def register_image_datasource(name, image, channel_names=None, copy=False,
             project's folder when that one is not writable), and open the
             copy; the original is never changed. False opens the original
             as it is.
+        image_index (int, optional): Which image of a microscope file that
+            holds several -- a CZI's scenes, an ND2's positions, a LIF's
+            images, an MCD's acquisitions, a VSI's scan areas -- counting
+            from 0 in the order the import dialog lists them. Defaults to 0,
+            the first. Every other format holds one image.
 
     Returns:
         dict: The project's saved config entry.
@@ -1738,6 +1797,8 @@ def register_image_datasource(name, image, channel_names=None, copy=False,
         import plexora
 
         plexora.register_image_datasource("quicklook", image="slide.ome.tif")
+        # The third scene of a slide scan
+        plexora.register_image_datasource("scene3", image="scan.czi", image_index=2)
         ```
 
     See Also:
@@ -1762,13 +1823,14 @@ def register_image_datasource(name, image, channel_names=None, copy=False,
 
     channel_info = data_model.convertOmeTiff(
         image_path, dataDirectory=str(dataset_dir), isLabelImg=False,
-        image_type=image_type, pyramidize=pyramidize)
+        image_type=image_type, pyramidize=pyramidize, image_index=image_index)
     n_channels = _layer_count(channel_info)
     brightfield_names = _brightfield_channel_names(channel_info)
     if brightfield_names is not None:
         channel_names = brightfield_names
     elif channel_names is None:
-        channel_names, _ = derive_image_channel_names(image_path, n_channels)
+        channel_names, _ = derive_image_channel_names(image_path, n_channels,
+                                                      index=image_index)
     elif len(channel_names) != n_channels:
         raise ValueError(
             f"channel_names has {len(channel_names)} entries but the image has {n_channels} channels."
@@ -1824,12 +1886,13 @@ def reregister_image(name, data_dir=None):
     channel_info = data_model.convertOmeTiff(
         image_path, dataDirectory=str(dataset_dir), isLabelImg=False,
         image_type=project.image.image_type_choice, pyramidize=False,
-        z_semantics=project.image.z_semantics, t_semantics=project.image.t_semantics)
+        z_semantics=project.image.z_semantics, t_semantics=project.image.t_semantics,
+        image_index=project.image.index)
 
     channel_names = _brightfield_channel_names(channel_info)
     if channel_names is None:
         channel_names, _ = derive_image_channel_names(
-            image_path, _layer_count(channel_info))
+            image_path, _layer_count(channel_info), index=project.image.index)
 
     def _swap(current):
         return current.patch(image=replace(

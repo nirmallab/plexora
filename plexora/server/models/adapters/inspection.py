@@ -19,6 +19,7 @@ from .anndata_adapter import (
     describe_obsm,
     is_likely_image_identifier_name,
     probed_obsm,
+    var_names as _var_names,
 )
 
 # Read-only structural inspection of not-yet-registered source files -- used
@@ -130,10 +131,7 @@ def _inspect_group(group) -> dict:
             "values": values,
         })
 
-    var_names = []
-    var_node = _child(group, "var")
-    if var_node is not None:
-        var_names = [str(name) for name in _read_elem(var_node).index]
+    var_names = _var_names(group)
     n_var = len(var_names)
     if not n_var:
         matrix = _child(group, "X")

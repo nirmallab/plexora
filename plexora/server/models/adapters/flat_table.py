@@ -23,6 +23,7 @@ out of a 6 GB file without touching a row); a 4 MB cell table is just read.
 from __future__ import annotations
 
 import io
+import re
 from pathlib import Path
 
 import polars as pl
@@ -63,13 +64,102 @@ def read_flat_table(path, data_type="csv", *, n_rows=None) -> pl.DataFrame:
     path = Path(path)
     if data_type == "parquet":
         return pl.read_parquet(path, n_rows=n_rows)
+    # One sniff for every read of the file -- schema, full load, sampling --
+    # so a tab-separated table is never read as one column by the one reader
+    # that forgot to ask.
+    options = delimited_options(path)
     if n_rows is not None:
         # At least the rows polars infers its dtypes from, so they are the
         # rows a read of the path would have inferred them from.
         head = csv_head(path, max(int(n_rows), _INFER_ROWS))
         if head is not None:
-            return pl.read_csv(io.BytesIO(head), n_rows=n_rows)
-    return pl.read_csv(path, n_rows=n_rows)
+            return pl.read_csv(io.BytesIO(head), n_rows=n_rows, **options)
+    return pl.read_csv(path, n_rows=n_rows, **options)
+
+
+#: The separators a delimited cell table is written with, in the order a tie
+#: is broken: comma (the CSV everything writes), tab (`.tsv`, and the `.txt`
+#: that spreadsheet programs and older quantification tools export), semicolon
+#: (Excel in a locale whose decimal mark is a comma).
+_SEPARATORS = (",", "\t", ";")
+
+#: How much of a file the header line is looked for in.
+_SNIFF_BYTES = 1 << 20
+
+
+def _header_line(path) -> str:
+    """The first line of the file, BOM and line end removed."""
+    with open(path, "rb") as handle:
+        head = handle.read(_SNIFF_BYTES)
+    line = head.split(b"\n", 1)[0].rstrip(b"\r")
+    return line.decode("utf-8-sig", errors="ignore")
+
+
+def _count_outside_quotes(line: str, separator: str) -> int:
+    count, quoted = 0, False
+    for char in line:
+        if char == '"':
+            quoted = not quoted
+        elif char == separator and not quoted:
+            count += 1
+    return count
+
+
+def sniff_separator(path) -> str:
+    """The separator of the delimited table at `path`, from its header line.
+
+    Read from the content, never the extension: a `.tsv` holding commas is a
+    real file (and a test), and a `.txt` is either. The separator that splits
+    the header most often wins; a header none of them splits is one column,
+    and a comma reads that as well as anything.
+    """
+    try:
+        line = _header_line(path)
+    except OSError:
+        return ","
+    counts = {sep: _count_outside_quotes(line, sep) for sep in _SEPARATORS}
+    best = max(_SEPARATORS, key=lambda sep: counts[sep])  # first wins a tie
+    return best if counts[best] else ","
+
+
+#: A number written with a decimal comma, and one written with a point.
+_DECIMAL_COMMA = re.compile(r"^[-+]?\d+,\d+(?:[eE][-+]?\d+)?$")
+_DECIMAL_POINT = re.compile(r"^[-+]?\d*\.\d+(?:[eE][-+]?\d+)?$")
+
+
+def _uses_decimal_comma(path) -> bool:
+    """Whether a semicolon table writes its numbers `1,5` -- what Excel does
+    where the comma is the decimal mark, and the reason it chose semicolons.
+
+    Only when the sample shows comma decimals and no point decimals: polars'
+    `decimal_comma` reads `1.5` as text, so a semicolon file written with
+    points must not be read that way."""
+    head = csv_head(path, _INFER_ROWS)
+    if not head:
+        return False
+    comma, point = _DECIMAL_COMMA, _DECIMAL_POINT
+    saw_comma = False
+    for line in head.decode("utf-8-sig", errors="ignore").splitlines()[1:]:
+        for field in line.split(";"):
+            field = field.strip().strip('"')
+            if point.match(field):
+                return False
+            if comma.match(field):
+                saw_comma = True
+    return saw_comma
+
+
+def delimited_options(path) -> dict:
+    """The `pl.read_csv` keywords that read the delimited table at `path`.
+
+    A UTF-8 BOM and CRLF line ends need nothing: polars reads both as is
+    (tests/test_delimited_tables.py holds it to that).
+    """
+    separator = sniff_separator(path)
+    options = {"separator": separator}
+    if separator == ";" and _uses_decimal_comma(path):
+        options["decimal_comma"] = True
+    return options
 
 
 #: The rows `pl.read_csv` infers a schema from (its `infer_schema_length`).
@@ -122,4 +212,8 @@ def write_flat_table(frame: pl.DataFrame, path, data_type="csv") -> None:
     if data_type == "parquet":
         frame.write_parquet(path)
     else:
-        frame.write_csv(path)
+        # Back in the file's own separator (and decimal mark): a user's `.tsv`
+        # written back as commas would be a silent format change too.
+        options = delimited_options(path) if path.is_file() else {}
+        frame.write_csv(path, separator=options.get("separator", ","),
+                        decimal_comma=bool(options.get("decimal_comma")))

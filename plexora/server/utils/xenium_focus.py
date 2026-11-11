@@ -5,7 +5,9 @@ rather than a file. A v2 run has one file in it, DAPI. A v3 run has four --
 `morphology_focus_0000..0003.ome.tif`, which are DAPI, the boundary stain, the
 interior RNA stain and the interior protein stain -- and they are four
 separate OME-TIFFs over the identical pixel grid, one channel each, not four
-planes of one file.
+planes of one file. XOA 4.0 renamed them after the stain they hold --
+`ch0000_dapi.ome.tif`, `ch0001_atp1a1_cd45_e-cadherin.ome.tif`, ... -- and
+both namings are read (`FOCUS_FILE`), ordered by the channel number either way.
 
 That is the whole problem this module exists for. Every reader in Plexora
 opens ONE path and reads `shape[0]` as the channel count, so four files means
@@ -35,9 +37,12 @@ from pathlib import Path
 
 import numpy as np
 
-#: What a focus file is called. Anchored and numbered: a stray `.ome.tif`
-#: somebody copied into the folder is not a channel of this image.
-FOCUS_FILE = re.compile(r"^morphology_focus_\d+\.ome\.tif$", re.IGNORECASE)
+#: What a focus file is called: `morphology_focus_0000.ome.tif` (XOA 2.0-3.x)
+#: or `ch0000_<stain>.ome.tif` (XOA 4.0 on). Anchored and numbered: a stray
+#: `.ome.tif` somebody copied into the folder is not a channel of this image.
+FOCUS_FILE = re.compile(
+    r"^(?:morphology_focus_(?P<index>\d+)|ch(?P<channel>\d+)_(?P<stain>.+?))"
+    r"\.ome\.tif$", re.IGNORECASE)
 
 #: The folder's name in a run directory. Matched on the NAME rather than on
 #: the contents alone so a directory of unrelated OME-TIFFs is not read as a
@@ -48,25 +53,45 @@ FOCUS_DIR = "morphology_focus"
 TILE_SIZE = 1024
 
 
+def _channel_number(name):
+    """(channel number, naming) of a focus file's name, or None."""
+    match = FOCUS_FILE.match(name)
+    if match is None:
+        return None
+    if match.group("index") is not None:
+        return int(match.group("index")), "numbered"
+    return int(match.group("channel")), "stain"
+
+
 def focus_files(path) -> list[Path]:
     """The focus folder's channel files, in channel order, or `[]`.
 
-    Sorted by name, which IS channel order: 10x numbers them `_0000` upward in
-    the order its own metadata lists the stains, and a sort that put channel 10
-    before channel 2 would silently rename somebody's panel -- so the numbers
-    are compared as numbers.
+    Ordered by the channel number in the name, which IS channel order: 10x
+    numbers them from 0 upward in the order its own metadata lists the stains,
+    and a sort that put channel 10 before channel 2 would silently rename
+    somebody's panel -- so the numbers are compared as numbers.
+
+    `[]` -- not a guess -- for a folder whose recognised files cannot be one
+    image: both namings at once (two runs' files copied together), or two
+    files claiming one channel number. Assembling either would put a stain in
+    another's slot; `spatial_scene._xenium_path` then opens a single file.
     """
     folder = Path(path)
+    if folder.is_file():
+        return [Path(member) for member in ome_set(folder)]
     if not folder.is_dir():
         return []
-    found = [child for child in folder.iterdir()
-             if child.is_file() and FOCUS_FILE.match(child.name)]
-
-    def order(child):
-        digits = re.findall(r"\d+", child.name)
-        return (int(digits[-1]) if digits else 0, child.name)
-
-    return sorted(found, key=order)
+    found = []
+    for child in folder.iterdir():
+        parsed = _channel_number(child.name)
+        if parsed is not None and child.is_file():
+            found.append((parsed[0], parsed[1], child))
+    if len({naming for _, naming, _ in found}) > 1:
+        return []
+    numbers = [number for number, _, _ in found]
+    if len(set(numbers)) != len(numbers):
+        return []
+    return [child for _, _, child in sorted(found, key=lambda item: item[0])]
 
 
 def is_focus_dir(path) -> bool:
@@ -83,9 +108,105 @@ def is_focus_dir(path) -> bool:
     if not path or is_remote_locator(path):
         return False
     folder = Path(path)
+    if folder.is_file():
+        # The first file of a multi-file OME-TIFF, one channel a file: the
+        # same thing by another route (`ome_set`).
+        return len(ome_set(folder)) > 1
     if folder.name.lower() != FOCUS_DIR:
         return False
     return len(focus_files(folder)) > 1
+
+
+#: What a member of a multi-file OME-TIFF is called.
+_OME_SET_SUFFIXES = (".tif", ".tiff", ".tf2", ".tf8", ".btf")
+
+
+def _set_document(path):
+    """The OME document that describes the set `path` belongs to: its own,
+    or -- for a `BinaryOnly` file -- the `MetadataFile` it names beside it (a
+    `.companion.ome`, or another OME-TIFF)."""
+    from plexora.server.utils import ome_xml, tiff_region
+
+    def embedded(file):
+        with tiff_region.opened(str(file)) as handle:
+            description = handle.pages[0].tags["ImageDescription"].value
+        return description if isinstance(description, str) else None
+
+    description = embedded(path)
+    if not description or not ome_xml.is_ome_xml(description) or (
+            "FileName" not in description and "BinaryOnly" not in description):
+        return None
+    document = ome_xml.read(description)
+    if document is not None and document.metadata_file and not document.images:
+        other = Path(path).parent / Path(document.metadata_file).name
+        if not other.is_file():
+            return None
+        if other.name.lower().endswith(_OME_SET_SUFFIXES):
+            description = embedded(other)
+        else:
+            description = other.read_text(encoding="utf-8", errors="replace")
+        document = ome_xml.read(description) if description else None
+    return document
+
+
+def _ome_set(path) -> tuple:
+    try:
+        if not str(path).lower().endswith(_OME_SET_SUFFIXES):
+            return ()
+        document = _set_document(path)
+        if document is None or not document.images:
+            return ()
+        image = document.images[0]
+        if image.size_z != 1 or image.size_t != 1 or image.size_c < 2 \
+                or any(count != 1 for count in image.samples):
+            return ()
+        by_channel = {}
+        for position, (first_c, _z, _t, ifd, count, file_name, _uuid) in enumerate(image.tiff_data):
+            channel = position if first_c is None else first_c
+            if not file_name or ifd not in (None, 0) or count not in (None, 1) \
+                    or channel in by_channel:
+                return ()
+            by_channel[channel] = Path(file_name).name
+        names = [by_channel.get(channel) for channel in range(image.size_c)]
+        if None in names or len(set(names)) != len(names) or len(by_channel) != image.size_c:
+            return ()
+        folder = Path(path).parent
+        if names[0] != Path(path).name:
+            return ()               # a member, not the file that stands for the set
+        members = tuple(str(folder / name) for name in names)
+        return members if all(Path(member).is_file() for member in members) else ()
+    except Exception:  # noqa: BLE001 -- not a set this reader assembles: the file opens by itself
+        return ()
+
+
+_ome_set_cached = None
+
+
+def ome_set(path) -> tuple:
+    """The files of the multi-file OME-TIFF that `path` is the FIRST file of,
+    in channel order; `()` for any other file.
+
+    One file per channel is how Bio-Formats, Micro-Manager and several
+    instruments' exports have written large panels since the 2011-06 schema
+    (and how a Xenium focus folder is written): each file holds one plane and
+    the whole document, whose `TiffData` elements name the file of every
+    channel. Plexora opens a TIFF without tifffile's OME reader and does not
+    follow those names, so such an image opened as its first channel alone.
+
+    Assembled only when it is the simple, common shape -- one plane per
+    channel (`SizeZ = SizeT = 1`), every channel's file named and present
+    beside this one -- and only for the file that holds channel 0, so the
+    other members still open by themselves and the set has one address. A
+    `BinaryOnly` file is described by the `MetadataFile` it names. Anything
+    else (planes of a z-stack or time series spread over files) reads as
+    before. Remembered per file.
+    """
+    global _ome_set_cached
+    if _ome_set_cached is None:
+        from plexora.server.utils import metacache
+
+        _ome_set_cached = metacache.per_file(_ome_set)
+    return _ome_set_cached(path)
 
 
 class _Level:
@@ -231,21 +352,43 @@ def open_focus(path, extension=None) -> FocusPyramid:
                         names=channel_names(path))
 
 
+def stain_from_name(name) -> str | None:
+    """The stain an XOA 4 focus file's name gives, readable, or None.
+
+    `ch0001_atp1a1_cd45_e-cadherin.ome.tif` -> `ATP1A1/CD45/E-CADHERIN`: the
+    name joins a channel's stains with underscores, and the OME-XML (which
+    is preferred when present) joins them with slashes.
+    """
+    match = FOCUS_FILE.match(name)
+    stain = match.group("stain") if match is not None else None
+    if not stain:
+        return None
+    return "/".join(part.upper() for part in stain.split("_") if part)
+
+
 def channel_names(path) -> list[str]:
     """Each focus file's channel name, out of its own OME-XML.
 
     `["DAPI", "18S", "ATP1A1/CD45/E-Cadherin", "AlphaSMA/Vimentin"]` for a v3
     run -- which is the panel, and is what the user is looking for in the
-    channel list. Falls back to the file's index for any file that does not
-    name its channel, rather than to nothing: a list that is half names and
-    half blanks is worse than one that is half names and half numbers.
+    channel list. An XOA 4 file that does not name its channel is named by
+    its file (`stain_from_name`); anything else falls back to its index rather
+    than to nothing: a list that is half names and half blanks is worse than
+    one that is half names and half numbers.
     """
     from plexora.datasource import _channel_names_from_ome_xml
 
+    files = focus_files(path)
+    if Path(path).is_file():
+        # A multi-file OME-TIFF: every file carries the whole document, so the
+        # first one names every channel.
+        names = _channel_names_from_ome_xml(files[0], len(files)) if files else None
+        return list(names) if names else [f"Channel {index + 1}" for index in range(len(files))]
     found = []
-    for index, child in enumerate(focus_files(path)):
+    for index, child in enumerate(files):
         names = _channel_names_from_ome_xml(child, 1)
-        found.append(str(names[0]) if names else f"Channel {index + 1}")
+        found.append(str(names[0]) if names
+                     else stain_from_name(child.name) or f"Channel {index + 1}")
     return found
 
 
@@ -300,6 +443,12 @@ def physical_metadata(path):
     try:
         with tf.TiffFile(str(files[0]), is_ome=False) as handle:
             xml = handle.pages[0].tags["ImageDescription"].value
-        return from_xml(xml).images[0].pixels
     except Exception:
         return {}
+    try:
+        return from_xml(xml).images[0].pixels
+    except Exception:
+        # A schema before 2016-06, which ome_types reads only with lxml.
+        from plexora.server.utils import ome_xml
+
+        return ome_xml.pixels(xml)

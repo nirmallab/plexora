@@ -17,6 +17,10 @@ the website's Python already has:
 - HDF5's LZ4 framing (Imaris) through the `lz4` package;
 - JPEG 2000 through a decoder the page provides (OpenJPEG in WebAssembly,
   `set_jpeg2k`), or a NotImplementedError saying so;
+- JPEG XR (czifile's Axioscan tiles, tifffile's JPEG XR) the same way
+  (jxrlib in WebAssembly, `set_jpegxr`);
+- CZI's Zstandard and ZSTD1 (`zstd1_decode`: hi/lo byte packing, BGR) from
+  the same zstd as `zstd_decode`;
 - the codec names wsidicom imports for a DICOM slide's frames (`JPEG8`,
   `JPEG2K`, ... with `.available`), so it decodes them here too.
 
@@ -43,12 +47,24 @@ _FALLBACKS = ("bitorder_decode", "delta_decode", "delta_encode", "float24_decode
               "packints_encode", "zlib_decode", "zlib_encode")
 
 _jpeg2k = None
+_jpegxr = None
 
 
 def set_jpeg2k(decode) -> None:
     """`decode(data: bytes) -> numpy array`: the page's JPEG 2000 decoder."""
     global _jpeg2k
     _jpeg2k = decode
+
+
+def set_jpegxr(decode) -> None:
+    """`decode(data: bytes) -> dict`: the page's JPEG XR decoder (jxrlib),
+    which answers with the pixels as jxrlib writes them -- `data`, rows
+    packed in the stream's own pixel format -- and that format: `width`,
+    `height`, `channels`, `colorformat` and `bitdepth` (jxrlib's names: "RGB",
+    "YOnly"; "8", "16", "16Float", ...), `bitsperpixel`, `alpha` and `bgr`.
+    `jpegxr_decode` makes the array imagecodecs would."""
+    global _jpegxr
+    _jpegxr = decode
 
 
 def zlibng_encode(data, level=6, out=None):
@@ -88,6 +104,58 @@ def zstd_decode(data, out=None):
 
 def zstd_encode(data, level=None, out=None):
     return _zstd()[1](bytes(data), 3 if level is None else level)
+
+
+_ZSTD_MAGIC = b"\x28\xb5\x2f\xfd"
+
+
+def zstd1_decode(data, *, itemsize=1, samples=1, out=None):
+    """A CZI's Zstandard subblock (compression 5 and 6), as imagecodecs
+    decodes it: a plain Zstandard frame, or ZSTD1 -- a header before the
+    frame (its size in the first byte, then typed chunks; type 1's low bit
+    says the bytes were packed "hi/lo": every item's first byte, then every
+    second, ...), undone here for `itemsize` > 1. Then, for `samples` 3 or 4,
+    B and R swapped and an 8-bit BGRA's alpha made 255. An int `out` is the
+    most the frame may hold, as in imagecodecs; another `out` is ignored, as
+    elsewhere in this module."""
+    data = bytes(data)
+    if len(data) < 2:
+        raise ValueError(f"srcsize={len(data)} < 2")
+    if itemsize < 1:
+        raise ValueError(f"itemsize={itemsize} < 1")
+    if samples not in (1, 3, 4):
+        raise ValueError(f"samples={samples} not in {{1, 3, 4}}")
+    start, hilo = 0, False
+    if data[:4] != _ZSTD_MAGIC:
+        start = data[0]
+        if start < 1 or start >= len(data):
+            raise ValueError(f"header_size={start} out of range for srcsize={len(data)}")
+        at = 1
+        while at < start:
+            kind = data[at]
+            at += 1
+            if kind != 1:
+                break  # a chunk type it does not know ends the header, as in imagecodecs
+            if at >= start:
+                raise ValueError("truncated chunk type 1")
+            hilo = bool(data[at] & 1)
+            at += 1
+    result = _zstd()[0](data[start:])
+    if isinstance(out, int) and out >= 0 and len(result) > out:
+        raise RuntimeError("ZSTD_decompress returned 'Destination buffer is too small'")
+    if hilo and itemsize > 1:
+        if len(result) % itemsize:
+            raise ValueError("decompressed size not a multiple of itemsize")
+        result = np.frombuffer(result, np.uint8).reshape(itemsize, -1).T.tobytes()
+    if samples in (3, 4):
+        if len(result) % (samples * itemsize):
+            raise ValueError("decompressed size not a multiple of samples*itemsize")
+        pixels = np.frombuffer(result, np.uint8).reshape(-1, samples, itemsize).copy()
+        pixels[:, [0, 2]] = pixels[:, [2, 0]]
+        if samples == 4 and itemsize == 1:
+            pixels[:, 3] = 255
+        result = pixels.tobytes()
+    return result
 
 
 # -- LZW (TIFF 6: MSB-first codes, early change) ----------------------------
@@ -181,6 +249,13 @@ def jpeg_decode(data, bitspersample=None, tables=None, header=None, colorspace=N
     if colorspace == 2 and _components(stream) == 3 and b"Adobe" not in stream[:512]:
         stream = stream[:2] + _ADOBE_RGB + stream[2:]
     image = Image.open(io.BytesIO(stream))
+    if isinstance(outcolorspace, str):
+        outcolorspace = outcolorspace.upper()
+    if outcolorspace in (3, "YCBCR") and image.mode == "RGB":
+        # The components as stored, not converted to colour, as imagecodecs
+        # gives them: a fluorescence MRXS keeps a filter in each
+        # (server/utils/formats/mrxs.py).
+        image.draft("YCbCr", None)
     image.load()
     if outcolorspace in (1, "MINISBLACK") and image.mode not in ("L", "I;16"):
         image = image.convert("L")
@@ -238,6 +313,42 @@ def jpeg2k_decode(data, out=None, **kwargs):
     return np.asarray(_jpeg2k(bytes(data)))
 
 
+#: jxrlib's sample depths that are a numpy type as they are. Fixed-point,
+#: packed (RGB555, RGB565, RGB101010) and 1-bit samples, which imagecodecs
+#: converts, are refused.
+_JXR_DTYPES = {"8": np.uint8, "16": np.uint16, "16Float": np.float16, "32Float": np.float32}
+
+
+def jpegxr_decode(data, index=None, fp2int=False, out=None, **kwargs):
+    """As imagecodecs decodes JPEG XR: grey as (height, width), colour as
+    (height, width, 3) in R, G, B order -- a BGR stream (a CZI's 24-bit
+    colour) is turned round, as imagecodecs' format converter turns it.
+
+    Only what has been held to imagecodecs is decoded: grey and RGB/BGR in
+    8 or 16-bit integers or 16 or 32-bit floats. The rest is refused: alpha
+    (the page's build never decodes an alpha plane), padded pixels
+    (32bppBGR, 128bppRGBFloat, ...), CMYK and n-channel streams."""
+    if _jpegxr is None:
+        raise NotImplementedError("JPEG XR decoding in the browser needs the page's "
+                                  "jxrlib decoder, which is not loaded")
+    found = _jpegxr(bytes(data))
+    depth, colour = str(found["bitdepth"]), str(found["colorformat"])
+    channels, bits = int(found["channels"]), int(found["bitsperpixel"])
+    dtype = _JXR_DTYPES.get(depth)
+    if (dtype is None or (colour, channels) not in (("YOnly", 1), ("RGB", 3)) or found["alpha"]
+            or bits != channels * 8 * np.dtype(dtype).itemsize):
+        alpha = " with alpha" if found["alpha"] else ""
+        raise NotImplementedError(f"JPEG XR in {bits}-bit {colour}{alpha} ({depth}-bit samples) "
+                                  "is not supported in the browser")
+    image = np.frombuffer(found["data"], dtype=dtype)
+    image = image.reshape(int(found["height"]), int(found["width"]), *((3,) if channels == 3 else ()))
+    if found["bgr"]:
+        image = image[..., ::-1]
+    if not (image.flags.writeable and image.flags.c_contiguous):
+        image = image.copy()
+    return image
+
+
 # -- HDF5's LZ4 framing (Imaris) ---------------------------------------------
 
 
@@ -271,6 +382,7 @@ def _have_zstd():
 
 #: tifffile uses this module's zstd only when it says it has one.
 ZSTD = _Available(_have_zstd)
+ZSTD1 = _Available(_have_zstd)
 
 #: wsidicom imports these together with their functions (wsidicom/codec/
 #: optionals.py) and takes imagecodecs for DICOM frames only when every name
@@ -285,6 +397,10 @@ JPEG8.CS = types.SimpleNamespace(UNKNOWN=0, GRAYSCALE=1, RGB=2, YCbCr=3, CMYK=4,
 JPEG2K = _Available(lambda: _jpeg2k is not None)
 JPEGLS = _Available(lambda: False)
 JPEGXL = _Available(lambda: False)
+JPEGXR = _Available(lambda: _jpegxr is not None)
+#: Windows Imaging Component, which czifile asks for before `jpegxr_decode`
+#: (it prefers it on Windows) when it reads a JPEG XR CZI's directory.
+WIC = _Available(lambda: False)
 
 
 def _absent(name):
@@ -298,6 +414,9 @@ def _absent(name):
 jpegls_decode = _absent("jpegls_decode")
 jpegxl_decode = _absent("jpegxl_decode")
 dicomrle_decode = _absent("dicomrle_decode")
+#: CZI's experimental "chunked" compression (type 7): czifile asks for it when
+#: it reads such a file's directory, so the file opens and its tiles say so.
+chunked_decode = _absent("chunked_decode")
 #: Encoders Plexora never calls in the browser (wsidicom imports them).
 jpeg8_encode = _absent("jpeg8_encode")
 jpeg2k_encode = _absent("jpeg2k_encode")

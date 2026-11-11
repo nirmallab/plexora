@@ -484,9 +484,13 @@ class LocalImageProvider:
 
     def __init__(self, path: str | None, pyramid: str | None = None,
                  rgb: bool = False, z_semantics: str | None = None,
-                 t_semantics: str | None = None):
+                 t_semantics: str | None = None, image_index: int = 0):
         self._path = str(path) if path else None
         self._pyramid = str(pyramid) if pyramid else None
+        #: Which image of a microscope file holding several this reads (a
+        #: CZI's scenes, a LIF's images: server/utils/formats); 0 for every
+        #: other file. `pyramid` is that image's derived levels.
+        self.image_index = int(image_index or 0)
         #: The project's recorded reading of a stored z/t axis (depth/time or
         #: cycles folded into channels); None reads the file as it always has
         #: been read. See plexora/server/volume/sources/tiff.py.
@@ -535,6 +539,11 @@ class LocalImageProvider:
             if dicom_wsi.is_dicom_path(self._path):
                 return dicom_wsi.build_extension(
                     dicom_wsi.open_image(self._path, rgb=self._rgb), self._pyramid)
+            from plexora.server.utils import formats
+
+            if formats.handles(self._path):
+                return formats.build_extension(
+                    formats.open_image(self._path, index=self.image_index), self._pyramid)
             if self._reads_colour():
                 return brightfield.build_extension(
                     brightfield.open_rgb(self._path), self._pyramid)
@@ -558,7 +567,7 @@ class LocalImageProvider:
         from plexora.server.utils.blocks import block_reduce
 
         from plexora.server.utils import (brightfield, dicom_wsi, ome_zarr,
-                                          tiff_series, xenium_focus)
+                                          tiff_series, value_range, xenium_focus)
 
         # A z-stack or time series: served one plane at a time through the
         # volume layer, whose default plane is the `channels` pyramid every
@@ -585,8 +594,9 @@ class LocalImageProvider:
         if ome_zarr.is_zarr_image_path(self._path):
             channels = ome_zarr.open_image(self._path,
                                            extension=self._missing_pyramid())
-            return (channels, ome_zarr.overview_plane(channels),
-                    ome_zarr.physical_metadata(channels))
+            metadata = ome_zarr.physical_metadata(channels)
+            return (*value_range.present(channels, ome_zarr.overview_plane(channels)),
+                    metadata)
 
         # Before the colour test below, not after: a DICOM H&E project carries
         # rgb=True, and `_reads_colour` would hand the slide to OpenSlide --
@@ -598,6 +608,20 @@ class LocalImageProvider:
                 self._path, extension=self._missing_pyramid(), rgb=self._rgb)
             return (channels, dicom_wsi.overview_plane(channels),
                     dicom_wsi.physical_metadata(channels))
+
+        # A microscope's or slide scanner's own format (Zeiss CZI, Nikon ND2,
+        # Leica LIF, Olympus VSI, ...: server/utils/formats). Before the colour
+        # test for the reason DICOM is: the file says itself whether its
+        # samples are a colour picture, and the TIFF readers below cannot open
+        # it at all.
+        from plexora.server.utils import formats
+
+        if formats.handles(self._path):
+            channels = formats.open_image(self._path, extension=self._missing_pyramid(),
+                                          rgb=self._rgb, index=self.image_index)
+            metadata = formats.physical_metadata(channels)
+            return (*value_range.present(channels, formats.overview_plane(channels)),
+                    metadata)
 
         # Dispatched on the file's storage layout, not on the project's
         # recorded kind: a node has no project, and an interleaved-RGB file
@@ -620,7 +644,25 @@ class LocalImageProvider:
             xml = channel_io.pages[0].tags['ImageDescription'].value
             metadata = from_xml(xml).images[0].pixels
         except:
-            metadata = {}
+            # Any schema before 2016-06, or a document ome_types refuses:
+            # read for what the viewer needs (server/utils/ome_xml.py).
+            try:
+                from plexora.server.utils import ome_xml
+
+                metadata = ome_xml.pixels(xml)
+            except Exception:
+                metadata = {}
+        if tiff_series.needs_region_reader(series):
+            # A pyramid that does not halve (a Leica SCN's steps of 4), or
+            # channels stored as one page's samples: a halving chain over the
+            # file's own levels, as the viewer addresses them.
+            from plexora.server.utils import tiff_region
+
+            if not _shared:
+                channel_io.close()
+            channels = tiff_region.open_image(self._path)
+            return (*value_range.present(channels, tiff_region.overview_plane(channels)),
+                    metadata)
         channels = zarr.open(series.aszarr())
 
         levels = series.levels
@@ -658,6 +700,9 @@ class LocalImageProvider:
             # image opened as it is, it is the whole stack, which is why it is
             # reduced a row slab at a time (`_overview_by_slabs`).
             zarray = _overview_by_slabs(zarray, reduce, block_reduce)
+        # float, signed and 32-bit pixels through a map onto the 16-bit tiles
+        # the viewer draws (identity for uint8/uint16): server/utils/value_range.py.
+        channels, zarray = value_range.present(channels, zarray)
         return channels, zarray, metadata
 
     def _reads_colour(self) -> bool:
@@ -684,7 +729,7 @@ class LocalImageProvider:
                      else self._pyramid)
         source = open_volume(self._path, extension=extension, rgb=self._rgb,
                              z_semantics=self._z_semantics,
-                             t_semantics=self._t_semantics)
+                             t_semantics=self._t_semantics, image_index=self.image_index)
         if source is None:
             return None
         if source.volume.is_planar and not is_volume_only_path(self._path):
@@ -704,7 +749,8 @@ class LocalImageProvider:
                 try:
                     build_volume_extension(source, self._pyramid)
                     source.close()
-                    source = open_volume(self._path, extension=self._pyramid)
+                    source = open_volume(self._path, extension=self._pyramid,
+                                         image_index=self.image_index)
                 except Exception:
                     # Read-only project directory, a full disk: the levels the
                     # project records are still served, as subsamples.
@@ -770,8 +816,11 @@ def _frame_identity(frame) -> dict:
     return identity
 
 
-def detect_image_type(path):
+def detect_image_type(path, index=0):
     """What kind of image the file at `path` is, as a `brightfield.Detection`.
+
+    `index` is which image of a microscope file holding several (each states
+    its own samples); every other format holds one and ignores it.
 
     The dispatch `convertOmeTiff` makes before it reads anything, lifted out
     because a node has to make the identical one: the primary decides an
@@ -795,6 +844,10 @@ def detect_image_type(path):
 
     if dicom_wsi.is_dicom_path(path):
         return dicom_wsi.detect_image_type(path)
+    from plexora.server.utils import formats
+
+    if formats.handles(path):
+        return formats.detect_image_type(path, index=index)
     return brightfield.detect_image_type(path)
 
 
@@ -835,12 +888,13 @@ def _page_overview(path, levels, level_series, zarray):
     return np.stack(got)
 
 
-def image_geometry(path, pyramid=None, rgb=False) -> dict:
+def image_geometry(path, pyramid=None, rgb=False, index=0) -> dict:
     """An image file's shape, without loading it into the module globals.
 
     The same facts `convertOmeTiff` derives at import time, read again here
     because a node has to be able to answer "how big is it" for a file the
-    primary has never seen.
+    primary has never seen. `index` is which image of a microscope file
+    holding several (scenes differ in size); every other format ignores it.
 
     Dispatching on the path rather than on the project's recorded kind is what
     lets a node serve an OME-Zarr store: a node has no project to have recorded
@@ -883,6 +937,11 @@ def image_geometry(path, pyramid=None, rgb=False) -> dict:
         return dicom_wsi.geometry(
             dicom_wsi.open_image(path, extension=pyramid, rgb=rgb))
 
+    from plexora.server.utils import formats
+
+    if formats.handles(path):
+        return formats.geometry_of(path, index=index, extension=pyramid)
+
     if rgb or brightfield.is_rgb_layout(path):
         return brightfield.geometry(brightfield.open_rgb(path, extension=pyramid))
 
@@ -895,7 +954,14 @@ def image_geometry(path, pyramid=None, rgb=False) -> dict:
     # the same one: a node answers "how big is it" from here while the primary
     # records the shape from the conversion, and a geometry check that
     # disagreed with the pixels would reject a perfectly good pairing.
-    array = zarr.open(tiff_series.channel_series(channel_io).aszarr())
+    series = tiff_series.channel_series(channel_io)
+    if tiff_series.needs_region_reader(series):
+        opened = tiff_region.open_image(path)
+        try:
+            return dicom_wsi.geometry(opened)
+        finally:
+            opened.close()
+    array = zarr.open(series.aszarr())
     if hasattr(array, "shape"):
         levels, shape = 1, array.shape
         chunks = array.chunks

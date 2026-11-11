@@ -379,8 +379,14 @@ def add_resource():
     path = node_resources.unquote_path(body.get("path") or "")
     if not path:
         raise ResourceError("a resource needs a path on this machine")
+    # Which image of a microscope file holding several (each is a resource of
+    # its own); absent, the first -- every file that holds one.
+    try:
+        index = int(body.get("index") or 0)
+    except (TypeError, ValueError):
+        raise ResourceError("`index` is the position of one image in the file") from None
 
-    resource = _registry().add(kind, resource_id, path)
+    resource = _registry().add(kind, resource_id, path, image_index=index)
     if kind == "segmentation" and not resource.prepared:
         _prepare_in_background(resource)
     elif kind == "image":
@@ -1341,7 +1347,8 @@ def volume_measure():
                                     "not a label volume")
             labels = volume_labels.open_label_volume(seg.path)
             source = open_volume(image.path, rgb=image.reads_colour,
-                                 z_semantics=zs, t_semantics=ts)
+                                 z_semantics=zs, t_semantics=ts,
+                                 image_index=getattr(image, "image_index", 0))
             if source is None or source.volume.is_planar:
                 raise ResourceError("this node reads the image as a single plane, so it "
                                     "has no planes to measure objects in")
@@ -1514,7 +1521,8 @@ def volume_surface():
             # Its own handle, as a measurement opens one: a long read must not
             # hold the tile path's resource lock.
             return open_volume(image.path, rgb=image.reads_colour,
-                               z_semantics=zs_, t_semantics=ts_)
+                               z_semantics=zs_, t_semantics=ts_,
+                               image_index=getattr(image, "image_index", 0))
 
         def stage(name):
             job["stage"], job["done"], job["total"] = str(name), 0, 0
@@ -1594,7 +1602,8 @@ def image_geometry(resource_id):
                  # tiles would have the viewer ask for levels the node cannot
                  # serve.
                  else local_providers.image_geometry(resource.path,
-                                                     rgb=resource.reads_colour))
+                                                     rgb=resource.reads_colour,
+                                                     index=resource.image_index))
     # What this node made of the file, carried with the shape so the primary
     # learns both in the one round trip `attach_image` already makes. Additive:
     # a primary reading a node too old to say it sees no keys and records an
@@ -1620,7 +1629,8 @@ def _own_channel_names(resource, count):
     try:
         from plexora.datasource import _channel_names_from_image_metadata
 
-        names = _channel_names_from_image_metadata(path, int(count))
+        names = _channel_names_from_image_metadata(
+            path, int(count), getattr(resource, "image_index", 0))
     except Exception:  # noqa: BLE001 -- names are a courtesy, not the image
         return None
     return list(names) if names and len(names) == int(count) else None
@@ -2214,7 +2224,8 @@ def _volume_source(resource, zs, ts):
         from plexora.server.volume.sources import open_volume
 
         return open_volume(resource.path, rgb=resource.reads_colour,
-                           z_semantics=zs, t_semantics=ts)
+                           z_semantics=zs, t_semantics=ts,
+                           image_index=getattr(resource, "image_index", 0))
 
     return _cached(resource, ("volume", zs, ts), open_source)
 
@@ -2496,7 +2507,8 @@ def _volume_geometry(resource):
     source = None
     try:
         source = open_volume(resource.path, rgb=resource.reads_colour,
-                             z_semantics=zs, t_semantics=ts)
+                             z_semantics=zs, t_semantics=ts,
+                             image_index=getattr(resource, "image_index", 0))
         return _describe_volume(source)
     except Exception as exc:  # noqa: BLE001 -- described as a plane instead
         current_app.logger.warning("could not read %s as a volume: %s", resource.id, exc)

@@ -66,7 +66,8 @@ def open_project_volume(project):
     extension = spec.pyramid if spec.pyramid and Path(spec.pyramid).exists() else None
     source = open_volume(spec.src, extension=extension,
                          rgb=spec.kind == IMAGE_TYPE_BRIGHTFIELD,
-                         z_semantics=spec.z_semantics, t_semantics=spec.t_semantics)
+                         z_semantics=spec.z_semantics, t_semantics=spec.t_semantics,
+                         image_index=spec.index)
     if source is None:
         return None
     if source.volume.is_planar and not is_volume_only_path(spec.src):
@@ -215,6 +216,12 @@ class SourceImage:
             pyramid = ome_zarr.open_image(source.path, extension=extension)
         elif dicom_wsi.is_dicom_path(source.path):
             pyramid = dicom_wsi.open_image(source.path, extension=extension, rgb=as_colour)
+        elif _formats_handle(source.path):
+            from plexora.server.utils import formats, value_range
+
+            # The project's own image of a file holding several.
+            pyramid, _overview = value_range.present(
+                formats.open_image(source.path, extension=extension, index=spec.index), None)
         elif as_colour or brightfield.is_rgb_layout(source.path):
             pyramid = brightfield.open_rgb(source.path, extension=extension)
         if pyramid is not None:
@@ -765,7 +772,13 @@ class ReaderShelf:
             locator = image.locator
             return f"node://{locator.node}/{locator.resource_id}"
         source = image.source
-        return str(source.path) if source is not None and source.path else None
+        if source is None or not source.path:
+            return None
+        # Which image of a file holding several: another scene of the same
+        # CZI is another image, never read through this one's reader.
+        project = getattr(dataset, "project", None)
+        index = project.image.index if project is not None else 0
+        return f"{source.path}#image{index}" if index else str(source.path)
 
     @staticmethod
     def _open(dataset, view):
@@ -826,3 +839,11 @@ SHELF = ReaderShelf()
 def close_readers():
     """Close every reader the shared shelf holds. For shutdown and tests."""
     SHELF.close()
+
+
+def _formats_handle(path) -> bool:
+    """Whether a microscope's own format reader opens `path`
+    (server/utils/formats)."""
+    from plexora.server.utils import formats
+
+    return formats.handles(path)

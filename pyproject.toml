@@ -80,7 +80,8 @@ dependencies = [
     # than an extra because opening an .ims is core; imported only where an
     # .ims is opened (server/volume/sources/ims.py), never at startup.
     "hdf5plugin>=5",
-    "imagecodecs",
+    # 2026.8.16: the floor czifile (below) needs.
+    "imagecodecs>=2026.8.16",
     "itsdangerous>=2.2",
     "Jinja2>=3.1",
     # Compiled kernels for the few analysis loops numpy cannot vectorise --
@@ -167,7 +168,27 @@ dependencies = [
     # Called at import of the package itself (plexora/__init__.py), to cap the
     # BLAS thread pool before sklearn deadlocks in a threaded server.
     "threadpoolctl>=3.6.0",
-    "tifffile>=2026.7.31",
+    # 2026.10.15: the floor oiffile (below) needs.
+    "tifffile>=2026.10.15",
+    # Microscope and slide-scanner formats that are not TIFF
+    # (server/utils/formats/): Zeiss CZI, Leica LIF/LOF/XLEF, Olympus OIR and
+    # OIB/OIF, Nikon ND2 and Hyperion MCD. Core rather than an extra because
+    # each is a format a microscope writes by default -- an image somebody
+    # cannot open without a pip step is an image Plexora does not open -- and
+    # each is pure Python (py3-none-any) under BSD-3 (MIT for readimc), so
+    # they cost nothing to build and run in the website's Pyodide as they do
+    # here. Imported only when such a file is opened. Their APIs are young:
+    # the floors are the releases the readers were written against
+    # (tests/test_formats_*.py hold them to it). Olympus VSI, Hamamatsu NDPIS
+    # and DeltaVision are read by Plexora's own code and need nothing here.
+    "czifile>=2026.11.8",
+    "liffile>=2026.11.8",
+    # nd2 brings dask (here already through spatialdata) and
+    # resource-backed-dask-array, which its module imports at the top.
+    "nd2>=0.12",
+    "oiffile>=2026.10.15",
+    "oirfile>=2026.10.22",
+    "readimc>=0.9.2",
     # The primary's HTTP client for talking to data nodes
     # (server/providers/http.py). Declared rather than leaned on transitively
     # through requests -- which Plexora does not depend on -- because the

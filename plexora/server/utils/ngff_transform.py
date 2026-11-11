@@ -270,7 +270,16 @@ def _axes_of(attrs: Mapping):
 
 
 def _first_multiscale(attrs: Mapping):
+    """`multiscales[0]`, from NGFF 0.4's flat attributes or 0.5's `"ome"` key.
+
+    NGFF 0.5 (Zarr v3, and spatialdata >= 0.6) nests the block under `ome` in
+    `zarr.json`'s attributes; reading only the flat spelling left every element
+    of such a store "aligned by assumption".
+    """
     multiscales = attrs.get("multiscales")
+    nested = attrs.get("ome")
+    if multiscales is None and isinstance(nested, Mapping):
+        multiscales = nested.get("multiscales")
     if isinstance(multiscales, Sequence) and multiscales and isinstance(multiscales[0], Mapping):
         return multiscales[0]
     return None

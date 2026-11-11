@@ -47,8 +47,8 @@ def _is_remote(path) -> bool:
 def open_tiff(path):
     """`tf.TiffFile` for a local path or a web address.
 
-    Local: exactly `tf.TiffFile(str(path), is_ome=False)`, the call every
-    reader already makes. Remote: the same over a `RemoteFile`, named after the
+    Local: `tiff_series.ImageTiff(str(path))` -- `tf.TiffFile(..., is_ome=False)`
+    whose `series[0]` is the image -- the call every reader of an image makes. Remote: the same over a `RemoteFile`, named after the
     file (tifffile tells an NDPI from a TIFF by its extension) and read as a
     single file -- a multi-file OME-TIFF's companions are not followed, the
     same as on disk.
@@ -59,14 +59,18 @@ def open_tiff(path):
         shared = _shared_local(path)
         if shared is not None:
             return shared
-        return tf.TiffFile(str(path), is_ome=False)
+        from plexora.server.utils.tiff_series import ImageTiff
+
+        return ImageTiff(str(path))
     from plexora.server.utils import remote_store
 
     store, key = remote_store.open_store(path)
     handle = remote_store.RemoteFile(store, key)
     try:
-        tiff = tf.TiffFile(handle, name=remote_store.url_name(path), size=handle.size,
-                           is_ome=False, _multifile=False)
+        from plexora.server.utils.tiff_series import ImageTiff
+
+        tiff = ImageTiff(handle, name=remote_store.url_name(path), size=handle.size,
+                         _multifile=False)
     except Exception:
         handle.close()
         raise
@@ -381,7 +385,9 @@ class _RgbSource:
     def read(self, y0, y1, x0, x1) -> np.ndarray:
         block = self._level.read_rgb(y0, y1, x0, x1)
         if block.dtype != np.uint8:
-            block = block.astype(np.uint8, copy=False)
+            from plexora.server.utils.brightfield import colour_bytes
+
+            block = colour_bytes(block)
         return block
 
 

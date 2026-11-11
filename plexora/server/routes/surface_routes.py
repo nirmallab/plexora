@@ -105,7 +105,8 @@ def _identity(datasource, project):
     if surface_store._node_binding(project, "image") is not None:
         return surface_store._identity(project, "image")
     return serve.source_identity(
-        (data_model.config.get(datasource) or {}).get('channelFile') or project.image.src)
+        (data_model.config.get(datasource) or {}).get('channelFile') or project.image.src,
+        project.image.index)
 
 
 def _channel_index(project, datasource, name):

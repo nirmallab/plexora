@@ -150,3 +150,76 @@ def write_plate_like(path, wells=("B/2", "B/3"), fields=("0",), version="0.4",
         for field in fields:
             write_ngff(path / well / field, version=version, **kwargs)
     return path
+
+
+def write_legacy_v2(path, shape=(2, 64, 48), chunks=(1, 32, 32), dtype=">u1",
+                    nested=False, separator_key=False, missing=(), levels=1,
+                    consolidated=False, version="0.2", fill_value=0,
+                    zarray_extra=None, seed=0):
+    """An NGFF 0.1-0.3 image as zarr-python 2 era writers left it, written by hand.
+
+    zarr-python 3 cannot write these (that is the point): `dtype` is written
+    verbatim (">u1" is what old bioformats2raw wrote for 8-bit images),
+    `nested` stores chunks as "0/0/0" the way NestedDirectoryStore did before
+    zarr 2.8, and `separator_key=False` leaves `dimension_separator` out of
+    `.zarray`, as those versions did. `missing` lists level-0 chunk coordinates
+    left unwritten (read back as `fill_value`); `"all"` writes none.
+    `zarray_extra` is merged into every `.zarray` (a key mapped to None is
+    removed). Chunks are uncompressed, C order. Returns (path, level-0 pixels).
+    """
+    import json
+
+    path = Path(path)
+    path.mkdir(parents=True, exist_ok=True)
+    (path / ".zgroup").write_text(json.dumps({"zarr_format": 2}))
+    rng = np.random.default_rng(seed)
+    np_dtype = np.dtype(dtype)
+    if np_dtype.kind == "b":
+        data = rng.integers(0, 2, size=shape).astype(np_dtype)
+    else:
+        data = rng.integers(1, 120, size=shape).astype(np_dtype)
+    current = data
+    datasets = []
+    consolidated_meta = {".zgroup": {"zarr_format": 2}}
+    for level in range(levels):
+        name = str(level)
+        meta = {"zarr_format": 2, "shape": list(current.shape), "chunks": list(chunks),
+                "dtype": dtype, "compressor": None, "fill_value": fill_value,
+                "order": "C", "filters": None}
+        if separator_key:
+            meta["dimension_separator"] = "/" if nested else "."
+        for key, value in (zarray_extra or {}).items():
+            if value is None:
+                meta.pop(key, None)
+            else:
+                meta[key] = value
+        array_dir = path / name
+        array_dir.mkdir(exist_ok=True)
+        (array_dir / ".zarray").write_text(json.dumps(meta))
+        consolidated_meta[f"{name}/.zarray"] = meta
+        grid = [range(-(-s // c)) for s, c in zip(current.shape, chunks)]
+        for coords in np.ndindex(*[len(g) for g in grid]):
+            if level == 0 and (missing == "all" or tuple(coords) in set(map(tuple, missing))):
+                continue
+            block = np.zeros(chunks, dtype=np_dtype)
+            window = tuple(slice(i * c, min((i + 1) * c, s))
+                           for i, c, s in zip(coords, chunks, current.shape))
+            piece = current[window]
+            block[tuple(slice(0, n) for n in piece.shape)] = piece
+            key = ("/" if nested else ".").join(str(i) for i in coords)
+            target = array_dir / key
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(block.tobytes(order="C"))
+        datasets.append({"path": name})
+        current = current[..., ::2, ::2]
+    axes_note = {"0.1": None, "0.2": None, "0.3": ["c", "y", "x"][-len(shape):]}
+    multiscale = {"version": version, "datasets": datasets}
+    if axes_note.get(version):
+        multiscale["axes"] = axes_note[version]
+    attrs = {"multiscales": [multiscale]}
+    (path / ".zattrs").write_text(json.dumps(attrs))
+    consolidated_meta[".zattrs"] = attrs
+    if consolidated:
+        (path / ".zmetadata").write_text(json.dumps(
+            {"zarr_consolidated_format": 1, "metadata": consolidated_meta}))
+    return path, data

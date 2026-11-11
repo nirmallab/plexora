@@ -159,7 +159,9 @@ def _open_series(path, all_pages: bool = False):
     """
     from plexora.server.utils import tiff_series
 
-    tiff = tf.TiffFile(str(path), is_ome=False)
+    from plexora.server.utils.tiff_series import ImageTiff
+
+    tiff = ImageTiff(str(path))
     try:
         if all_pages:
             series = tiff.series[0]

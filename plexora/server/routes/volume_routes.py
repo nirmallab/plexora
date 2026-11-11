@@ -763,8 +763,8 @@ def _level_context(datasource):
     rows, cols, covered = serve.area_at(volume, ask.level, ask.box)
     pool = ask.pool or serve.z_pool(volume, ask.level)
     remote = not getattr(source, "is_local", True)
-    identity = serve.source_identity(
-        (data_model.config.get(datasource) or {}).get('channelFile'))
+    record = data_model.config.get(datasource) or {}
+    identity = serve.source_identity(record.get('channelFile'), record.get('imageIndex'))
     if remote:
         # The project's own record of where the pixels are, not a file here.
         identity = f"node|{identity}|{data_model.load_generation}"
@@ -882,8 +882,8 @@ def volume_bricks(datasource):
             named = None
         channels.append((index, full, tuple(float(v) for v in window)))
     every_named = len(stamps) >= len(names) and all(parse_stamp(s) for s in stamps[:len(names)])
-    identity = serve.source_identity(
-        (data_model.config.get(datasource) or {}).get('channelFile'))
+    record = data_model.config.get(datasource) or {}
+    identity = serve.source_identity(record.get('channelFile'), record.get('imageIndex'))
     tag = "bk-" + hashlib.sha1("|".join(str(part) for part in (
         serve.PAYLOAD_VERSION, identity, level, entry["pool"], t, voxel_format,
         [(c[0], c[2]) for c in channels], at)).encode("utf-8")).hexdigest()[:24]

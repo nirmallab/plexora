@@ -3,12 +3,12 @@ title: "register_image_datasource"
 description: "Register an image alone as a project -- no cell table, no mask."
 generated: true
 symbol: "plexora.register_image_datasource"
-signature: "register_image_datasource(name, image, channel_names=None, copy=False, data_dir=None, image_type=None, pyramidize=None)"
+signature: "register_image_datasource(name, image, channel_names=None, copy=False, data_dir=None, image_type=None, pyramidize=None, image_index=0)"
 aliases: ["image only"]
 source:
-  end: 1788
+  end: 1850
   path: "plexora/datasource.py"
-  start: 1692
+  start: 1745
 ---
 
 {/* GENERATED from plexora.datasource.register_image_datasource. Edit the docstring or tools/docs/manifest.yaml, then run: python tools/docs/sync_docs.py generate */}
@@ -26,6 +26,7 @@ register_image_datasource(
     data_dir=None,
     image_type=None,
     pyramidize=None,
+    image_index=0,
 )
 ```
 
@@ -104,6 +105,16 @@ as it is.
 
 </Param>
 
+<Param name={"image_index"} type={"int"} default={"0"}>
+
+Which image of a microscope file that
+holds several -- a CZI's scenes, an ND2's positions, a LIF's
+images, an MCD's acquisitions, a VSI's scan areas -- counting
+from 0 in the order the import dialog lists them. Defaults to 0,
+the first. Every other format holds one image.
+
+</Param>
+
 </ParamTable>
 
 ## Returns
@@ -120,6 +131,8 @@ The project's saved config entry.
 import plexora
 
 plexora.register_image_datasource("quicklook", image="slide.ome.tif")
+# The third scene of a slide scan
+plexora.register_image_datasource("scene3", image="scan.czi", image_index=2)
 ```
 
 ## Related

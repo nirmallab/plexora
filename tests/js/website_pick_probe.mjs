@@ -67,10 +67,14 @@ function grant(state = "granted", after = "granted") {
 }
 
 /** A file handle over bytes held here. */
-function memFile(name, size = 4, lastModified = 1700000000000) {
-    const file = { name, size, lastModified, kind: "file-object" };
+function memFile(name, size = 4, lastModified = 1700000000000, text = "") {
+    const file = { name, size, lastModified, kind: "file-object", async text() { return text; } };
     return { kind: "file", name, file, async getFile() { return file; } };
 }
+
+//: An .ndpis naming its .ndpi files, as NanoZoomer writes it (CRLF lines).
+const NDPIS_TEXT = "[NanoZoomer Digital Pathology Image Set]\r\nNoImages=2\r\n"
+    + "Image0=set-DAPI (387) .ndpi\r\nImage1=set-FITC (485).ndpi\r\n";
 
 /**
  * A folder handle over a tree: {name: size | subtree}. Every handle in it
@@ -111,7 +115,8 @@ function memDir(name, tree, permission = grant(), parent = null) {
         },
     };
     for (const [child, value] of Object.entries(tree)) {
-        handle.children.set(child, typeof value === "number" ? memFile(child, value)
+        handle.children.set(child, typeof value === "string" ? memFile(child, value.length, undefined, value)
+            : typeof value === "number" ? memFile(child, value)
             : memDir(child, value, permission, handle));
     }
     return handle;
@@ -505,6 +510,66 @@ await check("an MRXS brings the folder beside it, with no question", async () =>
     assert.deepEqual(host.mounted.at(-1).names.sort(), ["slide.mrxs", "slide/Data0000.dat", "slide/Slidedat.ini"]);
 });
 
+await check("a VSI brings its _name_ folder beside it, with no question", async () => {
+    const host = bootHost();
+    const at = await give(host, memDir("Lab data", {
+        "scans": { "kidney.vsi": 5, "_kidney_": { "stack1": { "frame_t.ets": 9 }, "stack10001": { "frame_t.ets": 3 } },
+                   "other.vsi": 5 } }));
+    let asked = 0;
+    const path = await host.local.take(`${at}/scans/kidney.vsi`, { ask: async () => { asked += 1; return true; } });
+    assert.match(path, /^\/picked\/[0-9a-f]{12}\/kidney\.vsi$/);
+    assert.equal(asked, 0);
+    assert.deepEqual(host.mounted.at(-1).names.sort(),
+                     ["_kidney_/stack1/frame_t.ets", "_kidney_/stack10001/frame_t.ets", "kidney.vsi"]);
+    const record = host.db.rows("plexora-picks", "picks").at(-1);
+    assert.deepEqual([record.kind, record.name], ["slide", "_kidney_"]);
+});
+
+await check("an NDPIS brings the .ndpi files it names, not the rest of its folder", async () => {
+    const host = bootHost();
+    const at = await give(host, memDir("Lab data", {
+        "nano": { "set.ndpis": NDPIS_TEXT, "set-DAPI (387) .ndpi": 9, "set-FITC (485).ndpi": 9,
+                  "unrelated.ndpi": 9, "notes.txt": 1 } }));
+    const path = await host.local.take(`${at}/nano/set.ndpis`);
+    assert.match(path, /^\/picked\/[0-9a-f]{12}\/nano\/set\.ndpis$/);
+    assert.deepEqual(host.mounted.at(-1).names.sort(),
+                     ["nano/set-DAPI (387) .ndpi", "nano/set-FITC (485).ndpi", "nano/set.ndpis"]);
+    const record = host.db.rows("plexora-picks", "picks").at(-1);
+    assert.deepEqual([record.kind, record.only, record.set, record.name], ["directory", "ndpis", "set.ndpis", "nano"]);
+});
+
+await check("an NDPIS picked alone asks for its folder; one missing a channel's file is refused", async () => {
+    const host = bootHost();
+    const folder = memDir("nano", { "set.ndpis": NDPIS_TEXT, "set-DAPI (387) .ndpi": 9, "set-FITC (485).ndpi": 9 });
+    const file = folder.children.get("set.ndpis");
+    host.picked.files = [file];
+    host.picked.folder = folder;
+    const asked = [];
+    const path = await host.picks.pick({ mode: "file", ask: async (text) => { asked.push(text); return true; } });
+    assert.match(path, /^\/picked\/[0-9a-f]{12}\/nano\/set\.ndpis$/);
+    assert.equal(asked.length, 1);
+    assert.match(asked[0], /set\.ndpis is a set of 2 \.ndpi files/);
+    assert.deepEqual(host.mounted.at(-1).names.sort(),
+                     ["nano/set-DAPI (387) .ndpi", "nano/set-FITC (485).ndpi", "nano/set.ndpis"]);
+    const partial = memDir("nano", { "set.ndpis": NDPIS_TEXT, "set-DAPI (387) .ndpi": 9 });
+    host.picked.files = [partial.children.get("set.ndpis")];
+    host.picked.folder = partial;
+    await assert.rejects(host.picks.pick({ mode: "file", ask: async () => true }), /does not have them all/);
+});
+
+await check("an NDPIS folder remembered is mounted again as its set, not the rest", async () => {
+    const host = bootHost();
+    const at = await give(host, memDir("Lab data", {
+        "nano": { "set.ndpis": NDPIS_TEXT, "set-DAPI (387) .ndpi": 9, "set-FITC (485).ndpi": 9, "other.ndpi": 4 } }));
+    await host.local.take(`${at}/nano/set.ndpis`);
+    host.mounted.length = 0;
+    const { mounted } = await host.picks.restore();
+    assert.ok(mounted.length >= 1);
+    const again = host.mounted.find((m) => m.names.includes("nano/set.ndpis"));
+    assert.ok(again, JSON.stringify(host.mounted));
+    assert.deepEqual(again.names.sort(), ["nano/set-DAPI (387) .ndpi", "nano/set-FITC (485).ndpi", "nano/set.ndpis"]);
+});
+
 await check("the gate is asked once, before anything is mounted, and a no mounts nothing", async () => {
     const host = bootHost();
     const at = await give(host, memDir("Lab data", labTree()));
@@ -655,6 +720,27 @@ await check("an MRXS dropped with its folder is one slide", async () => {
     assert.equal(paths.length, 1);
     assert.match(paths[0], /\/slide\.mrxs$/);
     assert.deepEqual(host.mounted.at(-1).names.sort(), ["slide.mrxs", "slide/Data0000.dat", "slide/Slidedat.ini"]);
+});
+
+await check("a VSI dropped with its _name_ folder is one slide", async () => {
+    const host = bootHost();
+    const folder = memDir("_kidney_", { "stack1": { "frame_t.ets": 9 } });
+    const paths = await host.picks.take(dataTransfer([
+        { name: "kidney.vsi", handle: memFile("kidney.vsi") }, { name: "_kidney_", handle: folder }]), {});
+    assert.equal(paths.length, 1);
+    assert.match(paths[0], /\/kidney\.vsi$/);
+    assert.deepEqual(host.mounted.at(-1).names.sort(), ["_kidney_/stack1/frame_t.ets", "kidney.vsi"]);
+});
+
+await check("an NDPIS dropped with its .ndpi files is one set, mounted side by side", async () => {
+    const host = bootHost();
+    const paths = await host.picks.take(dataTransfer([
+        { name: "set.ndpis", handle: memFile("set.ndpis", NDPIS_TEXT.length, undefined, NDPIS_TEXT) },
+        { name: "set-DAPI (387) .ndpi", handle: memFile("set-DAPI (387) .ndpi") },
+        { name: "set-FITC (485).ndpi", handle: memFile("set-FITC (485).ndpi") }]), {});
+    assert.equal(paths.length, 1);
+    assert.match(paths[0], /^\/picked\/[0-9a-f]{12}\/set\.ndpis$/);
+    assert.deepEqual(host.mounted.at(-1).names.sort(), ["set-DAPI (387) .ndpi", "set-FITC (485).ndpi", "set.ndpis"]);
 });
 
 await check("a drop's gate is asked once the drop is read, and a no takes nothing", async () => {

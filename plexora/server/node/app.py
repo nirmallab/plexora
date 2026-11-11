@@ -178,9 +178,9 @@ def _restore_manifest(registry, manifest, log=print):
     """
     if not manifest:
         return
-    for kind, resource_id, path in node_resources.load_manifest(manifest):
+    for kind, resource_id, path, index in node_resources.load_manifest(manifest):
         try:
-            resource = registry.add(kind, resource_id, path)
+            resource = registry.add(kind, resource_id, path, image_index=index)
         except Exception as exc:
             log(f"  not serving {resource_id!r} again: {exc}")
             continue
@@ -269,15 +269,17 @@ def _image_levels(registry, shape):
     for image in registry.all():
         if image.kind != "image" or not image.path:
             continue
+        index = getattr(image, "image_index", 0)
         try:
-            source = open_volume(image.path, rgb=image.reads_colour)
+            source = open_volume(image.path, rgb=image.reads_colour, image_index=index)
             try:
                 described = _describe_volume(source)
             finally:
                 if source is not None:
                     source.close()
             if described is None:
-                described = local_providers.image_geometry(image.path, rgb=image.reads_colour)
+                described = local_providers.image_geometry(image.path, rgb=image.reads_colour,
+                                                           index=index)
         except Exception:  # noqa: BLE001 -- an unreadable image says nothing here
             continue
         if int(described["height"]) == height and int(described["width"]) == width:

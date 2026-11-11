@@ -14,7 +14,8 @@
  * Fortran order, a filter or codec it has no decoder for). Levels past these
  * (a pyramid Python derived into the project) stay Python's.
  *
- * Zarr v2 and v3 (NGFF 0.4 and 0.5): chunks keyed "." or "/" (v2), "c/..."
+ * Zarr v2 and v3 (NGFF 0.4 and 0.5): chunks keyed "." or "/" (v2; a
+ * `.zarray` without `dimension_separator` is looked at, `separatorOf`), "c/..."
  * or v2-style (v3); compressors blosc (c-blosc in WebAssembly, numcodecs.js,
  * client/external/numcodecs-0.3.2, loaded on the first chunk that needs it),
  * zstd (zstddec, as geotiff.js uses it), zlib and gzip (the browser's
@@ -96,6 +97,16 @@ function seededStore(inner, seed) {
             return bytes;
         },
         range: (key, offset, length) => inner.range(key, offset, length),
+        /** Whether `key` is there, by one byte of it; recorded like a
+         *  document, so the pool's other workers do not ask again. */
+        exists: async (key) => {
+            const mark = `exists:${key}`;
+            if (held.has(mark)) return held.get(mark) !== null;
+            const bytes = await inner.range(key, 0, 1).catch(() => null);
+            const found = Boolean(bytes && bytes.length);
+            if (store.recorded) store.recorded.push({ key: mark, buffer: found ? new ArrayBuffer(0) : null });
+            return found;
+        },
     };
     return store;
 }
@@ -213,14 +224,43 @@ function fromV2(path, doc) {
         if (typeof decode === "string") return { refused: `${path}: ${decode}` };
         decoders.push(decode);
     }
-    const separator = doc.dimension_separator || ".";
     const kind = match[2] + match[3];
-    return {
+    const array = {
         shape: doc.shape.map(Number), chunks: doc.chunks.map(Number), kind,
         little: match[1] !== ">", fill: fillOf(doc.fill_value, kind),
-        key: (coords) => `${path}/${coords.length ? coords.join(separator) : "0"}`,
+        // Absent before zarr 2.8, whose NestedDirectoryStore still wrote
+        // "0/0/0": `open` looks (`separatorOf`) rather than assume ".".
+        separator: doc.dimension_separator || null,
+        key: (coords) => `${path}/${coords.length ? coords.join(array.separator || ".") : "0"}`,
         decoders, sharding: null,
     };
+    return array;
+}
+
+/** How a v2 array whose `.zarray` names no separator stores its chunks, by
+ *  looking for a chunk in both spellings (a byte of each, not the chunk), once
+ *  per array at open: the first chunk, then -- a sparse array, its corner
+ *  never written -- the centre one and the last. None of them there reads as
+ *  ".", the metadata's own default. (Python lists the folder instead, which
+ *  the page cannot.) */
+async function separatorOf(source, array, path) {
+    const grid = array.shape.map((n, i) => Math.max(1, Math.ceil(n / array.chunks[i])));
+    const n = grid.length;
+    const plane = (pick) => grid.map((g, i) => (i >= n - 2 ? pick(g) : 0));
+    const candidates = [plane(() => 0), plane((g) => Math.floor(g / 2)), plane((g) => g - 1)];
+    const seen = new Set();
+    for (const coords of candidates) {
+        const name = coords.join(".");
+        if (seen.has(name)) continue;
+        seen.add(name);
+        const [dotted, nested] = await Promise.all([
+            source.exists(`${path}/${coords.join(".")}`),
+            source.exists(`${path}/${coords.join("/")}`),
+        ]);
+        if (dotted) return ".";
+        if (nested) return "/";
+    }
+    return ".";
 }
 
 /** A v3 codec list's decoding: bytes-to-bytes decoders (in decode order)
@@ -317,6 +357,9 @@ export function createZarrReader({ ask = null } = {}) {
             const doc = JSON.parse(new TextDecoder().decode(bytes));
             const array = v3 ? fromV3(name, doc) : fromV2(name, doc);
             if (array.refused) throw new Error(array.refused);
+            if (!v3 && !array.separator) {
+                array.separator = array.shape.length > 1 ? await separatorOf(source, array, name) : ".";
+            }
             if (array.shape.length !== axes.length) throw new Error(`${name}: ${array.shape.length} dimensions`);
             if (JSON.stringify(array.shape) !== JSON.stringify(shape.map(Number))) {
                 throw new Error(`${name} is ${array.shape.join("x")}`);

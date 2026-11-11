@@ -144,9 +144,20 @@ window.PlexoraImportHelp = (function () {
                 + "the file's own metadata.",
         },
         {
+            name: "Microscope or scanner file", shape: "file",
+            pointAt: "the file",
+            marker: ".czi · .nd2 · .lif · .lof · .xlef · .vsi · .oir · .oib · "
+                  + ".ndpis · .dv · .mcd · .zvi · .lsm",
+            produces: ["multiplex", "he"],
+            mayAsk: [],
+            note: "Channel names and pixel size come from the file. A .vsi "
+                + "reads its pixels from the _name_ folder beside it, and an "
+                + ".ndpis from the .ndpi files it lists.",
+        },
+        {
             name: "H&E / brightfield slide", shape: "file",
             pointAt: "the slide",
-            marker: ".svs · .ndpi · .scn · .mrxs · .svslide, or an RGB TIFF",
+            marker: ".svs · .ndpi · .scn · .mrxs · .svslide · .kfb, or an RGB TIFF",
             produces: ["he", "picture"],
             mayAsk: [],
             note: "Needs plexora[wsi] for the vendor formats.",

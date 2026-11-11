@@ -129,7 +129,35 @@ def is_ims_path(path) -> bool:
         return False
     if is_remote_ims(text):
         return True
-    return text.lower().endswith(SUFFIXES) and Path(text).is_file()
+    return (text.lower().endswith(SUFFIXES) and Path(text).is_file()
+            and not is_classic_ims(text))
+
+
+#: The first bytes of a TIFF or BigTIFF, either byte order.
+_TIFF_MAGIC = (b"II*\x00", b"MM\x00*", b"II+\x00", b"MM\x00+")
+_CLASSIC = {}
+
+
+def is_classic_ims(path) -> bool:
+    """Whether the `.ims` on this disk at `path` is an Imaris 3/4 "classic"
+    file: a TIFF (a thumbnail directory, then one page a plane, an
+    `[ImarisDataSet]` description), which Imaris wrote until 5.5 moved the
+    format to HDF5 in 2007 and can still export. It shares the suffix and
+    nothing else, so it is read as the TIFF it is (`tiff_series`); handed to
+    HDF5 it failed with "file signature not found". One four-byte read per
+    file, remembered by size and time."""
+    try:
+        stat = os.stat(path)
+        key = (os.fspath(path), stat.st_size, stat.st_mtime_ns)
+        if key not in _CLASSIC:
+            with open(path, "rb") as handle:
+                head = handle.read(4)
+            if len(_CLASSIC) > 256:
+                _CLASSIC.clear()
+            _CLASSIC[key] = head in _TIFF_MAGIC
+        return _CLASSIC[key]
+    except OSError:
+        return False
 
 
 def is_remote_ims(path) -> bool:

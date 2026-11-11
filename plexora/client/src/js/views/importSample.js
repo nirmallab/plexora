@@ -2634,6 +2634,18 @@ window.PlexoraImportSample = (function () {
         const rows = (state.proposal?.samples || [])
             .flatMap((sample) => sample.layers || [])
             .filter((row) => row.pick === layer.pick);
+        // One image of a file holding several (a CZI's scenes, a LIF's
+        // images): each is a sample, and its ✕ leaves that one out --
+        // `<src>#<image>` beside the rows' `src` -- until it is the last.
+        const images = rows.filter((row) => row.reference && row.src === layer.src
+                                            && Number.isInteger(row.imageIndex));
+        if (layer.reference && images.length > 1 && Number.isInteger(layer.imageIndex)) {
+            const key = `left-out:${pick}`;
+            const gone = Array.isArray(state.answers[key]) ? state.answers[key] : [];
+            state.answers[key] = [...gone, `${layer.src}#${layer.imageIndex}`];
+            inspect();
+            return;
+        }
         if (layer.reference || rows.length <= 1 || !layer.src) {
             removePick(pick);
             return;
@@ -3154,7 +3166,10 @@ window.PlexoraImportSample = (function () {
      *   button acts on the card it is on, not on the screen.
      */
     async function submit(replace, only) {
-        if (!state || !state.picks.length) return;
+        // Once the records exist the primary button opens a sample instead
+        // (`finishSamples`); a click its first listener still hears must not
+        // start a second import while the dialog closes.
+        if (!state || !state.picks.length || state.results) return;
         if (scoped()) return submitScoped();
 
         // No proposal yet means Import was pressed before the first inspection
@@ -3169,9 +3184,10 @@ window.PlexoraImportSample = (function () {
         // Before anything is written, and before the dialog changes: a
         // dismissed modal leaves the proposal exactly as it was.
         if (!(await askConfirmations(targets))) {
-            part("go").focus();
+            if (state) part("go").focus();
             return;
         }
+        if (!state) return;  // the dialog closed while a question was open
 
         render("importing");
         setStatus(replace ? `Re-reading ${replace}…`

@@ -53,11 +53,139 @@ Masks are **not** routed through this. A label image is a single 2-D plane and
 would break the reader that is currently correct.
 """
 
+import functools
 import os
+import re
 from collections import OrderedDict
 from xml.etree import ElementTree
 
 import tifffile as tf
+
+
+def _level0_samples(series) -> int:
+    total = 1
+    for side in series.shape:
+        total *= int(side)
+    return total
+
+
+def _is_reduced(series) -> bool:
+    try:
+        return bool(int(series.pages[0].subfiletype) & 1)
+    except Exception:
+        return False
+
+
+def _plane(series):
+    axes = str(getattr(series, "axes", "") or "")
+    shape = tuple(int(side) for side in series.shape)
+    if "Y" not in axes or "X" not in axes or len(axes) != len(shape):
+        return None
+    return shape[axes.index("Y")], shape[axes.index("X")]
+
+
+def _adopt_reduced_levels(series):
+    """`series` with the first image's reduced-resolution pages chained to it
+    as its levels, when tifffile left them as images of their own.
+
+    tifffile chains a pyramid's levels only when each is the one before
+    divided by exactly 2, 3 or 4. A pyramid whose steps are anything else --
+    libvips and GDAL overviews of an odd-sized image, a scanner's own
+    reductions -- arrives as a flat full-resolution image followed by
+    unrelated smaller ones, and Plexora then derived the coarse levels it
+    already had by reading the whole base: half a minute for a 1.5-gigapixel
+    slide, where using the file's own levels is no work at all. The pages
+    say what they are: `NewSubfileType` bit 0, "a reduced-resolution version
+    of another image in this file" -- OpenSlide's rule for a generic
+    pyramidal TIFF. Adopted only while each is smaller than the last, of the
+    same layout, and the same picture (aspect ratio within 1%, which leaves
+    out a format whose levels overlap their tiles differently). The readers
+    lay a halving chain over uneven steps (`needs_region_reader`,
+    `brightfield.open_rgb`).
+    """
+    base = series[0]
+    if _is_reduced(base) or len(getattr(base, "levels", None) or [base]) > 1:
+        return series
+    plane = _plane(base)
+    if plane is None:
+        return series
+    chain, rest = [base], []
+    for position, entry in enumerate(series[1:], start=1):
+        size = _plane(entry)
+        last = _plane(chain[-1])
+        if (size is not None and not rest and _is_reduced(entry)
+                and entry.axes == base.axes and entry.dtype == base.dtype
+                and len(entry.shape) == len(base.shape)
+                and [d for d, a in zip(entry.shape, entry.axes) if a not in "YX"]
+                == [d for d, a in zip(base.shape, base.axes) if a not in "YX"]
+                and size[0] < last[0] and size[1] < last[1]
+                and abs((size[1] / size[0]) / (plane[1] / plane[0]) - 1) <= 0.01):
+            chain.extend(getattr(entry, "levels", None) or [entry])
+        else:
+            rest.append(entry)
+    if len(chain) == 1:
+        return series
+    base.levels = chain
+    return [base] + rest
+
+
+def arrange_series(tiff, series):
+    """`series` with the image a person means by "this file" first.
+
+    Every reader takes `series[0]`, and for nearly every file that is the
+    image. Two layouts put something else there:
+
+    - **Leica SCN** lists the slide's macro overview first (the whole slide
+      at about 16 um a pixel) and the scanned regions after it, so an SCN
+      opened as a 1616 x 4668 thumbnail of the slide with its label. The
+      image is the largest region; a fluorescence scan's is the largest too,
+      one page a channel.
+    - A file whose **first page is a preview** flagged reduced-resolution
+      (`NewSubfileType` bit 0) with the data after it: an Imaris 3/4 "classic"
+      `.ims`, which is a TIFF whose first directory is a 512 x 512 RGB
+      thumbnail.
+
+    A pyramid tifffile did not chain is chained first
+    (`_adopt_reduced_levels`). Otherwise the list is reordered, never
+    filtered: the other series stay reachable after the first.
+    """
+    if len(series) < 2:
+        return series
+    series = _adopt_reduced_levels(series)
+    if len(series) < 2:
+        return series
+    chosen = 0
+    if getattr(tiff, "is_scn", False):
+        chosen = max(range(len(series)), key=lambda index: _level0_samples(series[index]))
+    elif _is_reduced(series[0]):
+        full = [index for index in range(len(series)) if not _is_reduced(series[index])]
+        if full:
+            chosen = max(full, key=lambda index: _level0_samples(series[index]))
+    if chosen:
+        series = [series[chosen]] + [entry for index, entry in enumerate(series) if index != chosen]
+    return series
+
+
+_PLAIN_SERIES = tf.TiffFile.__dict__.get("series")
+_PLAIN_SERIES_READ = getattr(_PLAIN_SERIES, "func", None) or getattr(_PLAIN_SERIES, "fget", None)
+
+
+class ImageTiff(tf.TiffFile):
+    """`tifffile.TiffFile` for an IMAGE (never a mask), opened as Plexora
+    opens every TIFF (`is_ome=False` unless the caller says otherwise), whose
+    `series[0]` is the image itself (`arrange_series`). Every reader that
+    opens a TIFF to show it constructs this rather than `tf.TiffFile`, so
+    they all agree on which series that is."""
+
+    def __init__(self, *args, **kwargs):
+        kwargs.setdefault("is_ome", False)
+        super().__init__(*args, **kwargs)
+
+    @functools.cached_property
+    def series(self):
+        if _PLAIN_SERIES_READ is None:      # a tifffile that stores it some other way
+            return arrange_series(self, list(super().series))
+        return arrange_series(self, list(_PLAIN_SERIES_READ(self)))
 
 
 #: How much of `ImageDescription` is scanned for the sign that it is OME-XML.
@@ -110,6 +238,68 @@ def _ome_sizes(tiff):
                 sizes[key] = 1
         return sizes
     return None
+
+
+_QPI_NAME = re.compile(r"<Name>([^<]*)</Name>")
+#: `[Channel 0.0.0.2]` -- dataset, image, timepoint?, channel: the last number.
+_IMARIS_CHANNEL = re.compile(r"\[Channel (?:\d+\.)*(\d+)\][^\[]*?^Name\s*=[ \t]*([^\r\n]*)", re.M)
+
+
+def embedded_channel_names(tiff, n_channels=None):
+    """The channel names `tiff` states about itself, or None.
+
+    Each flavour keeps them somewhere else, and a reader that knows one place
+    shows "Channel 1, Channel 2" for the rest:
+
+    - **OME-XML**, any schema version (`ome_xml.channel_names`): `Channel` since
+      2009-09, `LogicalChannel`/`ChannelInfo` before.
+    - **PerkinElmer / Akoya** (a `.qptiff` scan, inForm's `component_data.tif`):
+      every page carries its own XML description, whose first `<Name>` is that
+      page's marker ("PDL1 (Opal 520)").
+    - **ImageJ**: the stack's slice labels, when it has one per plane.
+
+    A list as long as the file has names for; the caller decides whether that
+    is every channel. Reads tags tifffile has already loaded.
+    """
+    from plexora.server.utils import ome_xml
+
+    try:
+        description = tiff.pages[0].tags["ImageDescription"].value
+    except Exception:
+        description = None
+    if isinstance(description, bytes):
+        description = description.decode("utf-8", "replace")
+    if isinstance(description, str):
+        if ome_xml.is_ome_xml(description):
+            names = ome_xml.channel_names(description)
+            if any(names):
+                return names
+        elif "PerkinElmer-QPI-ImageDescription" in description[:2048]:
+            names = _qpi_names(tiff)
+            if names:
+                return names
+        elif description.lstrip().startswith("[ImarisDataSet]"):
+            # Imaris 3/4 "classic": an INI block, one `[Channel N]` section each.
+            found = {int(index): name.strip()
+                     for index, name in _IMARIS_CHANNEL.findall(description)}
+            if found:
+                return [found.get(index, "") for index in range(max(found) + 1)]
+    labels = (getattr(tiff, "imagej_metadata", None) or {}).get("Labels")
+    if isinstance(labels, (list, tuple)) and labels and (n_channels is None or len(labels) == n_channels):
+        # ImageJ appends its own notes after a newline ("DAPI\nc:1/4 ...").
+        return [str(label).split("\n", 1)[0].strip() for label in labels]
+    return None
+
+
+def _qpi_names(tiff):
+    series = tiff.series[0]
+    names = []
+    for page in (getattr(series, "levels", None) or [series])[0].pages:
+        if page is None:
+            return None
+        found = _QPI_NAME.search(str(getattr(page, "description", "") or ""))
+        names.append(found.group(1).strip() if found else "")
+    return names if any(names) else None
 
 
 def _imagej_sizes(tiff):
@@ -237,7 +427,7 @@ def open_channel_series(path):
     from plexora import _work
 
     def opened():
-        tiff = tf.TiffFile(path, is_ome=False)
+        tiff = ImageTiff(path)
         try:
             return tiff, channel_series(tiff)
         except Exception:
@@ -289,6 +479,91 @@ def held_ifds(path) -> list[int] | None:
     return [int(offset) for offset in offsets]
 
 
+def _first_image_planes(tiff, shape) -> int:
+    """How many of a `(planes, Y, X)` series' planes are the FIRST image's,
+    when the file's OME-XML describes several images of one size; else 0.
+
+    Plexora opens a TIFF without tifffile's OME reader, which groups pages by
+    shape: a file holding several scenes or stage positions of one size (a
+    bfconvert of a multi-scene .czi or .lif, a ZEN or MetaMorph multi-position
+    export) arrives as ONE series with every scene's channels end to end, and
+    opened as an image of four times its channels, the first scene's panel
+    followed by the other scenes' as if they were more markers. The document
+    says where the first image stops.
+    """
+    from plexora.server.utils import ome_xml
+
+    try:
+        description = tiff.pages[0].tags["ImageDescription"].value
+    except Exception:
+        return 0
+    if not isinstance(description, str) or not ome_xml.is_ome_xml(description[:OME_MARKER_WINDOW]):
+        return 0
+    document = ome_xml.read(description, images=2)
+    if document is None or len(document.images) < 2:
+        return 0
+    first = document.images[0]
+    if (first.size_y, first.size_x) != tuple(shape[-2:]) or any(n != 1 for n in first.samples):
+        return 0
+    planes = first.size_c * first.size_z * first.size_t
+    if planes <= 0 or planes >= shape[0] or shape[0] % planes:
+        return 0
+    return planes
+
+
+def _leading_pages_series(tiff, series, planes):
+    """The first `planes` pages of `series` at every level, as a series that
+    keeps the pyramid (`single_plane_series`, for a run of planes)."""
+    levels = list(getattr(series, "levels", None) or [series])
+    built = []
+    for level in levels:
+        pages = list(level.pages)[:planes]
+        if len(pages) < planes or any(page is None for page in pages):
+            return series
+        built.append(tf.TiffPageSeries(
+            pages,
+            shape=(planes,) + tuple(int(size) for size in pages[0].shape[-2:]),
+            dtype=series.dtype,
+            axes="CYX",
+            parent=tiff,
+            name=series.name,
+        ))
+    base = built[0]
+    base.levels = built
+    return base
+
+
+def steps_unevenly(series) -> bool:
+    """Whether `series` has reduced levels that are NOT each half the one
+    before (within a pixel of rounding).
+
+    The viewer addresses level `n` as the image at `1 / 2**n`, and a pyramid
+    tifffile hands over is served level for level, which is right for the
+    halving pyramids nearly every writer makes. It is wrong for the rest: a
+    Leica SCN steps by 4, as does `bfconvert -pyramid-scale 4` and several
+    scanners' exports, and their zoomed-out levels were drawn at the wrong
+    size. Such a file is read through a halving chain laid over its own
+    levels instead (`tiff_region.open_image`), as a remote TIFF and every
+    brightfield slide already are.
+    """
+    levels = list(getattr(series, "levels", None) or [series])
+    for finer, coarser in zip(levels, levels[1:]):
+        for big, small in zip(finer.shape[-2:], coarser.shape[-2:]):
+            if abs(int(big) / 2 - int(small)) > 1:
+                return True
+    return False
+
+
+def needs_region_reader(series) -> bool:
+    """Whether a channel image must be read through `tiff_region.open_image`
+    rather than served from tifffile's own levels: its pyramid does not halve
+    (`steps_unevenly`), or its channels are interleaved SAMPLES of one page
+    (axes `YXS` that is not a colour picture -- a multispectral or
+    grey-plus-alpha export), which read positionally is an image as many
+    channels deep as it is tall."""
+    return steps_unevenly(series) or str(getattr(series, "axes", "") or "").endswith("S")
+
+
 def channel_series(tiff):
     """`tiff.series[0]` as a series indexed (channel, y, x).
 
@@ -318,6 +593,10 @@ def channel_series(tiff):
         return series
 
     if len(shape) == 3:
+        planes = _first_image_planes(tiff, shape)
+        if planes:
+            series = _leading_pages_series(tiff, series, planes)
+            shape = tuple(int(dimension) for dimension in series.shape)
         depth, middle = focal_planes(tiff)
         if depth > 1 and depth == shape[0]:
             # A focus series, not a panel. One channel, in focus.

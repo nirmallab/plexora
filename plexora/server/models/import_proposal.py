@@ -67,8 +67,17 @@ from plexora.server.utils import boundary_mask, ngff_transform, spatial_scene
 #: Suffixes that are an image before anything else looks at them. Not the whole
 #: list of what Plexora reads -- `_sniff_quick_view_kind` owns that -- but the
 #: set this module tries the image ladder on at all.
-IMAGE_SUFFIXES = (".tif", ".tiff", ".qptiff", ".svs", ".ndpi", ".scn", ".mrxs",
-                  ".svslide", ".dcm", ".png", ".jpg", ".jpeg", ".ims")
+IMAGE_SUFFIXES = (".tif", ".tiff", ".qptiff", ".svs", ".ndpi", ".scn", ".bif", ".mrxs",
+                  ".svslide", ".dcm", ".png", ".jpg", ".jpeg", ".ims",
+                  # A microscope's or slide scanner's own format (server/utils/formats).
+                  ".czi", ".nd2", ".lif", ".lof", ".xlef", ".vsi", ".oir", ".oib", ".oif",
+                  ".ndpis", ".dv", ".r3d", ".mcd", ".zvi", ".lsm", ".kfb")
+
+
+def _formats():
+    from plexora.server.utils import formats
+
+    return formats
 
 #: Suffixes that are a feature table. `.parquet` is NOT here: it is dispatched
 #: before this list, by its columns, because the same extension carries a cell
@@ -299,6 +308,15 @@ class LayerProposal:
     #: files (`_remote_folder`); such a sample takes the folder's name.
     #: Internal.
     folder: str | None = None
+    #: Which image of `src` this row is, for a microscope file holding several
+    #: (a CZI's scenes, an ND2's positions, a LIF's images, an MCD's
+    #: acquisitions, a VSI's scan areas: server/utils/formats) -- the position
+    #: `ImageSpec.image_index` records. None for a file holding one image.
+    image_index: int | None = None
+    #: Every image such a file holds, by name, in that order; one sample is
+    #: offered per image (`_each_image_a_sample`). Internal: each sample's row
+    #: is labelled with its own.
+    images: tuple = ()
 
     def to_dict(self) -> dict:
         return {
@@ -321,6 +339,7 @@ class LayerProposal:
             "subset": ({"column": self.subset.get("column"),
                         "value": self.subset.get("value")}
                        if self.subset else None),
+            "imageIndex": self.image_index,
         }
 
 
@@ -465,12 +484,13 @@ def describe(layer: LayerProposal) -> str:
 
 # -- reading what a file is ------------------------------------------------
 
-def _pixel_size_of(path, geometry=None):
+def _pixel_size_of(path, geometry=None, index=0):
     """Microns per pixel from the file's own metadata, or None.
 
     Never a default. A calibration nobody stated is absent, and inventing a
     conventional value produces a scale bar that is wrong and looks exactly
     like one that is right -- the rule `normalize_pixel_size` already states.
+    `index` is which image of a microscope file holding several.
     """
     from plexora.server.utils import brightfield, dicom_wsi, ome_zarr
 
@@ -479,6 +499,8 @@ def _pixel_size_of(path, geometry=None):
             payload = ome_zarr.physical_metadata(ome_zarr.open_image(path))
         elif dicom_wsi.is_dicom_path(path):
             payload = dicom_wsi.physical_metadata(dicom_wsi.open_image(path))
+        elif _formats().handles(path):
+            payload = _formats().physical_metadata(path, index=index)
         else:
             payload = brightfield.physical_metadata(path)
     except Exception:
@@ -513,12 +535,13 @@ def _points_extent(path):
             "numChannels": 0}
 
 
-def _geometry_of(path, rgb=False):
+def _geometry_of(path, rgb=False, index=0):
     """The file's shape, or None when it cannot be read.
 
     `local.image_geometry`, which is the same reader the node side uses, so a
     slide proposed here and one proposed from a node describe themselves
     identically. Never `convertOmeTiff`: that CONVERTS, and inspection must not.
+    `index` is which image of a microscope file holding several.
     """
     from plexora.server.providers import local
     from plexora.server.utils import segmentation_pyramid
@@ -532,7 +555,8 @@ def _geometry_of(path, rgb=False):
         return {"width": header.width, "height": header.height, "maxLevel": 1,
                 "tileWidth": None, "tileHeight": None, "numChannels": 1}
     try:
-        found = local.image_geometry(path, rgb=rgb)
+        found = (local.image_geometry(path, rgb=rgb, index=index) if index
+                 else local.image_geometry(path, rgb=rgb))
     except Exception:
         return None
     return {
@@ -1581,6 +1605,27 @@ def _a_folder_is_not_one_file(path, layers, warnings):
         "it rather than as one file."]
 
 
+def _set_members(folder) -> set:
+    """The names of files in `folder` that an image set beside them reads as
+    its channels (a Hamamatsu `.ndpis` lists one `.ndpi` per channel)."""
+    names = set()
+    try:
+        sets = [child for child in folder.iterdir()
+                if child.suffix.lower() == ".ndpis" and child.is_file()]
+    except OSError:
+        return names
+    if not sets:
+        return names
+    from plexora.server.utils.formats import ndpis
+
+    for child in sets:
+        try:
+            names.update(member.name for member in ndpis._members(child))
+        except OSError:
+            continue
+    return names
+
+
 def _detect_directory(path, answers, declared=None):
     from plexora.server.utils import dicom_wsi, ome_zarr
 
@@ -1626,11 +1671,15 @@ def _detect_directory(path, answers, declared=None):
     # walk: somebody who points at their home directory should get "nothing
     # here", not a five-minute scan.
     found, questions, warnings = [], [], []
+    members = _set_members(path)
     for child in sorted(path.iterdir()):
         # A 10x side file is skipped, not reported: a downloaded run is
         # `outs/` plus a handful of them, and counting any as found would
         # stop `_lone_bundle` from descending into the run they sit beside.
         if child.is_dir() or spatial_scene.is_spaceranger_side_file(child):
+            continue
+        # One channel of a Hamamatsu NDPIS set beside it: the set is the image.
+        if child.name in members:
             continue
         layers, child_questions, _, child_warnings = _detect_file(child, answers)
         found.extend(layers)
@@ -2668,8 +2717,23 @@ def _detect_image(path, answers, declared=None):
             id=_layer_id(path), kind="image", role="image", reference=True,
             label=path.name, src=str(path), dependency=hint,
             needs=("install",),
-            detail="Whole-slide image · needs an extra package")
+            detail=(f"{_formats().format_name(path)} · needs an extra package"
+                    if _formats().handles(path)
+                    else "Whole-slide image · needs an extra package"))
         return [layer], questions, None, warnings
+
+    images = ()
+    if _formats().handles(path):
+        # A file holding several images (a LIF project, a VSI with two scan
+        # areas, an MCD's acquisitions): this row is the first of them, and
+        # each is offered as a sample of its own once the samples are split
+        # (`_each_image_a_sample`).
+        try:
+            images = tuple(_formats().image_names(path))
+        except Exception:
+            images = ()
+        if len(images) < 2:
+            images = ()
 
     detection = None
     try:
@@ -2684,6 +2748,8 @@ def _detect_image(path, answers, declared=None):
         label=path.name, src=str(path),
         modality=("picture" if kind == "rgb"
                   else ("he" if brightfield_like else "multiplex")))
+    if images:
+        layer.image_index, layer.images = 0, images
     layer.geometry = _geometry_of(path, rgb=rgb)
     layer.channels = _channel_stubs(path, layer.geometry)
     layer.pixel_size = _pixel_size_of(path)
@@ -3239,7 +3305,9 @@ def _find_existing(reference, layers):
     # is a real duplicate and worth catching, but the node owns that identity
     # and asking it is a round trip on every keystroke of the import screen.
     if reference is not None and reference.src and not _is_node_address(reference.src):
-        found = _find_existing_datasource_for_image(reference.src, config)
+        # By image, too: scene 2 of a CZI registered is not scene 3 registered.
+        found = _find_existing_datasource_for_image(reference.src, config,
+                                                    index=reference.image_index or 0)
         if found:
             return found
     # A node-backed project records no path -- by design, because the file is
@@ -3576,6 +3644,8 @@ def _inspect_paths(paths, *, node=None, answers=None, sample=None) -> Proposal:
     if sample:
         scoped = _scoped_sample(sample, found, questions, bundles)
         proposal.samples.append(scoped)
+        # A layer of a sample that has its image reads a file's first image.
+        _first_image_only(scoped.layers, proposal.warnings)
         _choose_subsets([scoped], answers, scoped_image=_project_image(sample))
         return proposal
 
@@ -3586,6 +3656,10 @@ def _inspect_paths(paths, *, node=None, answers=None, sample=None) -> Proposal:
         if len(folders) == 1 and None not in folders:
             group.name = _clean_name(folders.pop())
         proposal.samples.append(group)
+    # A file holding several images is several samples: after the split, so
+    # what joined the file's sample stays with its first image's.
+    proposal.samples = _each_image_a_sample(proposal.samples, answers,
+                                            proposal.warnings)
     _name_channels(proposal.samples, panels, proposal.warnings)
     _choose_subsets(proposal.samples, answers)
     return proposal
@@ -3829,6 +3903,216 @@ def _split_bundles(found, bundles, questions, proposal):
     return samples
 
 
+# -- a file holding several images -------------------------------------------
+
+#: What joins a file's name and one of its images' names in its image row's
+#: label (`<file name> · <image>`), and in its sample's name (`<stem> - <image>`:
+#: a project name keeps letters, digits, spaces, "-", "_" and "." only
+#: (`_clean_name`), so a "·" there would become "_").
+IMAGE_JOIN = " · "
+NAME_JOIN = " - "
+
+_IMAGE_KEY = re.compile(r"^(?P<base>.+)#image(?P<number>\d+)$")
+
+
+def _image_key(base, index) -> str:
+    """The `SampleProposal.key` of image `index` of the file whose sample's
+    key was `base`: what the file IS, and which of its images."""
+    return f"{base}#image{int(index) + 1}"
+
+
+def _image_key_base(key):
+    """The file's sample key out of one of its images' (`_image_key`), or
+    None for any other key."""
+    found = _IMAGE_KEY.match(str(key or ""))
+    return found.group("base") if found else None
+
+
+def _left_out_image(src, index) -> str:
+    """How the ✕ on one image's row says it is left out, in `left-out:<pick>`
+    beside the rows' `src` (views/importSample.js `removeRow`)."""
+    return f"{src}#{int(index)}"
+
+
+def _unique_image_names(names) -> list:
+    """The file's images' names, each one nonempty and told apart from the
+    rest (two MCD acquisitions may carry one description)."""
+    out, seen = [], set()
+    for index, name in enumerate(names):
+        text = str(name or "").strip() or f"Image {index + 1}"
+        if text in seen:
+            text = f"{text} ({index + 1})"
+        seen.add(text)
+        out.append(text)
+    return out
+
+
+def _node_image_src(reference, index):
+    """`node://<node>/<id>` that image `index` of a file picked on a node is
+    served under once it is imported (`nodes.resource_id_for(path, index)`;
+    `import_sample._share_image_on_node` shares it then), or None when the
+    pick named a resource rather than the file, which says no path."""
+    from plexora import nodes as node_api
+    from plexora.server.routes.import_routes import _node_locator
+
+    try:
+        node = _node_locator(reference.src)[0]
+        said = str(reference.said or "").strip()
+        located = _node_locator(said) if said.startswith("node://") else (node, said)
+    except (TypeError, ValueError):
+        return None
+    if not located or not located[1] or not _looks_like_a_path(located[1]):
+        return None
+    return f"node://{node}/{node_api.resource_id_for(located[1], index)}"
+
+
+def _image_row(reference, index, src=None):
+    """The image row of image `index` of `reference`'s file: its own size,
+    channels, calibration and kind, read for that image -- scenes of one slide
+    differ in size, the images of a LIF in their channels. A file on a node is
+    described there when it is imported (`nodes.attach_image`), as its first
+    image's row is: here it is only told apart, by the `src` it will have."""
+    from plexora.server.providers import local
+
+    row = replace(reference, render={}, channels=(), channel_names=(), switch=None,
+                  geometry=None, transform=None, transform_source=None, detail="",
+                  needs=())
+    row.image_index = index
+    if _is_node_address(reference.src):
+        row.src = src or reference.src
+        row.render = {key: value for key, value in (reference.render or {}).items()
+                      if key == "detail"}
+        return row
+    path = Path(str(reference.src))
+    try:
+        detection = local.detect_image_type(path, index=index)
+    except Exception:  # noqa: BLE001 -- unread is fluorescence, as everywhere
+        detection = None
+    colour = getattr(detection, "verdict", None) == "brightfield"
+    row.modality = "he" if colour else "multiplex"
+    row.geometry = _geometry_of(path, rgb=colour, index=index)
+    row.channels = _channel_stubs(path, row.geometry)
+    row.pixel_size = _pixel_size_of(path, index=index)
+    if colour:
+        row.render = {"rgb": True}
+    return row
+
+
+def _first_image_only(layers, warnings):
+    """Say so for each row reading the first image of a file holding several
+    as a layer: a layer of a sample is one image, and only an image that is a
+    sample's own is chosen by number."""
+    for layer in layers:
+        names = list(layer.images or ())
+        if len(names) < 2 or not layer.src:
+            continue
+        name = Path(_named_by(layer)).name
+        try:
+            note = ("" if _is_node_address(layer.src) else _formats().note(layer.src))
+        except Exception:  # noqa: BLE001
+            note = ""
+        if not note:
+            # Said from what the row knows (a file on a node is not read here),
+            # in the words `formats.base.Reader.note` uses.
+            others = len(names) - 1
+            kind = _formats().format_name(name)
+            note = (f"This {kind + ' file' if kind else 'file'} holds {len(names)} "
+                    f"images; Plexora opens \"{names[0]}\" and not the other "
+                    f"{others if others > 1 else 'one'}.")
+        warnings.append(f"{name}: {note}")
+
+
+def _each_image_a_sample(samples, answers, warnings):
+    """Every sample whose image is a file holding several images (a CZI's
+    scenes, an ND2's positions, a LIF's images, an MCD's acquisitions, a
+    VSI's scan areas), as one sample per image.
+
+    Each is named `<stem> · <image>` and keyed `<the file's key>#image<n>`,
+    and its image row carries the image's position (`image_index`, which
+    registration records) and that image's own geometry. What else joined the
+    file's sample -- a mask or a table picked with it -- stays with the first
+    image's; a row added on one image's card (`attach`) goes to that image's.
+    An image whose row's ✕ was pressed is left out (`_left_out_image`).
+
+    A file holding several images that is not its sample's image -- a second
+    image beside another, read as a layer -- is its first image, and says so.
+    """
+    out = []
+    for sample in samples:
+        reference = next((layer for layer in sample.layers
+                          if layer.reference and layer.kind == "image"), None)
+        _first_image_only([layer for layer in sample.layers if layer is not reference],
+                          warnings)
+        if (reference is None or len(reference.images or ()) < 2 or sample.bundles
+                or (reference.image_index or 0) != 0):
+            out.append(sample)
+            continue
+        if _is_node_address(reference.src) and _node_image_src(reference, 1) is None:
+            # Picked as a node's resource rather than as the file: nothing
+            # says where the file is, so its other images cannot be served.
+            _first_image_only([reference], warnings)
+            out.append(sample)
+            continue
+        out.extend(_image_samples(sample, reference, answers))
+    return out
+
+
+def _image_samples(sample, reference, answers):
+    names = _unique_image_names(reference.images)
+    node = _is_node_address(reference.src)
+    srcs = [reference.src if index == 0 or not node else _node_image_src(reference, index)
+            for index in range(len(names))]
+    said = _said(answers, "left-out:", reference.said) if reference.said else None
+    gone = {str(entry) for entry in said} if isinstance(said, (list, tuple)) else set()
+    wanted = [index for index in range(len(names))
+              if _left_out_image(srcs[index], index) not in gone] or list(range(len(names)))
+    base_key, base_id, stem = sample.key, reference.id, sample.name
+    file_name = Path(_named_by(reference)).name
+    keys = {_image_key(base_key, index): index for index in wanted}
+    others = [layer for layer in sample.layers if layer is not reference]
+    lead = wanted[0]
+    # A row added on one image's card goes to that image; the rest stay
+    # with the first image offered.
+    home = {id(layer): keys.get(layer.attach, lead) for layer in others}
+    used, made = set(), []
+    for index in wanted:
+        row = reference if index == 0 else _image_row(reference, index, srcs[index])
+        row.image_index = index
+        row.id = _clean_name(f"{base_id}_{index + 1}")
+        row.label = f"{file_name}{IMAGE_JOIN}{names[index]}"
+        row.detail = ""
+        rows = [layer for layer in others if home[id(layer)] == index]
+        # The questions about this sample's own rows: by the row they sit
+        # under, or by the row waiting on them. One about none of the file's
+        # other rows (asked of the sample) stays with the first image's.
+        scopes = {f"layer:{layer.id}" for layer in rows}
+        needs = {need for layer in rows for need in (layer.needs or ())}
+        elsewhere = {f"layer:{layer.id}" for layer in others if home[id(layer)] != index}
+        elsewhere_needs = {need for layer in others if home[id(layer)] != index
+                           for need in (layer.needs or ())}
+        questions = []
+        for question in sample.questions:
+            if question.scope == f"layer:{base_id}":
+                if index == lead:
+                    questions.append(replace(question, scope=f"layer:{row.id}"))
+            elif question.scope in scopes or question.id in needs:
+                questions.append(question)
+            elif (index == lead and question.scope not in elsewhere
+                  and question.id not in elsewhere_needs):
+                questions.append(question)
+        mine = [row] + rows
+        name = _clean_name(f"{stem}{NAME_JOIN}{names[index]}")
+        if name in used:
+            name = _clean_name(f"{name} {index + 1}")
+        used.add(name)
+        image_sample = SampleProposal(name=name, layers=mine, questions=questions,
+                                      bundles=[], distinct=sample.distinct)
+        _finish(image_sample)
+        image_sample.key = _image_key(base_key, index)
+        made.append(image_sample)
+    return made
+
+
 def _place(samples, held, orphans, proposal, answers=None):
     """Put the rows that anchored nothing into the sample they belong to.
 
@@ -3857,7 +4141,10 @@ def _place(samples, held, orphans, proposal, answers=None):
     loose = []
     touched = set()
     for layer in held:
-        target = by_key.get(layer.attach)
+        # A card of one image of a file holding several is not a sample yet
+        # (`_each_image_a_sample` runs after this): the file's sample takes
+        # the row, and the split hands it to that image's.
+        target = by_key.get(layer.attach) or by_key.get(_image_key_base(layer.attach))
         if target is None:
             loose.append(layer)
             continue
@@ -4476,6 +4763,12 @@ def _detect_node(raw, fallback_node, answers, declared=None):
         if picked and layer.modality != "he":
             layer.switch = _role_switch(
                 f"mask-or-image:node://{node}/{browsed}", "image")
+        images = tuple(described.get("images") or ())
+        if len(images) > 1:
+            # A microscope file holding several images, as the node read it:
+            # this row is its first, and each is offered as a sample of its
+            # own (`_each_image_a_sample`). Never a mask.
+            layer.image_index, layer.images, layer.switch = 0, images, None
         questions = list(kind_questions)
         pyramid = described.get("pyramid")
         if pyramid:

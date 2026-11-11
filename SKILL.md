@@ -64,7 +64,7 @@ Entry points:
   or a bare `npx webpack`, both of which build in webpack's default
   `development` mode; see Sharp Edges for what that costs.
 - Optional extras: `pip install 'plexora[wsi]'` adds OpenSlide, which only
-  `.mrxs` needs — `.svs`/`.ndpi`/`.scn` are TIFFs underneath and tifffile reads
+  `.mrxs` needs — `.svs`/`.ndpi`/`.scn`/`.bif` are TIFFs underneath and tifffile reads
   them without it — and `wsidicom`/`pydicom`, which `dicom_wsi.py` needs for
   any DICOM whole-slide image; one extra install line covers both.
   `[jupyter]` for the notebook sidecar, `[dev]` for pytest. `[remote]` adds
@@ -112,7 +112,7 @@ Entry points:
 | `plexora/notebook_env.py` | Which URL a notebook viewer should use, and what to bind. `resolve_display()` returns a `Resolved(server_base, display, bind_host, kind)`; ladder: explicit base_url -> `proxy=False` -> Colab -> Open OnDemand (`OOD_NODE_RE` matches the discovered prefix) -> jupyter prefix + remote evidence -> direct localhost. `verify_proxy_route()` asks the notebook SERVER whether it really proxies a port. |
 | `plexora/jupyter.py`, `plexora/proxy.py` | Notebook display API, subprocess lifecycle, proxy entry point. `_start_server` returns `(port, base_url, token)`; the sidecar cache is keyed on bind host too. `PlexoraViewer.__init__` takes `tool=`/`overlay=`/`channels=`/`memory=` -- an ephemeral launch state carried in the entry URL and never persisted, built by `_launch_state()` and encoded by `_entry_query()` (`urlencode`, replacing the old `f"{url}?token=..."`, which was only ever correct for exactly one query parameter); the Colab iframe fallback shares `_entry_query()` too. Module-level `_launch_channels()` validates the `channels=` argument kernel-side before it ever reaches the server. `PlexoraViewer.from_memory()` is the kernel-as-node entry point (see `plexora/memory.py`); `refresh()`/`_reload_server()` POST `/reload_datasource` on the sidecar -- deliberately NOT `nodes._reload`, because a memory-served project's data lives in the kernel, not on a node's disk. `from_anndata(adata=...)` is now memory-served by default; `to_disk=True` is the documented escape hatch back to the old on-disk behaviour. |
 | `plexora/datasource.py` | Programmatic datasource registration (`register_datasource`, `register_image_datasource`). `anndata_spec()`, `described_spec()` and `flat_table_spec()` are one translation of the read-spec answers, extracted so `register_anndata_datasource`, `register_datasource` and the memory path (`plexora/memory.py`) share it instead of drifting apart. |
-| `plexora/nodes.py` | Programmatic **data node** API: `register_node`, `attach_table`/`attach_image`/`attach_segmentation`, `detach`, `inspect_table`. A node is a Plexora with the viewer off; see `plexora/server/providers/`. Also `client_node()` (the registered node on the browser's own machine, if any), `resource_id_for(path)` (derives an id from the path, never generates one), `share_path`/`resource_status`/`unshare_path` (add/poll/remove a resource on an already-running `--dynamic` node), `detect_on_node(node, path)` (ask a node what one of its own files is, before anything serves it -- the kind a `share_path` then names), `browse_on_node` (relay a native dialog to a node's machine) and `list_dir_on_node` (list one of its directories -- the only way to browse a machine with no desktop; copies `path`/`parent`/`crumbs`/`entries`/`truncated`/`total`/`partial`/`dataset`/`platform` out of the node's answer BY NAME, a whitelist that silently drops any field not listed there, so the explorer can never learn to draw something this function was not also taught to pass through), `stat_entries_on_node`/`fs_places_on_node`/`search_on_node` (the explorer's newer routes, through `_optional`: they are additive with no `API_VERSION` bump, so the only sign a node predates one is a bare 404, consumed as `None` -- which the route answers as `unsupported` -- before `http._check` turns it into the "upgrade it there" error that is right for a route a caller cannot do without; a 404 that carries a sentence is the node's own refusal and still raises, and a 429 arrives as `dir_search.SearchBusy`), `known_platform(node)` (the platform that node last reported to this process, from any answer carrying it -- never a probe, since it is asked when the node is down and labels only a sidebar icon), and `open_file_on_node`/`write_file_on_node` -- the one exception to "a node names, never sends": a plugin's Upload/Download button needs the bytes, and the browser asking has no route to the node at all. Both stream (an unread response the caller must consume and release; a write read off the wire as it goes), and a write's already-there refusal comes back as data (`{"exists": True}`, via `http.request`'s `allow_status=(409,)`) rather than an exception. `attach_image`/`attach_segmentation`/`detach("image", ...)` all run `_same_image` first. `attach_table`/`attach_image`/`attach_segmentation` gained `reload=True`; `reload=False` skips `_reload()`, for the caller who already knows another process is the one serving (the memory/kernel-node path). `attach_image` also takes `image_type` (the import form's override) and reads the node's own verdict off the geometry response, so an H&E slide on a node registers as brightfield — see `_node_image_kind` and the node-image invariant below. `image_type_on_node(name, resource_id)` answers the upload form's question out of `/hello`, opening nothing. |
+| `plexora/nodes.py` | Programmatic **data node** API: `register_node`, `attach_table`/`attach_image`/`attach_segmentation`, `detach`, `inspect_table`. A node is a Plexora with the viewer off; see `plexora/server/providers/`. Also `client_node()` (the registered node on the browser's own machine, if any), `resource_id_for(path, index=0)` (derives an id from the path, and from the image's index for any image of a file but its first, which keeps the id the file always had; never generates one), `share_path`/`resource_status`/`unshare_path` (add/poll/remove a resource on an already-running `--dynamic` node), `detect_on_node(node, path)` (ask a node what one of its own files is, before anything serves it -- the kind a `share_path` then names), `browse_on_node` (relay a native dialog to a node's machine) and `list_dir_on_node` (list one of its directories -- the only way to browse a machine with no desktop; copies `path`/`parent`/`crumbs`/`entries`/`truncated`/`total`/`partial`/`dataset`/`platform` out of the node's answer BY NAME, a whitelist that silently drops any field not listed there, so the explorer can never learn to draw something this function was not also taught to pass through), `stat_entries_on_node`/`fs_places_on_node`/`search_on_node` (the explorer's newer routes, through `_optional`: they are additive with no `API_VERSION` bump, so the only sign a node predates one is a bare 404, consumed as `None` -- which the route answers as `unsupported` -- before `http._check` turns it into the "upgrade it there" error that is right for a route a caller cannot do without; a 404 that carries a sentence is the node's own refusal and still raises, and a 429 arrives as `dir_search.SearchBusy`), `known_platform(node)` (the platform that node last reported to this process, from any answer carrying it -- never a probe, since it is asked when the node is down and labels only a sidebar icon), and `open_file_on_node`/`write_file_on_node` -- the one exception to "a node names, never sends": a plugin's Upload/Download button needs the bytes, and the browser asking has no route to the node at all. Both stream (an unread response the caller must consume and release; a write read off the wire as it goes), and a write's already-there refusal comes back as data (`{"exists": True}`, via `http.request`'s `allow_status=(409,)`) rather than an exception. `attach_image`/`attach_segmentation`/`detach("image", ...)` all run `_same_image` first. `attach_table`/`attach_image`/`attach_segmentation` gained `reload=True`; `reload=False` skips `_reload()`, for the caller who already knows another process is the one serving (the memory/kernel-node path). `attach_image` also takes `image_type` (the import form's override) and reads the node's own verdict off the geometry response, so an H&E slide on a node registers as brightfield — see `_node_image_kind` and the node-image invariant below. `image_type_on_node(name, resource_id)` answers the upload form's question out of `/hello`, opening nothing. |
 | `plexora/datasets.py` | Programmatic **dataset** API, over the same registry the server routes use (`server/models/datasets.py`). `create_dataset`, `create_project`, `configure_project`, `project_manifest`, `list_datasets`, `dataset(name_or_id)` (a `Dataset` handle), `project_from_spec`, `PROJECT_SPEC_KEYS` (the one list of every field a project spec may carry -- `cli.py`'s `_PROJECT_OPTIONS` and `create_project`'s validation both read off it, so a new field is added once; `paths`/`answers` make a row that is registered through `import_sample`'s detection instead of by role) and `DatasetCreateError`. `create_dataset` takes `on_progress=` and `cancel=`. `plan_dataset(*roots, node=)` and `create_dataset_from_directory(name, *roots, node=)` are the scripted face of New Dataset from a folder (folders on this computer, a data node, or a files-only server by `sftp://` address; `plexora dataset create NAME --scan DIR --node NAME` reaches the node case) (`server/models/dataset_plan.py`/`dataset_build.py`), in `_PUBLIC_API` and the docs manifest. **A one-sided marker/metadata answer completes itself** (`_complete_columns`): a spec naming only `metadata` -- or only `markers` -- takes the other side from the columns registration already recorded, because storing the empty half would read as "unclassified" and put the classification question back on screen. Naming both still means exactly those two lists. **A spec says which machine each file is on.** The `node` spec key is the entry's default and `node=`/`--node` the batch's, while any role field may answer for itself -- a `node://<node>/<path-or-id>` string exactly as the import form posts one, or `{"path": …, "node": …}` where `"node": null` is the per-field opt-out that makes "slides on the cluster, table on my laptop" sayable. Precedence: field > entry > batch > local. `_locate()` reads the three spellings into a `_Located`; `_check_located()` refuses what is not there WITHOUT writing anything (`nodes.detect_on_node` is a read, which is what extends the "everything validated before anything is registered" promise across machines) and its cache is returned by `_validate_batch` and handed to each `create_project`, because detection reads pixels and asking twice about fifty slides is minutes; `_serve()` is the write half -- `nodes.share_path` under the kind the ROLE decides (`image`/`segmentation`/`data`->`table`), never the node's own reading, since the field somebody wrote is their statement. Four cases: all-local is what it always was; a node image goes `_serve` -> empty `Project(image=ImageSpec())` -> `nodes.attach_image` and **any failure deletes the project**, which nothing else here does because nothing else here created one; a local image with a remote mask or table registers locally and hands only the remote roles to `configure_project` (reaching `import_routes.attach_segmentation`/`replace_project_data`'s own `node://` branches); an adopted `exist_ok` project is never deleted and still applies only the mask, as adoption always has. Shares are deliberately NOT undone on failure -- an identical re-add is a no-op so a re-run is free, while `unshare_path` could pull a resource out from under another project. `pending_conversions(names)`, `failed_conversions(names)` and `conversion_warnings(names)` are the CLI's courtesy lines for a mask still converting, one that failed, and one with something worth knowing but nothing wrong, all sharing `_described_on_nodes` (one `node_api.node_resources` call per node these projects read, narrowed to their own resource ids); all three swallow an unreachable node. `_apply_columns` returns early for a table whose binding is a node, or the adapter would hand `node://…` to h5py. `tests/test_datasets_api_on_a_node.py` covers it against a real second process. Exported lazily off `plexora/__init__.py`'s `_PUBLIC_API`, same reason as the rest of it (see that row above). |
 | `pyproject.toml`, `MANIFEST.in` | Packaging. Both must include frontend assets, shaders, and `client/src/js/**/*.js`. `MANIFEST.in` has no `plugins/*/static` glob, so each bundled plugin needs its own `recursive-include` line or an sdist installs fine and serves the tool with no client. Distribution is pip/wheel-only (`python -m build`) -- the old PyInstaller desktop-executable pipeline (`packaging/pyinstaller_entry.py`, `plexora/__pyinstaller/`, `package_win.bat`, `package_mac.sh`, `requirements.yml`) is gone. `pyproject.toml`'s own `version` is now the one source of truth for the DESKTOP app's version too -- see the `desktop/` row and `scripts/release.py`. |
 | `desktop/` | The desktop app's shell: Tauri v2, Rust, wrapping an embedded Python that runs `plexora --desktop`. `src-tauri/src/` is one file per concern -- `lib.rs` (entry), `setup.rs` (spawns the server, waits for its ready line), `server.rs` (the stdout/stdin protocol described at `cli.ready_line`), `windows.rs` (the app's windows, splash included), `menu.rs` (the native menu, set on macOS only -- `NATIVE_MENU_BAR` is `cfg!(target_os = "macos")`, because on Windows and Linux Tauri draws it inside the window above the page's own navbar, which showed two File / View / Help bars; `menu::run` is the one place a native action is carried out, for a Mac menu item or a navbar row's `shell_action` -- see Sharp Edges), `commands.rs` (every IPC command the frontend may call; `shell_action` accepts only the ids in `SHELL_ACTIONS` -- `show_data`, `show_logs`, `zoom_in`, `zoom_out`, `zoom_reset` -- so it cannot grow into a way to run arbitrary menu ids; `check_caller`, run before every command by `lib.rs`'s invoke handler, admits only the exact origin of this launch's server, because the capability can only say "any port on 127.0.0.1"; `read_file` reads only `HandedPaths` -- what the shell's own pickers, drops, confirmed opens and Save dialogs gave the page this run -- and `reveal_path` reaches a network path only through them), `downloads.rs` (native Save), `opens.rs` (file association / drag-open / second-instance handling, what reaches `/desktop/open`; a double-clicked file is queued at once, but paths in a `plexora://` link -- which any web page or e-mail can carry -- and any `\\server\share` path wait for a native Open/Cancel dialog, and a project link only navigates), `lifecycle.rs`, `smoke.rs`, and now `updates.rs` (`check_update`/`install_update` commands over `tauri-plugin-updater` 2.12 -- stops the embedded server before installing, restarts it plus shows a native dialog on a failed install, and answers `kind: "unsupported"` when `plugins.updater.pubkey` in `tauri.conf.json` is empty). `build.rs` declares every command in `commands.rs`; a command a remote origin (the web content) calls also needs an `allow-<command>` line in `capabilities/main.json`, or Tauri silently refuses it. Version, in `tauri.conf.json` and `Cargo.toml`, is kept equal to `pyproject.toml`'s by `scripts/release.py propagate`, never hand-edited. `tauri.conf.json`'s `plugins.updater` (pubkey committed empty, endpoint `releases/latest/download/latest.json`) and `bundle.createUpdaterArtifacts` (`false` by default) are turned on only by `scripts/release.py`'s `tauri_config_overlay`, and only when both `TAURI_SIGNING_PRIVATE_KEY` and `PLEXORA_UPDATER_PUBKEY` are set -- an unsigned build must not claim it can self-update. **`cargo` is not installed on this Mac**, so none of `updates.rs` has been compiled locally; CI builds and tests the Rust side. |
@@ -265,6 +265,17 @@ Entry points:
   `pyramid_transform()` was added beside `physical_metadata` for the layer
   work — `physical_metadata` itself is deliberately unchanged, because it
   answers a different question (pixel size, not where a layer sits).
+  A local store is opened through `_LegacyV2LocalStore` (`_open_group`), the
+  local twin of `ChunkCacheStore`'s handling (see `remote_store.py` below):
+  Zarr v2 metadata zarr-python 3 refuses — old bioformats2raw's `">u1"`, no
+  `order`/`fill_value`, a null separator — is normalised by
+  `remote_store.LegacyV2` as it is read, and an array whose chunks are nested
+  (`0/0/0`) under a `.zarray` that names no `dimension_separator` (zarr < 2.8)
+  has its spelling decided once per array by looking at the folder, because
+  zarr 3 reads "." for it, finds no chunk and draws the fill value: a black
+  image, no error. The user's files are never rewritten. The 2-D image this
+  opens goes through `value_range.present` in `LocalImageProvider.open`, like a
+  TIFF's.
 - `server/utils/remote_store.py` — reading a zarr store, or one file — a
   DICOM instance, a TIFF-family slide, an Imaris `.ims`, a PNG/JPEG — from a
   web address (`https`/`s3`/`gs`/`gcs`/`az`/`abfs(s)`) through an on-disk chunk cache,
@@ -294,7 +305,17 @@ Entry points:
   misses, and has no single-flight. `_supports_sync_io` is **False**, so
   zarr's sync fast path cannot bypass the cache. **All reads run on zarr's
   own IO loop** (`zarr.core.sync.sync` is how a Waitress thread gets there) —
-  never call `sync()` from a coroutine already on that loop. `probe`,
+  never call `sync()` from a coroutine already on that loop. Every
+  `.zarray`/`.zmetadata` a store hands out passes through its `LegacyV2`
+  (`note` -> `fix_v2_array_metadata`: a one-byte dtype with a byte order, a
+  typestr with none, a missing `order`/`fill_value`, a null
+  `dimension_separator`, a fill value the dtype cannot hold), shared with the
+  store's clones, and a chunk key of an array whose `.zarray` names no
+  separator is spelled once that array's separator is decided (`_chunk_key`:
+  the first chunk in both spellings, through the cache, then a listing; one
+  look per array however many chunks ask at once) — the same fixes the local
+  `ome_zarr._LegacyV2LocalStore` applies, so a folder and a web address read
+  alike. `probe`,
   `fingerprint`/`fingerprint_key` (an ETag/Last-Modified based staleness key)
   and `RemoteSupportMissing` (gs/az without the `plexora[remote]` extra) round
   it out. fsspec, aiohttp and s3fs import inside functions, so building the
@@ -515,6 +536,16 @@ Entry points:
   import's readers of a local TIFF (`looks_like_label_image`, `_focal_note`,
   `_channel_names_from_ome_xml`, `image_geometry`, `convertOmeTiff`,
   `/import/preview`) go through `opened`/`open_tiff`, not `tf.TiffFile`.
+  `open_tiff` constructs `tiff_series.ImageTiff` for a path and for a
+  `RemoteFile` alike, so `series[0]` is the image wherever it is read.
+  `open_image` is also the LOCAL reader of a TIFF that
+  `tiff_series.needs_region_reader` names — a pyramid that does not halve
+  (a Leica SCN's steps of 4, `bfconvert -pyramid-scale 4`), or channels stored
+  as one page's interleaved samples: `LocalImageProvider.open`,
+  `local.image_geometry` and `data_model._describe_chained_tiff` take its
+  halving chain, and `convertOmeTiff` gives such a file no pyramidized copy
+  (the copy's builder reads a page per channel). `_RgbSource` passes 16-bit
+  colour samples through `brightfield.colour_bytes`.
 - `server/models/remote_sources.py` — remote data as the data root sees it.
   The address book (`<data root>/remote_sources.json`) keeps options — an S3
   endpoint, "use my AWS profile", a region, an account name, a label
@@ -562,6 +593,10 @@ Entry points:
   hot path is `ctx.transform(...layer.transform)`. A layer whose transform
   could not be read gets `None`, not the identity — "aligned by assumption"
   is a real state the Layers panel says out loud, not silent behaviour.
+  `_first_multiscale` reads NGFF 0.5's `attributes.ome.multiscales` as well as
+  0.4's flat `multiscales`, because spatialdata >= 0.6 writes the nested
+  spelling and every element of such a store was otherwise "aligned by
+  assumption".
 - `server/utils/spatial_scene.py` — what a spatial store holds and where each
   piece sits, for the two shapes Plexora reads: a SpatialData store (elements
   under `images/`, `labels/`, `points/`, `shapes/`, read as plain JSON) and a
@@ -862,7 +897,12 @@ Entry points:
   overview heuristic wants a level with both non-channel dimensions >= 200.
   `channel_series(tiff)` returns `series[0]` **by identity** whenever it is
   already `CYX` — that is the load-bearing half, since it keeps the format
-  Plexora is built around on the path it was already on — and otherwise
+  Plexora is built around on the path it was already on — except when the
+  file's OME-XML describes several images of one size (a bfconvert of a
+  multi-scene `.czi`/`.lif`, which tifffile, without its OME reader, groups
+  into one series with every scene's channels end to end): then it is the
+  first image's planes at every level (`_first_image_planes`/
+  `_leading_pages_series`). Otherwise it
   rebuilds it as a `tifffile.TiffPageSeries` over the same pages with the
   leading axes collapsed row-major, which is page order. Because the result is
   a real series, `aszarr()` still hands back a genuine `zarr.Array`, so
@@ -893,12 +933,137 @@ Entry points:
   zoomed-out tile; it falls back to the series it was given if the plane is
   missing at some level. Recorded the same way DICOM's z-stack collapse is:
   `focalPlanes`/`focalPlane` on the channel info.
+  **Which series is `series[0]` is decided here too.** `ImageTiff` is the
+  `tifffile.TiffFile` every image open constructs (`is_ome=False` unless the
+  caller says otherwise; `tiff_region.open_tiff`, `open_channel_series`,
+  `brightfield`'s readers, `pixel_scale`, the volume source, the thumbnail),
+  and its `series` is `arrange_series`'s: a Leica SCN's largest region ahead of
+  the slide's macro (which `series[0]` used to be — a 1616 x 4668 thumbnail at
+  16 µm a pixel), a full-resolution series ahead of a preview-first directory
+  flagged reduced (Imaris classic's 512 x 512 thumbnail), reordered and never
+  filtered; and `_adopt_reduced_levels` chains reduced-resolution pages
+  (`NewSubfileType` bit 0) tifffile left as images of their own because their
+  steps were not exactly 2, 3 or 4, so a libvips or GDAL pyramid of an
+  odd-sized image is not rebuilt by reading its whole base. `steps_unevenly`
+  (a level that is not half the one before, within a pixel) and
+  `needs_region_reader` (that, or channels stored as interleaved samples,
+  axes ending `S`) send a file to `tiff_region.open_image`'s halving chain
+  locally too, because the viewer addresses level `n` as `1 / 2**n`.
+  `embedded_channel_names(tiff, n_channels)` is the one read of the names a
+  TIFF states about itself: OME-XML of any schema (`ome_xml.channel_names`),
+  a PerkinElmer/Akoya page description's `<Name>` per page (QPTIFF, inForm
+  `component_data.tif`), an Imaris classic `[ImarisDataSet]` INI block, an
+  ImageJ stack's slice labels; `datasource._channel_names_from_ome_xml` goes
+  through it.
+- `server/utils/ome_xml.py` — OME-XML read for what a viewer needs, under any
+  schema from 2003-FC on, with ElementTree by local tag name. `ome_types`
+  models 2016-06 only and converts older documents with lxml, which Plexora
+  does not ship, so every Bio-Formats/MetaMorph/Leica/Olympus export from
+  before about 2016 came back as an exception the callers swallowed: generic
+  channel names and no scale bar. `read(description, images=1)` -> `Document`
+  of `Image`s (channel names from `Pixels/Channel`, `LogicalChannel` or
+  `ChannelInfo`; `physical_size` with its unit; `tiff_data` file references;
+  `metadata_file` for `BinaryOnly`), `channel_names`, `pixels`, `is_ome_xml`.
+  Only the **first** `Image` is the image — later ones are a label, a macro,
+  another scene, or (before the 2019 pyramid specification) the same image at
+  a lower resolution with a pixel size to match — and parsing stops after the
+  images asked for. `ome_types` stays the first reader of the viewer's
+  metadata payload; `ome_xml.pixels` is the fallback when it raises
+  (`providers/local.py`, `pixel_scale._local_metadata`,
+  `xenium_focus.physical_metadata`), and `brightfield._ome_pixel_size`,
+  `tiff_series` and `xenium_focus.ome_set` read through it directly.
+- `server/utils/value_range.py` — float, signed and 32-bit images presented as
+  the uint16 tiles the viewer draws. A cast was the identity for 8/16-bit and
+  silently wrong for the rest: a 0-1 float image (inForm component data,
+  deconvolution, ImageJ 32-bit) became zeros and ones and opened black, a
+  negative value wrapped. `present(channels, overview)` leaves an 8- or 16-bit
+  unsigned image untouched and otherwise returns a `ValuePyramid` (the
+  `NgffPyramid` contract: not a `zarr.Array`, no `.shape`,
+  `pyramid[str(level)]`) applying a per-channel linear map chosen once at open
+  (`offset` the channel's minimum when negative, so zero stays zero; `scale`
+  1 when the values already fit and use the range, else the peak to the top —
+  to a quarter of it when the peak was measured on a reduced level), with the
+  overview mapped the same way because contrast windows come from the
+  overview. Applied in `LocalImageProvider.open`'s TIFF (both the tifffile
+  and the `needs_region_reader` paths) and OME-Zarr 2-D branches. The map is
+  kept as `value_transform`; nothing shows or inverts it yet, so the intensity
+  reported for a float image is the mapped one. `ValuePyramid` forwards only
+  `_FORWARDED`, never `array_keys` — see Key Invariants. `map_as(channels,
+  like)` reads another plane through `like`'s map, because every plane of a
+  z-stack must draw on one scale or contrast changes as you move through z.
+  `_Level.__array__` reads the source's own `__array__`, not `self[...]`,
+  because a region reader's level (`dicom_wsi._MonoLevel`) takes an integer
+  channel and nothing else.
+- `server/utils/formats/` — **microscope and slide-scanner files that are not
+  TIFF**, one module per format, each presented as the same
+  `base.FormatPyramid`, so every place that opens an image asks one question
+  (`formats.handles(path)`) instead of one per format. `__init__.py` is the
+  public API (`FORMATS` — suffix -> module, format name, the package it needs
+  — `describe` (cached by path, size and mtime), `open_image`, `geometry`,
+  `geometry_of(path, index, extension)` (cached per file version, because the
+  import asks it of every image of a file on every answer),
+  `channel_names`, `pixel_size`, `detect_image_type`, `needs_extension`/
+  `build_extension` into `format_pyramid.zarr`, `IMAGE_KIND = "vendor"`).
+  `base.py` holds the `Reader` contract (native levels finest first, channels,
+  `rgb`, pixel size, z/t, `read` a rectangle of one channel/level/plane), and
+  builds everything else once (`build`): the halving chain the viewer
+  addresses, the coarse levels a file without a pyramid lacks, the overview;
+  with `derive=True` a non-default plane's coarse level is resampled from its
+  own level above as it is read, so a large flat z-stack never reads a whole
+  plane per level; plus `WholeArrayReader`, `as_tzcyx`, `TileCache`,
+  `assemble`. Readers:
+  `vsi.py` (own: the VSI property tree + ETS tiles), `ndpis.py` (own, over
+  `tiff_region`), `dv.py` (own DeltaVision/`.r3d`), `zvi.py` (own Zeiss ZVI,
+  over `cfb.py`, a reusable OLE2/Compound File parser), `lsm.py` (Zeiss LSM,
+  over tifffile), `kfb.py` (own KFBio), `mrxs.py` (own, fluorescence MRXS only:
+  its module-level `claims(path)` is what `formats.handles` consults, so a
+  brightfield MRXS stays OpenSlide's), and over packages
+  `czi.py` (czifile), `nd2file.py` (nd2), `lif.py` (liffile; LIF/LOF/XLEF,
+  tile scans placed by stage position), `oir.py` (oirfile), `oib.py`
+  (oiffile; OIB/OIF), `mcd.py` (readimc). A missing package raises
+  `FormatSupportMissing` with its install line. **Every function takes an
+  `index`**, because one file may hold several images: `Reader.images` is
+  their fixed order, `ImageSpec.image_index` (config `imageIndex`, written only
+  for a multi-image file) records which one a project shows, and the import
+  offers each as a sample of its own (`import_proposal._each_image_a_sample`,
+  named `<stem>` + `NAME_JOIN` (" - ") + the image's name); `Reader.note` is
+  now said only where one image is taken (a file added as a layer). Node
+  resources carry the index (`nodes.resource_id_for(path, index)`), and the
+  brick/surface cache identities include it (`volume/serve.source_identity`).
+  The z-stack side is `server/volume/sources/formats.py`. On the website the
+  package readers load as the `microscope` stage (`plexora/browser/stages.py`)
+  and `readimc` as its own `imc` stage, because it imports imageio and pandas
+  at module level and a CZI should not load pandas; nd2 and readimc fall back
+  to seek and read when mapping is refused (WORKERFS, `[Errno 43]`). Their
+  `imagecodecs` requirement is `PROVIDED` by
+  `plexora.browser.imagecodecs_shim`, which `tools/browser_build/build.py`'s
+  `unmet()` counts as met; the shim decodes JPEG XR through the worker's
+  jxrlib wasm (`client/src/js/workers/jpegxr.js`,
+  `client/external/jpegxr-0.3.0/`, a synchronous XHR inside the worker) and
+  ZSTD1, honours `outcolorspace="YCBCR"`, and refuses WIC and CZI's "chunked"
+  compression with a sentence. `services/pickedFiles.js` mounts a VSI with its
+  `_<name>_` pixel folder and an NDPIS with its `.ndpi` members (`SLIDES`).
 - `server/utils/xenium_focus.py` — a Xenium `morphology_focus/` folder read as
   ONE image. From XOA 2.0 a run writes its in-focus morphology as a *folder*
   rather than a file: v2 has one file (DAPI), v3 has four
   (`morphology_focus_0000..0003.ome.tif` — DAPI, boundary stain, interior RNA,
   interior protein), each a separate single-channel OME-TIFF over the
-  identical pixel grid, not four planes of one file. Every other reader here
+  identical pixel grid, not four planes of one file. XOA 4.0 names them after
+  the stain (`ch0000_dapi.ome.tif`, `ch0001_atp1a1_cd45_e-cadherin.ome.tif`):
+  `FOCUS_FILE` reads both namings, ordered by the channel number either way,
+  `focus_files` answers `[]` — not a guess — for a folder mixing the two or
+  claiming one number twice (two runs' files copied together), so
+  `spatial_scene._xenium_path` opens a single file rather than put a stain in
+  another's slot, and `stain_from_name` names a file whose OME-XML does not
+  (`ATP1A1/CD45/E-CADHERIN`). The same reader assembles a **multi-file
+  OME-TIFF** (Bio-Formats, Micro-Manager: one file per channel, each holding
+  one plane and the whole document): `ome_set(path)` reads the
+  `TiffData/UUID@FileName` references (a `BinaryOnly` file's through the
+  `MetadataFile` it names) and answers the members only for the file holding
+  channel 0, only for one plane per channel with every member present beside
+  it; `is_focus_dir`/`focus_files` take that FILE as a focus "folder", so
+  every dispatch site below assembles it unchanged. Z-stacks and time series
+  spread over files still open one file. Every other reader here
   opens one path and reads `shape[0]` as the channel count, so four files
   would otherwise mean four cards with no way to composite them. `FocusPyramid`
   is shaped exactly like the zarr *group* a pyramidal TIFF yields
@@ -991,7 +1156,10 @@ Entry points:
   reading of an image file and the only one that is not a channel stack. Two
   jobs. **`detect_image_type(path) -> Detection(verdict, confidence, reason)`**
   is a six-rung ladder, structural evidence first and pixels last, and *never*
-  channel count: a whole-slide suffix (`.svs/.ndpi/.scn/.mrxs/.bif/.svslide`);
+  channel count: a whole-slide suffix (`.svs/.ndpi/.scn/.mrxs/.bif/.svslide`),
+  unless its image is single-sample grey pages (`_wsi_holds_channels`: a
+  Leica SCN400F or Aperio FL scan is fluorescence, and `is_rgb_layout` agrees;
+  an OpenSlide-only suffix stays brightfield);
   interleaved RGB storage (Bio-Formats' `isRGB()`); OME-XML
   `ContrastMethod`/`IlluminationType`/`SamplesPerPixel`; fluorophore vs R/G/B
   channel names and omero colours; then QuPath's thumbnail heuristic, which
@@ -1023,7 +1191,18 @@ Entry points:
   input contract the CYX views already satisfy — into
   `<project>/brightfield_pyramid.zarr`. `physical_metadata` reads the scale
   from wherever each format hides it (Aperio `|MPP = …|`, OME PhysicalSize,
-  Leica `<sizeX>`, TIFF XResolution, `openslide.mpp-x`). `.mrxs` needs the
+  Philips `DICOM_PIXEL_SPACING`, Leica `<sizeX>`, TIFF XResolution,
+  `openslide.mpp-x`). OME's is the FIRST image's (`_ome_pixel_size`, via
+  `ome_xml`, converted to microns, a tag-by-tag read for a document too
+  damaged to parse), because the last match used to win and gave a five-level
+  pre-2019 export a pixel sixteen times too large; XResolution is read off
+  the image's own page (`series[0]`, not the file's first) and ignored above
+  `_RESOLUTION_TAG_CEILING_UM` (200 µm), because 1 per inch or cm, libvips'
+  1 px/mm and 72 or 96 dpi are placeholders, not a calibration; a stated size
+  below `_SMALLEST_PIXEL_UM` is ignored the same way. `_tiff_layout` takes its
+  storage facts from the image's first page too. `colour_bytes` turns 16-bit
+  colour samples into the 8 bits a tile carries (a 48-bit RGB TIFF failed in
+  the encoder before). `.mrxs` needs the
   optional `[wsi]` extra; `BrightfieldSupportMissing` carries the install line.
   A web address takes the identical code through `_is_remote`/`_suffix`
   guards (`_suffix` reads a URL's name through `remote_image.suffix_of` so a
@@ -1392,7 +1571,12 @@ Entry points:
   Spelled as a comparison, adding a flat format means finding all dozen, and
   the one that is missed gives a **wrong answer silently** rather than an
   error. `read_flat_table` / `write_flat_table` are the one read and the one
-  write; `CsvAdapter` is registered under both keys and dispatches its single
+  write, and both take the file's own separator: `sniff_separator` reads tab,
+  comma or semicolon off the header line (never the extension — a `.tsv` of
+  commas is a real file, and a `.txt` is either), `delimited_options` adds
+  `decimal_comma` for a semicolon table whose numbers are written `1,5`, and a
+  write goes back in the separator and decimal mark the file had, so a user's
+  `.tsv` is not silently rewritten as commas. `CsvAdapter` is registered under both keys and dispatches its single
   format-specific step on `DataSpec.type`, so a parquet and the CSV of it
   normalize identically. Guarded by `tests/test_parquet_tables.py`.
   `import_routes.replace_project_data` gained a `spatial=` kwarg —
@@ -1469,7 +1653,16 @@ Entry points:
   at a time, `_node_take` slices a column's rows **on disk** across the three
   encodings anndata actually writes (plain array, `categorical`,
   `nullable-*`), and the matrix is read dense-slab / CSR row-block /
-  CSC column-wise. Markers land as float32; coordinates stay float64 (two
+  CSC column-wise. Files from before anndata 0.7 are read the same lazy way,
+  column by column, against `anndata.read_h5ad` in the tests: a compound
+  `obs`/`var`/`obsm` dataset (0.5/0.6) through `_Field`, with categorical
+  labels from `uns/<column>_categories`; a 0.7.x categorical whose
+  `categories` attribute references `__categories/<column>` (read as a plain
+  array it is the codes, which is what the viewer used to show); a sparse
+  matrix that says `h5sparse_format`/`h5sparse_shape` (`_encoding_of`,
+  `_matrix_shape`). `var_names(group)` is the one var-index read
+  (`inspection.py` uses it), and a layout none of these covers raises
+  `LegacyAnnDataError`, a `ValueError` whose message is the explanation. Markers land as float32; coordinates stay float64 (two
   columns against forty, and a centroid rounded in the seventh digit is a cell
   drawn somewhere else). Measured on a 1.2M-cell × 40-marker × 60-image file,
   loading one image: **746 MB → 338 MB peak RSS, 1.25 s → 0.43 s** (the import
@@ -7302,7 +7495,22 @@ the rest of the 3-D view is not mapped here yet, see `docs/internal/3d/`).
   with a tile's chunks fetched in one `pread_many` batch, since over a network
   each request is a round trip; what h5py still reads itself (a mask's slab,
   the per-channel label-detection windows) is pre-fetched by `_chunk_spans` +
-  `_warm`. `server/volume/prefetch.py`
+  `_warm`. A local `.ims` that is a TIFF — Imaris 3/4 "classic", written
+  until 2007 and still exported (`is_classic_ims`, four magic bytes,
+  remembered by size and mtime) — makes `is_ims_path` False, so it reads as
+  the TIFF it is (`ImageTiff` skips its preview directory) instead of failing
+  in HDF5 with "file signature not found"; a remote `.ims` is still taken as
+  HDF5. `server/volume/sources/formats.py` (`open_format_volume`,
+  `describe_volume`, `FormatVolumeSource`) serves a `server/utils/formats`
+  file's z-stack off the one open reader (`FormatPyramid.plane`), only when
+  every plane's levels are a bounded read (the file's own pyramid, or planes
+  up to 4096 px a side) or the default plane's levels have been derived at
+  import; any other plane of a larger stack without a pyramid then resamples
+  its coarse levels from its own level above (`base.build(derive=True)`), so
+  `describe_volume` needs only the default plane's chain complete, and until
+  it is the stack is shown as that plane alone. A non-uint8/16 stack goes through one `value_range.map_as`
+  map chosen from the default plane, so contrast holds through z.
+  `server/volume/prefetch.py`
   (`PREFETCHER`, a `PlanePrefetcher`) reads the chunk block of planes ahead
   of each plane tile served, in the direction of travel, in the background
   lane, from the node tile route (`node/api._read_ahead`) and the primary
@@ -8151,9 +8359,18 @@ Fluorescence) on the edit page; changing it calls `datasource.reregister_image`,
 re-reads the same file under the other reading and **never** writes to it. A
 monochrome multiplex DICOM slide refuses an H&E override outright — an optical
 path is a marker, not a camera's red/green/blue — rather than serving a wrong
-picture. `.mrxs` and any DICOM slide are the formats needing the optional
+picture. A brightfield `.mrxs` and any DICOM slide are the formats needing the optional
 `[wsi]` extra, and the sniffer probes for OpenSlide/`wsidicom` there so a
-missing install is reported while the user is still choosing a file.
+missing install is reported while the user is still choosing a file. A
+microscope's own format (`server/utils/formats`: `.czi`/`.nd2`/`.lif`/`.lof`/
+`.xlef`/`.vsi`/`.oir`/`.oib`/`.oif`/`.ndpis`/`.dv`/`.r3d`/`.mcd`/`.zvi`/
+`.lsm`/`.kfb`, and a fluorescence `.mrxs` that `mrxs.claims`) also sniffs
+as `ome_tiff`, after a `formats.describe` so a missing reader package or a VSI
+without its pixel folder is reported at the same moment; `convertOmeTiff`
+hands it to `_convert_format_image`, which records `image_kind` `vendor`
+(`formats.IMAGE_KIND`, drawn as an OME-TIFF is, since no client test names it)
+or `brightfield` for a colour scan. Its readers are core dependencies, not an
+extra, because a microscope writes these by default.
 
 **An image may be a folder.** OME-TIFF/TIFF/SVS/QPTIFF/PNG/JPEG are files;
 OME-Zarr is a directory, and so is the SpatialData store somebody points both
@@ -10305,6 +10522,47 @@ in **5.6 s**.
 - **The pyramid is real and used.** `_zarr_level(channels, level)` indexes the
   level group. When the source is a bare `zarr.Array` (non-pyramidal), `level` is
   ignored and every tile reads full resolution.
+- **Every TIFF opened as an IMAGE is a `tiff_series.ImageTiff`; a mask never
+  is.** Its `series[0]` is the image (`arrange_series`: an SCN's scan ahead of
+  its macro, a preview-first directory skipped, uneven reduced pages chained),
+  and every reader takes `series[0]`, so one `tf.TiffFile(path,
+  is_ome=False)` added for an image open reads a different series than its
+  neighbours — the macro's size, the thumbnail's pixel size — and the
+  provider, the geometry check and the recorded shape disagree. Masks keep
+  plain `tf.TiffFile`: a label image is one plane and none of those layouts.
+  Three image-side opens are plain on purpose and read no series choice:
+  `xenium_focus`'s per-member opens (each member file is one channel's
+  plane) and the two header-only OME reads (`image_pyramid._ome_image_fields`,
+  `import_proposal._ome_image_name`).
+- **A TIFF `needs_region_reader` names is never given a pyramidized copy.**
+  `convertOmeTiff` describes it as `tiff_region.open_image`'s halving chain
+  (`_describe_chained_tiff`, no gaps) and the provider serves that chain,
+  because the copy's builder reads a page per channel — wrong for channels
+  stored as one page's samples — and the file's own levels, read through the
+  chain, already serve every zoom.
+- **`ValuePyramid` must not forward `array_keys`.** The website decides
+  whether the PAGE may read a TIFF's tiles itself by asking the pyramid for
+  `array_keys` (`browser/node_spec.py`), and the page reads the file's own
+  samples, which for a float, signed or 32-bit image are not the tiles'
+  values. `_FORWARDED` is an allow-list for that reason; a blanket
+  `__getattr__` forward would let the page draw the raw floats.
+- **Only the file of channel 0 stands for a multi-file OME set.**
+  `xenium_focus.ome_set` answers `()` for every other member, so the set has
+  one address and each member still opens by itself — a folder import still
+  lists the other members as images of their own. A change that assembles
+  the set from any member gives one image as many addresses as it has files.
+- **A new image format is a `Reader` module in `server/utils/formats`,
+  registered in `FORMATS`, `import_proposal.IMAGE_SUFFIXES` and the client's
+  `EXTENSIONS` (`explorerTypes.js`); never a new branch per format in the
+  dispatch chains.** Every opener (`LocalImageProvider.open`/
+  `_missing_pyramid`, `local.image_geometry`/`detect_image_type`,
+  `convertOmeTiff`, the thumbnail, `datasource`'s sniffer and channel names,
+  `pixel_scale`, `source_image`, `volume.sources.open_volume`) has one
+  `formats.handles(path)` branch (a format that shares its suffix with
+  another reader, as fluorescence MRXS does with OpenSlide, answers through
+  its module's `claims(path)` inside `handles`, never in an opener),
+  because a per-format branch in each is the
+  drift that leaves one format half-wired.
 - **`qmin`/`qmax` must come from full-resolution data.** The downsampled `zarray`
   overview is mean-pooled, which dilutes single-pixel peaks and causes whole
   channels to saturate. `get_channel_quantization_window()` is deliberately split
@@ -10320,7 +10578,11 @@ in **5.6 s**.
   merely busy. The mini-map honours this by quantizing
   pooled `zarray` pixels against the full-res window rather than deriving the
   ceiling from `zarray` itself, which is the mistake this invariant warns
-  against.
+  against. The one exception is 8-bit on the website
+  (`data_model._eight_bit_on_the_website`): its window is (0, 255) unread,
+  because that is every value it can hold and the scan would hold the page's
+  one Python thread for minutes (a 77578 x 48502 VSI: 150 s); the desktop
+  still scans.
 - **An open makes exact windows only for the channels shown, and a
   provisional ask is answered at once on both front ends.** The warm-up
   (`_warm_datasource_caches`) computes stats and fit -- so the exact window,
@@ -10612,6 +10874,15 @@ in **5.6 s**.
   with `npm run build` on an `npm ci` of `plexora/client`'s lockfile (an
   install that has drifted from it, as the main tree's had on 2026-11-06 with
   jsPDF 3.0.4 against the lock's 4.2.1, builds a different bundle).
+- **A change to a `client/src/js/node/*.js` file the website's worker imports
+  means rebuilding `client/dist/tiffWorker_bundle.js`** (`npm run
+  build:worker`, `webpack.worker.config.js`). `workers/tiffWorker.js` bundles
+  `node/tiffReader.js`, `node/zarrReader.js`, `node/pyramid.js` and what they
+  import into that one file, which `services/browserNode.js`,
+  `browserPyramid.js` and `selfcheck.js` load at a fixed URL with no `?v=`
+  tag — so there is no tag to bump either, and an unrebuilt bundle keeps the
+  page reading with the old code while every probe that imports the source
+  passes.
 - **A page template extends `layout`, not `'base.html'`.** Hardcoding the base
   back in makes that page unroutable: it would come back from a fragment fetch
   as a whole second document — navbar, `<head>`, another `<body>` — to be
@@ -11355,6 +11626,38 @@ measures only the shown channel and queues no other scan, and its
 and checks that a small miss reads its 64 KiB piece and keeps it while a
 larger read still reads its block. The boundary goldens carry the
 `20261110_instant_first_view` tags. No full run was reported for this work.
+
+**Reading every version of every format added tests** (branch
+`feature/legacy-formats`): `tests/test_legacy_tiff_ome_xml.py`,
+`test_legacy_tiff_layouts.py`, `test_legacy_tiff_value_range.py`,
+`test_legacy_zarr_v2.py`, `test_legacy_zarr_ngff_transform.py`,
+`test_legacy_zarr_browser.py` (the page's `node/zarrReader.js` on legacy
+stores, tile for tile against the tile route; skipped without `node` and
+`npm ci`), `test_legacy_anndata.py`, `test_delimited_tables.py`, and the
+XOA 4.0 stain-named focus files in `tests/test_xenium_focus.py` (multi-file
+OME sets are in `test_legacy_tiff_layouts.py`); the fixtures
+`write_legacy_v2` (`tests/ngff_fixtures.py`) and the `layout=` option
+(`flat`/`multiscales`/`ome`) of `tests/spatial_fixtures.py`'s
+`write_element_attrs`/`write_spatialdata_store`. What was checked against
+which real samples, and what is still unread, is
+`docs/internal/FORMAT_VERSIONS_2026-11-11.md`.
+The same branch's non-TIFF formats (`server/utils/formats`) added
+`tests/test_formats_vsi.py`, `test_formats_ndpis.py`, `test_formats_dv.py`
+and `test_formats_app.py` (each through the app end to end, the DV and VSI
+z-stack volume source, `value_range.map_as`), over files written by
+`tests/formats_fixtures.py`; and `test_formats_czi.py`, `_nd2`, `_lif`,
+`_olympus`, `_mcd`, which drive each adapter through a fake of its package
+(`tests/formats_fakes.py`, built to the real packages' verified behaviour), so
+they need none installed. The second round added `test_formats_zvi.py`,
+`_cfb`, `_lsm`, `_kfb`, `_mrxs`, `_images` (multi-image files) and
+`_flat_stack` (derived planes), over `tests/formats_fixtures_more.py`;
+`tests/test_website_window.py` (the 8-bit window on the website);
+`tests/test_browser_czi_codecs.py` with `tests/browser/czi_codecs.mjs`; and
+`tests/js/jpegxr_probe.mjs`. Full suite on this branch with all of them:
+**12360 passed, 139 skipped, 0 failed** (macOS, serial, 2026-11-11; the env
+has no pytest-xdist). **The conda env lacks the six reader packages** (`czifile`,
+`liffile`, `nd2`, `oiffile`, `oirfile`, `readimc`) until they are installed
+from `pyproject.toml`; this branch's session used an overlay for them.
 
 **The desktop app has its own validation, outside pytest:**
 

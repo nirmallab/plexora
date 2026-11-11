@@ -148,12 +148,17 @@ def anisotropic(sx=1.0, sy=2.0, output="global"):
     return scale(sy, sx, output=output)
 
 
-def write_element_attrs(path, transforms, *, axes=("y", "x"), zarr_format=2):
+def write_element_attrs(path, transforms, *, axes=("y", "x"), zarr_format=2,
+                        layout="flat"):
     """One element's coordinate systems, written as plain JSON.
 
     Deliberately not through zarr: what the reader parses IS this file, and a
     fixture that goes through a writer tests the writer's idea of the spec
     rather than the file a user will actually hand us.
+
+    `layout` is where the transforms sit: "flat" at the top of the attributes,
+    "multiscales" in `multiscales[0]` (NGFF 0.4, `.zattrs`), "ome" in
+    `ome.multiscales[0]` (NGFF 0.5, `zarr.json`; spatialdata >= 0.6 writes this).
     """
     path = Path(path)
     path.mkdir(parents=True, exist_ok=True)
@@ -161,6 +166,13 @@ def write_element_attrs(path, transforms, *, axes=("y", "x"), zarr_format=2):
         "axes": [{"name": name} for name in axes],
         "coordinateTransformations": list(transforms),
     }
+    if layout in ("multiscales", "ome"):
+        multiscale = dict(payload, datasets=[{"path": "0", "coordinateTransformations": [
+            {"type": "scale", "scale": [1.0] * len(axes)}]}])
+        payload = {"multiscales": [multiscale]}
+        if layout == "ome":
+            payload = {"ome": dict(payload, version="0.5"),
+                       "spatialdata_attrs": {"version": "0.3"}}
     if zarr_format == 2:
         (path / ".zattrs").write_text(json.dumps(payload, indent=1), encoding="utf-8")
     else:
@@ -171,7 +183,7 @@ def write_element_attrs(path, transforms, *, axes=("y", "x"), zarr_format=2):
     return path
 
 
-def write_spatialdata_store(path, *, elements=None, zarr_format=2):
+def write_spatialdata_store(path, *, elements=None, zarr_format=2, layout="flat"):
     """A store whose elements each declare where they land.
 
     `elements` maps `"<kind>/<name>"` to that element's transformation list --
@@ -189,5 +201,6 @@ def write_spatialdata_store(path, *, elements=None, zarr_format=2):
         "points/transcripts": [],
     }
     for key, transforms in elements.items():
-        write_element_attrs(path / key, transforms, zarr_format=zarr_format)
+        write_element_attrs(path / key, transforms, zarr_format=zarr_format,
+                            layout=layout)
     return path

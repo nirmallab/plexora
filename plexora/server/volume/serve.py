@@ -114,15 +114,22 @@ def quantize(block, qmin, qmax, voxel_format="u8"):
 # -- names ------------------------------------------------------------------------
 
 
-def source_identity(path) -> str:
+def source_identity(path, index=None) -> str:
     """What the bytes were read from: a local file's path, size and mtime, or
-    the address of one that is not local."""
+    the address of one that is not local -- and, for a microscope file holding
+    several images (`imageIndex`), which of them: two positions of one ND2 are
+    two volumes, and a cache keyed by the file would serve one as the other."""
     text = str(path or "")
     try:
+        index = int(index or 0)
+    except (TypeError, ValueError):
+        index = 0
+    image = f"|image{index}" if index > 0 else ""
+    try:
         stat = os.stat(text)
-        return f"{text}|{stat.st_size}|{stat.st_mtime_ns}"
+        return f"{text}|{stat.st_size}|{stat.st_mtime_ns}{image}"
     except OSError:
-        return text
+        return text + image
 
 
 def level_etag(identity, index, t, level, window, voxel_format, covered, pool) -> str:

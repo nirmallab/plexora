@@ -193,3 +193,151 @@ def test_a_run_whose_focus_folder_has_several_files_resolves_to_the_folder(tmp_p
     chosen = spatial_scene.xenium_image_path(run)
 
     assert chosen == run / "morphology_focus"
+
+
+# -- XOA 4.0: files named after their stain -----------------------------
+#
+# XOA 4.0 renamed `morphology_focus_000N.ome.tif` to `ch000N_<stain>.ome.tif`.
+# Unrecognised, a four-stain v4 run fell through to the first `*.ome.tif` and
+# imported as DAPI alone, with nothing said.
+
+XOA4_STAINS = ("dapi", "atp1a1_cd45_e-cadherin", "18s", "alphasma_vimentin")
+XOA4_OME = ("DAPI", "ATP1A1/CD45/E-Cadherin", "18S", "AlphaSMA/Vimentin")
+
+
+def _plain_file(path, *, height=64, width=48, value=1):
+    """An OME-TIFF whose channel carries no Name."""
+    plane = np.full((height, width), value, dtype=np.uint16)
+    tifffile.imwrite(path, plane, ome=True, photometric="minisblack")
+    return plane
+
+
+def _v4_folder(root, stains=XOA4_STAINS, ome_names=XOA4_OME, order=None):
+    folder = root / "morphology_focus"
+    folder.mkdir(exist_ok=True)
+    planes = {}
+    # Written out of order, so a directory listing's order cannot pass the
+    # test for the channel number's.
+    for index in (order or reversed(range(len(stains)))):
+        path = folder / f"ch{index:04d}_{stains[index]}.ome.tif"
+        if ome_names is None:
+            planes[index] = _plain_file(path, value=index + 1)
+        else:
+            planes[index] = _focus_file(path, ome_names[index], value=index + 1)
+    return folder, [planes[index] for index in sorted(planes)]
+
+
+def test_xoa4_stain_named_files_are_one_image(tmp_path):
+    folder, planes = _v4_folder(tmp_path)
+
+    assert xenium_focus.is_focus_dir(folder)
+    assert [path.name for path in xenium_focus.focus_files(folder)] == [
+        f"ch{index:04d}_{stain}.ome.tif" for index, stain in enumerate(XOA4_STAINS)]
+    pyramid = xenium_focus.open_focus(folder)
+    assert pyramid["0"].shape == (4, 64, 48)
+    for index, plane in enumerate(planes):
+        assert np.array_equal(np.asarray(pyramid["0"][index, 0:64, 0:48]), plane)
+
+
+def test_xoa4_channels_are_ordered_by_number_past_nine(tmp_path):
+    folder = tmp_path / "morphology_focus"
+    folder.mkdir()
+    for index in (10, 2, 0):
+        _focus_file(folder / f"ch{index:04d}_stain{index}.ome.tif", f"S{index}")
+
+    assert [path.name for path in xenium_focus.focus_files(folder)] == [
+        "ch0000_stain0.ome.tif", "ch0002_stain2.ome.tif", "ch0010_stain10.ome.tif"]
+
+
+def test_xoa4_channels_are_named_by_their_ome_xml(tmp_path):
+    folder, _ = _v4_folder(tmp_path)
+
+    assert xenium_focus.channel_names(folder) == list(XOA4_OME)
+    assert datasource.derive_image_channel_names(folder, 4) == (
+        list(XOA4_OME), "image metadata")
+    assert xenium_focus.open_focus(folder).channel_names == list(XOA4_OME)
+
+
+def test_xoa4_channels_without_ome_names_are_named_by_their_file(tmp_path):
+    folder, _ = _v4_folder(tmp_path, ome_names=None)
+
+    assert xenium_focus.channel_names(folder) == [
+        "DAPI", "ATP1A1/CD45/E-CADHERIN", "18S", "ALPHASMA/VIMENTIN"]
+
+
+def test_an_xoa4_run_resolves_to_the_folder_through_its_manifest(tmp_path):
+    """The v4 manifest names the DAPI file inside the folder; the folder is
+    what it describes."""
+    run = tmp_path / "run"
+    run.mkdir()
+    (run / "experiment.xenium").write_text(
+        '{"images": {"morphology_focus_filepath": '
+        '"morphology_focus/ch0000_dapi.ome.tif"}}', encoding="utf-8")
+    _v4_folder(run)
+
+    assert spatial_scene.xenium_image_path(run) == run / "morphology_focus"
+
+
+def test_an_xoa4_run_without_a_manifest_resolves_to_the_folder(tmp_path):
+    run = tmp_path / "run"
+    run.mkdir()
+    (run / "morphology.ome.tif").write_bytes(b"x")
+    _v4_folder(run)
+
+    assert spatial_scene.xenium_image_path(run) == run / "morphology_focus"
+
+
+def test_a_one_stain_xoa4_folder_is_left_to_the_plain_reader(tmp_path):
+    """The real XOA 4.0 tiny bundle: `ch0000_dapi.ome.tif` alone."""
+    run = tmp_path / "run"
+    run.mkdir()
+    (run / "experiment.xenium").write_text(
+        '{"images": {"morphology_focus_filepath": '
+        '"morphology_focus/ch0000_dapi.ome.tif"}}', encoding="utf-8")
+    folder, _ = _v4_folder(run, stains=("dapi",), ome_names=("DAPI",))
+
+    assert not xenium_focus.is_focus_dir(folder)
+    assert spatial_scene.xenium_image_path(run) == folder / "ch0000_dapi.ome.tif"
+    assert spatial_scene._xenium_path(run, "morphology_focus") == \
+        folder / "ch0000_dapi.ome.tif"
+
+
+def test_unrecognised_names_are_not_channels(tmp_path):
+    folder, _ = _v4_folder(tmp_path, stains=("dapi", "18s"), ome_names=("DAPI", "18S"))
+    for stray in ("notes.ome.tif", "chA_dapi.ome.tif", "ch0002_x.ome.tif.bak",
+                  "ch0003.ome.tif", "morphology_focus.ome.tif"):
+        _focus_file(folder / stray, "stray")
+
+    assert [path.name for path in xenium_focus.focus_files(folder)] == [
+        "ch0000_dapi.ome.tif", "ch0001_18s.ome.tif"]
+    assert xenium_focus.open_focus(folder)["0"].shape[0] == 2
+
+
+def test_a_folder_mixing_both_namings_is_not_assembled(tmp_path):
+    """Two runs' files copied into one folder: `morphology_focus_0001` and
+    `ch0001_...` both claim channel 1. Composing them would put a stain in the
+    other's slot, so it is not one image -- one file is opened instead."""
+    run = tmp_path / "run"
+    run.mkdir()
+    folder = run / "morphology_focus"
+    folder.mkdir()
+    _focus_file(folder / "morphology_focus_0000.ome.tif", "DAPI")
+    _focus_file(folder / "morphology_focus_0001.ome.tif", "18S")
+    _focus_file(folder / "ch0000_dapi.ome.tif", "DAPI")
+    _focus_file(folder / "ch0001_atp1a1_cd45_e-cadherin.ome.tif", "ATP1A1/CD45/E-Cadherin")
+
+    assert xenium_focus.focus_files(folder) == []
+    assert not xenium_focus.is_focus_dir(folder)
+    chosen = spatial_scene.xenium_image_path(run)
+    assert chosen is not None and chosen.is_file()
+
+
+def test_two_files_claiming_one_channel_are_not_assembled(tmp_path):
+    folder = tmp_path / "morphology_focus"
+    folder.mkdir()
+    _focus_file(folder / "ch0000_dapi.ome.tif", "DAPI")
+    _focus_file(folder / "ch0001_18s.ome.tif", "18S")
+    _focus_file(folder / "ch0001_vimentin.ome.tif", "Vimentin")
+
+    assert xenium_focus.focus_files(folder) == []
+    assert not xenium_focus.is_focus_dir(folder)

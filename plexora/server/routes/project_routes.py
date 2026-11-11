@@ -209,7 +209,9 @@ def _z_axis(project):
 
         if not str(src).lower().endswith((".tif", ".tiff", ".qptiff")):
             return None
-        with tifffile.TiffFile(str(src), is_ome=False) as handle:
+        from plexora.server.utils.tiff_series import ImageTiff
+
+        with ImageTiff(str(src)) as handle:
             found = tiff_volume.page_layout(handle, handle.series[0])
         if found is None:
             return None

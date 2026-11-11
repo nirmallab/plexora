@@ -27,7 +27,11 @@ window.PlexoraExplorerTypes = (function () {
         // slide, whose other instances the server gathers from the metadata.
         image: [".tif", ".tiff", ".ome.tif", ".ome.tiff", ".svs", ".ndpi",
                 ".scn", ".bif", ".qptiff", ".dcm", ".png", ".jpg", ".jpeg",
-                ".zarr", ".ome.zarr", ".mrxs", ".ims"],
+                ".zarr", ".ome.zarr", ".mrxs", ".ims",
+                // A microscope's or slide scanner's own format
+                // (server/utils/formats).
+                ".czi", ".nd2", ".lif", ".lof", ".xlef", ".vsi", ".oir", ".oib",
+                ".oif", ".ndpis", ".dv", ".r3d", ".mcd", ".zvi", ".lsm", ".kfb"],
         csv: [".csv"],
         h5ad: [".h5ad"],
         data: [".csv", ".tsv", ".txt", ".parquet", ".h5ad"],
@@ -84,6 +88,12 @@ window.PlexoraExplorerTypes = (function () {
         [".svs", "Aperio SVS"], [".ndpi", "Hamamatsu NDPI"], [".scn", "Leica SCN"],
         [".mrxs", "MIRAX slide"], [".bif", "Ventana BIF"],
         [".dcm", "DICOM"], [".ims", "Imaris"],
+        [".czi", "Zeiss CZI"], [".nd2", "Nikon ND2"], [".lif", "Leica LIF"],
+        [".lof", "Leica LOF"], [".xlef", "Leica XLEF"], [".vsi", "Olympus VSI"],
+        [".oir", "Olympus OIR"], [".oib", "Olympus OIB"], [".oif", "Olympus OIF"],
+        [".ndpis", "Hamamatsu NDPIS"], [".dv", "DeltaVision"], [".r3d", "DeltaVision"],
+        [".mcd", "Hyperion MCD"], [".zvi", "Zeiss ZVI"], [".lsm", "Zeiss LSM"],
+        [".kfb", "KFBio KFB"],
         [".png", "PNG"], [".jpeg", "JPEG"], [".jpg", "JPEG"],
         [".h5ad", "AnnData"], [".zarr", "Zarr store"],
         [".csv", "CSV"], [".tsv", "TSV"], [".txt", "Text"],
@@ -95,7 +105,9 @@ window.PlexoraExplorerTypes = (function () {
     //: Awesome 7 Free; a dead one draws nothing and says nothing.
     const FILE_ICONS = [
         [[".ome.tiff", ".ome.tif", ".tiff", ".tif", ".svs", ".ndpi", ".scn",
-          ".bif", ".qptiff", ".mrxs", ".ims", ".png", ".jpg", ".jpeg", ".dcm"],
+          ".bif", ".qptiff", ".mrxs", ".ims", ".png", ".jpg", ".jpeg", ".dcm",
+          ".czi", ".nd2", ".lif", ".lof", ".xlef", ".vsi", ".oir", ".oib", ".oif",
+          ".ndpis", ".dv", ".r3d", ".mcd", ".zvi", ".lsm", ".kfb"],
          "fa-file-image"],
         [[".csv", ".tsv"], "fa-file-csv"],
         [[".xlsx", ".xlsm", ".xls"], "fa-file-excel"],

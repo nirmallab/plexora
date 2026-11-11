@@ -198,7 +198,9 @@ def resolve_providers(project) -> ProviderSet:
             project.image.src, project.image.pyramid,
             rgb=project.image.kind == IMAGE_TYPE_BRIGHTFIELD,
             z_semantics=project.image.z_semantics,
-            t_semantics=project.image.t_semantics)
+            t_semantics=project.image.t_semantics,
+            # Which image of a file holding several (a CZI's scenes, ...).
+            image_index=project.image.index)
 
     if seg_binding:
         segmentation = NodeSegmentationProvider(seg_binding).with_tile_size(*tile_size)

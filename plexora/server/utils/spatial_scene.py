@@ -52,7 +52,8 @@ SPATIALDATA_KINDS = {
 #:
 #: `morphology_focus` is a DIRECTORY from XOA 2.0 on: the focus stack is written
 #: as a multi-file OME series, `morphology_focus_0000.ome.tif` and its
-#: siblings. Kept in the same table as the single files because to everything
+#: siblings (`ch0000_dapi.ome.tif` and siblings from XOA 4.0 --
+#: `xenium_focus.FOCUS_FILE` knows both). Kept in the same table as the single files because to everything
 #: downstream it is one image layer either way -- see `_xenium_path`.
 #:
 #: **Order is preference**, and it is the difference between a viewer that

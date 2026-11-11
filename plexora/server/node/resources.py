@@ -251,6 +251,13 @@ class Resource:
     #: local path keeps.
     image_type: str | None = None
     image_type_reason: str | None = None
+    #: Images only: which image of a microscope file holding several this
+    #: resource serves (a CZI's scenes, a LIF's images: server/utils/formats),
+    #: and every image the file holds, by name -- one resource per image, each
+    #: under its own id (`nodes.resource_id_for(path, index)`). 0 and () for
+    #: every other file.
+    image_index: int = 0
+    images: tuple = ()
     #: Images only: `image_pyramid.flat_image_report` for a large channel
     #: stack written with one resolution level, plus where its pyramidized
     #: copy would go -- what the primary's import dialog offers to build. None
@@ -319,7 +326,8 @@ class Resource:
         told -- it closed over the path it was constructed with.
         """
         self.path = str(path)
-        self.provider = _provider_for(self.kind, self.path, rgb=self.reads_colour)
+        self.provider = _provider_for(self.kind, self.path, rgb=self.reads_colour,
+                                      image_index=self.image_index)
         self.opened = None
         if self.generation:
             # A mask served raw while it converted is now served from its
@@ -417,6 +425,13 @@ class Resource:
             # to record an ordinary channel stack.
             described["image_type"] = self.image_type
             described["image_type_reason"] = self.image_type_reason
+            # Which image of a file holding several, and what the file holds:
+            # the primary offers each image as a sample, and checks a node it
+            # asked for image k actually serves image k (an older node omits
+            # both and serves the first).
+            described["image_index"] = self.image_index
+            if len(self.images) > 1:
+                described["images"] = list(self.images)
         return described
 
 
@@ -481,7 +496,7 @@ class Registry:
         self._lock = threading.RLock()
 
     def add(self, kind: str, resource_id: str, path: str,
-            state: str = READY) -> Resource:
+            state: str = READY, image_index: int = 0) -> Resource:
         """Serve one more file, or return the one already serving it.
 
         Adding the same `(kind, id, path)` twice is a no-op rather than a
@@ -490,7 +505,14 @@ class Registry:
         dropped tunnel, or opening a second tab all ask for exactly the
         resource this node is already serving -- and a refusal there is one the
         caller can neither act on nor distinguish from a genuine clash.
+
+        `image_index` is which image of a microscope file holding several an
+        image resource serves (each image is a resource of its own).
         """
+        try:
+            image_index = int(image_index or 0)
+        except (TypeError, ValueError):
+            raise ResourceError(f"{image_index!r} is not an image number") from None
         kind = (kind or "").strip().lower()
         if kind not in RESOURCE_KINDS:
             raise ResourceError(
@@ -507,7 +529,8 @@ class Registry:
         with self._lock:
             existing = self._resources.get(resource_id)
             if existing is not None:
-                if existing.kind == kind and existing.source_path == str(resolved):
+                if (existing.kind == kind and existing.source_path == str(resolved)
+                        and existing.image_index == image_index):
                     return existing
                 raise ResourceError(
                     f"this node already serves a different resource called "
@@ -515,12 +538,19 @@ class Registry:
             resource = Resource(id=resource_id, kind=kind, path=str(resolved),
                                 source_path=str(resolved), state=state)
             if kind == "image":
-                detection = _detect_image_type(str(resolved))
+                resource.images = _image_names(str(resolved))
+                if image_index and not image_index < len(resource.images):
+                    raise ResourceError(
+                        f"{resolved.name} holds {max(len(resource.images), 1)} "
+                        f"image(s); there is no image {image_index + 1}")
+                resource.image_index = image_index
+                detection = _detect_image_type(str(resolved), image_index)
                 if detection is not None:
                     resource.image_type = detection.verdict
                     resource.image_type_reason = detection.reason
             resource.provider = _provider_for(kind, str(resolved),
-                                              rgb=resource.reads_colour)
+                                              rgb=resource.reads_colour,
+                                              image_index=resource.image_index)
             if kind == "image":
                 note_flat_image(resource)
             self._resources[resource_id] = resource
@@ -635,7 +665,22 @@ def _replace_snapshot(resource: Resource, snapshot) -> None:
         resource.generation += 1
 
 
-def _detect_image_type(path):
+def _image_names(path) -> tuple:
+    """Every image a microscope file holding several holds, by name (what
+    `image_index` counts); () for every other file, and for one that cannot
+    be read here -- the read path says why, in its own words."""
+    from plexora.server.utils import formats
+
+    try:
+        if not formats.handles(path):
+            return ()
+        names = tuple(str(name) for name in formats.image_names(path))
+    except Exception:  # noqa: BLE001
+        return ()
+    return names if len(names) > 1 else ()
+
+
+def _detect_image_type(path, index=0):
     """What the detector makes of an image this node is about to serve, or None.
 
     Never raises. A file the detector cannot inspect is still a file this node
@@ -648,7 +693,8 @@ def _detect_image_type(path):
     from plexora.server.providers import local as local_providers
 
     try:
-        return local_providers.detect_image_type(path)
+        return (local_providers.detect_image_type(path, index=index) if index
+                else local_providers.detect_image_type(path))
     except Exception:
         return None
 
@@ -751,7 +797,7 @@ def _geometry_or_none(path):
         if found else None
 
 
-def _provider_for(kind: str, path: str, rgb: bool = False):
+def _provider_for(kind: str, path: str, rgb: bool = False, image_index: int = 0):
     """The local provider that reads this kind of resource.
 
     The same classes the primary uses for a resource on its own disk -- one
@@ -773,7 +819,7 @@ def _provider_for(kind: str, path: str, rgb: bool = False):
     )
 
     if kind == "image":
-        return LocalImageProvider(path, rgb=rgb)
+        return LocalImageProvider(path, rgb=rgb, image_index=image_index)
     if kind == "segmentation":
         return LocalSegmentationProvider(path)
     return LocalTableProvider(None)
@@ -793,8 +839,10 @@ def _provider_for(kind: str, path: str, rgb: bool = False):
 # promise on the local side.
 
 
-def load_manifest(path) -> list[tuple[str, str, str]]:
-    """`(kind, id, path)` for everything a manifest names, or nothing.
+def load_manifest(path) -> list[tuple[str, str, str, int]]:
+    """`(kind, id, path, image_index)` for everything a manifest names, or
+    nothing. `image_index` is which image of a file holding several (0 when
+    the entry does not say, as every entry before it did not).
 
     A manifest that cannot be read is not an error worth refusing to start
     over: the worst case is a node that serves only what its command line
@@ -812,8 +860,12 @@ def load_manifest(path) -> list[tuple[str, str, str]]:
         kind = str(entry.get("kind") or "").strip()
         resource_id = str(entry.get("id") or "").strip()
         file_path = str(entry.get("path") or "").strip()
+        try:
+            index = max(0, int(entry.get("index") or 0))
+        except (TypeError, ValueError):
+            index = 0
         if kind and resource_id and file_path:
-            entries.append((kind, resource_id, file_path))
+            entries.append((kind, resource_id, file_path, index))
     return entries
 
 
@@ -833,7 +885,9 @@ def save_manifest(path, registry) -> bool:
         # the conversion is adopted rather than repeated -- and it keeps the
         # manifest true after a derived file is cleaned up.
         {"kind": resource.kind, "id": resource.id,
-         "path": resource.source_path or resource.path}
+         "path": resource.source_path or resource.path,
+         # Which image of a file holding several; absent for every other.
+         **({"index": resource.image_index} if resource.image_index else {})}
         for resource in registry.all()
     ]}
     try:

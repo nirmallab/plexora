@@ -233,8 +233,10 @@ def _identity(project, kind) -> str:
     if binding is not None:
         return (f"node://{binding.node}/{binding.resource_id}|"
                 f"{json.dumps(binding.fingerprint or {}, sort_keys=True, default=str)}")
-    path = project.image.src if kind == "image" else project.segmentation.derived
-    return source_identity(path)
+    if kind == "image":
+        # Which image of a file holding several, too (`imageIndex`).
+        return source_identity(project.image.src, project.image.index)
+    return source_identity(project.segmentation.derived)
 
 
 def _provenance(project, kind) -> str:

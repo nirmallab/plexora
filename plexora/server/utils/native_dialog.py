@@ -75,7 +75,10 @@ _TK_FILTERS = {
     # ".dcm" IS offered: a DICOM slide is a folder of instances, but picking any
     # one of them selects that slide (dicom_wsi.assemble_slide gathers its
     # siblings), so unlike ".zarr" the file dialog can genuinely return one.
-    "image": [("Image files", "*.tif *.tiff *.ome.tif *.ome.tiff *.svs *.ndpi *.scn *.bif *.qptiff *.dcm *.ims *.png *.jpg *.jpeg"), ("All files", "*.*")],
+    # A microscope's own formats (server/utils/formats) are offered here and
+    # not in the AppleScript list below, which filters by UTI: macOS registers
+    # none for them, and one unregistered extension greys out every file.
+    "image": [("Image files", "*.tif *.tiff *.ome.tif *.ome.tiff *.svs *.ndpi *.scn *.bif *.qptiff *.dcm *.ims *.png *.jpg *.jpeg *.czi *.nd2 *.lif *.lof *.xlef *.vsi *.oir *.oib *.oif *.ndpis *.dv *.r3d *.mcd *.zvi *.lsm *.kfb"), ("All files", "*.*")],
     "csv": [("CSV files", "*.csv"), ("All files", "*.*")],
     "h5ad": [("AnnData files", "*.h5ad"), ("All files", "*.*")],
     # The single Data input accepts any feature-table format, so its picker

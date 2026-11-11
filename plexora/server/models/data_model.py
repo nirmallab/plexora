@@ -843,7 +843,8 @@ def _image_identity(provider):
         return found.st_size, found.st_mtime_ns
 
     return (provider.path, stamp(provider.path), provider._pyramid, stamp(provider._pyramid),
-            provider._rgb, provider._z_semantics, provider._t_semantics)
+            provider._rgb, provider._z_semantics, provider._t_semantics,
+            provider.image_index)
 
 
 #: `_image_identity` of the image the loaded project opened, taken as it was
@@ -3347,7 +3348,11 @@ def _image_fingerprint(datasource_name):
         stat = os.stat(channel_file)
     except OSError:
         return None
-    return f"{stat.st_size}:{stat.st_mtime_ns}"
+    # Another image of a file holding several is another image: a project
+    # re-registered on scene 3 of the CZI it read scene 1 of has new windows.
+    index = entry.get('imageIndex')
+    image = f":image{int(index)}" if isinstance(index, int) and index > 0 else ""
+    return f"{stat.st_size}:{stat.st_mtime_ns}{image}"
 
 
 def _quantization_windows(datasource_name):
@@ -3717,6 +3722,21 @@ _WINDOW_SCAN_SLAB_BYTES = 128 * 2**20
 _WINDOW_SCAN_GATE = threading.BoundedSemaphore(2)
 
 
+def _eight_bit_on_the_website(plane) -> bool:
+    """Whether a plane's window is (0, 255) without reading it: 8-bit samples
+    on the website. That window is every value they can hold, so a tile
+    encoded through it is the samples as stored, clipped nowhere -- and
+    finding the brightest pixel of a large slide would hold up the website's
+    one Python thread for minutes (a 77578 x 48502 VSI: 150 s). The desktop
+    reads it on a thread of its own and keeps the exact window."""
+    if os.environ.get("PLEXORA_BACKEND") != "browser":
+        return False
+    try:
+        return np.dtype(getattr(plane, "dtype", None)) == np.uint8
+    except TypeError:
+        return False
+
+
 def quantization_window_of(channel_pyramid, index):
     """(qmin, qmax) read off a channel's full-resolution plane.
 
@@ -3730,6 +3750,8 @@ def quantization_window_of(channel_pyramid, index):
     """
     plane = (channel_pyramid if isinstance(channel_pyramid, zarr.Array)
              else _zarr_level(channel_pyramid, 0))
+    if _eight_bit_on_the_website(plane):
+        return (0.0, 255.0)
     if getattr(plane, "ndim", 0) != 3:
         # The unusual shapes keep the old one-shot behaviour: they are the
         # small cases, and guessing which axis to slab on would be worse.
@@ -5090,7 +5112,7 @@ def generate_thumbnail(datasource_name, max_size=320):
     else:
         array = _local_thumbnail_plane(
             project.image.src, project.image.pyramid,
-            rgb=project.image.kind == IMAGE_TYPE_BRIGHTFIELD)
+            rgb=project.image.kind == IMAGE_TYPE_BRIGHTFIELD, index=project.image.index)
     if array is None:
         return None
 
@@ -5158,7 +5180,7 @@ def _thumbnail_image(array):
     return Image.fromarray(quantized, mode='L')
 
 
-def _local_thumbnail_plane(channel_file, pyramid=None, rgb=False):
+def _local_thumbnail_plane(channel_file, pyramid=None, rgb=False, index=0):
     """The first channel of a coarse level, off this machine's own disk.
 
     The smallest pyramid level with both SPATIAL dims >= 200 -- the same
@@ -5192,10 +5214,28 @@ def _local_thumbnail_plane(channel_file, pyramid=None, rgb=False):
         return array[0] if array.ndim == 3 else array
     if providers.is_remote_locator(channel_file):
         return _remote_thumbnail_plane(channel_file, pyramid, rgb)
+    from plexora.server.utils import formats
+
+    if formats.handles(channel_file):
+        try:
+            # `index`: which image of a file holding several the project is.
+            opened = formats.open_image(channel_file, extension=pyramid, index=index)
+            try:
+                array = formats.overview_plane(opened)
+                colour = opened.is_color
+            finally:
+                opened.close()
+        except Exception:
+            return None
+        if colour and rgb and array.ndim == 3 and array.shape[0] == 3:
+            return np.ascontiguousarray(np.moveaxis(array, 0, -1))
+        return array[0] if array.ndim == 3 else array
     from plexora.server.utils import tiff_series
 
     try:
-        channel_io = tf.TiffFile(channel_file, is_ome=False)
+        from plexora.server.utils.tiff_series import ImageTiff
+
+        channel_io = ImageTiff(channel_file)
         # Same axes-aware read and same `default=` fallback as
         # LocalImageProvider.open, so a card is drawn for exactly the images
         # the viewer can open. Failure here is still a placeholder icon rather
@@ -5422,8 +5462,10 @@ def _image_channel_stem(filePath):
     """
     return re.sub(
         r'\.ome\.tiff|\.ome\.tif|\.ome\.zarr|\.tiff|\.tif|\.zarr|\.png'
-        r'|\.qptiff|\.svs|\.ndpi|\.scn|\.mrxs|\.bif|\.svslide|\.jpeg|\.jpg'
-        r'|\.dcm|\.dicom|\.ims',
+        r'|\.qptiff|\.svs|\.ndpis|\.ndpi|\.scn|\.mrxs|\.bif|\.svslide|\.jpeg|\.jpg'
+        r'|\.dcm|\.dicom|\.ims'
+        r'|\.czi|\.nd2|\.lif|\.lof|\.xlef|\.vsi|\.oir|\.oib|\.oif'
+        r'|\.dv|\.r3d|\.mcd|\.zvi|\.lsm|\.kfb',
         '', Path(filePath).name, flags=re.IGNORECASE)
 
 
@@ -5669,6 +5711,89 @@ def _convert_dicom_image(filePath, dataDirectory=None, progress_callback=None,
     return channel_info
 
 
+def _convert_format_image(filePath, dataDirectory=None, progress_callback=None,
+                          detection=None, as_brightfield=False, index=0):
+    """`convertOmeTiff`'s image branch for a microscope's or slide scanner's
+    own format (Zeiss CZI, Nikon ND2, Leica LIF, Olympus VSI, ...).
+
+    `_convert_dicom_image`'s shape and for the same reasons: the file says
+    whether its samples are a colour picture, so a channel stack read "as
+    brightfield" is refused rather than served as three borrowed markers, and a
+    colour scan read as fluorescence is its three planes. A file written
+    without a pyramid (ND2, LIF, OIR, DeltaVision) gets its coarse levels
+    derived once into the project folder; a z-stack or time series is recorded
+    as one when its planes can be served from the file
+    (plexora/server/volume/sources/formats.py), and otherwise shows its middle
+    plane.
+
+    `index` is which image of a file holding several (`formats.describe(path)
+    .images`); it is recorded as `imageIndex` only for such a file, so the
+    record of a file holding one image is what it always was.
+    """
+    from plexora.server.utils import formats
+
+    pyramid = formats.open_image(filePath, index=index)
+    try:
+        if as_brightfield and not pyramid.is_color:
+            channels = int(pyramid[0].shape[0])
+            raise ValueError(
+                f"This {pyramid.format_name} image has {channels} channel"
+                f"{'s' if channels != 1 else ''}, not a colour picture, so it cannot "
+                "be read as one colour image. Leave the image type on Auto or "
+                "Fluorescence.")
+        extension = None
+        if dataDirectory and formats.needs_extension(pyramid):
+            extension = formats.build_extension(
+                pyramid, formats.extension_path(dataDirectory),
+                progress_callback=progress_callback)
+            if extension:
+                pyramid.close()
+                pyramid = formats.open_image(filePath, extension=extension, index=index)
+        stem = _image_channel_stem(filePath)
+        several = len(pyramid.reader.images) > 1
+        num_channels = int(pyramid[0].shape[0])
+        channel_info = {
+            'maxLevel': len(pyramid),
+            'tileHeight': brightfield.TILE_SIZE,
+            'tileWidth': brightfield.TILE_SIZE,
+            'height': int(pyramid[0].shape[-2]),
+            'width': int(pyramid[0].shape[-1]),
+            'num_channels': num_channels,
+        }
+        if pyramid.is_color and as_brightfield:
+            channel_info['channel_names'] = [brightfield.RGB_CHANNEL_KEY]
+            channel_info['image_kind'] = brightfield.BRIGHTFIELD
+        else:
+            channel_info['channel_names'] = [f"{stem}_{i}" for i in range(num_channels)]
+            channel_info['image_kind'] = formats.IMAGE_KIND
+        channel_info['focalPlanes'] = int(pyramid.z_count)
+        if pyramid.z_count > 1 or pyramid.t_count > 1:
+            from plexora.server.volume.sources.formats import describe_volume
+
+            try:
+                volume = describe_volume(
+                    pyramid, color=channel_info['image_kind'] == brightfield.BRIGHTFIELD)
+            except Exception:
+                volume = None
+            if volume is not None:
+                channel_info.update(_volume_fields(volume))
+        if detection is not None:
+            channel_info['imageTypeDetected'] = detection.verdict
+            channel_info['imageTypeReason'] = detection.reason
+            channel_info['imageTypeConfidence'] = detection.confidence
+        if several:
+            channel_info['imageIndex'] = int(pyramid.image_index)
+        if extension:
+            channel_info['imagePyramid'] = str(extension)
+            key = segmentation_pyramid.source_fingerprint(filePath)
+            # Another image of the same file is another pyramid.
+            channel_info['imagePyramidKey'] = (f"{key}:image{pyramid.image_index}"
+                                               if key and pyramid.image_index else key)
+        return channel_info
+    finally:
+        pyramid.close()
+
+
 def _convert_remote_tiff_image(filePath, dataDirectory=None, progress_callback=None,
                                detection=None, effective=None, z_semantics=None,
                                t_semantics=None):
@@ -5781,6 +5906,26 @@ def _describe_local_tiff(series, stem_source):
         'width': shape[2],
         'num_channels': shape[0],
         'channel_names': [f"{stem}_{i}" for i in range(shape[0])],
+        'image_kind': 'ome_tiff',
+    }
+
+
+def _describe_chained_tiff(filePath):
+    """`_describe_local_tiff` for a file read through `tiff_region.open_image`
+    (`tiff_series.needs_region_reader`): the geometry of the halving chain its
+    tiles are served on."""
+    from plexora.server.providers.local import image_geometry
+
+    found = image_geometry(filePath)
+    stem = _image_channel_stem(filePath)
+    return {
+        'maxLevel': found['levels'],
+        'tileHeight': found['tile_height'],
+        'tileWidth': found['tile_width'],
+        'height': found['height'],
+        'width': found['width'],
+        'num_channels': found['num_channels'],
+        'channel_names': [f"{stem}_{i}" for i in range(found['num_channels'])],
         'image_kind': 'ome_tiff',
     }
 
@@ -5933,8 +6078,12 @@ def convertOmeTiff(filePath, channelFilePath=None, dataDirectory=None, isLabelIm
                    progress_callback=None, segmentation_mode_=segmentation_pyramid.DEFAULT_MODE,
                    image_type=None, stage_callback=None, label_geometry=None,
                    pyramidize=None, z_semantics=None, t_semantics=None,
-                   image_levels=None):
+                   image_levels=None, image_index=0):
     """What registering an image records about it.
+
+    `image_index` is which image of a microscope file holding several
+    (server/utils/formats: a CZI's scenes, a LIF's images, ...); every other
+    format holds one and ignores it.
 
     `pyramidize` is for a large multiplex TIFF written with one resolution
     level (`image_pyramid.pyramid_gaps`). None and True write a pyramidized
@@ -5996,6 +6145,18 @@ def convertOmeTiff(filePath, channelFilePath=None, dataDirectory=None, isLabelIm
             return _convert_dicom_image(
                 filePath, dataDirectory, progress_callback, detection=detection,
                 as_brightfield=(effective == brightfield.BRIGHTFIELD))
+
+        # A microscope's or slide scanner's own format (server/utils/formats):
+        # it states whether its samples are a colour picture, and the TIFF
+        # detector below cannot open it.
+        from plexora.server.utils import formats
+
+        if formats.handles(filePath):
+            detection = formats.detect_image_type(filePath, index=image_index)
+            effective = image_type or detection.verdict
+            return _convert_format_image(
+                filePath, dataDirectory, progress_callback, detection=detection,
+                as_brightfield=(effective == brightfield.BRIGHTFIELD), index=image_index)
 
         # Detected even when the user has already chosen, so the edit page can
         # show what the file looks like next to what was asked for -- and so a
@@ -6073,6 +6234,13 @@ def convertOmeTiff(filePath, channelFilePath=None, dataDirectory=None, isLabelIm
                     (len(channel_io.series[0].pages), volume.height, volume.width),
                     channel_info['maxLevel'], channel_io.series[0].dtype,
                     planes=volume.depth * volume.frames)
+            elif tiff_series.needs_region_reader(series):
+                # A pyramid that steps by 4, or channels stored as one page's
+                # samples: described as the halving chain the provider serves
+                # (`tiff_region.open_image`), and never copied -- the copy's
+                # builder reads a page per channel.
+                channel_info = _describe_chained_tiff(filePath)
+                gaps = ()
             else:
                 channel_info = _describe_local_tiff(series, filePath)
                 gaps = image_pyramid.pyramid_gaps(
