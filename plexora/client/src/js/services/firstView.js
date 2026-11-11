@@ -41,6 +41,7 @@
  *   begin({file, name})     -> the preview of a File, started now
  *   beginUrl({url, name})   -> a preview image Python made (the local app)
  *   beginZarr({path, fileFor}) -> the preview of an OME-Zarr folder the page holds
+ *   beginRemoteZarr({url})  -> the preview of an OME-Zarr store at a web address (the website)
  *   prefetch(path, file)    -> the file's directories handed to the worker
  *   step(key)               -> a step of the open reached ("viewer": registered)
  *   handOff({leaving, to})  -> kept for the viewer's page, when `leaving` is replaced
@@ -121,6 +122,14 @@
         if (order !== "II" && order !== "MM") return null;
         const le = order === "II";
         const magic = view.getUint16(2, le);
+        // Hamamatsu's NDPI: classic TIFF with 64-bit offsets (the first
+        // directory's at 4, each directory's next after its entries, and the
+        // high half of each entry's value or offset in a block after that),
+        // which tifffile reads for any .ndpi; below 4 GB the low halves alone
+        // happen to be right.
+        if (magic === 42 && le && /\.ndpi$/i.test(io.file.name || "")) {
+            return { le, big: false, ndpi: true, first: Number(view.getBigUint64(4, le)) };
+        }
         if (magic === 42) return { le, big: false, first: view.getUint32(4, le) };
         if (magic === 43) return { le, big: true, first: Number(view.getBigUint64(8, le)) };
         return null;
@@ -136,6 +145,7 @@
         const hv = new DataView(head.buffer, head.byteOffset, head.byteLength);
         const count = tiff.big ? Number(hv.getBigUint64(0, tiff.le)) : hv.getUint16(0, tiff.le);
         if (!count || count > 4096) return null;
+        if (tiff.ndpi) return ndpiDirectory(io, tiff, offset, count);
         const body = await io.at(offset + countBytes, count * entry + (tiff.big ? 8 : 4));
         if (body.length < count * entry) return null;
         const v = new DataView(body.buffer, body.byteOffset, body.byteLength);
@@ -157,10 +167,39 @@
         return { offset, tags, next };
     }
 
+    /**
+     * An NDPI directory: 12-byte entries, the next directory's 64-bit offset,
+     * then each entry's high 32 bits (tifffile's NDPI_LE). A lone LONG or IFD
+     * value is the 64-bit number both halves make (a level's one JPEG strip
+     * past 4 GB); an out-of-line value's offset likewise.
+     */
+    async function ndpiDirectory(io, tiff, offset, count) {
+        const body = await io.at(offset + 2, count * 12 + 8 + count * 4);
+        if (body.length < count * 12 + 8 + count * 4) return null;
+        const v = new DataView(body.buffer, body.byteOffset, body.byteLength);
+        const tags = new Map();
+        for (let i = 0; i < count; i += 1) {
+            const o = i * 12;
+            const tag = v.getUint16(o, true);
+            const type = v.getUint16(o + 2, true);
+            const n = v.getUint32(o + 4, true);
+            const size = TYPE_SIZE[type] || 1;
+            const low = v.getUint32(o + 8, true);
+            const high = v.getUint32(count * 12 + 8 + i * 4, true);
+            // NDPI keeps strings out of line whatever their length (tifffile).
+            const inline = n * size <= 4 && type !== 2;
+            const wide = inline && n === 1 && (type === 4 || type === 13) ? low + high * 2 ** 32 : null;
+            tags.set(tag, { type, n, size, inline, wide, raw: inline ? body.slice(o + 8, o + 12) : null,
+                            at: inline ? null : low + high * 2 ** 32 });
+        }
+        return { offset, tags, next: Number(v.getBigUint64(count * 12, true)) };
+    }
+
     /** A tag's values (numbers; a string for ASCII). */
     async function values(io, tiff, ifd, tag) {
         const t = ifd.tags.get(tag);
         if (!t) return null;
+        if (t.wide != null) return [t.wide];
         const bytes = t.inline ? t.raw : await io.at(t.at, t.n * t.size);
         if (t.type === 2) return new TextDecoder().decode(bytes.subarray(0, t.n)).replace(/\0+$/, "");
         const v = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
@@ -336,8 +375,6 @@
         // scanner's thumbnail sit beside it (SVS, NDPI, SCN, BIF, QPTIFF) --
         // and its preview the smallest directory of its kind and its shape:
         // a reduced level, or the thumbnail, never the label.
-        // NDPI past 4 GB keeps its offsets' high bits elsewhere: not read.
-        if (first.tags.has(65420) && io.file.size > 2 ** 32) return null;
         const seen = [top];
         let next = first.next;
         for (let i = 0; next && i < MAX_WALK; i += 1) {
@@ -702,6 +739,10 @@
 
     let current = null;
     let watch = 0;
+    //: Counted up by every `done`: a first view that waits for its source to
+    //: answer before it shows (an OME-Zarr's metadata, a remote store, a
+    //: folder that may not be an image) shows only if nothing let go since.
+    let generation = 0;
     //: The longest a first view stays up waiting for the viewer, and the
     //: longest a loaded page of the app with no viewer in it is covered.
     const MAX_SHOWN_MS = 180000;
@@ -1134,40 +1175,58 @@
         return { channels, bytes: Number(response.headers.get("X-Plexora-Bytes")) || 0 };
     }
 
+    /** Python's preview answer drawn into `state` (the local app). */
+    async function drawResponse(state, response) {
+        if (current !== state) return;
+        if (response.status !== 200) { done("unreadable"); return; }
+        const { channels, bytes } = previewHeaders(response);
+        const blob = await response.blob();
+        if (current !== state) return;
+        if (channels) paintChannels(state, channels);
+        if (bytes) {
+            state.bytes = bytes;
+            state.box.querySelector(".pfv-steps-head span").textContent = sizeText(bytes);
+        }
+        const img = new Image();
+        img.decoding = "async";
+        const src = URL.createObjectURL(blob);
+        img.onload = () => {
+            URL.revokeObjectURL(src);
+            if (current !== state) return;
+            if (!img.naturalWidth) { done("unreadable"); return; }
+            show(state, img);
+        };
+        img.onerror = () => { URL.revokeObjectURL(src); if (current === state) done("unreadable"); };
+        img.src = src;
+    }
+
     /** Python's preview at `url` drawn into `state` (the local app). */
     function loadUrl(state, url) {
         state.url = url;
-        global.fetch(url, { cache: "no-store" }).then(async (response) => {
-            if (current !== state) return;
-            if (response.status !== 200) { done("unreadable"); return; }
-            const { channels, bytes } = previewHeaders(response);
-            const blob = await response.blob();
-            if (current !== state) return;
-            if (channels) paintChannels(state, channels);
-            if (bytes) {
-                state.bytes = bytes;
-                state.box.querySelector(".pfv-steps-head span").textContent = sizeText(bytes);
-            }
-            const img = new Image();
-            img.decoding = "async";
-            const src = URL.createObjectURL(blob);
-            img.onload = () => {
-                URL.revokeObjectURL(src);
-                if (current !== state) return;
-                if (!img.naturalWidth) { done("unreadable"); return; }
-                show(state, img);
-            };
-            img.onerror = () => { URL.revokeObjectURL(src); if (current === state) done("unreadable"); };
-            img.src = src;
-        }).catch(() => { if (current === state) done("unreadable"); });
+        global.fetch(url, { cache: "no-store" }).then((response) => drawResponse(state, response))
+            .catch(() => { if (current === state) done("unreadable"); });
     }
 
-    /** A preview image Python made from a path (the local app's home page). */
-    function beginUrl({ url, name = "" } = {}) {
+    /**
+     * A preview image Python made from a path (the local app's home page).
+     * `wait`: shown only once Python has one -- a folder that may not be an
+     * image, a web address -- so nothing flashes up for what has none.
+     */
+    function beginUrl({ url, name = "", wait = false } = {}) {
         if (!url || !doc || !doc.body) return null;
-        const state = start(name);
-        loadUrl(state, url);
-        return state;
+        if (!wait) {
+            const state = start(name);
+            loadUrl(state, url);
+            return state;
+        }
+        const asked = generation;
+        global.fetch(url, { cache: "no-store" }).then((response) => {
+            if (generation !== asked || response.status !== 200) return;
+            const state = start(name);
+            state.url = url;
+            drawResponse(state, response);
+        }).catch(() => null);
+        return null;
     }
 
     // -- an OME-Zarr folder (the website's pick) ---------------------------------
@@ -1183,12 +1242,11 @@
     const ZARR_PREFERRED_SIDE = 512;
     const ZARR_TIMEOUT_MS = 30000;
 
-    /** A JSON document of the store, or null. */
+    /** A JSON document of the store, or null. `fileFor` may answer a promise. */
     async function zarrDoc(fileFor, key) {
-        const file = fileFor(key);
-        if (!file) return null;
         try {
-            return JSON.parse(await file.text());
+            const file = await fileFor(key);
+            return file ? JSON.parse(await file.text()) : null;
         } catch (error) {
             return null;
         }
@@ -1264,7 +1322,8 @@
             worker.onmessage = (event) => {
                 const data = event.data || {};
                 if (data.ask !== undefined) {
-                    worker.postMessage({ answer: data.ask, file: fileFor(data.path) || null });
+                    Promise.resolve().then(() => fileFor(data.path)).catch(() => null)
+                        .then((file) => worker.postMessage({ answer: data.ask, file: file || null }));
                     return;
                 }
                 const pending = calls.get(data.id);
@@ -1278,8 +1337,11 @@
             const x = level.axes.indexOf("x");
             const height = level.shape[y];
             const width = level.shape[x];
+            // A volume's middle plane, the one the viewer opens on (volume/model.py).
+            const zAxis = level.axes.indexOf("z");
+            const z = zAxis >= 0 ? Math.floor(level.shape[zAxis] / 2) : 0;
             call("open", { store: { page: root }, zarr: { arrays: [{ path: level.path, shape: level.shape, format: level.format }],
-                                                          axes: level.axes, t: 0, z: 0 } })
+                                                          axes: level.axes, t: 0, z } })
                 .then(() => call("tile", { channel: 0, level: 0, tx: 0, ty: 0, tw: width, th: height, raw: true }))
                 .then((got) => {
                     const bytes = got.array;
@@ -1295,34 +1357,77 @@
     }
 
     /**
-     * The preview of an OME-Zarr folder the page holds (the website's pick,
-     * mounted at `path`; `fileFor(path)` -> the File at a path under it, or
-     * null): its smallest level's first channel, read in the page.
+     * The preview of an OME-Zarr store: a folder the page holds (the
+     * website's pick, mounted at `path`; `fileFor(path)` -> the File at a path
+     * under it, or null) or, with `beginRemoteZarr`, one at a web address. Its
+     * metadata is read first and the frame shown only for an OME-Zarr image,
+     * so a folder or an address that is something else shows nothing.
      */
     function beginZarr({ path, fileFor, name = "" } = {}) {
         if (!path || typeof fileFor !== "function" || !doc || !doc.body) return null;
         const root = String(path).replace(/\/+$/, "");
-        const state = start(name || root.split("/").pop());
+        const asked = generation;
         const started = performance.now();
         zarrLevel(fileFor, root).then(async (level) => {
-            if (current !== state) return;
-            if (!level) throw new Error("not an OME-Zarr image");
+            if (!level || generation !== asked) return;
             const y = level.axes.indexOf("y");
             const x = level.axes.indexOf("x");
-            if (y !== level.axes.length - 2 || x !== level.axes.length - 1) throw new Error("the axes do not end y, x");
-            if (Math.max(level.shape[y], level.shape[x]) > MAX_ZARR_SIDE) throw new Error("smallest level too large for a preview");
+            if (y !== level.axes.length - 2 || x !== level.axes.length - 1) return;
+            if (Math.max(level.shape[y], level.shape[x]) > MAX_ZARR_SIDE) return;
+            const state = start(name || root.split("/").pop());
             paintChannels(state, level.channels);
-            const plane = await readZarrLevel(root, level, fileFor);
-            if (current !== state) return;
-            global.__plexoraFirstView = { ...(global.__plexoraFirstView || {}), readMs: Math.round(performance.now() - started),
-                                          layout: "zarr", size: [plane.width, plane.height] };
-            show(state, picture(plane));
-        }).catch((error) => {
-            if (current !== state) return;
-            global.__plexoraFirstView = { ...(global.__plexoraFirstView || {}), failed: String(error && error.message || error) };
-            done("unreadable");
-        });
-        return state;
+            try {
+                const plane = await readZarrLevel(root, level, fileFor);
+                if (current !== state) return;
+                global.__plexoraFirstView = { ...(global.__plexoraFirstView || {}),
+                                              readMs: Math.round(performance.now() - started),
+                                              layout: "zarr", size: [plane.width, plane.height] };
+                show(state, picture(plane));
+            } catch (error) {
+                if (current !== state) return;
+                global.__plexoraFirstView = { ...(global.__plexoraFirstView || {}),
+                                              failed: String(error && error.message || error) };
+                done("unreadable");
+            }
+        }).catch(() => null);
+        return null;
+    }
+
+    /**
+     * The address the page fetches for a key of a store at a web address,
+     * as the website's Python reads it (plexora/browser/buckets.py): https
+     * as it is, s3:// at the bucket's virtual host, gs:// through Google's
+     * JSON API (its XML host answers a page only where the bucket allows it).
+     * Null for anything else, and for a signed address (its query is the
+     * root's alone).
+     */
+    function remoteAddress(address) {
+        const text = String(address || "");
+        if (text.includes("?")) return null;
+        const match = /^([a-z0-9]+):\/\/([^/]+)\/?(.*)$/i.exec(text);
+        if (!match) return null;
+        const scheme = match[1].toLowerCase();
+        const key = match[3];
+        const encoded = key.split("/").map(encodeURIComponent).join("/");
+        if (scheme === "https" || scheme === "http") return text;
+        if (scheme === "s3" || scheme === "s3a") return `https://${match[2]}.s3.amazonaws.com/${encoded}`;
+        if (scheme === "gs" || scheme === "gcs") {
+            return `https://storage.googleapis.com/storage/v1/b/${encodeURIComponent(match[2])}/o/${encodeURIComponent(key)}?alt=media`;
+        }
+        return null;
+    }
+
+    /** The preview of an OME-Zarr store at a web address (the website), read by the page. */
+    function beginRemoteZarr({ url, name = "" } = {}) {
+        const root = String(url || "").trim().replace(/\/+$/, "");
+        if (!remoteAddress(root)) return null;
+        const fileFor = async (path) => {
+            const address = remoteAddress(path);
+            if (!address) return null;
+            const response = await global.fetch(address, { credentials: "omit" });
+            return response.ok ? response.blob() : null;
+        };
+        return beginZarr({ path: root, fileFor, name: name || root.split("/").pop() });
     }
 
     /** Step `key` of the open reached (the import's own news: "viewer" when it has registered). */
@@ -1410,6 +1515,7 @@
 
     /** The preview let go: faded out and removed. */
     function done(reason = "") {
+        generation += 1;
         const state = current;
         if (!state) return;
         current = null;
@@ -1475,7 +1581,7 @@
     }
 
     global.PlexoraFirstView = Object.freeze({
-        begin, beginUrl, beginZarr, done, prefetch, offsetsFor, step, handOff, resume,
+        begin, beginUrl, beginZarr, beginRemoteZarr, done, prefetch, offsetsFor, step, handOff, resume,
         active: () => Boolean(current),
         // For tests (tests/js/first_view_probe.mjs).
         _read: read,
@@ -1483,6 +1589,7 @@
         _jpegStream: jpegStream,
         _jpegBlock: jpegBlock,
         _zarrLevel: zarrLevel,
+        _remoteAddress: remoteAddress,
     });
 
     // The local app's viewer page takes up the first view its home page

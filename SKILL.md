@@ -1728,8 +1728,11 @@ Entry points:
   (`_PREVIEW_TIFF_SUFFIXES`: OME-TIFF, QPTIFF, SVS, NDPI, SCN, BIF; a Leica
   SCN's largest series, since its first is often the slide's macro; a slide
   whose pyramid stops above `_PREVIEW_MAX_SIDE` 4096 shows its thumbnail) and
-  OME-Zarr folders (`_zarr_preview`: the smallest level at least
-  `_PREVIEW_ZARR_SIDE` 512 a side, else the largest up to 4096, as
+  OME-Zarr stores -- a folder named `.zarr` or not, or a web address read as
+  the import reads it -- resolved as the import resolves one
+  (`resolve_image_path`: bioformats2raw's series, SpatialData's image)
+  (`_zarr_preview`: the smallest level at least `_PREVIEW_ZARR_SIDE` 512 a
+  side, else the largest up to 4096, a volume's middle plane, as
   `firstView.js` chooses). `X-Plexora-Channels` carries `{count, names, rgb}`
   for the frame's channel list (OME-XML names and SizeC, a QPTIFF's
   per-page biomarkers, a Zarr store's omero labels; `rgb` for interleaved
@@ -6813,7 +6816,8 @@ deliberately left out and what should be built next.
   the moment it is given to the home page**: channel 0's smallest pyramid
   level, read by the page itself from the dropped File (the header, the
   directories down to that level, its tile or two -- 10 reads for LSP26261,
-  61 for `1_750`), decoded (none, LZW, deflate, predictor 2; JPEG --
+  61 for `1_750`; NDPI's 64-bit offsets in a classic TIFF, the high halves
+  after each directory, for any `.ndpi`, as tifffile's `NDPI_LE`), decoded (none, LZW, deflate, predictor 2; JPEG --
   compression 7, JPEGTables, an Adobe APP14 marker added for Aperio's RGB --
   by the browser's `createImageBitmap`; at most `MAX_TILES` 256), windowed
   from its own pixels and drawn inside a frame of the viewer it turns into:
@@ -6827,9 +6831,17 @@ deliberately left out and what should be built next.
   directory is walked and the image is the largest, its preview the
   smallest directory of the same kind and shape -- a slide's reduced level
   or thumbnail, never its label or macro. An OME-Zarr folder picked on the
-  website (`beginZarr`) is read through the reader worker
-  (`dist/tiffWorker_bundle.js`, `node/zarrReader.js`) at the same level
-  `/import/preview` chooses. Because everything between a drop and the first tile
+  website (`beginZarr`, named `.zarr` or holding `.zattrs`/`zarr.json`, at
+  the root or bioformats2raw's `0/`) or at a web address
+  (`beginRemoteZarr`: https as it is, s3:// at the bucket's virtual host,
+  gs:// through Google's JSON API, as `browser/buckets.py`; the page's own
+  `fetch`, so the host must allow CORS) is read through the reader worker
+  (`dist/tiffWorker_bundle.js`, `node/zarrReader.js`) at the level and the
+  plane (a volume's middle) `/import/preview` chooses; its metadata is read
+  before the frame shows, and a store or folder that is not an image shows
+  nothing (`generation`, counted up by `done`, drops a start the import has
+  moved past). `beginUrl({wait: true})` does the same for the local app's
+  folders whose name says nothing and its web addresses. Because everything between a drop and the first tile
   was Python's, one step after another: 23 s for a 106 GB OME-TIFF from
   Downloads, over ten minutes from a file share. A pyramid in SubIFDs is
   named by directory 0; one in the main chain is found level by level, each
@@ -6850,11 +6862,15 @@ deliberately left out and what should be built next.
   `/import/preview` again when the picture was not in yet;
   `quickViewLanding.js` says `step("viewer")` and hands over before it
   navigates, and previews what `PREVIEWED` matches (the TIFF family and
-  `.zarr`; `ZARR_PATH` sends a website pick to `beginZarr`). A first load
+  `.zarr`) at once, and a folder whose name says nothing (`mayBeFolder`) or
+  a web address that may be a store (`mayBeStore`) once Python has a picture;
+  on the website a pick named `.zarr` or holding `ZARR_MARKERS` goes to
+  `beginZarr` and a web address to `beginRemoteZarr`. A first load
   selects slot 1, the channel on screen (`views/viewerSidebar.js`
   `resolveSelectedSlot` falls back to the first shown channel, no longer
   slot 2), so the contrast bar edits what is seen. `begin({file, name})`,
-  `beginUrl({url, name})`, `beginZarr({path, fileFor})`, `prefetch(path,
+  `beginUrl({url, name, wait})`, `beginZarr({path, fileFor})`,
+  `beginRemoteZarr({url})`, `prefetch(path,
   file)`, `step(key)`, `handOff({leaving, to})`, `resume()`,
   `done(reason)`, `active()`; how it ended goes to
   `window.__plexoraFirstView`. Pinned by `tests/test_first_view.py` (its
@@ -11420,7 +11436,11 @@ tables in JPEGTables and component ids 0,1,2; an Akoya-like QPTIFF). The
 boundary goldens carry the `20261111_first_load` tags. Commit `de73350b`
 (the frame, the handover, the slot-1 fallback) reported **11659 passed, 0
 failed, 137 skipped** in the worktree; with the slide, OME-Zarr and Blosc
-work after it, **11668 passed, 0 failed, 137 skipped** (2026-11-11, macOS).
+work after it, **11668 passed, 0 failed, 137 skipped**; with NDPI past
+4 GB, remote and unnamed OME-Zarr stores after that, **11676 passed, 0
+failed, 137 skipped** (2026-11-11, macOS). `write_ndpi_like(beyond=...)`
+writes a sparse file past 4 GB: its tests skip on Windows. The route's web
+address cases serve a store with `tests/remote_fixtures.py`'s `http_store`.
 
 **The desktop app has its own validation, outside pytest:**
 

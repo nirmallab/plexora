@@ -155,3 +155,78 @@ def write_qptiff_like(path, names=("DAPI", "CD8", "PanCK"), size=256, seed=0):
             tif.write(reduced[channel], tile=(64, 64), description=_qpi("ReducedResolution", name),
                       software="PerkinElmer-QPI", subfiletype=1, metadata=None)
     return stack, reduced
+
+
+def _full_jpeg(picture):
+    """A whole JFIF stream (YCbCr, its own tables): what an NDPI strip is."""
+    from PIL import Image
+
+    buffer = io.BytesIO()
+    Image.fromarray(picture).save(buffer, "JPEG", quality=95, subsampling=0)
+    return buffer.getvalue()
+
+
+def write_ndpi_like(path, *, beyond=0, jpeg=True, height=384, width=512, seed=0):
+    """A Hamamatsu-like NDPI, written by hand: classic little-endian TIFF with
+    NDPI's 64-bit offsets (the first directory's 8 bytes at 4; each
+    directory's 12-byte entries, its next directory's 8-byte offset, then each
+    entry's high 32 bits). Three images, one strip each: level 0, a reduced
+    level, and a macro of another shape. `beyond` bytes of hole (a sparse
+    file) before the reduced level put it and its directory past 4 GB, as in
+    a large slide. Returns the pictures by name."""
+    import struct
+
+    pictures = {
+        "level0": slide_picture(height, width, seed),
+        "level1": slide_picture(height // 4, width // 4, seed),
+        "macro": slide_picture(40, 120, seed + 2),
+    }
+    magnification = {"level0": 20.0, "level1": 5.0, "macro": -1.0}
+
+    def entry(tag, kind, count, value):
+        return (tag, kind, count, value)
+
+    ifds = []
+    with open(path, "wb") as out:
+        out.write(b"II" + struct.pack("<H", 42) + struct.pack("<Q", 0))  # first offset patched below
+        for name in ("level0", "macro", "level1"):
+            picture = pictures[name]
+            if name == "level1" and beyond:
+                out.seek(beyond, 1)
+            data = _full_jpeg(picture) if jpeg else picture.tobytes()
+            data_at = out.tell()
+            out.write(data)
+            bits_at = out.tell()
+            out.write(struct.pack("<3H", 8, 8, 8))
+            make_at = out.tell()
+            out.write(b"Hamamatsu\0")                      # NDPI keeps strings out of line
+            h, w = picture.shape[:2]
+            tags = [
+                entry(256, 4, 1, w), entry(257, 4, 1, h), entry(258, 3, 3, bits_at),
+                entry(259, 3, 1, 7 if jpeg else 1), entry(262, 3, 1, 6 if jpeg else 2),
+                entry(271, 2, 10, make_at),
+                entry(273, 4, 1, data_at), entry(277, 3, 1, 3), entry(278, 4, 1, h),
+                entry(279, 4, 1, len(data)), entry(65420, 4, 1, 1),
+                entry(65421, 11, 1, struct.unpack("<I", struct.pack("<f", magnification[name]))[0]),
+            ]
+            ifd_at = out.tell()
+            body = struct.pack("<H", len(tags))
+            highs = b""
+            for tag, kind, count, value in tags:
+                if kind == 3 and count == 1:
+                    field = struct.pack("<HH", value, 0)
+                    high = 0
+                else:
+                    field = struct.pack("<I", value & 0xFFFFFFFF)
+                    high = value >> 32
+                body += struct.pack("<HHI", tag, kind, count) + field
+                highs += struct.pack("<I", high)
+            next_at = ifd_at + len(body)
+            out.write(body + struct.pack("<Q", 0) + highs)
+            ifds.append((ifd_at, next_at))
+        out.seek(4)
+        out.write(struct.pack("<Q", ifds[0][0]))
+        for (_, next_at), (following, _) in zip(ifds, ifds[1:]):
+            out.seek(next_at)
+            out.write(struct.pack("<Q", following))
+    return pictures

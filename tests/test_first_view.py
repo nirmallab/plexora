@@ -17,6 +17,7 @@ import hashlib
 import json
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 
 import numpy as np
@@ -246,3 +247,74 @@ def test_an_ome_zarr_folder_names_its_smallest_level_and_its_channels(tmp_path, 
     assert got["path"] == "2" and got["shape"] == [1, 512, 512]
 
     assert _probe_args("--zarr", tmp_path / "missing.zarr") is None
+
+
+needs_sparse = pytest.mark.skipif(sys.platform == "win32",
+                                  reason="a 4 GB file is sparse here only where the file system makes it so")
+
+
+@needs_sparse
+def test_an_ndpi_past_4_gb_is_read_at_its_64_bit_offsets(tmp_path):
+    """NDPI keeps 64-bit offsets in a classic TIFF: the high half of each
+    entry's value after the directory. A reduced level and its directory past
+    4 GB (a sparse hole before them) are read where tifffile reads them."""
+    import base64
+    from io import BytesIO
+
+    from PIL import Image
+
+    from tests.slide_fixtures import write_ndpi_like
+
+    raw = tmp_path / "raw.ndpi"
+    pictures = write_ndpi_like(raw, beyond=2**32 + 999, jpeg=False)
+    with tifffile.TiffFile(raw) as tif:
+        assert tif.is_ndpi and tif.pages[2].dataoffsets[0] > 2**32
+    [got] = _probe(raw)
+    assert "error" not in got, got
+    assert (got["height"], got["width"], got["samples"]) == pictures["level1"].shape
+    assert got["sha256"] == _sha(pictures["level1"])
+
+    jpeg = tmp_path / "jpeg.ndpi"
+    write_ndpi_like(jpeg, beyond=2**32 + 12345, jpeg=True)
+    got = _probe_args("--jpeg", jpeg)
+    assert "error" not in got, got
+    with tifffile.TiffFile(jpeg) as tif:
+        expected = tif.pages[2].asarray().astype(int)
+    with Image.open(BytesIO(base64.b64decode(got["stream"]))) as decoded:
+        strip = np.asarray(decoded.convert("RGB")).astype(int)
+    assert strip.shape == expected.shape
+    assert np.abs(strip - expected).mean() < 2
+
+
+def test_an_ome_zarr_folder_is_one_whatever_its_name(tmp_path):
+    from tests.ngff_fixtures import write_ngff
+
+    store = write_ngff(tmp_path / "sample_7", shape=(2, 128, 128), levels=2, labels=["DAPI", "CD8"])
+    got = _probe_args("--zarr", store)
+    assert got["shape"] == [2, 128, 128] and got["channels"]["names"] == ["DAPI", "CD8"]
+
+
+def test_a_volumes_level_is_named_with_its_depth(tmp_path):
+    """The reader worker is asked for the middle plane of a z-stack (the plane
+    the viewer opens on); what the page reads of the store says its depth."""
+    from tests.ngff_fixtures import write_ngff
+
+    store = write_ngff(tmp_path / "volume.ome.zarr", shape=(2, 9, 64, 64), axes="czyx", levels=1)
+    got = _probe_args("--zarr", store)
+    assert got["axes"] == ["c", "z", "y", "x"] and got["shape"] == [2, 9, 64, 64]
+
+
+def test_a_remote_stores_keys_are_fetched_where_the_websites_python_reads_them():
+    got = _probe_args("--address",
+                      "https://uk1s3.embassy.ebi.ac.uk/idr/zarr/v0.4/idr0062A/6001240.zarr/.zattrs",
+                      "s3://lin-2023-orion-crc/data/P37 S29/image.ome.zarr/0/.zarray",
+                      "gs://idc-open-data/x/y.zarr/zarr.json",
+                      "https://host/a.zarr/.zattrs?X-Amz-Signature=1",
+                      "sftp://host/a.zarr/.zattrs")
+    assert got == [
+        "https://uk1s3.embassy.ebi.ac.uk/idr/zarr/v0.4/idr0062A/6001240.zarr/.zattrs",
+        "https://lin-2023-orion-crc.s3.amazonaws.com/data/P37%20S29/image.ome.zarr/0/.zarray",
+        "https://storage.googleapis.com/storage/v1/b/idc-open-data/o/x%2Fy.zarr%2Fzarr.json?alt=media",
+        None,
+        None,
+    ]

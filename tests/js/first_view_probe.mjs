@@ -5,10 +5,11 @@
 // tests/test_first_view.py to hold against tifffile's own reading.
 // `--jpeg FILE` prints the smallest level's first block as the stream the
 // page hands the browser's JPEG decoder (base64; Node has no decoder), and
-// `--zarr DIR` what the page reads of an OME-Zarr folder's metadata.
+// `--zarr DIR` what the page reads of an OME-Zarr folder's metadata, and
+// `--address A ...` what the page fetches for each key of a remote store.
 //
 //   node tests/js/first_view_probe.mjs FILE [FILE ...]   (from the repository root)
-//   node tests/js/first_view_probe.mjs --jpeg FILE | --zarr DIR
+//   node tests/js/first_view_probe.mjs --jpeg FILE | --zarr DIR | --address A ...
 import { createHash } from "node:crypto";
 import { closeSync, existsSync, fstatSync, openSync, readFileSync, readSync, statSync } from "node:fs";
 import vm from "node:vm";
@@ -53,6 +54,10 @@ if (args[0] === "--jpeg") {
         console.log(JSON.stringify({ error: String(error && error.message || error) }));
     }
     closeSync(file.fd);
+    process.exit(0);
+}
+if (args[0] === "--address") {
+    console.log(JSON.stringify(args.slice(1).map((address) => context.PlexoraFirstView._remoteAddress(address))));
     process.exit(0);
 }
 if (args[0] === "--zarr") {

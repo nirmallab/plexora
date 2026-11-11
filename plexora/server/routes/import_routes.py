@@ -193,7 +193,9 @@ def import_preview():
     page shows the moment Load is pressed, while the import goes on
     (services/firstView.js). The TIFF family (`_PREVIEW_TIFF_SUFFIXES`; a
     slide whose smallest level is too large shows its thumbnail) and OME-Zarr
-    folders. 204 for anything it does not read -- not one of those on this
+    stores -- a folder, named `.zarr` or not, or a web address, resolved as
+    the import resolves one (bioformats2raw's series, SpatialData's image).
+    204 for anything it does not read -- not one of those on this
     machine, a pyramid that stops large, samples it cannot window -- and the
     page then shows the import's own progress, as before. Reads the file's
     directories and one small plane: 0.1-0.5 s for a 106 GB slide, local or
@@ -206,10 +208,12 @@ def import_preview():
     from flask import Response
 
     raw = (request.args.get('path') or '').strip()
-    if not raw or '://' in raw:
+    if not raw:
         return Response(status=204)
     try:
-        if os.path.isdir(raw):
+        if '://' in raw or os.path.isdir(raw):
+            # A folder, or a store at a web address (s3://, gs://, https://...,
+            # read as the import reads it): an OME-Zarr image, or nothing.
             got = _zarr_preview(raw)
         elif raw.lower().endswith(_PREVIEW_TIFF_SUFFIXES) and os.path.isfile(raw):
             got = _tiff_preview(raw)
@@ -296,15 +300,17 @@ def _tiff_preview(raw):
 
 
 def _zarr_preview(raw):
-    """(picture, channels, size) of an OME-Zarr folder, or None: channel 0 of
-    a small level, its names from the store's omero metadata."""
+    """(picture, channels, size) of an OME-Zarr store (a folder or a web
+    address), or None: channel 0 of a small level, its names from the store's
+    omero metadata."""
     import numpy as np
 
     from plexora.server.utils import ome_zarr
 
     if not ome_zarr.is_zarr_image_path(raw):
         return None
-    pyramid = ome_zarr.open_image(raw)
+    image = ome_zarr.resolve_image_path(raw)
+    pyramid = ome_zarr.open_image(image)
     # The smallest level at least _PREVIEW_ZARR_SIDE a side, else the largest
     # up to _PREVIEW_MAX_SIDE: a store's pyramid often goes down to a hundred
     # pixels (firstView.js chooses the same).
@@ -316,8 +322,13 @@ def _zarr_preview(raw):
     shape = tuple(int(side) for side in level.shape)
     if max(shape[-2:]) > _PREVIEW_MAX_SIDE:
         return None
+    if 'z' in pyramid.axes:
+        # A volume's middle plane, the one the viewer opens on (volume/model.py).
+        depth = int(getattr(level, '_array', level).shape[list(pyramid.axes).index('z')])
+        if depth > 1:
+            level = ome_zarr.open_image(image, z=depth // 2)[index]
     picture = _windowed(np.asarray(level[0]))
-    names = ome_zarr.channel_labels(raw, shape[0]) or []
+    names = ome_zarr.channel_labels(image, shape[0]) or []
     return picture, {'count': shape[0], 'names': [str(name or '') for name in names[:_PREVIEW_MAX_NAMES]]}, 0
 
 
