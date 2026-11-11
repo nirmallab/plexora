@@ -69,6 +69,8 @@ CHECKS = (
     "Chrome and Edge open the explorer over the folders given, and mount what it answers",
     "a box says what it will not take from a drop, by its names, before reading it",
     "a file let go anywhere but a box that takes it is refused, not opened in place of the app",
+    "...in the local app opened in a browser tab too, but not in the desktop app",
+    "...and a file input, which the browser fills from a drop itself, is left alone",
 )
 
 

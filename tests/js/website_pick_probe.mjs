@@ -729,7 +729,7 @@ await check("a DICOM folder remembered is mounted again as its instances, not th
 // -- browsePicker.js on the website ---------------------------------------------------------------
 
 /** browsePicker.js in an app page of the website, with stand-ins for what it calls. */
-function bootPage({ local = null, explorer = null } = {}) {
+function bootPage({ local = null, explorer = null, backend = "browser", desktop = null } = {}) {
     const calls = { pick: [], chooseKind: [], take: [], explorer: [] };
     const listeners = new Map();
     const document = {
@@ -740,7 +740,8 @@ function bootPage({ local = null, explorer = null } = {}) {
     const context = {
         console, Promise, Object, Array, Map, Set, JSON, Error, String, Number, Boolean, setTimeout, Intl, Date,
         document,
-        PlexoraBackend: { kind: "browser" },
+        PlexoraBackend: { kind: backend },
+        PlexoraDesktop: desktop,
         PlexoraPicks: {
             pick: async (options) => { calls.pick.push(options); return "/picked/aa/x"; },
             take: () => Promise.resolve([]),
@@ -836,6 +837,46 @@ await check("a file let go anywhere but a box that takes it is refused, not open
     prevented = false;
     page.listeners.get("dragover")({ ...event, dataTransfer: { types: ["text/plain"] }, preventDefault() { prevented = true; } });
     assert.equal(prevented, false);
+});
+
+await check("...in the local app opened in a browser tab too, but not in the desktop app", async () => {
+    const files = () => ({ defaultPrevented: false, dataTransfer: { types: ["Files"], dropEffect: "copy" },
+                           prevented: false, preventDefault() { this.prevented = true; } });
+    const local = bootPage({ backend: "server" });
+    const over = files();
+    local.listeners.get("dragover")(over);
+    assert.equal(over.prevented, true);
+    assert.equal(over.dataTransfer.dropEffect, "none");
+    const drop = files();
+    local.listeners.get("drop")(drop);
+    assert.equal(drop.prevented, true);
+    // A zone that took the drag is left to it.
+    const taken = { ...files(), defaultPrevented: true };
+    local.listeners.get("dragover")(taken);
+    assert.equal(taken.dataTransfer.dropEffect, "copy");
+    // The desktop app's drops are paths; its window never opens a file.
+    const desktop = bootPage({ backend: "server", desktop: { platform: "darwin" } });
+    assert.equal(desktop.listeners.has("dragover"), false);
+    assert.equal(desktop.listeners.has("drop"), false);
+});
+
+await check("...and a file input, which the browser fills from a drop itself, is left alone", async () => {
+    for (const backend of ["browser", "server"]) {
+        const page = bootPage({ backend });
+        const input = { tagName: "INPUT", type: "file" };
+        let prevented = false;
+        const event = { target: input, defaultPrevented: false,
+                        dataTransfer: { types: ["Files"], dropEffect: "copy" },
+                        preventDefault() { prevented = true; } };
+        page.listeners.get("dragover")(event);
+        page.listeners.get("drop")(event);
+        assert.equal(prevented, false, backend);
+        assert.equal(event.dataTransfer.dropEffect, "copy", backend);
+        // Any other input is not one.
+        const text = { ...event, target: { tagName: "INPUT", type: "text" } };
+        page.listeners.get("dragover")(text);
+        assert.equal(prevented, true, backend);
+    }
 });
 
 await settle();
