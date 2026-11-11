@@ -461,6 +461,11 @@ PlexoraPage.register(function () {
             if (!response.ok || result.error) {
                 throw new Error(result.error || "Could not load that image.");
             }
+            // Registered: the first view says the viewer is next, and, where
+            // this page is about to be replaced by the viewer's (the local
+            // app), is kept for the viewer's page to take up.
+            preview?.step?.("viewer");
+            preview?.handOff?.({leaving: document, to: result.redirect});
             PlexoraRouter.go(result.redirect);
         } catch (error) {
             preview?.done?.("error");
@@ -480,7 +485,8 @@ PlexoraPage.register(function () {
      */
     async function firstView(path) {
         try {
-            const file = window.PlexoraPicks?.fileFor?.(path) || null;
+            const picks = window.PlexoraPicks;
+            const file = picks?.fileFor?.(path) || null;
             if (file) {
                 const preview = window.PlexoraFirstView;
                 if (!preview) return null;
@@ -489,15 +495,55 @@ PlexoraPage.register(function () {
                 return preview;
             }
             const website = typeof onWebsite === "function" && onWebsite();
-            if (website || isWebAddress(path) || !/\.(ome\.)?tiff?$/i.test(path)) return null;
+            const web = isWebAddress(path);
+            if (website) {
+                const preview = window.PlexoraFirstView;
+                if (!preview) return null;
+                if (preview.active()) return preview;
+                // A picked OME-Zarr folder, named so or not: read by the page,
+                // file by file. A store at a web address: fetched by the page.
+                const folder = path.replace(/\/+$/, "");
+                if (!web && picks?.fileFor && (ZARR_PATH.test(folder)
+                                       || ZARR_MARKERS.some((marker) => picks.fileFor(`${folder}/${marker}`)))) {
+                    preview.beginZarr?.({path: folder, fileFor: (at) => picks.fileFor(at), name: opening});
+                    return preview;
+                }
+                if (web && mayBeStore(path)) {
+                    preview.beginRemoteZarr?.({url: path, name: opening});
+                    return preview;
+                }
+                return null;
+            }
+            // The local app: Python's preview of the TIFF family and of
+            // OME-Zarr folders at once; of a folder whose name says nothing,
+            // and of a store at a web address, once Python has one.
+            const named = !web && PREVIEWED.test(path);
+            if (!named && !(web ? mayBeStore(path) : mayBeFolder(path))) return null;
             const preview = await loadFirstView();
             preview?.beginUrl?.({url: `${plexoraUrl("import/preview")}?path=${encodeURIComponent(path)}`,
-                                 name: opening});
+                                 name: opening, wait: !named});
             return preview;
         } catch (error) {
             return null;
         }
     }
+
+    //: What the local app's preview route reads (import_routes.import_preview):
+    //: the TIFF family -- OME-TIFF, QPTIFF and the TIFF-based slides -- and
+    //: OME-Zarr folders.
+    const PREVIEWED = /\.(ome\.)?tiff?$|\.(qptiff|svs|ndpi|scn|bif)$|\.zarr\/?$/i;
+    const ZARR_PATH = /\.zarr\/?$/i;
+    //: What marks a folder as an OME-Zarr image whatever its name (zarr v2 and
+    //: v3, and bioformats2raw's layout with the image at "0").
+    const ZARR_MARKERS = [".zattrs", "zarr.json", "0/.zattrs", "0/zarr.json"];
+    //: The last part of a path: a name ending in an extension is a file.
+    const lastPart = (path) => String(path).split("?")[0].replace(/[\\/]+$/, "").split(/[\\/]/).pop() || "";
+    const hasExtension = (path) => /\.[a-z0-9]{1,8}$/i.test(lastPart(path));
+    //: A web address that may be an OME-Zarr store: named so, or named
+    //: like a folder (its metadata then says).
+    const mayBeStore = (url) => /\.zarr(\/|$)/i.test(String(url).split("?")[0]) || !hasExtension(url);
+    //: A local path that may be a folder: Python's preview says whether it is an image.
+    const mayBeFolder = (path) => /[\\/]$/.test(path) || !hasExtension(path);
 
     //: The local app's home page loads the preview module when first wanted.
     let firstViewLoading = null;
@@ -506,7 +552,7 @@ PlexoraPage.register(function () {
         if (!firstViewLoading) {
             firstViewLoading = new Promise((resolve) => {
                 const script = document.createElement("script");
-                script.src = `${window.PLEXORA_BASE_URL || ""}/client/src/js/services/firstView.js`;
+                script.src = `${window.PLEXORA_BASE_URL || ""}/client/src/js/services/firstView.js?v=20261111_first_load`;
                 script.onload = () => resolve(window.PlexoraFirstView || null);
                 script.onerror = () => resolve(null);
                 document.head.appendChild(script);

@@ -186,6 +186,8 @@ while (Date.now() < deadline) {
     }
     await page.waitForTimeout(250);
 }
+// How the first view ended, or why it never showed (`failed`, `endedBy`).
+steps.firstView = await page.evaluate(() => window.__plexoraFirstView || null).catch(() => null);
 // The person reaches for the image at once: zoom in, three more channels on,
 // then zoom to full resolution, then pan -- each timed until the viewer has
 // stopped moving and every channel shown is fully drawn.

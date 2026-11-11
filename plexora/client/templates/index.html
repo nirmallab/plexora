@@ -514,6 +514,10 @@
    which is the whole reason it sits above rather than in base.html with the
    other services. Viewer-only: no other page has the element. #}
 <script src="{{ data.base_url }}/client/src/js/services/viewerLoader.js?v=20260915_center_loader" defer></script>
+{# The first view the home page handed over (services/firstView.js resume):
+   the preview in the viewer's canvas, with the open's steps, until the
+   viewer has drawn the image. #}
+<script src="{{ data.base_url }}/client/src/js/services/firstView.js?v=20261111_first_load" defer></script>
 {# What was on screen (viewport, zoom, HD mode, channels), captured and put
    back -- regions remember the view they were drawn under -- and magic
    select's client (click an artifact, get its outline; sets itself up once).
@@ -843,6 +847,6 @@
         {% endif %}
     </div>
 </div>
-<script src="{{ data.base_url }}/client/src/js/views/quickViewLanding.js?v=20261110_instant_first_view" defer></script>
+<script src="{{ data.base_url }}/client/src/js/views/quickViewLanding.js?v=20261111_first_load" defer></script>
 {% endif %}
 {% endblock %}
