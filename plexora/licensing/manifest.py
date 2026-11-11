@@ -53,10 +53,13 @@ root and per plugin on admin.biocognia.com (Licensing › Features), Plexora 3D
 (`volume`) and Video Studio (`plugin:video_studio`) off since 2026-11-11. That
 is the platform's to say, not this file's: Pro still names them, the plan
 still grants them, and the certificate leaves them out, so they come back on
-every licence the moment staff switch them on. What Plexora says follows the
-platform's public switches (`switches.py`): a held-back feature is not listed
-as included or not (`unlocks(held=...)`, `pro_words(held=...)`), and a refusal
-of one offers no trial and no price (`guards`).
+every licence the moment staff switch them on. A licence's own switch wins:
+staff can give one licence early access to a held-back feature on its licence
+page, and its certificate then carries it like any other grant. What Plexora
+says follows the platform's public switches (`switches.py`): a held-back
+feature is not listed as included or not unless this licence has it
+(`unlocks(held=...)`, `pro_words(held=...)`), and a refusal of one offers no
+trial and no price (`guards`).
 
 Some roots are off by default (`OFF_BY_DEFAULT`): not part of Pro or its
 trial, never sold, and turned on for a licence by an administrator, on the
@@ -296,11 +299,14 @@ def unlocks(entitlements, *, paid: bool, held=()) -> list[dict]:
     Not included" list has one source. `paid` is `describe()`'s boolean --
     whether a licence is held -- not a plan name. A feature in `held`
     (`switches.held()`: held back from every licence until it is released)
-    has no row: no licence lacks it more than another."""
+    has no row, as no licence lacks it more than another -- unless this
+    licence has it anyway (early access, switched on on its licence page on
+    admin.biocognia.com, which wins over the product's switch): then it is
+    listed as included."""
     grants = tuple(entitlements or ()) if paid else ()
     rows = [(root, *ENTITLEMENTS[root]) for root in ROOTS]
     rows += [(f"{PLUGIN_ROOT}:{name}", *PLUGINS[name]) for name in PLUGINS]
-    rows = [row for row in rows if not _held_back(row[0], held)]
+    rows = [row for row in rows if not _held_back(row[0], held) or any_satisfies(grants, row[0])]
     return [{"entitlement": name, "label": label, "summary": sentence, "granted": any_satisfies(grants, name)}
             for name, label, sentence in rows]
 

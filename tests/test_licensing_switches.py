@@ -107,8 +107,12 @@ def test_anything_unreadable_holds_nothing_back_and_offers_the_trial(platform):
 
 
 def test_held_back_features_are_not_listed_as_included_or_not(platform):
-    rows = {row["entitlement"] for row in manifest.unlocks(["ai", "volume"], paid=True, held=switches.held())}
+    rows = {row["entitlement"] for row in manifest.unlocks(["ai"], paid=True, held=switches.held())}
     assert rows == {"ai", "transcriptomics", "mcp"}
+    # A licence given early access on its licence page has it anyway: listed, as included.
+    early = {row["entitlement"]: row["granted"]
+             for row in manifest.unlocks(["ai", "volume"], paid=True, held=switches.held())}
+    assert early == {"ai": True, "transcriptomics": False, "mcp": False, "volume": True}
     words = manifest.pro_words(held=switches.held())
     assert words["included"] == "Plexora AI and Spatial transcriptomics"
     assert "Plexora 3D" not in words["included"] and "Video Studio" not in words["included"]
