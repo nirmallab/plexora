@@ -174,11 +174,14 @@ def status_lines(info: dict) -> list[str]:
 
     lines = [f"Plan: {_STATE_WORDS.get(info['state'], info['state'])}"]
     if info["state"] == "free" and info.get("reason") == "no_license":
-        words = manifest.pro_words()
+        from plexora.licensing import switches
+
+        known = switches.current()
+        words = manifest.pro_words(held=known["off"])
         lines.append(f"Everything Free works with no licence. Pro adds "
                      f"{words['included']}: "
-                     "`plexora license activate` connects this device, or "
-                     "`plexora license trial` starts a trial.")
+                     "`plexora license activate` connects this device"
+                     + (", or `plexora license trial` starts a trial." if known["trial"] else "."))
         if words["off_by_default"]:
             lines.append(words["off_by_default"])
         lines.append(f"Buy Plexora Pro: {links.PRICING_URL} -- the licence key arrives by email; "
@@ -191,7 +194,9 @@ def status_lines(info: dict) -> list[str]:
         lines.append(f"Licence: {info['license_id']}"
                      + (f" ({info['use_class']})" if info.get("use_class") else ""))
     if info.get("paid"):
-        for row in manifest.unlocks(info.get("entitlements"), paid=True):
+        from plexora.licensing import switches
+
+        for row in manifest.unlocks(info.get("entitlements"), paid=True, held=switches.held()):
             lines.append(f"{row['label']}: {'included' if row['granted'] else 'not included'}")
     env = info.get("environment") or {}
     if env.get("type"):
@@ -348,8 +353,13 @@ def _deactivate(args, log) -> int:
 def _trial(args, log) -> int:
     from biocognia import store
 
-    from plexora.licensing import LICENSING, PRODUCT
+    from plexora import links
+    from plexora.licensing import LICENSING, PRODUCT, switches
 
+    if not switches.trial_offered():
+        log(f"Plexora is not offering trials at the moment. Buy Plexora Pro at {links.PRICING_URL}, "
+            "or connect a licence with `plexora license activate`.")
+        return 1
     if args.email:
         result = LICENSING.client.start_trial(args.email)
         log(result.get("message") or f"A sign-in link is on its way to {args.email}. Approve "

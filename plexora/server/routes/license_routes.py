@@ -110,7 +110,7 @@ def status_payload() -> dict:
     from biocognia import store
 
     from plexora import licensing, links
-    from plexora.licensing import LICENSING, PRODUCT, manifest
+    from plexora.licensing import LICENSING, PRODUCT, manifest, switches
 
     try:
         info = licensing.describe(network=False)
@@ -122,15 +122,20 @@ def status_payload() -> dict:
         info = licensing.describe(state=free_state(PRODUCT.id, PRODUCT.free_limits,
                                                    "unreadable_file", state="invalid"))
     # What each root grants on this licence ("External MCP access: Not
-    # included"), so Settings lists what a licence lacks as well as has.
-    info["unlocks"] = manifest.unlocks(info.get("entitlements"), paid=bool(info.get("paid")))
+    # included"), so Settings lists what a licence lacks as well as has --
+    # less what the platform holds back from every licence (Plexora 3D and
+    # Video Studio until they are released), which no licence has.
+    known = switches.current()
+    info["unlocks"] = manifest.unlocks(info.get("entitlements"), paid=bool(info.get("paid")), held=known["off"])
     info["service_configured"] = bool(store.server_url())
     info["offline_only"] = store.offline_only()
     info["portal_url"] = store.portal_url()
     # The portal's trial page, or "" where the page could not finish the job:
-    # offline, or a build with no platform to connect to afterwards.
+    # offline, a build with no platform to connect to afterwards, or trials
+    # switched off on the platform (Settings then offers none).
+    info["trial_offered"] = bool(known["trial"])
     info["trial_url"] = (store.portal_url(f"start?product={PRODUCT.id}")
-                         if info["service_configured"] and not info["offline_only"] else "")
+                         if info["service_configured"] and not info["offline_only"] and known["trial"] else "")
     # Where Pro is bought: the pricing page, then checkout in the portal. A
     # page on the website, so it stands even offline -- a bought licence can
     # still reach an air-gapped machine as a licence file.

@@ -80,7 +80,10 @@ def refusal_detail(entitlement: str, *, what: str | None = None) -> dict:
         # Outside the Pro default (off by default, like `mcp`, or a
         # third-party plugin): neither Pro nor its trial unlocks it, so no
         # surface may call it Pro, offer a trial or name a price for it.
-        "off_by_default": manifest.off_by_default(entitlement),
+        # Held back from every licence until released (switches.py) says the
+        # same: nothing a person buys or starts unlocks it today.
+        "off_by_default": manifest.off_by_default(entitlement) or bool(_held(entitlement)),
+        "held": bool(_held(entitlement)),
         "hint": _hint(state, label, entitlement),
     }
     if what:
@@ -93,7 +96,26 @@ def hint_for(entitlement: str, state: str) -> str:
     return _hint(state, manifest.label(entitlement), entitlement)
 
 
+def _held(entitlement) -> str:
+    """The feature held back from every Plexora licence on the platform that
+    `entitlement` is or is under (Plexora 3D and Video Studio until released),
+    or "". From what is already known: a refusal never waits on the network."""
+    from plexora.licensing import switches
+
+    try:
+        return switches.held_by(entitlement)
+    except Exception:  # noqa: BLE001 - an unreadable answer is "not held", the old wording
+        return ""
+
+
 def _hint(state: str, label: str, entitlement: str | None = None) -> str:
+    held = _held(entitlement) if entitlement is not None else ""
+    if held:
+        whole = manifest.label(held)
+        part = "" if whole == label else f" (part of {whole})"
+        return (f"{label}{part} is not available yet: it has not been released to any Plexora "
+                f"licence or trial. Tell the user it is not released yet, and that everything else "
+                f"keeps working.")
     if entitlement == MCP:
         # Never "manual tools keep working": the tool being refused may be one.
         if state == "expired":
@@ -138,6 +160,8 @@ def _hint(state: str, label: str, entitlement: str | None = None) -> str:
 
 def _needs(detail: dict) -> str:
     """The refusal's first sentence, without its full stop."""
+    if detail.get("held"):
+        return f"{detail['label']} is not available yet: no Plexora licence includes it today"
     if detail.get("off_by_default"):
         if manifest.third_party(detail.get("entitlement")):
             return (f"{detail['label']} is a plugin from its maker, not part of Plexora Pro, "
