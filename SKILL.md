@@ -399,9 +399,11 @@ Entry points:
   `install()` says which; `tests/test_browser_cachefiles.py`.
 - `plexora/browser/tiff_ahead.py` — **a picked TIFF's directories read ahead
   of tifffile's walk**, because each step of that walk reads what the one
-  before named, and on the website a miss is one synchronous 1 MiB block read
-  after the last (`workers/pythonWorker.js` `blockReads`), ~220 ms cold from
-  a share against ~20 ms for 64 KiB. `install(read_ahead, piece)` wraps
+  before named, and on the website a miss is one synchronous read after the
+  last (`workers/pythonWorker.js` `blockReads`): a 1 MiB block, ~220 ms cold
+  from a share against ~20 ms for 64 KiB -- which is also why a small miss
+  that jumps (`SMALL`, not going on from the last read) now reads only its
+  64 KiB piece. `install(read_ahead, piece)` wraps
   tifffile's `FileHandle.open`: a file opened to read (mode `rb`, a path, no
   offset) is first `walk`ed as tifffile will open it -- header, main IFD
   chain, SubIFDs lists and their IFDs, the out-of-line values of the tags in
@@ -503,6 +505,16 @@ Entry points:
   SubIFD blocks in one `pread_many` (`_warm_subifds`), because tifffile
   otherwise reads them one round trip at a time (an Orion slide from S3, 19
   channels by 7 levels, was 133 round trips in a row: 24 s -> 6.6 s).
+  `opened(path)` is `open_tiff`/`close_tiff` as a `with`. On the website (one
+  thread) `open_tiff` of a local path returns the open
+  `tiff_series.open_channel_series` shares (`_shared_local`), and
+  `close_tiff` leaves it open (`tiff_series.is_shared`), because opening a
+  TIFF walks every page's directory -- a 40-channel, 7-level slide's 280
+  directories across 106 GB took seconds an open through the page -- and an
+  import opened it again for each reader for the same answer. So the
+  import's readers of a local TIFF (`looks_like_label_image`, `_focal_note`,
+  `_channel_names_from_ome_xml`, `image_geometry`, `convertOmeTiff`,
+  `/import/preview`) go through `opened`/`open_tiff`, not `tf.TiffFile`.
 - `server/models/remote_sources.py` — remote data as the data root sees it.
   The address book (`<data root>/remote_sources.json`) keeps options — an S3
   endpoint, "use my AWS profile", a region, an account name, a label
@@ -1217,13 +1229,19 @@ Entry points:
   [--keep-both|--replace] [--name]`.
 - `views/webOnboarding.js` — **Plexora Lite's first-use dialog**, where the
   website keeps the user's work (`window.PlexoraOnboarding`,
-  `ensure({reason})` -> `"ready"|"cancelled"`, `open({reason, start})`). It
+  `ensure({reason, quiet})` -> `"ready"|"cancelled"`, `open({reason, start})`). It
   asks nothing on page load: the first action that writes something to keep
   awaits `ensure()`, which shows the dialog only when no place is chosen or the
   chosen folder is not open this visit. Callers: `pickedFiles.pick`'s `gate`
   (awaited after the files are chosen and before anything is mounted or
   remembered; false is a cancel that leaves nothing behind), a saved server
-  (`connectionModal.js`), Settings, the home page. `shell.js`'s `askWhereOnce`
+  (`connectionModal.js`), Settings, the home page. The home page's one-press
+  open passes `quiet` (`browsePicker.js` `pickQuestions({quiet})`): a first
+  visit's question is put off -- the browser's storage made ready as "Use
+  browser storage" makes it, no dialog -- so the image opens at once, and the
+  project's page offers the choice once, in a toast (`offerLater`,
+  sessionStorage `plexora-onboarding-offer`); a folder to reconnect is still
+  asked first, its files being the ones to open. `shell.js`'s `askWhereOnce`
   and its keep-in-browser questions are gone. All storage is the host page's
   `PlexoraStore` (`services/browserStore.js`): `pickFolder`, `inspectFolder`
   (`workspace`, `legacy-nested`, `projects-inside`, `empty`, ...),
@@ -1702,7 +1720,12 @@ Entry points:
   /import/sample` and `POST /import/layers` -- the two writes, a new project
   or more layers on an existing one, that the Import Sample dialog's proposal
   step commits to; `GET /import/status` -- polls `layer_jobs` for a sample's
-  progress; `/inspect_data`, and `POST /upload_data_file` -- stages a
+  progress; `GET /import/preview?path=` -- the first channel of a local TIFF
+  at its smallest pyramid level as an 8-bit PNG windowed from its own
+  non-zero pixels (0.5th to 99.8th percentile), what the local app's home
+  page shows the moment Load is pressed (`services/firstView.js`
+  `beginUrl`), a 204 for anything it does not read (not a local TIFF, a
+  smallest level over `_PREVIEW_MAX_SIDE` 4096); `/inspect_data`, and `POST /upload_data_file` -- stages a
   CSV/TSV/TXT the browser sent, 512 MB cap, answers with a path on the
   server), `browse_routes`
   (`POST /browse_path` -- a native dialog, on this server's machine by default
@@ -2096,6 +2119,14 @@ One authoritative database; nodes are data services with no project state.
   address is opened through `RemoteImageProvider._open_pyramid` (closed after
   with `_close`) so the geometry matches the pyramid its tiles are served
   from; an OME-Zarr store falls through to the branch below unchanged.
+  On the website `LocalImageProvider.open` has the overview's level read by
+  the page's workers side by side (`_page_overview`, over
+  `providers.browser.page_regions`; at most `_PAGE_OVERVIEW_MAX_BYTES` 256
+  MiB), because Python reading it one tile after another in WebAssembly was,
+  on a 40-channel slide, 40 tiles of 2 MiB -- 20 s from a file share -- that
+  every first request of the viewer waited behind. The same values; None
+  elsewhere, for a level too large, or when the page declines a channel, and
+  Python reads it as before.
   `LocalTableProvider.lazy_features`/`read_feature_column` are the seam a WIDE
   table (see the adapters row's WIDE mode) reads through: `load()` keeps the
   adapter it built the frame from (`self._adapter`), and `describe`/
@@ -6758,10 +6789,42 @@ deliberately left out and what should be built next.
   grew with it: `pick` takes `types` and `startIn`; a lone `.dcm` asks for its
   folder and mounts that folder's DICOM instances (record `only: "dicom"`);
   `take(dataTransfer)` mounts a drop (handles in Chromium, entries in
-  Firefox and Safari, an MRXS paired with its folder); `mountHandle`,
+  Firefox and Safari, an MRXS paired with its folder) and reads a dropped
+  file through its own File, never its handle, which is only what finds it
+  next visit: Chrome reads a handle's file on the queue the site's storage
+  uses, and a file share's slow reads stalled that storage (and Python's
+  start in another tab) for seconds at a time. A handle the browser refuses
+  (a file in a folder it keeps from sites, AppData) leaves the dropped File,
+  which opens but is not remembered; `mountHandle`,
   `startHandle` and `originOf` (record `from`) serve the explorer. Probe:
   `tests/js/website_pick_probe.mjs`, run by `tests/test_website_pick.py`;
   website cases in `tests/js/file_explorer_probe.mjs`.
+- `services/firstView.js` — `window.PlexoraFirstView`, **the image on screen
+  the moment it is given to the home page**: channel 0's smallest pyramid
+  level, read by the page itself from the dropped File (the header, the
+  directories down to that level, its tile or two -- 10 reads for LSP26261,
+  61 for `1_750`), decoded (none, LZW, deflate, predictor 2), windowed from
+  its own pixels and drawn where the viewer will be, while Python inspects,
+  registers and loads behind it; it fades when the viewer has drawn the
+  image, the person reaches for it, or the import asks a question
+  (`done(reason)`). Because everything between a drop and the first tile
+  was Python's, one step after another: 23 s for a 106 GB OME-TIFF from
+  Downloads, over ten minutes from a file share. A pyramid in SubIFDs is
+  named by directory 0; one in the main chain is found level by level, each
+  level's first directory computed from the stride of the one above and read
+  to be sure, walked one by one where that does not hold. Every directory
+  offset found goes to the Python worker before Python opens the file
+  (`prefetch(path, file)` -> `PlexoraPython.prefetch` -> the worker's
+  `prefetch` op, see Key Invariants). Read from the File, never its handle,
+  for the reason `pickedFiles.js` gives. Loaded by the website's host page
+  (`services/shell.js`, after `backend.js`), whose document outlives the app
+  frame's way from the home page to the viewer, and borrowed by the frame;
+  the local app's home page loads it on demand and shows `/import/preview`
+  (`beginUrl`). `begin({file, name})`, `beginUrl({url, name})`,
+  `prefetch(path, file)`, `done(reason)`, `active()`. Pinned by
+  `tests/test_first_view.py` (its reader against tifffile, byte for byte);
+  measured by `tools/bench_web/bench_first_view.mjs`
+  (`docs/internal/bench/web/WEBSITE_FIRST_VIEW_2026-11-10.md`).
 - `views/channelNamesUpload.js` — `window.PlexoraChannelNames`, the dialog
   behind the sidebar's channel-rename button. One `<dialog>` with three stages
   (which file → which column → the count did not match); the server decides
@@ -7976,7 +8039,13 @@ rather than starting a second load over the first;
 while a drag is over it the `dropping` state paints
 `.quick-view-card.is-drop-over` and the line "Drop to open it.". On the
 website the landing is the same `count: "many"` target through
-`attachWebDrop`, the dropped file or folder mounted where it lies.
+`attachWebDrop`, the dropped file or folder mounted where it lies. A single
+dropped file is on screen in the drop's own turn (`attachWebDrop`'s
+`onFiles` -> `PlexoraFirstView.begin`, `services/firstView.js`), and the
+local app's Load of a TIFF path shows `/import/preview`, while the import
+goes on behind;
+both the drop and Browse pass `quiet`, so a first visit's where-to-keep-work
+question waits until the image is open (`views/webOnboarding.js`).
 `tests/test_home_landing.py` holds both halves — that the page is
 its own controls, and that the engine under it is the shared one. `POST /import/inspect` runs `import_proposal.inspect_paths` and answers
 with a `Proposal`; the dialog draws whatever comes back and decides nothing
@@ -7985,6 +8054,14 @@ change to the client. Pressing Import posts the same paths and answers to
 `POST /import/sample` (a new sample) or `POST /import/layers` (add to one that
 exists), which call `import_sample.import_sample`/`add_layers` — the one
 function every entry point reaches, including the Python API and the CLI.
+`import_sample` first takes the proposal the inspect a moment before made of
+the same unchanged plain local files (`import_proposal.inspected`: keyed by
+every file's path, size and mtime and the answers, taken once, at most 30 s
+old, all of them dropped by `forget_inspected` whenever a sample is
+registered so an `existing` it says is never stale), because the home page
+inspects and then imports the same paths, and the import used to inspect
+them all over again -- on a 106 GB OME-TIFF from a file share, as long again
+as the first. A folder, a node's resource or a URL is never remembered.
 `GET /import/status` polls `layer_jobs` for a sample whose layers are still
 building. The only controls that appear at all are the ones the *file* forces:
 a table picker for a multi-table `.zarr`, an image picker for a store with
@@ -9173,6 +9250,10 @@ Three inputs are already wired automatically:
 - **`GET /health`** (`system_routes.py`, returns 204, does no work) polled every
   5 s while the tab is visible; two consecutive failures → red. Required because
   an idle page issues no other requests, so nothing else notices a dead server.
+  On the website a failed poll is not counted while a request has waited on
+  Python over 1 s (`PlexoraPython.busy(1000)`): the tab's Python answers one
+  thing at a time, and `/health` waiting behind an import reading a large
+  file is Python at work, not "Disconnected".
 - **Tiles still loading**, tracked **per TiledImage** in `watchViewer()`. Not via
   the Viewer's aggregate `fully-loaded-change`: that only recomputes when some
   TiledImage raises its own event, and a newly added image doesn't raise one on
@@ -10005,17 +10086,32 @@ in **5.6 s**.
   where Python can wait on the page.** `browser/tiff_ahead.py` walks the file
   first and asks for each step's 64 KiB pieces at once; the worker's
   `blockReads` now also holds those pieces (`PIECE` 64 KiB, at most `PIECES`
-  256) and returns `readAhead(node, indexes)`, which reads each run of
+  1024, 64 MiB, shared by the read ahead, the small reads and the page's
+  prefetch) and returns `readAhead(node, indexes)`, which reads each run of
   neighbouring pieces as one Blob slice, the runs in parallel. A read that
   starts in a held piece is answered from the pieces alone, short where it
   runs past them, because a buffered reader asks again for what it wanted and
   no block is read for what nobody wanted. Splitting one block into parallel
-  slices was measured slower and dropped. `self.plexoraReadAhead(path,
+  slices was measured slower and dropped. **A miss of at most `SMALL` (128
+  KiB, the buffer Python's reader asks for after each seek in Pyodide's 3.14)
+  that does not go on from where the last read of the file ended reads the
+  64 KiB piece around it, kept, never a 1 MiB block** -- a read that goes on
+  (a table read start to end) keeps its blocks -- because
+  what a TIFF's open reads is directories and tile tables of a few hundred
+  bytes to a few KB, spread across the whole file: a 40-channel, 7-level
+  OME-TIFF of 106 GB has 280 of them, each a 1 MiB block (~0.25 s from a
+  share) and more than the 64 blocks kept (`KEEP`), so each of an import's
+  opens read them all again -- 642 s of `/import/inspect`. A piece costs
+  about what a 4 KB read does (~20 ms there); a larger miss, or one that
+  goes on from the last, still reads its blocks. The worker's `prefetch` op (`PlexoraPython.prefetch(path,
+  offsets)`) reads the pieces under the directory offsets the page's first
+  view found (`services/firstView.js`) side by side, before Python's open
+  walks them one read after another. `self.plexoraReadAhead(path,
   indexes)` answers -1 for a path that is not a picked file, before Pyodide
   is loaded, or while `idling > 0` (a job's wait lets requests in, and one
   could start inside the read); the boot snippet's `_read_ahead` answers -1
   without JSPI or when `can_run_sync()` is false, and tifffile then reads
-  block by block as before. **The worker JS and the Python bundle ship
+  miss by miss as before (a small one its piece). **The worker JS and the Python bundle ship
   together**: the worker calls `boot.start(read_ahead=..., read_piece=...)`,
   which an older bundle's `start` refuses. On eight 19-channel LSP files no
   trial had read, Python's open went from 1.3-1.8 s alone (8 reads of 1 MiB in
@@ -10225,6 +10321,31 @@ in **5.6 s**.
   pooled `zarray` pixels against the full-res window rather than deriving the
   ceiling from `zarray` itself, which is the mistake this invariant warns
   against.
+- **An open makes exact windows only for the channels shown, and a
+  provisional ask is answered at once on both front ends.** The warm-up
+  (`_warm_datasource_caches`) computes stats and fit -- so the exact window,
+  a whole full-resolution plane (1.9 GB a channel on a 40-channel, 106 GB
+  slide; 2.6 s a channel on a local disk, 18.7 s from a share) -- only for
+  the saved active channels, or the first for a project never opened,
+  because one scan for every channel kept the disk or the share busy for
+  minutes after an open, under every tile a zoom asked for. The website
+  still fits every channel's overview ahead of its click (`_fit_ahead`); on
+  the desktop a planar image's other channels get `_provisional_gmm` (of the
+  overview, no plane read), and a volume still warms and queues every
+  channel's exact window. A channel
+  switched on later is drawn at once with its provisional window and made
+  exact then. On the website a provisional ask (`wait_ms` 0) is not urgent
+  (`_page_window_or_retry`), and a background scan reads at most
+  `ROUND_BACKGROUND_SAMPLES` a round (`services/browserNode.js`, ~64 MB, was
+  ~640 MB), so a zoom's tiles never wait long behind it. On the desktop
+  (`_work.threaded()`) a viewer's provisional ask for a planar channel whose
+  window is not known is answered now with the provisional packet
+  (`window_exact` False) while `_window_behind` makes the exact window on a
+  thread of its own, once however many asks; the viewer asks again until it
+  is exact (`views/channelList.js` `awaitExactWindow`), as on the website.
+  A remote image, a volume, or a window that failed behind once is made
+  inline as it always was, and so is any ask that is not provisional (a
+  tile's encode, the warm-up). Pinned by `tests/test_page_window_warm.py`.
 - **The black `fillRect` before the GL blit is load-bearing.** The shader emits
   alpha 0.9, so the output composites over whatever is already in the reused tile
   canvas.
@@ -11213,6 +11334,27 @@ for the budget, the install hook, and a run of
 `tests/js/block_reads_ahead_probe.mjs`, which takes `blockReads` out of
 `pythonWorker.js` by regex, so renaming its constants or reshaping the
 function breaks the probe. No full run was reported for this work either.
+
+**The instant first view added tests** (branch `feature/instant-first-view`):
+`tests/test_first_view.py`, which runs `services/firstView.js`'s reader in
+Node (`tests/js/first_view_probe.mjs`, skipped without `node`) on files
+tifffile writes in both pyramid layouts -- uncompressed, deflated with and
+without the predictor, LZW, 8- and 16-bit -- and holds its samples to
+tifffile's reading of the same level byte for byte, and a main-chain pyramid
+to being found level by level; and `tests/test_import_reads_once.py`: the
+import takes the inspect it follows, a changed file is inspected again, the
+memo is taken once and only for the same answers, a folder is never
+remembered, a panel is answered without a pixel read while two planes are
+still read, the website shares one open and the desktop does not, and
+`/import/preview` draws the first channel at its smallest level.
+`tests/test_page_window_warm.py` now pins that the website's warm-up
+measures only the shown channel and queues no other scan, and its
+`test_the_desktop_never_answers_provisionally` is now
+`test_the_desktop_answers_at_once_and_makes_the_window_behind`.
+`tests/js/block_reads_ahead_probe.mjs` also takes `SMALL` out of the worker
+and checks that a small miss reads its 64 KiB piece and keeps it while a
+larger read still reads its block. The boundary goldens carry the
+`20261110_instant_first_view` tags. No full run was reported for this work.
 
 **The desktop app has its own validation, outside pytest:**
 
@@ -14875,7 +15017,11 @@ belonged to, and find no mask. In `import_proposal.py` now:
 - `looks_like_label_image` reads 512² windows through `aszarr`
   (`_tiff_reader`, which replaced `_tiff_corner` on 2026-10-14 when the one
   top-left corner became up to five windows), not `pages[0].asarray()` --
-  3 s and gigabytes per slide-sized mask, now ~17 ms.
+  3 s and gigabytes per slide-sized mask, now ~17 ms. A stack whose own
+  words (`tiff_series.plane_sizes`) say three channels or more of one focal
+  plane (`SizeC` > 2, `SizeZ` 1) is a panel, answered False with no pixel
+  read, because on a 106 GB slide from a file share the middle plane's
+  windows were seconds of an import nobody needed.
 In the dialog: a row's path is the name's hover title (no path line);
 `questionsUnder` puts a question under the row whose `needs` hold it when two
 rows share an id; a ✓ (`settleButton`) beside any question with a default
