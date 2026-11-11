@@ -49,6 +49,7 @@ for (const path of process.argv.slice(2)) {
         console.log(JSON.stringify({ path, width: plane.width, height: plane.height, samples: plane.samples,
                                      bits: plane.data.BYTES_PER_ELEMENT * 8, layout: plane.layout,
                                      reads: plane.reads, offsets: plane.offsets.length,
+                                     channels: plane.channels,
                                      sha256: createHash("sha256").update(bytes).digest("hex") }));
     } catch (error) {
         console.log(JSON.stringify({ path, error: String(error && error.message || error) }));

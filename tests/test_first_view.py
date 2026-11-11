@@ -52,7 +52,7 @@ def write_subifds(path, stack, levels=3, **options):
     return pyramid[-1][0]
 
 
-def write_main_chain(path, stack, levels=4, **options):
+def write_main_chain(path, stack, levels=4, names=None, **options):
     """Every level's planes one after another in the main chain, the OME-XML
     describing only the first level's (SizeC planes), each directory beside
     its own plane -- the layout of the 106 GB slide that took minutes."""
@@ -65,7 +65,8 @@ def write_main_chain(path, stack, levels=4, **options):
             '<Image ID="Image:0"><Pixels ID="Pixels:0" DimensionOrder="XYZCT" '
             f'Type="{np.dtype(stack.dtype).name}" SizeX="{width}" SizeY="{height}" '
             f'SizeC="{channels}" SizeZ="1" SizeT="1">'
-            + "".join(f'<Channel ID="Channel:0:{i}" SamplesPerPixel="1"/>' for i in range(channels))
+            + "".join(f'<Channel ID="Channel:0:{i}" Name="{(names or {}).get(i, f"C{i}")}" SamplesPerPixel="1"/>'
+                      for i in range(channels))
             + "</Pixels></Image></OME>")
         for index, level in enumerate(pyramid):
             for channel in range(channels):
@@ -132,3 +133,20 @@ def test_a_file_it_cannot_read_says_so(tmp_path):
     path.write_bytes(b"this is not a tiff at all")
     [got] = _probe(path)
     assert "error" in got
+
+
+def test_the_first_view_names_the_files_channels(tmp_path):
+    """The frame's channel list before the viewer has one: SizeC and each
+    Channel's Name from the OME-XML, entities decoded, in both layouts."""
+    chain = tmp_path / "named-chain.ome.tif"
+    write_main_chain(chain, _stack(3, 128, 128, np.uint16, seed=3), levels=2,
+                     names={0: "01_Nucleus_Hoechst", 1: "CD45 &amp; co"})
+    subifds = tmp_path / "named-subifds.ome.tif"
+    pyramid = _levels(_stack(2, 128, 128, np.uint16, seed=4), 2)
+    with tifffile.TiffWriter(subifds, bigtiff=True, ome=True) as tif:
+        tif.write(pyramid[0], subifds=1, tile=(64, 64),
+                  metadata={"axes": "CYX", "Channel": {"Name": ["DNA", "Ki-67"]}})
+        tif.write(pyramid[1], subfiletype=1, tile=(64, 64))
+    got_chain, got_subifds = _probe(chain, subifds)
+    assert got_chain["channels"] == {"count": 3, "names": ["01_Nucleus_Hoechst", "CD45 & co", "C2"]}
+    assert got_subifds["channels"] == {"count": 2, "names": ["DNA", "Ki-67"]}

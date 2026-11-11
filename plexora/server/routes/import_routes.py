@@ -24,6 +24,7 @@ the columns screen asked the marker/metadata split up front, which is a
 """
 
 import functools
+import json
 import logging
 import os
 import shutil
@@ -187,7 +188,10 @@ def import_preview():
     does not read -- not a TIFF on this machine, a pyramid that stops large,
     samples it cannot window -- and the page then shows the import's own
     progress, as before. Reads the file's directories and one small plane:
-    0.1-0.5 s for a 106 GB slide, local or on a file share."""
+    0.1-0.5 s for a 106 GB slide, local or on a file share. Its headers name
+    what the first view's channel list shows: `X-Plexora-Channels`, the
+    URL-encoded JSON `{count, names}` (`_preview_channels`), and
+    `X-Plexora-Bytes`, the file's size."""
     import io
 
     import numpy as np
@@ -205,6 +209,7 @@ def import_preview():
             levels = list(getattr(series, 'levels', None) or [series])
             level = levels[-1]
             shape = tuple(int(side) for side in level.shape)
+            channels = _preview_channels(tiff, shape)
             if len(shape) < 2 or max(shape[-2:]) > _PREVIEW_MAX_SIDE:
                 return Response(status=204)
             index = len(levels) - 1
@@ -230,7 +235,47 @@ def import_preview():
 
     out = io.BytesIO()
     Image.fromarray(picture).save(out, format='PNG', compress_level=1)
-    return Response(out.getvalue(), mimetype='image/png', headers={'Cache-Control': 'no-store'})
+    from urllib.parse import quote
+
+    headers = {'Cache-Control': 'no-store',
+               'X-Plexora-Channels': quote(json.dumps(channels, separators=(',', ':'))),
+               'X-Plexora-Bytes': str(os.path.getsize(raw))}
+    return Response(out.getvalue(), mimetype='image/png', headers=headers)
+
+
+#: The most channel names the preview's header carries (the page shows five).
+_PREVIEW_MAX_NAMES = 64
+
+
+def _preview_channels(tiff, shape):
+    """`{count, names}` of a TIFF for the first view's channel list: the
+    OME-XML's channel names and SizeC, else the planes of a (C, Y, X) level;
+    no names (and one channel) for interleaved RGB."""
+    import re
+
+    if len(shape) == 3 and shape[-1] in (3, 4):
+        return {'count': 1, 'names': []}
+    names, count = [], 0
+    # The first page's description: opened() reads files without tifffile's
+    # OME parsing, so `ome_metadata` is empty there.
+    try:
+        xml = tiff.pages.first.description or ''
+    except Exception:  # noqa: BLE001 -- no description: no names
+        xml = ''
+    if 'openmicroscopy' in xml[:4096] or '<OME' in xml[:4096]:
+        from html import unescape
+
+        for tag in re.finditer(r'<(?:\w+:)?Channel\b[^>]*>', xml):
+            if len(names) >= _PREVIEW_MAX_NAMES:
+                break
+            named = re.search(r'\bName="([^"]*)"', tag.group(0))
+            names.append(unescape(named.group(1)).strip() if named else '')
+        pixels = re.search(r'<(?:\w+:)?Pixels\b[^>]*>', xml)
+        size_c = pixels and re.search(r'\bSizeC="(\d+)"', pixels.group(0))
+        count = int(size_c.group(1)) if size_c else len(names)
+    if not count:
+        count = int(shape[0]) if len(shape) >= 3 else 1
+    return {'count': count, 'names': names}
 
 
 @app.route('/import/sample', methods=['POST'])

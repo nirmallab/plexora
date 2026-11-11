@@ -31,12 +31,15 @@ from plexora.server.utils import tiff_region, tiff_series
 from tests.helpers import use_data_root
 
 
-def _panel(path, channels=4, size=96):
+def _panel(path, channels=4, size=96, names=None):
     """An OME-TIFF of `channels` channels with a two-level SubIFD pyramid."""
     rng = np.random.default_rng(channels)
     stack = rng.integers(0, 4000, size=(channels, size, size)).astype(np.uint16)
+    metadata = {"axes": "CYX"}
+    if names:
+        metadata["Channel"] = {"Name": list(names)}
     with tifffile.TiffWriter(path, bigtiff=True, ome=True) as tif:
-        tif.write(stack, subifds=1, tile=(32, 32), metadata={"axes": "CYX"})
+        tif.write(stack, subifds=1, tile=(32, 32), metadata=metadata)
         tif.write(stack[:, ::2, ::2].copy(), subfiletype=1, tile=(32, 32))
     return path
 
@@ -163,3 +166,26 @@ def test_the_preview_route_draws_the_first_channel_at_its_smallest_level(data):
     assert client.get("/import/preview", query_string={"path": str(data / "missing.tif")}).status_code == 204
     (data / "notes.txt").write_text("not an image", encoding="utf-8")
     assert client.get("/import/preview", query_string={"path": str(data / "notes.txt")}).status_code == 204
+
+
+def test_the_preview_names_the_channels_and_the_size_for_the_first_views_list(data):
+    """The local first view's channel list: the OME-XML's names and SizeC in
+    `X-Plexora-Channels`, the file's size in `X-Plexora-Bytes`."""
+    import json
+    from urllib.parse import unquote
+
+    from plexora import app
+
+    image = _panel(data / "named.ome.tif", channels=3, names=["DNA", "CD45 & co", "Ki-67"])
+    found = app.test_client().get("/import/preview", query_string={"path": str(image)})
+    assert found.status_code == 200
+    channels = json.loads(unquote(found.headers["X-Plexora-Channels"]))
+    assert channels == {"count": 3, "names": ["DNA", "CD45 & co", "Ki-67"]}
+    assert int(found.headers["X-Plexora-Bytes"]) == os.path.getsize(image)
+
+    # No names in the file: the count alone, from the XML.
+    plain = _panel(data / "plain.ome.tif", channels=2)
+    channels = json.loads(unquote(app.test_client().get(
+        "/import/preview", query_string={"path": str(plain)}).headers["X-Plexora-Channels"]))
+    assert channels["count"] == 2
+    assert all(not name or name.startswith("Channel") for name in channels["names"])

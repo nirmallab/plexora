@@ -461,6 +461,11 @@ PlexoraPage.register(function () {
             if (!response.ok || result.error) {
                 throw new Error(result.error || "Could not load that image.");
             }
+            // Registered: the first view says the viewer is next, and, where
+            // this page is about to be replaced by the viewer's (the local
+            // app), is kept for the viewer's page to take up.
+            preview?.step?.("viewer");
+            preview?.handOff?.({leaving: document, to: result.redirect});
             PlexoraRouter.go(result.redirect);
         } catch (error) {
             preview?.done?.("error");
@@ -506,7 +511,7 @@ PlexoraPage.register(function () {
         if (!firstViewLoading) {
             firstViewLoading = new Promise((resolve) => {
                 const script = document.createElement("script");
-                script.src = `${window.PLEXORA_BASE_URL || ""}/client/src/js/services/firstView.js`;
+                script.src = `${window.PLEXORA_BASE_URL || ""}/client/src/js/services/firstView.js?v=20261111_first_load`;
                 script.onload = () => resolve(window.PlexoraFirstView || null);
                 script.onerror = () => resolve(null);
                 document.head.appendChild(script);
