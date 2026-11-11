@@ -1720,12 +1720,22 @@ Entry points:
   /import/sample` and `POST /import/layers` -- the two writes, a new project
   or more layers on an existing one, that the Import Sample dialog's proposal
   step commits to; `GET /import/status` -- polls `layer_jobs` for a sample's
-  progress; `GET /import/preview?path=` -- the first channel of a local TIFF
+  progress; `GET /import/preview?path=` -- the first channel of a local image
   at its smallest pyramid level as an 8-bit PNG windowed from its own
-  non-zero pixels (0.5th to 99.8th percentile), what the local app's home
-  page shows the moment Load is pressed (`services/firstView.js`
-  `beginUrl`), a 204 for anything it does not read (not a local TIFF, a
-  smallest level over `_PREVIEW_MAX_SIDE` 4096); `/inspect_data`, and `POST /upload_data_file` -- stages a
+  non-zero pixels (0.5th to 99.8th percentile; a brightfield slide in its own
+  colours), what the local app's home page shows the moment Load is pressed
+  (`services/firstView.js` `beginUrl`). It reads the TIFF family
+  (`_PREVIEW_TIFF_SUFFIXES`: OME-TIFF, QPTIFF, SVS, NDPI, SCN, BIF; a Leica
+  SCN's largest series, since its first is often the slide's macro; a slide
+  whose pyramid stops above `_PREVIEW_MAX_SIDE` 4096 shows its thumbnail) and
+  OME-Zarr folders (`_zarr_preview`: the smallest level at least
+  `_PREVIEW_ZARR_SIDE` 512 a side, else the largest up to 4096, as
+  `firstView.js` chooses). `X-Plexora-Channels` carries `{count, names, rgb}`
+  for the frame's channel list (OME-XML names and SizeC, a QPTIFF's
+  per-page biomarkers, a Zarr store's omero labels; `rgb` for interleaved
+  RGB, which the frame shows as the brightfield card) and `X-Plexora-Bytes`
+  the file's size (none for a folder); a 204 for anything it does not read);
+  `/inspect_data`, and `POST /upload_data_file` -- stages a
   CSV/TSV/TXT the browser sent, 512 MB cap, answers with a path on the
   server), `browse_routes`
   (`POST /browse_path` -- a native dialog, on this server's machine by default
@@ -6803,11 +6813,23 @@ deliberately left out and what should be built next.
   the moment it is given to the home page**: channel 0's smallest pyramid
   level, read by the page itself from the dropped File (the header, the
   directories down to that level, its tile or two -- 10 reads for LSP26261,
-  61 for `1_750`), decoded (none, LZW, deflate, predictor 2), windowed from
-  its own pixels and drawn where the viewer will be, while Python inspects,
+  61 for `1_750`), decoded (none, LZW, deflate, predictor 2; JPEG --
+  compression 7, JPEGTables, an Adobe APP14 marker added for Aperio's RGB --
+  by the browser's `createImageBitmap`; at most `MAX_TILES` 256), windowed
+  from its own pixels and drawn inside a frame of the viewer it turns into:
+  the sidebar with the file's channel names (OME-XML, a QPTIFF's per-page
+  XML, OME-Zarr omero labels; a brightfield card for RGB slides), the
+  preview in channel 1's colour, a bar and a card of the open's steps. It
+  moves onto the viewer's canvas once that exists, while Python inspects,
   registers and loads behind it; it fades when the viewer has drawn the
   image, the person reaches for it, or the import asks a question
-  (`done(reason)`). Because everything between a drop and the first tile
+  (`done(reason)`). Where nothing says how many planes a level has, every
+  directory is walked and the image is the largest, its preview the
+  smallest directory of the same kind and shape -- a slide's reduced level
+  or thumbnail, never its label or macro. An OME-Zarr folder picked on the
+  website (`beginZarr`) is read through the reader worker
+  (`dist/tiffWorker_bundle.js`, `node/zarrReader.js`) at the same level
+  `/import/preview` chooses. Because everything between a drop and the first tile
   was Python's, one step after another: 23 s for a 106 GB OME-TIFF from
   Downloads, over ten minutes from a file share. A pyramid in SubIFDs is
   named by directory 0; one in the main chain is found level by level, each
@@ -6820,11 +6842,36 @@ deliberately left out and what should be built next.
   (`services/shell.js`, after `backend.js`), whose document outlives the app
   frame's way from the home page to the viewer, and borrowed by the frame;
   the local app's home page loads it on demand and shows `/import/preview`
-  (`beginUrl`). `begin({file, name})`, `beginUrl({url, name})`,
-  `prefetch(path, file)`, `done(reason)`, `active()`. Pinned by
-  `tests/test_first_view.py` (its reader against tifffile, byte for byte);
-  measured by `tools/bench_web/bench_first_view.mjs`
+  (`beginUrl`). The local app's home page and viewer are two documents, so
+  the frame is handed over (`handOff`, one sessionStorage record,
+  `plexora.firstView`, naming the target viewer's path, which alone takes it
+  up, within 60 s) and taken up by the viewer's page (`resume`;
+  `templates/index.html` loads `firstView.js` deferred), which fetches
+  `/import/preview` again when the picture was not in yet;
+  `quickViewLanding.js` says `step("viewer")` and hands over before it
+  navigates, and previews what `PREVIEWED` matches (the TIFF family and
+  `.zarr`; `ZARR_PATH` sends a website pick to `beginZarr`). A first load
+  selects slot 1, the channel on screen (`views/viewerSidebar.js`
+  `resolveSelectedSlot` falls back to the first shown channel, no longer
+  slot 2), so the contrast bar edits what is seen. `begin({file, name})`,
+  `beginUrl({url, name})`, `beginZarr({path, fileFor})`, `prefetch(path,
+  file)`, `step(key)`, `handOff({leaving, to})`, `resume()`,
+  `done(reason)`, `active()`; how it ended goes to
+  `window.__plexoraFirstView`. Pinned by `tests/test_first_view.py` (its
+  reader against tifffile, byte for byte); measured by
+  `tools/bench_web/bench_first_view.mjs`, which records that end state as
+  `steps.firstView` and reads `PLEXORA_CHROME` for the browser
   (`docs/internal/bench/web/WEBSITE_FIRST_VIEW_2026-11-10.md`).
+- `node/blosc.js` — c-blosc 1.x frames (LZ4/LZ4HC, Zstandard or zlib inside;
+  no shuffle or byte shuffle) and numcodecs' LZ4 codec in plain JavaScript,
+  which `node/zarrReader.js` tries before numcodecs.js, because numcodecs.js's
+  Emscripten build makes functions with `new Function` and the website's CSP
+  (no `'unsafe-eval'`) refuses that -- so before it no Blosc OME-Zarr chunk
+  could be read in the page on the website. What it does not read (BloscLZ,
+  Snappy, bit-shuffle) answers null and falls to numcodecs.js, which runs
+  where eval is allowed. In `dist/tiffWorker_bundle.js` (`npm run
+  build:worker`). Pinned by `tests/test_blosc_js.py`
+  (`tests/js/blosc_probe.mjs`) against numcodecs' own encodings.
 - `views/channelNamesUpload.js` — `window.PlexoraChannelNames`, the dialog
   behind the sidebar's channel-rename button. One `<dialog>` with three stages
   (which file → which column → the count did not match); the server decides
@@ -8042,8 +8089,8 @@ website the landing is the same `count: "many"` target through
 `attachWebDrop`, the dropped file or folder mounted where it lies. A single
 dropped file is on screen in the drop's own turn (`attachWebDrop`'s
 `onFiles` -> `PlexoraFirstView.begin`, `services/firstView.js`), and the
-local app's Load of a TIFF path shows `/import/preview`, while the import
-goes on behind;
+local app's Load of a TIFF-family file or an OME-Zarr folder shows
+`/import/preview`, while the import goes on behind;
 both the drop and Browse pass `quiet`, so a first visit's where-to-keep-work
 question waits until the image is open (`views/webOnboarding.js`).
 `tests/test_home_landing.py` holds both halves — that the page is
@@ -11355,6 +11402,25 @@ measures only the shown channel and queues no other scan, and its
 and checks that a small miss reads its 64 KiB piece and keeps it while a
 larger read still reads its block. The boundary goldens carry the
 `20261110_instant_first_view` tags. No full run was reported for this work.
+
+**The first load in the viewer added tests** (branch
+`feature/first-load-in-viewer`): `tests/test_first_view.py` now also holds
+the page's channel names and, through `first_view_probe.mjs --jpeg` and
+`--zarr`, that a slide is previewed from its thumbnail never its label, that
+a JPEG slide's tiles reach the decoder whole, that a QPTIFF is previewed from
+its reduced level with its biomarkers, and that an OME-Zarr folder names its
+level and channels; `tests/test_import_reads_once.py` that `/import/preview`
+reads a slide in its own colours (its thumbnail when the pyramid stops
+large), names a QPTIFF's biomarkers and reads an OME-Zarr folder;
+`tests/test_blosc_js.py` (`tests/js/blosc_probe.mjs`) that `node/blosc.js`
+returns every numcodecs encoding a store's default writers produce byte for
+byte, or declines it, never anything else. The slides are hand-written by
+`tests/slide_fixtures.py` (an Aperio-like SVS with abbreviated JPEG tiles,
+tables in JPEGTables and component ids 0,1,2; an Akoya-like QPTIFF). The
+boundary goldens carry the `20261111_first_load` tags. Commit `de73350b`
+(the frame, the handover, the slot-1 fallback) reported **11659 passed, 0
+failed, 137 skipped** in the worktree; with the slide, OME-Zarr and Blosc
+work after it, **11668 passed, 0 failed, 137 skipped** (2026-11-11, macOS).
 
 **The desktop app has its own validation, outside pytest:**
 

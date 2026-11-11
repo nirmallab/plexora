@@ -179,58 +179,48 @@ def import_inspect():
 _PREVIEW_MAX_SIDE = 4096
 
 
+#: The files the local first view previews: the TIFF family -- OME-TIFF,
+#: QPTIFF and the TIFF-based slides tifffile reads (SVS, NDPI, SCN, BIF) --
+#: besides OME-Zarr folders.
+_PREVIEW_TIFF_SUFFIXES = ('.tif', '.tiff', '.qptiff', '.svs', '.ndpi', '.scn', '.bif')
+
+
 @app.route('/import/preview', methods=['GET'])
 def import_preview():
-    """The first channel of a local TIFF at its smallest pyramid level, as an
+    """The first channel of a local image at its smallest pyramid level, as an
     8-bit PNG windowed from its own values (0.5th to 99.8th percentile of the
-    non-zero pixels): what the home page shows the moment Load is pressed,
-    while the import goes on (services/firstView.js). 204 for anything it
-    does not read -- not a TIFF on this machine, a pyramid that stops large,
-    samples it cannot window -- and the page then shows the import's own
-    progress, as before. Reads the file's directories and one small plane:
-    0.1-0.5 s for a 106 GB slide, local or on a file share. Its headers name
-    what the first view's channel list shows: `X-Plexora-Channels`, the
-    URL-encoded JSON `{count, names}` (`_preview_channels`), and
-    `X-Plexora-Bytes`, the file's size."""
+    non-zero pixels; a brightfield slide in its own colours): what the home
+    page shows the moment Load is pressed, while the import goes on
+    (services/firstView.js). The TIFF family (`_PREVIEW_TIFF_SUFFIXES`; a
+    slide whose smallest level is too large shows its thumbnail) and OME-Zarr
+    folders. 204 for anything it does not read -- not one of those on this
+    machine, a pyramid that stops large, samples it cannot window -- and the
+    page then shows the import's own progress, as before. Reads the file's
+    directories and one small plane: 0.1-0.5 s for a 106 GB slide, local or
+    on a file share. Its headers name what the first view's channel list
+    shows: `X-Plexora-Channels`, the URL-encoded JSON `{count, names}`
+    (`_preview_channels`), and `X-Plexora-Bytes`, the file's size (a folder:
+    none)."""
     import io
 
-    import numpy as np
-    import zarr
     from flask import Response
 
-    from plexora.server.utils import tiff_region, tiff_series
-
     raw = (request.args.get('path') or '').strip()
-    if not raw or '://' in raw or not raw.lower().endswith(('.tif', '.tiff')) or not os.path.isfile(raw):
+    if not raw or '://' in raw:
         return Response(status=204)
     try:
-        with tiff_region.opened(raw) as tiff:
-            series = tiff_series.channel_series(tiff)
-            levels = list(getattr(series, 'levels', None) or [series])
-            level = levels[-1]
-            shape = tuple(int(side) for side in level.shape)
-            channels = _preview_channels(tiff, shape)
-            if len(shape) < 2 or max(shape[-2:]) > _PREVIEW_MAX_SIDE:
-                return Response(status=204)
-            index = len(levels) - 1
-            array = zarr.open(series.aszarr(level=index) if len(levels) > 1 else series.aszarr(), mode='r')
-            if len(shape) == 3 and shape[-1] in (3, 4) and str(level.dtype) == 'uint8':
-                picture = np.asarray(array[..., :3])
-            else:
-                plane = np.asarray(array[0] if len(shape) >= 3 else array[...])
-                while plane.ndim > 2:
-                    plane = plane[0]
-                values = plane[plane > 0]
-                if values.size:
-                    low, high = np.percentile(values, [0.5, 99.8])
-                else:
-                    low, high = 0.0, 1.0
-                high = max(float(high), float(low) + 1.0)
-                picture = np.clip((plane.astype(np.float32) - float(low)) * (255.0 / (high - float(low))),
-                                  0, 255).astype(np.uint8)
+        if os.path.isdir(raw):
+            got = _zarr_preview(raw)
+        elif raw.lower().endswith(_PREVIEW_TIFF_SUFFIXES) and os.path.isfile(raw):
+            got = _tiff_preview(raw)
+        else:
+            got = None
     except Exception:  # noqa: BLE001 -- no preview; the import reports what is wrong
         logging.getLogger(__name__).debug("No preview of %s", raw, exc_info=True)
+        got = None
+    if got is None:
         return Response(status=204)
+    picture, channels, size = got
     from PIL import Image
 
     out = io.BytesIO()
@@ -238,10 +228,101 @@ def import_preview():
     from urllib.parse import quote
 
     headers = {'Cache-Control': 'no-store',
-               'X-Plexora-Channels': quote(json.dumps(channels, separators=(',', ':'))),
-               'X-Plexora-Bytes': str(os.path.getsize(raw))}
+               'X-Plexora-Channels': quote(json.dumps(channels, separators=(',', ':')))}
+    if size:
+        headers['X-Plexora-Bytes'] = str(size)
     return Response(out.getvalue(), mimetype='image/png', headers=headers)
 
+
+def _windowed(plane):
+    """A plane as 8 bits, windowed from its non-zero values' 0.5th to 99.8th percentile."""
+    import numpy as np
+
+    while plane.ndim > 2:
+        plane = plane[0]
+    values = plane[plane > 0]
+    if values.size:
+        low, high = np.percentile(values, [0.5, 99.8])
+    else:
+        low, high = 0.0, 1.0
+    high = max(float(high), float(low) + 1.0)
+    return np.clip((plane.astype(np.float32) - float(low)) * (255.0 / (high - float(low))),
+                   0, 255).astype(np.uint8)
+
+
+def _preview_series(tiff):
+    """The series a TIFF's preview is of: a Leica SCN's largest image (its
+    first is often the glass slide's macro), else `channel_series`."""
+    import math
+
+    from plexora.server.utils import tiff_series
+
+    if getattr(tiff, 'is_scn', False) and len(tiff.series) > 1:
+        return max(tiff.series, key=lambda series: math.prod(int(side) for side in series.shape))
+    return tiff_series.channel_series(tiff)
+
+
+def _tiff_preview(raw):
+    """(picture, channels, size) of a TIFF-family file, or None."""
+    import numpy as np
+    import zarr
+
+    from plexora.server.utils import tiff_region
+
+    with tiff_region.opened(raw) as tiff:
+        series = _preview_series(tiff)
+        levels = list(getattr(series, 'levels', None) or [series])
+        index = len(levels) - 1
+        shape = tuple(int(side) for side in levels[index].shape)
+        if len(shape) < 2:
+            return None
+        if max(shape[-2:] if len(shape) < 3 or shape[-1] not in (3, 4) else shape[:2]) > _PREVIEW_MAX_SIDE:
+            # A slide whose pyramid stops large: its thumbnail, when it has one.
+            thumbnail = next((s for s in tiff.series if str(getattr(s, 'name', '')).lower() == 'thumbnail'), None)
+            if thumbnail is None:
+                return None
+            series, levels, index = thumbnail, [thumbnail], 0
+            shape = tuple(int(side) for side in thumbnail.shape)
+            if max(shape[:2]) > _PREVIEW_MAX_SIDE:
+                return None
+        channels = _preview_channels(tiff, shape)
+        level = levels[index]
+        array = zarr.open(series.aszarr(level=index) if len(levels) > 1 else series.aszarr(), mode='r')
+        if len(shape) == 3 and shape[-1] in (3, 4) and str(level.dtype) == 'uint8':
+            picture = np.asarray(array[..., :3])
+        else:
+            picture = _windowed(np.asarray(array[0] if len(shape) >= 3 else array[...]))
+    return picture, channels, os.path.getsize(raw)
+
+
+def _zarr_preview(raw):
+    """(picture, channels, size) of an OME-Zarr folder, or None: channel 0 of
+    a small level, its names from the store's omero metadata."""
+    import numpy as np
+
+    from plexora.server.utils import ome_zarr
+
+    if not ome_zarr.is_zarr_image_path(raw):
+        return None
+    pyramid = ome_zarr.open_image(raw)
+    # The smallest level at least _PREVIEW_ZARR_SIDE a side, else the largest
+    # up to _PREVIEW_MAX_SIDE: a store's pyramid often goes down to a hundred
+    # pixels (firstView.js chooses the same).
+    index = len(pyramid) - 1
+    while (index > 0 and max(pyramid[index].shape[-2:]) < _PREVIEW_ZARR_SIDE
+           and max(pyramid[index - 1].shape[-2:]) <= _PREVIEW_MAX_SIDE):
+        index -= 1
+    level = pyramid[index]
+    shape = tuple(int(side) for side in level.shape)
+    if max(shape[-2:]) > _PREVIEW_MAX_SIDE:
+        return None
+    picture = _windowed(np.asarray(level[0]))
+    names = ome_zarr.channel_labels(raw, shape[0]) or []
+    return picture, {'count': shape[0], 'names': [str(name or '') for name in names[:_PREVIEW_MAX_NAMES]]}, 0
+
+
+#: The side an OME-Zarr preview would rather have (`_zarr_preview`).
+_PREVIEW_ZARR_SIDE = 512
 
 #: The most channel names the preview's header carries (the page shows five).
 _PREVIEW_MAX_NAMES = 64
@@ -249,12 +330,13 @@ _PREVIEW_MAX_NAMES = 64
 
 def _preview_channels(tiff, shape):
     """`{count, names}` of a TIFF for the first view's channel list: the
-    OME-XML's channel names and SizeC, else the planes of a (C, Y, X) level;
-    no names (and one channel) for interleaved RGB."""
+    OME-XML's channel names and SizeC (a QPTIFF's biomarkers), else the planes
+    of a (C, Y, X) level; for interleaved RGB one channel, no names and `rgb`
+    (the frame shows the viewer's brightfield card)."""
     import re
 
     if len(shape) == 3 and shape[-1] in (3, 4):
-        return {'count': 1, 'names': []}
+        return {'count': 1, 'names': [], 'rgb': True}
     names, count = [], 0
     # The first page's description: opened() reads files without tifffile's
     # OME parsing, so `ome_metadata` is empty there.
@@ -273,6 +355,15 @@ def _preview_channels(tiff, shape):
         pixels = re.search(r'<(?:\w+:)?Pixels\b[^>]*>', xml)
         size_c = pixels and re.search(r'\bSizeC="(\d+)"', pixels.group(0))
         count = int(size_c.group(1)) if size_c else len(names)
+    elif getattr(tiff, 'is_qpi', False) and len(shape) >= 3:
+        # A QPTIFF names each channel in its own page's description (Akoya's
+        # PerkinElmer-QPI XML): the biomarker where it says one, else the name.
+        count = int(shape[0])
+        for at in range(min(count, _PREVIEW_MAX_NAMES, len(tiff.pages))):
+            text = getattr(tiff.pages[at], 'description', '') or ''
+            found = (re.search(r'<Biomarker>([^<]*)</Biomarker>', text)
+                     or re.search(r'<Name>([^<]*)</Name>', text))
+            names.append(found.group(1).strip() if found else '')
     if not count:
         count = int(shape[0]) if len(shape) >= 3 else 1
     return {'count': count, 'names': names}

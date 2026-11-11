@@ -485,7 +485,8 @@ PlexoraPage.register(function () {
      */
     async function firstView(path) {
         try {
-            const file = window.PlexoraPicks?.fileFor?.(path) || null;
+            const picks = window.PlexoraPicks;
+            const file = picks?.fileFor?.(path) || null;
             if (file) {
                 const preview = window.PlexoraFirstView;
                 if (!preview) return null;
@@ -494,7 +495,14 @@ PlexoraPage.register(function () {
                 return preview;
             }
             const website = typeof onWebsite === "function" && onWebsite();
-            if (website || isWebAddress(path) || !/\.(ome\.)?tiff?$/i.test(path)) return null;
+            if (website) {
+                // A picked OME-Zarr folder: read by the page, file by file.
+                const preview = window.PlexoraFirstView;
+                if (!preview?.beginZarr || !picks?.fileFor || !ZARR_PATH.test(path)) return null;
+                if (!preview.active()) preview.beginZarr({path, fileFor: (at) => picks.fileFor(at)});
+                return preview;
+            }
+            if (isWebAddress(path) || !PREVIEWED.test(path)) return null;
             const preview = await loadFirstView();
             preview?.beginUrl?.({url: `${plexoraUrl("import/preview")}?path=${encodeURIComponent(path)}`,
                                  name: opening});
@@ -503,6 +511,12 @@ PlexoraPage.register(function () {
             return null;
         }
     }
+
+    //: What the local app's preview route reads (import_routes.import_preview):
+    //: the TIFF family -- OME-TIFF, QPTIFF and the TIFF-based slides -- and
+    //: OME-Zarr folders.
+    const PREVIEWED = /\.(ome\.)?tiff?$|\.(qptiff|svs|ndpi|scn|bif)$|\.zarr\/?$/i;
+    const ZARR_PATH = /\.zarr\/?$/i;
 
     //: The local app's home page loads the preview module when first wanted.
     let firstViewLoading = null;

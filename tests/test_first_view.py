@@ -150,3 +150,99 @@ def test_the_first_view_names_the_files_channels(tmp_path):
     got_chain, got_subifds = _probe(chain, subifds)
     assert got_chain["channels"] == {"count": 3, "names": ["01_Nucleus_Hoechst", "CD45 & co", "C2"]}
     assert got_subifds["channels"] == {"count": 2, "names": ["DNA", "Ki-67"]}
+
+
+# -- slides and OME-Zarr -----------------------------------------------------------
+
+def _probe_args(*args):
+    done = subprocess.run(["node", str(PROBE), *map(str, args)], cwd=REPO_ROOT, capture_output=True,
+                          text=True, timeout=120)
+    assert done.returncode == 0, done.stderr[-2000:]
+    return json.loads(done.stdout.strip().splitlines()[-1])
+
+
+def test_a_slide_is_previewed_from_its_thumbnail_never_its_label(tmp_path):
+    """SVS's directories: the baseline, a thumbnail of its shape, a label of
+    another shape that is smaller still, a macro. The preview is the smallest
+    of the image's own shape -- the thumbnail -- read as tifffile reads it."""
+    from tests.slide_fixtures import write_svs_like
+
+    path = tmp_path / "slide.svs"
+    pictures = write_svs_like(path, jpeg=False)
+    [got] = _probe(path)
+    assert "error" not in got, got
+    assert (got["height"], got["width"], got["samples"]) == pictures["thumbnail"].shape
+    assert got["sha256"] == _sha(pictures["thumbnail"])
+
+
+def test_a_jpeg_slides_tiles_are_handed_to_the_decoder_whole(tmp_path):
+    """Aperio's JPEG tiles are abbreviated -- the tables are in JPEGTables --
+    and RGB with no colour marker. The stream the page hands the browser's
+    decoder has both: decoded (here by Pillow, as libjpeg does in the
+    browser) it is the strip's own pixels, not a YCbCr reading of them."""
+    from PIL import Image
+
+    from tests.slide_fixtures import write_svs_like
+
+    path = tmp_path / "slide.svs"
+    pictures = write_svs_like(path, jpeg=True)
+    got = _probe_args("--jpeg", path)
+    assert "error" not in got, got
+    assert (got["compression"], got["photometric"]) == (7, 2)
+    assert (got["height"], got["width"]) == pictures["thumbnail"].shape[:2]
+    import base64
+    from io import BytesIO
+
+    stream = base64.b64decode(got["stream"])
+    assert stream[:4] == b"\xff\xd8\xff\xee"          # the Adobe marker, first
+    with Image.open(BytesIO(stream)) as decoded:
+        strip = np.asarray(decoded.convert("RGB")).astype(int)
+    expected = pictures["thumbnail"][:strip.shape[0]].astype(int)
+    assert strip.shape == expected.shape
+    assert np.abs(strip - expected).mean() < 4
+    # Without the page's marker the same tables and scan read as YCbCr.
+    bare = b"\xff\xd8" + stream[2 + 16:]
+    with Image.open(BytesIO(bare)) as decoded:
+        misread = np.asarray(decoded.convert("RGB")).astype(int)
+    assert np.abs(misread - expected).mean() > 20
+
+
+def test_a_qptiff_is_previewed_from_its_reduced_level_with_its_biomarkers(tmp_path):
+    from tests.slide_fixtures import write_qptiff_like
+
+    path = tmp_path / "panel.qptiff"
+    _, reduced = write_qptiff_like(path, names=("DAPI", "CD8", "PanCK"))
+    [got] = _probe(path)
+    assert "error" not in got, got
+    assert (got["height"], got["width"]) == reduced.shape[1:]
+    assert got["sha256"] == _sha(reduced[0])
+    assert got["channels"] == {"count": 3, "names": ["DAPI", "CD8", "PanCK"]}
+
+
+@pytest.mark.parametrize("version", ["0.4", "0.5"])
+def test_an_ome_zarr_folder_names_its_smallest_level_and_its_channels(tmp_path, version):
+    """What the page reads of a picked OME-Zarr folder before the reader
+    worker reads the level: the path and shape of the smallest level at
+    least 512 a side (the largest when none is), the axes, the omero
+    labels -- zarr v2 and v3, and bioformats2raw's layout."""
+    from tests.ngff_fixtures import write_bioformats2raw_like, write_ngff
+
+    store = write_ngff(tmp_path / "image.ome.zarr", shape=(3, 256, 256), levels=3, version=version,
+                       labels=["DAPI", "CD3", "CD20"])
+    got = _probe_args("--zarr", store)
+    # No level reaches 512 a side: the largest, 256.
+    assert got == {"path": "0", "shape": [3, 256, 256], "format": 2 if version == "0.4" else 3,
+                   "axes": ["c", "y", "x"], "channels": {"count": 3, "names": ["DAPI", "CD3", "CD20"]}}
+
+    raw = write_bioformats2raw_like(tmp_path / "raw.zarr", version=version, shape=(2, 128, 128), levels=2,
+                                    axes="cyx")
+    got = _probe_args("--zarr", raw)
+    assert got["path"] == "0/0" and got["shape"] == [2, 128, 128]
+    assert got["channels"]["count"] == 2
+
+    # A pyramid down to 64 a side: the level above it that reaches 512.
+    deep = write_ngff(tmp_path / "deep.ome.zarr", shape=(1, 2048, 2048), levels=6, version=version)
+    got = _probe_args("--zarr", deep)
+    assert got["path"] == "2" and got["shape"] == [1, 512, 512]
+
+    assert _probe_args("--zarr", tmp_path / "missing.zarr") is None

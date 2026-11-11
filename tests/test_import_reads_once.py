@@ -189,3 +189,70 @@ def test_the_preview_names_the_channels_and_the_size_for_the_first_views_list(da
         "/import/preview", query_string={"path": str(plain)}).headers["X-Plexora-Channels"]))
     assert channels["count"] == 2
     assert all(not name or name.startswith("Channel") for name in channels["names"])
+
+
+def _preview_of(path):
+    import json
+    from io import BytesIO
+    from urllib.parse import unquote
+
+    from PIL import Image
+
+    from plexora import app
+
+    found = app.test_client().get("/import/preview", query_string={"path": str(path)})
+    if found.status_code != 200:
+        return found.status_code, None, None, found.headers
+    with Image.open(BytesIO(found.data)) as picture:
+        pixels = np.asarray(picture.convert("RGB") if picture.mode not in ("L", "RGB") else picture)
+    return 200, pixels, json.loads(unquote(found.headers["X-Plexora-Channels"])), found.headers
+
+
+def test_the_preview_reads_a_slide_in_its_own_colours_and_its_thumbnail_when_it_stops_large(data, monkeypatch):
+    """The TIFF-based slides (an Aperio-like SVS here, JPEG tiles in RGB):
+    the smallest level in colour, one RGB channel and no names; a slide whose
+    pyramid stops above the limit shows its thumbnail."""
+    from plexora.server.routes import import_routes
+    from tests.slide_fixtures import write_svs_like
+
+    path = data / "slide.svs"
+    pictures = write_svs_like(path, jpeg=True)
+    status, pixels, channels, headers = _preview_of(path)
+    assert status == 200
+    assert pixels.shape == pictures["baseline"].shape
+    assert np.abs(pixels.astype(int) - pictures["baseline"].astype(int)).mean() < 4
+    assert channels == {"count": 1, "names": [], "rgb": True}
+    assert int(headers["X-Plexora-Bytes"]) == os.path.getsize(path)
+
+    monkeypatch.setattr(import_routes, "_PREVIEW_MAX_SIDE", 400)
+    status, pixels, _, _ = _preview_of(path)
+    assert status == 200 and pixels.shape == pictures["thumbnail"].shape
+
+
+def test_the_preview_names_a_qptiffs_biomarkers(data):
+    from tests.slide_fixtures import write_qptiff_like
+
+    path = data / "panel.qptiff"
+    write_qptiff_like(path, names=("DAPI", "CD8", "PanCK"))
+    status, pixels, channels, _ = _preview_of(path)
+    assert status == 200 and pixels.ndim == 2
+    assert channels == {"count": 3, "names": ["DAPI", "CD8", "PanCK"]}
+
+
+def test_the_preview_reads_an_ome_zarr_folder(data):
+    """An OME-Zarr folder: channel 0 of its smallest level at least 512 a side
+    (else its largest, as firstView.js chooses), the omero labels
+    as its names, no size (a folder's is not one number worth walking it for)."""
+    from tests.ngff_fixtures import write_ngff
+
+    store = write_ngff(data / "image.ome.zarr", shape=(3, 256, 256), levels=3, labels=["DAPI", "CD3", "CD20"])
+    status, pixels, channels, headers = _preview_of(store)
+    assert status == 200 and pixels.shape == (256, 256)
+    assert channels == {"count": 3, "names": ["DAPI", "CD3", "CD20"]}
+    assert "X-Plexora-Bytes" not in headers
+    (data / "plain").mkdir()
+    assert _preview_of(data / "plain")[0] == 204
+
+    deep = write_ngff(data / "deep.ome.zarr", shape=(1, 2048, 2048), levels=6)
+    status, pixels, _, _ = _preview_of(deep)
+    assert status == 200 and pixels.shape == (512, 512)
