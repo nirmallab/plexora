@@ -3,10 +3,15 @@
 // it for the first view. Prints one JSON line per file: its size, layout, the
 // reads it made, and a sha256 of its samples (little-endian), for
 // tests/test_first_view.py to hold against tifffile's own reading.
+// `--jpeg FILE` prints the smallest level's first block as the stream the
+// page hands the browser's JPEG decoder (base64; Node has no decoder), and
+// `--zarr DIR` what the page reads of an OME-Zarr folder's metadata, and
+// `--address A ...` what the page fetches for each key of a remote store.
 //
 //   node tests/js/first_view_probe.mjs FILE [FILE ...]   (from the repository root)
+//   node tests/js/first_view_probe.mjs --jpeg FILE | --zarr DIR | --address A ...
 import { createHash } from "node:crypto";
-import { closeSync, fstatSync, openSync, readFileSync, readSync } from "node:fs";
+import { closeSync, existsSync, fstatSync, openSync, readFileSync, readSync, statSync } from "node:fs";
 import vm from "node:vm";
 
 class DiskFile {
@@ -39,7 +44,35 @@ context.globalThis = context;
 vm.createContext(context);
 vm.runInContext(readFileSync("plexora/client/src/js/services/firstView.js", "utf8"), context);
 
-for (const path of process.argv.slice(2)) {
+const args = process.argv.slice(2);
+if (args[0] === "--jpeg") {
+    const file = new DiskFile(args[1]);
+    try {
+        const got = await context.PlexoraFirstView._jpegBlock(file);
+        console.log(JSON.stringify({ ...got, stream: Buffer.from(got.stream).toString("base64") }));
+    } catch (error) {
+        console.log(JSON.stringify({ error: String(error && error.message || error) }));
+    }
+    closeSync(file.fd);
+    process.exit(0);
+}
+if (args[0] === "--address") {
+    console.log(JSON.stringify(args.slice(1).map((address) => context.PlexoraFirstView._remoteAddress(address))));
+    process.exit(0);
+}
+if (args[0] === "--zarr") {
+    const fileFor = (path) => (existsSync(path) && statSync(path).isFile()
+        ? { text: async () => readFileSync(path, "utf8") } : null);
+    try {
+        const got = await context.PlexoraFirstView._zarrLevel(fileFor, args[1].replace(/\/+$/, ""));
+        console.log(JSON.stringify(got));
+    } catch (error) {
+        console.log(JSON.stringify({ error: String(error && error.message || error) }));
+    }
+    process.exit(0);
+}
+
+for (const path of args) {
     const file = new DiskFile(path);
     try {
         const plane = await context.PlexoraFirstView._plane(file);
@@ -49,6 +82,7 @@ for (const path of process.argv.slice(2)) {
         console.log(JSON.stringify({ path, width: plane.width, height: plane.height, samples: plane.samples,
                                      bits: plane.data.BYTES_PER_ELEMENT * 8, layout: plane.layout,
                                      reads: plane.reads, offsets: plane.offsets.length,
+                                     channels: plane.channels,
                                      sha256: createHash("sha256").update(bytes).digest("hex") }));
     } catch (error) {
         console.log(JSON.stringify({ path, error: String(error && error.message || error) }));

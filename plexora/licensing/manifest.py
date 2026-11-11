@@ -47,6 +47,17 @@ Two principles hold for every root:
   transcript or bin layer is drawn, exported, measured and deleted on Free,
   like everything else; only making more of them is Pro.
 
+The platform can also hold a feature back from every licence -- Pro, its
+trial and every licence switch alike -- until it is released: a switch per
+root and per plugin on admin.biocognia.com (Licensing › Features), Plexora 3D
+(`volume`) and Video Studio (`plugin:video_studio`) off since 2026-11-11. That
+is the platform's to say, not this file's: Pro still names them, the plan
+still grants them, and the certificate leaves them out, so they come back on
+every licence the moment staff switch them on. What Plexora says follows the
+platform's public switches (`switches.py`): a held-back feature is not listed
+as included or not (`unlocks(held=...)`, `pro_words(held=...)`), and a refusal
+of one offers no trial and no price (`guards`).
+
 Some roots are off by default (`OFF_BY_DEFAULT`): not part of Pro or its
 trial, never sold, and turned on for a licence by an administrator, on the
 BioCognia platform's admin licence page (a switch per entitlement). `mcp`,
@@ -207,9 +218,15 @@ def _joined(words) -> str:
     return ", ".join(words[:-1]) + " and " + words[-1]
 
 
-def pro_words() -> dict[str, str]:
+def _held_back(name: str, held) -> bool:
+    return any(name == h or name.startswith(h + ":") for h in held or ())
+
+
+def pro_words(held=()) -> dict[str, str]:
     """What Pro adds, in words a person reads, built from `pro_default()` so a
     sentence that uses it cannot go stale when a root or plugin is added.
+    `held` (`switches.held()`) names features the platform holds back from
+    every licence until they are released; they are left out.
 
     `included` names the Pro default ("Plexora AI, Plexora 3D, Spatial
     transcriptomics and Video Studio"); `off_by_default` is a sentence on the
@@ -222,7 +239,8 @@ def pro_words() -> dict[str, str]:
     if off:
         verb, them = ("are", "them") if len(off) > 1 else ("is", "it")
         sentence = f"{_joined(off)} {verb} off by default; an administrator can turn {them} on."
-    return {"included": _joined(label(name) for name in pro_default()), "off_by_default": sentence}
+    included = [label(name) for name in pro_default() if not _held_back(name, held)]
+    return {"included": _joined(included), "off_by_default": sentence}
 
 
 def known(entitlement) -> bool:
@@ -271,15 +289,18 @@ def plan_for(entitlement) -> str:
     return "pro"
 
 
-def unlocks(entitlements, *, paid: bool) -> list[dict]:
+def unlocks(entitlements, *, paid: bool, held=()) -> list[dict]:
     """One row per root, then one per first-party plugin: what it is called,
     what it does and whether this licence grants it. Settings,
     `plexora license status` and `server_info` show these, so an "Included /
     Not included" list has one source. `paid` is `describe()`'s boolean --
-    whether a licence is held -- not a plan name."""
+    whether a licence is held -- not a plan name. A feature in `held`
+    (`switches.held()`: held back from every licence until it is released)
+    has no row: no licence lacks it more than another."""
     grants = tuple(entitlements or ()) if paid else ()
     rows = [(root, *ENTITLEMENTS[root]) for root in ROOTS]
     rows += [(f"{PLUGIN_ROOT}:{name}", *PLUGINS[name]) for name in PLUGINS]
+    rows = [row for row in rows if not _held_back(row[0], held)]
     return [{"entitlement": name, "label": label, "summary": sentence, "granted": any_satisfies(grants, name)}
             for name, label, sentence in rows]
 

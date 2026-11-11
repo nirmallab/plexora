@@ -1215,16 +1215,15 @@ class ViewerSidebar {
 
     /**
      * The selected slot. With none (first load, or the selected row was
-     * removed) it falls back to slot 2 -- the row J/K stepped through before
-     * any row could be selected, and the one gating mirrors its marker into
-     * -- then the first channel showing, then the first named row.
+     * removed) it falls back to the first channel showing -- on a first load
+     * slot 1, the channel on screen, so the contrast bar edits what is seen
+     * -- then the first named row.
      */
     resolveSelectedSlot() {
         const usable = (slot) => slot && slot.visible && slot.name;
         let slot = this.channelSlots[this.selectedSlot];
         if (!usable(slot)) {
-            slot = (usable(this.channelSlots[1]) ? this.channelSlots[1] : null)
-                || this.channelSlots.find((s) => usable(s) && s.enabled)
+            slot = this.channelSlots.find((s) => usable(s) && s.enabled)
                 || this.channelSlots.find(usable) || null;
             this.selectedSlot = slot ? slot.index : -1;
         }

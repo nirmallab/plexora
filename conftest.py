@@ -38,9 +38,13 @@ def plexora_data_root(tmp_path, monkeypatch):
     monkeypatch.setenv("PLEXORA_LIBRARY_PATH", "")
     # The admin's free/licensed switch for remote servers is never read from
     # the platform in a test (server/models/remote_access.py): free.
+    # Nor the features it holds back from every licence, or whether it offers
+    # a trial (licensing/switches.py): nothing held back, the trial offered.
     monkeypatch.setenv("PLEXORA_FEATURES_URL", "off")
     from plexora.server.models import remote_access
     remote_access.reset_for_tests()
+    from plexora.licensing import switches as licence_switches
+    licence_switches.reset_for_tests()
     # What Plexora learns about markers goes to the marker graph's overlay,
     # which is the user's own (shared with SCIMAP Pro) unless this names
     # another -- every test gets one of its own, and a lab's shared folder from

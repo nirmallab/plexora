@@ -1,10 +1,13 @@
 /**
  * The first view of an image, at once: the moment a file is given to the
  * home page, its first channel's smallest pyramid level is read by the page
- * itself and shown where the viewer will be, while the import (Python's
- * inspect and registration, the viewer's page, the project's load) goes on
- * behind it. When the viewer has drawn the same image -- or the person reaches
- * for it, or the import needs a question answered -- the preview fades.
+ * itself and shown inside a frame drawn as the viewer it turns into (the
+ * viewer's sidebar with the file's channel names, the preview in the canvas
+ * in channel 1's colour, a bar and the open's steps), while the import
+ * (Python's inspect and registration, the viewer's page, the project's load)
+ * goes on behind it. When the viewer has drawn the same image -- or the
+ * person reaches for it, or the import needs a question answered -- the
+ * preview fades.
  *
  * Why: everything between a dropped file and its first tile was Python's,
  * one step after another (docs/internal/bench/web/WEBSITE_FIRST_VIEW_2026-11-10.md):
@@ -37,7 +40,12 @@
  *
  *   begin({file, name})     -> the preview of a File, started now
  *   beginUrl({url, name})   -> a preview image Python made (the local app)
+ *   beginZarr({path, fileFor}) -> the preview of an OME-Zarr folder the page holds
+ *   beginRemoteZarr({url})  -> the preview of an OME-Zarr store at a web address (the website)
  *   prefetch(path, file)    -> the file's directories handed to the worker
+ *   step(key)               -> a step of the open reached ("viewer": registered)
+ *   handOff({leaving, to})  -> kept for the viewer's page, when `leaving` is replaced
+ *   resume()                -> taken up on the viewer's page (the local app)
  *   done(reason)            -> the preview let go (drawn, dialog, error, ...)
  *   active()                -> whether one is showing
  */
@@ -60,7 +68,8 @@
     const PIECE = 64 << 10;
     //: The most the smallest level may cost to read for a preview.
     const MAX_TILE_BYTES = 48 << 20;
-    const MAX_TILES = 64;
+    //: Tiles or strips: a scanner's thumbnail comes in strips of a few rows.
+    const MAX_TILES = 256;
     //: Directories walked one by one at most, when nothing can be computed.
     const MAX_WALK = 4096;
 
@@ -113,6 +122,14 @@
         if (order !== "II" && order !== "MM") return null;
         const le = order === "II";
         const magic = view.getUint16(2, le);
+        // Hamamatsu's NDPI: classic TIFF with 64-bit offsets (the first
+        // directory's at 4, each directory's next after its entries, and the
+        // high half of each entry's value or offset in a block after that),
+        // which tifffile reads for any .ndpi; below 4 GB the low halves alone
+        // happen to be right.
+        if (magic === 42 && le && /\.ndpi$/i.test(io.file.name || "")) {
+            return { le, big: false, ndpi: true, first: Number(view.getBigUint64(4, le)) };
+        }
         if (magic === 42) return { le, big: false, first: view.getUint32(4, le) };
         if (magic === 43) return { le, big: true, first: Number(view.getBigUint64(8, le)) };
         return null;
@@ -128,6 +145,7 @@
         const hv = new DataView(head.buffer, head.byteOffset, head.byteLength);
         const count = tiff.big ? Number(hv.getBigUint64(0, tiff.le)) : hv.getUint16(0, tiff.le);
         if (!count || count > 4096) return null;
+        if (tiff.ndpi) return ndpiDirectory(io, tiff, offset, count);
         const body = await io.at(offset + countBytes, count * entry + (tiff.big ? 8 : 4));
         if (body.length < count * entry) return null;
         const v = new DataView(body.buffer, body.byteOffset, body.byteLength);
@@ -149,10 +167,39 @@
         return { offset, tags, next };
     }
 
+    /**
+     * An NDPI directory: 12-byte entries, the next directory's 64-bit offset,
+     * then each entry's high 32 bits (tifffile's NDPI_LE). A lone LONG or IFD
+     * value is the 64-bit number both halves make (a level's one JPEG strip
+     * past 4 GB); an out-of-line value's offset likewise.
+     */
+    async function ndpiDirectory(io, tiff, offset, count) {
+        const body = await io.at(offset + 2, count * 12 + 8 + count * 4);
+        if (body.length < count * 12 + 8 + count * 4) return null;
+        const v = new DataView(body.buffer, body.byteOffset, body.byteLength);
+        const tags = new Map();
+        for (let i = 0; i < count; i += 1) {
+            const o = i * 12;
+            const tag = v.getUint16(o, true);
+            const type = v.getUint16(o + 2, true);
+            const n = v.getUint32(o + 4, true);
+            const size = TYPE_SIZE[type] || 1;
+            const low = v.getUint32(o + 8, true);
+            const high = v.getUint32(count * 12 + 8 + i * 4, true);
+            // NDPI keeps strings out of line whatever their length (tifffile).
+            const inline = n * size <= 4 && type !== 2;
+            const wide = inline && n === 1 && (type === 4 || type === 13) ? low + high * 2 ** 32 : null;
+            tags.set(tag, { type, n, size, inline, wide, raw: inline ? body.slice(o + 8, o + 12) : null,
+                            at: inline ? null : low + high * 2 ** 32 });
+        }
+        return { offset, tags, next: Number(v.getBigUint64(count * 12, true)) };
+    }
+
     /** A tag's values (numbers; a string for ASCII). */
     async function values(io, tiff, ifd, tag) {
         const t = ifd.tags.get(tag);
         if (!t) return null;
+        if (t.wide != null) return [t.wide];
         const bytes = t.inline ? t.raw : await io.at(t.at, t.n * t.size);
         if (t.type === 2) return new TextDecoder().decode(bytes.subarray(0, t.n)).replace(/\0+$/, "");
         const v = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
@@ -183,6 +230,7 @@
             bits: await one(io, tiff, ifd, 258, 1),
             samples: await one(io, tiff, ifd, 277, 1),
             compression: await one(io, tiff, ifd, 259, 1),
+            photometric: await one(io, tiff, ifd, 262, null),
             predictor: await one(io, tiff, ifd, 317, 1),
             planar: await one(io, tiff, ifd, 284, 1),
             format: await one(io, tiff, ifd, 339, 1),
@@ -214,6 +262,33 @@
         return spp > 1 ? Math.max(1, Math.round(fromAttrs / spp)) : fromAttrs;
     }
 
+    const XML_ENTITIES = { amp: "&", lt: "<", gt: ">", quot: "\"", apos: "'" };
+    //: The most channel names kept for the frame's channel list.
+    const MAX_NAMES = 64;
+
+    /**
+     * The image's channels, from the OME-XML in directory 0: `{count, names}`
+     * (count 0 when nothing says; names as many as the XML gives). What the
+     * frame's channel list shows before the viewer has its own.
+     */
+    function channelsOf(description) {
+        if (typeof description !== "string" || !/<OME[\s>:]|openmicroscopy/.test(description.slice(0, 4096))) {
+            return { count: 0, names: [] };
+        }
+        const pixels = description.match(/<(?:\w+:)?Pixels\b[^>]*>/);
+        const sizeC = pixels && pixels[0].match(/\bSizeC="(\d+)"/);
+        const spp = description.match(/SamplesPerPixel="(\d+)"/);
+        const rgb = spp && parseInt(spp[1], 10) > 1;
+        const names = [];
+        for (const tag of description.matchAll(/<(?:\w+:)?Channel\b[^>]*>/g)) {
+            if (names.length >= MAX_NAMES) break;
+            const named = tag[0].match(/\bName="([^"]*)"/);
+            names.push(named ? named[1].replace(/&(amp|lt|gt|quot|apos);/g, (_, e) => XML_ENTITIES[e]).trim() : "");
+        }
+        const count = rgb ? 1 : (sizeC ? parseInt(sizeC[1], 10) : names.length);
+        return { count, names: rgb ? [] : names };
+    }
+
     /**
      * Channel 0's smallest level: `{level: description, offsets: [every
      * directory offset found or computed], reads}`, or null when there is
@@ -227,6 +302,8 @@
         if (!first) return null;
         const top = await describe(io, tiff, first);
         if (!top) return null;
+        const description = await values(io, tiff, first, 270);
+        const channels = channelsOf(description);
         // OME's pyramid: SubIFDs.
         const subs = await values(io, tiff, first, 330);
         if (Array.isArray(subs) && subs.length) {
@@ -246,10 +323,10 @@
                 if (!d) break;
                 next = d.next;
             }
-            return { tiff, level: best, offsets, layout: "subifds" };
+            return { tiff, level: best, offsets, layout: "subifds", channels };
         }
         // A pyramid in the main chain, or no pyramid at all.
-        const planes = planesOf(await values(io, tiff, first, 270));
+        const planes = planesOf(description);
         let levelStart = first;
         let levelDesc = top;
         let best = top;
@@ -291,20 +368,41 @@
                 best = levelDesc;
                 layout = "chain-strided";
             }
-            return { tiff, level: best, offsets, layout };
+            return { tiff, level: best, offsets, layout, channels };
         }
-        // Nothing says how many planes a level has: walked, the smallest
-        // directory of the image's own kind kept.
+        // Nothing says how many planes a level has: every directory walked.
+        // The image is the largest of them -- a slide's label and macro and a
+        // scanner's thumbnail sit beside it (SVS, NDPI, SCN, BIF, QPTIFF) --
+        // and its preview the smallest directory of its kind and its shape:
+        // a reduced level, or the thumbnail, never the label.
+        const seen = [top];
         let next = first.next;
         for (let i = 0; next && i < MAX_WALK; i += 1) {
             offsets.push(next);
             const d = await directory(io, tiff, next);
             if (!d) break;
             const described = await describe(io, tiff, d);
-            if (described && sameKind(described, top) && described.width < best.width) best = described;
+            if (described) seen.push(described);
             next = d.next;
         }
-        return { tiff, level: best, offsets, layout };
+        const main = seen.reduce((a, b) => (b.width * b.height > a.width * a.height ? b : a));
+        const aspect = (d) => d.width / d.height;
+        const shaped = (d) => sameKind(d, main) && Math.abs(aspect(d) / aspect(main) - 1) < 0.02;
+        best = seen.filter(shaped).reduce((a, b) => (b.width < a.width ? b : a), main);
+        // A QPTIFF names each channel in its full-resolution page's own XML.
+        if (typeof description === "string" && description.includes("PerkinElmer-QPI")) {
+            const names = [];
+            for (const d of seen) {
+                if (names.length >= MAX_NAMES) break;
+                if (!sameKind(d, main) || d.width !== main.width || d.height !== main.height) continue;
+                const text = await values(io, tiff, d.ifd, 270);
+                const found = typeof text === "string"
+                    && (text.match(/<Biomarker>([^<]*)<\/Biomarker>/) || text.match(/<Name>([^<]*)<\/Name>/));
+                names.push(found ? found[1].trim() : "");
+            }
+            return { tiff, level: best, offsets, layout, channels: { count: names.length, names } };
+        }
+        return { tiff, level: best, offsets, layout, channels };
     }
 
     /** The directory `planes` after `start`, walked one by one; null at the chain's end. */
@@ -431,6 +529,49 @@
         return out;
     }
 
+    //: An Adobe APP14 segment saying "no colour transform": a TIFF's RGB JPEG
+    //: tiles (Aperio's) carry no marker, and a decoder would read their three
+    //: components as YCbCr.
+    const ADOBE_RGB = Uint8Array.of(0xff, 0xee, 0x00, 0x0e, 0x41, 0x64, 0x6f, 0x62, 0x65,
+                                    0x00, 0x64, 0x00, 0x00, 0x00, 0x00, 0x00);
+
+    /**
+     * One JPEG-compressed tile or strip (compression 7) as a stream a decoder
+     * reads by itself: the JPEGTables' tables in front of it (they are kept
+     * once, in tag 347, where the tiles are abbreviated), and, for RGB
+     * samples, the marker that says so.
+     */
+    function jpegStream(block, tables, rgb) {
+        const soi = (b) => b && b.length >= 4 && b[0] === 0xff && b[1] === 0xd8;
+        let head = Uint8Array.of(0xff, 0xd8);
+        let body = soi(block) ? block.subarray(2) : block;
+        // The tables without their own SOI and EOI.
+        const middle = soi(tables) ? tables.subarray(2, tables[tables.length - 2] === 0xff
+            && tables[tables.length - 1] === 0xd9 ? tables.length - 2 : tables.length) : new Uint8Array(0);
+        const adobe = rgb ? ADOBE_RGB : new Uint8Array(0);
+        const out = new Uint8Array(head.length + adobe.length + middle.length + body.length);
+        out.set(head, 0);
+        out.set(adobe, head.length);
+        out.set(middle, head.length + adobe.length);
+        out.set(body, head.length + adobe.length + middle.length);
+        return out;
+    }
+
+    /** A JPEG stream decoded by the browser: {width, height, rgba}. */
+    async function decodeJpeg(stream) {
+        if (typeof global.createImageBitmap !== "function") throw new Error("no JPEG decoder here");
+        const bitmap = await global.createImageBitmap(new Blob([stream], { type: "image/jpeg" }),
+                                                      { colorSpaceConversion: "none", premultiplyAlpha: "none" });
+        const { width, height } = bitmap;
+        const canvas = typeof global.OffscreenCanvas === "function"
+            ? new global.OffscreenCanvas(width, height)
+            : Object.assign(doc.createElement("canvas"), { width, height });
+        const ctx = canvas.getContext("2d");
+        ctx.drawImage(bitmap, 0, 0);
+        if (bitmap.close) bitmap.close();
+        return { width, height, rgba: ctx.getImageData(0, 0, width, height).data };
+    }
+
     /**
      * The level's first plane as {width, height, samples, data: Uint8Array |
      * Uint16Array}, interleaved when it has several samples.
@@ -454,6 +595,33 @@
         const blockWidth = level.tiled ? level.tileWidth : level.width;
         const raw = await Promise.all(Array.from({ length: wanted }, (_, i) => (counts[i]
             ? io.at(offsets[i], counts[i]) : Promise.resolve(new Uint8Array(0)))));
+        if (level.compression === 7) {
+            // JPEG (SVS, NDPI, SCN, BIF): decoded by the browser, side by side.
+            if (level.bits !== 8) throw new Error(`${level.bits}-bit JPEG`);
+            const tables = level.ifd.tags.has(347) ? Uint8Array.from(await values(io, tiff, level.ifd, 347)) : null;
+            const rgb = spp >= 3 && level.photometric === 2;
+            const decoded = await Promise.all(raw.map((block) => (block.length
+                ? decodeJpeg(jpegStream(block, tables, rgb)) : Promise.resolve(null))));
+            decoded.forEach((got, i) => {
+                if (!got) return;
+                const x0 = level.tiled ? (i % across) * blockWidth : 0;
+                const y0 = (level.tiled ? Math.floor(i / across) : i) * level.tileHeight;
+                const w = Math.min(got.width, level.width - x0);
+                const h = Math.min(got.height, level.height - y0);
+                const take = Math.min(spp, 3);
+                for (let y = 0; y < h; y += 1) {
+                    for (let x = 0; x < w; x += 1) {
+                        const src = (y * got.width + x) * 4;
+                        const dst = ((y0 + y) * level.width + x0 + x) * spp;
+                        for (let k = 0; k < take; k += 1) out[dst + k] = got.rgba[src + k];
+                    }
+                }
+            });
+            return { width: level.width, height: level.height, samples: spp, data: out };
+        }
+        if (level.compression === 6 || level.compression === 33003 || level.compression === 33005) {
+            throw new Error(`compression ${level.compression}`);
+        }
         const tiffLe = tiff.le;
         for (let i = 0; i < wanted; i += 1) {
             if (!raw[i].length) continue;
@@ -538,7 +706,7 @@
     //: Reads still under way, by the same key: a prefetch waits for one.
     const reading = new Map();
 
-    /** A File's first view: {canvas, width, height, ms, reads, layout} (throws when it cannot). */
+    /** A File's first view: {canvas, width, height, ms, reads, layout, channels} (throws when it cannot). */
     async function read(file) {
         const started = performance.now();
         const io = reader(file);
@@ -547,19 +715,55 @@
         found.set(keyOf(file), { offsets: located.offsets, layout: located.layout });
         while (found.size > 8) found.delete(found.keys().next().value);
         const plane = await pixels(io, located.tiff, located.level);
+        const channels = plane.samples >= 3 ? { count: 1, names: [], rgb: true }
+            : (located.channels || { count: 0, names: [] });
         return { canvas: picture(plane), width: plane.width, height: plane.height,
                  ms: Math.round(performance.now() - started), reads: io.reads(), layout: located.layout,
-                 full: { width: 0, height: 0 } };
+                 channels, full: { width: 0, height: 0 } };
     }
 
     // -- on screen ---------------------------------------------------------------
+    //
+    // The first view is drawn as the viewer it turns into: the viewer's
+    // sidebar (its header, Layers, the Image card with the file's channel
+    // names, channel 1 on) beside the canvas, the preview inside the canvas
+    // in channel 1's colour, a bar across the canvas's top and a card of the
+    // open's steps in its corner. Once the viewer's page is up the frame
+    // moves onto the viewer's canvas, and the real sidebar shows; it leaves
+    // when the viewer has drawn the image.
+    //
+    // The local app's home page and its viewer are two documents, so the
+    // frame is handed over (`handOff`, sessionStorage) and taken up again
+    // by the viewer's page (`resume`); the website's host page outlives the
+    // app frame's navigation and keeps the same one.
 
     let current = null;
     let watch = 0;
+    //: Counted up by every `done`: a first view that waits for its source to
+    //: answer before it shows (an OME-Zarr's metadata, a remote store, a
+    //: folder that may not be an image) shows only if nothing let go since.
+    let generation = 0;
     //: The longest a first view stays up waiting for the viewer, and the
     //: longest a loaded page of the app with no viewer in it is covered.
     const MAX_SHOWN_MS = 180000;
     const NO_VIEWER_MS = 15000;
+    //: The open's steps, in order; `step(key)` says one has been reached.
+    const STEPS = [
+        ["read", "Preview read from the file"],
+        ["register", "Registering the image"],
+        ["viewer", "Opening the viewer"],
+        ["draw", "Drawing at full resolution"],
+    ];
+    //: Channel 1's colour in the viewer (viewerSidebar.js defaultColors[0]):
+    //: the preview is drawn in it, so nothing changes colour at the hand-over.
+    const CHANNEL_ONE = [35, 136, 255];
+    //: The rows the frame's channel list shows (viewerSidebar's initialChannelSlots).
+    const ROWS = 5;
+    //: The hand-over between the local app's two documents.
+    const HANDOFF_KEY = "plexora.firstView";
+    const HANDOFF_MAX_AGE_MS = 60000;
+    //: The largest side of the picture handed over (sessionStorage is small).
+    const HANDOFF_SIDE = 1024;
 
     /** The app frame's page: {path, loaded, viewer}, or null. */
     function framePage() {
@@ -580,27 +784,198 @@
         css.id = "plexora-first-view-style";
         css.textContent = `
 .plexora-first-view{position:fixed;left:0;right:0;bottom:0;top:44px;z-index:2147483000;pointer-events:none;
-  display:flex;align-items:center;justify-content:center;background:#05070a;transition:opacity .28s ease}
+  display:grid;grid-template-columns:minmax(320px,380px) minmax(0,1fr);background:#05070a;color:#c9d3e0;
+  font:400 13px/1.4 system-ui,-apple-system,"Segoe UI",sans-serif;transition:opacity .28s ease}
 .plexora-first-view.is-leaving{opacity:0}
-.plexora-first-view canvas,.plexora-first-view img{max-width:calc(100% - 48px);max-height:calc(100% - 48px);
-  object-fit:contain;image-rendering:auto;opacity:0;transition:opacity .18s ease}
-.plexora-first-view.is-shown canvas,.plexora-first-view.is-shown img{opacity:1}
-.plexora-first-view-chip{position:absolute;left:16px;bottom:14px;font:500 12px/1.4 system-ui,-apple-system,"Segoe UI",sans-serif;
-  color:#c9d3e0;background:rgba(14,18,25,.82);border:1px solid rgba(255,255,255,.08);border-radius:999px;padding:5px 11px}`;
+.plexora-first-view.is-in-viewer{grid-template-columns:minmax(0,1fr);background:transparent}
+.plexora-first-view.is-in-viewer .pfv-side{display:none}
+.pfv-side{box-sizing:border-box;min-width:0;overflow:hidden;display:flex;flex-direction:column;gap:14px;padding:20px 16px 16px;
+  background:linear-gradient(180deg,rgba(20,24,31,.98),rgba(10,13,18,.98));border-right:1px solid rgba(255,255,255,.06)}
+.pfv-head{padding-bottom:14px;border-bottom:1px solid rgba(255,255,255,.07)}
+.pfv-kicker{font-size:11px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:#8b96a5}
+.pfv-title{font-size:21px;font-weight:700;color:#eef2f7}
+.pfv-section{font-size:14px;font-weight:600;color:#dfe5ec}
+.pfv-card{display:flex;flex-direction:column;gap:10px;padding:12px;border:1px solid rgba(80,160,230,.35);border-radius:12px;background:#0e1219}
+.pfv-card-head{display:flex;align-items:center;gap:8px;font-size:14px;font-weight:600;color:#eef2f7}
+.pfv-card-head span{margin-left:auto;font-size:11px;font-weight:500;color:#8b96a5}
+.pfv-skel{border-radius:6px;background:linear-gradient(90deg,#161b23 0,#1f2630 50%,#161b23 100%);background-size:480px 100%;
+  animation:pfvShimmer 1.4s linear infinite}
+.pfv-rows{display:flex;flex-direction:column;gap:6px}
+.pfv-row{height:32px;box-sizing:border-box;display:flex;align-items:center;gap:10px;padding:0 10px 0 12px;
+  border:1px solid rgba(255,255,255,.05);border-radius:8px;color:#6f7a89;white-space:nowrap;overflow:hidden}
+.pfv-row.is-on{color:#eef2f7;border-color:rgba(255,255,255,.08);border-left:3px solid rgb(${CHANNEL_ONE});padding-left:10px}
+.pfv-row i{flex:0 0 14px;height:14px;border-radius:3px;background:#2a313b}
+.pfv-row.is-on i{background:rgb(${CHANNEL_ONE})}
+.pfv-row b{font-weight:400;overflow:hidden;text-overflow:ellipsis}
+.pfv-row .pfv-skel{flex:0 1 150px;height:10px}
+.pfv-row em{margin-left:auto;font-style:normal;font-size:11px;color:#8fd3ff}
+.pfv-note{font-size:11px;color:#8b96a5}
+.pfv-card.is-rgb .pfv-skel-top{display:none}
+.pfv-slider{height:26px;display:flex;align-items:center;gap:12px;color:#c9d3e0}
+.pfv-slider b{flex:0 0 72px;font-weight:400}
+.pfv-slider i{flex:1;height:4px;border-radius:2px;background:#1f2630}
+.pfv-slider span{flex:0 0 32px;text-align:right;color:#8b96a5}
+.pfv-stage{position:relative;min-width:0;overflow:hidden;background:#000}
+.pfv-pic{position:absolute;inset:24px;display:flex;align-items:center;justify-content:center}
+.pfv-pic canvas,.pfv-pic img{max-width:100%;max-height:100%;object-fit:contain;opacity:0;transition:opacity .18s ease}
+.plexora-first-view.is-shown .pfv-pic canvas,.plexora-first-view.is-shown .pfv-pic img{opacity:1}
+.pfv-bar{position:absolute;left:0;right:0;top:0;height:3px;overflow:hidden;background:rgba(60,140,255,.15)}
+.pfv-bar-fill{height:3px;background:#3c8cff;transition:width .3s ease}
+.pfv-bar-sweep{position:absolute;top:0;left:0;width:40%;height:3px;
+  background:linear-gradient(90deg,transparent,rgba(160,210,255,.8),transparent);animation:pfvSweep 1.3s ease-in-out infinite}
+.pfv-pill{position:absolute;right:16px;top:14px;font-size:12px;color:#8fd3ff;background:rgba(12,16,22,.85);
+  border:1px solid rgba(60,140,255,.35);border-radius:999px;padding:4px 10px;opacity:0;transition:opacity .18s ease}
+.plexora-first-view.is-shown .pfv-pill{opacity:1}
+.pfv-steps{position:absolute;left:24px;bottom:24px;width:340px;max-width:calc(100% - 48px);box-sizing:border-box;
+  display:flex;flex-direction:column;gap:10px;padding:14px 16px;background:rgba(12,16,22,.92);
+  border:1px solid rgba(255,255,255,.09);border-radius:12px;box-shadow:0 8px 28px rgba(0,0,0,.5)}
+.plexora-first-view.is-in-viewer .pfv-steps{left:72px;max-width:calc(100% - 96px)}
+.pfv-steps-head{display:flex;align-items:center;gap:10px;font-size:14px;font-weight:600;color:#eef2f7;min-width:0}
+.pfv-steps-head b{font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.pfv-steps-head span{margin-left:auto;font-size:12px;font-weight:400;color:#8b96a5;white-space:nowrap}
+.pfv-spin{flex:0 0 12px;width:12px;height:12px;border-radius:50%;border:2px solid rgba(60,140,255,.25);
+  border-top-color:#3c8cff;animation:pfvSpin .9s linear infinite}
+.pfv-meter{height:4px;border-radius:2px;background:#1c2430;overflow:hidden}
+.pfv-meter div{height:4px;background:#3c8cff;transition:width .3s ease}
+.pfv-step{display:flex;align-items:center;gap:10px;color:#6f7a89}
+.pfv-step i{flex:0 0 16px;text-align:center;font-style:normal}
+.pfv-step span{margin-left:auto;font-size:12px;color:#8b96a5}
+.pfv-step.is-done{color:#c9d3e0}.pfv-step.is-done i{color:#2bd18b}
+.pfv-step.is-now{color:#eef2f7}.pfv-step.is-now i{color:#3c8cff}
+@keyframes pfvShimmer{0%{background-position:-240px 0}100%{background-position:240px 0}}
+@keyframes pfvSweep{0%{transform:translateX(-100%)}100%{transform:translateX(250%)}}
+@keyframes pfvSpin{to{transform:rotate(360deg)}}
+@media (max-width:900px){.plexora-first-view{grid-template-columns:minmax(0,1fr)}.pfv-side{display:none}}
+@media (prefers-reduced-motion:reduce){.pfv-skel,.pfv-bar-sweep,.pfv-spin{animation:none}}`;
         doc.head.appendChild(css);
     }
 
-    function overlay(name) {
+    function el(tag, className, text) {
+        const node = doc.createElement(tag);
+        if (className) node.className = className;
+        if (text != null) node.textContent = text;
+        return node;
+    }
+
+    /** "106 GB" from a byte count; "" when not known. */
+    function sizeText(bytes) {
+        if (!(bytes > 0)) return "";
+        const units = ["B", "KB", "MB", "GB", "TB"];
+        let value = bytes;
+        let unit = 0;
+        while (value >= 1000 && unit < units.length - 1) { value /= 1000; unit += 1; }
+        return `${value >= 10 || unit === 0 ? Math.round(value) : value.toFixed(1)} ${units[unit]}`;
+    }
+
+    function overlay(name, bytes) {
         style();
-        const box = doc.createElement("div");
-        box.className = "plexora-first-view";
+        const box = el("div", "plexora-first-view");
         box.setAttribute("aria-hidden", "true");
-        const chip = doc.createElement("div");
-        chip.className = "plexora-first-view-chip";
-        chip.textContent = name ? `Opening ${name}…` : "Opening…";
-        box.appendChild(chip);
+
+        const side = el("div", "pfv-side");
+        const head = el("div", "pfv-head");
+        head.append(el("div", "pfv-kicker", "Plexora"), el("div", "pfv-title", "Viewer"));
+        const card = el("div", "pfv-card");
+        const cardHead = el("div", "pfv-card-head", "Image");
+        const count = el("span");
+        cardHead.appendChild(count);
+        const rows = el("div", "pfv-rows");
+        const note = el("div", "pfv-note", "");
+        const skelA = el("div", "pfv-skel pfv-skel-top");
+        skelA.style.height = "30px";
+        const skelB = el("div", "pfv-skel pfv-skel-top");
+        skelB.style.height = "56px";
+        card.append(cardHead, skelA, skelB, rows, note);
+        side.append(head, el("div", "pfv-section", "Layers"), card);
+
+        const stage = el("div", "pfv-stage");
+        const bar = el("div", "pfv-bar");
+        const barFill = el("div", "pfv-bar-fill");
+        bar.append(barFill, el("div", "pfv-bar-sweep"));
+        const pic = el("div", "pfv-pic");
+        const pill = el("div", "pfv-pill", "Preview · low resolution");
+        const steps = el("div", "pfv-steps");
+        const stepsHead = el("div", "pfv-steps-head");
+        stepsHead.append(el("div", "pfv-spin"), el("b", "", name ? `Opening ${name}` : "Opening…"),
+                         el("span", "", sizeText(bytes)));
+        const meter = el("div", "pfv-meter");
+        const meterFill = el("div");
+        meter.appendChild(meterFill);
+        steps.append(stepsHead, meter);
+        const stepRows = STEPS.map(([, label]) => {
+            const row = el("div", "pfv-step");
+            row.append(el("i", "", "○"), doc.createTextNode(label), el("span", "", ""));
+            steps.appendChild(row);
+            return row;
+        });
+        stage.append(bar, pic, pill, steps);
+        box.append(side, stage);
         doc.body.appendChild(box);
-        return { box, chip };
+        return { box, card, pic, rows, count, note, barFill, meterFill, stepRows };
+    }
+
+    //: A brightfield slide's Image card in the viewer (views/brightfieldAdjust.js).
+    const BRIGHTFIELD = ["Brightness", "Contrast", "Gamma", "Opacity"];
+
+    /**
+     * The frame's channel list: the file's names, channel 1 on; bars where
+     * none is known. An RGB slide's card is the viewer's brightfield one --
+     * its four sliders -- instead.
+     */
+    function paintChannels(state, channels) {
+        const names = (channels && channels.names) || [];
+        const total = (channels && channels.count) || 0;
+        const rgb = Boolean(channels && channels.rgb);
+        state.channels = { count: total, names: names.slice(0, MAX_NAMES), rgb };
+        state.rows.textContent = "";
+        state.card.classList.toggle("is-rgb", rgb);
+        if (rgb) {
+            for (const label of BRIGHTFIELD) {
+                const row = el("div", "pfv-slider");
+                row.append(el("b", "", label), el("i"), el("span", "", "1.00"));
+                state.rows.appendChild(row);
+            }
+            state.count.textContent = "";
+            state.note.textContent = "";
+            return;
+        }
+        const shown = Math.max(1, Math.min(ROWS, total || ROWS));
+        for (let i = 0; i < shown; i += 1) {
+            const row = el("div", i === 0 ? "pfv-row is-on" : "pfv-row");
+            row.appendChild(el("i"));
+            if (names[i]) row.appendChild(el("b", "", names[i]));
+            else row.appendChild(el("div", "pfv-skel"));
+            if (i === 0) row.appendChild(el("em", "", "Preview"));
+            state.rows.appendChild(row);
+        }
+        state.count.textContent = total > 1 ? `${total} channels` : "";
+        state.note.textContent = names.length ? "Channel names from the file · the rest switch on when it opens" : "";
+    }
+
+    /** The steps' card and the bar: done ones ticked with their time, the current one marked. */
+    function paintSteps(state) {
+        let done = 0;
+        state.stepRows.forEach((row, i) => {
+            const at = state.times[i];
+            const now = i === state.step;
+            row.className = `pfv-step${at != null ? " is-done" : now ? " is-now" : ""}`;
+            row.firstChild.textContent = at != null ? "✓" : now ? "•" : "○";
+            row.lastChild.textContent = at != null ? `${(at / 1000).toFixed(1)} s` : "";
+            if (at != null) done += 1;
+        });
+        const pct = `${Math.max(6, Math.round((done / STEPS.length) * 100))}%`;
+        state.barFill.style.width = pct;
+        state.meterFill.style.width = pct;
+    }
+
+    /** Step `key` reached: every step before it done (at now, unless done already). */
+    function reach(state, key) {
+        const index = STEPS.findIndex(([k]) => k === key);
+        if (index < 0 || index < state.step) return;
+        const now = Math.round(performance.now() - state.started);
+        for (let i = 0; i < index; i += 1) if (state.times[i] == null) state.times[i] = now;
+        state.step = index;
+        paintSteps(state);
     }
 
     /** The viewer's canvas in the app's frame, where the preview is drawn to fit. */
@@ -657,12 +1032,14 @@
             if (current !== state) { global.clearInterval(watch); unreach(); return; }
             const rect = viewerRect();
             if (rect) {
+                state.box.classList.add("is-in-viewer");
                 state.box.style.left = `${rect.left}px`;
                 state.box.style.top = `${rect.top}px`;
                 state.box.style.right = "auto";
                 state.box.style.bottom = "auto";
                 state.box.style.width = `${rect.width}px`;
                 state.box.style.height = `${rect.height}px`;
+                reach(state, "draw");
                 const frame = doc.getElementById("plexora-app");
                 const win = frame ? frame.contentWindow : global;
                 if (win !== reachWin) {
@@ -671,7 +1048,12 @@
                     unreach = onReach(() => done("reached"));
                 }
             }
-            if (viewerDrawn()) { done("drawn"); return; }
+            if (viewerDrawn()) {
+                state.times[STEPS.length - 1] = Math.round(performance.now() - state.started);
+                paintSteps(state);
+                done("drawn");
+                return;
+            }
             // Never in front of something else for good: a page of the app
             // that is not a viewer (an error, a question), loaded a while,
             // or too long a wait for any viewer -- the page's own progress
@@ -689,18 +1071,58 @@
         }, 80);
     }
 
+    /** A grey picture in channel 1's colour (a colour one -- brightfield -- as it is). */
+    function tinted(source) {
+        const width = source.naturalWidth || source.width;
+        const height = source.naturalHeight || source.height;
+        if (!width || !height) return source;
+        const canvas = doc.createElement("canvas");
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext("2d");
+        if (!ctx) return source;
+        ctx.drawImage(source, 0, 0);
+        let image;
+        try {
+            image = ctx.getImageData(0, 0, width, height);
+        } catch (error) {
+            return source;
+        }
+        const px = image.data;
+        // Grey: every sampled pixel's three values equal.
+        const stride = Math.max(4, Math.floor(px.length / 4 / 4096) * 4);
+        for (let i = 0; i < px.length; i += stride) {
+            if (px[i] !== px[i + 1] || px[i] !== px[i + 2]) return source;
+        }
+        const [r, g, b] = CHANNEL_ONE;
+        for (let i = 0; i < px.length; i += 4) {
+            const v = px[i];
+            px[i] = (v * r) / 255;
+            px[i + 1] = (v * g) / 255;
+            px[i + 2] = (v * b) / 255;
+        }
+        ctx.putImageData(image, 0, 0);
+        return canvas;
+    }
+
     function show(state, element) {
-        element.setAttribute("alt", "");
-        state.box.insertBefore(element, state.chip);
+        const picture = tinted(element);
+        if (picture.setAttribute) picture.setAttribute("aria-hidden", "true");
+        state.pic.textContent = "";
+        state.pic.appendChild(picture);
+        state.picture = picture;
         // Two frames: drawn, then faded in.
         global.requestAnimationFrame(() => global.requestAnimationFrame(() => state.box.classList.add("is-shown")));
         state.shownAt = performance.now();
+        reach(state, "register");
         global.__plexoraFirstView = { ...(global.__plexoraFirstView || {}), shownMs: Math.round(state.shownAt - state.started) };
     }
 
-    function start(name) {
+    function start(name, { bytes = 0, channels = null } = {}) {
         done("replaced");
-        const state = { ...overlay(name), started: performance.now(), name };
+        const state = { ...overlay(name, bytes), started: performance.now(), name, bytes, step: 0, times: [] };
+        paintChannels(state, channels);
+        paintSteps(state);
         current = state;
         global.__plexoraFirstView = { startedAt: Math.round(state.started) };
         follow(state);
@@ -715,7 +1137,7 @@
         if (typeof global.File === "function" && !(file instanceof global.File)) {
             file = new global.File([file], file.name, { type: file.type, lastModified: file.lastModified });
         }
-        const state = start(name || file.name);
+        const state = start(name || file.name, { bytes: file.size });
         state.file = file;
         const key = keyOf(file);
         const pending = read(file);
@@ -726,6 +1148,7 @@
             global.__plexoraFirstView = { ...(global.__plexoraFirstView || {}), readMs: preview.ms,
                                           reads: preview.reads, layout: preview.layout,
                                           size: [preview.width, preview.height] };
+            paintChannels(state, preview.channels);
             show(state, preview.canvas);
         }).catch((error) => {
             if (current !== state) return;
@@ -736,24 +1159,363 @@
         return state;
     }
 
-    /** A preview image Python made from a path (the local app's home page). */
-    function beginUrl({ url, name = "" } = {}) {
-        if (!url || !doc || !doc.body) return null;
-        const state = start(name);
+    /** The channels and size Python's preview names in its headers (import_routes.import_preview). */
+    function previewHeaders(response) {
+        let channels = null;
+        try {
+            const raw = response.headers.get("X-Plexora-Channels");
+            const parsed = raw ? JSON.parse(decodeURIComponent(raw)) : null;
+            if (parsed && typeof parsed === "object") {
+                channels = { count: Number(parsed.count) || 0, rgb: parsed.rgb === true,
+                             names: Array.isArray(parsed.names) ? parsed.names.map((n) => String(n || "")) : [] };
+            }
+        } catch (error) {
+            channels = null;
+        }
+        return { channels, bytes: Number(response.headers.get("X-Plexora-Bytes")) || 0 };
+    }
+
+    /** Python's preview answer drawn into `state` (the local app). */
+    async function drawResponse(state, response) {
+        if (current !== state) return;
+        if (response.status !== 200) { done("unreadable"); return; }
+        const { channels, bytes } = previewHeaders(response);
+        const blob = await response.blob();
+        if (current !== state) return;
+        if (channels) paintChannels(state, channels);
+        if (bytes) {
+            state.bytes = bytes;
+            state.box.querySelector(".pfv-steps-head span").textContent = sizeText(bytes);
+        }
         const img = new Image();
         img.decoding = "async";
+        const src = URL.createObjectURL(blob);
         img.onload = () => {
+            URL.revokeObjectURL(src);
             if (current !== state) return;
             if (!img.naturalWidth) { done("unreadable"); return; }
             show(state, img);
         };
-        img.onerror = () => { if (current === state) done("unreadable"); };
-        img.src = url;
+        img.onerror = () => { URL.revokeObjectURL(src); if (current === state) done("unreadable"); };
+        img.src = src;
+    }
+
+    /** Python's preview at `url` drawn into `state` (the local app). */
+    function loadUrl(state, url) {
+        state.url = url;
+        global.fetch(url, { cache: "no-store" }).then((response) => drawResponse(state, response))
+            .catch(() => { if (current === state) done("unreadable"); });
+    }
+
+    /**
+     * A preview image Python made from a path (the local app's home page).
+     * `wait`: shown only once Python has one -- a folder that may not be an
+     * image, a web address -- so nothing flashes up for what has none.
+     */
+    function beginUrl({ url, name = "", wait = false } = {}) {
+        if (!url || !doc || !doc.body) return null;
+        if (!wait) {
+            const state = start(name);
+            loadUrl(state, url);
+            return state;
+        }
+        const asked = generation;
+        global.fetch(url, { cache: "no-store" }).then((response) => {
+            if (generation !== asked || response.status !== 200) return;
+            const state = start(name);
+            state.url = url;
+            drawResponse(state, response);
+        }).catch(() => null);
+        return null;
+    }
+
+    // -- an OME-Zarr folder (the website's pick) ---------------------------------
+
+    //: The page's reader worker (workers/tiffWorker.js), whose OME-Zarr reader
+    //: (node/zarrReader.js: blosc, zstd, zlib, gzip, lz4, v3 and shards) reads
+    //: the smallest level -- the same reader the website's tiles come from.
+    const READER = () => `${global.PLEXORA_SITE_BASE || ""}/client/dist/tiffWorker_bundle.js`;
+    //: The largest level a preview reads (pixels a side), as Python's, and the
+    //: side it would rather have: a store's pyramid often goes down to a
+    //: hundred pixels, too small to look at.
+    const MAX_ZARR_SIDE = 4096;
+    const ZARR_PREFERRED_SIDE = 512;
+    const ZARR_TIMEOUT_MS = 30000;
+
+    /** A JSON document of the store, or null. `fileFor` may answer a promise. */
+    async function zarrDoc(fileFor, key) {
+        try {
+            const file = await fileFor(key);
+            return file ? JSON.parse(await file.text()) : null;
+        } catch (error) {
+            return null;
+        }
+    }
+
+    /**
+     * The OME-Zarr level a preview reads, from the store's own metadata (NGFF
+     * 0.1-0.5, zarr v2 and v3; bioformats2raw's layout, the image at "0/"):
+     * the smallest at least ZARR_PREFERRED_SIDE a side (the largest up to
+     * MAX_ZARR_SIDE when none is), {path, shape, format, axes, channels}, or null when it
+     * is not an OME-Zarr image.
+     */
+    async function zarrLevel(fileFor, root) {
+        for (const sub of ["", "0/"]) {
+            const v2 = await zarrDoc(fileFor, `${root}/${sub}.zattrs`);
+            const v3 = v2 ? null : await zarrDoc(fileFor, `${root}/${sub}zarr.json`);
+            const attrs = v2 || (v3 && v3.attributes && (v3.attributes.ome || v3.attributes)) || null;
+            const multiscale = attrs && Array.isArray(attrs.multiscales) ? attrs.multiscales[0] : null;
+            if (!multiscale || !Array.isArray(multiscale.datasets) || !multiscale.datasets.length) continue;
+            const format = v2 ? 2 : 3;
+            const metaOf = async (dataset) => {
+                const path = `${sub}${String(dataset.path).replace(/^\/+|\/+$/g, "")}`;
+                const meta = await zarrDoc(fileFor, `${root}/${path}/${format === 2 ? ".zarray" : "zarr.json"}`);
+                return meta && Array.isArray(meta.shape) ? { path, shape: meta.shape.map(Number) } : null;
+            };
+            const datasets = multiscale.datasets;
+            let chosen = await metaOf(datasets[datasets.length - 1]);
+            if (!chosen) return null;
+            const named = Array.isArray(multiscale.axes) && multiscale.axes.length
+                ? multiscale.axes.map((a) => String(typeof a === "string" ? a : a && a.name).toLowerCase())
+                : ["t", "c", "z", "y", "x"].slice(5 - chosen.shape.length);
+            if (named.length !== chosen.shape.length) return null;
+            const side = (shape) => Math.max(shape[named.indexOf("y")] || 0, shape[named.indexOf("x")] || 0);
+            for (let i = datasets.length - 2; i >= 0 && side(chosen.shape) < ZARR_PREFERRED_SIDE; i -= 1) {
+                const larger = await metaOf(datasets[i]);
+                if (!larger || larger.shape.length !== named.length || side(larger.shape) > MAX_ZARR_SIDE) break;
+                chosen = larger;
+            }
+            const { path, shape } = chosen;
+            const c = named.indexOf("c");
+            const omero = (attrs && attrs.omero) || {};
+            const names = Array.isArray(omero.channels)
+                ? omero.channels.slice(0, MAX_NAMES).map((ch) => String((ch && ch.label) || "").trim()) : [];
+            return { path, shape, format, axes: named,
+                     channels: { count: c >= 0 ? shape[c] : 1, names } };
+        }
+        return null;
+    }
+
+    /** Channel 0 of the level, read by the reader worker: {width, height, samples, data}. */
+    function readZarrLevel(root, level, fileFor) {
+        return new Promise((resolve, reject) => {
+            let worker;
+            try {
+                worker = new global.Worker(READER());
+            } catch (error) {
+                reject(error);
+                return;
+            }
+            const calls = new Map();
+            let id = 0;
+            const finish = (fn, value) => {
+                global.clearTimeout(timer);
+                worker.terminate();
+                fn(value);
+            };
+            const timer = global.setTimeout(() => finish(reject, new Error("the reader took too long")), ZARR_TIMEOUT_MS);
+            const call = (op, args) => new Promise((res, rej) => {
+                id += 1;
+                calls.set(id, { res, rej });
+                worker.postMessage({ id, op, ...args });
+            });
+            worker.onmessage = (event) => {
+                const data = event.data || {};
+                if (data.ask !== undefined) {
+                    Promise.resolve().then(() => fileFor(data.path)).catch(() => null)
+                        .then((file) => worker.postMessage({ answer: data.ask, file: file || null }));
+                    return;
+                }
+                const pending = calls.get(data.id);
+                if (!pending) return;
+                calls.delete(data.id);
+                if (data.ok) pending.res(data.result);
+                else pending.rej(new Error(data.error));
+            };
+            worker.onerror = (event) => finish(reject, new Error((event && event.message) || "the reader failed"));
+            const y = level.axes.indexOf("y");
+            const x = level.axes.indexOf("x");
+            const height = level.shape[y];
+            const width = level.shape[x];
+            // A volume's middle plane, the one the viewer opens on (volume/model.py).
+            const zAxis = level.axes.indexOf("z");
+            const z = zAxis >= 0 ? Math.floor(level.shape[zAxis] / 2) : 0;
+            call("open", { store: { page: root }, zarr: { arrays: [{ path: level.path, shape: level.shape, format: level.format }],
+                                                          axes: level.axes, t: 0, z } })
+                .then(() => call("tile", { channel: 0, level: 0, tx: 0, ty: 0, tw: width, th: height, raw: true }))
+                .then((got) => {
+                    const bytes = got.array;
+                    const copy = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
+                    let data;
+                    if (got.format === "raw8") data = new Uint8Array(copy);
+                    else if (got.format === "raw16") data = new Uint16Array(copy);
+                    else throw new Error(`${got.format} samples`);
+                    finish(resolve, { width: got.width, height: got.height, samples: 1, data });
+                })
+                .catch((error) => finish(reject, error));
+        });
+    }
+
+    /**
+     * The preview of an OME-Zarr store: a folder the page holds (the
+     * website's pick, mounted at `path`; `fileFor(path)` -> the File at a path
+     * under it, or null) or, with `beginRemoteZarr`, one at a web address. Its
+     * metadata is read first and the frame shown only for an OME-Zarr image,
+     * so a folder or an address that is something else shows nothing.
+     */
+    function beginZarr({ path, fileFor, name = "" } = {}) {
+        if (!path || typeof fileFor !== "function" || !doc || !doc.body) return null;
+        const root = String(path).replace(/\/+$/, "");
+        const asked = generation;
+        const started = performance.now();
+        zarrLevel(fileFor, root).then(async (level) => {
+            if (!level || generation !== asked) return;
+            const y = level.axes.indexOf("y");
+            const x = level.axes.indexOf("x");
+            if (y !== level.axes.length - 2 || x !== level.axes.length - 1) return;
+            if (Math.max(level.shape[y], level.shape[x]) > MAX_ZARR_SIDE) return;
+            const state = start(name || root.split("/").pop());
+            paintChannels(state, level.channels);
+            try {
+                const plane = await readZarrLevel(root, level, fileFor);
+                if (current !== state) return;
+                global.__plexoraFirstView = { ...(global.__plexoraFirstView || {}),
+                                              readMs: Math.round(performance.now() - started),
+                                              layout: "zarr", size: [plane.width, plane.height] };
+                show(state, picture(plane));
+            } catch (error) {
+                if (current !== state) return;
+                global.__plexoraFirstView = { ...(global.__plexoraFirstView || {}),
+                                              failed: String(error && error.message || error) };
+                done("unreadable");
+            }
+        }).catch(() => null);
+        return null;
+    }
+
+    /**
+     * The address the page fetches for a key of a store at a web address,
+     * as the website's Python reads it (plexora/browser/buckets.py): https
+     * as it is, s3:// at the bucket's virtual host, gs:// through Google's
+     * JSON API (its XML host answers a page only where the bucket allows it).
+     * Null for anything else, and for a signed address (its query is the
+     * root's alone).
+     */
+    function remoteAddress(address) {
+        const text = String(address || "");
+        if (text.includes("?")) return null;
+        const match = /^([a-z0-9]+):\/\/([^/]+)\/?(.*)$/i.exec(text);
+        if (!match) return null;
+        const scheme = match[1].toLowerCase();
+        const key = match[3];
+        const encoded = key.split("/").map(encodeURIComponent).join("/");
+        if (scheme === "https" || scheme === "http") return text;
+        if (scheme === "s3" || scheme === "s3a") return `https://${match[2]}.s3.amazonaws.com/${encoded}`;
+        if (scheme === "gs" || scheme === "gcs") {
+            return `https://storage.googleapis.com/storage/v1/b/${encodeURIComponent(match[2])}/o/${encodeURIComponent(key)}?alt=media`;
+        }
+        return null;
+    }
+
+    /** The preview of an OME-Zarr store at a web address (the website), read by the page. */
+    function beginRemoteZarr({ url, name = "" } = {}) {
+        const root = String(url || "").trim().replace(/\/+$/, "");
+        if (!remoteAddress(root)) return null;
+        const fileFor = async (path) => {
+            const address = remoteAddress(path);
+            if (!address) return null;
+            const response = await global.fetch(address, { credentials: "omit" });
+            return response.ok ? response.blob() : null;
+        };
+        return beginZarr({ path: root, fileFor, name: name || root.split("/").pop() });
+    }
+
+    /** Step `key` of the open reached (the import's own news: "viewer" when it has registered). */
+    function step(key) {
+        if (current) reach(current, key);
+    }
+
+    /**
+     * The page holding the first view is about to be replaced by the viewer's
+     * (the local app: a full navigation): what it shows is kept for the
+     * viewer's page to take up (`resume`). Nothing when `leaving` is not the
+     * document the first view is in -- the website's app frame, whose host
+     * keeps it. `to`: the viewer's address, which alone takes it up.
+     * -> whether it was kept.
+     */
+    function handOff({ leaving = doc, to = "" } = {}) {
+        const state = current;
+        if (!state || leaving !== doc) return false;
+        let picture = "";
+        try {
+            const source = state.picture;
+            const width = source && (source.naturalWidth || source.width);
+            const height = source && (source.naturalHeight || source.height);
+            if (width && height) {
+                const scale = Math.min(1, HANDOFF_SIDE / Math.max(width, height));
+                const canvas = doc.createElement("canvas");
+                canvas.width = Math.max(1, Math.round(width * scale));
+                canvas.height = Math.max(1, Math.round(height * scale));
+                canvas.getContext("2d").drawImage(source, 0, 0, canvas.width, canvas.height);
+                picture = canvas.toDataURL("image/jpeg", 0.9);
+            }
+        } catch (error) {
+            picture = "";
+        }
+        let target = "";
+        try {
+            target = to ? new URL(to, global.location.href).pathname : "";
+        } catch (error) {
+            target = "";
+        }
+        // A picture not in yet (an import quicker than Python's preview):
+        // its address, for the viewer's page to ask again.
+        const record = { at: Date.now(), to: target, name: state.name, url: picture ? "" : (state.url || ""), bytes: state.bytes, channels: state.channels,
+                         elapsed: Math.round(performance.now() - state.started), times: state.times, picture };
+        try {
+            global.sessionStorage.setItem(HANDOFF_KEY, JSON.stringify(record));
+        } catch (error) {
+            try {
+                global.sessionStorage.setItem(HANDOFF_KEY, JSON.stringify({ ...record, picture: "" }));
+            } catch (inner) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /** The viewer's page takes up a first view the home page handed over. -> the state, or null. */
+    function resume() {
+        let record = null;
+        try {
+            const raw = global.sessionStorage.getItem(HANDOFF_KEY);
+            if (raw) global.sessionStorage.removeItem(HANDOFF_KEY);
+            record = raw ? JSON.parse(raw) : null;
+        } catch (error) {
+            record = null;
+        }
+        if (!record || !(Date.now() - record.at < HANDOFF_MAX_AGE_MS) || !doc.body) return null;
+        if (!doc.getElementById("viewer_sidebar")) return null;
+        // Only the viewer it was handed to.
+        if (record.to && record.to !== global.location.pathname) return null;
+        const state = start(record.name || "", { bytes: record.bytes, channels: record.channels });
+        state.started = performance.now() - (Number(record.elapsed) || 0) - Math.max(0, Date.now() - record.at);
+        state.times = Array.isArray(record.times) ? record.times.slice(0, STEPS.length) : [];
+        state.step = Math.max(0, state.times.length);
+        reach(state, "viewer");
+        if (record.picture) {
+            const img = new Image();
+            img.onload = () => { if (current === state && img.naturalWidth) show(state, img); };
+            img.src = record.picture;
+        } else if (record.url) {
+            loadUrl(state, record.url);
+        }
         return state;
     }
 
     /** The preview let go: faded out and removed. */
     function done(reason = "") {
+        generation += 1;
         const state = current;
         if (!state) return;
         current = null;
@@ -792,21 +1554,49 @@
         return read;
     }
 
+    /** The smallest level's first block as the stream the JPEG decoder is handed (tests). */
+    async function jpegBlock(file) {
+        const io = reader(file);
+        const located = await smallestLevel(io);
+        if (!located) throw new Error("not a TIFF this preview reads");
+        const level = located.level;
+        const offsets = await values(io, located.tiff, level.ifd, level.tiled ? 324 : 273);
+        const counts = await values(io, located.tiff, level.ifd, level.tiled ? 325 : 279);
+        const tables = level.ifd.tags.has(347) ? Uint8Array.from(await values(io, located.tiff, level.ifd, 347)) : null;
+        const block = await io.at(offsets[0], counts[0]);
+        return { width: level.width, height: level.height, compression: level.compression,
+                 photometric: level.photometric, tiled: level.tiled, tileWidth: level.tileWidth,
+                 tileHeight: level.tileHeight,
+                 stream: jpegStream(block, tables, level.samples >= 3 && level.photometric === 2) };
+    }
+
     /** The smallest level's first plane, raw (tests/js/first_view_probe.mjs). */
     async function plane(file) {
         const io = reader(file);
         const located = await smallestLevel(io);
         if (!located) throw new Error("not a TIFF this preview reads");
         const got = await pixels(io, located.tiff, located.level);
-        return { ...got, layout: located.layout, offsets: [...new Set(located.offsets)].sort((a, b) => a - b),
+        return { ...got, layout: located.layout, channels: located.channels, level: located.level, offsets: [...new Set(located.offsets)].sort((a, b) => a - b),
                  reads: io.reads() };
     }
 
     global.PlexoraFirstView = Object.freeze({
-        begin, beginUrl, done, prefetch, offsetsFor,
+        begin, beginUrl, beginZarr, beginRemoteZarr, done, prefetch, offsetsFor, step, handOff, resume,
         active: () => Boolean(current),
         // For tests (tests/js/first_view_probe.mjs).
         _read: read,
         _plane: plane,
+        _jpegStream: jpegStream,
+        _jpegBlock: jpegBlock,
+        _zarrLevel: zarrLevel,
+        _remoteAddress: remoteAddress,
     });
+
+    // The local app's viewer page takes up the first view its home page
+    // handed over (handOff), loaded deferred from templates/index.html.
+    try {
+        if (doc && typeof doc.getElementById === "function" && doc.getElementById("viewer_sidebar")) resume();
+    } catch (error) {
+        // No first view: the viewer's own loading is what is on screen.
+    }
 })(typeof window !== "undefined" ? window : globalThis);

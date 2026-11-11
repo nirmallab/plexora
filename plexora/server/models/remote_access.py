@@ -1,7 +1,7 @@
 """Whether connecting to a server needs a licence here: the admin's switch.
 
-Two switches in the BioCognia admin (admin.biocognia.com, Landing & sales ›
-Plexora features), one for the website and one for local sessions (the
+Two switches in the BioCognia admin (admin.biocognia.com, Licensing ›
+Features › Plexora remote servers), one for the website and one for local sessions (the
 desktop app and pip `plexora`), each "free" or "licensed". Both are free
 until someone changes them. They are read from the platform's public
 `GET /v1/features` (docs/internal/WEB_REMOTE_RELAY.md, "Licence switch"):
@@ -55,8 +55,13 @@ def _fetch():
     url = os.environ.get("PLEXORA_FEATURES_URL") or FEATURES_URL
     if url == "off":  # never asked (the test suite): free
         return dict(DEFAULT)
-    with urllib.request.urlopen(urllib.request.Request(url, headers={"Accept": "application/json"}),
-                                timeout=TIMEOUT) as response:
+    from plexora import __version__
+
+    # A named client: api.biocognia.com (Cloudflare) answers 403 to Python-urllib's
+    # default user agent, which left every installed copy on its default.
+    headers = {"Accept": "application/json", "User-Agent": f"Plexora/{__version__}",
+               "BioCognia-Client": f"plexora/{__version__}"}
+    with urllib.request.urlopen(urllib.request.Request(url, headers=headers), timeout=TIMEOUT) as response:
         return json.loads(response.read() or b"{}").get("remote_servers")
 
 

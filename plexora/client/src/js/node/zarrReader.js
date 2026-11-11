@@ -19,7 +19,9 @@
  * or v2-style (v3); compressors blosc (c-blosc in WebAssembly, numcodecs.js,
  * client/external/numcodecs-0.3.2, loaded on the first chunk that needs it),
  * zstd (zstddec, as geotiff.js uses it), zlib and gzip (the browser's
- * DecompressionStream), lz4 (numcodecs.js); v3's bytes (either endianness),
+ * DecompressionStream), lz4 (numcodecs.js); Blosc and LZ4 chunks are read
+ * by node/blosc.js first, in plain JavaScript, since numcodecs.js makes
+ * functions from strings and the website's CSP refuses that; v3's bytes (either endianness),
  * crc32c and sharding_indexed. A chunk that is not there is the array's fill
  * value, as zarr reads it.
  *
@@ -35,6 +37,7 @@
  *   tile({channel, level, tx, ty, tw, th, raw}) -> as node/tiffReader.js
  */
 import { ZSTDDecoder } from "zstddec";
+import { bloscDecode, lz4Codec } from "./blosc.js";
 
 const now = () => performance.now();
 
@@ -151,10 +154,16 @@ async function through(bytes, format) {
  */
 function bytesCodec(name, configuration = {}) {
     switch (name) {
+    // Blosc and LZ4 in plain JavaScript first (node/blosc.js): numcodecs.js
+    // makes functions from strings, which the website's CSP refuses. What
+    // blosc.js does not read (BloscLZ, Snappy, bit-shuffle) is numcodecs.js's.
     case "blosc":
-        return async (bytes) => (await numcodecs("blosc")).decode(bytes);
+        return async (bytes) => (await bloscDecode(bytes, {
+            zstd: async (part, size) => (await zstdDecoder()).decode(part, size),
+            zlib: (part) => through(part, "deflate"),
+        })) || (await numcodecs("blosc")).decode(bytes);
     case "lz4":
-        return async (bytes) => (await numcodecs("lz4")).decode(bytes);
+        return async (bytes) => lz4Codec(bytes) || (await numcodecs("lz4")).decode(bytes);
     case "zstd":
         return async (bytes, size) => (await zstdDecoder()).decode(bytes, size);
     case "gzip":
