@@ -4,8 +4,13 @@ Everything the website work (plan `dreamy-brewing-sunset.md`, branch `web/phase0
 is waiting on from you, in one place. Kept current as work lands; the newest
 state is on `web/phase0`. Each item says what to do and what it unblocks.
 **The website is live** at https://viewer.plexoraapp.com since 2026-11-08
-00:40 UTC, now 0.0.50 (`main` at 39f4c360, no tag; since 2026-11-11
-14:00 UTC: an image on screen the moment it is given -- the page reads channel
+00:40 UTC, now 0.0.51 (`main` at 1d5d27bc, no tag; since 2026-11-11
+23:30 UTC: the new microscope formats -- CZI, ND2, LIF, VSI, OIR, OIB,
+NDPIS, DeltaVision, MCD, ZVI, LSM, KFB, fluorescence MRXS, one sample per
+image of a multi-image file, JPEG XR and Zstd CZIs, a .vsi's or .ndpis's
+companion files -- and every older version of the formats already read,
+docs/internal/FORMAT_VERSIONS_2026-11-11.md; the first view drawn as the
+viewer it turns into; the licence feature switches; 0.0.50, an image on screen the moment it is given -- the page reads channel
 0's smallest pyramid level from the dropped file and shows it while the import
 goes on -- and opening it reads the file once,
 docs/internal/bench/web/WEBSITE_FIRST_VIEW_2026-11-10.md; live, LSP11385 from
@@ -21,7 +26,7 @@ asked only when work needs saving, the picked folder is the workspace --
 Storage & Locations, and .plexora export/import of one or many projects,
 docs/internal/PROJECT_BUNDLES.md; 0.0.46 to 0.0.42, the performance rounds
 five to one, before it), Pages project `plexora-viewer`
-branch `release`, bundle `py/0.0.50/`, flags `viewer: on`, telemetry on. 0.0.38 was live for under
+branch `release`, bundle `py/0.0.51/`, flags `viewer: on`, telemetry on. 0.0.38 was live for under
 an hour and did not start Python on the self-check page, in a second tab or
 without sync access handles; its `py/0.0.38/` stays, as every released
 prefix does, and nothing points at it. Activating a licence and AI do not work there until section 1,
@@ -192,6 +197,16 @@ bundle `py/dev/4f583c3b9745/` and, sharing the flags, no longer shows its
 
 ## 6. Git
 
+- **The new formats are on the website** as 0.0.51 (2026-11-11, from this
+  Mac): a full build (`plexora/browser/stages.py` gained the `microscope` and
+  `imc` stages, `uv.lock` the six reader packages), then Plexora's wheel
+  rebuilt once for the early-access listing. Before the upload the budgets,
+  `propagate --check`, the import check (every stage and reader imports), the
+  smoke test and the self-check passed against it served here; after it the
+  live self-check passes all but the Cloudflare analytics beacon's CSP check
+  (section 2). `publish.py verify` needs a Python with CA certificates (the
+  conda env's): the python.org 3.14 here has none installed.
+
 - **The instant first view is on the website** as 0.0.50 (2026-11-11, from
   this Mac): `py/0.0.50/` is 0.0.49's bundle, read back from the bucket
   byte-identical, with Plexora's wheel rebuilt (`build.py --plexora-only
@@ -207,8 +222,8 @@ bundle `py/dev/4f583c3b9745/` and, sharing the flags, no longer shows its
 - The **next desktop release** from `main` carries the removals (Segment in
   3-D, Carry an ROI through planes), the desktop speed-ups and the new
   telemetry values (the Worker that takes them is deployed). Make it
-  **0.0.51 or later** (`release.py ci --bump patch` from the newest), not a
-  tag of a version the website already has: its `py/0.0.37/` to `py/0.0.50/` are
+  **0.0.52 or later** (`release.py ci --bump patch` from the newest), not a
+  tag of a version the website already has: its `py/0.0.37/` to `py/0.0.51/` are
   published and never rewritten, so once the CI secrets
   exist such a Release run's `web_deploy` would refuse its own rebuild of
   that bundle and hold the release.
