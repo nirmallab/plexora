@@ -224,6 +224,7 @@
   {"class": "python", "endpoint": "upload_channels", "methods": ["POST"], "pattern": "^\\/upload_channels$"},
   {"class": "python", "endpoint": "get_not_called", "methods": ["GET"], "pattern": "^\\/get_not_called$"},
   {"class": "python", "endpoint": "import_inspect", "methods": ["POST"], "pattern": "^\\/import\\/inspect$"},
+  {"class": "python", "endpoint": "import_preview", "methods": ["GET"], "pattern": "^\\/import\\/preview$"},
   {"class": "python", "endpoint": "import_release_route", "methods": ["POST"], "pattern": "^\\/import\\/release$"},
   {"class": "python", "endpoint": "license.license_status", "methods": ["GET"], "pattern": "^\\/license\\/status$"},
   {"class": "python", "endpoint": "set_pixel_size", "methods": ["POST"], "pattern": "^\\/set_pixel_size$"},

@@ -200,7 +200,7 @@ PYTHON = (
     "dataset_scan_spec", "detect_image_type", "get_display_contrast", "compute_display_contrast",
     "drop_inspect", "edit_project_page", "fetch_file", "fix_table", "undo_table_fix",
     "get_consistency_report", "get_not_called", "get_ome_metadata", "get_saved_channel_list",
-    "save_channel_list", "import_inspect", "import_layers_route", "import_reclassify_route",
+    "save_channel_list", "import_inspect", "import_preview", "import_layers_route", "import_reclassify_route",
     "import_release_route", "import_sample_route", "import_status", "inspect_data",
     "list_spatialdata_tables_route", "node_share_resource", "node_unshare_resource",
     "node_resource_status", "save_project", "delete_project", "project_remove_layer",
