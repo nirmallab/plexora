@@ -15,19 +15,22 @@ const pick = (pattern, name) => {
     assert.ok(found, `pythonWorker.js has no ${name}`);
     return found[0];
 };
-const code = ["BLOCK", "KEEP", "PIECE", "PIECES"].map((name) => pick(new RegExp(`\\nconst ${name} = [^\\n]*\\n`), name))
+const code = ["BLOCK", "KEEP", "PIECE", "PIECES", "SMALL"].map((name) => pick(new RegExp(`\\nconst ${name} = [^\\n]*\\n`), name))
     .concat([pick(/\nfunction withGil\(module, read\) \{[\s\S]*?\n\}\n/, "withGil(module, read)"),
              pick(/\nfunction blockReads\(workerfs, module\) \{[\s\S]*?\n\}\n/, "blockReads(workerfs, module)")])
     .join("");
-const { blockReads, BLOCK, PIECE, PIECES } = new Function(`${code}; return { blockReads, BLOCK, PIECE, PIECES };`)();
+const { blockReads, BLOCK, PIECE, PIECES, SMALL } = new Function(`${code}; return { blockReads, BLOCK, PIECE, PIECES, SMALL };`)();
 
 //: Reads of the file: FileReaderSync's (a block, one at a time) and the read
 //: ahead's slices ([from, to] each).
 let synchronous = 0;
 const slices = [];
+//: The size of each of those reads.
+const sizes = [];
 globalThis.FileReaderSync = class {
     readAsArrayBuffer(part) {
         synchronous += 1;
+        sizes.push(part.bytes.length);
         return part.bytes.slice().buffer;
     }
 };
@@ -69,12 +72,33 @@ assert.equal(read(file, 3 * PIECE - 100, 128 << 10), 100);
 assert.equal(read(file, last * PIECE + 50, 1000), size - last * PIECE - 50, "the file's end, from its piece");
 assert.equal(synchronous, 0, "a read that starts in what was read ahead reads no block");
 assert.equal(read(file, 3 * PIECE, 16), 16);
-assert.equal(synchronous, 1, "a read anywhere else reads its block, as before");
+assert.equal(synchronous, 1, "a read anywhere else reads the file (its piece: a small read)");
 assert.equal(read(file, 3 * PIECE + 20, 16), 16);
 assert.equal(synchronous, 1, "and keeps it");
 assert.equal(await readAhead(file, [0, 1, last]), 0, "held pieces are not read again");
 
-const wide = picked(2, 40 * BLOCK);
+// A small read (a TIFF directory, a tile table) that misses reads only the
+// 64 KiB piece around it, and keeps it: the next small read near it reads
+// nothing. A larger read still reads its 1 MiB blocks.
+const sparse = picked(3, 8 * BLOCK);
+sizes.length = 0;
+assert.equal(read(sparse, 5 * BLOCK + 100, 400), 400);
+assert.deepEqual(sizes, [PIECE], "a small read reads its piece, not a block");
+assert.equal(read(sparse, 5 * BLOCK + 9000, 400), 400);
+assert.deepEqual(sizes, [PIECE], "the piece answers the next small read in it");
+assert.equal(read(sparse, 6 * BLOCK, SMALL * 4), SMALL * 4);
+assert.deepEqual(sizes, [PIECE, BLOCK], "a larger read reads its block");
+
+// A read that goes on from where the last one ended (a table read start to
+// end through Python's buffer) is sequential: its block, as before.
+const stream = picked(4, 4 * BLOCK);
+sizes.length = 0;
+assert.equal(read(stream, 0, 100), 100);
+assert.equal(read(stream, 100, SMALL), PIECE - 100, "answered from the piece, short at its end");
+assert.equal(read(stream, PIECE, 1000), 1000);
+assert.deepEqual(sizes, [PIECE, BLOCK], "the jump read its piece, the read that went on its block");
+
+const wide = picked(2, (2 * PIECES + 100) * PIECE);
 assert.equal(await readAhead(wide, Array.from({ length: PIECES + 40 }, (_, i) => 2 * i)), PIECES,
              "one read ahead reads at most PIECES");
 console.log(JSON.stringify({ ok: true, slices: slices.length, synchronous }));

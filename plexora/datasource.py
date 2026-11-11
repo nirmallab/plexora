@@ -641,7 +641,9 @@ def _channel_names_from_ome_xml(image_path, n_channels):
             finally:
                 tiff_region.close_tiff(tiff)
         else:
-            with tf.TiffFile(str(image_path), is_ome=False) as tiff:
+            from plexora.server.utils import tiff_region
+
+            with tiff_region.opened(image_path) as tiff:
                 xml = tiff.pages[0].tags['ImageDescription'].value
         ome_channels = from_xml(xml).images[0].pixels.channels
         ome_names = [c.name for c in ome_channels]

@@ -1302,20 +1302,81 @@
 
     let pending = null;
 
+    //: The viewer's page asks where to keep work, once, after an image the
+    //: home page opened with the question put off (`quiet`).
+    const OFFER_KEY = "plexora-onboarding-offer";
+
+    /**
+     * A first visit's question put off (`quiet`): the browser's own storage
+     * made ready as "Use browser storage" makes it, no dialog, so the image
+     * opens at once, and the viewer offers the choice once it is open
+     * (`offerLater`). "ready", or the dialog's answer when that fails.
+     */
+    async function quietly(store, reason) {
+        try {
+            const prepared = await store.prepareBrowser();
+            if (prepared && prepared.probe === "quota") throw new Error("quota");
+            await store.useBrowser();
+            try {
+                global.sessionStorage.setItem(OFFER_KEY, String(Date.now()));
+            } catch (error) {
+                // No offer then; Settings > Data has the same choice.
+            }
+            return "ready";
+        } catch (error) {
+            return run({ reason, start: "welcome" });
+        }
+    }
+
     /**
      * "ready" once a place for the user's work is chosen and open (asked
      * here when it is not), "cancelled" when the dialog is closed. One dialog
-     * at a time: a second call while it is up gets the same answer.
+     * at a time: a second call while it is up gets the same answer. `quiet`
+     * (the home page opening one image): a first visit's question is put off
+     * until the image is open (`quietly`); a folder to reconnect is still
+     * asked first, its files being the ones to open.
      */
-    function ensure({ reason = "save" } = {}) {
+    function ensure({ reason = "save", quiet = false } = {}) {
         const store = storeOf();
         if (!store || typeof store.needsOnboarding !== "function") return Promise.resolve("ready");
         if (pending) return pending;
         const start = store.needsReconnect() ? "reconnect" : store.needsOnboarding() ? "welcome" : null;
         if (!start) return Promise.resolve("ready");
-        pending = run({ reason, start }).finally(() => { pending = null; });
+        pending = (quiet && start === "welcome" && typeof store.prepareBrowser === "function"
+                   && typeof store.useBrowser === "function"
+            ? quietly(store, reason) : run({ reason, start })).finally(() => { pending = null; });
         return pending;
     }
+
+    /** On a viewer's page after a quiet first open: the choice, offered once. */
+    function offerLater() {
+        let asked = null;
+        try {
+            asked = global.sessionStorage.getItem(OFFER_KEY);
+        } catch (error) {
+            return;
+        }
+        // A project's page (`/<name>`), not the home page or a page of the client's own.
+        const path = global.location.pathname;
+        if (!asked || !doc || path === "/" || path.startsWith("/client/") || path.split("/").length !== 2) return;
+        try {
+            global.sessionStorage.removeItem(OFFER_KEY);
+        } catch (error) {
+            // Offered at most once more.
+        }
+        global.setTimeout(() => {
+            global.PlexoraToast?.show?.({
+                title: "Your work is kept in this browser",
+                note: "Plexora saved this project in the browser's storage. Keep your work in a folder on this computer instead?",
+                timeout: 20000,
+                actions: [{ label: "Choose a folder", primary: true,
+                            onSelect: () => open({ reason: "settings", start: "welcome" }) },
+                          { label: "Keep it here", onSelect: () => {} }],
+            });
+        }, 6000);
+    }
+    if (doc && doc.readyState === "loading") doc.addEventListener("DOMContentLoaded", offerLater, { once: true });
+    else offerLater();
 
     //: The dialog whatever was chosen before: Settings' "Set up again".
     function open({ reason = "settings", start = "welcome" } = {}) {

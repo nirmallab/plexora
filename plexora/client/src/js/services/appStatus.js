@@ -237,6 +237,11 @@
                                                        { detail: { version } }));
             }
         }).catch(() => {
+            // On the website the tab's Python answers one thing at a time: a
+            // long request (an import reading a large file) keeps `/health`
+            // waiting behind it, which is Python at work, not gone.
+            const python = window.PlexoraPython;
+            if (python && typeof python.busy === "function" && python.busy(1000)) return;
             healthFailures += 1;
             if (healthFailures >= HEALTH_FAILURES_BEFORE_ERROR) setError("Disconnected");
         });

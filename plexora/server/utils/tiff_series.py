@@ -262,6 +262,11 @@ def open_channel_series(path):
     return (*held, True)
 
 
+def is_shared(tiff) -> bool:
+    """Whether `tiff` is one `open_channel_series` shares (and must stay open)."""
+    return any(held[0] is tiff for held in list(_SHARED.values()))
+
+
 def held_ifds(path) -> list[int] | None:
     """The offsets of `path`'s main IFDs, in the order the file chains them,
     from the open the website shares (`open_channel_series`), which walked

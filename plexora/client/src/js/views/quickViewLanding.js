@@ -425,6 +425,7 @@ PlexoraPage.register(function () {
         opening = (pathInput.value.trim() || path).split(/[\\/]/).filter(Boolean).pop() || path;
         phase = "loading";
         paint();
+        const preview = await firstView(path);
         try {
             // Anything this one-press card would have to guess -- several
             // samples, a question, a file left out, a flat image needing
@@ -432,6 +433,7 @@ PlexoraPage.register(function () {
             // what was just read so it opens on it rather than reading again.
             const proposal = await readPick(path);
             if (cohortFolder(path, proposal)) {
+                preview?.done?.("dataset");
                 phase = "idle";
                 paint();
                 // A folder of samples (`s3://lin-2023-orion-crc/data`) is
@@ -441,6 +443,7 @@ PlexoraPage.register(function () {
                 return;
             }
             if (uncertain(proposal)) {
+                preview?.done?.("dialog");
                 phase = "idle";
                 paint();
                 window.PlexoraImportSample.open({paths: [path], proposal});
@@ -460,10 +463,56 @@ PlexoraPage.register(function () {
             }
             PlexoraRouter.go(result.redirect);
         } catch (error) {
+            preview?.done?.("error");
             phase = "idle";
             problem = error.message || "Could not load that image.";
             paint();
         }
+    }
+
+    /**
+     * The image's first view while it is imported (services/firstView.js):
+     * on the website the page reads the picked file itself (begun already
+     * when it was dropped) and hands what it found of the file's directories
+     * to the Python worker before Python opens it -- the worker answers
+     * nothing while Python reads; the local app shows what Python reads of
+     * the path at once (`/import/preview`). -> the preview module, or null.
+     */
+    async function firstView(path) {
+        try {
+            const file = window.PlexoraPicks?.fileFor?.(path) || null;
+            if (file) {
+                const preview = window.PlexoraFirstView;
+                if (!preview) return null;
+                if (!preview.active()) preview.begin({file});
+                await preview.prefetch(path, file);
+                return preview;
+            }
+            const website = typeof onWebsite === "function" && onWebsite();
+            if (website || isWebAddress(path) || !/\.(ome\.)?tiff?$/i.test(path)) return null;
+            const preview = await loadFirstView();
+            preview?.beginUrl?.({url: `${plexoraUrl("import/preview")}?path=${encodeURIComponent(path)}`,
+                                 name: opening});
+            return preview;
+        } catch (error) {
+            return null;
+        }
+    }
+
+    //: The local app's home page loads the preview module when first wanted.
+    let firstViewLoading = null;
+    function loadFirstView() {
+        if (window.PlexoraFirstView) return Promise.resolve(window.PlexoraFirstView);
+        if (!firstViewLoading) {
+            firstViewLoading = new Promise((resolve) => {
+                const script = document.createElement("script");
+                script.src = `${window.PLEXORA_BASE_URL || ""}/client/src/js/services/firstView.js`;
+                script.onload = () => resolve(window.PlexoraFirstView || null);
+                script.onerror = () => resolve(null);
+                document.head.appendChild(script);
+            });
+        }
+        return firstViewLoading;
     }
 
     /** A path the file browser handed back: open it, in the same gesture. */
@@ -507,6 +556,9 @@ PlexoraPage.register(function () {
             // browser" stays true for exactly as long as it is on screen.
             await browseForPath({
                 mode,
+                // A first visit's where-to-keep-work question after the image
+                // is open, not in front of it (views/webOnboarding.js).
+                quiet: true,
                 // Read by the listing picker; the native dialog narrows its own
                 // file-type dropdown with it.
                 filter: "image",
@@ -1061,6 +1113,12 @@ PlexoraPage.register(function () {
     if (landing && typeof attachWebDrop === "function") {
         attachWebDrop(landing, {
             count: "many",
+            quiet: true,
+            // The image on screen in the drop's own turn, read by the page
+            // (services/firstView.js), while it is mounted and imported.
+            onFiles: (files) => {
+                if (files.length === 1 && !busy()) window.PlexoraFirstView?.begin?.({file: files[0]});
+            },
             enabled: () => !busy(),
             onOver: (lit) => {
                 dropping = lit;

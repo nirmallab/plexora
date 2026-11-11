@@ -860,6 +860,9 @@
         fetch,
         mount: (dir, files) => ready.then(() => call("mount", { dir, files })),
         mountTree: (dir, blobs) => ready.then(() => call("mountTree", { dir, blobs })),
+        //: A mounted picked file's directories (byte offsets) read ahead, at
+        //: once, for Python's open (workers/pythonWorker.js `prefetch`).
+        prefetch: (path, offsets) => ready.then(() => call("prefetch", { path, offsets })),
         nodeSpec: (name) => ready.then(() => call("nodeSpec", { name })),
         //: The page's licence records written where Python's `biocognia`
         //: reads them (services/licenseClient.js); resolves Python's status.

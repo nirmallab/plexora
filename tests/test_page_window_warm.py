@@ -99,24 +99,25 @@ def test_the_warm_up_looks_and_comes_back_instead_of_waiting(project, monkeypatc
         assert stepped["ran"] <= 1
 
     channels = _channels()
-    # Each channel's stats were measured once (the shown one first), after
-    # its scan was done...
-    assert measured == [shown] + [name for name in channels if name != shown]
+    # Only the channel last shown was measured, after its scan was done: a
+    # scan is a whole full-resolution plane (1.9 GB a channel on a 106 GB
+    # slide), and one for every channel kept the file busy under every tile
+    # a zoom asked for. A channel switched on later is scanned then.
+    assert measured == [shown]
     # ...and Python never waited for a scan: every wait it made was answered
     # at once from a scan already finished (the page's kept answer).
-    assert all(scans.seen[i] == 3 for i in range(len(channels)))
+    assert scans.seen == {1: 3}
     # Every look gives the worker back within 250 ms, is not urgent, and
-    # queues the next channel's scan behind it.
+    # queues no other channel's scan behind it.
     assert {look["wait_ms"] for look in scans.looks} == {data_model._PAGE_WINDOW_LOOK_MS}
     assert not any(look["urgent"] for look in scans.looks)
-    first = [look for look in scans.looks if look["index"] == 1]
-    assert first[0]["ahead"] == [0]
+    assert all(look["ahead"] == [] for look in scans.looks)
     # While a scan was pending the task was queued again under its own name.
     assert names.count(f"warm-window-{shown}") == 2
-    # Stats for every channel; the contrast fit (seconds of WebAssembly no
-    # request can interrupt) only for the channel last shown.
+    # Stats and the contrast fit (seconds of WebAssembly no request can
+    # interrupt) only for the channel last shown.
     for name in channels:
-        assert (NAME, name) in data_model._image_stats_cache
+        assert ((NAME, name) in data_model._image_stats_cache) == (name == shown)
         assert (data_model._gmm_cache.get((NAME, name)) is not None) == (name == shown)
     # And every channel's fit ahead of its click (a chain of its own, the
     # shown channel first, one fit a task, never looking at a scan): the
@@ -301,12 +302,47 @@ def test_the_fit_route_answers_provisionally_only_when_asked(project, monkeypatc
     assert "retry" not in answered and json.loads(answered["body"])["window_exact"] is False
 
 
-def test_the_desktop_never_answers_provisionally(project, monkeypatch):
+def test_the_desktop_answers_at_once_and_makes_the_window_behind(project, monkeypatch):
+    """The desktop's threads: a viewer's provisional ask for a channel whose
+    exact window is not known is answered now, from the overview, and the
+    exact window -- every full-resolution pixel, 18.7 s a channel from a file
+    share -- is made on a thread of its own (`_window_behind`); the viewer's
+    next ask gets the exact packet. An ask that is not provisional (a tile's
+    encode, the warm-up) makes it inline, as it always did."""
+    import time
+
+    import threading
+
     monkeypatch.setenv("PLEXORA_WORK", "threads")
     scans = Page(monkeypatch, pending=5)
-    stats = data_model.get_image_channel_stats(_channels()[0], NAME, patient=True, provisional=True)
+    # The scan behind held until both provisional answers are in.
+    release = threading.Event()
+    real = data_model.get_channel_quantization_window
+
+    def held(*args, **kwargs):
+        release.wait(10)
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(data_model, "get_channel_quantization_window", held)
+    name = _channels()[0]
+    first = data_model.get_image_channel_stats(name, NAME, patient=True, provisional=True)
+    assert first["window_exact"] is False
+    gmm = data_model.get_channel_gmm(name, NAME, patient=True, provisional=True)
+    assert gmm["window_exact"] is False
+    # One scan behind for the channel, however many asks.
+    assert len(data_model._windows_behind) == 1
+    release.set()
+    deadline = time.monotonic() + 10
+    while data_model._windows_behind and time.monotonic() < deadline:
+        time.sleep(0.01)
+    assert not data_model._windows_behind
+    stats = data_model.get_image_channel_stats(name, NAME, patient=True, provisional=True)
     assert "window_exact" not in stats and stats["qmax"] == 1000.0
+    # Made once, behind; never looked at the website's way.
     assert scans.looks == [] and scans.waits == [0]
+    other = data_model.get_image_channel_stats(_channels()[1], NAME, patient=True)
+    assert "window_exact" not in other and other["qmax"] == 1001.0
+    assert scans.waits == [0, 1]
 
 
 def test_the_page_scans_one_line_urgent_first_and_keeps_the_answers():
@@ -328,7 +364,10 @@ def test_the_page_scans_one_line_urgent_first_and_keeps_the_answers():
     assert out["firstLook"] == {"done": False} and out["firstLookMs"] < 200
     # The urgent channel's scan went between two rounds of the warm-up's,
     # and the interrupted one resumed where it was: every window read once.
-    assert out["rounds"] == [0, 0, 2, 2, 2, 2, 0, 0, 1, 1, 1, 1]
+    # A round of the warm-up's reads one 4096-px window of this 16-bit plane
+    # (`ROUND_BACKGROUND_SAMPLES`: a zoom's tiles never wait long behind
+    # it), an urgent one's as many as its workers take two at a time.
+    assert out["rounds"] == [0, 0, 2, 2, 2, 2] + [0] * 6 + [1] * 8
     assert out["urgent"] == 2006 and out["resumed"] == {"done": True, "max": 6}
     assert out["windowsRead"] == out["windowsInPlane"]
     # Kept: asked again, nothing is read.

@@ -807,6 +807,9 @@
                               at("/client/src/js/services/pythonClient.js")]);
         const services = scripts([
             at("/client/src/js/services/backend.js"),
+            // A given image's first view, read by the page and shown here,
+            // where it outlives the frame's way to the viewer.
+            at("/client/src/js/services/firstView.js"),
             at("/client/src/js/services/pickedFiles.js"),
             // The explorer's listings of the folders the user gives the site.
             at("/client/src/js/services/localFiles.js"),
@@ -1414,6 +1417,7 @@
         global.PlexoraPicks = host.PlexoraPicks;
         global.PlexoraLocalFiles = host.PlexoraLocalFiles || null;
         global.PlexoraNode = host.PlexoraNode;
+        global.PlexoraFirstView = host.PlexoraFirstView || null;
         global.PlexoraKept = host.PlexoraKept || null;
         // The host's licence, which it holds only once Python has started: read
         // through to it, since a kept page is up before then.

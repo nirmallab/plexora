@@ -642,6 +642,9 @@ class LocalImageProvider:
             # least 200 px on both sides) opens as the multiscale group rather
             # than as its finest level.
             zarray = zarray["0"]
+        paged = _page_overview(self._path, levels, level_series, zarray)
+        if paged is not None:
+            zarray = paged
         if zarray.shape[1] > 400 or zarray.shape[2] > 400:
             x_reduce = zarray.shape[1] // 200
             y_reduce = zarray.shape[2] // 200
@@ -795,6 +798,43 @@ def detect_image_type(path):
     return brightfield.detect_image_type(path)
 
 
+
+#: The most an overview level read by the page at once may hold (bytes).
+_PAGE_OVERVIEW_MAX_BYTES = 256 << 20
+
+
+def _page_overview(path, levels, level_series, zarray):
+    """On the website, every channel of the overview's level read by the
+    page's workers side by side (`providers.browser.page_regions`) -- the
+    browser's own reads of the picked file, not Python's one tile after
+    another in WebAssembly: on a 40-channel slide that level is 40 tiles of
+    2 MiB, 20 s from a file share read in turn, and every first request of
+    the viewer waited behind it. The same values. None elsewhere, for a
+    level too large to read whole, or when the page declines any channel:
+    Python reads it as it always did."""
+    import numpy as np
+
+    from plexora.server.providers import browser as page
+
+    if not page.is_page_file(path) or len(getattr(zarray, "shape", ())) != 3:
+        return None
+    channels, height, width = (int(side) for side in zarray.shape)
+    if channels * height * width * np.dtype(zarray.dtype).itemsize > _PAGE_OVERVIEW_MAX_BYTES:
+        return None
+    index = next((i for i, level in enumerate(levels) if level is level_series), None)
+    if index is None:
+        return None
+    try:
+        got = page.page_regions(path, [tuple(int(side) for side in level.shape) for level in levels],
+                                np.dtype(zarray.dtype).name,
+                                [(channel, index, (0, 0, width, height)) for channel in range(channels)])
+    except Exception:  # noqa: BLE001 -- Python reads it then
+        return None
+    if not got or any(plane is None or plane.shape != (height, width) for plane in got):
+        return None
+    return np.stack(got)
+
+
 def image_geometry(path, pyramid=None, rgb=False) -> dict:
     """An image file's shape, without loading it into the module globals.
 
@@ -846,7 +886,11 @@ def image_geometry(path, pyramid=None, rgb=False) -> dict:
     if rgb or brightfield.is_rgb_layout(path):
         return brightfield.geometry(brightfield.open_rgb(path, extension=pyramid))
 
-    channel_io = tf.TiffFile(str(path), is_ome=False)
+    from plexora.server.utils import tiff_region
+
+    # The website's shared open (`tiff_region.open_tiff`): the import's other
+    # readers of this file walked its directories already.
+    channel_io = tiff_region.open_tiff(path)
     # The same axes-aware read `LocalImageProvider.open` does, and it has to be
     # the same one: a node answers "how big is it" from here while the primary
     # records the shape from the conversion, and a geometry check that

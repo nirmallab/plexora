@@ -187,6 +187,17 @@ bundle `py/dev/4f583c3b9745/` and, sharing the flags, no longer shows its
 
 ## 6. Git
 
+- **The instant first view is on `main`, not on the website yet**
+  (`feature/instant-first-view`, docs/internal/bench/web/WEBSITE_FIRST_VIEW_2026-11-10.md:
+  the image on screen 0.3-0.5 s after a drop, the import reading the file
+  once). Its Python changed, so it needs a bundle of its own: release it as
+  **0.0.50 or later** (`py/0.0.49/` is never rewritten). Only Plexora's own
+  Python changed since 0.0.49 (nothing under `kernels/`, `uv.lock`,
+  `tools/browser_build/`, `plexora/browser/stages.py`), so `build.py
+  --plexora-only --no-kernels` over a copy of 0.0.49's bundle is enough
+  (WEBSITE_RELEASE.md). Before the upload, `tools/bench_web/bench_first_view.mjs`
+  against the site served here shows the first view in a fresh profile.
+
 - `web/phase0` was merged into `main` (a fast-forward) and pushed on
   2026-11-07, at your word. Work goes on on `web/phase0`; each later wave is
   merged the same way when you say so. The push redeployed the docs site, so

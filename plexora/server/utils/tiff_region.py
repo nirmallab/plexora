@@ -56,6 +56,9 @@ def open_tiff(path):
     import tifffile as tf
 
     if not _is_remote(path):
+        shared = _shared_local(path)
+        if shared is not None:
+            return shared
         return tf.TiffFile(str(path), is_ome=False)
     from plexora.server.utils import remote_store
 
@@ -101,9 +104,53 @@ def _warm_subifds(tiff, handle) -> None:
         return
 
 
+def _shared_local(path):
+    """On the website (one thread), the open of a local `path` every reader
+    of it shares (`tiff_series.open_channel_series`); None elsewhere, or when
+    that open cannot be made. Opening a TIFF walks every page's directory --
+    a 40-channel, 7-level slide whose 280 directories lie across 106 GB took
+    seconds an open through the page, and an import opened it ten times over
+    (the label check, the geometry, the pixel size, the focal planes, the
+    channel names, the conversion) for the same answer each time."""
+    from plexora import _work
+
+    if _work.threaded():
+        return None
+    from plexora.server.utils import tiff_series
+
+    try:
+        tiff, _series, shared = tiff_series.open_channel_series(str(path))
+    except Exception:  # noqa: BLE001 -- a file of its own then, as before
+        return None
+    if not shared:
+        tiff.close()
+        return None
+    return tiff
+
+
+class opened:
+    """`with opened(path) as tiff:` -- `open_tiff`, then `close_tiff`."""
+
+    def __init__(self, path):
+        self._tiff = open_tiff(path)
+
+    def __enter__(self):
+        return self._tiff
+
+    def __exit__(self, *exc):
+        close_tiff(self._tiff)
+        return False
+
+
 def close_tiff(tiff) -> None:
-    """Close a TiffFile from `open_tiff`, and its stream when it has one."""
+    """Close a TiffFile from `open_tiff`, and its stream when it has one --
+    unless it is the website's shared open (`_shared_local`), which stays open
+    for the next reader."""
     if tiff is None:
+        return
+    from plexora.server.utils import tiff_series
+
+    if tiff_series.is_shared(tiff):
         return
     try:
         tiff.close()

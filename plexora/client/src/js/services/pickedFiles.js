@@ -469,8 +469,19 @@
     //: One dropped thing's files, whichever way the browser gave them.
     const treeOf = (one) => (one.handle ? walk(one.handle) : readEntries(one.entry));
 
+    //: A File made in this page, of the same bytes (nothing is copied): a
+    //: drop's comes from the app frame's page, which a navigation replaces.
+    const own = (file) => (typeof global.File === "function"
+        ? new global.File([file], file.name, { type: file.type, lastModified: file.lastModified }) : file);
+
     async function fileOf(one) {
         if (one.file && !one.entry && !one.handle) return one.file;
+        // A drop's own File, where the drop gave one, read rather than its
+        // handle's: Chrome reads a handle's file on the queue the site's
+        // storage uses, and a file share's slow reads stalled that storage
+        // (and Python's start in another tab) for seconds at a time; the
+        // dropped File reads beside it. The handle is still what is remembered.
+        if (one.file && one.handle) return own(one.file);
         if (one.handle) return one.handle.getFile();
         return new Promise((resolve, reject) => one.entry.file(resolve, reject));
     }
@@ -539,8 +550,14 @@
         return (async () => {
             const got = [];
             for (const one of dropped) {
-                const handle = one.handle ? await one.handle : null;
-                if (handle) got.push({ name: handle.name, directory: handle.kind === "directory", handle });
+                // A handle the browser refuses (a file in a folder it keeps
+                // from sites, AppData) is no handle: the dropped File itself
+                // still opens, only not remembered for the next visit.
+                const handle = one.handle ? await Promise.resolve(one.handle).catch(() => null) : null;
+                // The dropped File kept beside its handle: it is what is read
+                // (`fileOf`); the handle is what finds the file next visit.
+                if (handle) got.push({ name: handle.name, directory: handle.kind === "directory", handle,
+                                       file: handle.kind === "directory" ? null : one.file });
                 else if (one.entry) got.push({ name: one.entry.name, directory: one.entry.isDirectory, entry: one.entry });
                 else if (one.file) got.push({ name: one.file.name, directory: false, file: one.file });
             }

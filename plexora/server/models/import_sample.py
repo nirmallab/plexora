@@ -839,7 +839,11 @@ def import_sample(paths, *, answers=None, name=None, dataset=None, node=None,
     @param token - names this request for `/import/status?token=`, so the
         dialog can draw progress before the sample exists.
     """
-    proposal = import_proposal.inspect_paths(paths, node=node, answers=answers)
+    # What the inspect a moment ago found, when these are the same unchanged
+    # files (`import_proposal.inspected`: keyed by each file's size and
+    # modification time, so still what the files say); otherwise read now.
+    proposal = (import_proposal.inspected(paths, node=node, answers=answers)
+                or import_proposal.inspect_paths(paths, node=node, answers=answers))
     if not proposal.samples:
         reasons = [entry["reason"] for entry in proposal.unrecognised]
         raise ImportError_(
@@ -858,8 +862,13 @@ def import_sample(paths, *, answers=None, name=None, dataset=None, node=None,
         # so by naming it.
         return {"name": sample.existing, "layers": [], "pending": False,
                 "existing": True}
-    return register_sample(sample, name=name, dataset=dataset,
-                           answers=answers, replace=replace, token=token)
+    try:
+        return register_sample(sample, name=name, dataset=dataset,
+                               answers=answers, replace=replace, token=token)
+    finally:
+        # Registered (or not): what any remembered inspect said about
+        # `existing` may be out of date now.
+        import_proposal.forget_inspected()
 
 
 def reclassify(project_name, layer_id, target):
