@@ -1,6 +1,6 @@
 {
   "name": "plexora-desktop",
-  "version": "0.0.49",
+  "version": "0.0.50",
   "private": true,
   "description": "The Plexora desktop shell. Build it with scripts/release.py.",
   "license": "SEE LICENSE IN ../LICENSE",
