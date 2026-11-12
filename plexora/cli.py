@@ -1063,7 +1063,7 @@ def build_parser(command=None):
         config_set = config_subs.add_parser("set", help="Change a setting.")
         config_set.add_argument(
             "key", choices=("data-dir", "shared-dirs", "mask-output",
-                            "remote-cache-gb", "segment-model-dir"))
+                            "remote-cache-gb", "segment-model-dir", "compress-pyramids"))
         config_set.add_argument(
             "value",
             help="A path for data-dir; a comma-separated list for shared-dirs "
@@ -1075,7 +1075,11 @@ def build_parser(command=None):
                  "remote-cache-gb, the disk the cache of images read from web "
                  "addresses may use (at least 1); a directory for "
                  "segment-model-dir, where magic select's model files are read "
-                 "from and downloaded to (pass an empty string for the default).",
+                 "from and downloaded to (pass an empty string for the default); "
+                 "`on` or `off` for compress-pyramids, whether the copy Plexora "
+                 "makes of a large image written without a pyramid is compressed "
+                 "(about 75%% smaller than an exact copy, every pixel within its noise; "
+                 "on by default).",
         )
         return parser
 
@@ -2878,6 +2882,12 @@ def _run_config(args):
                 settings["segment_model_dir"] = str(Path(raw).expanduser().resolve())
             else:
                 settings.pop("segment_model_dir", None)
+        elif args.key == "compress-pyramids":
+            choice = str(args.value).strip().lower()
+            if choice not in ("on", "off"):
+                print("compress-pyramids is on or off")
+                return 2
+            settings["compress_pyramids"] = choice == "on"
         else:
             entries = [part.strip() for part in args.value.split(",")]
             settings["shared_dirs"] = [

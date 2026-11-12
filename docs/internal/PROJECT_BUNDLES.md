@@ -130,6 +130,21 @@ pyramid as SubIFDs; `approximate_image.reason`) goes as
 Plexora's own pyramids of an image in the project's derived folder (ready
 to open) go exactly as they are; only refs go smaller.
 
+**The same container is a flat image's compressed pyramid copy.** A large
+16-bit TIFF written without a pyramid gets its pyramidized copy as
+`<stem>.pyramid.approx` (server/utils/image_pyramid.py `APPROX_SUFFIX`)
+unless the Import dialog's "Compress the copy" switch or the setting
+(`compress_pyramids`, Settings > Data, `plexora config set
+compress-pyramids`) says otherwise; `approximate_image.write_tiles` takes the
+pyramid builder's exact tiles as they are made, every level from the exact
+level above, so the error never compounds. The OME-XML a TIFF copy carries
+(the `plexora-image-pyramid` marker with `source` and `source_key`, channel
+names, pixel size) is the index's `description`, so the copy is recognised
+and adopted as a TIFF copy is. In a bundle it is a ref like any copy beside
+its original: derived (`sources.PYRAMID_ENDING`, `DERIVED_NAMES`), carried
+byte for byte with "derived" and stored (`STORED_SUFFIXES`), and never made
+smaller again (`reason` takes TIFFs only).
+
 ### The manifest
 
 ```

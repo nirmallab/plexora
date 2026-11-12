@@ -5685,6 +5685,64 @@ html.is-native-dragging.has-drop-target body::after {
     font-size: 12px;
 }
 
+/* A choice that changes the question it sits in (views/importSample.js:
+   "Compress the copy"): the native checkbox drawn as a switch, still the
+   input itself -- focusable, labelled, Space flips it. */
+.plx-confirm-switch {
+    align-items: center;
+    color: var(--text-primary);
+    cursor: pointer;
+    display: inline-flex;
+    font-size: 13px;
+    gap: var(--space-2);
+    margin: var(--space-2) 0 var(--space-1);
+}
+
+.plx-confirm-switch input {
+    -webkit-appearance: none;
+    appearance: none;
+    background: rgba(5, 7, 10, 0.55);
+    border: 1.5px solid var(--border-strong);
+    border-radius: 999px;
+    cursor: pointer;
+    flex: 0 0 auto;
+    height: 18px;
+    margin: 0;
+    position: relative;
+    transition:
+        background-color var(--duration-fast) var(--ease-standard),
+        border-color var(--duration-fast) var(--ease-standard);
+    width: 32px;
+}
+
+.plx-confirm-switch input::after {
+    background: var(--text-secondary);
+    border-radius: 50%;
+    content: "";
+    height: 11px;
+    left: 2px;
+    position: absolute;
+    top: 2px;
+    transition: transform var(--duration-fast) var(--ease-standard),
+        background-color var(--duration-fast) var(--ease-standard);
+    width: 11px;
+}
+
+.plx-confirm-switch input:checked {
+    background: var(--accent-channel);
+    border-color: var(--accent-channel);
+}
+
+.plx-confirm-switch input:checked::after {
+    background: #05070a;
+    transform: translateX(14px);
+}
+
+.plx-confirm-switch input:focus-visible {
+    outline: 2px solid var(--accent-channel);
+    outline-offset: 2px;
+}
+
 /* `choose({ close: true })`: the way out is an X in the corner rather than
    a Cancel among the answers. The title gives it room. */
 .plx-confirm-close {

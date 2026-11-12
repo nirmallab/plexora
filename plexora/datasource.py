@@ -1025,13 +1025,16 @@ def register_datasource(
         image_type (str, optional): `"brightfield"` or `"fluorescence"`, to
             override how the image is read. Defaults to None, which
             decides from the file.
-        pyramidize (bool, optional): What to do with a large multiplex
-            TIFF that has no reduced-resolution levels. None (the default)
-            and True write a pyramidized copy once, as
-            `<name>.pyramid.ome.tiff` beside the original (or in the
-            project's folder when that one is not writable), and open the
-            copy; the original is never changed. False opens the original
-            as it is.
+        pyramidize (bool or str, optional): What to do with a large
+            multiplex TIFF that has no reduced-resolution levels. None (the
+            default) and True write a pyramidized copy once, beside the
+            original (or in the project's folder when that one is not
+            writable), and open the copy; the original is never changed. A
+            16-bit image's copy is `<name>.pyramid.approx`, about 75% smaller
+            than an exact copy with every pixel within its noise, unless the setting
+            `compress_pyramids` is off; otherwise `<name>.pyramid.ome.tiff`.
+            "compressed" or "exact" asks for that kind. False opens the
+            original as it is.
 
     Returns:
         dict: The project's saved config entry.
@@ -1523,13 +1526,16 @@ def register_anndata_datasource(
         image_type (str, optional): `"brightfield"` or `"fluorescence"`, to
             override how the image is read. Defaults to None, which
             decides from the file.
-        pyramidize (bool, optional): What to do with a large multiplex
-            TIFF that has no reduced-resolution levels. None (the default)
-            and True write a pyramidized copy once, as
-            `<name>.pyramid.ome.tiff` beside the original (or in the
-            project's folder when that one is not writable), and open the
-            copy; the original is never changed. False opens the original
-            as it is.
+        pyramidize (bool or str, optional): What to do with a large
+            multiplex TIFF that has no reduced-resolution levels. None (the
+            default) and True write a pyramidized copy once, beside the
+            original (or in the project's folder when that one is not
+            writable), and open the copy; the original is never changed. A
+            16-bit image's copy is `<name>.pyramid.approx`, about 75% smaller
+            than an exact copy with every pixel within its noise, unless the setting
+            `compress_pyramids` is off; otherwise `<name>.pyramid.ome.tiff`.
+            "compressed" or "exact" asks for that kind. False opens the
+            original as it is.
 
     Returns:
         dict: The project's saved config entry.
@@ -1782,13 +1788,16 @@ def register_image_datasource(name, image, channel_names=None, copy=False,
         image_type (str, optional): `"brightfield"` or `"fluorescence"`, to
             override how the image is read. Defaults to None, which
             decides from the file.
-        pyramidize (bool, optional): What to do with a large multiplex
-            TIFF that has no reduced-resolution levels. None (the default)
-            and True write a pyramidized copy once, as
-            `<name>.pyramid.ome.tiff` beside the original (or in the
-            project's folder when that one is not writable), and open the
-            copy; the original is never changed. False opens the original
-            as it is.
+        pyramidize (bool or str, optional): What to do with a large
+            multiplex TIFF that has no reduced-resolution levels. None (the
+            default) and True write a pyramidized copy once, beside the
+            original (or in the project's folder when that one is not
+            writable), and open the copy; the original is never changed. A
+            16-bit image's copy is `<name>.pyramid.approx`, about 75% smaller
+            than an exact copy with every pixel within its noise, unless the setting
+            `compress_pyramids` is off; otherwise `<name>.pyramid.ome.tiff`.
+            "compressed" or "exact" asks for that kind. False opens the
+            original as it is.
         image_index (int, optional): Which image of a microscope file that
             holds several -- a CZI's scenes, an ND2's positions, a LIF's
             images, an MCD's acquisitions, a VSI's scan areas -- counting

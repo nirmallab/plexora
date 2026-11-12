@@ -2799,7 +2799,9 @@ def _pyramid_offer(path, layer):
     report = image_pyramid.flat_image_report(path)
     if report is None:
         return None
-    where = image_pyramid.resolve_derived_image(path)
+    compressible = bool(report.get("compressible"))
+    where = image_pyramid.resolve_derived_image(
+        path, compressed=compressible and image_pyramid.compress_default(), either=True)
     if where.existing is not None:
         # A finished copy of this exact file is already there and is what
         # registration will open. Nothing to ask.
@@ -2817,7 +2819,7 @@ def _pyramid_offer(path, layer):
     location = ("in this browser's storage for this site" if browser_provider.is_page_file(path)
                 else "beside the original (or in the project's folder if that one is not writable)")
     render["pyramid"] = {**report, "output": str(target), "output_name": target.name,
-                         "location": location}
+                         "location": location, **_compress_offer(path, compressible)}
     note = render.get("detail")
     render["detail"] = f"{note} · No pyramid" if note else "No pyramid"
     layer.render = render
@@ -2827,6 +2829,19 @@ def _pyramid_offer(path, layer):
         options=({"value": "yes", "label": "Pyramidize and import"},
                  {"value": "no", "label": "Import as is"}),
         default="yes", scope=f"layer:{layer.id}", kind="confirm")
+
+
+def _compress_offer(path, compressible) -> dict:
+    """What the pyramid modal's "Compress the copy" switch needs: whether it
+    is shown (`compressible`: a 16-bit stack, a Python that makes compressed
+    copies), where it starts (`compress_default`, this computer's setting),
+    and the two names the copy can take. `image_pyramid.compressible`."""
+    from plexora.server.utils import image_pyramid
+
+    return {"compressible": bool(compressible),
+            "compress_default": image_pyramid.compress_default(),
+            "output_names": {"compressed": image_pyramid.derived_output_path(path, compressed=True).name,
+                             "exact": image_pyramid.derived_output_path(path).name}}
 
 
 def _looks_like_a_table(path) -> bool:
@@ -3739,10 +3754,11 @@ def _panel_for(image, panels):
 def _without_image_copies(found):
     """`found` less any pyramidized copy whose original is also in it.
 
-    A folder holding `slide.tif` and the `slide.pyramid.ome.tiff` Plexora
-    made of it is one image: registering the original adopts the copy. Two
-    rows would be two references with one id. Suffix first, so the metadata
-    read is paid only by files that could be a copy.
+    A folder holding `slide.tif` and the `slide.pyramid.ome.tiff` (or the
+    compressed `slide.pyramid.approx`) Plexora made of it is one image:
+    registering the original adopts the copy. Two rows would be two
+    references with one id. Suffix first, so the metadata read is paid only
+    by files that could be a copy.
     """
     from plexora.server.utils import image_pyramid
 
@@ -3751,7 +3767,7 @@ def _without_image_copies(found):
     for layer in found:
         src = str(layer.src or "")
         if (layer.role == "image"
-                and src.lower().endswith(image_pyramid.PYRAMID_SUFFIX)
+                and src.lower().endswith(image_pyramid.COPY_SUFFIXES)
                 and image_pyramid.copy_source(src) in sources):
             continue
         keep.append(layer)
@@ -4781,11 +4797,14 @@ def _detect_node(raw, fallback_node, answers, declared=None):
             # The same offer a flat image on this disk gets, built over there:
             # the original is on that machine, so that is where the copy is
             # written. Asked by address, which is what registration reads.
+            # The switch only when that node makes compressed copies (it says
+            # `compressible`; an older node says nothing and builds its own).
             layer.render = {
                 "detail": "on " + node + " · No pyramid",
                 "pyramid": {**pyramid, "location": (
                     f"on {node}, beside the original (or in the node's own data "
-                    "folder if that one is not writable)")},
+                    "folder if that one is not writable)"),
+                    **_compress_offer(picked or browsed, pyramid.get("compressible"))},
             }
             questions.append(Question(
                 id=f"pyramidize:{address}",

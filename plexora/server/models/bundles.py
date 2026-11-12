@@ -141,7 +141,7 @@ CHUNK = 1 << 20
 SAMPLE = 4 << 20
 #: Stored whole: these are compressed already.
 STORED_SUFFIXES = (".png", ".jpg", ".jpeg", ".webp", ".parquet", ".gz", ".zst", ".zip", ".mp4",
-                   ".h5ad", ".npz", ".jp2")
+                   ".h5ad", ".npz", ".jp2", ".approx")
 #: A sample that deflates to more than this share of its size is stored.
 INCOMPRESSIBLE = 0.9
 #: A member larger than RATIO_FLOOR that inflates more than this is refused.
@@ -186,7 +186,7 @@ IMAGE_ROLES = ("channelFile", "imageSource", "imagePyramid")
 #: Files the entry names that Plexora made and can make again, carried only
 #: when "ready to open" is asked for.
 DERIVED_NAMES = ("tenx/*", "*_tiled.ome.tif", "*.pyramid.ome.tif", "*.pyramid.ome.tiff",
-                 "projections_v*/*", "surfaces_v*/*")
+                 "*.pyramid.approx", "projections_v*/*", "surfaces_v*/*")
 TABLE_SUFFIXES = (".csv", ".tsv", ".txt", ".parquet", ".h5ad", ".feather", ".arrow", ".xlsx")
 #: Where an included image lands in the project's folder, and is known again.
 MEDIA = "media"

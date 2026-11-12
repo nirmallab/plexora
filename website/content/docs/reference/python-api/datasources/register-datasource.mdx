@@ -6,7 +6,7 @@ symbol: "plexora.register_datasource"
 signature: "register_datasource(name, image, features, x=None, y=None, segmentation=None, id_column=None, celltype_column=None, channel_names=None, copy=False, data_dir=None, segmentation_async=False, segmentation_mode=None, image_type=None, pyramidize=None)"
 aliases: ["csv", "table", "register"]
 source:
-  end: 1131
+  end: 1134
   path: "plexora/datasource.py"
   start: 962
 ---
@@ -158,15 +158,18 @@ decides from the file.
 
 </Param>
 
-<Param name={"pyramidize"} type={"bool"} default={"None"}>
+<Param name={"pyramidize"} type={"bool or str"} default={"None"}>
 
-What to do with a large multiplex
-TIFF that has no reduced-resolution levels. None (the default)
-and True write a pyramidized copy once, as
-`<name>.pyramid.ome.tiff` beside the original (or in the
-project's folder when that one is not writable), and open the
-copy; the original is never changed. False opens the original
-as it is.
+What to do with a large
+multiplex TIFF that has no reduced-resolution levels. None (the
+default) and True write a pyramidized copy once, beside the
+original (or in the project's folder when that one is not
+writable), and open the copy; the original is never changed. A
+16-bit image's copy is `<name>.pyramid.approx`, about 75% smaller
+than an exact copy with every pixel within its noise, unless the setting
+`compress_pyramids` is off; otherwise `<name>.pyramid.ome.tiff`.
+"compressed" or "exact" asks for that kind. False opens the
+original as it is.
 
 </Param>
 

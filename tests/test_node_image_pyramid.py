@@ -60,17 +60,20 @@ def test_a_shared_flat_image_is_offered_a_copy(tmp_path, small_threshold):
         "image", "slide", str(tmp_path / "slide.tif"))
     offer = resource.describe()["pyramid"]
     assert offer["channels"] == 2 and offer["levels"] == 2
-    assert offer["output_name"] == "slide.pyramid.ome.tiff"
+    # 16-bit: the copy it would make is the compressed kind, and it says so.
+    assert offer["output_name"] == "slide.pyramid.approx" and offer["compressible"] is True
 
 
 def test_the_node_builds_the_copy_and_serves_it(tmp_path, small_threshold):
+    """Asked for the exact kind (the dialog's switch off): today's TIFF."""
     pixels = _flat(tmp_path / "slide.tif")
     app = _node()
     resource = app.config["PLEXORA_NODE_RESOURCES"].add(
         "image", "slide", str(tmp_path / "slide.tif"))
     client = app.test_client()
 
-    answer = client.post("/node/v1/resources/slide/pyramidize", headers=TOKEN_HEADER)
+    answer = client.post("/node/v1/resources/slide/pyramidize", headers=TOKEN_HEADER,
+                         json={"kind": "exact"})
     assert answer.status_code == 200, answer.get_data(as_text=True)
     state = _wait(client, "slide")
     assert state["state"] == "ready", state.get("error")
@@ -86,6 +89,28 @@ def test_the_node_builds_the_copy_and_serves_it(tmp_path, small_threshold):
         np.testing.assert_array_equal(tiff.series[0].levels[0].asarray(), pixels)
     tile = client.get("/node/v1/image/slide/tile/ch_0/1/0_0", headers=TOKEN_HEADER)
     assert tile.status_code == 200
+
+
+def test_the_node_builds_a_compressed_copy_and_serves_it_in_place(tmp_path, small_threshold):
+    """Nobody said which (an older primary): the node's setting, on. The copy
+    is read through its formats reader, levels and tiles as for the TIFF."""
+    _flat(tmp_path / "slide.tif")
+    app = _node()
+    resource = app.config["PLEXORA_NODE_RESOURCES"].add(
+        "image", "slide", str(tmp_path / "slide.tif"))
+    client = app.test_client()
+    client.post("/node/v1/resources/slide/pyramidize", headers=TOKEN_HEADER)
+    state = _wait(client, "slide")
+    assert state["state"] == "ready", state.get("error")
+    assert Path(resource.path) == tmp_path / "slide.pyramid.approx"
+    assert not (tmp_path / "slide.pyramid.ome.tiff").exists()
+    geometry = client.get("/node/v1/image/slide/geometry", headers=TOKEN_HEADER).get_json()
+    assert geometry["levels"] == 2
+    tile = client.get("/node/v1/image/slide/tile/ch_0/1/0_0", headers=TOKEN_HEADER)
+    assert tile.status_code == 200
+    # Restarted, it serves that copy again rather than offering a build.
+    again = _node().config["PLEXORA_NODE_RESOURCES"].add("image", "slide", str(tmp_path / "slide.tif"))
+    assert Path(again.path) == tmp_path / "slide.pyramid.approx" and again.describe()["pyramid"] is None
 
 
 def test_a_read_only_folder_puts_the_copy_under_the_nodes_data_root(
@@ -153,8 +178,9 @@ def fake_node(monkeypatch):
     def status(node, resource_id, timeout=30.0):
         return dict(script["states"].pop(0))
 
-    def start(node, resource_id, timeout=30.0):
+    def start(node, resource_id, timeout=30.0, kind=None):
         script["started"].append(resource_id)
+        script.setdefault("kinds", []).append(kind)
         return {"state": "preparing"}
 
     monkeypatch.setattr(nodes, "resource_status", status)
@@ -178,6 +204,31 @@ def test_registration_waits_for_the_node_and_shows_its_steps(fake_node, monkeypa
     import_sample._pyramidize_on_node("o2", "slide", {}, "node://o2/slide")
     assert fake_node["started"] == ["slide"]
     assert seen == ["opening", "building", "writing", "registering"]
+
+
+@pytest.mark.parametrize("said, kind", [("compressed", "compressed"), ("exact", "exact"),
+                                        ("yes", None), (None, None)])
+def test_the_dialogs_switch_reaches_the_node(fake_node, said, kind):
+    """The kind the switch chose goes to the node with the request; "yes" or
+    nothing leaves it to the node."""
+    from plexora.server.models import import_sample
+
+    fake_node["states"] = [{"state": "ready", "pyramid": {"levels": 4}}, {"state": "ready", "pyramid": None}]
+    answers = {} if said is None else {"pyramidize:node://o2/slide": said}
+    import_sample._pyramidize_on_node("o2", "slide", answers, "node://o2/slide")
+    assert fake_node["kinds"] == [kind]
+
+
+def test_the_kind_is_sent_in_the_request_body(monkeypatch):
+    from plexora import nodes
+    from plexora.server.providers import http
+
+    sent = []
+    monkeypatch.setattr(nodes.node_registry, "get", lambda name: types.SimpleNamespace(name=name))
+    monkeypatch.setattr(http, "json_request", lambda entry, method, path, **kw: sent.append(kw) or {})
+    nodes.pyramidize_on_node("o2", "slide", kind="exact")
+    nodes.pyramidize_on_node("o2", "slide")
+    assert sent[0]["body"] == {"kind": "exact"} and sent[1]["body"] is None
 
 
 def test_import_as_is_asks_the_node_for_nothing(fake_node):
