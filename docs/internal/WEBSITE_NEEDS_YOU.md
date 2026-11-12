@@ -4,8 +4,12 @@ Everything the website work (plan `dreamy-brewing-sunset.md`, branch `web/phase0
 is waiting on from you, in one place. Kept current as work lands; the newest
 state is on `web/phase0`. Each item says what to do and what it unblocks.
 **The website is live** at https://viewer.plexoraapp.com since 2026-11-08
-00:40 UTC, now 0.0.52 (`main` at 05f4a010, no tag; since 2026-11-12
-02:50 UTC: a large remote image no longer ends the tab's Python -- what a
+00:40 UTC, now 0.0.53 (`main` at 3e0c2355, no tag; since 2026-11-12
+05:00 UTC: a remote .ims of any size opens -- h5py's reads of it no longer
+suspend, which ended Python, and it is read by path past h5py's 4 GiB
+file-object limit; checked with the 349 GB Imaris file in Chrome -- and a
+kept page Python draws differently is faded in, not reloaded; 0.0.52,
+since 2026-11-12 02:50 UTC: a large remote image no longer ends the tab's Python -- what a
 tab cannot hold is refused with a notice, a failure that happens anyway is
 named -- the slow-network and slow-drive notices, a lone Olympus .ets, a
 project's files opened again on a return visit without a search,
@@ -30,7 +34,7 @@ asked only when work needs saving, the picked folder is the workspace --
 Storage & Locations, and .plexora export/import of one or many projects,
 docs/internal/PROJECT_BUNDLES.md; 0.0.46 to 0.0.42, the performance rounds
 five to one, before it), Pages project `plexora-viewer`
-branch `release`, bundle `py/0.0.52/`, flags `viewer: on`, telemetry on. 0.0.38 was live for under
+branch `release`, bundle `py/0.0.53/`, flags `viewer: on`, telemetry on. 0.0.38 was live for under
 an hour and did not start Python on the self-check page, in a second tab or
 without sync access handles; its `py/0.0.38/` stays, as every released
 prefix does, and nothing points at it. Activating a licence and AI do not work there until section 1,
@@ -201,6 +205,18 @@ bundle `py/dev/4f583c3b9745/` and, sharing the flags, no longer shows its
 
 ## 6. Git
 
+- **0.0.53 is on the website** (2026-11-12, from this Mac): `py/0.0.53/` is
+  0.0.52's bundle, read back from the bucket against its manifest, with
+  Plexora's wheel rebuilt (`--plexora-only --no-kernels`; `stages.py`
+  changed only in the stage finder's code, not its stages). The full suite
+  passed on the release commit (12510 passed, 0 failed); before the upload
+  the budgets, `propagate --check`, the import check, the smoke test and
+  the self-check passed; after it the live self-check passes all but the
+  Cloudflare beacon's CSP check (section 2). The real 349 GB .ims was
+  driven in Chrome against this build served here
+  (docs/internal/WEBSITE_TAB_LIMITS.md); from the live site Chrome refuses
+  a test server on 127.0.0.1 (local network access), so not there.
+
 - **0.0.52 is on the website** (2026-11-12, from this Mac): `py/0.0.52/` is
   0.0.51's bundle, read back from the bucket byte-identical (227 files
   against its manifest), with Plexora's wheel rebuilt (`build.py
@@ -236,8 +252,8 @@ bundle `py/dev/4f583c3b9745/` and, sharing the flags, no longer shows its
 - The **next desktop release** from `main` carries the removals (Segment in
   3-D, Carry an ROI through planes), the desktop speed-ups and the new
   telemetry values (the Worker that takes them is deployed). Make it
-  **0.0.53 or later** (`release.py ci --bump patch` from the newest), not a
-  tag of a version the website already has: its `py/0.0.37/` to `py/0.0.52/` are
+  **0.0.54 or later** (`release.py ci --bump patch` from the newest), not a
+  tag of a version the website already has: its `py/0.0.37/` to `py/0.0.53/` are
   published and never rewritten, so once the CI secrets
   exist such a Release run's `web_deploy` would refuse its own rebuild of
   that bundle and hold the release.
