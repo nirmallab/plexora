@@ -868,7 +868,7 @@ def import_sample(paths, *, answers=None, name=None, dataset=None, node=None,
         so, and a mismatch is refused rather than quietly importing its
         neighbour. Optional: the Python API and the CLI pass paths and nothing
         else, and there is nothing for them to disagree with.
-    @param token - names this request for `/import/status?token=`, so the
+    @param token - names this request for `/import/status?registration=`, so the
         dialog can draw progress before the sample exists.
     """
     # What the inspect a moment ago found, when these are the same unchanged
@@ -1012,7 +1012,7 @@ def _restore_mask(project_name, segmentation):
 def add_layers(project_name, paths, *, answers=None, node=None, token=None):
     """Inspect these paths and add them to an existing sample.
 
-    @param token - names this request for `/import/status?token=`, as
+    @param token - names this request for `/import/status?registration=`, as
         `import_sample`'s does, so the dialog can draw each step's progress
         while the POST runs.
     """

@@ -173,9 +173,9 @@ def test_bricks_come_compressed_only_when_asked(tmp_path, client):
     plain = client.get(address, headers={"Accept-Encoding": "gzip"})
     assert "Content-Encoding" not in plain.headers
     assert plain.headers["Server-Timing"].startswith("total;dur=")
-    zipped = client.get(address + "&z=gzip", headers={"Accept-Encoding": "gzip"})
+    zipped = client.get(address + "&gz=1", headers={"Accept-Encoding": "gzip"})
     assert zipped.headers["Content-Encoding"] == "gzip"
     assert gzip.decompress(zipped.data) == plain.data and len(zipped.data) < len(plain.data)
     # A client that cannot take gzip gets the plain bytes even if it asks.
-    refused = client.get(address + "&z=gzip")
+    refused = client.get(address + "&gz=1")
     assert "Content-Encoding" not in refused.headers and refused.data == plain.data

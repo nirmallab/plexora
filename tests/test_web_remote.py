@@ -290,15 +290,44 @@ def test_the_website_refuses_what_it_cannot_connect(page):
 
 def test_the_page_answers_both_prefixes():
     """services/webRemote.js and the service worker agree on the two prefixes
-    this module calls and registers nodes at."""
+    this module calls and registers nodes at -- and the status indicator on
+    the relay's, whose failures it leaves to the node's layers."""
     root = Path(__file__).resolve().parents[1] / "plexora" / "client" / "src" / "js"
     page_js = (root / "services" / "webRemote.js").read_text(encoding="utf-8")
     worker = (root / "workers" / "backendRelay.js").read_text(encoding="utf-8")
+    status = (root / "services" / "appStatus.js").read_text(encoding="utf-8")
     assert f'const API = "{web_remote.API_PREFIX}"' in page_js
     assert f'const RELAY = "{web_remote.RELAY_PREFIX}/"' in page_js
     assert f'"{web_remote.API_PREFIX.rsplit("/", 1)[0]}/"' in worker
     assert f'"{web_remote.RELAY_PREFIX}/"' in worker
     assert f'const ROOM_PLACEHOLDER = "{web_remote.ROOM_PLACEHOLDER}"' in page_js
+    assert f'const RELAY = "{web_remote.RELAY_PREFIX}/"' in status
+
+
+def _run_probe(name):
+    import shutil
+
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("node is not installed")
+    root = Path(__file__).resolve().parents[1]
+    proc = subprocess.run([node, str(root / "tests" / "js" / name)],
+                          capture_output=True, text=True, cwd=root, timeout=60)
+    assert proc.returncode == 0, f"{proc.stdout}\n{proc.stderr}"
+
+
+def test_the_page_inflates_what_the_node_compressed():
+    """A node's `all_cells` comes through the relay gzipped; the Response the
+    page makes of it is never decoded by the browser, so the page inflates it
+    (tests/js/web_remote_relay_probe.mjs)."""
+    _run_probe("web_remote_relay_probe.mjs")
+
+
+def test_a_dropped_connection_is_not_the_apps_error():
+    """The page answers a dropped node's requests 502 or 504 at the site's own
+    origin; the status indicator leaves those to the node's layers, as it does
+    a direct node's (tests/js/app_status_relay_probe.mjs)."""
+    _run_probe("app_status_relay_probe.mjs")
 
 
 # -- files-only servers -----------------------------------------------------------

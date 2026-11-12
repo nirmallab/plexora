@@ -53,6 +53,8 @@
  *   bundleStores() / adopt(paths) / readFile(path)
  *                           for a `.plexora` file's bytes (services/bundleWeb.js)
  *   job(id) / cancel(id) / on(kind, fn)
+ *   later()                 the reads waiting now go after what is asked next
+ *                           (a page shown over the viewer, services/backend.js)
  *   stopped()               the `fatal` event ({cause, heap, memory}) once this
  *                           tab's Python has failed for good, else null
  *   unsupported(nav?)       {browser, version} when this browser cannot run the
@@ -530,9 +532,16 @@
         // waiting there: on the website every request waits its turn on one
         // thread, and a stale one would hold up the fresh ones.
         const signal = (init && init.signal) || (request && request.signal) || null;
+        // A page the user asked for -- the frame's next page (services/shell.js
+        // `frameBoot`, `first`), the app's router's fragment -- goes ahead of
+        // the reads waiting (workers/pythonWorker.js `ahead`): what the page
+        // being left still asked for would otherwise hold the click up.
+        const first = Boolean(init && init.first) || headers.some(([name, value]) =>
+            name.toLowerCase() === "x-plexora-fragment" && value === "1");
         const answer = await call("request", {
             method, path: route(url.pathname), query: url.search.replace(/^\?/, ""), headers,
             body: body ? body.buffer.slice(body.byteOffset, body.byteOffset + body.byteLength) : null,
+            ...(first ? { first } : {}),
         }, undefined, signal);
         // The picked files this request wrote, saved before its answer is.
         if (saving.size) await Promise.all([...saving]);
@@ -806,6 +815,16 @@
         });
     }
 
+    //: The reads waiting for Python now go after whatever is asked next
+    //: (workers/pythonWorker.js `later`): a page shown over the viewer
+    //: (services/backend.js) is not held up by the viewer's. Not dropped.
+    function later() {
+        if (!worker) return;
+        // Counted like every message the worker takes in.
+        if (inFlight) Atomics.add(inFlight, 0, 1);
+        worker.postMessage({ op: "later", args: {} });
+    }
+
     function cancel(id) {
         if (!cancels && mode === "tab") {
             // No shared memory with a tab's worker: a message, which Python
@@ -932,6 +951,7 @@
         steps: () => steps.slice(),
         tasks: () => tasks.slice(),
         cancel,
+        later,
         on,
         saveWith: (fn) => { saver = fn; },
         //: Every save still running (tests, and a page about to close).

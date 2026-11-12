@@ -744,11 +744,30 @@
             return json({ error: String(error.message || error) }, 504);
         }
         const out = new Headers();
+        let encoding = "";
         for (const [name, value] of answer.headers || []) {
+            if (String(name).toLowerCase() === "content-encoding") encoding = String(value).trim().toLowerCase();
             if (!UNSENT.has(String(name).toLowerCase())) out.append(name, value);
         }
         const empty = [204, 304].includes(answer.status) || request.method === "HEAD";
-        return new Response(empty ? null : answer.body, { status: answer.status, headers: out });
+        // The node compresses some answers whatever it is asked (a table's
+        // `all_cells`), and its link carries them as served. A Response made
+        // here is never decoded by the browser: still encoded, its bytes would
+        // reach their reader -- the website's Python -- as gzip.
+        let payload = answer.body;
+        if (!empty && payload && payload.length && /^(gzip|deflate)$/.test(encoding)) {
+            payload = await inflate(payload, encoding);
+        }
+        return new Response(empty ? null : payload, { status: answer.status, headers: out });
+    }
+
+    //: Bytes through the browser's own decompressor (pythonClient.js's).
+    async function inflate(bytes, format) {
+        const stream = new DecompressionStream(format);
+        const writer = stream.writable.getWriter();
+        writer.write(bytes).catch(() => {});
+        writer.close().catch(() => {});
+        return new Uint8Array(await new Response(stream.readable).arrayBuffer());
     }
 
     async function answer(request) {

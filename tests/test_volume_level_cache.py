@@ -163,3 +163,22 @@ def test_a_detail_is_a_range_of_planes_of_an_area(tmp_path, client):
     assert np.array_equal(voxels, np.rint(unit * 255).astype(np.uint8))
     whole = client.get(f"/volume/vol/level?channel={name}&level=0&box=8,16,40,32&w=0,4000")
     assert whole.headers["ETag"] != response.headers["ETag"]
+
+
+def test_gzip_is_asked_apart_from_the_planes(tmp_path, client):
+    """A page on another machine asks every level for gzip. It once did so
+    with `z=gzip`, which the route read as its planes and refused: no 3-D on
+    the website. `gz=1` is the ask, beside `z=z0,z1` or without it."""
+    import gzip
+
+    entry, _data = _volume(tmp_path)
+    name = entry["imageData"][1]["fullname"]
+    accept = {"Accept-Encoding": "gzip"}
+    plain = client.get(f"/volume/vol/level?channel={name}&level=0&box=8,16,40,32&z=1,3&w=0,4000")
+    zipped = client.get(f"/volume/vol/level?channel={name}&level=0&box=8,16,40,32&z=1,3&w=0,4000&gz=1",
+                        headers=accept)
+    assert zipped.status_code == 200 and zipped.headers["X-Plexora-Z"] == "1,3"
+    assert zipped.headers["Content-Encoding"] == "gzip"
+    assert gzip.decompress(zipped.data) == plain.data
+    base = client.get(f"/volume/vol/level?channel={name}&t=0&format=f16&w=0,4000&gz=1", headers=accept)
+    assert base.status_code == 200 and base.headers["Content-Encoding"] == "gzip"

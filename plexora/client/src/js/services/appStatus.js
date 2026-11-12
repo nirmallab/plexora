@@ -167,6 +167,8 @@
     // a generic label would be less useful than the specific ones features
     // supply via begin(). Errors are the part no feature reports today.
     const nativeFetch = window.fetch ? window.fetch.bind(window) : null;
+    //: Where the website answers a data node's routes (webRemote.js `RELAY`).
+    const RELAY = "/__plexora/relay/";
 
     /**
      * Whether a request was to THIS server.
@@ -179,12 +181,18 @@
      * Those failures are reported per resource instead -- the layer that needed
      * it is the thing that is missing.
      *
-     * A relative URL is always ours, which is every request in an ordinary
-     * session, so this costs a `startsWith` on the common path.
+     * On the website a data node is answered at this origin, under RELAY
+     * (services/webRemote.js): another machine all the same, whose dropped
+     * connection the page answers 502 or 504.
+     *
+     * A relative URL is ours unless it is relayed, which is every request in
+     * an ordinary session, so this costs an `includes` and a `startsWith` on
+     * the common path.
      */
     function isOwnOrigin(input) {
         try {
             const url = typeof input === "string" ? input : (input && input.url) || "";
+            if (url.includes(RELAY)) return false;
             if (!url || url.startsWith("/")) return true;
             if (!/^https?:\/\//i.test(url)) return true;
             return new URL(url, window.location.href).origin === window.location.origin;

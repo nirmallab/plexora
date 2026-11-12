@@ -79,7 +79,8 @@
      * bricks: from the browser's own timing of each large response (request
      * sent to last byte, less the server's `Server-Timing` total). Once two
      * uncompressed responses have come slower than SLOW_RATE, every later
-     * request asks for gzip (`z=gzip`) -- for the rest of the session.
+     * request asks for gzip (`gz=1`) -- for the rest of the session. Not
+     * `z`, which the level route reads as the planes of a detail.
      */
     const LINK = {
         rates: [],
@@ -102,7 +103,7 @@
         },
         /** `query` (URLSearchParams) asking for gzip when the link is slow. */
         ask(query) {
-            if (this.compress) query.set("z", "gzip");
+            if (this.compress) query.set("gz", "1");
             return query;
         },
     };
@@ -647,9 +648,12 @@ void locate(vec3 full, out vec3 lo, out vec3 hi, out int state, out vec3 base,
             const key = this.key;
             const query = new URLSearchParams({ level: String(level.level), t: String(this.t),
                                                 format: this.format });
+            // A `w` for every channel, empty for one without a window: the
+            // route pairs them by position, so one left out would hand the
+            // next channel's window to this one.
             for (const channel of this.channels) {
                 query.append("channel", channel.name);
-                if (channel.stamp) query.append("w", channel.stamp);
+                query.append("w", channel.stamp || "");
             }
             query.set("at", batch.map((leaf) => `${leaf.z}.${leaf.y}.${leaf.x}`).join(","));
             LINK.ask(query);

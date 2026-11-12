@@ -497,7 +497,7 @@ def status(project_name):
 # `/import/sample` does its slow work BEFORE the project exists -- tiling the
 # reference, converting a 10x matrix (minutes for a Visium HD run) -- and the
 # records above are keyed by a sample that has no name yet. So the dialog
-# names its own request with a token and polls `/import/status?token=` while
+# names its own request with a token and polls `/import/status?registration=` while
 # the POST runs; each proposed layer is a row here, in the same record shape,
 # so the rail it draws does not care which of the two documents it read.
 
@@ -581,7 +581,7 @@ def registration_progress(done, total, label=None, *, stage=None):
 
 
 def registration(token):
-    """The document `/import/status?token=` answers, or None once it is done."""
+    """The document `/import/status?registration=` answers, or None once it is done."""
     with _lock:
         rows = _registrations.get(str(token or ""))
         if rows is None:

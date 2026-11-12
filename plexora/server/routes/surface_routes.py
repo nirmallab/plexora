@@ -353,7 +353,7 @@ def surface_manifest(datasource, surface_id):
 @app.route('/volume/<string:datasource>/surfaces/<path:surface_id>/mesh', methods=['GET'])
 def surface_mesh(datasource, surface_id):
     """The mesh payload (`lod=<level>`, the finest when omitted). Immutable:
-    its ETag is its sha256, and a rebuilt surface is a new file. `z=gzip`
+    its ETag is its sha256, and a rebuilt surface is a new file. `gz=1`
     compresses it for a slow link, as the level route does."""
     from pathlib import Path
 
@@ -387,7 +387,7 @@ def surface_mesh(datasource, surface_id):
     if tag:
         response.set_etag(tag)
     response.headers["Cache-Control"] = "private, no-cache"
-    if request.args.get("z") == "gzip" and "gzip" in (request.headers.get("Accept-Encoding") or ""):
+    if request.args.get("gz") == "1" and "gzip" in (request.headers.get("Accept-Encoding") or ""):
         response.set_data(gzip.compress(data, compresslevel=1))
         response.headers["Content-Encoding"] = "gzip"
         response.headers["Vary"] = "Accept-Encoding"

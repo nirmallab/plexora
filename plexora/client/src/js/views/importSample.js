@@ -3573,7 +3573,7 @@ window.PlexoraImportSample = (function () {
             let document_ = null;
             try {
                 const response = await fetch(
-                    `${plexoraUrl("import/status")}?token=${encodeURIComponent(token)}`);
+                    `${plexoraUrl("import/status")}?registration=${encodeURIComponent(token)}`);
                 document_ = await response.json();
             } catch (error) { /* one missed tick */ }
             if (stopped || !state) return;

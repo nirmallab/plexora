@@ -1624,13 +1624,16 @@
         // is drawn once the licence and the picked files are in; this loader
         // follows the start's steps meanwhile (`unfollow` above).
         if (host.PlexoraShellStarted) await host.PlexoraShellStarted;
-        const response = await global.PlexoraPython.fetch(route, { headers: { Accept: "text/html" } });
+        // `first`: ahead of the reads Python still has waiting, the page
+        // left's among them (services/pythonClient.js `send`).
+        const asked = { headers: { Accept: "text/html" }, first: true };
+        const response = await global.PlexoraPython.fetch(route, asked);
         let html = await response.text();
         // Only the page is left to draw.
         screen.reach(ALMOST);
         const project = projectOf(html);
         if (project && await findFiles(project)) {
-            html = await (await global.PlexoraPython.fetch(route, { headers: { Accept: "text/html" } })).text();
+            html = await (await global.PlexoraPython.fetch(route, asked)).text();
         }
         // The next visit's first page, shown before Python is up.
         if (response.ok && !project && host.PlexoraPages) host.PlexoraPages.put(route, html);

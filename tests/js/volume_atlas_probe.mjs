@@ -275,6 +275,17 @@ check("and its old brick is no longer resident",
 check("a new channel set starts the atlas again",
       atlas.configure([{ name: "DNA", stamp: "0,4095" }], 0, "u8", 3) && atlas.slotOf.size === 0
       && atlas.empties.size === 0);
+// The route pairs `channel` and `w` by position: a channel with no window
+// yet still holds its place, or the next one's window would be read as its.
+atlas.configure([{ name: "DNA", stamp: "" }, { name: "CD8", stamp: "0,1000" }], 0, "u8", 3);
+requests.length = 0;
+await atlas.update(view);
+const unstamped = requests.filter((url) => url.includes("/bricks?"));
+check("a channel without a window keeps its place among the windows",
+      unstamped.length > 0 && unstamped.every((url) => {
+          const query = new URLSearchParams(url.split("?")[1]);
+          return query.getAll("channel").join("|") === "DNA|CD8" && query.getAll("w").join("|") === "|0,1000";
+      }), unstamped[0]);
 
 // -- the link: gzip only when it is slower than compressing ---------------------------
 
@@ -290,7 +301,7 @@ check("a new channel set starts the atlas again",
     LINK.note("http://h/a");
     LINK.note("http://h/b");
     check("a fast link keeps voxels uncompressed", LINK.compress === false
-          && LINK.ask(new URLSearchParams()).get("z") === null);
+          && LINK.ask(new URLSearchParams()).get("gz") === null);
     // 10 MB in 1.6 s: 6 MB/s, a 50 Mbit/s link.
     LINK.rates = [];
     entries.set("http://h/c", [{ requestStart: 0, responseEnd: 1600, encodedBodySize: 10e6, serverTiming: [] }]);
@@ -299,7 +310,11 @@ check("a new channel set starts the atlas again",
     check("one slow response is not yet a slow link", LINK.compress === false);
     LINK.note("http://h/d");
     check("two are: every later request asks for gzip",
-          LINK.compress === true && LINK.ask(new URLSearchParams()).get("z") === "gzip");
+          LINK.compress === true && LINK.ask(new URLSearchParams()).get("gz") === "1");
+    // `z` is a detail's planes on the level route: asking for gzip keeps them.
+    const detail = LINK.ask(new URLSearchParams({ z: "2,9" }));
+    check("asking for gzip leaves a detail's planes alone",
+          detail.get("z") === "2,9" && detail.get("gz") === "1");
     LINK.compress = false;
     LINK.rates = [];
     box.performance = realPerformance;

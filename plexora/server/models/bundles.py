@@ -1312,7 +1312,8 @@ class ZipSink:
         self._written[MANIFEST] = {"size": len(text), "crc": info.CRC}
         self._zip.close()
         self.verify()
-        with open(self.part, "rb") as stored:
+        # "r+b", not "rb": Windows flushes only through a handle open for writing.
+        with open(self.part, "r+b") as stored:
             os.fsync(stored.fileno())
         os.replace(self.part, self.dest)
         return self.dest

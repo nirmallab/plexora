@@ -7387,7 +7387,7 @@ the rest of the 3-D view is not mapped here yet, see `docs/internal/3d/`).
   (RESIDENT | REFINED | EMPTY), greedy cut by screen-space size, a shader walk
   per brick crossed -- and the finer detail sub-volume (`z=` + `box=`) stands
   in for node-backed images. `volumeAtlas.LINK` asks `/level` and `/bricks`
-  for `z=gzip` once the link measures under 30 MB/s. A finer piece (a detail,
+  for `gz=1` (gzip) once the link measures under 30 MB/s. A finer piece (a detail,
   or one level's atlas bricks) is drawn at the base's brightness by one gain
   per channel, because a mean-pooled coarser level is dimmer and each finer
   landing used to flash brighter: the mean of its columns' maxima over its
