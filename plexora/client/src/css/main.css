@@ -14593,6 +14593,28 @@ a.plx-onb-link {
 
 /* The files behind Images and Ready-to-open: what each is, where it is,
    what it would add. Indented under the row's text, not its tick. */
+/* "Smaller images", under Images once they go: a choice within the row,
+   lined up with its text. */
+.plx-bundle-option {
+    align-items: flex-start;
+    cursor: pointer;
+    display: flex;
+    gap: var(--space-3);
+    grid-column: 1 / -1;
+    margin: 10px 0 0 30px;
+}
+
+.plx-bundle-option-title {
+    color: var(--text-primary);
+    font-size: 12.5px;
+    font-weight: 600;
+    line-height: 1.3;
+}
+
+.plx-bundle-option:hover .plx-bundle-tick:not(:checked) {
+    border-color: var(--text-secondary);
+}
+
 .plx-bundle-files {
     background: rgba(255, 255, 255, 0.02);
     border: 1px solid var(--panel-rule);
@@ -15292,7 +15314,8 @@ a.plx-onb-link {
         column-gap: var(--space-3);
     }
 
-    .plx-bundle-files {
+    .plx-bundle-files,
+    .plx-bundle-option {
         margin-left: 0;
     }
 

@@ -1026,7 +1026,10 @@ Entry points:
   brightfield MRXS stays OpenSlide's), and over packages
   `czi.py` (czifile), `nd2file.py` (nd2), `lif.py` (liffile; LIF/LOF/XLEF,
   tile scans placed by stage position), `oir.py` (oirfile), `oib.py`
-  (oiffile; OIB/OIF), `mcd.py` (readimc). A missing package raises
+  (oiffile; OIB/OIF), `mcd.py` (readimc), and `approx.py` (own: the
+  `.approx` a `.plexora` file's "Smaller images" brought, read in place
+  through `approximate_image.Container` and a `TileCache`, names and pixel
+  size from the OME-XML its index keeps). A missing package raises
   `FormatSupportMissing` with its install line. **Every function takes an
   `index`**, because one file may hold several images: `Reader.images` is
   their fixed order, `ImageSpec.image_index` (config `imageIndex`, written only
@@ -1409,9 +1412,42 @@ Entry points:
   A `.plexora` dropped on the window is recognised by `bundle_routes.py`'s drop
   sniffer and routed to the `import_bundle` executor in `projectImport.js`;
   `POST /desktop/open` on one answers `{open: "bundle", ...}` rather than
-  importing without asking. CLI: `plexora project export [NAMES] [--dataset]
-  [--include images,derived] [-o]` and `plexora project import FILE [--into]
+  importing without asking. "Smaller images" (include part `approximate`,
+  off by default) sends a project's image refs (`IMAGE_ROLES`: `channelFile`,
+  `imageSource`, `imagePyramid`; a mask never goes smaller, so masks and
+  tables stay exact) as `media/<key>/<name>.approx`; the ref names it in
+  `approximate` and leaves `included` null, so an older Plexora treats it as
+  an image left out rather than misreading it; its media record carries
+  `approximate: {method, source_size}`. On import the original wins when this
+  computer has it (`_find_cheap`), else the container is placed at
+  `media/<key>/<name>.approx` as an included file is and read there as it is
+  (`formats/approx.py`); nothing is decoded back. `placements` lists it, so
+  the website's page writes it, and `workers/storeSync.js` holds a big
+  `.approx` as a link read in place in any store (`heldAnywhere`), not only a
+  shared folder, because placed in memory its first read would hand Python
+  the whole file. CLI: `plexora project export [NAMES] [--dataset]
+  [--include images,derived,approximate] [-o]` and `plexora project import FILE [--into]
   [--keep-both|--replace] [--name]`.
+- `server/utils/approximate_image.py` — **"Smaller images" for a `.plexora`
+  file**: a 16-bit grey TIFF (YX/CYX, pyramid as SubIFDs) kept as
+  q = round(sqrt(v)) and read back as q*q, so a pixel comes back within
+  sqrt(v)+0.25 counts by construction; photon noise grows as sqrt(v) too, so
+  the error is the same share of the noise at every brightness and no
+  background has to be estimated. q is then coded without loss with numpy and
+  zstd only, because that is what the website's Python has too: each
+  1024x1024 tile is predicted coarse to fine as SZ3 interpolates (anchors
+  every 64 px), its residuals zigzagged, split into bit planes by an 8x8 bit
+  transpose in uint64 words (`_transpose8`) and zstd'd at level 9, the
+  tile's first byte the planes used. The `<name>.approx` container is
+  `MAGIC`, tiles, a JSON index (keeping the original description, OME-XML),
+  its length, `END`; `Container` reads its tiles, and an import reads it in
+  place (`formats/approx.py`) rather than writing a TIFF. `decode` writes one
+  out only on request, a tiled BigTIFF with the original description and
+  `Software=MARK`, so exporting it again copies it rather than compressing it
+  twice. `reason` says why a file cannot go smaller, `likely` and `estimate`
+  answer the export dialog from a stat and the first page. `can_read()` (zstd
+  present) is true on the website too; `can_make()` is not, because the
+  website's Python cannot write a file of that size.
 - `views/webOnboarding.js` — **Plexora Lite's first-use dialog**, where the
   website keeps the user's work (`window.PlexoraOnboarding`,
   `ensure({reason, quiet})` -> `"ready"|"cancelled"`, `open({reason, start})`). It

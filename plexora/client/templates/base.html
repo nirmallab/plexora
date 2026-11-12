@@ -8,7 +8,7 @@
     <link rel="apple-touch-icon" href="{{ data.base_url }}/client/src/img/apple-touch-icon.png">
     <!-- Styles -->
     <link rel="stylesheet" href="{{ data.base_url }}/client/src/css/tokens.css?v=20261027_sidebar_radius">
-    <link rel="stylesheet" href="{{ data.base_url }}/client/src/css/main.css?v=20261110_onboarding_bundles">
+    <link rel="stylesheet" href="{{ data.base_url }}/client/src/css/main.css?v=20261112_approximate_bundles">
     {# Here and not in a page block: the explorer opens from every page, and
        appRouter.adoptStyles turns page stylesheets off on navigation. #}
     <link rel="stylesheet" href="{{ data.base_url }}/client/src/css/explorer.css?v=20261110_file_or_folder">
@@ -296,8 +296,8 @@
     {# A project as one `.plexora` file: Export, then Import (which draws with
        what the first sets up, PlexoraBundleKit and PlexoraBundleTransport).
        After dropRouter.js, whose executor registry the import joins. #}
-    <script src="{{ data.base_url }}/client/src/js/views/projectExport.js?v=20261110_onboarding_bundles" defer></script>
-    <script src="{{ data.base_url }}/client/src/js/views/projectImport.js?v=20261110_onboarding_bundles" defer></script>
+    <script src="{{ data.base_url }}/client/src/js/views/projectExport.js?v=20261112_approximate_bundles" defer></script>
+    <script src="{{ data.base_url }}/client/src/js/views/projectImport.js?v=20261112_approximate_bundles" defer></script>
     {% if data.backend == 'browser' %}
     {# The website's transport for those two (PlexoraBundleWeb): its Python
        decides, and the bytes move in a worker of the page's own

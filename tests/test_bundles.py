@@ -304,8 +304,8 @@ def test_included_images_are_placed_in_the_project(project, tmp_path, monkeypatc
     _another_computer(tmp_path, monkeypatch)
     project.unlink()
     monkeypatch.setattr(sources, "app_key", lambda: "host:OTHER")
-    assert bundles.preview(out)["projects"][0]["refs"] == {"found": 0, "included": 1, "missing": 0,
-                                                            "node": 0, "nodes": []}
+    assert bundles.preview(out)["projects"][0]["refs"] == {"found": 0, "included": 1, "approximate": 0,
+                                                            "missing": 0, "node": 0, "nodes": []}
     bundles.apply(out)
     placed = paths.project_state_dir("slide").joinpath(*ref["included"].split("/"))
     assert placed.is_file()

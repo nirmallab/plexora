@@ -11,12 +11,19 @@
  *   Images, masks and source tables  OFF: referenced by name, size and
  *                                    fingerprint, and found again where the
  *                                    other computer has them
+ *     Smaller images                 off, offered once images go: each 16-bit
+ *                                    fluorescence image about 85% smaller,
+ *                                    every pixel within its own noise
+ *                                    (server/utils/approximate_image.py)
  *   Ready-to-open files              off: a converted table, a tiled image
  *
  * Images are off because they are usually most of the bytes (460 MB of
  * analysis beside a 66.7 GB slide) and usually somewhere both computers can
  * see. The total is an upper bound: the file is written with deflate, and a
- * CSV shrinks a lot while a JPEG-tiled slide does not shrink at all.
+ * CSV shrinks a lot while a JPEG-tiled slide does not shrink at all. With
+ * smaller images it is "About": those count as the server's estimate. The
+ * website never offers them: its page copies members byte for byte, and
+ * coding an image would hold its one Python thread for the whole export.
  *
  * In the desktop app the Save dialog is asked BEFORE the export starts
  * (`PlexoraDesktop.pickSavePath`), so the server writes the file once,
@@ -481,8 +488,14 @@
         missing: {label: "Missing", icon: "triangle-exclamation", tone: "missing"},
     };
 
+    //: Under the images once they go: each 16-bit fluorescence image within
+    //: its own noise (server/utils/approximate_image.py).
+    const SMALLER = {title: "Smaller images",
+                     note: "About 85% smaller, every pixel within its own noise. Masks and tables stay exact."};
+
     /** The parts a fresh dialog starts with: the server's defaults, which
-     *  are tables, bookmarks and figures on, images and derived files off. */
+     *  are tables, bookmarks and figures on, images, derived files and
+     *  smaller images off. */
     function defaultInclude(estimate) {
         const given = (estimate && estimate.include) || {};
         return {
@@ -491,11 +504,41 @@
             figures: given.figures !== undefined ? Boolean(given.figures) : true,
             images: Boolean(given.images),
             derived: Boolean(given.derived),
+            approximate: Boolean(given.approximate),
         };
     }
 
     function rowOf(estimate, part) {
         return ((estimate && estimate.rows) || {})[part] || {size: 0, count: 0};
+    }
+
+    /**
+     * The row "Smaller images" is offered under: Images (else Ready-to-open
+     * files) once it is ticked and holds an image that can go smaller -- or
+     * null. Never on the website, whose Python cannot make them.
+     */
+    function smallerRow(estimate, include) {
+        const offer = estimate && estimate.approximate;
+        if (!offer || !offer.available || isWebsite()) return null;
+        for (const part of ["images", "derived"]) {
+            if (!(include && include[part])) continue;
+            const items = rowOf(estimate, part).items || [];
+            if (items.some((item) => item.approximate && item.can_include)) return part;
+        }
+        return null;
+    }
+
+    /** Whether the ticked images go smaller. */
+    function goesSmaller(estimate, include) {
+        return Boolean(include && include.approximate && smallerRow(estimate, include));
+    }
+
+    /** What a part comes to as it would go: images going smaller count as
+     *  the server's estimate of them. */
+    function partSize(estimate, part, include) {
+        const row = rowOf(estimate, part);
+        if (goesSmaller(estimate, include) && row.approximate_size != null) return Number(row.approximate_size || 0);
+        return Number(row.size || 0);
     }
 
     /**
@@ -506,9 +549,11 @@
      */
     function rowsFor(estimate, include) {
         const out = [];
+        const smallerUnder = smallerRow(estimate, include);
+        const smaller = goesSmaller(estimate, include);
         for (const spec of ROWS) {
             const parts = spec.parts.map((part) => rowOf(estimate, part));
-            const size = parts.reduce((sum, row) => sum + Number(row.size || 0), 0);
+            const size = spec.parts.reduce((sum, part) => sum + partSize(estimate, part, include), 0);
             const count = parts.reduce((sum, row) => sum + Number(row.count || 0), 0);
             const items = spec.list ? (parts[0].items || []) : [];
             if (!spec.locked && !count && !items.length) continue;
@@ -521,6 +566,9 @@
                 locked: Boolean(spec.locked), disabled,
                 on: spec.locked ? true : (!disabled && spec.parts.every((part) => include[part])),
                 hint: spec.key === "derived" ? derivedNote(estimate, include) : "",
+                smaller: spec.key === smallerUnder ? {on: smaller} : null,
+                // Its files say what they come to, "≈" where they go smaller.
+                approximate: smaller,
             });
         }
         return out;
@@ -554,11 +602,12 @@
             : `${alone} of these are only on this computer. The other computer does not rebuild them by themselves.`;
     }
 
-    /** What the ticked parts add up to: an upper bound, before compression. */
+    /** What the ticked parts add up to: an upper bound, before compression
+     *  (images going smaller count as the server's estimate of them). */
     function totalFor(estimate, include) {
         let total = Number(rowOf(estimate, "state").size || 0);
         for (const part of ["tables", "captures", "figures", "images", "derived"]) {
-            if (include[part]) total += Number(rowOf(estimate, part).size || 0);
+            if (include[part]) total += partSize(estimate, part, include);
         }
         return total;
     }
@@ -719,8 +768,7 @@
                             <span class="plx-bundle-file-sub">${esc(sub)}</span>
                         </span>
                         ${whereChip(item)}
-                        <span class="plx-bundle-file-size">${item.can_include && item.size != null
-                            ? esc(formatBytes(item.size)) : ""}</span>
+                        <span class="plx-bundle-file-size">${esc(fileSize(item, row.approximate))}</span>
                     </li>`;
                 }).join("")}
             </ul>` : "";
@@ -728,6 +776,15 @@
                 aria-expanded="${open ? "true" : "false"}" aria-controls="${id}-files">
                 ${esc(plural(row.items.length, "file"))}
                 <span class="fas fa-chevron-down" aria-hidden="true"></span></button>` : "";
+        const smaller = row.smaller ? `
+            <label class="plx-bundle-option" for="plx-bundle-approximate">
+                <input type="checkbox" class="plx-bundle-tick" id="plx-bundle-approximate" data-include="approximate"
+                       ${row.smaller.on ? "checked" : ""}>
+                <span class="plx-bundle-row-text">
+                    <span class="plx-bundle-option-title">${esc(SMALLER.title)}</span>
+                    <span class="plx-bundle-row-note">${esc(SMALLER.note)}</span>
+                </span>
+            </label>` : "";
         return `<div class="plx-bundle-row${row.on ? " is-on" : ""}${row.disabled ? " is-disabled" : ""}${
                     row.locked ? " is-locked" : ""}" data-row="${row.key}">
             <label class="plx-bundle-row-main" for="${id}">
@@ -744,8 +801,16 @@
                 <span class="plx-bundle-size">${esc(sizeText)}</span>
                 ${toggle}
             </span>
+            ${smaller}
             ${files}
         </div>`;
+    }
+
+    /** A listed file's size as it would go: "≈ 2.1 GB" when it goes smaller. */
+    function fileSize(item, smaller) {
+        if (!item.can_include || item.size == null) return "";
+        if (smaller && item.approximate && item.approximate_size != null) return `≈ ${formatBytes(item.approximate_size)}`;
+        return formatBytes(item.size);
     }
 
     function renderChoose(ui) {
@@ -759,9 +824,11 @@
 
     function paintFoot(ui) {
         const total = totalFor(ui.estimate, ui.include);
+        // Smaller images are an estimate, not a bound.
+        const label = goesSmaller(ui.estimate, ui.include) ? "About" : "Up to";
         ui.shell.part("foot").innerHTML = `<span class="plx-bundle-total"
                 title="Before compression. Tables and uncompressed images usually shrink a lot.">
-                <span class="plx-bundle-total-label">Up to</span>
+                <span class="plx-bundle-total-label">${label}</span>
                 <span class="plx-bundle-total-size">${esc(formatBytes(total))}</span></span>
             <button class="plx-button plx-button-primary" type="button" data-act="export">Export…</button>`;
     }
@@ -769,14 +836,20 @@
     function onChange(ui, event) {
         const input = event.target.closest?.("[data-include]");
         if (!input || ui.phase !== "choose") return;
-        const spec = ROWS.find((row) => row.key === input.dataset.include);
-        if (!spec || spec.locked) return;
-        spec.parts.forEach((part) => { ui.include[part] = input.checked; });
-        // Redrawn whole: the derived note and the total both follow the tick.
+        const key = input.dataset.include;
+        if (key === "approximate") {
+            ui.include.approximate = input.checked;
+        } else {
+            const spec = ROWS.find((row) => row.key === key);
+            if (!spec || spec.locked) return;
+            spec.parts.forEach((part) => { ui.include[part] = input.checked; });
+        }
+        // Redrawn whole: the derived note, the smaller-images choice and the
+        // sizes all follow the tick.
         const scroll = ui.shell.part("body").scrollTop;
         renderChoose(ui);
         ui.shell.part("body").scrollTop = scroll;
-        ui.shell.node.querySelector(`[data-include="${spec.key}"]`)?.focus();
+        ui.shell.node.querySelector(`[data-include="${key}"]`)?.focus();
     }
 
     function onBodyClick(ui, event) {
@@ -995,6 +1068,7 @@
         open, close,
         available: () => Boolean(transport() && transport().available()),
         _internal: {formatBytes, defaultInclude, rowsFor, totalFor, derivedNote, titleFor, suggestedName,
-                    stayNote, fileKind, includeParam, createServerTransport, progressDetail},
+                    stayNote, fileKind, includeParam, createServerTransport, progressDetail, smallerRow,
+                    fileSize},
     };
 })();

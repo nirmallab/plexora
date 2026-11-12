@@ -22,6 +22,7 @@ projects/<id>/entry.json            registry entry, paths tokenised
 projects/<id>/state/<rel>           the project's own folder; <name>.db as an sqlite backup snapshot
 projects/<id>/derived/<rel>         opt-in "ready to open": files Plexora made that the entry names
 media/<key>/<name>                  opt-in: the user's images, masks and tables
+media/<key>/<name>.approx           opt-in, "Smaller images": a 16-bit fluorescence image within its noise
 captures/<id>.json                  bookmarks and captures of project <id> (rows, no pictures)
 captures/<id>/<n>.<fmt>             their pictures
 figures/<figure id>/...             a figure whose images all come from projects in the file
@@ -51,7 +52,83 @@ Each member is either stored or deflated:
 
 So uncompressed multiplex OME-TIFFs and CSVs are compressed, and JPEG-tiled
 slides are not. A member of 1 GiB or more is written with ZIP64 sizes from
-the start.
+the start. A smaller image (`.approx`, below) is stored, ZIP64 from the
+start: it is compressed already, and its size is known only once written.
+
+### Smaller images
+
+With `include` "approximate" (and images, or ready-to-open files), a ref
+that is a project's image (`IMAGE_ROLES`: `channelFile`, `imageSource`,
+`imagePyramid`; never a mask, nor a file a project names as both) and a TIFF
+holding one 16-bit grey image (YX, or CYX with one page per channel, any
+pyramid as SubIFDs; `approximate_image.reason`) goes as
+`media/<key>/<name>.approx`. The code is `server/utils/approximate_image.py`.
+
+- **The method.** Every pixel `v` is kept as `q = round(sqrt(v))` and
+  comes back as `q*q`: within `sqrt(v) + 0.25` counts, by construction
+  (`|sqrt(v) - q| <= 0.5`). Photon noise grows as `sqrt(v)` too, so the
+  error is the same share of the noise at every brightness, with no
+  background to estimate: one set too high loses dim staining, and a
+  measurement of exactly that ruled out a log-above-background transform.
+- **The coding**, without loss from `q` on, with numpy and zstd alone (what
+  the website's Python has; SZ3, measured 9% smaller at the same bound, has
+  no build there). Each 1024 x 1024 tile is predicted coarse to fine as SZ3
+  interpolates: every 64th pixel as it is, then at strides 32 to 1 every
+  pixel between two decoded ones from their mean, rows then columns. The
+  residuals are zigzagged and split into bit planes (only as many as the
+  tile's largest residual needs, which its first byte says), and zstd'd at
+  level 9: bit planes take zstd's fast levels to what level 19 does over
+  bytes, at about 0.29 bytes a pixel. Encoding runs about 80 megapixels a
+  second on 16 threads; a tile decodes in about 25 ms on one.
+- **Measured** (2026-11-12, two 19-channel CyCIF slides, LSP26227 and
+  LSP20239): about 85% smaller than the uncompressed image with its pyramid;
+  bright pixels within about 2%, 3 to 10 times background within about 4%,
+  dim staining (1 to 3 times background) within 7.4%; the error's RMS
+  typically under half the pixel noise. Lossless compression reaches 56%
+  smaller at best (JPEG-XL), and plain log rounding to 8 bits 75%, with
+  bright pixels off by up to 2%. A mask goes exactly as it is, and is about
+  95% zeros: the zip's deflate already takes 11 GB to 74 MB.
+- **The container.** `MAGIC`, then each tile's bytes (level by level,
+  channel by channel, row by row), then a JSON index (levels with their
+  shapes and each tile's offset and length; the first page's description,
+  so the OME-XML with its channel names and `µm`; the resolution; the
+  source's name and size), its length and `END`. Encoding reads a row of
+  tiles at a time, so a stripped TIFF is read once.
+- **Read where it is.** `server/utils/formats/approx.py` is a `formats`
+  reader (`.approx` in `FORMATS`), so the viewer, region reads, renders, QC,
+  gating and the volume layer read it as they read any microscope format:
+  its levels are the original's pyramid, each tile decoded when first
+  touched and kept in a `TileCache`. Nothing is written back on import.
+  `approximate_image.decode` writes one out as a tiled TIFF for whoever
+  wants one (`Software` = `approximate_image.MARK`).
+- **The manifest.** The ref names the container in `approximate` and leaves
+  `included` empty; the media record says `{method, source_size}`. A
+  Plexora that predates this ignores `approximate` and looks for the
+  original as it would for an image left out.
+- **Import.** The original wins: a ref `_find_cheap` finds here takes the
+  original, and its container is not kept. Otherwise the container goes to
+  `media/<key>/<name>.approx` in the project's folder like an included file,
+  and the ref's `sources` entry keeps the original's identity with `at` the
+  container, so another computer still finds the original. The result and
+  the preview count such refs in `included` and again in `approximate`.
+- **Not twice.** A TIFF `decode` wrote is never made smaller again (`reason`
+  reads its `Software`): exporting it copies the file.
+- **The website** reads them and does not make them
+  (`approximate_image.can_read`, `can_make`: its Python cannot write a file
+  that size). Its import's page places the container as it places an
+  included file (`placements`), and its store reads a big one where it lies
+  -- in this browser's own storage too, not only a shared folder
+  (workers/storeSync.js `heldAnywhere`) -- so its Python reads a tile at a
+  time. Its export dialog does not offer them.
+- **The dialog** (`views/projectExport.js`) offers "Smaller images" under
+  Images once they are ticked and hold an image that can go smaller, and
+  says "About" rather than "Up to" for the total. The estimate
+  (`approximate_image.estimate`) reads each image's first page, no pixels:
+  0.16 of an uncompressed file, 0.25 of one compressed already, nothing for
+  a colour or 8-bit image or a copy `decode` wrote.
+
+Plexora's own pyramids of an image in the project's derived folder (ready
+to open) go exactly as they are; only refs go smaller.
 
 ### The manifest
 
@@ -62,9 +139,9 @@ the start.
              entry: {path, size, sha256},
              files: [{path, size, sha256, kind: state|table|derived}],
              refs:  [{token, role, roles?, kind: file|folder|node, identity,
-                      included: <media path>|null, derived,
+                      included: <media path>|null, approximate?: <media path>, derived,
                       hints: {absolute, relative_to_bundle, at, recorded}}]}],
- media:    [{path, size, sha256}],
+ media:    [{path, size, sha256, approximate?: {method, source_size}}],
  captures: [{project, path, size, sha256, count, previews: [{path, size, sha256}]}],
  datasets: [{id, name, projects: [project id], description, meta}],
  figures:  [{id, title, projects: [project id], files: [{path, size, sha256}]}],
@@ -195,7 +272,9 @@ into)` then works through these steps:
    channels, gates, regions or QC.
 4. **Detokenise** the entry.
 5. **Place** the files into the target's folder and its derived folder.
-   Included images go to the project's `media/<key>/<name>`.
+   Included images go to the project's `media/<key>/<name>`, and a smaller
+   image to `media/<key>/<name>.approx`, read there as it is, when this
+   computer has no original of it.
 6. **Merge** datasets (by id, then by name), captures (with the project name
    rewritten, and a new capture id if one is taken) and figures (with each
    image's project rewritten, and a new figure id if one is taken).
