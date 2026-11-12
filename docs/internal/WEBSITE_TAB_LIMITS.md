@@ -20,12 +20,22 @@ file, over one SFTP connection.
 | `/import/inspect` | 740 s | 2.21 GB | the import's mask guess reads a level-0 window of all 70 channels |
 | first `/get_image_channel_stats` | 112 s | 2.34 GB | the exact window scans the level-2 stack, 1.78 GB per channel; process peak 4.48 GB |
 
-The website's worker stops at 4 GiB. What filled it was **not** observed in a
-browser. The worker did not record the cause; it does now. What the
-measurements point at:
-- the first channel's stats, which peaked at 4.48 GB in CPython even with
-  desktop budgets;
-- an exact scan per channel, with decoded chunks held by caches sized for a
+What 0.0.52 named when it died the same way (its fatal hook, below): **not
+memory.** "SuspendError: trying to suspend JS frames", heap 0.26 GiB.
+- On the website Python waits on the network by suspending (JSPI). h5py reads
+  a remote .ims through Python's file object, called from HDF5's C code, and a
+  suspension with JavaScript frames under it ends Pyodide for good.
+- Reproduced in the live worker (2026-11-12): h5py reading a file object
+  whose `readinto` waits on a promise.
+- Behind it, a second wall: h5py's file-object driver addresses at most
+  `SIZE_MAX - 1` bytes, 4 GiB in 32-bit WebAssembly. With the reads fixed the
+  import stopped at "Unable to get link info (attempting I/O in temporary
+  file space)", the first group past 4 GiB.
+
+The measured costs above were real too, and the limits below still apply:
+- the first channel's stats peaked at 4.48 GB in CPython with desktop
+  budgets;
+- an exact scan per channel held decoded chunks in caches sized for a
   desktop.
 
 The remote chunk cache is not a suspect. On the website it lives in the site's
@@ -71,6 +81,15 @@ index is in memory.
   Also on the website:
   - whole-mask reads stream past 256 MB;
   - the overview caches keep 2 entries, not 8.
+- **A remote .ims's reads never suspend** (`server/utils/no_suspend.py`).
+  Inside `held()` coroutines run on the boot's SyncLoop, requests are
+  synchronous XMLHttpRequests (the service worker relays them like `fetch`,
+  a files-only server's included), a question to the page goes over shared
+  memory, and no stage is loaded.
+- **A remote .ims is a path** (`server/utils/fs_mount.py`,
+  `browser/remote_mount.py`, the worker's `plexoraMountReader`). h5py opens a
+  file in Pyodide's filesystem whose reads call `RemoteFile` and its cache, so
+  HDF5's own driver addresses 64 bits. The desktop keeps the file object.
 - **When Python dies anyway** (`pythonWorker.js`, `pythonClient.js`,
   `backend.js`, `appStatus.js`, `agentBridge.js`):
   - the worker records the real cause through Pyodide's `on_fatal` hook;
@@ -96,6 +115,25 @@ The first view's remaining cost is the overview of all 70 channels at level
 4: about 120 MB of chunks. Its reads ask for about 3× those bytes, which is not
 explained yet.
 
+## In a real browser, the real file (2026-11-12)
+
+Chrome, the fixed build served here, the 349 GB file over one SFTP connection
+to O2's transfer node (one Duo push) served as HTTP ranges on 127.0.0.1 -- the
+same h5py path as the page's own SFTP reads. Like a user: paste the address,
+Load, turn channels on, zoom, 3-D.
+
+| Step | Result |
+|---|---|
+| Load | the viewer, Hoechst drawn; 413 MB read |
+| a second channel (5'hmC) | drawn; heap 1.03 GB |
+| zoom to 50 µm | sharp; heap unchanged |
+| the stack in 3-D | rendered, two channels; heap 1.51 GB |
+| a third channel (MART1), one plane | drawn; heap 1.51 GB |
+
+Python never stopped; 1.17 GB was read in all, at about 6.9 MB/s, and
+"Waiting on the network" said so. The first view's reads (413 MB for the
+overview) are the open item below.
+
 ## Not done
 
 - **Derived files Python writes still go to memory**, up to the 512 MB budget.
@@ -106,9 +144,9 @@ explained yet.
   rather than built.
 - **`quantization_window_of`'s other-shapes branch** (`data_model.py`) still
   reads a whole plane in one call.
-- **Not driven in a real browser.** The limits were measured in CPython with
-  the website's settings, not in Pyodide. The crash itself was not reproduced
-  there. The next fatal error names its cause on the page and in the console.
+- **The page's own SFTP path with the real file** was not driven (it needs
+  the O2 password typed in the page). Its reads go through the same switch,
+  and the service worker was shown to relay a synchronous request to it.
 
 ## When to tell the user something is slow
 
