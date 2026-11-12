@@ -261,6 +261,16 @@ def resolve(entry: dict, me: str, extra_roots: Iterable[Path] = (), *, walk_seco
     return out
 
 
+def _as_recorded(entry: dict, me: str) -> dict:
+    """`entry` (as read_config gives it: this app's paths in place of the
+    recorded ones) with the recorded paths back, before its `at` changes.
+    write_config maps this app's paths back by the `at` it is handed, so a
+    file found a second time (`at` moving from one path here to another)
+    would otherwise keep the first path in the entry's values for good: the
+    project would name a file that is no longer there."""
+    return sources.record(entry, me)
+
+
 def ensure(name: str) -> int:
     """Find the files of project `name` that this computer has not found yet
     and record where they are. Returns how many were found. Never on the
@@ -286,6 +296,7 @@ def ensure(name: str) -> int:
         current = config.get(name)
         if current is None:
             return 0
+        current = _as_recorded(current, me)
         known = dict(current.get(sources.SOURCES) or {})
         for recorded, here in found.items():
             info = dict(known.get(recorded) or {})
@@ -316,11 +327,47 @@ def _project_folders(me: str) -> list:
     return list(dict.fromkeys(folders))[:50]
 
 
+#: An entry's keys that name one of its files, and what that file is to the
+#: project: what the website's "find it again" dialog calls it
+#: (client services/reopenFiles.js).
+_ROLES = (("channelFile", "image"), ("imageSource", "image"), ("imagePyramid", "image"),
+          ("segmentation", "mask"), ("segmentationSource", "mask"))
+
+
+def _role(entry: dict, names: set) -> str:
+    """What the file known by any of `names` is to the project `entry`:
+    "image", "mask", "table" (its cell table), "layer" (a spatial layer's
+    file), or "file"."""
+    for key, role in _ROLES:
+        if entry.get(key) in names:
+            return role
+    if sources._paths(entry.get("dataset"), lambda value: value in names):
+        return "table"
+    if sources._paths(entry.get("spatialLayers"), lambda value: value in names):
+        return "layer"
+    return "file"
+
+
+def title_of(name: str) -> str:
+    """Project `name`'s title, or its name."""
+    from plexora.server.models.project import Project, read_config
+    from plexora import paths
+
+    root = Project.root_for(name)
+    if root is None:
+        return name
+    entry = read_config(paths.config_path(root)).get(name) or {}
+    return str(entry.get("title") or name)
+
+
 def missing_here(name: str) -> list:
     """The files of project `name` this app has no path for: [{recorded, name,
     size, ...}], from the identities the project recorded. On the website this
-    is what the page asks the user to find, by choosing the folder that holds
-    them (client services/pickedFiles.js `find`); a pyramid the page made that
+    is what the page asks the user to find (client services/reopenFiles.js):
+    each item says where this app last had it (`here`: a `/picked/<id>/...`
+    path names the pick the browser may still hold), what it is to the project
+    (`role`), whether Plexora made it from another (`made`, `from_name`) and
+    whether it is a folder (`kind`, `entries`); a pyramid the page made that
     waits on a folder the browser opens again after one click (client
     services/derivedIndex.js) says so (`waiting`, and where: `place`), so the
     page can ask for that click instead of a search."""
@@ -332,9 +379,10 @@ def missing_here(name: str) -> list:
     if root is None:
         return []
     entry = read_config(paths.config_path(root)).get(name) or {}
+    known = entry.get(sources.SOURCES) or {}
     out = []
     waiting_here = None
-    for recorded, info in (entry.get(sources.SOURCES) or {}).items():
+    for recorded, info in known.items():
         info = info or {}
         here = (info.get("at") or {}).get(me) or (recorded if me == "website" and
                                                   recorded.startswith(sources.PAGE_ROOTS) else None)
@@ -344,9 +392,17 @@ def missing_here(name: str) -> list:
         # there (`resolve` takes it as found for the same reason).
         if me != "website" and not recorded.startswith(sources.PAGE_ROOTS) and _present(recorded, info):
             continue
+        source = info.get("from")
+        made = bool(source) or recorded.startswith("/derived/") or recorded.endswith(sources.PYRAMID_ENDING)
         item = {"recorded": recorded, "name": info.get("name") or Path(recorded).name,
                 "size": info.get("size"), "mtime_ms": info.get("mtime_ms"),
-                "head": info.get("head"), "tail": info.get("tail")}
+                "head": info.get("head"), "tail": info.get("tail"),
+                "here": here, "role": _role(entry, {recorded, here} - {None}),
+                "made": made, "kind": "folder" if sources.is_folder(info) else "file"}
+        if made and source:
+            item["from_name"] = (known.get(source) or {}).get("name") or Path(str(source)).name
+        if sources.is_folder(info):
+            item["entries"] = info.get("entries")
         if me == "website" and recorded.startswith("/derived/"):
             if waiting_here is None:
                 waiting_here = _waiting_copies()  # one question to the page, asked once
@@ -366,10 +422,13 @@ def _waiting_copies() -> dict:
             if isinstance(found, dict) and found.get("state") == "waiting"}
 
 
-def record_found(name: str, found: dict) -> int:
+def record_found(name: str, found: dict, anyway: Iterable[str] = ()) -> int:
     """Record where this app found files of project `name` ({recorded: path
-    here}), each only if it is the file the project recorded. Returns how many
-    were recorded."""
+    here}), each only if it is the file the project recorded -- or, for a
+    recorded path in `anyway`, whatever file the user chose in its place
+    (the website's "Use this file anyway"): that file's identity then replaces
+    the old one and the other apps' paths are dropped, so every app looks for
+    the file the project uses now. Returns how many were recorded."""
     from plexora.server.models.project import Project, config_transaction, read_config, write_config
     from plexora import paths
 
@@ -383,14 +442,24 @@ def record_found(name: str, found: dict) -> int:
         current = config.get(name)
         if current is None:
             return 0
+        current = _as_recorded(current, me)
         known = dict(current.get(sources.SOURCES) or {})
         recorded = 0
+        accepted = set(anyway or ())
         for original, here in found.items():
             info = known.get(original)
-            if not info or not isinstance(here, str) or not sources.same_file(info, here):
+            if not info or not isinstance(here, str):
                 continue
-            info = dict(info)
-            info["at"] = {**(info.get("at") or {}), me: here}
+            if sources.same_file(info, here):
+                info = dict(info)
+                info["at"] = {**(info.get("at") or {}), me: here}
+            elif original in accepted:
+                facts = sources.path_identity(here)
+                if not facts:
+                    continue
+                info = {**facts, "at": {me: here}}
+            else:
+                continue
             known[original] = info
             recorded += 1
         if recorded:

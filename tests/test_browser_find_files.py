@@ -1,6 +1,6 @@
-"""A desktop project, opened on the website: the page asks once for the folder
-that holds its image, finds the file by its identity and draws it
-(tests/browser/find_files.mjs, in Chrome).
+"""A desktop project, opened on the website: the page's dialog describes its
+image (the path the desktop recorded) and asks for it once, checks the file by
+its identity and draws it (tests/browser/find_files.mjs, in Chrome).
 
 The project is made here the way the desktop app makes one in the library it
 shares with the website: registered there, so its file's identity is recorded

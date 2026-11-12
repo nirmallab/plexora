@@ -1097,23 +1097,37 @@ def delete_project(name):
 
 @app.route('/project/<string:name>/files_here')
 def project_files_here(name):
-    """{missing: [{recorded, name, size, mtime_ms}]}: what this app has no
-    path for yet."""
+    """{missing: [{recorded, name, size, mtime_ms, here, role, ...}], title}:
+    what this app has no path for yet (relink.missing_here), and the
+    project's title for the page's dialog."""
     from plexora.server.utils import relink
 
-    return jsonify(missing=relink.missing_here(name))
+    return jsonify(missing=relink.missing_here(name), title=relink.title_of(name))
 
 
 @app.route('/project/<string:name>/files_here', methods=['POST'])
 def project_files_found(name):
     """Record where this app found files ({found: {recorded: path}}); each
-    only if it is the file the project recorded."""
+    only if it is the file the project recorded, or listed in `anyway` (the
+    user chose to use it in the original's place). Answers what is still
+    missing, and for each path found that was not taken, the identity of the
+    file there (`refused`), so the page can say how it differs."""
+    from plexora.server.models import sources
     from plexora.server.utils import relink
 
-    found = (request.get_json(silent=True) or {}).get('found') or {}
-    if not isinstance(found, dict):
-        return jsonify(error="`found` maps a recorded path to a path here."), 400
-    return jsonify(recorded=relink.record_found(name, found), missing=relink.missing_here(name))
+    body = request.get_json(silent=True) or {}
+    found = body.get('found')
+    found = {} if found is None else found
+    anyway = body.get('anyway')
+    anyway = [] if anyway is None else anyway
+    if not isinstance(found, dict) or not isinstance(anyway, list):
+        return jsonify(error="`found` maps a recorded path to a path here; `anyway` lists recorded paths."), 400
+    recorded = relink.record_found(name, found, anyway=[path for path in anyway if isinstance(path, str)])
+    missing = relink.missing_here(name)
+    still = {item["recorded"] for item in missing}
+    refused = {original: sources.path_identity(here) for original, here in found.items()
+               if original in still and isinstance(here, str)}
+    return jsonify(recorded=recorded, missing=missing, refused=refused)
 
 
 @app.route('/project/<string:name>/open_elsewhere')

@@ -628,6 +628,13 @@
                 : derived.requestFolders ? derived.requestFolders() : null;
             if (ask && ask.catch) ask.catch(() => 0);
         }
+        // And the files picked on earlier visits: the browser's prompt just
+        // answered listed every handle the site held, so the ones it granted
+        // open now without another question, and a project opened next finds
+        // them (services/reopenFiles.js). Before Python is up, its start
+        // mounts them (PlexoraPicks.restore).
+        const picks = global.PlexoraPicks;
+        if (up && picks && typeof picks.reconnect === "function") picks.reconnect({ ask: false }).catch(() => null);
         let next;
         try {
             next = await parts(rec.home);
