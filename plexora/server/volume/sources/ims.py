@@ -201,8 +201,19 @@ def _open_file(path, **options):
         # a host (its connection, the modules it imports) is made where the
         # website's Python can still suspend for it.
         stream.pread(0, min(stream.size, _FIRST_READ))
+        # The website: a path in its filesystem that reads the stream, since
+        # h5py's file-object driver stops at 4 GiB in 32-bit WebAssembly
+        # (server/utils/fs_mount.py). Elsewhere, the file object.
+        from plexora.server.utils import fs_mount
+
+        local = fs_mount.path_for(stream, _name(path))
+        if local is not None:
+            return h5py.File(local, "r", **options), stream
         return h5py.File(_HeldReads(stream), "r", **options), stream
     except Exception:
+        from plexora.server.utils import fs_mount
+
+        fs_mount.release(stream)
         stream.close()
         raise
 
@@ -267,6 +278,12 @@ def _close_file(handle, stream) -> None:
     except Exception:  # noqa: BLE001
         pass
     if stream is not None:
+        from plexora.server.utils import fs_mount
+
+        try:
+            fs_mount.release(stream)
+        except Exception:  # noqa: BLE001
+            pass
         try:
             stream.close()
         except Exception:  # noqa: BLE001

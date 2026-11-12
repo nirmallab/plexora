@@ -252,6 +252,51 @@ function withGil(module, read) {
     }
 }
 
+// -- A remote file as a path (plexora/browser/remote_mount.py) ---------------
+//
+// h5py's file-object driver addresses at most SIZE_MAX - 1 bytes: 4 GiB in
+// 32-bit WebAssembly, so a remote .ims past that failed at its first group
+// there. Given a path, HDF5's own driver addresses 64 bits. The file is a
+// MEMFS node of the remote file's size whose reads call Python (`reader`,
+// which reads through RemoteFile and its cache without suspending); an error
+// there is EIO to the library, never a JavaScript exception through its
+// frames.
+const EIO = 29;
+
+function mountReader(FS, module, path, size, reader) {
+    const dir = path.slice(0, path.lastIndexOf("/")) || "/";
+    FS.mkdirTree(dir);
+    FS.writeFile(path, new Uint8Array(0));
+    const node = FS.lookupPath(path).node;
+    node.usedBytes = Number(size);
+    node.stream_ops = {
+        ...node.stream_ops,
+        read(stream, buffer, offset, length, position) {
+            const at = Number(position);
+            const count = Math.max(0, Math.min(length, node.usedBytes - at));
+            if (count <= 0) return 0;
+            try {
+                return withGil(module, () => {
+                    const answer = reader(at, count);
+                    try {
+                        const bytes = answer && answer.toJs ? answer.toJs() : answer;
+                        buffer.set(bytes, offset);
+                        return bytes.length;
+                    } finally {
+                        answer?.destroy?.();
+                    }
+                });
+            } catch (error) {
+                self.postMessage({ log: `remote read of ${path} at ${at}: ${String(error && error.message || error).slice(-300)}` });
+                throw new FS.ErrnoError(EIO);
+            }
+        },
+        write() {
+            throw new FS.ErrnoError(EIO);
+        },
+    };
+}
+
 //: -> readAhead(node, indexes): those pieces of the picked file `node` not
 //: held, read at once -- each run of neighbours as one slice -- and held;
 //: resolves how many were read.
@@ -896,6 +941,8 @@ async function firstBoot(args) {
     self.plexoraJ2K = j2kDecode;
     self.plexoraJXR = jpegxrDecode;
     self.plexoraAskSync = syncAsk;
+    self.plexoraMountReader = (path, size, reader) => mountReader(py.FS, py._module, path, size, reader);
+    self.plexoraUnmountReader = (path) => { try { py.FS.unlink(path); } catch (error) { /* gone */ } };
     self.plexoraSourceWrite = sourceWrite;
     self.plexoraSleep = sleep;
     self.plexoraJspi = jspi;

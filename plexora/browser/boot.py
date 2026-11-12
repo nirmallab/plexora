@@ -471,6 +471,15 @@ def start(origin: str, *, base_url: str = "", post=None, cancelled=None, idle=No
     # one when it first reads an `sftp://` address there.
     sftp.set_resolver(web_remote.files_client)
 
+    from plexora.browser import remote_mount
+    from plexora.server.utils import fs_mount
+
+    # A remote file a C library reads (h5py: a remote .ims) is given to it as
+    # a path in this filesystem, past the 4 GiB its file-object driver
+    # addresses in 32-bit WebAssembly.
+    if remote_mount.available():
+        fs_mount.set_mounter(remote_mount.mount, remote_mount.release)
+
     from plexora.server.utils import source_writes
 
     # Saving into a picked file: the user's setting is the page's answer, and
