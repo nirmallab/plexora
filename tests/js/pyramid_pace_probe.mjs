@@ -4,11 +4,11 @@
 // `busy`). Prints JSON; tests/test_pyramid_pace.py asserts on it.
 import { readFileSync } from "node:fs";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 const JS = path.join(REPO, "plexora", "client", "src", "js");
-const { pacer } = await import(path.join(JS, "node", "pace.js"));
+const { pacer } = await import(pathToFileURL(path.join(JS, "node", "pace.js")).href);
 const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const out = {};
 
