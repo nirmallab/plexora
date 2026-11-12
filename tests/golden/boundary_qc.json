@@ -107,8 +107,8 @@
       "scripts": [
         "/client/src/js/services/passVariablesToFrontend.js?v=20260910_unreachable_message",
         "/client/src/js/services/desktopBridge.js?v=20261110_onboarding_bundles",
-        "/client/src/js/services/backend.js?v=20261110_file_or_folder",
-        "/client/src/js/services/appStatus.js?v=20261110_instant_first_view",
+        "/client/src/js/services/backend.js?v=20261111_tab_room",
+        "/client/src/js/services/appStatus.js?v=20261111_tab_room",
         "/client/src/js/services/telemetry.js?v=20260928_qc_owner",
         "/client/src/js/services/errors.js?v=20260927_telemetry",
         "/client/src/js/services/resourceRouting.js?v=20261110_tile_rows",
@@ -183,6 +183,7 @@
         "/client/src/js/views/requirementsModal.js?v=20261110_file_or_folder",
         "/client/src/js/views/confirmDialog.js?v=20261107_inline",
         "/client/src/js/services/toast.js?v=20260924_ui_pass",
+        "/client/src/js/services/handoffNotice.js?v=20261111_desktop_pace",
         "/client/src/js/services/handoff.js?v=20261107_gcloud",
         "/client/src/js/services/tooltip.js?v=20261022_glass_tooltip",
         "/client/src/js/services/proFeature.js?v=20261030_account",
@@ -345,8 +346,8 @@
       "scripts": [
         "/client/src/js/services/passVariablesToFrontend.js?v=20260910_unreachable_message",
         "/client/src/js/services/desktopBridge.js?v=20261110_onboarding_bundles",
-        "/client/src/js/services/backend.js?v=20261110_file_or_folder",
-        "/client/src/js/services/appStatus.js?v=20261110_instant_first_view",
+        "/client/src/js/services/backend.js?v=20261111_tab_room",
+        "/client/src/js/services/appStatus.js?v=20261111_tab_room",
         "/client/src/js/services/telemetry.js?v=20260928_qc_owner",
         "/client/src/js/services/errors.js?v=20260927_telemetry",
         "/client/src/js/services/resourceRouting.js?v=20261110_tile_rows",
@@ -421,6 +422,7 @@
         "/client/src/js/views/requirementsModal.js?v=20261110_file_or_folder",
         "/client/src/js/views/confirmDialog.js?v=20261107_inline",
         "/client/src/js/services/toast.js?v=20260924_ui_pass",
+        "/client/src/js/services/handoffNotice.js?v=20261111_desktop_pace",
         "/client/src/js/services/handoff.js?v=20261107_gcloud",
         "/client/src/js/services/tooltip.js?v=20261022_glass_tooltip",
         "/client/src/js/services/proFeature.js?v=20261030_account",
@@ -493,7 +495,7 @@
         "/client/src/js/views/planeMotion.js?v=20261013_znav",
         "/client/src/js/views/agentPanel.js?v=20261105_gating_v4",
         "/client/src/js/views/chatPanel.js?v=20261012_merge_main",
-        "/client/src/js/services/agentBridge.js?v=20261109_session_resumed",
+        "/client/src/js/services/agentBridge.js?v=20261111_tab_room",
         "/client/src/js/services/launchContext.js?v=20261005_bridge",
         "/client/src/js/main.js?v=20261110_tile_rows"
       ],
@@ -782,8 +784,8 @@
       "scripts": [
         "/client/src/js/services/passVariablesToFrontend.js?v=20260910_unreachable_message",
         "/client/src/js/services/desktopBridge.js?v=20261110_onboarding_bundles",
-        "/client/src/js/services/backend.js?v=20261110_file_or_folder",
-        "/client/src/js/services/appStatus.js?v=20261110_instant_first_view",
+        "/client/src/js/services/backend.js?v=20261111_tab_room",
+        "/client/src/js/services/appStatus.js?v=20261111_tab_room",
         "/client/src/js/services/telemetry.js?v=20260928_qc_owner",
         "/client/src/js/services/errors.js?v=20260927_telemetry",
         "/client/src/js/services/resourceRouting.js?v=20261110_tile_rows",
@@ -858,6 +860,7 @@
         "/client/src/js/views/requirementsModal.js?v=20261110_file_or_folder",
         "/client/src/js/views/confirmDialog.js?v=20261107_inline",
         "/client/src/js/services/toast.js?v=20260924_ui_pass",
+        "/client/src/js/services/handoffNotice.js?v=20261111_desktop_pace",
         "/client/src/js/services/handoff.js?v=20261107_gcloud",
         "/client/src/js/services/tooltip.js?v=20261022_glass_tooltip",
         "/client/src/js/services/proFeature.js?v=20261030_account",
@@ -942,7 +945,7 @@
         "/client/src/js/views/planeMotion.js?v=20261013_znav",
         "/client/src/js/views/agentPanel.js?v=20261105_gating_v4",
         "/client/src/js/views/chatPanel.js?v=20261012_merge_main",
-        "/client/src/js/services/agentBridge.js?v=20261109_session_resumed",
+        "/client/src/js/services/agentBridge.js?v=20261111_tab_room",
         "/client/src/js/services/launchContext.js?v=20261005_bridge",
         "/client/src/js/main.js?v=20261110_tile_rows"
       ],
@@ -969,7 +972,7 @@
       ]
     }
   },
-  "route_count": 335,
+  "route_count": 336,
   "routes": [
     "DELETE /nodes/<name>/resources/<resource_id>",
     "DELETE /project/<string:name>/layers/<path:layer_id>",
@@ -1081,6 +1084,7 @@
     "GET /projects/export/<string:job>/file",
     "GET /projects/export/estimate",
     "GET /projects/import/<string:job>",
+    "GET /read_pace",
     "GET /remote_health",
     "GET /resource_routing",
     "GET /resource_status",

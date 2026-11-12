@@ -118,7 +118,65 @@ const inBrowser = await E.beforeBuild(flat(52923, 45381, { browser: true }));   
 await E.beforeBuild(flat(52923, 45381, { browser: true }));                     // once per project per tab
 const buildToasts = said(mark);
 
+// The refusal: Python's "envelope" event (server/utils/tab_room.py), a build
+// this tab cannot hold. And Python stopping for good, with the worker's cause.
+const refusedWired = typeof listeners.envelope === "function";
+mark = toasts.length;
+const refusedShown = await E.refused({
+    reason: "tab-limit", title: "Too large for a browser tab",
+    note: "This mask's pyramid needs about 3.4 GB here." });
+const refusedToasts = said(mark);
+mark = toasts.length;
+await E.stopped({ memory: false, cause: "RangeError: x" });
+const stoppedToasts = said(mark);
+
+// Slow reads (`judgeSlow`, `pace`): intervals {start, end, busy, bytes} from
+// Python's network reads (server/utils/read_pace.py) and the picked file's
+// reads. Judged at a fixed `now` so the window is exact.
+const NOW = 1_000_000;
+const seconds = (n, each) => Array.from({ length: n }, (_, i) => ({
+    start: NOW - (n - i) * 1000, end: NOW - (n - i - 1) * 1000, ...each }));
+const slowVerdicts = {
+    // 12 s, 95 % of each second waiting, 3 MB a second: the network held the page.
+    network: E.judgeSlow("network", "transfer.rc.hms.harvard.edu", seconds(12, { busy: 950, bytes: 3e6 }), limits, NOW),
+    // The same wait, 100 MB a second: a lot read, not a slow network.
+    fastNetwork: E.judgeSlow("network", "fast.example.org", seconds(12, { busy: 950, bytes: 100e6 }), limits, NOW),
+    // Only 6 s of waiting: nothing said.
+    shortWait: E.judgeSlow("network", "transfer.rc.hms.harvard.edu", seconds(6, { busy: 950, bytes: 3e6 }), limits, NOW),
+    // Reads with work between them: 12 s of span, 2.4 s of waiting.
+    workBetween: E.judgeSlow("drive", "big.ome.tif", seconds(12, { busy: 200, bytes: 1e6 }), limits, NOW),
+    // 20 tiles read side by side over the same 12 s: 12 s of waiting, not 240.
+    parallelTiles: E.judgeSlow("drive", "share.ome.tif", Array.from({ length: 20 }, () => ({
+        start: NOW - 12000, end: NOW, busy: 12000, bytes: 2e6 })), limits, NOW),
+    // A local disk read hard: fast, not slow.
+    localDisk: E.judgeSlow("drive", "local.ome.tif", seconds(12, { busy: 1000, bytes: 800e6 }), limits, NOW),
+    // Intervals older than the window do not count.
+    stale: E.judgeSlow("network", "old.example.org", seconds(12, { busy: 950, bytes: 3e6 }), limits, NOW + 20000),
+};
+const paceWired = typeof listeners.pace === "function";
+mark = toasts.length;
+const live = Date.now();
+for (let i = 12; i > 0; i -= 1) {
+    E.pace({ cause: "network", source: "transfer.rc.hms.harvard.edu", start: live - i * 1000,
+             end: live - (i - 1) * 1000, busy: 950, bytes: 3e6 });
+}
+await new Promise((r) => setTimeout(r, 20));
+E.pace({ cause: "network", source: "transfer.rc.hms.harvard.edu", start: live, end: live + 900, busy: 900, bytes: 3e6 });
+await new Promise((r) => setTimeout(r, 20));
+const networkToasts = said(mark);
+toasts[toasts.length - 1]?.actions?.find((a) => a.label === "Close")?.onSelect();
+const rememberedSlow = [...store.keys()].filter((k) => k.includes("slow-"));
+mark = toasts.length;
+for (let i = 12; i > 0; i -= 1) {
+    E.pace({ cause: "drive", source: "LSP13626_from_the_lab_share.ome.tif", start: live - i * 1000,
+             end: live - (i - 1) * 1000, busy: 1000, bytes: 4e6 });
+}
+await new Promise((r) => setTimeout(r, 20));
+const driveToasts = said(mark);
+
 console.log(JSON.stringify({
+    slowVerdicts, paceWired, networkToasts, rememberedSlow, driveToasts,
+    refusedWired, refusedShown, refusedToasts, stoppedToasts,
     builds, buildVerdicts: [inFolder.verdict, inBrowser.verdict], buildToasts,
     toasts: open.map(({ title, actions }) => ({ title, actions: actions.map((a) => a.replace(/^\*/, "")) })),
     remembered: rememberedOpen,

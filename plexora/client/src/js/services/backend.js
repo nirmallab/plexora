@@ -245,6 +245,14 @@
         }
         const python = global.PlexoraPython;
         if (!python) return json({ success: false, error: "Plexora's Python is not loaded" }, 503);
+        // Python failed for good in this tab: answered here, at once, rather
+        // than by a worker that can only say so (and a 500 for every poll).
+        const stopped = typeof python.stopped === "function" ? python.stopped() : null;
+        if (stopped) {
+            return json({ success: false, ok: false, stopped: true,
+                          error: `Plexora stopped in this tab${stopped.cause ? ` (${stopped.cause})` : ""}. `
+                              + "Reload to start it again." }, 503);
+        }
         // A Google Cloud request carries the page's Google access token
         // (services/googleAuth.js) to Python for this request only (plan L9).
         if (global.PlexoraGoogleAuth) request = global.PlexoraGoogleAuth.sign(request, route);

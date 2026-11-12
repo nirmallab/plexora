@@ -165,6 +165,16 @@ def build_label_volume(source, dest, *, progress: Optional[Callable] = None,
         if dtype.kind not in "ui":
             raise TypeError(f"a label volume has integer ids, not {dtype}")
         shapes = _level_shapes(height, width, target, min_levels)
+        # On the website the volume is written into the tab's memory, and each
+        # plane is read whole as uint32: refused there when either cannot fit
+        # (server/utils/tab_room.py), before a plane is read. Written as uint32
+        # under zarr's default compression, taken (not measured) to keep ids at
+        # a sixth of their size, as segmentation_pyramid takes a mask's.
+        from plexora.server.utils import tab_room
+
+        tab_room.check_build(frames * depth * sum(h * w for h, w in shapes) * 4 / 6,
+                             "This mask's 3-D label volume")
+        tab_room.check_read(height * width * max(4, dtype.itemsize), "This mask's planes")
         group = zarr.open_group(str(tmp), mode="w")
         total = frames * depth * len(shapes)
         if frames == 1:

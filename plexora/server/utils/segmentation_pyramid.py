@@ -83,15 +83,25 @@ _DEFAULT_FULL_READ_MAX_BYTES = 8 * 1024 ** 3
 
 _FINGERPRINT_SCAN_LIMIT = 20000
 
+#: What a label pyramid writes for each byte of its level-0 labels: every
+#: level (4/3 of level 0) under zlib, taken to keep a mask at a sixth of its
+#: size or less (labels are runs of one id). An estimate for the website's
+#: refusal (server/utils/tab_room.py), not a measurement.
+_LABEL_WRITTEN_PER_RAW = (4 / 3) / 6
+
 
 def _full_read_budget() -> int:
+    from plexora.server.utils import tab_room
+
+    # On the website a whole-mask read is the tab's memory: past
+    # tab_room.READ_BUDGET the mask streams by tiles instead (slower, bounded).
     raw = os.environ.get("PLEXORA_MASK_FULL_READ_MAX_BYTES")
     if not raw:
-        return _DEFAULT_FULL_READ_MAX_BYTES
+        return tab_room.full_read_max(_DEFAULT_FULL_READ_MAX_BYTES)
     try:
-        return max(0, int(raw))
+        return tab_room.full_read_max(max(0, int(raw)))
     except ValueError:
-        return _DEFAULT_FULL_READ_MAX_BYTES
+        return tab_room.full_read_max(_DEFAULT_FULL_READ_MAX_BYTES)
 
 
 def derived_output_path(segmentation_path, data_directory=None, *,
@@ -1456,6 +1466,12 @@ def pyramidize_segmentation_mask(
         # does not fit is refused by name rather than wrapped into another
         # cell's id.
         out_dtype = np.dtype(np.uint32) if dtype.itemsize > 4 else dtype
+        # On the website the pyramid is written into the tab's memory: one
+        # that cannot fit is refused before a pixel is read.
+        from plexora.server.utils import tab_room
+
+        tab_room.check_build(height * width * out_dtype.itemsize * _LABEL_WRITTEN_PER_RAW,
+                             "This mask's pyramid")
 
         use_full_read = (
             bool(full_read)

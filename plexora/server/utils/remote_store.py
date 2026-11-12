@@ -75,6 +75,7 @@ from zarr.storage import WrapperStore
 
 from plexora import _work
 from plexora.server.providers.base import RemoteUnreachable, is_remote_locator
+from plexora.server.utils import read_pace
 
 _log = logging.getLogger(__name__)
 
@@ -1484,10 +1485,15 @@ class ChunkCacheStore(WrapperStore):
         prototype = _default_prototype()
         last_exc: Optional[BaseException] = None
         for attempt in range(len(_RETRY_DELAYS_S) + 1):
+            # Timed per host for the website's "waiting on the network" notice
+            # (server/utils/read_pace.py; a no-op where nobody is told).
+            host = host_of(self.root_url)
+            read_pace.began(host)
             try:
                 self.stats["fetches"] += 1
                 buffer = await self._store.get(key, prototype, byte_range)
             except Exception as exc:  # noqa: BLE001 -- classified below
+                read_pace.ended(host, 0)
                 if _not_connected(exc):
                     # A files-only server nobody has connected yet: no retry
                     # can help and no back-off should outlast the Connect
@@ -1509,10 +1515,12 @@ class ChunkCacheStore(WrapperStore):
                     await asyncio.sleep(_RETRY_DELAYS_S[attempt])
                 continue
             if buffer is None:
+                read_pace.ended(host, 0)
                 self._last_status[key] = _MISSING
                 return None
             self._last_status.pop(key, None)
             data = buffer.to_bytes()
+            read_pace.ended(host, len(data))
             self.stats["bytes_fetched"] += len(data)
             _count_fetched(len(data))
             return data
@@ -2323,8 +2331,15 @@ class RemoteFile(io.RawIOBase):
         """`n` bytes from `offset`, short at the end of the file."""
         return self.pread_many([(offset, n)])[0]
 
-    def pread_many(self, spans) -> list[bytes]:
-        """`[(offset, length)]` -> bytes each, every missing block in one fetch."""
+    def pread_many(self, spans, *, exact: bool = False) -> list[bytes]:
+        """`[(offset, length)]` -> bytes each, every missing block in one fetch.
+
+        `exact`: each span is fetched and cached as itself, not as the aligned
+        blocks around it -- for reads that already know where a whole unit of
+        the file lies (an Imaris chunk by its offset). Such units lie scattered
+        through a large file, so the 2 MB grid fetched 4.4x the bytes asked for
+        a 349 GB .ims's first view (2026-11-11); a reader that walks headers a
+        few bytes at a time keeps the grid."""
         spans = [(max(0, int(o)), max(0, int(n))) for o, n in spans]
         known = self.known_size
         if known is not None:
@@ -2334,7 +2349,10 @@ class RemoteFile(io.RawIOBase):
         plans = []
         wanted: dict[tuple[int, int], None] = {}
         for offset, length in spans:
-            blocks = _blocks_for(offset, offset + length, _grid(length))
+            if exact and length > 0:
+                blocks = [(offset, offset + length)]
+            else:
+                blocks = _blocks_for(offset, offset + length, _grid(length))
             plans.append(blocks)
             for block in blocks:
                 wanted.setdefault(block, None)

@@ -340,6 +340,15 @@ def create_app(plugins=None):
         return jsonify(success=False, error=str(exc), node=exc.node,
                        unavailable=True), 503
 
+    # A build or read the website's tab cannot hold (server/utils/tab_room.py):
+    # refused before it started, with the sentence already said on the page.
+    # 507 (Insufficient Storage) because that is what it is -- not a fault.
+    from plexora.server.utils.tab_room import TooLargeForTab
+
+    @app.errorhandler(TooLargeForTab)
+    def too_large_for_tab(exc):
+        return jsonify(success=False, error=str(exc), tab_limit=True), 507
+
     # Imported here (not at module top) purely for their route-registration
     # side effects -- see the docstring above for why `app` must already be
     # assigned by this point.

@@ -80,6 +80,7 @@ from __future__ import annotations
 
 import datetime as _dt
 import functools
+import math
 import os
 import threading
 from collections import OrderedDict
@@ -404,7 +405,9 @@ class _StreamRaw:
 
     def read_many(self, spans) -> list:
         spans = [(int(o), int(n)) for o, n in spans]
-        out = self.stream.pread_many(spans)
+        # Whole chunks by their own offsets: fetched as themselves, not as the
+        # 2 MB blocks around them (remote_store.RemoteFile.pread_many).
+        out = self.stream.pread_many(spans, exact=True)
         for (offset, size), data in zip(spans, out):
             if len(data) < size:
                 raise EOFError(f"{self.stream.name} ends before byte {offset + size}")
@@ -687,6 +690,35 @@ class ImsVolumeSource(VolumeSource):
             span = self._span(level, t, channel, stored[0], stored[-1], rows, cols)
             return span[[z - stored[0] for z in stored]]
         return self._span(level, t, channel, z0, z1, rows, cols)
+
+    def stated_ceiling(self, channel: int):
+        """The brightest voxel of `channel` over every plane and frame, as the
+        file states it, or None where it does not say.
+
+        Imaris saves each channel's full-resolution histogram with the file,
+        and its range as `HistogramMin`/`HistogramMax` on the channel's group:
+        the exact window (volume/windows.py) without reading a voxel, where a
+        scan of a 349 GB stack's channel fetched 2.3 GB over SFTP. A value no
+        voxel of this type could hold is not a statement (None); one a writer
+        left as a placeholder is caught by `windows.stated_window`."""
+        dtype = np.dtype(self.volume.dtype)
+        top = None
+        with self._io:
+            for t in range(max(1, self.volume.frames)):
+                key = f"DataSet/ResolutionLevel 0/TimePoint {t}/Channel {int(channel)}"
+                if key not in self._file:
+                    return None
+                attrs = self._file[key].attrs
+                high = _number(attrs.get("HistogramMax"))
+                low = _number(attrs.get("HistogramMin"), 0.0)
+                if high is None or not math.isfinite(high) or high <= 0:
+                    return None
+                if low is not None and low > high:
+                    return None
+                if dtype.kind in "ui" and high > np.iinfo(dtype).max:
+                    return None
+                top = high if top is None else max(top, high)
+        return top
 
     def read_stored(self, level, t, channel, s0, s1, rows, cols):
         """Stored planes s0..s1 of `level`, each once (`model.read_stored`)."""
@@ -1098,19 +1130,35 @@ def _mask_named(name: str) -> bool:
     return any(hint in lowered for hint in MASK_HINTS)
 
 
-def label_channels(handle, stream=None) -> tuple[list[int], list[str]]:
+#: The import's guess (`mask_verdict`) reads every channel's window only for a
+#: file of at most this many channels; past it, only the channels whose names
+#: say mask. Each window is a level-0 read, and finding its chunks walks that
+#: channel's chunk index: a 349 GB, 70-channel .ims fetched 2.2 GB over SFTP in
+#: 12 minutes (2026-11-11) to learn that 70 named stains are not a mask. A mask
+#: channel left unnamed among many is still opened as one when the user says
+#: the file is a mask (the import's Image/Mask switch): `label_channel` reads
+#: every channel.
+GUESS_CHANNELS = 4
+
+
+def label_channels(handle, stream=None, *, named_only_past=None) -> tuple[list[int], list[str]]:
     """(channels whose middle window reads as ids, every channel's name).
 
     `stream` is the file's `RemoteFile` at a web address: every channel's
-    window is then fetched in one batch first, not a channel at a time."""
+    window is then fetched in one batch first, not a channel at a time.
+    `named_only_past`: in a file of more channels than this, only those named
+    as a mask are read (None: every channel)."""
     levels = _levels_of(handle)
     count = max(1, _count(handle, "DataSet/ResolutionLevel 0/TimePoint 0", "Channel"))
     names = [_channel_name(handle, c) for c in range(count)]
-    if stream is not None:
+    read = list(range(count))
+    if named_only_past is not None and count > named_only_past:
+        read = [c for c in read if _mask_named(names[c])]
+    if stream is not None and read:
         z, rows, cols = _window_of(levels)
-        _warm(stream, [span for c in range(count)
+        _warm(stream, [span for c in read
                        for span in _chunk_spans(_window_data(handle, c), z, z, rows, cols)])
-    looks = [c for c in range(count) if looks_like_labels(_window(handle, c, levels))]
+    looks = [c for c in read if looks_like_labels(_window(handle, c, levels))]
     return looks, names
 
 
@@ -1141,13 +1189,17 @@ def mask_verdict(path):
     """`import_proposal.looks_like_label_image` for an .ims: True, False, or
     None to ask. A file of one channel of ids is a mask; a file of stains with
     one channel of ids beside them is either, and is asked about unless a name
-    -- the file's or the channel's -- says mask."""
+    -- the file's or the channel's -- says mask. In a file of more than
+    `GUESS_CHANNELS` channels only those named as a mask are read, unless the
+    file's own name says mask."""
     try:
         handle, stream = _open_file(path)
     except Exception:
         return None
     try:
-        looks, names = label_channels(handle, stream)
+        looks, names = label_channels(
+            handle, stream,
+            named_only_past=None if _mask_named(_name(path)) else GUESS_CHANNELS)
     except Exception:
         return None
     finally:

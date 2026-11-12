@@ -35,5 +35,12 @@
     "selfcheck": {
         "pyramid_bytes_per_second": 194000000,
         "measured": "2026-11-07: the self-check page (/selfcheck) on the reference computer (the i9 of P7, 24 threads, 12 band workers, Chrome 156, quiet): its 2 x 8192 x 8192 uint16 image, after an untimed 2048 x 2048 warm-up, built at 191-197 MB/s run from the preview through Cloudflare as a user runs it (194 kept; 239-261 MB/s served from this computer: each build revalidates the builder's scripts with Pages). Another computer's build rate on a real image is P7's 348 MB/s scaled by its own self-check rate over this one."
+    },
+    "slow": {
+        "window_s": 15,
+        "waited_s": 10,
+        "network_bytes_per_second": 50000000,
+        "drive_bytes_per_second": 100000000,
+        "measured": "2026-11-11: chosen between measurements, not fitted. HMS O2's transfer node over SFTP read ~20 MB/s from Boston (a 349 GB .ims, docs/internal/WEBSITE_TAB_LIMITS.md); a lab SMB share answered 64 KiB in ~20 ms and 1 MiB in ~220 ms (~4.5 MB/s, workers/pythonWorker.js); a local NVMe reads a picked file at well over 1 GB/s. 10 s of the last 15 spent waiting means the reads, not the work between them, held the page."
     }
 }

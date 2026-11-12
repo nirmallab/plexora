@@ -49,6 +49,35 @@ import os
 import time
 
 
+#: What the website's Python may keep, set through the variables each module
+#: already reads, so the desktop is untouched. The worker's WebAssembly memory
+#: stops at 4 GiB and an allocation that fails there ends Pyodide for good, and
+#: the files under /data are held in the same tab's memory
+#: (workers/storeSync.js). Budgets sized for a desktop -- an eighth of the
+#: machine for decoded chunks, 96 MB of HDF5 cache per open dataset, a copy of
+#: a stack under /data -- add up past that on a large stack (a 349 GB,
+#: 70-channel .ims ended the website's Python on 2026-11-11). Smaller caches
+#: cost re-reads, never a wrong answer. The remote chunk cache is not here: on
+#: the website it is kept in the site's storage, not in memory
+#: (plexora/browser/cachefiles.py).
+WEBSITE_LIMITS = {
+    # Decoded chunks of z-stacks (server/volume/chunk_cache.py; an eighth of
+    # the machine, up to 8 GB).
+    "PLEXORA_CHUNK_CACHE_MB": "256",
+    # Whole 3-D levels kept for the next asker (server/volume/serve.py;
+    # 512 MB).
+    "PLEXORA_LEVEL_CACHE_MB": "128",
+    # HDF5's decoded chunks per open .ims dataset, six open at most
+    # (server/volume/sources/ims.py; 96 MB each).
+    "PLEXORA_IMS_CHUNK_CACHE_MB": "24",
+    # No z-chunked copy of a stack (server/volume/bricks.py): its coarse
+    # levels alone are up to 256 MB a channel, and the cache of finer ones
+    # 4 GB, all of it written under /data. Reads across planes go to the
+    # stack itself instead: slower, the same pixels.
+    "PLEXORA_VOLUME_BRICKS": "0",
+}
+
+
 def environment(origin: str, *, base_url: str = "", data_root: str = "/data",
                 licence_dir: str = "/bioc", telemetry: dict | None = None) -> None:
     """What the app reads from the environment as it builds (create_app) and
@@ -76,6 +105,7 @@ def environment(origin: str, *, base_url: str = "", data_root: str = "/data",
         # unset, paths would look for Documents/Plexora and the workspaces
         # added in a settings file inside the worker's own filesystem.
         "PLEXORA_LIBRARY_PATH": "",
+        **WEBSITE_LIMITS,
     })
     for name in ("PLEXORA_SHARED_PATH", "PLEXORA_AUTH_TOKEN", "PLEXORA_TRUSTED_HOSTS",
                  "PLEXORA_PLUGINS", "PLEXORA_TELEMETRY", "PLEXORA_TELEMETRY_ENDPOINT",
@@ -390,6 +420,16 @@ def start(origin: str, *, base_url: str = "", post=None, cancelled=None, idle=No
     lap("chat")
     if post is not None:
         viewer_sessions.set_wakeup(lambda: post({"kind": "wakeup"}))
+        from plexora.server.utils import tab_room
+
+        # A build this tab cannot hold, refused: said on the page as well
+        # (services/handoffNotice.js, the "envelope" event).
+        tab_room.set_teller(lambda notice: post({"kind": "envelope", **notice}))
+        from plexora.server.utils import read_pace
+
+        # How long reads wait on each remote host, for the page's "waiting on
+        # the network" notice (services/handoffNotice.js `pace`).
+        read_pace.set_reporter(lambda event: post({"kind": "pace", **event}))
     browser_provider.set_column_source(columns)
     browser_provider.set_asker(ask)
     licence.set_asker(ask)

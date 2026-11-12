@@ -2,11 +2,12 @@
  * PlexoraEnvelope -- on the website, saying when something is more than a
  * browser tab does well, and offering what does it better: the desktop app,
  * which opens the project with nothing to export (services/desktopHandoff.js).
- * No notice offers a node: a node is something the user sets up from the
- * Remote menu when they want one, not something a toast pushes on them.
+ * One notice offers a node: waiting on the network (`pace`), where a node
+ * beside the data is the one thing that is faster (the user's call,
+ * 2026-11-11). Every other notice leaves nodes to the Remote menu.
  *
  * The limits are measured (client/src/envelope.json, each with its date) and
- * a situation within them gets no notice at all. Six moments (the stall one
+ * a situation within them gets no notice at all. Eight moments (the stall one
  * is judged but never said, see `tile`):
  *
  * - **open** (`check`): the project's table against the worker's heap (P9's
@@ -28,6 +29,17 @@
  *   limit, after the open's own tiles and never while a job holds the
  *   worker. Judged only -- the one answer to slow media is a node, and no
  *   notice offers one;
+ * - **refused** (`refused`, Python's "envelope" event): a build or read
+ *   this tab cannot hold, refused before it started (server/utils/
+ *   tab_room.py) -- its size and the desktop app;
+ * - **pace** (`pace`: how long reads waited, as intervals -- Python's reads
+ *   from each remote host, server/utils/read_pace.py; the picked file's
+ *   reads, Python's (workers/pythonWorker.js `drivePace`) and the tile
+ *   workers' (services/browserNode.js `paced`)): one cause held the page
+ *   `waited_s` of the last `window_s` seconds at under its rate --
+ *   "Waiting on the network" (the host and its MB/s; a data node beside the
+ *   data) or "Reading a slow drive" (the file and its MB/s; a copy on this
+ *   computer). The waiting, not the work between reads, is what counts;
  * - **stopped** (`stopped`, the worker's `fatal` event): Python failed for
  *   good -- past the open notice, a table that does not fit the worker's
  *   4 GiB ends Pyodide when an allocation fails -- "This tab ran out of
@@ -43,18 +55,30 @@
  *   judgeBuild(build, limits, device) -> {verdict: "website"|"desktop", title, note, seconds}
  *   judgeModel(gpu, limits)      -> {verdict: "website"|"node", title, note}
  *   judgeStall(samples, limits)  -> {verdict: "website"|"node", title, note, p95}
+ *   judgeSlow(cause, source, events, limits, now) -> {verdict: "website"|"node"|"copy",
+ *                                title, note, waited, rate}
+ *   pace(event)                  a read interval {cause, source, start, end, busy, bytes}
  *   onJob(event) / beforeBuild(build) / beforeModel() / tile(ms, app) / stopped(event)
  *                                the triggers (tests call them)
  *
- * Classic script, `window.PlexoraEnvelope`, in the site's host page only: the
- * desktop app shows no notice. Uses PlexoraHandoff and the frame's
- * PlexoraToast.
+ * Classic script, `window.PlexoraEnvelope`, in the site's host page. The
+ * desktop app loads it too, in its own page (templates/base.html, with
+ * `data-reads="desktop"`), for the one moment that applies there, **pace**:
+ * it asks its Python how long reads waited (GET /read_pace every 2 s while
+ * visible; server/utils/read_pace.py) -- the network per host, and tifffile's
+ * reads of each file -- and says it the same way. The rest are about what a
+ * browser tab holds. Uses PlexoraHandoff and the frame's PlexoraToast.
  */
 (function (global) {
     "use strict";
 
-    // Under the site's base path (services/shell.js `BASE`; "" at its root).
-    const LIMITS = (global.PLEXORA_SITE_BASE || "") + "/client/src/envelope.json";
+    //: The desktop app's own page (templates/base.html), not the site's host.
+    const SCRIPT = global.document && global.document.currentScript;
+    const DESKTOP = Boolean(SCRIPT && SCRIPT.dataset && SCRIPT.dataset.reads === "desktop");
+    // Under the site's base path (services/shell.js `BASE`; "" at its root);
+    // on the desktop, beside this script, under the server's own base.
+    const LIMITS = DESKTOP ? new URL("../../envelope.json", SCRIPT.src).href
+        : (global.PLEXORA_SITE_BASE || "") + "/client/src/envelope.json";
     const REMEMBER_DAYS = 30;
     //: `${project}|${reason}` already said in this tab.
     const shown = new Set();
@@ -194,6 +218,96 @@
         };
     }
 
+    //: Of `events` ({start, end, busy, bytes}, ms since the epoch), the ms
+    //: spent waiting and the bytes read within [from, to]. An interval that
+    //: is all waiting (a tile's read) is joined with those it overlaps --
+    //: tiles are read in parallel; one whose waiting is only part of its span
+    //: (reads with work between them) counts its share.
+    function waitedIn(events, from, to) {
+        let waited = 0;
+        let bytes = 0;
+        const whole = [];
+        for (const e of events) {
+            const start = Math.max(from, e.start);
+            const end = Math.min(to, e.end);
+            if (!(end > start)) continue;
+            const span = Math.max(1, e.end - e.start);
+            const share = (end - start) / span;
+            bytes += (Number(e.bytes) || 0) * share;
+            const busy = Math.min(Math.max(0, Number(e.busy) || 0), span);
+            if (busy >= 0.95 * span) whole.push([start, end]);
+            else waited += busy * share;
+        }
+        whole.sort((a, b) => a[0] - b[0]);
+        let run = null;
+        for (const [start, end] of whole) {
+            if (!run || start > run[1]) {
+                if (run) waited += run[1] - run[0];
+                run = [start, end];
+            } else {
+                run[1] = Math.max(run[1], end);
+            }
+        }
+        if (run) waited += run[1] - run[0];
+        return { waited, bytes };
+    }
+
+    const rateText = (rate) => (rate >= 10e6 ? `${Math.round(rate / 1e6)} MB/s`
+        : rate >= 0.1e6 ? `${(rate / 1e6).toFixed(1)} MB/s` : "under 0.1 MB/s");
+
+    /**
+     * Whether reads from `source` ("network": a host; "drive": a picked file)
+     * held the page: `waited_s` of the last `window_s` seconds spent waiting
+     * on them, at under that cause's rate. A fast source read a lot is not
+     * slow -- the work is large, and the other notices speak to that.
+     */
+    function judgeSlow(cause, source, events, rules, now = Date.now()) {
+        const slow = (rules && rules.slow) || {};
+        const windowMs = (Number(slow.window_s) || 15) * 1000;
+        const waitedMs = (Number(slow.waited_s) || 10) * 1000;
+        const limit = cause === "network" ? Number(slow.network_bytes_per_second) || 50e6
+            : Number(slow.drive_bytes_per_second) || 100e6;
+        const { waited, bytes } = waitedIn(events || [], now - windowMs, now);
+        if (waited < waitedMs) return { verdict: "website", waited };
+        const rate = bytes / (waited / 1000);
+        if (rate >= limit) return { verdict: "website", waited, rate };
+        const short = (text, most) => (text.length > most ? `${text.slice(0, most - 1)}…` : text);
+        if (cause === "network") {
+            return { verdict: "node", waited, rate, title: "Waiting on the network",
+                     note: `${rateText(rate)} from ${short(source, 40)}.` };
+        }
+        return { verdict: "copy", waited, rate, title: "Reading a slow drive",
+                 note: `${short(source, 24)} reads at ${rateText(rate)}; copy it here.` };
+    }
+
+    //: Read intervals by "cause|source", the last minute only.
+    const paces = new Map();
+    const PACE_KEEP_MS = 60000;
+
+    /** One read interval, judged with the others from its source: said
+     *  (`notice`) the first time its cause holds the page. Resolves the
+     *  verdict, or null for an interval that says nothing. */
+    function pace(event) {
+        if (!event || !event.source || !(Number(event.end) > Number(event.start))) return null;
+        const cause = event.cause === "network" ? "network" : "drive";
+        const source = String(event.source);
+        const key = `${cause}|${source}`;
+        const now = Date.now();
+        const start = Number(event.start);
+        const end = Number(event.end);
+        const list = (paces.get(key) || []).filter((e) => e.end >= now - PACE_KEEP_MS);
+        list.push({ start, end, bytes: Number(event.bytes) || 0,
+                    busy: event.busy !== undefined ? Number(event.busy) : end - start });
+        paces.set(key, list);
+        if (!limits) rules().catch(() => null);
+        const verdict = judgeSlow(cause, source, list, limits || {}, now);
+        if (verdict.verdict === "website") return verdict;
+        const app = appNow();
+        notice(cause === "network" ? "slow-network" : "slow-drive", projectOf(app, null) || "", app,
+               verdict, `plexora-notice:slow-${cause}:${source}`).catch(() => null);
+        return verdict;
+    }
+
     function remembered(key) {
         try {
             const until = Number(global.localStorage.getItem(key));
@@ -211,8 +325,18 @@
         }
     }
 
+    //: The one fetch of the limits in flight, shared by everything that
+    //: asks before it answers (each read interval does).
+    let asking = null;
+
     async function rules() {
-        if (!limits) limits = await (await global.fetch(LIMITS)).json().catch(() => null);
+        if (limits) return limits;
+        if (!asking) {
+            asking = Promise.resolve().then(() => global.fetch(LIMITS))
+                .then((answer) => answer.json()).catch(() => null);
+        }
+        limits = await asking;
+        if (!limits) asking = null;   // failed: asked again next time
         return limits;
     }
 
@@ -239,6 +363,20 @@
         const stay = { label: "Continue here", onSelect: () => remember(key) };
         if (kind === "open") return [{ ...desktop("Open in Desktop App"), primary: true }, stay];
         if (kind === "batch" || kind === "build" || kind === "model") return [{ ...desktop("Desktop app"), primary: true }, stay];
+        if (kind === "slow-network") {
+            const node = {
+                label: "Set up a data node", primary: true,
+                onSelect: () => {
+                    const modal = app && app.PlexoraConnectionModal;
+                    if (modal) modal.open({ kind: "node", view: "recipes",
+                                            intent: "A data node beside the data reads it there and sends only what is on screen." });
+                },
+            };
+            return [node, { label: "Close", onSelect: () => remember(key) }];
+        }
+        if (kind === "slow-drive") return [{ label: "OK", primary: true, onSelect: () => remember(key) }];
+        // Refused, not slow: nothing to continue, so the other button closes it.
+        if (kind === "tab-limit") return [{ ...desktop("Desktop app"), primary: true }, { label: "Close", onSelect: () => null }];
         if (kind === "stopped") {
             const reload = { label: "Reload", onSelect: () => global.location.reload() };
             return project ? [{ ...desktop("Open in Desktop App"), primary: true }, reload]
@@ -272,11 +410,11 @@
         if (!project) return null;
         current.project = project;
         current.app = app;
-        // Tiles are not watched: the only thing a slow-tile notice could offer
-        // is a node, and the website's own tile path was what tripped it (its
-        // tiles crossed the stall limit on a large image with nothing slow
-        // about the media). `watchTiles` stays for a caller that wants the
-        // measurement.
+        // Tiles are not watched: their time is the website's own tile path as
+        // much as the media (they crossed the stall limit on a large image
+        // with nothing slow about the media). Slow media is told from the
+        // reads' own waiting instead (`pace`). `watchTiles` stays for a caller
+        // that wants the measurement.
         // Judged once per project per tab: every page of a project opens a frame.
         if (opened.has(project)) return null;
         opened.add(project);
@@ -406,16 +544,72 @@
                 note: "This project needs more than the 4 GB a browser tab can give. "
                     + "The desktop app opens it with room to spare." }
             : { title: "Plexora stopped in this tab",
-                note: "Its Python failed and cannot go on. Reload, or open the project in the desktop app." };
+                note: "Its Python failed and cannot go on"
+                    + (event && event.cause ? ` (${String(event.cause).slice(0, 120)})` : "")
+                    + ". Reload, or open the project in the desktop app." };
         // Never remembered: a dismissal must not hide the next failure.
         return notice("stopped", project || "", app, verdict, `plexora-notice:stopped:${Date.now()}`);
     }
 
+    /**
+     * Python refused a build or read this tab cannot hold (server/utils/
+     * tab_room.py, the "envelope" event): said once per project in this tab
+     * (one sentence is enough; the next refusal's own error says the rest),
+     * never remembered across visits.
+     */
+    async function refused(event) {
+        if (!event || !event.title) return false;
+        const app = appNow();
+        const project = projectOf(app, null) || "";
+        return notice(String(event.reason || "tab-limit"), project, app,
+                      { title: String(event.title), note: String(event.note || "") },
+                      `plexora-notice:refused:${Date.now()}`);
+    }
+
+    // -- the desktop: its Python's read intervals, asked for ---------------------
+
+    const READS_EVERY_MS = 2000;
+
+    /** Ask the desktop's Python for the read intervals since the last ask
+     *  (server/routes/system_routes.py `/read_pace`) and judge each. Its
+     *  clock is lined up with this page's by the `now` it answers with. */
+    function watchReads(app, url) {
+        let after = 0;
+        let busy = false;
+        current.app = app;
+        async function ask() {
+            if (busy || (app.document && app.document.visibilityState !== "visible")) return;
+            busy = true;
+            try {
+                const answer = await app.fetch(`${url}?after=${after}`, { cache: "no-store" });
+                if (!answer.ok) return;
+                const body = await answer.json();
+                const shift = Number(body.now) ? Date.now() - Number(body.now) : 0;
+                if (Number.isFinite(Number(body.last))) after = Number(body.last);
+                for (const event of body.events || []) {
+                    pace({ ...event, start: Number(event.start) + shift, end: Number(event.end) + shift });
+                }
+            } catch (error) {
+                // The server is away: appStatus says so; asked again next time.
+            } finally {
+                busy = false;
+            }
+        }
+        rules().catch(() => null);
+        ask();
+        return global.setInterval(ask, READS_EVERY_MS);
+    }
+
+    if (DESKTOP) watchReads(global, new URL("../../../../read_pace", SCRIPT.src).href);
+
     if (global.PlexoraPython && typeof global.PlexoraPython.on === "function") {
         global.PlexoraPython.on("job", (event) => { onJob(event).catch(() => null); });
         global.PlexoraPython.on("fatal", (event) => { stopped(event).catch(() => null); });
+        global.PlexoraPython.on("envelope", (event) => { refused(event).catch(() => null); });
+        global.PlexoraPython.on("pace", (event) => { pace(event); });
     }
 
     global.PlexoraEnvelope = Object.freeze({ check, judge, judgeBatch, judgeBuild, judgeModel, judgeStall, p95,
-                                             onJob, beforeBuild, beforeModel, tile, watchTiles, stopped });
+                                             onJob, beforeBuild, beforeModel, tile, watchTiles, stopped,
+                                             refused, judgeSlow, pace, watchReads });
 })(typeof window !== "undefined" ? window : globalThis);
