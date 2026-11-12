@@ -184,6 +184,27 @@ let fatalTold = false;
 //: worker's WebAssembly memory stops at 4 GiB, and an allocation that fails
 //: there (polars' Rust aborts) ends Pyodide.
 const FATAL_MEMORY_BYTES = 3.5 * 2 ** 30;
+//: A cause that is running out of memory whatever the heap says: the page's
+//: own buffers (the files under /data are typed arrays outside the heap) can
+//: fail to grow while the heap is small.
+const OUT_OF_MEMORY = /out of memory|allocation failed|cannot enlarge memory|\boom\b|MemoryError/i;
+//: What ended Python here, once it has: {cause, heap, memory}.
+let fatalWith = null;
+
+//: Python failed for good (Pyodide's `on_fatal`, or the first call after
+//: that says so): the page is told once, with the cause, and every later
+//: request is answered at once instead of by a Python that cannot.
+function fatal(error, module = py && py._module) {
+    if (fatalTold) return;
+    fatalTold = true;
+    const heap = module && module.HEAP8 ? module.HEAP8.length : 0;
+    const cause = String((error && (error.message || error.name)) || error || "").slice(0, 400);
+    const memory = heap >= FATAL_MEMORY_BYTES || OUT_OF_MEMORY.test(cause)
+        || OUT_OF_MEMORY.test(String(error && error.name || ""));
+    fatalWith = { cause, heap, memory };
+    self.postMessage({ log: `Python stopped: ${cause} (heap ${(heap / 2 ** 30).toFixed(2)} GiB)` });
+    self.postMessage({ event: { kind: "fatal", memory, heap, cause } });
+}
 const at = () => performance.timeOrigin + performance.now();
 const mark = (name) => self.postMessage({ mark: name, at: at() });
 
@@ -234,14 +255,50 @@ function withGil(module, read) {
 //: -> readAhead(node, indexes): those pieces of the picked file `node` not
 //: held, read at once -- each run of neighbours as one slice -- and held;
 //: resolves how many were read.
+//: Reads of picked files, timed per file for the page's "slow drive" notice
+//: (services/handoffNotice.js `pace`): what a read waited is reported as
+//: intervals, closed after PACE_GAP_MS quiet or PACE_EVERY_MS busy, as
+//: plexora/server/utils/read_pace.py reports the network's.
+const PACE_EVERY_MS = 1000;
+const PACE_GAP_MS = 250;
+const drivePaces = new Map();
+function drivePace(name, began, ended, bytes) {
+    const source = String(name || "");
+    let state = drivePaces.get(source);
+    if (state && began - state.end > PACE_GAP_MS) {
+        reportPace(source, state);
+        state = null;
+    }
+    if (!state) {
+        state = { start: began, end: ended, busy: 0, bytes: 0 };
+        drivePaces.set(source, state);
+    }
+    state.end = Math.max(state.end, ended);
+    // Reads here are synchronous, one after another: their times add up.
+    state.busy += Math.max(0, ended - began);
+    state.bytes += bytes;
+    if (state.end - state.start >= PACE_EVERY_MS) {
+        reportPace(source, state);
+        drivePaces.delete(source);
+    }
+}
+function reportPace(source, state) {
+    self.postMessage({ event: { kind: "pace", cause: "drive", source, start: state.start,
+                                end: state.end, busy: state.busy, bytes: state.bytes } });
+}
+
 function blockReads(workerfs, module) {
     const reader = new FileReaderSync();
     const blocks = new Map();
     const pieces = new Map();
     //: Where the last read of each file ended: a read from there is sequential.
     const lastEnd = new Map();
-    const slice = (node, from, to) => withGil(module,
-        () => new Uint8Array(reader.readAsArrayBuffer(node.contents.slice(from, to))));
+    const slice = (node, from, to) => withGil(module, () => {
+        const began = Date.now();
+        const bytes = new Uint8Array(reader.readAsArrayBuffer(node.contents.slice(from, to)));
+        drivePace(node.name, began, Date.now(), bytes.length);
+        return bytes;
+    });
     const block = (node, index) => {
         const key = `${node.id}:${index}`;
         let data = blocks.get(key);
@@ -744,6 +801,11 @@ function warm(args) {
         const wheels = Promise.all(stagesInfo.base.wheels.map(fetchWheel));
         const { loadPyodide } = await import(`${base}pyodide/pyodide.mjs`);
         const pyodide = await loadPyodide({ indexURL: `${base}pyodide/` });
+        // The error that ends Pyodide, as it happens: every later call only
+        // says "already fatally failed", which names no cause.
+        try {
+            pyodide._api.on_fatal = (error) => fatal(error, pyodide._module);
+        } catch (error) { /* told by the next call instead */ }
         readAhead = blockReads(pyodide.FS.filesystems.WORKERFS, pyodide._module);
         phases.core = at(); mark("core");
         await pyodide.loadPackage(stagesInfo.base.pyodide, { messageCallback: () => {} });
@@ -1442,6 +1504,11 @@ const BUNDLE_OPS = {
     },
 };
 
+//: What the worker still answers once Python has failed for good: boot
+//: (which tells a reattaching page so), and what reads no Python. Every
+//: other op would only ask a dead Pyodide.
+const AFTER_FATAL = new Set(["boot", "heap", "trace", "state"]);
+
 const OPS = {
     boot,
     request,
@@ -1543,6 +1610,14 @@ async function drain() {
         }
         const queued = queue.shift();
         const { id, op, args, arrived } = queued;
+        if (fatalTold && !AFTER_FATAL.has(op)) {
+            // Python cannot answer any more: said now, not by a call into it.
+            if (pageNow(queued)) {
+                self.postMessage({ id, ok: false, stopped: true,
+                                   error: `Python stopped in this tab: ${fatalWith ? fatalWith.cause : "it failed"}` });
+            }
+            continue;
+        }
         const began = performance.now();
         const outer = current;
         current = { op, path: op === "request" ? args.path : null, since: began };
@@ -1577,14 +1652,13 @@ async function drain() {
             }
         } catch (error) {
             const message = String(error?.message || error);
-            // After a fatal error Pyodide answers every call with this; the
+            // The error that ended Pyodide (marked `pyodide_fatal_error`), or
+            // one of the calls after it, where `on_fatal` was not heard: the
             // page is told once, so it can say so instead of a 500 per request.
-            if (!fatalTold && /fatally failed and can no longer be used/.test(message)) {
-                fatalTold = true;
-                const heap = py && py._module && py._module.HEAP8 ? py._module.HEAP8.length : 0;
-                self.postMessage({ event: { kind: "fatal", memory: heap >= FATAL_MEMORY_BYTES, heap } });
-            }
-            if (pageNow(queued)) self.postMessage({ id, ok: false, error: message.slice(-6000) });
+            if (error && error.pyodide_fatal_error) fatal(error);
+            else if (/fatally failed and can no longer be used/.test(message)) fatal(error);
+            if (pageNow(queued)) self.postMessage({ id, ok: false, error: message.slice(-6000),
+                                                    stopped: fatalTold });
         } finally {
             busy = nested;
             inStep = outerStep;
@@ -1685,7 +1759,7 @@ let pendingBackground = 0;
 //: nothing could run in the last step, and nothing will before then.
 let dueInMs = 0;
 function step() {
-    if (!py || stepping || busy || queue.length) return;
+    if (!py || fatalTold || stepping || busy || queue.length) return;
     stepping = true;
     const now = performance.now();
     const onlyBackground = pendingBackground > 0 && pendingWork === 0;
@@ -1716,7 +1790,11 @@ function step() {
             }
             outcome.destroy(); cooperative.destroy();
         } catch (error) {
-            self.postMessage({ log: `step: ${error?.message || error}` });
+            if (error && error.pyodide_fatal_error) fatal(error);
+            else if (/fatally failed and can no longer be used/.test(String(error?.message || error))) fatal(error);
+            // Once Python has failed, the step loop ends: it was asking a dead
+            // Pyodide again every few hundred ms, one console line each time.
+            if (!fatalTold) self.postMessage({ log: `step: ${error?.message || error}` });
         } finally {
             busy = false;
         }

@@ -53,6 +53,8 @@
  *   bundleStores() / adopt(paths) / readFile(path)
  *                           for a `.plexora` file's bytes (services/bundleWeb.js)
  *   job(id) / cancel(id) / on(kind, fn)
+ *   stopped()               the `fatal` event ({cause, heap, memory}) once this
+ *                           tab's Python has failed for good, else null
  *   unsupported(nav?)       {browser, version} when this browser cannot run the
  *                           website's Python, else null (start() is not to be called)
  *   saveWith(fn)            who saves a picked file Python wrote (services/
@@ -70,6 +72,10 @@
     let nextId = 1;
     const waiting = new Map();
     const listeners = new Map();
+    //: The worker's `fatal` event once this tab's Python has failed for good
+    //: ({cause, heap, memory}): every request is then answered by the page
+    //: (services/backend.js), and the polls stand down (`stopped`).
+    let stoppedWith = null;
     const jobs = new Map();
     //: Long tasks' answers (layer_jobs `mirror`): key -> {running, get, answer, cancel, cancelled}.
     const mirrors = new Map();
@@ -257,11 +263,13 @@
             if (!pending) return;
             waiting.delete(data.id);
             if (data.ok) pending.resolve(data.result);
-            else pending.reject(data.aborted ? new DOMException(data.error, "AbortError") : new Error(data.error));
+            else if (data.aborted) pending.reject(new DOMException(data.error, "AbortError"));
+            else pending.reject(Object.assign(new Error(data.error), { stopped: Boolean(data.stopped) }));
             return;
         }
         if (data.event) {
             const event = data.event;
+            if (event.kind === "fatal") stoppedWith = event;
             if (event.kind === "job" && event.job) jobs.set(event.job.job_id, event);
             if (event.kind === "mirror" && event.key) {
                 if (event.running) mirrors.set(event.key, event);
@@ -854,6 +862,9 @@
 
     global.PlexoraPython = Object.freeze({
         warm,
+        //: The `fatal` event ({cause, heap, memory}) once Python has failed
+        //: for good in this tab, else null.
+        stopped: () => stoppedWith,
         start,
         ready,
         unsupported,

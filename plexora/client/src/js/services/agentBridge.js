@@ -451,12 +451,27 @@ window.PlexoraAgentBridge = (function () {
 
     // -- the loop -----------------------------------------------------------
 
+    //: Whether this tab's website Python has failed for good (the page's or
+    //: the host page's PlexoraPython). False on the desktop.
+    function pythonStopped() {
+        try {
+            const python = window.PlexoraPython
+                || (window.parent && window.parent !== window ? window.parent.PlexoraPython : null);
+            return Boolean(python && typeof python.stopped === "function" && python.stopped());
+        } catch (error) {
+            return false;
+        }
+    }
+
     /**
      * One poll, and everything it brought.
      * @returns how long to wait before the next one (ms), or null to stop.
      */
     async function pollOnce() {
         if (stopped) return null;
+        // The website's Python failed for good in this tab: nothing will
+        // answer until the page reloads (services/pythonClient.js `stopped`).
+        if (pythonStopped()) return null;
         if (!session) {
             const ok = await register().catch(() => false);
             if (stopped) return null;

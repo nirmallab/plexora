@@ -1,4 +1,5 @@
-# Process lifecycle routes: File > Quit, and the liveness probe.
+# Process lifecycle routes: File > Quit, the liveness probe, and how long
+# reads have waited (the desktop's slow-read notices).
 #
 # Quit used to be `os._exit(0)`, on the grounds that waitress's serve() loop
 # never returns on its own. It does: a KeyboardInterrupt on the main thread is
@@ -8,8 +9,10 @@
 # flushed, a stale nodes.json -- which Ctrl+C in a terminal always ran. A 10 s
 # backstop still hard-exits if that teardown wedges.
 from plexora import app
-from flask import Response, jsonify
+from flask import Response, jsonify, request
+import os
 import threading
+import time
 
 from plexora import _lifetime
 
@@ -54,3 +57,30 @@ def health():
 
     return Response(status=204, headers={
         'X-Plexora-Version': RUNNING_VERSION or 'source'})
+
+
+@app.route('/read_pace', methods=['GET'])
+def read_pace_since():
+    """How long reads waited, for the desktop's page (services/handoffNotice.js,
+    loaded with `data-reads="desktop"`, asks every 2 s while visible).
+
+    Its first call turns the measuring on (server/utils/read_pace.py `keep`,
+    `time_tifffile`), so a process no page watches -- a data node, a notebook
+    kernel with no viewer open -- measures nothing. `?after=` is the last
+    `seq` the page has; `now` is this process's clock, so the page can line
+    the intervals up with its own. The website's Python posts its intervals
+    to its page instead, and has no use for this.
+    """
+    from plexora.server.utils import read_pace
+
+    if os.environ.get("PLEXORA_BACKEND") == "browser":
+        return jsonify(events=[], last=0, now=round(time.time() * 1000))
+    if not read_pace.keeping():
+        read_pace.keep()
+        read_pace.time_tifffile()
+    try:
+        after = int(request.args.get("after", 0))
+    except ValueError:
+        after = 0
+    events, last = read_pace.since(after)
+    return jsonify(events=events, last=last, now=round(time.time() * 1000))

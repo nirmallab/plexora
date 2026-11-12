@@ -228,3 +228,45 @@ def test_a_dropped_connection_is_an_error_not_a_hang(served, http_store):
         assert read().shape == (4, HEIGHT, WIDTH)
     finally:
         source.close()
+
+
+def _cached_ranges(cache_root):
+    """Every byte range the chunk cache holds, as (start, end)."""
+    out = []
+    for path in cache_root.rglob("*"):
+        if path.is_file() and path.parent.name.endswith(".ranges"):
+            start, end = path.name.split("_")
+            out.append((int(start), int(end)))
+    return sorted(out)
+
+
+def test_exact_spans_fetch_only_their_own_bytes(served, http_store, cache_root):
+    """A chunk read by its offset (an Imaris chunk) is fetched and kept as
+    itself; the 2 MB grid around it fetched 4.4x the bytes on a 349 GB file,
+    whose chunks lie scattered."""
+    data = np.random.default_rng(1).integers(0, 256, 5 * 2**20, dtype=np.uint8).tobytes()
+    (served / "blob.ims").write_bytes(data)
+    server = http_store()
+    stream = remote_store.open_file(server.url("blob.ims"))
+    spans = [(3_000_001, 300_000), (123_457, 400_000)]
+
+    got = stream.pread_many(spans, exact=True)
+
+    assert got == [data[o:o + n] for o, n in spans]
+    held = _cached_ranges(cache_root)
+    assert (3_000_001, 3_300_001) in held and (123_457, 523_457) in held
+    assert not any(end - start == 2 * 2**20 for start, end in held)
+    # Asked again: answered from the cache, nothing fetched.
+    server.clear()
+    assert stream.pread_many(spans, exact=True) == got
+    assert server.count() == 0
+
+
+def test_grid_spans_still_fetch_aligned_blocks(served, http_store, cache_root):
+    data = np.random.default_rng(2).integers(0, 256, 5 * 2**20, dtype=np.uint8).tobytes()
+    (served / "blob.ims").write_bytes(data)
+    server = http_store()
+    stream = remote_store.open_file(server.url("blob.ims"))
+
+    assert stream.pread_many([(3_000_001, 300_000)]) == [data[3_000_001:3_300_001]]
+    assert (2 * 2**20, 4 * 2**20) in _cached_ranges(cache_root)

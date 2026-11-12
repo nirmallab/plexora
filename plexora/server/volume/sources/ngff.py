@@ -406,6 +406,17 @@ def build_volume_extension(source: NgffVolumeSource, dest,
     shapes = extension_shapes(source, target)
     if not shapes:
         return None
+    # On the website these levels are written into the tab's memory, and each
+    # plane of the level they come from is read whole: refused there when
+    # either cannot fit (server/utils/tab_room.py), before a pixel is read.
+    from plexora.server.utils import tab_room
+
+    itemsize = np.dtype(volume.dtype).itemsize
+    stacked = volume.frames * volume.depth * max(1, volume.channels)
+    tab_room.check_build(stacked * sum(h * w for h, w in shapes) * itemsize,
+                         "This stack's coarse levels")
+    base_h, base_w = (int(s) for s in source._arrays[base - 1].shape[-2:])
+    tab_room.check_read(base_h * base_w * itemsize, "This stack's planes")
     destination = Path(dest)
     destination.parent.mkdir(parents=True, exist_ok=True)
     building = destination.with_name(destination.name + ".building")

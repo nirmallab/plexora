@@ -191,8 +191,12 @@
                     if (!entry) return;
                     this.pending.delete(data.id);
                     worker.inflight -= 1;
-                    if (data.ok) entry.resolve(data.result);
-                    else entry.reject(new Error(data.error));
+                    if (data.ok) {
+                        this.paced(data.result);
+                        entry.resolve(data.result);
+                    } else {
+                        entry.reject(new Error(data.error));
+                    }
                 };
                 // A worker that dies (out of memory, a crash in a decoder)
                 // answers nothing again: what it was asked fails now, and it
@@ -248,8 +252,36 @@
             return global.PlexoraPicks ? global.PlexoraPicks.fileFor(path) : null;
         }
 
+        /** How long a read of the picked file waited, for the page's "slow
+         *  drive" notice (services/handoffNotice.js `pace`): each tile's own
+         *  read time, as an interval ending now. Tiles read in parallel, so
+         *  the page joins overlapping intervals. Never throws. */
+        paced(result) {
+            if (!this.paceSource || !result) return;
+            try {
+                const envelope = global.PlexoraEnvelope
+                    || (global.parent && global.parent !== global ? global.parent.PlexoraEnvelope : null);
+                if (!envelope || typeof envelope.pace !== "function") return;
+                const items = Array.isArray(result) ? result
+                    : (Array.isArray(result.tiles) ? result.tiles : [result]);
+                const end = Date.now();
+                for (const item of items) {
+                    const timing = item && item.timing;
+                    const readMs = timing ? Number(timing.readMs) : 0;
+                    if (!(readMs > 0)) continue;
+                    envelope.pace({ cause: "drive", source: this.paceSource, start: end - readMs,
+                                    end, busy: readMs, bytes: Number(timing.bytes) || 0 });
+                }
+            } catch (error) {
+                // A measurement is never worth a failed tile.
+            }
+        }
+
         async open(found, ifds = null) {
             this.storeRoot = found.store && found.store.page ? found.store.page : null;
+            //: The picked file's name, whose reads are timed (`paced`); none
+            //: for a file read by URL (the desktop's) or a folder's store.
+            this.paceSource = found.file && found.file.name ? String(found.file.name) : null;
             const t0 = performance.now();
             const [first, ...rest] = this.workers;
             const opened = await this.call(first, { op: "open", ...found, record: true, ifds });

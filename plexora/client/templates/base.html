@@ -45,11 +45,11 @@
          window.fetch). Before appStatus.js and not deferred, so a static
          build's page can put its own transport in place before that file
          wraps window.fetch and anything issues a request. -->
-    <script src="{{ data.base_url }}/client/src/js/services/backend.js?v=20261110_file_or_folder" type="text/javascript"></script>
+    <script src="{{ data.base_url }}/client/src/js/services/backend.js?v=20261111_tab_room" type="text/javascript"></script>
     <!-- App-wide status indicator. Loaded here, before everything else and not
          deferred, because it wraps window.fetch to detect a dead/erroring
          server and must be installed before any script issues a request. -->
-    <script src="{{ data.base_url }}/client/src/js/services/appStatus.js?v=20261110_instant_first_view" type="text/javascript"></script>
+    <script src="{{ data.base_url }}/client/src/js/services/appStatus.js?v=20261111_tab_room" type="text/javascript"></script>
     <!-- Optional, anonymous telemetry (plexora/telemetry): the tab's aggregate
          and its error fingerprints. Right after appStatus.js and not deferred,
          so the first tiles are timed and an early failure is caught; both are
@@ -237,6 +237,13 @@
        (a <dialog> of its own, its CSS in main.css); the website only, and
        inert there without the host page's PlexoraStore. #}
     <script src="{{ data.base_url }}/client/src/js/views/webOnboarding.js?v=20261110_instant_first_view" defer></script>
+    {% else %}
+    {# The desktop's slow-read notices (PlexoraEnvelope in desktop mode):
+       "Waiting on the network" and "Reading a slow drive", judged from how
+       long this server's reads waited (GET /read_pace). On the website the
+       site's host page loads it, so never here. After toast.js, which it
+       shows them with. #}
+    <script src="{{ data.base_url }}/client/src/js/services/handoffNotice.js?v=20261111_desktop_pace" data-reads="desktop" defer></script>
     {% endif %}
     {# What the website says where only the desktop app could act -- an SSH
        connection, the Google Cloud CLI, a data folder (PlexoraWebHandoff):

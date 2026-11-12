@@ -224,6 +224,14 @@
     // recurse through the wrapper's own error handling.
     function pollHealth() {
         if (!nativeFetch || document.visibilityState !== "visible") return;
+        // The website's Python failed for good in this tab: its notice says
+        // so and offers a reload (services/handoffNotice.js `stopped`), and a
+        // poll a few seconds would only add a failed request each time.
+        const stoppedPython = window.PlexoraPython;
+        if (stoppedPython && typeof stoppedPython.stopped === "function" && stoppedPython.stopped()) {
+            setError("Stopped");
+            return;
+        }
         nativeFetch(plexoraUrl("health"), { cache: "no-store" }).then((r) => {
             if (!r.ok) throw new Error(String(r.status));
             healthFailures = 0;

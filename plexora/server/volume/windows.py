@@ -20,6 +20,11 @@ persisted.
 A standard-deviation projection of values in [0, M] is at most M/2, so its
 window is (0, M/2) exactly, with no scan at all.
 
+STATED FIRST. A file that says what its brightest voxel is -- an Imaris file
+saves each channel's full-resolution histogram and its range -- needs no
+scan: `stated_window` takes that, checked against the coarsest level (which
+can be no brighter), and the scan runs only where a file says nothing.
+
 PROVISIONAL FIRST. The scan above reads gigabytes for a large stack -- seconds
 to minutes before the first tile could be quantized. `provisional_window` is
 what the viewer starts with instead: the larger of the default plane's maximum
@@ -102,8 +107,44 @@ def _scan_level(source, level: int, channel: int, planes, gate=None) -> float:
     return ceiling
 
 
+def stated_window(source, channel: int, gate=None):
+    """`((0, ceiling), how)` from what the file says its brightest voxel is
+    (`source.stated_ceiling`: an Imaris file's saved histogram), or None.
+
+    Exact without a scan, so the scan below is never run for such a file. A
+    placeholder some writer left there is caught by the coarsest level: its
+    voxels are averages of real ones, so the truth is at least as bright as
+    the brightest of them -- a stated ceiling below that is not believed.
+    That level is read whole when it fits PROVISIONAL_BUDGET (an Imaris
+    file's is a chunk or two), else its default plane."""
+    stated = getattr(source, "stated_ceiling", None)
+    if stated is None:
+        return None
+    try:
+        ceiling = stated(channel)
+    except Exception:  # noqa: BLE001 -- unreadable metadata: scan instead
+        return None
+    if ceiling is None:
+        return None
+    volume = source.volume
+    coarse = len(volume.levels) - 1
+    height, width = source.level_shape(coarse)
+    itemsize = max(1, np.dtype(volume.dtype).itemsize)
+    planes = [(t, z) for t in range(volume.frames) for z in range(volume.depth)]
+    if len(planes) * height * width * itemsize > PROVISIONAL_BUDGET:
+        planes = [(volume.default_view.t, volume.default_view.z)]
+    seen = _scan_level(source, coarse, channel, planes, gate)
+    if ceiling < seen:
+        return None
+    return (0.0, max(float(ceiling), 1.0)), {"exact": True, "level": 0, "stated": True}
+
+
 def volume_window(source, channel: int, gate=None) -> tuple[tuple[float, float], dict]:
-    """`((0, ceiling), how)` for one channel of `source`."""
+    """`((0, ceiling), how)` for one channel of `source`: the file's own
+    statement where it makes one (`stated_window`), else a scan."""
+    stated = stated_window(source, channel, gate)
+    if stated is not None:
+        return stated
     volume = source.volume
     planes = [(t, z) for t in range(volume.frames) for z in range(volume.depth)]
     itemsize = max(1, np.dtype(volume.dtype).itemsize)

@@ -1296,6 +1296,17 @@ def build_extension(pyramid, dest, target: int = EXTENSION_TARGET,
         total += 1
     if total == 0:
         return None
+    # On the website these levels are written into the tab's memory: refused
+    # there when they cannot fit (server/utils/tab_room.py), and read in
+    # smaller slabs, whose float64 temporaries are four times their size.
+    from plexora.server.utils import tab_room
+
+    derived, probe_h, probe_w = 0, height, width
+    while max(probe_h, probe_w) > target:
+        probe_h, probe_w = -(-probe_h // 2), -(-probe_w // 2)
+        derived += probe_h * probe_w
+    tab_room.check_build(channels * derived * dtype.itemsize, "This image's missing pyramid levels")
+    slab_bytes = tab_room.slab_max(_DOWNSAMPLE_SLAB_BYTES)
 
     group = zarr.open_group(str(destination), mode="w")
     written = 0
@@ -1307,7 +1318,7 @@ def build_extension(pyramid, dest, target: int = EXTENSION_TARGET,
         target_array = group.create_array(
             str(index), shape=(channels, out_height, out_width),
             dtype=dtype, chunks=chunks)
-        rows = max(1, _DOWNSAMPLE_SLAB_BYTES // max(1, width * dtype.itemsize * 2))
+        rows = max(1, slab_bytes // max(1, width * dtype.itemsize * 2))
         for channel in range(channels):
             for start in range(0, out_height, rows):
                 stop = min(start + rows, out_height)

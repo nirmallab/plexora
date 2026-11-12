@@ -194,6 +194,16 @@ _image_stats_cache = {}
 # per range.
 _view_overview_cache = collections.OrderedDict()
 _VIEW_OVERVIEW_CACHE_MAX = 8
+#: The same bound on the website, whose tab holds every entry in its 4 GiB
+#: (server/utils/tab_room.py): a 70-channel stack's entry is ~130 MB.
+_VIEW_OVERVIEW_CACHE_MAX_WEBSITE = 2
+
+
+def _overview_cache_max() -> int:
+    """How many views' overviews each overview cache keeps."""
+    from plexora.server.utils import tab_room
+
+    return _VIEW_OVERVIEW_CACHE_MAX_WEBSITE if tab_room.on_website() else _VIEW_OVERVIEW_CACHE_MAX
 _description_cache = {}
 _gate_filter_cache = {}
 _consistency_cache = {}
@@ -3309,7 +3319,7 @@ def _view_overview(datasource_name, spec):
             return cached
         overview = volume_overview(views.plane_pyramid_for(datasource_name, spec.token()))
         _view_overview_cache[key] = overview
-        while len(_view_overview_cache) > _VIEW_OVERVIEW_CACHE_MAX:
+        while len(_view_overview_cache) > _overview_cache_max():
             _view_overview_cache.popitem(last=False)
         return overview
 
@@ -3646,9 +3656,17 @@ def volume_window_state(channel_name, datasource_name):
     scope = (loaded_scope(datasource_name), channel_name)
     window = _provisional_windows.get(scope)
     if window is None:
-        from plexora.server.volume.windows import provisional_window
+        from plexora.server.volume.windows import provisional_window, stated_window
 
         index = real_channel_index(channel_name, datasource_name)
+        # A file that states its range (an Imaris file's saved histogram) is
+        # exact now: no provisional window, no scan queued behind it.
+        stated = stated_window(volume_source, index, gate=_WINDOW_SCAN_GATE)
+        if stated is not None:
+            window = stated[0]
+            _gmm_cache[cache_key] = window
+            _remember_quantization_window(datasource_name, f"{channel_name}|volume", window)
+            return window, True
         window, _how = provisional_window(volume_source, index)
         _provisional_windows[scope] = window
     queue_exact_window(channel_name, datasource_name, urgent=True)
@@ -4758,7 +4776,7 @@ def _minimap_overview(datasource_name, view):
     overview = np.asarray(volume_overview(pyramid))
     with _minimap_overviews_lock:
         _minimap_overviews[key] = overview
-        while len(_minimap_overviews) > 8:
+        while len(_minimap_overviews) > _overview_cache_max():
             _minimap_overviews.popitem(last=False)
     return overview
 
@@ -5998,6 +6016,11 @@ def _pyramidized_copy(filePath, dataDirectory, stage, report, volume_description
             return built
     needed = int(report_.get("output_bytes_estimate", 0)) \
         + int(report_.get("scratch_bytes_estimate", 0))
+    # Built by Python on the website (the page took no part): written into the
+    # tab's memory, so refused there when it cannot fit (server/utils/tab_room.py).
+    from plexora.server.utils import tab_room
+
+    tab_room.check_build(needed, "This image's pyramid")
     where = image_pyramid.resolve_derived_image(
         filePath, dataDirectory, needed_bytes=needed)
     if where.existing is not None:

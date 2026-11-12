@@ -124,11 +124,80 @@ def test_slow_tiles_are_judged_but_never_said(probe):
     assert probe["rememberedStall"] == []
 
 
+def test_slow_reads_are_said_when_one_cause_held_the_page(probe):
+    """Waiting on the network or a slow drive is said when the reads' own
+    waiting -- not the work between them, not tiles read side by side counted
+    twenty times -- held 10 of the last 15 s at under the cause's rate."""
+    v = probe["slowVerdicts"]
+    assert v["network"]["verdict"] == "node" and round(v["network"]["rate"] / 1e6, 1) == 3.0
+    assert v["network"]["note"] == "3.0 MB/s from transfer.rc.hms.harvard.edu."
+    assert v["fastNetwork"]["verdict"] == "website"
+    assert v["shortWait"]["verdict"] == "website"
+    assert v["workBetween"]["verdict"] == "website" and v["workBetween"]["waited"] < 3000
+    assert v["parallelTiles"]["verdict"] == "copy" and 11000 <= v["parallelTiles"]["waited"] <= 12000
+    assert v["localDisk"]["verdict"] == "website"
+    assert v["stale"]["verdict"] == "website"
+
+
+def test_a_slow_network_offers_a_data_node_once(probe):
+    assert probe["paceWired"]
+    assert probe["networkToasts"] == [{
+        "title": "Waiting on the network", "note": probe["networkToasts"][0]["note"],
+        "actions": ["*Set up a data node", "Close"]}]
+    assert "transfer.rc.hms.harvard.edu" in probe["networkToasts"][0]["note"]
+    assert probe["rememberedSlow"] == ["plexora-notice:slow-network:transfer.rc.hms.harvard.edu"]
+
+
+def test_a_slow_drive_says_to_copy_the_file_here(probe):
+    [toast] = probe["driveToasts"]
+    assert toast["title"] == "Reading a slow drive" and toast["actions"] == ["*OK"]
+    assert "MB/s" in toast["note"] and "copy it here" in toast["note"]
+
+
 def test_every_notice_is_short(probe):
-    for notice in probe["batch"] + probe["buildToasts"] + probe["modelToasts"] + probe["stall"]:
+    for notice in (probe["batch"] + probe["buildToasts"] + probe["modelToasts"] + probe["stall"]
+                   + probe["networkToasts"] + probe["driveToasts"] + probe["refusedToasts"]):
         assert len(notice["title"]) <= 60 and "\n" not in notice["note"] and len(notice["note"]) <= 60
         assert len(notice["actions"]) <= 3
         assert not any(word in (notice["title"] + notice["note"]).lower() for word in ("upgrade", "unlock", "pro "))
+
+
+@pytest.mark.skipif(not shutil.which("node"), reason="needs node")
+def test_the_desktop_says_slow_reads_the_websites_way():
+    """The desktop page asks its server how long reads waited (GET
+    /read_pace), its clock lined up with the server's, and says the same two
+    notices; a fast host says nothing."""
+    done = subprocess.run(["node", str(ROOT / "tests" / "js" / "desktop_pace_probe.mjs")],
+                          capture_output=True, text=True, encoding="utf-8", timeout=60)
+    assert done.returncode == 0, done.stderr
+    desktop = json.loads(done.stdout)
+    assert desktop["said"] == [
+        {"title": "Waiting on the network", "note": "3.0 MB/s from transfer.rc.hms.harvard.edu.",
+         "actions": ["*Set up a data node", "Close"]},
+        {"title": "Reading a slow drive", "note": "melanoma.ome.tif reads at 4.0 MB/s; copy it here.",
+         "actions": ["*OK"]},
+    ]
+    assert desktop["opened"] and desktop["opened"][0]["kind"] == "node"
+    assert desktop["every"] == 2000
+    # Under the server's own base, the limits fetched once.
+    assert desktop["asked"][0] == "http://127.0.0.1:5000/base/read_pace?after=0"
+    assert desktop["asked"].count("http://127.0.0.1:5000/base/client/src/envelope.json") == 1
+    assert "http://127.0.0.1:5000/base/read_pace?after=12" in desktop["asked"]
+    for notice in desktop["said"]:
+        assert len(notice["note"]) <= 60
+
+
+def test_only_the_desktop_page_loads_the_notices_itself(monkeypatch):
+    """The website's host page has its own copy (services/shell.js); a second
+    in the app's frame would say everything twice."""
+    import plexora
+
+    monkeypatch.delenv("PLEXORA_BACKEND", raising=False)
+    page = plexora.app.test_client().get("/").get_data(as_text=True)
+    assert 'handoffNotice.js?v=' in page and 'data-reads="desktop"' in page
+    monkeypatch.setenv("PLEXORA_BACKEND", "browser")
+    page = plexora.app.test_client().get("/").get_data(as_text=True)
+    assert "handoffNotice.js" not in page
 
 
 def test_the_size_of_an_open_project(tmp_path):
