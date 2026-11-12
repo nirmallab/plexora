@@ -378,16 +378,29 @@
                 return () => followers.delete(fn);
             },
             veiled,
+            //: Whether `win` is a page being built unseen over the app's
+            //: (replaceFrame).
+            standing: (win) => Boolean(standby && win && win.frameElement === standby.frame),
             //: The frame's own loader has to be seen (a question, a last
-            //: word): unveiled over this one, whose orb then stops.
-            reveal() {
+            //: word): unveiled over this one, whose orb then stops. A page
+            //: being built unseen is shown at once instead.
+            reveal(win) {
+                if (api.standing(win)) {
+                    standby.needed();
+                    return;
+                }
                 if (!veiled()) return;
                 frameOf().classList.remove("is-veiled");
                 later(() => screen.pause());
             },
             //: The frame's page is written: faded in over this loader, which
-            //: then goes.
-            shown() {
+            //: then goes. A page being built unseen is shown once it has
+            //: drawn (replaceFrame).
+            shown(win) {
+                if (api.standing(win)) {
+                    standby.written();
+                    return;
+                }
                 const frame = frameOf();
                 if (frame) frame.classList.remove("is-veiled");
                 later(() => screen.hide());
@@ -445,7 +458,14 @@
     //: A veiled frame's loader brought into sight over the host's: the
     //: host's step and hold taken over, the orb drawing on the same clock.
     function unveil() {
-        if (!shared || !shared.veiled()) return;
+        if (!shared) return;
+        // A page built unseen over the app's (replaceFrame): shown now, its
+        // own loader with it.
+        if (shared.standing(global)) {
+            shared.reveal(global);
+            return;
+        }
+        if (!shared.veiled()) return;
         screen.adopt(shared.snapshot());
         screen.play();
         shared.reveal();
@@ -474,7 +494,9 @@
         for (let i = 0; i < 150 && !(app && app.PlexoraConfirm && app.PlexoraToast
                                        && app.PlexoraShellFramed); i += 1) {
             await new Promise((resolve) => setTimeout(resolve, 200));
-            app = frame.contentWindow;
+            // The app's frame now: a kept page is replaced by a new frame
+            // (replaceFrame).
+            app = (doc.getElementById("plexora-app") || frame).contentWindow;
         }
         return app && app.PlexoraConfirm ? app : null;
     }
@@ -641,7 +663,9 @@
                 return;
             }
             shown = now;
-            const app = frame.contentWindow;
+            // The app's frame now: a kept page is replaced by a new frame
+            // (replaceFrame).
+            const app = (doc.getElementById("plexora-app") || frame).contentWindow;
             try {
                 app.PlexoraPro?.adopt?.(status);
                 app.dispatchEvent(new app.CustomEvent("plexora:license-external", { detail: status }));
@@ -957,9 +981,13 @@
         // (writePage asks for it, PlexoraShellLoader.shown).
         frame.className = "plexora-app-frame is-veiled";
         frame.src = here(global.location);
-        frame.addEventListener("load", () => {
-            started.then(() => keepHome(frame, pages)).catch(() => null);
+        // Every frame the app is shown in: this one, and one that replaces a
+        // kept page with Python's (replaceFrame, earlyPage).
+        const keeps = (one) => one.addEventListener("load", () => {
+            started.then(() => keepHome(one, pages)).catch(() => null);
         });
+        keeps(frame);
+        global.PlexoraShellReplace = (address, used) => replaceFrame(address, used, keeps);
         doc.body.appendChild(frame);
         // The key pressed with the host focused (before the frame has been
         // clicked into) reloads the frame too.
@@ -998,6 +1026,171 @@
                 if (response.ok) await pages.put("/", await response.text());
             } catch (error) { /* kept as it was */ }
         }, 5000);
+    }
+
+    // -- A kept page replaced without a reload ------------------------------------
+    //
+    // A page shown before Python started (earlyPage) that Python then draws
+    // differently is replaced by Python's own. It used to be by navigating
+    // the frame again: the page went, the loader came up, and the page was
+    // drawn from nothing in front of the user -- a reload in all but name,
+    // a few seconds into every visit whose kept home page was not Python's
+    // word for word (a project opened or removed, a folder the browser no
+    // longer grants). Now Python's page is built in a second frame the user
+    // does not see, over the first, and faded in over it once it has drawn:
+    // its styles, its fonts and, a project's viewer, its image. The page
+    // shown stays as it is, and usable, until then; used meanwhile, it stays
+    // for good and the second frame goes. A page built unseen that has to be
+    // seen (a question, a last word: frameBoot `unveil`) is shown at once.
+
+    //: The page being built unseen, while there is one: its frame, and what
+    //: it says (PlexoraShellLoader `shown`, `reveal`).
+    let standby = null;
+    //: Nothing here is timed to a browser: the page is written when this
+    //: browser's Python answers, and shown when it says it has drawn. These
+    //: only bound a page that never says so. Not written in STANDBY_WRITE_MS:
+    //: the second frame goes and the page shown stays. Written but not drawn
+    //: in STANDBY_DRAW_MS (a viewer's image: STANDBY_IMAGE_MS): shown as it
+    //: is, drawing on in place as any page does.
+    const STANDBY_WRITE_MS = 60000;
+    const STANDBY_DRAW_MS = 10000;
+    const STANDBY_IMAGE_MS = 15000;
+    //: A viewer with no image to wait for: none yet this long after its page
+    //: has loaded (a project without one, a volume).
+    const STANDBY_NO_IMAGE_MS = 1500;
+    //: How often the page shown is asked whether it has been used, while the
+    //: second frame's page is written.
+    const STANDBY_USE_POLL_MS = 100;
+
+    //: Whether the viewer's image in `win` is drawn: every item shown fully
+    //: loaded, and the view still (tools/bench_web's `settledIn`). Null for
+    //: a page without a viewer.
+    function imageDrawn(win) {
+        const viewer = win.__plexora && win.__plexora.seaDragonViewer && win.__plexora.seaDragonViewer.viewer;
+        if (!viewer || !viewer.world) return null;
+        const count = viewer.world.getItemCount();
+        if (!count) return false;
+        if (typeof viewer.isAnimating === "function" && viewer.isAnimating()) return false;
+        for (let i = 0; i < count; i += 1) {
+            const item = viewer.world.getItemAt(i);
+            if (item.getOpacity() > 0 && !item.getFullyLoaded()) return false;
+        }
+        return true;
+    }
+
+    //: Resolves once the page written in `win` has drawn, at its time limit,
+    //: or as soon as `used()`.
+    async function drawnIn(win, used) {
+        const start = Date.now();
+        let limit = STANDBY_DRAW_MS;
+        const left = () => Math.max(0, start + limit - Date.now());
+        const until = async (test) => {
+            while (left() > 0 && !used()) {
+                try {
+                    if (test()) return;
+                } catch (error) {
+                    return;
+                }
+                await wait(40);
+            }
+        };
+        // Its stylesheets, scripts and pictures (its `load`).
+        await until(() => win.document.readyState === "complete");
+        // Its fonts, the icons' among them.
+        try {
+            if (win.document.fonts) await Promise.race([win.document.fonts.ready, wait(left())]);
+        } catch (error) { /* drawn without */ }
+        // A project's viewer: its image.
+        if (win.flaskVariables && win.flaskVariables.datasource) {
+            limit = STANDBY_IMAGE_MS;
+            const loaded = Date.now();
+            await until(() => {
+                const drawn = imageDrawn(win);
+                return drawn === null ? Date.now() - loaded > STANDBY_NO_IMAGE_MS : drawn;
+            });
+        }
+        // Two of its frames: what it has is on the screen.
+        const painted = () => Promise.race([
+            new Promise((resolve) => win.requestAnimationFrame(() => win.requestAnimationFrame(resolve))),
+            wait(Math.max(100, left())),
+        ]);
+        await painted();
+        // Its entrance played out (the home page's card rises in, its title
+        // fades in), here where nobody sees it: the page fades in as it
+        // stands, not starting over. Twice more for one a script starts late.
+        for (let round = 0; round < 3 && settled(win) && !used(); round += 1) await painted();
+    }
+
+    //: The animations playing in `win` that end, ended now; how many there
+    //: were. One that never ends (a spinner, a glow) plays on.
+    function settled(win) {
+        let ended = 0;
+        let all = [];
+        try {
+            all = typeof win.document.getAnimations === "function" ? win.document.getAnimations() : [];
+        } catch (error) {
+            return 0;
+        }
+        for (const one of all) {
+            try {
+                const timing = one.effect && one.effect.getComputedTiming();
+                if (!timing || !Number.isFinite(timing.endTime) || one.playState !== "running") continue;
+                one.finish();
+                ended += 1;
+            } catch (error) { /* left to play */ }
+        }
+        return ended;
+    }
+
+    //: The app's page replaced by a new frame at `address`, faded in over it
+    //: once its page has drawn (see above). `keeps(frame)` sets a frame up
+    //: as the app's (hostBoot). Resolves "replaced" once the new frame is
+    //: the app's; otherwise the page shown stays and the new frame goes:
+    //: "used" when `used()` says it was used first, "late" when the new page
+    //: was never written, "busy" when another replacement is under way.
+    async function replaceFrame(address, used, keeps) {
+        const old = doc.getElementById("plexora-app");
+        if (standby || !old) return "busy";
+        const frame = doc.createElement("iframe");
+        frame.title = old.title;
+        frame.className = "plexora-app-frame is-standby";
+        frame.src = address;
+        const said = new Promise((resolve) => {
+            standby = { frame, written: () => resolve("written"), needed: () => resolve("needed") };
+        });
+        let polling = 0;
+        const usedFirst = new Promise((resolve) => {
+            polling = global.setInterval(() => {
+                if (used()) resolve("used");
+            }, STANDBY_USE_POLL_MS);
+        });
+        keeps(frame);
+        // Right over the old one, so under anything the host shows over the app.
+        old.after(frame);
+        let what = "late";
+        try {
+            what = await Promise.race([said, usedFirst, wait(STANDBY_WRITE_MS).then(() => "late")]);
+            if (what === "written") await drawnIn(frame.contentWindow, used);
+        } catch (error) { /* shown as it is */ }
+        global.clearInterval(polling);
+        standby = null;
+        if (used() || what === "late") {
+            frame.remove();
+            return used() ? "used" : "late";
+        }
+        const focused = doc.activeElement === old;
+        old.removeAttribute("id");
+        old.classList.add("is-leaving");
+        frame.id = "plexora-app";
+        frame.classList.remove("is-standby");
+        if (focused) {
+            try {
+                frame.contentWindow.focus();
+            } catch (error) { /* the page takes it when clicked */ }
+        }
+        // Under the new one until its fade is over.
+        global.setTimeout(() => old.remove(), VEIL_MS + 40);
+        return "replaced";
     }
 
     //: Keep the tab's address and title what the frame shows.
@@ -1247,7 +1440,7 @@
         const go = () => {
             if (done) return;
             done = true;
-            shared.shown();
+            shared.shown(global);
         };
         global.requestAnimationFrame(go);
         global.setTimeout(go, 400);
@@ -1268,9 +1461,10 @@
     //: Python (services/backend.js `PlexoraShellGate`) and the status chip
     //: says "Starting" meanwhile. Then Python's own answer for the address:
     //: kept for the next visit; the same, or the same but for its times
-    //: (written in); otherwise the page loads again from Python -- unless it
-    //: has been used (pressed, typed in), when it stays as it is: a reload
-    //: would throw away what was being done, a file being picked among it.
+    //: (written in); otherwise Python's page is faded in over it once drawn
+    //: (replaceFrame) -- unless it has been used (pressed, typed in, zoomed)
+    //: first, when it stays as it is: replacing it would throw away what was
+    //: being done, a file being picked among it.
     //: `kept.opens`: the tool the address asked for (`?tool=`), on a kept
     //: plain viewer (`kept.page`, its address): opened once Python is up, and
     //: Python's plain page is what the kept one is checked against.
@@ -1286,8 +1480,13 @@
         global.__plexoraEarly = { route, project };
         let used = false;
         const use = () => { used = true; };
-        const USES = ["pointerdown", "keydown", "input", "change", "drop"];
+        // A wheel too: a viewer zoomed is a view the page replacing it would
+        // not show.
+        const USES = ["pointerdown", "keydown", "input", "change", "drop", "wheel"];
         for (const type of USES) global.addEventListener(type, use, true);
+        const unwatched = () => {
+            for (const type of USES) global.removeEventListener(type, use, true);
+        };
         const task = parsed().then(() => (global.PlexoraStatus ? global.PlexoraStatus.begin("Starting") : null));
         let fresh = null;
         let checked = null;
@@ -1296,17 +1495,26 @@
             await host.PlexoraShellStarted;
             const response = await global.PlexoraPython.fetch(asked, { headers: { Accept: "text/html" } });
             if (response.ok) fresh = await response.text();
-            // Every kept answer the page was given, asked of Python again.
-            if (project && host.PlexoraKept) checked = await host.PlexoraKept.checked(global).catch(() => null);
+            // Every kept answer the page was given, asked of Python again --
+            // waited for only when the page itself is Python's: one that is
+            // not is replaced whatever they say (and its writes wait for
+            // them all the same, services/keptAnswers.js `cleared`).
+            const samePage = fresh !== null && timeless(fresh) === timeless(html);
+            if (project && host.PlexoraKept && samePage) {
+                checked = await host.PlexoraKept.checked(global).catch(() => null);
+            }
         } catch (error) {
             // Python did not start: the host takes the frame down and says so.
+            unwatched();
             return;
         } finally {
             const shown = await task;
             if (shown) shown.done();
-            for (const type of USES) global.removeEventListener(type, use, true);
         }
-        if (fresh === null) return;
+        if (fresh === null) {
+            unwatched();
+            return;
+        }
         host.PlexoraPages.put(asked, fresh);
         const changed = Boolean(checked && checked.changed.length);
         global.__plexoraEarly.changed = checked ? checked.changed : null;
@@ -1320,12 +1528,17 @@
         };
         // Left for another page meanwhile (a Recent row opened): `global` is
         // that page's window now, and nothing here is about it.
-        if (global.document !== doc) return;
+        if (global.document !== doc) {
+            unwatched();
+            return;
+        }
         if (fresh === html && !changed) {
+            unwatched();
             opens();
             return;
         }
         if (!changed && timeless(fresh) === timeless(html)) {
+            unwatched();
             const times = new DOMParser().parseFromString(fresh, "text/html").querySelectorAll("time");
             doc.querySelectorAll("time").forEach((node, i) => {
                 if (times[i]) node.textContent = times[i].textContent;
@@ -1333,13 +1546,33 @@
             opens();
             return;
         }
+        // Python's page, built unseen and faded in over this one once it has
+        // drawn (the host's replaceFrame): whenever this browser's Python
+        // answers and draws, nothing timed. This one stays until then, and
+        // stays for good if it is used first. Never by navigating the frame:
+        // that takes the page down and shows the loader, a reload.
+        let outcome = "used";
         if (!used) {
-            global.location.replace(global.location.href);
-            return;
+            const replace = host.PlexoraShellReplace;
+            outcome = typeof replace === "function"
+                ? await replace(here(global.location), () => used).catch(() => "late") : "late";
+            global.__plexoraEarly.replaced = outcome;
+        }
+        unwatched();
+        global.__plexoraEarly.used = used;
+        if (outcome === "replaced" || outcome === "busy") return;
+        if (outcome === "late") console.warn("shell: Python's page for this address was not drawn; the kept one stays");
+        // The page stays: whether it was drawn from answers no longer so,
+        // if that was not asked yet (its page was not Python's).
+        let stale = changed;
+        if (checked === null && project && host.PlexoraKept) {
+            const late = await host.PlexoraKept.checked(global).catch(() => null);
+            stale = Boolean(late && late.changed.length);
+            global.__plexoraEarly.changed = late ? late.changed : null;
         }
         // Used, and drawn from answers that are no longer so: its writes
         // were refused (services/backend.js), and a reload is offered.
-        if (changed && global.PlexoraToast && typeof global.PlexoraToast.show === "function") {
+        if (stale && global.PlexoraToast && typeof global.PlexoraToast.show === "function") {
             global.PlexoraToast.show({
                 title: "This project changed",
                 note: "It changed while Plexora was starting. Reload to see it as it is now.",

@@ -37,7 +37,8 @@ const ROWS = [
     [/^\/config$/, "serve_config"], [/^\/get_channel_names$/, "get_channel_names"],
     [/^\/get_saved_channel_list$/, "get_saved_channel_list"], [/^\/view_transform\/[^/]+$/, "get_view_transform"],
     [/^\/resource_routing$/, "resource_routing"], [/^\/get_all_cells\/.+$/, "get_all_cells"],
-    [/^\/save_channel_list$/, "save_channel_list"], [/^\/[^/]+$/, "image_viewer"],
+    [/^\/save_channel_list$/, "save_channel_list"], [/^\/get_channel_gmm$/, "get_channel_gmm"],
+    [/^\/[^/]+$/, "image_viewer"],
 ];
 const classify = (url) => {
     const pathname = new URL(String(url), "http://site.test/").pathname;
@@ -53,7 +54,8 @@ const python = {
         const where = new URL(String(url), "http://site.test/");
         const route = where.pathname + where.search;
         asked.push(route);
-        const body = answers.get(route) ?? answers.get(where.pathname);
+        // An answer may be a promise: one Python takes its time over.
+        const body = await (answers.get(route) ?? answers.get(where.pathname));
         const status = body === undefined ? 404 : 200;
         const bytes = new TextEncoder().encode(body === undefined ? "{}" : body);
         // As services/pythonClient.js `send` does: every answer observed.
@@ -234,8 +236,44 @@ out.specPending = await specCase({ ...image, labels: { served: false, pending: t
 // once in this one: the same files.
 out.specGeneration = await specCase({ ...image, generation: 2, labels }, { ...image, generation: 1, labels });
 out.specMoved = await specCase({ ...image, labels }, { ...image, labels: { ...labels, path: "/derived/j/other.tiff" } });
+// The check answers at the first change; the rest is still asked, and the
+// whole of it logged, a moment later.
+await wait(20);
 out.specWarnings = warnings.filter((w) => w.includes("spec:image"));
 for (const w of out.specWarnings) warnings.splice(warnings.indexOf(w), 1);
+
+// Answers made from the pixels are asked last, and the first answer found
+// changed answers the check at once: a fit that takes seconds on a Python
+// just started does not hold up what a cheap answer has already settled.
+{
+    const gmm = "/get_channel_gmm?channel=DAPI&datasource=image";
+    const names = "/get_channel_names?datasource=image";
+    K.observe(`http://site.test${gmm}`, "GET", 200, type, json({ means: [1, 2] }));
+    K.observe(`http://site.test${names}`, "GET", 200, type, json(["DAPI"]));
+    await wait(20);
+    const w = { ...window, PlexoraKept: undefined };
+    new Function("window", "console", source)(w, console);
+    const k = w.PlexoraKept;
+    k.configure({ stamp: "1.0|py/1/" });
+    let go;
+    const up = new Promise((resolve) => { go = resolve; });
+    k.starting(up);
+    const p = {};
+    await k.answer(req(gmm), p);      // given first
+    await k.answer(req(names), p);
+    let fitted;
+    answers.set(gmm, new Promise((resolve) => { fitted = () => resolve(JSON.stringify({ means: [1, 2] })); }));
+    answers.set(names, JSON.stringify(["DNA"]));
+    asked.length = 0;
+    go();
+    await up;
+    const early = await Promise.race([k.checked(p), wait(500).then(() => "held by the fit")]);
+    out.pixelsLast = { asked: asked.slice(), early, cleared: await Promise.race([k.cleared(p), wait(500).then(() => "held")]) };
+    fitted();
+    await wait(20);
+    out.pixelsLast.results = k.report().results;
+    for (const w of warnings.filter((w) => w.includes("DNA") || w.includes(names))) warnings.splice(warnings.indexOf(w), 1);
+}
 
 // Auto-contrast moving on by itself: channels calibrated since, not a change;
 // a kept channel's window no longer so, a change.

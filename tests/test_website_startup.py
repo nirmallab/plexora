@@ -22,7 +22,10 @@ on the Mac. Now (client services/shell.js, workers/pythonWorker.js):
   a test machine's artefact). Its requests wait
   until then (services/backend.js `PlexoraShellGate`). Python's own answer
   then replaces it unless it is the same (its `<time>` words written in) or
-  the page has been used. Picking a file on it before Python is up opens the
+  the page has been used -- built in a second frame nobody sees and faded in
+  over it once drawn (`replaceFrame`), not by navigating the frame, which
+  showed the loader and drew the page again: a visible reload a few seconds
+  into the visit. Picking a file on it before Python is up opens the
   image as soon as Python is, and the kept page already lists the project in
   Recent on the next visit (the home page is kept again after another page).
 - only the home page: one that saves what it shows, shown from an old copy,
@@ -114,7 +117,47 @@ def test_a_kept_page_holds_its_requests_and_yields_to_python():
     assert 'PlexoraStatus.begin("Starting")' in early
     # Replaced only when unused, and never from a page already left.
     assert early.index("global.document !== doc") < early.index("if (!used) {")
-    assert "global.location.replace(global.location.href)" in early[early.index("if (!used) {"):]
+    # Replaced by the host, by a frame built unseen and faded in over it --
+    # never by navigating the frame, which took the page down, showed the
+    # loader and drew it again: a visible reload a few seconds into a visit.
+    replacing = early[early.index("if (!used) {"):early.index('title: "This project changed"')]
+    assert "host.PlexoraShellReplace" in replacing
+    assert "location.replace" not in replacing and "location.reload" not in replacing
+    # Watched for use until the host has decided, a zoom included.
+    assert '"wheel"' in early
+    assert early.index("unwatched();", early.index("if (!used) {")) > early.index("host.PlexoraShellReplace")
+
+
+def test_a_kept_page_is_replaced_by_a_frame_built_unseen():
+    """Python's page for a kept one is written in a second frame over the
+    first, invisible and taking no pointer, and faded in once it has drawn
+    (`drawnIn`: its load, fonts, a viewer's image, its entrance played out);
+    the kept page is dropped after the fade. Nothing is timed to the
+    browser: it waits for this browser's Python and page, and the limits only
+    bound a page that never says it is done. Used meanwhile, the kept page
+    stays and the second frame goes."""
+    boot = _function(SHELL, "hostBoot")
+    assert "global.PlexoraShellReplace = (address, used) => replaceFrame(address, used, keeps);" in boot
+    assert boot.index("global.PlexoraShellReplace") < boot.index("doc.body.appendChild(frame)")
+    replace = _function(SHELL, "replaceFrame")
+    assert '"plexora-app-frame is-standby"' in replace and "old.after(frame)" in replace
+    assert "await drawnIn(frame.contentWindow, used)" in replace
+    # Used first, or never written: the kept page stays.
+    used = replace.index("if (used() || what === \"late\")")
+    assert replace.index("frame.remove();", used) < replace.index('frame.id = "plexora-app"')
+    # The app's id moves to the new frame; the old one goes after the fade.
+    assert replace.index('old.removeAttribute("id")') < replace.index('frame.id = "plexora-app"')
+    assert "old.remove(), VEIL_MS" in replace
+    drawn = _function(SHELL, "drawnIn")
+    assert 'readyState === "complete"' in drawn and "fonts.ready" in drawn and "imageDrawn(win)" in drawn
+    assert "settled(win)" in drawn
+    # The new frame's page says when it is written, or that it must be seen.
+    assert "standby.written()" in SHELL and "standby.needed()" in SHELL
+    assert "shared.shown(global)" in _function(SHELL, "reveal")
+    assert "shared.standing(global)" in _function(SHELL, "unveil")
+    css = (ROOT / "plexora/client/src/css/shell.css").read_text(encoding="utf-8")
+    standby = css[css.index(".plexora-app-frame.is-standby"):]
+    assert "opacity: 0" in standby[:standby.index("}")] and "pointer-events: none" in standby[:standby.index("}")]
 
 
 def test_the_worker_warms_outside_its_queue_and_boot_takes_over():
@@ -137,13 +180,14 @@ def test_the_start_asks_nothing_about_storage():
     (`askWhereOnce`, removed 2026-11-09), and a later visit no longer asks in
     the loader for a folder the browser stopped granting: the store is
     prepared without a question, and the first save runs the onboarding
-    (views/webOnboarding.js). The frame's first load does nothing but keep the
-    home page."""
+    (views/webOnboarding.js). A frame's load (the first one's, or one that
+    replaces a kept page's: `keeps`) does nothing but keep the home page."""
     boot = _function(SHELL, "hostBoot")
     assert "await global.PlexoraStore.prepare().catch(() => null);" in boot
     assert "askWhereOnce" not in SHELL and "keepInBrowser" not in SHELL
-    load = boot[boot.index('frame.addEventListener("load"'):]
+    load = boot[boot.index('const keeps = (one) => one.addEventListener("load"'):]
     load = load[:load.index("});")]
-    assert "keepHome(frame, pages)" in load and "PlexoraStore" not in load
+    assert "keepHome(one, pages)" in load and "PlexoraStore" not in load
+    assert "keeps(frame);" in boot
     # The store is prepared before Python starts, which it hands the folder to.
     assert boot.index("PlexoraStore.prepare(") < boot.index("PlexoraPython.start(")

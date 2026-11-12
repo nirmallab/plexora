@@ -251,6 +251,17 @@ html.plexora-boot-continued #plexora-boot-status {
     opacity: 0;
 }
 
+/* Python's page built unseen over a kept one (shell.js replaceFrame): no
+   pointer until it fades in over it, and then none for the kept page. */
+.plexora-app-frame.is-standby {
+    opacity: 0;
+    pointer-events: none;
+}
+
+.plexora-app-frame.is-leaving {
+    pointer-events: none;
+}
+
 /* Reduced motion: no rise, no scale, no breathing glow, no fades; the orb
    is one still frame (orbDriver.js) and a line changes in place. */
 @media (prefers-reduced-motion: reduce) {

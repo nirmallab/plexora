@@ -118,9 +118,10 @@ def test_the_same_answers_let_the_writes_go(probe):
     # /config's lastOpenedAt changes with every start: not a difference.
     assert probe["checked"] == {"checked": 3, "changed": []}
     assert probe["cleared"] is True
-    # The spec: Python's while none was kept, then asked again by the check.
-    assert probe["asked"] == ["spec:image", "/config", "/get_channel_names?datasource=image",
-                              "/get_saved_channel_list?datasource=image", "spec:image"]
+    # The spec: Python's while none was kept, then asked again by the check --
+    # first, ahead of the answers: whether the files are the ones drawn.
+    assert probe["asked"] == ["spec:image", "spec:image", "/config", "/get_channel_names?datasource=image",
+                              "/get_saved_channel_list?datasource=image"]
     # The browser node checks its project again, with Python's spec.
     assert probe["revalidated"] == 1
     # A page given nothing from here never waits.
@@ -134,6 +135,22 @@ def test_a_changed_answer_refuses_the_writes_and_is_kept_anew(probe):
     assert json.loads(probe["rekept"]) == [{"channel": "DAPI", "r": 255}]
     assert probe["warnings"] == ["kept answers: changed since they were kept: "
                                  "/get_saved_channel_list?datasource=image"]
+
+
+def test_pixel_answers_are_asked_last_and_a_change_answers_at_once(probe):
+    """A channel's fit took 6.5 s on a Python just started (it is made anew,
+    holding Python's one thread), and the check asked it in the order given,
+    so a changed channel list a millisecond's answer away waited behind it
+    and the kept viewer was replaced 7 s late. The answers made from the
+    pixels go last now, and the first change answers the check: the page is
+    replaced and its writes refused without waiting for the rest, which is
+    still asked, kept and logged."""
+    case = probe["pixelsLast"]
+    assert case["asked"] == ["/get_channel_names?datasource=image",
+                             "/get_channel_gmm?channel=DAPI&datasource=image"]
+    assert case["early"] == {"checked": 2, "changed": ["/get_channel_names?datasource=image"]}
+    assert case["cleared"] is False
+    assert case["results"] == [{"checked": 2, "changed": ["/get_channel_names?datasource=image"]}]
 
 
 def test_a_write_has_its_projects_state_asked_again(probe):
@@ -198,6 +215,15 @@ def test_the_host_shows_a_kept_viewer_and_checks_it():
     early = _function(SHELL, "earlyPage")
     assert "global.PlexoraNode.project(project)" in early
     assert early.index("await host.PlexoraShellStarted;") < early.index("host.PlexoraKept.checked(global)")
+    # The answers are waited for only when Python's page is the kept one: a
+    # page that is not is replaced whatever they say, at once.
+    asked = early[early.index("const samePage"):early.index("} catch (error)")]
+    assert "timeless(fresh) === timeless(html)" in asked
+    assert asked.index("samePage") < asked.index("host.PlexoraKept.checked(global)")
+    # A page that stays asks them then, for the reload it may offer.
+    stays = early[early.index('if (outcome === "replaced"'):]
+    assert "checked === null && project && host.PlexoraKept" in stays
+    assert stays.index("host.PlexoraKept.checked(global)") < stays.index('title: "This project changed"')
     # An unused page is replaced; a used one offers a reload.
     assert early.index("if (!used) {") < early.index('title: "This project changed"')
 
