@@ -462,8 +462,10 @@ def note_flat_image(resource) -> None:
         report = image_pyramid.flat_image_report(source)
         if report is None:
             return
+        # A copy of either kind (compressed or exact) is served as it is.
         where = image_pyramid.resolve_derived_image(
-            source, node_image_dir(resource.id))
+            source, node_image_dir(resource.id), either=True,
+            compressed=bool(report.get("compressible")) and image_pyramid.compress_default())
     except Exception:  # noqa: BLE001 -- an offer, never a reason to refuse the file
         return
     if where.existing is not None:

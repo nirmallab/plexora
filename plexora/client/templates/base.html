@@ -8,7 +8,7 @@
     <link rel="apple-touch-icon" href="{{ data.base_url }}/client/src/img/apple-touch-icon.png">
     <!-- Styles -->
     <link rel="stylesheet" href="{{ data.base_url }}/client/src/css/tokens.css?v=20261027_sidebar_radius">
-    <link rel="stylesheet" href="{{ data.base_url }}/client/src/css/main.css?v=20261112_approximate_bundles">
+    <link rel="stylesheet" href="{{ data.base_url }}/client/src/css/main.css?v=20261112_compressed_pyramids">
     {# Here and not in a page block: the explorer opens from every page, and
        appRouter.adoptStyles turns page stylesheets off on navigation. #}
     <link rel="stylesheet" href="{{ data.base_url }}/client/src/css/explorer.css?v=20261110_file_or_folder">
@@ -275,7 +275,7 @@
        their CSS in main.css, like importHelp below. #}
     <script src="{{ data.base_url }}/client/src/js/views/updateDialog.js?v=20261107_website" defer></script>
     <script src="{{ data.base_url }}/client/src/js/views/helpMenu.js?v=20261109_docsdomain" defer></script>
-    <script src="{{ data.base_url }}/client/src/js/views/importHelp.js?v=20261111_ets" defer></script>
+    <script src="{{ data.base_url }}/client/src/js/views/importHelp.js?v=20261112_compressed_pyramids" defer></script>
     {# What kind of address a string is: a web address, a `node://` locator
        or a plain path. Read by importSample.js and quickViewLanding.js, so
        both agree about an `s3://` URL instead of each testing for one its own
@@ -289,7 +289,7 @@
        primary button, the viewer's "+ Add Layer" and the requirements modal's
        layer row all open it, and none of those three shares a stylesheet.
        After datasetPicker.js, whose picker is this dialog's Dataset row. #}
-    <script src="{{ data.base_url }}/client/src/js/views/importSample.js?v=20261112_registration" defer></script>
+    <script src="{{ data.base_url }}/client/src/js/views/importSample.js?v=20261112_compressed_pyramids" defer></script>
     <!-- New Dataset: a dataset from a folder (scan, match, create). After
        importSample.js, whose dialog styles it reuses. -->
     <script src="{{ data.base_url }}/client/src/js/views/datasetBuilder.js?v=20261029_bucket_datasets" defer></script>

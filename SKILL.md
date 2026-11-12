@@ -1447,7 +1447,36 @@ Entry points:
   twice. `reason` says why a file cannot go smaller, `likely` and `estimate`
   answer the export dialog from a stat and the first page. `can_read()` (zstd
   present) is true on the website too; `can_make()` is not, because the
-  website's Python cannot write a file of that size.
+  website's Python cannot write a file of that size. `write_tiles(path,
+  shapes, tiles, description=, source=)` writes a container from tiles as
+  they are made (encoded on a pool while the next are made, through a
+  dot-prefixed `.tmp`): the compressed pyramid copy's writer.
+- `server/utils/image_pyramid.py` — **the pyramidized copy of a large flat
+  channel-stack TIFF** (one level, longest side over `FLAT_IMAGE_MAX_SIDE`
+  4096, or a stack over `STACK_LEVEL_VOXELS`): `pyramid_gaps` says when,
+  `flat_image_report` what the Import dialog states (header only, with
+  `compressible` and `compressed_bytes_estimate`), `pyramidize_image` builds
+  it in one streaming pass (2x2 integer mean, each level from the one above,
+  scratch levels memory-mapped beside the output). Two kinds:
+  `<stem>.pyramid.ome.tiff` (zlib level 1 SubIFD OME-TIFF, exact) and, with
+  `compress=True`, `<stem>.pyramid.approx` (`APPROX_SUFFIX`; uint16 planar
+  stacks only, `compressible`, never on the website): the same exact tiles
+  through `approximate_image.write_tiles` on its 1024 grid, every pixel
+  within sqrt(v)+0.25 of the exact level, with the TIFF's OME-XML (the
+  `IMAGE_MARKER` name and `{source, source_key}` description, channel names,
+  pixel size) in the index. The compressed kind is the default
+  (`compress_default` -> `paths.compress_pyramids`, the settings file's
+  `compress_pyramids`, Settings > Data, `plexora config set
+  compress-pyramids`); the Import dialog's switch answers `pyramidize:<pick>`
+  "compressed"/"exact" (`data_model.PYRAMIDIZE_KINDS`, also sent to a node's
+  `POST /resources/<id>/pyramidize` as `{kind}`). `resolve_derived_image(...,
+  compressed=, either=)` adopts a copy of the asked kind, or with `either`
+  (nobody chose) of either kind; `find_derived_image` (the website) either
+  kind; `is_image_copy`/`copy_source`/`is_adoptable_image` read a `.approx`
+  from its index (`_ome_text`). A compressed copy is recorded through its
+  formats reader (`data_model._describe_compressed_copy`, `image_kind`
+  `formats.IMAGE_KIND`) and read in place like a bundle's `.approx`.
+  `page_build` is the website's page builder's spec (exact only).
 - `views/webOnboarding.js` — **Plexora Lite's first-use dialog**, where the
   website keeps the user's work (`window.PlexoraOnboarding`,
   `ensure({reason, quiet})` -> `"ready"|"cancelled"`, `open({reason, start})`). It
@@ -10675,7 +10704,18 @@ in **5.6 s**.
   Three image-side opens are plain on purpose and read no series choice:
   `xenium_focus`'s per-member opens (each member file is one channel's
   plane) and the two header-only OME reads (`image_pyramid._ome_image_fields`,
-  `import_proposal._ome_image_name`).
+  which reads a compressed `.pyramid.approx` copy's OME-XML from its index,
+  and `import_proposal._ome_image_name`).
+- **A pyramidized copy is one of two kinds, and every check knows both.**
+  `<stem>.pyramid.ome.tiff` or the compressed `<stem>.pyramid.approx`
+  (`image_pyramid.COPY_SUFFIXES`): recognising (`is_image_copy`,
+  `copy_source`, `is_adoptable_image`), hiding a copy beside its original
+  (`import_proposal._without_image_copies`, `dataset_scan._derived_copy`),
+  derived files in a bundle (`sources.PYRAMID_ENDING` is a tuple for
+  `endswith`, `bundles.DERIVED_NAMES`) and the node's adoption
+  (`node/resources.note_flat_image`, `either=True`). A check written against
+  `PYRAMID_SUFFIX` alone misses every copy made since compression became the
+  default.
 - **A TIFF `needs_region_reader` names is never given a pyramidized copy.**
   `convertOmeTiff` describes it as `tiff_region.open_image`'s halving chain
   (`_describe_chained_tiff`, no gaps) and the provider serves that chain,

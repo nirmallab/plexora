@@ -5483,7 +5483,7 @@ def _image_channel_stem(filePath):
         r'|\.qptiff|\.svs|\.ndpis|\.ndpi|\.scn|\.mrxs|\.bif|\.svslide|\.jpeg|\.jpg'
         r'|\.dcm|\.dicom|\.ims'
         r'|\.czi|\.nd2|\.lif|\.lof|\.xlef|\.vsi|\.ets|\.oir|\.oib|\.oif'
-        r'|\.dv|\.r3d|\.mcd|\.zvi|\.lsm|\.kfb',
+        r'|\.dv|\.r3d|\.mcd|\.zvi|\.lsm|\.kfb|\.approx',
         '', Path(filePath).name, flags=re.IGNORECASE)
 
 
@@ -5928,6 +5928,31 @@ def _describe_local_tiff(series, stem_source):
     }
 
 
+def _describe_compressed_copy(copy, stem_source):
+    """`_describe_local_tiff` for a compressed pyramidized copy
+    (`image_pyramid.APPROX_SUFFIX`), read through its formats reader
+    (server/utils/formats/approx.py) as everything after registration reads
+    it: recorded as that kind, keys stemmed from `stem_source`."""
+    from plexora.server.utils import approximate_image, formats
+
+    pyramid = formats.open_image(copy)
+    try:
+        channels = int(pyramid[0].shape[0])
+        stem = _image_channel_stem(stem_source)
+        return {
+            'maxLevel': len(pyramid),
+            'tileHeight': approximate_image.TILE,
+            'tileWidth': approximate_image.TILE,
+            'height': int(pyramid[0].shape[-2]),
+            'width': int(pyramid[0].shape[-1]),
+            'num_channels': channels,
+            'channel_names': [f"{stem}_{i}" for i in range(channels)],
+            'image_kind': formats.IMAGE_KIND,
+        }
+    finally:
+        pyramid.close()
+
+
 def _describe_chained_tiff(filePath):
     """`_describe_local_tiff` for a file read through `tiff_region.open_image`
     (`tiff_series.needs_region_reader`): the geometry of the halving chain its
@@ -5977,8 +6002,15 @@ def _image_pyramid_reporter(stage_callback=None, progress_callback=None):
     return staged, report
 
 
-def _pyramidized_copy(filePath, dataDirectory, stage, report, volume_description=None):
+def _pyramidized_copy(filePath, dataDirectory, stage, report, volume_description=None,
+                      compress=None):
     """The pyramidized copy of the flat image at `filePath`: adopted, or built.
+
+    `compress` is the kind asked for: True the compressed copy
+    (`image_pyramid.APPROX_SUFFIX`, where `image_pyramid.compressible`), False
+    the exact one, None "whichever is there, else the setting's"
+    (`image_pyramid.compress_default`). A copy of the kind asked for is
+    adopted; asked for one kind with only the other there, it is built.
 
     Raises `PyramidError` (a ValueError, which the import routes turn into a
     400 sentence) when there is nowhere with room to write it or the build
@@ -6014,20 +6046,24 @@ def _pyramidized_copy(filePath, dataDirectory, stage, report, volume_description
             progress=report, stage=stage)
         if built is not None:
             return built
-    needed = int(report_.get("output_bytes_estimate", 0)) \
-        + int(report_.get("scratch_bytes_estimate", 0))
+    wanted = image_pyramid.compress_default() if compress is None else bool(compress)
+    compressed = wanted and bool(report_.get("compressible"))
+    output = report_.get("compressed_bytes_estimate") if compressed else report_.get("output_bytes_estimate")
+    needed = int(output or 0) + int(report_.get("scratch_bytes_estimate", 0))
     # Built by Python on the website (the page took no part): written into the
     # tab's memory, so refused there when it cannot fit (server/utils/tab_room.py).
     from plexora.server.utils import tab_room
 
     tab_room.check_build(needed, "This image's pyramid")
     where = image_pyramid.resolve_derived_image(
-        filePath, dataDirectory, needed_bytes=needed)
+        filePath, dataDirectory, needed_bytes=needed, compressed=compressed,
+        either=compress is None)
     if where.existing is not None:
         return where.existing
     if not where.writable:
         raise image_pyramid.PyramidError(where.reason)
-    _log.info("Building a pyramid for %s (one-time) -> %s", Path(filePath).name, where.target)
+    _log.info("Building a %spyramid for %s (one-time) -> %s", "compressed " if compressed else "",
+              Path(filePath).name, where.target)
     image_pyramid.pyramidize_image(
         filePath, where.target,
         channel_names=names,
@@ -6035,6 +6071,7 @@ def _pyramidized_copy(filePath, dataDirectory, stage, report, volume_description
         progress_callback=report,
         stage_callback=stage,
         volume_description=volume_description,
+        compress=compressed,
     )
     return where.target
 
@@ -6097,6 +6134,12 @@ def _convert_ims_image(filePath):
         source.close()
 
 
+#: `pyramidize` answers that name the kind of copy (the Import dialog's
+#: switch): the compressed one, or the exact one. True and None leave the
+#: kind to whatever copy is there, else to the setting.
+PYRAMIDIZE_KINDS = {"compressed": True, "exact": False}
+
+
 def convertOmeTiff(filePath, channelFilePath=None, dataDirectory=None, isLabelImg=False,
                    progress_callback=None, segmentation_mode_=segmentation_pyramid.DEFAULT_MODE,
                    image_type=None, stage_callback=None, label_geometry=None,
@@ -6112,9 +6155,11 @@ def convertOmeTiff(filePath, channelFilePath=None, dataDirectory=None, isLabelIm
     level (`image_pyramid.pyramid_gaps`). None and True write a pyramidized
     copy once -- beside the original, or under `dataDirectory` when that
     folder cannot take it -- and describe the COPY, adding `imageCopy` and
-    `imageSourceKey`; a copy already there is adopted. False describes the
-    original as it is. The original is never written to. Every other format
-    ignores it.
+    `imageSourceKey`; a copy already there is adopted, and a new one is the
+    kind the setting names (`image_pyramid.compress_default`).
+    "compressed" and "exact" (PYRAMIDIZE_KINDS) ask for that kind of copy.
+    False describes the original as it is. The original is never written to.
+    Every other format ignores it.
 
     `image_type` is the user's override -- 'brightfield', 'fluorescence', or
     None for "decide". It changes how the file is READ, never what is in it:
@@ -6284,8 +6329,11 @@ def convertOmeTiff(filePath, channelFilePath=None, dataDirectory=None, isLabelIm
 
         if gaps and pyramidize is not False:
             copy = _pyramidized_copy(filePath, dataDirectory, stage, report,
-                                     volume_description=volume_description)
-            if volume_description:
+                                     volume_description=volume_description,
+                                     compress=PYRAMIDIZE_KINDS.get(pyramidize))
+            if str(copy).lower().endswith(image_pyramid.APPROX_SUFFIX):
+                channel_info = _describe_compressed_copy(copy, filePath)
+            elif volume_description:
                 from plexora.server.volume.sources.tiff import open_tiff_volume
 
                 copied = open_tiff_volume(copy, z_choice=z_semantics, t_choice=t_semantics,

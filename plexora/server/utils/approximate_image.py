@@ -35,6 +35,11 @@ The index keeps the image's first description (the OME-XML, so channel names
 and the pixel size survive). `decode` writes a container out as a tiled TIFF,
 for whoever wants one; its Software tag (MARK) says what it is, so exporting
 it again copies it rather than making it smaller twice.
+
+The same container is a large flat image's compressed pyramid copy
+(server/utils/image_pyramid.py, `<name>.pyramid.approx`): `write_tiles` takes
+the tiles as the pyramid builder makes them, each level from the exact level
+above, so the error never compounds down the pyramid.
 """
 
 from __future__ import annotations
@@ -369,6 +374,70 @@ def encode(path, out, *, advance: Optional[Callable[[int], None]] = None,
     put(len(text).to_bytes(8, "little"))
     put(END)
     return {"size": written, "tiles": tiles_done}
+
+
+def write_tiles(path, shapes, tiles, *, description: Optional[str] = None, source: Optional[dict] = None,
+                workers: Optional[int] = None) -> dict:
+    """Write an approximate image to `path` from `tiles`: every tile of every
+    level of `shapes` ((C, Y, X) each), uint16, unpadded at the edges, in the
+    container's order -- level, plane, tile row, tile column. Tiles are
+    encoded on `workers` threads while the next are made; the file appears
+    under `path` only once complete (written through a dot-prefixed `.tmp`
+    beside it, removed on any failure). Returns {size, tiles}."""
+    from collections import deque
+
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_name(f".{path.name}-{os.getpid()}-{threading.get_ident()}.tmp")
+    count = _workers(workers)
+    levels_out = [{"shape": [int(side) for side in shape], "tiles": []} for shape in shapes]
+    grids = [_tile_grid(tuple(shape)) for shape in shapes]
+    wanted = [planes * rows * columns for planes, rows, columns in grids]
+    written = done = 0
+    try:
+        with open(temporary, "wb") as out, ThreadPoolExecutor(count) as pool:
+            def put(data) -> None:
+                nonlocal written
+                out.write(data)
+                written += len(data)
+
+            put(MAGIC)
+            level = 0
+            pending = deque()
+
+            def land(future) -> None:
+                nonlocal level, done
+                data = future.result()
+                while level < len(wanted) and len(levels_out[level]["tiles"]) >= wanted[level]:
+                    level += 1
+                if level == len(wanted):
+                    raise ValueError(f"{path.name}: more tiles were made than its levels hold.")
+                levels_out[level]["tiles"].append([written, len(data)])
+                put(data)
+                done += 1
+
+            for tile in tiles:
+                pending.append(pool.submit(encode_tile, tile))
+                if len(pending) >= 4 * count:
+                    land(pending.popleft())
+            while pending:
+                land(pending.popleft())
+            if done != sum(wanted):
+                raise ValueError(f"{path.name}: {done} tiles were made of the {sum(wanted)} its levels hold.")
+            index = {"format": FORMAT, "method": METHOD, "tile": TILE, "axes": "CYX", "dtype": "uint16",
+                     "levels": levels_out, "description": description or None,
+                     "resolution": None, "resolutionunit": None, "source": source}
+            text = json.dumps(index, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+            put(text)
+            put(len(text).to_bytes(8, "little"))
+            put(END)
+            out.flush()
+            os.fsync(out.fileno())
+        os.replace(temporary, path)
+    except BaseException:
+        temporary.unlink(missing_ok=True)
+        raise
+    return {"size": written, "tiles": done}
 
 
 def _tile_grid(shape) -> tuple:

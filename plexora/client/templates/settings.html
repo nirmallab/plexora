@@ -179,6 +179,24 @@
                     </div>
                 </div>
 
+                {# Whether the copy Plexora makes of a large image written
+                   without a pyramid is the compressed kind (paths.
+                   compress_pyramids, /settings/pyramids): the Import dialog's
+                   switch starts from it, and an import through the API, MCP or
+                   CLI takes it. settingsPage.js's PyramidsSection. #}
+                <h2 class="settings-panel-title plx-locations-after">Pyramids</h2>
+                <div class="settings-card" id="settings_pyramids">
+                    <label class="settings-node-field settings-remote-check">
+                        <input type="checkbox" id="settings_pyramids_compress">
+                        <span>Compress pyramid copies</span>
+                    </label>
+                    <div class="settings-meta" id="settings_pyramids_meta">
+                        A large image saved without a pyramid opens from a copy Plexora
+                        builds once. Compressed, the copy is about 75% smaller than an exact
+                        one, every pixel within its noise. Your original is never changed.
+                    </div>
+                </div>
+
                 <h2 class="settings-panel-title plx-locations-after">Data directory</h2>
                 <p class="settings-panel-lead">
                     Plexora's own folder, listed above as Data folder: its settings,
@@ -1076,5 +1094,5 @@
 {# remoteState.js is loaded by base.html, above and deferred, so it is parsed
    before this file runs -- the Remote servers section is one of its
    subscribers rather than a poller of its own. #}
-<script src="{{ data.base_url }}/client/src/js/views/settingsPage.js?v=20261110_onboarding_bundles" defer></script>
+<script src="{{ data.base_url }}/client/src/js/views/settingsPage.js?v=20261112_compressed_pyramids" defer></script>
 {% endblock %}

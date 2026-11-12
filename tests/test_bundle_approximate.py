@@ -347,6 +347,34 @@ def test_the_estimate_offers_smaller_images(slide):
         - rows["size"] + rows["approximate_size"]
 
 
+def test_a_compressed_pyramid_copy_goes_as_it_is(tmp_path, monkeypatch):
+    """A flat image's compressed pyramidized copy (`<name>.pyramid.approx`,
+    server/utils/image_pyramid.py) is a ready-to-open file: carried byte for
+    byte with "derived", stored rather than deflated, and never made smaller
+    again -- "approximate" makes the original smaller, not the copy."""
+    import plexora
+    from plexora.server.utils import image_pyramid
+
+    monkeypatch.setattr(image_pyramid, "FLAT_IMAGE_MAX_SIDE", 300)
+    original = tmp_path / "here" / "flat.tif"
+    original.parent.mkdir()
+    tifffile.imwrite(original, _fluorescence((2, 1100, 1000), seed=3), metadata={"axes": "CYX"})
+    plexora.register_image_datasource("flat", str(original))
+    copy = tmp_path / "here" / "flat.pyramid.approx"
+    assert _entry("flat")["channelFile"] == str(copy)
+
+    out = tmp_path / "flat.plexora"
+    bundles.export(["flat"], out, include={"images": True, "derived": True, "approximate": True})
+    names, manifest = _members(out)
+    carried, source = _ref(manifest, "channelFile"), _ref(manifest, "imageSource")
+    assert carried["derived"] is True and not carried.get("approximate")
+    assert carried["included"].endswith("/flat.pyramid.approx") and carried["included"] in names
+    with zipfile.ZipFile(out) as bundle:
+        assert bundle.read(carried["included"]) == copy.read_bytes()
+        assert bundle.getinfo(carried["included"]).compress_type == zipfile.ZIP_STORED
+    assert source["approximate"].endswith("/flat.tif.approx")
+
+
 def test_never_made_on_the_website(slide, monkeypatch):
     monkeypatch.setattr(approximate_image, "can_make", lambda: False)
     built = bundles.plan(["slide"], {"images": True, "approximate": True})
