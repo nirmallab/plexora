@@ -792,7 +792,10 @@ def test_a_good_relay_file_is_read_then_deleted(tmp_path):
     (json.dumps(_relay_json(key=wire.b64url_encode(bytes(16)))), '"key"'),
     (json.dumps(_relay_json(idle_exit=-1)), '"idle_exit"'),
     (json.dumps(_relay_json(idle_exit=True)), '"idle_exit"'),
-])
+# The cases hold fresh random rooms and keys, so their ids are fixed by hand:
+# xdist refuses a run whose workers collect different test ids.
+], ids=["not-json", "not-object", "version", "not-wss", "room", "auth", "key",
+        "idle-exit-negative", "idle-exit-bool"])
 def test_a_bad_relay_file_is_refused_and_left_in_place(tmp_path, text, words):
     path = tmp_path / "room.json"
     path.write_text(text)
