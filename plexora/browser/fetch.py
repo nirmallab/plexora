@@ -291,7 +291,11 @@ def _fetcher() -> Fetcher:
         from pyodide.ffi import can_run_sync, run_sync
     except ImportError:  # pragma: no cover - not a browser
         return XhrFetcher()
-    if not can_run_sync():
+    from plexora.server.utils import no_suspend
+
+    # Inside a C library's call back into Python (h5py reading a remote .ims)
+    # a suspension would end Python: a synchronous request instead.
+    if no_suspend.active() or not can_run_sync():
         return XhrFetcher()
     return BrowserFetcher(_wait_on or run_sync)
 

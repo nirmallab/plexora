@@ -80,6 +80,7 @@ from __future__ import annotations
 
 import datetime as _dt
 import functools
+import io
 import math
 import os
 import threading
@@ -196,10 +197,68 @@ def _open_file(path, **options):
         # here, where h5py's open would keep asking a stream that cannot say
         # and never return. h5py asks for it next anyway; it is remembered.
         stream.size
-        return h5py.File(stream, "r", **options), stream
+        # And the superblock's block, outside h5py too: the first fetch from
+        # a host (its connection, the modules it imports) is made where the
+        # website's Python can still suspend for it.
+        stream.pread(0, min(stream.size, _FIRST_READ))
+        return h5py.File(_HeldReads(stream), "r", **options), stream
     except Exception:
         stream.close()
         raise
+
+
+#: What `_open_file` reads of a remote .ims before h5py does.
+_FIRST_READ = 1 << 16
+
+
+class _HeldReads(io.RawIOBase):
+    """The stream h5py reads a remote .ims through: every read waits without
+    suspending (server/utils/no_suspend.py). h5py's `fileobj` driver calls
+    these from HDF5's C code, where the website's Python cannot suspend --
+    "SuspendError: trying to suspend JS frames" ended it on a 349 GB .ims over
+    SFTP (0.0.52). Plexora's own chunk reads (`_StreamRaw`) use the stream
+    itself and keep their concurrent fetches. Closing this leaves the stream
+    open: `_close_file` closes it after the file."""
+
+    def __init__(self, stream):
+        super().__init__()
+        self._stream = stream
+
+    def readable(self) -> bool:
+        return True
+
+    def seekable(self) -> bool:
+        return True
+
+    def writable(self) -> bool:
+        return False
+
+    def tell(self) -> int:
+        return self._stream.tell()
+
+    def seek(self, offset: int, whence: int = 0) -> int:
+        from plexora.server.utils import no_suspend
+
+        with no_suspend.held():
+            return self._stream.seek(offset, whence)
+
+    def readinto(self, buffer) -> int:
+        from plexora.server.utils import no_suspend
+
+        with no_suspend.held():
+            return self._stream.readinto(buffer)
+
+    def read(self, n: int = -1) -> bytes:
+        from plexora.server.utils import no_suspend
+
+        with no_suspend.held():
+            return self._stream.read(n)
+
+    def readall(self) -> bytes:
+        from plexora.server.utils import no_suspend
+
+        with no_suspend.held():
+            return self._stream.readall()
 
 
 def _close_file(handle, stream) -> None:

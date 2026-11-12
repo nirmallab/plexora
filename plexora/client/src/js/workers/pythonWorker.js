@@ -930,9 +930,15 @@ JSPI = bool(js.plexoraJspi)
 def _post(message):
     js.plexoraPost(json.dumps(message))
 
+def _held():
+    # Inside a C library's call back into Python (h5py reading a remote .ims:
+    # plexora/server/utils/no_suspend.py), where suspending ends Python.
+    from plexora.server.utils import no_suspend
+    return no_suspend.active()
+
 def _idle(seconds):
     import asyncio
-    if not JSPI:
+    if not JSPI or _held():
         # Nothing can be served meanwhile: the time passes, blocked.
         if seconds > 0:
             js.self.plexoraSleep(seconds)
@@ -977,7 +983,7 @@ def _ask(kind, args):
         entry = js.JSON.parse(json.dumps({"dtype": str(value.dtype), "shape": list(value.shape)}))
         entry.data = to_js(memoryview(value).cast("B"))
         setattr(message, key, entry)
-    value = run_sync(js.plexoraAsk(kind, message)) if JSPI else js.plexoraAskSync(kind, message)
+    value = run_sync(js.plexoraAsk(kind, message)) if JSPI and not _held() else js.plexoraAskSync(kind, message)
     return None if _absent(value) else value
 
 def _ask_columns(src, kinds):
@@ -1038,6 +1044,8 @@ _codecs.set_jpegxr(_jxr)
 def _load_stage(name):
     if not JSPI:
         raise ImportError(f"the {name} stage could not be loaded in this browser")
+    if _held():
+        raise ImportError(f"the {name} stage cannot be loaded inside a library's read")
     run_sync(js.plexoraLoadStage(name, _finder.importers.get(name, "?")))
 
 def _read_ahead(path, pieces):
@@ -1045,7 +1053,7 @@ def _read_ahead(path, pieces):
     # only where Python can wait on the reads; elsewhere tifffile reads them
     # one after another, as before.
     from pyodide.ffi import can_run_sync, to_js
-    if not JSPI or not can_run_sync():
+    if not JSPI or not can_run_sync() or _held():
         return -1
     answer = js.self.plexoraReadAhead(path, to_js(list(pieces)))
     return int(answer if isinstance(answer, (int, float)) else run_sync(answer))

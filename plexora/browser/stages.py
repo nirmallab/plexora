@@ -214,6 +214,13 @@ class StageFinder(importlib.abc.MetaPathFinder):
             # as it is imported. Not there yet is the true answer, and loading a
             # stage for a question would load every stage at boot.
             return None
+        from plexora.server.utils import no_suspend
+
+        if no_suspend.active():
+            # Inside a C library's call back into Python, where loading (a
+            # wait on the page) would end Python: not loaded now, and not
+            # recorded as failed, so the next import outside loads it.
+            return None
         self.importers[stage] = _importer()
         try:
             self._load(stage)

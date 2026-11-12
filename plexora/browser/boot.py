@@ -278,6 +278,12 @@ class _NoSelector:
         self._sleep = sleep
 
     def select(self, timeout=None):
+        if timeout is None:
+            # Nothing ready and no timer: what the coroutine waits for can only
+            # come from outside this loop -- another loop's task, a promise --
+            # and nothing outside runs while it blocks. Said, not spun on.
+            raise RuntimeError("a coroutine run to completion here waits on something "
+                               "only another event loop could finish")
         if timeout:
             self._sleep(timeout)
         return []
@@ -332,21 +338,36 @@ def run_to_completion(awaitable, sleep=time.sleep):
         _sync_loop = SyncLoop(sleep)
     loop = SyncLoop(sleep) if nested else _sync_loop
     running = asyncio.events._get_running_loop()
+    # A task of the loop said to be running, if this call is inside one: set
+    # aside while this loop's own tasks run, since a thread runs one task at a
+    # time (Python 3.14 refuses to enter another, and this loop would wait on
+    # a task that never started).
+    outer = asyncio.current_task(running) if running is not None else None
+    if outer is not None:
+        asyncio.tasks._leave_task(running, outer)
     asyncio.events._set_running_loop(None)
     try:
         return loop.run_until_complete(awaitable)
     finally:
         asyncio.events._set_running_loop(running)
+        if outer is not None:
+            asyncio.tasks._enter_task(running, outer)
         if nested:
             loop.close()
 
 
-def without_jspi(sleep=time.sleep) -> bool:
-    """Where the browser has no JavaScript Promise Integration (Firefox and
-    Safari before it shipped): Pyodide's loop cannot block for a coroutine, and
-    zarr's synchronous API -- every TIFF Plexora opens goes through it -- says
-    so and stops. Its `run_until_complete` runs the coroutine on a `SyncLoop`
-    instead. True if patched."""
+def blocking_loop(sleep=time.sleep, jspi: bool = False) -> bool:
+    """Pyodide's `run_until_complete` -- what zarr's synchronous API calls,
+    every TIFF Plexora opens and every remote read going through it -- runs
+    the coroutine on a `SyncLoop` where Python cannot suspend:
+
+    - always, in a browser without JavaScript Promise Integration (Firefox
+      and Safari before it shipped), where Pyodide's loop cannot block for a
+      coroutine and zarr says so and stops;
+    - with JSPI, inside `no_suspend.held()` (a C library's call back into
+      Python: h5py reading a remote .ims), where suspending would end Python.
+
+    Elsewhere JSPI waits as before. True if patched."""
     try:
         from pyodide import webloop
     except ImportError:
@@ -354,8 +375,11 @@ def without_jspi(sleep=time.sleep) -> bool:
     original = webloop.WebLoop.run_until_complete
     if getattr(original, "plexora_sync", False):
         return True
+    from plexora.server.utils import no_suspend
 
     def run_until_complete(self, future):
+        if jspi and not no_suspend.active():
+            return original(self, future)
         if asyncio.isfuture(future) and getattr(future, "get_loop", lambda: None)() is self:
             return original(self, future)  # a task of this loop: only JSPI can wait for it
         return run_to_completion(future, sleep)
@@ -363,6 +387,11 @@ def without_jspi(sleep=time.sleep) -> bool:
     run_until_complete.plexora_sync = True
     webloop.WebLoop.run_until_complete = run_until_complete
     return True
+
+
+def without_jspi(sleep=time.sleep) -> bool:
+    """`blocking_loop` for a browser without JSPI."""
+    return blocking_loop(sleep, jspi=False)
 
 
 def start(origin: str, *, base_url: str = "", post=None, cancelled=None, idle=None, waiting=None,
@@ -405,8 +434,9 @@ def start(origin: str, *, base_url: str = "", post=None, cancelled=None, idle=No
     lap("buckets")
     shims["cache"] = cache()
     lap("cache")
-    if not jspi:
-        shims["sync_loop"] = without_jspi(sleep or time.sleep)
+    # Without JSPI every coroutine runs on a SyncLoop; with it, those inside
+    # `no_suspend.held()` (h5py reading a remote .ims) do.
+    shims["sync_loop"] = blocking_loop(sleep or time.sleep, jspi=jspi)
     from plexora.browser import cooperative, licence
     from plexora.server.models import viewer_sessions
     from plexora.server.providers import browser as browser_provider

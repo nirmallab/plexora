@@ -38,8 +38,9 @@ web pages read it" rather than "cannot be reached".
 synchronous API waits there, and so does a TIFF's header read), each request
 is the page's `fetch`, awaited: requests issued together (`asyncio.gather`,
 remote_store's `read_ranges`) are in flight together. On any other loop (a
-browser without JSPI, where `boot.without_jspi` runs coroutines on a loop of
-its own that cannot wait for a promise) a request is one synchronous
+browser without JSPI, or inside `no_suspend.held()` -- h5py reading a remote
+.ims -- where `boot.blocking_loop` runs coroutines on a loop of its own that
+cannot wait for a promise) a request is one synchronous
 XMLHttpRequest, which a worker may make.
 
 Under CPython nothing here touches a browser unless a test installs it with a
