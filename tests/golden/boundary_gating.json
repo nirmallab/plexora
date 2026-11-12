@@ -31,8 +31,7 @@
         "client_node": "",
         "datasource": "",
         "datasources": [
-          "probe_ds",
-          "lsp11385"
+          "probe_ds"
         ],
         "desktop": false,
         "is_docker": false,
@@ -229,8 +228,7 @@
         "client_node": "",
         "datasource": "probe_ds",
         "datasources": [
-          "probe_ds",
-          "lsp11385"
+          "probe_ds"
         ],
         "desktop": false,
         "image_kind": "ome_tiff",
@@ -546,8 +544,7 @@
         "client_node": "",
         "datasource": "probe_ds",
         "datasources": [
-          "probe_ds",
-          "lsp11385"
+          "probe_ds"
         ],
         "desktop": false,
         "image_kind": "ome_tiff",

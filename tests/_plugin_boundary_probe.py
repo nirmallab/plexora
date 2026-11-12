@@ -26,9 +26,22 @@ from html.parser import HTMLParser
 # Route registration must not depend on, or write to, the user's real data
 # directory. Left unset, plexora.paths would resolve the platform default --
 # this probe's own projects would land in the developer's real one.
-os.environ.setdefault("PLEXORA_DATA_PATH", os.environ["PLEXORA_PROBE_DATA_PATH"])
+# Pinned rather than defaulted, and the other roots the project listing reads
+# are emptied the way conftest's `_isolated_data` empties them for a test: the
+# probe starts from a module fixture, before that autouse fixture runs, so it
+# would otherwise list the developer's website library (Documents/Plexora/
+# projects) and record those project names in the goldens.
+os.environ["PLEXORA_DATA_PATH"] = os.environ["PLEXORA_PROBE_DATA_PATH"]
+os.environ["PLEXORA_LIBRARY_PATH"] = ""
+os.environ.pop("PLEXORA_SHARED_PATH", None)
 
 import plexora  # noqa: E402  (must follow the env pin above)
+from pathlib import Path  # noqa: E402
+
+# The settings file is per-user and may record `shared_dirs`, which the
+# listing would merge in as well.
+plexora.paths.settings_path = lambda: Path(os.environ["PLEXORA_PROBE_DATA_PATH"]) / ".plexora-settings.json"
+plexora.paths.reset()
 
 # Modules whose absence is the actual contract: a core build must not pay the
 # import cost of an addon's heavy dependencies.
