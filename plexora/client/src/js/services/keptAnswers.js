@@ -40,7 +40,9 @@
  *   cleared(page)            a write of `page`'s may be sent (resolves true),
  *                            or must be refused (false)
  *   checked(page)            `page`'s kept answers asked again once Python is
- *                            up: {checked, changed: [route...]}, or null
+ *                            up (the cheap ones first): {checked, changed:
+ *                            [route...]} -- at the first change, `changed`
+ *                            that one -- or null
  *   early(route)             a project's viewer to show at once: {html, project, opens,
  *                            page} -- `opens` a tool to open once Python is up, the
  *                            page then the plain viewer at `page`
@@ -357,15 +359,37 @@
         }
     }
 
-    //: Asks Python again, in the order they were given, for every answer
-    //: `page` was given from here (and each spec the browser node was);
-    //: each fresh answer is kept as it comes (`observe`).
-    async function reconcile(page) {
+    //: Answers made from the image's pixels: the channels' statistics, their
+    //: mixture fits and the auto-contrast. Asked again last: on a Python
+    //: just started each is made anew (a fit took 6.5 s, holding Python's
+    //: one thread), where every other answer here takes a millisecond or two.
+    const FROM_PIXELS = new Set(["get_image_channel_stats", "get_channel_gmm", "get_display_contrast"]);
+
+    //: Asks Python again for every answer `page` was given from here (and
+    //: each spec the browser node was): the specs first, then the answers in
+    //: the order they were given, those FROM_PIXELS last. Each fresh answer
+    //: is kept as it comes (`observe`). `first(url)`: told of the first
+    //: answer found changed, as soon as it is -- one is all it takes to
+    //: replace the page and refuse its writes.
+    async function reconcile(page, first = () => {}) {
         const list = given.get(page) || [];
         const changed = [];
-        // By index: an answer given while this runs is checked too.
-        for (let i = 0; i < list.length; i += 1) {
-            const entry = list[i];
+        const found = (url) => {
+            if (!changed.length) first(url);
+            changed.push(url);
+        };
+        // Asked now, ahead of the rest in Python's queue: whether the files
+        // themselves are the ones the page drew.
+        const specs = specsChecked().then((moved) => {
+            if (moved.length) first(moved[0]);
+            return moved;
+        });
+        // An answer given while this runs is checked too.
+        const done = new Set();
+        const next = () => list.find((entry) => !done.has(entry) && !FROM_PIXELS.has(entry.endpoint))
+            || list.find((entry) => !done.has(entry));
+        for (let entry = next(); entry; entry = next()) {
+            done.add(entry);
             let fresh = null;
             try {
                 const response = await global.PlexoraPython.fetch(base() + entry.url);
@@ -374,18 +398,26 @@
                 fresh = null;
             }
             if (fresh && (provisional(entry.endpoint, fresh) || provisional(entry.endpoint, entry.bytes))) continue;
-            if (!fresh || !same(entry.endpoint, entry.bytes, fresh)) changed.push(entry.url);
+            if (!fresh || !same(entry.endpoint, entry.bytes, fresh)) found(entry.url);
         }
-        changed.push(...await specsChecked());
+        changed.push(...await specs);
         const result = { checked: list.length, changed };
         results.push(result);
         if (changed.length) console.warn("kept answers: changed since they were kept:", changed.join(", "));
         return result;
     }
 
+    //: `page`'s check: {checked, changed} once every answer is the same, or
+    //: as soon as one is not (`changed` then that one: the rest are still
+    //: asked, kept as they come, and logged with it, `report`).
     function checked(page) {
         if (!given.has(page) || !started) return Promise.resolve(null);
-        if (!checks.has(page)) checks.set(page, started.then(() => reconcile(page)));
+        if (!checks.has(page)) {
+            checks.set(page, started.then(() => new Promise((resolve, reject) => {
+                const count = (given.get(page) || []).length;
+                reconcile(page, (url) => resolve({ checked: count, changed: [url] })).then(resolve, reject);
+            })));
+        }
         return checks.get(page);
     }
 
