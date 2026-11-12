@@ -54,4 +54,7 @@ def available() -> bool:
         import js
     except ImportError:
         return False
-    return bool(getattr(js.self, "plexoraMountReader", None))
+    # Not every host is a worker: the bundle's import check boots in Node,
+    # which has no `self`.
+    worker = getattr(js, "self", None)
+    return bool(worker is not None and getattr(worker, "plexoraMountReader", None))
