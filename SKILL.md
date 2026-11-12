@@ -1012,7 +1012,13 @@ Entry points:
   own level above as it is read, so a large flat z-stack never reads a whole
   plane per level; plus `WholeArrayReader`, `as_tzcyx`, `TileCache`,
   `assemble`. Readers:
-  `vsi.py` (own: the VSI property tree + ETS tiles), `ndpis.py` (own, over
+  `vsi.py` (own: the VSI property tree + ETS tiles; a 3-sample ETS whose
+  channel dimension has size 1 is RGB, not one channel), `ets.py` (one `.ets`
+  opened alone, a `VsiReader` subclass: it takes names, pixel size, exact size
+  and stack name from a `.vsi` still beside its `_<name>_/stack<id>/` folder,
+  else "Channel n", no pixel size and the whole tile grid, since cellSens pads
+  the last tiles; refuses the non-image `blob_*_Frame#0.ets`; `name_of` names a
+  `frame_t*.ets` by its folders for the import and dataset name), `ndpis.py` (own, over
   `tiff_region`), `dv.py` (own DeltaVision/`.r3d`), `zvi.py` (own Zeiss ZVI,
   over `cfb.py`, a reusable OLE2/Compound File parser), `lsm.py` (Zeiss LSM,
   over tifffile), `kfb.py` (own KFBio), `mrxs.py` (own, fluorescence MRXS only:
@@ -8426,7 +8432,7 @@ picture. A brightfield `.mrxs` and any DICOM slide are the formats needing the o
 `[wsi]` extra, and the sniffer probes for OpenSlide/`wsidicom` there so a
 missing install is reported while the user is still choosing a file. A
 microscope's own format (`server/utils/formats`: `.czi`/`.nd2`/`.lif`/`.lof`/
-`.xlef`/`.vsi`/`.oir`/`.oib`/`.oif`/`.ndpis`/`.dv`/`.r3d`/`.mcd`/`.zvi`/
+`.xlef`/`.vsi`/`.ets`/`.oir`/`.oib`/`.oif`/`.ndpis`/`.dv`/`.r3d`/`.mcd`/`.zvi`/
 `.lsm`/`.kfb`, and a fluorescence `.mrxs` that `mrxs.claims`) also sniffs
 as `ome_tiff`, after a `formats.describe` so a missing reader package or a VSI
 without its pixel folder is reported at the same moment; `convertOmeTiff`
@@ -11736,11 +11742,14 @@ z-stack volume source, `value_range.map_as`), over files written by
 (`tests/formats_fakes.py`, built to the real packages' verified behaviour), so
 they need none installed. The second round added `test_formats_zvi.py`,
 `_cfb`, `_lsm`, `_kfb`, `_mrxs`, `_images` (multi-image files) and
-`_flat_stack` (derived planes), over `tests/formats_fixtures_more.py`;
+`_flat_stack` (derived planes), over `tests/formats_fixtures_more.py`, and
+`test_formats_ets.py` (an `.ets` alone or beside its `.vsi`, an RGB ETS as
+brightfield, `frame_t*.ets` naming);
 `tests/test_website_window.py` (the 8-bit window on the website);
 `tests/test_browser_czi_codecs.py` with `tests/browser/czi_codecs.mjs`; and
 `tests/js/jpegxr_probe.mjs`. Full suite on this branch with all of them:
-**12360 passed, 139 skipped, 0 failed** (macOS, serial, 2026-11-11; the env
+**12406 passed, 139 skipped, 0 failed** (macOS, serial, 2026-11-11, with the
+`.ets` reader; the env
 has no pytest-xdist). **The conda env lacks the six reader packages** (`czifile`,
 `liffile`, `nd2`, `oiffile`, `oirfile`, `readimc`) until they are installed
 from `pyproject.toml`; this branch's session used an overlay for them.

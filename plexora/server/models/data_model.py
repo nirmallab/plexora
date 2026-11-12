@@ -5464,7 +5464,7 @@ def _image_channel_stem(filePath):
         r'\.ome\.tiff|\.ome\.tif|\.ome\.zarr|\.tiff|\.tif|\.zarr|\.png'
         r'|\.qptiff|\.svs|\.ndpis|\.ndpi|\.scn|\.mrxs|\.bif|\.svslide|\.jpeg|\.jpg'
         r'|\.dcm|\.dicom|\.ims'
-        r'|\.czi|\.nd2|\.lif|\.lof|\.xlef|\.vsi|\.oir|\.oib|\.oif'
+        r'|\.czi|\.nd2|\.lif|\.lof|\.xlef|\.vsi|\.ets|\.oir|\.oib|\.oif'
         r'|\.dv|\.r3d|\.mcd|\.zvi|\.lsm|\.kfb',
         '', Path(filePath).name, flags=re.IGNORECASE)
 

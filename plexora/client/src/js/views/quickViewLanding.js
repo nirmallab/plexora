@@ -331,7 +331,7 @@ PlexoraPage.register(function () {
         if (/\.czi$/.test(name)) return "Zeiss CZI";
         if (/\.nd2$/.test(name)) return "Nikon ND2";
         if (/\.(lif|lof|xlef)$/.test(name)) return "Leica";
-        if (/\.(vsi|oir|oib|oif)$/.test(name)) return "Olympus";
+        if (/\.(vsi|ets|oir|oib|oif)$/.test(name)) return "Olympus";
         if (/\.ndpis$/.test(name)) return "slide";
         if (/\.(dv|r3d)$/.test(name)) return "DeltaVision";
         if (/\.mcd$/.test(name)) return "Hyperion MCD";
@@ -345,7 +345,7 @@ PlexoraPage.register(function () {
         const name = path.trim().toLowerCase();
         if (!name) return null;
         if (/\.zarr[\\/]?$/.test(name) || /[\\/]$/.test(name)) return "directory";
-        if (/\.(ome\.)?tiff?$/.test(name) || /\.(svs|ndpi|qptiff|mrxs|scn|svslide|ims|czi|nd2|lif|lof|xlef|vsi|oir|oib|oif|ndpis|dv|r3d|mcd|zvi|lsm|kfb)$/.test(name)) {
+        if (/\.(ome\.)?tiff?$/.test(name) || /\.(svs|ndpi|qptiff|mrxs|scn|svslide|ims|czi|nd2|lif|lof|xlef|vsi|ets|oir|oib|oif|ndpis|dv|r3d|mcd|zvi|lsm|kfb)$/.test(name)) {
             return "file";
         }
         return null;

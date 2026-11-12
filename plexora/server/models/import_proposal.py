@@ -70,8 +70,8 @@ from plexora.server.utils import boundary_mask, ngff_transform, spatial_scene
 IMAGE_SUFFIXES = (".tif", ".tiff", ".qptiff", ".svs", ".ndpi", ".scn", ".bif", ".mrxs",
                   ".svslide", ".dcm", ".png", ".jpg", ".jpeg", ".ims",
                   # A microscope's or slide scanner's own format (server/utils/formats).
-                  ".czi", ".nd2", ".lif", ".lof", ".xlef", ".vsi", ".oir", ".oib", ".oif",
-                  ".ndpis", ".dv", ".r3d", ".mcd", ".zvi", ".lsm", ".kfb")
+                  ".czi", ".nd2", ".lif", ".lof", ".xlef", ".vsi", ".ets", ".oir", ".oib",
+                  ".oif", ".ndpis", ".dv", ".r3d", ".mcd", ".zvi", ".lsm", ".kfb")
 
 
 def _formats():
@@ -3163,6 +3163,12 @@ def _group_stem(path) -> str:
     mask's name is a statement ABOUT the slide, not a different slide.
     """
     name = Path(path).name
+    if name.lower().endswith(".ets"):
+        # Every cellSens scan's pixels are `frame_t.ets`: two of them are
+        # told apart, and named, by the folders they were saved in.
+        from plexora.server.utils.formats import ets
+
+        return ets.name_of(path).lower()
     # `.ome.tif` and friends: take everything before the first dot, so
     # `slide.ome.tif` and `slide.csv` agree.
     stem = name.split(".", 1)[0].lower()

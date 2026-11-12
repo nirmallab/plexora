@@ -78,7 +78,7 @@ _TK_FILTERS = {
     # A microscope's own formats (server/utils/formats) are offered here and
     # not in the AppleScript list below, which filters by UTI: macOS registers
     # none for them, and one unregistered extension greys out every file.
-    "image": [("Image files", "*.tif *.tiff *.ome.tif *.ome.tiff *.svs *.ndpi *.scn *.bif *.qptiff *.dcm *.ims *.png *.jpg *.jpeg *.czi *.nd2 *.lif *.lof *.xlef *.vsi *.oir *.oib *.oif *.ndpis *.dv *.r3d *.mcd *.zvi *.lsm *.kfb"), ("All files", "*.*")],
+    "image": [("Image files", "*.tif *.tiff *.ome.tif *.ome.tiff *.svs *.ndpi *.scn *.bif *.qptiff *.dcm *.ims *.png *.jpg *.jpeg *.czi *.nd2 *.lif *.lof *.xlef *.vsi *.ets *.oir *.oib *.oif *.ndpis *.dv *.r3d *.mcd *.zvi *.lsm *.kfb"), ("All files", "*.*")],
     "csv": [("CSV files", "*.csv"), ("All files", "*.*")],
     "h5ad": [("AnnData files", "*.h5ad"), ("All files", "*.*")],
     # The single Data input accepts any feature-table format, so its picker

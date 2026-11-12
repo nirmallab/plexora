@@ -15,7 +15,7 @@ Each scanned region is an image of its own (`reader(path, index)`; the
 overview, the label, masks and focus maps are not images of the tissue and are
 not counted), with its channel names and pixel size from the tree and its own
 pyramid from the ETS: nothing is converted. The import offers each region as
-a sample.
+a sample. An ETS opened on its own, without the .vsi, is ets.py's.
 
 The property tree. Every node is a "volume": a 24-byte header (int16 header
 size, int16 0x5349 "IS", int32 version, int64 offset of the first field from
@@ -369,6 +369,10 @@ class VsiReader(Reader):
             name = {_KIND_Z: "z", _KIND_C: "c", _KIND_LAMBDA: "c", _KIND_T: "t"}.get(kind)
             if name and self._axis[name] is None:
                 self._axis[name] = position
+        if self._axis["c"] is not None and ets.samples > 1 and sizes[self._axis["c"]] == 1:
+            # One plane of colour samples (an H&E scan, an overview): its
+            # channels are the samples, not that dimension of one.
+            self._axis["c"] = None
         self._extra = extra
         self.rgb = ets.samples == 3 and ets.dtype == np.uint8
         if self._axis["c"] is not None:

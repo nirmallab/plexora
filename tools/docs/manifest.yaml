@@ -459,6 +459,7 @@ format_notes:
   ".lof": Leica LOF image (LAS X). Local only.
   ".xlef": Leica XLEF export (LAS X), with its frames as LOF or TIFF files beside it. Local only.
   ".vsi": Olympus/Evident cellSens VSI slide scan or acquisition, read from the `_name_` folder beside the file, with the scan's own resolution levels; each scanned region as a sample of its own. Local only.
+  ".ets": One scan of an Olympus/Evident cellSens VSI, opened without its .vsi (an H&E scan sent on its own opens as brightfield), with the scan's own resolution levels. Channel names and pixel size are in the .vsi, so they are read from it when the file is still in its `_name_/stack<n>` folder beside the .vsi, and are missing otherwise. Local only.
   ".oir": Olympus/Evident FluoView OIR image (FV1200 on). Local only.
   ".oib": Olympus FluoView OIB image. Local only.
   ".oif": Olympus FluoView OIF image, with its `.oif.files` folder. Local only.

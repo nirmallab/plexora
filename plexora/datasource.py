@@ -343,10 +343,16 @@ def _derive_dataset_name_from_path(path):
         # Both separators on every OS: a Windows client's path reaches a
         # POSIX server (data nodes), where Path() would keep the backslashes.
         stem = re.split(r"[\\/]", str(path).rstrip("\\/"))[-1]
+        if stem.lower().endswith(".ets"):
+            # Every cellSens scan's pixels are `frame_t.ets`: named by the
+            # folders it was saved in, as the import names it.
+            from plexora.server.utils.formats import ets
+
+            return ets.name_of(path)
     return re.sub(
         r"\.(ome\.tiff|ome\.tif|ome\.zarr|tiff|tif|svs|zarr|png|jpg|jpeg|qptiff"
         r"|ndpi|mrxs|scn|bif|svslide|dcm|dicom|ims"
-        r"|czi|nd2|lif|lof|xlef|vsi|oir|oib|oif|ndpis|dv|r3d|mcd|zvi|lsm|kfb)$",
+        r"|czi|nd2|lif|lof|xlef|vsi|ets|oir|oib|oif|ndpis|dv|r3d|mcd|zvi|lsm|kfb)$",
         "",
         stem,
         flags=re.IGNORECASE,

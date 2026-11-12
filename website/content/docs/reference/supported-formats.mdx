@@ -17,6 +17,7 @@ Plexora decides what a file is from its contents first and its extension second,
 | `.czi` | Image | Zeiss CZI image (ZEN 2011 on), a slide scan with its own resolution levels or an acquisition with its channels, planes and time points; each scene of a multi-scene file as a sample of its own. Local only. |
 | `.dcm` | Image | DICOM whole-slide image (a folder of .dcm files), read with wsidicom; a fluorescence slide's focal planes open as a z-stack. Local or at a web address (`pip install "plexora[remote]"`). |
 | `.dv` | Image | DeltaVision image (softWoRx). Local only. |
+| `.ets` | Image | One scan of an Olympus/Evident cellSens VSI, opened without its .vsi (an H&E scan sent on its own opens as brightfield), with the scan's own resolution levels. Channel names and pixel size are in the .vsi, so they are read from it when the file is still in its `_name_/stack<n>` folder beside the .vsi, and are missing otherwise. Local only. |
 | `.ims` | Image | Imaris image (HDF5, or the TIFF-based file Imaris 3 and 4 wrote), with every channel, plane and resolution level and the voxel size the file states, or a label mask, 2-D or 3-D. Local or at a web address. |
 | `.jpeg` | Image | Single-plane RGB or grayscale image. Local or at a web address. |
 | `.jpg` | Image | Single-plane RGB or grayscale image. Local or at a web address. |

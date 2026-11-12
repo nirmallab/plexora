@@ -283,7 +283,7 @@ _NOT_A_MASK = {
     ".dicom": "{name} is a DICOM slide. Plexora reads DICOM images, not DICOM "
               "segmentation objects.",
     **{suffix: "{name} is a microscope image, not a label mask."
-       for suffix in (".czi", ".nd2", ".lif", ".lof", ".xlef", ".vsi", ".oir", ".oib",
+       for suffix in (".czi", ".nd2", ".lif", ".lof", ".xlef", ".vsi", ".ets", ".oir", ".oib",
                       ".oif", ".ndpis", ".dv", ".r3d", ".mcd",
                       ".zvi", ".lsm", ".kfb")},
 }

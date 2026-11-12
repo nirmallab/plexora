@@ -1,7 +1,7 @@
 """Microscope and slide-scanner files that are not plain TIFF.
 
-Zeiss CZI, ZVI and LSM, Nikon ND2, Leica LIF/LOF/XLEF, Olympus VSI, OIR and
-OIB/OIF, Hamamatsu NDPIS, DeltaVision, Hyperion MCD, KFBio KFB and 3DHISTECH
+Zeiss CZI, ZVI and LSM, Nikon ND2, Leica LIF/LOF/XLEF, Olympus VSI (or one of
+its ETS files alone), OIR and OIB/OIF, Hamamatsu NDPIS, DeltaVision, Hyperion MCD, KFBio KFB and 3DHISTECH
 MRXS fluorescence slides: each read by a reader that knows
 its format (one module per format here, most of them over a maintained
 permissively licensed package), and every one of them presented as the same
@@ -38,6 +38,8 @@ from plexora.server.utils.formats.base import (  # noqa: F401 -- the package's v
 #: or None when the reader here needs nothing beyond Plexora's own dependencies)
 FORMATS = {
     ".vsi": ("vsi", "Olympus VSI", None),
+    # One scan's pixels without its .vsi (an H&E scan sent alone).
+    ".ets": ("ets", "Olympus ETS", None),
     ".ndpis": ("ndpis", "Hamamatsu NDPIS", None),
     ".dv": ("dv", "DeltaVision", None),
     ".r3d": ("dv", "DeltaVision", None),

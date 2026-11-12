@@ -30,8 +30,8 @@ window.PlexoraExplorerTypes = (function () {
                 ".zarr", ".ome.zarr", ".mrxs", ".ims",
                 // A microscope's or slide scanner's own format
                 // (server/utils/formats).
-                ".czi", ".nd2", ".lif", ".lof", ".xlef", ".vsi", ".oir", ".oib",
-                ".oif", ".ndpis", ".dv", ".r3d", ".mcd", ".zvi", ".lsm", ".kfb"],
+                ".czi", ".nd2", ".lif", ".lof", ".xlef", ".vsi", ".ets", ".oir",
+                ".oib", ".oif", ".ndpis", ".dv", ".r3d", ".mcd", ".zvi", ".lsm", ".kfb"],
         csv: [".csv"],
         h5ad: [".h5ad"],
         data: [".csv", ".tsv", ".txt", ".parquet", ".h5ad"],
@@ -90,6 +90,7 @@ window.PlexoraExplorerTypes = (function () {
         [".dcm", "DICOM"], [".ims", "Imaris"],
         [".czi", "Zeiss CZI"], [".nd2", "Nikon ND2"], [".lif", "Leica LIF"],
         [".lof", "Leica LOF"], [".xlef", "Leica XLEF"], [".vsi", "Olympus VSI"],
+        [".ets", "Olympus ETS"],
         [".oir", "Olympus OIR"], [".oib", "Olympus OIB"], [".oif", "Olympus OIF"],
         [".ndpis", "Hamamatsu NDPIS"], [".dv", "DeltaVision"], [".r3d", "DeltaVision"],
         [".mcd", "Hyperion MCD"], [".zvi", "Zeiss ZVI"], [".lsm", "Zeiss LSM"],
@@ -106,8 +107,8 @@ window.PlexoraExplorerTypes = (function () {
     const FILE_ICONS = [
         [[".ome.tiff", ".ome.tif", ".tiff", ".tif", ".svs", ".ndpi", ".scn",
           ".bif", ".qptiff", ".mrxs", ".ims", ".png", ".jpg", ".jpeg", ".dcm",
-          ".czi", ".nd2", ".lif", ".lof", ".xlef", ".vsi", ".oir", ".oib", ".oif",
-          ".ndpis", ".dv", ".r3d", ".mcd", ".zvi", ".lsm", ".kfb"],
+          ".czi", ".nd2", ".lif", ".lof", ".xlef", ".vsi", ".ets", ".oir", ".oib",
+          ".oif", ".ndpis", ".dv", ".r3d", ".mcd", ".zvi", ".lsm", ".kfb"],
          "fa-file-image"],
         [[".csv", ".tsv"], "fa-file-csv"],
         [[".xlsx", ".xlsm", ".xls"], "fa-file-excel"],

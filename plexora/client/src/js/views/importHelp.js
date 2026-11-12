@@ -146,13 +146,14 @@ window.PlexoraImportHelp = (function () {
         {
             name: "Microscope or scanner file", shape: "file",
             pointAt: "the file",
-            marker: ".czi · .nd2 · .lif · .lof · .xlef · .vsi · .oir · .oib · "
+            marker: ".czi · .nd2 · .lif · .lof · .xlef · .vsi · .ets · .oir · .oib · "
                   + ".ndpis · .dv · .mcd · .zvi · .lsm",
             produces: ["multiplex", "he"],
             mayAsk: [],
             note: "Channel names and pixel size come from the file. A .vsi "
                 + "reads its pixels from the _name_ folder beside it, and an "
-                + ".ndpis from the .ndpi files it lists.",
+                + ".ndpis from the .ndpi files it lists. A .ets is one scan of "
+                + "a .vsi; on its own it has no channel names or pixel size.",
         },
         {
             name: "H&E / brightfield slide", shape: "file",
