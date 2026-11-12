@@ -146,6 +146,39 @@ const ESTIMATE = {
           ex.includeParam(include) === "tables,captures,figures" && ex.includeParam({}) === "none");
 }
 
+// -- export: smaller images ----------------------------------------------------------
+
+const SMALL = {
+    ...ESTIMATE,
+    approximate: { available: true, share: 0.15 },
+    rows: { ...ESTIMATE.rows, images: { ...ESTIMATE.rows.images, approximate_size: 10e9, items: [
+        { ...ESTIMATE.rows.images.items[0], approximate: true, approximate_size: 10e9 },
+        { ...ESTIMATE.rows.images.items[1], approximate: false, approximate_size: null },
+    ] } },
+};
+
+{
+    const include = ex.defaultInclude(SMALL);
+    check("smaller images start off", include.approximate === false, include);
+    const offered = ex.rowsFor(SMALL, { ...include, images: true }).find((row) => row.key === "images");
+    check("smaller images are offered under images once they go, not before",
+          !ex.rowsFor(SMALL, include).some((row) => row.smaller) && offered.smaller && offered.smaller.on === false,
+          offered);
+    const on = { ...include, images: true, approximate: true };
+    const images = ex.rowsFor(SMALL, on).find((row) => row.key === "images");
+    check("ticked, the images count as the server's estimate of them",
+          images.smaller.on && images.size === 10e9 && ex.totalFor(SMALL, on) === 15e6 + 600e6 + 2e6 + 10e9
+          && ex.fileSize(SMALL.rows.images.items[0], true) === "≈ 10 GB"
+          && ex.fileSize(SMALL.rows.images.items[0], false) === "66.7 GB", images);
+    check("a server that cannot make them offers nothing, and counts nothing smaller",
+          ex.smallerRow(ESTIMATE, on) === null && ex.smallerRow({ ...SMALL, approximate: { available: false } }, on) === null
+          && ex.totalFor(ESTIMATE, on) === 15e6 + 600e6 + 2e6 + 66.7e9);
+    const site = makeWorld({ website: true }).exportApi._internal;
+    check("and the website never offers them", site.smallerRow(SMALL, on) === null);
+    check("the include rule names them when they are on",
+          ex.includeParam(on) === "tables,captures,figures,images,approximate");
+}
+
 {
     check("one project is exported under its name",
           ex.titleFor({ names: ["lsp11385_2"], estimate: { projects: [{ name: "lsp11385_2" }] } }) === "Export lsp11385_2");
@@ -182,6 +215,9 @@ const ESTIMATE = {
           im.imagesLine({ found: 2, included: 1, missing: 3, node: 1, nodes: ["HMS-O2"] })
               === "2 found here · 1 included · 1 on HMS-O2 · 3 to find after import"
           && im.imagesLine({}) === "");
+    check("a smaller copy is counted among the included, and says so",
+          im.imagesLine({ included: 2, approximate: 1 }) === "2 included · 1 as a smaller copy"
+          && im.imagesLine({ included: 3, approximate: 2 }) === "3 included · 2 as smaller copies");
     const projects = [{ id: "a", status: "new" }, { id: "b", status: "already_here" }, { id: "c", status: "conflict" }];
     check("Import counts what the choices bring in",
           im.importing(projects, {}).length === 2 && im.importLabel(projects, {}) === "Import 2 projects"

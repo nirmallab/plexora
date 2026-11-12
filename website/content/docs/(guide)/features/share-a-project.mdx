@@ -1,7 +1,7 @@
 ---
 title: "Share a project"
 description: "Export a project, several projects or a dataset as one .plexora file, import one someone sent you, and make your own copy of a shared project."
-aliases: ["export project", "import project", ".plexora", "bundle", "send a project", "share", "colleague", "make a copy", "find missing images", "changed on both", "plexora project export", "plexora project import"]
+aliases: ["export project", "import project", ".plexora", "bundle", "send a project", "share", "colleague", "make a copy", "find missing images", "changed on both", "plexora project export", "plexora project import", "smaller images", "compress images", "approximate images"]
 ---
 
 A **`.plexora` file** carries a project, several projects, or a whole dataset from one Plexora to another: one computer to the next, or one person to another. It holds what you did in Plexora (channels, gates, regions, QC, cell tables you edited, bookmarks and the figures made from the projects), and by default it refers to your images instead of copying them. The file is an ordinary ZIP archive.
@@ -28,9 +28,12 @@ The dialog lists each part with its size:
 | **Cell tables made in Plexora** | On by default. Edited copies of cell tables exist only in the project. |
 | **Bookmarks and figures** | On by default. Bookmarks of these samples, and figures made only from them. |
 | **Images, masks and source tables** | Off by default. |
+| **Smaller images** | Off by default; offered once images are on. Each 16-bit fluorescence image goes about 85% smaller. |
 | **Ready-to-open files** | Off by default. Converted tables and tiled images, which saves rebuilding them on the other computer. |
 
 Images are left out by default because they are usually most of the bytes, and usually somewhere both computers can already see, such as a shared network drive. The file then records each image's name, size and fingerprint, and the other computer finds it again. Turn **Images, masks and source tables** on when the other person cannot reach your files. Each image is marked **This computer**, **Shared drive**, **Data node** or **Missing**, so you can see which would be reachable. An image on a data node is referenced and opens when that node is connected; node addresses and tokens are never put in the file.
+
+**Smaller images** makes a file with images much smaller: each 16-bit fluorescence image goes about 85% smaller, with its pyramid. It is not an exact copy. Every pixel comes back within the noise the camera already recorded in it: bright staining within about 2% of its value, dim staining near the background within about 7%. Masks, cell tables and colour images always go exactly as they are. When the person importing the file has your original image, Plexora uses the original; otherwise it opens the smaller image from the file as it is, so the import is quick and the image stays small on disk. The website opens smaller images too, but only the desktop app and Plexora on a computer or server make them.
 
 Your computer's own records (saved servers, tokens, licence files) are never included, and neither are caches that Plexora rebuilds when the project opens.
 </Step>
@@ -67,7 +70,7 @@ Plexora reads only the file's list of contents first, and shows each project wit
 | **Update** | The file holds the next version of a project you have, and yours has not changed. | Yours is updated; the previous version is first moved to a backup folder. |
 | **Changed on both** | You and the sender both changed the project. | Choose **Keep both** (the incoming project is added under a new name and yours stays as it is) or **Replace** (yours is moved to a backup folder, then replaced). |
 
-Under each project the dialog says how many of its images were found on this computer and how many are still to find. It also shows where the projects will go: a location from the list in [Settings › Data](/docs/features/projects), with the default first.
+Under each project the dialog says how many of its images were found on this computer, how many the file includes (and how many of those arrive as smaller copies), and how many are still to find. It also shows where the projects will go: a location from the list in [Settings › Data](/docs/features/projects), with the default first.
 </Step>
 
 <Step>
@@ -93,6 +96,7 @@ Everything above is done in Plexora itself; you never need a terminal for it. If
 | Export several projects | `plexora project export NAME1 NAME2` |
 | Export a dataset | `plexora project export --dataset DATASET` |
 | Include the images, or the ready-to-open files | add `--include images` or `--include derived` (comma-separated for both) |
+| Include the images as smaller images | add `--include images,approximate` |
 | Import a file | `plexora project import project.plexora` |
 | Import into another location | `plexora project import project.plexora --into LOCATION` |
 | Keep both versions, or replace yours, when a project changed on both sides | add `--keep-both` or `--replace` |

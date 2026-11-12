@@ -999,7 +999,9 @@ def _build_project_parser():
                                           "with the dataset itself.")
     export.add_argument("--include", default="", metavar="PARTS",
                         help="Also carry, comma-separated: images (the images, masks and tables the "
-                             "projects read), derived (files Plexora made that save rebuilding them). "
+                             "projects read), derived (files Plexora made that save rebuilding them), "
+                             "approximate (with images: each 16-bit fluorescence image about 85%% "
+                             "smaller, every pixel within its own noise; masks and tables stay exact). "
                              "Tables, captures and figures always go.")
     export.add_argument("-o", "--out", metavar="FILE",
                         help="Where to write it (default: <name>.plexora here).")
@@ -2698,10 +2700,11 @@ def _run_project(args):
         if command == "export":
             from plexora.server.models import bundles
 
-            include = {"tables": True, "captures": True, "figures": True, "images": False, "derived": False}
+            include = {"tables": True, "captures": True, "figures": True, "images": False, "derived": False,
+                       "approximate": False}
             for part in filter(None, (item.strip().lower() for item in args.include.split(","))):
                 if part not in include:
-                    print(f"Unknown part to include: {part}. Choose from images, derived.")
+                    print(f"Unknown part to include: {part}. Choose from images, derived, approximate.")
                     return 2
                 include[part] = True
             names = bundles.resolve_projects(args.names, dataset=args.dataset)

@@ -18,6 +18,9 @@ Python's `zipfile`, Finder/Explorer and the browser's
                                         *_tiled pictures, pyramids, projections)
     media/<key>/<name>                  opt-in: the user's images, masks and
                                         tables, keyed by their identity
+    media/<key>/<name>.approx           opt-in, "Smaller images": a 16-bit
+                                        fluorescence image within its own noise
+                                        (server/utils/approximate_image.py)
     captures/<id>.json, captures/<id>/<n>.<fmt>
                                         bookmarks and captures of project <id>
     figures/<figure id>/...             a figure whose images all come from
@@ -29,9 +32,10 @@ The manifest:
      projects: [{id, name, title, revision, parent, entry: {path, size, sha256},
                  files: [{path, size, sha256, kind: "state"|"table"|"derived"}],
                  refs: [{token, role, kind: "file"|"folder"|"node", identity,
-                         included: <media path>|null, derived,
-                         hints: {absolute, relative_to_bundle, at, recorded}}]}],
-     media: [{path, size, sha256}], captures: [{project, path, size, sha256,
+                         included: <media path>|null, approximate?: <media path>,
+                         derived, hints: {absolute, relative_to_bundle, at, recorded}}]}],
+     media: [{path, size, sha256, approximate?: {method, source_size}}],
+     captures: [{project, path, size, sha256,
      count, previews: [...]}], datasets: [{id, name, projects: [id]}],
      figures: [{id, title, projects: [id], files: [...]}], left_out: [...]}
 
@@ -48,6 +52,17 @@ it opens (CACHES, one tuple shared with the size estimate), and the cell tables
 Plexora made inside the project (the edited copy of a table, a corrected
 parquet), which exist nowhere else. Never the computer's own records: nodes,
 remotes, servers, tokens, telemetry, licences, the remote cache.
+
+**Smaller images** (`include` "approximate", with images or ready-to-open
+files): a 16-bit grey TIFF that is a project's image (IMAGE_ROLES, never a
+mask) goes as `<name>.approx`, about 85% smaller, each pixel within its own
+noise, its pyramid with it. The ref names it in `approximate` and leaves
+`included` empty, so a Plexora that predates it looks for the original as it
+would for an image left out. Import takes the original when this computer
+has it and otherwise puts the container beside the project's other media,
+where Plexora reads it as it is (server/utils/formats/approx.py) -- the
+website too: its page places it like an included file. Only the desktop
+and a server make them (`approximate_image.can_make`).
 
 **Sync-ready.** Every carried file's sha256 is taken while it streams (never a
 second read). A project's `revision` is the sha256 of its canonical entry and
@@ -110,6 +125,7 @@ from typing import Callable, Iterable, Optional
 
 from plexora import paths
 from plexora.server.models import sources
+from plexora.server.utils import approximate_image
 
 FORMAT = 2
 MANIFEST = "plexora-bundle.json"
@@ -158,9 +174,14 @@ NEVER = ("nodes.json", "remotes.json", "servers.json", "tokens.json", "server_to
 
 #: What a bundle carries besides the project's own work, and the default of
 #: each: tables made in Plexora, bookmarks/captures and figures on; the user's
-#: images and the ready-to-open files off.
-INCLUDE = ("tables", "captures", "figures", "images", "derived")
-INCLUDE_DEFAULT = {"tables": True, "captures": True, "figures": True, "images": False, "derived": False}
+#: images and the ready-to-open files off. "approximate" is how images go
+#: (smaller, within their noise) when they go at all.
+INCLUDE = ("tables", "captures", "figures", "images", "derived", "approximate")
+INCLUDE_DEFAULT = {"tables": True, "captures": True, "figures": True, "images": False, "derived": False,
+                   "approximate": False}
+#: The entry keys naming a project's image (server/utils/relink.py _ROLES): the
+#: only refs "approximate" ever makes smaller. A mask never is.
+IMAGE_ROLES = ("channelFile", "imageSource", "imagePyramid")
 
 #: Files the entry names that Plexora made and can make again, carried only
 #: when "ready to open" is asked for.
@@ -212,6 +233,22 @@ def _never(rel: str) -> bool:
 
 def _derived_name(rel: str) -> bool:
     return any(fnmatch.fnmatchcase(rel, pattern) for pattern in DERIVED_NAMES)
+
+
+def _image_ref(ref: dict) -> bool:
+    """A ref to a project's image file (never a mask, nor a file a project
+    names as both), on a Plexora that can make smaller images."""
+    roles = set(ref.get("roles") or [ref.get("role")])
+    return ref.get("kind") == "file" and roles <= set(IMAGE_ROLES) and approximate_image.can_make()
+
+
+def _approximable(ref: dict, source: str, *, probe: bool) -> bool:
+    """Whether a ref's file goes smaller with "approximate": an image ref
+    that `approximate_image.reason` takes -- or, without `probe` (a plan for
+    the size estimate, which reads no file), looks as if it would."""
+    if not _image_ref(ref):
+        return False
+    return approximate_image.reason(source) is None if probe else approximate_image.likely(source)
 
 
 def _include(include) -> dict:
@@ -409,7 +446,9 @@ def resolve_projects(ids_or_names: Iterable[str] = (), dataset: Optional[str] = 
 class Member:
     """One file of a bundle: where it goes, what it is, and where it comes
     from (a path in this Python's filesystem, or `load()` for what is made on
-    the way: an entry, a database snapshot, a capture)."""
+    the way: an entry, a database snapshot, a capture). With `approximate`,
+    the image at `source` is written smaller as it goes (`size` is then the
+    image's own, which its progress counts)."""
 
     bundle_path: str
     kind: str
@@ -420,6 +459,7 @@ class Member:
     load: Optional[Callable[[], bytes]] = None
     snapshot: bool = False
     mtime_ns: int = 0
+    approximate: bool = False
 
     def to_json(self) -> dict:
         return {"bundle_path": self.bundle_path, "source": self.source, "kind": self.kind,
@@ -821,6 +861,19 @@ def _project_plan(local: _Local, include: dict, *, dest=None, identities=True, m
                                             sort_keys=True).encode("utf-8")).hexdigest()[:16]
             leaf = _safe_name(Path(source).name)
             prefix = f"{MEDIA}/{key}/{leaf}"
+            if include["approximate"] and _approximable(ref, source, probe=identities):
+                container = prefix + approximate_image.SUFFIX
+                ref["approximate"] = container
+                if media_keys is not None and container in media_keys:
+                    continue
+                if media_keys is not None:
+                    media_keys.add(container)
+                size = _stat(source)[0] or 0
+                record = {"path": container, "size": size, "sha256": None,
+                          "approximate": {"method": approximate_image.METHOD, "source_size": size}}
+                media.append(record)
+                members.append(Member(container, "media", size, source=source, record=record, approximate=True))
+                continue
             ref["included"] = prefix
             if media_keys is not None and prefix in media_keys:
                 continue
@@ -1036,12 +1089,17 @@ def plan(ids: Iterable[str] = (), include=None, *, dest=None, dataset: Optional[
 def estimate(ids: Iterable[str] = (), include=None, *, dataset: Optional[str] = None) -> dict:
     """Sizes for the export dialog, from stat calls alone: each part's size
     and count whether or not it is on (so the dialog can show them all), each
-    image with where it is, and the total of what `include` carries."""
+    image with where it is, and the total of what `include` carries. Images
+    and ready-to-open files also say what they come to as smaller images
+    (`approximate_size`, an estimate: `approximate_image.estimate`, which
+    reads an image's first page too), and each file whether it would be one
+    (`approximate`)."""
     chosen = _include(include)
     built = plan(ids, {key: True for key in INCLUDE}, dataset=dataset, identities=False)
     rows = {key: {"size": 0, "count": 0} for key in ("state", "tables", "captures", "figures",
                                                       "images", "derived")}
     rows["images"]["items"], rows["derived"]["items"] = [], []
+    rows["images"]["approximate_size"] = rows["derived"]["approximate_size"] = 0
     for member in built.members:
         key = {"entry": "state", "state": "state", "table": "tables", "capture": "captures",
                "figure": "figures", "derived": "derived"}.get(member.kind)
@@ -1049,6 +1107,8 @@ def estimate(ids: Iterable[str] = (), include=None, *, dataset: Optional[str] = 
             continue
         rows[key]["size"] += member.size
         rows[key]["count"] += 1
+        if key == "derived":
+            rows[key]["approximate_size"] += member.size
     for pid, refs in built.refs.items():
         name = next(local.name for local in built.projects if local.id == pid)
         for ref in refs:
@@ -1060,18 +1120,26 @@ def estimate(ids: Iterable[str] = (), include=None, *, dataset: Optional[str] = 
                     "path": absolute, "can_include": ref.get("where") in ("here", "shared")}
             if ref["kind"] == "node":
                 item["node"] = (ref.get("identity") or {}).get("node")
+            size = int(ref.get("size") or 0)
+            smaller = (approximate_image.estimate(absolute)
+                       if item["can_include"] and absolute and _image_ref(ref) else None)
+            item["approximate"] = smaller is not None
+            item["approximate_size"] = smaller if smaller is not None else ref.get("size")
             rows[key]["items"].append(item)
             if item["can_include"]:
-                rows[key]["size"] += int(ref.get("size") or 0)
+                rows[key]["size"] += size
                 rows[key]["count"] += 1
+                rows[key]["approximate_size"] += int(item["approximate_size"] or 0)
     total = rows["state"]["size"]
     for key, row in (("tables", "tables"), ("captures", "captures"), ("figures", "figures"),
                      ("images", "images"), ("derived", "derived")):
         if chosen[key]:
-            total += rows[row]["size"]
+            total += rows[row]["approximate_size" if chosen["approximate"] and "approximate_size" in rows[row]
+                               else "size"]
     return {"projects": [{"id": local.id, "name": local.name, "title": local.entry.get("title"),
                           "shared": local.shared} for local in built.projects],
             "rows": rows, "include": chosen, "total": total, "caches": built.caches,
+            "approximate": {"available": approximate_image.can_make(), "share": approximate_image.SHARE},
             "datasets": [{"id": item["id"], "name": item["name"]} for item in built.manifest["datasets"]],
             "figures": [{"id": item["id"], "title": item["title"]} for item in built.manifest["figures"]],
             "left_out": built.manifest["left_out"]}
@@ -1225,6 +1293,23 @@ class _Progress:
             self.progress(min(self.done, self.total), self.total)
 
 
+class _Hashing:
+    """A stream that takes the size, sha256 and CRC of what goes through it."""
+
+    def __init__(self, out):
+        self.out, self.size, self.crc, self.digest = out, 0, 0, hashlib.sha256()
+
+    def write(self, data) -> int:
+        self.digest.update(data)
+        self.crc = zlib.crc32(data, self.crc)
+        self.size += len(data)
+        self.out.write(data)
+        return len(data)
+
+    def record(self) -> dict:
+        return {"size": self.size, "sha256": self.digest.hexdigest(), "crc": self.crc & 0xFFFFFFFF}
+
+
 class ZipSink:
     """Writes a bundle as a ZIP64 file: into `<dest>.part`, 1 MiB at a time,
     each member's sha256 and CRC taken as it streams, cancel checked between
@@ -1274,6 +1359,21 @@ class ZipSink:
                 written += len(chunk)
                 self._progress.advance(len(chunk))
         record = {"size": written, "sha256": digest.hexdigest(), "crc": crc & 0xFFFFFFFF}
+        self._written[bundle_path] = record
+        return record
+
+    def add_stream(self, bundle_path: str, produce: Callable, *, mtime=None) -> dict:
+        """A member made as it is written (a smaller image): `produce(out,
+        meter)` writes it to `out` and tells `meter` its own progress. Stored,
+        as what it writes is compressed already; ZIP64 from the start, as its
+        size is not known until it is done."""
+        info = zipfile.ZipInfo(bundle_path, date_time=_zip_time(mtime))
+        info.compress_type = zipfile.ZIP_STORED
+        info.external_attr = 0o644 << 16
+        with self._zip.open(info, "w", force_zip64=True) as out:
+            hashing = _Hashing(out)
+            produce(hashing, self._progress)
+        record = hashing.record()
         self._written[bundle_path] = record
         return record
 
@@ -1368,6 +1468,13 @@ class FolderSink:
                 self._progress.advance(len(chunk))
         return {"size": written, "sha256": digest.hexdigest()}
 
+    def add_stream(self, bundle_path: str, produce: Callable, *, mtime=None) -> dict:
+        with self._target(bundle_path).open("wb") as out:
+            hashing = _Hashing(out)
+            produce(hashing, self._progress)
+        record = hashing.record()
+        return {"size": record["size"], "sha256": record["sha256"]}
+
     def add_bytes(self, bundle_path: str, data: bytes) -> dict:
         self._progress.check()
         self._target(bundle_path).write_bytes(data)
@@ -1421,6 +1528,21 @@ def export(ids: Iterable[str] = (), dest=None, *, include=None, dataset: Optiona
         for member in built.members:
             if member.load is not None:
                 written = target.add_bytes(member.bundle_path, member.load())
+            elif member.approximate:
+                if not Path(member.source).is_file():
+                    manifest["left_out"].append({"project": member.project, "path": member.bundle_path,
+                                                 "why": "gone before it was packed"})
+                    _drop_record(manifest, member.record)
+                    continue
+                try:
+                    written = target.add_stream(member.bundle_path, lambda out, meter, source=member.source:
+                                                approximate_image.encode(source, out, advance=meter.advance,
+                                                                         check=meter.check))
+                except BundleError:
+                    raise
+                except ValueError as error:
+                    # The image changed since the plan looked at it.
+                    raise BundleError(str(error)) from error
             else:
                 try:
                     written = target.add_file(member.bundle_path, member.source)
@@ -1905,7 +2027,9 @@ def placements(source, choices=None, into=None, *, at_least: int = 0) -> list:
                 continue
             add(record, (state_dir if place == "state" else derived_dir).joinpath(*rel.split("/")))
         for ref in project.get("refs") or ():
-            prefix = ref.get("included")
+            # A smaller image goes where an included file would: the page
+            # writes it, and the website's Python reads it in place.
+            prefix = ref.get("included") or (ref.get("approximate") if approximate_image.can_read() else None)
             if not prefix or prefix in claimed:
                 continue
             claimed.add(prefix)
@@ -1925,17 +2049,21 @@ def _preview(manifest: dict, into, bundle_path) -> dict:
     decided = _decide(manifest, root)
     me = sources.app_key()
     roots = _search_roots()
+    decodes = approximate_image.can_read()
     out = []
     for item in decided:
         project = item["project"]
-        found = included = missing = node = 0
+        found = included = missing = node = approximate = 0
         for ref in project.get("refs") or ():
             if ref.get("kind") == "node":
                 node += 1
             elif ref.get("included"):
                 included += 1
             elif _find_cheap(ref, bundle_path, me, roots):
-                found += 1
+                found += 1   # the original wins over a smaller copy of it
+            elif ref.get("approximate") and decodes:
+                included += 1
+                approximate += 1
             else:
                 missing += 1
         size = sum(int(record.get("size") or 0) for record in project.get("files") or ())
@@ -1943,7 +2071,8 @@ def _preview(manifest: dict, into, bundle_path) -> dict:
                     "status": item["status"], "action": item["action"], "target": item["target"],
                     "local": item["local"], "revision": project.get("revision"),
                     "parent": project.get("parent"), "size": size,
-                    "refs": {"found": found, "included": included, "missing": missing, "node": node,
+                    "refs": {"found": found, "included": included, "approximate": approximate,
+                             "missing": missing, "node": node,
                              "nodes": sorted({(ref.get("identity") or {}).get("node") or ""
                                               for ref in project.get("refs") or ()
                                               if ref.get("kind") == "node"} - {""})}})
@@ -1983,8 +2112,9 @@ def _validate(source, manifest: dict, chosen: list, root: Path) -> list:
             raise BundleError(_OUTSIDE)
     for project in manifest.get("projects") or ():
         for ref in project.get("refs") or ():
-            if ref.get("included") and not _safe_member(ref["included"]):
-                raise BundleError(_OUTSIDE)
+            for key in ("included", "approximate"):
+                if ref.get(key) and not _safe_member(ref[key]):
+                    raise BundleError(_OUTSIDE)
     for figure in manifest.get("figures") or ():
         if not _FIGURE_ID.match(str(figure.get("id") or "")):
             raise BundleError(_OUTSIDE)
@@ -2024,6 +2154,8 @@ def _wanted(manifest: dict, chosen: list) -> list:
         for ref in project.get("refs") or ():
             if ref.get("included"):
                 media_paths.add(ref["included"])
+            elif ref.get("approximate") and approximate_image.can_read():
+                media_paths.add(ref["approximate"])
     for record in manifest.get("media") or ():
         if any(record["path"] == prefix or record["path"].startswith(prefix + "/") for prefix in media_paths):
             out.append(record)
@@ -2147,8 +2279,11 @@ def _find_refs(refs_by_project: dict, bundle_path, placed_media: dict, me: str, 
         for ref in refs:
             if ref.get("kind") not in ("file", "folder") or not ref.get("token"):
                 continue
-            if ref.get("included") and ref["included"] in placed_media:
-                found[pid][ref["token"]] = placed_media[ref["included"]]
+            # What the bundle brought: the file itself, or a smaller image
+            # placed because this computer has no original of it.
+            copy = ref.get("included") or ref.get("approximate")
+            if copy and copy in placed_media:
+                found[pid][ref["token"]] = placed_media[copy]
                 continue
             hit = _find_cheap(ref, bundle_path, me, roots)
             if hit:
@@ -2305,6 +2440,7 @@ def _apply(opened, manifest, decided, chosen, wanted, root, bundle_id, *, progre
     placed = placed or {}
     stage_dir = Path(root) / f".importing-{bundle_id}"
     meter = _Progress(sum(int(record.get("size") or 0) for record in wanted), progress, cancel)
+    roots = _search_roots()
     undo: list = []
     later: list = []
     results = []
@@ -2380,6 +2516,27 @@ def _apply(opened, manifest, decided, chosen, wanted, root, bundle_id, *, progre
             # The images it included, in its own folder, once per bundle.
             for ref in project.get("refs") or ():
                 prefix = ref.get("included")
+                container = ref.get("approximate")
+                if not prefix and container and container not in placed_media \
+                        and (container in staged or container in placed):
+                    # A smaller image is read where it is put (formats/approx.py)
+                    # -- unless the original is here, which wins over it.
+                    if _find_cheap(ref, bundle_path, me, roots):
+                        if container in placed:
+                            Path(placed[container]).unlink(missing_ok=True)
+                        continue
+                    destination = state_dir.joinpath(*container.split("/"))
+                    if container in placed:
+                        record = next((item for item in manifest.get("media") or ()
+                                       if item["path"] == container), {"path": container})
+                        _take_placed(placed[container], destination, record, undo)
+                    else:
+                        if destination.exists():
+                            raise BundleError(f"{destination} is in the way.")
+                        undo.append(lambda d=destination: d.unlink(missing_ok=True))
+                        _move(staged[container], destination)
+                    placed_media[container] = str(destination)
+                    continue
                 if not prefix or prefix in placed_media:
                     continue
                 destination = state_dir.joinpath(*prefix.split("/"))
@@ -2425,11 +2582,15 @@ def _apply(opened, manifest, decided, chosen, wanted, root, bundle_id, *, progre
                                "app": ((manifest.get("bundle") or {}).get("app") or {}).get("kind")}
             entries[pid] = entry
             refs = project.get("refs") or []
+            # Smaller images placed here (not an original found).
+            copies = {ref["token"] for ref in refs if ref.get("approximate") in placed_media and ref.get("token")
+                      and found.get(ref["token"]) == placed_media[ref["approximate"]]}
             results.append({"id": new_id, "bundle_id": pid, "name": project.get("name"), "status": item["status"],
                             "action": item["action"], "target": target, "backup": item.get("backup"),
                             "refs": {"found": sum(1 for ref in refs if ref.get("token") in found
-                                                  and not ref.get("included")),
-                                     "included": sum(1 for ref in refs if ref.get("included")),
+                                                  and not ref.get("included") and ref.get("token") not in copies),
+                                     "included": sum(1 for ref in refs if ref.get("included")) + len(copies),
+                                     "approximate": len(copies),
                                      "missing": sum(1 for ref in refs if ref.get("kind") in ("file", "folder")
                                                     and ref.get("token") not in found),
                                      "node": sum(1 for ref in refs if ref.get("kind") == "node")}})
