@@ -65,12 +65,12 @@
             + '<circle cx="16.5" cy="16.5" r="3"/><path d="m21 21-2.4-2.4"/>',
         findFolder: '<path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v3"/><path d="M3 7v10a2 2 0 0 0 2 2h6"/>'
             + '<circle cx="17" cy="16" r="3"/><path d="m21.5 20.5-2.4-2.4"/>',
-        warn: '<path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z"/>'
+        "triangle-exclamation": '<path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z"/>'
             + '<path d="M12 9v4"/><path d="M12 17h.01"/>',
         check: '<path d="M20 6 9 17l-5-5"/>',
         close: '<path d="M18 6 6 18M6 6l12 12"/>',
         info: '<circle cx="12" cy="12" r="9"/><path d="M12 11v5"/><path d="M12 8h.01"/>',
-        search: '<circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/>',
+        "magnifying-glass": '<circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/>',
     };
 
     //: What a file is to its project (relink.py `_role`): [label, noun].
@@ -557,7 +557,7 @@
             hint: hintOf(row),
             actions: [
                 { key: "skip", kind: "secondary", label: "Open without it" },
-                { key: "locate:0", kind: "primary", icon: "search", label: folder ? "Locate folder…" : "Locate file…" },
+                { key: "locate:0", kind: "primary", icon: "magnifying-glass", label: folder ? "Locate folder…" : "Locate file…" },
             ],
             footnote: row.reason === "nohandle" ? "In Chrome or Edge, files you used here before reopen after one click." : "",
         };
@@ -582,7 +582,7 @@
             rows, locate: true, searched, folders, paths: true, pyramidNames: false, error,
             actions: [
                 { key: "skip", kind: "secondary", label: open.length === 1 ? "Open without it" : "Open without them" },
-                { key: "search", kind: "primary", icon: folders ? "folder" : "search",
+                { key: "search", kind: "primary", icon: folders ? "folder" : "magnifying-glass",
                   label: folders ? (searched ? "Search another folder…" : "Choose folder…")
                       : (searched ? "Choose more files…" : "Choose files…") },
             ],
@@ -611,7 +611,7 @@
             ? `It has the same name, but not the ${folder ? "files, size or dates" : "size or the modified date"} of the ${what} this project was made with.`
             : `It is not the ${what} this project was made with: ${folder ? "its files, size or dates differ" : "its size or modified date differ"}.`;
         return {
-            name: "mismatch", icon: "warn", tone: "warn",
+            name: "mismatch", icon: "triangle-exclamation", tone: "warn",
             title: folder ? "That is a different folder" : "That is a different file",
             lead: `${sentence} ${consequence(item)}`,
             compare: { left: `This project’s ${what}`, right: folder ? "The folder you chose" : "The file you chose", rows },
@@ -624,7 +624,7 @@
                 ...(fromList ? [{ key: "back", kind: "link", label: "Back to the list" }] : []),
                 { key: "anyway", kind: "secondary", label: folder ? "Use this folder anyway" : "Use this file anyway",
                   busy: "Opening…" },
-                { key: "another", kind: "primary", icon: "search", label: folder ? "Choose another folder…" : "Choose another file…" },
+                { key: "another", kind: "primary", icon: "magnifying-glass", label: folder ? "Choose another folder…" : "Choose another file…" },
             ],
         };
     }

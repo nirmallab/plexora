@@ -15,6 +15,7 @@ computer against them.
 | model | `wasm_click_s` 0.95 | 2026-11-07: MobileSAM's encoder on onnxruntime-web's WebAssembly EP in Chrome, this i9 (WebGPU 0.04-0.07 s; the desktop's CPU 0.38-0.41 s) |
 | stall | `tiles` 50, `skip` 50, `p95_ms` 150, `node_p95_ms` 35 | 2026-11-07, the envelope's media row: tiles from NVMe p95 35 ms; T_read_p95 150 ms (a slow share). The first 50 tiles of a page are the open's own, not counted. |
 | selfcheck | `pyramid_bytes_per_second` 194000000 | 2026-11-07: the self-check page (/selfcheck) on the reference computer (the i9 of P7, 24 threads, 12 band workers, Chrome 156, quiet): its 2 x 8192 x 8192 uint16 image, after an untimed 2048 x 2048 warm-up, built at 191-197 MB/s run from the preview through Cloudflare as a user runs it (194 kept; 239-261 MB/s served from this computer: each build revalidates the builder's scripts with Pages). Another computer's build rate on a real image is P7's 348 MB/s scaled by its own self-check rate over this one. |
+| slow | `window_s` 15, `waited_s` 10, `network_bytes_per_second` 50000000, `drive_bytes_per_second` 100000000 | 2026-11-11: chosen between measurements, not fitted. HMS O2's transfer node over SFTP read ~20 MB/s from Boston (a 349 GB .ims, docs/internal/WEBSITE_TAB_LIMITS.md); a lab SMB share answered 64 KiB in ~20 ms and 1 MiB in ~220 ms (~4.5 MB/s, workers/pythonWorker.js); a local NVMe reads a picked file at well over 1 GB/s. 10 s of the last 15 spent waiting means the reads, not the work between them, held the page. |
 
 ## Computers (self-check records)
 

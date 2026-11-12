@@ -216,6 +216,10 @@ PYTHON = (
     "projects_import_cancel_post", "project_make_copy", "project_find_missing",
     "project_attach_resource", "project_thumbnail", "list_projects", "assign_projects", "put_file",
     "reload_datasource", "remote_health", "rename_channels_json", "set_pixel_size",
+    # How long reads waited (server/routes/system_routes.py): the desktop's
+    # page asks it; the website's Python posts its intervals to the page
+    # instead, and answers this with nothing.
+    "read_pace_since",
     # File > Open on the Website (plexora/website_link.py): `shown: false` here,
     # as off any desktop app's server; the row is the desktop window's.
     "desktop_website",

@@ -11785,8 +11785,9 @@ brightfield, `frame_t*.ets` naming);
 `tests/test_website_window.py` (the 8-bit window on the website);
 `tests/test_browser_czi_codecs.py` with `tests/browser/czi_codecs.mjs`; and
 `tests/js/jpegxr_probe.mjs`. Full suite on this branch with all of them:
-**12406 passed, 139 skipped, 0 failed** (macOS, serial, 2026-11-11, with the
-`.ets` reader; the env
+**12496 passed, 139 skipped, 0 failed** (macOS, serial, 2026-11-11, 0.0.52:
+the `.ets` reader, the website's tab limits and slow-read notices, the
+reopened files; 12491 + the 5 fixed after it; the env
 has no pytest-xdist). **The conda env lacks the six reader packages** (`czifile`,
 `liffile`, `nd2`, `oiffile`, `oirfile`, `readimc`) until they are installed
 from `pyproject.toml`; this branch's session used an overlay for them.

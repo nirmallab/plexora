@@ -17,7 +17,10 @@ const pick = (pattern, name) => {
 };
 const code = ["BLOCK", "KEEP", "PIECE", "PIECES", "SMALL"].map((name) => pick(new RegExp(`\\nconst ${name} = [^\\n]*\\n`), name))
     .concat([pick(/\nfunction withGil\(module, read\) \{[\s\S]*?\n\}\n/, "withGil(module, read)"),
-             pick(/\nfunction blockReads\(workerfs, module\) \{[\s\S]*?\n\}\n/, "blockReads(workerfs, module)")])
+             pick(/\nfunction blockReads\(workerfs, module\) \{[\s\S]*?\n\}\n/, "blockReads(workerfs, module)"),
+             // What a read waited goes to the page's slow-drive notice
+             // (drivePace); here it is only counted.
+             "\nlet paced = 0;\nfunction drivePace() { paced += 1; }\n"])
     .join("");
 const { blockReads, BLOCK, PIECE, PIECES, SMALL } = new Function(`${code}; return { blockReads, BLOCK, PIECE, PIECES, SMALL };`)();
 

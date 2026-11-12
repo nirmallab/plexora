@@ -267,6 +267,7 @@
   {"class": "js", "endpoint": "search_dir", "methods": ["POST"], "pattern": "^\\/search_dir$"},
   {"class": "python", "endpoint": "fix_table", "methods": ["POST"], "pattern": "^\\/fix_table$"},
   {"class": "js", "endpoint": "fs_places_route", "methods": ["GET"], "pattern": "^\\/fs_places$"},
+  {"class": "python", "endpoint": "read_pace_since", "methods": ["GET"], "pattern": "^\\/read_pace$"},
   {"class": "python", "endpoint": "list_datasets", "methods": ["GET"], "pattern": "^\\/datasets$"},
   {"class": "python", "endpoint": "create_dataset", "methods": ["POST"], "pattern": "^\\/datasets$"},
   {"class": "js", "endpoint": "list_dir", "methods": ["POST"], "pattern": "^\\/list_dir$"},
