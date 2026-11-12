@@ -301,3 +301,643 @@ html.plexora-boot-continued #plexora-boot-status {
     color: #fff;
     opacity: 0.85;
 }
+
+/* A project's files opened again, or found by the user (services/
+   reopenFiles.js): one dialog over the frame's loader, before the project's
+   page is written. The loader has tokens.css but not main.css, so the
+   dialog carries the app's modal look itself: the raised card, the cyan
+   primary, the X in the head and no Cancel. */
+.plx-reopen {
+    width: min(600px, calc(100vw - 32px));
+    max-height: calc(100vh - 32px);
+    box-sizing: border-box;
+    padding: 0;
+    border: 1px solid var(--border-subtle, rgba(255, 255, 255, 0.12));
+    border-radius: var(--radius-card, 12px);
+    background: var(--surface-2, #121820);
+    color: var(--text-primary, #f8fafc);
+    box-shadow: var(--shadow-lg, 0 12px 28px rgba(0, 0, 0, 0.4));
+    overflow: auto;
+    font: inherit;
+    font-size: 14px;
+    animation: plx-reopen-in 260ms cubic-bezier(0.2, 0, 0, 1) both;
+}
+
+.plx-reopen::backdrop {
+    background: rgba(5, 7, 10, 0.62);
+}
+
+.plx-reopen [hidden] {
+    display: none;
+}
+
+.plx-reopen.is-busy {
+    cursor: progress;
+}
+
+.plx-reopen-body {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+    padding: 22px 24px 20px;
+}
+
+.plx-reopen-head {
+    display: flex;
+    align-items: flex-start;
+    gap: 14px;
+}
+
+.plx-reopen-glyph {
+    display: inline-flex;
+    flex: none;
+}
+
+.plx-reopen-glyph svg {
+    width: 16px;
+    height: 16px;
+}
+
+.plx-reopen-icon {
+    flex: none;
+    width: 40px;
+    height: 40px;
+    border-radius: 10px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    background: var(--accent-channel-tint, rgba(56, 189, 248, 0.10));
+    color: var(--accent-channel, #38bdf8);
+}
+
+.plx-reopen-icon svg {
+    width: 20px;
+    height: 20px;
+}
+
+.plx-reopen-icon.is-warn {
+    background: var(--accent-warning-soft, rgba(243, 184, 69, 0.14));
+    color: var(--accent-warning, #f3b845);
+}
+
+.plx-reopen-icon.is-done {
+    background: var(--accent-success-soft, rgba(52, 211, 153, 0.14));
+    color: var(--accent-success, #34d399);
+}
+
+.plx-reopen-heading {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    padding-top: 2px;
+}
+
+.plx-reopen-title {
+    margin: 0;
+    font-size: 18px;
+    line-height: 24px;
+    font-weight: 600;
+    overflow-wrap: anywhere;
+}
+
+.plx-reopen-lead {
+    margin: 0;
+    font-size: 14px;
+    line-height: 21px;
+    color: var(--text-secondary, #d8e1ed);
+}
+
+.plx-reopen-close {
+    flex: none;
+    width: 36px;
+    height: 36px;
+    margin: -6px -8px 0 0;
+    border: 0;
+    border-radius: var(--radius-control, 8px);
+    background: transparent;
+    color: var(--text-muted, #8ea0b8);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+}
+
+.plx-reopen-close:hover {
+    background: rgba(255, 255, 255, 0.06);
+    color: var(--text-primary, #f8fafc);
+}
+
+/* The files: one row each, what it is and what was recorded of it. */
+.plx-reopen-files {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    border: 1px solid rgba(255, 255, 255, 0.10);
+    border-radius: 10px;
+    background: #0e131a;
+    overflow: hidden;
+}
+
+.plx-reopen-file {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 10px 14px;
+    animation: plx-reopen-rise 320ms cubic-bezier(0.2, 0, 0, 1) both;
+    animation-delay: calc(var(--plx-reopen-i, 0) * 45ms + 60ms);
+}
+
+.plx-reopen-file + .plx-reopen-file {
+    border-top: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.plx-reopen-file-icon {
+    flex: none;
+    width: 32px;
+    height: 32px;
+    border-radius: var(--radius-control, 8px);
+    background: #1b2330;
+    color: #9fb3cc;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.plx-reopen-file-icon svg {
+    width: 16px;
+    height: 16px;
+}
+
+.plx-reopen-file-icon.is-large {
+    width: 36px;
+    height: 36px;
+}
+
+.plx-reopen-file-icon.is-large svg {
+    width: 18px;
+    height: 18px;
+}
+
+.plx-reopen-file-words {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+
+.plx-reopen-file-name {
+    font-size: 14px;
+    font-weight: 500;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.plx-reopen-file-meta {
+    font-size: 12px;
+    line-height: 17px;
+    color: var(--text-muted, #8ea0b8);
+}
+
+.plx-reopen-file-path {
+    font: 11px/16px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    color: #8593a8;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.plx-reopen-file-state {
+    flex: none;
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    gap: 4px;
+}
+
+.plx-reopen-state {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 12px;
+    color: var(--text-muted, #8ea0b8);
+}
+
+.plx-reopen-state svg {
+    width: 14px;
+    height: 14px;
+}
+
+.plx-reopen-state.is-found {
+    color: var(--accent-success, #34d399);
+    font-weight: 500;
+}
+
+.plx-reopen-state.is-missing {
+    color: var(--accent-warning, #f3b845);
+    font-weight: 500;
+}
+
+/* One file: its card, with everything recorded that helps find it. */
+.plx-reopen-card {
+    border: 1px solid rgba(255, 255, 255, 0.10);
+    border-radius: 10px;
+    background: #0e131a;
+    overflow: hidden;
+    transition: border-color var(--duration-fast, 120ms) var(--ease-standard, ease);
+    animation: plx-reopen-rise 320ms cubic-bezier(0.2, 0, 0, 1) 60ms both;
+}
+
+.plx-reopen-card.is-found {
+    border-color: rgba(52, 211, 153, 0.45);
+}
+
+.plx-reopen-card-top {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 14px 16px 12px;
+}
+
+.plx-reopen-card-name {
+    font-size: 15px;
+    font-weight: 600;
+    overflow-wrap: anywhere;
+}
+
+.plx-reopen-facts {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 10px 16px;
+    margin: 0;
+    padding: 0 16px 14px 64px;
+}
+
+.plx-reopen-fact {
+    min-width: 0;
+}
+
+.plx-reopen-fact.is-wide {
+    grid-column: 1 / -1;
+}
+
+.plx-reopen-fact dt {
+    margin: 0 0 2px;
+    font-size: 11px;
+    font-weight: 500;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: var(--text-muted, #8ea0b8);
+}
+
+.plx-reopen-fact dd {
+    margin: 0;
+    font-size: 13px;
+    line-height: 18px;
+    color: var(--text-secondary, #d8e1ed);
+    overflow-wrap: anywhere;
+}
+
+.plx-reopen-fact.is-wide dd {
+    font: 12px/17px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
+.plx-reopen-fact-extra {
+    color: var(--text-muted, #8ea0b8);
+}
+
+.plx-reopen-card-same {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 10px 16px;
+    background: rgba(52, 211, 153, 0.10);
+    border-top: 1px solid rgba(52, 211, 153, 0.30);
+    font-size: 13px;
+    color: #a7f3d0;
+}
+
+.plx-reopen-card-same .plx-reopen-glyph {
+    color: var(--accent-success, #34d399);
+}
+
+/* A file the user chose that is not the project's: the two side by side. */
+.plx-reopen-compare {
+    width: 100%;
+    table-layout: fixed;
+    border-collapse: separate;
+    border-spacing: 0;
+    border: 1px solid rgba(255, 255, 255, 0.10);
+    border-radius: 10px;
+    background: #0e131a;
+    font-size: 13px;
+    overflow: hidden;
+}
+
+.plx-reopen-compare th,
+.plx-reopen-compare td {
+    padding: 10px 14px;
+    text-align: left;
+    vertical-align: middle;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+    overflow-wrap: anywhere;
+}
+
+.plx-reopen-compare tbody tr:last-child > * {
+    border-bottom: 0;
+}
+
+.plx-reopen-compare thead th {
+    font-size: 11px;
+    font-weight: 500;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: var(--text-muted, #8ea0b8);
+    border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.plx-reopen-compare thead th:first-child {
+    width: 24%;
+}
+
+.plx-reopen-compare tbody th {
+    font-weight: 500;
+    color: var(--text-muted, #8ea0b8);
+}
+
+.plx-reopen-compare td {
+    color: var(--text-secondary, #d8e1ed);
+}
+
+.plx-reopen-same {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.plx-reopen-same .plx-reopen-glyph {
+    color: var(--accent-success, #34d399);
+}
+
+.plx-reopen-same .plx-reopen-glyph svg {
+    width: 13px;
+    height: 13px;
+}
+
+.plx-reopen-differs {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: var(--radius-sm, 6px);
+    background: var(--accent-warning-soft, rgba(243, 184, 69, 0.14));
+    color: #f8d58a;
+}
+
+.plx-reopen-tip,
+.plx-reopen-hint {
+    display: flex;
+    gap: 10px;
+    align-items: flex-start;
+    font-size: 13px;
+    line-height: 19px;
+}
+
+.plx-reopen-tip {
+    padding: 11px 13px;
+    border-radius: var(--radius-control, 8px);
+    background: var(--accent-channel-tint, rgba(56, 189, 248, 0.10));
+    border: 1px solid rgba(56, 189, 248, 0.30);
+    color: var(--text-secondary, #d8e1ed);
+}
+
+.plx-reopen-tip .plx-reopen-glyph,
+.plx-reopen-hint .plx-reopen-glyph {
+    margin-top: 2px;
+}
+
+.plx-reopen-tip .plx-reopen-glyph {
+    color: var(--accent-channel, #38bdf8);
+}
+
+.plx-reopen-tip strong {
+    color: var(--text-primary, #f8fafc);
+    font-weight: 600;
+}
+
+.plx-reopen-hint {
+    color: #c3cedb;
+}
+
+.plx-reopen-hint .plx-reopen-glyph {
+    color: var(--text-muted, #8ea0b8);
+}
+
+.plx-reopen-error {
+    padding: 10px 12px;
+    border-radius: var(--radius-control, 8px);
+    background: var(--accent-danger-soft, rgba(248, 113, 113, 0.14));
+    color: #fecaca;
+    font-size: 13px;
+    line-height: 19px;
+}
+
+.plx-reopen-progress {
+    height: 4px;
+    border-radius: 2px;
+    background: rgba(255, 255, 255, 0.08);
+    overflow: hidden;
+}
+
+.plx-reopen-progress span {
+    display: block;
+    width: 40%;
+    height: 100%;
+    border-radius: 2px;
+    background: var(--accent-channel, #38bdf8);
+    animation: plx-reopen-progress 1200ms ease-in-out infinite;
+}
+
+.plx-reopen-actions {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding-top: 2px;
+}
+
+.plx-reopen-actions-start,
+.plx-reopen-actions-end {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 10px;
+}
+
+.plx-reopen-actions-end {
+    margin-left: auto;
+}
+
+.plx-reopen-button {
+    font: inherit;
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    height: 40px;
+    padding: 0 16px;
+    border-radius: var(--radius-control, 8px);
+    font-size: 14px;
+    font-weight: 500;
+    white-space: nowrap;
+    cursor: pointer;
+    transition: background var(--duration-fast, 120ms) var(--ease-standard, ease),
+        border-color var(--duration-fast, 120ms) var(--ease-standard, ease),
+        color var(--duration-fast, 120ms) var(--ease-standard, ease);
+}
+
+.plx-reopen-button svg {
+    width: 16px;
+    height: 16px;
+}
+
+.plx-reopen-button.is-primary {
+    padding: 0 18px;
+    border: 0;
+    background: var(--accent-channel, #38bdf8);
+    color: #05070a;
+    font-weight: 600;
+}
+
+.plx-reopen-button.is-primary:hover {
+    background: #7dd3fc;
+}
+
+.plx-reopen-button.is-secondary,
+.plx-reopen-button.is-small {
+    border: 1px solid rgba(255, 255, 255, 0.16);
+    background: transparent;
+    color: var(--text-secondary, #d8e1ed);
+}
+
+.plx-reopen-button.is-secondary:hover,
+.plx-reopen-button.is-small:hover {
+    border-color: rgba(255, 255, 255, 0.32);
+    color: var(--text-primary, #f8fafc);
+}
+
+.plx-reopen-button.is-small {
+    height: 26px;
+    padding: 0 10px;
+    border-radius: var(--radius-sm, 6px);
+    font-size: 12px;
+}
+
+.plx-reopen-button.is-link {
+    height: auto;
+    padding: 4px 2px;
+    border: 0;
+    background: transparent;
+    color: var(--text-muted, #8ea0b8);
+    font-size: 13px;
+    text-decoration: underline;
+    text-decoration-color: transparent;
+    text-underline-offset: 3px;
+}
+
+.plx-reopen-button.is-link:hover {
+    color: var(--text-primary, #f8fafc);
+    text-decoration-color: currentColor;
+}
+
+.plx-reopen-button:disabled {
+    cursor: progress;
+    opacity: 0.7;
+}
+
+.plx-reopen.is-busy .plx-reopen-button.is-primary:disabled {
+    background: rgba(56, 189, 248, 0.35);
+    color: #e0f2fe;
+    opacity: 1;
+}
+
+.plx-reopen-button:focus-visible,
+.plx-reopen-close:focus-visible {
+    outline: 2px solid var(--accent-channel-soft, rgba(56, 189, 248, 0.36));
+    outline-offset: 2px;
+}
+
+.plx-reopen-foot {
+    margin: -4px 0 0;
+    padding-top: 12px;
+    border-top: 1px solid rgba(255, 255, 255, 0.08);
+    font-size: 12px;
+    line-height: 17px;
+    color: var(--text-muted, #8ea0b8);
+}
+
+@media (max-width: 520px) {
+    .plx-reopen-body {
+        padding: 18px 16px 16px;
+    }
+
+    .plx-reopen-facts {
+        grid-template-columns: minmax(0, 1fr);
+        padding-left: 16px;
+    }
+
+    .plx-reopen-file {
+        flex-wrap: wrap;
+    }
+
+    .plx-reopen-file-state {
+        flex-direction: row;
+        align-items: center;
+        margin-left: 44px;
+    }
+}
+
+@keyframes plx-reopen-in {
+    from {
+        opacity: 0;
+        transform: translateY(8px) scale(0.985);
+    }
+    to {
+        opacity: 1;
+        transform: none;
+    }
+}
+
+@keyframes plx-reopen-rise {
+    from {
+        opacity: 0;
+        transform: translateY(4px);
+    }
+    to {
+        opacity: 1;
+        transform: none;
+    }
+}
+
+@keyframes plx-reopen-progress {
+    from {
+        transform: translateX(-100%);
+    }
+    to {
+        transform: translateX(250%);
+    }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .plx-reopen,
+    .plx-reopen-file,
+    .plx-reopen-card,
+    .plx-reopen-progress span {
+        animation: none;
+    }
+
+    .plx-reopen-progress span {
+        width: 60%;
+    }
+}

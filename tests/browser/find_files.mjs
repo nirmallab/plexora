@@ -1,16 +1,18 @@
 // A project made in the desktop app, opened on the website: its image is
-// named by a path on the disk, which a web page cannot open. The loader asks
-// once for the folder that holds it ("Find them..."); the page finds the file
-// there by its identity, Python records where, and the viewer draws it.
+// named by a path on the disk, which a web page cannot open. The loader's
+// dialog (services/reopenFiles.js) describes the one missing file -- "Find
+// <name>", with the path the desktop recorded -- and its "Locate file…" opens
+// the browser's file dialog; the page checks the file by its identity, Python
+// records where, and the viewer draws it.
 //
 //   node tests/browser/find_files.mjs --entry ENTRY.json --image IMAGE
 //
 // ENTRY.json: {name, entry} -- a config.json entry as the desktop wrote it in
-// the website's library (tests/test_browser_find_files.py makes one). The
-// folder picker is stood in by a folder of the profile's storage holding a
-// copy of IMAGE (served by the test server; a copy keeps the bytes, not the time).
-// Where the browser has no folder picker (Firefox, Safari) the loader asks for
-// the file itself ("Locate file…"), answered here with IMAGE.
+// the website's library (tests/test_browser_find_files.py makes one). In
+// Chrome the file dialog is stood in by a copy of IMAGE in the profile's own
+// storage (served by the test server; a copy keeps the bytes, not the time,
+// so it is matched by its bytes); where the browser has no File System Access
+// (Firefox, Safari) the file input is answered with IMAGE itself.
 // Prints JSON with `ok`.
 import path from "node:path";
 import { readFileSync } from "node:fs";
@@ -32,12 +34,13 @@ try {
     const origin = `http://127.0.0.1:${server.port}`;
     out.folders = await canWriteFolders(browser.context, origin);
     if (out.folders) {
-        await page.addInitScript(() => {
-            window.showDirectoryPicker = async () => {
+        await page.addInitScript((fileName) => {
+            window.showOpenFilePicker = async () => {
                 const root = await navigator.storage.getDirectory();
-                return root.getDirectoryHandle("found-here", { create: true });
+                const dir = await root.getDirectoryHandle("found-here", { create: true });
+                return [await dir.getFileHandle(fileName)];
             };
-        });
+        }, path.basename(image));
     }
     await seedBrowserStore(browser.context, origin);
     await page.goto(`${origin}/?pydebug`);
@@ -60,24 +63,19 @@ try {
     ].join("\n")), [name, entry]);
     await page.evaluate(() => window.PlexoraPython.flush());
 
-    // Open it: the loader asks; "Find them..." is the answer -- or, with no
-    // folder picker, "Locate file...", a click the browser lets open its file
-    // dialog, answered with the image.
+    // Open it: the loader's dialog describes the file; "Locate file…" is a
+    // click the browser lets open its file dialog, answered with the image.
     await page.goto(`${origin}/${encodeURIComponent(name)}?pydebug`);
-    if (out.folders) {
-        out.asked = await page.waitForFunction(() => {
-            const frameEl = document.getElementById("plexora-app");
-            const inner = frameEl && frameEl.contentDocument;
-            const button = inner && [...inner.querySelectorAll(".plexora-boot-actions button")]
-                .find((b) => b.textContent.trim() === "Find them…");
-            if (button) button.click();
-            return Boolean(button);
-        }, null, { timeout: 60000, polling: 200 }).then(() => true, () => false);
-    } else {
-        const loader = await (await page.waitForSelector("#plexora-app", { timeout: 60000 })).contentFrame();
-        const locate = loader.locator(".plexora-boot-actions button", { hasText: "Locate file" });
-        out.asked = await locate.waitFor({ timeout: 60000 }).then(() => true, () => false);
-        if (out.asked) {
+    const loader = await (await page.waitForSelector("#plexora-app", { timeout: 60000 })).contentFrame();
+    const locate = loader.locator('dialog.plx-reopen [data-action="locate:0"]');
+    out.asked = await locate.waitFor({ timeout: 60000 }).then(() => true, () => false);
+    if (out.asked) {
+        out.title = await loader.locator("dialog.plx-reopen .plx-reopen-title").textContent();
+        out.wasAt = await loader.locator("dialog.plx-reopen .plx-reopen-fact.is-wide dd").textContent()
+            .catch(() => "");
+        if (out.folders) {
+            await locate.click();
+        } else {
             const chooser = page.waitForEvent("filechooser", { timeout: 30000 });
             await locate.click();
             await (await chooser).setFiles(image);
@@ -102,6 +100,7 @@ try {
     await browser.close();
     server.stop();
 }
-out.ok = Boolean(out.asked && out.drawn && String(out.recorded).includes("/picked/"));
+out.ok = Boolean(out.asked && out.drawn && String(out.recorded).includes("/picked/")
+                 && out.title === `Find ${path.basename(image)}` && out.wasAt === image);
 console.log(JSON.stringify(out, null, 1));
 process.exit(out.ok ? 0 : 1);

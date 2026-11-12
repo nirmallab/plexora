@@ -7004,7 +7004,44 @@ deliberately left out and what should be built next.
   which opens but is not remembered; `mountHandle`,
   `startHandle` and `originOf` (record `from`) serve the explorer. Probe:
   `tests/js/website_pick_probe.mjs`, run by `tests/test_website_pick.py`;
-  website cases in `tests/js/file_explorer_probe.mjs`.
+  website cases in `tests/js/file_explorer_probe.mjs`. For a later visit's
+  reopen it has `reconnect({ask, ids})` (serialised, because each run takes
+  the waiting list whole and a second beside it would find it empty; one
+  refusal stops the asking), `status(id)` (`mounted`, `prompt`, `denied`,
+  `moved`, `nohandle`, `none`), `chooseFile(item)`, `keep(chosen, {ask})`
+  and `idOf`; `find` matches a renamed file by size and date and answers
+  null on a cancel.
+- `services/reopenFiles.js` — `window.PlexoraReopen.run({doc, project, python,
+  picks, derived, reveal, status})`, **a project's files opened again on a
+  later visit to the website**, loaded by `services/shell.js` in the host
+  page's services list and called by its `findFiles` when
+  `/project/<name>/files_here` lists something. It replaced the loader's
+  "This project's image is on this computer [Skip] [Find them…]" question
+  (`askInLoader`, gone), which asked even when the browser would have
+  granted the files without a word. Three steps, cheapest first: picks the
+  browser already grants are mounted with no dialog; where it holds the
+  handle but asks again, one "Allow access" (Chrome's prompt lists every
+  handle the site held, and "Allow on every visit" makes later visits
+  silent); otherwise a "find it again" dialog per reason (no handle in
+  Firefox/Safari, moved, not allowed, another browser or cleared site data,
+  a desktop-made project). A chosen file is matched by size and date
+  whatever its name; a different file is shown beside the original and
+  recorded only on "Use this file anyway". `browserStore.js`'s `reconnect`
+  quietly runs `PlexoraPicks.reconnect({ask: false})` after the folder
+  grant, since that prompt already covered the picks. Python's half is
+  `server/utils/relink.py`: `missing_here` items carry `here`, `role`
+  (`image`/`mask`/`table`/`layer`/`file`), `made`, `from_name`, `kind`,
+  `entries`; `title_of`; `record_found(name, found, anyway=())`, which for a
+  path in `anyway` replaces the recorded identity with the chosen file's and
+  drops the other apps' `at`, so every app looks for the file the project
+  uses now. `record_found` and `ensure` map the entry back to its recorded
+  paths (`_as_recorded`) before moving `at`: `read_config` hands out this
+  app's paths, and a file found a second time used to leave the first path
+  in the entry's values for good (found on the live site: a renamed copy,
+  then "Use this file anyway", and the viewer opened the copy's old path).
+  The routes answer `title` and `refused` (the identity of a file
+  found but not taken), and the POST takes `anyway`. Styles:
+  `css/shell.css` `.plx-reopen*`.
 - `services/firstView.js` — `window.PlexoraFirstView`, **the image on screen
   the moment it is given to the home page**: channel 0's smallest pyramid
   level, read by the page itself from the dropped File (the header, the
@@ -11744,6 +11781,15 @@ they need none installed. The second round added `test_formats_zvi.py`,
 has no pytest-xdist). **The conda env lacks the six reader packages** (`czifile`,
 `liffile`, `nd2`, `oiffile`, `oirfile`, `readimc`) until they are installed
 from `pyproject.toml`; this branch's session used an overlay for them.
+
+**Reopening a project's files on the website added tests**:
+`tests/test_reopen_files.py` (relink's new fields, `record_found`'s
+`anyway`, the routes' `title`/`refused`) and its run of
+`tests/js/reopen_files_probe.mjs` (19 checks). The test's `CHECKS` tuple must
+list every line the probe prints, so a check added or renamed in one is
+added in the other. `tests/js/mini_dom.mjs` is a shared mini DOM, a copy of
+`web_onboarding_probe.mjs`'s own with `firstChild`/`lastChild`. No full run
+was reported for this work.
 
 **The desktop app has its own validation, outside pytest:**
 

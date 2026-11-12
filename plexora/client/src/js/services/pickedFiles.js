@@ -45,7 +45,17 @@
  *   originOf(path)         -> where a mounted path was chosen from (a `/local/...`
  *                             path, services/localFiles.js), or ""
  *   restore()              -> {mounted: [id], waiting: [pick]} at boot
- *   reconnect()            -> mounts every waiting pick (call from a click)
+ *   reconnect({ask, ids})  -> mounts the waiting picks (those of `ids`, or all):
+ *                             from a click with `ask` (the default), the browser
+ *                             asked once -- its prompt lists every handle the
+ *                             site held, and one refusal stops the asking; with
+ *                             `ask: false`, only those it grants already (after
+ *                             another of its prompts said yes)
+ *   status(id)             -> {state, record}: why a pick is not open --
+ *                             "mounted", "prompt" (the browser asks again),
+ *                             "denied", "moved" (granted, but the file is not
+ *                             where it was), "nohandle" (this browser keeps no
+ *                             handles: Firefox, Safari), or "none" (no record)
  *   list()                 -> every remembered pick
  *   fileFor(path)          -> the File behind a mounted path, or null
  *   filesUnder(prefix)     -> [{path, file}] mounted under a folder (an MRXS's)
@@ -53,7 +63,15 @@
  *   canWriteFolders()      -> whether this browser lets the page write into a
  *                             folder the user grants (Chromium's File System Access)
  *   find(missing)          -> from a click: a project's files found in a folder the
- *                             user chooses, mounted like a pick: {recorded: path}
+ *                             user chooses (or the files themselves, without a
+ *                             folder picker), each by its name or, renamed since,
+ *                             by its size, then checked as `sameFile`; mounted
+ *                             like a pick: {recorded: path}, or null (cancelled)
+ *   chooseFile(item)       -> from a click: one file the user chooses for `item`
+ *                             ({name, size, mtime_ms, head, tail}), not mounted:
+ *                             {file, handle, same}, or null (cancelled)
+ *   keep(chosen, {ask})    -> a `chooseFile` answer mounted and remembered like a
+ *                             pick (with an MRXS's folder and the like); its path
  *
  * Classic script, `window.PlexoraPicks`. Needs `window.PlexoraPython`.
  */
@@ -739,8 +757,9 @@
      * From a click: a project's files that this page has no path for
      * ([{recorded, name, size, mtime_ms, head, tail}], from Python's
      * /project/<name>/files_here), looked for in a folder the user chooses
-     * (and its subfolders), each by name and then by `sameFile`. The ones
-     * found are mounted like a pick and remembered; {recorded: path here}.
+     * (and its subfolders), each by name -- or by size, renamed since -- and
+     * then by `sameFile`. The ones found are mounted like a pick and
+     * remembered; {recorded: path here}, or null when the dialog was cancelled.
      */
     async function find(missing) {
         let entries;
@@ -749,13 +768,14 @@
                 entries = await walk(await global.showDirectoryPicker({ id: "plexora-find", mode: "read" }));
             } else {
                 // No folder picker (Firefox, Safari): the files themselves
-                // ("Locate file…"); a folder input would list, and ask to
+                // ("Choose files…"); a folder input would list, and ask to
                 // upload, everything under the folder.
-                entries = (await chooseWithInput({ multiple: missing.length > 1 }))
-                    .map((file) => ({ path: file.name, file, handle: null }));
+                const files = await chooseWithInput({ multiple: missing.length > 1 });
+                if (!files.length) return null;
+                entries = files.map((file) => ({ path: file.name, file, handle: null }));
             }
         } catch (error) {
-            if (error && error.name === "AbortError") return {};
+            if (error && error.name === "AbortError") return null;
             throw error;
         }
         const byName = new Map();
@@ -769,6 +789,14 @@
             for (const entry of byName.get(item.name) || []) {
                 if (await sameFile(entry.file, item)) { hit = entry; break; }
             }
+            // Renamed since it was recorded: a file of its size, which
+            // `sameFile` then takes only by its date or its bytes.
+            if (!hit && item.size != null) {
+                for (const entry of entries) {
+                    if (entry.file.name === item.name || entry.file.size !== item.size) continue;
+                    if (await sameFile(entry.file, item)) { hit = entry; break; }
+                }
+            }
             if (!hit) continue;
             // One mount per name: two found files may share one.
             const id = newId();
@@ -779,6 +807,83 @@
             out[item.recorded] = path;
         }
         return out;
+    }
+
+    /**
+     * From a click: one file the user chooses for `item` (a project file this
+     * page has no path for), in the browser's dialog -- which opens where this
+     * site's last one did -- or a file input. Not mounted yet: the caller
+     * shows how it differs first, when it does. -> {file, handle, same}, or
+     * null when cancelled.
+     */
+    async function chooseFile(item) {
+        let file = null;
+        let handle = null;
+        try {
+            if (global.showOpenFilePicker) {
+                [handle] = await global.showOpenFilePicker({ id: "plexora", multiple: false });
+                file = handle ? await handle.getFile() : null;
+            } else {
+                [file] = await chooseWithInput({ multiple: false });
+            }
+        } catch (error) {
+            if (error && error.name === "AbortError") return null;
+            throw error;
+        }
+        if (!file) return null;
+        return { file, handle: handle || null, same: await sameFile(file, item || {}) };
+    }
+
+    //: A `chooseFile` answer mounted and remembered like a pick, with what it
+    //: needs beside it (`ask`: the caller's one-button question, for an
+    //: MRXS's folder and the like). -> its path, or null.
+    async function keep(chosen, { ask = null } = {}) {
+        try {
+            return await mountOne(newId(), chosen.file, chosen.handle || null, { ask });
+        } catch (error) {
+            if (error && error.name === "AbortError") return null;
+            throw error;
+        }
+    }
+
+    //: Every handle a record holds: a folder's, a slide's file and folder,
+    //: a few files'.
+    const handlesOf = (record) => [record.handle, record.folder, ...(record.handles || [])].filter(Boolean);
+
+    async function permissionOf(handle) {
+        try {
+            return await handle.queryPermission({ mode: "read" });
+        } catch (error) {
+            return "prompt";
+        }
+    }
+
+    //: Why a record that is not mounted is not (`status`).
+    async function stateOf(record) {
+        const all = handlesOf(record);
+        if (!all.length) return "nohandle";
+        for (const handle of all) {
+            const state = await permissionOf(handle);
+            if (state !== "granted") return state === "denied" ? "denied" : "prompt";
+        }
+        // Every handle granted, and still not mounted: what it points at is
+        // gone from where it was (getFile's NotFoundError).
+        return "moved";
+    }
+
+    async function status(id) {
+        await reconnecting;
+        if ([...mounted.keys()].some((path) => idOf(path) === id)) return { state: "mounted", record: null };
+        let record = waiting.find((one) => one.id === id) || null;
+        if (!record) {
+            try {
+                record = (await list()).find((one) => one.id === id) || null;
+            } catch (error) {
+                record = null;
+            }
+        }
+        if (!record) return { state: "none", record: null };
+        return { state: await stateOf(record), record };
     }
 
     async function granted(handle, ask) {
@@ -899,16 +1004,44 @@
         return { mounted, waiting: waiting.slice() };
     }
 
-    async function reconnect() {
+    //: One reconnect at a time (the home page's Reconnect starts a quiet one
+    //: that a project's loader may meet): each takes the waiting list whole,
+    //: so a second running beside it would find it empty, and `status` would
+    //: take a record it holds for one granted but gone.
+    let reconnecting = Promise.resolve();
+
+    function reconnect(options = {}) {
+        const run = reconnecting.then(() => reconnectNow(options));
+        reconnecting = run.catch(() => null);
+        return run;
+    }
+
+    async function reconnectNow({ ask = true, ids = null } = {}) {
+        const wanted = ids ? new Set(ids) : null;
         const done = [];
+        const still = [];
+        let asking = Boolean(ask);
         for (const record of waiting.splice(0)) {
+            if (wanted && !wanted.has(record.id)) {
+                still.push(record);
+                continue;
+            }
             try {
-                if (await mountRecord(record, true)) done.push(record.id);
-                else waiting.push(record);
-            } catch (error) {
-                waiting.push(record);
+                if (await mountRecord(record, asking)) {
+                    done.push(record.id);
+                    continue;
+                }
+            } catch (error) { /* gone from where it was: still waiting */ }
+            still.push(record);
+            // The browser's prompt lists every handle the site held, so a no
+            // (or a prompt dismissed) is the answer for the rest too: it is
+            // not asked again, once a file.
+            if (asking && handlesOf(record).length) {
+                const state = await stateOf(record);
+                if (state === "prompt" || state === "denied") asking = false;
             }
         }
+        waiting.push(...still);
         return { mounted: done, waiting: waiting.slice() };
     }
 
@@ -946,7 +1079,9 @@
                                               .map(([path, file]) => ({ path, file })),
                                           handleFor: (path) => handles.get(path) || null,
                                           canWriteFolders: () => typeof global.showDirectoryPicker === "function",
-                                          find,
+                                          find, chooseFile, keep, status,
+                                          //: The pick a mounted (or recorded) path belongs to.
+                                          idOf,
                                           //: A file mounted by other means (a test, a drop).
                                           adopt: (path, file) => mounted.set(path, file) });
 })(window);

@@ -457,40 +457,13 @@
         screen.end(text, "plexora-boot-failed");
     };
 
-    //: A row of buttons under the line (a question's, a last word's).
+    //: A row of buttons under the line (a last word's).
     function actionRow() {
         const row = doc.createElement("div");
         row.className = "plexora-boot-actions";
         const below = doc.querySelector("#plexora-boot .plexora-boot-below") || doc.getElementById("plexora-boot");
         if (below) below.appendChild(row);
         return row;
-    }
-
-    //: A question in the loader, before the app starts: `text`, then a button
-    //: per action; resolves with the chosen action's value. (A click here is
-    //: what lets the page ask the browser for a permission.) The start's
-    //: steps wait for it: the line goes back to them once it is answered.
-    let asking = 0;
-    function askInLoader(text, actions) {
-        asking += 1;
-        unveil();
-        screen.say(text);
-        const row = actionRow();
-        return new Promise((resolve) => {
-            for (const action of actions) {
-                const button = doc.createElement("button");
-                button.type = "button";
-                button.textContent = action.label;
-                if (action.primary) button.className = "is-primary";
-                button.addEventListener("click", () => {
-                    row.remove();
-                    asking -= 1;
-                    if (!asking) screen.resume();
-                    resolve(action.value);
-                });
-                row.appendChild(button);
-            }
-        });
     }
 
     //: The app's page in the frame, once it can show a dialog and a notice:
@@ -811,6 +784,9 @@
             // where it outlives the frame's way to the viewer.
             at("/client/src/js/services/firstView.js"),
             at("/client/src/js/services/pickedFiles.js"),
+            // A project's files opened again on a later visit, or found by
+            // the user: the frame's loader asks through it (`findFiles`).
+            at("/client/src/js/services/reopenFiles.js"),
             // The explorer's listings of the folders the user gives the site.
             at("/client/src/js/services/localFiles.js"),
             // Saving into a picked file Python wrote (Settings > Data, off by default).
@@ -1063,54 +1039,24 @@
         }
     }
 
-    //: A project made in the desktop app names its files as that app knows
-    //: them: asked once, in the loader, for the folder that holds them
-    //: (PlexoraPicks.find), and what is found is recorded for Python. True
-    //: when something was found (the page is then asked for again).
+    //: The files of a project this page has no path for (picked on an
+    //: earlier visit, in another browser, or by the desktop app), opened
+    //: again before its page is drawn (services/reopenFiles.js): silently
+    //: where the browser grants them, after one Allow access where it asks
+    //: again, or found by the user where it keeps nothing -- in a dialog
+    //: over this loader, whose clicks are what the browser's prompts and
+    //: file dialogs need. True when something was opened or found (the page
+    //: is then asked for again).
     async function findFiles(project) {
-        const route = `/project/${encodeURIComponent(project)}/files_here`;
-        let missing = [];
+        const reopen = host && host.PlexoraReopen;
+        if (!reopen || !global.PlexoraPicks) return false;
         try {
-            missing = (await (await global.PlexoraPython.fetch(route)).json()).missing || [];
+            return await reopen.run({
+                doc, project, python: global.PlexoraPython, picks: global.PlexoraPicks,
+                derived: host.PlexoraDerived || null, reveal: unveil, status,
+            });
         } catch (error) {
             return false;
-        }
-        if (!missing.length) return false;
-        // Only copies this browser made and keeps in a folder it may no
-        // longer read without a click (Python reports them `waiting`): that
-        // folder asked for again in one click, not the files looked for.
-        if (missing.every((item) => item && item.waiting) && global.PlexoraDerived
-            && typeof global.PlexoraDerived.reconnect === "function") {
-            const open = await askInLoader(
-                missing.length === 1 ? "This project's pyramid is in a folder the browser needs to open again."
-                    : "This project's pyramids are in a folder the browser needs to open again.",
-                [{ value: false, label: "Skip" }, { value: true, label: "Open folder", primary: true }]);
-            if (!open) return false;
-            try {
-                const done = await global.PlexoraDerived.reconnect();
-                return Boolean(done && done.mounted && done.mounted.length);
-            } catch (error) {
-                return false;
-            } finally {
-                screen.resume();
-            }
-        }
-        if (!global.PlexoraPicks || !global.PlexoraPicks.find) return false;
-        // A folder to look in where the browser has a folder picker; the file
-        // itself where it has not (Firefox, Safari).
-        const folders = typeof global.showDirectoryPicker === "function";
-        const label = folders ? "Find them…" : missing.length === 1 ? "Locate file…" : "Locate files…";
-        const go = await askInLoader(
-            missing.length === 1 ? "This project's image is on this computer." : "This project's files are on this computer.",
-            [{ value: false, label: "Skip" }, { value: true, label, primary: true }]);
-        if (!go) return false;
-        status("Looking for the files");
-        try {
-            const found = await global.PlexoraPicks.find(missing).catch(() => ({}));
-            if (!Object.keys(found).length) return false;
-            await global.PlexoraPython.fetch(route, { method: "POST", headers: { "Content-Type": "application/json" },
-                                                      body: JSON.stringify({ found }) });
-            return true;
         } finally {
             screen.resume();
         }
