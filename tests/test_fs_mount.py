@@ -72,3 +72,22 @@ def test_release_is_once(mounter):
     fs_mount.release(stream)
     fs_mount.release(stream)
     assert released == [path]
+
+
+def test_a_host_without_a_worker_has_no_mounter(monkeypatch):
+    """The bundle's import check boots Python in Node, where `js` has no
+    `self`: the boot must go on without a mounter, not fail."""
+    import sys
+    import types
+
+    from plexora.browser import remote_mount
+
+    class NoSelf:
+        def __getattr__(self, name):
+            raise AttributeError(name)
+
+    monkeypatch.setitem(sys.modules, "js", NoSelf())
+    assert remote_mount.available() is False
+    worker = types.SimpleNamespace(plexoraMountReader=lambda *a: None)
+    monkeypatch.setitem(sys.modules, "js", types.SimpleNamespace(self=worker))
+    assert remote_mount.available() is True
