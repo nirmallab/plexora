@@ -183,7 +183,9 @@
                    without a pyramid is the compressed kind (paths.
                    compress_pyramids, /settings/pyramids): the Import dialog's
                    switch starts from it, and an import through the API, MCP or
-                   CLI takes it. settingsPage.js's PyramidsSection. #}
+                   CLI takes it. settingsPage.js's PyramidsSection. Not on the
+                   website, whose page builds exact copies itself. #}
+                {% if not website %}
                 <h2 class="settings-panel-title plx-locations-after">Pyramids</h2>
                 <div class="settings-card" id="settings_pyramids">
                     <label class="settings-node-field settings-remote-check">
@@ -196,6 +198,7 @@
                         one, every pixel within its noise. Your original is never changed.
                     </div>
                 </div>
+                {% endif %}
 
                 <h2 class="settings-panel-title plx-locations-after">Data directory</h2>
                 <p class="settings-panel-lead">
