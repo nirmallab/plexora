@@ -405,7 +405,13 @@
         async finish(manifest) {
             await this.flush();
             if (this.pending) await this.pending;
-            await this.api.finishExport(this.videoId, this.exportId, manifest);
+            try {
+                await this.api.finishExport(this.videoId, this.exportId, manifest);
+            } catch (error) {
+                // 410: the export already ended (its writer failed while
+                // finish waited); the status below says why, with the tail.
+                if (error.status !== 410) throw error;
+            }
             for (;;) {
                 const status = await this.api.exportStatus(this.videoId, this.exportId);
                 if (status.status === "done") {

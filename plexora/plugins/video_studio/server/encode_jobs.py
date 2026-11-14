@@ -243,7 +243,16 @@ def finish(video_id: str, export_id: str, client_manifest: dict) -> dict:
                        409)
     job["_finish"] = client_manifest if isinstance(client_manifest, dict) else {}
     job["status"] = "finishing"
-    job["_queue"].put(None)
+    # With the writer behind the queue is full: wait for room, but not past
+    # the writer's end -- once it has failed or been cancelled nothing takes
+    # from the queue, and this request would never answer.
+    while True:
+        try:
+            job["_queue"].put(None, timeout=0.5)
+            break
+        except queue.Full:
+            if job["status"] != "finishing":
+                raise JobError(f"this export is {job['status']}", 410) from None
     _resume(job)
     return describe(job)
 
@@ -360,6 +369,13 @@ def _run(job: dict):
             job["finished_at"] = _now()
             job["_touched"] = time.monotonic()
             job["_document"] = None
+            # Nothing takes from the queue any more: empty it, so its frames
+            # are freed and a finish waiting for room is let go.
+            while True:
+                try:
+                    job["_queue"].get_nowait()
+                except queue.Empty:
+                    break
 
 
 def _keep_partial(job):
