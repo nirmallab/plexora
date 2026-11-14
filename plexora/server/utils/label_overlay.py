@@ -38,7 +38,7 @@ def label_region(pyramid, level, y, x, height, width):
         array = pyramid[str(level)]
         return np.asarray(array[y:y + height, x:x + width])
     else:
-        present = [int(k) for k in pyramid.array_keys() if str(k).isdigit()]
+        present = _present_levels(pyramid)
         below = [k for k in present if k <= level]
         base = max(below) if below else min(present)
         array = pyramid[str(base)]
@@ -51,7 +51,24 @@ def label_region(pyramid, level, y, x, height, width):
     columns = columns[columns < array.shape[1]]
     if not len(rows) or not len(columns):
         return np.zeros((len(rows), len(columns)), dtype=array.dtype)
+    if not hasattr(array, "oindex"):
+        # An in-memory mask's level is numpy (or memory_pyramid._NumpyLevel),
+        # which has no orthogonal indexing; the same evenly spaced rows and
+        # columns are a plain strided slice.
+        return np.asarray(array[rows[0]:rows[-1] + 1:factor,
+                                columns[0]:columns[-1] + 1:factor])
     return np.asarray(array.oindex[rows, columns])
+
+
+def _present_levels(pyramid):
+    """The level numbers a mask pyramid holds.
+
+    A zarr group lists them with `array_keys()`; an in-memory mask is an
+    `ome_zarr.NgffPyramid`, which has no such method and iterates its level
+    names instead.
+    """
+    keys = pyramid.array_keys() if hasattr(pyramid, "array_keys") else iter(pyramid)
+    return [int(k) for k in keys if str(k).isdigit()]
 
 
 def mask_level_shape(pyramid, level):
@@ -62,7 +79,7 @@ def mask_level_shape(pyramid, level):
         array = pyramid[str(level)]
         return tuple(array.shape[-2:])
     else:
-        present = [int(k) for k in pyramid.array_keys() if str(k).isdigit()]
+        present = _present_levels(pyramid)
         below = [k for k in present if k <= level]
         base = max(below) if below else min(present)
         array = pyramid[str(base)]

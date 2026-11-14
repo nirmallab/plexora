@@ -57,11 +57,26 @@ import secrets
 import threading
 from pathlib import Path
 
-#: What the kernel's node is called in `nodes.json`. One per data root, and
-#: re-registered under the same name every kernel, so a restart heals rather
-#: than accumulating an entry per session -- the same discipline `plexora
-#: connect` uses for the node on a user's laptop.
+#: What a kernel's node is called in `nodes.json`: this, then the kernel's own
+#: `<pid>-<random>` (`KernelNode.name`). One name per kernel, because two
+#: notebooks open at once are two live kernels, and a shared name let the
+#: second take over the first one's projects. A restart still heals rather than
+#: accumulating: a kernel prunes the entries of kernels that no longer answer,
+#: and takes over a project whose kernel has gone. Bare, it is what every
+#: kernel was called before, and a binding to it is still a kernel's.
 NODE_NAME = "notebook-kernel"
+
+#: How long a kernel waits for another kernel's node to say it is still
+#: running. This only bounds a kernel busy enough to be slow, which is counted
+#: as running; a refused connection is not bounded by it, and on Windows takes
+#: about 2 s to come back.
+KERNEL_PROBE_TIMEOUT = 5.0
+
+#: The kernels this process has already found gone, as (name, endpoint,
+#: node_id). Gone is for good -- nothing brings that node_id back on that
+#: port -- so each dead kernel costs one refused connection per process, not
+#: one per resource kind, per candidate name and again at registration.
+_GONE_KERNELS = set()
 
 #: Threads the kernel node's waitress pool runs. Small on purpose: this pool
 #: serves tiles from inside the process that is also doing the analysis, and a
@@ -348,7 +363,11 @@ class KernelNode:
 
         self.registry = node_resources.Registry()
         self.token = secrets.token_hex(16)
-        self.node_id = f"kernel-{os.getpid()}-{secrets.token_hex(3)}"
+        suffix = f"{os.getpid()}-{secrets.token_hex(3)}"
+        self.node_id = f"kernel-{suffix}"
+        #: This kernel's own entry in `nodes.json`, and the node every binding
+        #: it writes names. See `NODE_NAME`.
+        self.name = f"{NODE_NAME}-{suffix}"
         app = create_node_app(
             [], self.token, node_id=self.node_id,
             # No browser ever talks to this node -- see the module docstring --
@@ -366,14 +385,15 @@ class KernelNode:
         return f"http://127.0.0.1:{self.port}"
 
     def _register(self, log=print):
-        """Put this node in `nodes.json`, replacing whatever was there.
+        """Put this node in `nodes.json`, and drop the kernels that have gone.
 
-        Under a fixed name rather than a generated one, so a kernel restart
-        overwrites the previous kernel's entry instead of leaving a dead node
-        behind for every session. `verify=True` costs one loopback request and
-        proves the thread is actually answering before anything is attached to
-        it -- the alternative being an attach that fails with a connection
-        error the user has no way to place.
+        Under this kernel's own name, so a second notebook open at the same
+        time does not overwrite the first one's entry. A restart does not leave
+        a dead node behind for every session either: every other kernel entry
+        that no longer answers is removed here. `verify=True` costs one
+        loopback request and proves the thread is actually answering before
+        anything is attached to it -- the alternative being an attach that
+        fails with a connection error the user has no way to place.
 
         No `browser_endpoint`, and `role="kernel"`, which is what keeps this
         node out of `/resource_routing` altogether: its loopback address means
@@ -383,8 +403,12 @@ class KernelNode:
         from plexora import nodes as node_api
         from plexora.server.models import nodes as node_registry
 
-        node_api.register_node(NODE_NAME, self.endpoint, token=self.token,
+        node_api.register_node(self.name, self.endpoint, token=self.token,
                                role=node_registry.KERNEL, verify=True)
+        for other in node_registry.load_all().values():
+            if (other.name != self.name and other.role == node_registry.KERNEL
+                    and not _kernel_is_running(other)):
+                node_registry.remove(other.name)
 
     def _ensure_registered(self, log=print):
         """Register again if the CURRENT data root does not know this node.
@@ -397,7 +421,7 @@ class KernelNode:
         """
         from plexora.server.models import nodes as node_registry
 
-        entry = node_registry.find(NODE_NAME)
+        entry = node_registry.find(self.name)
         if entry is not None and entry.endpoint == self.endpoint \
                 and entry.token == self.token:
             return
@@ -433,6 +457,49 @@ def _serve_in_thread(app, threads=NODE_THREADS):
                               daemon=True)
     thread.start()
     return server
+
+
+def _is_kernel_name(name) -> bool:
+    """Whether a binding's node is a notebook kernel's, going by its name."""
+    name = str(name or "")
+    return name == NODE_NAME or name.startswith(f"{NODE_NAME}-")
+
+
+def _kernel_is_running(entry) -> bool:
+    """Whether the kernel behind this `nodes.json` entry is still alive.
+
+    Gone means it cannot have been: the connection is refused, something
+    else on that port turns its token away, or a different node answers.
+    Anything less certain -- a slow answer from a kernel busy with the
+    user's own cells -- counts as running, because the cost of a wrong
+    "gone" is taking over a live notebook's project.
+    """
+    import urllib3
+
+    from plexora.server.providers import http
+    from plexora.server.providers.base import (
+        NodeVersionMismatch,
+        ResourceError,
+        ResourceUnavailable,
+    )
+
+    key = (entry.name, entry.endpoint, entry.node_id)
+    if key in _GONE_KERNELS:
+        return False
+    try:
+        answer = http.hello(entry, timeout=KERNEL_PROBE_TIMEOUT)
+    except NodeVersionMismatch:
+        return True
+    except ResourceUnavailable as exc:
+        running = not isinstance(exc.__cause__,
+                                 urllib3.exceptions.NewConnectionError)
+    except ResourceError:
+        running = False
+    else:
+        running = not entry.node_id or answer.get("node_id") == entry.node_id
+    if not running:
+        _GONE_KERNELS.add(key)
+    return running
 
 
 # -- registering a project over in-memory objects --------------------------
@@ -645,7 +712,7 @@ def register_memory_datasource(
 
     ids = _resource_ids(name)
     existing = Project.find(name, data_root)
-    _refuse_foreign(existing, ids)
+    _refuse_foreign(existing, ids, own=kernel.name)
 
     project = _ensure_image(name, image, existing, ids, kernel,
                             channel_names=channel_names, image_type=image_type,
@@ -759,24 +826,46 @@ def _resource_ids(name) -> dict:
     return {kind: f"{slug}-{kind}" for kind in ("image", "segmentation", "table")}
 
 
-def _refuse_foreign(project, ids):
+def _refuse_foreign(project, ids, own=None):
     """Never overwrite a project this kernel did not make.
 
     Re-registering our own is the whole point -- that is `refresh`. Silently
     repointing somebody's existing project at a notebook's arrays is a different
     thing entirely, and the failure would be discovered by the user opening it
     and finding their slide replaced.
+
+    `own` is the calling kernel's node name (None when it has not started one).
+    A project another kernel made is that kernel's while it is running -- a
+    second notebook open beside the first -- and is taken over only once that
+    kernel has gone, which is what lets a restarted kernel re-register its
+    projects under the same names.
     """
+    from plexora.server.models import nodes as node_registry
+
     if project is None:
         return
     for kind, resource_id in ids.items():
         binding = project.resource(kind)
         if binding is None or not binding.is_node:
             continue
-        if binding.node != NODE_NAME or binding.resource_id != resource_id:
+        if binding.resource_id != resource_id or not _is_kernel_name(binding.node):
             raise MemoryDataError(
                 f"a project called {project.name!r} already exists and its "
                 f"{kind} points somewhere else. Choose another name.")
+        if binding.node == own:
+            continue
+        entry = node_registry.find(binding.node)
+        if entry is None:
+            continue
+        if entry.role != node_registry.KERNEL:
+            raise MemoryDataError(
+                f"a project called {project.name!r} already exists and its "
+                f"{kind} points somewhere else. Choose another name.")
+        if _kernel_is_running(entry):
+            raise MemoryDataError(
+                f"a project called {project.name!r} is being served by another "
+                f"notebook kernel that is still running. Choose another name, "
+                f"or shut that notebook's kernel down first.")
 
 
 def infer_project_name(image, data_dir=None) -> str:
@@ -785,9 +874,11 @@ def infer_project_name(image, data_dir=None) -> str:
     The image's file name without its image extension, as the Import dialog
     suggests it; `"notebook"` when the image is an array and has no name. A
     name this kernel already owns is returned as is, so calling again after
-    an edit refreshes the same project rather than starting `<name>_2`. A name
-    held by a project this kernel did not make gets `_2`, `_3`, ... -- the
-    same rule `_refuse_foreign` would otherwise turn into an error.
+    an edit refreshes the same project rather than starting `<name>_2`, and so
+    is one whose kernel has gone (a restart). A name held by a project this
+    kernel did not make -- an import, or another notebook's kernel that is
+    still running -- gets `_2`, `_3`, ... -- the same rule `_refuse_foreign`
+    would otherwise turn into an error.
     """
     from plexora import datasource as datasource_api
     from plexora import paths
@@ -796,11 +887,15 @@ def infer_project_name(image, data_dir=None) -> str:
     base = (datasource_api._derive_dataset_name_from_path(image)
             if _is_path(image) else "") or "notebook"
     data_root = Path(data_dir).expanduser().resolve() if data_dir else paths.data_root()
+    # This kernel's node, if it has started one: a name it is serving is its
+    # own to refresh; one another running kernel is serving is not.
+    kernel = KernelNode._instance
+    own = kernel.name if kernel is not None else None
     candidate, n = base, 1
     while True:
         existing = Project.find(candidate, data_root)
         try:
-            _refuse_foreign(existing, _resource_ids(candidate))
+            _refuse_foreign(existing, _resource_ids(candidate), own=own)
             return candidate
         except MemoryDataError:
             n += 1
@@ -864,7 +959,7 @@ def _ensure_image(name, image, existing, ids, kernel, *, channel_names,
         Project(name=str(name), image=ImageSpec()).save(data_root)
     # reload=False: the process attaching is the notebook kernel, and the
     # process serving is the sidecar. See nodes._reload.
-    return node_api.attach_image(str(name), node=NODE_NAME,
+    return node_api.attach_image(str(name), node=kernel.name,
                                  resource_id=ids["image"],
                                  channel_names=channel_names, reload=False)
 
@@ -907,7 +1002,7 @@ def _ensure_segmentation(project, segmentation, ids, kernel, *, data_root,
         return updated
 
     kernel.serve("segmentation", ids["segmentation"], snapshot_mask(segmentation))
-    return node_api.attach_segmentation(project.name, node=NODE_NAME,
+    return node_api.attach_segmentation(project.name, node=kernel.name,
                                         resource_id=ids["segmentation"],
                                         reload=False)
 
@@ -955,7 +1050,7 @@ def _ensure_table(project, *, adata, table, ids, kernel, coordinate_source,
             x=x, y=y, id_column=obs_id_field, celltype_column=celltype_column)
 
     kernel.serve("table", resource_id, snapshot)
-    return node_api.attach_table(project.name, node=NODE_NAME,
+    return node_api.attach_table(project.name, node=kernel.name,
                                  resource_id=resource_id, spec=spec,
                                  reload=False)
 
@@ -969,5 +1064,5 @@ def serves_memory(project) -> bool:
     anything.
     """
     return any((binding := project.resource(kind)) is not None
-               and binding.is_node and binding.node == NODE_NAME
+               and binding.is_node and _is_kernel_name(binding.node)
                for kind in ("image", "segmentation", "table"))
