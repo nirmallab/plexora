@@ -84,14 +84,17 @@ def test_the_project_records_the_image_it_was_handed(registered):
 
 
 def test_every_resource_points_at_this_kernel_and_not_at_a_path(registered):
+    # This kernel's own node name, not one shared by every kernel: see
+    # tests/test_memory_two_kernels.py.
+    name = memory_api.KernelNode.get(**QUIET).name
     for kind in ("image", "segmentation", "table"):
         binding = registered.resource(kind)
         assert binding is not None and binding.is_node
-        assert binding.node == memory_api.NODE_NAME
+        assert binding.node == name
     # The spec records the LOCATOR, not the memory URI it was built with: a
     # binding says where a resource is, and `node://` is the one spelling for
     # "not on this machine's filesystem". `memory://` never leaves the node.
-    assert registered.dataset.src == f"node://{memory_api.NODE_NAME}/tonsil-table"
+    assert registered.dataset.src == f"node://{name}/tonsil-table"
     assert registered.image.src == ""
 
 
@@ -283,7 +286,7 @@ def test_the_kernel_node_is_registered_loopback_and_invisible_to_a_browser(
     `resourceRouting.js`, which falls back to proxying when a probe fails."""
     from plexora.server.models import nodes as node_registry
 
-    node = node_registry.get(memory_api.NODE_NAME)
+    node = node_registry.get(memory_api.KernelNode.get(**QUIET).name)
     assert node.endpoint.startswith("http://127.0.0.1:")
     assert node.browser_endpoint is None
     assert node.token
