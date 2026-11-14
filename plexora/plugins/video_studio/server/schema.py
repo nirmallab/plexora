@@ -828,10 +828,11 @@ def content_time(k: int, n: int, duration_s: float, loop: bool) -> float:
 
 def _step_value(track: dict, t: float, fallback):
     """The value a step track holds at time t: its last keyframe at or before
-    t, its first before any. `$current` resolves to the fallback."""
-    value = fallback
+    t, the fallback before its first (the browser's stepAt renders it that
+    way, and the manifest must record what was rendered). `$current` resolves
+    to the fallback."""
     frames = track.get("keyframes") or []
-    if not frames:
+    if not frames or t < frames[0]["t"] - 1e-9:
         return fallback
     value = frames[0]["value"]
     for kf in frames:

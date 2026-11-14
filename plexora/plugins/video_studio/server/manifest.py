@@ -131,4 +131,8 @@ def _verify(plan: list, client_frames: list):
                 # A frame the browser described unreadably is a disagreement,
                 # never a reason to lose a finished export.
                 return False
+        # The view mode is recorded too: a plane shown where the plan says
+        # volume misstates the frame as much as a wrong plane does.
+        if "mode" in theirs and theirs["mode"] != ours["mode"]:
+            return False
     return True

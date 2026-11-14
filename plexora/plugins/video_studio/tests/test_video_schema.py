@@ -439,8 +439,10 @@ def test_muted_tracks_change_nothing_and_timepoints_and_modes_step_too():
     early, late = schema.acquired_at(doc, 1.0), schema.acquired_at(doc, 5.0)
     assert early["z"] == 0 and late["z"] == 0
     assert (early["t"], late["t"]) == (1, 3)
-    # Before its first keyframe a step track holds that keyframe's value.
-    assert (early["mode"], late["mode"]) == ("volume", "volume")
+    # Before its first keyframe a step track does nothing: the base mode shows,
+    # as the browser renders it (static/videoAnimation.js stepAt).
+    assert doc["base"]["view"]["mode"] == "plane"
+    assert (early["mode"], late["mode"]) == ("plane", "volume")
 
 
 def test_a_slab_reveal_grows_from_its_fixed_edge():
