@@ -132,6 +132,16 @@ INSTALL_TIMEOUT = 900
 
 ANNOUNCE_RE = re.compile(r"\[plexora-remote\]\s+node=(\S+)\s+port=(\d+)")
 
+#: How long a direct (no scheduler) `--bind-node` connection waits, once the
+#: viewer answers, for the announce that carries its token. It is printed
+#: before the viewer listens, so this is the reader catching up, not the remote.
+ANNOUNCE_TOKEN_WAIT = 5
+
+#: The token a `--bind-node` viewer guards itself with, on the same announce.
+#: Read separately, as NODE_HOSTNAME_RE is, so a remote too old to send one
+#: (and therefore too old to require one) still parses.
+ANNOUNCE_TOKEN_RE = re.compile(r"\[plexora-remote\]\s.*?\btoken=(\S+)")
+
 #: Terminal control sequences, stripped off every line the far side sends.
 #: `-t` gives the remote a pty, so everything over there believes it is talking
 #: to a terminal and colours itself accordingly -- pip paints its ERROR red,
@@ -1156,6 +1166,12 @@ def parse_announce(line):
     return match.group(1), int(match.group(2))
 
 
+def parse_announce_token(line):
+    """The viewer's token from the remote's announce line, or None."""
+    match = ANNOUNCE_TOKEN_RE.search(line)
+    return match.group(1) if match else None
+
+
 def parse_node_announce(line):
     """`{host, port, node_id, token, hostname, platform}` from an announce line.
 
@@ -1468,7 +1484,11 @@ class _Watched:
     #: only thing worth waiting for was "which compute node did the scheduler
     #: give me"; a viewer that starts a data node beside itself announces twice,
     #: on the same pipe, in an order neither end controls.
-    DEFAULT_MATCHERS = {"announce": parse_announce}
+    #:
+    #: The token first: both come off one line, and whoever wakes on the
+    #: announce must find the token already recorded.
+    DEFAULT_MATCHERS = {"announce_token": parse_announce_token,
+                        "announce": parse_announce}
 
     def __init__(self, argv, label, *, echo=print, env=None, detach=False,
                  matchers=None, hold_stdin=False):
@@ -1522,6 +1542,10 @@ class _Watched:
     @property
     def announce(self):
         return self.found.get("announce")
+
+    @property
+    def announce_token(self):
+        return self.found.get("announce_token")
 
     @property
     def saw_announce(self):
@@ -1666,6 +1690,10 @@ atexit.register(_shut_down_active)
 #: waiting fixes, and it looked exactly like a node that was slow to start.
 NODE_TOKEN_HEADER = "X-Plexora-Node-Token"
 
+#: The header a viewer checks (plexora/_guard.py TOKEN_HEADER), duplicated for
+#: the same reason.
+VIEWER_TOKEN_HEADER = "X-Plexora-Token"
+
 
 def _wait_for_health(url, deadline, watchers, *, echo=None, headers=None,
                      any_answer=False):
@@ -1688,8 +1716,8 @@ def _wait_for_health(url, deadline, watchers, *, echo=None, headers=None,
     opposite answers:
 
     - A VIEWER started over there may have been started with its own auth
-      token, which this side has no way to know -- the announce line carries a
-      node and a port and nothing else. Such a viewer answers 403, which is
+      token, which this side may not know yet -- only a `--bind-node` viewer
+      announces one, and the poll does not wait for it. Such a viewer answers 403, which is
       still proof that Plexora is up and listening on the far end of the
       tunnel, and is the whole question this poll is asking. So: any HTTP
       status below 500 is life, including the ones urllib raises on.
@@ -1792,7 +1820,7 @@ def _wait_for_announce(watched, deadline, *, echo=print):
 
 def register_node_through(base_url, name, endpoint, token, *,
                           browser_endpoint=None, managed_by=None, role=None,
-                          timeout=20):
+                          timeout=20, viewer_token=None):
     """Register a data node with a Plexora, over its own settings route.
 
     Used instead of writing the far side's nodes.json directly, and instead of
@@ -1803,6 +1831,9 @@ def register_node_through(base_url, name, endpoint, token, *,
 
     Registering through the TUNNEL rather than to a public address is what
     makes this safe on a cluster: the request never leaves the ssh channel.
+
+    `token` is the node's; `viewer_token` is the viewer's own, which only a
+    `--bind-node` viewer has, sent in a header rather than in the URL.
     """
     import json
 
@@ -1813,10 +1844,13 @@ def register_node_through(base_url, name, endpoint, token, *,
         payload["managed_by"] = managed_by
     if role:
         payload["role"] = role
+    headers = {"Content-Type": "application/json"}
+    if viewer_token:
+        headers[VIEWER_TOKEN_HEADER] = viewer_token
     request = urllib.request.Request(
         f"{str(base_url).rstrip('/')}/settings/nodes",
         data=json.dumps(payload).encode("utf-8"),
-        headers={"Content-Type": "application/json"},
+        headers=headers,
         method="POST",
     )
     with _urlopen(request, timeout=timeout) as response:
@@ -2301,6 +2335,9 @@ class Session:
         #: the job announces itself, and None forever in direct mode.
         self.node = None
         self.node_port = None
+        #: The viewer's own token, read off its announce. Only a `--bind-node`
+        #: viewer has one: it listens on the cluster's network, not loopback.
+        self.token = None
         #: `{name, endpoint, browser_endpoint}` per data node this session set
         #: up and registered. Reported rather than returned, because a node
         #: that could not be registered is a degraded connection, not a failed
@@ -2323,11 +2360,18 @@ class Session:
 
     @property
     def open_url(self):
-        """The URL to actually open -- the datasource included when there is one."""
+        """The URL to actually open -- the datasource and token included when
+        there are any. The viewer trades the token for a cookie on this first
+        request, so only this one URL carries it."""
         url = self.url
         if url is None:
             return None
-        return url + self.datasource if self.datasource else url
+        url = url + self.datasource if self.datasource else url
+        if self.token:
+            from urllib.parse import quote
+
+            url += ("&" if "?" in url else "?") + f"token={quote(self.token, safe='')}"
+        return url
 
     @property
     def alive(self):
@@ -2556,6 +2600,7 @@ class Session:
                     f"Plexora did not answer on {self.url} within "
                     f"{self.health_timeout:g}s.\n" + self._silence_hint()
                 )
+            self.token = self._viewer_token()
 
             # Only now, with a viewer that answers: registering a node means
             # POSTing to that viewer, so there is nothing to POST to until here.
@@ -2578,6 +2623,19 @@ class Session:
             self.stop()
             raise
         return self
+
+    def _viewer_token(self):
+        """The token a `--bind-node` viewer printed on its announce, or None.
+
+        Under --srun the announce was already waited for. Without a scheduler
+        nothing waits for it, and the health poll can win the race to the line
+        the far side printed before it started listening, so it is given a
+        moment. A remote too old to mint one sends none and needs none.
+        """
+        if not self.bind_node or self.primary is None:
+            return None
+        self.primary.saw_announce.wait(timeout=ANNOUNCE_TOKEN_WAIT)
+        return self.primary.announce_token
 
     # -- data nodes --------------------------------------------------------
 
@@ -2682,6 +2740,7 @@ class Session:
                 browser_endpoint=browser_endpoint,
                 role=role,
                 managed_by=f"connect:{self.node_name}" if self.node_name else "connect",
+                viewer_token=self.token,
             )
         except Exception as exc:
             self.node_errors.append(f"{name}: {exc}")

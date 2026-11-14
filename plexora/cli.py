@@ -520,7 +520,13 @@ def remote_instructions(user, host, port, base_url="", *, login_host=None,
     prefix = _clean_base_url(base_url)
     local_url = with_token(f"http://localhost:{port}{prefix or '/'}", token)
     login = login_host or "<login-host>"
-    lines = [f"{ANNOUNCE_PREFIX} node={node or host} port={port}", ""]
+    # The token rides the announce, after the port: `plexora connect` reads it
+    # off the ssh pipe, and an older one, which matches only node and port,
+    # still parses the line.
+    announce = f"{ANNOUNCE_PREFIX} node={node or host} port={port}"
+    if token:
+        announce += f" token={token}"
+    lines = [announce, ""]
 
     if node and bind_node:
         lines += [
@@ -3539,11 +3545,14 @@ def _terminal_token(args, host, detected_kind, paths):
     another account on the same machine -- a shared workstation, a login
     node -- cannot use the port. Not given one:
 
-    * a typed `--remote`: `plexora connect` reads only the port off the ready
-      line, and a remote newer than the laptop's Plexora would refuse every
-      request the older laptop made. Loopback plus the browser guard still
-      apply there. A bare `plexora` over ssh, remote only by detection, is not
-      `plexora connect` (which always types the flag) and keeps its token.
+    * a typed `--remote` on loopback: `plexora connect` reads only the port off
+      the ready line, and a remote newer than the laptop's Plexora would
+      refuse every request the older laptop made. Loopback plus the browser
+      guard still apply there. A bare `plexora` over ssh, remote only by
+      detection, is not `plexora connect` (which always types the flag) and
+      keeps its token. `--bind-node` keeps one too: it listens on 0.0.0.0,
+      where every account on the cluster's network reaches the port, so the
+      token goes out on the announce line and `plexora connect` reads it there.
     * a hub's proxy or Colab: the page is framed by, or proxied through,
       another origin, where a SameSite cookie does not arrive.
     * `--no-token`.
@@ -3554,7 +3563,8 @@ def _terminal_token(args, host, detected_kind, paths):
     inherited = os.environ.get("PLEXORA_AUTH_TOKEN")
     if inherited:
         return inherited
-    typed_remote = args.remote and not getattr(args, "remote_detected", False)
+    typed_remote = (args.remote and not getattr(args, "remote_detected", False)
+                    and not args.bind_node)
     if args.no_token or typed_remote or detected_kind in ("proxy", "colab"):
         return None
     if _is_loopback(host):
@@ -3806,9 +3816,9 @@ def main(argv=None):
         health_url = browser_url(host, port)
         url = f"{browser_url(host, port, '', args.datasource)}?token={ood_token}"
 
-    if args.remote and getattr(args, "remote_detected", False):
+    if args.remote and (getattr(args, "remote_detected", False) or args.bind_node):
         # The tunnel's URL is the only one this user is given, so it carries
-        # the token a detected remote kept.
+        # the token a detected remote or a --bind-node launch kept.
         _print_remote_instructions(args, port, token=view_token)
     elif args.remote:
         _print_remote_instructions(args, port)
