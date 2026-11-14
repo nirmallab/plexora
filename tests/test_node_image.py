@@ -191,7 +191,10 @@ def test_the_viewer_route_serves_a_node_tile(node_image):
     data_model.load_datasource("remote", reload=True)
 
     client = app.test_client()
-    response = client.get("/generated/data/remote/slide_0/0/0_0.png")
+    # At the address the viewer builds: `c=` is the content version /config
+    # gives the opened project's channel (main.js's boot and applyRouting).
+    version = client.get("/config?datasource=remote").get_json()["remote"]["imageData"][0]["version"]
+    response = client.get(f"/generated/data/remote/slide_0/0/0_0.png?c={version}")
 
     assert response.status_code == 200
     assert response.mimetype == "image/webp"

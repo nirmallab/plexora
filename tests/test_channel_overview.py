@@ -184,14 +184,15 @@ def test_the_route_serves_an_image(client):
 
 
 def test_the_route_lets_the_browser_keep_it(client):
-    """Same bargain as the tile route: immutable for a given load_generation,
-    with the generation in the ETag rather than the URL so a reload invalidates
-    without the client rewriting anything."""
+    """Kept, but asked about each time: its address is the channel's name,
+    which neither a reload nor a re-registered image changes, so the
+    generation in the ETag only works if the browser revalidates -- and then a
+    matching tag is a 304, not a re-render."""
     test_client, name, names = client
     response = test_client.get(f"/generated/overview/{name}/{names[0]}")
     etag = response.headers["ETag"]
     assert str(data_model.load_generation) in etag
-    assert response.headers["Cache-Control"] == "private, max-age=31536000"
+    assert response.headers["Cache-Control"] == "private, no-cache"
 
     conditional = test_client.get(
         f"/generated/overview/{name}/{names[0]}", headers={"If-None-Match": etag}

@@ -502,7 +502,10 @@ def test_a_drawn_up_projection_tile_is_final_and_says_so(tmp_path, client, monke
     monkeypatch.setattr(plane_view, "SERVED_SLAB_BYTES", 8 * 48 * 40 * 2)
     data_routes._tile_png_cache.clear()
     views._views.clear()
-    url = f"/generated/data/proj/{src}/0/0_0.png?q=hd&view=z0-7max"
+    # With the content version the viewer puts in the address (`c=`): only an
+    # address that names the file is kept for a year.
+    version = client.get("/config?datasource=proj").get_json()["proj"]["imageData"][0]["version"]
+    url = f"/generated/data/proj/{src}/0/0_0.png?q=hd&view=z0-7max&c={version}"
     drawn = client.get(url)
     assert drawn.headers.get("X-Plexora-Served-Steps") == "1"
     assert drawn.headers["Cache-Control"] == "private, max-age=31536000"

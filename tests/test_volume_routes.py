@@ -148,8 +148,9 @@ def test_a_planar_image_refuses_a_view_and_keeps_its_etag(tmp_path, client):
     key = _channel_key(entry, 0)
     response = client.get(f"/generated/data/flat/{key}/0/0_0.png?q=hd")
     assert response.status_code == 200
-    assert response.headers["ETag"] == \
-        f'"{data_model.load_generation}-flat-{key}-0-0_0.png-hd"'
+    # The generation and the file's content version, then the address: no view.
+    assert response.headers["ETag"].startswith(f'"{data_model.load_generation}.')
+    assert response.headers["ETag"].endswith(f'-flat-{key}-0-0_0.png-hd"')
     assert client.get(f"/generated/data/flat/{key}/0/0_0.png?view=z1").status_code == 400
 
 
