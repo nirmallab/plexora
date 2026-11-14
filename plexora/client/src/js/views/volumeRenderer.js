@@ -1272,6 +1272,9 @@ ${sample}`;
             this.surfaces?.lost();
             this.programs.clear();
             this.status = "lost";
+            // A load in flight still writes status when it ends, so the loss
+            // is kept where nothing else writes.
+            this.contextLost = true;
             global.PlexoraToast?.show?.({
                 title: "The volume view was lost by the graphics driver; back to planes.",
                 tone: "warning",
@@ -1628,7 +1631,8 @@ ${sample}`;
                     throw new Error("volume level: the shape does not match the bytes");
                 }
                 const gl = this.gl;
-                if (!gl) return;
+                // A lost context makes null textures: keep none of them.
+                if (!gl || gl.isContextLost?.()) return;
                 const texture = gl.createTexture();
                 gl.bindTexture(gl.TEXTURE_3D, texture);
                 gl.texParameteri(gl.TEXTURE_3D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
@@ -3591,6 +3595,16 @@ ${sample}`;
                     document.getElementById("openseadragon_wrapper")
                         ?.classList.remove("is-volume-mode");
                     return;
+                }
+                // A renderer whose context the driver took (lost) keeps the
+                // old context's quad and pixel-store state, which a restored
+                // context does not share: build a new one on a new canvas,
+                // so surfaces and handles hook it again (volume-mounted).
+                // contextLost, not status: a level load that finishes after
+                // the loss sets status back to "ready".
+                if (renderer && (renderer.contextLost || renderer.gl?.isContextLost?.())) {
+                    renderer.destroy();
+                    renderer = null;
                 }
                 if (!renderer) {
                     renderer = new VolumeRenderer({ viewState, datasource });
