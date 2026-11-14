@@ -181,7 +181,27 @@ def _state():
         "notebook_mode": bool(app.config.get('PLEXORA_NOTEBOOK_MODE')),
         "shared_roots": [str(path) for path in paths.shared_roots()],
         "entry_count": len(data_migration.migratable(resolution.path)),
+        # True from the moment a migration starts copying out of the root in
+        # use: saves are refused from then until the restart.
+        "moved_away": _moved_away(),
     }
+
+
+def _moved_away():
+    try:
+        data_migration.refuse_writes_if_moved_away()
+    except data_migration.MovedAway:
+        return True
+    return False
+
+
+@app.errorhandler(data_migration.MovedAway)
+def _moved_away_refusal(exc):
+    # Any save of the user's state, from any route, once a migration has
+    # started copying the data folder away: refused with the sentence, as a
+    # 409 rather than a 500 (data_migration.refuse_writes_if_moved_away).
+    # import_routes._json_errors lets it through to here for that reason.
+    return jsonify(success=False, error=str(exc), moved_away=True), 409
 
 
 @app.route('/settings/data')
@@ -964,8 +984,6 @@ def remote_health():
     port that has gone. So the held address is compared first, and a mismatch
     is its own state rather than a fast green tick.
     """
-    import time
-
     from plexora.server.models import data_model
     from plexora.server.models import nodes as node_registry
     from plexora.server.models import remote_sessions, remotes as remote_store
@@ -973,6 +991,9 @@ def remote_health():
 
     held = data_model.held_node_addresses()
     health = {}
+    # Profile name -> registry entry, probed together after the loop
+    # (http.hello_each): one dead node costs one budget, not one each.
+    to_probe = {}
     for remote in sorted(remote_store.load_all().values(),
                          key=lambda item: item.name):
         session = remote_sessions.get(remote.name, remote_sessions.KIND_NODE)
@@ -1000,20 +1021,20 @@ def remote_health():
                           "again.",
             }
             continue
-        started = time.perf_counter()
-        try:
-            answer = http.hello(entry, timeout=HEALTH_TIMEOUT)
-        except Exception as exc:
-            health[remote.name] = {
+        to_probe[remote.name] = entry
+    answers = http.hello_each(to_probe.values(), timeout=HEALTH_TIMEOUT)
+    for remote_name, (answer, exc, ms) in zip(to_probe, answers):
+        if exc is not None:
+            health[remote_name] = {
                 "state": "unreachable", "ms": None,
                 # The reason, not a category: "refused this server's token" and
                 # "connection timed out" want different things done about them.
                 "detail": str(exc) or exc.__class__.__name__,
             }
             continue
-        health[remote.name] = {
+        health[remote_name] = {
             "state": "healthy",
-            "ms": int(round((time.perf_counter() - started) * 1000)),
+            "ms": ms,
             "detail": "",
             # What kind of machine answered -- cores, memory, a GPU if it has
             # one, room left where the data goes. It rides on the probe rather
@@ -1324,9 +1345,13 @@ def settings_nodes():
     from plexora.server.providers import http as node_http
 
     listed = []
-    for node in node_registry.load_all().values():
+    # All at once (node_http.hello_each): one dead node costs one budget, not
+    # one each.
+    nodes = list(node_registry.load_all().values())
+    for node, (hello, failed, _ms) in zip(nodes, node_http.hello_each(nodes, timeout=2.5)):
         try:
-            hello = node_http.hello(node, timeout=2.5)
+            if failed is not None:
+                raise failed
             listed.append(_node_view(node, hello.get("resources") or []))
         except Exception as exc:
             listed.append(_node_view(node, None, str(exc)))

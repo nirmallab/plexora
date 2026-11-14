@@ -452,6 +452,37 @@ def hello(node, timeout=PROBE_TIMEOUT) -> dict:
     return answer
 
 
+def hello_each(nodes, timeout=PROBE_TIMEOUT) -> list:
+    """`hello` to every node at once: `(answer, error, ms)` per node, in the
+    order given, with exactly one of `answer` and `error` set.
+
+    For the lists that ask every node on the map (Settings > Data nodes, the
+    edit page's Resources, the connections menu). A node that does not answer
+    costs its whole connect and read budget, and dead tunnels pile up on the
+    map, so asked one after another the list waits the sum of them; asked
+    together it waits the slowest one. On the website the pool runs each call
+    as it is submitted, which is the one-after-another it always was there.
+    """
+    from time import perf_counter
+
+    from plexora import _work
+
+    def probe(node):
+        started = perf_counter()
+        try:
+            answer = hello(node, timeout=timeout)
+        except Exception as exc:  # noqa: BLE001 - handed to the caller per node
+            return None, exc, None
+        return answer, None, int(round((perf_counter() - started) * 1000))
+
+    nodes = list(nodes)
+    if len(nodes) <= 1:
+        return [probe(node) for node in nodes]
+    with _work.executor(max_workers=min(8, len(nodes)),
+                        thread_name_prefix="plexora-node-hello") as pool:
+        return list(pool.map(probe, nodes))
+
+
 def reachable(node, timeout=PROBE_TIMEOUT) -> bool:
     """Whether this server can reach the node right now.
 

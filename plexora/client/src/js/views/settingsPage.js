@@ -715,7 +715,11 @@
             text(el("settings_pending_body"),
                  "Saved: " + state.pending + ". Plexora is still serving from "
                  + state.in_use + " and will use the new directory the next time "
-                 + "it starts.");
+                 + "it starts."
+                 // Saves are refused from the move on (settings_routes
+                 // _state.moved_away), so say it before one is.
+                 + (state.moved_away ? " Changes cannot be saved until then: "
+                    + "restart Plexora to keep working." : ""));
         }
 
         const locked = Boolean(state.env_override);

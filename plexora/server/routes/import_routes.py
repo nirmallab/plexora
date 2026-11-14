@@ -136,15 +136,18 @@ def _json_errors(route):
 
     A node that cannot be reached is left to the app's own handler
     (`plexora/__init__.py`), which already answers it as JSON -- with a 503,
-    since it is temporary, and logged once rather than per request.
+    since it is temporary, and logged once rather than per request. So is a
+    save refused because the data folder is being moved away: settings_routes
+    answers it with a 409 that says so, and it is no failure to log.
     """
+    from plexora.server.models.data_migration import MovedAway
     from plexora.server.providers.base import ResourceUnavailable
 
     @functools.wraps(route)
     def wrapped(*args, **kwargs):
         try:
             return route(*args, **kwargs)
-        except ResourceUnavailable:
+        except (ResourceUnavailable, MovedAway):
             raise
         except Exception as exc:  # noqa: BLE001 -- the point is to catch all
             logging.getLogger(__name__).exception("%s failed", request.path)
@@ -872,6 +875,29 @@ def attach_segmentation(name, mask_path, mode=None, transform=None):
             name, pending, dataset_dir, fields["segmentationMode"]
         )
     return updated
+
+
+def refuse_before_applying(data_path_str=None, mask_path=None):
+    """The refusals `replace_project_data` and `attach_segmentation` make,
+    made before either of them changes anything.
+
+    The edit page and the requirements modal post a data file and a mask
+    together and say "nothing was saved" when one is refused. Applied one
+    after the other, the first was already recorded -- a table copied into the
+    project, a mask's conversion started -- by the time the second said no.
+    Raises ValueError with the same message the apply would have.
+    """
+    from plexora.server.utils import segmentation_pyramid
+
+    if (data_path_str and not _node_locator(data_path_str)
+            and not is_remote_locator(data_path_str)):
+        source = Path(data_path_str).expanduser()
+        if not source.exists():
+            raise ValueError(f"No such data file: {source}")
+    if mask_path and not _node_locator(mask_path):
+        refusal = segmentation_pyramid.mask_format_refusal(mask_path)
+        if refusal:
+            raise ValueError(refusal)
 
 
 def replace_project_data(name, data_path_str, payload=None, spatial=None):

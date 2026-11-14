@@ -1,4 +1,5 @@
 from plexora import paths
+from plexora.server.models import data_migration
 
 import logging
 import sqlite3
@@ -129,7 +130,8 @@ def _create_table(conn, model):
 
 
 def _ensure_healthy(db_file):
-    """Reactive recovery only, invoked after an actual sqlite3.DatabaseError --
+    """Reactive recovery only, invoked after an actual sqlite3.DatabaseError
+    that is not an OperationalError (see _connect) --
     not a proactive integrity_check on every call, since that would add cost
     to every get/save_list without adding safety (a check that passes right
     before a query says nothing about corruption from that query's own write)."""
@@ -145,6 +147,13 @@ def _connect(db_file, model):
     conn = sqlite3.connect(str(db_file), timeout=10)
     try:
         _create_table(conn, model)
+    except sqlite3.OperationalError:
+        # Busy ("database is locked" past the timeout), disk full or an I/O
+        # error: the file is fine, so the caller gets the error. Moving it
+        # aside here would empty the project. OperationalError is a subclass
+        # of DatabaseError, so it must be caught first.
+        conn.close()
+        raise
     except sqlite3.DatabaseError:
         # Close the failed connection first -- on Windows, _ensure_healthy's
         # rename-aside fails with PermissionError while a handle is still open.
@@ -211,6 +220,10 @@ def get(model, datasource):
 
 
 def save_list(model, datasource, cells):
+    # Every saved state (channel lists, view state, every plugin table through
+    # plexora.api.store) is written here, so this is where a write into a data
+    # root that a migration has copied away is refused.
+    data_migration.refuse_writes_if_moved_away()
     db_file = _prepare(model, datasource)
     conn = _connect(db_file, model)
     try:

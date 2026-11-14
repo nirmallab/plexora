@@ -695,10 +695,11 @@ def project_resources(name):
     """This project's resource bindings, and what the registered nodes offer.
 
     One request because it is one question -- "where could this come from" --
-    and the controls need both halves at once. Nodes are probed in parallel
-    with each other only in the sense that one failing does not stop the rest:
-    a node that is asleep is listed as unreachable rather than omitted, since
-    a project may well be pointing at it and the page has to be able to say so.
+    and the controls need both halves at once. Nodes are probed all at once
+    (node_http.hello_each), so a list of dead tunnels costs one probe budget
+    rather than one each, and one failing does not stop the rest: a node that
+    is asleep is listed as unreachable rather than omitted, since a project
+    may well be pointing at it and the page has to be able to say so.
     """
     from plexora.server.models import nodes as node_registry
     from plexora.server.providers import http as node_http
@@ -708,9 +709,11 @@ def project_resources(name):
         return jsonify(error="Unknown project"), 404
 
     offered = []
-    for node in node_registry.load_all().values():
+    nodes = list(node_registry.load_all().values())
+    for node, (hello, failed, _ms) in zip(nodes, node_http.hello_each(nodes, timeout=2.5)):
         try:
-            hello = node_http.hello(node, timeout=2.5)
+            if failed is not None:
+                raise failed
             offered.append({
                 "name": node.name, "reachable": True,
                 "resources": hello.get("resources") or [],
@@ -858,6 +861,9 @@ def save_project(name):
         # A bad path or an unreadable file is the user's to fix, and they need
         # to be told which. The old handler returned success=False with HTTP
         # 200 and no message, and the client navigated away regardless.
+        # Refused part way, the parts already applied are put back: the reply
+        # says nothing was saved.
+        tool_routes._restore_if_changed(name, project)
         return jsonify(success=False, error=str(exc)), 400
 
     if changed:
@@ -908,25 +914,21 @@ def _apply_edit(project, payload):
 
     changed = False
 
+    mask_wanted = None
+    new_mask = False
     if "segmentation" in payload:
-        wanted = (payload.get("segmentation") or "").strip() or None
+        mask_wanted = (payload.get("segmentation") or "").strip() or None
         # What the field was showing -- the node address when the mask is on
         # one, because that is what `_describe` put in it. Comparing against a
         # local source path instead would read every save of an unrelated
         # setting as "the user cleared the mask".
         current = _segmentation_field(project)
-        if (wanted or None) != (current or None):
-            if (wanted and not is_node_locator(wanted)
-                    and not Path(wanted).expanduser().exists()):
-                raise ValueError(f"No such segmentation mask: {wanted}")
-            # Local path, node address or empty -- attach_segmentation is the
-            # one place that tells them apart, for all three surfaces.
-            import_routes.attach_segmentation(project.name, wanted)
-            changed = True
+        new_mask = (mask_wanted or None) != (current or None)
 
-    swapped = False
+    data_wanted = None
+    new_data = False
     if "data" in payload:
-        wanted = (payload.get("data") or "").strip() or None
+        data_wanted = (payload.get("data") or "").strip() or None
         current = project.dataset.src if project.dataset else None
         # A different path is the obvious case. The other one is a source whose
         # PATH is unchanged and whose table has just been chosen -- which is
@@ -935,14 +937,32 @@ def _apply_edit(project, payload):
         # silently: the user picked a table, pressed Save, and the project went
         # on being unreadable with nothing said.
         spec = project.dataset
-        narrowed = wanted and spec is not None and (
+        narrowed = data_wanted and spec is not None and (
             (payload.get("table") or None) != (spec.table or None)
             or ((payload.get("subset_column") or None)
                 != ((spec.subset or {}).get("column") or None)))
-        if (wanted or None) != (current or None) or narrowed:
-            import_routes.replace_project_data(project.name, wanted, payload)
-            changed = True
-            swapped = True
+        new_data = bool((data_wanted or None) != (current or None) or narrowed)
+
+    # Every refusal before anything is applied: a mask recorded (and its
+    # conversion started) ahead of a data path that does not exist would
+    # outlive the 400 that says nothing was saved.
+    if (new_mask and mask_wanted and not is_node_locator(mask_wanted)
+            and not Path(mask_wanted).expanduser().exists()):
+        raise ValueError(f"No such segmentation mask: {mask_wanted}")
+    import_routes.refuse_before_applying(data_wanted if new_data else None,
+                                         mask_wanted if new_mask else None)
+
+    if new_mask:
+        # Local path, node address or empty -- attach_segmentation is the
+        # one place that tells them apart, for all three surfaces.
+        import_routes.attach_segmentation(project.name, mask_wanted)
+        changed = True
+
+    swapped = False
+    if new_data:
+        import_routes.replace_project_data(project.name, data_wanted, payload)
+        changed = True
+        swapped = True
 
     # How a stack's Z axis is read (plexora/server/volume/sources/tiff.py):
     # depth or imaging cycles. The two readings disagree about the channel

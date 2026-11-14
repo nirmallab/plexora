@@ -229,6 +229,37 @@ def plan(source, target) -> Plan:
 _job: dict = {"status": "idle"}
 _job_lock = threading.Lock()
 
+#: The root a migration has started copying out of, from the first entry on,
+#: and still after it succeeds: this process keeps serving from that root until
+#: it restarts (settings_routes' docstring), so state saved there now is saved
+#: where the next start no longer looks. A run that fails puts back what was
+#: here before it: the old root is live again, unless an earlier run in this
+#: process already succeeded and the next start uses that one's target.
+_moved_from: Path | None = None
+
+
+class MovedAway(RuntimeError):
+    """A write of the user's state into a root that is being migrated away."""
+
+
+def refuse_writes_if_moved_away() -> None:
+    """Raise `MovedAway` when this process's data root is being, or has been,
+    migrated away. Called before every write of saved state
+    (database_model.save_list), so a gate or channel list saved now is refused
+    with a reason, rather than accepted and missing after the restart."""
+    with _job_lock:
+        moved_from = _moved_from
+    if moved_from is not None and paths.data_root() == moved_from:
+        raise MovedAway(
+            "Plexora is moving its data folder, and a change saved now would be "
+            "left behind in the old one. Restart Plexora to keep working.")
+
+
+def _mark_moved_from(root: Path | None) -> None:
+    global _moved_from
+    with _job_lock:
+        _moved_from = root
+
 
 def status() -> dict:
     with _job_lock:
@@ -304,6 +335,9 @@ def _run(source: Path, target: Path, mode: str, on_success) -> None:
     #: (name, renamed) for each entry this run has put in the target, so a
     #: failure can take every one of them back out.
     landed: list = []
+    # What a failure puts back (`_moved_from`'s comment).
+    with _job_lock:
+        moved_before = _moved_from
     try:
         target.mkdir(parents=True, exist_ok=True)
         current = plan(source, target)
@@ -316,6 +350,9 @@ def _run(source: Path, target: Path, mode: str, on_success) -> None:
             raise RuntimeError(" ".join(reason))
 
         total = len(current.entries)
+        # From here, a write to the old root may land after its project was
+        # copied, and so would be missing after the restart.
+        _mark_moved_from(source)
         for index, name in enumerate(current.entries):
             _set(status="running", done=index, total=total, current=name,
                  migrated=list(done))
@@ -333,6 +370,7 @@ def _run(source: Path, target: Path, mode: str, on_success) -> None:
     except Exception as exc:  # noqa: BLE001 - reported, never raised into a thread
         error = f"{type(exc).__name__}: {exc}"
         stuck = _put_back(source, target, landed)
+        _mark_moved_from(moved_before)
         if stuck:
             error += (f" These could not be put back and are still in "
                       f"{target}: {', '.join(stuck)}.")
@@ -379,6 +417,8 @@ def start(source, target, mode, on_success) -> None:
 
 def reset() -> None:
     """Forget a finished job. For tests, and for a page reloaded after one."""
+    global _moved_from
     with _job_lock:
         _job.clear()
         _job["status"] = "idle"
+        _moved_from = None

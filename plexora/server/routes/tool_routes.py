@@ -384,6 +384,9 @@ def satisfy_requirements(datasource):
         if not data_path and project.has_data_source and project.unresolved and (
                 payload.get("table") or payload.get("subset_column")):
             data_path = project.dataset.src
+        # Both answers checked before either is applied, so a refused mask
+        # does not leave the table it was posted with recorded.
+        import_routes.refuse_before_applying(data_path, payload.get("segmentation"))
         if data_path:
             import_routes.replace_project_data(datasource, data_path, payload)
             reload_needed = True
@@ -412,6 +415,10 @@ def satisfy_requirements(datasource):
                 payload.get("roles") or payload.get("columns")
                 or payload.get("coordinates") or payload.get("row_number_ids"))
     except ValueError as exc:
+        # The reply says nothing was saved, so nothing may stay saved: an
+        # answer refused after an earlier one in the same post was recorded
+        # puts the project back as it was, and reloads it.
+        _restore_if_changed(datasource, project)
         return jsonify(success=False, error=str(exc)), 400
 
     if reload_needed:
@@ -515,6 +522,13 @@ def _reload_or_restore(datasource, previous, wait_for_table=True, keep_image=Fal
     except Exception:
         _restore(datasource, previous)
         raise
+
+
+def _restore_if_changed(datasource, previous):
+    """`_restore`, when the record no longer equals `previous`: a post refused
+    part way through, after some of its answers had been applied."""
+    if Project.find(datasource) != previous:
+        _restore(datasource, previous)
 
 
 def _restore(datasource, previous):
