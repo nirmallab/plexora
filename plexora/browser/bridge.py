@@ -20,6 +20,7 @@ twice. Under CPython all of this is tested as it is (tests/test_bridge.py).
 
 from __future__ import annotations
 
+import contextvars
 import itertools
 from urllib.parse import urlsplit
 
@@ -95,9 +96,18 @@ def handle(app, request: dict, origin: str) -> dict:
     # A write into a picked file goes to the page once, as the request ends
     # (server/utils/source_writes.py): before its answer, so the answer the
     # caller gets is about a file the page is already saving.
-    with source_writes.batch():
-        iterable = app.wsgi_app(environ(request, origin), start_response)
-        body, rest = _first(iterable, CHUNK)
+    def answer():
+        with source_writes.batch():
+            iterable = app.wsgi_app(environ(request, origin), start_response)
+            return _first(iterable, CHUNK)
+
+    # One thread answers every request here. A body left to `read` may stop
+    # inside `stream_with_context`, its app and request context still pushed:
+    # in a context of its own (kept for its reads), they never reach the
+    # requests answered in between, and two such bodies never pop each
+    # other's.
+    context = contextvars.copy_context()
+    body, rest = context.run(answer)
     if captured.get("written"):
         body = b"".join(captured["written"]) + body
     # "Ask me again in N ms" (server/providers/browser.py `WindowPending`):
@@ -106,13 +116,13 @@ def handle(app, request: dict, origin: str) -> dict:
                   if name.lower() == RETRY_HEADER.lower()), None)
     if retry is not None:
         if rest is not None and hasattr(rest, "close"):
-            rest.close()
+            context.run(rest.close)
         return {"status": captured.get("status", 503), "headers": [], "body": b"", "stream": None,
                 "wrote": False, "retry": int(retry)}
     stream = None
     if rest is not None:
         stream = next(_ids)
-        _streams[stream] = rest
+        _streams[stream] = (context, rest)
     return {"status": captured.get("status", 500), "headers": captured.get("headers", []),
             "body": body, "stream": stream, "wrote": method not in _READS}
 
@@ -122,11 +132,17 @@ def read(stream: int, size: int = CHUNK) -> dict:
     held = _streams.get(stream)
     if held is None:
         return {"body": b"", "done": True}
-    body, rest = _first(held, size)
+    context, rest = held
+    try:
+        body, rest = context.run(_first, rest, size)
+    except BaseException:
+        # A body that failed part-way has nothing more to give.
+        _streams.pop(stream, None)
+        raise
     if rest is None:
         _streams.pop(stream, None)
         return {"body": body, "done": True}
-    _streams[stream] = rest
+    _streams[stream] = (context, rest)
     return {"body": body, "done": False}
 
 
@@ -134,7 +150,8 @@ def close(stream: int) -> None:
     """The page stopped reading: let the app's iterable clean up."""
     held = _streams.pop(stream, None)
     if held is not None:
-        held.close()
+        context, rest = held
+        context.run(rest.close)
 
 
 class _Rest:
