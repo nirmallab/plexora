@@ -705,6 +705,11 @@ class RemoteSession:
 
         record = self.remote.gcloud
         with self._lock:
+            # Ended before it began: bringing a machine up now would leave it
+            # billing for a session that is already over, and writing the
+            # state would undo the EXITED stop() just set.
+            if self._stopping:
+                return
             self._phase_state = STATE_PREPARING_COMPUTE
             if self.state not in (STATE_AUTHENTICATING, STATE_FAILED):
                 self.state = STATE_PREPARING_COMPUTE
@@ -843,6 +848,11 @@ class RemoteSession:
         for session in all_sessions().values():
             if session is self or session.remote.name != self.remote.name:
                 continue
+            # Not one registered but not yet started: that is a Connect being
+            # pressed right now, not an attempt anybody gave up on, and ending
+            # it here left it "exited" with nothing spawned.
+            if session._thread is None:
+                continue
             if session.state in OPENING_STATES:
                 # The machine is given back once, by the session being ended
                 # -- not a second time by the attempt it takes down with it.
@@ -874,6 +884,25 @@ class RemoteSession:
                 return
             self.session.establish()
         except BaseException as exc:  # noqa: BLE001 - reported, never raised
+            with self._lock:
+                stopping = self._stopping
+                if stopping and self.state != STATE_FAILED:
+                    self.state = STATE_EXITED
+            if stopping:
+                # A Disconnect during establishment kills the ssh, and that is
+                # what raised here: the button, not a failure. No diagnosis for
+                # a cause nobody hit, and no after-failure release -- the
+                # stop() in progress owns the machine's ending and applies the
+                # profile's rule. Its processes and helper go all the same, in
+                # case establishment spawned one after stop() looked.
+                self._report_connect("cancelled", started)
+                try:
+                    if self.session is not None:
+                        self.session.stop()
+                except Exception:
+                    pass
+                self._cleanup_helper()
+                return
             self._fail(exc)
             self._report_connect(connect_outcome(exc), started)
             # Not only the helper: establishment spawns real ssh processes
@@ -1238,6 +1267,10 @@ class RemoteSession:
 
     def stop(self):
         with self._lock:
+            # A record that had already ended is being reaped, not ended by
+            # anybody: start() does this before connecting the profile again,
+            # and it must not take the profile's other attempt down with it.
+            was_live = self.state in (*OPENING_STATES, STATE_CONNECTED)
             self._stopping = True
             self._forget_secrets_locked()
             self._cancel_prompt_locked()
@@ -1253,7 +1286,8 @@ class RemoteSession:
         # and also the one `atexit` takes when the app quits with a connection
         # still open -- which is why the profile's switch is consulted here
         # and not only in the HTTP route that used to own it.
-        self._end_unfinished_siblings()
+        if was_live:
+            self._end_unfinished_siblings()
         self._release_compute()
 
 
@@ -1350,6 +1384,26 @@ def start(remote, *, askpass_url=None, auth_token=None, timeout=None,
                 *OPENING_STATES, STATE_CONNECTED):
             raise ConnectionRefused(
                 f"“{remote.name}” is already connected or connecting.")
+    if existing is not None:
+        # Outside the lock -- stopping waits on processes. A failed or exited
+        # session's stop() is usually a no-op by now (its own teardown ran),
+        # but replacing the record without it leaked its watcher entries into
+        # connect._ACTIVE for the life of the app, and any child process that
+        # happened to survive its session with them.
+        # And BEFORE the new attempt is registered: stop() ends the profile's
+        # unfinished attempts, and the new one, already in the registry and
+        # "connecting", was one of them -- every reconnect ended at once with
+        # nothing spawned, and on Google Cloud left the VM it had just started.
+        try:
+            existing.stop()
+        except Exception:
+            pass
+    with _REGISTRY_LOCK:
+        # Another Connect for the same profile may have got in while the old
+        # record was being stopped.
+        if _SESSIONS.get(key) is not existing:
+            raise ConnectionRefused(
+                f"“{remote.name}” is already connected or connecting.")
         connecting = sum(1 for session in _SESSIONS.values()
                          if session.state in OPENING_STATES)
         if connecting >= MAX_CONNECTING:
@@ -1361,16 +1415,6 @@ def start(remote, *, askpass_url=None, auth_token=None, timeout=None,
                                 kind=kind, allow_origin=allow_origin,
                                 register=register, unregister=unregister)
         _SESSIONS[key] = session
-    if existing is not None:
-        # Outside the lock -- stopping waits on processes. A failed or exited
-        # session's stop() is usually a no-op by now (its own teardown ran),
-        # but replacing the record without it leaked its watcher entries into
-        # connect._ACTIVE for the life of the app, and any child process that
-        # happened to survive its session with them.
-        try:
-            existing.stop()
-        except Exception:
-            pass
     return session.start()
 
 
