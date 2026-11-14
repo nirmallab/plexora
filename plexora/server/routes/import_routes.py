@@ -998,6 +998,11 @@ def replace_project_data(name, data_path_str, payload=None, spatial=None):
         # roles are predicted from has to be the header the adapter will
         # actually read -- a `cell_index` added afterwards is a column no role
         # can name, which is how the Xenium cell id stayed a string.
+        original = source
+        try:
+            stat = original.stat()
+        except OSError:
+            stat = None
         if spatial or not _picked_on_the_website(source):
             source = _copy_into_project(name, source)
         if spatial:
@@ -1007,6 +1012,15 @@ def replace_project_data(name, data_path_str, payload=None, spatial=None):
                 source, pixel_size=spatial.get("pixel_size"),
                 root=spatial.get("root"))
             derived = dict(record) if record else {}
+            if derived and stat is not None:
+                # The copy was rewritten, so its name, size and mtime no
+                # longer match the run's file, which is how "+ Add Layer"
+                # recognises a table this sample already has
+                # (`import_proposal._scoped_sample`). Without this the run's
+                # raw table is offered again and copied over this one.
+                derived["copied_from"] = {
+                    "src": str(original), "name": original.name,
+                    "size": stat.st_size, "mtime_ns": stat.st_mtime_ns}
 
     inspection = _inspect(source, data_type, table)
     # Both branches produce markers/metadata/roles: inspect_flat_table

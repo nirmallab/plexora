@@ -447,13 +447,18 @@ def _needs_build(proposal) -> bool:
 _SPATIAL_FORMATS = ("xenium", "visium_hd", "visium")
 
 
-def _spatial_context(table, reference):
+def _spatial_context(table, *, frame_scale=None, pixel_size=None):
     """`{"pixel_size", "root"}` for a table that needs correcting, else None.
 
     Keyed on the BUNDLE's format rather than on the table's shape: a CSV that
     happens to have `cell_id` and `x_centroid` columns is somebody's own
     quantification in whatever frame they chose, and rescaling it by a pixel
     size would move every cell for no reason anybody could find.
+
+    @param frame_scale - what the reference is of a Visium run's full-res
+        frame: the reference's own on a fresh import, the one recorded on the
+        run's bundle when a table is added to an existing sample.
+    @param pixel_size - microns per reference pixel, for a Xenium run.
     """
     bundle = dict(table.bundle or {})
     if bundle.get("format") not in _SPATIAL_FORMATS:
@@ -463,10 +468,9 @@ def _spatial_context(table, reference):
         # what it needs from here is what the reference is of the run's
         # full-res frame, which is where Space Ranger states every position.
         return {"format": bundle["format"], "root": bundle.get("root"),
-                "frame_scale": ((reference.render or {}).get("frameScale")
-                                if reference is not None else None) or 1.0}
+                "frame_scale": frame_scale or 1.0}
     return {
-        "pixel_size": reference.pixel_size if reference is not None else None,
+        "pixel_size": pixel_size,
         "root": bundle.get("root"),
     }
 
@@ -624,7 +628,12 @@ def _register(final, created, proposal, answers, layers, reference, mask,
             step(table.id, "Reading the table")
             replace_project_data(final, table.src, {
                 "table": table.table, **_subset_of(table, answers),
-            }, spatial=_spatial_context(table, reference))
+            }, spatial=_spatial_context(
+                table,
+                frame_scale=((reference.render or {}).get("frameScale")
+                             if reference is not None else None),
+                pixel_size=(reference.pixel_size
+                            if reference is not None else None)))
             step(table.id, status="ready")
 
         def _apply(project):
@@ -804,15 +813,38 @@ def register_layers(project_name, proposal, *, answers=None):
 
     before = Project.find(project_name)
     if mask is not None:
-        attach_segmentation(project_name, mask.src)
+        # Polygons stated in a run's full-res frame carry the transform
+        # `_scoped_sample` composed with the recorded frame scale, as a fresh
+        # import's do (`_register`); without it they are drawn in full-res
+        # pixels over a hires picture.
+        attach_segmentation(
+            project_name, mask.src,
+            transform=(mask.transform
+                       if boundary_mask.is_boundary_geojson(mask.src or "")
+                       else None))
         step(mask.id, "Queued", status="ready")
     if table is not None:
         previous = Project.find(project_name)
         step(table.id, "Reading the table")
+        # What a fresh import reads off its reference, read off the sample
+        # instead: the frame scale recorded on the run's bundle, and the
+        # reference's pixel size. Without them a run's table is attached as
+        # the vendor wrote it -- Visium positions in full-res pixels, Xenium
+        # centroids in microns beside a string cell id.
+        recorded = list(previous.bundles if previous is not None else ())
+        own = (table.bundle or {}).get("id")
+        frame_scale = next(
+            (b.get("frameScale") for b in recorded
+             if b.get("id") == own and b.get("frameScale")),
+            next((b.get("frameScale") for b in recorded
+                  if b.get("frameScale")), None))
+        pixel_size = (((previous.image.pixel_size or {}).get("value"))
+                      if previous is not None else None)
         try:
             replace_project_data(project_name, table.src, {
                 "table": table.table, **_subset_of(table, answers),
-            })
+            }, spatial=_spatial_context(table, frame_scale=frame_scale,
+                                        pixel_size=pixel_size))
         except Exception:
             # Not half done: the mask this call attached goes back to what was
             # there, so a refused table never leaves a sample with a new mask
@@ -825,6 +857,12 @@ def register_layers(project_name, proposal, *, answers=None):
 
     def _apply(project):
         for bundle in proposal.bundles:
+            recorded = project.bundle(str(bundle.get("id") or "")) or {}
+            if recorded.get("frameScale") and not bundle.get("frameScale"):
+                # The run again, with no reference among the picks to say
+                # what it is of the full-res frame: the fresh import's answer
+                # stays, or the next layer added from it lands unscaled.
+                bundle = {**bundle, "frameScale": recorded["frameScale"]}
             project = project.with_bundle(bundle)
         for layer in registered:
             project = project.with_layer(

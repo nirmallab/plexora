@@ -4469,14 +4469,23 @@ def _scoped_sample(name, found, questions, bundles):
     # A flat table is COPIED into the project when attached, timestamps and
     # all (`import_routes._copy_into_project`), so the original is recognised
     # by name, size and mtime rather than by path.
-    table_copy = _file_signature(project.dataset.src) if (
-        project is not None and project.dataset is not None) else None
+    table_copies = set()
+    if project is not None and project.dataset is not None:
+        table_copies.add(_file_signature(project.dataset.src))
+        # A run's table is rewritten after the copy (a Xenium `cells.parquet`
+        # gains `cell_index` and pixel coordinates), so the copy matches
+        # nothing: the original's signature was recorded when it was copied.
+        copied = (project.dataset.derived or {}).get("copied_from") or {}
+        if copied.get("name"):
+            table_copies.add((copied["name"], copied.get("size"),
+                              copied.get("mtime_ns")))
+    table_copies.discard(None)
     for layer in found:
         try:
             if layer.src and _identity(layer.src) in registered:
                 continue
-            if (layer.role == "table" and table_copy is not None
-                    and _file_signature(layer.src) == table_copy):
+            if (layer.role == "table" and table_copies
+                    and _file_signature(layer.src) in table_copies):
                 continue
         except OSError:
             pass
@@ -4486,7 +4495,11 @@ def _scoped_sample(name, found, questions, bundles):
             # card, because it would re-express every other layer's transform.
             layer.role = "layer"
             layer.reference = False
-        if layer.role not in ("table", "note", "mask"):
+        # A mask too when it is stated in a Visium run's full-res frame: its
+        # polygons are drawn by its transform, which has to take in the
+        # recorded frame scale as `_finish` does on a fresh import.
+        if (layer.role not in ("table", "note", "mask")
+                or (layer.role == "mask" and layer.frame == "fullres")):
             _align(layer, None, reference_pixel_size, run_pixel_size,
                    frame_scale=frame_scale)
         layers.append(layer)
