@@ -210,13 +210,15 @@ class CellExplorerSidebarController {
         });
 
         // A time series' table: another frame is other rows, so the colours
-        // are read again for it (the values are cached per frame).
+        // are read again for it (the values are cached per frame). A recolor
+        // alone would rebuild the table from the previous frame's ids and
+        // codes, so every id on this frame would wear another cell's colour.
         let shownFrame = this.ctx.view?.tableFrame?.() ?? null;
         this.ctx.view?.onChange?.(() => {
             const frame = this.ctx.view?.tableFrame?.() ?? null;
             if (frame === shownFrame) return;
             shownFrame = frame;
-            this.recolor();
+            if (this.state.column) this.select(this.state.column, { persist: false });
         });
 
         this.el("cell_explorer_mask_wait_skip")?.addEventListener("click", async () => {
