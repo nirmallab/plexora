@@ -203,6 +203,10 @@ def saved_gating_list_at(datasource_name) -> tuple:
 
 def rows_at(datasource_name, rev):
     """The rows of a list `remember` kept, or None."""
+    # "0" is the empty list (`_blob_revision`), known without being kept: a
+    # page that read a never-gated project still merges against it.
+    if str(rev) == "0":
+        return []
     blob = _SEEN.get((str(datasource_name), str(rev)))
     if blob is None:
         return None
