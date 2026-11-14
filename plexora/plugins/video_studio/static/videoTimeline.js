@@ -52,6 +52,7 @@
         let root = null;
         let release = null;
         let selection = new Set();
+        let diamonds = new Map();        // "track/kf" -> its button, to repaint the selection in place
         let scale = null;                // px per second
         let lanesWidth = 0;
         let playhead = null;
@@ -137,6 +138,7 @@
             if (!root || !project()) return;
             const body = root._body;
             body.replaceChildren();
+            diamonds = new Map();
             const labelWidth = 120;
             lanesWidth = Math.max(200, root.clientWidth - labelWidth - 12);
             const fit = lanesWidth / Math.max(0.5, project().duration_s);
@@ -208,6 +210,7 @@
             const button = el("button", `vs-key${selection.has(key) ? " is-selected" : ""}`, {
                 type: "button", "aria-label": `Keyframe at ${kf.t.toFixed(2)} s`, title: `${kf.t.toFixed(2)} s · ${kf.ease}` });
             button.style.left = `${x(kf.t)}px`;
+            diamonds.set(key, button);
             button.addEventListener("pointerdown", (event) => drag(event, track, kf, key, button));
             button.addEventListener("dblclick", (event) => {
                 event.stopPropagation();
@@ -262,7 +265,10 @@
             };
             button.addEventListener("pointermove", move);
             button.addEventListener("pointerup", up);
-            render();
+            // Repaint the selection in place: a render() here would replace this
+            // button, which holds the pointer capture and the move/up listeners,
+            // and the drag, copy or seek would never finish.
+            for (const [k, b] of diamonds) b.className = `vs-key${selection.has(k) ? " is-selected" : ""}`;
         }
 
         function easeMenu(anchor, track, kf) {
