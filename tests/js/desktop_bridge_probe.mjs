@@ -314,7 +314,8 @@ const tick = () => new Promise((resolve) => setTimeout(resolve, 0));
           ["tauri://drag-enter", "tauri://drag-over", "tauri://drag-leave", "tauri://drag-drop"]
               .every((name) => (world.webviewListeners[name] || []).length === 1
                                && !world.tauriListeners[name])
-          && (world.tauriListeners["plexora://menu"] || []).length === 1);
+          && (world.webviewListeners["plexora://menu"] || []).length === 1
+          && !world.tauriListeners["plexora://menu"]);
     world.emitOnWebview("tauri://drag-drop", { paths: ["C:\\data\\x.tif"], position: { x: 0, y: 0 } });
     check("and a drop heard there is handled", world.drops.length === 1);
 }

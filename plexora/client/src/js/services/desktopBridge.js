@@ -485,12 +485,14 @@
     }
 
     /**
-     * Where this window's own drag events are heard. The global `listen`
-     * hears an event whatever window it was for, so with two windows open one
-     * drop was handled by both; the current webview's `listen` -- what Tauri's
-     * own `onDragDropEvent` uses -- hears only this one's.
+     * Where the events the shell sends to this one window are heard: its
+     * drags, and the menu, opens and downloads aimed at it. The global
+     * `listen` hears an event whatever window it was for, so with two windows
+     * open one drop, one menu pick or one finished download was handled by
+     * both; the current webview's `listen` -- what Tauri's own
+     * `onDragDropEvent` uses -- hears only this one's.
      */
-    function dragListen() {
+    function windowListen() {
         try {
             const webview = tauri.webview?.getCurrentWebview?.();
             if (webview && typeof webview.listen === "function") {
@@ -503,14 +505,14 @@
     }
 
     if (typeof listen === "function") {
-        listen("plexora://menu", (event) => runMenu(String(event.payload?.id || "")));
-        listen("plexora://opens-pending", () => collectOpens());
-        listen("plexora://download-finished", (event) => onDownloadFinished(event.payload));
-        const onDrag = dragListen();
-        onDrag("tauri://drag-enter", (event) => onNativeDrag("enter", event.payload));
-        onDrag("tauri://drag-over", (event) => onNativeDrag("over", event.payload));
-        onDrag("tauri://drag-leave", () => onNativeDrag("leave", null));
-        onDrag("tauri://drag-drop", (event) => onNativeDrop(event.payload));
+        const onWindow = windowListen();
+        onWindow("plexora://menu", (event) => runMenu(String(event.payload?.id || "")));
+        onWindow("plexora://opens-pending", () => collectOpens());
+        onWindow("plexora://download-finished", (event) => onDownloadFinished(event.payload));
+        onWindow("tauri://drag-enter", (event) => onNativeDrag("enter", event.payload));
+        onWindow("tauri://drag-over", (event) => onNativeDrag("over", event.payload));
+        onWindow("tauri://drag-leave", () => onNativeDrag("leave", null));
+        onWindow("tauri://drag-drop", (event) => onNativeDrop(event.payload));
     }
 
     document.addEventListener("DOMContentLoaded", () => {
