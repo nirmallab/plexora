@@ -18,6 +18,8 @@
  * accepting more; the user goes on drawing while the server is unreachable and
  * everything lands when it comes back. Losing an annotation because a laptop
  * slept is not an acceptable outcome, and neither is blocking the pen on it.
+ * The one exception is a batch the server refused outright (a 4xx): sending it
+ * again only repeats the refusal, so it leaves the queue (`refused`).
  *
  * **A conflict is a question, not an error.** Two tabs on one project both hold
  * a full copy and both autosave. Whoever saves second is told, and gets to
@@ -56,6 +58,9 @@ class RoiStore {
         this.statusDetail = "";
 
         this.queue = [];
+        //: Operations the server refused (a 4xx), out of the queue so they are
+        //: not sent again. Their effect is still on screen until the next load.
+        this.refused = [];
         this.undoStack = [];
         this.redoStack = [];
 
@@ -127,6 +132,7 @@ class RoiStore {
             this.storedImageSize = data.stored_image_size || [null, null];
             this.dimensionMismatch = Boolean(data.dimension_mismatch);
             this.queue = [];
+            this.refused = [];
             this.undoStack = [];
             this.redoStack = [];
 
@@ -497,10 +503,16 @@ class RoiStore {
         }
 
         // A 4xx means the operations themselves are wrong, so retrying sends the
-        // same rejection forever. Stop, keep the local geometry, and say so --
-        // the export button is the way out and it works from local state.
+        // same rejection forever. Keep the local geometry and say so -- the
+        // export button is the way out and it works from local state -- but take
+        // the refused batch out of the queue: the server applies a batch whole,
+        // so left there it would ride along with every later edit and take each
+        // of them down with it. Edits queued meanwhile go out on their own.
+        this.queue.splice(0, batch.length);
+        this.refused.push(...batch);
         task?.fail("ROI save failed");
         this.setStatus("failed", result.data.error || "the server rejected this change");
+        if (this.queue.length) this.scheduleFlush();
     }
 
     scheduleRetry() {

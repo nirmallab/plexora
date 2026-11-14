@@ -506,6 +506,10 @@ class RoiInteraction {
                 this.state = "editing.vertex";
                 this.drag = { id: hit.feature.id, vertex: hit.vertex, before: hit.feature.geometry,
                               plane: hit.plane ?? null, solidBefore: hit.feature.solid || null };
+            } else if (hit && this.store.isLocked(hit.feature)) {
+                // The lock exists to stop exactly this drag, and the server
+                // refuses the move anyway. Left idle, so the viewer pans.
+                this.notify("That ROI is locked.");
             } else if (hit) {
                 this.state = "editing.move";
                 this.drag = { id: hit.feature.id, origin, before: hit.feature.geometry,
