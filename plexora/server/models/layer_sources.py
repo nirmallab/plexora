@@ -544,6 +544,18 @@ def _points_tile(project_name, layer, level, tile, quality, style):
         project_name, layer.id, int(level), tile_x, tile_y,
         tile_size=tile_size, min_q=min_q, bin_pixels=requested)
 
+    if style and style.get("lo") is None and style.get("hi") is None:
+        # ONE COLOUR, NO GENES: the whole panel's density, binned at the
+        # asked-for bin size, so it is stretched against that bin's ceiling
+        # and the Low/High fractions -- exactly as the ramp and per-gene paths
+        # are. `density_window` is the ceiling for a one-level-pixel bin: with
+        # 40-micron bins that saturated every bin holding a few molecules and
+        # left dlo/dhi moving the url but not the picture.
+        stretched = transcript_tiles._stretch(counts, ceiling, low, high)
+        return data_model.encode_tile_array(
+            _colourise(stretched.astype("uint8"), style["color"]),
+            False, quality)
+
     hi = style.get("hi") if style else None
     if hi is None:
         hi = density_window(stored, int(level))
