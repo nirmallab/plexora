@@ -3,9 +3,10 @@
 A cohort table on a node (one .h5ad spanning several slides) is imported once
 per slide, and every one of those projects is bound to the SAME node resource:
 the resource id comes from the file's path, and only the read spec's `subset`
-differs. The node holds one loaded spec per resource, so whichever project
-loaded last decides what every other project's reads return. These tests pin
-that each project keeps reading its own image's cells whoever loaded since.
+differs. The node held one loaded spec per resource, so whichever project
+loaded last decided what every other project's reads returned (audit
+nr-node-1). These tests pin that each project keeps reading its own image's
+cells whoever loaded since.
 """
 
 from __future__ import annotations
@@ -15,11 +16,6 @@ import pytest
 import tifffile
 
 from tests.node_harness import node_process  # noqa: F401 - fixture
-
-# Confirmed by the 2026-11 audit and not fixed: the fix needs a change to the
-# node API (a resource keyed by its read spec), so it waits for a decision
-# (docs/internal/AUDIT_2026-11-14.md, nr-node-1). Strict, so a fix shows here.
-pytestmark = pytest.mark.xfail(strict=True, reason="audit nr-node-1: confirmed, not fixed")
 
 
 @pytest.fixture
@@ -134,3 +130,137 @@ def test_the_viewer_keeps_its_slide_when_the_agent_opens_another_from_the_same_n
         f"the viewer's slide-one read another slide's cells after the agent "
         f"loaded slide-two from the same node table: X={after.tolist()}")
     np.testing.assert_array_equal(after, before)
+
+
+# -- the pieces under the two tests above ------------------------------------
+
+
+def _in_process_node(path):
+    from plexora.server.node.app import create_node_app
+
+    app = create_node_app([f"table:cells={path}"], "tok", log=lambda *a, **k: None)
+    return app.test_client()
+
+
+NODE_TOKEN = {"X-Plexora-Node-Token": "tok"}
+
+
+def test_an_operation_runs_against_the_project_it_names(client, tmp_path, node_process):
+    """A write -- an ROI's cell columns, gating's `uns` -- goes to the rows of
+    the project that sent it, whichever slide the node loaded last."""
+    from plexora.api import table_operation
+    from plexora.server.providers.http import SPEC_PARAM, spec_key
+
+    @table_operation("audit_test.image_ids")
+    def _image_ids(dataset, payload):
+        # Which slides' cells this dataset holds, from their ids
+        # (`image_01_cell_3`): whatever the loaded frame calls its columns.
+        frame = dataset.table.frame()
+        found = set()
+        for column in frame.columns:
+            for value in frame[column].to_list():
+                if isinstance(value, str) and "_cell_" in value:
+                    found.add(value.split("_cell_")[0])
+        return sorted(found)
+
+    first, second = _two_slides(client, tmp_path, node_process)
+    node = _in_process_node(tmp_path / "cells.h5ad")
+    keys = []
+    for project in (first, second):
+        answer = node.post("/node/v1/table/cells/load", headers=NODE_TOKEN,
+                           json={"spec": project.dataset.to_dict()})
+        assert answer.status_code == 200, answer.get_data(as_text=True)
+        # The node names the spec the way the primary does, with no round trip.
+        assert answer.get_json()["spec"] == spec_key(project.dataset.to_dict())
+        keys.append(answer.get_json()["spec"])
+
+    for key, expected in zip(keys, (["image_01"], ["image_02"])):
+        answer = node.post(f"/node/v1/table/cells/op/audit_test.image_ids?{SPEC_PARAM}={key}",
+                           headers=NODE_TOKEN, json={})
+        assert answer.get_json()["result"] == expected
+    # A primary too old to name a spec gets the one loaded last, as before.
+    answer = node.post("/node/v1/table/cells/op/audit_test.image_ids",
+                       headers=NODE_TOKEN, json={})
+    assert answer.get_json()["result"] == ["image_02"]
+
+
+def test_a_spec_the_node_no_longer_holds_is_a_typed_409(client, tmp_path, node_process,
+                                                       monkeypatch):
+    """Evicted by other projects' specs: answered with the header that tells
+    the primary to load it again, not with another project's rows."""
+    from plexora.server.node import resources as node_resources
+    from plexora.server.providers.http import SPEC_MISSING_HEADER, SPEC_PARAM
+
+    monkeypatch.setattr(node_resources, "LOADED_SPECS", 1)
+    first, second = _two_slides(client, tmp_path, node_process)
+    node = _in_process_node(tmp_path / "cells.h5ad")
+    keys = [node.post("/node/v1/table/cells/load", headers=NODE_TOKEN,
+                      json={"spec": project.dataset.to_dict()}).get_json()["spec"]
+            for project in (first, second)]
+
+    evicted = node.get(f"/node/v1/table/cells/describe?{SPEC_PARAM}={keys[0]}",
+                       headers=NODE_TOKEN)
+    assert evicted.status_code == 409
+    assert evicted.headers.get(SPEC_MISSING_HEADER) == keys[0]
+    kept = node.get(f"/node/v1/table/cells/describe?{SPEC_PARAM}={keys[1]}",
+                    headers=NODE_TOKEN)
+    assert kept.status_code == 200
+
+
+def test_the_primary_reads_a_409_with_the_header_as_spec_not_loaded():
+    from types import SimpleNamespace
+
+    from plexora.server.providers import http
+    from plexora.server.providers.base import SpecNotLoaded
+
+    node = SimpleNamespace(name="laptop")
+    response = SimpleNamespace(status=409, data=b'{"error": "gone"}',
+                               headers={http.SPEC_MISSING_HEADER: "abc"})
+    with pytest.raises(SpecNotLoaded):
+        http._check(node, response, None)
+    response.headers = {}
+    with pytest.raises(http.ResourceError) as raised:
+        http._check(node, response, None)
+    assert not isinstance(raised.value, SpecNotLoaded)
+
+
+def test_a_provider_loads_its_spec_again_and_repeats_the_read(monkeypatch):
+    """The node restarted, or evicted this spec: one reload, then the read."""
+    from types import SimpleNamespace
+
+    from plexora.server.providers import http
+    from plexora.server.providers.base import SpecNotLoaded
+    from plexora.server.providers.node import NodeTableProvider
+
+    spec = SimpleNamespace(to_dict=lambda: {"src": "cells.h5ad",
+                                            "subset": {"column": "image_id",
+                                                       "value": "image_01"}})
+    provider = NodeTableProvider(SimpleNamespace(node="laptop", resource_id="cells"), spec)
+    monkeypatch.setattr(NodeTableProvider, "node", property(lambda self: object()))
+    asked, loads = [], []
+
+    def json_request(node, method, path, **kwargs):
+        asked.append(path)
+        if len(asked) == 1:
+            raise SpecNotLoaded("gone")
+        return {"described": True}
+
+    monkeypatch.setattr(http, "json_request", json_request)
+    monkeypatch.setattr(provider, "load", lambda *a, **k: loads.append(1))
+
+    assert provider.describe() == {"described": True}
+    assert loads == [1]
+    key = http.spec_key(spec.to_dict())
+    assert asked == [f"/node/v1/table/cells/describe?{http.SPEC_PARAM}={key}"] * 2
+
+
+def test_the_spec_key_survives_the_json_round_trip():
+    import json
+
+    from plexora.server.providers.http import spec_key
+
+    sent = {"src": "a.h5ad", "columns": {"markers": ("CD3", "CD8")},
+            "subset": {"column": "image_id", "value": "image_01"}, "scale": 0.5}
+    assert spec_key(json.loads(json.dumps(sent))) == spec_key(sent)
+    assert spec_key({**sent, "subset": {"column": "image_id", "value": "image_02"}}) \
+        != spec_key(sent)

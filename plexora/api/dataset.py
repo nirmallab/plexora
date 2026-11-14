@@ -959,7 +959,11 @@ class TableHandle:
         if binding is not None:
             from plexora.server.providers.node import run_node_operation
 
-            return run_node_operation(binding, operation, payload)
+            # The project's read spec rides along: a node table is often
+            # several projects' (one per slide), and the node must run this
+            # against this project's rows, not whichever it loaded last.
+            return run_node_operation(binding, operation, payload,
+                                      spec=self._project.dataset)
         from plexora.server.providers.operations import run_table_operation
 
         return run_table_operation(
@@ -987,7 +991,8 @@ class TableHandle:
         if binding is not None:
             from plexora.server.providers.node import stream_node_operation
 
-            return stream_node_operation(binding, operation, payload)
+            return stream_node_operation(binding, operation, payload,
+                                         spec=self._project.dataset)
         from plexora.server.providers.operations import run_table_stream
 
         return run_table_stream(

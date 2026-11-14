@@ -36,6 +36,7 @@ is what keeps a tile request free of a CORS preflight.
 from __future__ import annotations
 
 import contextlib
+import hashlib
 import json
 import threading
 from contextlib import contextmanager
@@ -46,6 +47,7 @@ from plexora.server.providers.base import (
     NodeVersionMismatch,
     ResourceError,
     ResourceUnavailable,
+    SpecNotLoaded,
 )
 
 #: Header the primary authenticates with. A header rather than `?t=` so a token
@@ -69,6 +71,28 @@ FILE_NAME_HEADER = "X-Plexora-File-Name"
 #: Set by the primary's proxy routes when a node call failed, so the client can
 #: attribute the failure to the node rather than to the app.
 NODE_ERROR_HEADER = "X-Plexora-Node-Error"
+#: The query parameter a table read names its read spec with (`spec_key`).
+#: One table file on a node is commonly several projects -- a cohort .h5ad
+#: imported once per slide, each with its own subset -- and every one of them
+#: is the same resource id, so the resource alone does not say whose rows a
+#: read means. A node too old to know the parameter ignores it.
+SPEC_PARAM = "spec"
+#: On a node's 409 for a spec it does not hold: the key it was asked for.
+#: What tells "load it again" apart from every other refusal.
+SPEC_MISSING_HEADER = "X-Plexora-Spec-Missing"
+
+
+def spec_key(spec_dict: Mapping[str, Any]) -> str:
+    """A table read spec's name, the same on both ends of the wire.
+
+    A hash of the spec as the primary sends it: the node computes it from the
+    JSON it received, the primary from the dict it sent, with no round trip
+    between, so an operation that has a project but no loaded provider can
+    still say which spec it means.
+    """
+    canonical = json.dumps(spec_dict or {}, sort_keys=True, separators=(",", ":"),
+                           default=str)
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()[:20]
 
 #: Seconds. Generous on read because a cold GMM fit on a node is ~1 s and a
 #: pyramid conversion is polled rather than waited on; tight on connect because
@@ -414,6 +438,9 @@ def _check(node, response, expected_api, stream=False, allow_status=(), path="")
             f"{node.plexora_version or 'no version'}; this one reports "
             f"{cli.version_string()}.)")
     if status == 409:
+        if response.headers.get(SPEC_MISSING_HEADER):
+            raise SpecNotLoaded(
+                f"data node {node.name!r} does not hold this table's read spec: {detail}")
         raise ResourceError(
             f"data node {node.name!r} disagrees about the request: {detail}")
     if status in (502, 503, 504):

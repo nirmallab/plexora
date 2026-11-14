@@ -37,6 +37,7 @@ from plexora.server.providers.base import (
     ResourceLocator,
     ResourceNotLocal,
     ResourceUnavailable,
+    SpecNotLoaded,
 )
 
 API_VERSION = node_registry.API_VERSION
@@ -170,6 +171,12 @@ class NodeTableProvider(_NodeBacked):
         self._spec = spec
         self._generation = None
         self._loaded = None
+        #: `http.spec_key` of the spec this provider loads with, named on
+        #: every read: several projects can be one resource on the node (a
+        #: cohort table imported once per slide), and the node keeps each
+        #: one's rows apart only by this.
+        self._spec_key = (http.spec_key(spec.to_dict()) if spec is not None
+                          else None)
 
     @property
     def spec(self):
@@ -285,40 +292,60 @@ class NodeTableProvider(_NodeBacked):
 
     # -- reads -----------------------------------------------------------
 
+    def _named(self, path: str) -> str:
+        """`path` naming this provider's read spec, for a node that keeps
+        several. A node too old to know the parameter ignores it."""
+        if not self._spec_key:
+            return path
+        joiner = "&" if "?" in path else "?"
+        return f"{path}{joiner}{http.SPEC_PARAM}={self._spec_key}"
+
+    def _again_after_load(self, call):
+        """`call()`, and once more after loading the spec again if the node no
+        longer holds it -- it restarted, or other projects' specs evicted it.
+
+        Safe for a write too: the node refuses before running anything.
+        """
+        try:
+            return call()
+        except SpecNotLoaded:
+            self.load()
+            return call()
+
     def describe(self) -> dict:
-        return http.json_request(
+        return self._again_after_load(lambda: http.json_request(
             self.node, "GET",
-            f"/node/v1/table/{self._binding.resource_id}/describe",
-            expected_api=API_VERSION)
+            self._named(f"/node/v1/table/{self._binding.resource_id}/describe"),
+            expected_api=API_VERSION))
 
     def all_cells(self, columns, data_type):
         dtype = "integer" if np.issubdtype(data_type, int) else "float"
-        data, _ = http.bytes_request(
+        data, _ = self._again_after_load(lambda: http.bytes_request(
             self.node, "GET",
-            f"/node/v1/table/{self._binding.resource_id}/all_cells"
-            f"?columns={','.join(columns)}&dtype={dtype}",
-            expected_api=API_VERSION)
+            self._named(f"/node/v1/table/{self._binding.resource_id}/all_cells"
+                        f"?columns={','.join(columns)}&dtype={dtype}"),
+            expected_api=API_VERSION))
         # urllib3 has already undone the body's Content-Encoding, so this is
         # the same buffer a local read produces -- which is the point of the
         # node speaking the viewer's own wire shape.
         return np.frombuffer(data, dtype=np.uint32 if dtype == "integer" else np.float32)
 
     def filter_columns(self, columns) -> dict:
-        data, _ = http.bytes_request(
+        data, _ = self._again_after_load(lambda: http.bytes_request(
             self.node, "GET",
-            f"/node/v1/table/{self._binding.resource_id}/columns"
-            f"?names={','.join(columns)}",
-            expected_api=API_VERSION)
+            self._named(f"/node/v1/table/{self._binding.resource_id}/columns"
+                        f"?names={','.join(columns)}"),
+            expected_api=API_VERSION))
         return wire.unpack_columns(data)
 
     def metadata_column(self, column: str):
         from plexora.server.models.adapters import MetadataColumn
 
-        data, _ = http.bytes_request(
+        data, _ = self._again_after_load(lambda: http.bytes_request(
             self.node, "GET",
-            f"/node/v1/table/{self._binding.resource_id}/metadata_column"
-            f"?column={column}",
-            expected_api=API_VERSION)
+            self._named(f"/node/v1/table/{self._binding.resource_id}/metadata_column"
+                        f"?column={column}"),
+            expected_api=API_VERSION))
         values, meta = wire.unpack_array(data)
         categories = meta.get("categories")
         return MetadataColumn(
@@ -328,28 +355,22 @@ class NodeTableProvider(_NodeBacked):
         )
 
     def rows(self, ids) -> list:
-        answer = http.json_request(
+        answer = self._again_after_load(lambda: http.json_request(
             self.node, "GET",
-            f"/node/v1/table/{self._binding.resource_id}/rows"
-            f"?ids={http.encode_ids(ids)}",
-            expected_api=API_VERSION)
+            self._named(f"/node/v1/table/{self._binding.resource_id}/rows"
+                        f"?ids={http.encode_ids(ids)}"),
+            expected_api=API_VERSION))
         return answer.get("rows") or []
 
     # -- work that has to happen there ------------------------------------
 
     def run(self, operation: str, payload: Mapping[str, Any], dataset=None) -> Any:
-        answer = http.json_request(
-            self.node, "POST",
-            f"/node/v1/table/{self._binding.resource_id}/op/{operation}",
-            body=dict(payload or {}), expected_api=API_VERSION,
-            headers=_licence_headers(self.node, operation))
-        return answer.get("result")
+        return run_node_operation(self._binding, operation, payload,
+                                  spec=self._spec, node=self.node)
 
     def stream(self, operation: str, payload: Mapping[str, Any] | None = None):
-        return http.stream_request(
-            self.node, "POST",
-            f"/node/v1/table/{self._binding.resource_id}/stream/{operation}",
-            body=dict(payload or {}), headers=_licence_headers(self.node, operation))
+        return stream_node_operation(self._binding, operation, payload,
+                                     spec=self._spec, node=self.node)
 
 
 class NodeSegmentationProvider(_NodeBacked):
@@ -1094,22 +1115,77 @@ def _licence_headers(node, operation: str) -> dict:
     return tokens.headers_for(getattr(node, "token", "") or "", operation)
 
 
-def run_node_operation(binding, operation: str, payload=None):
-    """Run one table operation on the node that holds the table."""
-    node = node_for(binding)
-    answer = http.json_request(
-        node, "POST", f"/node/v1/table/{binding.resource_id}/op/{operation}",
-        body=dict(payload or {}), expected_api=API_VERSION,
-        headers=_licence_headers(node, operation))
+def _spec_named(path: str, spec) -> str:
+    """`path` naming the read spec `spec` (`http.spec_key`), when there is one."""
+    if spec is None:
+        return path
+    return f"{path}?{http.SPEC_PARAM}={http.spec_key(spec.to_dict())}"
+
+
+def _load_spec(node, binding, spec):
+    """Have the node load its table under `spec` again (see SpecNotLoaded)."""
+    http.json_request(
+        node, "POST", f"/node/v1/table/{binding.resource_id}/load",
+        body={"spec": spec.to_dict(), "reload": False}, expected_api=API_VERSION)
+
+
+def run_node_operation(binding, operation: str, payload=None, *, spec=None, node=None):
+    """Run one table operation on the node that holds the table.
+
+    `spec` is the project's read spec, which says whose rows the operation is
+    about when several projects share the table: a write to slide one's cells
+    must not land on whichever slide the node loaded last. A node that no
+    longer holds it refuses before running anything, so loading it and asking
+    again does not repeat a write.
+    """
+    node = node or node_for(binding)
+
+    def attempt():
+        return http.json_request(
+            node, "POST",
+            _spec_named(f"/node/v1/table/{binding.resource_id}/op/{operation}", spec),
+            body=dict(payload or {}), expected_api=API_VERSION,
+            headers=_licence_headers(node, operation))
+
+    try:
+        answer = attempt()
+    except SpecNotLoaded:
+        _load_spec(node, binding, spec)
+        answer = attempt()
     return answer.get("result")
 
 
-def stream_node_operation(binding, operation: str, payload=None):
-    """Run one streaming table operation, forwarding its chunks."""
-    node = node_for(binding)
-    return http.stream_request(
-        node, "POST", f"/node/v1/table/{binding.resource_id}/stream/{operation}",
-        body=dict(payload or {}), headers=_licence_headers(node, operation))
+def stream_node_operation(binding, operation: str, payload=None, *, spec=None, node=None):
+    """Run one streaming table operation, forwarding its chunks.
+
+    `spec` as for `run_node_operation`. The refusal arrives with the first
+    chunk, before any was forwarded, so the retry is invisible downstream.
+    """
+    node = node or node_for(binding)
+
+    def attempt():
+        return http.stream_request(
+            node, "POST",
+            _spec_named(f"/node/v1/table/{binding.resource_id}/stream/{operation}", spec),
+            body=dict(payload or {}), headers=_licence_headers(node, operation))
+
+    def chunks():
+        pieces = attempt()
+        try:
+            first = next(pieces)
+        except StopIteration:
+            return
+        except SpecNotLoaded:
+            _load_spec(node, binding, spec)
+            pieces = attempt()
+            try:
+                first = next(pieces)
+            except StopIteration:
+                return
+        yield first
+        yield from pieces
+
+    return chunks()
 
 
 #: How often a measurement running on a node is asked how far it has got.

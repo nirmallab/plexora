@@ -41,12 +41,14 @@ from flask import Blueprint, Response, current_app, jsonify, request, send_file
 from plexora import _work
 from plexora.server.node import resources as node_resources
 from plexora.server.providers import wire
-from plexora.server.providers.base import ResourceError
+from plexora.server.providers.base import ResourceError, SpecNotLoaded
 from plexora.server.providers.http import (
     API_HEADER,
     FILE_NAME_HEADER,
     GENERATION_HEADER,
     RESOURCE_HEADER,
+    SPEC_MISSING_HEADER,
+    SPEC_PARAM,
     TOKEN_HEADER,
     VIEW_HEADER,
 )
@@ -165,6 +167,15 @@ def _unknown_operation(exc):
 @node_bp.errorhandler(ResourceError)
 def _resource_error(exc):
     return jsonify(success=False, error=str(exc)), 409
+
+
+@node_bp.errorhandler(SpecNotLoaded)
+def _spec_not_loaded(exc):
+    """A 409 the primary acts on rather than reports: load the spec again,
+    then repeat the request. The header is what tells it from other 409s."""
+    response = jsonify(success=False, error=str(exc))
+    response.headers[SPEC_MISSING_HEADER] = request.args.get(SPEC_PARAM) or "1"
+    return response, 409
 
 
 @node_bp.errorhandler(BadView)
@@ -299,10 +310,21 @@ def _ready(resource):
 def _table(resource_id):
     resource = _ready(_registry().get(resource_id, kind="table"))
     if not resource.loaded:
-        raise ResourceError(
-            f"table {resource_id!r} has not been loaded on this node yet; the "
-            f"primary must POST its read spec first")
+        message = (f"table {resource_id!r} has not been loaded on this node "
+                   f"yet; the primary must POST its read spec first")
+        # A primary that names its spec loads it and asks again on its own.
+        raise SpecNotLoaded(message) if _spec() else ResourceError(message)
     return resource
+
+
+def _spec():
+    """The read spec this table request names (`http.spec_key`), or None."""
+    return request.args.get(SPEC_PARAM) or None
+
+
+def _table_provider(resource):
+    """The provider of the spec this request names. Under the resource's lock."""
+    return node_resources.table_view(resource, _spec()).provider
 
 
 # -- what this node serves, while it is running ---------------------------
@@ -939,7 +961,7 @@ def table_inspect(resource_id):
 def table_describe(resource_id):
     resource = _table(resource_id)
     with resource.lock:
-        description = resource.provider.describe()
+        description = _table_provider(resource).describe()
     return _stamped(_json(description), resource)
 
 
@@ -955,7 +977,7 @@ def table_all_cells(resource_id):
     columns = [c for c in (request.args.get("columns") or "").split(",") if c]
     data_type = int if request.args.get("dtype") == "integer" else float
     with resource.lock:
-        array = resource.provider.all_cells(columns, data_type)
+        array = _table_provider(resource).all_cells(columns, data_type)
     content = gzip.compress(array.tobytes("C"))
     response = current_app.response_class(content)
     response.headers.set("Content-Type", "application/octet-stream")
@@ -975,7 +997,7 @@ def table_geometry(resource_id):
     resource = _table(resource_id)
     columns = [c for c in (request.args.get("columns") or "").split(",") if c]
     with resource.lock:
-        payload = resource.provider.geometry(columns)
+        payload = _table_provider(resource).geometry(columns)
     response = current_app.response_class(
         payload, mimetype="application/vnd.apache.arrow.file")
     return _stamped(response, resource)
@@ -987,7 +1009,7 @@ def table_columns(resource_id):
     resource = _table(resource_id)
     names = [c for c in (request.args.get("names") or "").split(",") if c]
     with resource.lock:
-        columns = resource.provider.filter_columns(names)
+        columns = _table_provider(resource).filter_columns(names)
     return _stamped(_frame(wire.pack_columns(columns)), resource)
 
 
@@ -1002,7 +1024,7 @@ def table_metadata_column(resource_id):
     column = request.args.get("column") or ""
     with resource.lock:
         try:
-            values = resource.provider.metadata_column(column)
+            values = _table_provider(resource).metadata_column(column)
         except KeyError:
             return jsonify(success=False, error=f"no column named {column!r}"), 404
     return _stamped(_frame(wire.pack_array(
@@ -1018,7 +1040,7 @@ def table_rows(resource_id):
     resource = _table(resource_id)
     raw = [value for value in (request.args.get("ids") or "").split(",") if value]
     with resource.lock:
-        rows = resource.provider.rows(raw)
+        rows = _table_provider(resource).rows(raw)
     return _stamped(_json({"rows": rows}), resource)
 
 
@@ -1056,7 +1078,7 @@ def table_operation(resource_id, operation):
     resource = _table(resource_id)
     payload = request.get_json(silent=True) or {}
     with resource.lock:
-        dataset = node_resources.dataset_for(resource)
+        dataset = node_resources.dataset_for(resource, _spec())
         result = run_table_operation(operation, dataset, payload)
     return _stamped(_json({"result": result}), resource)
 
@@ -1074,10 +1096,14 @@ def table_stream_operation(resource_id, operation):
         return refused
     resource = _table(resource_id)
     payload = request.get_json(silent=True) or {}
+    # Looked up now, while a missing spec can still be a 409 and the request
+    # is still there to name it; the generator runs after both are gone.
+    with resource.lock:
+        view = node_resources.table_view(resource, _spec())
 
     def chunks():
         with resource.lock:
-            dataset = node_resources.dataset_for(resource)
+            dataset = node_resources.dataset_of(view)
             for piece in run_table_stream(operation, dataset, payload):
                 yield piece if isinstance(piece, bytes) else str(piece).encode("utf-8")
 

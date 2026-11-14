@@ -329,6 +329,15 @@ class ResourceMoved(ResourceError):
     """
 
 
+class SpecNotLoaded(ResourceError):
+    """A node table was asked about a read spec it does not hold.
+
+    Never loaded under it since the node started, or evicted since by other
+    projects' specs (`server/node/resources.LOADED_SPECS`). The answer is to
+    load it again and repeat the read, which the primary does on its own.
+    """
+
+
 class NodeVersionMismatch(ResourceError):
     """A node speaks a node-API version this primary does not.
 

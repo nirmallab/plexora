@@ -27,12 +27,13 @@ of it is anybody's only copy.
 from __future__ import annotations
 
 import threading
+from collections import OrderedDict
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Mapping
 
 from plexora.server.providers.base import (RESOURCE_KINDS, ResourceError,
-                                           is_remote_locator)
+                                           SpecNotLoaded, is_remote_locator)
 
 #: How `--serve` names one resource: `kind:id=path`.
 #:
@@ -55,8 +56,24 @@ PREPARING = "preparing"
 ERROR = "error"
 
 
+#: How many read specs one table resource keeps loaded at once. Each is a
+#: loaded frame -- for subsets of a cohort, a slide's rows each -- and one
+#: evicted is loaded again by the primary on its next read (`SpecNotLoaded`),
+#: so this bounds memory and costs a reload, never a wrong row.
+LOADED_SPECS = 4
+
+
 class UnknownResource(KeyError):
     """This node does not serve anything by that name."""
+
+
+@dataclass
+class LoadedSpec:
+    """One read spec's loaded table: the provider and its synthesized project."""
+
+    provider: Any
+    spec: Any
+    project: Any
 
 
 class RWLock:
@@ -285,8 +302,15 @@ class Resource:
     memory: Any = None
     #: Tables only: the read spec the primary last pushed, and the synthesized
     #: project record built from it so plugin code sees the handles it expects.
+    #: What a read that names no spec gets -- a primary too old to name one.
     spec: Any = None
     project: Any = None
+    #: Tables only: every spec loaded lately, by `http.spec_key`, most recent
+    #: last, as `LoadedSpec`s. One table file is commonly several projects (a
+    #: cohort .h5ad imported once per slide, each with its own subset), all on
+    #: this one resource id, so a read names the spec it means and gets that
+    #: spec's rows whoever loaded since. At most `LOADED_SPECS` are kept.
+    loaded_specs: "OrderedDict[str, LoadedSpec]" = field(default_factory=OrderedDict)
     #: Serializes load against read. A reload swaps the frame under whatever is
     #: reading it, and a describe() halfway through that would be describing
     #: two different tables. `with resource.lock:` is the writer -- see RWLock
@@ -1015,7 +1039,11 @@ def load_table(resource: Resource, spec_dict: Mapping[str, Any], reload: bool = 
     table's shape to validate it against the image and the mask.
     """
     from plexora.server.models.project import DataSpec, Project
+    from plexora.server.providers.http import spec_key
 
+    # Named by what the primary SENT, before the path below is swapped in:
+    # the primary computes the same name from the same dict without asking.
+    key = spec_key(dict(spec_dict or {}))
     spec = DataSpec.from_dict(dict(spec_dict or {}))
     if spec is None:
         raise ResourceError("the table read spec has no source file")
@@ -1045,9 +1073,16 @@ def load_table(resource: Resource, spec_dict: Mapping[str, Any], reload: bool = 
         resource.provider = provider
         resource.spec = spec
         resource.project = _project_for(resource, spec)
+        resource.loaded_specs.pop(key, None)
+        resource.loaded_specs[key] = LoadedSpec(provider, spec, resource.project)
+        while len(resource.loaded_specs) > LOADED_SPECS:
+            resource.loaded_specs.popitem(last=False)
         resource.generation += 1
         fingerprint = resource.provider.fingerprint()
         return {
+            # The name to read this spec back by. A primary that predates it
+            # ignores it, and its reads get the latest spec, as they always did.
+            "spec": key,
             "generation": resource.generation,
             "fingerprint": fingerprint.to_dict() if fingerprint is not None else None,
             "columns": list(loaded.table.columns),
@@ -1087,17 +1122,41 @@ def _project_for(resource: Resource, spec):
     return Project.from_entry(resource.id, {"dataset": spec.to_dict()})
 
 
-def dataset_for(resource: Resource):
-    """The plugin-API handle set for a node-side table.
+def table_view(resource: Resource, key: str | None = None) -> LoadedSpec:
+    """The loaded table a read means: the spec named by `key`, or with no key
+    (a primary too old to send one) the spec loaded last.
 
-    Built with the resource's own provider bound to the table handle, so
-    `frame()` reads what this node loaded rather than reaching for data_model's
-    globals -- which on a node describe nothing at all.
+    Call with the resource's lock held: a named spec is moved to the recent
+    end, so the specs in use are the ones kept.
     """
-    from plexora.api.dataset import _project_data_for
-
+    if key:
+        loaded = resource.loaded_specs.get(key)
+        if loaded is None:
+            raise SpecNotLoaded(
+                f"table {resource.id!r} is not loaded under this read spec on "
+                f"this node (never, or not since other projects' specs "
+                f"replaced it); the primary loads it again")
+        resource.loaded_specs.move_to_end(key)
+        return loaded
     if resource.project is None:
         raise ResourceError(
             f"resource {resource.id!r} has not been loaded yet; the primary "
             f"must POST its read spec first")
-    return _project_data_for(resource.project, table_provider=resource.provider)
+    return LoadedSpec(resource.provider, resource.spec, resource.project)
+
+
+def dataset_for(resource: Resource, key: str | None = None):
+    """The plugin-API handle set for a node-side table.
+
+    Built with the read spec's own provider bound to the table handle, so
+    `frame()` reads what this node loaded rather than reaching for data_model's
+    globals -- which on a node describe nothing at all.
+    """
+    return dataset_of(table_view(resource, key))
+
+
+def dataset_of(view: LoadedSpec):
+    """`dataset_for` of a spec already looked up."""
+    from plexora.api.dataset import _project_data_for
+
+    return _project_data_for(view.project, table_provider=view.provider)
