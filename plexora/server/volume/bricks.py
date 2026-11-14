@@ -81,6 +81,9 @@ ENV_SWITCH = "PLEXORA_VOLUME_BRICKS"
 
 _LOCKS: dict[str, threading.Lock] = {}
 _LOCKS_LOCK = threading.Lock()
+#: (folder, source key) -> the one Store every load of that stack uses
+#: (`store_for`), guarded by _LOCKS_LOCK.
+_STORES: dict[tuple[str, str | None], "Store"] = {}
 
 
 def enabled() -> bool:
@@ -249,6 +252,10 @@ class Store:
         self.lock = _lock_for(self.path)
         self._arrays: dict[int, object] = {}
         self._manifest = None
+        #: Whether this store has read a valid build.json or written one
+        #: (`store_for` tells a folder deleted under it from one not yet
+        #: written).
+        self._on_disk = False
         self._touched: dict[str, float] = {}
         #: "level/shard" -> readers using it now: eviction passes these by.
         self._pins: dict[str, int] = {}
@@ -271,6 +278,8 @@ class Store:
                     or raw.get("source_key") != self.key):
                 raw = {"version": FORMAT_VERSION, "source_key": self.key,
                        "coarse": {}, "shards": {}, "bytes": 0}
+            else:
+                self._on_disk = True
             raw.setdefault("pooled", {})
             self._manifest = raw
         return self._manifest
@@ -280,6 +289,7 @@ class Store:
         part = self.manifest_path.with_suffix(".json.part")
         part.write_text(json.dumps(self._manifest))
         os.replace(part, self.manifest_path)
+        self._on_disk = True
 
     def reset_if_stale(self) -> None:
         """A store copied from another version of the source is thrown away."""
@@ -510,8 +520,29 @@ def store_for(project_name, source) -> Store:
     from plexora import paths
 
     image = getattr(source, "path", None)
-    return Store(paths.derived_root(project_name) / STORE_NAME, source.volume,
-                 source_key(image) if image else None)
+    path = paths.derived_root(project_name) / STORE_NAME
+    key = source_key(image) if image else None
+    # One Store per folder and source version for the whole process: the
+    # background copy keeps writing through the store of the load that
+    # started it, and a later load of the same stack (A, then B, then A
+    # again) must see that copy land -- and must not save a manifest read
+    # before it over build.json. Only the lock used to be shared.
+    fresh = Store(path, source.volume, key)  # outside: Store() takes _LOCKS_LOCK
+    with _LOCKS_LOCK:
+        store = _STORES.get((str(path), key))
+        if store is not None and store._on_disk and not store.manifest_path.exists():
+            # Its folder was deleted under it (the project deleted and
+            # imported again): what it remembers holding is gone.
+            store = None
+        if store is None:
+            for other in [k for k in _STORES if k[0] == str(path)]:
+                del _STORES[other]
+            store = _STORES[(str(path), key)] = fresh
+        else:
+            # The key pins the geometry; the project's calibration may have
+            # changed since (which levels are pooled follows the z step).
+            store.volume = source.volume
+        return store
 
 
 def _free_bytes(directory: Path):
