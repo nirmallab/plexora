@@ -905,7 +905,13 @@ class TranscriptsSidebarController {
     syncVisibility() {
         if (!this.layer) return;
         const record = this.ctx.layers?.get?.(this.layer.layerId);
-        if (!record) return;
+        if (!record) {
+            // The layer was removed (the Layers card's X): its card, eye and
+            // opacity are gone with it, so the molecules have to go too, or
+            // they stay on the image with nothing left to hide them.
+            this.forgetLayer();
+            return;
+        }
         if (record.visible !== this.layer.visible) {
             this.layer.setVisible(record.visible);
         }
@@ -915,6 +921,16 @@ class TranscriptsSidebarController {
             this.paintControls();
             this.save();
         }
+    }
+
+    /** Stop drawing a layer that has left the stack, and wait for another. */
+    forgetLayer() {
+        if (this.saveTimer) window.clearTimeout(this.saveTimer);
+        this.saveTimer = null;
+        this.layer?.destroy();
+        this.layer = null;
+        this.show("empty");
+        this.watchForALayer();
     }
 
     onHide() {

@@ -1021,20 +1021,28 @@ if (window.Plexora) {
             const onResize = () => moduleInstance?.rebuildSliders?.();
             window.addEventListener("resize", onResize);
             onCleanup?.(() => window.removeEventListener("resize", onResize));
-            eventHandler.bind(CSVGatingList.events.SELECTION_CHANGED, () => {
+            // The bus is page-wide and outlives this instance, so each handler
+            // is unbound on deactivate too. Otherwise every close and reopen
+            // left one more set behind, and a closed Thresholding went on
+            // gating, repainting and resetting the open one's list.
+            const bind = (names, fn) => {
+                const off = eventHandler.bind(names, fn);
+                if (typeof off === "function") onCleanup?.(off);
+            };
+            bind(CSVGatingList.events.SELECTION_CHANGED, () => {
                 updateSeaDragonSelection();
                 updateCentroidsForGate();
                 runSegmentationGate(true);
             });
-            eventHandler.bind(CSVGatingList.events.GATING_BRUSH_MOVE, () => {
+            bind(CSVGatingList.events.GATING_BRUSH_MOVE, () => {
                 updateSeaDragonSelection();
                 runSegmentationGate(false);
             });
-            eventHandler.bind(CSVGatingList.events.RESET_GATINGLIST, () => {
+            bind(CSVGatingList.events.RESET_GATINGLIST, () => {
                 moduleInstance.resetGatingList();
                 seaDragonViewer.forceRepaint();
             });
-            eventHandler.bind(ctx.coreEvents.RESET_LISTS, () => {
+            bind(ctx.coreEvents.RESET_LISTS, () => {
                 moduleInstance.resetGatingList();
             });
         },

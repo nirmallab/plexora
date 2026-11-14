@@ -1008,8 +1008,30 @@ window.PlexoraToolLoader = (function () {
      *   requirements dialog a missing column would otherwise put up.
      * @returns loadTool's outcome: `{loaded: true}` (also for a tool that was
      *   already loaded and has just been brought back) or `{skipped: why}`.
+     *   A second open while the first is still loading gets the first's.
      */
     async function openTool(toolName, linkEl, options = {}) {
+        return once(toolName, () => openToolOnce(toolName, linkEl, options));
+    }
+
+    //: Loads in flight, by tool: the promise the first caller was given.
+    //: Nothing is in `loadedTools` until a load has finished, so without this
+    //: a second press of the shortcut, a double click or the agent's open_tool
+    //: arriving mid-load fetched the panel again, lifted its header actions
+    //: again and activated the plugin a second time.
+    const opening = new Map();
+
+    function once(toolName, start) {
+        const inFlight = opening.get(toolName);
+        if (inFlight) return inFlight;
+        const promise = start().finally(() => {
+            if (opening.get(toolName) === promise) opening.delete(toolName);
+        });
+        opening.set(toolName, promise);
+        return promise;
+    }
+
+    async function openToolOnce(toolName, linkEl, options) {
         if (loadedTools.has(toolName)) {
             show(toolName);
             if (!options.quiet) reveal(toolName);
@@ -1161,8 +1183,10 @@ window.PlexoraToolLoader = (function () {
         for (const entry of wanted) {
             if (loadedTools.has(entry.name)) continue;
             try {
-                const outcome = await loadTool(entry.name,
-                    { quiet: true, started: options.started });
+                // Through `once`, so a restore and a user's open of the same
+                // tool share one load rather than racing two.
+                const outcome = await once(entry.name, () => loadTool(entry.name,
+                    { quiet: true, started: options.started }));
                 if (outcome.skipped) {
                     skipped.push(`${toolLabel(entry.name)}: ${outcome.skipped}`);
                 }

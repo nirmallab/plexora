@@ -748,7 +748,13 @@ class VisiumHdSidebarController {
     syncVisibility() {
         if (!this.layer) return;
         const record = this.ctx.layers?.get?.(this.layer.layerId);
-        if (!record) return;
+        if (!record) {
+            // The layer was removed (the Layers card's X): its card, eye and
+            // opacity are gone with it, so the spots or bins have to go too,
+            // or they stay on the image with nothing left to hide them.
+            this.forgetLayer();
+            return;
+        }
         if (record.visible !== this.layer.visible) this.layer.setVisible(record.visible);
         if (Number.isFinite(record.opacity) && record.opacity !== this.layer.state.opacity) {
             this.layer.setOpacity(record.opacity);
@@ -756,6 +762,16 @@ class VisiumHdSidebarController {
             this.save();
         }
         this.layer.syncTransform();
+    }
+
+    /** Stop drawing a layer that has left the stack, and wait for another. */
+    forgetLayer() {
+        if (this.saveTimer) window.clearTimeout(this.saveTimer);
+        this.saveTimer = null;
+        this.layer?.destroy();
+        this.layer = null;
+        this.show("empty");
+        this.watchForALayer();
     }
 
     onHide() { this.layer?._tiles?.setVisible?.(false); }

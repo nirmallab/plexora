@@ -370,6 +370,8 @@ class LayerStack {
         this._listeners = new Set();
         this._layers = new Map();
         this._order = [];
+        //: Ids unregistered and not registered again since. See wasRemoved.
+        this._removed = new Set();
     }
 
     /**
@@ -432,6 +434,7 @@ class LayerStack {
             };
             this._layers.set(id, layer);
             this._order.push(id);
+            this._removed.delete(id);
         }
         const { transform, ...rest } = spec;
         Object.assign(layer, rest);
@@ -481,11 +484,16 @@ class LayerStack {
         if (!this._layers.has(id)) return false;
         this._layers.delete(id);
         this._order = this._order.filter((entry) => entry !== id);
+        this._removed.add(id);
         this._changed();
         return true;
     }
 
     has(id) { return this._layers.has(id); }
+
+    /** This layer was in the stack and has been unregistered since -- as
+     *  opposed to one that has not arrived yet. See OverlayHost._layerVisible. */
+    wasRemoved(id) { return this._removed.has(id); }
 
     get(id) { return this._layers.get(id) || null; }
 
@@ -899,8 +907,12 @@ class OverlayHost {
         const layer = this._stack.get(entry.layerId);
         // A layer that does not exist does not hide an overlay: a plugin may
         // register its drawing before the layer list arrives, and vanishing in
-        // the meantime would look like the plugin failed.
-        return !layer || layer.visible;
+        // the meantime would look like the plugin failed. A layer that WAS
+        // there and has been removed is another matter: its card and eye went
+        // with it, so a drawing still tagged with it would have nothing left
+        // to hide it by.
+        if (!layer) return !this._stack.wasRemoved?.(entry.layerId);
+        return layer.visible;
     }
 
     /**

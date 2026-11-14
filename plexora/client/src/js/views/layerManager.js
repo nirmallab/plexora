@@ -104,6 +104,9 @@ window.PlexoraLayerManager = (function () {
     let stack = null;
     let sortable = null;
     let unsubscribe = null;
+    /** render() is running, so paint() must not start another one: a list
+     *  that still disagrees with the stack costs one render, never a loop. */
+    let rendering = false;
     const collapsed = new Set();
     /** Layers the user has pinned in place. Held here rather than on the stack
      *  record: it is a fact about this panel, and the renderer has no use for it. */
@@ -1711,7 +1714,17 @@ window.PlexoraLayerManager = (function () {
         // picture makes the one thing this panel exists to show a lie. That
         // was true while the image could only ever BE the bottom; now that it
         // can be dragged, pinning the row is what would make the list lie.
-        return stack.layers().slice().reverse().filter(isCarded);
+        //
+        // GROUPED BY SURFACE, the stack's order kept inside each group: the
+        // order render() lays the cards out in, and the one paint() checks
+        // them against. Nothing keeps the stack itself grouped -- a raster
+        // registered on top of a points layer, or a stored order with an image
+        // above a surface -- and when this list was the plain stack order the
+        // two could never agree, so render and paint called each other until
+        // the call stack overflowed.
+        const layers = stack.layers().slice().reverse().filter(isCarded);
+        return SURFACE_ORDER.flatMap(
+            (surface) => layers.filter((layer) => surfaceOf(layer) === surface));
     }
 
     function cardedIds() { return cardedLayers().map((layer) => layer.id); }
@@ -1780,8 +1793,6 @@ window.PlexoraLayerManager = (function () {
         const list = el(LIST_ID);
         if (!list || !stack) return;
         const layers = cardedLayers();
-        const present = SURFACE_ORDER.filter(
-            (surface) => layers.some((layer) => surfaceOf(layer) === surface));
 
         // A card that has just appeared -- a mask that finished building, a
         // layer somebody imported -- has never been in `collapsed`, so it
@@ -1803,12 +1814,8 @@ window.PlexoraLayerManager = (function () {
         // column. The refusal still stands (see ensureSortable's onMove); it
         // is just no longer announced in advance. The grouping itself is what
         // is left of the boundary, and it is what the order means.
-        const wanted = [];
-        for (const surface of present) {
-            for (const layer of layers) {
-                if (surfaceOf(layer) === surface) wanted.push(ensureCard(layer));
-            }
-        }
+        // (cardedLayers does the grouping, so paint checks the same order.)
+        const wanted = layers.map(ensureCard);
 
         const keep = new Set(wanted);
         for (const child of Array.from(list.children)) {
@@ -1837,7 +1844,12 @@ window.PlexoraLayerManager = (function () {
         for (const node of wanted) list.appendChild(node);
 
         ensureSortable();
-        paint();
+        rendering = true;
+        try {
+            paint();
+        } finally {
+            rendering = false;
+        }
     }
 
     /**
@@ -1855,7 +1867,7 @@ window.PlexoraLayerManager = (function () {
         // claimed, is a card that does not exist yet -- and repainting a
         // list it is not in would leave the panel silently one card short
         // until something else happened to rebuild it.
-        if (cardedIds().join(",") !== renderedIds(list).join(",")) {
+        if (!rendering && cardedIds().join(",") !== renderedIds(list).join(",")) {
             render();
             return;
         }
