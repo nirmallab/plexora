@@ -153,6 +153,16 @@ SSH_READY_TIMEOUT = 420
 #: slowest hardware on the menu, and because overrunning it is not fatal: the
 #: mount chain installs gcsfuse itself if it has to.
 STARTUP_READY_TIMEOUT = 600
+#: How long to wait for a VM caught between states to land on one before the
+#: ladder picks a rung. Disconnect stops or deletes with `--async`, so a
+#: Connect a minute later finds the machine still STOPPING; a stop settles well
+#: inside this.
+SETTLE_TIMEOUT = 180
+#: The statuses Compute Engine reports while a VM is on its way somewhere else.
+#: None of them is a rung of the ladder: a STOPPING machine is about to be
+#: TERMINATED (or gone, for a delete), and probing ssh on it only waits out
+#: SSH_READY_TIMEOUT against a host that is shutting down.
+_SETTLING = ("STOPPING", "SUSPENDING", "REPAIRING", "PROVISIONING", "STAGING")
 
 
 def _spawn_flags():
@@ -2154,6 +2164,24 @@ def ensure_instance(cfg, echo=print):
 
     found = instance(project, zone, name)
     status = (found or {}).get("status") or ""
+    # Settled before the ladder reads it, because a status read once is a
+    # snapshot: a machine STOPPING from the last Disconnect will be TERMINATED
+    # (start it) or gone (create one) in a minute, and neither is "wait for
+    # ssh". Read again until it lands, then take the rung for where it landed.
+    if status in _SETTLING:
+        echo(f"  The VM {name} is {status.lower()}; waiting for it to "
+             f"finish before connecting.")
+        settle_by = _now() + SETTLE_TIMEOUT
+        while status in _SETTLING:
+            if _now() > settle_by:
+                raise GcloudError(
+                    f"The VM {name} has been {status.lower()} for more than "
+                    f"{SETTLE_TIMEOUT:g}s. Check it in the Google Cloud "
+                    f"console, and connect again once it has stopped or "
+                    f"started.")
+            _sleep(5)
+            found = instance(project, zone, name)
+            status = (found or {}).get("status") or ""
     action = "reused"
     if found is None and not rented:
         raise GcloudError(
