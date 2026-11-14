@@ -281,8 +281,28 @@ class Store:
             else:
                 self._on_disk = True
             raw.setdefault("pooled", {})
+            self._repair_coarse(raw)
             self._manifest = raw
         return self._manifest
+
+    @staticmethod
+    def _repair_coarse(raw: dict) -> None:
+        """A finished coarse level that still lists prepared shards was
+        written before eviction knew to pass coarse levels by, and may have
+        lost shards to it (read back as zeros). Copy that level again, and the
+        pooled levels built from it."""
+        damaged = {level for level in raw["shards"] if raw["coarse"].get(level)}
+        if not damaged:
+            return
+        for level in damaged:
+            raw["coarse"].pop(level, None)
+            held = raw["shards"].pop(level, {})
+            raw["bytes"] = max(0, int(raw.get("bytes", 0)) - sum(int(v) for v in held.values()))
+        for name in [n for n in raw["pooled"] if n.partition("p")[0] in damaged]:
+            raw["pooled"].pop(name)
+        # "1.t.c.z" for a level, "1p4.t.c.z" for its pooled copy.
+        raw["units"] = [u for u in raw.get("units", [])
+                        if u.split(".")[0].partition("p")[0] not in damaged]
 
     def _save(self) -> None:
         self.path.mkdir(parents=True, exist_ok=True)
@@ -596,6 +616,12 @@ def build_coarse(store: Store, source, report=None, cancel=None, *, copy=True) -
                        for cc in range(volume.channels)
                        for zz in range(0, volume.depth, BRICK[0])):
                     manifest["coarse"][str(level)] = True
+                    # Areas prepared at this level before the copy reached it
+                    # are part of the copy now: no longer the prepared-area
+                    # cache's to count or evict.
+                    held = manifest["shards"].pop(str(level), {})
+                    manifest["bytes"] = max(0, int(manifest.get("bytes", 0))
+                                            - sum(int(v) for v in held.values()))
                 store._save()
         if report is not None:
             report(100.0 * (count + 1) / total, f"Copying the stack in 3-D: level {level}")
@@ -669,8 +695,13 @@ def prepare(store: Store, source, level: int, box, *, channels=None, t=0, report
                 for bx in range(x0 // sx, (x1 - 1) // sx + 1):
                     wanted.append((c, zb, by, bx))
     manifest = store.manifest()
-    # {shard id: bytes written}, so eviction gives back what each one took.
-    held = manifest["shards"].setdefault(str(level), {})
+    with store.lock:
+        # Checked again with the entry made: the copy may have finished this
+        # level since, and its entry must not come back once it is gone.
+        if store.has_coarse(level):
+            return {"shards": 0, "bytes": 0, "skipped": 0}
+        # {shard id: bytes written}, so eviction gives back what each one took.
+        held = manifest["shards"].setdefault(str(level), {})
     todo = [w for w in wanted if store.shard_id(t, *w) not in held]
     cost = len(todo) * sz * sy * sx * itemsize
     if cost > PREPARE_BUDGET:
@@ -688,6 +719,9 @@ def prepare(store: Store, source, level: int, box, *, channels=None, t=0, report
         array[t, c, z0:z1 + 1, rows, cols] = np.asarray(block, dtype=volume.dtype)
         size = int(np.asarray(block).nbytes)
         with store.lock:
+            if store.has_coarse(level):
+                # The copy finished this level meanwhile and holds it whole.
+                break
             held[store.shard_id(t, c, zb, by, bx)] = size
             manifest["bytes"] = int(manifest.get("bytes", 0)) + size
             store._touched[f"{level}/{store.shard_id(t, c, zb, by, bx)}"] = time.time()
@@ -705,10 +739,16 @@ def _evict(store: Store, keep=()) -> None:
     (called with the store's lock held). Removed from the manifest first, so a
     read never finds a shard whose file is going."""
     manifest = store.manifest()
+    # Never a level the copy holds or will hold: while it is still copying, a
+    # unit it has written may share a file with a prepared shard, and deleting
+    # that file would leave the finished level reading zeros. Only a store
+    # that copies prepares areas at all (volume_routes `volume_prepare`).
+    copied = {str(level) for level in coarse_levels(store.volume)}
     while int(manifest.get("bytes", 0)) > CACHE_BUDGET:
         candidates = [(store._touched.get(f"{level}/{shard}", 0.0), level, shard)
                       for level, shards in manifest["shards"].items() for shard in shards
-                      if f"{level}/{shard}" not in keep
+                      if level not in copied
+                      and f"{level}/{shard}" not in keep
                       and not store._pins.get(f"{level}/{shard}")]
         if not candidates:
             return
