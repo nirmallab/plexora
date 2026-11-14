@@ -233,8 +233,10 @@ def parquet(native=None) -> bool:
     pyarrow reads and writes it: its `parquet` stage is fetched the first time
     one is read or written (an import from here loads it, through JSPI), and
     polars, which decided at its own import that pyarrow was absent, is told
-    it is not (`_tell_polars`). `scan_parquet` reads eagerly: these tables
-    are a row per object, not a run's transcripts. True if patched."""
+    it is not (`_tell_polars`). `scan_parquet` is a real scan and a head read
+    reads only its rows: a schema probe (`is_boundary_table`) or a one-row
+    read may meet a Xenium boundary table of millions of vertex rows, and
+    reading all of it could exhaust the 4 GiB heap. True if patched."""
     import polars as pl
 
     if native_parquet() if native is None else native:
@@ -251,8 +253,49 @@ def parquet(native=None) -> bool:
         kwargs["use_pyarrow"] = True
         return write(self, file, *args, **kwargs)
 
+    def local(source, kwargs, allowed):
+        # One file on this file system, asked nothing pyarrow's ParquetFile
+        # cannot answer: read in batches. Anything else takes the full read.
+        return (isinstance(source, (str, os.PathLike)) and "*" not in os.fspath(source)
+                and all(k in allowed for k in kwargs if kwargs[k] is not None)
+                and all(isinstance(c, str) for c in kwargs.get("columns") or ()))
+
+    def leading(source, columns, n_rows, predicate=None, batch_size=None):
+        # The file's first `n_rows` rows (all if None), batch by batch, then
+        # `predicate` on them; reading stops once they are in.
+        import pyarrow.parquet as pq
+
+        with pq.ParquetFile(source) as file:
+            size = batch_size or (max(n_rows, 1) if n_rows is not None else 65_536)
+            for batch in file.iter_batches(batch_size=size, columns=columns):
+                frame = pl.from_arrow(batch)
+                if n_rows is not None:
+                    frame = frame.head(n_rows)
+                    n_rows -= frame.height
+                yield frame if predicate is None else frame.filter(predicate)
+                if n_rows is not None and n_rows <= 0:
+                    return
+
+    def schema(source, columns=None):
+        # The footer alone, as polars types its columns.
+        import pyarrow.parquet as pq
+
+        arrow_schema = pq.read_schema(source)
+        if columns is not None:
+            import pyarrow as pa
+
+            arrow_schema = pa.schema([arrow_schema.field(c) for c in columns])
+        return pl.from_arrow(arrow_schema.empty_table()).schema
+
     def read_parquet(source, *args, n_rows=None, **kwargs):
         arrow()
+        if n_rows is not None and not args and local(source, kwargs, ("columns",)):
+            # A head read (a schema probe asks one row) reads only the rows it
+            # returns, not the file: a boundary table is millions of vertices.
+            columns = kwargs.get("columns")
+            frames = list(leading(source, columns, n_rows))
+            return (pl.concat(frames) if frames
+                    else pl.DataFrame(schema=schema(source, columns)))
         kwargs["use_pyarrow"] = True
         frame = read(source, *args, **kwargs)
         return frame if n_rows is None else frame.head(n_rows)
@@ -261,7 +304,25 @@ def parquet(native=None) -> bool:
         # What a scan takes and a read does not (row-group hints, cloud
         # options), dropped: an eager read has no use for them.
         keep = {k: v for k, v in kwargs.items() if k in ("columns", "storage_options")}
-        return read_parquet(source, n_rows=n_rows, **keep).lazy()
+        try:
+            from polars.io.plugins import register_io_source
+        except ImportError:
+            register_io_source = None
+        if register_io_source is None or args or not local(source, keep, ("columns",)):
+            return read_parquet(source, n_rows=n_rows, **keep).lazy()
+        arrow()
+        # A real scan: the schema from the footer, and only the columns and
+        # leading rows the query asks for are read (`collect_schema()` reads
+        # no row, a `select` of two columns reads two).
+        limit = n_rows
+
+        def source_batches(with_columns, predicate, n_rows, batch_size):
+            if limit is not None:
+                n_rows = limit if n_rows is None else min(n_rows, limit)
+            yield from leading(source, with_columns, n_rows, predicate, batch_size)
+
+        frame = register_io_source(source_batches, schema=lambda: schema(source))
+        return frame if keep.get("columns") is None else frame.select(keep["columns"])
 
     write_parquet.__doc__, read_parquet.__doc__ = write.__doc__, read.__doc__
     pl.DataFrame.write_parquet = write_parquet
