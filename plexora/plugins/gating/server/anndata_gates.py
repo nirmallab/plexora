@@ -532,18 +532,37 @@ def load_gates_from_anndata(
             return {"image_id": current_image_id, "gates": {}}
         column = existing[current_image_id]
 
-    # Table rows are ordered like var_names at the time of the last save
-    # (see save_gates_to_anndata's realignment note) -- matched back to
-    # today's deduplicated display names by position, the same "common,
-    # overwhelmingly likely" fast-path assumption that function documents.
     var_names = _read_var_names(path)
     display_names = api.deduplicate_names(var_names)
 
+    # Rows are read by the marker the table's index names, as the save side
+    # realigns them: a table written by another tool may list only some
+    # markers, or list them in another order, and var may have changed since
+    # Plexora last saved. A duplicated var_name's k-th row in the table is
+    # its k-th copy in var (save writes PTPRC_1's gate on the second PTPRC
+    # row). Only an index that names no marker at all -- a default
+    # RangeIndex or numeric labels -- is read by position.
+    row_names = [str(name) for name in existing.index]
+    var_set = set(var_names)
+    by_position = (not any(name in var_set for name in row_names)
+                   and all(name.lstrip("-").isdigit() for name in row_names))
+    rows_by_name = {}
+    for i, name in enumerate(row_names):
+        rows_by_name.setdefault(name, []).append(i)
+    seen = {}
+
     gates = {}
-    for position, name in enumerate(display_names):
-        if position >= len(column):
-            break
-        value = column.iloc[position]
+    for position, (raw, name) in enumerate(zip(var_names, display_names)):
+        if by_position:
+            row = position
+        else:
+            occurrence = seen.get(raw, 0)
+            seen[raw] = occurrence + 1
+            rows = rows_by_name.get(raw, ())
+            row = rows[occurrence] if occurrence < len(rows) else None
+        if row is None or row >= len(column):
+            continue
+        value = column.iloc[row]
         if value is None or (isinstance(value, float) and np.isnan(value)):
             continue
         gates[name] = float(value)
