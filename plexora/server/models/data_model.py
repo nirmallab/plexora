@@ -1103,6 +1103,9 @@ def _clear_table_caches():
     _description_cache.clear()
     _consistency_cache.clear()
     _gate_filter_cache.clear()
+    # The centroid layer's copy of the gated columns, which answers before it
+    # would ever ask this module again.
+    centroid_tiles._filter_tables.clear()
     _feature_column_cache.clear()
     _metadata_column_cache.clear()
 
@@ -1311,8 +1314,15 @@ def load_datasource(datasource_name, reload=False, wait_for_table=False, keep_im
                 # On the website the index waits (`_index_later`): it needs
                 # scipy, a second of WebAssembly before the viewer's first
                 # requests, and nothing on the first screen picks a cell.
-                if _work.threaded():
-                    load_ball_tree(datasource_name, reload=True)
+                # Built over the table just read rather than through
+                # load_ball_tree: `_loaded_source` is not this project's yet, so
+                # that would run a whole second load inside this one -- whose
+                # table, read behind the viewer, this load then superseded,
+                # leaving the project loaded with no cells.
+                if (_work.threaded() and loaded_datasource is not None
+                        and project.has_table and project.roles.x and project.roles.y):
+                    ball_tree = _index_over(datasource_name, project, loaded_datasource,
+                                            reload=True)
             # Data on disk just changed underneath us (first load or explicit
             # reload) -- any cached GMM/description results are now stale.
             # Unless the image was kept: then what was measured of it stays.
@@ -1332,6 +1342,7 @@ def load_datasource(datasource_name, reload=False, wait_for_table=False, keep_im
             _description_cache.clear()
             _consistency_cache.clear()
             _gate_filter_cache.clear()
+            centroid_tiles._filter_tables.clear()
             _feature_column_cache.clear()
             _metadata_column_cache.clear()
             # Bumped so downstream tile-byte caches (keyed on this) know to

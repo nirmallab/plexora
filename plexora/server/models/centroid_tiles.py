@@ -1,3 +1,4 @@
+import hashlib
 import json
 import os
 import shutil
@@ -121,6 +122,30 @@ def _node_signature(binding):
     }
 
 
+def _read_spec_signature(spec):
+    """A short stable token for which cells, at which positions, the adapter
+    reads out of the file, or None for a spec that says nothing beyond it.
+
+    An AnnData or SpatialData table is the file PLUS this: another image of
+    the same .h5ad (`subset`), another obsm array (`coordinates`) or another
+    table of a store leaves the file, and the 'id'/'X'/'Y' names the adapter
+    synthesizes, exactly as they were -- so a cache keyed on those alone kept
+    drawing image A's cells over image B. None for a plain CSV, so its
+    manifest keeps the keys it always had.
+    """
+    body = {
+        "table": spec.table,
+        "coordinates": dict(spec.coordinates or {}),
+        "subset": dict(spec.subset or {}),
+        "obs_id_field": spec.obs_id_field,
+        "row_number_ids": bool(spec.row_number_ids),
+    }
+    if not any(body.values()):
+        return None
+    body["type"] = spec.type
+    return hashlib.sha1(json.dumps(body, sort_keys=True, default=str).encode()).hexdigest()[:16]
+
+
 def _expected_manifest(config, datasource_name):
     project = _project(config, datasource_name)
     binding = project.resource("table")
@@ -145,6 +170,7 @@ def _expected_manifest(config, datasource_name):
         # The file is the same file after a correction is applied or undone;
         # the positions are not, so the tiles built from them are not either.
         "correction": table_correction.signature(project.dataset.correction),
+        "read_spec": _read_spec_signature(project.dataset),
         "id_column": project.roles.cell_id or "id",
         "x_column": project.roles.x,
         "y_column": project.roles.y,
@@ -165,6 +191,7 @@ def _is_manifest_current(manifest, expected):
         "csv_size",
         "csv_mtime_ns",
         "correction",
+        "read_spec",
         "id_column",
         "x_column",
         "y_column",
@@ -295,10 +322,13 @@ def _build_into(tmp_root, root, config, datasource_name, expected):
             with target_manifest.open("r", encoding="utf-8") as handle:
                 promoted = json.load(handle)
             if _is_manifest_current(promoted, expected):
-                _filter_tables.pop(datasource_name, None)
+                # The gated columns' row numbers are this build's rows. The
+                # cache's keys are tuples, so popping the bare name never
+                # removed anything; it holds one entry, so clear it.
+                _filter_tables.clear()
                 return promoted
         raise
-    _filter_tables.pop(datasource_name, None)
+    _filter_tables.clear()
     return manifest
 
 
@@ -347,11 +377,16 @@ def _load_filter_table(config, datasource_name, gates):
         return None
     expected = _expected_manifest(config, datasource_name)
     gate_columns = tuple(sorted(gates.keys()))
+    # The whole read spec, not just the file: log1p, another matrix or another
+    # image of the same file leave its stat as it was and change every value.
+    read_as = json.dumps(_project(config, datasource_name).dataset.to_dict(),
+                         sort_keys=True, default=str)
     key = (
         datasource_name,
         expected["csv_path"],
         expected["csv_size"],
         expected["csv_mtime_ns"],
+        read_as,
         gate_columns,
     )
     cached = _filter_tables.get(key)
