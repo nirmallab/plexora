@@ -95,6 +95,10 @@ window.PlexoraAgentBridge = (function () {
     //: channel save is released. Bounded so a fit that never answers cannot
     //: leave the project's channel list unsaveable.
     const SETTLE_LIMIT_MS = 30000;
+    //: The server's attach TTL (viewer_sessions.ATTACH_TTL_S): a command
+    //: attaches the tab for this long. An agent that sent its last command
+    //: longer ago than this, and is no longer attached, has gone.
+    const ATTACH_TTL_MS = 120000;
 
     let session = null;
     const cursor = { after: 0, afterEvent: 0 };
@@ -121,6 +125,13 @@ window.PlexoraAgentBridge = (function () {
     //: What the user had before an agent's first on-screen change; see the
     //: header. Null when nothing has been leased (or it was given back).
     let lease = null;
+    //: When the last command was run here (Date.now()), and the agent
+    //: sessions whose events say they are still going (`*.session`, not yet
+    //: `finished`). A session sends `restore_viewer` at its end, however long
+    //: its model is quiet; a one-off command (an MCP viewer_navigate) never
+    //: does, so its lease is given back once it has gone (`pollOnce`).
+    let lastCommandAt = 0;
+    const liveSessions = new Set();
     //: The commands that take the lease. Reads, captures and evidence do not:
     //: an agent that only looks leaves nothing to restore.
     const MUTATING = new Set([
@@ -517,6 +528,15 @@ window.PlexoraAgentBridge = (function () {
             await runCommand(command);
             if (navigating) return null;
         }
+        // A lease nobody will give back: the agent that took it is no longer
+        // attached, sent nothing for the attach TTL, and no session is going
+        // that would end in `restore_viewer`. Released the way "Continue in
+        // background" is -- what is on screen stays, saving is the user's
+        // again -- so their next channel edit is saved as any is.
+        if (lease && !attached && !commands.length && !liveSessions.size && !contrastPlaying()
+            && Date.now() - lastCommandAt >= ATTACH_TTL_MS) {
+            await restore({ reason: "detached" });
+        }
         if (commands.length || events.length) return 0;
         if (payload.budget_exhausted) return BUSY_RETRY_MS;
         return attached ? 0 : idleMs;
@@ -591,6 +611,15 @@ window.PlexoraAgentBridge = (function () {
         writeStore();
         // This tab's own doing, echoed back: it has already happened here.
         if (event.origin && event.origin === session) return;
+        const sessionEvent = event.payload || {};
+        if (String(event.kind || "").endsWith(".session") && sessionEvent.session_id) {
+            // The agent panel's own reading of a session's events.
+            if (["finished", "ai_finished", "report"].includes(sessionEvent.event)) {
+                liveSessions.delete(String(sessionEvent.session_id));
+            } else {
+                liveSessions.add(String(sessionEvent.session_id));
+            }
+        }
         window.dispatchEvent(new CustomEvent("plexora:agent-state-changed", { detail: event }));
         // QC's calls are core's to serve (/get_not_called): whatever QC or the
         // ROI document changed -- a session's region, an approval, a check's
@@ -701,6 +730,7 @@ window.PlexoraAgentBridge = (function () {
     async function runCommand(command) {
         if (!command || !command.command_id) return;
         cursor.after = Math.max(cursor.after, Number(command.seq) || 0);
+        lastCommandAt = Date.now();
         writeStore();
         const warnings = [];
         const expected = command.expected_revision;
@@ -1164,6 +1194,18 @@ window.PlexoraAgentBridge = (function () {
                 lease.suspended = false;
                 panel.resumePersistence();
             }
+            // And it is what the lease gives back: a restore that put the
+            // pre-session channels on screen would leave them unsaved over
+            // this, and the next save would write them back.
+            if (lease) {
+                try {
+                    lease.slots = panel.snapshotSlots();
+                    lease.memory = panel.snapshotChannelMemory();
+                    lease.channelsTouched = false;
+                } catch (error) {
+                    // Left as it was: a restore rebuilds what the lease holds.
+                }
+            }
             panel.scheduleSaveChannels();
         }
         touch();
@@ -1589,6 +1631,21 @@ window.PlexoraAgentBridge = (function () {
         return lease;
     }
 
+    /** Whether the slots on screen differ from `leased` in channel, colour or
+     *  on/off. Windows are left out: an auto-level landing after the lease
+     *  was taken moves one, and is no reason to rebuild. */
+    function slotsMoved(leased) {
+        let now;
+        try {
+            now = sidebar().snapshotSlots();
+        } catch (error) {
+            return false;
+        }
+        if (!Array.isArray(now) || now.length !== leased.length) return true;
+        return now.some((slot, i) => slot.name !== leased[i].name
+            || slot.colorHex !== leased[i].colorHex || Boolean(slot.enabled) !== Boolean(leased[i].enabled));
+    }
+
     /**
      * Give the viewer back as the lease found it (see the header). Every step
      * is tried on its own, so one that fails (a tool that will not close) does
@@ -1644,13 +1701,18 @@ window.PlexoraAgentBridge = (function () {
             return true;
         });
         await step("channels", async () => {
-            // Rebuilt only when a channel command ran: a rebuild re-draws
-            // every channel, and an agent that only moved the view has
-            // nothing here to give back.
-            if (keep || !held.channelsTouched || !Array.isArray(held.slots) || !held.slots.length) return false;
+            // Rebuilt only when a channel command ran, or the slots are not
+            // the ones leased (a plugin's claim moved one: Thresholding's
+            // marker goes into slot 2): a rebuild re-draws every channel,
+            // and an agent that only moved the view has nothing here to give
+            // back.
+            if (keep || !Array.isArray(held.slots) || !held.slots.length) return false;
+            if (!held.channelsTouched && !slotsMoved(held.slots)) return false;
             const panel = sidebar();
-            // applyChannels' replace branch, without the save: the user's own
-            // arrangement was never unsaved, so nothing is written.
+            // applyChannels' replace branch, without the save: what the lease
+            // holds is on disk already (the user's own arrangement, or one
+            // the agent persisted, which re-based the lease), so nothing is
+            // written.
             panel.suspendPersistence();
             try {
                 await panel.applyLaunchChannels(held.slots.map((slot) => {
@@ -1745,6 +1807,7 @@ window.PlexoraAgentBridge = (function () {
             const command = heldCommands.shift();
             const handler = HANDLERS[command.type];
             if (!handler) continue;
+            lastCommandAt = Date.now();
             // Acknowledged when it was held; what it returns now has nobody
             // waiting for it.
             const call = {
