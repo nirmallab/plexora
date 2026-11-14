@@ -134,8 +134,14 @@ def guess_roles(columns: Iterable[Any]) -> dict:
     Returns only the roles it is confident about; an unresolved role is simply
     absent, which the project record stores as None and something may later ask
     the user to fill in.
+
+    A column literally called "id" is never offered. Plexora numbers the rows
+    under that name, so the table adapters set the file's own "id" aside and
+    refuse a role naming it (CsvAdapter._without_own_id): guessed, it was a
+    cell id that stopped the table loading. "ID" and the like are other
+    columns and still resolve.
     """
-    names = [str(c) for c in columns]
+    names = [str(c) for c in columns if str(c) != "id"]
     by_normalized = {}
     for name in names:
         by_normalized.setdefault(normalize_column_name(name), name)
