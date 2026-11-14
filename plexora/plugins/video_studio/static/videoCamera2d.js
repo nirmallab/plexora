@@ -85,13 +85,29 @@
         return { x: view.cx - view.w / 2, y: view.cy - h / 2, width: view.w, height: h };
     }
 
+    /**
+     * Output pixels per image pixel a view is drawn at on an output of `size`
+     * ({width, height}). applyViewport hands rect() to viewerScene.js
+     * fitRegion, which fits the rectangle's TURNED extent, so a view turned
+     * 90 degrees on a wide output shows its height across the width: the zoom
+     * is size.width / view.w only when the view is upright (or upside down).
+     */
+    function scale(view, size) {
+        const r = rect(view, size.width / size.height);
+        const radians = (view.degrees || 0) * Math.PI / 180;
+        const cos = Math.abs(Math.cos(radians));
+        const sin = Math.abs(Math.sin(radians));
+        return Math.min(size.width / (r.width * cos + r.height * sin),
+                        size.height / (r.width * sin + r.height * cos));
+    }
+
     /** The view showing image rectangle `r` whole at output aspect `aspect`. */
     function fit(r, aspect, base = {}) {
         const w = Math.max(r.width, r.height * aspect);
         return { ...copy({ degrees: 0, ...base, cx: r.x + r.width / 2, cy: r.y + r.height / 2, w }) };
     }
 
-    const api = { copy, between, pathAt, pan, rect, fit };
+    const api = { copy, between, pathAt, pan, rect, scale, fit };
     global.PlexoraVideoCamera2d = api;
     if (typeof module !== "undefined" && module.exports) module.exports = api;
 })(typeof window !== "undefined" ? window : globalThis);

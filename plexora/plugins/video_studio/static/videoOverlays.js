@@ -63,7 +63,9 @@
             return (viewHeight * longest) / size.height;
         }
         if (!state.viewport) return null;
-        return (px * state.viewport.w) / size.width;
+        // The zoom the frame is drawn at, turned extent and all (a view
+        // turned 90 degrees on a wide output is not w image pixels across).
+        return px / global.PlexoraVideoCamera2d.scale(state.viewport, size);
     }
 
     function shadowText(ctx, text, x, y, { size, weight = 500, align = "left", color = "#fff",
