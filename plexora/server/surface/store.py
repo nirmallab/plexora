@@ -257,6 +257,23 @@ def cache_key(project, spec: SurfaceSpec) -> str:
     if spec.type == "label_surfaces":
         parts["labels"] = _identity(project, "segmentation")
         parts["engine"] = [LABEL_ALGORITHM, LABEL_ENGINE]
+    # What somebody typed about the stack shapes the build as much as the file
+    # does: the units, the z pooling, the smoothing frame, what min_size means.
+    # Only typed values and readings that differ from the default, so a stack
+    # nobody touched keeps the key its surfaces were built under: a spacing
+    # Import Sample copied from the file's own metadata, and the "depth" and
+    # "time" every source records, are not typed.
+    image = project.image
+    reading = {name: dict(value) for name, value in (
+        ("pixel_size", image.pixel_size),
+        ("pixel_size_z", image.pixel_size_z),
+        ("frame_interval", image.frame_interval))
+        if value and value.get("source") != "metadata"}
+    reading.update({name: value for name, value, default in (
+        ("z_semantics", image.z_semantics, "depth"),
+        ("t_semantics", image.t_semantics, "time")) if value and value != default})
+    if reading:
+        parts["reading"] = reading
     raw = json.dumps(parts, sort_keys=True, default=str).encode("utf-8")
     return hashlib.sha256(raw).hexdigest()
 

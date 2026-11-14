@@ -67,9 +67,11 @@ def block_for(source, identity, *, channel, t, region, pre=None, budget=None):
     volume = source.volume
     plan = preview_plan(volume, region, budget)
     pre = pre or isosurface.Preprocess()
+    # The voxel size too: a typed z step changes the preprocessed block (its
+    # smoothing is in µm) without changing the file it was read from.
     key = (identity, int(channel), int(t), plan.level, plan.rows.start, plan.rows.stop,
            plan.cols.start, plan.cols.stop, plan.z0, plan.z1, plan.stride,
-           pre.sigma_um, pre.background_um)
+           pre.sigma_um, pre.background_um, _scale(volume)[0])
     with _lock:
         held = _blocks.get(key)
         if held is not None:
