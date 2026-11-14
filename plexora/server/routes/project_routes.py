@@ -1070,6 +1070,11 @@ def delete_project(name):
     # and a rollback must not reach into a file the failed import never
     # touched.
     datasets.forget_project(name)
+    # Its finished layer builds too, so a sample imported again under this
+    # name is not shown the old one's outcome. A build still running keeps its
+    # record: it rebuilds for the new sample when it ends (layer_jobs.forget).
+    from plexora.server.models import layer_jobs
+    layer_jobs.forget(name, keep_running=True)
     # Only this user's own copy of the project directory -- which is everything
     # Plexora put under its own root, and deliberately not the label pyramid it
     # derived beside the user's mask. That file is named after the mask rather

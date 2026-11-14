@@ -110,12 +110,24 @@ def get(project_name, layer_id):
         return dict(found) if found else None
 
 
-def forget(project_name=None):
+def forget(project_name=None, *, keep_running=False):
     """Drop job records. Everything when called with nothing -- for teardown
-    and for the tests; nothing in the request path calls this."""
+    and for the tests.
+
+    `keep_running` keeps the records of builds still running, which is what
+    deleting a sample wants: a sample imported again under its name gets the
+    running record back from `start` rather than a second build racing the
+    first for one cache directory, and the first builds it again when it ends
+    (`_finish`: the layer it read is not the one there now).
+    """
     with _lock:
         for key in [k for k in _jobs
                     if project_name is None or k[0] == project_name]:
+            record = _jobs[key]
+            # A "waiting" record is a layer nothing here can build: not running.
+            if (keep_running and record.get("status") == "pending"
+                    and record.get("stage") != "waiting"):
+                continue
             _jobs.pop(key, None)
 
 
@@ -155,27 +167,68 @@ def start(project_name, layer_id, work, *, stages=None, message=None):
             record["message"] = text
 
     def run():
-        stage, report = data_model._staged_reporter(bands, on_change)
-        try:
-            project = Project.load(project_name)
-            layer = project.layer(layer_id)
-            if layer is None:
-                raise KeyError(f"{project_name} has no layer {layer_id!r}")
-            work(project, layer, stage, report)
-            _finish(project_name, layer_id, "ready")
-        except Exception as error:  # reported on the card, not swallowed
-            # A dependency this environment has not got carries its own install
-            # line, if the exception knows one. Duck-typed rather than imported
-            # so core does not have to know which plugin raised it.
-            _finish(project_name, layer_id, "failed", error=str(error),
-                    install=getattr(type(error), "INSTALL", None))
+        # Again for as long as the layer changed while it was being built: a
+        # re-import that corrects its source or transform mid-build gets the
+        # running record back from `start` (one build per cache directory),
+        # so this thread is the one that has to build what the layer now says.
+        while True:
+            stage, report = data_model._staged_reporter(bands, on_change)
+            built = None
+            try:
+                project = Project.load(project_name)
+                layer = project.layer(layer_id)
+                if layer is None:
+                    raise KeyError(f"{project_name} has no layer {layer_id!r}")
+                built = _built_from(project, layer)
+                work(project, layer, stage, report)
+                outcome = {"status": "ready"}
+            except Exception as error:  # reported on the card, not swallowed
+                # A dependency this environment has not got carries its own
+                # install line, if the exception knows one. Duck-typed rather
+                # than imported so core does not have to know which plugin
+                # raised it.
+                outcome = {"status": "failed", "error": str(error),
+                           "install": getattr(type(error), "INSTALL", None)}
+                # A build stopped by the user (the surface and projection
+                # builders end with InterruptedError) stays stopped, whatever
+                # changed under it: the stop it read is gone with the build,
+                # so going round again would build it anyway.
+                if isinstance(error, InterruptedError):
+                    built = None
+            if _finish(project_name, layer_id, built=built, **outcome):
+                return
 
     _work.spawn(run, name=f"layer-{project_name}-{layer_id}")
     return get(project_name, layer_id)
 
 
-def _finish(project_name, layer_id, status, *, error=None, install=None):
+def _built_from(project, layer):
+    """What a build of `layer` read, to tell afterwards whether it still holds.
+
+    The layer as registered, less what only names or shows it (its status, its
+    label, whether it is visible, its open questions, its `render` bag of
+    opacity and colours, which a slider rewrites while the build runs), and
+    the few facts of the project a builder bakes in: the reference image's
+    size, tile size and pixel size, and when the sample was created -- a
+    sample deleted and imported again under the same name is not the one the
+    build read. The few build inputs an import keeps in `render` (Visium HD's
+    grid and bin size) come with its source matrix, which this does compare.
+    """
+    image = project.image
+    return (replace(layer, status="ready", label="", visible=True, unresolved=(),
+                    render={}),
+            image.width, image.height, image.tile_width, image.pixel_size,
+            project.created_at)
+
+
+def _finish(project_name, layer_id, status, *, error=None, install=None,
+            built=None):
     """Record the outcome, in memory and on the project.
+
+    `built` is `_built_from` of what the build read. When the layer now says
+    something else -- re-imported while it was being built -- the outcome is
+    not this layer's: nothing is written, the record stays pending, and this
+    answers False so the caller builds it again.
 
     Both, and that is the point of writing it twice: the in-memory record
     carries the message and the install line for the card that is on screen
@@ -187,8 +240,13 @@ def _finish(project_name, layer_id, status, *, error=None, install=None):
     reader in between see "ready" in memory and the layer still pending on
     the project (tests/test_layer_jobs.py failed about half its runs).
     """
+    stale = []
+
     def change(project):
         layer = next((l for l in project.spatial_layers if l.id == layer_id), None)
+        if layer is not None and built is not None and _built_from(project, layer) != built:
+            stale.append(True)
+            return project
         if layer is None or layer.status == status:
             return project
         return project.with_layer(replace(layer, status=status))
@@ -199,15 +257,18 @@ def _finish(project_name, layer_id, status, *, error=None, install=None):
         # already handles.
         Project.mutate(project_name, change)
     finally:
-        # Said on the card whether or not the project could be written.
-        with _lock:
-            _jobs[(project_name, layer_id)] = _record(
-                status,
-                progress=100 if status == "ready" else 0,
-                stage="ready" if status == "ready" else "failed",
-                stage_label="Ready" if status == "ready" else "Failed",
-                message=None if status == "ready" else error,
-                error=error, install=install)
+        # Said on the card whether or not the project could be written --
+        # unless the layer changed under the build, which leaves it pending.
+        if not stale:
+            with _lock:
+                _jobs[(project_name, layer_id)] = _record(
+                    status,
+                    progress=100 if status == "ready" else 0,
+                    stage="ready" if status == "ready" else "failed",
+                    stage_label="Ready" if status == "ready" else "Failed",
+                    message=None if status == "ready" else error,
+                    error=error, install=install)
+    return not stale
 
 
 # -- tasks that are not layers ---------------------------------------------

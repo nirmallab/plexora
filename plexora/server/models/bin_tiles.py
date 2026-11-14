@@ -190,9 +190,15 @@ def read_stats(datasource_name, layer_id):
 
 
 def read_tissue(datasource_name, layer_id, pooling):
-    """Which squares of this pooling hold at least one measured bin, memmapped."""
+    """Which squares of this pooling hold at least one measured bin.
+
+    Read into memory, not mapped: the cache keeps it for the life of the
+    process, and on Windows a mapped file cannot be deleted, so a rebuild of a
+    store anybody had drawn from failed (WinError 32). One byte per square is
+    a few MB for a whole slide at pooling 1.
+    """
     path = cache_dir(datasource_name, layer_id) / f"tissue_p{int(pooling)}.npy"
-    return _cached(_tissue_cache, path, lambda p: np.load(p, mmap_mode="r"))
+    return _cached(_tissue_cache, path, lambda p: np.load(p))
 
 
 def revision(manifest):
@@ -625,12 +631,30 @@ def _build_locked(root, *, genes, gene_ids, blocks, expected, progress, stage,
             json.dump(manifest, handle)
 
         if root.exists():
-            shutil.rmtree(root)
-        shutil.move(str(tmp_root), str(root))
+            # Renamed aside in one step and deleted once the new store is in
+            # place: a delete that fails half way (a file still held open)
+            # then leaves a folder behind, never a live store with no manifest.
+            old_root = root.with_name(f"{root.name}.old.{os.getpid()}")
+            shutil.rmtree(old_root, ignore_errors=True)
+            os.replace(root, old_root)
+            try:
+                shutil.move(str(tmp_root), str(root))
+            except BaseException:
+                os.replace(old_root, root)
+                raise
+            shutil.rmtree(old_root, ignore_errors=True)
+        else:
+            shutil.move(str(tmp_root), str(root))
     except BaseException:
         shutil.rmtree(tmp_root, ignore_errors=True)
         raise
-    _manifest_cache.pop(str(root / "manifest.json"), None)
+    # Everything read from the old store, not only its manifest: a file
+    # rewritten within the mtime's resolution would otherwise read as cached.
+    prefix = str(root) + os.sep
+    for cache in (_manifest_cache, _stats_cache, _tissue_cache):
+        for key in list(cache):  # tiles may be adding entries meanwhile
+            if key.startswith(prefix):
+                cache.pop(key, None)
     return manifest
 
 
