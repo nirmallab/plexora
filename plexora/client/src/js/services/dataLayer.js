@@ -48,11 +48,19 @@ class DataLayer {
         }
     }
 
+    /**
+     * The project's saved channel rows; null when it has none saved. Resolves
+     * undefined when they could not be read -- an error status, a proxy's
+     * HTML page, a dropped connection -- which no answer can be (JSON has no
+     * undefined), so the sidebar can tell a failed read from "nothing saved"
+     * and does not write its default guess over the saved list.
+     */
     async getSavedChannelList() {
         try {
             let response = await fetch(plexoraUrl('get_saved_channel_list') + '?' + new URLSearchParams({
                 datasource: datasource
             }))
+            if (!response.ok) throw new Error(`HTTP ${response.status}`);
             let response_data = await response.json();
             return response_data;
         } catch (e) {
@@ -61,10 +69,11 @@ class DataLayer {
     }
 
     async saveChannelList(map_channels, active_channels, list_colors, list_ranges, list_channels,
-                          list_meta = null) {
+                          list_meta = null, { keepalive = false } = {}) {
         const self = this;
         try {
-            let response = await fetch(plexoraUrl('save_channel_list'), {
+            const address = plexoraUrl('save_channel_list');
+            const init = {
                 method: 'POST',
                 headers: {
                     'Accept': 'application/json',
@@ -83,7 +92,13 @@ class DataLayer {
                         ...(list_meta ? { list_meta } : {})
                     }
                 )
-            });
+            };
+            // keepalive for a page that is leaving (views/datasetNav.js): the
+            // request outlives it. A browser refuses one past 64 KB, so a long
+            // panel's list then goes as an ordinary request.
+            let response = await (keepalive
+                ? fetch(address, { ...init, keepalive: true }).catch(() => fetch(address, init))
+                : fetch(address, init));
             let response_data = await response.json();
             return response_data;
         } catch (e) {

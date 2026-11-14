@@ -253,12 +253,13 @@
             viewport.setRotation?.(degrees, immediately);
         }
 
-        /** Write any pending change now (page leaving, tests). */
-        flush() {
+        /** Write any pending change now (page leaving, tests). `keepalive`
+         *  when it is leaving: the request outlives the page. */
+        flush({ keepalive = false } = {}) {
             if (this._saveTimer === null) return Promise.resolve();
             clearTimeout(this._saveTimer);
             this._saveTimer = null;
-            return this._save();
+            return this._save({ keepalive });
         }
 
         _notify() {
@@ -287,7 +288,7 @@
             }, this._saveDelay);
         }
 
-        _save() {
+        _save({ keepalive = false } = {}) {
             const url = typeof global.plexoraUrl === "function"
                 ? global.plexoraUrl(`view_transform/${encodeURIComponent(this.datasource)}`)
                 : `/view_transform/${encodeURIComponent(this.datasource)}`;
@@ -295,6 +296,7 @@
                 method: "PUT",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify(this.state),
+                ...(keepalive ? { keepalive: true } : {}),
             })).catch((error) => {
                 // Never fatal: the view is already turned; only the next
                 // load will not remember it.

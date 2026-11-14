@@ -91,6 +91,9 @@ class GatingSidebarController {
         //: slider (gatingAgentBridge.js preview_gate) -- never saved: see
         //: persistGatingList. Cleared by anything the user does to the gate.
         this.agentPreview = null;
+        //: The saved gates could not be read when the panel opened (fetchSaved):
+        //: nothing is saved until they are (readSavedBeforeSave).
+        this._savedUnread = false;
         //: Whether Z/X are listening. On while the panel is shown, off once
         //: it is put away (onHide) or unloaded (the cleanup below).
         this._keysArmed = false;
@@ -370,8 +373,13 @@ class GatingSidebarController {
     }
 
     // ViewerSidebar#init() restore-flow hooks (see registerModule()'s doc comment).
-    fetchSaved() {
-        return this.api.getSavedGatingList();
+    async fetchSaved() {
+        const rows = await this.api.getSavedGatingList();
+        // undefined is a read that failed, not "nothing saved" (see
+        // getSavedGatingList). The list this panel then holds is the default
+        // one, not the sample's, and must not be saved over the real gates.
+        this._savedUnread = rows === undefined;
+        return rows;
     }
 
     async applyOrDefault(savedGating) {
@@ -439,7 +447,41 @@ class GatingSidebarController {
     }
 
     persistIfNeeded(hadSaved) {
-        if (!hadSaved) this.persistGatingList();
+        if (!hadSaved && !this._savedUnread) this.persistGatingList();
+    }
+
+    /**
+     * Before the first save on a panel whose saved gates could not be read
+     * when it opened: read them again. Still unreadable, nothing is saved --
+     * the list here is the default one, and a save with no revision would
+     * replace every stored gate with it. Read and empty, the list is this
+     * sample's to save. Read with gates in it, they go on the panel in place
+     * of the defaults, and this save is dropped; the panel stays unread
+     * until they are on it (reloadFromServer clears the flag), since the read
+     * just made set the revision a save would name. Saves waiting at once
+     * share the one read.
+     *
+     * @returns whether the save may go ahead.
+     */
+    readSavedBeforeSave() {
+        if (this._savedReread) return this._savedReread;
+        this._savedReread = (async () => {
+            const rows = await this.api.getSavedGatingList();
+            if (rows === null || (Array.isArray(rows) && !rows.length)) {
+                this._savedUnread = false;
+                return true;
+            }
+            if (!Array.isArray(rows)) return false;
+            if (await this.reloadFromServer(rows)) {
+                window.PlexoraToast?.show?.({
+                    title: "Saved gates loaded",
+                    note: "They could not be read when the panel opened. Make the last change again.",
+                    lines: [],
+                });
+            }
+            return false;
+        })().finally(() => { this._savedReread = null; });
+        return this._savedReread;
     }
 
     // -- walking to a sibling sample (services/carryOver.js) ---------------
@@ -541,7 +583,11 @@ class GatingSidebarController {
                 // (the DB), not from anything sent here -- flush the current
                 // in-memory state first so a gate set moments ago (still
                 // inside the 400ms autosave debounce) isn't missed.
-                await this.api.saveGatingList(this.gatingList.gating_channels, this.gatingList.selections);
+                // Not when the saved gates were never read: that list is the
+                // default one, and the DB already holds the real gates.
+                if (!this._savedUnread) {
+                    await this.api.saveGatingList(this.gatingList.gating_channels, this.gatingList.selections);
+                }
                 const result = await this.saveWithImageId(tableNameInput.value.trim() || "gates");
                 status.className = "success";
                 status.textContent = `Saved column "${result.image_id}" (${result.n_active_gates} markers).`;
@@ -923,6 +969,7 @@ class GatingSidebarController {
      */
     async onSaveVersionClick() {
         window.clearTimeout(this._saveGatingTimer);
+        this._saveGatingTimer = null;
         let answer;
         try {
             await (this._gatingSaveChain || Promise.resolve());
@@ -974,6 +1021,7 @@ class GatingSidebarController {
         if (button) button.disabled = true;
         try {
             window.clearTimeout(this._saveGatingTimer);
+            this._saveGatingTimer = null;
             await (this._gatingSaveChain || Promise.resolve());
             await this.persistGatingList();
             const answer = await this.api.clearGates(markers);
@@ -1045,8 +1093,13 @@ class GatingSidebarController {
         // the cells QC passed, and a region drawn since the last press
         // changes which those are. The server caches the fit per QC state,
         // so an unchanged one costs a lookup.
-        await this.gatingList.getGatingGMM(this.gateMarker);
-        const packet = this.gatingList.hasGatingGMM[this.gateMarker];
+        const marker = this.gateMarker;
+        await this.gatingList.getGatingGMM(marker);
+        // The marker can change while the fit is in flight (Z/X, the
+        // dropdown, an agent). setGateRange writes the marker on screen, so
+        // a late fit would land on that one instead of the one asked for.
+        if (this.gateMarker !== marker) return;
+        const packet = this.gatingList.hasGatingGMM[marker];
         if (!packet || packet.gate === undefined) return;
         const range = this.getGateRange(this.gateMarker);
         const factor = Math.pow(10, this.dataLayer.gateDecimals(range));
@@ -1580,7 +1633,13 @@ class GatingSidebarController {
         this.setGateMarker(marker, { force: true, syncSlot: false });
     }
 
-    async persistGatingList() {
+    /**
+     * `keepalive`: for a page that is leaving (flushSave). Reached before
+     * the first await whenever the saved gates were read, so the request
+     * starts while the page is still up.
+     */
+    async persistGatingList({ keepalive = false } = {}) {
+        if (this._savedUnread && !(await this.readSavedBeforeSave())) return null;
         let channels = this.gatingList.gating_channels;
         let selections = this.gatingList.selections;
         if (this.agentPreview) {
@@ -1597,7 +1656,7 @@ class GatingSidebarController {
                 delete selections[fullName];
             }
         }
-        const answer = await this.api.saveGatingList(channels, selections);
+        const answer = await this.api.saveGatingList(channels, selections, { keepalive });
         // A locked gate is put back by the server whatever was saved over it;
         // say so, and show the gate it kept, rather than leave the slider
         // showing a value that is no longer the stored one.
@@ -1871,14 +1930,19 @@ class GatingSidebarController {
      * playing on every gate the session wrote -- the look ended, and another
      * marker's gate came up as if it were being gated again.
      *
+     * `read`: rows just read by the caller (readSavedBeforeSave), applied
+     * as they are rather than asked for again.
+     *
      * @returns whether anything was applied.
      */
-    async reloadFromServer() {
+    async reloadFromServer(read = null) {
         if (this.sidebar.isRestoring()) return false;
         this.agentPreview = null;
         this.loadProvenance();
-        const rows = await this.api.getSavedGatingList();
+        const rows = Array.isArray(read) ? read : await this.api.getSavedGatingList();
         if (!Array.isArray(rows)) return false;
+        // The saved list is on the panel now: saves may go ahead.
+        this._savedUnread = false;
         const gates = this.gatingList.gating_channels;
         Object.keys(gates).forEach((key) => delete gates[key]);
         this._applyingRemote = true;
@@ -1900,8 +1964,26 @@ class GatingSidebarController {
         if (this.sidebar.isRestoring() || this._applyingRemote) return;
         window.clearTimeout(this._saveGatingTimer);
         this._saveGatingTimer = window.setTimeout(() => {
+            // Nothing waiting any more (flushSave reads it).
+            this._saveGatingTimer = null;
             this._gatingSaveChain = (this._gatingSaveChain || Promise.resolve()).then(() => this.persistGatingList());
         }, 400);
+    }
+
+    /**
+     * Send a gate save still waiting on its debounce now, for a page that is
+     * leaving (views/datasetNav.js's walk): the timer would die with the
+     * page, and a gate moved just before N with it. Straight to the request,
+     * not through _gatingSaveChain, which would start it too late to be sent.
+     * Not while the saved gates are unread: the list here is the default
+     * one, and the read persistGatingList makes first cannot finish now.
+     */
+    flushSave({ keepalive = false } = {}) {
+        if (this._saveGatingTimer === null || this._saveGatingTimer === undefined) return null;
+        window.clearTimeout(this._saveGatingTimer);
+        this._saveGatingTimer = null;
+        if (this._savedUnread) return null;
+        return this.persistGatingList({ keepalive });
     }
 
     /** Put the slider back in step with the gate, silently: this is the plugin

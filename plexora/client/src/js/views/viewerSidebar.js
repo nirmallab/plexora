@@ -491,6 +491,15 @@ class ViewerSidebar {
             this.initChannelSlots();
             this.applyInitialChannels();
         }
+        // The default guess on screen because the saved list could not be
+        // read (undefined: see getSavedChannelList), not because there is
+        // none. Its auto-levels and the user's first edit would each save it
+        // over the list the project does have: persistChannelList reads the
+        // list again first (readSavedChannelsBeforeSave). A launch or a
+        // carried set is somebody's request, not a guess, and saves as it
+        // would after a read that worked.
+        this._savedChannelsUnread = savedChannels === undefined
+            && !launchChannels.length && !carriedChannels.length;
 
         // Kept, so a restore that has to run AFTER these -- a carried marker
         // re-imposed on top of this sample's own saved gates -- has something
@@ -515,7 +524,11 @@ class ViewerSidebar {
         // NEXT DOOR's arrangement -- saving either would make it this project's
         // channels for everybody afterwards, so walking a dataset once would
         // rewrite every sample in it.
-        if (!launchChannels.length && !carriedChannels.length && !(savedChannels && savedChannels.length)) this.persistChannelList();
+        // Nor after a read that failed (undefined: see getSavedChannelList):
+        // that is not "nothing saved", and the guess would replace the list
+        // the project does have.
+        const savedRead = savedChannels !== undefined;
+        if (savedRead && !launchChannels.length && !carriedChannels.length && !(savedChannels && savedChannels.length)) this.persistChannelList();
         this.sidebarModules.forEach((m, i) => m.persistIfNeeded && m.persistIfNeeded(Boolean(moduleSaved[i] && moduleSaved[i].length)));
 
         // The gating calibration, offered to every channel and applied to the
@@ -2537,11 +2550,10 @@ class ViewerSidebar {
         // it), and wrong for this one: `_restoring` is already false by the
         // time the GMM this ran on came back, so without this flag an
         // arrangement that is documented as never being written back WOULD be,
-        // a second or two after the page settled, once per channel.
-        if (slot.autoSilent) {
-            slot.autoSilent = false;
-            return;
-        }
+        // a second or two after the page settled, once per channel. Read, not
+        // cleared: both passes come through here, and the second (the fit)
+        // is the one that lands late. levelChannel clears it when it ends.
+        if (slot.autoSilent) return;
         // setSlotRange(..., false) deliberately doesn't autosave (auto-leveling isn't a
         // user edit) -- but persistChannelList's raw-unit conversion (toRawRangeForSlot)
         // needs the channel's quantization window, and the very first activation of a
@@ -2706,6 +2718,8 @@ class ViewerSidebar {
         // ease), and Auto on a hand-set channel did nothing. Revert puts the
         // flag back with the window (preAutoRange).
         if (options.force) slot.userRangeChanged = false;
+        // And an explicit Auto is an edit: its window is saved like one.
+        if (options.force) slot.autoSilent = false;
         // A gating window already on the channel is better than either pass:
         // a late fit never replaces it (an explicit Auto click still does).
         // Nor over a contrast show's slot (`agent`: agentBridge's animate_contrast).
@@ -2769,6 +2783,9 @@ class ViewerSidebar {
             if (!options.force) this.syncGatingContrast?.({ only: [slot.index] });
         } finally {
             slot.autoLeveling = false;
+            // The launch or walk's "not an edit" covers this one levelling,
+            // both passes and every early return; the next is the user's.
+            slot.autoSilent = false;
         }
     }
 
@@ -3148,7 +3165,8 @@ class ViewerSidebar {
             const slot = this.channelSlots[i];
             if (!slot) continue;
             // Nothing this path auto-levels may be written back to the project
-            // -- see applyAutoRange, where the flag is read and cleared. Set
+            // -- see applyAutoRange, where the flag is read, and levelChannel,
+            // where it is cleared once the levelling ends. Set
             // before setSlotMarker, which is what schedules the auto-level.
             if (silent && !entry.range) slot.autoSilent = true;
             this.setSlotMarker(slot.index, entry.name, {
@@ -3520,6 +3538,9 @@ class ViewerSidebar {
         // list with somebody else's. It also has none of the main.js globals
         // this method reads, so the guard is load-bearing rather than a policy.
         if (!this.persist) return Promise.resolve(null);
+        if (this._savedChannelsUnread) {
+            return this.readSavedChannelsBeforeSave().then((go) => (go ? this.persistChannelList() : null));
+        }
         const listChannels = {};
         // Must cover every entry map_channels (imageChannelsIdx, all real image
         // channels) can reference server-side -- NOT this.columns (gating markers
@@ -3595,7 +3616,73 @@ class ViewerSidebar {
             };
         });
         return this.dataLayer.saveChannelList(imageChannelsIdx, activeChannels, listColors, listRanges,
-                                              listChannels, listMeta);
+                                              listChannels, listMeta, { keepalive: Boolean(this._saveKeepalive) });
+    }
+
+    /**
+     * Before a save on a page whose saved channel list could not be read at
+     * boot (init): read it again. Still unreadable, nothing is saved -- the
+     * slots are the default guess, and every one of them would be written
+     * over the project's list. Read and empty, the slots are this project's
+     * to save. Read with rows, those go on screen in place of the guess and
+     * this save is dropped. Saves waiting at once share the one read.
+     *
+     * @returns whether the save may go ahead.
+     */
+    readSavedChannelsBeforeSave() {
+        if (this._savedChannelsReread) return this._savedChannelsReread;
+        this._savedChannelsReread = (async () => {
+            const rows = await this.dataLayer.getSavedChannelList();
+            if (rows === undefined) return false;
+            if (!(Array.isArray(rows) && rows.length)) {
+                this._savedChannelsUnread = false;
+                return true;
+            }
+            // As init restores them: the setters applySavedChannels reuses
+            // would otherwise schedule a save of what they just read.
+            const wasRestoring = this._restoring;
+            this._restoring = true;
+            try {
+                await this.applySavedChannels(rows);
+            } finally {
+                this._restoring = wasRestoring;
+            }
+            this._savedChannelsUnread = false;
+            this.syncContrastBar?.();
+            window.PlexoraToast?.show?.({
+                title: "Saved channels loaded",
+                note: "They could not be read when the page opened. A change made since was not saved.",
+                tone: "warning",
+            });
+            return false;
+        })().finally(() => { this._savedChannelsReread = null; });
+        return this._savedChannelsReread;
+    }
+
+    /**
+     * Send a channel-list save still waiting on its debounce now, for a page
+     * that is leaving (views/datasetNav.js's walk): the timer would die with
+     * the page, and the last contrast drag with it. With keepalive, so the
+     * request outlives the page. saveChannelList starts its request before
+     * it first waits, so the flag is read while it is set.
+     */
+    flushChannelSave({ keepalive = false } = {}) {
+        if (this._saveChannelsTimer === null || this._saveChannelsTimer === undefined) return null;
+        window.clearTimeout(this._saveChannelsTimer);
+        this._saveChannelsTimer = null;
+        // Nor a default guess the saved list was never read for: the read
+        // persistChannelList would make first cannot finish on a page that
+        // is leaving, and the guess is not worth keeping.
+        if (this._restoring || this._persistenceSuspended || this._savedChannelsUnread) return null;
+        // Straight to the request, not through _channelSaveChain: on a page
+        // that is leaving, a save queued behind one in flight would start
+        // too late to be sent at all.
+        this._saveKeepalive = keepalive;
+        try {
+            return this.persistChannelList();
+        } finally {
+            this._saveKeepalive = false;
+        }
     }
 
     /**
@@ -3616,6 +3703,7 @@ class ViewerSidebar {
     suspendPersistence() {
         this._persistenceSuspended = (this._persistenceSuspended || 0) + 1;
         window.clearTimeout(this._saveChannelsTimer);
+        this._saveChannelsTimer = null;
     }
 
     resumePersistence() {
@@ -3630,6 +3718,8 @@ class ViewerSidebar {
         if (this._restoring || this._persistenceSuspended) return;
         window.clearTimeout(this._saveChannelsTimer);
         this._saveChannelsTimer = window.setTimeout(() => {
+            // Nothing waiting any more (flushChannelSave reads it).
+            this._saveChannelsTimer = null;
             // Chained (not just debounced): a slow/out-of-order response from an earlier
             // save could otherwise land after a newer one and silently overwrite it.
             this._channelSaveChain = (this._channelSaveChain || Promise.resolve()).then(() => this.persistChannelList());

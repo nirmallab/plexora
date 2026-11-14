@@ -53,8 +53,13 @@ window.PlexoraDatasetNav = (function () {
     let place = null;
 
     //: A navigation is in flight. A second click during it would capture the
-    //: arrangement again, over a page that is already leaving.
+    //: arrangement again, over a page that is already leaving. Put back when
+    //: the page did not go after all: a leave answered "Stay" at a
+    //: beforeunload prompt (LEAVE_GRACE_MS), or this page shown again from
+    //: the back/forward cache (pageshow).
     let leaving = false;
+    let leavingTimer = null;
+    const LEAVE_GRACE_MS = 5000;
 
     let root = null;
     let previousButton = null;
@@ -140,6 +145,42 @@ window.PlexoraDatasetNav = (function () {
     }
 
     /**
+     * Send the saves still waiting on their 400 ms debounce -- the plane, the
+     * rotation, the viewer preferences, the channel list, a tool's own state
+     * such as Thresholding's gates -- now, with keepalive. Their timers die
+     * with the page, so an edit made just before the walk would otherwise
+     * never be saved, and the sample would reopen as it was before it.
+     */
+    function flushSaves() {
+        const plexora = window.__plexora || {};
+        const pending = [
+            () => plexora.viewState,
+            () => plexora.seaDragonViewer && plexora.seaDragonViewer.viewTransform,
+            () => window.PlexoraViewerPrefs,
+        ];
+        for (const service of pending) {
+            try {
+                const writer = service();
+                if (writer && typeof writer.flush === "function") writer.flush({ keepalive: true });
+            } catch (error) {
+                console.error("datasetNav: could not save before leaving", error);
+            }
+        }
+        try {
+            plexora.viewerSidebar?.flushChannelSave?.({ keepalive: true });
+        } catch (error) {
+            console.error("datasetNav: could not save the channels before leaving", error);
+        }
+        for (const module of (plexora.viewerSidebar && plexora.viewerSidebar.sidebarModules) || []) {
+            try {
+                module?.flushSave?.({ keepalive: true });
+            } catch (error) {
+                console.error("datasetNav: could not save a tool's state before leaving", error);
+            }
+        }
+    }
+
+    /**
      * Leave for `target`, carrying what this page has arranged.
      *
      * The capture happens HERE rather than in an unload handler: an unload
@@ -150,6 +191,13 @@ window.PlexoraDatasetNav = (function () {
     function go(target) {
         if (!target || leaving) return;
         leaving = true;
+        // Guarded like the listeners below: a probe's stand-in window may
+        // have no timers, and then only pageshow puts the flag back.
+        if (typeof window.setTimeout === "function") {
+            window.clearTimeout(leavingTimer);
+            leavingTimer = window.setTimeout(() => { leaving = false; }, LEAVE_GRACE_MS);
+        }
+        flushSaves();
         // A B/N walk with the thumbnail grid open: it has nothing left to show.
         if (window.PlexoraDatasetStrip) window.PlexoraDatasetStrip.close();
         try {
@@ -407,6 +455,13 @@ window.PlexoraDatasetNav = (function () {
     // drawn, shows what was said.
     if (typeof window.addEventListener === "function") {
         window.addEventListener("plexora:agent-dataset-progress", onDatasetProgress);
+        // This page back from the back/forward cache: the walk it left on
+        // is over, and Next has to work on it again.
+        window.addEventListener("pageshow", (event) => {
+            if (!event || !event.persisted) return;
+            if (leavingTimer !== null) window.clearTimeout(leavingTimer);
+            leaving = false;
+        });
     }
 
     if (typeof document !== "undefined") {

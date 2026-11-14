@@ -1082,19 +1082,22 @@
             }, this._saveDelay);
         }
 
-        flush() {
+        /** Write a pending change now. `keepalive` for a page that is
+         *  leaving (views/datasetNav.js): the request outlives it. */
+        flush({ keepalive = false } = {}) {
             if (this._saveTimer === null) return Promise.resolve();
             clearTimeout(this._saveTimer);
             this._saveTimer = null;
-            return this._save();
+            return this._save({ keepalive });
         }
 
-        _save() {
+        _save({ keepalive = false } = {}) {
             const address = url(`view_state/${encodeURIComponent(this.datasource)}`);
             return Promise.resolve(this._fetch(address, {
                 method: "PUT",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify(this.state),
+                ...(keepalive ? { keepalive: true } : {}),
             })).catch((error) => {
                 // Never fatal: the plane is on screen; only the next load will
                 // not reopen on it.

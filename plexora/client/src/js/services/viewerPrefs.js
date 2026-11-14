@@ -297,8 +297,9 @@
             }, this._saveDelay);
         }
 
-        /** Write what changed since the last save, now. */
-        flush() {
+        /** Write what changed since the last save, now. `keepalive` for a
+         *  page that is leaving (views/datasetNav.js): the request outlives it. */
+        flush({ keepalive = false } = {}) {
             if (this._saveTimer !== null) {
                 clearTimeout(this._saveTimer);
                 this._saveTimer = null;
@@ -310,6 +311,7 @@
                 method: "PUT",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify(body),
+                ...(keepalive ? { keepalive: true } : {}),
             })).catch((error) => {
                 // Never fatal: the layout on screen is right; only the next
                 // session will not open with it.

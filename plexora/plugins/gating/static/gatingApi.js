@@ -43,11 +43,18 @@ class GatingApi {
         }
     }
 
+    /**
+     * The saved gate rows; null when none are saved. Resolves undefined when
+     * they could not be read (an error status, a proxy's HTML page, a dropped
+     * connection), which no answer can be: the panel must not take a failed
+     * read for "nothing saved" and save its default list over the real one.
+     */
     async getSavedGatingList() {
         try {
             let response = await fetch(this.url('plugins/gating/get_saved_gating_list') + '?' + new URLSearchParams({
                 datasource: this.datasource
             }))
+            if (!response.ok) throw new Error(`HTTP ${response.status}`);
             let response_data = await response.json();
             this.revision = response.headers?.get?.('X-Gating-Revision') || null;
             return response_data;
@@ -240,9 +247,10 @@ class GatingApi {
         form.submit()
     }
 
-    async saveGatingList(channels, selections) {
+    async saveGatingList(channels, selections, { keepalive = false } = {}) {
         try {
-            let response = await fetch(this.url('plugins/gating/save_gating_list'), {
+            const address = this.url('plugins/gating/save_gating_list');
+            const init = {
                 method: 'POST',
                 headers: {
                     'Accept': 'application/json',
@@ -256,7 +264,13 @@ class GatingApi {
                         base: this.revision
                     }
                 )
-            });
+            };
+            // keepalive for a page that is leaving (views/datasetNav.js): the
+            // request outlives it. A browser refuses one past 64 KB, so a long
+            // panel's gates then go as an ordinary request.
+            let response = await (keepalive
+                ? fetch(address, { ...init, keepalive: true }).catch(() => fetch(address, init))
+                : fetch(address, init));
             let response_data = await response.json();
             if (response_data && response_data.revision) this.revision = response_data.revision;
             return response_data;
