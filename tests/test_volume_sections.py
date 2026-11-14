@@ -42,7 +42,10 @@ def _stack(tmp_path):
 def test_a_section_over_budget_is_drawn_up_from_a_coarser_level_and_never_kept(tmp_path, client,
                                                                               monkeypatch):
     data, base = _stack(tmp_path)
-    exact = client.get(base + "/0/0_0.png?q=hd&view=xzy20")
+    # With the content version the viewer puts in the address (`c=`): only an
+    # address that names the file is kept for a year.
+    version = client.get("/config?datasource=deep").get_json()["deep"]["imageData"][0]["version"]
+    exact = client.get(base + f"/0/0_0.png?q=hd&view=xzy20&c={version}")
     assert exact.status_code == 200 and "X-Plexora-Served-Steps" not in exact.headers
     assert exact.headers["Cache-Control"] == "private, max-age=31536000"
     # Every plane's chunk-row at level 0 is 40 x 64 x 64 x 2 bytes x 2 chunks;
