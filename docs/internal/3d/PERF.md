@@ -159,7 +159,7 @@ compression saves five-sixths. So:
   batches (its least wait is ~1 ms; a page stalled at load is not a slow link). A server without
   the route (an older node) is asked singly from then on. Only a volume's tiles go through the
   scheduler, so a flat image's tiles are unchanged.
-- **gzip for voxels on a slow link** (`z=gzip` on `/level` and `/bricks`, level 1, ~195 MB/s):
+- **gzip for voxels on a slow link** (`gz=1` on `/level` and `/bricks`, level 1, ~195 MB/s; `z=gzip` until 2026-11-12, which `/level` read as its planes and refused):
   asked once two large responses have arrived under 30 MB/s, from the first request when the
   page itself is served from another machine.
 

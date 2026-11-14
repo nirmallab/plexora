@@ -101,12 +101,18 @@
         return badge;
     }
 
-    /** "2 found here · 1 included · 1 to find after import", or "". */
+    /** "2 found here · 1 included · 1 as a smaller copy · 1 to find after
+     *  import", or "". A smaller copy is an included image within its own
+     *  noise (server/utils/approximate_image.py), used when this computer
+     *  has no original of it. */
     function imagesLine(refs) {
         refs = refs || {};
         const parts = [];
         if (refs.found) parts.push(`${refs.found} found here`);
         if (refs.included) parts.push(`${refs.included} included`);
+        if (refs.approximate) {
+            parts.push(refs.approximate === 1 ? "1 as a smaller copy" : `${refs.approximate} as smaller copies`);
+        }
         if (refs.node) {
             const nodes = (refs.nodes || []).filter(Boolean);
             parts.push(`${refs.node} on ${nodes.length ? nodes.join(", ") : "a data node"}`);
@@ -607,8 +613,8 @@
         const skipped = project.action === "skip";
         const refs = project.refs || {};
         const missing = Number(refs.missing || 0);
-        const found = imagesLine({found: refs.found, included: refs.included, node: refs.node,
-                                  nodes: refs.nodes});
+        const found = imagesLine({found: refs.found, included: refs.included, approximate: refs.approximate,
+                                  node: refs.node, nodes: refs.nodes});
         const backup = project.backup
             ? `<p class="plx-bundle-result-backup">Your previous version is in
                 <span class="plx-bundle-result-note" title="${esc(project.backup)}">${esc(project.backup)}</span></p>`

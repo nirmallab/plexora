@@ -1266,6 +1266,20 @@ def mask_output_preference() -> str:
     return value if value in MASK_OUTPUT_CHOICES else MASK_OUTPUT_CHOICES[0]
 
 
+def compress_pyramids() -> bool:
+    """Whether a large flat image's pyramidized copy is made compressed
+    (server/utils/image_pyramid.py: about 75% smaller, every pixel within its
+    noise) when nobody said which: the Import dialog's switch starts here, and
+    an import through the API, MCP or CLI takes it. On unless the settings
+    file says `compress_pyramids: false` (Settings > Data, `plexora config set
+    compress-pyramids off`). Not cached, for the reason
+    `mask_output_preference` gives."""
+    value = read_settings().get("compress_pyramids", True)
+    if isinstance(value, str):
+        return value.strip().lower() not in ("off", "false", "no", "0")
+    return bool(value)
+
+
 def find_derived(name, *parts, home_root=None) -> Path | None:
     """An existing derived artifact, or None.
 

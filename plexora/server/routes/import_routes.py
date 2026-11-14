@@ -496,7 +496,9 @@ def import_status():
 
     # An import still inside its POST has no sample to ask about yet; the
     # dialog names it by the token it sent. See `layer_jobs.registering`.
-    token = (request.args.get('token') or '').strip()
+    # `registration=`, not `token=`: that is the launch token the auth guard
+    # reads from every request (plexora/__init__.py `require_auth_token`).
+    token = (request.args.get('registration') or '').strip()
     if token:
         return jsonify(layer_jobs.registration(token)
                        or {"layers": {}, "pending": False})

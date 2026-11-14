@@ -3699,9 +3699,38 @@
             : "Applies to projects opened after the change.");
     };
 
+    // -- Pyramids -----------------------------------------------------------
+    //
+    // "Compress pyramid copies" (paths.compress_pyramids), from
+    // /settings/pyramids: what the Import dialog's switch starts from, and
+    // what an import nobody asked about makes. The tick writes it at once.
+    function PyramidsSection() {}
+
+    PyramidsSection.prototype.start = function () {
+        const box = el("settings_pyramids_compress");
+        if (!box) return;
+        box.addEventListener("change", async () => {
+            const wanted = box.checked;
+            box.disabled = true;
+            // Not saved: the tick goes back to what is in force.
+            const answer = await postJson("settings/pyramids", { compress: wanted })
+                .catch(() => ({ compress: !wanted }));
+            this.draw(answer.ok === false ? { compress: !wanted } : answer);
+        });
+        getJson("settings/pyramids").then((state) => this.draw(state));
+    };
+
+    PyramidsSection.prototype.draw = function (state) {
+        const box = el("settings_pyramids_compress");
+        if (!box) return;
+        box.disabled = false;
+        if (state && typeof state.compress === "boolean") box.checked = state.compress;
+    };
+
     PlexoraPage.register(() => {
         const unwireRail = wireRail();
         if (el("settings_panel_advanced")) new AdvancedSection().start();
+        if (el("settings_pyramids")) new PyramidsSection().start();
         if (!el("settings_panel_data")) return unwireRail || null;
         if (el("settings_panel_nodes")) new NodesSection().start();
         let remotes = null;

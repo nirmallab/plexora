@@ -774,17 +774,18 @@ def _level_context(datasource):
 
 
 def _maybe_gzip(response, started=None):
-    """`z=gzip` in the query, and a browser that takes gzip: the body
+    """`gz=1` in the query, and a browser that takes gzip: the body
     compressed at gzip's fastest setting. The 3-D view asks for it once it has
     measured its link slower than compressing (views/volumeAtlas.js
     `LINK`): voxels compress about fivefold, which on a slow link is five
     times the speed, and on localhost is CPU time spent for nothing -- hence
     only when asked. The query is part of the address, so a compressed body
-    never answers for an uncompressed one in any cache."""
+    never answers for an uncompressed one in any cache. (It was `z=gzip`,
+    which the level route read as its planes, `z=z0,z1`, and refused.)"""
     import gzip
     import time
 
-    if request.args.get('z') == 'gzip' and 'gzip' in (request.headers.get('Accept-Encoding') or ''):
+    if request.args.get('gz') == '1' and 'gzip' in (request.headers.get('Accept-Encoding') or ''):
         response.set_data(gzip.compress(response.get_data(), compresslevel=1))
         response.headers['Content-Encoding'] = 'gzip'
         response.headers['Vary'] = 'Accept-Encoding'

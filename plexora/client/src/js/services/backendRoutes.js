@@ -190,6 +190,8 @@
   {"class": "python", "endpoint": "segment_v1.status", "methods": ["GET"], "pattern": "^\\/segment\\/v1\\/status$"},
   {"class": "python", "endpoint": "settings_advanced", "methods": ["GET"], "pattern": "^\\/settings\\/advanced$"},
   {"class": "python", "endpoint": "settings_advanced_set", "methods": ["POST"], "pattern": "^\\/settings\\/advanced$"},
+  {"class": "python", "endpoint": "settings_pyramids", "methods": ["GET"], "pattern": "^\\/settings\\/pyramids$"},
+  {"class": "python", "endpoint": "settings_pyramids_set", "methods": ["POST"], "pattern": "^\\/settings\\/pyramids$"},
   {"class": "python", "endpoint": "telemetry_preview", "methods": ["GET"], "pattern": "^\\/telemetry\\/preview$"},
   {"class": "python", "endpoint": "get_display_contrast", "methods": ["GET"], "pattern": "^\\/display_contrast$"},
   {"class": "js", "endpoint": "get_nearest_cell", "methods": ["GET"], "pattern": "^\\/get_nearest_cell$"},

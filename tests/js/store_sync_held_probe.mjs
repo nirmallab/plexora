@@ -324,6 +324,34 @@ const DB = "lung/lung.db";
     check("own storage: nothing linked", store.linked().length === 0 && FS.mounts.size === 0);
 }
 
+// 8b. A smaller image a .plexora file brought (`.approx`) is read where it
+// lies in any store, this browser's own storage too -- found at open, or
+// placed by an import's worker (`adopt`); a big TIFF there is placed as before.
+const SMALLER = "lung/media/0123456789abcdef/slide.ome.tif.approx";
+const BIG_TIFF = "lung/media/fedcba9876543210/other.ome.tif";
+{
+    const FS = fs();
+    const store = createStore(FS, "/data", () => {});
+    const folder = new DirHandle("state");
+    folder.put("config.json", "{}");
+    const smaller = folder.put(SMALLER, "the smaller image", HELD_BYTES + 1);
+    folder.put(BIG_TIFF, "a big tiff", HELD_BYTES + 1);
+    await store.open(folder);
+    check("smaller images are linkable", linkable(SMALLER) && linkable("a.approx") && !linkable("a.approx.db"));
+    check("own storage: a big smaller image is a link", isLinkAt(FS, `/data/${SMALLER}`)
+          && JSON.stringify(store.linked()) === JSON.stringify([SMALLER]), JSON.stringify(store.linked()));
+    check("and read through it, never whole at open", smaller.reads === 0
+          && text(FS.readFile(`/data/${SMALLER}`)) === "the smaller image");
+    check("own storage: a big TIFF is placed as before", FS.exists(`/data/${BIG_TIFF}`) && !isLinkAt(FS, `/data/${BIG_TIFF}`));
+    await store.push();
+    check("own storage: the link is never written back", smaller.writes === 0);
+    const imported = "lung2/media/0123456789abcdef/slide.ome.tif.approx";
+    const placed = folder.put(imported, "an imported smaller image", HELD_BYTES + 2);
+    const adopted = await store.adopt([imported]);
+    check("own storage: an import's smaller image is adopted as a link", isLinkAt(FS, `/data/${imported}`)
+          && adopted.linked === 1 && placed.reads === 0, JSON.stringify(adopted));
+}
+
 // 9. Where links do not work: a file Python pushed that grew past the limit
 // stays in memory for the visit (it used to be dropped, and built again), and
 // the folder's copy is left alone.

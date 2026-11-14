@@ -111,7 +111,7 @@ function leftBehind(number) {
         if (queue[i].page !== undefined && queue[i].page < number) queue.splice(i, 1);
     }
     // Every retry waiting is an earlier page's: this one has asked nothing yet.
-    for (const timer of retrying.values()) clearTimeout(timer);
+    for (const { timer } of retrying.values()) clearTimeout(timer);
     retrying.clear();
     for (const [id, resolve] of [...asks]) {
         asks.delete(id);
@@ -163,8 +163,12 @@ let nextAsk = 1;
 const queue = [];
 let busy = false;
 let idling = 0;
-//: id -> timer of a request a route asked to be asked again later (`drain`).
+//: id -> {timer, queued} of a request a route asked to be asked again later (`drain`).
 const retrying = new Map();
+//: Ids of the requests Python is running now, and those of them the page
+//: dropped meanwhile (`cancel`): a route's "again later" is then not asked again.
+const running = new Set();
+const abandoned = new Set();
 let syncPending = false;
 //: The project store at /data (workers/storeSync.js), once mounted.
 let store = null;
@@ -1663,7 +1667,10 @@ async function drain() {
             await pullNow();
             continue;
         }
-        const queued = queue.shift();
+        // The oldest message not left for later (`later`); those once
+        // nothing else waits.
+        const first = queue.findIndex((message) => !message.late);
+        const queued = queue.splice(Math.max(first, 0), 1)[0];
         const { id, op, args, arrived } = queued;
         if (fatalTold && !AFTER_FATAL.has(op)) {
             // Python cannot answer any more: said now, not by a call into it.
@@ -1680,8 +1687,14 @@ async function drain() {
         const outerStep = inStep;
         busy = true;
         inStep = false;
+        running.add(id);
         try {
             const result = await OPS[op](args || {});
+            if (op === "request" && result && result.retry && abandoned.has(id)) {
+                // Dropped by the page while Python ran it (its page left).
+                if (pageNow(queued)) self.postMessage({ id, ok: false, error: "AbortError: the page gave up on this request", aborted: true });
+                continue;
+            }
             if (op === "request" && result && result.retry) {
                 // Back in the queue in `retry` ms, behind whatever arrives
                 // meanwhile; a cancel finds it in `retrying`.
@@ -1690,12 +1703,12 @@ async function drain() {
                 queued.retries = (queued.retries || 0) + 1;
                 queued.args = { ...args, headers: [...(args.headers || []).filter(([name]) => name.toLowerCase() !== "x-plexora-retried"),
                                                    ["X-Plexora-Retried", String(queued.retries)]] };
-                retrying.set(id, setTimeout(() => {
+                retrying.set(id, { queued, timer: setTimeout(() => {
                     retrying.delete(id);
                     if (!pageNow(queued)) return;  // its page is gone (a reload)
                     queue.push(queued);
                     drain();
-                }, result.retry));
+                }, result.retry) });
                 continue;
             }
             const transfer = result && result.body instanceof Uint8Array ? [result.body.buffer] : [];
@@ -1715,18 +1728,38 @@ async function drain() {
             if (pageNow(queued)) self.postMessage({ id, ok: false, error: message.slice(-6000),
                                                     stopped: fatalTold });
         } finally {
-            busy = nested;
-            inStep = outerStep;
-            current = outer;
+            running.delete(id);
+            abandoned.delete(id);
             // It may have queued work: the next step finds out.
             pendingWork = Math.max(pendingWork, 1);
             if (op === "request") lastAnswer = performance.now();
+            // Still busy, so no other drain starts meanwhile: what the page
+            // posted while Python ran read in before the next is taken.
+            if (queue.length) await letIn();
+            busy = nested;
+            inStep = outerStep;
+            current = outer;
         }
     }
     if (!busy && !queue.length) {
         step();
         idlePull();
     }
+}
+
+//: Turns of this worker's event loop until the messages the page has posted
+//: are read in (with shared memory, its count says so; without, one turn):
+//: Python's answer goes on in `drain` as a microtask, which lets no message
+//: in, so a page asked for first (`ahead`) or a request the page dropped
+//: (`cancel`) would wait for the whole queue to be answered. A MessageChannel's
+//: task, not setTimeout's: no 4 ms clamp on every request.
+const turns = new MessageChannel();
+const turned = [];
+turns.port1.onmessage = () => { const next = turned.shift(); if (next) next(); };
+const nextTurn = () => new Promise((resolve) => { turned.push(resolve); turns.port2.postMessage(null); });
+async function letIn() {
+    await nextTurn();
+    for (let i = 0; i < 100 && inFlight !== null && Atomics.load(inFlight, 0) > 0; i += 1) await nextTurn();
 }
 
 //: The store's pull, holding the queue while it reads (Python must not see
@@ -1896,13 +1929,26 @@ self.onmessage = ({ data }) => {
     }
     if (data.op === "cancel") {
         // A request the page gave up on (its AbortSignal), dropped if Python
-        // has not begun it; one already begun runs to its end.
+        // has not begun it; one already begun runs to its end, and is not
+        // asked again if its route says "again later".
         const at = queue.findIndex((queued) => queued.id === data.args.id);
         const later = retrying.get(data.args.id);
         if (at >= 0 || later !== undefined) {
             if (at >= 0) queue.splice(at, 1);
-            if (later !== undefined) { clearTimeout(later); retrying.delete(data.args.id); }
+            if (later !== undefined) { clearTimeout(later.timer); retrying.delete(data.args.id); }
             self.postMessage({ id: data.args.id, ok: false, error: "AbortError: the page gave up on this request", aborted: true });
+        } else if (running.has(data.args.id)) {
+            abandoned.add(data.args.id);
+        }
+        return;
+    }
+    if (data.op === "later") {
+        // The page showed another over its viewer (services/appRouter.js;
+        // services/backend.js): the reads waiting now, the viewer's, go after
+        // whatever is asked next. Not dropped: the viewer is kept, to be
+        // shown again as it was.
+        for (const message of [...queue, ...[...retrying.values()].map((entry) => entry.queued)]) {
+            if (isRead(message)) message.late = true;
         }
         return;
     }
@@ -1911,7 +1957,24 @@ self.onmessage = ({ data }) => {
         // What it queues runs on the usual pace, not after another task's delay.
         dueInMs = 0;
     }
-    queue.push(data);
+    if (data.op === "request" && data.args && data.args.first) ahead(data);
+    else queue.push(data);
     drain();
 };
+
+//: A page the user asked for (services/pythonClient.js `first`) in the queue:
+//: ahead of the reads waiting at its end, so a click is not held up by what
+//: the page being left still asked for (a channel's stats asked "again
+//: later", a burst of tiles). Never ahead of a write or anything that is not
+//: a request (a picked file's mount): the page would be drawn from before
+//: it. Behind any page asked for before it.
+function ahead(message) {
+    let at = queue.length;
+    while (at > 0 && isRead(queue[at - 1]) && !queue[at - 1].args.first) at -= 1;
+    queue.splice(at, 0, message);
+}
+
+//: Whether a queued message is a request that only reads.
+const isRead = (message) => message.op === "request"
+    && ["GET", "HEAD"].includes(String(message.args && message.args.method).toUpperCase());
 mark("loaded");

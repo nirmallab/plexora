@@ -2,7 +2,7 @@
 
 Zeiss CZI, ZVI and LSM, Nikon ND2, Leica LIF/LOF/XLEF, Olympus VSI (or one of
 its ETS files alone), OIR and OIB/OIF, Hamamatsu NDPIS, DeltaVision, Hyperion MCD, KFBio KFB and 3DHISTECH
-MRXS fluorescence slides: each read by a reader that knows
+MRXS fluorescence slides, and Plexora's own smaller images (`.approx`): each read by a reader that knows
 its format (one module per format here, most of them over a maintained
 permissively licensed package), and every one of them presented as the same
 pyramid (`base.FormatPyramid`), so the rest of Plexora asks the same questions
@@ -58,6 +58,8 @@ FORMATS = {
     # Only a fluorescence slide (`mrxs.claims`): a brightfield MRXS stays
     # OpenSlide's, as it always was (brightfield.py).
     ".mrxs": ("mrxs", "3DHISTECH MRXS", None),
+    # A smaller image a .plexora file brought (server/utils/approximate_image.py).
+    ".approx": ("approx", "Plexora smaller image", None),
 }
 
 SUFFIXES = tuple(FORMATS)

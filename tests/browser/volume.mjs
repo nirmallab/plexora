@@ -15,9 +15,13 @@
 // exact, and single-brick latency cold then warm. `--ops` also runs
 // volume_web.py's OPS (isosurface, cell surfaces, object measurement) in the
 // website's Python and in CPython with numba and without.
+// `--slow-link` enters 3-D as a page served from another machine does (the
+// website itself): asking for gzip from the first level (volumeAtlas.js
+// `LINK`), which a page on 127.0.0.1 never does.
 //
 //   node tests/browser/volume.mjs --files IMAGE[,MASK] --out DIR
 //        [--arms website,desktop] [--ops] [--bricks 8] [--headed] [--site DIR]
+//        [--slow-link]
 // Prints the record as JSON (also DIR/record.json); exits 1 when a check fails.
 import { spawn, spawnSync } from "node:child_process";
 import { mkdirSync, readdirSync, statSync, writeFileSync } from "node:fs";
@@ -33,6 +37,7 @@ const site = opt("--site", path.join(REPO, "plexora", "client", "dist", "static"
 const brickCount = Number(opt("--bricks", "8"));
 const runOps = args.includes("--ops");
 const headed = args.includes("--headed");
+const slowLink = args.includes("--slow-link");
 //: Bodies larger than this are compared by their sha256 alone (not saved).
 const SAVE_MAX = Number(opt("--save-max", String(48 << 20)));
 if (!files.length || !out) throw new Error("--files IMAGE[,MASK] --out DIR");
@@ -316,8 +321,9 @@ async function runArm(kind) {
         rec.windows = windows;
         // The 3-D view, entered as a user enters it, until it has drawn.
         await target.waitForFunction(() => window.__plexora?.viewState, null, { timeout: 60000 });
-        const entered = await target.evaluate(async () => {
+        const entered = await target.evaluate(async (slow) => {
             const P = window.__plexora;
+            if (slow) window.PlexoraVolumeAtlas.LINK.compress = true;
             const t = performance.now();
             P.viewState.set({ mode: "volume", layout: "single" });
             const end = t + 300000;
@@ -330,7 +336,7 @@ async function runArm(kind) {
                 await new Promise((resolve) => setTimeout(resolve, 20));
             }
             return { ms: Math.round(performance.now() - t), status };
-        });
+        }, slowLink);
         rec.timings.enter3dMs = entered.ms;
         rec.renderer = entered.status;
         // What the canvas shows: every pixel's brightest sample, read back.

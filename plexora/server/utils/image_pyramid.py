@@ -64,6 +64,15 @@ IMAGE_MARKER = "plexora-image-pyramid"
 
 PYRAMID_SUFFIX = ".pyramid.ome.tiff"
 
+#: A compressed copy (server/utils/approximate_image.py): the same levels,
+#: every pixel within its own noise, about 75% smaller than the exact copy
+#: (0.83 GB against 3.32 GB for a 10240 px, 19-channel crop). Read in place by
+#: server/utils/formats/approx.py.
+APPROX_SUFFIX = ".pyramid.approx"
+
+#: Either kind of copy, as its name ends.
+COPY_SUFFIXES = (PYRAMID_SUFFIX, APPROX_SUFFIX)
+
 TILE_SIZE = 1024
 
 #: How much of one level Plexora reads in a single slab. The same budget
@@ -198,6 +207,7 @@ def flat_image_report(path, threshold: Optional[int] = None,
         raw = channels * height * width * dtype.itemsize
         factors = segmentation_pyramid.pyramid_factors(
             height, width, TILE_SIZE, stack_min_levels(planes, height, width))
+        smaller = compressible(dtype, volume=all_pages)
         return {
             "height": height,
             "width": width,
@@ -206,11 +216,40 @@ def flat_image_report(path, threshold: Optional[int] = None,
             "bytes": raw,
             "levels": len(factors),
             "output_bytes_estimate": raw * 4 // 3,
+            # Whether the copy can be the compressed kind here, and about what
+            # it comes to: a share of the exact copy's size, approximate_image's
+            # for an uncompressed image with its pyramid.
+            "compressible": smaller,
+            "compressed_bytes_estimate": _compressed_bytes(raw) if smaller else None,
             "scratch_bytes_estimate": _scratch_bytes(channels, height, width, dtype),
             "reasons": reasons,
         }
     finally:
         tiff.close()
+
+
+def compressible(dtype, *, volume: bool = False) -> bool:
+    """Whether a copy of an image of `dtype` can be the compressed kind here:
+    16-bit grey channels (approximate_image's rule), a planar stack (a
+    volume's copy is read plane by plane as a TIFF), and a Python that makes
+    approximate images -- not the website's, whose page builds its copies."""
+    from plexora.server.utils import approximate_image
+
+    return np.dtype(dtype) == np.uint16 and not volume and approximate_image.can_make()
+
+
+def _compressed_bytes(raw: int) -> int:
+    from plexora.server.utils import approximate_image
+
+    return int(raw * 4 / 3 * approximate_image.SHARE)
+
+
+def compress_default() -> bool:
+    """Whether a copy nobody chose the kind of is the compressed one: the
+    setting (`paths.compress_pyramids`, on unless turned off)."""
+    from plexora import paths
+
+    return paths.compress_pyramids()
 
 
 def _scratch_bytes(channels, height, width, dtype) -> int:
@@ -228,8 +267,10 @@ def _scratch_bytes(channels, height, width, dtype) -> int:
 # Where the copy goes, and recognising it again
 # --------------------------------------------------------------------------
 
-def derived_output_path(source, data_directory=None) -> Path:
-    """The NAME a pyramidized copy takes, in `data_directory` or beside `source`."""
+def derived_output_path(source, data_directory=None, *, compressed: bool = False) -> Path:
+    """The NAME a pyramidized copy takes, in `data_directory` or beside
+    `source`: `<stem>.pyramid.ome.tiff`, or `<stem>.pyramid.approx` for the
+    compressed kind."""
     source = Path(source)
     stem = source.name
     for suffix in _SOURCE_SUFFIXES:
@@ -237,7 +278,7 @@ def derived_output_path(source, data_directory=None) -> Path:
             stem = stem[: -len(suffix)]
             break
     target_dir = Path(data_directory) if data_directory else source.parent
-    return target_dir / f"{stem}{PYRAMID_SUFFIX}"
+    return target_dir / f"{stem}{APPROX_SUFFIX if compressed else PYRAMID_SUFFIX}"
 
 
 class DerivedImage(NamedTuple):
@@ -287,13 +328,14 @@ def _sweep_leftovers(directory: Path, name: str) -> None:
             continue
 
 
-def _candidates(source: Path, data_directory=None) -> list:
-    """Where a copy of `source` may be written, in the order it is looked for."""
+def _candidates(source: Path, data_directory=None, compressed: bool = False) -> list:
+    """Where a copy of `source` of one kind may be written, in the order it
+    is looked for."""
     from plexora import paths
 
-    candidates = [derived_output_path(source)]
+    candidates = [derived_output_path(source, compressed=compressed)]
     if data_directory is not None:
-        in_project = derived_output_path(source, data_directory)
+        in_project = derived_output_path(source, data_directory, compressed=compressed)
         if paths.mask_output_preference() == "project":
             candidates.insert(0, in_project)
         else:
@@ -301,13 +343,14 @@ def _candidates(source: Path, data_directory=None) -> list:
     return candidates
 
 
-def _found(source: Path, candidates) -> Optional[Path]:
+def _found(source: Path, candidates, website: bool = True) -> Optional[Path]:
     """The first finished copy of `source` among `candidates`, then -- in the
-    desktop app, to read only -- the copy the website kept for the same file
-    in Plexora's folder (Documents/Plexora/pyramids/<key>/,
-    server/utils/relink.py `website_copies`): built once, by either app."""
+    desktop app, to read only, when `website` -- the copy the website kept for
+    the same file in Plexora's folder (Documents/Plexora/pyramids/<key>/,
+    server/utils/relink.py `website_copies`): built once, by either app. The
+    website's copies are always the exact kind (its page builds them)."""
     existing = next((c for c in candidates if is_adoptable_image(c, source)), None)
-    if existing is not None:
+    if existing is not None or not website:
         return existing
     from plexora.server.utils import relink
 
@@ -316,14 +359,18 @@ def _found(source: Path, candidates) -> Optional[Path]:
 
 
 def find_derived_image(source, data_directory=None) -> Optional[Path]:
-    """A finished copy of `source`, beside it or in the project's folder
-    (`resolve_derived_image`'s order), or None. Looks only: the website asks
-    before its page builds one (data_model `_pyramidized_copy`)."""
+    """A finished copy of `source` of either kind, beside it or in the
+    project's folder (`resolve_derived_image`'s order, the kind the setting
+    names first), or None. Looks only: the website asks before its page builds
+    one (data_model `_pyramidized_copy`), and it reads either kind."""
     source = Path(source)
-    return _found(source, _candidates(source, data_directory))
+    first = compress_default()
+    return _found(source, _candidates(source, data_directory, first)
+                  + _candidates(source, data_directory, not first))
 
 
-def resolve_derived_image(source, data_directory=None, *, needed_bytes: int = 0) -> DerivedImage:
+def resolve_derived_image(source, data_directory=None, *, needed_bytes: int = 0,
+                          compressed: bool = False, either: bool = False) -> DerivedImage:
     """Where `source`'s pyramidized copy is, and where one would be written.
 
     Beside the source first -- the copy is then shared by every project and
@@ -331,14 +378,20 @@ def resolve_derived_image(source, data_directory=None, *, needed_bytes: int = 0)
     `paths.mask_output_preference() == "project"` swaps the order for finding
     and for writing alike, exactly as it does for derived masks.
 
+    `compressed` is the kind wanted, and the target is named for it. A
+    finished copy of that kind is `existing`; with `either` (nobody chose the
+    kind) a copy of the other kind is too, so a copy made once is used
+    whichever kind the setting names now.
+
     A folder is a target only when it accepts writes AND has `needed_bytes`
     free, so "the disk is full" is said before any work starts.
     """
     from plexora import paths
 
     source = Path(source)
-    candidates = _candidates(source, data_directory)
-    existing = _found(source, candidates)
+    candidates = _candidates(source, data_directory, compressed)
+    others = _candidates(source, data_directory, not compressed) if either else []
+    existing = _found(source, candidates + others, website=either or not compressed)
     problems = []
     for candidate in candidates:
         folder = candidate.parent
@@ -358,14 +411,24 @@ def resolve_derived_image(source, data_directory=None, *, needed_bytes: int = 0)
     return DerivedImage(existing, candidates[0], False, reason)
 
 
+def _ome_text(path) -> Optional[str]:
+    """The OME-XML `path` carries: a TIFF's, or the one a compressed copy's
+    index keeps (approximate_image)."""
+    if str(path).lower().endswith(".approx"):
+        from plexora.server.utils import approximate_image
+
+        return approximate_image.read_index(path).get("description")
+    with tf.TiffFile(str(path)) as tiff:
+        return tiff.ome_metadata
+
+
 def _ome_image_fields(path) -> Optional[tuple]:
     """`(name, description)` of the first OME Image in `path`, or None."""
     try:
-        with tf.TiffFile(str(path)) as tiff:
-            text = tiff.ome_metadata
-            if not text:
-                return None
-            root = ElementTree.fromstring(text)
+        text = _ome_text(path)
+        if not text:
+            return None
+        root = ElementTree.fromstring(text)
     except Exception:
         return None
     for element in root.iter():
@@ -391,9 +454,9 @@ def _description(path) -> Optional[dict]:
 
 
 def is_image_copy(path) -> bool:
-    """Whether `path` is a pyramidized copy this module wrote."""
+    """Whether `path` is a pyramidized copy this module wrote, of either kind."""
     path = Path(path)
-    return path.name.lower().endswith(PYRAMID_SUFFIX) and _description(path) is not None
+    return path.name.lower().endswith(COPY_SUFFIXES) and _description(path) is not None
 
 
 def copy_source(path) -> Optional[str]:
@@ -427,11 +490,19 @@ def is_adoptable_image(candidate, source) -> bool:
     if not _same_source(payload.get("source_key"), segmentation_pyramid.source_fingerprint(source)):
         return False
     try:
-        with tf.TiffFile(str(candidate), is_ome=False) as copy:
-            series = copy.series[0]
-            if len(series.levels) < 2:
+        if candidate.name.lower().endswith(APPROX_SUFFIX):
+            from plexora.server.utils import approximate_image
+
+            levels = approximate_image.read_index(candidate)["levels"]
+            if len(levels) < 2:
                 return False
-            copy_shape = tuple(int(side) for side in series.shape)
+            copy_shape = tuple(int(side) for side in levels[0]["shape"])
+        else:
+            with tf.TiffFile(str(candidate), is_ome=False) as copy:
+                series = copy.series[0]
+                if len(series.levels) < 2:
+                    return False
+                copy_shape = tuple(int(side) for side in series.shape)
         if len(copy_shape) == 2:
             copy_shape = (1,) + copy_shape  # one channel: tifffile reads the copy as YX
         tiff, series = _open_series(source)
@@ -642,12 +713,19 @@ def pyramidize_image(
     progress_callback: Optional[Callable[[int, int], None]] = None,
     stage_callback: Optional[Callable[..., None]] = None,
     volume_description: Optional[dict] = None,
+    compress: bool = False,
 ) -> str:
     """Write a tiled pyramid OME-TIFF copy of the channel stack at `source`.
 
     `volume_description` (`{page_axes, physical}`) makes the copy hold EVERY
     page of a z-stack or time series, laid out as recorded there, rather than
     the channel stack `tiff_series.channel_series` reads.
+
+    `compress` writes the compressed kind instead (`APPROX_SUFFIX`, a 16-bit
+    planar stack only, `compressible`): the same exact levels, each tile kept
+    within its noise by approximate_image -- every level from the exact level
+    above it, so the error never compounds -- on approximate_image's 1024
+    grid, with the same OME-XML in its index.
 
     `source` is never written to. `destination` appears only once complete.
     `compression_args` defaults to zlib level 1: against the default level 6
@@ -659,6 +737,10 @@ def pyramidize_image(
     source = Path(source)
     destination = Path(destination)
     workers = int(max_workers or _workers())
+    if compress:
+        from plexora.server.utils import approximate_image
+
+        tile_size = approximate_image.TILE
 
     def stage(key, detail=None):
         if stage_callback is not None:
@@ -685,6 +767,10 @@ def pyramidize_image(
                 f"{source.name} is laid out as {series.axes} {dtype.name}; a "
                 "pyramidized copy can only be made of a (channel, y, x) stack "
                 "of integer or float pixels.")
+        if compress and not compressible(dtype, volume=bool(volume_description)):
+            raise PyramidError(
+                f"{source.name} is {dtype.name}; a compressed pyramidized copy can only "
+                "be made of 16-bit channels here, so no copy was made.")
         channels, height, width = shape
 
         stage("preparing")
@@ -772,7 +858,14 @@ def pyramidize_image(
             if key == "writing":
                 stage("writing")
 
+        metadata = _ome_metadata(channels, channel_names, physical, source, fingerprint,
+                                 volume_description)
         try:
+            if compress:
+                _write_compressed(destination, source, block, level_shapes, factors, channels,
+                                  dtype, metadata, tile_size, workers, progress_callback)
+                stage("writing")
+                return str(destination)
             segmentation_pyramid.write_tiled_pyramid(
                 destination,
                 height=height,
@@ -780,8 +873,7 @@ def pyramidize_image(
                 dtype=dtype,
                 block=block,
                 channels=channels,
-                metadata=_ome_metadata(channels, channel_names, physical, source, fingerprint,
-                                       volume_description),
+                metadata=metadata,
                 tile_size=tile_size,
                 # The levels the scratch was laid out for, a stack's padding
                 # (`stack_min_levels`) included: the writer counts by tile alone.
@@ -798,6 +890,15 @@ def pyramidize_image(
             raise PyramidError(
                 f"Plexora is not allowed to write in {destination.parent}, so no "
                 "pyramidized copy was made.") from error
+        except OSError as error:
+            # write_tiled_pyramid says this itself; the compressed writer
+            # does not know it is a pyramid.
+            if compress and error.errno in segmentation_pyramid._NO_SPACE_ERRNOS:
+                raise PyramidError(
+                    f"The disk holding {destination.parent} ran out of space while "
+                    f"writing {destination.name}; nothing was kept. Free some space "
+                    "and try again.") from error
+            raise
     finally:
         for pool in pools:
             pool.shutdown(wait=True, cancel_futures=True)
@@ -805,3 +906,38 @@ def pyramidize_image(
             scratch.close()
         tiff.close()
     return str(destination)
+
+
+def _write_compressed(destination, source, block, level_shapes, factors, channels, dtype,
+                      metadata, tile_size, workers, progress_callback) -> None:
+    """`pyramidize_image`'s compressed kind: every tile `block` makes, in the
+    order it makes them (level, channel, tile row, column -- the container's
+    order), through `approximate_image.write_tiles`, with the OME-XML a TIFF
+    copy would carry (`_ome_metadata`: the marker, `source`/`source_key`,
+    channel names, pixel size) kept in its index."""
+    from plexora.server.utils import approximate_image
+
+    height, width = level_shapes[0]
+    ome = tf.OmeXml(**metadata)
+    ome.addimage(dtype, (channels, height, width), (channels, 1, 1, height, width, 1), **metadata)
+    total = channels * sum(-(-level_h // tile_size) * -(-level_w // tile_size)
+                           for level_h, level_w in level_shapes)
+
+    def tiles():
+        done = 0
+        for factor, (level_h, level_w) in zip(factors, level_shapes):
+            for channel in range(channels):
+                for y0 in range(0, level_h, tile_size):
+                    y1 = min(y0 + tile_size, level_h)
+                    for x0 in range(0, level_w, tile_size):
+                        tile = block(channel, factor, y0, y1, x0, min(x0 + tile_size, level_w),
+                                     level_h, level_w)
+                        done += 1
+                        if progress_callback is not None:
+                            progress_callback(done, total)
+                        yield np.ascontiguousarray(tile, dtype=np.uint16)
+
+    approximate_image.write_tiles(
+        destination, [(channels, level_h, level_w) for level_h, level_w in level_shapes], tiles(),
+        description=ome.tostring(declaration=True),
+        source={"name": Path(source).name, "size": Path(source).stat().st_size}, workers=workers)

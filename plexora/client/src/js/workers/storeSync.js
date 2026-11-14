@@ -35,7 +35,9 @@
  * anew at such a path is written to the folder like any other file, and then
  * read from there in its turn, which gives its bytes back to the heap. Where
  * this Emscripten cannot read through a link (`canLink`, probed once) they
- * are left in the folder, unread, as they always were.
+ * are left in the folder, unread, as they always were. A smaller image a
+ * .plexora file brought (`.approx`) is held so in any store, this browser's
+ * own storage too (`heldAnywhere`): it is gigabytes, and only ever read.
  *
  * The store holds every project and a page opens one, so a file of
  * `LAZY_BYTES` or more is read when Python first reads it, not when the folder
@@ -73,10 +75,16 @@ const EIO = 29;
 const HELD_ROOT = "/held";
 //: The held files read where they lie: TIFFs -- the pyramids Python builds
 //: into a project, which it writes beside and moves into place
-//: (`os.replace`, which replaces the link). Anything else may be opened to be
-//: written in place (a project's SQLite database), which a file read in the
-//: folder cannot take, so it is left there as before.
-export const linkable = (rel) => /\.(ome\.)?tiff?$/i.test(String(rel));
+//: (`os.replace`, which replaces the link) -- and the smaller images a
+//: .plexora file brings (`.approx`, server/utils/approximate_image.py), which
+//: Python only ever reads. Anything else may be opened to be written in place
+//: (a project's SQLite database), which a file read in the folder cannot
+//: take, so it is left there as before.
+export const linkable = (rel) => /\.(ome\.)?tiff?$|\.approx$/i.test(String(rel));
+//: Held in any store, this browser's own storage too, and not only in a
+//: shared folder: a smaller image is gigabytes, and placed in memory
+//: (`placeLazy`) its first read would hand Python the whole file.
+export const heldAnywhere = (rel) => /\.approx$/i.test(String(rel));
 
 // WORKERFS dates a mounted file by `file.lastModifiedDate`, which Firefox no
 // longer has: a file is dated by its own `lastModified`, as the worker's own
@@ -142,6 +150,10 @@ export function createStore(FS, root = "/data", log = () => {}, options = {}) {
     //: they cannot be, they are left out by name, as before.
     const readInPlace = (rel) => Boolean(linksWork) && linkable(rel);
     const skipped = (rel) => shared && (keptOut(rel) || (held.has(rel) && !readInPlace(rel)));
+    //: Whether the folder's file at `rel` is held there, read where it lies:
+    //: anything too big in a shared folder; a big smaller image in any store,
+    //: where links work (elsewhere it is placed as any file is).
+    const holds = (rel, size) => size >= HELD_BYTES && (shared || (heldAnywhere(rel) && canLink()));
     let chain = Promise.resolve();
     const queue = (work) => (chain = chain.then(work, work));
 
@@ -190,7 +202,7 @@ export function createStore(FS, root = "/data", log = () => {}, options = {}) {
                     await visit(child, path);
                 } else {
                     const file = await child.getFile();
-                    if (shared && file.size >= HELD_BYTES) {
+                    if (holds(path, file.size)) {
                         big.set(path, file);
                         continue;
                     }
@@ -301,7 +313,8 @@ export function createStore(FS, root = "/data", log = () => {}, options = {}) {
      * there is open.
      */
     function linkAll(big) {
-        if (!shared || !canLink()) return 0;
+        // Unshared, `big` holds only what is held anywhere (`holds`).
+        if (!canLink()) return 0;
         let count = 0;
         for (const [rel, file] of big) {
             if (!linkable(rel)) continue;
@@ -617,7 +630,7 @@ export function createStore(FS, root = "/data", log = () => {}, options = {}) {
                     FS.mkdirTree(full(dir));
                     knownDirs.add(dir);
                 }
-                if (shared && file.size >= HELD_BYTES) {
+                if (holds(rel, file.size)) {
                     held.set(rel, file.size);
                     big.set(rel, file);
                     continue;

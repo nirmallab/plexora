@@ -256,7 +256,63 @@
         // A Google Cloud request carries the page's Google access token
         // (services/googleAuth.js) to Python for this request only (plan L9).
         if (global.PlexoraGoogleAuth) request = global.PlexoraGoogleAuth.sign(request, route);
-        return python.fetch(request);
+        if (!["GET", "HEAD"].includes(request.method)) return python.fetch(request);
+        return untilGone(request, (signal) => python.fetch(request, { signal }));
+    }
+
+    //: Aborted as this page goes (`pagehide`: the app's frame moving to
+    //: another page): what it asked Python to read and Python has not begun
+    //: is dropped from the worker's queue, and its retries with it -- nobody
+    //: reads their answers, and the next page's requests would wait behind
+    //: them (a channel's stats asked "again later" until the page left).
+    //: Reads only: a write the page made as it left still lands. Kept on the
+    //: window, since a page the site's loader writes into it loads this file
+    //: again, and document.open took the window's listeners away.
+    function leaving() {
+        if (global.__plexoraLeaving) return global.__plexoraLeaving;
+        if (typeof AbortController !== "function") return null;
+        const state = { controller: new AbortController() };
+        state.gone = () => state.controller.abort();
+        // Back from the browser's back/forward cache: asking again.
+        state.back = (event) => {
+            if (event.persisted) state.controller = new AbortController();
+        };
+        // A page shown over the viewer, which stays (services/appRouter.js):
+        // the viewer's reads waiting go after the page's, not dropped.
+        state.covered = () => {
+            const python = global.PlexoraPython;
+            if (python && typeof python.later === "function") python.later();
+        };
+        global.__plexoraLeaving = state;
+        return state;
+    }
+
+    //: `ask(signal)`, `signal` aborting with `request`'s or as this page
+    //: goes; the page's listener let go once answered (a viewer asks Python
+    //: thousands of times).
+    async function untilGone(request, ask) {
+        const state = leaving();
+        const own = request.signal || null;
+        if (!state) return ask(own);
+        const page = state.controller.signal;
+        const both = new AbortController();
+        const stop = () => both.abort();
+        if (page.aborted || (own && own.aborted)) stop();
+        page.addEventListener("abort", stop, { once: true });
+        if (own) own.addEventListener("abort", stop, { once: true });
+        try {
+            return await ask(both.signal);
+        } finally {
+            page.removeEventListener("abort", stop);
+            if (own) own.removeEventListener("abort", stop);
+        }
+    }
+
+    const state = browser && typeof global.addEventListener === "function" ? leaving() : null;
+    if (state) {
+        global.addEventListener("pagehide", state.gone);
+        global.addEventListener("pageshow", state.back);
+        global.addEventListener("plexora:viewer-hidden", state.covered);
     }
 
     function supports(feature) {

@@ -258,6 +258,10 @@ PYTHON = (
     # and chooses its folders itself, and Python says so to a change.
     "settings_locations", "settings_locations_add", "settings_locations_remove",
     "settings_locations_default", "settings_locations_tidy",
+    # Whether pyramid copies are compressed (paths.compress_pyramids): the
+    # website's page builds exact copies itself and shows no card for it, so
+    # Python only answers its own setting.
+    "settings_pyramids", "settings_pyramids_set",
 )
 
 

@@ -192,7 +192,7 @@ def _register(outs, answers=None, monkeypatch=None):
 
 def test_the_dialog_can_watch_a_registration_before_the_sample_exists(
         run, monkeypatch):
-    """`/import/status?token=` answers while `/import/sample` is running.
+    """`/import/status?registration=` answers while `/import/sample` is running.
 
     The 10x conversion is minutes on a real run and happens before the
     sample has a name, so without this the dialog shows "waiting" on every
@@ -226,7 +226,7 @@ def test_the_dialog_can_watch_a_registration_before_the_sample_exists(
     assert result["name"]
 
     client = plexora.app.test_client()
-    body = client.get("/import/status?token=tok-1").get_json()
+    body = client.get("/import/status?registration=tok-1").get_json()
     assert body == {"layers": {}, "pending": False}
 
 

@@ -177,3 +177,20 @@ def test_the_status_route_answers_the_same_document(sample):
     payload = client.get("/import/status?sample=demo").get_json()
     assert payload == layer_jobs.status("demo")
     assert client.get("/import/status").status_code == 400
+
+
+def test_a_registration_is_asked_for_beside_the_launch_token():
+    """`token=` is the launch token the auth guard reads from every request; a
+    registration in progress is asked for as `registration=`, so one request
+    can carry both and neither is read as the other."""
+    previous = plexora.app.config.get("PLEXORA_AUTH_TOKEN")
+    plexora.app.config["PLEXORA_AUTH_TOKEN"] = "launch"
+    try:
+        client = plexora.app.test_client()
+        with layer_jobs.registering("reg-1", ["cells"]):
+            body = client.get("/import/status?registration=reg-1&token=launch").get_json()
+            assert body["registering"] and set(body["layers"]) == {"cells"}
+            # The launch token names no registration.
+            assert client.get("/import/status?token=launch").status_code == 400
+    finally:
+        plexora.app.config["PLEXORA_AUTH_TOKEN"] = previous

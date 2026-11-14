@@ -323,10 +323,20 @@ def test_a_sticky_detail_stays_on_the_bar_while_it_moves():
 
 # -- registration -----------------------------------------------------------
 
+def _compression(on):
+    """The setting `paths.compress_pyramids` reads (Settings > Data)."""
+    from plexora import paths
+
+    with paths.settings_lock():
+        paths.write_settings({**paths.read_settings(), "compress_pyramids": on})
+
+
 def test_a_large_flat_image_is_registered_as_its_copy(tmp_path, monkeypatch, small_threshold):
+    """With compression switched off: today's copy, an exact pyramid TIFF."""
     data_dir = tmp_path / "data"
     data_dir.mkdir()
     use_data_root(monkeypatch, data_dir)
+    _compression(False)
     images = tmp_path / "images"
     images.mkdir()
     pixels = _flat(images / "slide.tif", shape=(3, 2100, 1500))
@@ -411,7 +421,13 @@ def test_the_proposal_offers_the_copy(tmp_path, small_threshold):
     image = next(layer for layer in sample.layers if layer.role == "image")
     assert question.scope == f"layer:{image.id}"
     pyramid = image.render["pyramid"]
-    assert pyramid["channels"] == 3 and pyramid["output_name"] == "slide.pyramid.ome.tiff"
+    assert pyramid["channels"] == 3 and pyramid["output_name"] == "slide.pyramid.approx"
+    # The switch's facts: shown (16-bit), on as the setting is, both names,
+    # and what the compressed copy comes to.
+    assert pyramid["compressible"] is True and pyramid["compress_default"] is True
+    assert pyramid["output_names"] == {"compressed": "slide.pyramid.approx",
+                                       "exact": "slide.pyramid.ome.tiff"}
+    assert 0 < pyramid["compressed_bytes_estimate"] < pyramid["output_bytes_estimate"]
     assert question.id not in image.needs  # a confirmation, never outstanding
     assert "No pyramid" in image.detail
 
@@ -472,3 +488,224 @@ def test_memory_is_bounded_by_the_slab_not_the_image(tmp_path, monkeypatch):
     finally:
         tracemalloc.stop()
     assert peak < raw / 4, f"peak {peak >> 20} MB for a {raw >> 20} MB image"
+
+
+# -- the compressed copy ------------------------------------------------------
+#
+# `<name>.pyramid.approx` (server/utils/approximate_image.py): the same exact
+# levels, each pixel kept as round(sqrt(v)) and read back squared, read in
+# place through its formats reader.
+
+def _compressed_levels(path):
+    from plexora.server.utils import formats
+
+    reader = formats.open_image(path)
+    try:
+        return [np.stack([np.asarray(reader[k][c, :, :]) for c in range(reader[k].shape[0])])
+                for k in range(len(reader))]
+    finally:
+        reader.close()
+
+
+def _within_noise(got, exact):
+    value = exact.astype(np.float64)
+    return bool(np.all(np.abs(got.astype(np.float64) - value) <= np.sqrt(value) + 0.25))
+
+
+def test_a_compressed_copy_keeps_every_level_within_its_noise(tmp_path):
+    """Every level is the exact one (the reference reducer, from the exact
+    level above -- the error never compounds) within sqrt(v) + 0.25."""
+    pixels = _flat(tmp_path / "slide.tif", shape=(3, 2100, 1500))
+    out = image_pyramid.pyramidize_image(
+        tmp_path / "slide.tif", tmp_path / "slide.pyramid.approx", compress=True)
+    assert out == str(tmp_path / "slide.pyramid.approx")
+    levels = _compressed_levels(out)
+    assert [level.shape for level in levels] == [(3, 2100, 1500), (3, 1050, 750), (3, 525, 375)]
+    exact = pixels
+    for level in levels:
+        assert level.dtype == np.uint16 and _within_noise(level, exact)
+        exact = _reference_level(exact)
+    # Nothing of the build is left beside it.
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["slide.pyramid.approx", "slide.tif"]
+
+
+def test_a_compressed_copy_carries_names_pixel_size_and_its_origin(tmp_path):
+    from plexora.server.utils import formats
+
+    _flat(tmp_path / "slide.tif", shape=(3, 1500, 1200))
+    copy = tmp_path / "slide.pyramid.approx"
+    image_pyramid.pyramidize_image(tmp_path / "slide.tif", copy, channel_names=["DNA", "CD3", "CD8"],
+                                   physical={"physical_size_x": 0.65, "physical_size_y": 0.65,
+                                             "physical_size_x_unit": "µm",
+                                             "physical_size_y_unit": "µm"}, compress=True)
+    assert formats.channel_names(copy) == ["DNA", "CD3", "CD8"]
+    reader = formats.open_image(copy)
+    try:
+        assert formats.physical_metadata(reader)["physical_size_x"] == pytest.approx(0.65)
+    finally:
+        reader.close()
+    assert image_pyramid.is_image_copy(copy)
+    assert image_pyramid.copy_source(copy) == str(tmp_path / "slide.tif")
+    assert image_pyramid.is_adoptable_image(copy, tmp_path / "slide.tif")
+
+
+@pytest.mark.parametrize("dtype", [np.uint8, np.float32, np.int16])
+def test_only_16_bit_images_are_compressed(tmp_path, dtype, small_threshold):
+    _flat(tmp_path / "slide.tif", shape=(2, 1500, 1200), dtype=dtype)
+    report = image_pyramid.flat_image_report(tmp_path / "slide.tif")
+    assert report["compressible"] is False and report["compressed_bytes_estimate"] is None
+    with pytest.raises(segmentation_pyramid.PyramidError, match="16-bit"):
+        image_pyramid.pyramidize_image(tmp_path / "slide.tif", tmp_path / "slide.pyramid.approx",
+                                       compress=True)
+    assert not (tmp_path / "slide.pyramid.approx").exists()
+
+
+def test_the_website_never_makes_one(tmp_path, monkeypatch, small_threshold):
+    """Its page builds its copies, the exact kind; its Python does not make
+    approximate images (approximate_image.can_make)."""
+    _flat(tmp_path / "slide.tif", shape=(2, 1500, 1200))
+    monkeypatch.setenv("PLEXORA_BACKEND", "browser")
+    assert image_pyramid.flat_image_report(tmp_path / "slide.tif")["compressible"] is False
+
+
+def test_a_large_flat_image_is_registered_as_its_compressed_copy(tmp_path, monkeypatch, small_threshold):
+    """The default: a 16-bit image's copy is the compressed kind, recorded as
+    its formats kind and served from it; the original is its source."""
+    from plexora.server.utils import formats
+
+    data_dir = tmp_path / "data"
+    data_dir.mkdir()
+    use_data_root(monkeypatch, data_dir)
+    images = tmp_path / "images"
+    images.mkdir()
+    pixels = _flat(images / "slide.tif", shape=(3, 2100, 1500))
+    before = (images / "slide.tif").read_bytes()
+
+    entry = datasource.register_image_datasource(
+        name="small", image=images / "slide.tif", data_dir=data_dir)
+
+    copy = images / "slide.pyramid.approx"
+    assert entry["channelFile"] == str(copy)
+    assert not (images / "slide.pyramid.ome.tiff").exists()
+    assert entry["imageSource"] == str(images / "slide.tif")
+    assert (images / "slide.tif").read_bytes() == before  # the original, untouched
+    assert entry["image_kind"] == formats.IMAGE_KIND
+    assert (entry["maxLevel"], entry["width"], entry["height"], entry["num_channels"]) == (3, 1500, 2100, 3)
+    # Tile keys stemmed from the original, not from the copy.
+    assert [c["src"].rstrip("/").rsplit("/", 1)[-1] for c in entry["imageData"]] == [
+        "slide_0", "slide_1", "slide_2"]
+    assert _within_noise(_compressed_levels(copy)[0], pixels)
+
+    # The edit page's re-read keeps the origin.
+    datasource.reregister_image("small", data_dir=data_dir)
+    project = Project.find("small", data_dir)
+    assert project.image.src == str(copy) and project.image.source == str(images / "slide.tif")
+
+
+def test_each_kind_is_adopted_and_the_other_built_only_when_asked(tmp_path, monkeypatch, small_threshold):
+    """A copy made once is used whichever kind the setting names now; asked
+    for the other kind by name ("compressed" / "exact"), that one is built."""
+    data_dir = tmp_path / "data"
+    data_dir.mkdir()
+    use_data_root(monkeypatch, data_dir)
+    _flat(tmp_path / "slide.tif", shape=(2, 1500, 1200))
+    exact = tmp_path / "slide.pyramid.ome.tiff"
+    small = tmp_path / "slide.pyramid.approx"
+    image_pyramid.pyramidize_image(tmp_path / "slide.tif", exact)
+    built = exact.stat().st_mtime_ns
+
+    entry = datasource.register_image_datasource(name="a", image=tmp_path / "slide.tif", data_dir=data_dir)
+    assert entry["channelFile"] == str(exact) and exact.stat().st_mtime_ns == built
+    assert not small.exists()
+
+    entry = datasource.register_image_datasource(
+        name="b", image=tmp_path / "slide.tif", data_dir=data_dir, pyramidize="compressed")
+    assert entry["channelFile"] == str(small) and exact.stat().st_mtime_ns == built
+
+    exact.unlink()
+    _compression(False)
+    entry = datasource.register_image_datasource(name="c", image=tmp_path / "slide.tif", data_dir=data_dir)
+    assert entry["channelFile"] == str(small) and not exact.exists()
+
+    entry = datasource.register_image_datasource(
+        name="d", image=tmp_path / "slide.tif", data_dir=data_dir, pyramidize="exact")
+    assert entry["channelFile"] == str(exact)
+
+
+def test_with_compression_off_a_16_bit_copy_is_todays_tiff(tmp_path, monkeypatch, small_threshold):
+    data_dir = tmp_path / "data"
+    data_dir.mkdir()
+    use_data_root(monkeypatch, data_dir)
+    _compression(False)
+    pixels = _flat(tmp_path / "slide.tif", shape=(2, 1500, 1200))
+    entry = datasource.register_image_datasource(name="off", image=tmp_path / "slide.tif", data_dir=data_dir)
+    assert entry["channelFile"] == str(tmp_path / "slide.pyramid.ome.tiff")
+    assert entry["image_kind"] == "ome_tiff"
+    levels, chunks = _levels(tmp_path / "slide.pyramid.ome.tiff")
+    np.testing.assert_array_equal(levels[0], pixels)
+    with tf.TiffFile(str(tmp_path / "slide.pyramid.ome.tiff"), is_ome=False) as tiff:
+        assert tiff.pages[0].compression == tf.COMPRESSION.ADOBE_DEFLATE
+    assert not (tmp_path / "slide.pyramid.approx").exists()
+
+
+def test_the_dialogs_switch_builds_the_kind_it_says(tmp_path, monkeypatch, small_threshold):
+    """`pyramidize:<pick>` answers "compressed" or "exact" where the dialog
+    showed the switch; "yes" (an older page) takes the setting."""
+    from plexora.server.models.import_sample import import_sample
+
+    data_dir = tmp_path / "data"
+    data_dir.mkdir()
+    use_data_root(monkeypatch, data_dir)
+    for answer, name in (("exact", "slide.pyramid.ome.tiff"), ("compressed", "slide.pyramid.approx")):
+        folder = tmp_path / answer
+        folder.mkdir()
+        _flat(folder / "slide.tif", shape=(2, 1500, 1200))
+        pick = str(folder / "slide.tif")
+        import_sample([pick], answers={f"pyramidize:{pick}": answer}, name=f"said_{answer}")
+        assert Project.find(f"said_{answer}", data_dir).image.src == str(folder / name)
+        assert sorted(p.name for p in folder.iterdir()) == sorted(["slide.tif", name])
+
+
+def test_a_found_compressed_copy_asks_nothing(tmp_path, small_threshold):
+    _flat(tmp_path / "slide.tif", shape=(3, 1500, 1200))
+    image_pyramid.pyramidize_image(tmp_path / "slide.tif", tmp_path / "slide.pyramid.approx", compress=True)
+    sample = inspect_paths([str(tmp_path / "slide.tif")]).samples[0]
+    assert not [q for q in sample.questions if q.id.startswith("pyramidize:")]
+    image = next(layer for layer in sample.layers if layer.role == "image")
+    assert "Pyramidized copy found" in image.render["detail"]
+
+
+def test_a_folder_with_the_original_and_its_compressed_copy_is_one_image(tmp_path, small_threshold):
+    from plexora.server.models import dataset_scan
+
+    _flat(tmp_path / "slide.tif", shape=(3, 1500, 1200))
+    image_pyramid.pyramidize_image(tmp_path / "slide.tif", tmp_path / "slide.pyramid.approx", compress=True)
+    proposal = inspect_paths([str(tmp_path / "slide.tif"), str(tmp_path / "slide.pyramid.approx")])
+    images = [layer for sample in proposal.samples for layer in sample.layers if layer.role == "image"]
+    assert [layer.src for layer in images] == [str(tmp_path / "slide.tif")]
+    assert dataset_scan._derived_copy("slide.pyramid.approx", ["slide.tif", "slide.pyramid.approx"]) == "slide.tif"
+    assert dataset_scan._derived_copy("slide.pyramid.approx", ["slide.pyramid.approx"]) is None
+
+
+def test_the_setting_is_on_unless_turned_off(tmp_path):
+    from plexora import paths
+
+    assert paths.compress_pyramids() is True
+    _compression(False)
+    assert paths.compress_pyramids() is False
+    _compression("on")
+    assert paths.compress_pyramids() is True
+
+
+def test_settings_and_the_cli_change_it(tmp_path, monkeypatch):
+    import plexora
+    from plexora import cli, paths
+
+    client = plexora.app.test_client()
+    assert client.get("/settings/pyramids").get_json() == {"compress": True}
+    assert client.post("/settings/pyramids", json={"compress": False}).get_json() == {"compress": False}
+    assert paths.read_settings()["compress_pyramids"] is False
+    assert client.post("/settings/pyramids", json={"compress": "maybe"}).status_code == 400
+    assert cli.main(["config", "set", "compress-pyramids", "on"]) == 0
+    assert paths.compress_pyramids() is True
+    assert cli.main(["config", "set", "compress-pyramids", "sometimes"]) == 2

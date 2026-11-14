@@ -472,18 +472,23 @@ def pyramidize_image(resource_id):
     is `ready` -- served from the copy -- or `error` with a sentence.
 
     Behind `--dynamic`: it writes a file. An image that needs nothing, or one
-    already building, is described and left alone.
+    already building, is described and left alone. `{"kind": "compressed" |
+    "exact"}` asks for that kind of copy (the Import dialog's switch);
+    without it, whatever copy is there, else this node's setting.
     """
     refusal = _dynamic_or_403()
     if refusal is not None:
         return refusal
     resource = _registry().get(resource_id, kind="image")
+    from plexora.server.models.data_model import PYRAMIDIZE_KINDS
+
+    kind = str((request.get_json(silent=True) or {}).get("kind") or "").strip().lower()
     if resource.pyramid and resource.state != node_resources.PREPARING:
-        _pyramidize_in_background(resource)
+        _pyramidize_in_background(resource, PYRAMIDIZE_KINDS.get(kind))
     return _stamped(jsonify(success=True, resource=resource.describe()), resource)
 
 
-def _pyramidize_in_background(resource):
+def _pyramidize_in_background(resource, compress=None):
     """`data_model._pyramidized_copy` for a node image, off the request thread."""
     import threading
 
@@ -511,7 +516,7 @@ def _pyramidize_in_background(resource):
             stage("opening")
             copy = data_model._pyramidized_copy(
                 resource.source_path or resource.path,
-                node_resources.node_image_dir(resource.id), stage, report)
+                node_resources.node_image_dir(resource.id), stage, report, compress=compress)
             with resource.lock:
                 node_resources.serve_image_copy(resource, copy)
         except Exception as exc:  # noqa: BLE001 -- said to the user, verbatim
