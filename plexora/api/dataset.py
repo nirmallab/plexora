@@ -602,7 +602,17 @@ class SegHandle:
             An array of uint32 cell-label ids, one per pixel of the box that
             actually existed; 0 where the box runs off the mask.
         """
-        return self.provider().read_region(level, box, max_pixels=max_pixels)
+        provider = self.provider()
+        try:
+            return provider.read_region(level, box, max_pixels=max_pixels)
+        finally:
+            # A provider per read, so the read lets go of the mask file: on
+            # Windows a file held open until the garbage collector runs cannot
+            # be replaced when the mask is rebuilt at the same path. A node's
+            # provider holds no file and has no close.
+            close = getattr(provider, "close", None)
+            if callable(close):
+                close()
 
     def centroid_manifest(self) -> dict:
         """The cell-centroid tile cache's manifest, building it if needed.

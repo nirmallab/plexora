@@ -558,16 +558,22 @@ class LocalImageProvider:
             return self._pyramid
         try:
             if dicom_wsi.is_dicom_path(self._path):
-                return dicom_wsi.build_extension(
-                    dicom_wsi.open_image(self._path, rgb=self._rgb), self._pyramid)
+                opened = dicom_wsi.open_image(self._path, rgb=self._rgb)
+                try:
+                    return dicom_wsi.build_extension(opened, self._pyramid)
+                finally:
+                    _close_pyramid(opened)
             from plexora.server.utils import formats
 
             if formats.handles(self._path):
                 return formats.build_extension(
                     formats.open_image(self._path, index=self.image_index), self._pyramid)
             if self._reads_colour():
-                return brightfield.build_extension(
-                    brightfield.open_rgb(self._path), self._pyramid)
+                opened = brightfield.open_rgb(self._path)
+                try:
+                    return brightfield.build_extension(opened, self._pyramid)
+                finally:
+                    _close_pyramid(opened)
             return ome_zarr.build_extension(
                 ome_zarr.open_image(self._path), self._pyramid)
         except Exception:
@@ -960,8 +966,15 @@ def image_geometry(path, pyramid=None, rgb=False, index=0) -> dict:
 
     # Same order as `LocalImageProvider.open`: a directory has to be
     # recognised before anything tries to read tags out of it.
+    # Every reader opened below is closed before returning: a node answers
+    # this per request, and on Windows a file left open until the garbage
+    # collector runs cannot be renamed, replaced or deleted.
     if xenium_focus.is_focus_dir(path):
-        return xenium_focus.geometry(xenium_focus.open_focus(path))
+        opened = xenium_focus.open_focus(path)
+        try:
+            return xenium_focus.geometry(opened)
+        finally:
+            _close_pyramid(opened)
 
     if ome_zarr.is_zarr_image_path(path):
         return ome_zarr.geometry(ome_zarr.open_image(path, extension=pyramid))
@@ -969,8 +982,11 @@ def image_geometry(path, pyramid=None, rgb=False, index=0) -> dict:
     # Same order as `LocalImageProvider.open` above, and load-bearing for the
     # same reason: a DICOM slide must never reach the OpenSlide branch.
     if dicom_wsi.is_dicom_path(path):
-        return dicom_wsi.geometry(
-            dicom_wsi.open_image(path, extension=pyramid, rgb=rgb))
+        opened = dicom_wsi.open_image(path, extension=pyramid, rgb=rgb)
+        try:
+            return dicom_wsi.geometry(opened)
+        finally:
+            _close_pyramid(opened)
 
     from plexora.server.utils import formats
 
@@ -978,13 +994,48 @@ def image_geometry(path, pyramid=None, rgb=False, index=0) -> dict:
         return formats.geometry_of(path, index=index, extension=pyramid)
 
     if rgb or brightfield.is_rgb_layout(path):
-        return brightfield.geometry(brightfield.open_rgb(path, extension=pyramid))
+        opened = brightfield.open_rgb(path, extension=pyramid)
+        try:
+            return brightfield.geometry(opened)
+        finally:
+            _close_pyramid(opened)
 
     from plexora.server.utils import tiff_region
 
     # The website's shared open (`tiff_region.open_tiff`): the import's other
     # readers of this file walked its directories already.
     channel_io = tiff_region.open_tiff(path)
+    try:
+        return _tiff_geometry(path, channel_io)
+    finally:
+        # Skips the website's shared open, which stays for the next reader.
+        tiff_region.close_tiff(channel_io)
+
+
+def _close_pyramid(pyramid) -> None:
+    """Release what a one-off pyramid opened: its own `close` (DICOM, a
+    brightfield slide) and any per-file handles it holds (a focus folder's,
+    one TIFF per channel) -- the same release `SourceImage.close` does."""
+    closer = getattr(pyramid, "close", None)
+    if callable(closer):
+        try:
+            closer()
+        except Exception:  # noqa: BLE001
+            pass
+    for handle in getattr(pyramid, "_handles", ()) or ():
+        try:
+            handle.close()
+        except Exception:  # noqa: BLE001
+            pass
+
+
+def _tiff_geometry(path, channel_io) -> dict:
+    """`image_geometry` for a plain or pyramidal TIFF, read from `channel_io`,
+    which the caller closes."""
+    import zarr
+
+    from plexora.server.utils import dicom_wsi, tiff_region, tiff_series
+
     # The same axes-aware read `LocalImageProvider.open` does, and it has to be
     # the same one: a node answers "how big is it" from here while the primary
     # records the shape from the conversion, and a geometry check that

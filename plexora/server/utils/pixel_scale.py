@@ -83,7 +83,13 @@ def _local_metadata(path: str):
     if ome_zarr.is_zarr_image_path(path):
         return ome_zarr.physical_metadata(ome_zarr.open_image(path))
     if dicom_wsi.is_dicom_path(path):
-        return dicom_wsi.physical_metadata(dicom_wsi.open_image(path))
+        # Closed here, not left to the garbage collector: the slide holds a
+        # handle per instance file, which on Windows keeps them locked.
+        opened = dicom_wsi.open_image(path)
+        try:
+            return dicom_wsi.physical_metadata(opened)
+        finally:
+            opened.close()
     from plexora.server.utils import formats
 
     if formats.handles(path):

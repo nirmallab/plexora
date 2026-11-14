@@ -968,6 +968,21 @@ def is_loaded(datasource_name) -> bool:
     return _loaded_source is not None and _loaded_source == loaded_scope(datasource_name)
 
 
+def _close_mask_provider(provider):
+    """Let go of the mask file a provider the viewer no longer reads holds.
+
+    Dropping it is not enough: tifffile's objects refer to each other, so the
+    file stays open until the cycle collector happens to run, and a re-segmented
+    mask's pyramid is rebuilt at the same path -- which Windows refuses to
+    replace while it is open. A node's provider holds no file."""
+    close = getattr(provider, "close", None)
+    if callable(close):
+        try:
+            close()
+        except Exception:  # noqa: BLE001 -- a release, never a reason to fail
+            _log.debug("closing the previous mask failed", exc_info=True)
+
+
 def unload(datasource_name):
     """Let go of `datasource_name` if it is the project loaded, so the next
     request for that name loads whatever the registry holds under it then.
@@ -1004,6 +1019,7 @@ def unload(datasource_name):
         datasource = ball_tree = seg = zarray = channels = None
         metadata = volume_source = _image_opened_as = None
         source = None
+        _close_mask_provider(_providers.segmentation)
         _providers = providers.EMPTY
         _table_read_as = None
         _remote = False
@@ -1394,7 +1410,10 @@ def load_datasource(datasource_name, reload=False, wait_for_table=False, keep_im
             metadata = loaded_metadata
             _image_opened_as = opened_as if not failures.get("image") else None
             source = datasource_name
+            outgoing_mask = _providers.segmentation
             _providers = resolved
+            if outgoing_mask is not resolved.segmentation:
+                _close_mask_provider(outgoing_mask)
             _resource_errors.clear()
             _resource_errors.update(failures)
             # The one boolean every dispatch guard tests. Set with the rest of the
@@ -1815,15 +1834,22 @@ def _stat_image(src):
 
 
 def _waits_for_open(entry, datasource_name):
-    """Whether `entry`'s mask is one at a web address left unconverted until
-    its sample was opened -- which is now (`datasource._segmentation_config_fields`).
+    """Whether `entry`'s mask is still waiting for a conversion nothing is
+    running -- which starts now.
+
+    A mask at a web address is left unconverted until its sample is opened
+    (`datasource._segmentation_config_fields`). A local one's job starts at
+    registration, but on a daemon thread: a script or `plexora project create`
+    that ends before it finishes takes the job with it and leaves the record
+    pending for good, so it is picked up here as well.
 
     Not while a conversion for it is already running: its record is the job's
     to write.
     """
+    source = entry.get('segmentationSource')
     return (not entry.get('segmentation')
             and entry.get('segmentation_status') == 'pending'
-            and providers.is_remote_locator(entry.get('segmentationSource'))
+            and bool(source) and not providers.is_node_locator(source)
             and not _segmentation_job_lock_for(datasource_name).locked())
 
 
@@ -5841,29 +5867,36 @@ def _convert_brightfield_image(filePath, dataDirectory=None, progress_callback=N
     which is what a node's geometry check compares against. How many layers
     the *viewer* draws is `channel_names`, and for brightfield that is one.
     """
+    # Every open here is closed before returning, as `_convert_format_image`
+    # does: a slide's file left to the garbage collector stays locked on
+    # Windows after the import has finished with it.
     pyramid = brightfield.open_rgb(filePath)
-    extension = None
-    if dataDirectory and brightfield.needs_extension(pyramid):
-        # Only a slide written with no usable pyramid gets here: `open_rgb`
-        # serves a virtual halving chain off whatever levels the file has, and
-        # a scanner's own pyramid covers the whole zoom range. So importing a
-        # 300 MB SVS writes nothing, and importing a flat 40000px RGB TIFF
-        # derives the coarse levels once.
-        extension = brightfield.build_extension(
-            pyramid, brightfield.extension_path(dataDirectory),
-            progress_callback=progress_callback)
-        if extension:
-            pyramid = brightfield.open_rgb(filePath, extension=extension)
+    try:
+        extension = None
+        if dataDirectory and brightfield.needs_extension(pyramid):
+            # Only a slide written with no usable pyramid gets here: `open_rgb`
+            # serves a virtual halving chain off whatever levels the file has, and
+            # a scanner's own pyramid covers the whole zoom range. So importing a
+            # 300 MB SVS writes nothing, and importing a flat 40000px RGB TIFF
+            # derives the coarse levels once.
+            extension = brightfield.build_extension(
+                pyramid, brightfield.extension_path(dataDirectory),
+                progress_callback=progress_callback)
+            if extension:
+                pyramid.close()
+                pyramid = brightfield.open_rgb(filePath, extension=extension)
 
-    stem = _image_channel_stem(filePath)
-    channel_info = {
-        'maxLevel': len(pyramid),
-        'tileHeight': brightfield.TILE_SIZE,
-        'tileWidth': brightfield.TILE_SIZE,
-        'height': int(pyramid[0].shape[-2]),
-        'width': int(pyramid[0].shape[-1]),
-        'num_channels': int(pyramid[0].shape[0]),
-    }
+        stem = _image_channel_stem(filePath)
+        channel_info = {
+            'maxLevel': len(pyramid),
+            'tileHeight': brightfield.TILE_SIZE,
+            'tileWidth': brightfield.TILE_SIZE,
+            'height': int(pyramid[0].shape[-2]),
+            'width': int(pyramid[0].shape[-1]),
+            'num_channels': int(pyramid[0].shape[0]),
+        }
+    finally:
+        pyramid.close()
     if as_fluorescence:
         channel_info['channel_names'] = [f"{stem}_{i}" for i in range(3)]
         channel_info['image_kind'] = 'ome_tiff'
@@ -7215,10 +7248,11 @@ def get_segmentation_job_status(datasource_name):
         return _segmentation_jobs[datasource_name]
     entry = get_config().get(datasource_name, {})
     if _waits_for_open(entry, datasource_name):
-        # A mask at a web address left unconverted at registration, and now
-        # somebody is waiting on it: the viewer it was added to, the import
-        # dialog that registered it, a script's `wait=True`. Its conversion
-        # starts here as it would on opening the sample (`load_config`).
+        # A mask left unconverted -- at a web address, or one whose job ended
+        # with the process that started it -- and now somebody is waiting on
+        # it: the viewer it was added to, the import dialog that registered
+        # it, a script's `wait=True`. Its conversion starts here as it would
+        # on opening the sample (`load_config`).
         load_config(datasource_name)
         if datasource_name in _segmentation_jobs:
             return _segmentation_jobs[datasource_name]

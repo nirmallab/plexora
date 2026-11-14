@@ -63,8 +63,15 @@ class _MaskShelf:
 
     def close(self):
         with self._lock:
+            gone = [provider for _where, provider in self._held.values()]
             self._held.clear()
             self._order.clear()
+        # Closed, not just dropped: a dropped local provider keeps its file
+        # open until the cycle collector runs (see `forget`).
+        for provider in gone:
+            close = getattr(provider, "close", None)
+            if callable(close):
+                close()
 
     def forget(self, path):
         """Close and drop every local mask read from `path`."""

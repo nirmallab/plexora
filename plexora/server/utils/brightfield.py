@@ -1034,6 +1034,22 @@ class RgbPyramid:
     def level_shapes(self) -> list[list[int]]:
         return [[int(level.shape[-2]), int(level.shape[-1])] for level in self._levels]
 
+    def close(self) -> None:
+        """Release the file/slide behind the native levels. Idempotent.
+
+        Explicit rather than left to the garbage collector: tifffile's pages
+        refer back to their file, so dropping the pyramid does not close it,
+        and on Windows a held handle keeps the slide from being deleted or
+        replaced. A website `PageSlide` stays with the page (its close does
+        nothing)."""
+        handle, self._handle = self._handle, None
+        close = getattr(handle, "close", None)
+        if callable(close):
+            try:
+                close()
+            except Exception:  # noqa: BLE001
+                pass
+
 
 # -- opening -------------------------------------------------------------
 

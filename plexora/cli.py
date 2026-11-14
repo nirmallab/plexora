@@ -2416,6 +2416,7 @@ def _create_from_scan(api, args):
                                  description=args.description,
                                  exist_ok=args.exist_ok)
     dataset_build.remember_plan(dataset.id, plan, dataset.projects)
+    _finish_mask_conversions(dataset.projects)
     if args.json:
         _print_json({**_dataset_wire(dataset),
                      "unassigned": [u["path"] for u in plan["unassigned"]]})
@@ -2571,6 +2572,7 @@ def _run_dataset(args):
                 node=args.node,
                 exist_ok=args.exist_ok,
             )
+            _finish_mask_conversions(dataset.projects)
             if args.json:
                 _print_json(_dataset_wire(dataset))
             else:
@@ -2690,6 +2692,7 @@ def _run_project(args):
                     spec = {**_load_spec_file(args.spec_file), **spec}
                 spec["exist_ok"] = args.exist_ok
                 name = api.project_from_spec(spec)
+            _finish_mask_conversions([name])
             if args.json:
                 _print_json(api.project_manifest(name))
             else:
@@ -2750,6 +2753,11 @@ def _run_project(args):
                 spec = {**_load_spec_file(args.spec_file), **spec}
             spec.pop("image", None)
             record = api.configure_project(args.name, **spec)
+            if spec.get("segmentation"):
+                _finish_mask_conversions([args.name])
+                # What the project is now the mask is drawn, not while it was
+                # still converting.
+                record = api.project_manifest(args.name)
             if args.json:
                 _print_json(record)
             else:
@@ -2774,6 +2782,34 @@ def _message(exc):
     contains a single one. A user reading a terminal should see the sentence.
     """
     return str(exc.args[0]) if exc.args else str(exc)
+
+
+def _finish_mask_conversions(names):
+    """Wait for the mask conversions this command started, before it exits.
+
+    A local mask is converted on a daemon thread after registration returns,
+    which suits the viewer -- its server outlives the job -- but a command
+    ends the moment it returns, and the job dies with it: the project's mask
+    is then pending until something opens the project again. Only jobs
+    running in this process: a mask at a web address is converted when its
+    sample is first opened, and one on a node by the node.
+
+    Said on stderr, so `--json` stays a payload other programs parse.
+    """
+    from plexora import _work
+    from plexora.server.models import data_model
+
+    for name in names:
+        record = data_model._segmentation_jobs.get(name)
+        if not record or record.get("status") != "pending":
+            continue
+        print(f"Converting {name}'s segmentation mask...", file=sys.stderr)
+        while record and record.get("status") == "pending":
+            _work.wait(0.25)
+            record = data_model._segmentation_jobs.get(name)
+        if record and record.get("status") == "error":
+            print(f"Could not convert {name}'s segmentation mask: "
+                  f"{record.get('error')}", file=sys.stderr)
 
 
 def _say_what_is_converting(api, names):
