@@ -481,8 +481,31 @@
         }
         source = next;
         checks.clear();
-        for (const entry of held.values()) close(entry);
+        const open = [...held.values()];
         held.clear();
+        for (const entry of open) close(entry);
+    }
+
+    //: Projects held besides those of the page shown: the one just left, so
+    //: going back finds its readers open. The host page keeps this node for
+    //: the tab's life, and every project the app frame shows is checked here:
+    //: a dataset walked image by image kept every image's workers, their
+    //: parsed IFDs and their files until the tab closed.
+    const KEEP_LEFT = 1;
+
+    /** Before `name`'s first check: let go of the projects the page no
+     *  longer shows (not checked since the app last changed page), all but
+     *  the KEEP_LEFT checked last. */
+    function evict(name) {
+        const left = [...held.keys()].filter((other) => other !== name && !checks.has(other));
+        for (const other of left.slice(0, Math.max(0, left.length - KEEP_LEFT))) {
+            const entry = held.get(other);
+            held.delete(other);
+            close(entry);
+            if (regionReader && entry.image && entry.image.file && regionReader.file === entry.image.file) {
+                closeRegions();
+            }
+        }
     }
 
     //: What a part holds open, to tell whether a new check names the same file.
@@ -532,6 +555,7 @@
         // script while the files are found (on the desktop app, granted by
         // the shell after a round trip to the server).
         const slide = spec && spec.kind === "slide";
+        if (!held.has(name)) evict(name);
         const warm = served && !held.has(name) ? {
             image: !slide && spec.served ? new TiffPool(WORKERS) : null,
             labels: spec.labels && spec.labels.served ? new TiffPool(LABEL_WORKERS) : null,
@@ -551,6 +575,9 @@
             && (!before.image.pool || sameFile(before.image, spec.path, files))
             && (!before.labels.pool || sameFile(before.labels, spec.labels && spec.labels.path, files))) {
             unwarm();
+            // Checked last now (`evict` lets go of the oldest first).
+            held.delete(name);
+            held.set(name, before);
             return before;
         }
         // A part whose spec and file are as they were stays open, with the
@@ -589,6 +616,15 @@
     function close(entry) {
         closePart(entry.image);
         closePart(entry.labels);
+        // A whole-slide image stays open in every openslide worker until let
+        // go (services/browserSlides.js); one another held project reads
+        // stays. Asked again, it opens again.
+        const slide = entry.image && entry.image.slide && entry.image.slide.path;
+        if (slide && global.PlexoraSlides && typeof global.PlexoraSlides.forget === "function"
+            && ![...held.values()].some((other) => other !== entry && other.image && other.image.slide
+                                                   && other.image.slide.path === slide)) {
+            Promise.resolve(global.PlexoraSlides.forget(slide)).catch(() => {});
+        }
     }
 
     //: The image's part of a spec, and the mask's: what a part's readers were
