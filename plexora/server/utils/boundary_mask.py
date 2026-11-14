@@ -338,11 +338,13 @@ def rasterize(polygons: Polygons, destination, *, width: int, height: int,
               max_workers: Optional[int] = None,
               scale: int = 1,
               progress_callback: Optional[Callable[[int, int], None]] = None,
-              stage_callback: Optional[Callable[..., None]] = None) -> str:
+              stage_callback: Optional[Callable[..., None]] = None,
+              frame: Optional[str] = None) -> str:
     """Draw `polygons` as a tiled pyramidal label mask `width` x `height`.
 
     `polygons`, `width` and `height` are all in the MASK's grid; `scale` is
-    only recorded, so the file says how that grid relates to the image's.
+    only recorded, so the file says how that grid relates to the image's, and
+    `frame` (`frame_key`) likewise, so it says which image's grid that is.
 
     Every level is drawn from the polygons themselves rather than downsampled
     from the one above it. That costs nothing extra -- filling a polygon at
@@ -439,7 +441,30 @@ def rasterize(polygons: Polygons, destination, *, width: int, height: int,
         min_levels=levels,
         progress_callback=progress_callback,
         stage_callback=stage_callback,
+        frame=frame,
     )
+
+
+def frame_key(*, width, height, transform=None, pixel_size=None) -> str:
+    """A short name for the reference frame polygons are drawn into: the
+    image's size and the registration `_to_reference_pixels` would use.
+
+    Stamped into the drawn mask, so a mask found by its name beside the run
+    is reused only for the frame it was drawn in -- not after its pixel size
+    was corrected, nor for a second sample registered to another image.
+    Rounded, so the same registration read back from JSON keys the same.
+    """
+    import hashlib
+    import json
+
+    if transform is not None and len(tuple(transform)) == 6:
+        how = ["transform", [round(float(v), 9) for v in transform]]
+    elif pixel_size:
+        how = ["pixel_size", round(float(pixel_size), 12)]
+    else:
+        how = None
+    text = json.dumps([int(width), int(height), how])
+    return hashlib.sha1(text.encode("utf-8")).hexdigest()[:12]
 
 
 def mask_scale(polygons: Polygons, width: int, height: int) -> int:
@@ -503,7 +528,10 @@ def build(table_path, destination, *, width: int, height: int,
                      levels=(int(levels) + extra) if levels else None,
                      scale=scale,
                      progress_callback=progress_callback,
-                     stage_callback=stage_callback)
+                     stage_callback=stage_callback,
+                     frame=frame_key(width=width, height=height,
+                                     transform=transform,
+                                     pixel_size=pixel_size))
 
 
 def resolve_mask(table_path, data_directory=None, *, geometry,
@@ -513,14 +541,31 @@ def resolve_mask(table_path, data_directory=None, *, geometry,
     The counterpart of `data_model.resolve_outline_segmentation`, and it
     adopts an already-derived pyramid on the same terms: beside the source
     first, so a second project importing the same run pays for the drawing
-    once.
+    once -- when it is registered the same way. A pyramid drawn into another
+    frame is not this geometry's mask, whatever its name.
     """
+    frame = frame_key(width=geometry["width"], height=geometry["height"],
+                      transform=geometry.get("transform"),
+                      pixel_size=geometry.get("pixel_size"))
     location = segmentation_pyramid.resolve_derived_mask(
-        table_path, data_directory, mode=segmentation_pyramid.MODE_FILLED)
+        table_path, data_directory, mode=segmentation_pyramid.MODE_FILLED,
+        frame=frame)
     if location.existing is not None:
         return str(location.existing)
+    target = location.target
+    shared = segmentation_pyramid.derived_output_path(
+        table_path, None, mode=segmentation_pyramid.MODE_FILLED)
+    if data_directory is not None and target == shared and shared.exists():
+        # The one beside the run is another frame's drawing, which another
+        # sample may be serving: this one is drawn into the project instead.
+        own = segmentation_pyramid.derived_output_path(
+            table_path, data_directory, mode=segmentation_pyramid.MODE_FILLED)
+        from plexora import paths
+
+        if paths.is_writable(own.parent):
+            target = own
     return build(
-        table_path, location.target,
+        table_path, target,
         width=geometry["width"], height=geometry["height"],
         transform=geometry.get("transform"),
         pixel_size=geometry.get("pixel_size"),

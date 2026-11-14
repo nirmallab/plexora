@@ -1004,25 +1004,43 @@ def replace_project_data(name, data_path_str, payload=None, spatial=None):
         except OSError:
             stat = None
         if spatial or not _picked_on_the_website(source):
-            source = _copy_into_project(name, source)
-        if spatial:
-            from plexora.server.utils import xenium_cells
+            # Never over the copy the record names now: this table has not
+            # been read yet, and a swap refused below, or by the reload after
+            # it, leaves that record -- and those bytes -- in force.
+            source = _copy_into_project(
+                name, source,
+                keep=project.dataset.src if project.dataset is not None else None)
+        copied = source != original and Path(source).resolve() != original.resolve()
+        try:
+            if spatial:
+                from plexora.server.utils import xenium_cells
 
-            record = xenium_cells.normalise_cells_table(
-                source, pixel_size=spatial.get("pixel_size"),
-                root=spatial.get("root"))
-            derived = dict(record) if record else {}
-            if derived and stat is not None:
-                # The copy was rewritten, so its name, size and mtime no
-                # longer match the run's file, which is how "+ Add Layer"
-                # recognises a table this sample already has
-                # (`import_proposal._scoped_sample`). Without this the run's
-                # raw table is offered again and copied over this one.
-                derived["copied_from"] = {
-                    "src": str(original), "name": original.name,
-                    "size": stat.st_size, "mtime_ns": stat.st_mtime_ns}
-
-    inspection = _inspect(source, data_type, table)
+                record = xenium_cells.normalise_cells_table(
+                    source, pixel_size=spatial.get("pixel_size"),
+                    root=spatial.get("root"))
+                derived = dict(record) if record else {}
+            inspection = _inspect(source, data_type, table)
+        except BaseException:
+            if copied:
+                # A copy nothing names, of a table that was refused.
+                try:
+                    source.unlink(missing_ok=True)
+                except OSError:
+                    pass
+            raise
+        if stat is not None and ((spatial and derived)
+                                 or (copied and source.name != original.name)):
+            # The copy was rewritten, or copied beside the record's own file
+            # of that name, so its name, size and mtime no longer match the
+            # run's file, which is how "+ Add Layer" recognises a table this
+            # sample already has (`import_proposal._scoped_sample`). Without
+            # this the run's raw table is offered again and copied over this
+            # one.
+            derived["copied_from"] = {
+                "src": str(original), "name": original.name,
+                "size": stat.st_size, "mtime_ns": stat.st_mtime_ns}
+    else:
+        inspection = _inspect(source, data_type, table)
     # Both branches produce markers/metadata/roles: inspect_flat_table
     # classifies the header directly, propose_read_spec folds
     # classify_from_inspection into the read spec. Read the classification off
@@ -1211,7 +1229,7 @@ def _picked_on_the_website(path) -> bool:
     return os.environ.get("PLEXORA_BACKEND") == "browser" and str(path).startswith("/picked/")
 
 
-def _copy_into_project(name, table_path):
+def _copy_into_project(name, table_path, keep=None):
     """A quantification table is small next to the image, and a project that
     keeps working after the user tidies their downloads folder is worth the
     disk. AnnData and SpatialData are referenced in place -- those are not
@@ -1220,12 +1238,27 @@ def _copy_into_project(name, table_path):
     A Xenium run's `cells.parquet` is a few megabytes beside five gigabytes of
     morphology, so the same rule holds for it: the copy is what the ROI
     plugin's region columns get written into, and writing those back into the
-    vendor's own output directory is not something to do behind the user."""
+    vendor's own output directory is not something to do behind the user.
+
+    `keep`: the copy the project's record names now, which is never written
+    over. Every MCMICRO run calls its table `cells.csv`, so a new one of that
+    name goes beside it (`cells-2.csv`), and the one after that back to
+    `cells.csv`, which nothing names by then."""
     dataset_dir = paths.project_state_dir(name)
     dataset_dir.mkdir(parents=True, exist_ok=True)
     local = dataset_dir / table_path.name
-    if table_path.resolve() != local.resolve():
-        shutil.copy2(table_path, local)
+    if table_path.resolve() == local.resolve():
+        return local
+    try:
+        named = bool(keep) and local.exists() and local.samefile(keep)
+    except (OSError, ValueError):
+        named = False
+    if named:
+        stem, dot, rest = table_path.name.partition(".")
+        local = dataset_dir / f"{stem}-2{dot}{rest}"
+        if local.resolve() == table_path.resolve():
+            return local
+    shutil.copy2(table_path, local)
     _forget_upload(table_path)
     return local
 

@@ -2544,6 +2544,12 @@ def _apply(opened, manifest, decided, chosen, wanted, root, bundle_id, *, progre
         raise
     finally:
         shutil.rmtree(stage_dir, ignore_errors=True)
+    # A target the server has open is now a different project under the same
+    # name (an update, or one deleted since); its next open reads these files.
+    from plexora.server.models import data_model
+
+    for item in chosen:
+        data_model.unload(item["target"])
     for step in later:
         try:
             step()

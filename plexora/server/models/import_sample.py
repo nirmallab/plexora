@@ -613,7 +613,14 @@ def _register(final, created, proposal, answers, layers, reference, mask,
                                                      attach_segmentation,
                                                      replace_project_data)
 
+    from plexora.server.models import data_model
+
     step = layer_jobs.registration_step
+    if created:
+        # A new sample's name is free in the registry, so a project loaded
+        # under it is one deleted since (by another process, say): the next
+        # open must read this sample's files, not serve that one's.
+        data_model.unload(final)
     try:
         if reference is not None:
             step(reference.id, "Preparing the image")
@@ -702,9 +709,18 @@ def _register(final, created, proposal, answers, layers, reference, mask,
         if created:
             found = Project.find(final)
             if found is not None:
+                # Let go first: a viewer may have opened the half-written
+                # sample, and Windows will not delete a file held open.
+                data_model.unload(final)
                 found.delete()
         raise
 
+    if created:
+        # Again, now the name is in the registry: before, `loaded_scope` had
+        # no root to put to it, so on a shared root the deleted project's
+        # (root, name) was never matched above. Also lets go of a sample a
+        # viewer opened while it was half registered.
+        data_model.unload(final)
     project = Project.load(final)
     started = []
     for layer in project.spatial_layers:

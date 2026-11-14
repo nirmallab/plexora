@@ -567,10 +567,27 @@ def refresh_segmentation_mapping(entry, datasource_name):
         entry['segmentationMode'] = mode
 
     pending_source = None
+    # Polygons say nothing of the picture they are drawn into, so a mask
+    # drawn from them is adopted only for this project's frame: the one
+    # beside the run may be another sample's drawing, registered elsewhere.
+    # No frame to compare (the image has no geometry yet) adopts nothing,
+    # and the job that draws one reports why.
+    frame = None
+    polygons = segmentation_pyramid.is_polygon_source(source)
+    if polygons:
+        from plexora.server.utils import boundary_mask
+
+        geometry = _label_geometry_for(datasource_name, source)
+        if geometry:
+            frame = boundary_mask.frame_key(
+                width=geometry["width"], height=geometry["height"],
+                transform=geometry.get("transform"),
+                pixel_size=geometry.get("pixel_size"))
     location = segmentation_pyramid.resolve_derived_mask(
-        source, paths.derived_root(datasource_name), mode=mode
+        source, paths.derived_root(datasource_name), mode=mode, frame=frame
     )
-    if not source_changed and location.existing is not None:
+    if (not source_changed and location.existing is not None
+            and (frame is not None or not polygons)):
         # Backfilling a legacy entry: its derived file is one of ours, of the
         # kind this datasource wants, and nothing says the source moved on --
         # so adopt it rather than spending a minute reproducing it. Checked
@@ -924,6 +941,61 @@ def loaded_scope(datasource_name):
 def is_loaded(datasource_name) -> bool:
     """Whether `datasource_name` is the datasource this process has loaded."""
     return _loaded_source is not None and _loaded_source == loaded_scope(datasource_name)
+
+
+def unload(datasource_name):
+    """Let go of `datasource_name` if it is the project loaded, so the next
+    request for that name loads whatever the registry holds under it then.
+
+    For a project that is going away (deleted) or getting different files
+    behind the same name (a fresh import, a bundle's update). "Loaded" is
+    decided on the name (`loaded_scope`), so without this a project
+    re-created under a deleted one's name opened onto the deleted one's
+    image, channels and cells. Back to the state before anything was loaded:
+    the files are let go (Windows will not delete a file held open), a table
+    still being read behind the viewer is superseded, and `load_generation`
+    moves on so no tile cached for the old project is served again.
+    """
+    global datasource
+    global ball_tree
+    global source
+    global seg
+    global zarray
+    global channels
+    global metadata
+    global load_generation
+    global _loaded_source
+    global _providers
+    global _table_read_as
+    global _remote
+    global volume_source
+    global _table_epoch
+    global _image_opened_as
+    with load_lock:
+        if not is_loaded(datasource_name):
+            return
+        scope = _loaded_source
+        _loaded_source = None
+        datasource = ball_tree = seg = zarray = channels = None
+        metadata = volume_source = _image_opened_as = None
+        source = None
+        _providers = providers.EMPTY
+        _table_read_as = None
+        _remote = False
+        _resource_errors.clear()
+        _image_failures.pop(scope, None)
+        _table_epoch += 1
+        stale = list(_table_pending.values())
+        _table_pending.clear()
+        _table_failed.clear()
+        _gmm_cache.clear()
+        _quantization_store_cache.clear()
+        _image_stats_cache.clear()
+        _view_overview_cache.clear()
+        _clear_table_caches()
+        load_generation += 1
+        for event in stale:
+            event.set()
 
 
 #: A local cell table at least this large loads BEHIND the viewer: the image

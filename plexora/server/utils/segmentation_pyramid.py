@@ -179,7 +179,8 @@ def _newest_mtime_ns(path: Path) -> Optional[int]:
     return newest
 
 
-def _is_adoptable(derived: Path, source: Path, mode: str) -> bool:
+def _is_adoptable(derived: Path, source: Path, mode: str,
+                  frame: Optional[str] = None) -> bool:
     """Whether `derived` can be served for `source` without rebuilding it.
 
     Two conditions, both cheap. It has to be a mask we wrote in the mode this
@@ -193,6 +194,12 @@ def _is_adoptable(derived: Path, source: Path, mode: str) -> bool:
     check whenever there IS a recorded fingerprint. This one exists for the
     callers that have none: a fresh import, and a data node, which has no
     project and therefore nothing to have recorded.
+
+    `frame` (`boundary_mask.frame_key`): polygons are microns, and the same
+    table drawn for another image, or before a pixel size was corrected,
+    puts every cell somewhere else. Found by name, a mask drawn for another
+    frame would be served with nothing to say so; one stamped with no frame
+    cannot say either, and is redrawn once like a scale-less one.
     """
     if generated_mask_kind(derived) != mode:
         return False
@@ -200,6 +207,8 @@ def _is_adoptable(derived: Path, source: Path, mode: str) -> bool:
         # Drawn from polygons before the grid was chosen per run, so always at
         # the image's own pixels -- which for a Visium HD run is a mask that is
         # all outline. Redrawn once; the new file is stamped and adopted after.
+        return False
+    if frame is not None and generated_mask_frame(derived) != frame:
         return False
     if _is_remote(source):
         # No mtime to compare against. Staleness of a remote source is the
@@ -653,7 +662,8 @@ def open_remote_labels(url):
 
 def resolve_derived_mask(segmentation_path, data_directory=None, *,
                          mode: str = MODE_OUTLINES,
-                         use_preference: bool = True) -> DerivedMask:
+                         use_preference: bool = True,
+                         frame: Optional[str] = None) -> DerivedMask:
     """Where `segmentation_path`'s derived pyramid is, and where one would go.
 
     Two locations, searched in this order.
@@ -690,6 +700,9 @@ def resolve_derived_mask(segmentation_path, data_directory=None, *,
     `data_directory` with `use_preference=False`: the preference is about a
     viewer's own filing, and on a node the shared place beside the mask always
     comes first.
+
+    `frame`: only a mask drawn from polygons into that reference frame is
+    found (`_is_adoptable`).
     """
     from plexora import paths
 
@@ -701,7 +714,7 @@ def resolve_derived_mask(segmentation_path, data_directory=None, *,
         if data_directory is None:
             raise ValueError("A mask at a web address needs a project to convert into.")
         target = _remote_derived_path(segmentation_path, data_directory, mode)
-        existing = target if _is_adoptable(target, segmentation_path, mode) else None
+        existing = target if _is_adoptable(target, segmentation_path, mode, frame) else None
         return DerivedMask(existing, target, paths.is_writable(target.parent))
 
     source_path = Path(segmentation_path)
@@ -714,7 +727,7 @@ def resolve_derived_mask(segmentation_path, data_directory=None, *,
             candidates.append(in_project)
 
     existing = next(
-        (c for c in candidates if _is_adoptable(c, source_path, mode)), None)
+        (c for c in candidates if _is_adoptable(c, source_path, mode, frame)), None)
     if existing is None and mode == MODE_FILLED:
         # In the desktop app, to read only: the label pyramid the website
         # built of the same mask, kept in Plexora's folder
@@ -723,7 +736,7 @@ def resolve_derived_mask(segmentation_path, data_directory=None, *,
 
         existing = next((Path(c) for c in relink.website_copies(
             source_path, derived_output_path(source_path, None, mode=mode).name, "labels")
-            if _is_adoptable(Path(c), source_path, mode)), None)
+            if _is_adoptable(Path(c), source_path, mode, frame)), None)
     for candidate in candidates:
         if paths.is_writable(candidate.parent):
             return DerivedMask(existing, candidate, True)
@@ -949,6 +962,30 @@ def generated_mask_scale(path) -> Optional[int]:
         return None
     found = _SCALE_STAMP.search(recorded)
     return int(found.group(1)) if found else None
+
+
+#: The reference frame a mask drawn from polygons was drawn into, stamped
+#: after the scale: `plexora-label-pyramid scale=1 frame=3f2a...`
+#: (`boundary_mask.frame_key`).
+_FRAME_STAMP = re.compile(r"\bframe=([0-9a-f]+)\b")
+
+
+def generated_mask_frame(path) -> Optional[str]:
+    """The frame key a mask drawn from polygons was stamped with, or None:
+    a raster mask, anything we did not write, and every polygon mask drawn
+    before the frame was recorded."""
+    candidate = Path(path)
+    if not candidate.is_file():
+        return None
+    try:
+        with tf.TiffFile(str(candidate)) as reader:
+            recorded = reader.ome_metadata or ""
+    except Exception:
+        return None
+    if FILLED_MARKER not in recorded:
+        return None
+    found = _FRAME_STAMP.search(recorded)
+    return found.group(1) if found else None
 
 
 def is_generated_outline_mask(path) -> bool:
@@ -1297,10 +1334,13 @@ def write_tiled_pyramid(
     return str(destination)
 
 
-def _label_metadata(marker: str = FILLED_MARKER, scale: Optional[int] = None) -> dict:
+def _label_metadata(marker: str = FILLED_MARKER, scale: Optional[int] = None,
+                    frame: Optional[str] = None) -> dict:
     """The level-0 OME metadata of a label pyramid this module writes: one
-    YX plane, the marker (and the scale stamp) as the Image Name."""
+    YX plane, the marker (and the scale and frame stamps) as the Image Name."""
     name = marker if scale is None else f"{marker} scale={int(scale)}"
+    if frame:
+        name = f"{name} frame={frame}"
     return {"axes": "YX", "Channel": {"Name": "cell"}, "Name": name}
 
 
@@ -1319,6 +1359,7 @@ def write_label_pyramid(
     min_levels: Optional[int] = None,
     progress_callback: Optional[Callable[[int, int], None]] = None,
     stage_callback: Optional[Callable[..., None]] = None,
+    frame: Optional[str] = None,
 ) -> str:
     """Write a tiled pyramidal label OME-TIFF, tile by tile, from `block`.
 
@@ -1334,6 +1375,8 @@ def write_label_pyramid(
 
     `scale`, when given, is stamped after the marker (`generated_mask_scale`):
     how many of this file's pixels span one of the reference image's.
+    `frame`, when given, is stamped after that (`generated_mask_frame`): the
+    reference frame polygons were drawn into.
     """
     return write_tiled_pyramid(
         destination,
@@ -1341,7 +1384,7 @@ def write_label_pyramid(
         width=width,
         dtype=dtype,
         block=lambda _channel, *rest: block(*rest),
-        metadata=_label_metadata(marker, scale),
+        metadata=_label_metadata(marker, scale, frame),
         tile_size=tile_size,
         compression=compression,
         max_workers=max_workers,

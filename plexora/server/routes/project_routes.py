@@ -1084,6 +1084,9 @@ def delete_project(name):
                   "deleted from Plexora.",
         ), 403
 
+    # First: the server holding it open would keep serving it to a project
+    # imported later under the same name, and holds its files open besides.
+    data_model.unload(name)
     project.delete()
     # The grouping goes with it. Here rather than inside `Project.delete()`:
     # that primitive is also how a half-finished registration is rolled back,
