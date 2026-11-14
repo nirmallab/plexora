@@ -92,13 +92,31 @@ def _policy_resolver():
     return PolicyResolver()
 
 
+def _policy_connector():
+    import aiohttp
+
+    class PolicyConnector(aiohttp.TCPConnector):
+        """Checks the host of every connection, the hops of a redirect included.
+
+        aiohttp sends `on_request_start` once, for the address as typed, and
+        dials an IP literal without asking the resolver, so a redirect to
+        `http://169.254.169.254/` would pass both; this is where it is caught.
+        """
+
+        async def connect(self, req, *args, **kwargs):
+            check_host(req.url.host)
+            return await super().connect(req, *args, **kwargs)
+
+    return PolicyConnector(resolver=_policy_resolver())
+
+
 async def get_client(**kwargs):
     """fsspec's `get_client` hook: an aiohttp session that obeys this policy."""
     import aiohttp
 
     trace = aiohttp.TraceConfig()
     trace.on_request_start.append(_on_request_start)
-    connector = aiohttp.TCPConnector(resolver=_policy_resolver())
+    connector = _policy_connector()
     return aiohttp.ClientSession(connector=connector,
                                  trace_configs=[*kwargs.pop("trace_configs", []), trace],
                                  **kwargs)
