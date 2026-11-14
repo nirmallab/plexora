@@ -323,12 +323,15 @@ def write_shapes_element(dataset, frame, element_name, transformations=None, *,
                 frame = pd.concat([kept.drop(columns=[c for c in kept.columns
                                                       if c not in frame.columns]),
                                    frame], ignore_index=True)
-        element = ShapesModel.parse(frame, transformations=transformations)
-        sdata.delete_element_from_disk(element_name)
-    else:
-        element = ShapesModel.parse(frame, transformations=transformations)
-    sdata.shapes[element_name] = element
-    sdata.write_element(element_name)
+    element = ShapesModel.parse(frame, transformations=transformations)
+    # spatialdata re-consolidates the store root after its delete and its
+    # write, which drops the store's v2 tables from the root index: the index
+    # is put back as it was, with only this element's entries changed.
+    with _root_index_kept(store, f"shapes/{element_name}"):
+        if element_name in taken:
+            sdata.delete_element_from_disk(element_name)
+        sdata.shapes[element_name] = element
+        sdata.write_element(element_name)
     return {"path": str(store), "name": element_name, "element": f"shapes/{element_name}",
             "n_rows": len(frame)}
 
@@ -812,3 +815,51 @@ def _open_group_at(path: str, writable: bool):
 
     with h5py.File(path, "r+" if writable else "r") as handle:
         yield handle
+
+
+@contextlib.contextmanager
+def _root_index_kept(store, element_path):
+    """Keep a SpatialData root's consolidated index through a spatialdata write.
+
+    spatialdata rebuilds the whole root index after every element it writes or
+    deletes, and that rebuild drops the v2 tables real stores keep under a v3
+    root (see `_open_group`). So the index found before is written back
+    afterwards, with only the entries under `element_path` (and its
+    element-type group) taken from the rebuilt one -- also when the write
+    fails half-way, so the index matches what is on disk. A root without an
+    index is left without one.
+    """
+    metadata = Path(store) / "zarr.json"
+    try:
+        before = json.loads(metadata.read_text(encoding="utf-8")).get("consolidated_metadata")
+    except (OSError, ValueError):
+        before = None
+    old = before.get("metadata") if isinstance(before, dict) else None
+    try:
+        yield
+    finally:
+        if old is not None:
+            _restore_root_index(metadata, before, old, element_path)
+
+
+def _restore_root_index(metadata, before, old, element_path):
+    import os
+
+    document = json.loads(metadata.read_text(encoding="utf-8"))
+    rebuilt = document.get("consolidated_metadata") or {}
+    fresh = rebuilt.get("metadata") or {}
+    kind = element_path.split("/", 1)[0]
+
+    def written(key):
+        return key == element_path or key.startswith(element_path + "/")
+
+    entries = {key: value for key, value in old.items() if not written(key)}
+    entries.update({key: value for key, value in fresh.items()
+                    if written(key) or key == kind})
+    document["consolidated_metadata"] = {**before, **rebuilt,
+                                         "metadata": dict(sorted(entries.items()))}
+    # Replaced whole rather than rewritten in place, so no reader -- and no
+    # crash -- ever meets a half-written root.
+    staged = metadata.with_name(metadata.name + ".plexora-tmp")
+    staged.write_bytes(json.dumps(document, indent=2).encode("utf-8"))
+    os.replace(staged, metadata)
