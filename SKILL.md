@@ -10302,6 +10302,18 @@ in **5.6 s**.
   manifest only meet again because both were computed from the same filename,
   with nothing exchanged between sessions to reconcile them — which is what
   lets a project reopen in a later session with no reconfiguration.
+- **So one node table is often several projects, and every table read and
+  operation names its read spec.** A cohort .h5ad imported once per slide is
+  one resource id for every slide's project; only the spec's `subset` differs.
+  `http.spec_key` names a spec from the dict the primary sends (both ends
+  compute it, no round trip); the node keeps up to
+  `node/resources.LOADED_SPECS` loaded specs per table (`Resource.loaded_specs`,
+  `table_view`), and `NodeTableProvider` / `run_node_operation` send
+  `?spec=<key>`. A spec the node no longer holds answers 409 with
+  `X-Plexora-Spec-Missing` (`SpecNotLoaded` on the primary), which loads it and
+  repeats the request once — safe for a write, the node refuses before running
+  anything. A request with no `spec` gets the spec loaded last, which is what an
+  older primary relies on; never drop the parameter from a new table read.
 - **Where the primary image LIVES can change; which image it IS cannot.**
   `nodes._same_image` runs before `attach_image`, `attach_segmentation` and
   `detach("image", ...)`, and compares width/height/`num_channels`. Every ROI
@@ -10781,7 +10793,11 @@ in **5.6 s**.
   `add_security_headers`: each is registered unconditionally and reads its
   `app.config` key per request. A terminal `plexora` now has a token by
   default (see `cli.py`); the tokenless cases -- Docker, a loopback notebook
-  sidecar, a typed `--remote`, `--no-token` -- rely on the browser guard instead.
+  sidecar, a typed `--remote` on loopback, `--no-token` -- rely on the browser
+  guard instead. `--remote --bind-node` listens on 0.0.0.0 and keeps a token:
+  it rides the `[plexora-remote]` announce after the port (`token=`), and
+  `connect.Session` reads it there (`ANNOUNCE_TOKEN_RE`) for `open_url` and the
+  node registrations it POSTs.
 - **The browser guard judges by headers only a browser sends.** A write
   marked `cross-site` or `same-site`, or from a foreign Origin, is refused;
   a request with neither `Sec-Fetch-Site` nor `Origin` passes, because that
