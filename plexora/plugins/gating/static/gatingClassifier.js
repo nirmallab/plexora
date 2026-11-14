@@ -133,6 +133,7 @@ class GateClassifierControl {
         this._armed = false;
         this._onClick = (event) => this.onCanvasClick(event);
         this._onKey = (event) => this.onKey(event);
+        this._onReviewKey = (event) => this.onKey(event, true);
         this._onServer = (event) => this.onServerChange(event);
         this._runsTimer = 0;
     }
@@ -209,6 +210,7 @@ class GateClassifierControl {
         this.disarm();
         window.clearTimeout(this._runsTimer);
         this.hover?.destroy();
+        document.removeEventListener("keydown", this._onReviewKey, true);
         document.removeEventListener("keydown", this._onKey);
         window.removeEventListener("plexora:agent-state-changed", this._onServer);
         this.ctx.layers?.removeOverlay?.("classifier-examples");
@@ -216,6 +218,10 @@ class GateClassifierControl {
 
     show() {
         this.shown = true;
+        // Capture: before the dataset chip's N (views/datasetNav.js), which
+        // stands down on preventDefault. The review's N is the cell's answer.
+        // Escape stays bubbling, so an open menu's capture Escape shuts only it.
+        document.addEventListener("keydown", this._onReviewKey, true);
         document.addEventListener("keydown", this._onKey);
         this.syncArming();
         this.hover?.sync();
@@ -224,6 +230,7 @@ class GateClassifierControl {
     hide() {
         this.shown = false;
         if (this.review) this.stopReview();
+        document.removeEventListener("keydown", this._onReviewKey, true);
         document.removeEventListener("keydown", this._onKey);
         this.syncArming();
         this.hover?.sync();
@@ -652,16 +659,19 @@ class GateClassifierControl {
         }
     }
 
-    onKey(event) {
+    /** `capture`: called from the capture-phase listener, which answers only
+     *  the letters; Escape waits for the bubbling one (see show()). */
+    onKey(event, capture = false) {
         if (this.review) {
             const answer = { p: "positive", n: "negative", s: "skip", escape: "stop" }[
                 String(event.key || "").toLowerCase()];
-            if (!answer || !this.controller.acceptsKeys(event)) return;
+            if (!answer || capture === (answer === "stop")) return;
+            if (!this.controller.acceptsKeys(event)) return;
             event.preventDefault();
             this.answerReview(answer);
             return;
         }
-        if (event.key !== "Escape" || !this.label) return;
+        if (capture || event.key !== "Escape" || !this.label) return;
         if (!this.controller.acceptsKeys(event)) return;
         this.setLabel(null);
     }
