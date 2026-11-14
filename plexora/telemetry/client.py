@@ -331,8 +331,19 @@ class Telemetry:
                         self._agg.clear()
                         self._records.clear()
                     if self._queue is not None and self.resolved.source != "server":
-                        self._queue.clear()
+                        # Under the flush lock: a flush that has already
+                        # swapped the aggregate out must not write it after.
+                        with self._flush_lock:
+                            self._queue.clear()
                     self._wake.set()
+                elif self.resolved.mode == config.OFF and \
+                        self.resolved.source in ("settings", "env", "do_not_track"):
+                    # Off from a process that was not counting (`plexora
+                    # telemetry off` in a terminal): the queue on disk is the
+                    # one a server on this data root uploads from.
+                    self._clear_shared_queue()
+                    if not self._started:
+                        self.enabled = False
                 elif self.enabled and self._started and not _work.threaded():
                     if self._queue is None or self._env is None:
                         self._ready.clear()
@@ -355,6 +366,42 @@ class Telemetry:
         except Exception:
             self._fail()
             return self.resolved
+
+    def _clear_shared_queue(self):
+        queue = self._queue
+        if queue is None:
+            queue = Queue()
+            if not queue.path.exists():
+                return  # nothing was ever queued here: do not create the file
+        try:
+            queue.clear()
+        finally:
+            if queue is not self._queue:
+                queue.close()
+
+    def recheck(self) -> bool:
+        """Whether telemetry is still on, after re-reading the mode.
+
+        A serving process reads settings.json once, at start; another process
+        (`plexora telemetry off` in a terminal, a second server on this data
+        root) may have changed it since. Called before every flush and every
+        upload. Turning off goes through `reconfigure`, so what is queued is
+        dropped; another mode is applied as it is. Turning telemetry back on
+        is left to `reconfigure` (the settings page), which starts threads.
+        """
+        if not self.enabled:
+            return False
+        try:
+            with self._state_lock:
+                server = self._queue.get_state("server", {}) if self._queue else None
+                resolved = config.resolve(server=server)
+                if resolved.mode == config.OFF:
+                    self.reconfigure()
+                elif resolved.mode != self.mode:
+                    self._apply(resolved)
+        except Exception:
+            self._fail()
+        return self.enabled
 
     def shutdown(self, budget_s=2.0):
         """Final flush, the session summary, and one last upload attempt."""
@@ -428,7 +475,7 @@ class Telemetry:
             self._wake.clear()
             stopping = self._stop.is_set()
             try:
-                if self.enabled:
+                if self.recheck():
                     self.flush()
                     if stopping:
                         self._write_session_summary("clean")

@@ -176,6 +176,9 @@ def upload_once(telemetry, *, include_open=False, force=False) -> str:
     queue = telemetry.queue or telemetry.open_queue()
     if queue is None:
         return "failed"
+    # The mode this process holds may be stale: `plexora telemetry off` in
+    # another terminal changes only settings.json.
+    telemetry.recheck()
     mode = effective_mode(telemetry, queue)
     if mode == config.OFF:
         return "off"
