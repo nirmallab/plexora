@@ -62,9 +62,11 @@ import { jpegxrDecode } from "./jpegxr.js";
 // (services/pythonClient.js `keepsAcrossReload`), this worker is one tab's,
 // named for it, and every page the tab shows connects: a reload connects
 // again to the Python the last page left, its projects loaded. The latest
-// page is the one answered. What the page before asked and was not answered
-// is dropped (its answers would carry ids the new page uses for other
-// things), and what Python had asked it is answered "nothing", the asks' own
+// page is the one answered. What the page before asked to read and was not
+// answered is dropped; what it asked to write still runs, as on a page that
+// leaves (services/backend.js `leaving`), and only the answer is not posted,
+// since it would carry an id the new page uses for other things (`pageNow`).
+// What Python had asked the page before is answered "nothing", the asks' own
 // fallback. Once no page of the tab has come back for PAGE_GONE_MS (the tab
 // closed), the worker closes itself (`watchPage`) rather than hold its heap
 // for the browser's minutes.
@@ -104,11 +106,12 @@ function attach(port) {
     watchPage();
 }
 
-//: The page before `number` is gone: its queued and retried requests are
-//: dropped, and Python's questions to it answered with nothing.
+//: The page before `number` is gone: its queued reads and its retries (only
+//: reads are retried) are dropped, and Python's questions to it answered with
+//: nothing. Its writes stay queued: the edit it saved as it left still lands.
 function leftBehind(number) {
     for (let i = queue.length - 1; i >= 0; i -= 1) {
-        if (queue[i].page !== undefined && queue[i].page < number) queue.splice(i, 1);
+        if (queue[i].page !== undefined && queue[i].page < number && isRead(queue[i])) queue.splice(i, 1);
     }
     // Every retry waiting is an earlier page's: this one has asked nothing yet.
     for (const { timer } of retrying.values()) clearTimeout(timer);
@@ -477,8 +480,19 @@ async function loadStage(name, importer = "?") {
     if (!stage) throw new Error(`no stage ${name}`);
     const started = performance.now();
     const wheels = installWheels(stage.wheels);
-    if (stage.pyodide.length) await py.loadPackage(stage.pyodide, { messageCallback: () => {} });
+    // Pyodide reports a package whose download failed, it does not throw:
+    // thrown below, the stage is failed (and asked again later), not loaded
+    // without it.
+    const errors = [];
+    let missing = [];
+    if (stage.pyodide.length) {
+        await py.loadPackage(stage.pyodide, { messageCallback: () => {}, errorCallback: (text) => errors.push(text) });
+        const canonical = (pkg) => String(pkg).toLowerCase().replace(/[-_.]+/g, "-");
+        const have = new Set(Object.keys(py.loadedPackages || {}).map(canonical));
+        missing = stage.pyodide.filter((pkg) => !have.has(canonical(pkg)));
+    }
     await wheels;
+    if (missing.length) throw new Error(`${name}: ${missing.join(", ")} did not load${errors.length ? `: ${errors.join("; ")}` : ""}`);
     self.postMessage({ event: { kind: "stage", stage: name, importer,
                                 ms: Math.round(performance.now() - started) } });
 }
@@ -890,6 +904,11 @@ async function boot(args) {
         setTimeout(() => self.close(), 1000);
         return { ...answer, dead: true };
     }
+    // A stage that failed for the page before (the network down for a moment)
+    // is asked again for this one, as a new Python would: a reload fixes it.
+    try {
+        py.runPython("from plexora.browser import stages; stages.forget_failures()");
+    } catch (error) { /* asked again only by a new Python, then */ }
     return { ...answer, reattached: true, page: pageNumber };
 }
 
@@ -1930,9 +1949,12 @@ self.onmessage = ({ data }) => {
     if (data.op === "cancel") {
         // A request the page gave up on (its AbortSignal), dropped if Python
         // has not begun it; one already begun runs to its end, and is not
-        // asked again if its route says "again later".
-        const at = queue.findIndex((queued) => queued.id === data.args.id);
-        const later = retrying.get(data.args.id);
+        // asked again if its route says "again later". Only this page's: ids
+        // restart with each page, and a write the page before left queued
+        // (`leftBehind`) can carry the same id.
+        const at = queue.findIndex((queued) => queued.id === data.args.id && pageNow(queued));
+        const retry = retrying.get(data.args.id);
+        const later = retry !== undefined && pageNow(retry.queued) ? retry : undefined;
         if (at >= 0 || later !== undefined) {
             if (at >= 0) queue.splice(at, 1);
             if (later !== undefined) { clearTimeout(later.timer); retrying.delete(data.args.id); }

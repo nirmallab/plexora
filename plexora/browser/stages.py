@@ -191,8 +191,9 @@ class StageFinder(importlib.abc.MetaPathFinder):
     """Loads a stage the first time one of its modules is imported, then lets
     the ordinary finders find it. `load(stage)` is the page's loader: it
     fetches and installs the stage's packages (waiting through JSPI), or
-    raises; a stage that failed to load is not asked for again in this
-    session, and the import fails as a missing package would."""
+    raises; a stage that failed to load is not asked for again until the
+    page asks for it (`forget_failures`, a page reconnecting to this Python),
+    and the import fails as a missing package would."""
 
     def __init__(self, load, loaded=("base",)):
         self._load = load
@@ -233,6 +234,13 @@ class StageFinder(importlib.abc.MetaPathFinder):
 
         boot.stage(stage)
         return None  # the ordinary finders find what was just installed
+
+    def forget_failures(self) -> list:
+        """Lets the stages that failed be asked for again (their failure may
+        have been the network's); returns their names."""
+        names = sorted(self.failed)
+        self.failed.clear()
+        return names
 
 
 def _probing() -> bool:
@@ -286,3 +294,14 @@ def install(load, loaded=("base",)) -> StageFinder:
     finder = StageFinder(load, loaded)
     sys.meta_path.insert(0, finder)
     return finder
+
+
+def forget_failures() -> list:
+    """The installed finder's `forget_failures`: a reloaded page of a tab that
+    kept its Python (Chrome, Edge) asks again for what failed before it, as a
+    new Python would."""
+    names = []
+    for finder in sys.meta_path:
+        if isinstance(finder, StageFinder):
+            names += finder.forget_failures()
+    return names
