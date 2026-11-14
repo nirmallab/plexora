@@ -28,9 +28,10 @@ So reads resolve across `roots()` while writes always land in `data_root()`.
 When a project's home root *is* the user root -- the entire single-user case --
 the two collapse to one directory and nothing is different from before.
 
-Deliberately a leaf module: it imports nothing from `plexora`, so it cannot
-participate in the import cycle that `plexora/__init__.py` sits at the centre
-of, and it is safe to call from anywhere including the CLI.
+Deliberately a leaf module: it imports nothing from `plexora` but
+`_transient_locks`, itself a stdlib-only leaf, so it cannot participate in the
+import cycle that `plexora/__init__.py` sits at the centre of, and it is safe
+to call from anywhere including the CLI.
 """
 
 from __future__ import annotations
@@ -48,6 +49,8 @@ from pathlib import Path
 from typing import NamedTuple
 
 from platformdirs import user_config_dir, user_data_dir
+
+from plexora._transient_locks import past_transient_locks
 
 #: Passed to platformdirs as both the app name and (via appauthor=False) the
 #: whole of the path tail. Without appauthor=False, Windows gets
@@ -276,11 +279,16 @@ def read_settings() -> dict:
     A damaged file reads as {} rather than raising: the fallbacks below are all
     still available, and refusing to start because a preferences file is
     corrupt would be a worse failure than quietly using the default.
+
+    A refusal is waited out first: Windows refuses to open the file for the
+    moment another process's `write_settings` is replacing it, and reading
+    that as {} would hand a read-modify-write an empty file to write back, or
+    a starting process the platform default as its data root for good.
     """
     path = settings_path()
     try:
         with _settings_lock:
-            text = path.read_text(encoding="utf-8")
+            text = past_transient_locks(lambda: path.read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return {}
     if not text.strip():
@@ -387,7 +395,8 @@ def _registry_size(root) -> int | None:
     the answer to base a refusal on.
 
     Re-implements the count rather than calling `project.read_config`, because
-    this module imports nothing from `plexora` and has to keep it that way --
+    this module imports nothing from `plexora` beyond a stdlib-only leaf and
+    has to keep it that way --
     the CLI resolves the root before the package is importable.
     """
     path = Path(root) / CONFIG_FILENAME
@@ -1055,9 +1064,14 @@ def _registered(root: Path) -> frozenset:
     if cached is not None and cached[0] == stamp:
         return cached[1]
     try:
-        names = frozenset(json.loads(path.read_text(encoding="utf-8") or "{}"))
+        names = frozenset(json.loads(
+            past_transient_locks(lambda: path.read_text(encoding="utf-8")) or "{}"))
     except (OSError, ValueError):
-        names = frozenset()
+        # A read refused past the retry, or a file caught half-written, is not
+        # "this root holds no projects": remembering that under the stamp
+        # would send every project's state to the data root until the
+        # registry is next written. Answer as before and read again next time.
+        return cached[1] if cached is not None else frozenset()
     _names_cache[path] = (stamp, names)
     return names
 
