@@ -33,7 +33,7 @@ import numpy as np
 import tifffile as tf
 import zarr
 
-from plexora.server.utils import ome_zarr
+from plexora.server.utils import ome_zarr, tiff_series
 
 # Suffix for masks this module generates. The old pipeline wrote
 # ".fast-outlines.pyramid.ome.tiff" even when the boundaries were exact;
@@ -1014,6 +1014,11 @@ def _tiff_level_gaps(reader) -> list:
     gaps = []
     if len(series.levels) <= 1:
         gaps.append("it has only one resolution level (no pyramid)")
+    elif tiff_series.steps_unevenly(series):
+        # The tile route reads a servable mask level for level, and the viewer
+        # takes level n to be 1/2**n: a 4x-step pyramid would draw every
+        # zoomed-out view shrunk toward the origin.
+        gaps.append("its levels do not each halve")
     if not page.is_tiled:
         gaps.append("it is not tiled")
     return gaps
@@ -1044,6 +1049,10 @@ def _zarr_level_gaps(group) -> list:
     first = group[str(names[0])]
     if getattr(first, "ndim", 2) != 2:
         return [f"its levels are {first.ndim}-D arrays, not single planes"]
+    # Level n is read as the mask at 1/2**n, as for the image beside it.
+    shapes = [group[str(n)].shape[-2:] for n in names]
+    if ome_zarr.dyadic_prefix(shapes) < len(shapes):
+        return ["its levels do not each halve"]
     return []
 
 
