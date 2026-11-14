@@ -49,6 +49,10 @@ class FigureDocumentState {
 
         this._listeners = { change: [], status: [] };
         this._chain = Promise.resolve();
+        /** Saves the server has not confirmed yet, oldest first. A save whose
+         *  request never arrived stays here and goes out again, ahead of the
+         *  next one -- that next one was built on it. */
+        this._unsent = [];
         this._undo = [];
         this._redo = [];
 
@@ -103,6 +107,7 @@ class FigureDocumentState {
         }
         this.document = result.data.document;
         this.sourceStatus = result.data.source_status || {};
+        this._unsent = [];
         this._undo = [];
         this._redo = [];
         this._setStatus("saved");
@@ -143,32 +148,7 @@ class FigureDocumentState {
         this._setStatus("unsaved");
         this._emit("change", this.document);
 
-        return this._enqueue(async () => {
-            // Read HERE, not where the commit was made. The queue serialises
-            // saves, so an earlier one may have moved the figure on between the
-            // two moments -- and `before.revision` is then a revision the server
-            // has already superseded, which it answers with a 409 that has
-            // nothing to do with another session. Placing a text box and pressing
-            // Escape was enough: the add and the remove are two commits in the
-            // same breath, and the second carried the revision from before the
-            // first.
-            //
-            // Basing the operations on the latest CONFIRMED revision is exactly
-            // what the chain exists to make safe: nothing else can have written
-            // in between, because nothing else is allowed to be in flight.
-            const baseRevision = this.revision;
-            this._setStatus("saving");
-            let result;
-            try {
-                result = await this.api.patchFigure(this.figureId, baseRevision, operations);
-            } catch (error) {
-                // Never discard local state after a failed save: the network is
-                // the thing that failed, and the user's work is still here.
-                this._setStatus("failed", "Could not reach the server. Your changes are still here.");
-                return false;
-            }
-            return this._settle(result, before);
-        });
+        return this._enqueue(() => this._save({ operations: operations, before: before }));
     }
 
     /** Roll back one committed action. */
@@ -209,30 +189,68 @@ class FigureDocumentState {
         this._setStatus("unsaved");
         this._emit("change", this.document);
 
-        return this._enqueue(async () => {
-            // Same as `commit`: the revision is whatever is confirmed when the
-            // request goes out, not what was current when undo was pressed. Two
-            // undos in a row is the case that broke.
+        return this._enqueue(() => this._save({ document: draft, before: current }));
+    }
+
+    /**
+     * Send `batch`, after any earlier save whose request never arrived.
+     *
+     * A dropped request leaves its edit in the tab only. The next edit was made
+     * on top of it, so sending that one alone and calling the result "saved"
+     * would leave the server without the dropped edit while the tab says all is
+     * stored. Each unsent batch goes out again in order, and "saved" is said
+     * only once none is left.
+     */
+    async _save(batch) {
+        // A whole-document replace already holds every earlier edit the tab
+        // shows, so nothing before it needs sending -- once it is stored. Until
+        // then it keeps them: if the server refuses it, the tab goes back to a
+        // document that still shows them, and they must still go out.
+        if (batch.document) {
+            batch.supersedes = this._unsent;
+            this._unsent = [];
+        }
+        this._unsent.push(batch);
+        while (this._unsent.length) {
+            const item = this._unsent[0];
+            // Read HERE, not where the commit was made. The queue serialises
+            // saves, so an earlier one may have moved the figure on between the
+            // two moments -- and `before.revision` is then a revision the server
+            // has already superseded, which it answers with a 409 that has
+            // nothing to do with another session. Placing a text box and pressing
+            // Escape was enough: the add and the remove are two commits in the
+            // same breath, and the second carried the revision from before the
+            // first. Two undos in a row broke the same way.
+            //
+            // Basing the operations on the latest CONFIRMED revision is exactly
+            // what the chain exists to make safe: nothing else can have written
+            // in between, because nothing else is allowed to be in flight.
             const baseRevision = this.revision;
-            draft.revision = baseRevision;
             this._setStatus("saving");
             let result;
             try {
-                result = await this.api.replaceFigure(this.figureId, baseRevision, draft);
+                if (item.document) {
+                    item.document.revision = baseRevision;
+                    result = await this.api.replaceFigure(this.figureId, baseRevision, item.document);
+                } else {
+                    result = await this.api.patchFigure(this.figureId, baseRevision, item.operations);
+                }
             } catch (error) {
+                // Never discard local state after a failed save: the network is
+                // the thing that failed, and the user's work is still here. It
+                // stays in `_unsent`, so the next save carries it.
                 this._setStatus("failed", "Could not reach the server. Your changes are still here.");
                 return false;
             }
-            return this._settle(result, current);
-        });
+            if (!result.ok) return this._settle(result, item);
+            this._unsent.shift();
+            this.document.revision = result.data.revision;
+        }
+        this._setStatus("saved");
+        return true;
     }
 
-    _settle(result, before) {
-        if (result.ok) {
-            this.document.revision = result.data.revision;
-            this._setStatus("saved");
-            return true;
-        }
+    _settle(result, item) {
         if (result.status === 409) {
             // Both sides have work. Nothing is discarded here -- the banner
             // asks, and reloading is the user's decision.
@@ -246,8 +264,22 @@ class FigureDocumentState {
         // The server refused the edit itself. The local copy is now describing
         // something that was never stored, so it goes back to what was
         // confirmed -- otherwise the next save would be built on a state the
-        // server has never seen.
-        this.document = before;
+        // server has never seen. Unsent edits made after it were built on it,
+        // so they go too, with their undo steps; the ones before it are stored.
+        const dropped = this._unsent.splice(0);
+        dropped.slice(1).forEach((later) => {
+            const at = this._undo.lastIndexOf(later.before);
+            if (at >= 0) this._undo.splice(at, 1);
+        });
+        // A refused replace was to carry the unsent edits before it. The
+        // document it goes back to shows them and the server never stored
+        // them, so they are queued again for the next save.
+        if (item.supersedes) this._unsent = item.supersedes;
+        // The revision stays the confirmed one: unsent batches stored just now
+        // moved it past the number this snapshot was taken at.
+        const confirmed = this.revision;
+        this.document = item.before;
+        this.document.revision = confirmed;
         this._undo.pop();
         this._setStatus("failed", result.data.error || "That change could not be saved.");
         this._emit("change", this.document);
