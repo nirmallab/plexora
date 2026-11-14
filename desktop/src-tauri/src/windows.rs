@@ -68,6 +68,37 @@ fn init_script(app: &AppHandle, origin: &str) -> String {
     )
 }
 
+/// What the navigation guard does with a window's move to `target`.
+#[derive(Debug, PartialEq, Eq)]
+enum Navigation {
+    Allow,
+    /// The user's browser opens it instead; the window stays.
+    External,
+    Refuse,
+}
+
+/// The navigation guard. The app's own pages are those of the server running
+/// now (`server`), parsed by the rule `commands::is_server_page` uses: after a
+/// restart the server is on a new port, and the origin a window was built with
+/// is a port that may now be anyone's. `built` stands in only while no server
+/// is ready -- before the first one, or between one and its successor.
+fn navigation_for(target: &url::Url, built: &url::Origin, server: Option<&str>) -> Navigation {
+    let ours = match server {
+        Some(origin) => crate::commands::is_server_page(target, origin),
+        None => target.origin() == *built,
+    };
+    if ours {
+        return Navigation::Allow;
+    }
+    match target.scheme() {
+        // Documentation, a paper, a bucket's web page: the user's browser,
+        // not a Plexora window that cannot go back.
+        "http" | "https" | "mailto" => Navigation::External,
+        "about" | "blob" | "data" => Navigation::Allow,
+        _ => Navigation::Refuse,
+    }
+}
+
 /// A window on the app's server. Every one is built here so each gets the
 /// init script, the download handler and the navigation guard.
 pub fn create_main(app: &AppHandle, label: &str, url: &str) -> tauri::Result<WebviewWindow> {
@@ -82,18 +113,14 @@ pub fn create_main(app: &AppHandle, label: &str, url: &str) -> tauri::Result<Web
         .center()
         .initialization_script(&init_script(app, &origin_text))
         .on_navigation(move |target| {
-            if target.origin() == origin {
-                return true;
-            }
-            match target.scheme() {
-                // Documentation, a paper, a bucket's web page: the user's
-                // browser, not a Plexora window that cannot go back.
-                "http" | "https" | "mailto" => {
+            let server = for_links.state::<ServerState>().0.ready().map(|ready| ready.origin);
+            match navigation_for(target, &origin, server.as_deref()) {
+                Navigation::Allow => true,
+                Navigation::External => {
                     let _ = for_links.opener().open_url(target.as_str(), None::<&str>);
                     false
                 }
-                "about" | "blob" | "data" => true,
-                _ => false,
+                Navigation::Refuse => false,
             }
         })
         .on_download(downloads::handler(app.clone()))
@@ -137,4 +164,41 @@ pub fn bring_to_front(window: &WebviewWindow) {
     let _ = window.unminimize();
     let _ = window.show();
     let _ = window.set_focus();
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn page(text: &str) -> url::Url {
+        text.parse().unwrap()
+    }
+
+    #[test]
+    fn a_window_follows_its_server_to_a_new_port() {
+        // Built on 8420; the server restarted on 51234 (8420 was taken).
+        let built = page("http://127.0.0.1:8420/?token=a").origin();
+        let now = Some("http://127.0.0.1:51234");
+        assert_eq!(navigation_for(&page("http://127.0.0.1:51234/?token=b"), &built, now), Navigation::Allow);
+        // The old port is somebody else's now: not a page of this app.
+        assert_eq!(navigation_for(&page("http://127.0.0.1:8420/"), &built, now), Navigation::External);
+    }
+
+    #[test]
+    fn the_built_origin_stands_in_only_while_no_server_is_ready() {
+        let built = page("http://127.0.0.1:8420/").origin();
+        assert_eq!(navigation_for(&page("http://127.0.0.1:8420/tonsil"), &built, None), Navigation::Allow);
+        assert_eq!(navigation_for(&page("http://127.0.0.1:8421/"), &built, None), Navigation::External);
+    }
+
+    #[test]
+    fn other_pages_go_to_the_browser_or_nowhere() {
+        let built = page("http://127.0.0.1:8420/").origin();
+        let now = Some("http://127.0.0.1:8420");
+        assert_eq!(navigation_for(&page("https://plexora.app/docs"), &built, now), Navigation::External);
+        assert_eq!(navigation_for(&page("mailto:a@b.c"), &built, now), Navigation::External);
+        assert_eq!(navigation_for(&page("about:blank"), &built, now), Navigation::Allow);
+        assert_eq!(navigation_for(&page("data:text/html,hi"), &built, now), Navigation::Allow);
+        assert_eq!(navigation_for(&page("file:///etc/passwd"), &built, now), Navigation::Refuse);
+    }
 }
