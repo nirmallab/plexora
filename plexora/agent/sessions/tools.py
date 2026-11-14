@@ -163,6 +163,17 @@ def mirroring(mirror) -> bool:
     return bool(mirror.get("enabled")) and mirror.get("status") != "off"
 
 
+def bulk_pass_running(record) -> bool:
+    """Whether the session's bulk job is queued or running in this process.
+    A rollback or commit must wait for it: the pass goes on writing (and
+    receipting) after the finish lets go of the session."""
+    from plexora.agent import jobs
+
+    job_id = record.get("bulk_job_id")
+    job = jobs.store().get(job_id) if job_id else None
+    return job is not None and job.get("status") in ("queued", "running")
+
+
 def mirror_brief(mirror):
     return {k: mirror.get(k) for k in ("status", "view_id", "last_error", "sent")}
 
@@ -702,6 +713,9 @@ class SessionTools:
         with self.engine_for(call, inp.session_id, st=st) as engine:
             record = engine.record
             out = {"session_id": inp.session_id, "action": action}
+            if action in ("commit", "rollback") and bulk_pass_running(record):
+                raise AgentError("conflict", f"the bulk pass is still running; {action} once "
+                                 "it is over (or cancel it, then wait for it)", retryable=True)
             if action == "cancel":
                 job_id = record.get("bulk_job_id")
                 if job_id:

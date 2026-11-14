@@ -546,6 +546,11 @@ def apply_final(engine, packet, answer):
             target = engine.record["units"].get(key)
             if target is None or target["state"] not in TERMINAL:
                 continue
+            if target.get("channel_level"):
+                # A channel verdict is decided on its audit row, never
+                # confirmed: reopened, it would be sent to manual review and
+                # its marker read as reliable in every cell.
+                continue
             target.setdefault("concerns", []).append(concern.model_dump(mode="json"))
             target["state"] = "awaiting_confirm"
             target["level"] = 2

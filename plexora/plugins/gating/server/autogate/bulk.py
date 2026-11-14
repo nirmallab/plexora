@@ -402,14 +402,18 @@ def run(call, inp):
             # The first that is not another image's stop (`_Halted`).
             raise next((e for e in errors if not isinstance(e, _Halted)), errors[0])
     with engine_for(call, session_id) as engine:
-        if engine.record.get("scope") == "dataset":
+        # A session finished while the pass ran (cancelled) stays finished:
+        # nothing more is decided for it, and it is not brought back to life.
+        running = engine.record["state"] == "bulk_running"
+        if running and engine.record.get("scope") == "dataset":
             from plexora.plugins.gating.server.autogate import groups, transfer
 
             if groups.active(engine):
                 groups.maintain(engine)
             else:
                 transfer.after_bulk(engine)
-        engine.record["state"] = "deciding"
+        if running:
+            engine.record["state"] = "deciding"
         engine.record.pop("bulk_progress", None)
         progress = engine.progress()
     return {"session_id": session_id, "progress": progress, "calibration": calibrations}

@@ -54,11 +54,15 @@ def calibrate_image(call, project, session_id):
     return {"project": project, "revision": calibration.revision(project), "changed": changed}
 
 
-def _check_stopped(session_id):
+def _check_stopped(session_id, call=None):
     from plexora.agent.jobs import JobCancelled
 
     if store().control(session_id).get("stopped"):
         raise JobCancelled("stopped from the viewer")
+    if call is not None:
+        # `qc_session_finish(action="cancel")` cancels the job: the steps
+        # after the scan must stop too, not write on into a cancelled session.
+        call.check_cancelled()
 
 
 #: Two announcements this close together are folded into one, unless the
@@ -160,21 +164,32 @@ def add_candidates(engine, project, scan, ranked, *, audited=False):
     open_channels = {name for name, u in channels.items()
                      if u["state"] in ("scanned", "awaiting_audit", "awaiting_candidates",
                                        "audit_uncertain")}
+    audited_channels = {name for name, u in channels.items()
+                        if u["state"] not in ("pending", "scanned")
+                        and not u["state"].startswith("skipped")}
     added = []
     for candidate in ranked:
         if candidate.class_hint in schemas.STAINING_REGION_CLASSES:
             _staining_hint(record, project, candidate)
             continue
         unit = candidate_unit(candidate, project, scan)
+        lead = unit["audit_channel"]
         if unit["audit_channel"] not in open_channels:
             unit["audit_channel"] = next(
                 (c for c in unit["channels"] if c in open_channels), None)
         if unit["audit_channel"] is None:
-            continue
+            if not (audited and lead in audited_channels):
+                continue
+            # A fallback detector run after its channels were audited and
+            # closed (the checks outlast the audit): the finding still gets
+            # its confirm look, and a confirmed one flags its channels when
+            # the session closes (`finalize._settle_channel_statuses`).
+            unit["audit_channel"] = lead
+            unit["audit_channels"] = [c for c in unit["channels"] if c in audited_channels]
         # A candidate merged across channels is drawn on every one of
         # their audit tiles, and kept when any row names it.
-        unit["audit_channels"] = [c for c in unit["channels"] if c in open_channels] \
-            or [unit["audit_channel"]]
+        unit["audit_channels"] = unit.get("audit_channels") or [
+            c for c in unit["channels"] if c in open_channels] or [unit["audit_channel"]]
         if audited and all(channels[c]["state"] != "scanned" for c in unit["audit_channels"]):
             unit["state"] = "awaiting_confirm"
             unit["forced_confirm"] = "found by a fallback detector after the audit"
@@ -281,12 +296,12 @@ def _run_bulk(call, session_id, announce, scanmod, DetectorContext, run_all, ver
             add_candidates(engine, project, result, built["ranked"])
             _update_result(engine, result, built, skipped)
         call.progress(done=3, total=4, message="scanned")
-    _check_stopped(session_id)
+    _check_stopped(session_id, call)
     background_step(call, session_id, scan=result if not done_scan else None,
                     announce=announce)
-    _check_stopped(session_id)
+    _check_stopped(session_id, call)
     dna_step(call, session_id, announce=announce)
-    _check_stopped(session_id)
+    _check_stopped(session_id, call)
     from plexora.plugins.qc.server import checks_bulk
 
     try:

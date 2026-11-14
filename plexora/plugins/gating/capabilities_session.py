@@ -2565,6 +2565,9 @@ def finish(call, inp):
         out = {"session_id": inp.session_id, "action": action}
         from plexora.plugins.gating.server.autogate import cellcalls
 
+        if action in ("commit", "rollback") and session_tools.bulk_pass_running(record):
+            raise AgentError("conflict", f"the bulk pass is still running; {action} once it "
+                             "is over (or cancel it, then wait for it)", retryable=True)
         if action == "cancel":
             job_id = record.get("bulk_job_id")
             if job_id:

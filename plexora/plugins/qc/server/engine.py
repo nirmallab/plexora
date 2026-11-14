@@ -705,14 +705,15 @@ class QCEngine(BaseEngine):
             unit["write_error"] = "no geometry"
             return None
         record = self._candidate_record(unit, klass=klass, action=action, geometry=geometry)
-        unit["geometry"] = geometry
         if unit.get("channel_level"):
             # A verdict on whole channels (a cycle out of register
             # everywhere): recorded, never drawn -- the cells read it from
-            # the result (`cells.calls`).
+            # the result (`cells.calls`). The unit keeps no outline, so no
+            # later look (the final review) shows it as a region.
             record["channel_level"] = True
             self._store_candidate(record)
             return None
+        unit["geometry"] = geometry
         if self.options["mode"] != "apply":
             unit["proposed"] = True
             self._store_candidate(record)

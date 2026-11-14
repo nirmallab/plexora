@@ -928,6 +928,10 @@ def final_qc_review(engine, units):
     for unit in engine.units_of("candidate", project):
         if unit["state"] not in schemas.WRITTEN_STATES or not unit.get("geometry"):
             continue
+        if unit.get("channel_level"):
+            # A verdict on a whole channel is settled on its audit row and is
+            # no region: drawn here it would read as one covering the tissue.
+            continue
         # A region keeps the label it was first shown under, so a second
         # review names the same regions as the first did.
         if not unit.get("review_label"):

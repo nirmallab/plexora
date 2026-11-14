@@ -82,7 +82,10 @@ class ServerLink:
         if self.token:
             params["token"] = self.token
         full = urllib.parse.urljoin(self.base_url, path.lstrip("/"))
-        return full + ("?" + urllib.parse.urlencode(params) if params else "")
+        if not params:
+            return full
+        # A path that already carries a query keeps it; the token joins it.
+        return full + ("&" if "?" in full else "?") + urllib.parse.urlencode(params)
 
     def request(self, method: str, path: str, body=None, *, timeout=TIMEOUT_S, **query):
         """(status, parsed JSON or bytes). Raises OSError when nobody answers."""

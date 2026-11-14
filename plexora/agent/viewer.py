@@ -70,21 +70,20 @@ class RemoteViewerControl:
     def __init__(self, link):
         self.link = link
 
-    def _call(self, method, path, body=None, timeout=5.0):
+    def _call(self, method, path, body=None, timeout=5.0, **query):
         try:
-            return self.link.request(method, path, body, timeout=timeout)
+            return self.link.request(method, path, body, timeout=timeout, **query)
         except OSError as exc:
             raise AgentError("viewer_not_available",
                              f"the Plexora server at {self.link.base_url} did not answer",
                              detail={"hint": NOT_AVAILABLE_HINT}, retryable=True) from exc
 
     def list_sessions(self, project=None):
-        path = "/agent/v1/viewer/sessions"
-        if project:
-            from urllib.parse import quote
-
-            path += f"?project={quote(project)}"
-        status, answer = self._call("GET", path)
+        # The filter goes in as a query parameter, encoded with the link's
+        # token: glued into the path, it swallows `?token=` and a server that
+        # needs one refuses the listing.
+        status, answer = self._call("GET", "/agent/v1/viewer/sessions",
+                                    project=project or None)
         if status == 404:
             raise AgentError("capability_unavailable", predates_message(self.link.base_url),
                              detail={"hint": "restart the Plexora server, then reload the tab"})
