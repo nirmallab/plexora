@@ -346,7 +346,6 @@ def reset_gates(call, inp):
     ds = call.data
     revision_before = model.revision(ds)
     rows_before = model.gate_rows(ds)
-    prov_before = provenance.read(ds.name)
     before = [g["marker"] for g in model.all_gates(ds) if g["thresholded"]]
     try:
         reset, skipped, revision_after = model.reset_gates(
@@ -357,16 +356,14 @@ def reset_gates(call, inp):
     except KeyError as exc:
         raise AgentError("invalid_input", str(exc).strip("'\""),
                          detail={"markers": list(ds.table.markers)}) from exc
-    cleared = []
-    if inp.clear_provenance:
-        kept = {m: r for m, r in prov_before.items() if m not in reset}
-        cleared = sorted(set(prov_before) - set(kept))
-        if cleared:
-            provenance._write(ds.name, kept)
+    # The rows as they are now, not as read before the reset: a status the
+    # user set meanwhile is kept, and so is an exclusion.
+    dropped = provenance.clear_for_reset(ds.name, reset) if inp.clear_provenance else {}
+    cleared = sorted(dropped)
     target = _snapshot_path(ds.name, call.operation_id)
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text(json.dumps({"project": ds.name, "rows": rows_before,
-                                  "provenance": {m: prov_before[m] for m in cleared}},
+                                  "provenance": dropped},
                                  default=str), encoding="utf-8")
     after = [g["marker"] for g in model.all_gates(ds) if g["thresholded"]]
     changed = revision_after != revision_before or bool(cleared)

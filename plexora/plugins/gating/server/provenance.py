@@ -152,6 +152,11 @@ def set_status(name, marker, status, *, note=None, principal=None, current=None)
             raise ValueError(f"status is one of {STATUSES + ('unlocked', 'included')}")
         row["status"] = status
         if status in ("locked", "approved") and current is not None:
+            # An agent's gate moved in the sidebar since is the user's: say so
+            # before the value on screen becomes the written one, which would
+            # hide the edit (`edited_since`) and credit the agent with it.
+            if edited_since(row, {"low": current[0], "high": current[1]}):
+                row["method"] = "manual"
             # What the lock protects is the value on screen when it was set.
             row["written_low"], row["written_high"] = current
             row["value_low"], row["value_high"] = current
@@ -165,6 +170,35 @@ def set_status(name, marker, status, *, note=None, principal=None, current=None)
         rows[marker] = row
         _write(name, rows)
         return before, status
+
+
+#: What a row trimmed by `clear_for_reset` keeps of an excluded marker.
+_EXCLUSION = ("marker", "status", "note", "principal", "timestamp")
+
+
+def clear_for_reset(name, markers) -> dict:
+    """Forget how `markers`' gates were made, after a reset put them back at
+    full range; returns {marker: row before} of the rows dropped or trimmed.
+    An `excluded` status is the user's decision about the marker, not about
+    its gate, so its row keeps that. Read and written under the lock, so a
+    status set on another marker meanwhile is kept."""
+    with _lock(name):
+        rows = read(name)
+        cleared = {}
+        for marker in markers:
+            row = rows.get(marker)
+            if row is None:
+                continue
+            if row.get("status") == "excluded":
+                if not any(v not in (None, {}) for k, v in row.items() if k not in _EXCLUSION):
+                    continue
+                rows[marker] = {**{k: row.get(k) for k in _EXCLUSION}, "detail": {}}
+            else:
+                del rows[marker]
+            cleared[marker] = row
+        if cleared:
+            _write(name, rows)
+        return cleared
 
 
 def mark_rolled_back(name, marker, *, operation_id=None):
