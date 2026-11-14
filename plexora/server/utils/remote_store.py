@@ -818,6 +818,48 @@ class CacheIndex:
                 self._db.execute("UPDATE stores SET bytes = bytes - ? WHERE store_id = ?",
                                  (int(row[0]), store_id))
 
+    def forget_under(self, store_id: str, prefix: str) -> None:
+        """Drop every row and value of `prefix` -- every range of a file, or a
+        zarr node and every key under it; "" is the whole store.
+
+        For bytes that belong to an object the host has since replaced. A
+        fetch in flight may still carry the old object's bytes, so it is not
+        recorded either (the generation).
+        """
+        if prefix:
+            where = "store_id = ? AND (key = ? OR substr(key, 1, ?) = ?)"
+            args: tuple = (store_id, prefix, len(prefix) + 1, prefix + "/")
+        else:
+            where, args = "store_id = ?", (store_id,)
+        with self._lock:
+            self.generation += 1
+            rows = self._db.execute(
+                f"SELECT key, range_start, range_end, size, missing FROM entries "
+                f"WHERE {where}", args).fetchall()
+            for key, start, end, _size, missing in rows:
+                if not missing:
+                    self.drop_value(store_id, key, (start, end))
+            self._db.execute(f"DELETE FROM entries WHERE {where}", args)
+            dropped = sum(int(size) for _k, _s, _e, size, missing in rows if not missing)
+            if dropped:
+                self._total -= dropped
+                self._db.execute("UPDATE stores SET bytes = bytes - ? WHERE store_id = ?",
+                                 (dropped, store_id))
+
+    # What object a key's cached bytes came from, as the host last named it
+    # (`ChunkCacheStore.revalidate`). Kept in `meta`, so no schema change.
+
+    def identity(self, store_id: str, key: str) -> Optional[str]:
+        with self._lock:
+            row = self._db.execute("SELECT v FROM meta WHERE k = ?",
+                                   (f"id:{store_id}:{key}",)).fetchone()
+        return row[0] if row else None
+
+    def remember_identity(self, store_id: str, key: str, identity: str) -> None:
+        with self._lock:
+            self._db.execute("INSERT OR REPLACE INTO meta (k, v) VALUES (?, ?)",
+                             (f"id:{store_id}:{key}", identity))
+
     def touch(self, store_id: str, key: str, rng=_FULL) -> None:
         with self._lock:
             self._touches[(store_id, key, rng[0], rng[1])] = time.time()
@@ -948,7 +990,15 @@ class CacheIndex:
                     "SELECT COALESCE(SUM(size), 0) FROM entries "
                     "WHERE store_id = ? AND missing = 0", (store_id,)).fetchone()
                 self._db.execute("DELETE FROM entries WHERE store_id = ?", (store_id,))
-                self._db.execute("DELETE FROM stores WHERE store_id = ?", (store_id,))
+                # The row is kept, emptied, as clearing everything keeps it:
+                # an open store registered it once and records every later
+                # entry against it, so without it each record failed its
+                # foreign key until a restart. An empty, unpinned row is not
+                # shown. A rebuild's placeholder row has no open store.
+                self._db.execute("UPDATE stores SET bytes = 0, pinned = 0 WHERE store_id = ?",
+                                 (store_id,))
+                self._db.execute("DELETE FROM stores WHERE store_id = ? "
+                                 "AND root_url LIKE 'unknown:%'", (store_id,))
                 self._total -= int(row[0] or 0)
             trash = []
             for sid in ids:
@@ -1858,6 +1908,34 @@ class ChunkCacheStore(WrapperStore):
                     pass
         return size
 
+    def revalidate(self, prefix: str, identity: Optional[str]) -> None:
+        """Drop what is cached of `prefix` when the host now names a different
+        object there than the one it was cached from.
+
+        `prefix` is a file's key, or a zarr node (every key under it; "" the
+        whole store), and `identity` what a fresh probe said it is. Cached
+        bytes were otherwise served forever: a file or store rewritten at the
+        same address read as a mix of its old cached blocks and new fetched
+        ones. A key cached before identities were kept has none, and its
+        bytes are trusted rather than refetched (a store kept offline would
+        lose them all at once).
+        """
+        if not identity:
+            return
+        index = self.index
+        known = index.identity(self.store_id, prefix)
+        if known == identity:
+            return
+        if known is not None:
+            index.forget_under(self.store_id, prefix)
+            _block_memory.drop(self.root_url, prefix)
+            for key in [k for k in self.sizes if _is_under(k, prefix)]:
+                self.sizes.pop(key, None)
+            self._listings.clear()
+            self.legacy.ndim.clear()
+            self.legacy.separator.clear()
+        index.remember_identity(self.store_id, prefix, identity)
+
     async def _get_range(self, key: str, start: int, end: int) -> Optional[bytes]:
         """`[start, end)` of `key` through the cache; b"" past the end."""
         try:
@@ -2196,6 +2274,19 @@ class _BlockMemory:
         with self._lock:
             self._blocks.clear()
             self._bytes = 0
+
+    def drop(self, root: str, prefix: str) -> None:
+        """Forget the blocks of `prefix` (a file's key, or "" every file) in
+        the store at `root`."""
+        with self._lock:
+            for key in [k for k in self._blocks
+                        if k[0] == root and _is_under(k[1], prefix)]:
+                self._bytes -= len(self._blocks.pop(key))
+
+
+def _is_under(key: str, prefix: str) -> bool:
+    """Whether `key` is `prefix` or below it ("" holds every key)."""
+    return not prefix or key == prefix or key.startswith(prefix + "/")
 
 
 _block_memory = _BlockMemory(_MEM_BUDGET)
@@ -2888,8 +2979,32 @@ def probe(url, timeout: float = 2.0, *, fresh: bool = False) -> ProbeResult:
         # Not a zarr node. A folder of DICOM instances answers with what is
         # in it instead: its identity is a digest of the listing.
         result = _probe_folder(store, subpath, url) or result
+    if result.status == "ok":
+        _revalidate(store, subpath, result)
     _probes[url] = result
     return result
+
+
+def _revalidate(store: ChunkCacheStore, prefix: str, result: ProbeResult) -> None:
+    """Drop the cached bytes of `prefix` if the probe found another object.
+
+    The identity is what `fingerprint` keys on, plus which metadata document
+    answered, so the cache is refetched exactly when the fingerprint says the
+    object changed -- and everything derived from it is rebuilt from new bytes.
+    """
+    if result.etag:
+        found = f"etag:{result.etag}"
+    elif result.last_modified:
+        found = f"lm:{result.last_modified}"
+    elif result.size is not None:
+        found = f"size:{result.size}"
+    else:
+        return
+    try:
+        store.revalidate(prefix, f"{result.key or ''}|{found}")
+    except Exception:  # noqa: BLE001 -- a probe still answers when the index cannot
+        _log.warning("remote cache: could not check %s against the host",
+                     url_join(store.root_url, prefix), exc_info=True)
 
 
 def _info_identity(info: Mapping[str, Any]) -> tuple[Optional[str], Optional[str]]:
@@ -2924,10 +3039,13 @@ def _probe_file(store: ChunkCacheStore, key: str, url: str,
         return ProbeResult(False, "offline", _describe(exc, url))
     etag, modified = _info_identity(info or {})
     size = (info or {}).get("size")
+    result = ProbeResult(True, "ok", "", etag, modified,
+                         int(size) if size is not None else None, key)
+    # Before the size is remembered: a replaced file's old length goes too.
+    _revalidate(store, key, result)
     if size is not None:
         store.remember_size(key, int(size))
-    return ProbeResult(True, "ok", "", etag, modified,
-                       int(size) if size is not None else None, key)
+    return result
 
 
 #: How many folder listings a probe may make looking for a DICOM instance in a

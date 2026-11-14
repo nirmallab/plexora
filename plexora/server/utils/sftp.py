@@ -320,6 +320,8 @@ class SFTPClient:
         self._closed = False
         self._handles: "collections.OrderedDict[str, _Handle]" = collections.OrderedDict()
         self._handles_lock = threading.Lock()
+        #: (size, mtime) each path last stat'ed with (`_check_handle`).
+        self._seen: dict[str, tuple] = {}
         self._executor: Optional[ThreadPoolExecutor] = None
         self._executor_lock = threading.Lock()
         #: What crossed this conversation, for `stats()`: requests sent and
@@ -419,7 +421,10 @@ class SFTPClient:
     def _send(self, ptype: int, payload: bytes) -> Future:
         if self._closed or self._failure is not None:
             raise self._connection_error()
-        self._slots.acquire()
+        # Bounded like the reply: a server that stalls with every slot taken
+        # must fail this call the same way, not hang it.
+        if not self._slots.acquire(timeout=self.call_timeout):
+            raise self._timeout_error()
         future: Future = Future()
         future.add_done_callback(lambda _: self._slots.release())
         request_id = next(self._ids) & 0xFFFFFFFF
@@ -536,13 +541,36 @@ class SFTPClient:
             return ConnectionError(f"The connection to {self.label} closed: {said}")
         return ConnectionError(f"The connection to {self.label} closed.")
 
+    def _timeout_error(self) -> TimeoutError:
+        return TimeoutError(
+            f"{self.label} did not answer within {int(self.call_timeout)} seconds")
+
+    def _abandon(self, future: Future) -> None:
+        """Give up on a request nobody will wait for any more.
+
+        Its slot is released only when the future settles, so one left pending
+        on a stalled server held that slot until the server answered; enough
+        of them and every later call blocked for a slot. A late reply to it
+        finds nothing pending and is dropped. Whoever takes it out of pending
+        settles it: a reply popped just now is being settled by the reader.
+        """
+        owned = False
+        with self._pending_lock:
+            for request_id, pending in list(self._pending.items()):
+                if pending is future:
+                    del self._pending[request_id]
+                    self._sent_at.pop(request_id, None)
+                    owned = True
+                    break
+        if owned and not future.done():
+            future.set_exception(self._timeout_error())
+
     def _reply(self, future: Future):
         try:
             return future.result(timeout=self.call_timeout)
         except FutureTimeout as exc:
-            raise TimeoutError(
-                f"{self.label} did not answer within {int(self.call_timeout)} "
-                "seconds") from exc
+            self._abandon(future)
+            raise self._timeout_error() from exc
 
     def _expect(self, future: Future, want: int, path: str = "") -> _Reader:
         ptype, reader = self._reply(future)
@@ -561,7 +589,9 @@ class SFTPClient:
 
     def stat(self, path: str) -> Attrs:
         """What `path` is, following symlinks."""
-        return self._expect(self._send(_STAT, _string(path)), _ATTRS, path).attrs()
+        attrs = self._expect(self._send(_STAT, _string(path)), _ATTRS, path).attrs()
+        self._check_handle(path, attrs)
+        return attrs
 
     def lstat(self, path: str) -> Attrs:
         return self._expect(self._send(_LSTAT, _string(path)), _ATTRS, path).attrs()
@@ -645,7 +675,14 @@ class SFTPClient:
                     for offset, length in wanted]
             wanted = []
             for offset, length, future in sent:
-                ptype, reader = self._reply(future)
+                try:
+                    ptype, reader = self._reply(future)
+                except TimeoutError:
+                    # The rest of the span is not waited for either: left
+                    # pending, its reads would keep their slots.
+                    for _offset, _length, rest in sent:
+                        self._abandon(rest)
+                    raise
                 if ptype == _STATUS:
                     code = reader.uint32()
                     if code == FX_EOF:
@@ -701,6 +738,27 @@ class SFTPClient:
         for old in stale:
             self._close_handle(old, wait=False)
         return handle
+
+    def _check_handle(self, path: str, attrs: Attrs) -> None:
+        """Close the cached handle on `path` if a stat shows another file there.
+
+        A handle reads the file it was opened on, and a pipeline that replaces
+        a file by renaming a new one over it leaves the path naming another:
+        the handle, refreshed by every read, went on serving the old bytes.
+        """
+        seen = (attrs.size, attrs.mtime)
+        stale = None
+        with self._handles_lock:
+            before = self._seen.get(path)
+            self._seen[path] = seen
+            if before is not None and before != seen:
+                entry = self._handles.pop(path, None)
+                stale = entry.handle if entry is not None else None
+            if len(self._seen) > 4 * _HANDLE_CAP:
+                for name in [n for n in self._seen if n not in self._handles and n != path]:
+                    del self._seen[name]
+        if stale is not None:
+            self._close_handle(stale, wait=False)
 
     def _forget_handle(self, path: str, handle: bytes) -> None:
         with self._handles_lock:

@@ -496,6 +496,18 @@ class PackedCacheIndex(CacheIndex):
         super().forget(store_id, key, rng)
         self.drop_value(store_id, key, rng)
 
+    def forget_under(self, store_id, prefix) -> None:
+        # Values go with their rows (`drop_value`), bytes when their segment
+        # is taken over.
+        super().forget_under(store_id, prefix)
+        self._changed()
+
+    def remember_identity(self, store_id, key, identity) -> None:
+        # In the snapshot like the rows: a reload must still know what
+        # object its cached bytes came from.
+        super().remember_identity(store_id, key, identity)
+        self._changed()
+
     def touch(self, store_id, key, rng=remote_store._FULL) -> None:
         super().touch(store_id, key, rng)
         self._changed()
