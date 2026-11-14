@@ -633,8 +633,22 @@ class PlexoraViewer:
         self._port = None
         self._display_base = None
         self._token = None
+        #: Set by the classmethods that (re-)register the project just before
+        #: opening it. A sidecar that was already running keys "which project
+        #: is loaded" on the name, so it has to be told to read the project
+        #: again or the new page boots onto the previous round's table.
+        self._reload_pending = False
         if start:
             self.start()
+
+    @classmethod
+    def _open_registered(cls, start=True, **kwargs):
+        """A viewer on a project that was just (re-)registered."""
+        viewer = cls(start=False, **kwargs)
+        viewer._reload_pending = True
+        if start:
+            viewer.start()
+        return viewer
 
     def _launch_state(self):
         """The ephemeral launch state, as the page will receive it, or {}.
@@ -742,7 +756,8 @@ class PlexoraViewer:
             copy=copy,
             data_dir=resolved_data_dir,
         )
-        return cls(datasource=name, data_dir=resolved_data_dir, **viewer_kwargs)
+        return cls._open_registered(datasource=name, data_dir=resolved_data_dir,
+                                    **viewer_kwargs)
 
     @classmethod
     def from_anndata(
@@ -855,8 +870,8 @@ class PlexoraViewer:
                 subset_by=subset_by, subset_value=subset_value,
                 data_dir=resolved_data_dir,
             )
-            return cls(datasource=name, data_dir=resolved_data_dir,
-                       memory=True, **viewer_kwargs)
+            return cls._open_registered(datasource=name, data_dir=resolved_data_dir,
+                                        memory=True, **viewer_kwargs)
         register_anndata_datasource(
             name=name,
             image=image,
@@ -878,7 +893,8 @@ class PlexoraViewer:
             copy=copy,
             data_dir=resolved_data_dir,
         )
-        return cls(datasource=name, data_dir=resolved_data_dir, **viewer_kwargs)
+        return cls._open_registered(datasource=name, data_dir=resolved_data_dir,
+                                    **viewer_kwargs)
 
     @classmethod
     def from_memory(cls, name, image=None, *, data_dir=None, tool=None,
@@ -948,10 +964,11 @@ class PlexoraViewer:
         ).expanduser().resolve()
         memory_api.register_memory_datasource(
             name, image, data_dir=resolved_data_dir, **data_kwargs)
-        return cls(datasource=name, data_dir=resolved_data_dir, memory=True,
-                   tool=tool, overlay=overlay, channels=channels, proxy=proxy,
-                   height=height, width=width, base_url=base_url,
-                   plugins=plugins, start=start)
+        return cls._open_registered(
+            datasource=name, data_dir=resolved_data_dir, memory=True,
+            tool=tool, overlay=overlay, channels=channels, proxy=proxy,
+            height=height, width=width, base_url=base_url,
+            plugins=plugins, start=start)
 
     def start(self):
         """Start the sidecar server this viewer needs, or reuse one already running.
@@ -974,10 +991,9 @@ class PlexoraViewer:
         if self._port is not None:
             return self._port
         resolved = resolve_display(self.proxy, self._base_url)
-        was_running = _SERVERS.get(
-            _server_key(self.data_dir, resolved.server_base, self.plugins,
-                        resolved.bind_host)
-        )
+        key = _server_key(self.data_dir, resolved.server_base, self.plugins,
+                          resolved.bind_host)
+        was_running = _SERVERS.get(key)
         if resolved.bind_host != "127.0.0.1" and not (
             was_running and was_running.poll() is None
         ):
@@ -992,6 +1008,10 @@ class PlexoraViewer:
             self.data_dir, resolved.server_base, plugins=self.plugins,
             host=resolved.bind_host,
         )
+        # Only `_start_server` spawning a sidecar puts a new handle under this
+        # key; reusing or adopting one leaves it as it was. A fresh sidecar has
+        # nothing loaded yet, so only a reused one needs telling.
+        spawned = _SERVERS.get(key) is not was_running
         if resolved.kind == "proxy":
             # Only this route depends on jupyter-server-proxy, and only the
             # notebook server can say whether it has it -- see
@@ -1006,6 +1026,10 @@ class PlexoraViewer:
             self._display_base = resolved.display.replace(
                 PORT_PLACEHOLDER, str(self._port)
             )
+        if self._reload_pending:
+            self._reload_pending = False
+            if not spawned:
+                self._reload_server()
         return self._port
 
     @property
