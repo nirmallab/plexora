@@ -453,6 +453,7 @@ def approve_roi(call, inp):
                     "approved_action": user.get("approved_action"),
                     "action": candidate.get("action")}
         user.update(approved=True, approved_action=action)
+        user.pop("approved_by", None)
         if action != candidate.get("action"):
             roi_link.rename(ds, inp.roi_id, action, candidate)
             candidate["action"] = action
@@ -903,7 +904,13 @@ def reset(call, inp):
                 roi_id = candidate.get("roi_id")
                 if not roi_id or roi_id not in features:
                     continue
-                if roi_link.user_wins(candidate) or features[roi_id].get("locked"):
+                # A check's region counts as approved by being written
+                # (`approved_by: check`); only what a person did keeps it.
+                user = candidate.get("user_state") or {}
+                if user.get("approved_by") == "check":
+                    user = {k: v for k, v in user.items() if k != "approved"}
+                if roi_link.user_wins({**candidate, "user_state": user}) \
+                        or features[roi_id].get("locked"):
                     kept.append(roi_id)
                     continue
                 deleted.append(features[roi_id])

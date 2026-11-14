@@ -10,7 +10,10 @@ renders are deterministic, so a `read`-class capability call is answered from
 What is never cached (`cacheable`): a capability whose permission is not
 `read`; one whose egress is `row_level` or `raw_pixels` (cell-level data is not
 copied onto disk a second time); viewer state (`viewer_required`, `viewer.*`:
-what a tab shows changes without a receipt); a job; and any failed call.
+what a tab shows changes without a receipt); a job; a read of live state
+(`Capability.cacheable` False: a job's status, a session's progress or next
+item, which move on without a receipt, and a status call that can pause a
+session); and any failed call.
 
 Invalidation is the revision (plexora/agent/revision.py), which every receipted
 write bumps. A person's own edits in the viewer leave no receipt, so an entry
@@ -50,6 +53,8 @@ def plexora_version() -> str:
 
 def cacheable(capability) -> bool:
     if capability is None or capability.permission != "read":
+        return False
+    if not getattr(capability, "cacheable", True):
         return False
     if capability.egress in UNCACHED_EGRESS:
         return False

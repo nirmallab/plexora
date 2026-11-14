@@ -173,7 +173,7 @@ def run_qc_3d(call, inp):
     call.progress(total - 1, total, "checking objects")
     flagged = {}
     if "segmentation_3d" in checks:
-        frame = _objects(record)
+        frame = _objects(record, inp.t)
         if frame is not None:
             found, flagged = qc3d.segmentation_3d(frame, depth=depth)
             findings += found
@@ -194,14 +194,19 @@ def run_qc_3d(call, inp):
     return brief
 
 
-def _objects(record):
-    """The measured 3-D object table (`objects_v1.parquet`), or None."""
+def _objects(record, t=0):
+    """The measured 3-D object table (`objects_v1.parquet`), or None -- of
+    frame `t` only when it is a time series' (a `t` column), since the check
+    is for that frame and other frames' cells are not this one's."""
     import polars as pl
 
     from plexora.server.volume import objects
 
     table, _manifest = objects.object_paths(record)
-    return pl.read_parquet(table) if table.exists() else None
+    if not table.exists():
+        return None
+    frame = pl.read_parquet(table)
+    return frame.filter(pl.col("t") == t) if "t" in frame.columns else frame
 
 
 def _class_of(finding):

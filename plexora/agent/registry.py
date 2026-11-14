@@ -77,6 +77,11 @@ class Capability:
     execution: str = "immediate"
     #: The MCP tool reports progress notifications while it runs (`job_wait`).
     streams_progress: bool = False
+    #: A `read` the AI harness may answer from its tool-result cache
+    #: (plexora/ai/harness/toolcache.py). False for a read of live state that
+    #: moves on without a receipt (a job's status, a session's progress), or
+    #: one that can also change it (a session status call that pauses).
+    cacheable: bool = True
     egress: str = "metadata"
     tags: tuple = ()
     version: str = "1"

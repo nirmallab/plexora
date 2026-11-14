@@ -146,6 +146,17 @@ def finish_result(call, engine, action) -> dict:
         results.put_result(document, result, activate=activate)
         if activate:
             document["strictness"] = dict(result["strictness"])
+            # The regions the user made theirs in the result this one
+            # replaces (drawn before or during the session) still count: the
+            # sync carries them into this result before its cells are called.
+            from plexora.plugins.qc.server import roi_link
+
+            try:
+                roi_link.sync(call.session.image_data(project), document)
+            except Exception as exc:  # noqa: BLE001 -- the session's own regions still stand
+                engine.log(event="user_regions_not_carried", error=str(exc))
+                record.setdefault("warnings", []).append(
+                    f"the user's earlier QC regions were not carried over: {exc}")
         results.save(project, document)
     if activate and record.get("has_table"):
         from plexora.plugins.qc.server.cells import calls

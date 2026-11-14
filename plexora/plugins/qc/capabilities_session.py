@@ -803,7 +803,8 @@ def capabilities():
                     "open or left for a person and why, each check's state and its limit "
                     "questions (detail=full: everything else it holds); or the recent "
                     "sessions. Can pause or resume it.",
-            permission="read", input_model=StatusInput, handler=status, egress="aggregates"),
+            permission="read", input_model=StatusInput, handler=status, egress="aggregates",
+            cacheable=False),
         cap(name="qc.session_finish", tool_name="qc_session_finish",
             purpose="Finish a QC session: close it (its result becomes the project's active "
                     "QC), commit a propose-mode session's regions, cancel its scan, or roll "

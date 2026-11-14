@@ -294,6 +294,10 @@ def find_regions_of_interest_3d(call, inp):
     per = max(1, inp.n // max(1, len(inp.criteria)))
     found, notes = [], []
     frame = _objects(data)
+    # A time series' table holds every frame's cells; the places asked for
+    # are frame t's, and other frames' cells are not this one's.
+    if frame is not None and "t" in frame.columns:
+        frame = frame.filter(frame["t"] == inp.t)
     has_objects = frame is not None and "bbox_z0" in frame.columns
     for criterion in inp.criteria:
         call.check_cancelled()

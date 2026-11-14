@@ -2866,7 +2866,8 @@ def capabilities():
                     "needs review, its progress and what waits on the user (detail=full: "
                     "everything else it holds); or the recent sessions. Can pause or resume "
                     "it.",
-            permission="read", input_model=StatusInput, handler=session_qc(status), egress="aggregates"),
+            permission="read", input_model=StatusInput, handler=session_qc(status), egress="aggregates",
+            cacheable=False),
         cap(name="gating.session_finish", entitlement="ai:gating:session", tool_name="gating_session_finish",
             purpose="Finish a gating session: close it, commit a propose-mode session's "
                     "gates, cancel its bulk pass, or roll back every gate it wrote.",

@@ -427,23 +427,27 @@ def _split_pairs(frame, threshold):
     """Row pairs (a, b): b starts the plane after a ends, and their XY boxes
     overlap by at least `threshold` (IoU). Candidates come from a grid of box
     centres a box's width across, so a table of many cells is not compared
-    all against all."""
+    all against all. A time series' rows (`t`) pair only within their own
+    frame: another frame's cell at the same place is a different cell."""
     x0, x1 = frame["bbox_x0"].to_numpy(), frame["bbox_x1"].to_numpy()
     y0, y1 = frame["bbox_y0"].to_numpy(), frame["bbox_y1"].to_numpy()
     z0, z1 = frame["bbox_z0"].to_numpy(), frame["bbox_z1"].to_numpy()
     if not len(x0):
         return []
+    t = (frame["t"].to_numpy().astype(np.int64) if "t" in frame.columns
+         else np.zeros(len(x0), dtype=np.int64))
     cell = max(1.0, float(np.median(np.maximum(x1 - x0, y1 - y0) + 1)))
     cx = ((x0 + x1) / 2.0 // cell).astype(np.int64)
     cy = ((y0 + y1) / 2.0 // cell).astype(np.int64)
     grid = {}
     for row in range(len(z0)):
-        grid.setdefault((int(z0[row]), int(cx[row]), int(cy[row])), []).append(row)
+        grid.setdefault((int(t[row]), int(z0[row]), int(cx[row]), int(cy[row])),
+                        []).append(row)
     pairs = []
     for a in range(len(z1)):
         for gx in (cx[a] - 1, cx[a], cx[a] + 1):
             for gy in (cy[a] - 1, cy[a], cy[a] + 1):
-                for b in grid.get((int(z1[a]) + 1, int(gx), int(gy)), ()):
+                for b in grid.get((int(t[a]), int(z1[a]) + 1, int(gx), int(gy)), ()):
                     ix = max(0, min(x1[a], x1[b]) - max(x0[a], x0[b]) + 1)
                     iy = max(0, min(y1[a], y1[b]) - max(y0[a], y0[b]) + 1)
                     inter = ix * iy

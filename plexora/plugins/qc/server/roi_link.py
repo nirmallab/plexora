@@ -26,6 +26,7 @@ regions into the five in one revision, keeping each region's class.
 
 from __future__ import annotations
 
+import copy
 import re
 
 from plexora.plugins.qc.server import polygons, results, schemas
@@ -797,6 +798,7 @@ def sync(ds, document, *, save=True) -> dict:
             report.setdefault("renamed", []).append(row["roi_id"])
             if candidate is not None:
                 candidate["action"] = named
+                user.pop("approved_by", None)
         if bool(feature.get("locked")) != bool(row.get("locked")):
             row["locked"] = bool(feature.get("locked"))
             if row["locked"]:
@@ -816,6 +818,69 @@ def sync(ds, document, *, save=True) -> dict:
             user["approved"] = bool(row.get("approved"))
             if row.get("approved_action"):
                 user["approved_action"] = row["approved_action"]
+    # Carrying: a region the user made theirs (drew, edited, approved,
+    # locked) whose row belongs to a result that is no longer the active one
+    # -- a later session closed, or reset_qc cleared it -- still counts, so
+    # it moves into the active result. Its row is already known, so the
+    # adoption below would never see it. An open session's regions stay its
+    # own until it finishes.
+    sources = {}
+    for row in rows:
+        roi_id = row["roi_id"]
+        feature = features.get(roi_id)
+        if feature is None or row.get("deleted") or row.get("removed_from_qc") \
+                or roi_id in live_ids \
+                or (result is not None and row.get("result_id") == result.get("result_id")):
+            continue
+        klass = class_in(feature["category_id"], labels, row.get("class"))
+        if klass is None:
+            continue
+        rid = row.get("result_id")
+        if rid and rid not in sources:
+            sources[rid] = results.get_result(ds.name, document, rid)
+        source = sources.get(rid) if rid else None
+        if row.get("session_id") and not (source or {}).get("finished_at"):
+            continue
+        before = ((source or {}).get("candidates") or {}).get(row.get("candidate_id"))
+        if before is not None and before.get("roi_id") not in (None, roi_id):
+            before = None
+        if not ((before is not None and user_wins(before)) or row.get("created_by") == "user"
+                or row.get("user_edited") or row.get("approved") or row.get("locked")):
+            continue
+        if result is None:
+            result = results.ensure_active(document, ds.name)
+        candidates = result.setdefault("candidates", {})
+        candidate_id = row["candidate_id"]
+        if candidate_id in candidates:
+            candidate_id = f"user_{roi_id}".lower()
+        candidate = copy.deepcopy(before) if before is not None else {
+            "detector": row.get("detector") or "user",
+            "detector_version": row.get("detector_version") or "1",
+            "class_alternatives": [], "scope": row.get("scope") or "all_channels",
+            "channels": list(row.get("channels") or []),
+            "cycles": list(row.get("cycles") or []), "severity": row.get("severity"),
+            "score": None, "metrics": {}, "measurement": {}, "ai_decision": None,
+            "evidence_artifacts": [], "created_by": row.get("created_by"),
+            "state": "user_kept", "created_at": row.get("created_at") or results.now_iso()}
+        user = candidate.setdefault("user_state", {})
+        if row.get("created_by") == "user":
+            user["created_by"] = "user"
+        user["edited"] = bool(user.get("edited") or row.get("user_edited"))
+        user["approved"] = bool(row.get("approved"))
+        user["locked"] = bool(row.get("locked"))
+        if row.get("approved_action"):
+            user["approved_action"] = row["approved_action"]
+        candidate.update({"id": candidate_id, "roi_id": roi_id, "class": klass,
+                          "geometry": feature["geometry"],
+                          "action": row.get("action") or candidate.get("action")
+                          or schemas.default_action(klass)})
+        candidates[candidate_id] = candidate
+        live_ids.add(roi_id)
+        row["result_id"] = result["result_id"]
+        row["candidate_id"] = candidate_id
+        if not any(r is row for r in changed_rows):
+            changed_rows.append(row)
+        report["adopted"].append(roi_id)
     # Adoption: regions in a QC category QC did not write.
     adopted_rows = []
     for roi_id, feature in features.items():

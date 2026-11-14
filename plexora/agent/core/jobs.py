@@ -81,15 +81,15 @@ def capabilities():
     return [
         cap(name="job.get", tool_name="job_get",
             purpose="One job's status, progress and, once done, result.",
-            permission="read", input_model=JobInput, handler=job_get),
+            permission="read", input_model=JobInput, handler=job_get, cacheable=False),
         cap(name="job.list", tool_name="job_list",
             purpose="Recent jobs, newest first, optionally only those in one state.",
-            permission="read", input_model=ListInput, handler=job_list),
+            permission="read", input_model=ListInput, handler=job_list, cacheable=False),
         cap(name="job.wait", tool_name="job_wait",
             purpose="Wait for a job to finish (up to timeout_s), reporting its progress as it "
                     "goes; returns the job, finished or not.",
             permission="read", input_model=WaitInput, handler=job_wait,
-            streams_progress=True),
+            streams_progress=True, cacheable=False),
         cap(name="job.cancel", tool_name="job_cancel",
             purpose="Ask a running job to stop. Work it already receipted stays done.",
             permission="reversible_write", input_model=JobInput, handler=job_cancel,

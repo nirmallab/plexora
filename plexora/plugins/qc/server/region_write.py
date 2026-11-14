@@ -48,7 +48,10 @@ def check_candidate(detector, version, klass, key, region, *, channels, scope,
             "origin": "automatic" if automatic else "check", "fine_grid": True,
             "created_by": AUTOMATIC_BY if automatic else detector, "state": "confirmed",
             "action": action, "created_at": results.now_iso(),
-            "user_state": {"approved": not automatic, "approved_action": action},
+            # The approval is the write's, not a person's (`approved_by`):
+            # reset_qc still deletes the region while nobody touched it.
+            "user_state": {"approved": not automatic, "approved_action": action,
+                           **({} if automatic else {"approved_by": "check"})},
             # The planes (and frame) of a z-stack the finding is on, or None.
             **({"extent": dict(extent)} if extent else {})}
 

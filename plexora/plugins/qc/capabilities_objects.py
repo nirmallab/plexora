@@ -113,6 +113,11 @@ def object_review_start(call, inp):
         raise AgentError("precondition_missing", "measure the 3-D mask's cells first "
                          "(measure_objects): the review needs their measured rows")
     frame = pl.read_parquet(table)
+    # A time series' table holds every frame's cells, ids reused frame to
+    # frame; the review's views show frame 0 (render_object_views' default),
+    # so its suspicions are frame 0's.
+    if "t" in frame.columns:
+        frame = frame.filter(pl.col("t") == 0)
     depth = record.image.depth
     _findings, flagged = qc3d.segmentation_3d(frame, depth=depth)
     if inp.object_ids:
@@ -245,7 +250,7 @@ def capabilities(free):
                      "centre, its measured row, and why it is in the queue.",
              permission="read", input_model=ReviewInput, handler=object_review_next,
              visual_output=True, egress="rendered_pixels", reads=("image", "table"),
-             tags=tags),
+             cacheable=False, tags=tags),
         free(name="qc.object_review_answer", tool_name="object_review_answer",
              entitlement=ENTITLEMENT,
              purpose="Record a verdict on one cell of an object review: ok, merged, split, "
@@ -255,7 +260,7 @@ def capabilities(free):
         free(name="qc.object_review_status", tool_name="object_review_status",
              purpose="How far an object review is, and its verdicts so far.",
              permission="read", input_model=ReviewInput, handler=object_review_status,
-             egress="aggregates", tags=tags),
+             egress="aggregates", cacheable=False, tags=tags),
         free(name="qc.object_review_finish", tool_name="object_review_finish",
              entitlement=ENTITLEMENT,
              purpose="Finish an object review: the tally, and the cells judged not one whole "
