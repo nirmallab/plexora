@@ -195,6 +195,12 @@ OLD_REMOTE_RE = re.compile(r"unrecognized arguments:\s*(--[\w-]+)")
 #: prefixes it uses when it has given up do.
 SRUN_ERROR_RE = re.compile(r"\bsrun:\s*(?:error|fatal)\b", re.IGNORECASE)
 
+#: srun reporting on a task it launched: `srun: error: <node>: task 0: Exited
+#: with exit code 2` (or `tasks 0-3: Killed`). Same prefix as a refusal, the
+#: opposite meaning -- the job was allocated and its program ran and failed, so
+#: the reason is in what that program printed, not in the job's arguments.
+SRUN_TASK_REPORT_RE = re.compile(r":\s*tasks?\s+[\d,\-\[\]]+:", re.IGNORECASE)
+
 #: What the scheduler's refusals mean for the job arguments. A scheduler that
 #: will not start a job says exactly why, and then the login node's banner
 #: pushes it out of the tail: on HMS O2 what reached the user was a paragraph
@@ -989,8 +995,21 @@ def reverse_forwards(pairs):
     return argv
 
 
+def _pty_flags(force):
+    """`-t`, or `-t -t` when ssh's own stdin is not the user's terminal.
+
+    OpenSSH honours a single `-t` only when its stdin is a tty, and drops it
+    with "Pseudo-terminal will not be allocated" otherwise -- which is every
+    connection the app opens (the desktop hands its server a lifeline pipe,
+    and a detached spawn is given a pipe of its own). A second `-t` forces it,
+    so the far side still gets the pty its hang-up depends on.
+    """
+    return ["-t", "-t"] if force else ["-t"]
+
+
 def direct_ssh_argv(target, local_port, remote_port, launch_line, *, jump=None,
-                    ssh_opts=(), forwards=(), reverse=(), tty=True):
+                    ssh_opts=(), forwards=(), reverse=(), tty=True,
+                    force_tty=False):
     """One process: the forward and the command that fills it.
 
     `-t` asks for a pty so that when this ssh dies -- the user hits Ctrl+C, the
@@ -1005,9 +1024,13 @@ def direct_ssh_argv(target, local_port, remote_port, launch_line, *, jump=None,
     `NODE_ANNOUNCE_RE` never matches a connection that is working perfectly.
     Without one the pipes are clean. The teardown the pty was there for is
     handed to `--exit-on-stdin-close` instead (see `node_command_line`).
+
+    `force_tty` is for a connection the app opens, whose ssh has no terminal
+    for stdin -- see `_pty_flags`.
     """
     _refuse_flag_shaped(target, jump)
-    argv = ["ssh", *(["-t"] if tty else []), *_ssh_options(ssh_opts)]
+    argv = ["ssh", *(_pty_flags(force_tty) if tty else []),
+            *_ssh_options(ssh_opts)]
     if jump:
         argv += ["-J", jump]
     argv += ["-L", f"{local_port}:127.0.0.1:{remote_port}"]
@@ -1036,7 +1059,7 @@ def _gcloud_head(gcloud):
 
 
 def gcloud_ssh_argv(gcloud, local_port, remote_port, launch_line, *,
-                    ssh_opts=(), forwards=(), reverse=()):
+                    ssh_opts=(), forwards=(), reverse=(), force_tty=False):
     """`direct_ssh_argv`'s shape, carried by gcloud instead of by ssh.
 
     Everything after `--` is handed to the underlying ssh verbatim, so the
@@ -1047,7 +1070,8 @@ def gcloud_ssh_argv(gcloud, local_port, remote_port, launch_line, *,
     downstream of it cannot tell which of the two builders produced their argv.
     """
     argv = _gcloud_head(gcloud)
-    argv += ["--command", launch_line, "--", "-t", *_ssh_options(ssh_opts)]
+    argv += ["--command", launch_line, "--", *_pty_flags(force_tty),
+             *_ssh_options(ssh_opts)]
     argv += ["-L", f"{local_port}:127.0.0.1:{remote_port}"]
     argv += extra_forwards(forwards)
     argv += reverse_forwards(reverse)
@@ -1055,7 +1079,7 @@ def gcloud_ssh_argv(gcloud, local_port, remote_port, launch_line, *,
 
 
 def gcloud_node_ssh_argv(gcloud, local_port, remote_port, launch_line, *,
-                         ssh_opts=()):
+                         ssh_opts=(), force_tty=False):
     """The same again, for a data node: one forward and nothing else.
 
     A node session's ssh is `direct_ssh_argv` with no extra forwards and no
@@ -1065,15 +1089,20 @@ def gcloud_node_ssh_argv(gcloud, local_port, remote_port, launch_line, *,
     two transports must stop at the argv.
     """
     argv = _gcloud_head(gcloud)
-    argv += ["--command", launch_line, "--", "-t", *_ssh_options(ssh_opts)]
+    argv += ["--command", launch_line, "--", *_pty_flags(force_tty),
+             *_ssh_options(ssh_opts)]
     argv += ["-L", f"{local_port}:127.0.0.1:{remote_port}"]
     return argv
 
 
-def job_ssh_argv(target, launch_line, *, jump=None, ssh_opts=()):
-    """The process that holds the SLURM job open. No forward -- see below."""
+def job_ssh_argv(target, launch_line, *, jump=None, ssh_opts=(),
+                 force_tty=False):
+    """The process that holds the SLURM job open. No forward -- see below.
+
+    Its pty is what hangs srun up when this ssh ends, queued or running.
+    """
     _refuse_flag_shaped(target, jump)
-    argv = ["ssh", "-t", *_ssh_options(ssh_opts)]
+    argv = ["ssh", *_pty_flags(force_tty), *_ssh_options(ssh_opts)]
     if jump:
         argv += ["-J", jump]
     argv += [target, launch_line]
@@ -1287,9 +1316,13 @@ def scheduler_lines(lines):
     error lines is what puts the reason back at the top -- and it is a filter
     rather than a search over everything, so a motd that happens to contain
     the word "partition" cannot be read as the scheduler having said it.
+
+    A task's exit report is left out: it says the job started, so treating it
+    as a refusal would hide a missing `plexora` or a data-root conflict.
     """
     return [str(line).strip() for line in lines
-            if SRUN_ERROR_RE.search(str(line))]
+            if SRUN_ERROR_RE.search(str(line))
+            and not SRUN_TASK_REPORT_RE.search(str(line))]
 
 
 def scheduler_refusal(lines):
@@ -1451,6 +1484,13 @@ class _Watched:
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             text=True,
+            # Decoded as UTF-8 with replacement, never strictly in the locale:
+            # the far side writes whatever its own encoding makes (a Windows
+            # node's cp1252 path, an old cluster's Latin-1 rc), and one byte
+            # the strict decoder refuses would end the reader -- losing the
+            # announce in the same chunk and leaving the pipe undrained.
+            encoding="utf-8",
+            errors="replace",
             bufsize=1,
             # `env` carries the SSH_ASKPASS handshake when the app drives this
             # instead of a terminal; `detach` takes the controlling tty away so
@@ -1489,23 +1529,34 @@ class _Watched:
 
     def _pump(self):
         stream = self.process.stdout
-        if stream is not None:
-            for raw in stream:
-                # -t gives us a pty, and a pty gives us \r\n -- and colour,
-                # which nothing downstream of here is a terminal. See ANSI_RE.
-                line = strip_ansi(raw.rstrip("\r\n"))
-                self.lines.append(line)
-                for name, matcher in self.matchers.items():
-                    if name in self.found:
-                        continue
-                    value = matcher(line)
-                    if value:
-                        self.found[name] = value
-                        self.events[name].set()
-                self._echo(f"  [{self.label}] {line}")
-        # Wake anyone waiting for an announce that is never coming.
-        for event in self.events.values():
-            event.set()
+        try:
+            if stream is not None:
+                for raw in stream:
+                    # -t gives us a pty, and a pty gives us \r\n -- and colour,
+                    # which nothing downstream of here is a terminal. See ANSI_RE.
+                    line = strip_ansi(raw.rstrip("\r\n"))
+                    self.lines.append(line)
+                    for name, matcher in self.matchers.items():
+                        if name in self.found:
+                            continue
+                        value = matcher(line)
+                        if value:
+                            self.found[name] = value
+                            self.events[name].set()
+                    self._echo(f"  [{self.label}] {line}")
+        except Exception as exc:
+            # Echoed, so the log says why the waits that follow end early.
+            # Not added to `lines`: those are the far side's own words, which
+            # the diagnoses read.
+            try:
+                self._echo(f"  [{self.label}] (stopped reading: {exc})")
+            except Exception:
+                pass
+        finally:
+            # Wake anyone waiting for an announce that is never coming --
+            # whatever ended the reader, not only a clean end of the pipe.
+            for event in self.events.values():
+                event.set()
 
     @property
     def alive(self):
@@ -1547,6 +1598,27 @@ class _Watched:
                 self.process.kill()
             except Exception:
                 pass
+
+
+def _wait_for_any_end(primary, others=()):
+    """Block until `primary` or any of `others` ends.
+
+    Under srun a connection is two processes, and the tunnel can die while the
+    job lives (missed keepalives on the compute-node hop, a site's idle killer
+    ending the `-N` session). Waiting on the job alone would keep a session
+    that nothing can reach "connected", holding its allocation. A watcher has
+    ended when its process has, or when its reader has run out of output.
+    """
+    watchers = [primary, *others]
+    while True:
+        for watched in watchers:
+            if not watched.alive or not watched._thread.is_alive():
+                if watched is primary:
+                    # Reaped, as before: its output is done, so it is going.
+                    primary.process.wait()
+                return
+        # A real pause, not `_sleep`, which tests stub to return at once.
+        primary._thread.join(timeout=0.5)
 
 
 def _kill_tree(process):
@@ -2279,7 +2351,11 @@ class Session:
         self.echo(f"$ {' '.join(argv)}")
         watched = _Watched(argv, label, echo=self.echo,
                            env=self.env if env is None else env,
-                           detach=self.detach, matchers=matchers)
+                           detach=self.detach, matchers=matchers,
+                           # A connection the app opens must not hand ssh the
+                           # server's own stdin: the desktop's lifeline pipe,
+                           # or a terminal ssh would put in raw mode.
+                           hold_stdin=self.detach)
         self.watchers.append(watched)
         _ACTIVE.append(watched)
         return watched
@@ -2419,13 +2495,15 @@ class Session:
                     gcloud_ssh_argv(self.gcloud, self.local_port,
                                     self.remote_port, line,
                                     ssh_opts=self.ssh_opts,
-                                    forwards=forwards, reverse=reverse)
+                                    forwards=forwards, reverse=reverse,
+                                    force_tty=self.detach)
                     if self.gcloud else
                     direct_ssh_argv(self.target, self.local_port,
                                     self.remote_port, line, jump=self.jump,
                                     ssh_opts=self.ssh_opts,
                                     forwards=forwards, reverse=reverse,
-                                    tty=not _wants_windows(self.remote_os)),
+                                    tty=not _wants_windows(self.remote_os),
+                                    force_tty=self.detach),
                     "ssh", matchers,
                 )
                 if mount_line:
@@ -2445,7 +2523,8 @@ class Session:
                     remote = install_prefixed(install_line, remote)
                 self.primary = self._spawn(
                     job_ssh_argv(self.target, remote,
-                                 jump=self.jump, ssh_opts=self.ssh_opts),
+                                 jump=self.jump, ssh_opts=self.ssh_opts,
+                                 force_tty=self.detach),
                     "job", matchers,
                 )
                 if install_line:
@@ -2680,9 +2759,17 @@ class Session:
         )
 
     def wait(self):
-        """Block until the process holding the remote Plexora up exits."""
+        """Block until the process holding the remote Plexora up exits, or
+        the srun tunnel that is the only way to reach it does.
+
+        The local data node is not counted: a viewer that lost it still
+        works, with one layer fewer.
+        """
         if self.primary is not None:
-            self.primary.process.wait()
+            _wait_for_any_end(
+                self.primary,
+                [w for w in self.watchers
+                 if w is not self.primary and w.label == "tunnel"])
 
     def stop(self):
         # Reversed so the tunnel goes before the job it points at. `lines` is
@@ -2854,7 +2941,10 @@ class NodeSession:
         self.echo(f"$ {' '.join(argv)}")
         watched = _Watched(argv, label, echo=self.echo, env=self.env,
                            detach=self.detach, matchers=matchers,
-                           hold_stdin=hold_stdin)
+                           # Held for any connection the app opens too, so ssh
+                           # is never handed the server's own stdin -- see
+                           # `Session._spawn`.
+                           hold_stdin=hold_stdin or self.detach)
         self.watchers.append(watched)
         _ACTIVE.append(watched)
         return watched
@@ -2919,11 +3009,12 @@ class NodeSession:
             self.primary = self._spawn(
                 gcloud_node_ssh_argv(self.gcloud, self.local_port,
                                      self.remote_port, line,
-                                     ssh_opts=self.ssh_opts)
+                                     ssh_opts=self.ssh_opts,
+                                     force_tty=self.detach)
                 if self.gcloud else
                 direct_ssh_argv(self.target, self.local_port, self.remote_port,
                                 line, jump=self.jump, ssh_opts=self.ssh_opts,
-                                tty=not windows),
+                                tty=not windows, force_tty=self.detach),
                 "node", matchers,
                 # The other half of `--exit-on-stdin-close`: the node watches
                 # the channel, and this is what keeps the channel open until
@@ -2944,7 +3035,8 @@ class NodeSession:
                 remote = install_prefixed(install_line, remote)
             self.primary = self._spawn(
                 job_ssh_argv(self.target, remote,
-                             jump=self.jump, ssh_opts=self.ssh_opts),
+                             jump=self.jump, ssh_opts=self.ssh_opts,
+                             force_tty=self.detach),
                 "job", matchers)
             if install_line:
                 _await_install(self, self.primary, install_line)
@@ -3158,8 +3250,11 @@ class NodeSession:
         return self.registered
 
     def wait(self):
+        # The srun tunnel too: a node nothing can reach is not being served.
         if self.primary is not None:
-            self.primary.process.wait()
+            _wait_for_any_end(
+                self.primary,
+                [w for w in self.watchers if w is not self.primary])
 
     def stop(self):
         for watched in reversed(self.watchers):
