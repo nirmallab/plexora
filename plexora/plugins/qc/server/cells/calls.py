@@ -573,7 +573,11 @@ def derive(ds, result, table, *, pairs=None, geometries=None, seg=None, dna=None
 
     # -- channel-level verdicts ----------------------------------------------
     # A cycle out of register everywhere has no region: its channels'
-    # markers are unreliable in every cell.
+    # markers are unreliable in every cell. A channel the user called clean
+    # (`dismiss_qc_finding`, finding channel) flags nothing; its evidence
+    # stays, marked.
+    clean = {d.get("channel"): d for d in result.get("user_dismissed") or []
+             if d.get("finding") == "channel"}
     for candidate in (result.get("candidates") or {}).values():
         user = candidate.get("user_state") or {}
         action = candidate.get("action") or "exclude"
@@ -594,6 +598,11 @@ def derive(ds, result, table, *, pairs=None, geometries=None, seg=None, dna=None
             if marker is None:
                 marker_evidence.append({**record, "borne_out": False, "n_flagged": 0,
                                         "why": "the table does not measure this channel"})
+                continue
+            if channel in clean:
+                marker_evidence.append({**record, "borne_out": True, "n_flagged": 0,
+                                        "dismissed": {"by": clean[channel].get("by"),
+                                                      "at": clean[channel].get("at")}})
                 continue
             flag(marker, reason, status, np.ones(n, dtype=bool), category)
             marker_evidence.append({**record, "borne_out": True, "n_flagged": n})
@@ -1120,6 +1129,18 @@ def write_for_active(call, project, *, refresh_regions=True):
         # A mask, table, pixel size or transform changed under stored pairs:
         # they are read again whatever the caller asked.
         refresh_regions = refresh_regions or (full and stored is not None)
+        from plexora.plugins.qc.server.exclusions import roi_revision
+
+        if not refresh_regions \
+                and (result.get("cells") or {}).get("roi_revision") != roi_revision(project):
+            # A region reshaped or deleted since the calls were derived (the
+            # ROI panel, update_roi): the stored pairs are its old outline's.
+            # They are synced and propagated again, as `exclusions._rederive`
+            # would, or the stamp below would call the old outline current.
+            from plexora.plugins.qc.server import roi_link
+
+            roi_link.sync(ds, document)
+            refresh_regions = True
         pairs = None
         per_roi = None
         geometries = None
@@ -1175,8 +1196,6 @@ def write_for_active(call, project, *, refresh_regions=True):
         result["cells"]["table_name"] = ds.table.source_kind
         # What the calls were derived from: a region drawn since makes them
         # stale for anything that leaves QC failures out (server/exclusions.py).
-        from plexora.plugins.qc.server.exclusions import roi_revision
-
         result["cells"]["roi_revision"] = roi_revision(project)
         result["cells"]["inputs"] = now
         result["cells"]["exclusion_filter"] = {"disabled_categories": disabled}

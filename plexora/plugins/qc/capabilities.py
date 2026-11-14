@@ -701,7 +701,7 @@ def dismiss_finding(call, inp):
         results.put_result(document, result)
         results.save(inp.project, document)
     cells = None
-    if changed and inp.finding != "channel" and call.session.project(inp.project).has_table:
+    if changed and call.session.project(inp.project).has_table:
         cells = calls.write_for_active(call, inp.project, refresh_regions=False)
     after = results.revision(inp.project)
     arguments = {"project": inp.project, "finding": inp.finding, "reason": inp.reason,
@@ -1136,93 +1136,120 @@ def refine_roi(call, inp):
                              detail={"project": inp.project})
         tissue_px = float(((scan.meta if scan else {}).get("tissue") or {}).get("area_px")
                           or 0.0)
-        seq = 0
-        if targets:
-            # One region at a time, each read inside the reader lock and
-            # inferred outside it (refine_sam.trace): a tile request never
-            # waits behind a model.
-            for candidate in targets:
-                    roi_id = candidate["roi_id"]
-                    user = candidate.get("user_state") or {}
-                    feature_geometry = live[roi_id]["geometry"]
-                    theirs = user.get("edited") or candidate.get("created_by") == "user" \
-                        or user.get("created_by") == "user"
-                    envelope = feature_geometry if theirs else (
-                        candidate.get("envelope_geometry") or feature_geometry)
-                    if candidate.get("trace") in ("map", "none") \
-                            and candidate.get("envelope_geometry"):
-                        # A check's map region: its outline IS the score map
-                        # (there are no pixels of a misregistration or a
-                        # cluster to trace). A retrace puts that back.
-                        trace = _map_trace(candidate, feature_geometry, live[roi_id]["class"],
-                                           pixel_um)
-                        envelope = candidate["envelope_geometry"]
-                    else:
-                        mask = polygons.geometry_to_grid(envelope, scan.grid, touch=True)
-                        about = {**candidate, "class": live[roi_id]["class"]}
-                        if inp.method == "classical":
-                            with source_image.SHELF.reader(ds) as source:
-                                trace = refine.refine(about, mask, scan, source,
-                                                      pixel_um=pixel_um, envelope=envelope,
-                                                      options=options)
-                        elif inp.method == "sam":
-                            trace = _sam_any_class(about, mask, scan, ds, pixel_um=pixel_um,
-                                                   envelope=envelope, options=options)
-                        else:
-                            trace = refine_sam.trace(about, mask, scan, ds, pixel_um=pixel_um,
-                                                     envelope=envelope, options=options)
-                    if not trace.refined:
-                        skipped.append({"roi_id": roi_id, "why": trace.reason,
-                                        "status": trace.status})
-                        continue
-                    record = trace.to_record()
-                    record["margin_um"] = inp.margin_um
-                    candidate["refinement"] = record
-                    changed = roi_link.retrace(ds, roi_id, candidate, trace.geometry)
-                    candidate["envelope_geometry"] = envelope
-                    candidate["geometry"] = trace.geometry
-                    measurement = candidate.setdefault("measurement", {})
-                    if tissue_px > 0:
-                        measurement["refined_fraction"] = min(1.0, trace.area_px2 / tissue_px)
-                    user.pop("edited", None)
-                    candidate["user_state"] = user
-                    refined.append({"roi_id": roi_id, "method": trace.method,
-                                    "kept_fraction": trace.kept_fraction,
-                                    "area_um2": trace.area_um2, "parts": trace.parts})
-                    if changed is None:
-                        continue
-                    undo, partial = roi_link.undo_arguments(inp.project, changed["before"],
-                                                            changed["revision_after"],
-                                                            reshaped=True)
-                    seq += 1
-                    child = dataclasses.replace(call, operation_id=f"{call.operation_id}."
-                                                                   f"{seq:03d}",
-                                                receipted=False, extras=dict(call.extras),
-                                                # One ROI-panel notice for them
-                                                # all, below; none per region.
-                                                notify=None)
-                    receipt = make_receipt(
-                        child, changed=True,
-                        before={"roi_id": roi_id, "geometry_hash": polygons.geometry_hash(
-                            changed["before"].get("geometry"))},
-                        after={"roi_id": roi_id, "method": trace.method,
-                               "kept_fraction": trace.kept_fraction},
-                        revision_before=changed["revision_before"],
-                        revision_after=changed["revision_after"],
-                        persistent_state="plugin_store:roi", reversible=not partial,
-                        undo_hint={"tool": "update_roi", "arguments": undo,
-                                   **({"partial": True} if partial else {})},
-                        extra={"parent_operation_id": call.operation_id,
-                               "candidate_id": candidate["id"]})
-                    receipts.append(receipt.model_dump(mode="json"))
+        result_id = (result or {}).get("result_id")
+        strictness_now = dict(document.get("strictness") or {})
+    # The traces run with the QC lock released: a region's pixels and its
+    # model take seconds to minutes, and every other QC writer (a region
+    # drawn, an approval, strictness, a gating run's re-derive) waits on that
+    # lock. One region at a time, each read inside the reader lock and
+    # inferred outside it (refine_sam.trace): a tile request never waits
+    # behind a model either.
+    traced = []
+    for candidate in targets:
+        roi_id = candidate["roi_id"]
+        user = candidate.get("user_state") or {}
+        feature_geometry = live[roi_id]["geometry"]
+        theirs = user.get("edited") or candidate.get("created_by") == "user" \
+            or user.get("created_by") == "user"
+        envelope = feature_geometry if theirs else (
+            candidate.get("envelope_geometry") or feature_geometry)
+        if candidate.get("trace") in ("map", "none") \
+                and candidate.get("envelope_geometry"):
+            # A check's map region: its outline IS the score map
+            # (there are no pixels of a misregistration or a
+            # cluster to trace). A retrace puts that back.
+            trace = _map_trace(candidate, feature_geometry, live[roi_id]["class"],
+                               pixel_um)
+            envelope = candidate["envelope_geometry"]
+        else:
+            mask = polygons.geometry_to_grid(envelope, scan.grid, touch=True)
+            about = {**candidate, "class": live[roi_id]["class"]}
+            if inp.method == "classical":
+                with source_image.SHELF.reader(ds) as source:
+                    trace = refine.refine(about, mask, scan, source,
+                                          pixel_um=pixel_um, envelope=envelope,
+                                          options=options)
+            elif inp.method == "sam":
+                trace = _sam_any_class(about, mask, scan, ds, pixel_um=pixel_um,
+                                       envelope=envelope, options=options)
+            else:
+                trace = refine_sam.trace(about, mask, scan, ds, pixel_um=pixel_um,
+                                         envelope=envelope, options=options)
+        if not trace.refined:
+            skipped.append({"roi_id": roi_id, "why": trace.reason,
+                            "status": trace.status})
+            continue
+        traced.append((candidate["id"], roi_id, polygons.geometry_hash(feature_geometry),
+                       envelope, trace))
+    seq = 0
+    with results.lock(inp.project):
+        if traced:
+            # Applied to the store as it is now: a region reshaped, locked or
+            # deleted meanwhile, or a result replaced, keeps what it has.
+            document = results.load(inp.project)
+            roi_link.sync(ds, document)
+            result = results.active(document)
+            live = {r["roi_id"]: r for r in roi_link.live_regions(ds, result)}
+            strictness_now = dict(document.get("strictness") or {})
+        for candidate_id, roi_id, shape, envelope, trace in traced:
+            candidate = ((result or {}).get("candidates") or {}).get(candidate_id) \
+                if (result or {}).get("result_id") == result_id else None
+            user = (candidate or {}).get("user_state") or {}
+            if candidate is None or candidate.get("roi_id") != roi_id \
+                    or roi_id not in live or user.get("locked") \
+                    or polygons.geometry_hash(live[roi_id]["geometry"]) != shape:
+                skipped.append({"roi_id": roi_id,
+                                "why": "the region changed while it was traced"})
+                continue
+            record = trace.to_record()
+            record["margin_um"] = inp.margin_um
+            candidate["refinement"] = record
+            changed = roi_link.retrace(ds, roi_id, candidate, trace.geometry)
+            candidate["envelope_geometry"] = envelope
+            candidate["geometry"] = trace.geometry
+            measurement = candidate.setdefault("measurement", {})
+            if tissue_px > 0:
+                measurement["refined_fraction"] = min(1.0, trace.area_px2 / tissue_px)
+            user.pop("edited", None)
+            candidate["user_state"] = user
+            refined.append({"roi_id": roi_id, "method": trace.method,
+                            "kept_fraction": trace.kept_fraction,
+                            "area_um2": trace.area_um2, "parts": trace.parts})
+            if changed is None:
+                continue
+            undo, partial = roi_link.undo_arguments(inp.project, changed["before"],
+                                                    changed["revision_after"],
+                                                    reshaped=True)
+            seq += 1
+            child = dataclasses.replace(call, operation_id=f"{call.operation_id}."
+                                                           f"{seq:03d}",
+                                        receipted=False, extras=dict(call.extras),
+                                        # One ROI-panel notice for them
+                                        # all, below; none per region.
+                                        notify=None)
+            receipt = make_receipt(
+                child, changed=True,
+                before={"roi_id": roi_id, "geometry_hash": polygons.geometry_hash(
+                    changed["before"].get("geometry"))},
+                after={"roi_id": roi_id, "method": trace.method,
+                       "kept_fraction": trace.kept_fraction},
+                revision_before=changed["revision_before"],
+                revision_after=changed["revision_after"],
+                persistent_state="plugin_store:roi", reversible=not partial,
+                undo_hint={"tool": "update_roi", "arguments": undo,
+                           **({"partial": True} if partial else {})},
+                extra={"parent_operation_id": call.operation_id,
+                       "candidate_id": candidate["id"]})
+            receipts.append(receipt.model_dump(mode="json"))
         if refined:
             from plexora.plugins.qc.server import strictness
 
-            for candidate in targets:
-                candidate["action_by_strictness"] = strictness.actions_by_preset(candidate)
+            for candidate_id in {c["id"] for c in targets}:
+                candidate = result["candidates"].get(candidate_id)
+                if candidate is not None:
+                    candidate["action_by_strictness"] = strictness.actions_by_preset(candidate)
             results.put_result(document, result)
             results.save(inp.project, document)
-        strictness_now = dict(document.get("strictness") or {})
     after = results.revision(inp.project)
     if refined:
         roi_link.tell_roi_panel(call, inp.project, "update")
