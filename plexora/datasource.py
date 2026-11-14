@@ -954,27 +954,39 @@ def derive_anndata_channel_names(image_path, features_path, n_channels):
 def _zarr_names(path):
     """`var_names` and `uns['all_markers']` of a zarr AnnData, as the one
     object `_derive_channel_names_from_adata` reads: nothing else is opened."""
+    import zarr
+
+    return _group_names(zarr.open_group(str(path), mode="r"))
+
+
+def _group_names(group):
+    """`_zarr_names` for an already-open AnnData group, local or at a web
+    address. Every element is asked for by key, so a host that cannot list
+    still answers."""
     from types import SimpleNamespace
 
-    import zarr
-    from anndata.io import read_elem
+    from plexora.server.models.adapters.anndata_adapter import _child, _read_elem, var_names
 
-    group = zarr.open_group(str(path), mode="r")
-    var = read_elem(group["var"])
     uns = {}
-    if "uns" in group and "all_markers" in group["uns"]:
-        uns["all_markers"] = read_elem(group["uns"]["all_markers"])
-    return SimpleNamespace(var_names=list(var.index), uns=uns)
+    uns_group = _child(group, "uns")
+    markers = _child(uns_group, "all_markers") if uns_group is not None else None
+    if markers is not None:
+        uns["all_markers"] = _read_elem(markers)
+    return SimpleNamespace(var_names=var_names(group), uns=uns)
 
 
 def derive_spatialdata_channel_names(image_path, store, table, n_channels):
     """derive_anndata_channel_names() for one table inside a SpatialData
     store -- identical tier order and semantics, since the resolved table is
-    an AnnData with its own var_names and uns['all_markers']."""
-    from plexora.server.models.adapters.spatialdata_adapter import read_spatialdata_table
+    an AnnData with its own var_names and uns['all_markers'].
 
-    adata = read_spatialdata_table(store, table)
-    return _derive_channel_names_from_adata(image_path, adata, n_channels)
+    Only those two are read, as for a zarr AnnData: reading the table whole
+    loads its matrix, which on a large or remote table is gigabytes (or a
+    refusal) for a list of names, after `plan()` took care not to read it."""
+    from plexora.server.models.adapters.spatialdata_adapter import open_table_group
+
+    names = _group_names(open_table_group(store, table))
+    return _derive_channel_names_from_adata(image_path, names, n_channels)
 
 
 def _derive_channel_names_from_adata(image_path, adata, n_channels):

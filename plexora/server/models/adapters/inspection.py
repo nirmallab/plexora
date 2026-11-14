@@ -372,9 +372,12 @@ def source_obsm(spec) -> list[dict]:
         return [dict(entry) for entry in spec.obsm]
     try:
         if spec.type == "spatialdata":
-            from .spatialdata_adapter import read_spatialdata_table
+            from .spatialdata_adapter import open_table_group
 
-            return describe_obsm(read_spatialdata_table(spec.src, spec.table))
+            # The group, not the table read whole: shapes are metadata, and
+            # reading the table would load its matrix to label a dropdown.
+            group = open_table_group(spec.src, spec.table)
+            return _describe_obsm_mapping(_child(group, "obsm")) or probed_obsm(group)
         import anndata as ad
 
         adata = ad.read_h5ad(spec.src, backed="r")
