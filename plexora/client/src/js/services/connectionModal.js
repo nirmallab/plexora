@@ -211,7 +211,7 @@ window.PlexoraConnectionModal = (function () {
             // republished every poll, so the next snapshot tries again.
             if (anotherDialogIsUp()) return;
             stopBackground(row.name, row.kind);
-            open({ name: row.name, kind: row.kind, intent: row.intent });
+            open({ name: row.name, kind: row.kind, intent: row.intent, attach: true });
             return;
         }
         // Stopped from Settings or the globe, or otherwise over: nothing to
@@ -1190,7 +1190,10 @@ window.PlexoraConnectionModal = (function () {
      *   the note in views/settingsPage.js); `intent` -- one sentence saying
      *   why, shown under the title; `view: "recipes"` -- open straight on the
      *   presets, for a caller whose button said "Add a server" rather than
-     *   "Connect".
+     *   "Connect"; `attach: true` -- show `name`'s connection as it stands
+     *   and never start one, for bringing back a connection that went on in
+     *   the background: a failure there is to be read, and connecting again
+     *   would be a second login, job or VM nobody asked for.
      * @returns Promise<{connected, name, node, kind}>. `connected` is false
      *   for every way out that did not end connected, including closing the
      *   dialog on a connection that is still opening -- which keeps running.
@@ -1259,7 +1262,7 @@ window.PlexoraConnectionModal = (function () {
                         note: "The connection keeps its place until the question is answered.",
                         timeout: 0,
                         actions: [{ label: "Answer", primary: true,
-                                    onSelect: () => { open({ name, kind, intent }); } }],
+                                    onSelect: () => { open({ name, kind, intent, attach: true }); } }],
                     });
                 }
             }
@@ -3500,7 +3503,7 @@ window.PlexoraConnectionModal = (function () {
             // just told us they do not have.
             watch();
             addServer();
-        } else if (name) begin();
+        } else if (name && !options.attach) begin();
         else watch();
         return promise;
     }
