@@ -26,6 +26,8 @@ from plexora.server.utils.formats.base import Reader, TileCache, chosen, names_o
 
 #: Dimensions read at the default plane / channel; the rest at index 0.
 _OWN = ("Y", "X", "S", "C", "Z", "T", "M")
+#: What the decoded frames kept for the regions around them may hold.
+_CACHE_BYTES = 256 << 20
 
 
 def _step(coords, name):
@@ -93,7 +95,13 @@ class LifReader(Reader):
         else:
             height, width = self._tile_h, self._tile_w
         self.levels = [(int(height), int(width))]
-        self._frames = TileCache(capacity=max(8, 2 * len(self._places or ())))
+        # Twice the tiles, so a strip build keeps a channel's frames between
+        # strips; but no more bytes than the budget, which a big scan's
+        # frames would otherwise pass many times over.
+        frame_bytes = max(1, self._tile_h * self._tile_w * self.dtype.itemsize
+                          * (samples if self.rgb else 1))
+        count = max(8, 2 * len(self._places or ()))
+        self._frames = TileCache(capacity=max(4, min(count, _CACHE_BYTES // frame_bytes)))
 
     def _mosaic(self, image):
         """`[(m, y, x)]`: each tile's top-left corner in pixels, or None when
