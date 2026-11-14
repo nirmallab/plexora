@@ -756,6 +756,73 @@ def _fingerprints(session, images) -> dict:
     return out
 
 
+#: The most a dataset start keeps of its images' tables in memory at once
+#: (and never more than a quarter of what this process may use).
+START_HOLD_BYTES = 2 * 1024 ** 3
+
+
+def _hold_budget() -> int:
+    from plexora import _resources
+
+    try:
+        allowed = _resources.allocated_memory_bytes()
+    except Exception:  # an unreadable machine is a small one
+        allowed = None
+    return min(START_HOLD_BYTES, allowed // 4) if allowed else START_HOLD_BYTES // 4
+
+
+def _hold_tables(session, images) -> dict:
+    """{image: cell count}, each image's table read once and held for the
+    rest of the start: `table_limit` is raised to cover the dataset, as far
+    as `_hold_budget` allows. Every walk a start makes (the markers, the
+    channels, the matrix, QC, the units) reads the images in the same order,
+    so a session holding fewer tables than that reads every one whole again
+    on every walk. Only the tables that fit the budget are held: past it,
+    every walk still reads the remaining images' tables again (a cache
+    shorter than a walk in a fixed order misses on every image). An image
+    with no table (an auto-contrast run's) counts no cells."""
+    budget, held, loaded, sizes = _hold_budget(), 0, 0, {}
+    for name in images:
+        if not session.project(name).has_table:
+            sizes[name] = 0
+            continue
+        if held < budget:
+            session.table_limit = max(session.table_limit, loaded + 1)
+        frame = session.data(name).table.geometry()
+        sizes[name] = frame.height
+        held += int(frame.estimated_size())
+        loaded += 1
+    return sizes
+
+
+def _holding_tables(handler):
+    """A start lets go of the tables `_hold_tables` held once it is over,
+    however it ends, oldest first: back to what the session held before it,
+    or to what the reference and the bulk pass's workers need (`bulk.run`
+    raises the limit to that, perhaps already while the start returns),
+    whichever is more."""
+    import functools
+
+    @functools.wraps(handler)
+    def wrapped(call, inp):
+        from plexora.plugins.gating.server.autogate.bulk import IMAGE_WORKERS
+
+        session = call.session
+        before = session.table_limit
+        try:
+            return handler(call, inp)
+        finally:
+            session.table_limit = min(session.table_limit, max(before, 4, IMAGE_WORKERS + 3))
+            # The session evicts only when it reads a table it does not hold,
+            # and the bulk pass's reads are all of held ones: without this a
+            # long-lived session keeps the whole hold until its next miss.
+            held = session.held()
+            for name in held[:max(0, len(held) - session.table_limit)]:
+                session.invalidate(name)
+
+    return wrapped
+
+
 def prepare(call, project, choice=None, *, setup="wait", purpose="gating") -> dict:
     """The deterministic half of a start, with no session: what a driver
     collects before it calls any model (`plexora.ai.harness.decision`).
@@ -800,6 +867,7 @@ def prepare(call, project, choice=None, *, setup="wait", purpose="gating") -> di
             "receipts": list(given_receipts) + list(receipts)}
 
 
+@_holding_tables
 def start(call, inp):
     from plexora.agent.sessions.store import new_session_id
     from plexora.plugins.gating.server.autogate import engine as engines
@@ -834,21 +902,20 @@ def start(call, inp):
         if not images:
             raise AgentError("precondition_missing", f"{cohort.name!r} has no gateable images")
         dataset_name = cohort.name
+        if inp.reference_image and inp.reference_image not in images:
+            raise AgentError("invalid_input", f"{inp.reference_image!r} is not a gateable "
+                             "image of this dataset", detail={"images": images})
+        sizes = {}
+        if len(images) > 1:
+            # The reference image stays held while the bulk pass walks the
+            # rest; an evicted table would refit every marker for every packet.
+            call.session.table_limit = max(call.session.table_limit, 4)
+            sizes = _hold_tables(call.session, images)
         if inp.reference_image:
-            if inp.reference_image not in images:
-                raise AgentError("invalid_input", f"{inp.reference_image!r} is not a gateable "
-                                 "image of this dataset", detail={"images": images})
             reference = inp.reference_image
         else:
-            # An image with no table (an auto-contrast run's) counts no cells.
-            sizes = {name: call.session.data(name).table.geometry().height
-                     if call.session.project(name).has_table else 0 for name in images}
-            reference = max(images, key=lambda n: (sizes[n], -images.index(n)))
+            reference = max(images, key=lambda n: (sizes.get(n, 0), -images.index(n)))
         images = [reference] + [n for n in images if n != reference]
-    if len(images) > 1:
-        # The reference image stays held while the bulk pass walks the rest;
-        # an evicted table would refit every marker for every packet.
-        call.session.table_limit = max(call.session.table_limit, 4)
     # A column the set-up form would have to ask for (no cell id, no
     # coordinates): nothing can be planned without it, and only the user can
     # name it -- so only a session that waits for the form starts without it.
@@ -2565,6 +2632,32 @@ def finish(call, inp):
         out = {"session_id": inp.session_id, "action": action}
         from plexora.plugins.gating.server.autogate import cellcalls
 
+        ended = record["state"] if record["state"] in schemas.FINISHED_STATES else None
+        # A session that has ended takes only what can still follow it: a
+        # rollback (the undo the viewer offers once it is finished) and a
+        # propose-mode commit after a close that wrote nothing (what status
+        # offers). Anything else -- a client retrying after a timeout, a close
+        # after a rollback -- answers what the session ended as and changes
+        # nothing: no write, no new state, no second set of decision rows.
+        if ended and not (action == "rollback" and ended != "rolled_back"
+                          or action == "commit" and ended == "done"
+                          and record["options"]["mode"] == "propose"
+                          and not record.get("committed")
+                          and not engines.summary_of(record)["written"]):
+            out.update(state=ended, finished_at=record.get("finished_at"),
+                       progress=engine.progress(),
+                       units=[_unit_row(u) for u in record["units"].values()][:MAX_LIST],
+                       questions=record.get("questions") or [],
+                       summary=engines.summary_of(record),
+                       note=f"the session had already ended ({ended}); nothing was changed")
+            receipt = make_receipt(call, changed=False, before=None,
+                                   after={"action": action, "state": ended},
+                                   persistent_state=STATE, reversible=False,
+                                   extra={"gating_session": inp.session_id})
+            out["receipt"] = receipt.model_dump(mode="json")
+            out["next"] = (f"{tool_name_of('gating.report')}(session_id) for the review "
+                           f"report; {tool_name_of('gating.export')} for CSV")
+            return out
         if action in ("commit", "rollback") and session_tools.bulk_pass_running(record):
             raise AgentError("conflict", f"the bulk pass is still running; {action} once it "
                              "is over (or cancel it, then wait for it)", retryable=True)
@@ -2597,6 +2690,9 @@ def finish(call, inp):
             cellcalls.on_commit(engine)
             record["options"]["mode"] = "propose"
             record["state"] = "done"
+            # A commit that had nothing to write still happened: a retry of
+            # it must not pass the ended-session check above.
+            record["committed"] = True
         elif action == "rollback":
             undone, refused = [], []
             # Newest first; each undo moves its store's revision, which the
@@ -2645,7 +2741,19 @@ def finish(call, inp):
 
             # What this session decided, for a person to learn from across
             # runs (`server/experience.py`); nothing reads it into a gate.
-            experience.after_finish(record, action, memo.versions())
+            if action == "rollback" and ended == "done":
+                # Undone after its close or commit: those decisions are in the
+                # ledger already, so only the rollback of each is new.
+                sid = record.get("session_id")
+                for project in dict.fromkeys(u["project"] for u in record["units"].values()
+                                             if u.get("project")):
+                    decided = dict.fromkeys(r.get("marker") for r in experience.read(project)
+                                            if r["row"] == "decision"
+                                            and r.get("session_id") == sid)
+                    for marker in decided:
+                        experience.correction(project, marker, "rolled_back", session_id=sid)
+            else:
+                experience.after_finish(record, action, memo.versions())
         engine.release_all()
         out["progress"] = engine.progress()
         out["units"] = [_unit_row(u) for u in record["units"].values()][:MAX_LIST]
