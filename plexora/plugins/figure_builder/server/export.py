@@ -24,6 +24,7 @@ reinstall rather than failing with an ImportError from three frames down.
 from __future__ import annotations
 
 import json
+import zipfile
 from pathlib import Path
 
 from plexora.plugins.figure_builder.server import (
@@ -110,10 +111,22 @@ def export(document, out_dir, options, progress=None, cancelled=None):
             if source is not None:
                 source.close()
 
+    # PNG and TIFF have no pages, so a figure of several is several files, and
+    # the dialog has one Download link. Handing it page 1 would leave the rest
+    # in a server folder the user cannot reach (a remote node, the website), so
+    # every page goes out together, with the manifest beside them.
+    download = written[0]
+    if len(written) > 1:
+        download = out_dir / f"{stem}.zip"
+        with zipfile.ZipFile(download, "w", zipfile.ZIP_DEFLATED) as archive:
+            for path in [*written, manifest_path]:
+                archive.write(path, path.name)
+
     return {
         "cancelled": False,
         "files": [str(path) for path in written] + [str(manifest_path)],
-        "download": str(written[0]),
+        "download": str(download),
+        "pages": len(written) if fmt != "pdf" else len(pages),
         "panels": len(results),
         "warnings": _warnings(results, fonts),
     }

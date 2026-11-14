@@ -148,8 +148,14 @@ class FigureExportUi {
             this.setPhase("idle", "Cancelled. Nothing was written.");
         } else if (job.status === "done") {
             window.PlexoraTelemetry?.feature("figure.export", "figure_builder");
+            // PNG and TIFF write a file per page, so a figure of several pages
+            // downloads as one .zip of them; said here, so a .zip arriving
+            // where a picture was expected is not a surprise.
+            const zipped = /\.zip$/i.test(job.result.download || "");
             this.setPhase("done", FigureSchema.countPhrase(job.result.panels, "panel")
-                + " rendered.");
+                + " rendered."
+                + (zipped ? ` The download is a .zip of ${FigureSchema.countPhrase(
+                    job.result.pages, "page")} and the provenance.` : ""));
             // A long render is exactly when somebody switches to another
             // window; the desktop app says it is done if they have.
             window.PlexoraDesktop?.notifyIfAway({
