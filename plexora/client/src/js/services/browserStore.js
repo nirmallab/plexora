@@ -76,9 +76,13 @@
     const WORKSPACE_FILE = "workspace.json";
     //: What a page never copies between stores (workers/storeSync.js
     //: `KEPT_OUT` and `KEPT_OUT_PREFIXES`, repeated here: this is a classic
-    //: script): one machine's caches, the desktop's server token, project
-    //: bundles' staging and exports, and write probes.
-    const KEPT_OUT = new Set([".remote_cache", ".ims_index", ".models", ".telemetry", "server_token.json"]);
+    //: script): one machine's caches, the desktop's server token, one
+    //: browser's registries of nodes, remotes, servers and agents (their
+    //: tokens; they stay in this browser's own storage, OPFS plexora/state,
+    //: whichever store is in use: storeSync `OWN`), project bundles' staging
+    //: and exports, and write probes.
+    const KEPT_OUT = new Set([".remote_cache", ".ims_index", ".models", ".telemetry", "server_token.json",
+        "nodes.json", "remotes.json", "servers.json", "sidecars.json", ".agent"]);
     const KEPT_OUT_PREFIXES = [".importing-", ".bundles"];
     const PROBE_PREFIX = ".plexora-write-probe";
     //: Files that do not make a folder anybody's: the operating systems' own.

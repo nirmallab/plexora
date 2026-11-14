@@ -25,12 +25,14 @@
  *
  * A folder the desktop app writes too (`open(handle, {shared: true})`) may
  * hold what is not the page's to read: the caches of one machine a data root
- * keeps and its server's token (`KEPT_OUT`), never read in, written or
- * deleted: the page's Python may make its own at the same path, which stays in
- * memory. And files too big to hold in memory (`HELD_BYTES`: a pyramid
- * Python built into a project, a big table): those are read where they lie,
- * a slice at a time (Emscripten's WORKERFS, mounted under /held/<n> and
- * linked at their path, `linkHeld`), never copied into memory -- before,
+ * keeps, its server's token, and one browser's registries of nodes, remotes,
+ * servers and agents (`KEPT_OUT`), never read in, written or deleted: the
+ * page's Python may make its own at the same path, which stays in memory --
+ * the registries kept in this browser's own storage instead (`OWN`), so they
+ * outlive the visit. And files too big to hold in memory (`HELD_BYTES`: a
+ * pyramid Python built into a project, a big table): those are read where
+ * they lie, a slice at a time (Emscripten's WORKERFS, mounted under /held/<n>
+ * and linked at their path, `linkHeld`), never copied into memory -- before,
  * Python never saw them, and built them again every visit. One Python writes
  * anew at such a path is written to the folder like any other file, and then
  * read from there in its turn, which gives its bytes back to the heap. Where
@@ -41,9 +43,11 @@
  * `LAZY_BYTES` or more is read when Python first reads it, not when the folder
  * is opened (`placeLazy`); one never read is never written back.
  *
- *   createStore(FS, root = "/data", log, {readSync, heldRoot}) ->
+ *   createStore(FS, root = "/data", log, {readSync, heldRoot, own, only}) ->
  *       {open(handle, {shared}), push(), pull(), adopt(paths), files(), held(), linked(), unread()}
  */
+
+import { idbFolder } from "./idbFolder.js";
 
 const now = () => performance.now();
 
@@ -51,8 +55,17 @@ const now = () => performance.now();
 //: a data root's caches of one machine (plexora/paths.py: the web chunk
 //: cache, the .ims chunk indexes, downloaded model weights, the telemetry
 //: queue), often gigabytes and each made again where it is needed; the
-//: desktop's server token; and write probes.
-const KEPT_OUT = new Set([".remote_cache", ".ims_index", ".models", ".telemetry", "server_token.json"]);
+//: desktop's server token; the registries of one browser's nodes, remotes,
+//: servers and agents, with their tokens (server/models/bundles.py `NEVER`:
+//: another browser on the same folder would take this one's relay nodes off
+//: the map, and their tokens are not the folder's to hold); and write probes.
+const KEPT_OUT = new Set([".remote_cache", ".ims_index", ".models", ".telemetry", "server_token.json",
+    "nodes.json", "remotes.json", "servers.json", "sidecars.json", ".agent"]);
+//: Of those, what the user typed or connected once and should not have to
+//: again (the registries): while a shared folder is the store, kept in this
+//: browser's own storage (`browserOwn`) -- the place they live when no folder
+//: is -- so a reload, or a move to a folder and back, keeps them.
+const OWN = new Set(["nodes.json", "remotes.json", "servers.json", "sidecars.json", ".agent"]);
 //: ... and every name that begins with one of these: what project bundles
 //: keep beside the projects (server/models/bundles.py) -- an import's staging
 //: folder (`.importing-<bundle>`) and exports waiting to be fetched
@@ -98,6 +111,38 @@ export function keptOut(rel) {
     return KEPT_OUT.has(top) || top.startsWith(PROBE_PREFIX) || KEPT_OUT_PREFIXES.some((prefix) => top.startsWith(prefix));
 }
 
+//: This browser's own storage, where its registries live while a shared
+//: folder is the store (`OWN`): OPFS plexora/state, else the folder kept in
+//: IndexedDB -- the same place workers/pythonWorker.js `browserState` keeps
+//: the projects when no folder is granted, so the registries are where
+//: Python finds them either way. Null where this browser has neither.
+let ownFolder = null;
+function browserOwn() {
+    if (ownFolder) return ownFolder;
+    ownFolder = (async () => {
+        if (typeof navigator === "undefined" || !navigator.storage
+            || typeof navigator.storage.getDirectory !== "function") return null;
+        try {
+            const plexora = await (await navigator.storage.getDirectory())
+                .getDirectoryHandle("plexora", { create: true });
+            // A write, as the store will make one: opening is not enough
+            // (WebKit on Windows opens OPFS and fails every write).
+            const probe = await plexora.getFileHandle(".write-check", { create: true });
+            const writable = await probe.createWritable();
+            await writable.write(new Uint8Array([1]));
+            await writable.close();
+            await plexora.removeEntry(".write-check").catch(() => {});
+            return await plexora.getDirectoryHandle("state", { create: true });
+        } catch (error) {
+            if (typeof indexedDB === "undefined") return null;
+            return idbFolder("plexora-state");
+        }
+    })();
+    // Tried again at the next open when it failed (IndexedDB refused too).
+    ownFolder.catch(() => { ownFolder = null; });
+    return ownFolder;
+}
+
 //: FNV-1a over a file's bytes: whether a file rewritten within the same
 //: millisecond, at the same size, changed (memory file times are in ms).
 function fingerprint(bytes) {
@@ -117,6 +162,16 @@ export function createStore(FS, root = "/data", log = () => {}, options = {}) {
     //: worker keeps more than one store (pythonWorker.js `libraries`), or
     //: two would both mount /held/1.
     const heldRoot = options.heldRoot || HELD_ROOT;
+    //: The top-level names this store keeps in step (`only`): all of them,
+    //: or -- the store of a browser's own registries (`own`) -- just those.
+    const within = options.only ? (rel) => options.only.has(String(rel).split("/")[0]) : () => true;
+    //: Where the registries a shared folder must not carry are kept (`OWN`):
+    //: this browser's own storage for /data, Python's data root; none for an
+    //: added folder (pythonWorker.js `libraries`), which Python keeps none in.
+    //: A function giving a directory handle, or null.
+    const ownState = options.own !== undefined ? options.own : (root === "/data" ? browserOwn : null);
+    //: The store of those registries while a shared folder is open.
+    let own = null;
     let handle = null;
     //: Files placed in memory whose bytes are still in the folder (rel -> node).
     const unread = new Map();
@@ -160,7 +215,7 @@ export function createStore(FS, root = "/data", log = () => {}, options = {}) {
             for (const name of names) {
                 if (name === "." || name === "..") continue;
                 const child = rel ? `${rel}/${name}` : name;
-                if (skipped(child)) continue;
+                if (!within(child) || skipped(child)) continue;
                 // A held file's link: the folder's file, read where it lies.
                 if (isLink(full(child))) continue;
                 const stat = FS.stat(full(child));
@@ -184,7 +239,7 @@ export function createStore(FS, root = "/data", log = () => {}, options = {}) {
             for await (const [name, child] of dir.entries()) {
                 if (name.endsWith(".crswap")) continue; // a write in progress
                 const path = rel ? `${rel}/${name}` : name;
-                if (shared && keptOut(path)) continue;
+                if (!within(path) || (shared && keptOut(path))) continue;
                 if (child.kind === "directory") {
                     dirs.add(path);
                     await visit(child, path);
@@ -433,6 +488,7 @@ export function createStore(FS, root = "/data", log = () => {}, options = {}) {
     function clear(path = root) {
         for (const name of FS.readdir(path)) {
             if (name === "." || name === "..") continue;
+            if (path === root && !within(name)) continue; // another store's
             const child = `${path}/${name}`;
             if (!isLink(child) && FS.isDir(FS.stat(child).mode)) {
                 clear(child);
@@ -455,6 +511,7 @@ export function createStore(FS, root = "/data", log = () => {}, options = {}) {
             knownDirs.clear();
             held.clear();
             unread.clear();
+            own = null;
             shared = Boolean(options.shared);
             handle = dir;
             const remote = await remoteWalk();
@@ -464,6 +521,20 @@ export function createStore(FS, root = "/data", log = () => {}, options = {}) {
             }
             for (const [rel, file] of remote.files) known.set(rel, await place(rel, file));
             const linked = linkAll(remote.big);
+            if (shared && ownState) {
+                // The registries this folder never carries, read from this
+                // browser's own storage, and written back there (`push`).
+                try {
+                    const dir = await ownState();
+                    if (dir) {
+                        const mine = createStore(FS, root, log, { readSync, only: OWN, own: null });
+                        await mine.open(dir);
+                        own = mine;
+                    }
+                } catch (error) {
+                    log(`store: this browser's nodes and servers are kept for this visit only (${error?.message || error})`);
+                }
+            }
             return { files: known.size, unread: unread.size, held: held.size, linked,
                      ms: Math.round(now() - began) };
         });
@@ -530,6 +601,15 @@ export function createStore(FS, root = "/data", log = () => {}, options = {}) {
                     // Already gone.
                 }
             }
+            if (own) {
+                try {
+                    const mine = await own.push();
+                    written += mine.written;
+                    removed += mine.removed;
+                } catch (error) {
+                    log(`store: this browser's nodes and servers could not be kept (${error?.message || error})`);
+                }
+            }
             return { written, removed };
         });
     }
@@ -581,6 +661,16 @@ export function createStore(FS, root = "/data", log = () => {}, options = {}) {
                 try { FS.unmount(links.get(rel).dir); } catch (error) { /* in use */ }
                 links.delete(rel);
             }
+            if (own) {
+                // Another tab of this browser may have changed them.
+                try {
+                    const mine = await own.pull();
+                    read += mine.read;
+                    dropped += mine.dropped;
+                } catch (error) {
+                    log(`store: this browser's nodes and servers could not be read (${error?.message || error})`);
+                }
+            }
             return { read, dropped, linked };
         });
     }
@@ -602,7 +692,7 @@ export function createStore(FS, root = "/data", log = () => {}, options = {}) {
             const missing = [];
             const big = new Map();
             for (const rel of paths || []) {
-                if (shared && keptOut(rel)) continue;
+                if (!within(rel) || (shared && keptOut(rel))) continue;
                 let file = null;
                 try {
                     const dir = await folderOf(rel, false);
