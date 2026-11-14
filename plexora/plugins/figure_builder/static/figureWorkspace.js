@@ -353,6 +353,14 @@ class FigureWorkspace {
     destroy() {
         window.removeEventListener("keydown", this._onKey);
         window.removeEventListener("resize", this._onResize);
+        // The canvas is a routed page and the window outlives it: a space-pan
+        // listener left here would keep cancelling Space app-wide and pin this
+        // whole workspace, one more set per visit.
+        window.removeEventListener("keydown", this._onSpaceDown);
+        window.removeEventListener("keyup", this._onSpaceUp);
+        window.removeEventListener("blur", this._releaseSpace);
+        this._detachDrop?.();
+        this._detachDrop = null;
         this.closeMenu();
         this.contextMenu?.destroy();
         this.viewOptions?.destroy();
