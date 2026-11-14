@@ -210,8 +210,9 @@ class CSVGatingList {
         dropzone.on("sending", (file, xhr, formData) => {
             formData.append("datasource", this.datasource);
         });
+        // The file just uploaded, not the saved list read back.
         dropzone.on("queuecomplete", (file, xhr, formData) => {
-            return this.applyGates()
+            return this.applyGates('file')
         });
 
         // In the desktop app a file dropped from Explorer or Finder arrives as
@@ -312,80 +313,17 @@ class CSVGatingList {
     * @parms {String} source Whether it is from new file upload or saved
     */
     async applyGates(source) {
-        let gates;
-        if (source === 'file') {
-            gates = await this.api.getUploadedGatingCsvValues();
-        } else {
-            gates = await this.api.getSavedGatingList();
+        // The panel (GatingSidebarController) owns the gate on screen and its
+        // save, so the gates go to it. This used to reset and click this
+        // off-screen list's rows instead: every gated marker in the file
+        // ended up in the drawn gate at once, the panel's slider never moved,
+        // and nothing was saved.
+        if (source !== 'file') {
+            await this.panel?.reloadFromServer();
+            return;
         }
-
-        this.eventHandler.trigger(CSVGatingList.events.RESET_GATINGLIST)
-        _.each(gates, async (col) => {
-            if (col.channel == 'Lasso') {
-                // Lasso-drawn regions are no longer supported; ignore any
-                // legacy 'Lasso' rows from older saved/exported gate lists.
-            } else {
-                let shortName = this.dataLayer.getShortChannelName(col.channel);
-                let channelID = this.gatingIDs[shortName];
-                if (this.sliders.get(shortName)) {
-                    // A downloaded CSV now says `thresholded` -- whether this
-                    // marker was ever gated at all -- where it used to say
-                    // `gate_active`, which described only the single marker on
-                    // screen when the file was written. Rows restored from the
-                    // database still carry gate_active, as do CSVs exported by
-                    // older builds, so both names are accepted here.
-                    const gated = col.thresholded !== undefined ? col.thresholded : col.gate_active;
-                    let toggle_off
-                    if (!gated && col.channel in this.selections) {
-                        toggle_off = true;
-                    } else {
-                        toggle_off = false;
-                    }
-                    this.gating_channels[col.channel] = [col.gate_start, col.gate_end];
-                    if (gated) {
-                        // IF the channel isn't active, make it so
-                        if (!this.selections[col.channel]) {
-                            let selector = `#csv_gating-slider_${channelID}`;
-                            document.querySelector(selector).click();
-                        }
-                        this.selections[col.channel] = [col.gate_start, col.gate_end];
-
-                        // Update the slider values to reflect the new gate
-                        const slider = this.sliders.get(shortName);
-                        if (slider) {
-                            // Apply the same data type conversion as in addSlider
-                            const fullName = this.dataLayer.getFullChannelName(shortName);
-                            const channelRange = [this.databaseDescription[fullName].min, this.databaseDescription[fullName].max];
-                            // The grid as a floor and the file's own
-                            // decimals kept: a CSV that says 7.42 means 7.42.
-                            const at = (value) => Math.pow(10,
-                                this.dataLayer.gateValueDecimals(channelRange, parseFloat(value)));
-                            const v0 = Math.floor(parseFloat(col.gate_start) * at(col.gate_start) + 1e-9)
-                                / at(col.gate_start);
-                            const v1 = Math.ceil(parseFloat(col.gate_end) * at(col.gate_end) - 1e-9)
-                                / at(col.gate_end);
-
-                            slider.silentValue([v0, v1]);
-                            // Update the input fields
-                            d3.select('#gating_slider-input_' + channelID + '_0').attr('value', v0);
-                            d3.select('#gating_slider-input_' + channelID + '_0').property('value', v0);
-                            d3.select('#gating_slider-input_' + channelID + '_1').attr('value', v1);
-                            d3.select('#gating_slider-input_' + channelID + '_1').property('value', v1);
-                        }
-
-                    } else {
-                        // If channel is currently active, but shouldn't be, update it
-                        if (toggle_off) {
-                            let selector = `#csv_gating-slider_${channelID}`;
-                            document.querySelector(selector).click();
-                        }
-                        delete this.selections[col.channel];
-                    }
-                }
-            }
-        })
-        // Trigger brush
-        this.eventHandler.trigger(CSVGatingList.events.SELECTION_CHANGED, this.selections);
+        const gates = await this.api.getUploadedGatingCsvValues();
+        this.panel?.loadGates(gates);
     }
 
     /**

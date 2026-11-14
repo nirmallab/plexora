@@ -49,6 +49,10 @@ class GatingSidebarController {
         this.ctx = ctx;
         this.sidebar = ctx.sidebar;
         this.gatingList = ctx.moduleInstance;
+        // The list's Load Gates (its file input, its drop target and the drop
+        // router's `upload_gates`) hands the file's rows to this panel, which
+        // owns the gate on screen and its save -- see loadGates.
+        if (this.gatingList) this.gatingList.panel = this;
         this.dataLayer = ctx.dataLayer;
         this.api = new GatingApi(ctx);
         this.eventHandler = ctx.eventHandler;
@@ -1958,6 +1962,47 @@ class GatingSidebarController {
             this._applyingRemote = false;
         }
         return true;
+    }
+
+    /**
+     * Load Gates: the rows of a gates CSV (the upload route's answer), made
+     * this sample's gates -- the panel's button, a file dropped on the list
+     * and a confirmed desktop drop all end here (CSVGatingList#applyGates).
+     *
+     * Merged into `gating_channels`, not replacing it: a marker the file does
+     * not name keeps its gate. A row whose `thresholded` is empty is a marker
+     * the file left ungated, so it goes back to THIS sample's full range (the
+     * file's numbers are the other sample's). A CSV from an older build has
+     * no `thresholded`; its `gate_active` named only the marker on screen
+     * when it was written, so its numbers are taken as they are.
+     *
+     * The marker on screen stays on screen, alone in the drawn gate and on
+     * the slider at its loaded value, and the list is saved: the load used
+     * to stop at the legacy list's own maps, which drew every gated marker in
+     * the file at once and was lost on a reload.
+     */
+    loadGates(rows) {
+        if (!Array.isArray(rows)) return;
+        this.agentPreview = null;
+        const names = this.getGateMarkerNames();
+        rows.forEach((row) => {
+            if (!row || !row.channel || row.channel === "Lasso") return;
+            const name = this.dataLayer.getShortChannelName(row.channel);
+            if (!names.includes(name)) return;
+            const fullName = this.dataLayer.getFullChannelName(name);
+            const gated = "thresholded" in row ? Boolean(row.thresholded) : true;
+            const range = [Number(row.gate_start), Number(row.gate_end)];
+            if (gated && !range.every(Number.isFinite)) return;
+            this.gatingList.gating_channels[fullName] = gated ? range : this.getGateRange(name);
+            // Auto's way back is to the gate before the load, not this one.
+            this.preAutoGates.delete(fullName);
+        });
+        if (this.gateMarker) {
+            this.setGateMarker(this.gateMarker, { force: true, syncSlot: false });
+        }
+        // The marker list's gated-indicator dots read gating_channels.
+        this.gateMarkerSelect?.setOptions?.(this.getGateMarkerNames());
+        this.scheduleSaveGating();
     }
 
     scheduleSaveGating() {
