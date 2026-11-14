@@ -17,6 +17,7 @@ a project nobody has open, at a scale nobody is looking at.
 from __future__ import annotations
 
 import math
+import os
 import threading
 
 import numpy as np
@@ -65,12 +66,48 @@ class _MaskShelf:
             self._held.clear()
             self._order.clear()
 
+    def forget(self, path):
+        """Close and drop every local mask read from `path`."""
+        key = _same_path(path)
+        with self._lock:
+            names = [name for name, (where, _provider) in self._held.items()
+                     if where[0] == "local" and _same_path(where[1]) == key]
+            gone = [self._held.pop(name)[1] for name in names]
+            for name in names:
+                self._order.remove(name)
+        for provider in gone:
+            close = getattr(provider, "close", None)
+            if callable(close):
+                close()
+
 
 _MASKS = _MaskShelf()
 
 
 def close_masks():
     _MASKS.close()
+
+
+def forget_mask_path(path):
+    """Let go of the mask file at `path` before it is rebuilt there: the
+    rebuilt pyramid takes the same name (`derived_output_path`), and Windows
+    will not replace a file this shelf holds open."""
+    _MASKS.forget(path)
+
+
+def _same_path(path):
+    return os.path.normcase(os.path.abspath(str(path)))
+
+
+def _file_identity(path):
+    """(mtime, size) of a local mask file, so a mask rebuilt at the same path
+    is opened anew rather than read from the replaced file; None for a web
+    address or a file that cannot be looked at."""
+    try:
+        stat = os.stat(path)
+    except (OSError, TypeError, ValueError):
+        return None
+    return stat.st_mtime_ns, stat.st_size
 
 
 def _mask_for(record):
@@ -91,7 +128,7 @@ def _mask_for(record):
     locator = handle.locator
     binding = record.resources.get("segmentation")
     where = (("node", binding.node, binding.resource_id) if binding is not None
-             else ("local", seg.derived))
+             else ("local", seg.derived, _file_identity(seg.derived)))
     try:
         provider = _MASKS.get(record.name, where, handle.provider)
         # One pixel: cheap, and a mask that cannot be read says so here, not
@@ -548,14 +585,30 @@ def _mask_plane(view_token):
     return None
 
 
-def _read_mask(mask, level, box, *, max_pixels, z):
-    """`mask.read_region` at plane `z` when the reader takes one (a local
-    mask does; a data node's answers for its middle plane)."""
+def _mask_frame(view_token):
+    """The frame of a time series' mask to outline under a view: the view's
+    own; None for frame 0, every mask's default (and all a 2-D mask has)."""
+    if not view_token:
+        return None
+    from plexora.api.representation import to_spec
+
+    t = int(to_spec(view_token).t or 0)
+    return t if t > 0 else None
+
+
+def _read_mask(mask, level, box, *, max_pixels, z, t=None):
+    """`mask.read_region` at plane `z` of frame `t` when the reader takes
+    them (a local mask and a data node's do); a reader that does not answers
+    for its default plane."""
     import inspect
 
-    if z is not None and "z" in inspect.signature(mask.read_region).parameters:
-        return mask.read_region(level, box, max_pixels=max_pixels, z=z)
-    return mask.read_region(level, box, max_pixels=max_pixels)
+    params = inspect.signature(mask.read_region).parameters
+    where = {}
+    if z is not None and "z" in params:
+        where["z"] = z
+    if t is not None and "t" in params:
+        where["t"] = t
+    return mask.read_region(level, box, max_pixels=max_pixels, **where)
 
 
 def _view_manifest(spec, provenance):
@@ -746,7 +799,7 @@ def render_region(session, spec, *, store=True, pixel_size=None):
         # in the picture and not the ones on the default plane.
         mask_plane = _mask_plane(view_token)
         labels = _read_mask(mask, mask_level, lbox, max_pixels=MAX_SOURCE_PIXELS_AGENT,
-                            z=mask_plane)
+                            z=mask_plane, t=_mask_frame(view_token))
         labels = resize_labels_nearest(labels, out_w, out_h)
         cells = spec.cells
         outline = cells.outline_color if cells else "#e6e6e6"

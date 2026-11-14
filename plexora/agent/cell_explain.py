@@ -27,8 +27,8 @@ MAX_CROP_PX = 1000.0
 def explain_cell(session, data, *, cell_id, marker=None, k=8, within_um=None, crop_um=None,
                  crop_px=None, include_crop=True, include_metadata=False, store=True):
     from plexora.agent import render
-    from plexora.agent.cell_gallery import (NEIGHBOUR_OUTLINE, TARGET_OUTLINE, crop_for,
-                                            table_cells)
+    from plexora.agent.cell_gallery import (NEIGHBOUR_OUTLINE, TARGET_OUTLINE, cell_view,
+                                            crop_for, frame_of, table_cells, table_frames)
     from plexora.server.utils import pixel_scale
 
     record = data.project
@@ -102,6 +102,7 @@ def explain_cell(session, data, *, cell_id, marker=None, k=8, within_um=None, cr
     order = np.argsort(distances, kind="stable")
     order = order[order != index]
     frames = _column_of(data, keep, "t")
+    frame = frame_of(frames[index]) if frames is not None else None
     if frames is not None:
         # A time series' object table holds every cell once per frame: its
         # neighbours are the ones beside it at the same moment.
@@ -129,6 +130,8 @@ def explain_cell(session, data, *, cell_id, marker=None, k=8, within_um=None, cr
         "cell_id": int(cell_id),
         "id_column": id_column,
         "centroid": {"x": x, "y": y, "unit": "px"},
+        # A time series' row is one frame's: the values and centroid are its.
+        **({"t": frame} if frame is not None else {}),
         "centroid_um": {"x": x * scale, "y": y * scale} if scale else None,
         "markers": values,
         "top_markers": [{"marker": name, **values[name]} for name in ranked[:TOP_MARKERS]],
@@ -164,8 +167,18 @@ def explain_cell(session, data, *, cell_id, marker=None, k=8, within_um=None, cr
             channels.append(ChannelSpec(name=nuclear, color=NUCLEAR_COLOR))
         if marker and marker in channel_names:
             channels.append(ChannelSpec(name=marker, color=TARGET_COLOR))
+        # Drawn at the row's frame and plane, as the gallery draws each cell:
+        # the default view is frame 0's middle plane, where this id may be
+        # another cell or none.
+        from plexora.agent.sections import plane_of, table_planes
+
+        zs, stack_depth, _solid = table_planes(data, keep)
+        shown = table_frames(data, keep)
+        view = cell_view(plane_of(zs[index], stack_depth) if zs is not None else None,
+                         frame_of(shown[index]) if shown is not None else None)
         spec = RenderInput(
             project=record.name,
+            **({"view": view} if view else {}),
             center=CenterBounds(center_x=x, center_y=y, **crop),
             channels=channels or None,
             segmentation="outlines",

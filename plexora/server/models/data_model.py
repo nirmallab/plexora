@@ -347,6 +347,12 @@ def resolve_outline_segmentation(segmentation_path, dataDirectory=None, progress
         built = _page_label_pyramid(segmentation_path, progress_callback, stage_callback)
         if built is not None:
             return built
+    # A rebuild lands at the same path as the pyramid it replaces, which the
+    # agent may still hold open between renders: Windows will not replace a
+    # file held open. Not imported when no agent has rendered anything.
+    agent_render = sys.modules.get("plexora.agent.render")
+    if agent_render is not None:
+        agent_render.forget_mask_path(location.target)
     return segmentation_pyramid.pyramidize_segmentation_mask(
         segmentation_path,
         location.target,
@@ -902,9 +908,28 @@ def gmm_cache_get_or_set(key, compute_fn):
     (load_datasource() clears it on every reload)."""
     if key in _gmm_cache:
         return _gmm_cache[key]
+    state = _table_state()
     value = compute_fn()
-    _gmm_cache[key] = value
+    with load_lock:
+        if _still_current(state):
+            _gmm_cache[key] = value
     return value
+
+
+def _table_state():
+    """What an answer derived from the loaded table is computed from: the load
+    in force and its frame. Taken before computing; `_still_current` says,
+    under `load_lock`, whether the answer may still be cached. A reload (or a
+    table landing behind the viewer) clears the caches once, so an answer
+    computed from the old table and stored after that clear would be served
+    as the new table's until the next reload. Read in this order on purpose:
+    a load sets the frame before it moves the generation."""
+    return load_generation, globals().get("datasource")
+
+
+def _still_current(state) -> bool:
+    generation, frame = state
+    return generation == load_generation and frame is globals().get("datasource")
 
 
 
@@ -1080,7 +1105,11 @@ def _await_table(datasource_name):
         event = _table_pending.get(scope)
         if event is None:
             return
-        event.wait()
+        # Queued (the website's one thread): only the queued read can set
+        # it, so run it here rather than block the thread that must run it.
+        # Still unset after that, nothing else will set it.
+        if not _work.wait_event(event):
+            return
         # Still registered once set is a read that never handed over, and
         # nothing more will come of it. Anything else registered by now is
         # a later load's own read -- a reload behind this one -- and the
@@ -2618,6 +2647,7 @@ def get_filter_columns(datasource_name, columns):
     below, and by the gating plugin's own queries (plexora/plugins/gating/
     server/model.py) via this same function, not a private copy.
     """
+    state = _table_state()
     remote = _remote_table()
     if remote is None and datasource is None:
         # Defensive backstop -- callers into this shared primitive
@@ -2639,8 +2669,10 @@ def get_filter_columns(datasource_name, columns):
     else:
         cols = _filter_columns_from_frame(datasource, columns,
                                           _feature_reader())
-    _gate_filter_cache.clear()
-    _gate_filter_cache[key] = cols
+    with load_lock:
+        if _still_current(state):
+            _gate_filter_cache.clear()
+            _gate_filter_cache[key] = cols
     return cols
 
 
@@ -2726,6 +2758,7 @@ def get_metadata_column(datasource_name, column):
     if cached is not None:
         return cached
 
+    state = _table_state()
     remote = _remote_table()
     frame = get_datasource_df()
     if remote is not None:
@@ -2748,9 +2781,11 @@ def get_metadata_column(datasource_name, column):
                 f"the loaded table has {frame.height} rows"
             )
 
-    if len(_metadata_column_cache) >= _METADATA_COLUMN_CACHE_MAX:
-        _metadata_column_cache.pop(next(iter(_metadata_column_cache)))
-    _metadata_column_cache[key] = result
+    with load_lock:
+        if _still_current(state):
+            if len(_metadata_column_cache) >= _METADATA_COLUMN_CACHE_MAX:
+                _metadata_column_cache.pop(next(iter(_metadata_column_cache)))
+            _metadata_column_cache[key] = result
     return result
 
 
@@ -3160,8 +3195,11 @@ def get_datasource_description(datasource_name, wait=True):
     if datasource_name in _description_cache:
         return _description_cache[datasource_name]
 
+    state = _table_state()
     if not _project(datasource_name).has_table:
-        _description_cache[datasource_name] = {}
+        with load_lock:
+            if _still_current(state):
+                _description_cache[datasource_name] = {}
         return {}
     if not _has_cells(datasource_name):
         # A table that did not load -- a file that moved, a read that failed
@@ -3178,7 +3216,9 @@ def get_datasource_description(datasource_name, wait=True):
     else:
         description = _describe_frame(datasource)
 
-    _description_cache[datasource_name] = description
+    with load_lock:
+        if _still_current(state):
+            _description_cache[datasource_name] = description
     return description
 
 

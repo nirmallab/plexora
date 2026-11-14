@@ -229,12 +229,15 @@ class LocalSegmentationProvider:
     def __init__(self, path: str | None):
         self._path = str(path) if path else None
         self._opened = None
+        # The TIFF `open()` read the mask through, so `close` can let go of
+        # the file.
+        self._tiff = None
 
     @property
     def locator(self) -> ResourceLocator:
         return ResourceLocator(kind="segmentation", provider=LOCAL, path=self._path)
 
-    def read_region(self, level, box, max_pixels=0, z=None):
+    def read_region(self, level, box, max_pixels=0, z=None, t=None):
         """Labels (uint32) for `box` = (x0, y0, x1, y1) at `level`, 0 where it
         runs off the mask. Opens the mask on first use and keeps it open.
 
@@ -243,7 +246,9 @@ class LocalSegmentationProvider:
 
         `z` picks the plane of a 3-D label volume (plexora/server/volume/
         labels.py); without it a volume answers for its middle plane, and a
-        2-D mask ignores it -- it is the same picture on every plane.
+        2-D mask ignores it -- it is the same picture on every plane. `t`
+        picks the frame of a time series' label volume (frame 0 without it),
+        as the node's `read_region` does.
         """
         from plexora.server.utils.label_overlay import padded_label_region
 
@@ -256,9 +261,24 @@ class LocalSegmentationProvider:
             if self._opened is None:
                 raise FileNotFoundError("this project has no segmentation mask")
         pyramid = self._opened
+        if t is not None and hasattr(pyramid, "frame"):
+            pyramid = pyramid.frame(int(t))
         if z is not None and hasattr(pyramid, "plane"):
             pyramid = pyramid.plane(int(z))
         return padded_label_region(pyramid, level, box)
+
+    def close(self):
+        """Let go of the mask file `read_region` opened. Windows will not
+        replace a file held open, and a rebuilt mask lands at the same path
+        (`segmentation_pyramid.derived_output_path`)."""
+        opened, self._opened = self._opened, None
+        tiff, self._tiff = self._tiff, None
+        if tiff is not None:
+            tiff.close()
+        elif callable(getattr(opened, "close", None)):
+            # A tiled TIFF at a web address (`_TiffLabelLevels`); a zarr
+            # store or a label volume has nothing to close.
+            opened.close()
 
     def read_regions(self, level, boxes):
         """`read_region(level, box)` for each of `boxes`, in order.
@@ -352,6 +372,7 @@ class LocalSegmentationProvider:
         if ome_zarr.is_zarr_image_path(self._path):
             return zarr.open(self._path)
         seg_io = tf.TiffFile(self._path, is_ome=False)
+        self._tiff = seg_io
         return zarr.open(seg_io.series[0].aszarr())
 
     def _reads_colour(self) -> bool:

@@ -75,6 +75,35 @@ def table_cells(data):
     return ids, xs, ys, keep
 
 
+def frame_of(t):
+    """The frame a time series' table row is from, or None when it has none."""
+    if t is None or not np.isfinite(t):
+        return None
+    return int(round(float(t)))
+
+
+def table_frames(data, keep):
+    """The frame of each kept row of a time series' table (its `t` role, held
+    to the image's frames), or None when the image has a single frame: a
+    frame column mapped on a still image or a one-frame stack names frames
+    the image has not got, and a view of one would be refused."""
+    count = int(getattr(data.project.image, "frames", 1) or 1)
+    if count < 2:
+        return None
+    from plexora.agent.cell_explain import _column_of
+
+    ts = _column_of(data, keep, "t")
+    return None if ts is None else np.clip(np.round(ts), 0, count - 1)
+
+
+def cell_view(plane, frame):
+    """The view a cell's crop is drawn at: its row's frame of a time series
+    and its plane of a z-stack -- the moment and depth its value and centroid
+    are from. None for the image's default view."""
+    token = (f"t{frame}" if frame else "") + (f"z{plane}" if plane is not None else "")
+    return token or None
+
+
 def marker_values(data, marker, keep):
     if marker not in data.table.markers:
         raise AgentError("invalid_input", f"{marker!r} is not a marker of {data.name!r}",
@@ -143,6 +172,9 @@ def render_cell_gallery(session, data, *, cell_ids=None, marker=None, select_how
     from plexora.agent.sections import plane_of, table_planes
 
     zs, depth, _solid = table_planes(data, keep)
+    # On a time series, each cell at its row's frame: the table holds every
+    # cell once per frame, and its value and centroid are that frame's.
+    frames = table_frames(data, keep)
     gate = None
     values = None
     if marker:
@@ -232,9 +264,11 @@ def render_cell_gallery(session, data, *, cell_ids=None, marker=None, select_how
     for index in chosen.tolist():
         cid = int(ids[index])
         plane = plane_of(zs[index], depth) if zs is not None else None
+        at = frame_of(frames[index]) if frames is not None else None
+        view = cell_view(plane, at)
         spec = RenderInput(
             project=record.name,
-            **({"view": f"z{plane}"} if plane is not None else {}),
+            **({"view": view} if view else {}),
             center=CenterBounds(center_x=float(xs[index]), center_y=float(ys[index]), **crop),
             channels=draw_channels,
             segmentation="outlines",
@@ -250,7 +284,8 @@ def render_cell_gallery(session, data, *, cell_ids=None, marker=None, select_how
                "level": rendered["manifest"]["level"],
                "segmentation_status": rendered["manifest"]["segmentation"]["status"],
                "outline_drawn": rendered["manifest"]["cells"]["highlight_rendering"],
-               **({"z": plane} if plane is not None else {})}
+               **({"z": plane} if plane is not None else {}),
+               **({"t": at} if at is not None else {})}
         caption = f"#{cid}"
         if values is not None:
             value = float(values[index])
@@ -287,6 +322,8 @@ def render_cell_gallery(session, data, *, cell_ids=None, marker=None, select_how
         "tile_px": int(tile_px),
         **({"planes": "each cell at the plane of its centroid (its row's z)"}
            if zs is not None else {}),
+        **({"frames": "each cell at the frame of its row (its row's t)"}
+           if frames is not None else {}),
         "columns": columns,
         "channels": [c.model_dump(mode="json") for c in draw_channels],
         "tiles": rows,
