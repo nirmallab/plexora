@@ -563,15 +563,24 @@ def normalize_pixel_size(raw):
     alternative, quietly assuming some conventional value, produces a figure
     with a scale bar that is simply wrong and looks exactly like one that is
     right.
+
+    A value stated in another unit (a capture of an image whose file said
+    "nm" or "mm") is converted, because every reader of this takes `value` as
+    microns; one in a unit nobody knows is no calibration at all.
     """
+    from plexora.server.utils import pixel_scale
+
     if not isinstance(raw, dict):
         return None
     value = as_float(raw.get("value"), 0.0)
     if value <= 0:
         return None
+    value = pixel_scale.to_microns(value, clean_text(raw.get("unit")) or "µm")
+    if value is None:
+        return None
     return {
         "value": value,
-        "unit": clean_text(raw.get("unit")) or "µm",
+        "unit": "µm",
         # Recorded because it changes what the number means: a value the user
         # typed for an uncalibrated import is not the same evidence as one the
         # file stated, and the provenance page says which.

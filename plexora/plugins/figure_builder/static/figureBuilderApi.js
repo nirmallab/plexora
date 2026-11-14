@@ -385,11 +385,27 @@ class FigureBuilderApi {
             // one of them assumed -- the only thing worse than a missing
             // calibration is a wrong one, and neither shape can invent a value.
             const pixels = metadata?.images?.[0]?.pixels || metadata || {};
-            const value = Number(pixels.physical_size_x);
+            // The endpoint passes the file's own unit through ("nm" for an
+            // OME-Zarr in nanometres, "mm" from some OME-TIFFs), and everything
+            // that reads a capture's pixel size takes it as microns. So convert
+            // here, with the table the server's pixel_scale.to_microns uses; a
+            // unit not in it is no calibration, not a number of microns.
+            const micronsPerUnit = {
+                "µm": 1, "um": 1, "micron": 1, "microns": 1, "micrometer": 1,
+                "micrometre": 1, "μm": 1,
+                "nm": 1e-3, "nanometer": 1e-3, "nanometre": 1e-3,
+                "mm": 1e3, "millimeter": 1e3, "millimetre": 1e3,
+                "cm": 1e4, "m": 1e6, "meter": 1e6, "metre": 1e6,
+                "å": 1e-4, "angstrom": 1e-4,
+            };
+            const unit = String(pixels.physical_size_x_unit || "µm").trim().toLowerCase();
+            const factor = Object.prototype.hasOwnProperty.call(micronsPerUnit, unit)
+                ? micronsPerUnit[unit] : NaN;
+            const value = Number(pixels.physical_size_x) * factor;
             if (!(value > 0)) return null;
             return {
                 value: value,
-                unit: pixels.physical_size_x_unit || "µm",
+                unit: "µm",
                 // The endpoint now says which of the two this is: a project
                 // calibrated by hand in the viewer serves its value here, and
                 // reporting that as "metadata" would put a claim on the
