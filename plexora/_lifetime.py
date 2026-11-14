@@ -193,6 +193,9 @@ def install_signal_handlers(signals=None):
     a console closing. All of them become the KeyboardInterrupt that Waitress
     already stops cleanly on. Only callable from the main thread, which is the
     only place the launchers call it; elsewhere it quietly does nothing.
+
+    A signal the process was started ignoring stays ignored: `nohup plexora`
+    asked to outlive its terminal, and catching its SIGHUP would undo that.
     """
     if threading.current_thread() is not threading.main_thread():
         return []
@@ -208,6 +211,8 @@ def install_signal_handlers(signals=None):
     installed = []
     for signum in signals:
         try:
+            if signal.getsignal(signum) is signal.SIG_IGN:
+                continue
             signal.signal(signum, handler)
             installed.append(signum)
         except (OSError, ValueError):

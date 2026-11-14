@@ -510,7 +510,7 @@ ANNOUNCE_PREFIX = "[plexora-remote]"
 
 
 def remote_instructions(user, host, port, base_url="", *, login_host=None,
-                        node=None, bind_node=False):
+                        node=None, bind_node=False, token=None):
     """The lines `plexora --remote` prints, as a pure function.
 
     `node` is the switch between the two shapes: set means we are on a compute
@@ -518,7 +518,7 @@ def remote_instructions(user, host, port, base_url="", *, login_host=None,
     they ssh to is the host Plexora is on.
     """
     prefix = _clean_base_url(base_url)
-    local_url = f"http://localhost:{port}{prefix or '/'}"
+    local_url = with_token(f"http://localhost:{port}{prefix or '/'}", token)
     login = login_host or "<login-host>"
     lines = [f"{ANNOUNCE_PREFIX} node={node or host} port={port}", ""]
 
@@ -713,6 +713,9 @@ def apply_detection(args, resolved, *, remote_env=False):
     # exists to explain.
     if remote_env:
         args.remote = True
+        # Remembered, because an explicit --remote goes tokenless for an older
+        # `plexora connect` and a detected one has no such caller.
+        args.remote_detected = True
         return "remote"
     return None
 
@@ -2947,7 +2950,9 @@ def connect_kwargs(args, profile=None):
         "node_name": (args.node_name or saved("node_name")
                       or (profile.name if profile is not None else None)),
         "node_port": args.node_port,
-        "local_node": not args.no_local_node,
+        # The flag can turn it off for one run; a profile saved with it off
+        # stays off, as it does when the app connects with that profile.
+        "local_node": (not args.no_local_node) and bool(saved("local_node", True)),
         # An opt-in either way round, so the flag does not have to beat a saved
         # value: `--install` on the command line, or a profile that was saved
         # with it on. Nothing here can turn it off for one run, which is the
@@ -2986,17 +2991,33 @@ def _saved_remote(name):
         return None
 
 
-def _save_remote(name, target, kwargs):
+def _save_remote(name, target, kwargs, profile=None):
     """Record this connection under `name`, before trying it.
 
     Before, not after: a first attempt that fails on the remote command is
     exactly when having the rest of it saved is worth most, because the fix is
     to change one field and press connect again.
+
+    Starts from the profile it was connected with, or else the one already
+    saved under `name`: Settings records more than the terminal has flags for
+    (a preset, a files record, a workstation's account), and `extra` is
+    promised to ride through a `--save` that has never heard of it.
     """
+    from dataclasses import replace
+
     from plexora.server.models.remotes import Remote, save
 
-    save(Remote(
-        name=name,
+    base = profile if profile is not None else _saved_remote(name)
+    extra = dict(base.extra) if base is not None else {}
+    # Only when there is one, so every other profile's `extra` stays the
+    # empty dict it has always been. It reaches here only by having been
+    # read off a saved workstation -- there is no flag for it -- so this is
+    # what stops `--save` under a new name quietly producing a copy that
+    # has forgotten which machine it is talking to.
+    if kwargs.get("remote_os"):
+        extra["workstation"] = {**(extra.get("workstation") or {}),
+                                "os": kwargs["remote_os"]}
+    fields = dict(
         target=target,
         remote_command=kwargs["remote_command"],
         datasource=kwargs["datasource"],
@@ -3010,15 +3031,12 @@ def _save_remote(name, target, kwargs):
         serve=tuple(kwargs["also_serve"]),
         local_serve=tuple(kwargs["local_serve"]),
         node_name=kwargs["node_name"],
+        local_node=kwargs["local_node"],
         install=kwargs["install"],
-        # Only when there is one, so every other profile's `extra` stays the
-        # empty dict it has always been. It reaches here only by having been
-        # read off a saved workstation -- there is no flag for it -- so this is
-        # what stops `--save` under a new name quietly producing a copy that
-        # has forgotten which machine it is talking to.
-        extra=({"workstation": {"os": kwargs["remote_os"]}}
-               if kwargs.get("remote_os") else {}),
-    ))
+        extra=extra,
+    )
+    save(replace(base, name=name, **fields) if base is not None
+         else Remote(name=name, **fields))
     print(f"Saved as {name!r}. Next time: plexora connect {name}")
 
 
@@ -3038,7 +3056,7 @@ def _run_connect(args):
     if profile is not None:
         print(f"Using saved server {profile.name!r} ({target}).")
     if args.save:
-        _save_remote(args.save, target, kwargs)
+        _save_remote(args.save, target, kwargs, profile)
 
     code = connect(target, **kwargs)
     if not args.save and profile is None:
@@ -3128,7 +3146,7 @@ def _verify_detected_proxy(mount, port):  # pragma: no cover - needs jupyter_ser
         pass
 
 
-def _print_remote_instructions(args, port):
+def _print_remote_instructions(args, port, token=None):
     """Work out this machine's place in the world and say how to reach it."""
     _scheduler, node, detected_login = scheduler_topology()
     for line in remote_instructions(
@@ -3139,6 +3157,7 @@ def _print_remote_instructions(args, port):
         login_host=args.login_host or detected_login,
         node=node,
         bind_node=args.bind_node,
+        token=token,
     ):
         # flush, every line: under --srun the task's stdout is a pipe rather
         # than the pty an ordinary `ssh -t` would give it, so Python block
@@ -3484,9 +3503,11 @@ def _terminal_token(args, host, detected_kind, paths):
     another account on the same machine -- a shared workstation, a login
     node -- cannot use the port. Not given one:
 
-    * `--remote`: `plexora connect` reads only the port off the ready line, and
-      a remote newer than the laptop's Plexora would refuse every request the
-      older laptop made. Loopback plus the browser guard still apply there.
+    * a typed `--remote`: `plexora connect` reads only the port off the ready
+      line, and a remote newer than the laptop's Plexora would refuse every
+      request the older laptop made. Loopback plus the browser guard still
+      apply there. A bare `plexora` over ssh, remote only by detection, is not
+      `plexora connect` (which always types the flag) and keeps its token.
     * a hub's proxy or Colab: the page is framed by, or proxied through,
       another origin, where a SameSite cookie does not arrive.
     * `--no-token`.
@@ -3497,7 +3518,8 @@ def _terminal_token(args, host, detected_kind, paths):
     inherited = os.environ.get("PLEXORA_AUTH_TOKEN")
     if inherited:
         return inherited
-    if args.no_token or args.remote or detected_kind in ("proxy", "colab"):
+    typed_remote = args.remote and not getattr(args, "remote_detected", False)
+    if args.no_token or typed_remote or detected_kind in ("proxy", "colab"):
         return None
     if _is_loopback(host):
         try:
@@ -3648,7 +3670,9 @@ def main(argv=None):
         ood_node = ood_node or socket.gethostname()
         if args.base_url is None:
             args.base_url = ood_mount(ood_node, port)
-        ood_token = secrets.token_urlsafe(16)
+        # An inherited token wins, as in _terminal_token: the restart after an
+        # update must come back with the one the open page's cookie holds.
+        ood_token = os.environ.get("PLEXORA_AUTH_TOKEN") or secrets.token_urlsafe(16)
         os.environ["PLEXORA_AUTH_TOKEN"] = ood_token
 
     # Set only for an explicit --data-dir. There is deliberately no default
@@ -3746,7 +3770,11 @@ def main(argv=None):
         health_url = browser_url(host, port)
         url = f"{browser_url(host, port, '', args.datasource)}?token={ood_token}"
 
-    if args.remote:
+    if args.remote and getattr(args, "remote_detected", False):
+        # The tunnel's URL is the only one this user is given, so it carries
+        # the token a detected remote kept.
+        _print_remote_instructions(args, port, token=view_token)
+    elif args.remote:
         _print_remote_instructions(args, port)
     if args.ood:
         # Not the browser_url line: that address is this node's own loopback
@@ -3803,9 +3831,13 @@ def main(argv=None):
     # Help > Check for Updates may stop this server to restart it on new code;
     # it only offers that when a launcher is here to do the starting.
     app.config["PLEXORA_CAN_RESTART"] = True
-    from plexora._lifetime import make_interruptible
+    from plexora._lifetime import install_signal_handlers, make_interruptible
 
     make_interruptible()
+    # A closed terminal (SIGHUP, or SIGBREAK on Windows) or a `kill` (SIGTERM)
+    # stops like Ctrl+C, so atexit still ends the ssh sessions and cluster jobs
+    # the viewer started and the finally below stops --also-serve's node.
+    install_signal_handlers()
     served = {}
     try:
         serve(

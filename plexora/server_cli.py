@@ -80,9 +80,12 @@ def main(argv=None):
         pass
     cli.start_telemetry(app, "notebook" if args.notebook_mode else "sidecar")
     app.config["PLEXORA_CAN_RESTART"] = True
-    from plexora._lifetime import make_interruptible
+    from plexora._lifetime import install_signal_handlers, make_interruptible
 
     make_interruptible()
+    # A kernel ends this sidecar with terminate(), a SIGTERM on POSIX: stop
+    # like Ctrl+C, so atexit forgets the record and ends what the viewer started.
+    install_signal_handlers()
     served = {}
     serve(
         app,
