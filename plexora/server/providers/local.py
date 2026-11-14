@@ -888,6 +888,20 @@ def _page_overview(path, levels, level_series, zarray):
     return np.stack(got)
 
 
+def flat_tile_grid(chunks, shape) -> tuple[int, int]:
+    """(tile height, tile width) a single-level image is served on: its
+    reader's chunk when that is a real tile, else the virtual 1024 grid a
+    pyramid is served on. A strip-written TIFF's chunk is one strip -- a few
+    rows by the full width -- and serving on it costs one request and one
+    encode per strip; a tile read is a slice, so it need not land on a chunk.
+    Shared by the import (`convertOmeTiff`) and a node's geometry, so the two
+    agree."""
+    height, width = int(chunks[-2]), int(chunks[-1])
+    if height < min(256, int(shape[-2])) or width < min(256, int(shape[-1])):
+        return 1024, 1024
+    return height, width
+
+
 def image_geometry(path, pyramid=None, rgb=False, index=0) -> dict:
     """An image file's shape, without loading it into the module globals.
 
@@ -964,7 +978,7 @@ def image_geometry(path, pyramid=None, rgb=False, index=0) -> dict:
     array = zarr.open(series.aszarr())
     if hasattr(array, "shape"):
         levels, shape = 1, array.shape
-        chunks = array.chunks
+        chunks = flat_tile_grid(array.chunks, shape)
         level_shapes = [[int(shape[-2]), int(shape[-1])]]
     else:
         keys = sorted(list(array), key=lambda k: int(k))

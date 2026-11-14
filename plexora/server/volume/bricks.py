@@ -93,14 +93,50 @@ def _lock_for(path) -> threading.Lock:
         return _LOCKS.setdefault(key, threading.Lock())
 
 
+_ZARR_META = (".zgroup", ".zattrs", ".zarray", "zarr.json")
+
+
+def _zarr_meta_newest(folder: Path, depth: int) -> int:
+    """Newest modification time of `folder` and of the zarr metadata
+    documents of it and of the groups and arrays under it. Never looks inside
+    an array, whose folder is its chunks: a deep stack has hundreds of
+    thousands, and this runs on every load."""
+    newest = folder.stat().st_mtime_ns
+    is_array = False
+    for name in _ZARR_META:
+        try:
+            newest = max(newest, (folder / name).stat().st_mtime_ns)
+        except OSError:
+            continue
+        if name == ".zarray":
+            is_array = True
+        elif name == "zarr.json":
+            try:
+                # Bytes, not text: json finds UTF-8 itself, where read_text
+                # decodes in the locale's code page on Windows and fails on a
+                # channel label another v3 writer stored as raw UTF-8.
+                is_array = json.loads((folder / name).read_bytes()).get("node_type") != "group"
+            except (OSError, ValueError, AttributeError):
+                is_array = True
+    if is_array or depth <= 0:
+        return newest
+    with os.scandir(folder) as entries:
+        children = [Path(entry.path) for entry in entries if entry.is_dir()]
+    for child in children:
+        newest = max(newest, _zarr_meta_newest(child, depth - 1))
+    return newest
+
+
 def source_key(path) -> str | None:
-    """Size and modification time of the stack's file (or folder's newest)."""
+    """Size and modification time of the stack's file; for a zarr folder the
+    newest of the folder and its groups' and arrays' metadata documents
+    (rewritten whenever a level is), not of its every chunk."""
     try:
         p = Path(path)
         if p.is_dir():
-            newest = max((f.stat().st_mtime_ns for f in p.rglob("*") if f.is_file()),
-                         default=p.stat().st_mtime_ns)
-            return f"dir:{newest}"
+            # Three deep reaches an OME-Zarr's levels, a bioformats2raw
+            # series' levels and a label image's levels.
+            return f"dir:{_zarr_meta_newest(p, 3)}"
         info = p.stat()
         return f"{info.st_size}:{info.st_mtime_ns}"
     except OSError:

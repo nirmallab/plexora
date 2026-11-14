@@ -2158,8 +2158,15 @@ def _saved_active_channels(datasource_name, fullnames):
 def _warm_datasource_caches(datasource_name):
     """Pre-populate description/GMM caches in the background so the first
     real request after a datasource load doesn't pay for them synchronously.
-    Best-effort only: if a concurrent switch to a different datasource races
-    this, the _ensure_loaded() calls inside will just reload as needed.
+    Best-effort only, and of the project loaded when it starts: once the user
+    has switched to another, it stops. A reload of this same project (a
+    channel rename, say) does not stop it: the reload's own warm-up returns at
+    once while this one holds the lock, so this one carries on for both. On
+    threads its channel steps run in
+    `reading_ahead`, so none loads this project back over the one opened
+    since -- which reloaded each over the other, step after step, until both
+    warm-ups ran out of channels. The website's (`_warm_on_page`) checks the
+    same.
 
     Two passes, not one pass per channel. The client blocks on
     get_image_channel_stats (histogram, quantization window, provisional
@@ -2200,13 +2207,18 @@ def _warm_datasource_caches(datasource_name):
             # stale name.
             def warm(step, fullname):
                 _work.checkpoint()
+                if not is_loaded(datasource_name):
+                    raise NotLoaded(f"{datasource_name} is no longer the project loaded")
                 try:
-                    step(fullname, datasource_name)
+                    # A switch landing mid-step raises NotLoaded rather than
+                    # loading this project back.
+                    with reading_ahead():
+                        step(fullname, datasource_name)
                 except UnknownChannelError:
                     pass
-                except providers.ResourceUnavailable:
-                    # The machine went away. Not this channel's problem, and
-                    # the outer handler has the sentence for it.
+                except (providers.ResourceUnavailable, NotLoaded):
+                    # The machine went away, or the user left the project.
+                    # Not this channel's problem: the pass ends.
                     raise
                 except Exception as exc:
                     # One channel that cannot be measured is one channel, not
@@ -2287,6 +2299,9 @@ def _warm_datasource_caches(datasource_name):
         # waiting on the work. Stop at the channel we reached and say so once,
         # plainly, instead of filing a bug report about a deliberate action.
         _log.info("Stopped warming %s: %s", datasource_name, exc)
+    except NotLoaded:
+        # The user opened another project meanwhile.
+        _log.debug("Stopped warming %s: no longer the project loaded", datasource_name)
     except Exception as exc:
         _log.exception("Background cache warmup failed for %s: %s", datasource_name, exc)
     finally:
@@ -4311,7 +4326,11 @@ def _window_behind(channel_name, datasource_name):
 
     def make():
         try:
-            get_channel_quantization_window(channel_name, datasource_name)
+            # Never loads the project back if the user has left it meanwhile.
+            with reading_ahead():
+                get_channel_quantization_window(channel_name, datasource_name)
+        except NotLoaded:
+            pass
         except Exception as exc:  # noqa: BLE001 -- the next ask makes it inline and reports it
             _log.debug("Exact window of %s in %s failed behind: %s", channel_name, datasource_name, exc)
             with _windows_behind_lock:
@@ -5978,11 +5997,13 @@ def _describe_local_tiff(series, stem_source):
     describing a pyramidized copy must not turn `slide_0` into
     `slide.pyramid_0`.
     """
+    from plexora.server.providers.local import flat_tile_grid
+
     channels = zarr.open(series.aszarr())
     if isinstance(channels, zarr.Array):
         max_level = 1
-        chunks = channels.chunks
         shape = channels.shape
+        chunks = flat_tile_grid(channels.chunks, shape)
     else:
         max_level = len(channels)
         shape = _zarr_level(channels, 0).shape
@@ -6126,11 +6147,13 @@ def _volume_fields(volume) -> dict:
 
 def _describe_volume_plane(source, stem_source):
     """`_describe_local_tiff`'s fields for a volume, read off its default plane."""
+    from plexora.server.providers.local import flat_tile_grid
+
     default = source.volume.default_view
     pyramid = source.plane_pyramid(default.t, default.z)
     if isinstance(pyramid, zarr.Array):
         max_level = 1
-        chunks = pyramid.chunks
+        chunks = flat_tile_grid(pyramid.chunks, pyramid.shape)
     else:
         max_level = len(list(pyramid))
         chunks = (1, 1024, 1024)
