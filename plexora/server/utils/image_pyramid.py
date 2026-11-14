@@ -434,7 +434,10 @@ def is_adoptable_image(candidate, source) -> bool:
             copy_shape = tuple(int(side) for side in series.shape)
         if len(copy_shape) == 2:
             copy_shape = (1,) + copy_shape  # one channel: tifffile reads the copy as YX
-        tiff, series = _open_series(source)
+        # A volume copy (it records `page_axes`) holds every page, read the
+        # way `pyramidize_image` read them; `channel_series` keeps only the
+        # middle plane of a single-channel z-stack, which would never match.
+        tiff, series = _open_series(source, all_pages=bool(payload.get("page_axes")))
         try:
             source_shape = tuple(int(side) for side in series.shape)
         finally:
@@ -547,6 +550,13 @@ class _Scratch:
                 path, mode="w+", dtype=dtype, shape=shape))
 
     def close(self):
+        # Unmap each level ourselves: views of it can outlive this call (a
+        # cached slab, a failed build's traceback), and Windows will not
+        # delete a file that is still mapped, so rmtree would quietly fail.
+        for level in self.levels:
+            underlying = getattr(level, "_mmap", None)
+            if underlying is not None:
+                underlying.close()
         self.levels = []
         if self.directory is not None:
             shutil.rmtree(self.directory, ignore_errors=True)
