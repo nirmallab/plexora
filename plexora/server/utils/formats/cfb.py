@@ -230,14 +230,20 @@ class CompoundFile:
                 return self._minifat[unit] if unit < len(self._minifat) else _NO_ENTRY
             return self._next(unit)
 
-        unit = following(chain[-1]) if chain else entry.start
-        while len(chain) <= last:
-            # A chain longer than its stream's size is a loop: stop there.
-            if unit > _MAX_REGULAR or len(chain) >= limit:
-                entry._chain_ended = True
-                break
-            chain.append(unit)
-            unit = following(unit)
+        # Grown under the lock: two threads walking it at once would each
+        # append the sectors the other already had, and every later offset of
+        # the stream would then map to the wrong sector.
+        with self._lock:
+            if len(chain) > last or entry._chain_ended:
+                return chain
+            unit = following(chain[-1]) if chain else entry.start
+            while len(chain) <= last:
+                # A chain longer than its stream's size is a loop: stop there.
+                if unit > _MAX_REGULAR or len(chain) >= limit:
+                    entry._chain_ended = True
+                    break
+                chain.append(unit)
+                unit = following(unit)
         return chain
 
     def read(self, entry: Entry, offset: int = 0, size: Optional[int] = None) -> bytes:
