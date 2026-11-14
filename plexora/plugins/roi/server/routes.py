@@ -457,6 +457,12 @@ def map_to_cells():
     entry = state["images"].get(schema.DEFAULT_IMAGE) or schema.empty_image()
     if not entry["features"]:
         return jsonify(success=False, error="There are no ROIs to map"), 400
+    # Refused the way an edit is (and the preview with it): regions drawn on an
+    # image of another size would be written onto this image's cells.
+    try:
+        repository._require_matching_image(state)
+    except ImageMismatch as exc:
+        return _mismatch_response(exc)
 
     # The join and the write go out as one operation, because both need the
     # table's file and the loaded frame to be the same machine's -- see

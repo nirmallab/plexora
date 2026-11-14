@@ -325,10 +325,14 @@ def cells_in_roi(ds, roi_id, *, max_ids=1_000, keep=None):
     and the boundary is strict. `keep` (one bool per table row, False for a
     cell QC leaves out) adds `n_qc_excluded` and `n_cells_passing`.
     """
-    state = _state(ds)
+    repo = ROIRepository(ds.name)
+    state = repo.load()
     _, feature = schema.find(_features(state), roi_id)
     if feature is None:
         raise KeyError(f"no ROI {roi_id!r} in {ds.name!r}")
+    # The guard an edit gets: a region drawn on an image of another size
+    # would be counted against this image's cells and look valid.
+    repo._require_matching_image(state)
     if ds.schema is None or not ds.table.available:
         raise LookupError("this project has no cell table")
     x_column, y_column = ds.schema.x, ds.schema.y
