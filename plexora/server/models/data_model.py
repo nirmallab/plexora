@@ -2957,10 +2957,14 @@ def get_all_cells(datasource_name, start_keys, data_type=float, t=None):
 
     remote = _remote_table()
     if remote is not None:
-        return remote.all_cells(start_keys, data_type)
-    values = _all_cells_from_frame(datasource, start_keys, data_type, _feature_reader())
+        # The node takes no frame, but the compact copy here holds the `t`
+        # column in the node's row order, so the same mask applies to its rows.
+        values = remote.all_cells(start_keys, data_type)
+    else:
+        values = _all_cells_from_frame(datasource, start_keys, data_type,
+                                       _feature_reader())
     keep = _frame_rows(datasource_name, t)
-    if keep is not None:
+    if keep is not None and keep.size * len(start_keys) == values.size:
         # One frame's rows of a time series' table, in table order: the ids
         # in them are unique, which is what the viewer's id-keyed tables need.
         values = values.reshape(-1, len(start_keys))[keep].reshape(-1)
@@ -7207,11 +7211,21 @@ def start_segmentation_job(datasource_name, label_file, data_directory,
             # skipped the reload and that open then kept "no mask" until the
             # page was refreshed: every mask tile a 500. Waiting for it means
             # `source` is settled before it is compared.
-            with load_lock:
-                if (source == datasource_name
-                        and Project.config_path_for(datasource_name) == config_file
-                        and Project.find(datasource_name) is not None):
-                    load_datasource(datasource_name, reload=True)
+            #
+            # A reload that fails is not the mask's failure: the conversion
+            # and the record above stand, and the next open picks the mask up.
+            # The reload's own error (an image briefly unreadable, a node
+            # refusing the table) is recorded by load_datasource itself;
+            # letting it reach the handler below took a good mask off.
+            try:
+                with load_lock:
+                    if (source == datasource_name
+                            and Project.config_path_for(datasource_name) == config_file
+                            and Project.find(datasource_name) is not None):
+                        load_datasource(datasource_name, reload=True)
+            except Exception as exc:
+                _log.warning("%s: reloading after the mask converted failed -- %s",
+                             datasource_name, exc)
         except Exception as exc:
             if _stale():
                 _segmentation_jobs.pop(datasource_name, None)
