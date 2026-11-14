@@ -132,6 +132,11 @@
                 reject(new DOMException("The request was aborted", "AbortError"));
                 return;
             }
+            // A worker that never loaded answers nothing: said at once.
+            if (stoppedWith && !heard) {
+                reject(Object.assign(new Error(stoppedWith.cause), { stopped: true }));
+                return;
+            }
             waiting.set(id, { resolve, reject });
             if (inFlight) Atomics.add(inFlight, 0, 1);
             worker.postMessage({ id, op, args }, transfer || []);
@@ -259,7 +264,30 @@
         }
     }
 
+    //: Whether the worker has said anything yet: its module posts the mark
+    //: "loaded" as it finishes loading, and a tab's worker `attached` as it
+    //: connects a page.
+    let heard = false;
+
+    //: The worker's `error` event. Before it has said anything, its script
+    //: (or a module it imports) failed to fetch or run, and nothing will
+    //: ever answer: what waits is rejected -- the boot's call with it, so
+    //: start() settles with an error the loader shows -- and the page answers
+    //: the rest (`stopped`). Afterwards it is an uncaught error in a worker
+    //: that runs on, only logged.
+    function onError(event) {
+        console.error("[python] worker failed:", event && event.message);
+        if (heard || stoppedWith) return;
+        stoppedWith = { kind: "fatal", cause: "Python did not load", memory: false, heap: 0 };
+        for (const [id, pending] of waiting) {
+            waiting.delete(id);
+            pending.reject(Object.assign(new Error(stoppedWith.cause), { stopped: true }));
+        }
+        emit("fatal", stoppedWith);
+    }
+
     function onMessage({ data }) {
+        heard = true;
         if (data.id !== undefined) {
             const pending = waiting.get(data.id);
             if (!pending) return;
@@ -387,7 +415,7 @@
             mode = "page";
             worker = new Worker(url, { type: "module" });
             worker.onmessage = onMessage;
-            worker.onerror = (event) => console.error("[python] worker failed:", event.message);
+            worker.onerror = onError;
             return;
         }
         mode = "tab";
@@ -401,7 +429,7 @@
         tabName().then((tabbed) => {
             if (tabbed) {
                 const tabWorker = new SharedWorker(url, { type: "module", name: tabbed.name, extendedLifetime: true });
-                tabWorker.onerror = (event) => console.error("[python] worker failed:", event.message);
+                tabWorker.onerror = onError;
                 target = tabWorker.port;
                 target.onmessage = onMessage;
                 target.onmessageerror = () => console.error("[python] a message from Python could not be read");
@@ -418,7 +446,7 @@
                 mode = "page";
                 target = new Worker(url, { type: "module" });
                 target.onmessage = onMessage;
-                target.onerror = (event) => console.error("[python] worker failed:", event.message);
+                target.onerror = onError;
             }
             for (const [message, transfer] of outbox.splice(0)) target.postMessage(message, transfer);
         });
