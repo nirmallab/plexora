@@ -21,9 +21,15 @@ directory while the data sits somewhere the app no longer looks. A failed
 migration here leaves both the data and the pointer exactly as they were, so
 the recovery is "try again", not "find my projects".
 
-**A failure stops the run.** Remaining entries are left untouched and the
-report names the one that failed and the ones that got through. Pressing on
-would spread the damage across a tree nobody can now describe.
+**A failure stops the run and undoes it.** Remaining entries are left
+untouched, the ones that got through are put back (renamed back, or their
+copies deleted from the target), and the report names the one that failed and
+the ones that had got through. Pressing on would spread the damage across a
+tree nobody can now describe, and stopping without undoing would leave the
+root the setting still points at missing whatever had already moved -- its
+`config.json` among them -- with every moved entry a collision that refuses
+the retry. So a move never deletes an original until every entry has landed
+and the new directory is recorded.
 
 Progress is counted in TOP-LEVEL ENTRIES, not bytes. A byte total means walking
 the whole tree before copying a single file, and this data lives on Dropbox and
@@ -45,8 +51,9 @@ from plexora import _work, paths
 #: copies exist, and is the only mode that cannot lose anything.
 MODE_COPY = "copy"
 
-#: Move: a rename within one filesystem, a copy-then-remove across two. This is
-#: `shutil.move`'s own rule and the reason nothing here implements it by hand.
+#: Move: a rename within one filesystem, a copy-then-remove across two. The
+#: removes wait until every entry has been copied and the setting written --
+#: see the module docstring -- which is why this is not `shutil.move`.
 MODE_MOVE = "move"
 
 #: Change the setting and touch no files. The default, and what someone
@@ -238,26 +245,65 @@ def is_running() -> bool:
         return _job.get("status") == "running"
 
 
-def _transfer(source: Path, target: Path, name: str, mode: str) -> None:
-    """One top-level entry, by whichever stdlib call is right for it.
+def _transfer(source: Path, target: Path, name: str, mode: str) -> bool:
+    """One top-level entry. True when it was renamed, so the original is gone;
+    False when it was copied, so the original is still there.
 
-    `shutil.move` rather than a hand-rolled rename-else-copy: it already does
-    exactly that, including the cross-device fallback, and a reimplementation
-    would differ from it on the cases nobody tests.
+    Not `shutil.move`: across filesystems it copies and then deletes the
+    original at once, so a failure on a later entry would leave the root the
+    setting still points at without the earlier ones. A move that cannot be a
+    rename -- another filesystem, or on Windows a directory with a file held
+    open in it -- is a copy here, and `_run` deletes the original only once
+    every entry has landed and the new directory is recorded.
     """
     src = source / name
     dst = target / name
     if mode == MODE_MOVE:
-        shutil.move(str(src), str(dst))
-        return
+        try:
+            os.rename(src, dst)
+            return True
+        except OSError:
+            pass
     if src.is_dir():
         shutil.copytree(src, dst)
     else:
         shutil.copy2(src, dst)
+    return False
+
+
+def _remove(path: Path) -> None:
+    if path.is_dir() and not path.is_symlink():
+        shutil.rmtree(path)
+    else:
+        path.unlink()
+
+
+def _put_back(source: Path, target: Path, landed: list) -> list[str]:
+    """Undo a run that failed: renamed entries go back to `source`, and every
+    copy it made in `target`, a half-finished one included, is deleted.
+
+    Returns the names that could not be undone. The target held none of these
+    names when the run started (the plan refuses any collision), so whatever
+    is there under them now is this run's own.
+    """
+    stuck = []
+    for name, renamed in reversed(landed):
+        dst = target / name
+        try:
+            if renamed:
+                os.rename(dst, source / name)
+            elif os.path.lexists(dst):
+                _remove(dst)
+        except OSError:
+            stuck.append(name)
+    return stuck
 
 
 def _run(source: Path, target: Path, mode: str, on_success) -> None:
     done: list[str] = []
+    #: (name, renamed) for each entry this run has put in the target, so a
+    #: failure can take every one of them back out.
+    landed: list = []
     try:
         target.mkdir(parents=True, exist_ok=True)
         current = plan(source, target)
@@ -273,15 +319,41 @@ def _run(source: Path, target: Path, mode: str, on_success) -> None:
         for index, name in enumerate(current.entries):
             _set(status="running", done=index, total=total, current=name,
                  migrated=list(done))
-            _transfer(source, target, name, mode)
+            # Checked again per entry: something that appeared in the target
+            # since the plan is not this run's to delete if the copy fails.
+            if os.path.lexists(target / name):
+                raise RuntimeError(f"Already in the new directory: {name}")
+            # Recorded before the transfer, as a copy, so a copy that fails
+            # half way is deleted too; a rename either happened or did not.
+            landed.append((name, False))
+            landed[-1] = (name, bool(_transfer(source, target, name, mode)))
             done.append(name)
 
         on_success()
-        _set(status="done", done=len(done), total=total, current="",
-             migrated=list(done), error="")
     except Exception as exc:  # noqa: BLE001 - reported, never raised into a thread
-        _set(status="error", current="", migrated=list(done),
-             error=f"{type(exc).__name__}: {exc}")
+        error = f"{type(exc).__name__}: {exc}"
+        stuck = _put_back(source, target, landed)
+        if stuck:
+            error += (f" These could not be put back and are still in "
+                      f"{target}: {', '.join(stuck)}.")
+        _set(status="error", current="", migrated=list(done), error=error)
+        return
+
+    # The new directory is recorded and holds a complete copy of everything,
+    # so from here nothing is undone: an original that cannot be deleted (a
+    # file held open, say) is only an old copy left behind, named in the
+    # report, and not a failed migration.
+    left_behind = []
+    if mode == MODE_MOVE:
+        for name, renamed in landed:
+            if renamed or not os.path.lexists(source / name):
+                continue
+            try:
+                _remove(source / name)
+            except OSError:
+                left_behind.append(name)
+    _set(status="done", done=len(done), total=total, current="",
+         migrated=list(done), error="", left_behind=left_behind)
 
 
 def start(source, target, mode, on_success) -> None:
