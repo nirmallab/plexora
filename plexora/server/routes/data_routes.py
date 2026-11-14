@@ -48,16 +48,66 @@ def serve_config():
     every viewer boot, for every project the user has -- so anything per-layer
     bigger than a few hundred bytes (a gene vocabulary, a category list) belongs
     in that layer's own derived manifest and not here.
+
+    Only the project a viewer is opening (`?datasource=`, main.js's boot) gets
+    its tiles' content `version`s: working one out stats the image and the
+    mask, and a file on a share that is slow or gone can hold that for
+    seconds -- every other project in the list would cost every boot that.
     """
     from plexora.server.models.project import Project
 
     config = get_config()
+    opening = request.args.get('datasource')
     out = {}
     for name, entry in (config or {}).items():
         project = Project.from_entry(name, entry)
         out[name] = {**entry,
                      "layers": [layer.to_entry() for layer in project.all_layers]}
+        if name == opening and entry.get("imageData"):
+            out[name]["imageData"] = _versioned_image_data(name, entry)
     return out
+
+
+def _address_key(src):
+    """The key a `/generated/data/<project>/<key>/` address ends in."""
+    return str(src or "").rstrip("/").rsplit("/", 1)[-1]
+
+
+def _tile_versions(entry):
+    """{tile key: content version} for every `imageData` entry of a project.
+
+    The mask's entry ('Area') is versioned by the mask, every other one by the
+    image. See datasource.tile_content_version for why tiles need one at all.
+    """
+    from plexora.datasource import tile_content_version
+
+    image = mask = None
+    versions = {}
+    for channel in entry.get("imageData") or ():
+        if not isinstance(channel, dict) or not channel.get("src"):
+            continue
+        if channel.get("fullname") == "Area":
+            mask = mask or tile_content_version(entry, label=True)
+            versions[_address_key(channel["src"])] = mask
+        else:
+            image = image or tile_content_version(entry)
+            versions[_address_key(channel["src"])] = image
+    return versions
+
+
+def _versioned_image_data(datasource, entry):
+    """`imageData` with each entry's content `version`, on copies, so it never
+    reaches config.json. The viewer puts it in every tile address it builds."""
+    # While this project is the loaded one, the tile route's own value for
+    # this load: one stat per load, and /config and the tiles agree on it.
+    versions = _tile_versions_by_load.get((datasource, data_model.load_generation)) \
+        if data_model.is_loaded(datasource) else None
+    if versions is None:
+        versions = _tile_versions(entry)
+    return [{**channel, "version": versions[_address_key(channel.get("src"))]}
+            if isinstance(channel, dict) and _address_key(channel.get("src")) in versions
+            else channel
+            for channel in entry.get("imageData") or ()]
 
 
 @app.route('/get_nearest_cell', methods=['GET'])
@@ -1073,6 +1123,9 @@ def _finish_reference_rename(datasource, before, names):
         renames[channel['name']] = renamed
         renames[channel['fullname']] = renamed
     data_model.rename_saved_channels(datasource, renames)
+    # The 8-bit tile windows are persisted by name as well, and the image file
+    # (their fingerprint) has not changed, so the reload below keeps them.
+    data_model.rename_quantization_windows(datasource, renames)
 
     data_model.load_datasource(datasource, reload=True)
     # `names` goes back so the page can take the new names on in place --
@@ -1458,6 +1511,37 @@ def _tile_etag(generation, datasource, channel, level, tile, quality, view="", w
     return etag
 
 
+#: (datasource, load_generation) -> {tile key: content version}. Per load, as
+#: the tile cache is: the version describes the file this load is reading, and
+#: working it out (a config read and a stat) once per tile would be the cost.
+_tile_versions_by_load = {}
+
+
+def _tile_content_version(datasource, channel, generation):
+    """The content version of one channel's (or the mask's) tiles, or ''."""
+    key = (datasource, generation)
+    versions = _tile_versions_by_load.get(key)
+    if versions is None:
+        versions = _tile_versions((get_config() or {}).get(datasource) or {})
+        if len(_tile_versions_by_load) > 64:
+            _tile_versions_by_load.clear()
+        _tile_versions_by_load[key] = versions
+    return versions.get(channel, "")
+
+
+def _tile_cache_control(version):
+    """Kept for a year only when the request's address names these pixels.
+
+    The viewer puts the content version /config gave it in every tile address
+    (`c=`), so a new file is a new address. Any other caller -- an address
+    built without one, or one naming a previous file -- is asked to revalidate
+    instead: one cheap 304 rather than a year of the previous image.
+    """
+    if version and request.args.get('c') == version:
+        return 'private, max-age=31536000'
+    return 'private, no-cache'
+
+
 # E.G /generated/data/melanoma/channel_00_files/13/16_18.png
 # ?q=hd requests the full-precision 16-bit path for channel tiles; anything
 # else (including the param being absent) uses the fast default WebP path.
@@ -1499,12 +1583,14 @@ def generate_png(datasource, channel, level, tile):
     # read: the tag is known from the request alone (the bytes depend only on
     # the generation, the address, the view and the window it names).
     if view and request.headers.get('If-None-Match'):
-        early = _tile_etag(data_model.ensure_loaded(datasource),
+        generation = data_model.ensure_loaded(datasource)
+        version = _tile_content_version(datasource, channel, generation)
+        early = _tile_etag(f"{generation}.{version}",
                            datasource, channel, level, tile, quality, view, window)
         if request.headers.get('If-None-Match') == early:
             response = app.response_class(status=304)
             response.headers['ETag'] = early
-            response.headers['Cache-Control'] = 'private, max-age=31536000'
+            response.headers['Cache-Control'] = _tile_cache_control(version)
             return response
     try:
         encoded, mimetype = _get_tile_png_bytes(datasource, channel, level, tile, quality,
@@ -1518,11 +1604,15 @@ def generate_png(datasource, channel, level, tile):
     # Tile bytes are immutable for a given load_generation, so let the browser
     # keep them: without this Flask's send_file() emits `Cache-Control:
     # no-cache` and every pan back over visited ground is a fresh round trip
-    # through the (globally serialized) zarr/tifffile reader. The generation is
-    # in the ETag rather than the URL so a reload invalidates without the
-    # frontend having to rewrite tile URLs -- a stale conditional request gets
-    # a 200 with fresh bytes instead of a wrong 304.
-    etag = _tile_etag(data_model.load_generation, datasource, channel, level, tile, quality,
+    # through the (globally serialized) zarr/tifffile reader. But only for a
+    # year when the address names the pixels (`c=`, _tile_cache_control): a
+    # browser never revalidates a fresh entry, so an ETag alone would never be
+    # read. The content version is in the ETag beside the generation because
+    # the generation restarts at 0 with the process, and a revalidation after
+    # a restart must not be told the previous file's bytes are current.
+    generation = data_model.load_generation
+    version = _tile_content_version(datasource, channel, generation)
+    etag = _tile_etag(f"{generation}.{version}", datasource, channel, level, tile, quality,
                       view, window)
     from plexora.server.volume.plane_view import served_final, served_steps
 
@@ -1539,7 +1629,7 @@ def generate_png(datasource, channel, level, tile):
     else:
         response = send_file(io.BytesIO(encoded), mimetype=mimetype)
     response.headers['ETag'] = etag
-    response.headers['Cache-Control'] = 'private, max-age=31536000'
+    response.headers['Cache-Control'] = _tile_cache_control(version)
     if steps:
         # A projection computed coarser and drawn up: final, so cached, and
         # said all the same.
@@ -1746,7 +1836,16 @@ def generate_overview(datasource, channel):
         except BadView:
             view = ''
 
-    etag = f'"{generation}-overview-{datasource}-{channel}' + (f'-{view}"' if view else '"')
+    # Addressed by the channel's NAME, which a rename can move to another plane
+    # and a re-registered image keeps: so the plane's key and the file's
+    # content version are in the tag, and the browser asks every time (the
+    # map is one small picture, and a 304 is all it costs).
+    key = next((_address_key(entry.get('src')) for entry in
+                ((get_config() or {}).get(datasource) or {}).get('imageData') or ()
+                if isinstance(entry, dict) and channel in (entry.get('fullname'),
+                                                           entry.get('name'))), '')
+    stamp = f"{generation}.{_tile_content_version(datasource, key, generation)}.{key}"
+    etag = f'"{stamp}-overview-{datasource}-{channel}' + (f'-{view}"' if view else '"')
     if request.headers.get('If-None-Match') == etag:
         response = app.response_class(status=304)
     else:
@@ -1755,7 +1854,7 @@ def generate_overview(datasource, channel):
             abort(404)
         response = send_file(io.BytesIO(encoded), mimetype='image/webp')
     response.headers['ETag'] = etag
-    response.headers['Cache-Control'] = 'private, max-age=31536000'
+    response.headers['Cache-Control'] = 'private, no-cache'
     return response
 
 

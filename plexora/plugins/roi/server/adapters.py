@@ -452,8 +452,14 @@ def _write_obs_columns(dataset, labels, names, category_column, name_column, rep
     path = _table_path(dataset)
     source = dataset.table.source
 
+    from plexora.server.models.adapters.anndata_adapter import (
+        PLEXORA_CELL_COLUMNS_ATTR,
+        plexora_cell_columns,
+    )
+
     with _open_group(path) as handle:
         obs = read_elem(handle["obs"])
+        written = plexora_cell_columns(handle)
 
     taken = [c for c in (category_column, name_column) if c in obs.columns]
     if taken and not replace:
@@ -481,6 +487,12 @@ def _write_obs_columns(dataset, labels, names, category_column, name_column, rep
         # the frame as a whole is the only one that keeps those honest.
         del handle["obs"]
         write_elem(handle, "obs", obs)
+        # Marked as Plexora's own: a destination named 'roi' or 'core' reads as
+        # an image identifier to the multi-image guard, which would then refuse
+        # the project this very write annotated. On the AnnData group, beside
+        # obs, so a later rewrite of obs (QC flags written to source) keeps it.
+        handle.attrs[PLEXORA_CELL_COLUMNS_ATTR] = json.dumps(sorted(
+            (written & set(obs.columns)) | {category_column, name_column}))
 
     return {
         "path": str(path),

@@ -129,9 +129,12 @@ function fetchViewTransform() {
 const viewState = window.PlexoraViewState && datasource
     ? new PlexoraViewState(datasource) : null;
 
-// Data prevent caching on the config file, as it may have been modified
+// Data prevent caching on the config file, as it may have been modified.
+// `datasource` asks for this project's tile content versions (serve_config):
+// only the project being opened has its files looked at.
 window.__plexoraReady = Promise.all([
-    d3.json(`${plexoraUrl("config")}?t=${Date.now()}`),
+    d3.json(`${plexoraUrl("config")}?t=${Date.now()}`
+            + (datasource ? `&datasource=${encodeURIComponent(datasource)}` : "")),
     fetchViewTransform(),
     // The viewer's motion and section sizes (services/viewerPrefs.js) only
     // matter to a volume, so a planar image never asks for them.
@@ -474,9 +477,12 @@ async function init(config, savedViewTransform = null) {
             const route = isLabel ? segRoute : imageRoute;
             if (!route) {
                 // This server's own address: the proxy path, which is also the
-                // only path for a local layer.
+                // only path for a local layer. `c=` names the file behind it
+                // (/config's `version`): the address is the browser's cache
+                // key for a year, and the key in the path is only the file's
+                // NAME, which a re-registered image or a re-run mask keeps.
                 channel.src = channel.origSrc;
-                channel.srcQuery = "";
+                channel.srcQuery = channel.version ? `c=${encodeURIComponent(channel.version)}` : "";
                 return;
             }
             // An image names which channel in the path; a mask has one plane

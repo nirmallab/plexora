@@ -17,7 +17,8 @@ from .anndata_adapter import (
     _matrix_shape,
     _read_elem,
     describe_obsm,
-    is_likely_image_identifier_name,
+    is_multi_image_identifier,
+    plexora_cell_columns,
     probed_obsm,
     var_names as _var_names,
 )
@@ -113,6 +114,7 @@ def _inspect_group(group) -> dict:
     SpatialDataAdapter override only `_open_group`.
     """
     obs = _LazyObs(group)
+    written = plexora_cell_columns(obs)
     obs_columns = []
     for column in obs.columns:
         series = obs[column]
@@ -122,12 +124,14 @@ def _inspect_group(group) -> dict:
             "name": column,
             "dtype": str(series.dtype),
             "is_subset_candidate": is_candidate,
-            # Same name heuristic the adapter's own ambiguity guard enforces,
-            # so the UI reserves its "this file may span multiple images"
-            # warning for genuinely identifier-shaped columns rather than every
-            # categorical one.
-            "likely_multi_image_identifier": (
-                is_candidate and is_likely_image_identifier_name(column) and n_unique > 1),
+            # The adapter's own guard, word for word, so the UI reserves its
+            # "this file may span multiple images" warning for identifier-
+            # shaped columns -- and so every column `plan()` would refuse over
+            # is asked about here first. Not tied to `is_candidate`: an integer
+            # image id, or more images than a dropdown lists, is refused all
+            # the same.
+            "likely_multi_image_identifier": is_multi_image_identifier(
+                column, n_unique, written),
             "values": values,
         })
 

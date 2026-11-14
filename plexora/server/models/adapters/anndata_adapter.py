@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 
 import numpy as np
@@ -272,17 +273,63 @@ def describe_obsm(adata) -> list[dict]:
     return _describe_obsm_mapping(adata.obsm)
 
 
+#: The attribute listing the obs columns Plexora itself wrote onto the cells
+#: (ROI "Map to cells"). They annotate cells; whatever they are called, they do
+#: not say which image a cell is in. Kept on the AnnData's own group, not on
+#: obs: every Plexora write into obs (ROI, QC flags) unlinks and rewrites the
+#: obs group, which would drop an attribute kept there.
+PLEXORA_CELL_COLUMNS_ATTR = "plexora-cell-columns"
+
+
+def plexora_cell_columns(obs) -> set[str]:
+    """The obs columns Plexora wrote, as recorded on the AnnData group, or none.
+
+    Takes a lazily read obs or the AnnData group itself. A frame from anywhere
+    else has no record to read, and every column is then the file's own.
+    """
+    node = getattr(obs, "_root", obs)
+    try:
+        written = node.attrs.get(PLEXORA_CELL_COLUMNS_ATTR)
+    except (AttributeError, TypeError):
+        return set()
+    if written is None:
+        return set()
+    # Kept as JSON text: one string attribute reads the same from h5py and
+    # zarr, where a list of strings does not.
+    try:
+        names = json.loads(_text(written))
+    except (TypeError, ValueError):
+        return set()
+    if not isinstance(names, list):
+        return set()
+    return {str(name) for name in names}
+
+
+def is_multi_image_identifier(column, n_unique, written=()) -> bool:
+    """The one rule for "this column may split the table into images".
+
+    Shared by the adapter's guard and inspection's `ambiguous`, so the import
+    asks about every column that `plan()` would later refuse over: the name
+    says image, the values say more than one -- numeric or text, and however
+    many there are.
+    """
+    return (column not in written and n_unique > 1
+            and is_likely_image_identifier_name(column))
+
+
 def _likely_image_identifier_columns(obs) -> list[str]:
     """Obs columns whose NAME says image and whose VALUES say more than one.
 
     Takes the obs frame rather than an AnnData, because the guard now runs
     before anything opens the matrix -- which is the whole point of it.
     """
+    written = plexora_cell_columns(obs)
     candidates = []
     for column in obs.columns:
-        if not is_likely_image_identifier_name(column):
+        # The name first: a column it rules out is never read.
+        if column in written or not is_likely_image_identifier_name(column):
             continue
-        if _distinct_count(obs[column]) > 1:
+        if is_multi_image_identifier(column, _distinct_count(obs[column]), written):
             candidates.append(column)
     return candidates
 
@@ -878,6 +925,10 @@ class AnnDataAdapter:
         # a table keyed on a column called "roi" or "core", which the heuristic
         # does not recognise and would wave through.
         self.image_id_column = spec.roles.image_id
+        # The other answer to the same question: "this table covers one image".
+        # It is what the record keeps in place of the name heuristic (see
+        # DataSpec.single_image), so the heuristic must not overrule it.
+        self.single_image = bool(getattr(spec, "single_image", False))
         # Which obs column supplies the identifier, or None for the positional
         # row index (the default -- see the uint32-packing note in
         # datasource.py). Deliberately read from the read spec rather than
@@ -1117,7 +1168,7 @@ class AnnDataAdapter:
                     "several images' cells over one image. Choose which "
                     "image to load."
                 )
-        else:
+        elif not self.single_image:
             ambiguous = _likely_image_identifier_columns(obs)
             if ambiguous:
                 raise ValueError(

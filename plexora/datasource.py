@@ -1,4 +1,5 @@
 import datetime
+import hashlib
 import json
 import re
 import shutil
@@ -51,6 +52,46 @@ def _image_channel_entries(name, channel_info, channel_names, segmentation_path)
             "src": f"/generated/data/{name}/{key}/",
         })
     return entries
+
+
+#: The config fields that decide what an image channel's tiles show, and what a
+#: mask's do. Names and colours are not among them: they change what a tile is
+#: called, never its pixels.
+_IMAGE_TILE_IDENTITY = ("channelFile", "imageIndex", "imagePyramid", "imagePyramidKey",
+                        "imageSource", "imageSourceKey", "image_kind", "imageTypeChoice",
+                        "imageAxes", "imageZSemantics", "imageTSemantics")
+_MASK_TILE_IDENTITY = ("segmentation", "segmentationSource", "segmentationSourceKey",
+                       "segmentationMode", "segmentationScale")
+
+
+def tile_content_version(entry, label=False):
+    """A short token naming the pixels behind a project's channel (or mask) tiles.
+
+    Tiles are cached by the browser for a year at an address that names only
+    the project and a key derived from the FILE NAME (`<stem>_<i>`, the mask's
+    stem), so a re-registered image or a re-run mask that kept its name would
+    be drawn from the previous file's tiles. This token goes in the address
+    (`c=`, see main.js's applyRouting) and changes whenever the file or the
+    way it is read does. A local file's size and mtime are in it, so a file
+    rewritten in place counts too; a remote one is named by its locator only,
+    since asking a host would cost a round trip per /config -- so a remote
+    image replaced at the same locator keeps its version. Tiles a node serves
+    directly (main.js's node routes) never carry this token at all.
+    """
+    from plexora.server.providers.base import is_remote_locator
+
+    fields = _MASK_TILE_IDENTITY if label else _IMAGE_TILE_IDENTITY
+    identity = [entry.get(field) for field in fields]
+    path = (entry.get("segmentationSource") or entry.get("segmentation")) if label \
+        else entry.get("channelFile")
+    if isinstance(path, str) and path and not is_remote_locator(path):
+        try:
+            stat = Path(path).stat()
+            identity.append([stat.st_size, stat.st_mtime_ns])
+        except (OSError, ValueError):
+            pass
+    text = json.dumps(identity, sort_keys=True, default=str)
+    return hashlib.sha1(text.encode("utf-8")).hexdigest()[:12]
 
 
 def _layer_count(channel_info):

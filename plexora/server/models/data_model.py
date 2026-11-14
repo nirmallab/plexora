@@ -1881,6 +1881,19 @@ def _spatial_index_manifest(project, signature, frame):
     correction = table_correction.signature(getattr(project.dataset, "correction", None))
     if correction:
         raw["correction"] = correction
+    # How the file is read places and selects the cells: an AnnData table's
+    # 'X'/'Y' are synthesized from whichever obsm array `coordinates` names, so
+    # a corrected obsm key, scale or subset leaves the file and the role names
+    # as they were. Only when there is one, as for the correction above.
+    dataset = project.dataset
+    read = {key: value for key, value in (
+        ("table", dataset.table),
+        ("coordinates", dict(dataset.coordinates or {})),
+        ("subset", dict(dataset.subset or {})),
+        ("obs_id_field", getattr(dataset, "obs_id_field", None)),
+    ) if value}
+    if read:
+        raw["read"] = read
     # Through JSON once, so it compares equal to what a manifest file reads back.
     return json.loads(json.dumps(raw, default=str))
 
@@ -3432,6 +3445,65 @@ def _remember_quantization_window(datasource_name, channel_name, window):
             # project on a read-only or full filesystem must still open.
             _log.warning("Could not persist quantization window for %s/%s: %s",
                          datasource_name, channel_name, exc)
+
+
+def rename_quantization_windows(datasource_name, renames):
+    """Move the persisted windows to the channels' new names.
+
+    The windows are keyed by channel NAME under the image file's fingerprint,
+    and a rename rewrites only the project record, so the fingerprint still
+    matches afterwards. A rename that moves a name to another plane (a panel
+    list fixed after it was read in the wrong order) would otherwise quantize
+    that plane with the ceiling measured for the plane that used to carry the
+    name: a bright plane saturates, a dim one collapses to a few grey levels.
+
+    @param renames every OLD spelling -> the new name, as rename_saved_channels.
+                   Applied all at once, so a swap does not overwrite itself.
+    """
+    # This process's copies are keyed by name too.
+    for key in [key for key in list(_gmm_cache)
+                if isinstance(key, tuple) and key[:2] == ('qwindow', datasource_name)]:
+        _gmm_cache.pop(key, None)
+    fingerprint = _image_fingerprint(datasource_name)
+    if fingerprint is None:
+        return
+    windows = _quantization_windows(datasource_name)
+    with _quantization_store_lock:
+        cached = _quantization_store_cache.get(datasource_name)
+        if cached is not None and cached[0] == fingerprint:
+            windows = cached[1]
+        if not windows:
+            return
+        def channel_of(stored_name):
+            # '<name>' or '<name>|volume': only that suffix is split off, so a
+            # channel whose own name holds a '|' keeps it.
+            if stored_name.endswith('|volume'):
+                return stored_name[:-len('|volume')], '|volume'
+            return stored_name, ''
+
+        moved, kept = {}, {}
+        for stored_name, pair in windows.items():
+            name, suffix = channel_of(stored_name)
+            if name in renames:
+                moved[f"{renames[name]}{suffix}"] = pair
+            else:
+                kept[stored_name] = pair
+        targets = set(renames.values())
+        # A window kept under a name that is new to this image was measured for
+        # some other plane; it must not stand in for the one renamed onto it.
+        windows = {**{key: pair for key, pair in kept.items()
+                      if channel_of(key)[0] not in targets}, **moved}
+        _quantization_store_cache[datasource_name] = (fingerprint, windows)
+        payload = json.dumps({
+            'fingerprint': fingerprint,
+            'windows': {name: list(pair) for name, pair in windows.items()},
+        }).encode('utf-8')
+        try:
+            database_model.save_list(database_model.ChannelQuantization,
+                                     datasource=datasource_name, cells=payload)
+        except Exception as exc:
+            _log.warning("Could not move quantization windows for %s: %s",
+                         datasource_name, exc)
 
 
 
