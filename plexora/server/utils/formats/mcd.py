@@ -74,6 +74,8 @@ class McdReader(WholeArrayReader):
     def _load(self, out=None):
         import readimc
 
+        # `out` is not used: readimc builds the acquisition in memory itself, and
+        # the seek-and-read fallback reads every record in before placing it.
         try:
             with readimc.MCDFile(self._path) as handle:
                 # `strict=False`: an acquisition stopped early holds fewer pixels

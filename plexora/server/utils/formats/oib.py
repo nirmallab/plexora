@@ -83,7 +83,10 @@ class OibReader(WholeArrayReader):
         import oiffile
 
         with oiffile.OifFile(self._path) as handle:
-            return as_tzcyx(np.asarray(handle.asarray()), self._dims)
+            # A stack over `MEMORY_BYTES` is decoded into a temporary memory-mapped
+            # file: oiffile hands `out` on to tifffile's `TiffSequence.asarray`.
+            array = handle.asarray(out=out) if out else handle.asarray()
+            return as_tzcyx(np.asarray(array), self._dims)
 
 
 def reader(path: str, index: int = 0) -> OibReader:
