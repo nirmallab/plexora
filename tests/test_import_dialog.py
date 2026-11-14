@@ -442,6 +442,27 @@ def test_a_pyramid_confirmation_is_a_note_under_its_row_and_a_modal_at_import(di
     assert ".plx-import-question.is-confirm" in css
 
 
+def test_the_pyramid_questions_switch_changes_it_as_it_is_flipped():
+    """"Compress the copy" in the pyramid modal: there only where the copy
+    can be the compressed kind; flipping it says the other question at once
+    -- title, body and the chip's size -- in the same dialog; and the answer
+    is "compressed" or "exact". Run from source (tests/js/
+    pyramid_compress_probe.mjs), the dialog's own functions against a stand-in
+    DOM."""
+    import shutil
+    import subprocess
+
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("node is not installed")
+    probe = REPO_ROOT / "tests" / "js" / "pyramid_compress_probe.mjs"
+    result = subprocess.run([node, str(probe)], capture_output=True, text=True, encoding="utf-8",
+                            cwd=REPO_ROOT, timeout=60)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "all passed" in result.stdout
+    assert ".plx-confirm-switch input:checked::after" in _read(MAIN_CSS)
+
+
 def test_a_pyramid_build_is_shown_from_the_first_moment(dialog):
     """The first status poll is REGISTER_POLL_MS away, and opening a large
     stack can take longer than that -- so the row is painted active, on its

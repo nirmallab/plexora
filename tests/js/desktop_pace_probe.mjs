@@ -25,17 +25,31 @@ const waits = (cause, source, rate, first) => Array.from({ length: 12 }, (_, i) 
 });
 
 const asked = [];
+//: The same host read faster since: three more seconds at `rate`.
+const faster = (rate, first) => Array.from({ length: 3 }, (_, i) => {
+    const end = serverNow() - (2 - i) * 1000;
+    return { cause: "network", source: "transfer.rc.hms.harvard.edu", start: end - 1000, end,
+             busy: 1000, bytes: rate, seq: first + i };
+});
 let answers = [
     { events: waits("network", "transfer.rc.hms.harvard.edu", 3e6, 1), last: 12 },
     { events: waits("drive", "melanoma.ome.tif", 4e6, 13), last: 24 },
     { events: waits("network", "fast.example.org", 400e6, 25), last: 36 },
 ];
 const toasts = [];
+//: Every note a notice on screen was changed to (the toast's `setNote`).
+const live = [];
 const opened = [];
 const store = new Map();
 globalThis.localStorage = { getItem: (k) => store.get(k) ?? null, setItem: (k, v) => store.set(k, v) };
 globalThis.flaskVariables = { datasource: "melanoma" };
-globalThis.PlexoraToast = { show: (options) => toasts.push(options) };
+globalThis.PlexoraToast = {
+    show: (options) => {
+        toasts.push(options);
+        return { isLive: () => true, node: { isConnected: true },
+                 setNote: (text) => live.push(`${options.title}: ${text}`) };
+    },
+};
 globalThis.PlexoraConnectionModal = { open: (options) => opened.push(options) };
 globalThis.document = {
     visibilityState: "visible",
@@ -54,9 +68,14 @@ globalThis.setInterval = (fn, ms) => { timers.push(ms); return realSetInterval(f
 
 new Function(readFileSync(path.join(client, "js", "services", "handoffNotice.js"), "utf-8"))();
 await new Promise((r) => setTimeout(r, 400));
+// The slow host read faster since the notice went up: its note follows.
+const before = live.length;
+answers.push({ events: faster(30e6, 37), last: 39 });
+await new Promise((r) => setTimeout(r, 400));
 const said = toasts.map((t) => ({ title: t.title, note: t.note,
                                   actions: (t.actions || []).map((a) => (a.primary ? `*${a.label}` : a.label)) }));
 toasts.find((t) => t.title === "Waiting on the network")?.actions?.[0]?.onSelect();
 console.log(JSON.stringify({ said, opened, asked: asked.slice(0, 5), every: timers[0],
+                             liveBefore: live.slice(0, before), liveAfter: live.slice(before),
                              wired: typeof globalThis.PlexoraEnvelope.watchReads }));
 process.exit(0);

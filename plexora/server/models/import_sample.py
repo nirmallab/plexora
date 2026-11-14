@@ -194,6 +194,19 @@ NODE_PYRAMID_POLL_S = 1.0
 NODE_PYRAMID_MISSES = 30
 
 
+def _pyramidize_answer(said):
+    """`register_image_datasource`'s `pyramidize` for the dialog's answer to
+    "build a pyramidized copy": None when nothing was said, False for "no",
+    the kind of copy for "compressed" / "exact" (the dialog's switch,
+    data_model.PYRAMIDIZE_KINDS), True for any other yes."""
+    if said is None:
+        return None
+    value = str(said).strip().lower()
+    if value in ("no", "false"):
+        return False
+    return value if value in ("compressed", "exact") else True
+
+
 def _pyramidize_on_node(node, resource_id, answers, address):
     """Have the node build a flat image's pyramidized copy, and wait for it.
 
@@ -202,18 +215,20 @@ def _pyramidize_on_node(node, resource_id, answers, address):
     the import rail stage by stage, so the dialog shows the same six steps it
     shows for a local build. A "no" in `answers`, or an image the node does
     not offer to pyramidize (small, already pyramidal, an older node), costs
-    one status request.
+    one status request. "compressed" / "exact" is passed on as the kind of
+    copy; an older node builds its own kind.
     """
     from plexora import nodes as node_api
     from plexora.server.models.import_proposal import _said
 
-    said = _said(answers or {}, "pyramidize:", address)
-    if said is not None and str(said).lower() in ("no", "false"):
+    choice = _pyramidize_answer(_said(answers or {}, "pyramidize:", address))
+    if choice is False:
         return
     described = node_api.resource_status(node, resource_id)
     if not described.get("pyramid") and described.get("state") != "preparing":
         return
-    node_api.pyramidize_on_node(node, resource_id)
+    node_api.pyramidize_on_node(node, resource_id,
+                                kind=choice if isinstance(choice, str) else None)
     misses = 0
     while True:
         _work.pause(NODE_PYRAMID_POLL_S)
@@ -267,8 +282,9 @@ def _register_reference(name, reference, frame, layers, answers=None):
 
     `answers["pyramidize:<pick>"]` is the dialog's answer to "build a
     pyramidized copy of this flat image": "no" opens the original as it is,
-    anything else -- including no answer, which is what the API sends --
-    lets the conversion build the copy when the image needs one.
+    "compressed" / "exact" builds that kind, anything else -- including no
+    answer, which is what the API sends -- lets the conversion build the copy
+    when the image needs one, of the kind the setting names.
     """
     from plexora.datasource import (register_blank_datasource,
                                     register_image_datasource)
@@ -334,8 +350,7 @@ def _register_reference(name, reference, frame, layers, answers=None):
     from plexora.server.models.import_proposal import _said
 
     image_type = "brightfield" if (reference.render or {}).get("rgb") else None
-    said = _said(answers or {}, "pyramidize:", reference.src)
-    pyramidize = None if said is None else str(said).lower() not in ("no", "false")
+    pyramidize = _pyramidize_answer(_said(answers or {}, "pyramidize:", reference.src))
     # Which image of a microscope file holding several this sample is
     # (`import_proposal._each_image_a_sample`); 0 for every other file.
     return register_image_datasource(name=name, image=source,

@@ -256,10 +256,12 @@ class PlanePrefetcher:
         return True
 
     def _start_workers(self):
-        """Called with the lock held."""
+        """Called with the lock held. Without threads (the website), one
+        queued task at a time, which reads one job (`_run`)."""
         self._threads = [thread for thread in self._threads if thread.is_alive()]
-        while len(self._threads) < self._workers:
-            self._threads.append(_work.spawn(self._run, name="plexora-plane-prefetch"))
+        while len(self._threads) < (self._workers if _work.threaded() else 1):
+            self._threads.append(_work.spawn(self._run, name="plexora-plane-prefetch",
+                                             background=True))
 
     def _run(self):
         while True:
@@ -289,6 +291,17 @@ class PlanePrefetcher:
                     self.stats[outcome] += 1
                     if outcome == "failed":
                         self._done.pop(key, None)
+            if not _work.threaded():
+                # One read a task, the next queued behind whatever request
+                # came meanwhile, and only once requests are quiet: the website
+                # has one Python thread, and a queue drained in one task (a
+                # dozen tiles of a stack read over the web) held every tile
+                # anybody was waiting for half a minute.
+                with self._lock:
+                    if self._jobs:
+                        self._threads.append(_work.spawn(self._run, name="plexora-plane-prefetch",
+                                                         background=True))
+                return
 
     def forget(self) -> None:
         """Drop everything queued and remembered (a source closed)."""

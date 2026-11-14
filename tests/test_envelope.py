@@ -178,6 +178,15 @@ def test_the_desktop_says_slow_reads_the_websites_way():
          "actions": ["*OK"]},
     ]
     assert desktop["opened"] and desktop["opened"][0]["kind"] == "node"
+    # Its rate is said live while it is up: the host read faster since the
+    # notice went up, and the note follows (the last five seconds, each second).
+    network = lambda notes: [n for n in notes if n.startswith("Waiting on the network: ")]  # noqa: E731
+    assert set(network(desktop["liveBefore"])) == {
+        "Waiting on the network: 3.0 MB/s from transfer.rc.hms.harvard.edu."}
+    after = network(desktop["liveAfter"])
+    assert after and after[-1] != "Waiting on the network: 3.0 MB/s from transfer.rc.hms.harvard.edu."
+    assert after[-1].endswith(" MB/s from transfer.rc.hms.harvard.edu.")
+    assert all(len(n.split(": ", 1)[1]) <= 60 for n in desktop["liveBefore"] + desktop["liveAfter"])
     assert desktop["every"] == 2000
     # Under the server's own base, the limits fetched once.
     assert desktop["asked"][0] == "http://127.0.0.1:5000/base/read_pace?after=0"

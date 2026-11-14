@@ -374,9 +374,10 @@ def _is_temp(name) -> bool:
 def _derived_copy(name, siblings) -> str | None:
     """Which sibling `name` is Plexora's own pyramid of, or None.
 
-    Names only. A label or outline pyramid is always derived; a plain
-    `.pyramid.ome.tiff` is skipped only when the original is beside it, since
-    on its own it is the only copy there is.
+    Names only. A label or outline pyramid is always derived; an image's
+    `.pyramid.ome.tiff` (or compressed `.pyramid.approx`) is skipped only
+    when the original is beside it, since on its own it is the only copy
+    there is.
     """
     from plexora.server.utils import image_pyramid, segmentation_pyramid
 
@@ -385,12 +386,13 @@ def _derived_copy(name, siblings) -> str | None:
                    segmentation_pyramid.OUTLINE_SUFFIX):
         if lowered.endswith(suffix):
             return name[: -len(suffix)]
-    if lowered.endswith(image_pyramid.PYRAMID_SUFFIX):
-        stem = lowered[: -len(image_pyramid.PYRAMID_SUFFIX)]
+    copy = next((suffix for suffix in image_pyramid.COPY_SUFFIXES if lowered.endswith(suffix)), None)
+    if copy is not None:
+        stem = lowered[: -len(copy)]
         for sibling in siblings:
             other = sibling.lower()
             if other != lowered and other.startswith(stem + ".") and \
-                    not other.endswith(image_pyramid.PYRAMID_SUFFIX):
+                    not other.endswith(image_pyramid.COPY_SUFFIXES):
                 return sibling
     return None
 

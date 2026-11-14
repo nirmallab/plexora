@@ -53,9 +53,9 @@ PAGE_ROOTS = ("/picked/", "/derived/")
 IDENTITY_BYTES = 1 << 20
 #: The website's project store, as its Python sees it (plexora/browser/boot.py).
 STORE_ROOT = "/data/"
-#: How a pyramid Plexora writes is named (image_pyramid PYRAMID_SUFFIX and the
-#: mask pyramids' suffixes, which all end in it).
-PYRAMID_ENDING = ".pyramid.ome.tiff"
+#: How a pyramid Plexora writes is named (image_pyramid COPY_SUFFIXES, the
+#: mask pyramids' suffixes ending in the first): for `str.endswith`.
+PYRAMID_ENDING = (".pyramid.ome.tiff", ".pyramid.approx")
 #: A project entry's derived file and the field naming what it was made from.
 _MADE_FROM = (("segmentation", "segmentationSource"),)
 

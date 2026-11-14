@@ -3427,6 +3427,17 @@ def get_channel_gmm(channel_name, datasource_name, view="", *, patient=False, pr
             return cached
     if provisional and slab is None and _window_behind(channel_name, datasource_name):
         return _provisional_gmm(channel_name, datasource_name)
+    if (provisional and slab is None and _remote_image() is None
+            and volume_source is not None and not volume_source.volume.is_planar):
+        # A volume's fit answers at once, as its statistics do: with the
+        # provisional window while the exact one is made behind
+        # (`volume_window_state`). Made here, the exact window was a scan of
+        # the stack inside this request -- on the website, a 91-plane stack
+        # read over the web held its one Python thread for minutes, every
+        # tile queued behind it until the tab gave up.
+        window, exact = volume_window_state(channel_name, datasource_name)
+        if not exact:
+            return _provisional_gmm(channel_name, datasource_name, window)
     # Single-flight. encode_tile() calls this for every default-quality tile,
     # and a cold entry costs ~0.7 s: a GaussianMixture(3) fit plus a .max()
     # over the entire full-resolution channel plane (~218 MB, see the comment
@@ -3869,7 +3880,16 @@ def _volume_quantization_window(channel_name, datasource_name):
             _gmm_cache[cache_key] = window
             return window
         idx = real_channel_index(channel_name, datasource_name)
-        window, _how = volume_window(volume_source, idx, gate=_WINDOW_SCAN_GATE)
+        # On the website a stack read over the web is sampled rather than
+        # scanned (providers/remote.py `volume_window`): nothing else runs
+        # while a scan reads, and a large stack's is gigabytes a channel.
+        # The desktop scans it on a thread of its own, behind a provisional
+        # window.
+        sampled = None if _work.threaded() else getattr(_providers.image, "volume_window", None)
+        if sampled is not None:
+            window, _how = sampled(volume_source, idx, gate=_WINDOW_SCAN_GATE)
+        else:
+            window, _how = volume_window(volume_source, idx, gate=_WINDOW_SCAN_GATE)
         _gmm_cache[cache_key] = window
         _remember_quantization_window(datasource_name, stored_name, window)
         return window
@@ -3956,12 +3976,13 @@ def queue_exact_window(channel_name, datasource_name, urgent=False):
                        [0 if urgent else 1, next(_exact_window_seq), datasource_name,
                         channel_name])
         if _exact_window_worker is None or not _exact_window_worker.is_alive():
-            _exact_window_worker = _work.spawn(_exact_window_loop,
+            _exact_window_worker = _work.spawn(_exact_window_loop, background=True,
                                                name="plexora-exact-windows")
         _exact_window_cv.notify()
 
 
 def _exact_window_loop():
+    global _exact_window_worker
     while True:
         with _exact_window_cv:
             if not _exact_window_queue:
@@ -3987,6 +4008,15 @@ def _exact_window_loop():
                          datasource_name, channel_name, exc)
         finally:
             _provisional_windows.pop((loaded_scope(datasource_name), channel_name), None)
+        if not _work.threaded():
+            # The website: one channel a task, the next once requests are
+            # quiet again -- every channel in one task held its one Python
+            # thread for seconds a channel with tiles waiting behind it.
+            with _exact_window_cv:
+                if _exact_window_queue:
+                    _exact_window_worker = _work.spawn(_exact_window_loop, background=True,
+                                                       name="plexora-exact-windows")
+            return
 
 
 #: How much of a plane one slab of the window scan materializes. The scan
@@ -4060,13 +4090,15 @@ def quantization_window_of(channel_pyramid, index):
 _provisional_fits: dict = {}
 
 
-def _provisional_gmm(channel_name, datasource_name):
-    """A planar channel's contrast fit on the website while the page still
-    reads its full-resolution plane: the fit (`channel_gmm_of`) over the
-    overview, which is all it is made of -- the window is only carried in the
-    packet -- with `_provisional_stats`' window and `window_exact` False. Not
-    in `_gmm_cache` or the project's stored fits, which hold exact packets;
-    kept for this load so the exact packet is not fitted again."""
+def _provisional_gmm(channel_name, datasource_name, window=None):
+    """A channel's contrast fit while its exact window is still being made --
+    a planar channel on the website while the page reads its full-resolution
+    plane, or a volume's channel (`window`: its provisional window): the fit
+    (`channel_gmm_of`) over the overview, which is all it is made of -- the
+    window is only carried in the packet -- with `window_exact` False (a
+    planar channel carries `_provisional_stats`' window). Not in `_gmm_cache`
+    or the project's stored fits, which hold exact packets; kept for this
+    load so the exact packet is not fitted again."""
     key = (datasource_name, load_generation, channel_name)
     made = _provisional_fits.get(key)
     if made is None:
@@ -4077,6 +4109,8 @@ def _provisional_gmm(channel_name, datasource_name):
         for old in [k for k in _provisional_fits if k[:2] != key[:2]]:
             _provisional_fits.pop(old, None)
         _provisional_fits[key] = made
+    if window is not None:
+        return {**made, "qmin": float(window[0]), "qmax": float(window[1])}
     return made
 
 
@@ -5760,7 +5794,7 @@ def _image_channel_stem(filePath):
         r'|\.qptiff|\.svs|\.ndpis|\.ndpi|\.scn|\.mrxs|\.bif|\.svslide|\.jpeg|\.jpg'
         r'|\.dcm|\.dicom|\.ims'
         r'|\.czi|\.nd2|\.lif|\.lof|\.xlef|\.vsi|\.ets|\.oir|\.oib|\.oif'
-        r'|\.dv|\.r3d|\.mcd|\.zvi|\.lsm|\.kfb',
+        r'|\.dv|\.r3d|\.mcd|\.zvi|\.lsm|\.kfb|\.approx',
         '', Path(filePath).name, flags=re.IGNORECASE)
 
 
@@ -6214,6 +6248,31 @@ def _describe_local_tiff(series, stem_source):
     }
 
 
+def _describe_compressed_copy(copy, stem_source):
+    """`_describe_local_tiff` for a compressed pyramidized copy
+    (`image_pyramid.APPROX_SUFFIX`), read through its formats reader
+    (server/utils/formats/approx.py) as everything after registration reads
+    it: recorded as that kind, keys stemmed from `stem_source`."""
+    from plexora.server.utils import approximate_image, formats
+
+    pyramid = formats.open_image(copy)
+    try:
+        channels = int(pyramid[0].shape[0])
+        stem = _image_channel_stem(stem_source)
+        return {
+            'maxLevel': len(pyramid),
+            'tileHeight': approximate_image.TILE,
+            'tileWidth': approximate_image.TILE,
+            'height': int(pyramid[0].shape[-2]),
+            'width': int(pyramid[0].shape[-1]),
+            'num_channels': channels,
+            'channel_names': [f"{stem}_{i}" for i in range(channels)],
+            'image_kind': formats.IMAGE_KIND,
+        }
+    finally:
+        pyramid.close()
+
+
 def _describe_chained_tiff(filePath):
     """`_describe_local_tiff` for a file read through `tiff_region.open_image`
     (`tiff_series.needs_region_reader`): the geometry of the halving chain its
@@ -6263,8 +6322,15 @@ def _image_pyramid_reporter(stage_callback=None, progress_callback=None):
     return staged, report
 
 
-def _pyramidized_copy(filePath, dataDirectory, stage, report, volume_description=None):
+def _pyramidized_copy(filePath, dataDirectory, stage, report, volume_description=None,
+                      compress=None):
     """The pyramidized copy of the flat image at `filePath`: adopted, or built.
+
+    `compress` is the kind asked for: True the compressed copy
+    (`image_pyramid.APPROX_SUFFIX`, where `image_pyramid.compressible`), False
+    the exact one, None "whichever is there, else the setting's"
+    (`image_pyramid.compress_default`). A copy of the kind asked for is
+    adopted; asked for one kind with only the other there, it is built.
 
     Raises `PyramidError` (a ValueError, which the import routes turn into a
     400 sentence) when there is nowhere with room to write it or the build
@@ -6300,20 +6366,24 @@ def _pyramidized_copy(filePath, dataDirectory, stage, report, volume_description
             progress=report, stage=stage)
         if built is not None:
             return built
-    needed = int(report_.get("output_bytes_estimate", 0)) \
-        + int(report_.get("scratch_bytes_estimate", 0))
+    wanted = image_pyramid.compress_default() if compress is None else bool(compress)
+    compressed = wanted and bool(report_.get("compressible"))
+    output = report_.get("compressed_bytes_estimate") if compressed else report_.get("output_bytes_estimate")
+    needed = int(output or 0) + int(report_.get("scratch_bytes_estimate", 0))
     # Built by Python on the website (the page took no part): written into the
     # tab's memory, so refused there when it cannot fit (server/utils/tab_room.py).
     from plexora.server.utils import tab_room
 
     tab_room.check_build(needed, "This image's pyramid")
     where = image_pyramid.resolve_derived_image(
-        filePath, dataDirectory, needed_bytes=needed)
+        filePath, dataDirectory, needed_bytes=needed, compressed=compressed,
+        either=compress is None)
     if where.existing is not None:
         return where.existing
     if not where.writable:
         raise image_pyramid.PyramidError(where.reason)
-    _log.info("Building a pyramid for %s (one-time) -> %s", Path(filePath).name, where.target)
+    _log.info("Building a %spyramid for %s (one-time) -> %s", "compressed " if compressed else "",
+              Path(filePath).name, where.target)
     image_pyramid.pyramidize_image(
         filePath, where.target,
         channel_names=names,
@@ -6321,6 +6391,7 @@ def _pyramidized_copy(filePath, dataDirectory, stage, report, volume_description
         progress_callback=report,
         stage_callback=stage,
         volume_description=volume_description,
+        compress=compressed,
     )
     return where.target
 
@@ -6385,6 +6456,12 @@ def _convert_ims_image(filePath):
         source.close()
 
 
+#: `pyramidize` answers that name the kind of copy (the Import dialog's
+#: switch): the compressed one, or the exact one. True and None leave the
+#: kind to whatever copy is there, else to the setting.
+PYRAMIDIZE_KINDS = {"compressed": True, "exact": False}
+
+
 def convertOmeTiff(filePath, channelFilePath=None, dataDirectory=None, isLabelImg=False,
                    progress_callback=None, segmentation_mode_=segmentation_pyramid.DEFAULT_MODE,
                    image_type=None, stage_callback=None, label_geometry=None,
@@ -6400,9 +6477,11 @@ def convertOmeTiff(filePath, channelFilePath=None, dataDirectory=None, isLabelIm
     level (`image_pyramid.pyramid_gaps`). None and True write a pyramidized
     copy once -- beside the original, or under `dataDirectory` when that
     folder cannot take it -- and describe the COPY, adding `imageCopy` and
-    `imageSourceKey`; a copy already there is adopted. False describes the
-    original as it is. The original is never written to. Every other format
-    ignores it.
+    `imageSourceKey`; a copy already there is adopted, and a new one is the
+    kind the setting names (`image_pyramid.compress_default`).
+    "compressed" and "exact" (PYRAMIDIZE_KINDS) ask for that kind of copy.
+    False describes the original as it is. The original is never written to.
+    Every other format ignores it.
 
     `image_type` is the user's override -- 'brightfield', 'fluorescence', or
     None for "decide". It changes how the file is READ, never what is in it:
@@ -6572,8 +6651,11 @@ def convertOmeTiff(filePath, channelFilePath=None, dataDirectory=None, isLabelIm
 
         if gaps and pyramidize is not False:
             copy = _pyramidized_copy(filePath, dataDirectory, stage, report,
-                                     volume_description=volume_description)
-            if volume_description:
+                                     volume_description=volume_description,
+                                     compress=PYRAMIDIZE_KINDS.get(pyramidize))
+            if str(copy).lower().endswith(image_pyramid.APPROX_SUFFIX):
+                channel_info = _describe_compressed_copy(copy, filePath)
+            elif volume_description:
                 from plexora.server.volume.sources.tiff import open_tiff_volume
 
                 copied = open_tiff_volume(copy, z_choice=z_semantics, t_choice=t_semantics,

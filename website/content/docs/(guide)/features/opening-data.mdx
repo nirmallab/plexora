@@ -64,6 +64,7 @@ Images can also be read from a web address, S3, Google Cloud Storage or Azure, o
 ## Tips
 
 - A mask must have the same width and height as its image.
+- A large image saved without a pyramid (a flat TIFF) opens slowly, so Import Sample offers to build a pyramidized copy once, beside the original or in the project, and opens that copy. A 16-bit image's copy is compressed: about 75% smaller than an exact copy, every pixel within its own noise. Turn **Compress the copy** off in that question, or **Compress pyramid copies** in **Settings › Data**, for an exact copy. Your original is never changed.
 - A private bucket needs its access set up first in **Settings › Web data**. An `https://` address in front of a bucket cannot be listed, so paste the bucket's own `s3://` or `gs://` address to open a folder of samples.
 - Dropping a file onto the import dialog in a browser uploads it (up to 64 MB). For a large image, choose it with Browse or paste its path, so it is read in place. A file dropped somewhere that does not take one is refused, so the browser does not open it in place of Plexora.
 - In the desktop app you can drag a file onto the window, or open `.svs`, `.ndpi`, `.scn`, `.mrxs`, `.qptiff` and `.h5ad` files with Plexora from your file manager.

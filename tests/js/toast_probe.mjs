@@ -52,6 +52,17 @@ function element(tag = "div") {
             this.children = this.children.filter((c) => c !== child);
             child.parentNode = null;
         },
+        insertBefore(child, before) {
+            const at = before ? this.children.indexOf(before) : -1;
+            if (at < 0) this.children.push(child);
+            else this.children.splice(at, 0, child);
+            child.parentNode = this;
+            return child;
+        },
+        get nextSibling() {
+            const siblings = this.parentNode ? this.parentNode.children : [];
+            return siblings[siblings.indexOf(this) + 1] || null;
+        },
         setAttribute(name, value) { this.attributes[name] = value; },
         addEventListener(name, fn) { (this.listeners[name] ||= []).push(fn); },
         fire(name) { (this.listeners[name] || []).forEach((fn) => fn()); },
@@ -297,6 +308,30 @@ check("onDismiss hears why it went, once", () => {
                                     actions: [{ label: "Go", onSelect: () => {} }] });
     actionRow(withAction.node).children[0].fire("click");
     assert.deepEqual(why, ["user", "replaced", "timeout", "action"]);
+});
+
+check("its note changes in place while it is up, and not after", () => {
+    const t = boot();
+    const handle = t.api.show({ title: "Waiting on the network", note: "1.9 MB/s", timeout: 0,
+                                actions: [{ label: "Close", onSelect: () => {} }] });
+    handle.setNote("2.4 MB/s");
+    const [head, note, actions] = handle.node.children;
+    assert.equal(head.className, "plx-toast-head");
+    assert.equal(note.className, "plx-toast-note");
+    assert.equal(note.textContent, "2.4 MB/s");
+    assert.equal(actions.className, "plx-toast-actions");
+    assert.equal(handle.node.children.length, 3, "the same note, not a second one");
+    handle.dismiss();
+    handle.setNote("3.1 MB/s");
+    assert.equal(note.textContent, "2.4 MB/s");
+});
+
+check("a notice shown without a note gains one under its title", () => {
+    const t = boot();
+    const handle = t.api.show({ title: "x", timeout: 0, actions: [{ label: "Go", onSelect: () => {} }] });
+    handle.setNote("now with a note");
+    assert.deepEqual(handle.node.children.map((n) => n.className),
+                     ["plx-toast-head", "plx-toast-note", "plx-toast-actions"]);
 });
 
 check("a warning tone is marked, and nothing else changes", () => {

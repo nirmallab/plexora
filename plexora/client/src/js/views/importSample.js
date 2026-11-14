@@ -2838,12 +2838,14 @@ window.PlexoraImportSample = (function () {
      */
     function renderConfirmNote(question, sample) {
         const row = el("div", "plx-import-question is-confirm");
-        const pyramid = layerOf(sample, question)?.render?.pyramid || {};
+        const layer = layerOf(sample, question);
+        const pyramid = layer?.render?.pyramid || {};
         const said = state.answers[question.id];
+        const smaller = compressesPyramid(sample, layer);
         const line = el("p", "plx-import-question-hint");
         if (said === undefined) {
-            const size = formatBytes(pyramid.output_bytes_estimate);
-            line.textContent = "Not pyramidized — Plexora will offer to build a "
+            const size = copyBytes(pyramid, smaller);
+            line.textContent = `Not pyramidized — Plexora will offer to build a ${smaller ? "compressed " : ""}`
                 + `pyramidized copy${size ? ` (about ${size})` : ""} when you `
                 + "press Import.";
             row.appendChild(line);
@@ -2853,9 +2855,12 @@ window.PlexoraImportSample = (function () {
         head.appendChild(el("span", "plx-import-badge",
             said === "no" ? "as is" : "will pyramidize"));
         const place = (state.copyPlaces || {})[question.id];
+        const names = pyramid.output_names || {};
+        const copy = smaller ? `${names.compressed || "a pyramidized copy"} (compressed)`
+            : names.exact || pyramid.output_name || "a pyramidized copy";
         head.appendChild(el("span", null, said === "no"
             ? "Opens the original, without a pyramid."
-            : `Builds ${pyramid.output_name || "a pyramidized copy"} first${place ? `, ${place}` : ""}.`));
+            : `Builds ${copy} first${place ? `, ${place}` : ""}.`));
         const change = el("button", "plx-import-link", "Change…");
         change.type = "button";
         change.addEventListener("click", async () => {
@@ -2893,15 +2898,72 @@ window.PlexoraImportSample = (function () {
         return chip;
     }
 
+    /** "1.4 GB", what this row's copy comes to: the compressed kind's
+     *  estimate, or the exact one's. */
+    function copyBytes(pyramid, compressed) {
+        return formatBytes(compressed ? pyramid.compressed_bytes_estimate : pyramid.output_bytes_estimate);
+    }
+
+    /**
+     * Whether this row's pyramidized copy is the compressed kind
+     * (server/utils/image_pyramid.py `APPROX_SUFFIX`): only where the server
+     * can make one (`compressible`), and then as the dialog's switch said,
+     * or -- nobody asked yet -- as the setting says (`compress_default`).
+     */
+    function compressesPyramid(sample, layer) {
+        const pyramid = layer?.render?.pyramid || {};
+        if (!pyramid.compressible) return false;
+        const question = questionsFor(sample, `layer:${layer.id}`)
+            .find((candidate) => candidate.kind === "confirm");
+        const said = question ? state.answers[question.id] : undefined;
+        if (said === "compressed") return true;
+        if (said === "exact") return false;
+        return pyramid.compress_default !== false;
+    }
+
+    /** The pyramid question's title and body for one kind of copy. */
+    function pyramidWords(pyramid, compressed) {
+        const place = pyramid.location || "beside the original";
+        return compressed
+            ? {title: "Build a compressed pyramid?",
+               body: "Large flat images open slowly without one. Plexora saves a compressed copy, "
+                   + `every pixel within its noise, ${place}, and opens that copy. Your original is not changed.`}
+            : {title: "Build a pyramid first?",
+               body: `Large flat images open slowly without one. Plexora saves a copy ${place}, `
+                   + "and opens that copy. Your original is not changed."};
+    }
+
+    /**
+     * "Compress the copy": a switch under the chip. Flipping it says the
+     * question again for that kind at once -- title, body and the chip's
+     * size -- through `onFlip(checked)`.
+     */
+    function compressSwitch(checked, onFlip) {
+        const label = el("label", "plx-confirm-switch");
+        const input = document.createElement("input");
+        input.type = "checkbox";
+        input.setAttribute("role", "switch");
+        input.checked = Boolean(checked);
+        input.addEventListener("change", () => onFlip(input.checked));
+        label.append(input, el("span", null, "Compress the copy"));
+        return {label, input};
+    }
+
     /**
      * Put one pyramidize confirmation to the user. Resolves the chosen value
-     * ("yes" / "no"), or null when the modal is dismissed.
+     * ("yes" / "no"; "compressed" / "exact" where the switch is shown), or
+     * null when the modal is dismissed.
+     *
+     * The desktop app and a server: one question, and -- where the copy can
+     * be the compressed kind -- a switch that turns it into the other
+     * question as it is flipped.
      *
      * On the website, where the browser can write into a folder the user
      * grants: where the projects are kept in Plexora's folder the copy goes
      * there, or into a folder of the user's own (`askPyramidHome`); otherwise
      * beside the original (the folder picker opens there) or in this browser.
-     * A cancelled picker keeps it where it would have gone.
+     * A cancelled picker keeps it where it would have gone. The page builds
+     * those copies, always the exact kind.
      */
     async function askPyramid(question, sample) {
         const layer = layerOf(sample, question);
@@ -2913,19 +2975,42 @@ window.PlexoraImportSample = (function () {
         const no = options.find((option) => option.value === "no")
             || {value: "no", label: "Import as is"};
         if (!window.PlexoraConfirm?.choose) return question.default ?? yes.value;
-        const size = formatBytes(pyramid.output_bytes_estimate);
         const pyramids = websitePyramids();
-        const chip = fileChip(name, [
-            `${formatCount(pyramid.width)} × ${formatCount(pyramid.height)} px`,
-            pyramid.channels ? `${formatCount(pyramid.channels)} channels` : null,
-            size ? `copy ≈ ${size}` : null,
-        ]);
+        const chipFor = (compressed) => {
+            const size = copyBytes(pyramid, compressed);
+            return fileChip(name, [
+                `${formatCount(pyramid.width)} × ${formatCount(pyramid.height)} px`,
+                pyramid.channels ? `${formatCount(pyramid.channels)} channels` : null,
+                size ? `copy ≈ ${size}` : null,
+            ]);
+        };
+        const chip = chipFor(false);
         if (!pyramids || !pyramids.canWriteFolders()) {
-            return window.PlexoraConfirm.choose({
-                title: "Build a pyramid first?",
-                body: `Large flat images open slowly without one. The copy is saved ${pyramid.location
-                    || "beside the original"}; the original is not changed.`,
-                content: chip,
+            const smaller = Boolean(pyramid.compressible);
+            const on = compressesPyramid(sample, layer);
+            const content = el("div", "plx-confirm-content");
+            let shown = chipFor(on);
+            content.appendChild(shown);
+            let toggle = null;
+            if (smaller) {
+                toggle = compressSwitch(on, (checked) => {
+                    const dialog = content.closest("dialog");
+                    const words = pyramidWords(pyramid, checked);
+                    const title = dialog?.querySelector(".plx-dialog-title");
+                    if (title) title.textContent = words.title;
+                    const body = dialog?.querySelector(".plx-confirm-body");
+                    if (body) body.textContent = words.body;
+                    const fresh = chipFor(checked);
+                    shown.replaceWith(fresh);
+                    shown = fresh;
+                });
+                content.appendChild(toggle.label);
+            }
+            const words = pyramidWords(pyramid, on);
+            const chosen = await window.PlexoraConfirm.choose({
+                title: words.title,
+                body: words.body,
+                content,
                 choices: [
                     {value: no.value, label: no.label},
                     {value: yes.value, label: yes.label, kind: "primary", focus: true},
@@ -2933,6 +3018,8 @@ window.PlexoraImportSample = (function () {
                 close: true,
                 inline: true,
             });
+            if (chosen === yes.value && toggle) return toggle.input.checked ? "compressed" : "exact";
+            return chosen;
         }
         // The website, where the browser can write into a folder. Where the
         // projects are kept in Plexora's folder that is where the copy goes
@@ -2950,7 +3037,8 @@ window.PlexoraImportSample = (function () {
         const kept = "this browser";
         const chosen = await window.PlexoraConfirm.choose({
             title: "Save the pyramid beside the original?",
-            body: `Large flat images need one to open quickly. Close to keep it in ${kept}.`,
+            body: `Large flat images need one to open quickly. Close to keep it in ${kept}. `
+                + "Your original is not changed.",
             content: chip,
             choices: [{value: "folder", label: "Save beside original…", kind: "primary", focus: true}],
             close: true,
@@ -3272,11 +3360,12 @@ window.PlexoraImportSample = (function () {
             results.push(result);
             resultAt.push(at);
         }
-        const built = pyramidRowName();
+        const built = pyramidRow();
         if (built) {
             window.PlexoraDesktop?.notifyIfAway({
-                title: `${built} is ready`,
-                body: "The pyramidized copy is built and the sample is opening.",
+                title: `${built.name} is ready`,
+                body: `The ${built.compressed ? "compressed " : ""}pyramidized copy is built `
+                    + "and the sample is opening.",
             });
         }
         finishSamples(results, resultAt);
@@ -3715,9 +3804,10 @@ window.PlexoraImportSample = (function () {
             line.textContent = summarize(state.proposal);
         } else {
             const names = state.registered || [];
-            const building = !names.length && !scoped() && pyramidRowName();
+            const building = !names.length && !scoped() && pyramidRow();
             line.textContent = building
-                ? `Building a pyramidized copy of ${building} — this happens once.`
+                ? `Building a ${building.compressed ? "compressed " : ""}pyramidized copy of `
+                  + `${building.name} — this happens once.`
                 : names.length > 1
                 ? `${names.length} samples registered.`
                 : names.length
@@ -3726,13 +3816,20 @@ window.PlexoraImportSample = (function () {
         }
     }
 
-    /** The first row this import pyramidizes, by name, or null. */
-    function pyramidRowName() {
+    /** The first row this import pyramidizes -- `{name, compressed}`, whether
+     *  its copy is the compressed kind -- or null. */
+    function pyramidRow() {
         for (const sample of state.proposal?.samples || []) {
             const layer = (sample.layers || []).find((row) => buildsPyramid(sample, row));
-            if (layer) return layer.label || basename(layer.src);
+            if (layer) return {name: layer.label || basename(layer.src),
+                               compressed: compressesPyramid(sample, layer)};
         }
         return null;
+    }
+
+    /** The first row this import pyramidizes, by name, or null. */
+    function pyramidRowName() {
+        return pyramidRow()?.name || null;
     }
 
     function basename(path) {

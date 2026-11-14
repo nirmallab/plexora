@@ -34,6 +34,15 @@ budget). It can be lower than the exact window -- a pyramid's coarse levels
 are averages -- so the brightest few pixels may clip in the 8-bit picture
 until the exact scan, run in the background, replaces it. It is never
 persisted, and every byte served with it says which window it was made with.
+
+SAMPLED ON THE WEBSITE, FOR A STACK READ OVER THE WEB. The website's Python
+has one thread, and a background task there runs to its end with every
+request waiting behind it: the scan above, for a 91-plane 13350 x 19120 IDR
+stack, reads 3.4 GB a channel, over a link IDR serves at 0.5-2 MB/s. Its window
+there is `sampled_window` instead: the provisional window's reads plus a
+spread of level-0 chunks of the default plane, with headroom -- what a planar
+image read over the web gets (providers/remote.py `sampled_window`). It is
+the window that is kept, like the scan's.
 """
 
 from __future__ import annotations
@@ -193,6 +202,51 @@ def provisional_window(source, channel: int) -> tuple[tuple[float, float], dict]
     ceiling = max(ceiling, _scan_level(source, coarse, channel, planes))
     return (0.0, max(ceiling, 1.0)), {"exact": False, "provisional": True,
                                       "level": fine, "coarse": coarse}
+
+
+def sampled_window(source, channel: int, gate=None, *, chunks: int,
+                   headroom: float) -> tuple[tuple[float, float], dict]:
+    """`((0, ceiling), how)` without a scan of the stack -- see the module
+    notes. The file's statement where it makes one; else what
+    `provisional_window` reads, and `chunks` level-0 chunks spread across the
+    default plane, the brightest of them times `headroom` (at most the
+    type's largest value)."""
+    stated = stated_window(source, channel, gate)
+    if stated is not None:
+        return stated
+    (_, ceiling), _how = provisional_window(source, channel)
+    volume = source.volume
+    default = volume.default_view
+    height, width = source.level_shape(0)
+    decode = getattr(source, "decode_chunk", None)
+    shape = decode(0) if callable(decode) else None
+    tile_h, tile_w = (max(1, int(shape[1])), max(1, int(shape[2]))) if shape else (1024, 1024)
+    rows, cols = math.ceil(height / tile_h), math.ceil(width / tile_w)
+    count = max(1, min(int(chunks), rows * cols))
+    # A lattice across the plane: every row band and column band is visited
+    # before any is visited twice.
+    side = max(1, math.ceil(math.sqrt(count)))
+    picks = set()
+    for i in range(side):
+        for j in range(side):
+            if len(picks) < count:
+                picks.add((min(rows - 1, int((i + 0.5) * rows / side)),
+                           min(cols - 1, int((j + 0.5) * cols / side))))
+    for r, c in sorted(picks):
+        box = (slice(r * tile_h, min(height, (r + 1) * tile_h)),
+               slice(c * tile_w, min(width, (c + 1) * tile_w)))
+        if gate is not None:
+            with gate:
+                block = source.read_plane(0, default.t, default.z, channel, *box)
+        else:
+            block = source.read_plane(0, default.t, default.z, channel, *box)
+        if block.size:
+            ceiling = max(ceiling, float(block.max()))
+    ceiling *= headroom
+    dtype = np.dtype(volume.dtype)
+    if np.issubdtype(dtype, np.integer):
+        ceiling = min(ceiling, float(np.iinfo(dtype).max))
+    return (0.0, max(ceiling, 1.0)), {"exact": False, "sampled": True, "chunks": len(picks)}
 
 
 def parse_stamp(text) -> tuple[float, float] | None:

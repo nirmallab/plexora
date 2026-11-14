@@ -317,7 +317,9 @@ window.PlexoraImportHelp = (function () {
             + "the row: plexora[spatial], plexora[wsi]."},
         {icon: "layer-group", text: "A large image with no pyramid is offered "
             + "a pyramidized copy at Import, written once beside the original "
-            + "(or in the project). The original is never changed."},
+            + "(or in the project) and compressed, about 75% smaller than an exact "
+            + "copy with every pixel within its noise, unless you switch that off. The original "
+            + "is never changed."},
     ];
 
     const TABS = [

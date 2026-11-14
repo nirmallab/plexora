@@ -412,18 +412,22 @@ def prepare_again(node, resource_id, timeout=30.0):
     return described
 
 
-def pyramidize_on_node(node, resource_id, timeout=30.0):
+def pyramidize_on_node(node, resource_id, timeout=30.0, kind=None):
     """Ask a node to build the pyramidized copy of a flat image it serves.
 
     The copy is written on the node, beside the original or under the node's
-    own data root. Returns the node's description, normally `preparing`; poll
-    `resource_status` until it is `ready` (served from the copy) or `error`.
-    A node too old to have the route answers with the "upgrade it there"
-    sentence `http._check` writes for any 404.
+    own data root. `kind` is "compressed" or "exact" when the Import dialog's
+    switch said which (None: whatever copy is there, else the node's
+    setting); a node from before the switch ignores it. Returns the node's
+    description, normally `preparing`; poll `resource_status` until it is
+    `ready` (served from the copy) or `error`. A node too old to have the
+    route answers with the "upgrade it there" sentence `http._check` writes
+    for any 404.
     """
     entry = node_registry.get(str(node))
     answer = http.json_request(
         entry, "POST", f"/node/v1/resources/{resource_id}/pyramidize",
+        body={"kind": kind} if kind else None,
         timeout=timeout, expected_api=node_registry.API_VERSION)
     described = dict(answer.get("resource") or {})
     described["locator"] = f"node://{entry.name}/{resource_id}"

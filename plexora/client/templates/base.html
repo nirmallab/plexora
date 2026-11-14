@@ -8,7 +8,7 @@
     <link rel="apple-touch-icon" href="{{ data.base_url }}/client/src/img/apple-touch-icon.png">
     <!-- Styles -->
     <link rel="stylesheet" href="{{ data.base_url }}/client/src/css/tokens.css?v=20261027_sidebar_radius">
-    <link rel="stylesheet" href="{{ data.base_url }}/client/src/css/main.css?v=20261110_onboarding_bundles">
+    <link rel="stylesheet" href="{{ data.base_url }}/client/src/css/main.css?v=20261114_idr_merge">
     {# Here and not in a page block: the explorer opens from every page, and
        appRouter.adoptStyles turns page stylesheets off on navigation. #}
     <link rel="stylesheet" href="{{ data.base_url }}/client/src/css/explorer.css?v=20261110_file_or_folder">
@@ -49,7 +49,11 @@
     <!-- App-wide status indicator. Loaded here, before everything else and not
          deferred, because it wraps window.fetch to detect a dead/erroring
          server and must be installed before any script issues a request. -->
-    <script src="{{ data.base_url }}/client/src/js/services/appStatus.js?v=20261112_relay_status" type="text/javascript"></script>
+    <script src="{{ data.base_url }}/client/src/js/services/appStatus.js?v=20261114_idr_merge" type="text/javascript"></script>
+    <!-- How far the view has sharpened, as a bar along the navbar's bottom
+         edge (#tile_progress). appStatus.js's watchViewer starts it for each
+         viewer; nothing here touches the page until then. -->
+    <script src="{{ data.base_url }}/client/src/js/services/tileProgress.js?v=20261112_tile_progress" type="text/javascript"></script>
     <!-- Optional, anonymous telemetry (plexora/telemetry): the tab's aggregate
          and its error fingerprints. Right after appStatus.js and not deferred,
          so the first tiles are timed and an early failure is caught; both are
@@ -229,7 +233,7 @@
        one page would send every other page back to `window.alert`. Costs
        nothing until something calls show(): there is no host element until
        then. #}
-    <script src="{{ data.base_url }}/client/src/js/services/toast.js?v=20260924_ui_pass" defer></script>
+    <script src="{{ data.base_url }}/client/src/js/services/toast.js?v=20261112_tile_progress" defer></script>
     {% if data.backend == 'browser' %}
     {# The website's first-use onboarding (PlexoraOnboarding): where the
        user's work is kept, asked at the first action that keeps something,
@@ -243,7 +247,7 @@
        long this server's reads waited (GET /read_pace). On the website the
        site's host page loads it, so never here. After toast.js, which it
        shows them with. #}
-    <script src="{{ data.base_url }}/client/src/js/services/handoffNotice.js?v=20261111_desktop_pace" data-reads="desktop" defer></script>
+    <script src="{{ data.base_url }}/client/src/js/services/handoffNotice.js?v=20261112_tile_progress" data-reads="desktop" defer></script>
     {% endif %}
     {# What the website says where only the desktop app could act -- an SSH
        connection, the Google Cloud CLI, a data folder (PlexoraWebHandoff):
@@ -275,7 +279,7 @@
        their CSS in main.css, like importHelp below. #}
     <script src="{{ data.base_url }}/client/src/js/views/updateDialog.js?v=20261107_website" defer></script>
     <script src="{{ data.base_url }}/client/src/js/views/helpMenu.js?v=20261109_docsdomain" defer></script>
-    <script src="{{ data.base_url }}/client/src/js/views/importHelp.js?v=20261111_ets" defer></script>
+    <script src="{{ data.base_url }}/client/src/js/views/importHelp.js?v=20261112_compressed_pyramids" defer></script>
     {# What kind of address a string is: a web address, a `node://` locator
        or a plain path. Read by importSample.js and quickViewLanding.js, so
        both agree about an `s3://` URL instead of each testing for one its own
@@ -289,15 +293,15 @@
        primary button, the viewer's "+ Add Layer" and the requirements modal's
        layer row all open it, and none of those three shares a stylesheet.
        After datasetPicker.js, whose picker is this dialog's Dataset row. #}
-    <script src="{{ data.base_url }}/client/src/js/views/importSample.js?v=20261112_registration" defer></script>
+    <script src="{{ data.base_url }}/client/src/js/views/importSample.js?v=20261112_compressed_pyramids" defer></script>
     <!-- New Dataset: a dataset from a folder (scan, match, create). After
        importSample.js, whose dialog styles it reuses. -->
     <script src="{{ data.base_url }}/client/src/js/views/datasetBuilder.js?v=20261029_bucket_datasets" defer></script>
     {# A project as one `.plexora` file: Export, then Import (which draws with
        what the first sets up, PlexoraBundleKit and PlexoraBundleTransport).
        After dropRouter.js, whose executor registry the import joins. #}
-    <script src="{{ data.base_url }}/client/src/js/views/projectExport.js?v=20261110_onboarding_bundles" defer></script>
-    <script src="{{ data.base_url }}/client/src/js/views/projectImport.js?v=20261110_onboarding_bundles" defer></script>
+    <script src="{{ data.base_url }}/client/src/js/views/projectExport.js?v=20261112_approximate_bundles" defer></script>
+    <script src="{{ data.base_url }}/client/src/js/views/projectImport.js?v=20261112_approximate_bundles" defer></script>
     {% if data.backend == 'browser' %}
     {# The website's transport for those two (PlexoraBundleWeb): its Python
        decides, and the bytes move in a worker of the page's own
@@ -710,6 +714,11 @@
     <!-- Sits outside .navbar-collapse so it stays visible when the navbar
          collapses. Filled in by appStatus.js. -->
     <div id="app_status"></div>
+    {# The view's full-resolution tiles arriving (services/tileProgress.js):
+       a bar along the navbar's bottom edge, filled by the share that has
+       arrived, gone once they all have. #}
+    <div id="tile_progress" class="nav-load-bar" role="progressbar" aria-label="Image tiles arriving"
+         aria-valuemin="0" aria-valuemax="100" hidden><span class="nav-load-bar-fill"></span></div>
 </nav>
 
 {% block content %}{% endblock %}

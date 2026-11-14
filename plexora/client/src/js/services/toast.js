@@ -109,8 +109,10 @@ window.PlexoraToast = (function () {
      * @param onDismiss optional; called once, with why (see `dismiss`), so a
      *   caller can remember that the user closed it.
      * @param tone optional; "warning" for a notice about something broken.
-     * @returns {dismiss, node, isLive} so a caller that knows the notice is
-     *   stale -- the thing it described has been undone -- can take it back.
+     * @returns {dismiss, node, isLive, setNote} so a caller that knows the
+     *   notice is stale -- the thing it described has been undone -- can take
+     *   it back, and one whose number moves (a read rate) can say it as it
+     *   moves.
      */
     function show(options) {
         const settings = options || {};
@@ -144,9 +146,9 @@ window.PlexoraToast = (function () {
         head.appendChild(close);
         node.appendChild(head);
 
+        const note = document.createElement("p");
+        note.className = "plx-toast-note";
         if (settings.note) {
-            const note = document.createElement("p");
-            note.className = "plx-toast-note";
             note.textContent = settings.note;
             node.appendChild(note);
         }
@@ -210,7 +212,14 @@ window.PlexoraToast = (function () {
         mount.appendChild(node);
         live = entry;
         arm(entry, timeout);
-        return { dismiss: () => dismiss(entry), node, isLive: () => !entry.gone };
+        //: The sentence under the title, changed in place (none: a notice
+        //: shown without one gains it under the title).
+        const setNote = (text) => {
+            if (entry.gone || !text || note.textContent === text) return;
+            note.textContent = text;
+            if (!note.parentNode) node.insertBefore(note, head.nextSibling);
+        };
+        return { dismiss: () => dismiss(entry), node, isLive: () => !entry.gone, setNote };
     }
 
     /** Take back whatever is showing. Nothing if nothing is. */

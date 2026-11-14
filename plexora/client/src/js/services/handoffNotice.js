@@ -39,7 +39,9 @@
  *   `waited_s` of the last `window_s` seconds at under its rate --
  *   "Waiting on the network" (the host and its MB/s; a data node beside the
  *   data) or "Reading a slow drive" (the file and its MB/s; a copy on this
- *   computer). The waiting, not the work between reads, is what counts;
+ *   computer), the MB/s kept live while the notice is up (`keepLive`: the
+ *   last five seconds, each second; "idle now" with the last rate when
+ *   nothing reads). The waiting, not the work between reads, is what counts;
  * - **stopped** (`stopped`, the worker's `fatal` event): Python failed for
  *   good -- past the open notice, a table that does not fit the worker's
  *   4 GiB ends Pyodide when an allocation fails -- "This tab ran out of
@@ -254,6 +256,18 @@
 
     const rateText = (rate) => (rate >= 10e6 ? `${Math.round(rate / 1e6)} MB/s`
         : rate >= 0.1e6 ? `${(rate / 1e6).toFixed(1)} MB/s` : "under 0.1 MB/s");
+    const short = (text, most) => (text.length > most ? `${text.slice(0, most - 1)}…` : text);
+
+    //: A slow-read notice's sentence: the source and its rate. `idle`: no
+    //: read from it waits now, and `rate` was the last one's.
+    function slowNote(cause, source, rate, idle = false) {
+        if (idle) {
+            return cause === "network" ? `Idle now; last ${rateText(rate)} from ${short(source, 28)}.`
+                : `${short(source, 24)}: idle now; last ${rateText(rate)}.`;
+        }
+        return cause === "network" ? `${rateText(rate)} from ${short(source, 40)}.`
+            : `${short(source, 24)} reads at ${rateText(rate)}; copy it here.`;
+    }
 
     /**
      * Whether reads from `source` ("network": a host; "drive": a picked file)
@@ -271,18 +285,54 @@
         if (waited < waitedMs) return { verdict: "website", waited };
         const rate = bytes / (waited / 1000);
         if (rate >= limit) return { verdict: "website", waited, rate };
-        const short = (text, most) => (text.length > most ? `${text.slice(0, most - 1)}…` : text);
         if (cause === "network") {
             return { verdict: "node", waited, rate, title: "Waiting on the network",
-                     note: `${rateText(rate)} from ${short(source, 40)}.` };
+                     note: slowNote(cause, source, rate) };
         }
         return { verdict: "copy", waited, rate, title: "Reading a slow drive",
-                 note: `${short(source, 24)} reads at ${rateText(rate)}; copy it here.` };
+                 note: slowNote(cause, source, rate) };
     }
 
     //: Read intervals by "cause|source", the last minute only.
     const paces = new Map();
     const PACE_KEEP_MS = 60000;
+
+    //: A slow-read notice's rate is said as it moves: over the last LIVE_MS
+    //: of that source's reads, every LIVE_EVERY_MS while the notice is up.
+    //: Intervals close each second on the website and come every 2 s on the
+    //: desktop, so five seconds always holds some. Under LIVE_IDLE_MS of
+    //: waiting in it, nothing is being read: said as idle, with the last rate.
+    const LIVE_MS = 5000;
+    const LIVE_EVERY_MS = 1000;
+    const LIVE_IDLE_MS = 250;
+    //: "cause|source" -> {timer, rate} of a slow-read notice on screen.
+    const livePaces = new Map();
+
+    /** Keep `handle`'s note (PlexoraToast.show's) on the source's rate now,
+     *  until the notice goes. */
+    function keepLive(cause, source, handle, rate) {
+        if (!handle || typeof handle.setNote !== "function") return;
+        const key = `${cause}|${source}`;
+        const before = livePaces.get(key);
+        if (before) global.clearInterval(before.timer);
+        const state = { timer: null, rate };
+        state.timer = global.setInterval(() => {
+            // Gone: dismissed, replaced, or its page left (the website's
+            // frame navigated, taking the notice with it).
+            if ((typeof handle.isLive === "function" && !handle.isLive())
+                    || (handle.node && handle.node.isConnected === false)) {
+                global.clearInterval(state.timer);
+                if (livePaces.get(key) === state) livePaces.delete(key);
+                return;
+            }
+            const now = Date.now();
+            const { waited, bytes } = waitedIn(paces.get(key) || [], now - LIVE_MS, now);
+            const idle = waited < LIVE_IDLE_MS;
+            if (!idle) state.rate = bytes / (waited / 1000);
+            handle.setNote(slowNote(cause, source, state.rate, idle));
+        }, LIVE_EVERY_MS);
+        livePaces.set(key, state);
+    }
 
     /** One read interval, judged with the others from its source: said
      *  (`notice`) the first time its cause holds the page. Resolves the
@@ -304,7 +354,8 @@
         if (verdict.verdict === "website") return verdict;
         const app = appNow();
         notice(cause === "network" ? "slow-network" : "slow-drive", projectOf(app, null) || "", app,
-               verdict, `plexora-notice:slow-${cause}:${source}`).catch(() => null);
+               verdict, `plexora-notice:slow-${cause}:${source}`)
+            .then((handle) => keepLive(cause, source, handle, verdict.rate)).catch(() => null);
         return verdict;
     }
 
@@ -386,19 +437,20 @@
     }
 
     /** The notice for `reason` on `project`, unless said in this tab or
-     *  dismissed in the last 30 days. Resolves whether it was shown. */
+     *  dismissed in the last 30 days. Resolves the notice shown (the handle
+     *  PlexoraToast.show returns, or true), else false. */
     async function notice(reason, project, app, verdict, key = `plexora-notice:${project}:${reason}`) {
         const once = `${project}|${reason}`;
         if (!app || shown.has(once) || remembered(key)) return false;
         shown.add(once);
         for (let i = 0; i < 50 && !app.PlexoraToast; i += 1) await new Promise((r) => global.setTimeout(r, 200));
         if (!app.PlexoraToast) return false;
-        app.PlexoraToast.show({
+        const handle = app.PlexoraToast.show({
             title: verdict.title, note: verdict.note, timeout: 0,
             actions: actions(reason, project, app, key),
             onDismiss: (why) => { if (why === "user") remember(key); },
         });
-        return true;
+        return handle || true;
     }
 
     async function sizeOf(app, project) {
@@ -548,7 +600,8 @@
                     + (event && event.cause ? ` (${String(event.cause).slice(0, 120)})` : "")
                     + ". Reload, or open the project in the desktop app." };
         // Never remembered: a dismissal must not hide the next failure.
-        return notice("stopped", project || "", app, verdict, `plexora-notice:stopped:${Date.now()}`);
+        return Boolean(await notice("stopped", project || "", app, verdict,
+                                    `plexora-notice:stopped:${Date.now()}`));
     }
 
     /**
@@ -561,9 +614,9 @@
         if (!event || !event.title) return false;
         const app = appNow();
         const project = projectOf(app, null) || "";
-        return notice(String(event.reason || "tab-limit"), project, app,
-                      { title: String(event.title), note: String(event.note || "") },
-                      `plexora-notice:refused:${Date.now()}`);
+        return Boolean(await notice(String(event.reason || "tab-limit"), project, app,
+                                    { title: String(event.title), note: String(event.note || "") },
+                                    `plexora-notice:refused:${Date.now()}`));
     }
 
     // -- the desktop: its Python's read intervals, asked for ---------------------

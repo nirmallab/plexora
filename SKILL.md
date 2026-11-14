@@ -1058,7 +1058,10 @@ Entry points:
   brightfield MRXS stays OpenSlide's), and over packages
   `czi.py` (czifile), `nd2file.py` (nd2), `lif.py` (liffile; LIF/LOF/XLEF,
   tile scans placed by stage position), `oir.py` (oirfile), `oib.py`
-  (oiffile; OIB/OIF), `mcd.py` (readimc). A missing package raises
+  (oiffile; OIB/OIF), `mcd.py` (readimc), and `approx.py` (own: the
+  `.approx` a `.plexora` file's "Smaller images" brought, read in place
+  through `approximate_image.Container` and a `TileCache`, names and pixel
+  size from the OME-XML its index keeps). A missing package raises
   `FormatSupportMissing` with its install line. **Every function takes an
   `index`**, because one file may hold several images: `Reader.images` is
   their fixed order, `ImageSpec.image_index` (config `imageIndex`, written only
@@ -1451,9 +1454,71 @@ Entry points:
   A `.plexora` dropped on the window is recognised by `bundle_routes.py`'s drop
   sniffer and routed to the `import_bundle` executor in `projectImport.js`;
   `POST /desktop/open` on one answers `{open: "bundle", ...}` rather than
-  importing without asking. CLI: `plexora project export [NAMES] [--dataset]
-  [--include images,derived] [-o]` and `plexora project import FILE [--into]
+  importing without asking. "Smaller images" (include part `approximate`,
+  off by default) sends a project's image refs (`IMAGE_ROLES`: `channelFile`,
+  `imageSource`, `imagePyramid`; a mask never goes smaller, so masks and
+  tables stay exact) as `media/<key>/<name>.approx`; the ref names it in
+  `approximate` and leaves `included` null, so an older Plexora treats it as
+  an image left out rather than misreading it; its media record carries
+  `approximate: {method, source_size}`. On import the original wins when this
+  computer has it (`_find_cheap`), else the container is placed at
+  `media/<key>/<name>.approx` as an included file is and read there as it is
+  (`formats/approx.py`); nothing is decoded back. `placements` lists it, so
+  the website's page writes it, and `workers/storeSync.js` holds a big
+  `.approx` as a link read in place in any store (`heldAnywhere`), not only a
+  shared folder, because placed in memory its first read would hand Python
+  the whole file. CLI: `plexora project export [NAMES] [--dataset]
+  [--include images,derived,approximate] [-o]` and `plexora project import FILE [--into]
   [--keep-both|--replace] [--name]`.
+- `server/utils/approximate_image.py` — **"Smaller images" for a `.plexora`
+  file**: a 16-bit grey TIFF (YX/CYX, pyramid as SubIFDs) kept as
+  q = round(sqrt(v)) and read back as q*q, so a pixel comes back within
+  sqrt(v)+0.25 counts by construction; photon noise grows as sqrt(v) too, so
+  the error is the same share of the noise at every brightness and no
+  background has to be estimated. q is then coded without loss with numpy and
+  zstd only, because that is what the website's Python has too: each
+  1024x1024 tile is predicted coarse to fine as SZ3 interpolates (anchors
+  every 64 px), its residuals zigzagged, split into bit planes by an 8x8 bit
+  transpose in uint64 words (`_transpose8`) and zstd'd at level 9, the
+  tile's first byte the planes used. The `<name>.approx` container is
+  `MAGIC`, tiles, a JSON index (keeping the original description, OME-XML),
+  its length, `END`; `Container` reads its tiles, and an import reads it in
+  place (`formats/approx.py`) rather than writing a TIFF. `decode` writes one
+  out only on request, a tiled BigTIFF with the original description and
+  `Software=MARK`, so exporting it again copies it rather than compressing it
+  twice. `reason` says why a file cannot go smaller, `likely` and `estimate`
+  answer the export dialog from a stat and the first page. `can_read()` (zstd
+  present) is true on the website too; `can_make()` is not, because the
+  website's Python cannot write a file of that size. `write_tiles(path,
+  shapes, tiles, description=, source=)` writes a container from tiles as
+  they are made (encoded on a pool while the next are made, through a
+  dot-prefixed `.tmp`): the compressed pyramid copy's writer.
+- `server/utils/image_pyramid.py` — **the pyramidized copy of a large flat
+  channel-stack TIFF** (one level, longest side over `FLAT_IMAGE_MAX_SIDE`
+  4096, or a stack over `STACK_LEVEL_VOXELS`): `pyramid_gaps` says when,
+  `flat_image_report` what the Import dialog states (header only, with
+  `compressible` and `compressed_bytes_estimate`), `pyramidize_image` builds
+  it in one streaming pass (2x2 integer mean, each level from the one above,
+  scratch levels memory-mapped beside the output). Two kinds:
+  `<stem>.pyramid.ome.tiff` (zlib level 1 SubIFD OME-TIFF, exact) and, with
+  `compress=True`, `<stem>.pyramid.approx` (`APPROX_SUFFIX`; uint16 planar
+  stacks only, `compressible`, never on the website): the same exact tiles
+  through `approximate_image.write_tiles` on its 1024 grid, every pixel
+  within sqrt(v)+0.25 of the exact level, with the TIFF's OME-XML (the
+  `IMAGE_MARKER` name and `{source, source_key}` description, channel names,
+  pixel size) in the index. The compressed kind is the default
+  (`compress_default` -> `paths.compress_pyramids`, the settings file's
+  `compress_pyramids`, Settings > Data, `plexora config set
+  compress-pyramids`); the Import dialog's switch answers `pyramidize:<pick>`
+  "compressed"/"exact" (`data_model.PYRAMIDIZE_KINDS`, also sent to a node's
+  `POST /resources/<id>/pyramidize` as `{kind}`). `resolve_derived_image(...,
+  compressed=, either=)` adopts a copy of the asked kind, or with `either`
+  (nobody chose) of either kind; `find_derived_image` (the website) either
+  kind; `is_image_copy`/`copy_source`/`is_adoptable_image` read a `.approx`
+  from its index (`_ome_text`). A compressed copy is recorded through its
+  formats reader (`data_model._describe_compressed_copy`, `image_kind`
+  `formats.IMAGE_KIND`) and read in place like a bundle's `.approx`.
+  `page_build` is the website's page builder's spec (exact only).
 - `views/webOnboarding.js` — **Plexora Lite's first-use dialog**, where the
   website keeps the user's work (`window.PlexoraOnboarding`,
   `ensure({reason, quiet})` -> `"ready"|"cancelled"`, `open({reason, start})`). It
@@ -10847,7 +10912,18 @@ in **5.6 s**.
   Three image-side opens are plain on purpose and read no series choice:
   `xenium_focus`'s per-member opens (each member file is one channel's
   plane) and the two header-only OME reads (`image_pyramid._ome_image_fields`,
-  `import_proposal._ome_image_name`).
+  which reads a compressed `.pyramid.approx` copy's OME-XML from its index,
+  and `import_proposal._ome_image_name`).
+- **A pyramidized copy is one of two kinds, and every check knows both.**
+  `<stem>.pyramid.ome.tiff` or the compressed `<stem>.pyramid.approx`
+  (`image_pyramid.COPY_SUFFIXES`): recognising (`is_image_copy`,
+  `copy_source`, `is_adoptable_image`), hiding a copy beside its original
+  (`import_proposal._without_image_copies`, `dataset_scan._derived_copy`),
+  derived files in a bundle (`sources.PYRAMID_ENDING` is a tuple for
+  `endswith`, `bundles.DERIVED_NAMES`) and the node's adoption
+  (`node/resources.note_flat_image`, `either=True`). A check written against
+  `PYRAMID_SUFFIX` alone misses every copy made since compression became the
+  default.
 - **A TIFF `needs_region_reader` names is never given a pyramidized copy.**
   `convertOmeTiff` describes it as `tiff_region.open_image`'s halving chain
   (`_describe_chained_tiff`, no gaps) and the provider serves that chain,

@@ -123,6 +123,28 @@ def settings_advanced_set():
     return settings_advanced()
 
 
+@app.route('/settings/pyramids')
+def settings_pyramids():
+    """`{compress}`: whether a large flat image's pyramidized copy is made
+    compressed when nobody chose (`paths.compress_pyramids`), the Import
+    dialog's switch's starting point."""
+    return jsonify(compress=paths.compress_pyramids())
+
+
+@app.route('/settings/pyramids', methods=['POST'])
+def settings_pyramids_set():
+    """`{compress: bool}`, stored in the settings file. The next pyramid
+    built follows it; copies already made stay as they are."""
+    payload = request.get_json(silent=True) or {}
+    if not isinstance(payload.get('compress'), bool):
+        return jsonify(error="Say whether to compress pyramid copies: true or false."), 400
+    with paths.settings_lock():
+        settings = paths.read_settings()
+        settings["compress_pyramids"] = payload['compress']
+        paths.write_settings(settings)
+    return settings_pyramids()
+
+
 def _resolve(raw):
     """A user-typed path as an absolute one, or None if it is not usable.
 
