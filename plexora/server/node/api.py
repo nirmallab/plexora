@@ -387,6 +387,9 @@ def add_resource():
         raise ResourceError("`index` is the position of one image in the file") from None
 
     resource = _registry().add(kind, resource_id, path, image_index=index)
+    # The same mask shared again after segmentation was re-run into its file
+    # is converted again, not served from the old file's pyramid.
+    resource.forget_rewritten_source()
     if kind == "segmentation" and not resource.prepared:
         _prepare_in_background(resource)
     elif kind == "image":
@@ -437,6 +440,9 @@ def resource_status(resource_id):
     the moment a mask restored at startup starts being prepared.
     """
     resource = _registry().get(resource_id)
+    # Reopening a project probes this and nothing else while the mask reads
+    # ready, so a mask rewritten in place has to be noticed here too.
+    resource.forget_rewritten_source()
     _prepare_on_first_use(resource)
     return _stamped(jsonify(success=True, resource=resource.describe()), resource)
 
@@ -454,6 +460,7 @@ def prepare_again(resource_id):
     if refusal is not None:
         return refusal
     resource = _registry().get(resource_id, kind="segmentation")
+    resource.forget_rewritten_source()
     if not resource.prepared:
         _prepare_in_background(resource)
     return _stamped(jsonify(success=True, resource=resource.describe()), resource)
@@ -1300,11 +1307,13 @@ def _start_job(name, work):
 
     with _JOBS_LOCK:
         _JOBS[job_id] = job
-        while len(_JOBS) > JOBS_KEPT:
-            oldest = next(iter(_JOBS))
-            if _JOBS[oldest]["state"] == "running":
+        # Oldest first, stepping past running jobs: a long job at the head
+        # must not hold every later finished result in memory behind it.
+        for old_id in list(_JOBS):
+            if len(_JOBS) <= JOBS_KEPT:
                 break
-            _JOBS.pop(oldest)
+            if _JOBS[old_id]["state"] != "running":
+                _JOBS.pop(old_id)
     _work.spawn(run, name=f"plexora-{name}-{job_id}")
     return job_id
 

@@ -215,8 +215,12 @@ def _make_mask_servable(resource, log=print, progress=None, registry=None):
         except Exception:  # noqa: BLE001 -- the conversion below says what is wrong
             shape = None
         resource.image_levels = _image_levels(registry, shape)
+    # Before converting, so a rewrite that lands mid-conversion still reads
+    # as a change the next time the mask is shared.
+    stamp = node_resources.file_stamp(resource.source_path or resource.path)
     resource.mask_mode = _convert_mask_if_needed(resource, log=log,
                                                  progress=progress)
+    resource.source_stamp = stamp
     resource.prepared = True
     resource.progress = None
 

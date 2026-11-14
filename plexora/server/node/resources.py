@@ -215,6 +215,12 @@ class Resource:
     #: such a mask twice would put it back into `preparing` and make the caller
     #: poll for a conversion that is not going to happen.
     prepared: bool = False
+    #: Masks only: `file_stamp` of `source_path` when it was last prepared.
+    #: `prepared` alone would outlive a mask rewritten at the same path (a
+    #: segmentation re-run into the same `cell.ome.tif`), and the node would
+    #: keep serving the pyramid converted from the old cells -- see
+    #: `forget_rewritten_source`.
+    source_stamp: str | None = None
     #: Masks only: restored from the manifest and not yet checked. Preparing it
     #: waits for the first thing that asks about it -- a status probe when a
     #: project opens, or a tile -- so a node coming back is never held up
@@ -334,6 +340,53 @@ class Resource:
             # pyramid. New generation, so no tile or ETag from the raw reads is
             # mistaken for one of the pyramid's.
             self.generation += 1
+
+    def forget_rewritten_source(self) -> bool:
+        """Put a prepared mask back to unprepared when its file has been
+        rewritten since; whether it was.
+
+        Re-running segmentation into the same file is the normal way a mask
+        changes, and sharing it again lands on `Registry.add`'s idempotent
+        branch, which hands back this resource -- still pointed at the pyramid
+        converted from the old cells. Undone here: served raw from the source
+        again, everything opened from the old file dropped, and a new
+        generation so no tile of the old cells is taken for one of the new.
+        `prepare_on_use` then reconverts it on the next share, prepare or
+        status probe, and the derived file left from last time is not adopted
+        because it is older than the mask.
+
+        A stat, so it is asked by the share, prepare and status routes, never
+        per tile. A mask that cannot be stat'ed is left as it is.
+        """
+        if self.kind != "segmentation" or not self.prepared or self.memory is not None:
+            return False
+        stamp = file_stamp(self.source_path)
+        if self.source_stamp is None or stamp is None or stamp == self.source_stamp:
+            return False
+        from plexora.server.node.api import _close_volumes
+
+        with self.lock:
+            if not self.prepared:
+                return False
+            self.prepared = False
+            self.source_stamp = None
+            self.prepare_on_use = True
+            self.path = self.source_path
+            self.provider = _provider_for(self.kind, self.path, rgb=self.reads_colour,
+                                          image_index=self.image_index)
+            self.opened = None
+            self.opened_overview = None
+            self.opened_metadata = None
+            _close_volumes(self.derived)
+            self.derived = {}
+            self.compute_locks = {}
+            self.mask_mode = None
+            self.image_levels = None
+            self.warning = None
+            self._label_volume_held = None
+            if self.generation:
+                self.generation += 1
+        return True
 
     def _label_volume_facts(self):
         """`LabelVolume.describe()` for a mask served as a label volume, else
@@ -795,6 +848,22 @@ def _geometry_or_none(path):
         return None
     return {key: found.get(key) for key in ("width", "height", "numChannels")} \
         if found else None
+
+
+def file_stamp(path) -> str | None:
+    """size:mtime of a file, or None when it cannot be stat'ed -- what tells a
+    mask rewritten in place from the one that was prepared (the same identity
+    `api._file_fingerprint` keys stored windows on, and for the same reason:
+    hashing a whole-slide mask would cost more than reconverting it)."""
+    import os
+
+    if not path:
+        return None
+    try:
+        stat = os.stat(path)
+    except OSError:
+        return None
+    return f"{stat.st_size}:{stat.st_mtime_ns}"
 
 
 def _provider_for(kind: str, path: str, rgb: bool = False, image_index: int = 0):
