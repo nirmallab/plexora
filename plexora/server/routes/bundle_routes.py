@@ -10,6 +10,7 @@ views/projectImport.js) work through these:
     GET    /projects/export/<job>/file                              the file, with Range
     POST   /projects/export/plan {ids, include}                     the website's members
     POST   /projects/export/manifest {manifest, sums, entries?}     ... and its manifest
+                                    ({work_dir, release: true}: a stopped one's folder)
     POST   /projects/import/preview {path} | {upload} | {manifest} | a file
                                     [{choices, place_from}: + the page's placements]
     POST   /projects/import {path|upload, choices, location, placed?}  -> {job, ...}
@@ -137,13 +138,20 @@ def projects_export_plan():
 
     body = request.get_json(silent=True) or {}
     ids = _ids(body.get('ids')) + _ids(body.get('names'))
+    work_dir = tempfile.mkdtemp(prefix="plexora-bundle-")
     try:
-        return jsonify(bundles.plan_for_page(ids, body.get('include'), dataset=body.get('dataset') or None,
-                                             work_dir=tempfile.mkdtemp(prefix="plexora-bundle-")))
-    except KeyError as error:
-        return _refused(error, 404)
-    except ValueError as error:
-        return _refused(error)
+        plan = bundles.plan_for_page(ids, body.get('include'), dataset=body.get('dataset') or None,
+                                     work_dir=work_dir)
+    except BaseException as error:
+        # No page will ever name a refused or failed plan's folder, and on
+        # the website it is in the tab's memory.
+        shutil.rmtree(work_dir, ignore_errors=True)
+        if isinstance(error, KeyError):
+            return _refused(error, 404)
+        if isinstance(error, ValueError):
+            return _refused(error)
+        raise
+    return jsonify(plan)
 
 
 @app.route('/projects/export/manifest', methods=['POST'])
@@ -152,10 +160,16 @@ def projects_export_manifest():
     work_dir?}` -> the finished manifest the page writes first
     (bundles.finish_manifest): with the plan's `entries`, each project's
     revision, which `stamps` then records in its entry (`record_export`). The
-    plan's `work_dir` is removed: the page has read what was in it."""
+    plan's `work_dir` is removed: the page has read what was in it.
+
+    `{work_dir, release: true}` only removes the plan's folder: the page
+    sends it when an export is stopped or fails after its plan."""
     from plexora.server.models import bundles
 
     body = request.get_json(silent=True) or {}
+    if body.get('release') is True:
+        _remove_work_dir(body.get('work_dir'))
+        return jsonify(released=True)
     if not isinstance(body.get('manifest'), dict) or not isinstance(body.get('sums'), dict):
         return _refused("Send the manifest and the sums.")
     entries = body.get('entries') if isinstance(body.get('entries'), dict) else None

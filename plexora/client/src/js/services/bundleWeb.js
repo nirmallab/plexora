@@ -240,12 +240,15 @@
         }
 
         async function runExport(job, {ids, dataset, include, save, name}) {
+            // The plan's work folder, until the manifest call removes it.
+            let workDir = null;
             try {
                 stage(job, "snapshot");
                 await python().flush();
                 checkCancelled(job);
                 const plan = await call("/projects/export/plan", {ids, include, dataset: dataset || null},
                                         "The export could not be planned.");
+                workDir = plan.work_dir || null;
                 checkCancelled(job);
                 const reach = reachable(await python().bundleStores());
                 const members = await sourcesOf(plan.members || [], reach);
@@ -272,6 +275,7 @@
                 const manifest = await call("/projects/export/manifest", {
                     manifest: plan.manifest, sums: packed.sums, left_out: packed.left_out, entries: plan.entries,
                     stamps: plan.stamps, work_dir: plan.work_dir}, "The file's manifest could not be made.");
+                workDir = null;
                 checkCancelled(job);
                 stage(job, "verify");
                 job.waiting = false;
@@ -288,6 +292,12 @@
                 if (job.mover && job.waiting) {
                     await Promise.race([job.mover.ask({op: "cancel"}).catch(() => null),
                                         new Promise((resolve) => setTimeout(resolve, 5000))]);
+                }
+                // Python's copies of the databases, in the tab's memory: only
+                // this page can say they are no longer wanted. Not waited
+                // for, so the job ends even when Python is what failed.
+                if (workDir) {
+                    call("/projects/export/manifest", {work_dir: workDir, release: true}).catch(() => null);
                 }
                 if (error && error.cancelled || job.cancelled) end(job, "cancelled");
                 else end(job, "failed", {error: error.message || String(error)});
