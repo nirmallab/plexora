@@ -208,8 +208,10 @@ self.onmessage = async ({ data }) => {
         }
         if (!access) {
             const parts = new Map();
+            // `kind` as in the other two homes: a mask's levels are sampled
+            // ids, never 2x2 means of them.
             const result = await build({
-                geometry, dtype, channels, factors, tile, description, hands,
+                geometry, dtype, channels, factors, tile, description, kind, hands,
                 sink: { write: (bytes, at) => { parts.set(at, bytes); } },
                 progress: (progress) => self.postMessage({ progress }),
             });

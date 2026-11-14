@@ -17,7 +17,8 @@
  * in when the database is first opened at version 2):
  *   {path, key, name, kind: "image"|"labels", home, folder? (beside: the
  *    folder's handle), blob? (indexeddb), bytes, builtBy, made,
- *    movedFrom? (a copy moved out of the site's storage), moveFailed?}
+ *    movedFrom? (a copy moved out of the site's storage), moveFailed?,
+ *    sampled? (indexeddb labels: built with sampled levels; one without is rebuilt)}
  *
  * `prepare()` runs at boot, between the store's and Python's start
  * (services/shell.js), and needs no click: it resolves every record it can,
@@ -234,7 +235,16 @@
             } catch (error) {
                 kept = []; // no IndexedDB (a private window in an old Safari): nothing recorded
             }
-            for (const record of kept) records.set(record.path, record);
+            for (const record of kept) {
+                // A mask's pyramid built in memory before its levels were
+                // sampled (workers/pyramidWorker.js once dropped `kind` there)
+                // holds averaged ids: forgotten with its blob, so it is built again.
+                if (record.home === "indexeddb" && record.kind === "labels" && !record.sampled) {
+                    await drop(record.path);
+                    continue;
+                }
+                records.set(record.path, record);
+            }
             // The site's storage: every finished copy, recorded or not.
             const seen = new Set();
             try {
@@ -400,6 +410,8 @@
         const was = records.get(entry.path);
         const made = { builtBy: "page", made: Date.now(), ...entry };
         if (!made.kind) made.kind = kindOf(made.name);
+        // Built now, so its levels are sampled ids: `prepare` keeps it.
+        if (made.home === "indexeddb" && made.kind === "labels") made.sampled = true;
         if (made.bytes == null) made.bytes = file ? file.size : null;
         if (!made.folder) delete made.folder;
         if (was && was.movedFrom && !made.movedFrom) made.movedFrom = was.movedFrom;
