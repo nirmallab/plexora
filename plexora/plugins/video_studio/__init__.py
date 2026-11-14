@@ -35,7 +35,7 @@ Kept import-light, like every descriptor module.
 
 from plexora.api.plugin import Plugin, Requires
 
-VERSION = "20261107_contrast_settled"
+VERSION = "20261114_audit"
 
 
 def _blueprint():

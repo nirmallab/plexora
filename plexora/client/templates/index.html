@@ -564,7 +564,7 @@
    all, and this is the way out of it. It mounts off its own fetch and asks
    the viewer for nothing. #}
 <script src="{{ data.base_url }}/client/src/js/views/datasetStrip.js?v=20261105_gating_v4" defer></script>
-<script src="{{ data.base_url }}/client/src/js/views/datasetNav.js?v=20261105_gating_v4" defer></script>
+<script src="{{ data.base_url }}/client/src/js/views/datasetNav.js?v=20261114_audit" defer></script>
 <script src="{{ data.base_url }}/client/src/js/views/pluginHelp.js?v=20261025_roi_map_confirm" defer></script>
 {# Why the canvas is empty, when it is. Before main.js, which calls it from
    the boot path the moment a load comes back without an image. #}
@@ -580,11 +580,11 @@
    its `inspect` with it), and the controller every control changes it
    through. #}
 <script src="{{ data.base_url }}/client/src/js/services/inspectGeometry.js?v=20261022_bookmarks" defer></script>
-<script src="{{ data.base_url }}/client/src/js/services/viewState.js?v=20261022_views2" defer></script>
+<script src="{{ data.base_url }}/client/src/js/services/viewState.js?v=20261114_audit" defer></script>
 <script src="{{ data.base_url }}/client/src/js/services/inspectState.js?v=20261022_bookmarks" defer></script>
 <script src="{{ data.base_url }}/client/src/js/services/perfProbe.js?v=20261010_perf" defer></script>
 <script src="{{ data.base_url }}/client/src/js/services/volumeWindows.js?v=20261010_windows" defer></script>
-<script src="{{ data.base_url }}/client/src/js/services/viewerPrefs.js?v=20261022_bookmarks" defer></script>
+<script src="{{ data.base_url }}/client/src/js/services/viewerPrefs.js?v=20261114_audit" defer></script>
 {# A channel switched on comes in rather than lands, on every surface the
    channel section drives (the plane, layers, section panes). Before main.js,
    whose boot adds the first channels. #}
@@ -609,7 +609,7 @@
 <script src="{{ data.base_url }}/client/src/js/views/surfaceStudio.js?v=20261021_pro" defer></script>
 <script src="{{ data.base_url }}/client/src/js/views/surfaceInspect.js?v=20261021_pro" defer></script>
 <script src="{{ data.base_url }}/client/src/js/views/surfaceObjects.js?v=20261011_surfaces" defer></script>
-<script src="{{ data.base_url }}/client/src/js/views/volumeRenderer.js?v=20261023_gain" defer></script>
+<script src="{{ data.base_url }}/client/src/js/views/volumeRenderer.js?v=20261114_audit" defer></script>
 {# The 3-D view's dock (cutting the stack) and the handles that drag its cuts. #}
 <script src="{{ data.base_url }}/client/src/js/views/volumeDock.js?v=20261022_bookmarks" defer></script>
 <script src="{{ data.base_url }}/client/src/js/views/volumeHandles.js?v=20261022_bookmarks" defer></script>
@@ -638,12 +638,12 @@
 {# Plexora AI chat (/ai/v1/conversations): a launcher chip and a non-modal
    panel in the viewer's lower-left corner. #}
 <script src="{{ data.base_url }}/client/src/js/views/chatPanel.js?v=20261012_merge_main" defer></script>
-<script src="{{ data.base_url }}/client/src/js/services/agentBridge.js?v=20261111_tab_room" defer></script>
+<script src="{{ data.base_url }}/client/src/js/services/agentBridge.js?v=20261114_audit" defer></script>
 {# What a launch link asked this page to show beyond its channels -- a colour-by
    column, cells, regions, a viewport (page_routes.launch_from_dict). After
    agentBridge.js: it applies them through the bridge's own handlers. #}
 <script src="{{ data.base_url }}/client/src/js/services/launchContext.js?v=20261005_bridge" defer></script>
-<script src="{{ data.base_url }}/client/src/js/main.js?v=20261110_tile_rows" defer></script>
+<script src="{{ data.base_url }}/client/src/js/main.js?v=20261114_audit" defer></script>
 {% else %}
 {# The home page: `/` with no datasource named, whether or not anything is
    registered yet.

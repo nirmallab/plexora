@@ -26,7 +26,7 @@ encoding and the repository) is left to the factory.
 
 from plexora.api.plugin import Plugin, Requires
 
-VERSION = "20261107_label_high_byte"
+VERSION = "20261114_audit"
 
 
 def _blueprint():
