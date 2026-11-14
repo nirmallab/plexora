@@ -685,6 +685,13 @@ def _decide_mask(item, open_):
                 _choice("layer", "Add as an image layer", "add_layer", as_layer,
                         sample=sample),
             ])
+    if fit.get("withImage") and fit.get("existing") != sample:
+        # Dropped with an image that is not the open sample's: see
+        # `_decide_table`.
+        return _action("attach_mask", item, "needs_confirm",
+                       f"{name} came with its own image. Attach it to {title}?",
+                       reason="dropped_with_image", route=attach,
+                       sample=sample, reload=True)
     auto = (compatible is True and match in ("exact", "prefix")) or (
         compatible is None and match == "exact")
     if auto:
@@ -747,6 +754,13 @@ def _decide_table(item, open_):
         return _action("attach_table", item, "needs_confirm",
                        f"{name} has no cell coordinates Plexora recognises.",
                        reason="no_coordinates", route=attach, sample=sample)
+    if fit.get("withImage") and fit.get("existing") != sample:
+        # Dropped with an image that is not the open sample's: these are that
+        # image's cells, not this tissue's. They go with it when it is
+        # imported (`_with_their_image`), and are never attached here unasked.
+        return _action("attach_table", item, "needs_confirm",
+                       f"{name} came with its own image. Attach it to {title}?",
+                       reason="dropped_with_image", route=attach, sample=sample)
     message = f"Attach cell data to {title}"
     if multi:
         message = f"Attach the cells of {multi['suggested']} to {title}"
@@ -953,6 +967,8 @@ def _inspect(picks, open_project, target, node):
     if images_go_elsewhere:
         actions = [a for a in actions if a["kind"] != "apply_channel_names"]
 
+    if snapshot is not None:
+        actions = _with_their_image(actions, items, snapshot)
     actions = _merge_new_samples(actions, proposal, engine_picks)
     if snapshot is None:
         actions = _with_followers(actions, items)
@@ -1043,6 +1059,30 @@ def _row_item(pick, path, row, common, snapshot):
                 "detail": row.detail, "fit": fit}
     return {"pick": pick, "path": path, "kind": "layer", "label": label,
             "detail": row.detail, "fit": common}
+
+
+def _with_their_image(actions, items, open_):
+    """A table or mask dropped with its own image goes where that image goes:
+    when the image is imported as a new sample, so are they (one import, by
+    `_merge_new_samples`, as with nothing open), whatever the open sample
+    has. When the image is asked about or opens another sample, what was
+    decided against the open sample stays, asked (`dropped_with_image`)."""
+    going = {(a.get("fit") or {}).get("sampleIndex") for a in actions
+             if a["kind"] in ("import_new", "open_dialog")
+             and a.get("sample") is None and a["status"] != "needs_confirm"}
+    going.discard(None)
+    by_pick = {item["pick"]: item for item in items}
+    out = []
+    for action in actions:
+        item = by_pick.get(action["picks"][0]) if action["picks"] else None
+        fit = (item or {}).get("fit") or {}
+        if (item is not None and item["kind"] in ("table", "mask")
+                and fit.get("withImage") and fit.get("existing") != open_["name"]
+                and fit.get("sampleIndex") in going
+                and not action["kind"].startswith("noop")):
+            action = _new_sample(item, None)
+        out.append(action)
+    return out
 
 
 def _merge_new_samples(actions, proposal, picks):
