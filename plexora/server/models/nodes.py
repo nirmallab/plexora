@@ -29,6 +29,7 @@ a routing decision unrepresentable rather than merely wrong.
 from __future__ import annotations
 
 import threading
+import time
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any, Mapping
@@ -266,7 +267,14 @@ def get(name: str, root=None) -> Node:
 # resuming. A tunnel comes back on whatever local port was free, and work
 # still holding the OLD port has to stay refused: that port is exactly what
 # the next session may hand to something else.
-_disconnected: set[tuple[str, str]] = set()
+#
+# Each address maps to the token it held when it was removed. A reconnect made
+# by ANOTHER process (`plexora node connect` in a terminal) never passes
+# through this one's `save()`, so the only sign that the address is current
+# again is nodes.json naming it with a new token -- see `_check_disk`. The
+# same token again proves nothing: it is what another process's stale
+# read-modify-write of the file would put back.
+_disconnected: dict[tuple[str, str], str] = {}
 _disconnected_lock = threading.Lock()
 
 
@@ -277,8 +285,15 @@ def is_disconnected(node: Node) -> bool:
     still holding a stale node fails at once and says why, rather than
     rediscovering it one refused connection at a time.
     """
+    key = (node.name, node.endpoint)
     with _disconnected_lock:
-        return (node.name, node.endpoint) in _disconnected
+        if key not in _disconnected:
+            return False
+    # The rare path, so the file is looked at now rather than within the
+    # second: it is the only way a reconnect made elsewhere lifts the refusal.
+    _check_disk(force=True)
+    with _disconnected_lock:
+        return key in _disconnected
 
 
 #: How many times each node's ADDRESS has changed in this process. Providers
@@ -303,10 +318,12 @@ _addresses_lock = threading.Lock()
 def address_generation(name: str) -> int:
     """A number that changes when this node's address does.
 
-    Cheap on purpose -- an in-memory read, no file. It is consulted on the way
-    to every node call, and the whole point is that the common case (nothing
-    has moved) costs nothing.
+    Cheap on purpose -- an in-memory read, plus at most one stat of nodes.json
+    a second (`_check_disk`). It is consulted on the way to every node call,
+    and the whole point is that the common case (nothing has moved) costs next
+    to nothing.
     """
+    _check_disk()
     with _addresses_lock:
         return _addresses.get(str(name), 0)
 
@@ -314,6 +331,86 @@ def address_generation(name: str) -> int:
 def _address_moved(name: str) -> None:
     with _addresses_lock:
         _addresses[str(name)] = _addresses.get(str(name), 0) + 1
+
+
+#: How often, at most, `address_generation` stats nodes.json, in seconds.
+_DISK_CHECK_SECONDS = 1.0
+
+#: Per nodes.json path, what this process last knew of it: when it was last
+#: checked (monotonic), its stat stamp when last read, whether it has been read
+#: at all, and {name: (endpoint, token)}. Another process -- `plexora node
+#: connect` in a terminal, a kernel, a second server on this data root --
+#: rewrites the file without passing through this one's `save()`, so the file
+#: itself is the only place such a move shows. `save` and `remove` keep
+#: `known` current, so this process's own writes are not counted twice.
+_disk: dict[str, dict] = {}
+_disk_lock = threading.Lock()
+
+
+def _disk_state(path: Path) -> dict:
+    """This process's record of `path`. Called under _addresses_lock."""
+    return _disk.setdefault(str(path), {
+        "checked": None, "stamp": None, "read": False, "known": {}})
+
+
+def _check_disk(force: bool = False) -> None:
+    """Notice a node moved, or reconnected, by another process.
+
+    At most one stat a second unless `force`, and the file is read only when
+    that stat changed. Never fatal: a node call must not fail because a file it
+    does not otherwise need could not be read.
+    """
+    try:
+        path = nodes_path()
+    except Exception:
+        return
+    now = time.monotonic()
+    with _addresses_lock:
+        state = _disk_state(path)
+        if (not force and state["checked"] is not None
+                and now - state["checked"] < _DISK_CHECK_SECONDS):
+            return
+    # One reader at a time, and never under _addresses_lock: on a network
+    # filesystem a stat can be slow, and every node call comes through here.
+    if not _disk_lock.acquire(blocking=force):
+        return
+    try:
+        with _addresses_lock:
+            state["checked"] = now
+            seen = state["stamp"] if state["read"] else False
+        try:
+            st = path.stat()
+            stamp = (st.st_mtime_ns, st.st_size, st.st_ino)
+        except OSError:
+            stamp = None
+        if stamp == seen:
+            return
+        try:
+            raw = read_config(path) if stamp is not None else {}
+        except (OSError, ValueError):
+            return
+        on_disk = {}
+        for name, entry in (raw or {}).items():
+            if isinstance(entry, dict):
+                on_disk[name] = ((entry.get("endpoint") or "").rstrip("/"),
+                                 entry.get("token") or "")
+        with _addresses_lock:
+            # The first read is the baseline, not a move: a provider records
+            # the generation it saw at its own first resolve, which comes after.
+            known = state["known"]
+            moved = [name for name, address in on_disk.items()
+                     if known.get(name) != address] if state["read"] else []
+            state.update(stamp=stamp, read=True, known=on_disk)
+        # Same rule as `save`: an entry written over an absence is a move.
+        for name in moved:
+            _address_moved(name)
+        with _disconnected_lock:
+            for (name, endpoint), token in list(_disconnected.items()):
+                there = on_disk.get(name)
+                if there and there[0] == endpoint and there[1] != token:
+                    del _disconnected[(name, endpoint)]
+    finally:
+        _disk_lock.release()
 
 
 def save(node: Node, root=None) -> Node:
@@ -341,11 +438,13 @@ def save(node: Node, root=None) -> Node:
     if ((was.get("endpoint") or "").rstrip("/") != node.endpoint
             or (was.get("token") or "") != (node.token or "")):
         _address_moved(node.name)
+    with _addresses_lock:
+        _disk_state(path)["known"][node.name] = (node.endpoint, node.token or "")
     # This address is current again, whatever it was before. A reconnect that
     # lands on the port a previous session used is an ordinary thing, and the
     # work still holding that address is now right to use it.
     with _disconnected_lock:
-        _disconnected.discard((node.name, node.endpoint))
+        _disconnected.pop((node.name, node.endpoint), None)
     return node
 
 
@@ -357,10 +456,12 @@ def remove(name: str, root=None) -> None:
         if entry is None:
             return
         _write(path, raw)
+    with _addresses_lock:
+        _disk_state(path)["known"].pop(name, None)
     endpoint = (entry.get("endpoint") or "").rstrip("/") if isinstance(entry, dict) else ""
     if endpoint:
         with _disconnected_lock:
-            _disconnected.add((name, endpoint))
+            _disconnected[(name, endpoint)] = entry.get("token") or ""
 
 
 def record_handshake(name: str, hello: Mapping[str, Any], when: str, root=None):
