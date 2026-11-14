@@ -682,11 +682,11 @@ def test_a_get_is_simply_run_again_after_a_page_reconnect(origin):
 @pytest.mark.parametrize("options, expected", [
     ({}, "copy"),
     ({"cache_bytes": 8}, "refused"),
-    ({"cache_ttl": 0.2}, "run again"),
+    ({"cache_ttl": 0.2}, "expired"),
 ])
 def test_a_repeat_of_an_answered_post(origin, options, expected):
     """Kept for two minutes and answered from the copy; one too large to keep
-    is refused rather than run twice; one past its time is a new request."""
+    is refused rather than run twice; one past its time is refused too."""
     async def scenario():
         async with Rig(origin, **options) as rig:
             page = await rig.joined_page()
@@ -694,7 +694,7 @@ def test_a_repeat_of_an_answered_post(origin, options, expected):
             await page.send(stream)
             first = await asyncio.wait_for(future, 10)
             assert json.loads(first["body"])["count"] == 1
-            if expected == "run again":
+            if expected == "expired":
                 await until(lambda: not rig.link._exchanges, what="the copy to expire")
             again = await page.repeat(stream, "POST", "/echo", body=b"once")
             if expected == "copy":
@@ -704,7 +704,8 @@ def test_a_repeat_of_an_answered_post(origin, options, expected):
                 assert again["status"] == 502 and "too large" in again["error"]
                 assert origin.counts["/echo"] == 1
             else:
-                assert json.loads(again["body"])["count"] == 2
+                assert again["status"] == 502 and "not run twice" in again["error"]
+                assert origin.counts["/echo"] == 1
             assert page.anomalies == []
 
     run(scenario())

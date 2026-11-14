@@ -14,8 +14,9 @@ the same stream id once both ends are back, so this side:
 
 - executes a repeated GET or HEAD again (a read costs nothing twice);
 - never executes anything else twice: a repeat of a request it is still
-  answering is answered by that execution, from its first byte, and a repeat
-  of one it has answered in the last two minutes is answered from a copy;
+  answering is answered by that execution, from its first byte, a repeat
+  of one it has answered in the last two minutes is answered from a copy, and
+  a repeat of one answered longer ago is refused;
 - addresses a client's answers to the pid that client last spoke from, since
   a page that reconnected has a new one.
 
@@ -67,6 +68,9 @@ DROP_RESPONSE_HEADERS = frozenset({
 READ_METHODS = frozenset({"GET", "HEAD"})
 _METHOD_RE = re.compile(r"^[A-Z][A-Z0-9_-]{0,31}$")
 _CLIENT_MAX = 128
+#: How many writes let go of are remembered as run, so a page that sends one
+#: again after a long absence is refused rather than run twice. A few MB.
+_RETIRED_MAX = 1 << 16
 
 #: Close codes the relay uses that mean "stop trying": another node took the
 #: room, or this node's auth is not the room's.
@@ -345,6 +349,11 @@ class RelayLink:
         self._clients = {}     # client id -> pid it last spoke from
         self._pid_client = {}  # pid -> client id
         self._exchanges = {}   # (client, stream) -> _Exchange
+        # (client, stream) of a write let go of -> the _Exchange while it is
+        # still running, None once it has been answered.
+        self._retired = collections.OrderedDict()
+        # The still-running ones among them, which the janitor watches.
+        self._retired_live = set()
         self._tasks = set()
         self._bad_frames = 0
         self._last_bad_log = 0.0
@@ -634,6 +643,10 @@ class RelayLink:
             if exchange is not None:
                 exchange.cancel()
                 self._exchanges.pop(exchange.key, None)
+            retired = self._retired.get((client, stream)) if client else None
+            if retired is not None:
+                retired.cancel()
+                self._retired[retired.key] = None
         elif kind == wire.STOP:
             self._end("the page asked this node to stop")
         # Anything else is a kind from a newer page; ignored.
@@ -684,6 +697,18 @@ class RelayLink:
         method = header.get("m")
         path = header.get("p")
         existing = self._exchanges.get(key)
+        if existing is None and key in self._retired:
+            # A write the page has been away from for longer than its copy
+            # lasts: still running, it answers this repeat; answered, it was
+            # run once and is not run again.
+            existing = self._retired.pop(key)
+            if existing is None:
+                self._retired[key] = None
+                self._spawn(self._send_error(
+                    pid, stream, "this request was answered while the page was away, "
+                                 "and it is not run twice"))
+                return
+            self._exchanges[key] = existing
         if existing is not None:
             if existing.reads or not existing.upload_done:
                 # A read runs again; an upload that never finished never ran.
@@ -800,6 +825,12 @@ class RelayLink:
         exchange.done = True
         exchange.finished_at = time.monotonic()
         exchange.wake.set()
+        if self._retired.get(exchange.key) is exchange:
+            # Finished long after its page went away: kept for a resend from
+            # now on, like any other answer.
+            del self._retired[exchange.key]
+            exchange.paused_at = None
+            self._exchanges[exchange.key] = exchange
         if not exchange.reads:
             self._fit_cache()
 
@@ -896,8 +927,44 @@ class RelayLink:
                 abandoned = (exchange.target is None and exchange.paused_at is not None
                              and now - exchange.paused_at > self.cache_ttl)
                 if expired or abandoned:
-                    exchange.cancel()
                     self._exchanges.pop(exchange.key, None)
+                    self._retire(exchange)
+            for exchange in list(self._retired_live):
+                if self._retired.get(exchange.key) is not exchange:
+                    # Asked for again, finished, cancelled or evicted.
+                    self._retired_live.discard(exchange)
+                elif not exchange.keep:
+                    # Outgrew a whole copy: with no page reading it, its
+                    # producer would wait on `space` for ever.
+                    self._retired_live.discard(exchange)
+                    self._tombstone(exchange)
+
+    def _retire(self, exchange):
+        """Let go of an exchange the page has been away from for too long. A
+        write is remembered as run: one still running keeps running (its
+        server would anyway) and is kept whole to answer the page if it does
+        ask again; one answered, or grown too big to keep whole, keeps only
+        its key."""
+        if exchange.reads:
+            exchange.cancel()
+            return
+        if exchange.done or not exchange.replayable or not exchange.keep:
+            self._tombstone(exchange)
+        else:
+            self._retired[exchange.key] = exchange
+            self._retired_live.add(exchange)
+        self._retired.move_to_end(exchange.key)
+        while len(self._retired) > _RETIRED_MAX:
+            _key, oldest = self._retired.popitem(last=False)
+            if oldest is not None:
+                oldest.cancel()
+
+    def _tombstone(self, exchange):
+        """Stop a write let go of and remember only that it ran."""
+        exchange.cancel()
+        exchange.base, exchange.size = exchange.total, 0
+        exchange.frames.clear()
+        self._retired[exchange.key] = None
 
     async def _idle_watch(self):
         if self.config.idle_exit <= 0:

@@ -739,7 +739,10 @@
             : new Uint8Array(await request.arrayBuffer());
         let answer;
         try {
-            answer = await session.roomClient.fetch({ method: request.method, path, headers, body });
+            // The signal is the caller's: a Python timeout aborts it, and the
+            // room then cancels the request at the node.
+            answer = await session.roomClient.fetch({ method: request.method, path, headers, body,
+                                                      signal: request.signal });
         } catch (error) {
             return json({ error: String(error.message || error) }, 504);
         }

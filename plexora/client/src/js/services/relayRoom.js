@@ -13,11 +13,13 @@
  * restart, a network blip, a forced update): the page reconnects on its own,
  * with the same room password, and every request that had not finished is
  * sent again under its own stream id -- the node answers a repeated GET by
- * running it again and a repeated write from the copy it kept, so nothing is
- * done twice. A caller sees a slower answer, never a lost one.
+ * running it again and a repeated write from the copy it kept (or, that copy
+ * long gone, with a refusal), so nothing is done twice. A caller sees a
+ * slower answer, never a lost one; a caller that gives up (its fetch's
+ * signal) has the request cancelled at the node and never sent again.
  *
  *   join({relay, room, auth, key, licence, log}) -> Room
- *   Room.fetch({method, path, headers, body}) -> Promise<{status, headers, body}>
+ *   Room.fetch({method, path, headers, body, signal}) -> Promise<{status, headers, body}>
  *   Room.stop()           ask the node to shut down (its job ends)
  *   Room.close()          leave the room; the node keeps running
  *   Room.state()          {socket, node, hello}
@@ -136,6 +138,10 @@
         let retryTimer = null;
         // Frames go out one at a time, in order: encryption is asynchronous.
         let sending = Promise.resolve();
+        // And are acted on in the order they came: decryption is asynchronous
+        // too, and WebCrypto may finish a small end frame before the 1 MiB
+        // chunk ahead of it, which would close the answer without that chunk.
+        let receiving = Promise.resolve();
 
         function set(change) {
             state = { ...state, ...change };
@@ -186,14 +192,23 @@
             for (const entry of pending.values()) if (!entry.sent) sendRequest(entry);
         }
 
-        async function onBinary(data) {
-            let frame;
+        function gaveUp() {
+            const error = new Error("The request was given up on.");
+            error.name = "AbortError";
+            return error;
+        }
+
+        async function openBinary(data) {
             try {
-                frame = decode(await open(await keyPromise, room, "n2p", new Uint8Array(data)));
+                return decode(await open(await keyPromise, room, "n2p", new Uint8Array(data)));
             } catch (error) {
                 log(`relay: a frame did not decrypt (${error.message || error})`);
-                return;
+                return null;
             }
+        }
+
+        function onBinary(frame) {
+            if (!frame) return;
             if (frame.kind === KIND.HELLO) {
                 // A node's hello is the node (re)joining or answering this
                 // page's own: whatever it had in hand from before may be gone
@@ -287,8 +302,14 @@
                 }, PING_MS);
             };
             ws.onmessage = (event) => {
-                if (typeof event.data === "string") onText(event.data);
-                else onBinary(event.data);
+                const data = event.data;
+                // Every frame starts decrypting at once; each is handled only
+                // after the ones that came before it, text frames included.
+                const opened = typeof data === "string" ? null : openBinary(data);
+                receiving = receiving.then(async () => {
+                    if (opened === null) onText(data);
+                    else onBinary(await opened);
+                }).catch(() => null);
             };
             ws.onclose = (event) => {
                 if (socket === ws) socket = null;
@@ -324,15 +345,32 @@
                 listeners.add(listener);
                 return () => listeners.delete(listener);
             },
-            fetch({ method = "GET", path, headers = [], body = null }) {
+            fetch({ method = "GET", path, headers = [], body = null, signal = null }) {
                 if (closed) return Promise.reject(new Error(state.error || "This connection has ended."));
+                if (signal && signal.aborted) return Promise.reject(gaveUp());
                 return new Promise((resolve, reject) => {
                     const stream = nextStream;
                     nextStream = nextStream >= 0xfffffffe ? 1 : nextStream + 1;
+                    let onAbort = null;
+                    const settle = (finish) => (value) => {
+                        if (onAbort) signal.removeEventListener("abort", onAbort);
+                        finish(value);
+                    };
                     const entry = { stream, method: String(method).toUpperCase(), path,
                                     headerList: headers, body: body ? new Uint8Array(body) : null,
-                                    resolve, reject, sent: false, chunks: [], status: null,
-                                    headers: null, heard: Date.now() };
+                                    resolve: settle(resolve), reject: settle(reject), sent: false,
+                                    chunks: [], status: null, headers: null, heard: Date.now() };
+                    if (signal) {
+                        // The caller gave up (a Python timeout): the node stops
+                        // working on it, and no reconnect sends it again.
+                        onAbort = () => {
+                            if (pending.get(stream) !== entry) return;
+                            pending.delete(stream);
+                            send(KIND.CANCEL, stream, {}).catch(() => null);
+                            entry.reject(gaveUp());
+                        };
+                        signal.addEventListener("abort", onAbort);
+                    }
                     pending.set(stream, entry);
                     sendRequest(entry);
                 });
