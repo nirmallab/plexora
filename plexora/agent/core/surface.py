@@ -244,8 +244,8 @@ def surface_inspect(call, inp):
                      "surface_refine remove_small, or raise min_size")
     touching = int(np.sum(np.asarray(frame["touches_bounds"]))) if "touches_bounds" in frame.columns else 0
     if touching:
-        flags.append(f"{touching} object(s) touch the edge of the volume: their volumes are "
-                     "of what is inside it")
+        flags.append(f"{touching} object(s) touch the edge of the volume (or of the region "
+                     "extracted): their volumes are of what is inside it")
     open_count = int(np.sum(~np.asarray(frame["closed"], dtype=bool))) if "closed" in frame.columns else 0
     if open_count:
         flags.append(f"{open_count} object(s) are open: no volume is reported for them")
@@ -351,8 +351,9 @@ def surface_refine(call, inp):
     layer = _surface_layer(record, inp.surface)
     params = {k: v for k, v in inp.model_dump().items()
               if k in ("min_size", "n", "ids", "smoothing", "ratio") and v is not None}
-    scale, physical = store.project_scale(record)
     manifest = store.read_manifest(layer)
+    # The frame the surface was measured in, as the refine route does.
+    scale, physical = store.manifest_scale(record, manifest)
     try:
         updated = refine.refine(layer.src, inp.op, params, scale=scale, physical=physical,
                                 frame_for=lambda m: store.frame_for(record, layer, m, manifest))

@@ -543,7 +543,9 @@ def refine_surface(datasource, surface_id):
     payload = request.get_json(silent=True) or {}
     op = payload.get("op")
     params = {k: v for k, v in payload.items() if k != "op"}
-    scale, physical = surface_store.project_scale(project)
+    # The frame the surface was measured in, so min_size and smoothing mean
+    # what its table and manifest say (a z step typed since is not it).
+    scale, physical = surface_store.manifest_scale(project, manifest)
     try:
         updated = refine.refine(layer.src, op, params, scale=scale, physical=physical,
                                 frame_for=lambda m: surface_store.frame_for(project, layer, m,

@@ -323,11 +323,14 @@ def check(project, spec: SurfaceSpec, *, source=None) -> dict:
 
 
 def object_table(project, t=0):
-    """The measured object table (objects_v1.parquet), frame `t`'s rows, or None."""
+    """The measured object table (objects_v1.parquet), frame `t`'s rows, or
+    None -- None too when it was measured from a mask the project no longer
+    has: its boxes would decide which tiles of the new mask are read, and its
+    voxel numbers would be joined onto other cells with the same ids."""
     from plexora.server.volume import objects as volume_objects
 
     path, _ = volume_objects.object_paths(project)
-    if not path.exists():
+    if not path.exists() or not volume_objects.table_is_current(project):
         return None
     try:
         import polars as pl
@@ -391,7 +394,12 @@ def create(project, raw, *, replace_existing=False, source=None, render=None) ->
     if saved is None:
         raise SurfaceRefused(f"{project.name} no longer exists")
     with _cancel_lock:
-        _cancel[(project.name, layer_id)] = threading.Event()
+        # A build of this layer still running keeps its flag (layer_jobs
+        # starts no second one), so a Stop after this reaches it; a flag left
+        # set by a build that never ran is not handed to the next.
+        flag = _cancel.get((project.name, layer_id))
+        if flag is None or flag.is_set():
+            _cancel[(project.name, layer_id)] = threading.Event()
     register()
     layer_jobs.start_builder(saved, saved.layer(layer_id))
     return {"layer": layer_id, "status": "pending", "created": True, **known}
@@ -481,20 +489,47 @@ def build_layer(project, layer, stage, report) -> None:
                 f"the surface has {surface.n_triangles / 1e6:.1f} M triangles, more than a "
                 f"browser can hold ({levels.RESIDENT_TRIANGLES / 1e6:.0f} M); choose a lower "
                 "quality, a smaller region or fewer objects")
+        # Stop and remove reach the build after the extraction too: a Stop
+        # ends it failed, not ready, and a removed layer's folder is not
+        # written again.
+        _stop_if(event)
         stage("measuring")
         volume = source.volume
         scale, physical = _scale(volume)
         columns = mesh_mod.measure(surface, scale=scale, physical=physical,
-                                   dims=(volume.width, volume.height, volume.depth))
+                                   dims=(volume.width, volume.height, volume.depth),
+                                   bounds=_cap_bounds(spec, info))
         frame = _objects_frame(project, spec, columns)
+        _stop_if(event)
         stage("writing")
         write_surface(folder, surface, frame, project=project, spec=spec, level=level,
                       volume=volume, scale=scale, physical=physical, info=info,
                       cache_key=(layer.extra or {}).get("cacheKey"))
+        if event.is_set():
+            # Removed (or stopped) while the files were written: `forget`'s
+            # delete may have run before them, so what was written goes too.
+            shutil.rmtree(folder, ignore_errors=True)
+            raise InterruptedError("cancelled")
     finally:
         source.close()
         with _cancel_lock:
-            _cancel.pop((project.name, layer.id), None)
+            if _cancel.get((project.name, layer.id)) is event:
+                _cancel.pop((project.name, layer.id), None)
+
+
+def _stop_if(event) -> None:
+    if event.is_set():
+        raise InterruptedError("cancelled")
+
+
+def _cap_bounds(spec, info):
+    """Where an isosurface's extraction capped it (`mesh.cap_bounds` of the
+    plan's grid), for `touches_bounds`; None for cell surfaces, capped on the
+    volume's outer faces, which `dims` already describe."""
+    grid = ((info or {}).get("plan") or {}).get("grid")
+    if spec.type != "isosurface" or not grid:
+        return None
+    return mesh_mod.cap_bounds(grid)
 
 
 def _channel_index(project, spec):
@@ -808,13 +843,31 @@ def project_scale(project):
         source.close()
 
 
+def manifest_scale(project, manifest):
+    """`(scale, physical)` a surface was measured in, as its manifest records
+    it. A version of the surface (an edit, `refine`) is measured and edited in
+    that same frame, so its objects table keeps the units the manifest names
+    -- the centroid neighbours, surface_inspect and export read them from the
+    manifest. The project's spacing now only for a manifest that says none."""
+    spacing = (manifest or {}).get("spacing") or {}
+    if spacing.get("units") == "um" and spacing.get("scale"):
+        return tuple(float(v) for v in spacing["scale"]), True
+    if spacing.get("units") == "voxel":
+        return (1.0, 1.0, 1.0), False
+    return project_scale(project)
+
+
 def frame_for(project, layer, surface, manifest):
     """The objects table of `surface` (a version of `layer`)."""
-    scale, physical = project_scale(project)
+    scale, physical = manifest_scale(project, manifest)
     dims = (manifest or {}).get("dims")
-    columns = mesh_mod.measure(surface, scale=scale, physical=physical,
-                               dims=tuple(dims) if dims else None)
     spec_raw = (layer.extra or {}).get("surface") or {}
+    bounds = None
+    if spec_raw.get("type") == "isosurface":
+        grid = (((manifest or {}).get("build") or {}).get("plan") or {}).get("grid")
+        bounds = mesh_mod.cap_bounds(grid) if grid else None
+    columns = mesh_mod.measure(surface, scale=scale, physical=physical,
+                               dims=tuple(dims) if dims else None, bounds=bounds)
     if spec_raw.get("type") == "label_surfaces":
         return _objects_frame(project, SurfaceSpec.from_dict(spec_raw), columns)
     import polars as pl

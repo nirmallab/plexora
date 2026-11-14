@@ -54,6 +54,36 @@ def object_paths(project) -> tuple[Path, Path]:
     return folder / TABLE_NAME, folder / MANIFEST_NAME
 
 
+def table_is_current(project) -> bool:
+    """Whether the object table still describes `project`'s mask.
+
+    The table stays in the project's folder when the mask is replaced or
+    re-segmented, and nothing measures it again on its own; a reader that
+    takes its boxes, sizes or ids for the mask on screen would pair one
+    mask's cells with another's numbers. Current means: its manifest names
+    the mask the project has now (`labels`, written at measure time), and
+    that mask's store was not rewritten in place after the table was."""
+    table_path, manifest_path = object_paths(project)
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        written = table_path.stat().st_mtime_ns
+    except (OSError, ValueError):
+        return False
+    derived = project.segmentation.derived
+    if not derived or not isinstance(manifest, dict) or manifest.get("labels") != str(derived):
+        return False
+    # The same `<stem>_labels_v1.zarr` rebuilt from a new mask keeps its name;
+    # its metadata file then is newer than the table. A node's mask has no
+    # file here, and its locator is what the comparison above can check.
+    for name in (".zattrs", "zarr.json"):
+        try:
+            if (Path(derived) / name).stat().st_mtime_ns > written:
+                return False
+        except OSError:
+            continue
+    return True
+
+
 def measure_project_objects(project, *, units="physical", channels=None, attach=None,
                             progress=None, cancelled=None) -> dict:
     """Measure `project`'s label volume; returns a summary dict.

@@ -113,8 +113,11 @@ def extract(read, grid: marching.Grid, iso, *, pre: Preprocess | None = None,
     positions, triangles = marching.march(reader, grid.shape, iso, strip=strip, close=True,
                                           progress=progress, cancelled=cancelled)
     positions = grid.to_level0(positions)
+    # Where the padding capped it, for `touches_bounds`: the grid's outermost
+    # voxel centres, not the volume's edge, at a coarse level or in a region.
     surface = mesh_mod.Mesh(positions=positions, triangles=triangles,
-                            object_id=np.zeros(len(positions), np.uint32))
+                            object_id=np.zeros(len(positions), np.uint32),
+                            header={"cap_bounds": mesh_mod.cap_bounds(grid)})
     count, labels = mesh_mod.components(len(positions), triangles)
     surface = mesh_mod.renumber_by_size(surface, labels)
     surface = mesh_mod.sort_by_object(surface)
@@ -132,7 +135,7 @@ def extract(read, grid: marching.Grid, iso, *, pre: Preprocess | None = None,
             mesh_mod.renumber_by_size(replace(surface, objects=None), labels))
     report["pieces_kept"] = surface.n_objects
     surface = finish(surface, smoothing, scale=scale, voxel=grid.scale, keep_raw=keep_raw,
-                     report=report)
+                     report=report, cancelled=cancelled)
     return surface, report
 
 
@@ -141,15 +144,22 @@ def _object_volumes(surface, scale):
 
 
 def finish(surface, smoothing, *, scale, voxel, keep_raw=True, report=None, inset=0.0,
-           progress=None):
+           progress=None, cancelled=None):
     """Smooth (Taubin, constrained), compute normals, inset; fills `report`.
-    `progress(done, total)` is told each smoothing iteration."""
+    `progress(done, total)` is told each smoothing iteration, and
+    `cancelled()` is asked then too: smoothing a large mesh takes minutes."""
     report = report if report is not None else {}
     before = float(np.abs(_object_volumes(surface, scale)).sum()) if surface.n_objects else 0.0
     if smoothing is not None and smoothing.iterations > 0 and surface.n_triangles:
+        def told(done, total):
+            if cancelled is not None and cancelled():
+                raise InterruptedError("cancelled")
+            if progress is not None:
+                progress(done, total)
+
         raw = surface.positions
         smoothed, moved = mesh_mod.taubin(raw, surface.triangles, smoothing, scale=scale,
-                                          voxel=voxel, progress=progress)
+                                          voxel=voxel, progress=told)
         surface = replace(surface, positions=smoothed, positions_raw=raw if keep_raw else None)
         report["smoothing"] = {**smoothing.to_dict(), **moved}
     normals = mesh_mod.vertex_normals(surface.positions, surface.triangles)

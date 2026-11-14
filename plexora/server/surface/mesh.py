@@ -555,13 +555,31 @@ def _rim_vertices(triangles, n_vertices) -> np.ndarray:
     return keys[single] // np.int64(n_vertices)
 
 
-def measure(mesh: Mesh, *, scale=(1.0, 1.0, 1.0), physical=False, dims=None) -> dict:
+def cap_bounds(grid) -> list:
+    """`[lo, hi, tolerance]` (each x, y, z in level-0 voxels) where an
+    isosurface marched on `grid` (a `marching.Grid` or its `to_dict()`) is
+    capped: on its outermost voxels' centres, which at a coarse level or a
+    region's edge are not the volume's. The tolerance is half a grid voxel,
+    as far as constrained smoothing moves a vertex."""
+    grid = grid.to_dict() if hasattr(grid, "to_dict") else grid
+    shape = np.asarray(grid["shape"], dtype=np.float64)[::-1]     # (Z, H, W) -> x, y, z
+    scale = np.asarray(grid.get("scale") or (1.0, 1.0, 1.0), dtype=np.float64)
+    lo = np.asarray(grid.get("offset") or (0.0, 0.0, 0.0), dtype=np.float64)
+    hi = lo + scale * (shape - 1.0)
+    return [lo.tolist(), hi.tolist(), (0.5 * scale).tolist()]
+
+
+def measure(mesh: Mesh, *, scale=(1.0, 1.0, 1.0), physical=False, dims=None,
+            bounds=None) -> dict:
     """One row per object, as columns (numpy arrays).
 
     `scale` is the spacing (µm per voxel) when `physical`, else ones and the
     columns are in voxels. `dims` = (width, height, depth) of the volume, for
-    `touches_bounds`. A volume is reported only for a closed object; an open
-    one (a piece cut by an imported file, say) has NaN and `closed` False.
+    `touches_bounds`; `bounds` (`cap_bounds`, or the mesh's own
+    `header["cap_bounds"]` when an isosurface was just extracted) is where the
+    extraction capped it, and replaces `dims` when given. A volume is
+    reported only for a closed object; an open one (a piece cut by an
+    imported file, say) has NaN and `closed` False.
     """
     unit = "um" if physical else "vox"
     mesh = mesh if mesh.objects is not None else sort_by_object(mesh)
@@ -632,7 +650,14 @@ def measure(mesh: Mesh, *, scale=(1.0, 1.0, 1.0), physical=False, dims=None) -> 
         "n_triangles": counts,
         "closed": closed,
     })
-    if dims is not None:
+    if bounds is None:
+        # A key of its own: the file format's `bounds` is the vertices' [min, max].
+        bounds = (mesh.header or {}).get("cap_bounds")
+    if bounds is not None and len(bounds) == 3:
+        lo, hi, tolerance = (np.asarray(b, dtype=np.float64) for b in bounds)
+        out["touches_bounds"] = ((lo_box <= lo + tolerance).any(axis=1)
+                                 | (hi_box >= hi - tolerance).any(axis=1))
+    elif dims is not None:
         # A surface closed by the volume's edge lies on the outermost voxels'
         # centres (an isosurface) or their outer faces (a label surface).
         top = np.asarray(dims, dtype=np.float64) - 1.0

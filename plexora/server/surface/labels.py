@@ -154,7 +154,8 @@ def extract_labels(label_volume, level, grid: marching.Grid, *, ids=None, region
         stage("smoothing")
     smoothed = time.perf_counter()
     surface = iso_mod.finish(surface, smoothing, scale=scale, voxel=grid.scale,
-                             keep_raw=keep_raw, report=report, inset=inset, progress=progress)
+                             keep_raw=keep_raw, report=report, inset=inset, progress=progress,
+                             cancelled=cancelled)
     engine["seconds_finish"] = round(time.perf_counter() - smoothed, 3)
     return surface, report
 
