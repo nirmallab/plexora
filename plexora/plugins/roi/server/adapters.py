@@ -618,7 +618,9 @@ def _write_flat_columns(dataset, kind, labels, names, category_column,
     # over the original (server/utils/source_writes.py), and read from it:
     # Pyodide's polars cannot read the page's read-only mount.
     with source_writes.writable(source.path) as target:
-        frame = read_flat_table(target, kind)
+        # As text: the columns this does not add are written back exactly as
+        # the user wrote them, not re-spelled by a typed read ('007' -> '7').
+        frame = read_flat_table(target, kind, as_text=True)
         taken = [c for c in (category_column, name_column) if c in frame.columns]
         if taken and not replace:
             raise ColumnExists(sorted(frame.columns),
@@ -639,7 +641,7 @@ def _write_flat_columns(dataset, kind, labels, names, category_column,
                                              dir=directory)
         os.close(handle)
         try:
-            write_flat_table(frame, temporary, kind)
+            write_flat_table(frame, temporary, kind, like=target)
             os.replace(temporary, target)
         except BaseException:
             with contextlib.suppress(OSError):

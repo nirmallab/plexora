@@ -51,7 +51,13 @@ def is_flat_table(data_type) -> bool:
     return data_type in FLAT_TABLE_TYPES
 
 
-def read_flat_table(path, data_type="csv", *, n_rows=None) -> pl.DataFrame:
+#: How a delimited table writes a missing value besides an empty field: R's
+#: `write.csv` writes `NA`. Read as null, so a marker column holding one is
+#: still a number column rather than text.
+MISSING_VALUES = ("NA", "N/A")
+
+
+def read_flat_table(path, data_type="csv", *, n_rows=None, as_text=False) -> pl.DataFrame:
     """The file, as polars read it and before anything is done to it.
 
     `n_rows` reads a prefix -- enough to infer dtypes for the classification
@@ -60,6 +66,11 @@ def read_flat_table(path, data_type="csv", *, n_rows=None) -> pl.DataFrame:
     same rows, read the same way, but polars handed the path maps the whole
     file -- on the website, where it has no threads, a large table makes it
     panic even for a prefix.
+
+    `as_text` reads a delimited table's every column as the text written in
+    the file, for a write-back: a column read as numbers and written out again
+    is re-spelled by polars ('007' -> '7', 'TRUE' -> 'true', '1E3' -> '1000.0').
+    A parquet is typed either way, and written back as it was.
     """
     path = Path(path)
     if data_type == "parquet":
@@ -68,13 +79,29 @@ def read_flat_table(path, data_type="csv", *, n_rows=None) -> pl.DataFrame:
     # so a tab-separated table is never read as one column by the one reader
     # that forgot to ask.
     options = delimited_options(path)
+    if as_text:
+        return pl.read_csv(path, n_rows=n_rows, infer_schema=False, **options)
+    options["null_values"] = list(MISSING_VALUES)
+    source = path
     if n_rows is not None:
         # At least the rows polars infers its dtypes from, so they are the
         # rows a read of the path would have inferred them from.
         head = csv_head(path, max(int(n_rows), _INFER_ROWS))
         if head is not None:
-            return pl.read_csv(io.BytesIO(head), n_rows=n_rows, **options)
-    return pl.read_csv(path, n_rows=n_rows, **options)
+            source = head
+    try:
+        return _read_csv(source, n_rows, options)
+    except pl.exceptions.ComputeError:
+        # A column whose first 100 values misled the inference -- whole
+        # numbers, then a fraction further down -- fails the parse. Typed from
+        # every row instead, which costs a second pass only for such a file.
+        return _read_csv(source, n_rows, {**options, "infer_schema_length": None})
+
+
+def _read_csv(source, n_rows, options) -> pl.DataFrame:
+    if isinstance(source, bytes):
+        source = io.BytesIO(source)
+    return pl.read_csv(source, n_rows=n_rows, **options)
 
 
 #: The separators a delimited cell table is written with, in the order a tie
@@ -201,12 +228,16 @@ def csv_head(path, records: int) -> bytes | None:
     return None
 
 
-def write_flat_table(frame: pl.DataFrame, path, data_type="csv") -> None:
+def write_flat_table(frame: pl.DataFrame, path, data_type="csv", *, like=None) -> None:
     """`frame` over the file at `path`, in the format `data_type` names.
 
     The counterpart of the read, and it exists for one caller: the ROI
     plugin writes its region columns back into the user's own table. Writing a
     parquet back as a CSV would be a silent format change to somebody's data.
+
+    `like` is the file whose separator and decimal mark to keep, when `path`
+    is not it: a write-back goes to an empty temporary file renamed over the
+    user's, and an empty file sniffs as commas.
     """
     path = Path(path)
     if data_type == "parquet":
@@ -214,6 +245,7 @@ def write_flat_table(frame: pl.DataFrame, path, data_type="csv") -> None:
     else:
         # Back in the file's own separator (and decimal mark): a user's `.tsv`
         # written back as commas would be a silent format change too.
-        options = delimited_options(path) if path.is_file() else {}
+        source = Path(like) if like is not None else path
+        options = delimited_options(source) if source.is_file() else {}
         frame.write_csv(path, separator=options.get("separator", ","),
                         decimal_comma=bool(options.get("decimal_comma")))

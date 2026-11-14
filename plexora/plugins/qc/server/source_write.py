@@ -390,7 +390,9 @@ def _write_flat(dataset, kind, qc, seg, replace):
     # polars cannot read the page's read-only mount), and refused there before
     # anything -- the backup included -- unless the user allowed it.
     with source_writes.writable(source.path) as target:
-        frame = read_flat_table(target, kind)
+        # As text: the columns this does not add are written back exactly as
+        # the user wrote them, not re-spelled by a typed read ('007' -> '7').
+        frame = read_flat_table(target, kind, as_text=True)
         added = []
         if qc is not None:
             added += [_flat_series(name, qc[0][name]) for name in qc[0].columns]
@@ -413,7 +415,7 @@ def _write_flat(dataset, kind, qc, seg, replace):
         handle, temporary = tempfile.mkstemp(suffix=Path(target).suffix, dir=directory)
         os.close(handle)
         try:
-            write_flat_table(frame, temporary, kind)
+            write_flat_table(frame, temporary, kind, like=target)
             os.replace(temporary, target)
         except BaseException:
             with contextlib.suppress(OSError):

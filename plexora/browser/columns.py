@@ -62,6 +62,8 @@ def frame(schema, parsed: dict) -> tuple[pl.DataFrame, list]:
     [{kind: "num", values, missing, bad, fractions} | {kind: "str", codes,
     dictionary}]}` in `schema`'s order, arrays as numpy (float64 values, uint8
     missing flags or None, int32 codes with -1 for missing)."""
+    from plexora.server.models.adapters.flat_table import MISSING_VALUES
+
     rows = int(parsed["rows"])
     series = []
     notes = []
@@ -82,7 +84,10 @@ def frame(schema, parsed: dict) -> tuple[pl.DataFrame, list]:
             elif dtype != "Float64":
                 out = out.cast(getattr(pl, dtype))
         else:
-            dictionary = list(column["dictionary"])
+            # `read_flat_table` reads R's `NA` as missing in every column; the
+            # page hands it back as text.
+            dictionary = [None if value in MISSING_VALUES else value
+                          for value in column["dictionary"]]
             codes = np.asarray(column["codes"], dtype=np.int64)[:rows]
             # Missing (-1) points at a null past the dictionary's end.
             index = np.where(codes < 0, len(dictionary), codes)
@@ -101,7 +106,14 @@ def from_page(spec, ask) -> pl.DataFrame | None:
     type, the page without the file -- and the caller reads the file."""
     import logging
 
+    from plexora.server.models.adapters.flat_table import delimited_options
+
     if getattr(spec, "type", None) != "csv" or not getattr(spec, "src", None):
+        return None
+    # The page splits fields on commas and reads points as the decimal mark: a
+    # tab- or semicolon-separated table would come back with every value
+    # missing, so polars reads it, as it does on the desktop.
+    if delimited_options(spec.src) != {"separator": ","}:
         return None
     schema = schema_of(spec.src)
     if schema is None:
