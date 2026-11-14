@@ -796,6 +796,12 @@ class ImageViewer {
                 onChange: () => this.applyLabelRenderer(),
             })
             : null;
+        // A lost context comes back empty (glInit.js claims the loss): this
+        // viewer's cell tables go up again once the program is rebuilt, and
+        // ahead of createGLInit's redraw, which waits on the same build.
+        renderer.gl?.canvas?.addEventListener?.("webglcontextrestored", () => {
+            renderer.ready().then(() => this.restoreGLTextures());
+        });
 
         // The per-tile colorize pass. See views/tileColorize.js -- what reaches it
         // is this viewer's renderer plus the handful of lookups it needs per tile.
@@ -3297,6 +3303,31 @@ class ImageViewer {
         this.bindPickings(renderer, this.pickedIds || []);
         this.bindLabels(renderer, ids);
         this.idCount = ids.length;
+    }
+
+    /**
+     * Put the cell tables back on a restored WebGL context. Every texture
+     * init() and loadBuffers() made died with the old context, so they are made
+     * again and refilled from what this viewer still holds; the marker slots
+     * and cache keys are forgotten so loadBuffers uploads the ranges and each
+     * marker's magnitudes again.
+     */
+    restoreGLTextures() {
+        const renderer = this.glRenderer;
+        // init() has not run: nothing was ever put on the context.
+        if (!renderer.texture_pickings) return;
+        renderer.texture_mag = [renderer.gl.createTexture(), renderer.gl.createTexture(), renderer.gl.createTexture(), renderer.gl.createTexture()];
+        renderer.texture_ids = renderer.gl.createTexture();
+        renderer.texture_mask = renderer.gl.createTexture();
+        renderer.texture_ranges = renderer.gl.createTexture();
+        renderer.texture_centers = renderer.gl.createTexture();
+        renderer.texture_pickings = renderer.gl.createTexture();
+        renderer._markerTextures = renderer._markerTextures.map(() => "");
+        renderer._nextMarkerTexture = 0;
+        this._cacheKeys = {};
+        this.bindPickings(renderer, this.pickedIds || []);
+        this.bindSegmentationBuffers(this.ids, this.centers);
+        return this.forceRepaint();
     }
 
     /**

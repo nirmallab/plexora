@@ -72,6 +72,15 @@ class GLTileTextureCache {
         this.entries.clear();
         this.bytes = 0;
     }
+
+    /**
+     * Drop every entry WITHOUT deleting its texture: after a context loss the
+     * textures are already gone, and the restored context never made them.
+     */
+    forget() {
+        this.entries.clear();
+        this.bytes = 0;
+    }
 }
 
 
@@ -111,6 +120,24 @@ function createGLRenderer({ indexOfTexture, selectTexture, resolveGLReady }) {
     // GPU family, context loss and the texture cache's counters, for optional
     // telemetry. A no-op when the service is absent or telemetry is off.
     globalThis.PlexoraPerf?.noteGl(renderer, "image");
+
+    // A lost context is given back only to a page that claims the loss
+    // (preventDefault), and it comes back empty. Until the program is built
+    // again on it (createGLInit), `contextLost` keeps tileColorize from
+    // colouring tiles on a dead context and caching the blank as drawn.
+    const canvas = renderer.gl?.canvas;
+    if (canvas?.addEventListener) {
+        canvas.addEventListener("webglcontextlost", (event) => {
+            event.preventDefault();
+            renderer.contextLost = true;
+            console.warn("The tile renderer's WebGL context was lost; tiles are redrawn when it comes back.");
+        });
+        canvas.addEventListener("webglcontextrestored", () => {
+            renderer.contextLost = true;
+            renderer._tileTextureCache.forget();
+            renderer.restore();
+        });
+    }
 
     renderer.loadArray = function (e, w, h) {
         // Allow for custom drawing in webGL
@@ -190,8 +217,9 @@ function createGLRenderer({ indexOfTexture, selectTexture, resolveGLReady }) {
 
     renderer["gl-loaded"] = function (program) {
         // Kept so a second program on this context (the GPU cell layer,
-        // labelGpu.js) can hand the context back to this one. Set once: the
-        // program is built once per page (GLRenderer.ready).
+        // labelGpu.js) can hand the context back to this one. Set once per
+        // context: the program is built once per page (GLRenderer.ready), and
+        // again after a lost context is restored.
         this.program = program;
         // Uniform variables for coloring
         this.u_ids_shape = this.gl.getUniformLocation(program, "u_ids_shape");
@@ -256,7 +284,7 @@ function createGLInit({ viewer, renderer, config, handleTileLoaded, tileDrawingC
     //: returns early on its signature), so all they ever did was multiply the
     //: per-frame bookkeeping by the channel count.
     let wired = false;
-    return () => {
+    const open = () => {
         renderer.width = renderer.width || config.tileWidth;
         renderer.height = renderer.height || config.tileHeight;
         // Resizing the canvas reallocates (and clears) its drawing buffer:
@@ -267,6 +295,8 @@ function createGLInit({ viewer, renderer, config, handleTileLoaded, tileDrawingC
         }
         const built = typeof renderer.ready === "function" ? renderer.ready() : renderer.init();
         built.then(() => {
+            // The program is on a live context: tiles may be coloured again.
+            if (!renderer.gl?.isContextLost?.()) renderer.contextLost = false;
             if (!wired) {
                 wired = true;
                 viewer.addHandler("tile-loaded", handleTileLoaded);
@@ -280,6 +310,11 @@ function createGLInit({ viewer, renderer, config, handleTileLoaded, tileDrawingC
             world.update();
         });
     };
+    // A restored context (createGLRenderer claimed its loss and remade the
+    // texture and buffer) needs exactly what `open` does: the program built
+    // on it, then every item redrawn.
+    renderer.gl?.canvas?.addEventListener?.("webglcontextrestored", open);
+    return open;
 }
 
 

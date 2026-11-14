@@ -50,7 +50,8 @@ export class GLRenderer {
      * adds -- two per channel, on every plane step -- and each used to fetch
      * both shaders again past the cache and recompile them, with the fetches
      * queued behind the tiles in the browser's connection pool. A failure is
-     * not kept: the next call tries again.
+     * not kept: the next call tries again. Neither is a program whose context
+     * was lost: restore() forgets it.
      */
     ready() {
         if (!this._ready) {
@@ -60,6 +61,18 @@ export class GLRenderer {
             });
         }
         return this._ready;
+    }
+
+    /**
+     * A lost context came back (webglcontextrestored). It comes back empty:
+     * the texture, the quad buffer and the program all died with the old one.
+     * Make the first two again and forget the program, so the next ready()
+     * builds it on the new context.
+     */
+    restore() {
+        this.texture = this.gl.createTexture();
+        this.buffer = this.gl.createBuffer();
+        this._ready = null;
     }
 
     updateShape(width, height) {

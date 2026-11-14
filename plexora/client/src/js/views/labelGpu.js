@@ -471,8 +471,32 @@ function createLabelGpu({ renderer, vShaderUrl, fShaderUrl, labelTile, onChange 
         state.tileKeys = new WeakMap();
     }
 
+    // Built again on a restored context only when the loss is what turned the
+    // layer off (or caught it compiling): not when it was off for a reason a
+    // new context does not change, such as ids past 2^24.
+    let restorable = false;
     if (gl?.canvas?.addEventListener) {
-        gl.canvas.addEventListener("webglcontextlost", () => disable("the WebGL context was lost"));
+        gl.canvas.addEventListener("webglcontextlost", () => {
+            restorable = restorable || state.active || state.reason === "compiling"
+                || state.reason === "the WebGL context was lost";
+            disable("the WebGL context was lost");
+        });
+        gl.canvas.addEventListener("webglcontextrestored", () => {
+            if (!restorable) return;
+            restorable = false;
+            // The program, tables and tile textures died with the old context:
+            // forget them without deleting, and build on the new one after the
+            // channel program, whose quad buffer drawTile draws with.
+            state.program = null;
+            state.layers = new Map();
+            state.tileCache = null;
+            state.tileKeys = new WeakMap();
+            state.alphaFill = null;
+            state.reason = "compiling";
+            api.ready = Promise.resolve(renderer.ready?.()).then(build).catch((e) => {
+                disable(`the cell-layer shader did not build (${e.message || e})`);
+            });
+        });
     }
 
     const api = {

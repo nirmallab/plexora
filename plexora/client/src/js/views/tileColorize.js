@@ -67,6 +67,10 @@ function createTileDrawing({
     labelGpuMode = () => false,
     segmentationMode = () => undefined,
 }) {
+    // Whether the renderer's context cannot draw: lost, or restored without
+    // its program yet (glInit.js keeps `contextLost` up until it is rebuilt).
+    const glDown = () => Boolean(renderer.contextLost || renderer.gl?.isContextLost?.());
+
     // Default tile-drawing behavior, invoked as the "callback" from the
     // custom handler below.
     function tileDrawingDefault(e) {
@@ -224,6 +228,15 @@ function createTileDrawing({
                 return;
             }
 
+            // The WebGL context is lost, or restored but its program not yet
+            // built again (glInit.js): a draw now would blit a blank canvas
+            // and cache it as this colorization for the rest of the page.
+            // Keep whatever the tile showed, and colour it once GL is back.
+            if (glDown()) {
+                e.rendered._plexoraSig = null;
+                return;
+            }
+
             // The black fill is load-bearing, not redundant: the shader
             // emits a partial alpha, so the GL output composites over whatever
             // is already in this reused canvas. A layer channel clears
@@ -358,6 +371,8 @@ function createTileDrawing({
             console.warn("Missing Array for tile:", e.tile.getUrl(), "- skipping rendering");
             return;
         }
+        // Not cached, so it is simply drawn again at the next frame.
+        if (glDown()) return;
 
         // Use new parameters for this tile
         renderer.gl_arguments = {
