@@ -242,6 +242,23 @@ class SourceImage:
         # its directory (`open_channel_series`); left open by `close` then.
         self._file, series, self._shared_file = tiff_series.open_channel_series(source.path)
         self._path = str(source.path)
+        if tiff_series.needs_region_reader(series):
+            # A pyramid that does not halve (a Leica SCN's steps of 4), or
+            # channels stored as one page's samples: the viewer reads these
+            # through a halving chain (LocalImageProvider.open), so level n
+            # here has to be that chain's level n, not tifffile's own.
+            from plexora.server.utils import tiff_region
+
+            if not self._shared_file:
+                self._file.close()
+            self._file = None
+            pyramid = tiff_region.open_image(source.path)
+            self._pyramid = pyramid
+            self._zarr = pyramid
+            self._is_array = False
+            self.levels = len(pyramid)
+            self._level_shapes = [tuple(shape) for shape in pyramid.level_shapes]
+            return
         self._zarr = zarr.open(series.aszarr(), mode="r")
         self._is_array = hasattr(self._zarr, "shape")
         self.levels = 1 if self._is_array else len(list(self._zarr))
