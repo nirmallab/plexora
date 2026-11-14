@@ -1497,6 +1497,77 @@ html.is-native-dragging.has-drop-target body::after {
     }
 }
 
+/* The view's full-resolution tiles arriving (services/tileProgress.js): a
+   bar along the navbar's bottom edge, over its border, as wide as the share
+   that has arrived. A light runs along what has arrived while more is coming,
+   so a slow link that has not moved the width for a second still reads as
+   working; it fades once the view is sharp. */
+.nav-load-bar {
+    bottom: -1px;
+    height: 2px;
+    left: 0;
+    opacity: 1;
+    overflow: hidden;
+    pointer-events: none;
+    position: absolute;
+    right: 0;
+    transition: opacity 320ms var(--ease-standard);
+}
+
+.nav-load-bar[hidden] {
+    display: none;
+}
+
+.nav-load-bar.is-done {
+    opacity: 0;
+}
+
+.nav-load-bar-fill {
+    background: var(--accent-channel);
+    box-shadow: 0 0 6px var(--accent-channel-soft);
+    display: block;
+    height: 100%;
+    /* Something on screen from the first frame: a load at 0% is not idle. */
+    min-width: 3%;
+    overflow: hidden;
+    position: relative;
+    transition: width 260ms var(--ease-standard);
+    width: 0;
+}
+
+/* Across the part that has arrived, whatever its width. */
+.nav-load-bar-fill::after {
+    animation: nav-load-bar-light 1.4s linear infinite;
+    background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.7), transparent);
+    bottom: 0;
+    content: "";
+    left: -40%;
+    position: absolute;
+    top: 0;
+    width: min(40%, 160px);
+}
+
+.nav-load-bar.is-done .nav-load-bar-fill::after {
+    animation: none;
+    opacity: 0;
+}
+
+@keyframes nav-load-bar-light {
+    from { left: -40%; }
+    to { left: 100%; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .nav-load-bar-fill {
+        transition: none;
+    }
+
+    .nav-load-bar-fill::after {
+        animation: none;
+        opacity: 0;
+    }
+}
+
 /* ------------------------------------------------------------------ */
 /* Data-source field (dataSourceField.js)                               */
 /* A path input, its pickers, and the table/image selects that appear   */

@@ -256,58 +256,17 @@
     }
 
     // --- viewer: tiles still streaming in -----------------------------------
-    // "A channel was switched on but hasn't finished loading."
-    //
-    // Tracked per TiledImage rather than through the Viewer's aggregate
-    // fully-loaded-change: that aggregate only recomputes when some TiledImage
-    // raises its own fully-loaded-change, and a freshly added image doesn't
-    // raise anything on the way in (it starts un-loaded, which is not a change
-    // for it). So the viewer's cached _fullyLoaded stays true through the whole
-    // load and then matches again once the image finishes -- meaning it fires
-    // no event at all for a newly added channel. Verified: zero events across a
-    // channel toggle.
-    //
-    // Tiles go through OSD's own XHR rather than fetch, so tile-load-failed is
-    // the only way this path can surface an error.
+    // "A channel was switched on but hasn't finished loading." Said by the bar
+    // along the navbar's bottom edge (services/tileProgress.js), which shows
+    // how far the view has sharpened -- the "Loading" this used to show said
+    // only that it had not. This keeps the one thing that bar does not say:
+    // tiles go through OSD's own XHR rather than fetch, so tile-load-failed
+    // is the only way this path can surface an error.
     function watchViewer(viewer) {
         if (!viewer || !viewer.addHandler || viewer.__plexoraStatusWatched) return;
         viewer.__plexoraStatusWatched = true;
-
-        const pending = new Set();
-        let loading = null;
-        function refresh() {
-            if (pending.size && !loading) {
-                loading = begin("Loading");
-            } else if (!pending.size && loading) {
-                loading.done();
-                loading = null;
-            }
-        }
-        function trackItem(item) {
-            if (!item || !item.addHandler || item.__plexoraStatusTracked) return;
-            item.__plexoraStatusTracked = true;
-            const update = () => {
-                if (item.getFullyLoaded && item.getFullyLoaded()) pending.delete(item);
-                else pending.add(item);
-                refresh();
-            };
-            item.addHandler("fully-loaded-change", update);
-            update();
-        }
-        function forget(item) {
-            pending.delete(item);
-            refresh();
-        }
-
-        if (viewer.world) {
-            viewer.world.addHandler("add-item", (event) => trackItem(event.item));
-            viewer.world.addHandler("remove-item", (event) => forget(event.item));
-            for (let i = 0; i < viewer.world.getItemCount(); i++) {
-                trackItem(viewer.world.getItemAt(i));
-            }
-        }
+        window.PlexoraTileProgress?.watch(viewer);
         viewer.addHandler("tile-load-failed", () => setError("Tile failed"));
-        viewer.addHandler("close", () => { pending.clear(); refresh(); });
     }
 
     // --- mount ---------------------------------------------------------------

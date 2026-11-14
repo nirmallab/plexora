@@ -230,6 +230,21 @@ class RemoteImageProvider(LocalImageProvider):
             return data_model.quantization_window_of(pyramid, channel_index)
         return sampled_window(pyramid, channel_index)
 
+    def volume_window(self, source, channel_index, gate=None):
+        """`((0, ceiling), how)` for a volume's channel without scanning the
+        stack over the network -- the same sample and headroom as a planar
+        image's window above, of the default plane, over the coarse levels
+        of every plane (`windows.sampled_window`). Asked on the website only
+        (data_model `_volume_quantization_window`). Exact where the store has
+        been made available offline."""
+        from plexora.server.models import remote_sources
+        from plexora.server.volume import windows
+
+        if remote_sources.is_pinned(self._path):
+            return windows.volume_window(source, channel_index, gate=gate)
+        return windows.sampled_window(source, channel_index, gate=gate,
+                                      chunks=WINDOW_SAMPLE_CHUNKS, headroom=WINDOW_HEADROOM)
+
 
 def _close(pyramid) -> None:
     close = getattr(pyramid, "close", None)

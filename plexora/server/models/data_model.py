@@ -3246,6 +3246,17 @@ def get_channel_gmm(channel_name, datasource_name, view="", *, patient=False, pr
             return cached
     if provisional and slab is None and _window_behind(channel_name, datasource_name):
         return _provisional_gmm(channel_name, datasource_name)
+    if (provisional and slab is None and _remote_image() is None
+            and volume_source is not None and not volume_source.volume.is_planar):
+        # A volume's fit answers at once, as its statistics do: with the
+        # provisional window while the exact one is made behind
+        # (`volume_window_state`). Made here, the exact window was a scan of
+        # the stack inside this request -- on the website, a 91-plane stack
+        # read over the web held its one Python thread for minutes, every
+        # tile queued behind it until the tab gave up.
+        window, exact = volume_window_state(channel_name, datasource_name)
+        if not exact:
+            return _provisional_gmm(channel_name, datasource_name, window)
     # Single-flight. encode_tile() calls this for every default-quality tile,
     # and a cold entry costs ~0.7 s: a GaussianMixture(3) fit plus a .max()
     # over the entire full-resolution channel plane (~218 MB, see the comment
@@ -3601,7 +3612,16 @@ def _volume_quantization_window(channel_name, datasource_name):
             _gmm_cache[cache_key] = window
             return window
         idx = real_channel_index(channel_name, datasource_name)
-        window, _how = volume_window(volume_source, idx, gate=_WINDOW_SCAN_GATE)
+        # On the website a stack read over the web is sampled rather than
+        # scanned (providers/remote.py `volume_window`): nothing else runs
+        # while a scan reads, and a large stack's is gigabytes a channel.
+        # The desktop scans it on a thread of its own, behind a provisional
+        # window.
+        sampled = None if _work.threaded() else getattr(_providers.image, "volume_window", None)
+        if sampled is not None:
+            window, _how = sampled(volume_source, idx, gate=_WINDOW_SCAN_GATE)
+        else:
+            window, _how = volume_window(volume_source, idx, gate=_WINDOW_SCAN_GATE)
         _gmm_cache[cache_key] = window
         _remember_quantization_window(datasource_name, stored_name, window)
         return window
@@ -3688,12 +3708,13 @@ def queue_exact_window(channel_name, datasource_name, urgent=False):
                        [0 if urgent else 1, next(_exact_window_seq), datasource_name,
                         channel_name])
         if _exact_window_worker is None or not _exact_window_worker.is_alive():
-            _exact_window_worker = _work.spawn(_exact_window_loop,
+            _exact_window_worker = _work.spawn(_exact_window_loop, background=True,
                                                name="plexora-exact-windows")
         _exact_window_cv.notify()
 
 
 def _exact_window_loop():
+    global _exact_window_worker
     while True:
         with _exact_window_cv:
             if not _exact_window_queue:
@@ -3719,6 +3740,15 @@ def _exact_window_loop():
                          datasource_name, channel_name, exc)
         finally:
             _provisional_windows.pop((loaded_scope(datasource_name), channel_name), None)
+        if not _work.threaded():
+            # The website: one channel a task, the next once requests are
+            # quiet again -- every channel in one task held its one Python
+            # thread for seconds a channel with tiles waiting behind it.
+            with _exact_window_cv:
+                if _exact_window_queue:
+                    _exact_window_worker = _work.spawn(_exact_window_loop, background=True,
+                                                       name="plexora-exact-windows")
+            return
 
 
 #: How much of a plane one slab of the window scan materializes. The scan
@@ -3792,13 +3822,15 @@ def quantization_window_of(channel_pyramid, index):
 _provisional_fits: dict = {}
 
 
-def _provisional_gmm(channel_name, datasource_name):
-    """A planar channel's contrast fit on the website while the page still
-    reads its full-resolution plane: the fit (`channel_gmm_of`) over the
-    overview, which is all it is made of -- the window is only carried in the
-    packet -- with `_provisional_stats`' window and `window_exact` False. Not
-    in `_gmm_cache` or the project's stored fits, which hold exact packets;
-    kept for this load so the exact packet is not fitted again."""
+def _provisional_gmm(channel_name, datasource_name, window=None):
+    """A channel's contrast fit while its exact window is still being made --
+    a planar channel on the website while the page reads its full-resolution
+    plane, or a volume's channel (`window`: its provisional window): the fit
+    (`channel_gmm_of`) over the overview, which is all it is made of -- the
+    window is only carried in the packet -- with `window_exact` False (a
+    planar channel carries `_provisional_stats`' window). Not in `_gmm_cache`
+    or the project's stored fits, which hold exact packets; kept for this
+    load so the exact packet is not fitted again."""
     key = (datasource_name, load_generation, channel_name)
     made = _provisional_fits.get(key)
     if made is None:
@@ -3809,6 +3841,8 @@ def _provisional_gmm(channel_name, datasource_name):
         for old in [k for k in _provisional_fits if k[:2] != key[:2]]:
             _provisional_fits.pop(old, None)
         _provisional_fits[key] = made
+    if window is not None:
+        return {**made, "qmin": float(window[0]), "qmax": float(window[1])}
     return made
 
 

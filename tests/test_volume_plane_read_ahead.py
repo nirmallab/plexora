@@ -263,6 +263,33 @@ def test_the_tile_cache_budget_comes_from_the_allocation(monkeypatch):
 # -- tiles made ahead of a stack decoded a plane at a time ---------------------------
 
 
+def test_without_threads_each_read_ahead_is_a_background_task_of_its_own(monkeypatch):
+    """The website: one Python thread, and a task runs to its end with every
+    request behind it. A queue of reads drained in one task (a dozen tiles of
+    a stack read over the web) held the tiles anybody was waiting for half a
+    minute; one read a task, each waiting for requests to be quiet, holds
+    them a read at most."""
+    from plexora import _work
+
+    monkeypatch.setenv("PLEXORA_WORK", "cooperative")
+    _work._reset_for_tests()
+    ahead = prefetch_module.PlanePrefetcher(workers=2, min_budget=0)
+    made = []
+    try:
+        assert ahead.after_plane_tile("tile", 5, 20, lambda z: made.append(z) or True,
+                                      ahead=4) == [6, 4]
+        assert _work.pending(background=False) == 0, "nothing ahead of a request"
+        assert _work.pending(background=True) == 1, "one task, not one per worker"
+        names = []
+        assert _work.run_pending(ran=names, background=False) == 0
+        assert _work.run_pending(budget_s=0, ran=names) == 1 and len(made) == 1
+        assert _work.pending(background=True) == 1, "the next read queued behind it"
+        assert _work.run_pending(ran=names) == 1 and sorted(made) == [4, 6]
+        assert names == ["plexora-plane-prefetch"] * 2 and _work.pending() == 0
+    finally:
+        _work._reset_for_tests()
+
+
 def test_after_plane_tile_follows_the_hand_nearest_first():
     ahead = prefetch_module.PlanePrefetcher(workers=1, min_budget=0)
     made, held = [], {7}

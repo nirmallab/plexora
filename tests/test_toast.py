@@ -38,6 +38,8 @@ CHECKS = (
     "an action runs, then dismisses the notice",
     "an action that answers false leaves it up",
     "onDismiss hears why it went, once",
+    "its note changes in place while it is up, and not after",
+    "a notice shown without a note gains one under its title",
     "a warning tone is marked, and nothing else changes",
 )
 
