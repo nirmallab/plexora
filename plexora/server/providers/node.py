@@ -41,6 +41,21 @@ from plexora.server.providers.base import (
 
 API_VERSION = node_registry.API_VERSION
 
+#: The last image tile this thread forwarded: whether the node marked it
+#: `no-store` (volume/plane_view.py `served_steps` says the same of a tile
+#: drawn here).
+_forwarded = threading.local()
+
+
+def forwarded_transient(reset: bool = True) -> bool:
+    """Whether the last image tile this thread forwarded was one the node
+    drew with its provisional window and marked `no-store`: data_routes
+    neither keeps it nor lets the browser keep it."""
+    transient = getattr(_forwarded, "transient", False)
+    if reset:
+        _forwarded.transient = False
+    return transient
+
 
 def node_for(binding):
     """The node entry a resource binding names, or a sentence saying it is gone.
@@ -920,6 +935,9 @@ class NodeImageProvider(_NodeBacked):
             f"?q={quality}&tw={width}&th={height}{_query(params)}",
             expected_api=API_VERSION)
         self._served(response, params)
+        # Drawn with the node's provisional window (it says `no-store`): the
+        # primary's route keeps it nowhere either (`forwarded_transient`).
+        _forwarded.transient = "no-store" in (response.headers.get("Cache-Control") or "")
         return data, response.headers.get("Content-Type") or "image/webp"
 
     def overview(self, channel_name, view=None):
@@ -968,13 +986,21 @@ class NodeImageProvider(_NodeBacked):
     def quantization_window(self, channel_name, window_class=None) -> tuple:
         """(qmin, qmax) for one channel; `window_class` ("volume"/"std") for a
         volume, whose one window spans every plane (volume/windows.py)."""
+        return self.quantization_window_state(channel_name, window_class)[0]
+
+    def quantization_window_state(self, channel_name, window_class=None) -> tuple:
+        """`((qmin, qmax), exact)`: `quantization_window`, and whether the node
+        has scanned for it or answered with its provisional guess meanwhile
+        (a planar channel it has not scanned yet). A node too old to say is
+        exact."""
         params = self._view_params() if window_class else {}
         if params:
             params["wc"] = window_class
         answer = self._image_json(
             f"quantization?channel_index={self._index(channel_name)}", params,
             timeout=180.0)
-        return (float(answer.get("qmin") or 0.0), float(answer.get("qmax") or 1.0))
+        window = (float(answer.get("qmin") or 0.0), float(answer.get("qmax") or 1.0))
+        return window, bool(answer.get("exact", True))
 
     def level(self, channel_name, ask, covered, pool, window):
         """`(bytes, shape)`: one channel's 3-D level, built on the node.
@@ -1149,9 +1175,12 @@ def measure_objects_on_node(image_binding, seg_binding, *, channel_names, indice
                                      expected_api=API_VERSION)
     except ResourceUnavailable:
         raise
+    # The table first: the index is optional, and nothing that goes wrong
+    # fetching it may cost the measurement.
+    frame = pl.read_parquet(io.BytesIO(data))
     if planes_folder is not None:
         _fetch_planes(node, job, planes_folder)
-    return pl.read_parquet(io.BytesIO(data)), dict(status.get("manifest") or {})
+    return frame, dict(status.get("manifest") or {})
 
 
 def cell_features_on_node(image_binding, seg_binding, *, marker_index, dna_index=None,

@@ -3376,9 +3376,35 @@ def get_channel_gmm(channel_name, datasource_name, view="", *, patient=False, pr
             # otherwise open a burst of connections for the same answer.
             packet_gmm = (remote.gmm(channel_name) if slab is None
                           else remote.gmm(channel_name, view=slab.token()))
+            if slab is None and "window_exact" not in packet_gmm and not _node_window_exact(
+                    remote, channel_name, datasource_name, packet_gmm):
+                # As `_provisional_gmm`'s: not kept, and said, so the viewer
+                # moves the fit to the exact window when it lands.
+                return {**packet_gmm, "window_exact": False}
             _gmm_cache[cache_key] = packet_gmm
             return packet_gmm
         return _compute_channel_gmm(channel_name, datasource_name, cache_key, slab)
+
+
+def _node_window_exact(remote, channel_name, datasource_name, packet):
+    """Whether a node's planar stats packet or fit was made with the channel's
+    exact window, not the provisional one the node answers with while it
+    scans (its planar /stats and /gmm do not say which; /quantization does).
+    Neither may be kept for the load past the scan: the viewer converts saved
+    raw ranges with its qmin/qmax. A volume's packets say for themselves, and
+    a node too old to say is exact."""
+    if remote.volume() is not None:
+        return True
+    made_with = ((float(packet["qmin"]), float(packet["qmax"]))
+                 if packet.get("qmin") is not None and packet.get("qmax") is not None else None)
+    key = ('qwindow', datasource_name, channel_name)
+    known = _gmm_cache.get(key)
+    if known is not None and made_with == (float(known[0]), float(known[1])):
+        return True
+    window, exact = remote.quantization_window_state(channel_name)
+    if exact:
+        _gmm_cache[key] = window
+    return exact and (made_with is None or made_with == window)
 
 
 def _slab_view(datasource_name, view):
@@ -3722,9 +3748,11 @@ def get_channel_quantization_window(channel_name, datasource_name, window_class=
         if remote is not None:
             # The full-resolution read this needs is the one thing that must
             # not cross a network: the whole point of the window is that it
-            # comes from every pixel of the channel plane.
-            window = remote.quantization_window(channel_name)
-            _gmm_cache[cache_key] = window
+            # comes from every pixel of the channel plane. Kept only once the
+            # node has scanned for it, not its provisional guess meanwhile.
+            window, exact = remote.quantization_window_state(channel_name)
+            if exact:
+                _gmm_cache[cache_key] = window
             return window
         idx = real_channel_index(channel_name, datasource_name)
         estimate = getattr(_providers.image, "quantization_window", None)
@@ -4346,6 +4374,11 @@ def get_image_channel_stats(channel_name, datasource_name, view="", *, patient=F
         # next ask after the exact window lands gets the exact packet.
         is_volume = remote.volume() is not None and not _WINDOW_SCANS_INLINE
         stats = remote.channel_stats(channel_name, provisional=is_volume)
+        if "window_exact" not in stats and not _node_window_exact(
+                remote, channel_name, datasource_name, stats):
+            # A planar packet says nothing of its window: made with the
+            # node's guess, it says so here, and the viewer asks again.
+            stats = {**stats, "window_exact": False}
         if stats.get("window_exact", True):
             _image_stats_cache[cache_key] = stats
         return stats

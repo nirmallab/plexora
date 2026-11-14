@@ -1462,11 +1462,13 @@ def _get_tile_png_bytes(datasource, channel, level, tile, quality, view="", wind
     # without cross-module cache access. `quality` is part of the key so
     # default/hd/legacy variants of the same tile don't collide.
     generation = data_model.ensure_loaded(datasource)
+    from plexora.server.providers.node import forwarded_transient
     from plexora.server.volume.plane_view import served_final, served_steps
 
     # This thread's previous tile is not this one's -- a cached tile included,
     # which would otherwise be sent with the last section's drawn-up flags.
     served_steps()
+    forwarded_transient()
     key = _tile_key(generation, datasource, channel, level, tile, quality, view, window)
     with _tile_png_cache_lock:
         cached = _tile_png_cache.get(key)
@@ -1492,6 +1494,10 @@ def _get_tile_png_bytes(datasource, channel, level, tile, quality, view="", wind
         # once the area is prepared in 3-D. A drawn-up projection is final.
         if not served_final():
             return encoded, mimetype
+    if forwarded_transient(reset=False):
+        # A node's tile drawn with its provisional window: the exact one
+        # replaces it once the node's scan lands, so it is not kept here.
+        return encoded, mimetype
 
     _keep_tile(key, (encoded, mimetype))
     if view:
@@ -1614,10 +1620,17 @@ def generate_png(datasource, channel, level, tile):
     version = _tile_content_version(datasource, channel, generation)
     etag = _tile_etag(f"{generation}.{version}", datasource, channel, level, tile, quality,
                       view, window)
+    from plexora.server.providers.node import forwarded_transient
     from plexora.server.volume.plane_view import served_final, served_steps
 
     final = served_final()
     steps = served_steps()
+    if forwarded_transient():
+        # As uncachable as the node made it (a provisional window): no
+        # year-long max-age, no ETag, so the next fetch is the exact tile.
+        response = send_file(io.BytesIO(encoded), mimetype=mimetype)
+        response.headers['Cache-Control'] = 'no-store'
+        return response
     if steps and not final:
         response = send_file(io.BytesIO(encoded), mimetype=mimetype)
         response.headers['Cache-Control'] = 'no-store'

@@ -298,11 +298,22 @@ def stream_request(node, method, path, *, body=None, timeout=None, chunk=1 << 16
     is released when the generator is exhausted or closed, which Flask's
     `stream_with_context` guarantees even when the client disconnects.
     """
+    import urllib3
+
     response = request(node, method, path, body=body, timeout=timeout, stream=True,
                        headers=headers)
     try:
         for piece in response.stream(chunk, decode_content=True):
             yield piece
+    # The body can break after `request` answered (a tunnel blip, a node
+    # restart, a read gap): named the way `request` names it, so a caller's
+    # `except ResourceError` holds for the whole answer, not only its start.
+    except urllib3.exceptions.TimeoutError as exc:
+        raise ResourceUnavailable(
+            f"data node {node.name!r} did not answer in time", node=node.name) from exc
+    except urllib3.exceptions.HTTPError as exc:
+        raise ResourceUnavailable(
+            f"lost the connection to data node {node.name!r}: {exc}", node=node.name) from exc
     finally:
         response.release_conn()
 

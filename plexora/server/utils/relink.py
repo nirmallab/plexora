@@ -36,6 +36,7 @@ its path under this computer's shared roots and Locations (`tail_candidates`).
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 import shutil
@@ -54,6 +55,11 @@ _log = logging.getLogger(__name__)
 WALK_SECONDS = 10.0
 #: How long one query of the system's file index may take.
 INDEX_SECONDS = 5.0
+#: How long a file `ensure` searched for everywhere and did not find is then
+#: looked for only in the cheap places ("Find missing images..." asks again).
+MISS_SECONDS = 600.0
+#: {(project, recorded path, identity): when `ensure` last missed it}.
+_missed: dict = {}
 #: Folders a walk never enters: the system's, caches, and build trees.
 _SKIP = {"appdata", "library", "node_modules", ".git", "$recycle.bin", "windows", "program files",
          "program files (x86)", "programdata", ".cache", ".conda", "site-packages", "__pycache__"}
@@ -124,26 +130,38 @@ def _user_folders() -> list:
     return [path for path in found if path.is_dir()]
 
 
+#: The Windows Search query. Fixed text: the name it looks for comes from a
+#: project's `sources` or a .plexora someone else made, so it reaches
+#: PowerShell in an environment variable, never as code (`$(...)`, `$var`, a
+#: backtick or a `"` in a name would otherwise run or be expanded away). The
+#: variable is the child's alone, not a setting, hence not PLEXORA_*.
+_WINDOWS_INDEX_SCRIPT = (
+    "$n = $env:PLX_INDEX_NAME -replace \"'\", \"''\"; "
+    "$c = New-Object -ComObject ADODB.Connection; "
+    "$c.Open(\"Provider=Search.CollatorDSO;Extended Properties='Application=Windows';\"); "
+    "$r = $c.Execute('SELECT System.ItemPathDisplay FROM SYSTEMINDEX WHERE System.FileName = ''' + $n + ''''); "
+    "while (-not $r.EOF) { $r.Fields.Item('System.ItemPathDisplay').Value; $r.MoveNext() }")
+
+
 def _index(name: str) -> list:
     """Paths the operating system's file index knows by this name."""
+    # A file's name, nothing else: a path or a control character is never a
+    # name a file here could have, and only reaches the index from a crafted file.
+    if not name or "/" in name or "\\" in name or any(ord(ch) < 32 for ch in name):
+        return []
     try:
         if sys.platform == "darwin" and shutil.which("mdfind"):
             done = subprocess.run(["mdfind", "-name", name], capture_output=True, text=True, timeout=INDEX_SECONDS,
                                   **popen_kwargs())
             return [Path(line) for line in done.stdout.splitlines() if Path(line).name == name]
         if os.name == "nt":
-            quoted = name.replace("'", "''")
-            script = (
-                "$c = New-Object -ComObject ADODB.Connection; "
-                "$c.Open(\"Provider=Search.CollatorDSO;Extended Properties='Application=Windows';\"); "
-                f"$r = $c.Execute(\"SELECT System.ItemPathDisplay FROM SYSTEMINDEX WHERE System.FileName = '{quoted}'\"); "
-                "while (-not $r.EOF) { $r.Fields.Item('System.ItemPathDisplay').Value; $r.MoveNext() }")
             # By its full path: PATH may not reach System32's PowerShell (the
             # desktop app's bundled server, a conda shell).
             shell = Path(os.environ.get("SystemRoot", "C:/Windows")) / "System32" / "WindowsPowerShell" / "v1.0" / "powershell.exe"
             done = subprocess.run([str(shell) if shell.is_file() else "powershell", "-NoProfile", "-NonInteractive",
-                                   "-Command", script],
-                                  capture_output=True, text=True, timeout=INDEX_SECONDS, **popen_kwargs())
+                                   "-Command", _WINDOWS_INDEX_SCRIPT],
+                                  capture_output=True, text=True, timeout=INDEX_SECONDS,
+                                  env={**os.environ, "PLX_INDEX_NAME": name}, **popen_kwargs())
             return [Path(line.strip()) for line in done.stdout.splitlines() if line.strip()]
         for tool in ("plocate", "locate"):
             if shutil.which(tool):
@@ -206,15 +224,23 @@ def _first(facts: dict, candidates: Iterable[Path]) -> Optional[Path]:
 
 
 def resolve(entry: dict, me: str, extra_roots: Iterable[Path] = (), *, walk_seconds: float = WALK_SECONDS,
-            index=_index) -> dict:
+            index=None, searched: Iterable[str] = (), asked_out: Optional[set] = None) -> dict:
     """{recorded path: path here} for every file of `entry` that this
-    computer can find and has not recorded yet."""
+    computer can find and has not recorded yet. The index and the walk share
+    `walk_seconds`; the files in `searched` (looked for everywhere a moment
+    ago and not found) are looked for only in the cheap places. The recorded
+    paths the index was asked about are added to `asked_out`."""
+    # Looked up now, not bound at definition: a caller (or a test) that
+    # replaces relink._index is the one asked.
+    index = _index if index is None else index
+    searched = set(searched)
     known = (entry or {}).get(sources.SOURCES) or {}
     here = {recorded: (info.get("at") or {}).get(me) for recorded, info in known.items()}
     missing = [recorded for recorded, path in here.items()
                if not (path and _present(path, known[recorded]))
                and not (_present(recorded, known[recorded]) and not recorded.startswith(sources.PAGE_ROOTS))]
     out: dict = {}
+    asked = []
 
     def folders_found():
         return {Path(path).parent for path in list(out.values()) + [p for p in here.values() if p]
@@ -238,11 +264,16 @@ def resolve(entry: dict, me: str, extra_roots: Iterable[Path] = (), *, walk_seco
                 candidates.append(Path(source_here).parent / name)
             candidates += [folder / name for folder in folders_found()]
             hit = _first(facts, candidates)
-            if hit is None:
+            # One index query is a process (PowerShell on Windows): the first
+            # is always asked, the rest only while the budget lasts.
+            if hit is None and recorded not in searched and (not asked or time.monotonic() < deadline):
+                asked.append(name)
+                if asked_out is not None:
+                    asked_out.add(recorded)
                 hit = _first(facts, index(name))
             if hit is not None:
                 out[recorded] = str(hit)
-        still = [recorded for recorded in group if recorded not in out]
+        still = [recorded for recorded in group if recorded not in out and recorded not in searched]
         if still and time.monotonic() < deadline:
             wanted = {(known[r] or {}).get("name") or Path(r).name: r for r in still}
             roots = list(dict.fromkeys([*folders_found(), *extra_roots, *_user_folders()]))
@@ -259,6 +290,13 @@ def resolve(entry: dict, me: str, extra_roots: Iterable[Path] = (), *, walk_seco
     look([recorded for recorded in missing if not recorded.startswith(made)])
     look([recorded for recorded in missing if recorded.startswith(made)])
     return out
+
+
+def _miss_key(name: str, recorded: str, info) -> tuple:
+    """A file of project `name` as `ensure` remembers missing it: a new
+    identity (the file recorded again) is a new file to look for."""
+    facts = {key: value for key, value in (info or {}).items() if key != "at"}
+    return name, recorded, json.dumps(facts, sort_keys=True, default=str)
 
 
 def _as_recorded(entry: dict, me: str) -> dict:
@@ -286,9 +324,22 @@ def ensure(name: str) -> int:
         return 0
     path = paths.config_path(root)
     entry = read_config(path).get(name) or {}
-    if not entry.get(sources.SOURCES):
+    known = entry.get(sources.SOURCES)
+    if not known:
         return 0
-    found = resolve(entry, me, extra_roots=_project_folders(me))
+    # Every open runs this (under data_model's load_lock): a file the last
+    # open searched for everywhere and did not find is not searched for again
+    # for MISS_SECONDS, only in the cheap places. Only a file the index was
+    # really asked about counts as searched: one the budget ran out before is
+    # asked first next time, so over a few opens every file gets its turn.
+    now = time.monotonic()
+    keys = {recorded: _miss_key(name, recorded, info) for recorded, info in known.items()}
+    searched = [recorded for recorded, key in keys.items() if key in _missed and now - _missed[key] < MISS_SECONDS]
+    asked: set = set()
+    found = resolve(entry, me, extra_roots=_project_folders(me), searched=searched, asked_out=asked)
+    now = time.monotonic()
+    for recorded in asked - set(found):
+        _missed[keys[recorded]] = now
     if not found:
         return 0
     with config_transaction():
@@ -554,6 +605,8 @@ def find_in_folder(name: str, folder) -> dict:
     if root is None:
         raise KeyError(name)
     entry = read_config(paths.config_path(root)).get(name) or {}
+    for key in [key for key in list(_missed) if key[0] == name]:
+        _missed.pop(key, None)
     found = resolve_in(entry, me, folder)
     recorded = record_found(name, found) if found else 0
     return {"found": recorded, "missing": missing_here(name)}
