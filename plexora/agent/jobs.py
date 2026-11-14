@@ -89,6 +89,23 @@ def _atomic_json(path: Path, record: dict):
     os.replace(tmp, path)
 
 
+def _other_process_alive(pid) -> bool:
+    """Whether `pid` is another process that is still running. The MCP process
+    and the server share one jobs folder, so a job the other one is running
+    must stay `running`. This process's own pid is never "other": a record of
+    it that this store does not hold was left by an earlier run (the website's
+    workers all report the same pid)."""
+    try:
+        pid = int(pid)
+    except (TypeError, ValueError):
+        return False
+    if pid == os.getpid():
+        return False
+    from plexora.server.models import server_records
+
+    return server_records._alive(pid)
+
+
 def public(record: dict) -> dict:
     return {key: value for key, value in record.items() if key not in _PRIVATE}
 
@@ -133,7 +150,8 @@ class JobStore:
 
     def recover(self) -> list:
         """Mark on-disk jobs that were queued or running in a process that is
-        not running them now as `interrupted`. Returns their ids."""
+        not running them now as `interrupted`: not this one, and not another
+        live process. Returns their ids."""
         if not self.folder.is_dir():
             return []
         marked = []
@@ -145,6 +163,8 @@ class JobStore:
             if record.get("status") not in ("queued", "running"):
                 continue
             if record.get("job_id") in self._jobs:
+                continue
+            if _other_process_alive(record.get("pid")):
                 continue
             record["status"] = "interrupted"
             record["finished_at"] = now_iso()
