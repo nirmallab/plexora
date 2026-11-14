@@ -116,13 +116,15 @@ def _xy_positions(names: Sequence[str]) -> tuple[int, int] | None:
     return names.index("x"), names.index("y")
 
 
-def transform_list(transforms, names: Sequence[str]) -> tuple[float, ...]:
+def transform_list(transforms, names: Sequence[str]) -> tuple[float, ...] | None:
     """One NGFF `coordinateTransformations` list, flattened to an affine.
 
-    Handles `scale`, `translation` and `affine`; `identity` is a no-op and
-    anything else is skipped, because an unknown transform type is a claim this
-    module cannot evaluate and pretending it was the identity would place the
-    layer somewhere nobody asked for while reporting success.
+    Handles `scale`, `translation` and `affine`; `identity` is a no-op and a
+    `sequence` is composed from its own list, which is how spatialdata writes a
+    composed transform (a scale then a shift, after an alignment or a crop).
+    Anything else makes the whole list None, because an unknown transform type
+    is a claim this module cannot evaluate and pretending it was the identity
+    would place the layer somewhere nobody asked for while reporting success.
 
     Applied in list order, which is what the spec says: the first entry acts on
     the array coordinates and each later one acts on the previous result.
@@ -158,6 +160,13 @@ def transform_list(transforms, names: Sequence[str]) -> tuple[float, ...]:
             matrix = _affine_xy(entry.get("affine"), xi, yi, len(names))
             if matrix is not None:
                 out = compose(matrix, out)
+        elif kind == "sequence":
+            inner = transform_list(entry.get("transformations"), names)
+            if inner is None:
+                return None
+            out = compose(inner, out)
+        elif kind != "identity":
+            return None
     return out
 
 

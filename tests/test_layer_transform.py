@@ -126,10 +126,10 @@ def test_an_unknown_transform_type_is_skipped_rather_than_guessed():
     it as the identity would place the layer somewhere nobody asked for and
     report success."""
     affine = T.transform_list([
-        {"type": "sequence", "transformations": [{"type": "scale", "scale": [9, 9]}]},
+        {"type": "displacements", "path": "field"},
     ], ["y", "x"])
 
-    assert affine == T.IDENTITY
+    assert affine is None
 
 
 def test_an_ngff_affine_is_read_out_of_its_rows():

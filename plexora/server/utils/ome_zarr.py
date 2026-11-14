@@ -1176,7 +1176,8 @@ def pyramid_transform(pyramid) -> tuple[float, ...] | None:
     scale bar a thing that could move for a reason nobody would look for here.
 
     None when the store names no x/y axes, which is the same condition
-    `physical_metadata` returns {} for.
+    `physical_metadata` returns {} for, or declares a transform type that cannot
+    be flattened to an affine.
 
     @returns [a, b, c, d, e, f] in canvas order -- see ngff_transform.
     """
@@ -1194,6 +1195,9 @@ def pyramid_transform(pyramid) -> tuple[float, ...] | None:
     # that backwards silently swaps a scale-then-shift for a shift-then-scale.
     out = ngff_transform.transform_list(level0.get("coordinateTransformations"), names)
     shared = ngff_transform.transform_list(multiscale.get("coordinateTransformations"), names)
+    # A type that cannot be flattened makes the placement unknown, not identity.
+    if out is None or shared is None:
+        return None
     return ngff_transform.compose(shared, out)
 
 
