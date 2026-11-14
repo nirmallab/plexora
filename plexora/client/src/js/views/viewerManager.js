@@ -325,6 +325,9 @@ export class ViewerManager {
         //: Planes prefetched for the next step: token -> {key, pairs, pending}
         //: (prepareStandby).
         this.standby = new Map();
+        //: A slot's first add still waiting for its volume window: slot ->
+        //: that add's promise (addChannelItems).
+        this.windowWaits = new WeakMap();
         //: THE ONE PLACE the model reaches the renderers. Before this the
         //: Layers panel's eye and opacity slider wrote the stack and nothing
         //: read them back, so a card promised two controls that moved nothing.
@@ -544,8 +547,12 @@ export class ViewerManager {
         rev.onSupersede?.(() => {
             if (viewSelection.spec === next) viewSelection.spec = previous;
         });
-        const prepared = group ? group.prepared
-            : (baseSwap ? baseSwap.then(() => null) : Promise.resolve(null));
+        // Both, not either: a colour stack has no channel pairs, so its group
+        // (if any) has nothing to wait for and answers at once -- and taking
+        // that answer alone committed the revision while the slide was still
+        // at the old plane.
+        const prepared = Promise.all([group ? group.prepared : null, baseSwap])
+            .then(([commit]) => commit || null);
         return prepared.then((commit) => {
             if (!commit) {
                 if (!rev.superseded) this.shownView = next;
@@ -1389,6 +1396,27 @@ export class ViewerManager {
      */
     addChannelItems(srcIdx, outgoing = null, options = {}) {
         const { zombie = false, group = null, standby = null, adopt = null } = options;
+        //: The slot this pair is for. OpenSeadragon adds an item a task later
+        //: (and a volume's first add waits for its window first), so by the
+        //: time the pair lands the channel may have been switched off -- or
+        //: switched off and on again, which is a new slot -- or the base eye
+        //: closed. Such a pair is for nobody: claimed, it would draw with no
+        //: slot behind it (white, at the full range) and nothing would ever
+        //: remove it.
+        const slot = this.channelList.currentChannels[srcIdx];
+        const stale = () => this.channelList.currentChannels[srcIdx] !== slot
+            || this.referenceHidden;
+        // A first add still waiting for the channel's window is THE add for
+        // its slot: it builds at the plane and quality current when the
+        // window comes, so a plane step, the HD toggle or a window change in
+        // the meantime joins it rather than asking for a second pair (two
+        // pairs draw the colour twice and take the ground away twice).
+        const waiting = !standby && slot ? this.windowWaits.get(slot) : null;
+        if (waiting) {
+            if (adopt) this.dropPair(adopt);
+            group?.leave();
+            return waiting;
+        }
         // A volume's 8-bit tiles name the window they are quantized with: the
         // channel's must be known before a single address is (it is, but for
         // the first add of a channel -- one request, which on a data node can
@@ -1401,13 +1429,19 @@ export class ViewerManager {
         if (windows && fullName && !windows.peek(fullName) && tileQuality.hd) {
             windows.ensure([fullName]).catch?.(() => {});
         } else if (windows && fullName && !windows.peek(fullName) && !options.windowAsked) {
-            return windows.ensure([fullName]).then(() => {
-                if (!(srcIdx in this.channelList.currentChannels)) {
+            const wait = windows.ensure([fullName]).then(() => {
+                if (this.windowWaits.get(slot) === wait) this.windowWaits.delete(slot);
+                if (stale()) {
                     group?.leave();
                     return null;
                 }
                 return this.addChannelItems(srcIdx, outgoing, { ...options, windowAsked: true });
             });
+            // Only an add with no revision behind it: a step's grouped wait
+            // belongs to that step, and a later step joining it would build
+            // into the abandoned step's group and never reach its own plane.
+            if (!standby && slot && !group) this.windowWaits.set(slot, wait);
+            return wait;
         }
         const url = this.imageViewer.config["imageData"][srcIdx]["src"];
         const { maxLevel, extraZoomLevels } = this.imageViewer.config;
@@ -1517,7 +1551,7 @@ export class ViewerManager {
                 // it.
                 const alive = landed.every(
                     (entry) => !world || world.getIndexOfItem(entry.item) >= 0);
-                if (!alive) {
+                if (!alive || stale()) {
                     this.dropWorldItems(landed.map((entry) => entry.item));
                     settle();
                     return;
@@ -1586,6 +1620,15 @@ export class ViewerManager {
             ? Fade.group(2, { target: () => this.referenceOpacity() }) : null;
 
         const claim = (e, z) => {
+            // Landed after its channel went (see `stale`): off the world
+            // again, and the fade told this half will not come. Before
+            // `restoreView`, which is kept for the pair that does come.
+            if (!replacing && stale()) {
+                this.dropWorldItems([e.item]);
+                fade?.join(null);
+                settle();
+                return;
+            }
             this.restoreView();
             // "open" is what wires up the GL colorize pipeline (see
             // imageViewer.js's initGL, bound to the "open" handler) --
@@ -1732,7 +1775,7 @@ export class ViewerManager {
      * Idempotent, because `rebuildTileLayers` calls it again after a routing
      * repair and OSD would otherwise stack a second copy behind the first.
      */
-    load_brightfield_base({ view = viewSelection.spec, replacing = null, done = null } = {}) {
+    load_brightfield_base({ view = viewSelection.spec, replacing = null, done = null, build = null } = {}) {
         // Not while the base layer's eye is off. `rebuildTileLayers` calls
         // this after a routing repair, and without the guard a reconnecting
         // node would put the slide back on screen under a closed eye.
@@ -1795,7 +1838,7 @@ export class ViewerManager {
             preload: true,
             success: (e) => {
                 if (replacing) {
-                    this.handOverBrightfieldBase(e.item, replacing, done);
+                    this.handOverBrightfieldBase(e.item, replacing, done, build);
                     return;
                 }
                 this.restoreView();
@@ -1843,14 +1886,16 @@ export class ViewerManager {
                 resolve();
             };
             this._baseBuild = build;
-            this.load_brightfield_base({ view, replacing: shown, done: resolve });
+            this.load_brightfield_base({ view, replacing: shown, done: resolve, build });
         });
     }
 
-    handOverBrightfieldBase(item, outgoing, done) {
-        const build = this._baseBuild;
+    handOverBrightfieldBase(item, outgoing, done, build) {
         const world = this.viewer?.world;
-        if (!world || !build || build.cancelled) {
+        // The build that ASKED for this item, not whichever is newest: OSD
+        // answers a task later, so a step superseded before its item landed
+        // would otherwise have its plane handed over in the newer one's place.
+        if (!world || !build || build.cancelled || build !== this._baseBuild) {
             world?.removeItem(item);
             done?.();
             return;
