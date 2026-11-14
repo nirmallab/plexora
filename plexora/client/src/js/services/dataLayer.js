@@ -160,9 +160,15 @@ class DataLayer {
             }), {
                 headers: headers
             })
+            // An error body is not cells: a 503's JSON is a whole number of
+            // uint32s and was read as ids and centres.
+            if (!response.ok) throw new Error(`get_all_cells answered ${response.status}`);
             return response.arrayBuffer();
         } catch (e) {
+            // Thrown on, not swallowed: undefined here became an empty cell
+            // table, which loadCells kept for the rest of the page.
             console.log("Error Getting Gated Cell Ids", e);
+            throw e;
         }
     }
 

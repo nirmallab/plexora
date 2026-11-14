@@ -135,8 +135,15 @@ class NumericData {
       if (this.cellsPromise) {
           return this.cellsPromise;
       }
-      this.cellsPromise = this.fetchCells();
-      return this.cellsPromise;
+      // A failure is not cached, as in getColumn: a node blip or the
+      // website's Python not yet loaded is over a moment later, and the next
+      // caller should ask again rather than get the failure for the page.
+      const promise = this.fetchCells();
+      promise.catch(() => {
+          if (this.cellsPromise === promise) this.cellsPromise = null;
+      });
+      this.cellsPromise = promise;
+      return promise;
   }
 
   /**
@@ -214,7 +221,16 @@ class NumericData {
    * @param keys - list of keys to access
    */
   async getAllFloat32Entries(keys) {
-      return this.getAllEntries(keys, false);
+      // A failure reads as no values here rather than a rejection: its caller
+      // ImageViewer.loadBuffers runs inside forceRepaint, which would be left
+      // not ready and drop every later repaint. No values binds nothing, as a
+      // network error always did; getColumn already treats it as a failure.
+      try {
+          return await this.getAllEntries(keys, false);
+      } catch (e) {
+          console.warn("Marker values not loaded", e);
+          return new Float32Array(0);
+      }
   }
 
   /*
@@ -236,6 +252,10 @@ class NumericData {
       }
       const { dataLayer } = this;
       const arr = await dataLayer.getAllCells(keys, useInt);
+      // Not a whole number of 4-byte values: not an answer to read as one.
+      if (!arr || arr.byteLength % 4 !== 0) {
+          throw new Error(`get_all_cells answered ${arr ? arr.byteLength : "no"} bytes`);
+      }
       if (useInt) {
           return new Uint32Array(arr);
       }
