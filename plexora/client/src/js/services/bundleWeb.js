@@ -363,7 +363,11 @@
                                            done: status.done || 0, total: status.total || 0,
                                            progress: Math.max(job.status.progress,
                                                               Math.round(from + (to - from) * (Number(status.progress) || 0) / 100))});
-                if (status.status === "ready") {
+                // An older Python says "cancelled" for a Stop that came after
+                // its registry write, with the result: those projects are in,
+                // so the files they name stay.
+                if (status.status === "ready"
+                        || status.status === "cancelled" && status.result && status.result.projects) {
                     end(job, "ready", {result: status.result});
                     return;
                 }

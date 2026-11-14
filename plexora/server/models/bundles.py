@@ -1466,6 +1466,22 @@ def _drop_record(manifest: dict, record) -> None:
     for figure in manifest.get("figures") or ():
         if record in figure.get("files", []):
             figure["files"].remove(record)
+    # An image left out is no longer included: its refs are looked for on
+    # import like any other, rather than named at a copy that never landed.
+    # A folder missing one member goes whole, as a store read with holes is
+    # worse than none.
+    path = str(record.get("path") or "")
+    gone = set()
+    for project in manifest.get("projects") or ():
+        for ref in project.get("refs") or ():
+            prefix = ref.get("included")
+            if prefix and (path == prefix or path.startswith(prefix + "/")):
+                ref["included"] = None
+                gone.add(prefix)
+    if gone and manifest.get("media"):
+        manifest["media"] = [item for item in manifest["media"]
+                             if not any(item.get("path") == prefix or str(item.get("path") or "").startswith(prefix + "/")
+                                        for prefix in gone)]
 
 
 def _record_revision(local: _Local, revision: str, parent: Optional[str], stamp: str) -> None:
@@ -1925,6 +1941,7 @@ def _preview(manifest: dict, into, bundle_path) -> dict:
     decided = _decide(manifest, root)
     me = sources.app_key()
     roots = _search_roots()
+    carried = {str(record.get("path") or "") for record in manifest.get("media") or ()}
     out = []
     for item in decided:
         project = item["project"]
@@ -1932,7 +1949,7 @@ def _preview(manifest: dict, into, bundle_path) -> dict:
         for ref in project.get("refs") or ():
             if ref.get("kind") == "node":
                 node += 1
-            elif ref.get("included"):
+            elif ref.get("included") and _carries(carried, ref["included"]):
                 included += 1
             elif _find_cheap(ref, bundle_path, me, roots):
                 found += 1
@@ -1958,6 +1975,13 @@ def _preview(manifest: dict, into, bundle_path) -> dict:
             "figures": [{"id": item.get("id"), "title": item.get("title")} for item in manifest.get("figures") or ()],
             "captures": sum(int(item.get("count") or 0) for item in manifest.get("captures") or ()),
             "needed": needed, "free": free, "fits": free is None or needed <= FREE_SHARE * free}
+
+
+def _carries(carried: set, prefix: str) -> bool:
+    """Whether the bundle's media records hold `prefix` (a file) or anything
+    under it (a folder): an older export kept `included` on a ref whose
+    image it then left out."""
+    return prefix in carried or any(path.startswith(prefix + "/") for path in carried)
 
 
 def _free_bytes(root: Path) -> Optional[int]:
@@ -1988,6 +2012,14 @@ def _validate(source, manifest: dict, chosen: list, root: Path) -> list:
     for figure in manifest.get("figures") or ():
         if not _FIGURE_ID.match(str(figure.get("id") or "")):
             raise BundleError(_OUTSIDE)
+        # A figure's files land under its own folder by the part after this
+        # prefix, so one that does not start with it (a part ending in "..")
+        # would land beside it, on another figure's files.
+        prefix = f"figures/{figure['id']}/"
+        for record in figure.get("files") or ():
+            path = str(record.get("path") or "")
+            if not path.startswith(prefix) or not path[len(prefix):]:
+                raise BundleError(_OUTSIDE)
     wanted = _wanted(manifest, chosen)
     present = source.members()
     total = 0
@@ -2132,9 +2164,12 @@ def _detokenise(entry: dict, *, original: str, target: str, state_dir: Path, der
     return out
 
 
-def _find_refs(refs_by_project: dict, bundle_path, placed_media: dict, me: str, *, search: bool) -> dict:
+def _find_refs(refs_by_project: dict, bundle_path, placed_media: dict, me: str, *, search: bool,
+               kept: Optional[dict] = None) -> dict:
     """{project id: {token: path here}} for each file and folder ref:
-    included ones where they were placed, the rest by `_find_cheap`, then
+    included ones where they were placed, those an Update kept in the
+    project's folder (`kept`: {project id: {token: path}}), the rest by
+    `_find_cheap`, then
     (with `search`) one `relink.resolve` for all that are left: the
     operating system's index and a walk of the user's folders and the
     bundle's own."""
@@ -2150,7 +2185,7 @@ def _find_refs(refs_by_project: dict, bundle_path, placed_media: dict, me: str, 
             if ref.get("included") and ref["included"] in placed_media:
                 found[pid][ref["token"]] = placed_media[ref["included"]]
                 continue
-            hit = _find_cheap(ref, bundle_path, me, roots)
+            hit = ((kept or {}).get(pid) or {}).get(ref["token"]) or _find_cheap(ref, bundle_path, me, roots)
             if hit:
                 found[pid][ref["token"]] = hit
             elif ref.get("identity"):
@@ -2190,6 +2225,44 @@ def _backup(folder: Path, root: Path, name: str, entry: Optional[dict]) -> Optio
     if entry is not None:
         (target / "entry.json").write_text(json.dumps(entry, indent=1, ensure_ascii=False), encoding="utf-8")
     return target
+
+
+def _keep_media(held: Path, state_dir: Path, refs: list, undo: list) -> dict:
+    """The images an earlier bundle placed in this project's own folder
+    (`media/<key>/`), which an Update or Replace has just moved aside into
+    `held` with the rest of it: each one a ref of this bundle still names, and
+    does not bring itself, moved back into `state_dir` ({token: its path}). No
+    search walks the hidden backup, so the project would name a path this
+    computer does not have."""
+    from plexora.server.utils import relink
+
+    media = held / MEDIA
+    if not media.is_dir():
+        return {}
+    brought = {str(ref["included"]).split("/")[1] for ref in refs
+               if ref.get("included") and str(ref["included"]).count("/") >= 1}
+    out: dict = {}
+    moved: dict = {}
+    for ref in refs:
+        identity = ref.get("identity")
+        if ref.get("kind") not in ("file", "folder") or not ref.get("token") or not identity \
+                or ref.get("included"):
+            continue
+        for key in sorted(set(os.listdir(media)) | set(moved)):
+            folder = moved.get(key, media / key)
+            if key in brought or not folder.is_dir():
+                continue
+            hit = next((child for child in sorted(folder.iterdir())
+                        if relink._present(child, identity) and sources.same_file(identity, child)), None)
+            if hit is None:
+                continue
+            if key not in moved:
+                moved[key] = state_dir / MEDIA / key
+                _move(folder, moved[key])
+                undo.append(lambda a=moved[key], b=folder: _move(a, b))
+            out[ref["token"]] = str(moved[key] / hit.name)
+            break
+    return out
 
 
 def _same_device(a: Path, b: Path) -> bool:
@@ -2325,6 +2398,7 @@ def _apply(opened, manifest, decided, chosen, wanted, root, bundle_id, *, progre
         stage("place")
         renamed = {}
         placed_media: dict = {}
+        kept: dict = {}
         entries = {}
         for item in chosen:
             project = item["project"]
@@ -2346,6 +2420,8 @@ def _apply(opened, manifest, decided, chosen, wanted, root, bundle_id, *, progre
             # aside above.
             if not _occupied(state_dir, frozenset(str(Path(where)) for where in placed.values())):
                 undo.append(lambda d=state_dir: shutil.rmtree(d, ignore_errors=True))
+            if item.get("backup"):
+                kept[pid] = _keep_media(Path(item["backup"]) / "state", state_dir, project.get("refs") or [], undo)
             for record in project.get("files") or ():
                 path = record["path"]
                 if manifest.get("format") == FORMAT_1:
@@ -2383,6 +2459,9 @@ def _apply(opened, manifest, decided, chosen, wanted, root, bundle_id, *, progre
                 if not prefix or prefix in placed_media:
                     continue
                 destination = state_dir.joinpath(*prefix.split("/"))
+                # Only an image that landed is named here; one an older
+                # export left out is looked for like any other ref.
+                landed = False
                 if ref.get("kind") == "folder":
                     for record in manifest.get("media") or ():
                         if not record["path"].startswith(prefix + "/"):
@@ -2390,21 +2469,26 @@ def _apply(opened, manifest, decided, chosen, wanted, root, bundle_id, *, progre
                         final = state_dir.joinpath(*record["path"].split("/"))
                         if record["path"] in placed:
                             _take_placed(placed[record["path"]], final, record, undo)
+                            landed = True
                         elif record["path"] in staged:
                             _move(staged[record["path"]], final)
+                            landed = True
                 elif prefix in placed:
                     record = next((item for item in manifest.get("media") or () if item["path"] == prefix),
                                   {"path": prefix})
                     _take_placed(placed[prefix], destination, record, undo)
+                    landed = True
                 elif prefix in staged:
                     _move(staged[prefix], destination)
-                placed_media[prefix] = str(destination)
+                    landed = True
+                if landed:
+                    placed_media[prefix] = str(destination)
             renamed[original] = target
             item["state_dir"], item["derived_dir"] = state_dir, derived_dir
         # Every project's images, found in one search (one walk of the user's
         # folders for a whole dataset, not one per project).
         found_all = _find_refs({item["id"]: item["project"].get("refs") or [] for item in chosen},
-                               bundle_path, placed_media, me, search=search)
+                               bundle_path, placed_media, me, search=search, kept=kept)
         for item in chosen:
             project = item["project"]
             pid, original, target = item["id"], str(project.get("name") or ""), item["target"]
@@ -2428,8 +2512,8 @@ def _apply(opened, manifest, decided, chosen, wanted, root, bundle_id, *, progre
             results.append({"id": new_id, "bundle_id": pid, "name": project.get("name"), "status": item["status"],
                             "action": item["action"], "target": target, "backup": item.get("backup"),
                             "refs": {"found": sum(1 for ref in refs if ref.get("token") in found
-                                                  and not ref.get("included")),
-                                     "included": sum(1 for ref in refs if ref.get("included")),
+                                                  and ref.get("included") not in placed_media),
+                                     "included": sum(1 for ref in refs if ref.get("included") in placed_media),
                                      "missing": sum(1 for ref in refs if ref.get("kind") in ("file", "folder")
                                                     and ref.get("token") not in found),
                                      "node": sum(1 for ref in refs if ref.get("kind") == "node")}})
@@ -2644,6 +2728,8 @@ def _merge_figures(manifest: dict, staged: dict, renamed: dict, names_by_id: dic
             figure_id = "fig_" + uuid.uuid4().hex[:12]
         folder = root / figure_id
         prefix = f"figures/{figure['id']}/"
+        if not all(record["path"].startswith(prefix) for record in files):
+            raise BundleError(_OUTSIDE)
         for record in files:
             _move(staged[record["path"]], folder.joinpath(*record["path"][len(prefix):].split("/")))
         undo.append(lambda folder=folder: shutil.rmtree(folder, ignore_errors=True))
@@ -2935,6 +3021,12 @@ def job_status(token: str) -> dict:
         raise KeyError(token)
     record = layer_jobs.tasks(TASK_OWNER, prefix=token).get(token) or {}
     status = record.get("status", "pending")
+    if status == "cancelled" and state["kind"] != "export" and state.get("result") is not None:
+        # A Stop that came after the registry write: the projects are in, so
+        # the job landed (a "cancelled" makes the website's page take back
+        # the files those projects now name).
+        status = "ready"
+        record = {**record, "progress": 100, "stage": "ready", "stage_label": "Ready"}
     out = {"job": token, "kind": state["kind"], "status": status, "progress": record.get("progress", 0),
            "stage": record.get("stage"), "stage_label": record.get("stage_label"),
            "error": state.get("error") or record.get("error"), "done": state["done"], "total": state["total"],
