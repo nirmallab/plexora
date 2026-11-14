@@ -799,10 +799,15 @@ def inspect(inventory, *, cancel=None, progress=None, budget_s=None):
                 found = _inspect_one(entry, inventory.place)
             except Exception as error:  # noqa: BLE001 -- one bad file is one row
                 found = {"inspected": True, "role": None,
-                         "reason": f"{entry.name}: {error}"}
+                         "reason": f"{entry.name}: {error}", "transient": True}
+            # An answer about the connection or the moment -- a node that did
+            # not answer, a bucket not yet set up, a file another program held
+            # open -- is not the file's: its version does not change when that
+            # is fixed, so it is not kept, and the next scan asks again.
+            transient = found.pop("transient", False)
             with inventory.lock:
                 _apply(entry, found)
-            if found.get("inspected"):
+            if found.get("inspected") and not transient:
                 _remember(entry)
         with inventory.lock:
             inventory.counts["inspected"] = sum(
@@ -965,12 +970,19 @@ def _inspect_remote(entry, place):
 
     kind, name = place
     if entry.kind == "bundle":
-        return _inspect_bundle(entry, node=name if kind == "node" else None)
+        found = _inspect_bundle(entry, node=name if kind == "node" else None)
+        # Nothing read from a server may be the server not answering.
+        found["transient"] = found.get("role") is None
+        return found
     if entry.kind == "raster" and kind in ("sftp", "web"):
         declared = "mask" if _guess_role(entry) == "mask" else None
         layers, _questions, _bundle, warnings = engine._detect_remote(
             entry.path, {}, declared)
-        return _raster_fields(entry, layers, warnings)
+        found = _raster_fields(entry, layers, warnings)
+        # No layer at all is how an unreachable host, an offline or private
+        # bucket and a missing package answer; none of them is the file's.
+        found["transient"] = not layers
+        return found
     if entry.kind == "raster":
         return _node_raster(entry, name)
     if entry.kind == "table":
@@ -990,7 +1002,8 @@ def _node_raster(entry, node):
     try:
         detected = node_api.detect_on_node(node, entry.path)
     except Exception as error:  # noqa: BLE001 -- the node's sentence, as the row's
-        return {"inspected": True, "role": None, "reason": f"{entry.name}: {error}"}
+        return {"inspected": True, "role": None, "reason": f"{entry.name}: {error}",
+                "transient": True}
     found = detected.get("kind")
     if found not in ("image", "segmentation"):
         return {"inspected": True, "role": None,
@@ -1040,7 +1053,8 @@ def _remote_table(entry, place):
         else:
             local, whole = _node_head_copy(name, entry)
     except Exception as error:  # noqa: BLE001
-        return {"inspected": True, "role": None, "reason": f"{entry.name}: {error}"}
+        return {"inspected": True, "role": None, "reason": f"{entry.name}: {error}",
+                "transient": True}
     found = _inspect_table(entry, Path(local))
     if found.get("role") == "channels" and whole:
         found["proxy"] = str(local)
