@@ -57,7 +57,6 @@ from plexora.server.utils.source_image import (  # noqa: F401
     choose_view_level,
     composite,
 )
-from plexora.server.utils import display_curve
 
 #: Ceiling on one rendered panel, in pixels per side. A 300 mm page at 1200 DPI
 #: is ~14,000 px; past this a single panel is gigabytes of float32 and the
@@ -98,64 +97,27 @@ def render_panel(source, scene, target_width, target_height):
                                 target_width, target_height)
     level = choose_level(source, viewport["w"], target_width)
     divisor = 2 ** level
-    box = (viewport["x"] / divisor, viewport["y"] / divisor,
-           (viewport["x"] + viewport["w"]) / divisor,
-           (viewport["y"] + viewport["h"]) / divisor)
+    # The whole pixels `read` would have floored and ceiled the box to anyway,
+    # so a viewport inside the image renders exactly as it always has.
+    x0 = int(math.floor(viewport["x"] / divisor))
+    y0 = int(math.floor(viewport["y"] / divisor))
+    x1 = max(x0 + 1, int(math.ceil((viewport["x"] + viewport["w"]) / divisor)))
+    y1 = max(y0 + 1, int(math.ceil((viewport["y"] + viewport["h"]) / divisor)))
+    if (x1 - x0) * (y1 - y0) > MAX_SOURCE_PIXELS:
+        raise RenderError(
+            "this panel covers more of the image than one render can read; "
+            "export it at a lower DPI"
+        )
 
-    if source.is_brightfield:
-        # Nothing to composite and no window to apply -- the samples are the
-        # picture. Taken before the channel loop rather than inside it because
-        # a brightfield scene carries no channel entries at all: there is no
-        # sidebar row to have captured one from.
-        block = source.read_rgb(level, box)
-        image = Image.fromarray(np.ascontiguousarray(block), "RGB")
-        if image.size != (target_width, target_height):
-            image = image.resize((max(1, target_width), max(1, target_height)),
-                                 Image.LANCZOS)
-        return image, {"level": level, "channels_rendered": 1}
-
-    accumulator = None
-    rendered = 0
-    for channel in scene.get("channels") or []:
-        if not channel.get("visible", True):
-            continue
-        index = source.channel_index(channel["key"])
-        if index is None:
-            # Reported by the caller through `missing_channels`; nothing is
-            # substituted, because a substituted channel produces a panel that
-            # looks right and is wrong.
-            continue
-        plane, _ = source.read(index, level, box)
-        if accumulator is None:
-            accumulator = np.zeros((plane.shape[0], plane.shape[1], 3), dtype=np.float32)
-        elif plane.shape != accumulator.shape[:2]:
-            # Levels of a pyramid can be off by a pixel against each other.
-            plane = plane[:accumulator.shape[0], :accumulator.shape[1]]
-
-        low, high = float(channel["window"][0]), float(channel["window"][1])
-        span = high - low
-        if span <= 0:
-            continue
-        # The shader's range_clamp, in raw units -- identical arithmetic to
-        # dividing both sides by 65535 first, and without the rounding; the
-        # channel's curve when it was drawn with one.
-        scaled = display_curve.transfer(plane, (low, high), channel.get("curve"))
-        colour = channel["color"]
-        weight = CHANNEL_ALPHA / 255.0
-        for offset, key in enumerate(("r", "g", "b")):
-            value = float(colour[key])
-            if value:
-                accumulator[:scaled.shape[0], :scaled.shape[1], offset] += scaled * (value * weight)
-        rendered += 1
-
-    if accumulator is None:
-        # Every channel was gone, or the panel had none. Black, which is what
-        # the viewer shows for the same state, rather than an error: the panel's
-        # labels and scale bar are still worth exporting.
-        accumulator = np.zeros((max(1, target_height), max(1, target_width), 3),
-                               dtype=np.float32)
-
-    image = Image.fromarray((np.clip(accumulator, 0.0, 1.0) * 255.0).astype(np.uint8), "RGB")
+    # Padded, not clipped: a viewport Quick Edit zoomed or panned past the
+    # slide's edge keeps the part that exists where the preview draws it, with
+    # background around it. A clipped read resized to the panel would stretch
+    # that part across the margin and leave the scale bar measuring the wrong
+    # thing. Brightfield pads with white and needs no channel entries; a
+    # missing channel is skipped, and reported by the caller through
+    # `missing_channels`, never substituted.
+    pixels, rendered, _ = _composite_padded(source, scene, level, (x0, y0, x1, y1))
+    image = Image.fromarray(np.ascontiguousarray(pixels), "RGB")
     if image.size != (target_width, target_height):
         # LANCZOS both ways. Downsampling a bright-on-black fluorescence image
         # with a box filter loses thin structures; upsampling with nearest
@@ -168,10 +130,10 @@ def _composite_padded(source, scene, level, box):
     """The box's pixels composited, as (H, W, 3) uint8, with background where
     the box runs off the image.
 
-    Padded rather than clipped, unlike the upright path: a turned frame is cut
-    from the MIDDLE of this raster, and a raster that shrank to the part of the
-    box that exists would move that middle -- the panel would show a field a
-    little way from the one that was framed. The compositing itself is core's
+    Padded rather than clipped: a turned frame is cut from the MIDDLE of this
+    raster, and an upright one is resized from all of it, so a raster that
+    shrank to the part of the box that exists would move or stretch the
+    field that was framed. The compositing itself is core's
     (`source_image.composite`), shared with an agent's rendered evidence.
     """
     return composite(source, scene.get("channels") or [], level, box)
