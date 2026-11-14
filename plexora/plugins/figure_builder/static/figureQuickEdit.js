@@ -305,6 +305,13 @@ class FigureQuickEdit {
         };
         this.planes.clear();
         const session = this.session;
+        // Not ready until the channels are mounted and something has been
+        // drawn (`markReady`). Before that there is no channel widget and the
+        // view is black, so Done would write the panel with no channels and a
+        // black preview -- for a 3-D panel, over the picture it exports from.
+        session.ready = false;
+        const done = document.getElementById("fb_quickedit_done");
+        if (done) done.disabled = true;
         // The z-stack view the panel was captured on, when it was: a copy,
         // edited here and merged back on Done (mergeVolumeState).
         const recorded = panel.scene?.plugins?.volume?.state;
@@ -354,7 +361,16 @@ class FigureQuickEdit {
         // a fraction of that, and the sharp one replaces it in place when it
         // arrives. Not awaited, because the session is usable without it.
         await this.refresh({ coarse: true });
+        if (this.session !== session) return;
+        this.markReady(session);
         this.refresh();
+    }
+
+    /** The session has something to save: Done may write it. */
+    markReady(session) {
+        session.ready = true;
+        const done = document.getElementById("fb_quickedit_done");
+        if (done) done.disabled = false;
     }
 
     /**
@@ -490,6 +506,7 @@ class FigureQuickEdit {
         // for on every open, a coarsest-level read each: forty requests in
         // front of a forty-channel panel showing three, and on the website
         // forty turns of the page's one Python queue.
+        const session = this.session;
         const described = {};
         const asking = new Map();
         const sourceId = this.session.sourceId;
@@ -510,6 +527,9 @@ class FigureQuickEdit {
         const shown = new Set((panel.scene.channels || [])
             .filter((channel) => channel.visible !== false).map((channel) => channel.key));
         await Promise.all(names.filter((name) => shown.has(keyByName[name])).map(describe));
+        // Closed, or replaced by another open, while the ranges were on their
+        // way: the widget below would land on the NEXT session (or on none).
+        if (this.session !== session) return;
         this.session.describe = describe;
 
         // A bus of this session's own. `SimpleEventHandler` has no unbind, so a
@@ -574,7 +594,9 @@ class FigureQuickEdit {
             });
         }
 
-        await this.sidebar.init(described);
+        const sidebar = this.sidebar;
+        await sidebar.init(described);
+        if (this.session !== session) return;
         this.seedFromScene(panel, names, keyByName);
     }
 
@@ -788,7 +810,9 @@ class FigureQuickEdit {
             && source.datasource && source.datasource === this.loadedDatasource
             && Renderer.supported());
         if (!live) {
+            // Ready at once: Done on a still saves nothing (see `commit`).
             this.showStill(panel);
+            this.markReady(session);
             return;
         }
 
@@ -839,6 +863,7 @@ class FigureQuickEdit {
             frame.remove();
             session.frame3d = null;
             this.showStill(panel);
+            this.markReady(session);
             return;
         }
         session.renderer = renderer;
@@ -854,7 +879,11 @@ class FigureQuickEdit {
         };
         renderer.show(true);
         await renderer.refresh();
-        if (this.session === session) this.scheduleLivePreview();
+        if (this.session !== session) return;
+        // Only now: until its levels land the renderer draws black, and Done
+        // stores what it draws as the panel's master picture.
+        this.markReady(session);
+        this.scheduleLivePreview();
     }
 
     /** The stored picture, still, with the channels locked. */
@@ -1429,8 +1458,10 @@ class FigureQuickEdit {
         const panel = session && this.state.panel(session.panelId);
         // A 3-D panel that could only be shown, not drawn: nothing here was
         // changed, and its stored picture is the master -- re-saving the
-        // still would only make it softer.
-        if (!panel || session.locked) {
+        // still would only make it softer. And a session still opening is
+        // Cancel, not Done: it has no channels and has drawn nothing yet (see
+        // `open`), so saving it would write an empty panel.
+        if (!panel || session.locked || !session.ready) {
             if (options && options.keepOpen) this.teardownSession();
             else this.close();
             return;
