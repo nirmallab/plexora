@@ -794,9 +794,14 @@ class TranscriptLayer {
         // looks like it did not work. The server ignores this key (see
         // `layer_sources.parse_style`, which reads only the ones it knows);
         // it is here to make the url different, which is the only thing that
-        // reaches a cache entry that is never revalidated.
+        // reaches a cache entry that is never revalidated. The BUILD rides
+        // along for the same reason: the raster is drawn from the molecule
+        // tiles, and a rebuild of the layer changes neither the plugin nor
+        // the project record its ETag names.
         const version = this.manifest?.version;
-        if (version) parts.push(`v=${encodeURIComponent(version)}`);
+        const build = this.manifest?.revision;
+        const stamp = [version, build].filter(Boolean).join(".");
+        if (stamp) parts.push(`v=${encodeURIComponent(stamp)}`);
         return parts.join("&");
     }
 
@@ -1354,6 +1359,21 @@ class TranscriptLayer {
         }
     }
 
+    /**
+     * Which build a tile is asked of, for its url, or null from a node too
+     * old to say. An aggregate is computed per request, so how it is derived
+     * is part of it too -- and only of it: keying the molecule tiles on that
+     * would throw the heaviest ones away for a change that does not touch
+     * them. The server keeps a tile for a year only under the string it
+     * would have built itself (`routes.points`), so the two must agree.
+     */
+    tileRevision(aggregated) {
+        const build = this.manifest?.revision;
+        if (!build) return null;
+        const derived = this.manifest?.aggregate_revision;
+        return aggregated && derived ? `${build}.${derived}` : build;
+    }
+
     async fetchTile(key, address, level, tag) {
         this.pending.add(key);
         const aggregated = level > 0;
@@ -1364,6 +1384,7 @@ class TranscriptLayer {
                 // can only be computed for a stated selection.
                 genes: aggregated ? this.drawnGenes() : null,
                 minq: aggregated ? this.state.minQ : null,
+                revision: this.tileRevision(aggregated),
             });
             if (!buffer) return;
             const packed = TranscriptLayer.repack(buffer, aggregated);

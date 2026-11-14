@@ -46,14 +46,21 @@ class TranscriptsApi {
      * which the server can only compute for a stated selection and a stated
      * quality threshold -- so those ride the url there, and a tile is
      * immutable for the four of them together.
+     *
+     * `revision` names the build the tile is asked of (the manifest's), and
+     * rides the url as `v=`: a tile is kept for a year, so a rebuild of the
+     * layer reaches a browser holding the old one only through a different
+     * url. A node too old to state one gets the url it always got.
      */
-    async points(layer, tile, { level = 0, genes = null, minq = null } = {}) {
+    async points(layer, tile, { level = 0, genes = null, minq = null,
+                                revision = null } = {}) {
         const extra = { layer, tile };
         if (level) extra.level = String(level);
         if (genes && genes.length) extra.genes = genes.join(",");
         if (minq !== null && minq !== undefined) {
             extra.minq = String(Math.round(minq));
         }
+        if (revision) extra.v = String(revision);
         const response = await fetch(this.url(
             `plugins/transcripts/points?${this._query(extra)}`));
         return response.ok ? response.arrayBuffer() : null;

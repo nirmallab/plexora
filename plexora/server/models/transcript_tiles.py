@@ -72,6 +72,7 @@ import json
 import os
 import shutil
 import threading
+import time
 from pathlib import Path
 
 import numpy as np
@@ -151,7 +152,8 @@ AGGREGATE_DTYPE_NAME = "gene:uint16,x:float32,y:float32,count:uint32"
 #: molecules rather than stored (`aggregate_tile`), and `/manifest` reports
 #: this constant live, so changing it changes the picture on the next tile
 #: fetch. What it does invalidate is tiles a BROWSER already holds under a
-#: year-long `Cache-Control`, which is why it rides the aggregate ETag.
+#: year-long `Cache-Control`, which is why it rides the aggregate url and
+#: ETag (`aggregate_revision`).
 AGGREGATE_BINS = 45
 
 #: Bumped when an aggregate's CONTENTS change but the cache it is computed
@@ -242,6 +244,27 @@ def read_manifest(datasource_name, layer_id):
             return json.load(handle)
     except (OSError, ValueError):
         return None
+
+
+def revision(manifest):
+    """Which BUILD of this layer a manifest describes, as a short string.
+
+    What the viewer puts in every tile url. A tile is served under a
+    year-long `max-age`, so a browser that holds one never asks again and
+    never sees an ETag change; only a different url reaches it. The source
+    file's mtime cannot tell two builds apart -- a rebuild after the layer's
+    transform, its `min_qv` or its gene panel changed reads the same file --
+    so the build's own stamp leads, and a cache written before there was
+    one falls back to the mtime it always had.
+    """
+    manifest = manifest or {}
+    stamp = manifest.get("built_ns") or manifest.get("source_mtime_ns")
+    return f"{manifest.get('version')}-{stamp}"
+
+
+def aggregate_revision():
+    """How an aggregate is derived, for the urls and ETags of level > 0."""
+    return f"{AGGREGATE_BINS}r{AGGREGATE_REVISION}"
 
 
 def is_current(manifest, expected):
@@ -410,6 +433,11 @@ def _build_locked(datasource_name, layer_id, root, *, genes, gene_index,
         # Said out loud, because the one thing that has ever been wrong about
         # this cache is what frame it is in.
         "units": "reference_pixels",
+        # Which build this is (`revision`). Past the previous build's stamp
+        # even when the clock is too coarse to move between two builds in a
+        # row, because two builds that shared it would share their tile urls.
+        "built_ns": max(time.time_ns(), int(
+            (read_manifest(datasource_name, layer_id) or {}).get("built_ns") or 0) + 1),
     }
     with (tmp_root / "manifest.json").open("w", encoding="utf-8") as handle:
         json.dump(manifest, handle)

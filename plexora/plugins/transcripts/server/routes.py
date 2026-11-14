@@ -183,6 +183,14 @@ def manifest():
         # detail by working out how big a bin would be ON SCREEN, which it
         # cannot do without knowing how many of them a tile is cut into.
         "aggregate_bins": transcript_tiles.AGGREGATE_BINS,
+        # Which build this is, and how its aggregates are derived. The viewer
+        # puts them in every tile url (`v=`), because a tile is kept for a
+        # year and a browser that holds one never asks again: a rebuild of
+        # the same file under the same urls would go on being drawn from the
+        # old bytes -- the old positions, and after a gene panel reordered,
+        # under another gene's name.
+        "revision": transcript_tiles.revision(stored),
+        "aggregate_revision": transcript_tiles.aggregate_revision(),
         # -- what the density controls need to speak in real units --------
         #
         # MICRONS PER PIXEL, read off the project NOW rather than out of the
@@ -317,10 +325,18 @@ def points():
         # without this a browser holding these tiles under a year-long
         # max-age would go on drawing the old grain and the old dots.
         tag = f"{level}:{tile}:{','.join(names)}"
+        build = transcript_tiles.revision(stored)
         if level > 0:
-            tag = (f"{tag}:{min_q}:{transcript_tiles.AGGREGATE_BINS}"
-                   f"r{transcript_tiles.AGGREGATE_REVISION}")
-        return _points_response(records, cap=None, cacheable=True,
+            tag = f"{tag}:{min_q}:{transcript_tiles.aggregate_revision()}"
+            build = f"{build}.{transcript_tiles.aggregate_revision()}"
+        # Kept for a year only when the url names the build these bytes came
+        # from, or names none (a viewer older than `v=`, which gets what it
+        # always got). A url naming another build was built from a manifest
+        # the cache has since replaced, and keeping this answer under it
+        # would be keeping it under a name that is not its own.
+        asked = request.args.get("v")
+        return _points_response(records, cap=None,
+                                cacheable=asked is None or asked == build,
                                 stored=stored, tag=tag)
 
     bounds = {
@@ -354,11 +370,14 @@ def _points_response(records, *, cap, cacheable, stored, tag):
         "X-Transcript-Record-Size": str(records.dtype.itemsize),
         "Cache-Control": "private, max-age=0",
     }
+    if tag:
+        # Keyed on which build the cache is, so a rebuild changes every
+        # tile's ETag at once and nothing else does. The ETag alone reaches
+        # no browser holding a fresh copy; the url's `v=` is what does that.
+        from plexora.server.models import transcript_tiles
+
+        headers["ETag"] = f'"{transcript_tiles.revision(stored)}-{tag}"'
     if cacheable:
-        # Keyed on what the cache was built from, so a rebuild invalidates
-        # every tile at once and nothing else does.
-        headers["ETag"] = (f'"{stored.get("source_mtime_ns")}-'
-                           f'{stored.get("version")}-{tag}"')
         headers["Cache-Control"] = "private, max-age=31536000"
     return Response(payload, mimetype="application/octet-stream", headers=headers)
 
