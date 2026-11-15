@@ -120,7 +120,8 @@ def locate_box(project, artifact_id, px4) -> tuple:
     x0, y0, x1, y1 = px4
     first = frame_at(manifest, (x0, y0), artifact_id=artifact_id)
     second = frame_at(manifest, (x1, y1), artifact_id=artifact_id)
-    if first is not second:
+    # By value: a single render's one frame is built afresh on each lookup.
+    if first != second:
         raise AgentError("invalid_input", f"the box's corners fall on two tiles of "
                          f"{artifact_id}; draw it inside one tile",
                          detail={"corners": [first.get("panel") or first.get("slot"),

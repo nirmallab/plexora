@@ -24,6 +24,7 @@ PROBE = REPO_ROOT / "tests" / "js" / "dataset_walk_leave_probe.mjs"
 #: here rather than silently reducing what is covered.
 CHECKS = (
     "a walk saves the plane, rotation and viewer prefs that were still waiting",
+    "a page left any other way (a link, Back, closing the tab) still sends what was waiting",
     "a walk the browser did not take (Stay at the leave prompt) leaves Next working",
     "a page back from the back/forward cache can walk again",
 )

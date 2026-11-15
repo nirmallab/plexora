@@ -282,8 +282,17 @@ window.PlexoraDropRouter = (function () {
     }
 
     function go(href) {
-        if (window.PlexoraRouter?.go) window.PlexoraRouter.go(href);
-        else window.location.href = href;
+        if (window.PlexoraRouter?.go) return window.PlexoraRouter.go(href);
+        window.location.href = href;
+        return null;
+    }
+
+    /** Whether `sample` is this page's own viewer, hidden under a routed page
+     *  (the Samples page over it): going there only shows it again -- nothing
+     *  reloads, and main.js does not boot to take a handoff. */
+    function ownHiddenViewer(sample) {
+        return Boolean(sample) && sample === datasource() && !viewerShowing()
+            && Boolean(window.PlexoraRouter?.go);
     }
 
     function sampleUrl(sample) {
@@ -315,6 +324,16 @@ window.PlexoraDropRouter = (function () {
         }
         const result = await postJson("import/layers", {sample, paths, answers});
         status?.done?.();
+        if (ownHiddenViewer(sample)) {
+            // A reload the router would turn into showing the viewer as it was.
+            if (result.reload) {
+                window.location.href = sampleUrl(sample);
+                return;
+            }
+            if (effects?.navigate) await go(sampleUrl(sample));
+            await window.__plexora?.adoptLayers?.();
+            return;
+        }
         if (effects?.navigate || result.reload || sample !== datasource()) {
             go(sampleUrl(sample));
         }
@@ -368,7 +387,15 @@ window.PlexoraDropRouter = (function () {
                 target = result.project || target;
             }
             handOff(target, action.then);
-            if (href) go(href);
+            if (!href) return;
+            if (ownHiddenViewer(target)) {
+                // The viewer is shown again, not booted: what the drop handed
+                // over is taken here, once it is on screen.
+                await go(href);
+                if (viewerShowing()) await takeHandoff(target);
+                return;
+            }
+            go(href);
         },
 
         attach_mask: async (action, {choice}) => {

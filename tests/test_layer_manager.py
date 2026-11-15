@@ -21,6 +21,8 @@ MENU_CHECKS = (
     "...which opens two rows of copy and paste glyphs, each sentence a tooltip",
     "...and the Log brightness switch, one for every channel",
     "a registered layer gets no menu",
+    "a layer edit still waiting on its debounce is sent by flush, with keepalive",
+    "...and only once: the debounce it replaced does not send it again",
 )
 
 

@@ -25,6 +25,7 @@ it stands on does not depend on how far the pass has got.
 from __future__ import annotations
 
 import contextvars
+import logging
 import threading
 import time
 
@@ -34,6 +35,8 @@ from plexora.plugins.gating.server import model
 from plexora.plugins.gating.server.autogate import schemas, views
 from plexora.plugins.gating.server.autogate.engine import (TERMINAL, compact_profile,
                                                            engine_for, unit_key, _metrics)
+
+log = logging.getLogger(__name__)
 
 
 def _context_of(panel, marker):
@@ -529,6 +532,7 @@ class _Ahead:
             if len(self.markers) > 1 else None
 
     def _profile(self, marker):
+        from plexora.agent.jobs import JobCancelled
         from plexora.plugins.gating.server.autogate import biology, context
 
         # Read for every marker, not once for the pass: the panel's context
@@ -543,6 +547,16 @@ class _Ahead:
         except AgentError as exc:
             prepared = {"close": ("manual_review_recommended",
                                   f"could not be profiled: {exc.message}")}
+        except (JobCancelled, InterruptedError):
+            raise
+        except Exception as exc:  # noqa: BLE001
+            # One marker's failure closes that marker, not the pass: a failed
+            # pass is resubmitted by every gating_next (`_resume_bulk`) and
+            # would fail on the same marker each time.
+            log.exception("gating bulk: profiling %s of %s failed", marker, self.project)
+            prepared = {"close": ("manual_review_recommended",
+                                  f"could not be profiled: {type(exc).__name__}: "
+                                  f"{str(exc)[:200]}")}
         return prepared, round((time.perf_counter() - started) * 1e3, 1)
 
     def get(self, marker):

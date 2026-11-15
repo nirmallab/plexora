@@ -806,12 +806,21 @@ def _save_field(project, fp, entry):
             "factor": entry["factor"], "level": entry["level"],
             "computed_at": entry["computed_at"], "timing_ms": entry.get("timing_ms")}
     _atomic_write(folder / f"{fp}.json", json.dumps(meta).encode("utf-8"))
-    _sweep(folder)
+    _sweep(folder, protect=(fp,))
 
 
-def _sweep(folder, keep=4):
-    metas = sorted((p for p in folder.glob("*.json") if p.name not in ("state.json",
-                                                                         "last.json")),
+def _sweep(folder, keep=4, protect=()):
+    """Drop all but the `keep` newest fields -- never one that is still the
+    last measured of its pair (`last.json`) or in `protect`: a QC session
+    reads every cycle's field back by its fingerprint (`checks_bulk.field_of`),
+    and a cyclic image has more DNA cycles than `keep`."""
+    try:
+        current = set(json.loads((folder / "last.json").read_text(encoding="utf-8")).values())
+    except (OSError, ValueError, AttributeError):
+        current = set()
+    current.update(protect)
+    metas = sorted((p for p in folder.glob("*.json")
+                    if p.name not in ("state.json", "last.json") and p.stem not in current),
                    key=lambda p: p.stat().st_mtime, reverse=True)
     for stale in metas[keep:]:
         for path in (stale, stale.with_suffix(".npz")):

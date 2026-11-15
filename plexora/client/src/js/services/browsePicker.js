@@ -405,13 +405,17 @@ function carriesFiles(event) {
  * @param onFiles ([File]) in the drop's own turn, before anything is asked or
  *   mounted: the dropped files themselves (the home page's first view,
  *   services/firstView.js).
+ * @param onNone () when a drop that got as far as `onFiles` yields no path
+ *   after all: a question closed, a mount refused. What `onFiles` started
+ *   (the home page's first view) is taken down there.
  * @param quiet a first visit's where-to-keep-work question after the image
  *   opens rather than before (`pickQuestions`).
  * The innermost zone under the pointer takes the drop; one around it stands
  * aside (`defaultPrevented`).
  */
 function attachWebDrop(zoneEl, {count = "one", refuse = null, enabled = null,
-                                onOver = null, onDrop = null, onFiles = null, quiet = false} = {}) {
+                                onOver = null, onDrop = null, onFiles = null, onNone = null,
+                                quiet = false} = {}) {
     const picks = window.PlexoraPicks;
     if (!zoneEl || typeof onDrop !== "function" || !onWebsite() || !picks || !picks.take) {
         return () => {};
@@ -459,11 +463,19 @@ function attachWebDrop(zoneEl, {count = "one", refuse = null, enabled = null,
             }
         }
         // In this turn: the drop's handles can be read only now.
+        const none = () => {
+            try {
+                if (onNone) onNone();
+            } catch (error) {
+                // Its own business; the drop is over either way.
+            }
+        };
         picks.take(event.dataTransfer, pickQuestions({quiet}))
             .then((paths) => {
-                if (paths.length) onDrop(count === "many" ? paths : paths[0]);
-            })
-            .catch((error) => {
+                if (paths && paths.length) onDrop(count === "many" ? paths : paths[0]);
+                else none();
+            }, (error) => {
+                none();
                 window.PlexoraToast?.show?.({title: "Not dropped", note: error?.message || String(error),
                                              tone: "warning"});
             });

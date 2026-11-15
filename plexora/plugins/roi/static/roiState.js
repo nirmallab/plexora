@@ -73,6 +73,9 @@ class RoiStore {
         //: The operations that touched one of QC's regions, marked as they
         //: are applied (touchesQc) and announced once saved (announceQc).
         this._qcOps = new WeakSet();
+        //: Counts every local edit queued and every save landed: a `load()`
+        //: whose read was overtaken by either must not replace them.
+        this._changeSeq = 0;
     }
 
     //: How long after the last committed edit the batch goes out. Long enough
@@ -114,7 +117,13 @@ class RoiStore {
      * sidebar guards against with isRestoring().
      */
     async load() {
+        const seq = this._changeSeq;
         const result = await this.api.getState();
+        // An edit queued, or a save landed, while the read was on its way:
+        // the reply is older than this panel. Taking it would wipe the queue
+        // (or put the revision back, so the next save conflicts with itself).
+        // Null: not loaded; the caller loads again once the store is clean.
+        if (this.loaded && this._changeSeq !== seq) return null;
         this._suspended = true;
         try {
             if (!result.ok || !result.data.success) {
@@ -427,6 +436,7 @@ class RoiStore {
 
     enqueue(ops) {
         if (this._suspended) return;
+        this._changeSeq += 1;
         this.queue.push(...ops);
         this.setStatus("dirty", "");
         this.scheduleFlush();
@@ -475,6 +485,7 @@ class RoiStore {
 
         if (result.ok && result.data.success) {
             this.queue.splice(0, batch.length);
+            this._changeSeq += 1;
             this.revision = result.data.revision;
             this._retryDelay = 0;
             task?.done();
@@ -538,6 +549,41 @@ class RoiStore {
 
     get hasUnsavedWork() {
         return this.queue.length > 0 || this.status === "conflict";
+    }
+
+    /** Whether the server holds exactly what this panel shows: nothing queued
+     *  or in flight, no conflict, no edit the server refused. */
+    get inStepWithServer() {
+        return !this.queue.length && !this._flushing && !this.refused.length
+            && !this.dimensionMismatch && this.status !== "conflict";
+    }
+
+    /**
+     * Send what is queued now, rather than after the debounce, and wait for
+     * it: for a write that reads the server's regions (Map to cells, Save to
+     * file, From cells). Resolves `inStepWithServer`.
+     */
+    async settle() {
+        const landed = async () => {
+            while (this._flushing) await new Promise((resolve) => setTimeout(resolve, 50));
+        };
+        for (let round = 0; round < 3; round++) {
+            await landed();
+            if (!this.queue.length) break;
+            if (this._flushTimer) clearTimeout(this._flushTimer);
+            this._flushTimer = null;
+            const revision = this.revision;
+            await this.flush();
+            // Not delivered (unreachable, a conflict, refused): no use asking again.
+            if (this.revision === revision) break;
+        }
+        await landed();
+        // A debounce cleared above and no save started: put it back.
+        if (this.queue.length && !this._flushTimer && !this._retryTimer
+                && this.status !== "conflict" && !this.dimensionMismatch) {
+            this.scheduleFlush();
+        }
+        return this.inStepWithServer;
     }
 
     // -- conflict resolution ---------------------------------------------

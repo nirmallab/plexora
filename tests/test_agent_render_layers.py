@@ -120,3 +120,29 @@ def test_compositing_never_loads_a_datasource(made, tmp_path, monkeypatch):
                         lambda *a, **k: calls.append(a) or None)
     assert _render()["manifest"]["layers_rendered"]
     assert calls == []
+
+
+def test_a_drawn_layer_closes_what_it_opened(made, tmp_path, monkeypatch):
+    """Every render that draws an image layer opened a `SourceImage` for it
+    and left its file handle to the garbage collector -- on Windows a held
+    handle keeps the file from being replaced or deleted (audit lead
+    io-formats-8)."""
+    from plexora.server.utils import source_image
+
+    _save(tmp_path, Project.load("synth").with_layer(_column_layer(tmp_path)))
+    opened, closed = [], []
+    real = source_image.SourceImage
+
+    class Tracked(real):
+        def __init__(self, data, *args, **kwargs):
+            super().__init__(data, *args, **kwargs)
+            if "#layer:second" in json.dumps(data, default=str):    # the layer's stand-in
+                opened.append(self)
+
+        def close(self):
+            closed.append(self)
+            super().close()
+
+    monkeypatch.setattr(source_image, "SourceImage", Tracked)
+    assert _render()["manifest"]["layers_rendered"]
+    assert opened and all(any(c is o for c in closed) for o in opened)

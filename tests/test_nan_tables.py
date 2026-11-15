@@ -116,6 +116,24 @@ def test_the_summary_and_the_fit_skip_nan(client, tmp_path, suffix):
     assert np.isfinite(fit.get_json()["gate"])
 
 
+
+def test_the_fit_skips_an_infinite_marker_value(client, tmp_path):
+    """+inf (a ratio over a zero, say) is not scrubbed on load as -inf is. The
+    gate's histogram is binned on the finite values, so the Auto button still
+    answers (audit lead r2-row-identity-6)."""
+    frame = _frame()
+    cd8 = frame["CD8"].to_numpy().copy()
+    cd8[2] = np.inf
+    frame = frame.with_columns(pl.Series("CD8", cd8))
+    _attach(client, tmp_path, frame, ".parquet")
+
+    fit = client.post("/plugins/gating/get_gating_gmm", data=json.dumps(
+        {"channel": "CD8", "datasource": "proj", "selection_ids": []}))
+    assert fit.status_code == 200, fit.get_data(as_text=True)[:400]
+    body = fit.get_json()
+    assert np.isfinite(body["gate"])
+    assert all(np.isfinite(point["x"]) for point in body["gmm_1"])
+
 # -- coordinates ------------------------------------------------------------
 
 @pytest.mark.parametrize("suffix", [".csv", ".parquet"])

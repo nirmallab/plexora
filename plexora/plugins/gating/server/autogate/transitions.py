@@ -162,6 +162,34 @@ def _no_positives(engine, unit, where):
     return _outcome(unit, direction_discarded=True)
 
 
+def _within_refusal(engine, unit, packet, answer):
+    """Refuse (`invalid_input`) a look's `within` that `_within` would refuse,
+    before anything of the look is kept on the unit: a refused answer is
+    struck and saved (`BaseEngine._strike`), so what it had already written
+    -- its notes, judged rows, confidence -- would stay, and pile up again on
+    the corrected answer. Read-only (`Engine._references`)."""
+    from plexora.agent.errors import AgentError
+    from plexora.plugins.gating.server.autogate import packets
+
+    partner = (answer.within or "").strip()
+    condition = unit.get("condition")
+    if condition:
+        if partner and partner != condition["within"]:
+            raise AgentError("invalid_input", f"this gate is already conditional on "
+                             f"{condition['within']}+; judge its rows",
+                             detail={"condition": condition["within"]})
+        return
+    evidence = packet.get("evidence") or {}
+    allowed = evidence.get("within_allowed") or packets.within_eligible(evidence.get("partners"))
+    if partner not in allowed:
+        raise AgentError("invalid_input", "`within` must name a subset partner of this "
+                         "packet gated at moderate confidence or better (`allowed.within`)",
+                         detail={"allowed": allowed, "given": partner or None})
+    if not any(r["marker"] == partner for r in engine._references(unit)):
+        raise AgentError("invalid_input", f"{partner} is no longer a gated partner",
+                         detail={"allowed": allowed})
+
+
 def _within(engine, unit, packet, answer):
     """A look's `within`: the stain is real only inside a subset partner's
     positives. The gate is refitted among them (`bivariate.within_partner`),
@@ -304,6 +332,8 @@ def _look(engine, packet, answer, *, where):
 
     unit = _units(engine, packet)[0]
     reference = answer.kind == "t3_biological"
+    if answer.within:
+        _within_refusal(engine, unit, packet, answer)
     _note(unit, answer)
     _judge_rows(unit, packet, answer)
     unit["ai_confidence"] = _confidence(answer)

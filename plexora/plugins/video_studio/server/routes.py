@@ -73,7 +73,15 @@ def _guard(fn):
         return _error(exc, 400)
 
 
-def _facts_for(datasource, client=None):
+def _facts_for(datasource, client=None, *, reread=True):
+    """`reread=False` believes client facts that already carry the server's
+    fingerprint -- the bar's, which came from /api/state -- rather than
+    reading the image's volume description again (a file read, or a node
+    round trip) on every preview."""
+    if (not reread and isinstance(client, dict)
+            and isinstance(client.get("fingerprint"), dict) and client["fingerprint"]
+            and client.get("image_size")):
+        return facts_mod.merge({"datasource": datasource or ""}, client)
     server = None
     if datasource:
         try:
@@ -126,7 +134,7 @@ def build_preset():
     user changes parameters."""
     def run():
         body = _payload()
-        facts = _facts_for(body.get("datasource"), body.get("facts"))
+        facts = _facts_for(body.get("datasource"), body.get("facts"), reread=False)
         document = presets.build(body.get("preset"), facts, body.get("scene"),
                                  body.get("params"))
         return api.json_response({"success": True, "document": document,
@@ -186,6 +194,12 @@ def replace_video(video_id):
 def delete_video(video_id):
     def run():
         schema.validate_video_id(video_id)
+        # A running writer holds files under the video's folder; on Windows
+        # the rmtree would fail partway, after removing other exports' files.
+        running = encode_jobs.running(video_id)
+        if running:
+            return _error(f"export {running[0]} is still running; cancel it first", 409,
+                          code="export_running", export_id=running[0])
         repository.delete(video_id)
         return api.json_response({"success": True})
     return _guard(run)

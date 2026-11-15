@@ -101,9 +101,13 @@ class SpotLayer extends BinLayer {
 
     // -- values -----------------------------------------------------------------
 
-    /** Every named field loaded, in one request for the ones that are not. */
+    /** Every named field loaded, in one request for the ones that are not.
+     *  A batch whose request failed is drawn empty this once but not kept,
+     *  so the next draw asks again rather than showing the genes as absent
+     *  for the life of the page. */
     async load(names) {
         const missing = names.filter((name) => !this._values.has(name));
+        const failed = new Map();
         // In batches: the route answers at most SPOT_VALUE_BATCH names.
         for (let start = 0; start < missing.length; start += SpotLayer.SPOT_VALUE_BATCH) {
             const batch = missing.slice(start, start + SpotLayer.SPOT_VALUE_BATCH);
@@ -111,7 +115,13 @@ class SpotLayer extends BinLayer {
             try {
                 answer = await this.api.spotValues(this.layerId, batch);
             } catch (error) {
+                console.error("visium_hd: spot values could not be read", error);
                 answer = null;
+            }
+            // `_get` answers null for a refused request rather than throwing.
+            if (!answer || typeof answer.values !== "object" || answer.values === null) {
+                for (const name of batch) failed.set(name, new Float32Array(this.spotCount()));
+                continue;
             }
             for (const name of batch) {
                 const field = answer?.values?.[name];
@@ -120,7 +130,7 @@ class SpotLayer extends BinLayer {
                 this._windows.set(name, Number(answer?.windows?.[name]) || 1);
             }
         }
-        return names.map((name) => this._values.get(name));
+        return names.map((name) => failed.get(name) || this._values.get(name));
     }
 
     /** Each styled gene's automatic window, in the shape `ceiling` reads. */

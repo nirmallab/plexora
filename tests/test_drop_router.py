@@ -54,6 +54,9 @@ CHECKS = (
     'a drop while another is being added waits, and says so',
     '...then runs',
     'the home page hands over only what is more than a new sample',
+    "over the open sample's own viewer, the drop's follow-up attach still runs",
+    'a drop onto the sample open behind the Samples page that needs a reload reloads it',
+    '...and one that does not is taken on by the viewer it shows again',
 )
 
 

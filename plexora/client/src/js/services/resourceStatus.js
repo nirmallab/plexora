@@ -68,6 +68,10 @@ window.PlexoraResourceStatus = (function () {
     //: How often a converting mask is asked about. The conversion is minutes;
     //: the chip only has to move.
     const MASK_POLL_MS = 2000;
+    //: Polls in a row that find the mask gone from the report (its node's
+    //: segmentation unavailable, the project's mask replaced) before the watch
+    //: ends; a report run again (a reconnect) starts a new one.
+    const MASK_MISSES = 15;
 
     //: What each resource kind is called in a sentence. The route's keys are
     //: the server's words for them; these are the user's.
@@ -554,16 +558,33 @@ window.PlexoraResourceStatus = (function () {
             });
         };
         show(converting);
+        // One poll at a time: a slow answer is not joined by the next.
+        let asking = false;
+        let misses = 0;
+        const end = () => {
+            window.clearInterval(maskWatch);
+            maskWatch = null;
+        };
         maskWatch = window.setInterval(() => {
+            if (asking) return;
+            asking = true;
             load(datasource).then((next) => {
                 const mask = ((next && next.masks) || [])
                     .find((row) => row.id === converting.id);
-                if (!mask || mask.state === "preparing") {
-                    if (mask) show(mask);
+                if (!mask) {
+                    misses += 1;
+                    if (misses < MASK_MISSES) return;
+                    // Gone: the chip is not left saying it converts.
+                    end();
+                    wait?.ready();
                     return;
                 }
-                window.clearInterval(maskWatch);
-                maskWatch = null;
+                misses = 0;
+                if (mask.state === "preparing") {
+                    show(mask);
+                    return;
+                }
+                end();
                 if (mask.state === "error") {
                     wait?.failed(failedSentence(mask));
                     return;
@@ -572,7 +593,7 @@ window.PlexoraResourceStatus = (function () {
                 if (maskReloader) maskReloader(mask.version);
                 if (mask.warning) maskNote(datasource, [mask.warning]);
                 else if (maskToast) maskToast.dismiss();
-            }).catch(() => null);
+            }).catch(() => null).finally(() => { asking = false; });
         }, MASK_POLL_MS);
     }
 

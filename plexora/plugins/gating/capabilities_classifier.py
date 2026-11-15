@@ -125,6 +125,13 @@ def annotate(call, inp):
                 unknown.append(int(cell_id))
     after = store.examples(ds.name, inp.marker)
     _tell(call, inp.marker)
+    # The undo puts every touched cell back to the label it had: a relabelled
+    # cell gets its old label again, a removed one comes back, a new one goes.
+    was_pos, was_neg = {int(c) for c in before[0]}, {int(c) for c in before[1]}
+    touched = ({int(c) for c in (*inp.positive, *inp.negative, *inp.remove)}
+               - set(unknown))
+    undo = {"positive": sorted(touched & was_pos), "negative": sorted(touched & was_neg),
+            "remove": sorted(touched - was_pos - was_neg)}
     receipt = make_receipt(
         call, changed=before != after,
         before={"positive": len(before[0]), "negative": len(before[1])},
@@ -132,7 +139,7 @@ def annotate(call, inp):
         persistent_state="plugin_store:gating",
         undo_hint={"tool": "classifier_annotate", "arguments": {
             "project": call.project_name, "marker": inp.marker,
-            "remove": sorted(set(inp.positive) | set(inp.negative))}})
+            **{k: v for k, v in undo.items() if v}}})
     return {"receipt": receipt.model_dump(mode="json"),
             "examples": {"positive": len(after[0]), "negative": len(after[1])},
             "unknown_cells": unknown[:100]}

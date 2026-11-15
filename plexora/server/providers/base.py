@@ -338,6 +338,16 @@ class SpecNotLoaded(ResourceError):
     """
 
 
+class NodeRefused(ResourceError):
+    """A node answered and turned this server away (HTTP 401/403).
+
+    Its own kind because it is not one resource's problem: the token is wrong,
+    or the node will not take on what was asked of it, and every read of every
+    resource on that node fails the same way. Callers that shrug off an
+    unhelpful answer about one file must let this one out.
+    """
+
+
 class NodeVersionMismatch(ResourceError):
     """A node speaks a node-API version this primary does not.
 

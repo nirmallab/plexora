@@ -334,6 +334,11 @@ def start_build(token, plan, *, name, description="", exist_ok=False,
     from plexora import paths
     from plexora.server.models import dataset_plan, layer_jobs
 
+    if (TASK_OWNER, token) in layer_jobs.running_tasks(prefix=token):
+        # A second Create while this scan's build runs: `start_task` would
+        # leave the running task alone, so its record has to be left too --
+        # a fresh one here would be the one polled, and never written.
+        return build_status(token)
     check_name(name, exist_ok=exist_ok)
     plan = dataset_plan.verify(plan)
     state = {"name": str(name).strip(), "projects": [], "dataset": None,

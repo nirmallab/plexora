@@ -622,6 +622,11 @@ def _region(ds, marker, x, finite, bio, partners, lo, hi, width, col, cellmod, p
         gate = next(float(p["gate"]) for p in partners if p["marker"] == name)
         col_p = profmod.column(ds, name)
         y = col_p.to_fit(cellmod.values(ds, name)) > col_p.to_fit(gate)
+    # The whole image's ceiling is read on the body above the floor spike
+    # (`profile.Column.body`); each tile's is too, or a tile's share of the
+    # unmeasured cells is taken for its background and its ceiling lands in
+    # the floor's valley, near zero.
+    floor = float(col.fit[col.floor_n - 1]) if col.floor_n else None
     estimates = []
     for t in range(PARAMS["tiles"] ** 2):
         rows = (tile == t) & finite
@@ -632,7 +637,10 @@ def _region(ds, marker, x, finite, bio, partners, lo, hi, width, col, cellmod, p
             if curve is not None and curve["rise"] >= PARAMS["bio_min_rise"]:
                 estimates.append(curve["x0"] + PARAMS["bio_k"] * curve["s"])
         else:
-            found = background(np.sort(x[rows]))
+            body = np.sort(x[rows])
+            if floor is not None:
+                body = body[body > floor + 1e-6 * max(1.0, abs(floor))]
+            found = background(body) if body.size >= PARAMS["tile_min_cells"] // 2 else None
             if found is not None and found["ceiling"] is not None:
                 estimates.append(found["ceiling"])
     if len(estimates) < 3:

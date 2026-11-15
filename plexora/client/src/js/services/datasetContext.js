@@ -51,13 +51,31 @@ window.PlexoraDataset = (function () {
      * @param databaseDescription - per-column stats, or {} before it arrives
      */
     function build(config, imageChannels, databaseDescription = {}) {
-        const schema = resolveSchema(config);
+        // Read from `config` live, like segmentation below: refreshDataset
+        // (main.js) mutates `config` in place, and every active plugin keeps
+        // the object it was handed. One schema per record, so a plugin
+        // comparing two reads sees the same object.
+        let schemaFor;
+        let schemaOf = null;
+        const schema = () => {
+            const spec = config.dataset;
+            const key = spec ? spec.roles : null;
+            if (schemaFor === undefined || schemaFor.spec !== spec || schemaFor.key !== key) {
+                schemaFor = { spec, key };
+                schemaOf = resolveSchema(config);
+            }
+            return schemaOf;
+        };
 
         // Reserved columns are numeric but are not markers. Kept in step with
         // the server's TableHandle.markers, which likewise reports only
         // columns a histogram could be built for.
-        const reserved = new Set(["id"]);
-        [schema?.cellId, schema?.x, schema?.y].forEach((c) => c && reserved.add(c));
+        const reserved = () => {
+            const out = new Set(["id"]);
+            const now = schema();
+            [now?.cellId, now?.x, now?.y].forEach((c) => c && out.add(c));
+            return out;
+        };
 
         return {
             name: config.name || window.datasource,
@@ -88,8 +106,12 @@ window.PlexoraDataset = (function () {
             table: {
                 // No dataset block IS the image-only state; there is no
                 // separate flag that could disagree with it.
-                available: Boolean(config.dataset),
-                sourceKind: config.dataset?.type || "csv",
+                get available() {
+                    return Boolean(config.dataset);
+                },
+                get sourceKind() {
+                    return config.dataset?.type || "csv";
+                },
                 describe: databaseDescription,
                 /**
                  * Columns a plugin can threshold or plot -- the classification
@@ -114,15 +136,18 @@ window.PlexoraDataset = (function () {
                     const describable = (column) => Boolean(databaseDescription[column]?.histogram);
                     const recorded = (config.dataset?.columns?.markers || []).filter(describable);
                     if (recorded.length) return recorded;
+                    const skip = reserved();
                     return Object.keys(databaseDescription).filter(
-                        (column) => !reserved.has(column) && describable(column)
+                        (column) => !skip.has(column) && describable(column)
                     );
                 },
                 get metadataColumns() {
                     return [...(config.dataset?.columns?.metadata || [])];
                 },
             },
-            schema,
+            get schema() {
+                return schema();
+            },
         };
     }
 

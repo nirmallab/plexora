@@ -111,10 +111,11 @@ def lines(document, results, options):
         out += [f"  {line}" for line in limitations]
         out += [
             "",
-            "  These are stated rather than omitted. The panels above were",
-            "  re-rendered from the source image at the resolution requested;",
-            "  anything listed here was drawn by a tool whose data a figure does",
-            "  not store, and appears only in the on-screen preview.",
+            "  These are stated rather than omitted. Except for the panels",
+            "  named here, the panels above were re-rendered from the source",
+            "  image at the resolution requested; an overlay listed here was",
+            "  drawn by a tool whose data a figure does not store, and appears",
+            "  only in the on-screen preview.",
         ]
     return out
 
@@ -155,6 +156,8 @@ def _panel_lines(document, panel, result):
                       if result.get("requested_dpi") else ""))
 
     for channel in panel["scene"]["channels"]:
+        if not channel.get("visible", True):
+            continue  # not drawn (`composite` skips it), so not listed as drawn
         colour = channel["color"]
         out.append(
             f"      channel {channel['fullname_at_capture'] or channel['key']}"
@@ -162,6 +165,13 @@ def _panel_lines(document, panel, result):
             f"  rgb({colour['r']},{colour['g']},{colour['b']})")
 
     for name, contribution in panel["scene"]["plugins"].items():
+        if name == "volume":
+            # Core's record of the z-stack view, not an overlay: say which.
+            state = (contribution or {}).get("state") or {}
+            view = state.get("cut") or state.get("mode") if isinstance(state, dict) else None
+            if view:
+                out.append(f"      view    {view}")
+            continue
         out.append(f"      overlay {name} {contribution['version']}")
     return out
 
@@ -172,7 +182,23 @@ def _limitations(results):
     for _, result in results:
         channels.update(result.get("missing_channels") or [])
         overlays.update(result.get("missing_overlays") or [])
+
+    def labels(flag):
+        return [result.get("label") or panel["panel_id"]
+                for panel, result in results if result.get(flag)]
+
     out = []
+    # The same caveats `export._warnings` raises, on the page that travels
+    # with the PDF.
+    if labels("missing_source"):
+        out.append("panels whose source image is no longer available (exported black): "
+                   + ", ".join(labels("missing_source")))
+    if labels("stale_view"):
+        out.append("panels whose image no longer has the plane they were captured on "
+                   "(exported at the default plane): " + ", ".join(labels("stale_view")))
+    if labels("client_rendered"):
+        out.append("3-D panels exported from the picture the viewer's 3-D view drew, "
+                   "not re-rendered: " + ", ".join(labels("client_rendered")))
     if channels:
         out.append("channels no longer present in the source: " + ", ".join(sorted(channels)))
     if overlays:

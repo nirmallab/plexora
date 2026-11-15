@@ -109,6 +109,18 @@
         // A helper that failed is not replaced: one that failed to load will
         // fail again, and Python fits for itself without one.
         wanted = Math.max(0, wanted - 1);
+        // The last one gone (none ready, none loading, none to come): what is
+        // queued would wait for good -- Python asking "pending" forever. It
+        // fails instead, and Python fits it itself.
+        if (helpers.some((other) => !other.dead) || helpers.length < wanted) return;
+        while (queue.length) {
+            const queued = jobs.get(queue.shift());
+            if (queued && queued.state === "queued") {
+                delete queued.values;
+                delete queued.code;
+                Object.assign(queued, { state: "done", error: why, at: now() });
+            }
+        }
     }
 
     function expire() {

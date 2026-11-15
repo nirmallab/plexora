@@ -80,6 +80,16 @@ const report = {};
 // Plane 7 on screen, nothing loaded yet: the request carries the plane.
 viewer.setCentroidPlanes({ column: "Z", z0: 7, z1: 7 });
 report.filter = viewer.centroidRequestFilter();
+// The server keeps low < z <= high; the ROI mapping and the click index put
+// z on plane floor(z + 0.5). A z exactly half-way (a cell spanning planes 6
+// and 7 has z 6.5) must be on the same plane both ways: 6.5 on 7, 7.5 not.
+{
+    const [low, high] = report.filter.Z;
+    // As the server compares: the filter columns are float32.
+    const kept = (z) => Math.fround(z) > Math.fround(low) && Math.fround(z) <= Math.fround(high);
+    report.half_way = { "6.5": kept(6.5), "7.5": kept(7.5), "7": kept(7), "6.49": kept(6.49),
+        "7.49": kept(7.49) };
+}
 let pending = viewer.updateVisibleCentroidTiles();
 viewer.requests.at(-1).reply.resolve({ ids: [1, 2] });
 await pending;
@@ -90,7 +100,8 @@ viewer.setCentroidPlanes({ column: "Z", z0: 2, z1: 2 });
 const before = viewer.requests.length;
 pending = viewer.updateVisibleCentroidTiles();
 report.refetched_cached_tile = viewer.requests.length === before + 1
-    && JSON.stringify(viewer.requests.at(-1).filter.Z) === JSON.stringify([1.5, 2.5]);
+    && viewer.requests.at(-1).filter.Z[0] < 1.5 && viewer.requests.at(-1).filter.Z[0] > 1.49
+    && viewer.requests.at(-1).filter.Z[1] < 2.5 && viewer.requests.at(-1).filter.Z[1] > 2.49;
 report.while_loading = ids();
 viewer.requests.at(-1).reply.resolve({ ids: [3] });
 await pending;

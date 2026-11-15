@@ -188,6 +188,8 @@
     }
 
     function ask(session, text, secretAnswer) {
+        // A stopped connection is asked nothing more.
+        if (ended(session)) return Promise.resolve(null);
         return new Promise((resolve) => {
             const id = secret(6);
             const before = session.state;
@@ -224,13 +226,19 @@
         return true;
     }
 
+    //: The answers to one of the server's questions, or null -- the sign-in
+    //: given up (sshEntry.js sends nothing) -- once a question was given up
+    //: (Stop, a timeout: `answer(null)`) or the connection has ended.
     async function interactive(session, request) {
+        if (ended(session)) return null;
         if (request.name) line(session, request.name);
         if (request.instruction) line(session, request.instruction);
         const answers = [];
         for (const item of request.prompts || []) {
             const text = [request.instruction, item.prompt].filter(Boolean).join("\n").trim();
-            answers.push(await ask(session, text || item.prompt, !item.echo));
+            const answer = await ask(session, text || item.prompt, !item.echo);
+            if (answer === null || ended(session)) return null;
+            answers.push(answer);
         }
         return answers;
     }
@@ -275,6 +283,12 @@
         session.error = null;
         line(session, `The data node is up${hello.hostname ? ` on ${hello.hostname}` : ""}.`);
         finishSsh(session);
+        // Started: a reload from now on waits the short while (`reattach`).
+        const kept = session.room ? read(ROOMS_KEY)[session.room] : null;
+        if (kept && kept.until) {
+            delete kept.until;
+            keepRoom(session.room, kept);
+        }
     }
 
     function watchRoom(session) {
@@ -343,7 +357,10 @@
         const plan = session.plan;
         const auth = secret(32);
         const key = secret(32);
-        keepRoom(session.room, { relay: session.relay, auth, key, name: session.name, at: Date.now() });
+        // `until`: while the node is starting, a reloaded tab waits for it
+        // this long (`reattach`): its start command goes on without the page.
+        keepRoom(session.room, { relay: session.relay, auth, key, name: session.name, at: Date.now(),
+                                 until: Date.now() + Math.max(60, plan.timeout || 600) * 1000 });
         openRoom(session, { auth, key });
         // The room exists once this page is in it; only then may the node join.
         if (!(await waitFor(() => session.roomClient.state().socket === "open"
@@ -626,6 +643,10 @@
             };
             sessions.set(session.id, session);
             openRoom(session, record);
+            // A node still starting when the tab was reloaded (a queued job,
+            // an install) is waited for until its start's own timeout.
+            const wait = Math.max(REATTACH_MS, (Number(record.until) || 0) - Date.now());
+            if (wait > REATTACH_MS) session.detail = "Waiting for the data node to start…";
             setTimeout(() => {
                 if (session.state === "connecting") {
                     session.error = "The data node is no longer running.";
@@ -633,7 +654,7 @@
                     session.roomClient.close();
                     dropRoom(room);
                 }
-            }, REATTACH_MS);
+            }, wait);
         }
         // Files-only servers this tab was connected to: signed in to again,
         // the dialog brought back for the questions.

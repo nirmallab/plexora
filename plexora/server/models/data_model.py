@@ -146,6 +146,9 @@ def classify_image_error(exc):
         return "unavailable", detail
     if getattr(type(exc), "INSTALL", None) and isinstance(exc, ImportError):
         return "inaccessible", detail
+    # A node that turns this server away: the image is fine, the access is not.
+    if isinstance(exc, (providers.NodeRefused, providers.NodeVersionMismatch)):
+        return "inaccessible", detail
     if isinstance(exc, FileNotFoundError):
         return "missing", detail
     if isinstance(exc, PermissionError):
@@ -1853,6 +1856,24 @@ def _waits_for_open(entry, datasource_name):
             and not _segmentation_job_lock_for(datasource_name).locked())
 
 
+def _merge_fixups(stored, before, after):
+    """`stored` (the entry as the file holds it now) with the keys `load_config`
+    changed from `before` to `after`, one level into a nested dict (the
+    `dataset` spec), and nothing else."""
+    merged = dict(stored or {})
+    for key in set(before) | set(after):
+        old, new = before.get(key), after.get(key)
+        if old == new and (key in before) == (key in after):
+            continue
+        if key not in after:
+            merged.pop(key, None)
+        elif isinstance(old, dict) and isinstance(new, dict) and isinstance(merged.get(key), dict):
+            merged[key] = _merge_fixups(merged[key], old, new)
+        else:
+            merged[key] = new
+    return merged
+
+
 def load_config(datasource_name):
     global config
 
@@ -1874,6 +1895,10 @@ def load_config(datasource_name):
                 entry = config[datasource_name]
         except Exception:  # noqa: BLE001 -- a file not found is reported as missing, as ever
             _log.exception("Could not look for %s's files on this computer", datasource_name)
+    # What the entry held before the fixups below, so the write sends back
+    # only what they changed: an edit to the entry made while this load ran
+    # outside the lock must survive it.
+    read_entry = json.loads(json.dumps(entry or {}))
     updated = False
     # Update the feature-table path -- skipped entirely for an image-only
     # datasource, which has no source file to fix up.
@@ -1931,7 +1956,8 @@ def load_config(datasource_name):
                 # Gone means deleted while this load was in flight; re-adding
                 # it here would resurrect a project the user just removed.
                 if datasource_name in stored:
-                    stored[datasource_name] = entry
+                    stored[datasource_name] = _merge_fixups(
+                        stored[datasource_name], read_entry, entry)
                     write_config(config_file, stored)
 
     # Started only after the write above has landed, since the job patches the
@@ -4886,8 +4912,11 @@ def _channel_num_to_name(datasource_name, channel_num):
 # (qmin, span) window they encode. Applying one is a single gather over the
 # tile; the arithmetic form it replaces promoted each 1024x1024 tile to float64
 # (an 8 MB temporary) and made four passes over it for the rint/clip/astype.
-_quantize_lut_cache = {}
+# Bounded, most recently used kept: every contrast-slider position is a window
+# of its own, and 64 KiB each for the life of the server adds up.
+_quantize_lut_cache = collections.OrderedDict()
 _quantize_lut_lock = threading.Lock()
+_QUANTIZE_LUT_LIMIT = 64
 
 
 def _quantize_to_uint8(array, qmin, span):
@@ -4899,11 +4928,15 @@ def _quantize_to_uint8(array, qmin, span):
     key = (float(qmin), float(span))
     with _quantize_lut_lock:
         lut = _quantize_lut_cache.get(key)
+        if lut is not None:
+            _quantize_lut_cache.move_to_end(key)
     if lut is None:
         levels = np.arange(65536, dtype=np.float32)
         lut = np.clip(np.rint((levels - qmin) / span * 255), 0, 255).astype(np.uint8)
         with _quantize_lut_lock:
             _quantize_lut_cache[key] = lut
+            while len(_quantize_lut_cache) > _QUANTIZE_LUT_LIMIT:
+                _quantize_lut_cache.popitem(last=False)
     return lut[array]
 
 
@@ -5564,25 +5597,27 @@ def _local_thumbnail_plane(channel_file, pyramid=None, rgb=False, index=0):
     try:
         from plexora.server.utils.tiff_series import ImageTiff
 
-        channel_io = ImageTiff(channel_file)
-        # Same axes-aware read and same `default=` fallback as
-        # LocalImageProvider.open, so a card is drawn for exactly the images
-        # the viewer can open. Failure here is still a placeholder icon rather
-        # than an error -- this is a grid of cards, not a page.
-        levels = tiff_series.channel_series(channel_io).levels
-        axes = str(getattr(levels[0], "axes", "") or "")
-        interleaved = (axes.endswith("S") and len(levels[0].shape) == 3
-                       and levels[0].shape[-1] in (3, 4))
+        # Closed here rather than by a GC cycle: on Windows an open file
+        # cannot be moved or deleted, and this runs for every card.
+        with ImageTiff(channel_file) as channel_io:
+            # Same axes-aware read and same `default=` fallback as
+            # LocalImageProvider.open, so a card is drawn for exactly the
+            # images the viewer can open. Failure here is still a placeholder
+            # icon rather than an error -- this is a grid of cards, not a page.
+            levels = tiff_series.channel_series(channel_io).levels
+            axes = str(getattr(levels[0], "axes", "") or "")
+            interleaved = (axes.endswith("S") and len(levels[0].shape) == 3
+                           and levels[0].shape[-1] in (3, 4))
 
-        def spatial(level):
-            return level.shape[:2] if interleaved else level.shape[-2:]
+            def spatial(level):
+                return level.shape[:2] if interleaved else level.shape[-2:]
 
-        level_series = next(
-            (level for level in reversed(levels)
-             if all(d >= 200 for d in spatial(level))),
-            levels[0],
-        )
-        array = np.asarray(zarr.open(level_series.aszarr()))
+            level_series = next(
+                (level for level in reversed(levels)
+                 if all(d >= 200 for d in spatial(level))),
+                levels[0],
+            )
+            array = np.asarray(zarr.open(level_series.aszarr()))
     except Exception:
         return None
     if interleaved:

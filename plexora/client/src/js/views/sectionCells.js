@@ -40,6 +40,9 @@
             this.cache = new Map();
             //: axis -> the last cut read: drawn until the next one lands.
             this.last = {};
+            //: axis -> key of the cut asked for last: an answer for an older
+            //: cut that lands after it is cached but not drawn.
+            this.wanted = {};
             this.pending = new Map();
         }
 
@@ -113,13 +116,14 @@
         }
 
         async fetchCut(want) {
+            const key = `${want.axis}|${want.at}|${want.t}|${want.level}|${want.a0}|${want.a1}`;
+            this.wanted[want.axis] = key;
             const hit = this.held({ ...want, a0: Math.max(0, want.a0), a1: want.a1 });
             if (hit) {
                 this.last[want.axis] = hit;
                 this.sections.paintOverlays?.();
                 return hit;
             }
-            const key = `${want.axis}|${want.at}|${want.t}|${want.level}|${want.a0}|${want.a1}`;
             if (this.pending.has(key)) return this.pending.get(key);
             const params = new URLSearchParams({
                 axis: want.axis, at: String(want.at), t: String(want.t), level: String(want.level),
@@ -140,6 +144,7 @@
                     };
                     this.cache.set(key, cut);
                     while (this.cache.size > CACHE) this.cache.delete(this.cache.keys().next().value);
+                    if (this.wanted[want.axis] !== key) return cut;
                     this.last[want.axis] = cut;
                     this.sections.paintOverlays?.();
                     return cut;

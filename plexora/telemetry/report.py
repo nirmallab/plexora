@@ -91,8 +91,11 @@ def notice_seen() -> dict:
 
 
 def reset() -> dict:
-    """A new install id, and nothing queued under the old one."""
+    """A new install id (and session id), and nothing queued or held in
+    memory under the old one."""
+    old_session = identity.session_id()
     identity.reset_install_id()
+    telemetry.forget_session(old_session)
     queue = telemetry.queue or telemetry.open_queue()
     if queue is not None:
         queue.clear()

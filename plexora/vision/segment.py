@@ -76,6 +76,9 @@ class _Entry:
     capped: bool
     pixel_um: float | None
     low_res: dict = field(default_factory=dict)
+    #: What the request that made it asked for (`_asked`): a token is reused
+    #: only for the same project, plane and channels.
+    asked: tuple = ()
 
 
 _CACHE: "OrderedDict[str, _Entry]" = OrderedDict()
@@ -356,12 +359,13 @@ def segment(session, project, *, view, points, channels=None, box=None, token=No
         raise SegmentError("invalid_input", "at least one include point or a box is needed")
     positives = xy[labels == 1]
 
+    asked = _asked(project, image_view, channels)
     entry = _lookup(token=token) if token else None
-    if entry is not None and not _covers(entry, xy, box):
+    if entry is not None and (entry.asked != asked or not _covers(entry, xy, box)):
         entry = None
     if entry is None:
         entry = _embedding_for(session, project, record, view, positives, channels, timing,
-                               image_size, image_view=image_view)
+                               image_size, image_view=image_view, asked=asked)
     timing["read_ms"] = timing.get("read_ms", 0.0)
 
     level_x0, level_y0, level_x1, level_y1 = entry.lbox
@@ -508,8 +512,18 @@ def _covers(entry: _Entry, xy, box) -> bool:
     return bool(inside.all())
 
 
+def _asked(project, image_view, channels) -> tuple:
+    """The parts of a request an embedding answers for, compared before a
+    token is trusted (the key check in `_embedding_for` covers the rest)."""
+    try:
+        wanted = json.dumps(channels, sort_keys=True, default=str)
+    except (TypeError, ValueError):
+        wanted = repr(channels)
+    return (str(project), str(image_view or ""), wanted)
+
+
 def _embedding_for(session, project, record, view, positives, channels, timing, image_size,
-                   image_view=None):
+                   image_view=None, asked=()):
     """Read + composite inside the shelf lock, embed outside it, cache."""
     from plexora.server.utils import pixel_scale, source_image
     from plexora.server.volume.viewspec import BadView
@@ -545,7 +559,7 @@ def _embedding_for(session, project, record, view, positives, channels, timing, 
     entry = _Entry(token=token, key=key, identity=identity, level=level, lbox=lbox,
                    factor=factor, image_size=image_size, embedding=embedding,
                    channels=specs, capped=capped,
-                   pixel_um=float(size["value"]) if size else None)
+                   pixel_um=float(size["value"]) if size else None, asked=asked)
     _remember(entry)
     return entry
 

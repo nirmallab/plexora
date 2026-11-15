@@ -179,10 +179,21 @@ class TranscriptsSidebarController {
             }))
             .filter((group) => group.genes.length);
 
-        ["viewAs", "pointStyle", "size", "opacity", "binMicrons", "colormap",
+        // Through the layer's own setters, not straight into state: `set`
+        // pushes size, point style and the quality floor at the renderer
+        // (and restyles the density raster), `setOpacity` reaches the shader
+        // and the raster, and the Layers card is told the same opacity the
+        // panel's slider would tell it.
+        const display = {};
+        ["viewAs", "pointStyle", "size", "binMicrons", "colormap",
          "densityLow", "densityHigh", "minQ"].forEach((key) => {
-            if (state[key] !== undefined) live[key] = state[key];
+            if (state[key] !== undefined) display[key] = state[key];
         });
+        if (state.opacity !== undefined) {
+            this.layer.setOpacity(state.opacity);
+            this.ctx.layers?.setOpacity?.(this.layer.layerId, this.layer.state.opacity);
+        }
+        this.layer.set(display);
 
         this.fill();
         this.paintTree();
@@ -224,9 +235,12 @@ class TranscriptsSidebarController {
         const attached = await this.layer.attach();
         if (!attached) {
             // Registered but not tiled yet -- or tiled by a version whose
-            // record layout this one cannot read. Both are a build.
+            // record layout this one cannot read. Both are a build. A
+            // manifest that could not be READ (null) is a broken or briefly
+            // unreachable server, not a reason to re-tile the whole parquet:
+            // just poll, and `ready` re-attaches.
             this.show("building");
-            await this.requestBuild(layerId);
+            if (this.layer.manifest) await this.requestBuild(layerId);
             this.watchBuild(layerId);
             return;
         }
@@ -283,12 +297,15 @@ class TranscriptsSidebarController {
     }
 
     watchBuild(layerId) {
+        let misses = 0;
         this.poll = setInterval(async () => {
             try {
                 const state = await this.api.status(layerId);
                 const label = this.el("transcripts_building_label");
                 // `pending`, `ready`, `failed` -- core's one job vocabulary
-                // (server/models/layer_jobs.py).
+                // (server/models/layer_jobs.py) -- plus `missing` when no job
+                // exists and no readable cache does either.
+                if (state.status === "pending") misses = 0;
                 if (state.status === "pending" && label) {
                     label.textContent = state.message
                         || `Preparing transcripts… (${state.stage || "working"})`;
@@ -308,6 +325,18 @@ class TranscriptsSidebarController {
                         label.textContent = state.install
                             ? `${state.error} — ${state.install}`
                             : `Transcripts could not be prepared: ${state.error}`;
+                    }
+                }
+                if (!["pending", "ready", "failed"].includes(state.status)
+                        && ++misses >= 3) {
+                    // No job and no cache, three times running: the build was
+                    // refused (no source file on this layer). Polling on would
+                    // be a spinner that never ends -- the Visium panel's rule.
+                    clearInterval(this.poll);
+                    this.poll = null;
+                    if (label) {
+                        label.textContent =
+                            "This transcript layer has no source file to build from.";
                     }
                 }
             } catch (error) {

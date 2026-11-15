@@ -450,12 +450,34 @@ class Engine(BaseEngine):
         #: draws are recorded against it (`note_partners_drawn`).
         self._rerendering = None
 
+    #: Whether a context sheet drawn now may leave out rows the reader was
+    #: already shown (`packets._sheet`, `sheets: trim`). The briefing those
+    #: rows are read from is the default reader's (`packets.briefed`), so only
+    #: a packet for that reader, one at a time, is trimmed -- the packets
+    #: `next_packet` sends as a delta; a lane's go whole.
+    sheet_trim = True
+
+    def issue(self, unit=None, *, reader=None, parallel=None, tasks=None):
+        from plexora.agent.sessions.engine import DEFAULT_READER
+
+        self.sheet_trim = ((reader or DEFAULT_READER) == DEFAULT_READER
+                           and not (parallel and int(parallel) > 1))
+        try:
+            return super().issue(unit, reader=reader, parallel=parallel, tasks=tasks)
+        finally:
+            self.sheet_trim = True
+
     def rerender(self, packet_id):
+        from plexora.agent.sessions.engine import DEFAULT_READER
+
         self._rerendering = packet_id
+        entry = self.record["outstanding"].get(packet_id) or {}
+        self.sheet_trim = (entry.get("reader") or DEFAULT_READER) == DEFAULT_READER
         try:
             return super().rerender(packet_id)
         finally:
             self._rerendering = None
+            self.sheet_trim = True
 
     def _migrate(self):
         """A session stored while gating had its per-cell model (removed
@@ -995,6 +1017,9 @@ class Engine(BaseEngine):
         marker = unit["marker"]
         gate = model.get_gate(ds, marker)
         desc = model._description(ds).get(marker) or {}
+        # A low at or above the high bound passes no cell: stored as the empty
+        # gate there (`model.set_gate(empty=True)`), which counts the same cells.
+        no_cell = empty
         if empty:
             top = float(desc.get("max") if desc.get("max") is not None else gate["high"])
             snapped_low = snapped_high = top
@@ -1002,9 +1027,15 @@ class Engine(BaseEngine):
             confidence = confidence or state_confidence(state)
         else:
             high = unit.get("high") if unit.get("high") is not None else gate["high"]
-            snapped_low, snapped_high = model.snap_to_grid(low, high, desc)
-            if not snapped_low < snapped_high:
-                snapped_low, snapped_high = float(low), float(high)
+            if float(low) >= float(high):
+                # A lattice point above every cell (an up-step or a guard
+                # edge past the column's maximum, `lattice.build`).
+                snapped_low = snapped_high = float(high)
+                no_cell = True
+            else:
+                snapped_low, snapped_high = model.snap_to_grid(low, high, desc)
+                if not snapped_low < snapped_high:
+                    snapped_low, snapped_high = float(low), float(high)
         unit["final"] = snapped_low
         unit["confidence"] = confidence
         # Which QC calls the estimate stood on: a QC change afterwards makes
@@ -1078,7 +1109,7 @@ class Engine(BaseEngine):
         revision_before = model.revision(ds)
         try:
             before, after, revision_after = model.set_gate(ds, marker, snapped_low,
-                                                           snapped_high, empty=empty)
+                                                           snapped_high, empty=no_cell)
         except model.GateLocked as exc:
             self.close(unit, "skipped_locked", str(exc), write=False)
             return None
@@ -1293,7 +1324,7 @@ class Engine(BaseEngine):
         with self.timed("regression"):
             result = tableops.local_or_node(ds, "gating.autogate.regression", {
                 "marker": unit["marker"], "final": unit["candidate"], "gmm": anchor,
-                "prior": prior, "partners": partners,
+                "prior": prior, "partners": partners, "high": unit.get("high"),
                 # The band the looks walk, so a gate the lattice offered is never
                 # failed for leaving the mixture's narrower one.
                 "guard": (self.lattice_for(unit).get("guard")
@@ -2715,7 +2746,8 @@ def summary_of(record) -> dict:
     review = count(schemas.REVIEW_STATES) - low - empty
     return {"units_total": len(units), "units_done": count(TERMINAL),
             "accepted": count(schemas.ACCEPTED_STATES), "accepted_low_confidence": low,
-            "review": review + count(("not_binary", "insufficient_information")),
+            # REVIEW_STATES holds not_binary and insufficient_information already.
+            "review": review,
             "empty": empty, "failed": by_state.get("technically_failed", 0),
             "skipped": count(schemas.SKIPPED_STATES),
             "written": sum(1 for u in units if u.get("receipts")),

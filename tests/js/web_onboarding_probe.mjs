@@ -290,7 +290,7 @@ function makeStore(options = {}) {
     return store;
 }
 
-function boot({ store = makeStore(), reducedMotion = true, noStore = false } = {}) {
+function boot({ store = makeStore(), reducedMotion = true, noStore = false, extra = {} } = {}) {
     const document = makeDocument();
     const persisted = [];
     const context = {
@@ -304,6 +304,7 @@ function boot({ store = makeStore(), reducedMotion = true, noStore = false } = {
         } },
         PlexoraToast: { shown: [], show(options) { this.shown.push(options); } },
     };
+    Object.assign(context, extra);
     context.window = context;
     if (!noStore) {
         context.PlexoraStore = store;
@@ -854,6 +855,40 @@ function bootPicks({ gateAnswer, picker = "file" }) {
     const gate = async () => { gated.push(mounted.length); return gateAnswer; };
     return { picks: context.PlexoraPicks, mounted, remembered, gated, gate };
 }
+
+await check("after a quiet first open the viewer offers a folder, at a site's root and under a base path", async () => {
+    for (const [base, path] of [["", "/kidney_01"], ["/app", "/app/kidney_01"],
+                                ["/rnode/host7/8421/app", "/rnode/host7/8421/app/kidney_01"]]) {
+        const held = new Map([["plexora-onboarding-offer", "1"]]);
+        const later = [];
+        const t = boot({ extra: {
+            PLEXORA_SITE_BASE: base,
+            location: { pathname: path },
+            sessionStorage: { getItem: (k) => held.get(k) ?? null, setItem: (k, v) => held.set(k, v),
+                              removeItem: (k) => held.delete(k) },
+            setTimeout: (fn, ms) => { if (ms >= 1000) later.push(fn); else setTimeout(fn, ms); },
+        } });
+        for (const fn of later) fn();
+        const offer = t.context.PlexoraToast.shown.find((o) => /kept in this browser/.test(o.title || ""));
+        assert.ok(offer, `no "Choose a folder" offer on ${path} (base "${base}")`);
+        assert.equal(held.has("plexora-onboarding-offer"), false, "the offer is made once");
+    }
+    // Not on the home page, under a base path or not.
+    for (const [base, path] of [["", "/"], ["/app", "/app/"], ["/app", "/app"]]) {
+        const held = new Map([["plexora-onboarding-offer", "1"]]);
+        const later = [];
+        const t = boot({ extra: {
+            PLEXORA_SITE_BASE: base,
+            location: { pathname: path },
+            sessionStorage: { getItem: (k) => held.get(k) ?? null, setItem: (k, v) => held.set(k, v),
+                              removeItem: (k) => held.delete(k) },
+            setTimeout: (fn, ms) => { if (ms >= 1000) later.push(fn); else setTimeout(fn, ms); },
+        } });
+        for (const fn of later) fn();
+        assert.equal(t.context.PlexoraToast.shown.length, 0, `an offer on the home page ${path}`);
+        assert.equal(held.has("plexora-onboarding-offer"), true, "kept for the viewer's page");
+    }
+});
 
 await check("a pick's gate runs before anything is mounted or recorded, and a no leaves nothing", async () => {
     for (const [mode, picker] of [["file", "file"], ["directory", "directory"]]) {

@@ -546,7 +546,22 @@
 
     const sameFile = (part, path, files) => Boolean(part && part.file && handleOf(files(path)) === part.file);
 
-    async function check(name) {
+    //: The check of each project still running: a second check of the same
+    //: name waits for it (a frame navigation landing mid-check, a mask
+    //: recheck). Side by side, each started its own pools and the one ending
+    //: last replaced the other's `held` entry without closing it.
+    const checking = new Map();
+
+    function check(name) {
+        const running = checking.get(name);
+        const next = (running ? running.catch(() => null) : Promise.resolve()).then(() => checkNow(name));
+        checking.set(name, next);
+        const done = () => { if (checking.get(name) === next) checking.delete(name); };
+        next.then(done, done);
+        return next;
+    }
+
+    async function checkNow(name) {
         const asked = performance.now();
         const spec = await source.spec(name);
         const answered = performance.now();

@@ -718,13 +718,20 @@
    where a physical size the FILE states is meant to be correctable. No viewer
    to tell -- the scale bar is on the other page, and it re-reads the endpoint
    when it loads. Here rather than inline in project_edit.html: the website's
-   Content-Security-Policy runs no inline script. */
-(function () {
-    const start = () => {
-        const name = window.flaskVariables && window.flaskVariables.datasetName;
-        if (typeof ScaleCalibration !== "function" || !name) return;
-        new ScaleCalibration(name, null, { alwaysShow: true }).init();
-    };
-    if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", start);
-    else start();
-})();
+   Content-Security-Policy runs no inline script. A page controller, so a
+   routed visit starts it too (no DOMContentLoaded, the script not run again),
+   and named from the page's own project: a routed page keeps the viewer's
+   flaskVariables, which carry no `datasetName`. */
+PlexoraPage.register(() => {
+    const root = document.getElementById("project-edit");
+    if (!root || typeof ScaleCalibration !== "function") return;
+    let name = null;
+    try {
+        name = JSON.parse(root.dataset.project || "{}").name || null;
+    } catch (error) {
+        name = null;
+    }
+    name = name || (window.flaskVariables && window.flaskVariables.datasetName);
+    if (!name) return;
+    new ScaleCalibration(name, null, { alwaysShow: true }).init();
+});

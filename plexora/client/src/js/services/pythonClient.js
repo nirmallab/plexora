@@ -103,6 +103,11 @@
     //: running: a request's answer waits for the ones its request started,
     //: whose events the worker posted before the answer.
     const saving = new Set();
+    //: request id -> the saves it started (the worker names it); a save the
+    //: worker did not name (`undefined`, a worker from before) is in `unnamed`
+    //: and waited for by every answer, as all were.
+    const savesOf = new Map();
+    const unnamed = new Set();
     let saver = null;
 
     //: What a page waits on Python for: its requests (and their streamed
@@ -127,7 +132,7 @@
 
     function post(op, args, transfer, signal) {
         const id = nextId++;
-        return new Promise((resolve, reject) => {
+        const posted = new Promise((resolve, reject) => {
             if (signal && signal.aborted) {
                 reject(new DOMException("The request was aborted", "AbortError"));
                 return;
@@ -149,6 +154,9 @@
                 }, { once: true });
             }
         });
+        //: Its id, for what the worker says of it besides the answer (`savesFor`).
+        posted.id = id;
+        return posted;
     }
 
     //: Python's questions to the page, answered by whoever registered for
@@ -256,6 +264,20 @@
             .catch((error) => console.error("[python] saving", event.source, error));
         saving.add(done);
         done.finally(() => saving.delete(done));
+        if (event.request === undefined) {
+            unnamed.add(done);
+            done.finally(() => unnamed.delete(done));
+        } else if (event.request !== null) {
+            if (!savesOf.has(event.request)) savesOf.set(event.request, []);
+            savesOf.get(event.request).push(done);
+        }
+    }
+
+    //: The saves the request `id` started, taken (and those no worker named).
+    function savesFor(id) {
+        const mine = savesOf.get(id) || [];
+        savesOf.delete(id);
+        return [...mine, ...unnamed];
     }
 
     function emit(kind, payload) {
@@ -566,13 +588,20 @@
         // being left still asked for would otherwise hold the click up.
         const first = Boolean(init && init.first) || headers.some(([name, value]) =>
             name.toLowerCase() === "x-plexora-fragment" && value === "1");
-        const answer = await call("request", {
+        const asked = call("request", {
             method, path: route(url.pathname), query: url.search.replace(/^\?/, ""), headers,
             body: body ? body.buffer.slice(body.byteOffset, body.byteOffset + body.byteLength) : null,
             ...(first ? { first } : {}),
         }, undefined, signal);
-        // The picked files this request wrote, saved before its answer is.
-        if (saving.size) await Promise.all([...saving]);
+        let answer;
+        try {
+            answer = await asked;
+        } finally {
+            // The picked files this request wrote, saved before its answer is;
+            // not those of other requests (one may wait on "Save into <file>?").
+            const writes = savesFor(asked.id);
+            if (writes.length && answer) await Promise.all(writes);
+        }
         let payload = answer.body;
         if (answer.stream !== null && answer.stream !== undefined) {
             const parts = [answer.body];

@@ -136,11 +136,18 @@ def get_results(call, inp):
     results = _results()
     ds = call.session.image_data(inp.project)
     document = results.load(inp.project)
+    stored_active = document.get("active_result_id")
     sync = roi_link.sync(ds, document, save=False)
     result = results.get_result(inp.project, document, inp.result_id) if inp.result_id \
         else results.active(document)
+    # A read's sync may make a manual result in memory only (results.
+    # ensure_active, for a region drawn in a QC category and not yet taken
+    # in): its id is new on every read and names nothing stored.
+    unsaved = (document.get("active_result_id") != stored_active
+               and result is not None and result.get("result_id") != stored_active
+               and result.get("result_id") == document.get("active_result_id"))
     out = {"project": inp.project, "revision": results.revision(inp.project),
-           "active_result_id": document.get("active_result_id"),
+           "active_result_id": stored_active,
            "strictness": document.get("strictness"), "sync": sync,
            "exclusion_filter": {"disabled_categories": results.disabled_categories(document)},
            "cycles_override": document.get("cycles_override"),
@@ -150,6 +157,11 @@ def get_results(call, inp):
         out["note"] = "no QC result yet: run a QC session or draw regions in a QC: category"
         return out
     out["summary"] = results.summary(result)
+    if unsaved:
+        out["summary"]["result_id"] = None
+        out["unsaved"] = True
+        out["note"] = ("regions drawn in a QC category are not taken in yet: the next QC "
+                       "write (or the panel's refresh) stores them as a manual result")
     out["channels"] = [{k: c.get(k) for k in ("name", "cycle", "status", "flags", "reason",
                                                "reached_by", "user_state") if c.get(k) is not None}
                        for c in result.get("channels") or []][:MAX_LIST]

@@ -78,6 +78,11 @@ class QcStack {
         window.setTimeout(tick, 150);
     }
 
+    /** The QC tool closed: a poll mid-request stops at its job check. */
+    destroy() {
+        this.job = null;
+    }
+
     async write() {
         const answer = await this.api.stackWrite({}).catch(() => null);
         if (!answer?.ok) {

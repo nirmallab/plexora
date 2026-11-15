@@ -354,6 +354,13 @@
                 const started = await call("/projects/import", {path, choices: choices || {}, location: location || null,
                                                                placed}, "The import could not start.");
                 job.python = started.job;
+                // A Stop pressed while the start was on its way had no Python
+                // job to name (`cancel` below): pass it on now, and `follow`
+                // ends the job as Python answers.
+                if (job.cancelled) {
+                    await call(`/projects/import/${encodeURIComponent(job.python)}/cancel`, {},
+                               "That job could not be stopped.").catch(() => null);
+                }
                 await follow(job, started);
             } catch (error) {
                 if (job.mover) job.mover.cancel();

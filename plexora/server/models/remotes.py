@@ -164,7 +164,6 @@ class Remote:
         for key, value in (
             ("datasource", self.datasource),
             ("data_dir", self.data_dir),
-            ("plugins", self.plugins),
             ("bind_node", self.bind_node),
             ("jump", self.jump),
             ("ssh_opts", list(self.ssh_opts)),
@@ -177,6 +176,10 @@ class Remote:
                 out[key] = value
         if self.srun is not None:
             out["srun"] = self.srun
+        # The same: `plugins=""` is `--plugins ""`, core only, and dropping it
+        # with the falsy fields reconnected a core-only profile with every one.
+        if self.plugins is not None:
+            out["plugins"] = self.plugins
         # Written only when switched off, so the file stays a record of what
         # somebody chose rather than of every default.
         if not self.local_node:

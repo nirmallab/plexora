@@ -1142,6 +1142,43 @@ async function run(cmd) {
         && staged[1][1] === 1 && staged[1][2] === "CD3" && staged[1][3] === "#ffd43b", staged);
 }
 
+// -- after the show: held looks run before anything newer -----------------------
+
+{
+    const showServer = makeServer();
+    const show = makePage({ server: showServer, storage: makeStorage() });
+    show.fireDomReady();
+    for (let i = 0; i < 20 && !showServer.polls.length; i++) await tick(5);
+    show.bridge.stop();
+    // A held look takes a while to apply, as a real channel rebuild does.
+    const apply = show.sidebar.applyLaunchChannels.bind(show.sidebar);
+    let applying = 0;
+    let overlapped = false;
+    show.sidebar.applyLaunchChannels = async (entries, options) => {
+        if (applying) overlapped = true;
+        applying += 1;
+        await tick(120);
+        try { return await apply(entries, options); } finally { applying -= 1; }
+    };
+    await show.bridge._run(command("animate_contrast", {
+        channels: [{ name: "CD8", window: [100, 900], color: "#ffd43b" }], slot: 1, pace: "brisk" }));
+    await show.bridge._run(command("set_channels", { channels: [{ name: "CD3" }], mode: "replace" }));
+    for (let i = 0; i < 200 && !applying; i++) await tick(10);
+    // The show is over and its held look is being applied: what the session
+    // sends now runs after it, never beside it.
+    const newer = show.bridge._run(command("set_channels", { channels: [{ name: "DAPI" }], mode: "replace" }));
+    const capture = command("capture_view", { settle_ms: 0 });
+    await newer;
+    await show.bridge._run(capture);
+    const launches = show.log.filter((e) => e[0] === "applyLaunchChannels").map((e) => e[1][0].name);
+    check("a look sent while the held ones are applied runs after them, not beside them",
+        !overlapped && launches.join() === "CD3,DAPI", { overlapped, launches });
+    const captured = show.log.findIndex((e) => e[0] === "renderCurrentViewCanvas");
+    const lastLaunch = show.log.map((e) => e[0]).lastIndexOf("applyLaunchChannels");
+    check("...and a capture after it captures the look it was told is done",
+        captured > lastLaunch, show.log.map((e) => e[0]));
+}
+
 process.stderr.write(JSON.stringify({ checked, failures }, null, 2));
 process.stdout.write(failures.length ? `${failures.length} of ${checked} checks failed\n`
                                      : `all ${checked} checks passed\n`);

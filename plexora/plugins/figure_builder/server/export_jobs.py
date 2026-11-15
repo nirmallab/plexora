@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import shutil
 import threading
+import time
 import uuid
 from datetime import datetime, timezone
 
@@ -60,6 +61,7 @@ def start(figure_id, document, options):
     with _LOCK:
         _sweep()
         _JOBS[job_id] = job
+    _sweep_orphans(figure_id)
 
     job["_thread"] = _work.spawn(_run, job, document, options, name=f"figure-export-{job_id}")
     return job_id
@@ -143,6 +145,35 @@ def download_path(job_id):
     if job is None or job["status"] != "done" or not job["result"]:
         return None
     return job["result"].get("download")
+
+
+#: How old an export folder no job of this process knows must be before it is
+#: removed. Not zero: another Plexora on the same data root may be mid-export.
+ORPHAN_AGE_S = 6 * 3600
+
+
+def _sweep_orphans(figure_id):
+    """Remove this figure's export folders left by earlier runs.
+
+    Jobs are not persisted, so a folder no job here knows is one nothing can
+    download any more; `_sweep` only ever reached the folders of jobs this
+    process started, and every export made before a restart stayed for good.
+    """
+    try:
+        root = repository.figure_dir(figure_id) / "exports"
+        folders = list(root.iterdir()) if root.is_dir() else []
+    except (OSError, ValueError):
+        return
+    with _LOCK:
+        known = set(_JOBS)
+    cutoff = time.time() - ORPHAN_AGE_S
+    for folder in folders:
+        try:
+            stale = folder.name not in known and folder.stat().st_mtime < cutoff
+        except OSError:
+            continue
+        if stale:
+            shutil.rmtree(folder, ignore_errors=True)
 
 
 def _sweep():

@@ -152,3 +152,37 @@ def test_the_bridge_collects_a_selection_with_its_ids(made):
     collected = outside.call("bridge_collect", {"kind": "selection", "arguments": {
         "project": made["name"], "name": "edge"}})
     assert "ids" not in collected and collected["ref"]["uri"].endswith("/selections/edge")
+
+
+def test_undoing_a_replace_after_a_later_edit_is_refused(made):
+    _invoke("set_selection", {"project": made["name"], "name": "s", "cell_ids": [1, 2]})
+    first = _invoke("set_selection", {"project": made["name"], "name": "s", "cell_ids": [3]})
+    _invoke("set_selection", {"project": made["name"], "name": "s", "cell_ids": [4]})
+    undone = _invoke("undo_operation", {"operation_id": first["result"]["receipt"]["operation_id"]})
+    assert not undone["ok"] and undone["error"]["code"] == "conflict", undone
+    assert selection.read_all(made["name"])["s"]["cell_ids"] == ["4"]
+    # Undoing the newest one still works.
+    _invoke("set_selection", {"project": made["name"], "name": "t", "cell_ids": [1]})
+    newest = _invoke("set_selection", {"project": made["name"], "name": "t", "cell_ids": [2]})
+    assert _invoke("undo_operation", {"operation_id":
+                                      newest["result"]["receipt"]["operation_id"]})["ok"]
+    assert selection.read_all(made["name"])["t"]["cell_ids"] == ["1"]
+
+
+def test_concurrent_writes_to_two_selections_both_land(made, monkeypatch):
+    import threading
+    import time
+
+    write = selection._write_all
+
+    def slow_write(project, records):
+        time.sleep(0.3)        # widen the read-modify-write window
+        write(project, records)
+    monkeypatch.setattr(selection, "_write_all", slow_write)
+    threads = [threading.Thread(target=_invoke, args=("set_selection", {
+        "project": made["name"], "name": name, "cell_ids": [1]})) for name in ("a", "b")]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+    assert set(selection.read_all(made["name"])) == {"a", "b"}

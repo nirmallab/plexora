@@ -2702,7 +2702,10 @@ def _run_project(args):
                 spec = _spec_from_args(args, image=given[0], name=args.name)
                 if args.spec_file:
                     spec = {**_load_spec_file(args.spec_file), **spec}
-                spec["exist_ok"] = args.exist_ok
+                # The flag only ever turns it on: store_true cannot tell "not
+                # typed" from "no", and a file's `"exist_ok": true` is an answer.
+                if args.exist_ok:
+                    spec["exist_ok"] = True
                 name = api.project_from_spec(spec)
             _finish_mask_conversions([name])
             if args.json:
@@ -2765,6 +2768,10 @@ def _run_project(args):
             if args.spec_file:
                 spec = {**_load_spec_file(args.spec_file), **spec}
             spec.pop("image", None)
+            # The positional names the project. A file written for `create`
+            # names it too, and passing that as a keyword beside the positional
+            # was a TypeError rather than a refusal.
+            spec.pop("name", None)
             record = api.configure_project(args.name, **spec)
             if spec.get("segmentation"):
                 _finish_mask_conversions([args.name])

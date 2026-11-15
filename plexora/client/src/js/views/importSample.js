@@ -3283,7 +3283,18 @@ window.PlexoraImportSample = (function () {
             : "Registering…");
         const results = [];
         const resultAt = [];
+        // Samples an earlier press already registered, by key: an import that
+        // stopped partway (a failure, a name taken) keeps what landed, and
+        // pressing Import again registers only the rest -- posting a landed
+        // sample again would make a second project of it.
+        state.landed = state.landed || {};
         for (const {sample, at} of targets) {
+            const landed = !replace && sample.key ? state.landed[sample.key] : null;
+            if (landed) {
+                results.push(landed);
+                resultAt.push(at);
+                continue;
+            }
             const meta = state.meta[sample.key] || {};
             const dataset = datasetFor(sample);
             let result = null;
@@ -3357,6 +3368,7 @@ window.PlexoraImportSample = (function () {
                     : (error.message || "Import failed."), true);
                 return;
             }
+            if (!replace && sample.key) state.landed[sample.key] = result;
             results.push(result);
             resultAt.push(at);
         }

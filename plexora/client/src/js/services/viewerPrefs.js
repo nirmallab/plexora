@@ -312,11 +312,30 @@
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify(body),
                 ...(keepalive ? { keepalive: true } : {}),
-            })).catch((error) => {
-                // Never fatal: the layout on screen is right; only the next
-                // session will not open with it.
+            })).then((response) => {
+                // A 5xx is a server that could not write it, not one that
+                // refused it: kept for the next save like a network failure.
+                if (response && !response.ok && !(response.status >= 400 && response.status < 500)) {
+                    throw new Error(`HTTP ${response.status}`);
+                }
+            }).catch((error) => {
+                // Never fatal: the layout on screen is right. What failed goes
+                // back under whatever changed since, and leaves with the next
+                // save -- otherwise the next session would open without it.
+                this._restore(body);
                 console.error("viewerPrefs: could not save", error);
             });
+        }
+
+        /** Put a body that failed back under `_pending`: a key changed since
+         *  wins, and the object-valued ones merge field by field. */
+        _restore(body) {
+            const newer = this._pending;
+            const merged = { ...body, ...newer };
+            for (const key of ["sections", "grid", "rotate", "handles", "area"]) {
+                if (body[key] && newer[key]) merged[key] = { ...body[key], ...newer[key] };
+            }
+            this._pending = merged;
         }
     }
 

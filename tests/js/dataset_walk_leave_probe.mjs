@@ -214,6 +214,45 @@ await checkAsync("a walk saves the plane, rotation and viewer prefs that were st
     }
 });
 
+await checkAsync("a page left any other way (a link, Back, closing the tab) still sends what was waiting", async () => {
+    const t = boot({ here: "b" });
+    const ctx = t.context;
+    const viewState = new ctx.PlexoraViewState("b");
+    const viewport = { setFlip() {}, setRotation() {}, goHome() {} };
+    const viewTransform = new ctx.PlexoraViewTransform({ viewport }, { datasource: "b" });
+    // The channel list (viewerSidebar.js flushChannelSave) and the Layers
+    // panel (layerManager.js flush) save on debounces of their own; each is
+    // asked for what is waiting, with keepalive.
+    const asked = [];
+    ctx.__plexora = {
+        viewState,
+        seaDragonViewer: { viewTransform },
+        viewerSidebar: { flushChannelSave: (options) => asked.push(["channels", options]) },
+    };
+    ctx.PlexoraLayerManager = { flush: (options) => asked.push(["layers", options]) };
+    await viewState.load({ search: "" });
+
+    viewState.set({ z: 7 });
+    ctx.PlexoraViewerPrefs.set({ motion: "off" });
+    t.advance(100);
+    // No walk: the navbar, the browser's Back, or the tab closed. The page
+    // goes, and its timers with it.
+    t.dispatch("pagehide", { persisted: false });
+    await ticks();
+
+    const put = (path) => t.requests.find((r) => r.method === "PUT" && r.url.includes(path));
+    for (const [path, what] of [["view_state/b", "the plane (z 7)"], ["viewer_prefs", "the viewer preference"]]) {
+        const entry = put(path);
+        assert.ok(entry, `${what} was never sent: only a dataset walk flushed the saves`);
+        assert.ok(entry.keepalive, `${what} went without keepalive, as the page was going`);
+    }
+    for (const what of ["channels", "layers"]) {
+        const call = asked.find((row) => row[0] === what);
+        assert.ok(call, `the ${what} save still waiting was never asked for on pagehide`);
+        assert.equal(call[1] && call[1].keepalive, true, `the ${what} save was asked for without keepalive`);
+    }
+});
+
 await checkAsync("a walk the browser did not take (Stay at the leave prompt) leaves Next working", async () => {
     const t = boot({ here: "b" });
     t.api.go("c");

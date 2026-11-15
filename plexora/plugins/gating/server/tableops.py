@@ -165,8 +165,10 @@ def gmm(dataset, payload):
     # is the one read that knows where they are.
     column_data = np.asarray(dataset.table.columns([channel_name])[channel_name])
     # The histogram the curves below are laid over -- binned on the whole
-    # column, in its own units, and deliberately not subsampled.
-    bin_edges = np.histogram_bin_edges(column_data[~np.isnan(column_data)], bins=50)
+    # column, in its own units, and deliberately not subsampled. Finite values
+    # only: +inf is not scrubbed on load (only -inf is), and one would make
+    # the range infinite and the binning raise. The fit skips it too.
+    bin_edges = np.histogram_bin_edges(column_data[np.isfinite(column_data)], bins=50)
     midpoints = (bin_edges[1:] + bin_edges[:-1]) / 2
 
     if selection_ids:

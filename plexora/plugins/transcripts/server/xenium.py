@@ -171,6 +171,7 @@ def read_transcripts(path, *, pixel_size=None, transform=None,
         raise UnsupportedTranscriptFile(
             f"{path.name} does not carry Xenium's transcript columns")
     try:
+        import pyarrow as pa
         import pyarrow.parquet as pq
     except ImportError as error:
         raise TranscriptDependencyMissing(
@@ -190,7 +191,12 @@ def read_transcripts(path, *, pixel_size=None, transform=None,
     if progress:
         progress("read", 1, 1)
 
-    names = table.column(XENIUM_GENE).to_numpy(zero_copy_only=False)
+    gene_column = table.column(XENIUM_GENE)
+    if pa.types.is_binary(gene_column.type) or pa.types.is_large_binary(gene_column.type):
+        # Xenium Onboard Analysis 1.x writes the names as binary: read as
+        # bytes, "b'EPCAM'" matches neither a panel gene nor a control prefix.
+        gene_column = gene_column.cast(pa.string())
+    names = gene_column.to_numpy(zero_copy_only=False)
     x = np.asarray(table.column(XENIUM_X).to_numpy(zero_copy_only=False), dtype=np.float64)
     y = np.asarray(table.column(XENIUM_Y).to_numpy(zero_copy_only=False), dtype=np.float64)
     qv = (np.asarray(table.column(XENIUM_QV).to_numpy(zero_copy_only=False),

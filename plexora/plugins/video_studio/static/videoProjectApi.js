@@ -13,8 +13,10 @@
 
     const base = () => `${global.PLEXORA_BASE_URL || ""}/plugins/video_studio/api`;
 
-    async function request(path, { method = "GET", body, headers = {}, raw = false, signal } = {}) {
+    async function request(path, { method = "GET", body, headers = {}, raw = false, signal,
+                                   keepalive = false } = {}) {
         const init = { method, headers: { ...headers }, signal };
+        if (keepalive) init.keepalive = true;
         if (body !== undefined && !(body instanceof Blob) && !(body instanceof ArrayBuffer)
             && !ArrayBuffer.isView(body)) {
             init.headers["Content-Type"] = "application/json";
@@ -74,8 +76,8 @@
         finishExport: (id, exportId, manifest) => request(
             `/videos/${enc(id)}/exports/${enc(exportId)}/finish`, { method: "POST", body: { manifest } }),
         exportStatus: (id, exportId) => request(`/videos/${enc(id)}/exports/${enc(exportId)}`),
-        cancelExport: (id, exportId) => request(`/videos/${enc(id)}/exports/${enc(exportId)}`, {
-            method: "DELETE" }),
+        cancelExport: (id, exportId, { keepalive = false } = {}) => request(
+            `/videos/${enc(id)}/exports/${enc(exportId)}`, { method: "DELETE", keepalive }),
         downloadUrl: (id, exportId) => `${base()}/videos/${enc(id)}/exports/${enc(exportId)}/download`,
         manifestUrl: (id, exportId) => `${base()}/videos/${enc(id)}/exports/${enc(exportId)}/manifest`,
         recordExport: (id, body) => request(`/videos/${enc(id)}/exports/record`, {

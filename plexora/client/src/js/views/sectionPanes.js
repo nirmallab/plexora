@@ -1333,7 +1333,22 @@
             this.viewState.set({ z });
         }
 
-        async ensureBuilt() {
+        /**
+         * The panes, built once. A build waits on both sections' geometry,
+         * and sections switched on, off and on again inside that wait would
+         * otherwise start a second: two pairs of panes in the wrapper, one
+         * orphaned, every viewer handler bound twice. So one build at a
+         * time, and every caller in the meantime waits on it.
+         */
+        ensureBuilt() {
+            if (this.panes) return Promise.resolve(true);
+            if (!this._building) {
+                this._building = this.buildPanes().finally(() => { this._building = null; });
+            }
+            return this._building;
+        }
+
+        async buildPanes() {
             if (this.panes) return true;
             if (!this.wrapper || typeof OpenSeadragon !== "function") return false;
             const imageViewer = this.imageViewer;

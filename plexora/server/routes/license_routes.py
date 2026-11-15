@@ -125,7 +125,7 @@ def status_payload() -> dict:
     # included"), so Settings lists what a licence lacks as well as has --
     # less what the platform holds back from every licence (Plexora 3D and
     # Video Studio until they are released), which no licence has.
-    known = switches.current()
+    known = switches.for_page()
     info["unlocks"] = manifest.unlocks(info.get("entitlements"), paid=bool(info.get("paid")), held=known["off"])
     info["service_configured"] = bool(store.server_url())
     info["offline_only"] = store.offline_only()

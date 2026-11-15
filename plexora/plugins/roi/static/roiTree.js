@@ -106,6 +106,15 @@ class RoiTree {
         const liveFeatures = new Set();
         let previous = null;
 
+        // Every region under its category in one walk, in the store's order:
+        // a filter per category was features x categories on every change.
+        const byCategory = new Map();
+        for (const feature of this.store.features) {
+            const members = byCategory.get(feature.category_id);
+            if (members) members.push(feature);
+            else byCategory.set(feature.category_id, [feature]);
+        }
+
         for (const category of this.store.sortedCategories()) {
             liveCategories.add(category.id);
             let row = this.categoryRows.get(category.id);
@@ -114,7 +123,7 @@ class RoiTree {
                 this.categoryRows.set(category.id, row);
             }
 
-            const members = this.store.features.filter((f) => f.category_id === category.id);
+            const members = byCategory.get(category.id) || [];
             if (!this.known.has(category.id)) {
                 this.known.add(category.id);
                 // Every category arrives folded: opening the panel shows the

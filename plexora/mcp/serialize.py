@@ -52,6 +52,9 @@ def bound(value: Any, limit: int = MAX_TOOL_CHARS) -> str:
     text = dumps(value)
     if len(text) <= limit:
         return text
+    if not isinstance(value, dict):
+        # The truncation marker needs a dict to live in.
+        value = {"value": value}
     cut = []
     for _ in range(64):
         candidates = [(len(dumps(items)), path, items) for path, items in _lists(value)
@@ -63,10 +66,18 @@ def bound(value: Any, limit: int = MAX_TOOL_CHARS) -> str:
         dropped = len(items) - keep
         del items[keep:]
         cut.append({"path": path, "dropped": dropped})
-        if isinstance(value, dict):
-            value["truncated"] = True
-            value["_truncated"] = cut
+        value["truncated"] = True
+        value["_truncated"] = cut
         text = dumps(value)
         if len(text) <= limit:
             return text
-    return text[:limit]
+    # Halving lists was not enough (a long string, a too-wide row): send a
+    # valid envelope with the start of the text, never a sliced JSON document.
+    envelope = {"truncated": True, "_truncated": cut, "chars": len(text), "preview": ""}
+    room = max(0, limit - len(dumps(envelope)))
+    while True:
+        envelope["preview"] = text[:room]
+        out = dumps(envelope)
+        if len(out) <= limit or room == 0:
+            return out
+        room = max(0, room - (len(out) - limit) - 1)

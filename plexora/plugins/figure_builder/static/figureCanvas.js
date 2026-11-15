@@ -77,6 +77,9 @@ class FigureCanvas {
         this.state = options.state;
         this.api = options.api;
         this.figureId = options.figureId;
+        // The object clipboard is per tab and outlives a routed page; what was
+        // copied in another figure names sources this one does not have.
+        if (typeof FigureClipboard !== "undefined") FigureClipboard.scope(this.figureId);
         this.onEditPanel = options.onEditPanel || (() => {});
         this.onSelectionChange = options.onSelectionChange || (() => {});
         //: Told when a drag starts and stops, so chrome that floats over the
@@ -211,8 +214,14 @@ class FigureCanvas {
     // -- rendering -------------------------------------------------------
 
     setPage(pageId) {
+        // The selection belongs to the page it was made on. Kept across a
+        // switch, Delete, the arrow-key nudge and Align would act on objects
+        // on a page nobody is looking at.
+        const left = pageId !== this.pageId && this.selection.size > 0;
         this.pageId = pageId;
+        if (left) this.selection.clear();
         this.render();
+        if (left) this.onSelectionChange([]);
     }
 
     setScale(scale) {
@@ -2411,6 +2420,11 @@ class FigureCanvas {
     commitGesture(gesture) {
         const moves = [];
         const annotationOps = [];
+        // Panels this gesture places itself. A linked move must not write one
+        // of them back to its OLD position: with two panels of a row selected,
+        // each one's linked moves would undo the other's, and the last wins.
+        const placed = new Set(gesture.items
+            .filter((item) => item.kind === "panel").map((item) => item.id));
         for (const item of gesture.items) {
             // The provisional box the preview computed, if there was one. Read
             // in preference to the DOM because a line's element is its
@@ -2433,7 +2447,8 @@ class FigureCanvas {
                     // A linked row shares a box. Only on a resize: sharing a
                     // POSITION would mean dragging one panel dragged them all
                     // onto each other, and the row could never be a row.
-                    moves.push(...this._linkedSizeMoves(this.state.panel(item.id), box));
+                    moves.push(...this._linkedSizeMoves(this.state.panel(item.id), box)
+                        .filter((move) => !placed.has(move.panel_id)));
                 }
             } else if (gesture.kind === "resize" && this.clearsAutofit(item, gesture)) {
                 // Dragging the top or bottom edge of a text box is the user

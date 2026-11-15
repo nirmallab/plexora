@@ -551,9 +551,12 @@ def mask_window_reader(project, providers=None):
     segmentation = getattr(providers, "segmentation", None)
     if segmentation is None:
         return None, 1
+    # A mask drawn finer than its image (polygons) has the image's grid at
+    # its level log2(scale); (col, row) are image pixels.
+    level = int(project.segmentation.extra_levels or 0)
 
     def read_square(col, row, plane=None):
         box = (col - WINDOW, row - WINDOW, col + WINDOW + 1, row + WINDOW + 1)
-        return np.asarray(segmentation.read_region(0, box))
+        return np.asarray(segmentation.read_region(level, box))
 
     return read_square, workers

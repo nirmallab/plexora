@@ -86,9 +86,11 @@ class FigureThumbnail {
         }
         for (const annotation of Object.values(document_.annotations || {})) {
             if (annotation.page_id !== page.page_id) continue;
+            // `type`, and the box is in `geometry` (schema.py), not on the
+            // annotation itself as a panel's placement is.
             out.items.push({
-                kind: annotation.kind === "text" ? "text" : "shape",
-                ...FigureThumbnail._rect(annotation, scale),
+                kind: annotation.type === "text" ? "text" : "shape",
+                ...FigureThumbnail._rect(annotation.geometry || {}, scale),
             });
         }
 

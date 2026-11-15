@@ -78,17 +78,19 @@ function all(root, predicate, out = []) {
 }
 const byClass = (root, name) => all(root, (n) => n.classList.contains(name));
 
-function makeWorld({ license = false, saved = null, gone = false } = {}) {
+function makeWorld({ license = false, saved = null, gone = false, offline = false } = {}) {
     const { document, wrapper } = makeDom();
     const posts = [];
     const explained = [];
     let pending = [];
     let release = null;
+    const polls = [];
     const fetch = async (url, init) => {
         const answer = (status, body) => ({ ok: status < 400, status, json: async () => body });
         if (init && init.method === "POST") {
             const body = JSON.parse(init.body || "{}");
             posts.push({ url, body });
+            if (offline && url.endsWith("/messages")) throw new TypeError("Failed to fetch");
             if (url.endsWith("ai/v1/conversations")) {
                 if (license) return answer(403, { success: false, license: { entitlement: "ai:chat", label: "Plexora AI chat" } });
                 return answer(200, { ok: true, conversation_id: "cv_1" });
@@ -98,6 +100,7 @@ function makeWorld({ license = false, saved = null, gone = false } = {}) {
         // The resume check: does the server still have this conversation?
         if (!url.includes("/events")) return gone ? answer(404, { ok: false }) : answer(200, { ok: true });
         // A held poll: answers what is queued, or waits until something is.
+        polls.push(url);
         if (!pending.length) await new Promise((resolve) => { release = resolve; });
         const events = pending;
         pending = [];
@@ -126,7 +129,7 @@ function makeWorld({ license = false, saved = null, gone = false } = {}) {
         if (release) { const r = release; release = null; r(); }
         await tick(5);
     };
-    return { panel, wrapper, posts, explained, push, document, store };
+    return { panel, wrapper, posts, explained, push, document, store, polls };
 }
 
 const source = readFileSync(PANEL, "utf8");
@@ -281,6 +284,42 @@ const source = readFileSync(PANEL, "utf8");
     check("on Free the panel stays closed and nothing explains or upsells",
           w.explained.length === 0
           && byClass(w.wrapper, "plx-chat-panel")[0].hidden === true);
+}
+
+{
+    const w = makeWorld();
+    w.panel.open();
+    await tick(5);
+    await w.push({ event: "turn_started" });
+    const asked = w.polls.length;
+    w.panel.close();
+    // The poll held when it closed comes back; nothing is asked after it.
+    await w.push({ event: "text", text: "said while closed" });
+    await tick(30);
+    check("a closed panel stops listening: no poll after the one held when it closed",
+          w.polls.length === asked, { asked, now: w.polls.length });
+    w.panel.open();
+    await tick(5);
+    check("...and opened again it listens from where it left off, missing nothing",
+          w.polls.length === asked + 1 && /after=1(&|$)/.test(w.polls.at(-1)), w.polls);
+    await w.push({ event: "turn_finished" });
+}
+
+{
+    // The message POST never reaches the server (offline, connection reset):
+    // fetch rejects rather than answering.
+    const w = makeWorld({ offline: true });
+    w.panel.open();
+    await tick(5);
+    const input = byClass(w.wrapper, "plx-chat-input")[0];
+    input.value = "hello?";
+    byClass(w.wrapper, "plx-chat-send")[0].click();
+    await tick(5);
+    const root = byClass(w.wrapper, "plx-chat-panel")[0];
+    const log = byClass(w.wrapper, "plx-chat-log")[0];
+    check("a message whose POST fails at the network level clears busy and says it was not sent",
+          w.panel._state.busy === false && !root.classList.contains("is-busy")
+          && byClass(log, "plx-chat-error").length === 1, { busy: w.panel._state.busy });
 }
 
 check("the panel never parses markup", !/innerHTML|insertAdjacentHTML|outerHTML/.test(source));

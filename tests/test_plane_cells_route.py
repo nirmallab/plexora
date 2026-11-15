@@ -124,3 +124,22 @@ def test_a_plane_outside_the_stack_or_an_unmeasured_mask_is_refused(tmp_path, cl
     register_image_datasource("raw", path)
     refused = client.get("/volume/raw/plane_cells?z=2&column=CD8")
     assert refused.status_code == 400 and refused.get_json()["reason"] == "not_measured"
+
+
+def test_whole_values_never_answer_for_a_table_at_a_freed_address(monkeypatch):
+    """Audit io-volume-10: the cache is keyed by id(frame); a new table that
+    lands at a freed one's address must not get the old one's values."""
+    import polars as pl
+
+    from plexora.server.routes import volume_routes
+
+    monkeypatch.setattr(volume_routes, "id", lambda _obj: 1234, raising=False)
+    volume_routes._plane_values.clear()
+    old = pl.DataFrame({"CellID": [1, 2], "CD3": [5.0, 6.0]})
+    ids, values = volume_routes._whole_values(old, "CellID", None, 0, "CD3")
+    assert values.tolist() == [5.0, 6.0]
+    del old
+    new = pl.DataFrame({"CellID": [1, 2], "CD3": [7.0, 8.0]})
+    ids, values = volume_routes._whole_values(new, "CellID", None, 0, "CD3")
+    assert values.tolist() == [7.0, 8.0]
+    volume_routes._plane_values.clear()

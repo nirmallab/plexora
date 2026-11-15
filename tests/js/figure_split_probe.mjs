@@ -296,5 +296,48 @@ check("to the new size", linked.map((move) => [move.placement.w_mm, move.placeme
 check("and leaves their positions alone",
     linked.map((move) => move.placement.x_mm), [20, 106, 149]);
 
+// Two panels of the row resized TOGETHER (the row is still selected right
+// after Split). Each one's linked moves used to carry the OTHER selected
+// panel's old position, and the last write won: all but one snapped back.
+commits.length = 0;
+const together = runInContext(`(() => {
+    const canvas = __buildCanvas();
+    canvas.splitComposite("pnl_c");
+    const row = Object.keys(canvas.state.document.link_groups)[0];
+    const ids = canvas.state.document.link_groups[row].panel_ids.slice(0, 2);
+    const items = ids.map((id, index) => {
+        const start = { ...canvas.state.panel(id).placement };
+        return { kind: "panel", id, start,
+                 box: { x_mm: start.x_mm + 5, y_mm: start.y_mm + 7,
+                        w_mm: 50, h_mm: 36 } };
+    });
+    canvas.commitGesture({ kind: "resize", items });
+    return ids.map((id, index) => {
+        const placement = canvas.state.panel(id).placement;
+        return [placement.x_mm - items[index].start.x_mm,
+                placement.y_mm - items[index].start.y_mm,
+                placement.w_mm, placement.h_mm];
+    });
+})()`, ctx);
+check("two linked panels resized together both land where they were dragged",
+    together, [[5, 7, 50, 36], [5, 7, 50, 36]]);
+
+// A page switch leaves nothing selected on the page nobody is looking at:
+// Delete, the arrow-key nudge and Align act on the selection.
+const switched = runInContext(`(() => {
+    const canvas = __buildCanvas();
+    const told = [];
+    canvas.onSelectionChange = (ids) => told.push(ids);
+    canvas.select(["pnl_c"], false);
+    const before = canvas.selection.size;
+    canvas.setPage("pg_2");
+    const after = canvas.selection.size;
+    canvas.select(["pnl_c"], false);
+    canvas.setPage("pg_2");          // the same page again: nothing to drop
+    return { before, after, kept: canvas.selection.size, last: told[told.length - 1] };
+})()`, ctx);
+check("a page switch drops the selection", [switched.before, switched.after], [1, 0]);
+check("but re-showing the same page keeps it", switched.kept, 1);
+
 console.error(JSON.stringify({ problems, commits: commits.length }, null, 2));
 process.exit(problems.length ? 1 : 0);

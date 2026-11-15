@@ -10,8 +10,11 @@ anything project-less, is written; a read that names no project is keyed on
 `all`.
 
 A file rather than a process counter because two processes write the same data
-root (the server and an MCP server). Two bumps racing may land as one, which
-still changes the token; nothing here needs an exact count.
+root (the server and an MCP server). The read-modify-write is held across
+both (`plexora._process_lock`, `revision.lock` beside the file): unheld, a
+bump that read the file before another process wrote it would put the counter
+back to a token an earlier read is already cached under, and that stale read
+would be served again.
 
 Edits a person makes by hand in the viewer do not go through the capability
 registry and leave no receipt, which is why the tool-result cache that reads
@@ -25,7 +28,6 @@ import os
 import threading
 from pathlib import Path
 
-_LOCK = threading.Lock()
 FILENAME = "revision.json"
 
 
@@ -33,6 +35,18 @@ def path() -> Path:
     from plexora import paths
 
     return paths.agent_root() / FILENAME
+
+
+def _lock_file() -> Path:
+    file = path().with_name("revision.lock")
+    file.parent.mkdir(parents=True, exist_ok=True)
+    return file
+
+
+def _lock():
+    from plexora import _process_lock
+
+    return _process_lock.lock_for("agent-revision", _lock_file)
 
 
 def _read(file: Path) -> dict:
@@ -46,7 +60,7 @@ def _read(file: Path) -> dict:
 def bump(project: str | None = None) -> dict:
     """Record one write (to `project`, or to nothing project-shaped)."""
     file = path()
-    with _LOCK:
+    with _lock():
         data = _read(file)
         data["all"] = int(data.get("all") or 0) + 1
         if project:

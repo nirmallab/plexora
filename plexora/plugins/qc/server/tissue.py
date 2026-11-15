@@ -21,6 +21,8 @@ reads one nuclear overview when there is none.
 from __future__ import annotations
 
 import json
+import threading
+from collections import OrderedDict
 
 import numpy as np
 
@@ -129,18 +131,65 @@ def for_project(session, project, *, scan_result=None) -> dict:
         held = from_scan(stored) if stored is not None else None
     if held is not None:
         return held
-    from plexora.agent.evidence import image_qc
-    from plexora.agent.render import resolve_channel
-    from plexora.plugins.qc.server import cycles as cycle_rules
-    from plexora.plugins.qc.server import scan
-    from plexora.server.utils import pixel_scale, source_image
+    from plexora.server.utils import pixel_scale
 
     record = session.project(project)
     channel_records = list(record.image.real_channels)
     names = [c.get("fullname") or c.get("name") for c in channel_records]
     pixel = pixel_scale.pixel_size(record)
     pixel_um = float(pixel["value"]) if pixel else None
-    with qc_plane.reader(session.image_data(project)) as source:
+    image_data = session.image_data(project)
+    key = _overview_key(project, image_data, names, pixel_um)
+    with _OVERVIEW_GUARD:
+        held = _OVERVIEW.get(key) if key is not None else None
+        if held is not None:
+            _OVERVIEW.move_to_end(key)
+    if held is None:
+        held = _from_overview(image_data, channel_records, names, pixel_um)
+        if key is not None:
+            with _OVERVIEW_GUARD:
+                _OVERVIEW[key] = held
+                while len(_OVERVIEW) > _OVERVIEW_KEEP:
+                    _OVERVIEW.popitem(last=False)
+    # Copies: a caller may change its masks.
+    return {**held, "mask": held["mask"].copy(), "feathered": held["feathered"].copy()}
+
+
+#: The tissue read from an image with no stored scan, by image (file, stamp,
+#: plane) and channels: a basic result's every derive asks for it, and the
+#: read is a nuclear overview -- or, with no channel named as one, every
+#: channel's.
+_OVERVIEW: "OrderedDict[tuple, dict]" = OrderedDict()
+_OVERVIEW_KEEP = 4
+_OVERVIEW_GUARD = threading.Lock()
+
+
+def _overview_key(project, image_data, names, pixel_um):
+    import os
+
+    try:
+        identity = qc_plane.identity(image_data)
+    except Exception:
+        return None
+    if identity is None:
+        return None
+    base = str(identity).split("|", 1)[0]
+    try:
+        stat = os.stat(base)
+        stamp = (stat.st_size, stat.st_mtime_ns)
+    except OSError:
+        stamp = None
+    return (str(project), str(identity), stamp, tuple(names), pixel_um)
+
+
+def _from_overview(image_data, channel_records, names, pixel_um):
+    from plexora.agent.evidence import image_qc
+    from plexora.agent.render import resolve_channel
+    from plexora.plugins.qc.server import cycles as cycle_rules
+    from plexora.plugins.qc.server import scan
+    from plexora.server.utils import source_image
+
+    with qc_plane.reader(image_data) as source:
         level = image_qc.overview_level(source)
         ov_h, ov_w = source.level_shape(level)
         width = source.level_shape(0)[1]

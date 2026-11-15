@@ -125,9 +125,15 @@ class FigureCaptureTool {
      * Guarded with `typeof` because the probes load this file without
      * figureConfirm.js, and a bare reference would be a ReferenceError inside a
      * keydown handler.
+     *
+     * And a routed page (Settings, the Figure Canvas) over the viewer: the
+     * viewer is still there, hidden, and C on the canvas armed capture on it
+     * while S put a capture of it into the bin. Followed through core's
+     * `plexora:viewer-hidden` / `-shown`, as the bookmark and dataset keys do.
      */
     static standDown() {
         return FigureCaptureTool.isTyping()
+            || FigureCaptureTool.viewerHidden
             || (typeof FigureConfirm !== "undefined" && FigureConfirm.modalOpen);
     }
 
@@ -1143,4 +1149,12 @@ class FigureCaptureTool {
                 "image/webp", 0.9);
         });
     }
+}
+
+//: Whether a routed page is over the viewer (services/appRouter.js announces
+//: both edges). Static so the dock's C and the tool's S read one answer.
+FigureCaptureTool.viewerHidden = false;
+if (typeof window !== "undefined" && typeof window.addEventListener === "function") {
+    window.addEventListener("plexora:viewer-hidden", () => { FigureCaptureTool.viewerHidden = true; });
+    window.addEventListener("plexora:viewer-shown", () => { FigureCaptureTool.viewerHidden = false; });
 }

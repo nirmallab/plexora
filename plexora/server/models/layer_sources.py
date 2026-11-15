@@ -31,7 +31,7 @@ import hashlib
 import threading
 from collections import OrderedDict
 
-from plexora.server.models.project import Project, config_generation
+from plexora.server.models.project import Project, project_generation
 from plexora.server.utils import brightfield, colormaps
 
 #: How many layer pyramids stay open. Each pins a file handle and whatever the
@@ -113,7 +113,8 @@ def resolve_layer_provider(project, layer):
 def open_layer(project_name, layer_id):
     """This layer's pyramid, opened once and kept.
 
-    Keyed on the config generation as well as the ids, so re-registering a layer
+    Keyed on the project's config generation (`project_generation`: the last
+    write that changed THIS project's record) as well as the ids, so re-registering a layer
     with a corrected transform or a rebuilt pyramid does not go on serving the
     old one -- and so an unrelated project being loaded does NOT evict this,
     which is what would happen if the key were `data_model.load_generation`.
@@ -121,7 +122,9 @@ def open_layer(project_name, layer_id):
     Returns None for a layer that has no pixels of its own: the centroid layer,
     a points layer, or a layer the project no longer has.
     """
-    generation = config_generation()
+    # This project's generation, not the whole config's: another project's
+    # save or a page view's lastOpenedAt stamp changes nothing drawn here.
+    generation = project_generation(project_name)
     key = (project_name, layer_id, generation)
     with _lock:
         found = _open_layers.get(key)
@@ -761,7 +764,7 @@ def layer_tile(project_name, layer_id, channel, level, tile, quality="fast",
             return None
         payload, mimetype = served[0], served[1]
         revision = served[2] if len(served) > 2 else None
-        etag = (f'"{config_generation()}-{project_name}-{layer_id}-density-'
+        etag = (f'"{project_generation(project_name)}-{project_name}-{layer_id}-density-'
                 f'{level}-{tile}-{quality}-{_style_key(style)}'
                 f'{"-" + revision if revision else ""}"')
         return payload, mimetype, etag

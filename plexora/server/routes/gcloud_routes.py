@@ -406,9 +406,13 @@ def gcloud_vm_delete(name):
             f"here, or remove it in the Google Cloud console.")), 400
     _end_sessions(name)
     try:
-        _api().delete_instance(record)
+        done = _api().delete_instance(record)
     except gcloud.GcloudError as exc:
         return _failed(exc)
+    if done == "deleting":
+        # The website: accepted, not waited on (gcloud_rest.delete_instance).
+        return jsonify(ok=True, status="STOPPING", message=(
+            f"Deleting {record.get('vm_name')}. {BUCKET_UNTOUCHED}"))
     return jsonify(ok=True, status="missing", message=(
         f"Deleted {record.get('vm_name')}. {BUCKET_UNTOUCHED}"))
 
@@ -489,6 +493,13 @@ def gcloud_vm_node(name):
     if api is not gcloud_rest:
         return jsonify(error=(
             "The desktop app connects to this VM over SSH: press Connect.")), 400
+    # The admin's switch, as `/settings/remotes/<name>/connect` asks it: this
+    # is the website's connect for a Google Cloud profile, and no relay sees it.
+    from plexora.server.models import remote_access
+
+    refused = remote_access.refusal()
+    if refused is not None:
+        return refused
     try:
         done = api.ensure_node(record)
         status = api.node_status(record)

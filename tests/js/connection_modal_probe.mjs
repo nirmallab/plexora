@@ -530,6 +530,14 @@ function fetchStub(url, options = {}) {
         return reply({ instances: cloud.instances });
     }
     if (url.indexOf("settings/gcloud/zones") >= 0) {
+        if (cloud.heldZones) {
+            // Held until the check releases it: the region's own zones, so a
+            // late answer is recognisable by what it would put in the control.
+            const region = decodeURIComponent(url.split("region=")[1] || "");
+            const zones = [region + "-b", region + "-c"];
+            return new Promise((resolve) => cloud.heldZones.push(
+                { region, release: () => resolve(reply({ zones, pick: zones[0] })) }));
+        }
         return reply({ zones: cloud.zones, pick: cloud.zones[0] });
     }
     if (url.indexOf("settings/gcloud/auth") >= 0) return reply({ started: true });
@@ -2081,6 +2089,37 @@ async function main() {
           one(compute, "connect-gcloud-where").hidden === false
           && one(compute, "connect-gcloud-where").textContent
                  .indexOf("us-central1-a") >= 0);
+    // Zone lookups answer in any order. One still in flight when a VM is
+    // chosen, or when the region moves on, is an answer to a question nobody
+    // is asking any more -- and must not put its zone over the VM's.
+    const regionBox = controls(compute, "VM location").drop.control;
+    const zoneBox = controls(compute, "Zone").drop.control;
+    const vmLabel = "analysis-box — n2-highmem-32 — us-central1-a — Stopped";
+    cloud.heldZones = [];
+    regionBox.value = "europe-west4";
+    regionBox.onchange();
+    // Away and back, since picking the row already chosen is not a change.
+    vmField.drop.pick("Choose a VM…");
+    vmField.drop.pick(vmLabel);
+    cloud.heldZones.forEach((held) => held.release());
+    await settle();
+    check("a zone lookup answering after a VM is chosen leaves the VM's zone",
+          zoneBox.value === "us-central1-a" && regionBox.value === "us-central1");
+    cloud.heldZones = [];
+    regionBox.value = "europe-west4";
+    regionBox.onchange();
+    regionBox.value = "asia-east1";
+    regionBox.onchange();
+    cloud.heldZones[1].release();
+    await settle();
+    cloud.heldZones[0].release();
+    await settle();
+    check("...and the last region asked about is the one whose zones show",
+          zoneBox.value === "asia-east1-b"
+          && !zoneBox.options.some((o) => String(o.value).indexOf("europe-west4") === 0));
+    cloud.heldZones = null;
+    vmField.drop.pick(vmLabel);
+    await settle();
     const farWarn = one(dialog, "connect-gcloud-warn");
     // A name the list did not cover: the zone in the control belongs to the
     // BUCKET, and sending it would describe an instance in a zone it is not

@@ -383,6 +383,7 @@ class QCEngine(BaseEngine):
             merged_into["channels"] = list(dict.fromkeys(
                 [*merged_into.get("channels", []), *unit.get("channels", [])]))
             self.close(unit, "merged", f"the same region as {merged_into['id']}")
+            self.store_channels(merged_into)
             return
         # The pixels are traced before the action is derived: how much tissue
         # a region removes is the trace's area, not its envelope's.
@@ -652,7 +653,13 @@ class QCEngine(BaseEngine):
         unit["refinement"] = record
         scan = self.scan(unit["project"])
         tissue_px = float((scan.meta.get("tissue") or {}).get("area_px") or 0.0)
-        if record["status"] in ("map", "detector") and tissue_px > 0:
+        if unit.get("channel_level"):
+            # A cycle out of register everywhere removes no tissue -- its
+            # markers are unreliable in every cell (`cells.calls`) -- so, as
+            # for a failed stain (`transitions._decide_channel_level`), the
+            # share of the tissue never caps its action.
+            measurement["refined_fraction"] = 0.0
+        elif record["status"] in ("map", "detector") and tissue_px > 0:
             measurement["refined_fraction"] = min(1.0, polygons.area_of(envelope) / tissue_px)
         else:
             measurement["refined_fraction"] = measurement.get("tissue_fraction")
@@ -859,6 +866,24 @@ class QCEngine(BaseEngine):
                 "roi_id": unit.get("roi_id"), "action": action, "state": unit["state"],
                 "created_by": "agent", "user_state": {}, "session_id": self.id,
                 "created_at": results.now_iso()}
+
+    def store_channels(self, unit):
+        """A written region that took in another's channels (a merge, an
+        absorb) keeps them in the stored result: the cells follow the stored
+        record (`roi_link.membership_meta`), not the session's unit."""
+        from plexora.plugins.qc.server import results
+
+        project = self.project
+        channels = list(unit.get("channels") or [])
+        with results.lock(project):
+            document = results.load(project)
+            result = results.get_result(project, document, self.record["result_id"])
+            stored = ((result or {}).get("candidates") or {}).get(unit["id"])
+            if stored is None or list(stored.get("channels") or []) == channels:
+                return
+            stored["channels"] = channels
+            results.put_result(document, result)
+            results.save(project, document)
 
     def _store_candidate(self, record):
         from plexora.plugins.qc.server import results

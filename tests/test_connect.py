@@ -245,7 +245,8 @@ def test_srun_command_line_wraps_the_launch():
 #: Spliced into the argv assertions below so they keep pinning the shape of the
 #: command rather than re-stating the keepalive policy; the policy itself is
 #: pinned once, in the three tests under "-- keepalive --".
-KEEPALIVE = ["-o", "ServerAliveInterval=30", "-o", "ServerAliveCountMax=3"]
+KEEPALIVE = ["-o", "ServerAliveInterval=30", "-o", "ServerAliveCountMax=3",
+             "-o", "ExitOnForwardFailure=yes"]
 
 
 def test_direct_ssh_carries_both_the_forward_and_the_command():
@@ -259,7 +260,7 @@ def test_direct_ssh_accepts_a_jump_host_and_options():
         "me@host", 9000, 8123, "plexora", jump="me@gate",
         ssh_opts=["Compression=yes"],
     )
-    assert argv[:10] == ["ssh", "-t", *KEEPALIVE, "-o", "Compression=yes",
+    assert argv[:12] == ["ssh", "-t", *KEEPALIVE, "-o", "Compression=yes",
                          "-J", "me@gate"]
 
 

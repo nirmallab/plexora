@@ -3160,6 +3160,10 @@ export class ViewerManager {
      */
     showReference() {
         this.referenceHidden = false;
+        // Remembered again here, not only at the hide: that one expires after
+        // 5 s, and a world the hide emptied (no mask, no other layer) fits
+        // the whole slide when this first item lands.
+        if (!this.viewer?.world?.getItemCount?.()) this.rememberView();
         const kind = this.imageViewer?.config?.image_kind;
         if (kind === "brightfield") {
             this.load_brightfield_base();

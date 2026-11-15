@@ -345,3 +345,11 @@ def test_names_can_be_applied_without_the_dialog(probe):
     once when the server needs nothing more, the dialog only to ask."""
     assert "apply() renames with no dialog when the server needs nothing more" in probe, probe
     assert "...and opens the dialog only to ask which column" in probe, probe
+
+
+def test_a_load_that_lands_after_the_dialog_closed_still_reaches_the_page(probe):
+    """Closing mid-Load does not stop the server applying the names, so the
+    page is still handed them -- and a late reply for a closed dialog is not
+    drawn on the next one."""
+    assert "PASS names applied after the dialog was closed mid-Load still reach the page" in probe, probe
+    assert "PASS ...and a late refusal for a closed dialog is not shown on the next one" in probe, probe

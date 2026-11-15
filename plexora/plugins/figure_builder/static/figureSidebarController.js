@@ -409,10 +409,13 @@ class FigureBuilderSidebarController {
         });
         // Taken in this session and not in the server's answer: its write is
         // still in flight, or it was refused. Either way this page is the only
-        // thing holding it, so it stays at the top where it was.
+        // thing holding it, so it stays at the top where it was. One whose
+        // write LANDED and that the bin no longer lists has left the bin --
+        // adopted into a figure, or deleted -- and kept here it stayed ticked
+        // and outlined, ready to be added to a figure a second time.
         const seen = new Set(rows.map((row) => row.capture_id));
-        const held = this.captures.filter(
-            (entry) => !seen.has(entry.id) && (entry.fresh || entry.unsaved));
+        const held = this.captures.filter((entry) => !seen.has(entry.id)
+            && ((entry.fresh && !entry.stored) || entry.unsaved));
         this.captures = held.concat(merged);
         if (this.selected && !this.captures.some((entry) => entry.id === this.selected)) {
             this.deselect();
@@ -531,6 +534,7 @@ class FigureBuilderSidebarController {
             return false;
         }
         capture.unsaved = false;
+        capture.stored = true;
         if (preview) await this.bin.putPreview(capture.id, preview.blob, preview);
         this.setStatus("Kept in captures");
         return true;

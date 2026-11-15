@@ -19,7 +19,10 @@
  * THE STARTING SCENE follows the viewer: while no preview is showing, moving
  * the image (or turning the 3-D view) and then playing starts the video from
  * there. "Set end view" is the exception: it records where the user moved to
- * as the END, and keeps the start where it was.
+ * as the END, and keeps the start where it was. Only an unedited preset build
+ * follows the viewer: a saved video that was opened, or one edited in the path
+ * editor or the timeline (where moving the viewer is how a camera position is
+ * set), is the user's document, and Play plays it as it is.
  *
  * Classic script; registers itself with `window.Plexora.registerPlugin`.
  */
@@ -75,6 +78,9 @@
             this.presetName = null;
             this.params = readJson(PARAMS_KEY, {});
             this.project = null;
+            // True while `project` is what the preset last built (not a saved
+            // video that was opened): only then may Play rebuild it.
+            this.presetBuild = false;
             this.warnings = [];
             this.saved = { videoId: null, revision: null, digest: null };
             this.baseScene = null;
@@ -192,6 +198,9 @@
 
         destroy() {
             global.removeEventListener("keydown", this.onKey, true);
+            // A recording left running would keep its window listener and its
+            // sampling interval, and grow its samples, for the page's life.
+            if (this.recorder?.active) this.recorder.stop();
             this.abort?.abort();
             this.preview.end();
             this.detachAgent?.();
@@ -349,6 +358,7 @@
             if (seq !== this.buildSeq) return;
             const previous = this.project;
             this.project = this.withOutput(answer.document, previous);
+            this.presetBuild = true;
             this.warnings = answer.warnings || [];
             this.preview.invalidate();
             if (previous) this.preview.rescale(previous.duration_s, this.project.duration_s);
@@ -402,7 +412,10 @@
                 this.preview.pause();
                 return;
             }
-            if (!this.preview.active) {
+            // The start follows the viewer only for an unedited preset build;
+            // anything else is the user's document, and rebuilding it from the
+            // preset would silently replace it (and the next save the stored one).
+            if (!this.preview.active && this.presetBuild && !this.customized) {
                 const before = this.baseScene;
                 this.ensureBase();
                 if (before !== this.baseScene) {
@@ -527,9 +540,23 @@
                                     duration: project.duration_s, loop: project.loop, title: project.title });
         }
 
+        /** Run `work` after every save/edit/undo/redo already asked for.
+         *  Each of them reads `saved.videoId`/`saved.revision` and writes it
+         *  back after a round trip, so two at once both created a video, or
+         *  sent one revision twice and lost the second to a 409. */
+        serial(work) {
+            const run = (this._serial || Promise.resolve()).then(work, work);
+            this._serial = run.catch(() => {});
+            return run;
+        }
+
         /** The project as a saved video; created on first save, replaced
          *  after. Resolves the video id. */
-        async save(announce = false) {
+        save(announce = false) {
+            return this.serial(() => this.saveNow(announce));
+        }
+
+        async saveNow(announce = false) {
             if (!this.project) return null;
             const digest = this.digest(this.project);
             if (this.saved.videoId && this.saved.digest === digest) return this.saved.videoId;
@@ -561,6 +588,7 @@
             const document = answer.document;
             await this.preview.end();
             this.project = document;
+            this.presetBuild = false;
             this.saved = { videoId, revision: document.revision, digest: this.digest(document) };
             this.presetName = document.provenance?.preset?.name || this.presetName;
             if (document.provenance?.preset?.params) {
@@ -578,14 +606,22 @@
 
         /** Edits from the path editor or timeline: through the server's ops
          *  route (saved first if need be), onto the undo stack. */
-        async edit(operations, label = "Edit") {
-            const videoId = await this.save();
-            if (!videoId) return null;
-            const answer = await this.api.ops(videoId, this.saved.revision, operations);
-            this.customized = true;
-            this.applyEdited(answer);
-            this.history.push({ label, forward: operations, inverse: answer.inverse });
-            return answer;
+        edit(operations, label = "Edit") {
+            return this.serial(async () => {
+                const videoId = await this.saveNow();
+                if (!videoId) return null;
+                let answer;
+                try {
+                    answer = await this.api.ops(videoId, this.saved.revision, operations);
+                } catch (error) {
+                    this.bar.showError(`Could not apply “${label}”: ${error.message}`);
+                    throw error;
+                }
+                this.customized = true;
+                this.applyEdited(answer);
+                this.history.push({ label, forward: operations, inverse: answer.inverse });
+                return answer;
+            });
         }
 
         applyEdited(answer) {
@@ -603,7 +639,9 @@
             if (this.preview.active && !this.preview.playing) this.preview.seek(this.preview.time);
         }
 
-        async undo() {
+        undo() { return this.serial(() => this.undoNow()); }
+
+        async undoNow() {
             const entry = this.history.undo();
             if (!entry) return;
             try {
@@ -617,7 +655,9 @@
             }
         }
 
-        async redo() {
+        redo() { return this.serial(() => this.redoNow()); }
+
+        async redoNow() {
             const entry = this.history.redo();
             if (!entry) return;
             try {

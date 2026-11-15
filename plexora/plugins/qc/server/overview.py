@@ -681,8 +681,9 @@ def rank_channels(session, project, box, *, top=None, exclude_nuclear=False,
                 weakest = min(strength, key=strength.get)
                 del planes[weakest], strength[weakest]
     ranked.sort(key=lambda r: -abs(r["contrast"]))
+    # From the planes held: channels tied at the cut-off may sort either way.
     shown = [*include, *[r["channel"] for r in ranked if r["channel"] not in include
-                         and not (exclude_nuclear and r["nuclear"])][:by_rank]]
+                         and r["channel"] in planes][:by_rank]]
     return {"ranked": ranked, "shown": shown,
             "box": {"x": inner_box[0], "y": inner_box[1], "width": inner_box[2] - inner_box[0],
                     "height": inner_box[3] - inner_box[1]},

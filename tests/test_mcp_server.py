@@ -113,6 +113,17 @@ def test_bounding_truncates_and_says_so():
     assert parsed["truncated"] is True and parsed["_truncated"][0]["path"] == "items"
 
 
+def test_bounding_an_unshrinkable_result_stays_valid_json_and_says_so():
+    # A long string, a top-level list and a too-wide row: none can be cut by
+    # halving lists, so the old `text[:limit]` fallback emitted broken JSON.
+    for value in ({"log": "x\"y" * 5_000}, list(range(5_000)),
+                  {"rows": [{"blob": "z" * 9_000}]}):
+        text = serialize.bound(value, limit=2_000)
+        assert len(text) <= 2_000
+        parsed = json.loads(text)
+        assert parsed["truncated"] is True
+
+
 def test_nan_and_bytes_survive_serialization():
     parsed = json.loads(serialize.bound({"x": float("nan"), "b": b"abc"}))
     assert parsed == {"x": None, "b": "<3 bytes>"}

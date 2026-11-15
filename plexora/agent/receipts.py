@@ -25,7 +25,7 @@ def _origin(call):
 def make_receipt(call, *, changed, before=None, after=None, revision_before=None,
                  revision_after=None, persistent_state="none", source_file_modified=False,
                  source_path=None, reversible=None, undo_hint=None, extra=None,
-                 bridge=None) -> Receipt:
+                 bridge=None, bump_revision=True) -> Receipt:
     """The receipt for the call in hand, appended to the audit log as `ok`.
 
     `call` is the `Call` the capability was invoked with (plexora/agent/registry.py);
@@ -35,6 +35,10 @@ def make_receipt(call, *, changed, before=None, after=None, revision_before=None
     can find each other's record: `{peer, execution_id, workspace_id,
     table_fingerprint}`. Never a token -- the receipt is returned to the caller
     and written to the audit log.
+
+    `bump_revision=False` for a change no cached read can describe: a viewer
+    command that changed one tab only (viewer reads are never cached), which
+    would otherwise flush the project's cached tool results on every pan.
     """
     capability = call.capability
     origin = _origin(call)
@@ -83,7 +87,7 @@ def make_receipt(call, *, changed, before=None, after=None, revision_before=None
                        "arguments": call.arguments, "receipt": receipt.model_dump(mode="json"),
                        **lineage, **(extra or {})})
     call.receipted = True
-    if changed:
+    if changed and bump_revision:
         # What a cached read is keyed on (plexora/agent/revision.py): a write
         # that changed something makes every remembered read of it stale.
         from plexora.agent import revision

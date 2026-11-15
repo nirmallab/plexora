@@ -9,7 +9,11 @@ edited, locked, renamed (renaming is choosing the action) or moved it.
 
 from __future__ import annotations
 
+import logging
+
 from plexora.agent.receipts import make_receipt
+
+_log = logging.getLogger(__name__)
 
 
 #: Who wrote an automatic region (`run_basic_qc`), as its candidate and row say.
@@ -130,46 +134,64 @@ def write_regions(call, project, *, detector, klass, covered, work, row_keys,
                         "geometry": f.get("geometry")} for f in replace]
         rows = []
         k = 0
-        for key, records in work:
-            mine = per_key.setdefault(key, {"written": []})
-            for record in records:
-                k += 1
-                action = record.get("action") or "exclude"
+        # An ROI is stored the moment it is created, its `roi_meta` row only
+        # below: a failure in between would leave a region in a QC category
+        # with no row, which `roi_link.sync` adopts as the user's own approved
+        # region -- one no later write of this check replaces. So the region
+        # in flight is deleted, and the rows and candidates of those already
+        # made are stored, whatever happens.
+        pending = None
+        try:
+            for key, records in work:
+                mine = per_key.setdefault(key, {"written": []})
+                for record in records:
+                    k += 1
+                    action = record.get("action") or "exclude"
+                    try:
+                        before, after, feature = roi_link.create(ds, record, action=action,
+                                                                 session_id=session_id)
+                    except ConflictError:
+                        before, after, feature = roi_link.create(ds, record, action=action,
+                                                                 session_id=session_id)
+                    pending = feature["id"]
+                    child = dataclasses.replace(
+                        call, operation_id=f"{call.operation_id}.{k:03d}", receipted=False,
+                        notify=None, extras=dict(call.extras))
+                    receipt = make_receipt(
+                        child, changed=True, before=None,
+                        after={"roi_id": feature["id"], "name": feature["name"], "key": key},
+                        revision_before=before, revision_after=after,
+                        persistent_state="plugin_store:roi",
+                        undo_hint={"tool": "delete_roi", "arguments": {
+                            "project": project, "roi_id": feature["id"], "confirm": True}},
+                        extra={"parent_operation_id": call.operation_id,
+                               "artifact_class": record["class"], "action": action})
+                    receipts.append(receipt.operation_id)
+                    record["roi_id"] = feature["id"]
+                    record["action_by_strictness"] = strictness.actions_by_preset(record)
+                    row = {**roi_link.meta_row(record, feature, result=result,
+                                               session_id=session_id, action=action,
+                                               strictness=None,
+                                               agent=AUTOMATIC_BY if automatic else None,
+                                               operation_id=receipt.operation_id,
+                                               created_by=detector),
+                           "approved": not automatic, "approved_action": action}
+                    result.setdefault("candidates", {})[record["id"]] = record
+                    rows.append(row)
+                    pending = None
+                    written.append(feature["id"])
+                    mine["written"].append(feature["id"])
+        finally:
+            if pending is not None:
                 try:
-                    before, after, feature = roi_link.create(ds, record, action=action,
-                                                             session_id=session_id)
-                except ConflictError:
-                    before, after, feature = roi_link.create(ds, record, action=action,
-                                                             session_id=session_id)
-                child = dataclasses.replace(call, operation_id=f"{call.operation_id}.{k:03d}",
-                                            receipted=False, notify=None,
-                                            extras=dict(call.extras))
-                receipt = make_receipt(
-                    child, changed=True, before=None,
-                    after={"roi_id": feature["id"], "name": feature["name"], "key": key},
-                    revision_before=before, revision_after=after,
-                    persistent_state="plugin_store:roi",
-                    undo_hint={"tool": "delete_roi", "arguments": {
-                        "project": project, "roi_id": feature["id"], "confirm": True}},
-                    extra={"parent_operation_id": call.operation_id,
-                           "artifact_class": record["class"], "action": action})
-                receipts.append(receipt.operation_id)
-                record["roi_id"] = feature["id"]
-                record["action_by_strictness"] = strictness.actions_by_preset(record)
-                result.setdefault("candidates", {})[record["id"]] = record
-                rows.append({**roi_link.meta_row(record, feature, result=result,
-                                                 session_id=session_id, action=action,
-                                                 strictness=None,
-                                                 agent=AUTOMATIC_BY if automatic else None,
-                                                 operation_id=receipt.operation_id,
-                                                 created_by=detector),
-                             "approved": not automatic, "approved_action": action})
-                written.append(feature["id"])
-                mine["written"].append(feature["id"])
-        if rows:
-            results.upsert_roi_meta(project, rows)
-        results.put_result(document, result)
-        results.save(project, document)
+                    repo.apply(repo.load()["revision"],
+                               [{"op": "roi.bulk_delete", "ids": [pending]}])
+                except Exception:  # noqa: BLE001 -- the first failure is the one raised
+                    _log.exception("QC could not delete region %s of a failed write", pending)
+            if rows:
+                results.upsert_roi_meta(project, rows)
+            results.put_result(document, result)
+            results.save(project, document)
         revision_after = repo.load()["revision"]
     if written or removed:
         roi_link.tell_roi_panel(call, project, "create")

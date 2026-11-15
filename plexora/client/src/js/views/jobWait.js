@@ -86,6 +86,15 @@ window.PlexoraJobWait = (function () {
         //: The overlay while it is on screen, null while the chip stands in for it.
         let modal = null;
         let parts = null;
+        //: The ready dwell's timer while it runs. A start() or a failure that
+        //: lands inside it cancels it, or the dwell would close over them.
+        let dwell = null;
+
+        function endDwell() {
+            if (dwell === null) return;
+            window.clearTimeout(dwell);
+            dwell = null;
+        }
 
         /** Fill in the navbar's mount point, once. */
         function mountChip() {
@@ -240,6 +249,11 @@ window.PlexoraJobWait = (function () {
          * whose result is already on screen in another form.
          */
         function start(options) {
+            // The finished bar still dwelling is over; the new job takes it.
+            if (state === "ready") {
+                endDwell();
+                state = "idle";
+            }
             if (state !== "idle") return;
             const opts = options || {};
             state = "working";
@@ -276,7 +290,10 @@ window.PlexoraJobWait = (function () {
                 return;
             }
             paintModal();
-            window.setTimeout(() => {
+            endDwell();
+            dwell = window.setTimeout(() => {
+                dwell = null;
+                if (state !== "ready") return;
                 state = "idle";
                 close();
             }, READY_DWELL_MS);
@@ -284,6 +301,7 @@ window.PlexoraJobWait = (function () {
 
         function failed(error) {
             if (state === "idle") return;
+            endDwell();
             state = "failed";
             reading = { progress: null, message: "", stage: "", error: error || "" };
             // The one thing that does reopen. The job the user was promised

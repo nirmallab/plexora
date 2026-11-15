@@ -1411,7 +1411,13 @@ if (booted) {
             + "   a: { panel_id: 'pnl_a', render_revision: 1, placement: null },"
             + "   b: { panel_id: 'pnl_b', render_revision: 1, placement: null },"
             + "   c: { panel_id: 'pnl_c', render_revision: 1, placement: null } } };"
+            + " const marked = { pages: [page], panels: {}, annotations: {"
+            + "   t: { annotation_id: 'an_t', type: 'text', page_id: 'pg_1',"
+            + "        geometry: { x_mm: 10, y_mm: 20, w_mm: 30, h_mm: 5, rotation: 0 } },"
+            + "   s: { annotation_id: 'an_s', type: 'shape', page_id: 'pg_1',"
+            + "        geometry: { x_mm: 50, y_mm: 60, w_mm: 20, h_mm: 10, rotation: 0 } } } };"
             + " return { placed: FigureThumbnail.layout(placed, 'pg_1', 210),"
+            + "   marked: FigureThumbnail.layout(marked, 'pg_1', 210),"
             + "   mosaic: FigureThumbnail.layout(empty, 'pg_1', 200),"
             + "   nothing: FigureThumbnail.layout({ pages: [], panels: {} }, null, 210) }; })();",
             ctx);
@@ -1427,6 +1433,14 @@ if (booted) {
               x: 21, y: 30, w: 42, h: 30 }])) {
             problems.push(`a placed panel is in the wrong place: `
                 + JSON.stringify(thumb.placed.items));
+        }
+        // Annotations are `type`d and placed by their `geometry`: a text box
+        // is a text block where it is, not a 1px shape in the corner.
+        if (JSON.stringify(thumb.marked.items) !== JSON.stringify([
+            { kind: "text", x: 10, y: 20, w: 30, h: 5 },
+            { kind: "shape", x: 50, y: 60, w: 20, h: 10 }])) {
+            problems.push(`annotations are drawn as the wrong thing or in the wrong place: `
+                + JSON.stringify(thumb.marked.items));
         }
         // Nothing placed: the tray is what the figure consists of, squared up
         // so it does not pretend to be a page.

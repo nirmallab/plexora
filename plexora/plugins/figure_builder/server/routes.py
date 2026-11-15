@@ -195,6 +195,9 @@ def delete_figure(figure_id):
         return jsonify(success=False, error=str(exc)), 400
     except UnknownFigure:
         return _not_found()
+    except repository.FigureInUse:
+        return jsonify(success=False, error="A file of this figure is still open "
+                       "(an export or a preview). Try again in a moment."), 409
     return jsonify(success=True)
 
 

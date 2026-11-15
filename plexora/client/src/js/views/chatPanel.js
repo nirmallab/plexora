@@ -267,6 +267,11 @@ window.PlexoraChatPanel = (function () {
         // Opened again from the launcher, it comes back full size.
         if (state.minimized) minimize(false);
         state.root.hidden = !state.open;
+        // Closed, the panel stops listening (a held poll after another ties
+        // up a server worker for nothing); opened again, it picks up from
+        // its cursor, so nothing said meanwhile is missed.
+        if (!state.open) stopListening();
+        else if (state.conversation && !state.source && !state.polling) listen();
         if (state.open && !state.conversation) {
             const started = (await resume()) || (await start());
             if (!started) {
@@ -369,7 +374,14 @@ window.PlexoraChatPanel = (function () {
         }
         scroll(true);
         setBusy(true);
-        const answer = await post(`ai/v1/conversations/${state.conversation}/messages`, { text, images });
+        // A POST that never reaches the server rejects instead of answering;
+        // read as a refusal, or the panel stays busy with Send disabled.
+        let answer;
+        try {
+            answer = await post(`ai/v1/conversations/${state.conversation}/messages`, { text, images });
+        } catch (_) {
+            answer = { status: 0, body: { error: { message: "The message was not sent: the server could not be reached." } } };
+        }
         if (!answer.body.ok) {
             state.echoes = Math.max(0, state.echoes - 1);
             setBusy(false);
@@ -384,15 +396,27 @@ window.PlexoraChatPanel = (function () {
 
     // -- events -------------------------------------------------------------------------
 
+    /** Stop the stream or the held polls; a poll in flight is left to come
+     *  back, and what it brings is dropped (the cursor stays). */
+    function stopListening() {
+        state.listening = (state.listening || 0) + 1;
+        if (state.source) state.source.close();
+        state.source = null;
+        state.polling = false;
+    }
+
     function listen() {
-        if (typeof EventSource === "function" && !state.polling) {
+        stopListening();
+        const mine = state.listening;
+        if (typeof EventSource === "function") {
             const source = new EventSource(url(`ai/v1/conversations/${state.conversation}/events?after=${state.cursor}`));
             source.onmessage = (message) => receive(message);
             source.onerror = () => {
                 source.close();
+                if (mine !== state.listening) return;
                 state.source = null;
                 state.polling = true;
-                poll();
+                poll(mine);
             };
             // Named events (`event: tool_result`) do not reach onmessage.
             for (const name of KNOWN) source.addEventListener(name, receive);
@@ -400,15 +424,16 @@ window.PlexoraChatPanel = (function () {
             return;
         }
         state.polling = true;
-        poll();
+        poll(mine);
     }
 
-    async function poll() {
-        while (state.polling && state.conversation) {
+    async function poll(mine) {
+        while (state.polling && state.conversation && mine === state.listening) {
             try {
                 const response = await fetch(url(
                     `ai/v1/conversations/${state.conversation}/events?after=${state.cursor}&wait=${POLL_WAIT_S}`));
                 const body = await response.json();
+                if (mine !== state.listening) return;
                 for (const event of body.events || []) handle(event);
                 if (!response.ok) await new Promise((resolve) => setTimeout(resolve, 2000));
             } catch (_) {

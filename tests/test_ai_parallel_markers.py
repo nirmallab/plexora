@@ -615,3 +615,22 @@ def test_the_harness_gates_with_parallel_markers_and_writes_the_prefix_once(tmp_
     readers = {(json.loads(c["body"]["request"]["messages"][-1]["content"][-1]["text"])
                 .get("briefed") or {}).get("reader") for c in calls}
     assert readers - {None}, "only one lane ever answered"
+
+
+def test_a_cancelled_parallel_run_pauses_its_session_like_a_serial_one(tmp_path, scene):
+    """A job cancel (the panel's Stop, ai_run_control) raises `JobCancelled`
+    inside a lane. It must end the run as a serial run's does -- paused,
+    reason `cancelled`, the session paused -- not `failed` with the
+    exception text (audit lead ai-mcp-6)."""
+    with FakeGateway(oracle_brain(scene(tmp_path, "gcan"))) as gateway:
+        def check():
+            if len(gateway.calls) >= 2:
+                raise jobs.JobCancelled()
+
+        summary = GatingRun(GatingOptions(project="gcan", parallel_markers=3, start_options=V1),
+                            gateway=client(gateway), trace=TraceStore(tmp_path / "c.sqlite"),
+                            check=check).run()
+    assert summary["status"] == "paused" and summary["reason"] == "cancelled", summary
+    state = ok(invoke(AgentSession(), "gating_session_status",
+                      {"session_id": summary["session_id"]}))
+    assert (state.get("control") or {}).get("paused") is True, state

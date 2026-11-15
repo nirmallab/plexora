@@ -530,9 +530,47 @@ def download(project):
             "provenance.json": files.get("provenance"),
             "findings.csv": files.get("findings"),
             "summary.json": files.get("summary"), "result.json": files.get("result")}.get(kind)
+    folder = _download_folder(payload.get("folder"))
     if not path:
+        _remove_folder(folder)
         abort(404)
-    return send_file(path, as_attachment=True, download_name=f"{project}_qc_{kind}")
+    response = send_file(path, as_attachment=True, download_name=f"{project}_qc_{kind}")
+    # The folder was made for this one download: gone once it is sent. On
+    # the body's close, after the file in it is closed (so Windows can
+    # delete it). Not `call_on_close`: send_file's passthrough body never
+    # runs the response's own close.
+    if folder is not None:
+        from werkzeug.wsgi import ClosingIterator
+
+        response.response = ClosingIterator(response.response,
+                                            [lambda: _remove_folder(folder)])
+    return response
+
+
+def _download_folder(folder):
+    """`folder` when it is an export folder under agent_root/exports, else
+    None: nothing outside it is ever removed."""
+    from pathlib import Path
+
+    from plexora import paths
+
+    if not folder:
+        return None
+    try:
+        path = Path(folder).resolve()
+        exports = (paths.agent_root() / "exports").resolve()
+    except (OSError, ValueError):
+        return None
+    if path.parent != exports or not path.name.startswith("qc_"):
+        return None
+    return path
+
+
+def _remove_folder(folder):
+    import shutil
+
+    if folder is not None:
+        shutil.rmtree(folder, ignore_errors=True)
 
 
 @qc_bp.route("/agent_session/<session_id>/control", methods=["POST"])

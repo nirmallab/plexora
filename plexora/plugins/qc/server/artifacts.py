@@ -2220,10 +2220,23 @@ def load_or_run(session, project, *, params=None, force=False, progress=None,
         summary = load_summary(project, fp)
         if summary is not None:
             _point(project, fp)
+            _keep_pixel_size(project, context)
             return summary, True
     result = run(session, project, fp, context, progress=progress,
                  check_cancelled=check_cancelled)
-    return _save(project, fp, result), False
+    saved = _save(project, fp, result)
+    _keep_pixel_size(project, context)
+    return saved, False
+
+
+def _keep_pixel_size(project, context):
+    """A pixel size passed as params.pixel_um is the image's from now on:
+    without it stored, availability() says no_pixel_size right after the run,
+    the panel cannot tell whether the result is stale, and basic QC (which
+    passes no params) skips the detector."""
+    if context.get("pixel_um_source") == "params" \
+            and settings(project).get("pixel_um") != context["pixel_um"]:
+        save_settings(project, pixel_um=context["pixel_um"])
 
 
 def note_running(project, job_id):

@@ -238,10 +238,26 @@ class RoiRenderer {
     }
 
     intersects(feature, view) {
-        const box = RoiGeometry.bounds(feature.geometry);
+        const box = RoiRenderer.boundsOf(feature.geometry);
         if (!box) return false;
         return !(box.maxX < view.minX || box.minX > view.maxX
             || box.maxY < view.minY || box.minY > view.maxY);
+    }
+
+    /**
+     * A shape's bounds, measured once per shape: culling asks every frame,
+     * and a scan of every vertex of every region per frame is the cost the
+     * culling exists to save. Keyed on the geometry object itself, like
+     * pathFor's cache -- every edit makes a new one (roiTools never moves a
+     * vertex in place) -- so nothing needs invalidating.
+     */
+    static boundsOf(geometry) {
+        if (!geometry || typeof geometry !== "object") return RoiGeometry.bounds(geometry);
+        const cache = RoiRenderer._bounds || (RoiRenderer._bounds = new WeakMap());
+        if (cache.has(geometry)) return cache.get(geometry);
+        const box = RoiGeometry.bounds(geometry);
+        cache.set(geometry, box);
+        return box;
     }
 
     /**

@@ -145,9 +145,9 @@ window.PlexoraDatasetNav = (function () {
     }
 
     /**
-     * Send the saves still waiting on their 400 ms debounce -- the plane, the
-     * rotation, the viewer preferences, the channel list, a tool's own state
-     * such as Thresholding's gates -- now, with keepalive. Their timers die
+     * Send the saves still waiting on their debounce -- the plane, the
+     * rotation, the viewer preferences, the channel list, the Layers panel,
+     * a tool's own state such as Thresholding's gates -- now, with keepalive. Their timers die
      * with the page, so an edit made just before the walk would otherwise
      * never be saved, and the sample would reopen as it was before it.
      */
@@ -170,6 +170,11 @@ window.PlexoraDatasetNav = (function () {
             plexora.viewerSidebar?.flushChannelSave?.({ keepalive: true });
         } catch (error) {
             console.error("datasetNav: could not save the channels before leaving", error);
+        }
+        try {
+            window.PlexoraLayerManager?.flush?.({ keepalive: true });
+        } catch (error) {
+            console.error("datasetNav: could not save the layers before leaving", error);
         }
         for (const module of (plexora.viewerSidebar && plexora.viewerSidebar.sidebarModules) || []) {
             try {
@@ -455,6 +460,11 @@ window.PlexoraDatasetNav = (function () {
     // drawn, shows what was said.
     if (typeof window.addEventListener === "function") {
         window.addEventListener("plexora:agent-dataset-progress", onDatasetProgress);
+        // Every other way of leaving -- a link, the navbar, Back, the tab
+        // closed -- goes without a walk, and the debounced saves' timers go
+        // with the page: send them as it goes. Harmless after a walk, which
+        // has already sent them.
+        window.addEventListener("pagehide", () => flushSaves());
         // This page back from the back/forward cache: the walk it left on
         // is over, and Next has to work on it again.
         window.addEventListener("pageshow", (event) => {

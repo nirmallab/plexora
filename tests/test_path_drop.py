@@ -61,6 +61,9 @@ CHECKS = (
     "leaving the window takes the label away",
     "a refused box's label says why, in the refused tone",
     "a zone inside a modal lights itself and draws no label",
+    "a website drop whose question was closed (no path) says it came to nothing",
+    "a website drop whose mount failed says it came to nothing",
+    "a website drop that yields a path is handed on, and is not called nothing",
 )
 
 
@@ -94,3 +97,15 @@ def test_the_import_dialogs_rows_take_a_drop_too():
     css = (REPO_ROOT / "plexora/client/src/css/main.css").read_text(encoding="utf-8")
     assert ".plx-import-inline-pick.is-drop-over .plx-import-field" in css
     assert ".import-field-row.is-drop-over > .form-control" in css
+
+
+def test_the_home_page_takes_down_a_first_view_its_drop_started():
+    """The website home page starts the full-screen first view from a drop's
+    files (`onFiles`); a drop that then yields no path must end it, or it
+    covers the page until its three-minute timeout."""
+    home = (REPO_ROOT / "plexora" / "client" / "src" / "js" / "views"
+            / "quickViewLanding.js").read_text(encoding="utf-8")
+    web = home[home.index("attachWebDrop(landing, {"):]
+    web = web[:web.index("onDrop:")]
+    assert "onNone:" in web
+    assert 'PlexoraFirstView?.done?.("cancelled")' in web

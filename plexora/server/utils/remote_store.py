@@ -64,7 +64,7 @@ import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Iterable, Mapping, Optional
-from urllib.parse import quote, urlsplit, urlunsplit
+from urllib.parse import urlsplit, urlunsplit
 
 from zarr.abc.store import (
     OffsetByteRequest,
@@ -529,7 +529,7 @@ def _slice(data: bytes, byte_range) -> bytes:
     raise ValueError(f"Unexpected byte range {byte_range!r}")
 
 
-_SAFE_KEY = re.compile(r"[^A-Za-z0-9._/\-]")
+_SAFE_KEY = re.compile(r"[^a-z0-9._/\-]")
 
 
 def _key_path(key: str) -> str:
@@ -537,10 +537,18 @@ def _key_path(key: str) -> str:
 
     Percent-encoded outside a conservative set, which keeps `:` and `?` off a
     Windows disk and leaves ordinary keys (`0/c/0/1/2`, `.zattrs`) readable.
+    Upper-case letters are escaped too: macOS and Windows fold case, so `Cells`
+    and `cells` spelled as themselves would be one file there, and one key
+    would be served the other's bytes. Escapes use upper-case hex and nothing
+    else on disk is a capital, so the spellings stay distinct after folding.
     """
     parts = [p for p in key.split("/") if p not in ("", ".", "..")]
-    return "/".join(_SAFE_KEY.sub(lambda m: quote(m.group(0), safe=""), p)
-                    for p in parts)
+    return "/".join(_SAFE_KEY.sub(_escape_char, p) for p in parts)
+
+
+def _escape_char(match) -> str:
+    # By hand: `quote` leaves letters alone, capitals included.
+    return "".join(f"%{b:02X}" for b in match.group(0).encode("utf-8"))
 
 
 def _range_name(start: int, end: int) -> str:
@@ -1088,6 +1096,12 @@ class CacheIndex:
                 continue
             parsed = self._parse_value_path(directory, path)
             if parsed is None:
+                # Nothing can name it (an old spelling, a stray file): bytes
+                # no row will ever read or evict.
+                try:
+                    path.unlink(missing_ok=True)
+                except OSError:
+                    pass
                 continue
             try:
                 stat = path.stat()
@@ -1124,10 +1138,15 @@ class CacheIndex:
             end = int(match.group(2).replace("m", "-"))
             key_rel = relative[: -(len(path.name) + 1)]
             key_rel = key_rel[: -len(".ranges")]
-            return unquote(key_rel), start, end
+            key = unquote(key_rel)
+            # Only this spelling names a value: a file in another one (the
+            # literal capitals written before `_key_path` escaped them) may
+            # hold a case-twin's bytes on a folding disk.
+            return (key, start, end) if _key_path(key) == key_rel else None
         if any(part.endswith(".ranges") for part in Path(relative).parts[:-1]):
             return None
-        return unquote(relative), -1, -1
+        key = unquote(relative)
+        return (key, -1, -1) if _key_path(key) == relative else None
 
 
 def _long_path(path: Path) -> Path:
@@ -1564,6 +1583,11 @@ class ChunkCacheStore(WrapperStore):
                 if attempt < len(_RETRY_DELAYS_S):
                     await asyncio.sleep(_RETRY_DELAYS_S[attempt])
                 continue
+            except BaseException:
+                # Cancelled (asyncio.CancelledError is not an Exception): the
+                # read is over, or the host stays "in flight" for good.
+                read_pace.ended(host, 0)
+                raise
             if buffer is None:
                 read_pace.ended(host, 0)
                 self._last_status[key] = _MISSING

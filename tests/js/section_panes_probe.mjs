@@ -764,6 +764,52 @@ function poll(ms) {
     frames.stop();
 }
 
+// -- sections on, off and on before the first geometry fetch returns ---------------
+//
+// setEnabled(true) awaits ensureBuilt, which fetches both sections' geometry
+// before it builds. A second "on" while that fetch is out used to start a
+// second build: two pairs of panes appended to the wrapper, the first pair
+// orphaned in the DOM, every viewer handler bound twice.
+
+{
+    const appended = [];
+    const handlers = [];
+    const wrapper = { ...element(), appendChild(c) { appended.push(c); return c; },
+                      append(...c) { appended.push(...c); } };
+    const viewState = { depth: 40, frames: 1, info: { width: 1000, height: 800 }, get: () => ({ t: 0 }) };
+    const imageViewer = { viewer: { addHandler: (name) => handlers.push(name), world: { getItemAt: () => null } } };
+    const panes = new SectionPanes({ viewState, imageViewer, viewerManager: null, config: {} });
+    panes.wrapper = wrapper;
+    panes.bindDivider = () => {};
+    const pending = [];
+    const saved = { OpenSeadragon: box.OpenSeadragon, build: Pane.prototype.build };
+    box.OpenSeadragon = Object.assign(function OpenSeadragon() {}, saved.OpenSeadragon);
+    Pane.prototype.build = function () {};
+    box.PlexoraTileDecode = { createTileLoadedHandler: () => () => {} };
+    box.PlexoraTileColorize = { createTileDrawing: () => ({}) };
+    box.fetch = () => new Promise((resolve) => pending.push(resolve));
+    const geometry = { width: 1000, height: 40, level_shapes: [[40, 1000]] };
+
+    const on1 = panes.setEnabled(true);
+    const off = panes.setEnabled(false);
+    const on2 = panes.setEnabled(true);
+    for (const resolve of pending.splice(0)) resolve({ ok: true, json: async () => geometry });
+    for (let i = 0; i < 5 && pending.length === 0; i += 1) await new Promise((r) => setImmediate(r));
+    for (const resolve of pending.splice(0)) resolve({ ok: true, json: async () => geometry });
+    await Promise.all([on1, off, on2]);
+    const roots = appended.filter((node) => node && node.className && /viewer-section-pane /.test(node.className));
+    check("sections switched on, off and on before the geometry arrives build one pair of panes",
+        roots.length === 2 && handlers.filter((h) => h === "animation").length === 1,
+        `${roots.length} panes appended, ${handlers.filter((h) => h === "animation").length} animation handlers`);
+    check("...and end up shown", panes.enabled === true && panes.panes !== null);
+
+    box.OpenSeadragon = saved.OpenSeadragon;
+    Pane.prototype.build = saved.build;
+    delete box.PlexoraTileDecode;
+    delete box.PlexoraTileColorize;
+    delete box.fetch;
+}
+
 // -- the panes are 2-D only: nothing of the 3-D view's cut is left in them ----------
 {
     check("no cut guides or pinning to 3-D sections",

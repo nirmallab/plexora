@@ -180,6 +180,8 @@ class QcSegmentationQc {
         window.clearTimeout(this._densityTimer);
         this._pollTimer = null;
         this._flagTimer = null;
+        // A poll mid-request when the tool closes stops at its job check.
+        this.job = null;
         Object.values(this.sliders).forEach((slider) => slider?.destroy?.());
         this.sliders = {};
         Object.values(this.pickers).forEach((picker) => picker?.destroy?.());
@@ -429,7 +431,10 @@ class QcSegmentationQc {
         }
         this.status = status;
         const fp = status.summary && status.summary.fingerprint;
-        if (fp && (!this.cells || this.cells.fingerprint !== fp)) {
+        // Not again while this result's cells are on their way (a reload
+        // while they load): the cells and the density map are heavy.
+        if (fp && (!this.cells || this.cells.fingerprint !== fp) && this._cellsLoading !== fp) {
+            this._cellsLoading = fp;
             this.loadCells();
             this.density = null;
             this.scheduleDensity(0);
@@ -454,6 +459,7 @@ class QcSegmentationQc {
         const answer = await this.api.segmentationCells(this.flags).catch(() => null);
         // A slider dragged on: only the latest answer counts.
         if (seq !== this._cellsSeq) return;
+        this._cellsLoading = null;
         if (!answer || !answer.ok || !answer.data.available) return;
         this.cells = answer.data;
         this.host.setCellGroups();

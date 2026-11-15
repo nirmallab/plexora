@@ -95,6 +95,26 @@ def test_the_same_view_hits_the_cache_without_a_token(scene):
     assert [c[0] for c in fake.calls].count("embed") == 1
 
 
+def test_a_token_is_not_reused_for_other_channels(scene):
+    """Audit io-surface-11: a token names an embedding of one project, plane
+    and set of channels; a request for others is embedded afresh."""
+    from plexora.agent import AgentSession
+
+    _mask, cx, cy = _speck(scene)
+    fake = sam_backend.FakeSamBackend()
+    session = AgentSession()
+    with sam.use_backend(fake):
+        first = segmenter.segment(session, "qcsynth", view=_view_round(cx, cy),
+                                  points=[{"x": cx, "y": cy, "label": 1}],
+                                  channels=[{"name": scene["channels"][0]}])
+        other = segmenter.segment(session, "qcsynth", view=_view_round(cx, cy),
+                                  points=[{"x": cx, "y": cy, "label": 1}],
+                                  channels=[{"name": scene["channels"][1]}],
+                                  token=first["token"])
+    assert [c[0] for c in fake.calls].count("embed") == 2
+    assert other["token"] != first["token"]
+
+
 def test_bad_prompts_are_refused_in_words(scene):
     from plexora.agent import AgentSession
 

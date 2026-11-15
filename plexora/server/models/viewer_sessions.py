@@ -256,7 +256,12 @@ def leave(session_id, *, navigating_to=None) -> bool:
 
 
 def _pending_for(session, after_seq, after_event):
-    commands = [c for c in session.commands if c.status == "pending" and c.seq > after_seq]
+    # `delivered` too: the tab's cursor moves only when it starts a command
+    # (services/agentBridge.js runCommand), so one past `after_seq` is one it
+    # never took -- its poll's answer was lost, or it navigated away before
+    # reaching it -- and is sent again rather than lost.
+    commands = [c for c in session.commands
+                if c.status in ("pending", "delivered") and c.seq > after_seq]
     events = [e for e in session.events if e["event_seq"] > after_event]
     return commands, events
 

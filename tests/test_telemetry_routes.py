@@ -141,6 +141,21 @@ def test_reset_mints_a_new_id_and_clears_the_queue(telemetry_enabled):
     assert t.queue.snapshot() == ([], [])
 
 
+def test_reset_leaves_nothing_that_links_the_old_id_to_the_new(telemetry_enabled):
+    from plexora.telemetry import identity
+
+    t, _fake = telemetry_enabled
+    t.start(plexora.app, "terminal", upload=False)
+    t.count("tool.summary", "open", tool="roi")  # still in memory, not flushed
+    old_session = identity.session_id()
+    t.queue.set_state(f"session:{old_session}", {"updated": 1.0, "props": {}})
+    client().post("/telemetry/reset", json={})
+    assert identity.session_id() != old_session
+    counters, records = t.live_rows()
+    assert not [row for row in counters if row[1] == "tool.summary"] and records == []
+    assert t.queue.get_state(f"session:{old_session}") is None
+
+
 def test_status_and_send_carry_a_refused_registration(telemetry_enabled):
     t, fake = telemetry_enabled
     t.start(plexora.app, "terminal", upload=False)

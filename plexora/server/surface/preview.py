@@ -41,6 +41,9 @@ CONTOUR_POINTS = 40_000
 _blocks: OrderedDict = OrderedDict()
 _bytes = 0
 _lock = threading.Lock()
+#: key -> the lock its one read holds: a slider moved while a cold block is
+#: still being read waits for that read instead of reading it again.
+_reading: dict = {}
 
 
 def clear() -> None:
@@ -77,18 +80,30 @@ def block_for(source, identity, *, channel, t, region, pre=None, budget=None):
         if held is not None:
             _blocks.move_to_end(key)
             return held, plan
-    read = levels.plan_reader(source, plan, t=t, channel=channel)
-    block = read(0, plan.grid.shape[0] - 1)
-    if pre.active:
-        block = pre.apply(block, plan.voxel_um(_scale(volume)[0]))
-    block = np.ascontiguousarray(block, dtype=np.float32)
-    with _lock:
-        if key not in _blocks:
-            _blocks[key] = block
-            _bytes += block.nbytes
-            while _bytes > CACHE_BYTES and len(_blocks) > 1:
-                _, dropped = _blocks.popitem(last=False)
-                _bytes -= dropped.nbytes
+        gate = _reading.setdefault(key, threading.Lock())
+    with gate:
+        try:
+            with _lock:
+                held = _blocks.get(key)
+                if held is not None:
+                    _blocks.move_to_end(key)
+                    return held, plan
+            read = levels.plan_reader(source, plan, t=t, channel=channel)
+            block = read(0, plan.grid.shape[0] - 1)
+            if pre.active:
+                block = pre.apply(block, plan.voxel_um(_scale(volume)[0]))
+            block = np.ascontiguousarray(block, dtype=np.float32)
+            with _lock:
+                if key not in _blocks:
+                    _blocks[key] = block
+                    _bytes += block.nbytes
+                    while _bytes > CACHE_BYTES and len(_blocks) > 1:
+                        _, dropped = _blocks.popitem(last=False)
+                        _bytes -= dropped.nbytes
+        finally:
+            with _lock:
+                if _reading.get(key) is gate:
+                    del _reading[key]
     return block, plan
 
 

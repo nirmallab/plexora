@@ -123,6 +123,22 @@ def test_an_exclusion_filed_as_a_selection_says_what_was_done():
     assert not any("every marker is gated" in a for a in out.ambiguities)
 
 
+def test_an_except_exclusion_filed_as_a_selection_gates_the_rest():
+    # "except" is both a restriction cue and an exclusion cue: filed as a
+    # selection it used to become an empty restriction (refused, the run
+    # aborted) or a restriction to the very marker the user excluded.
+    text = "gate everything except CD45"
+    for requested in ([], ["CD45"]):
+        out = settle(reading(mode="selected_markers", requested_markers=requested,
+                             excluded_markers=["CD45"]), text, PANEL)
+        assert out.scope == "all_markers" and out.excluded == ["CD45"], requested
+        assert "CD45" not in GATING.context_arguments(out, PANEL).get("markers", [])
+    # A real restriction phrased with "except" still restricts.
+    kept = settle(reading(mode="selected_markers", requested_markers=["CD3"]),
+                  "skip everything except CD3", PANEL)
+    assert kept.scope == "selected_markers" and kept.requested == ["CD3"]
+
+
 def test_markers_named_for_context_are_not_a_scope():
     out = settle(reading(markers_mentioned=["SOX10", "MART1"], disease="melanoma"),
                  "This is melanoma; SOX10 and MART1 may help identify tumor cells.", PANEL)

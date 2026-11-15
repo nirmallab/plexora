@@ -27,7 +27,6 @@ import copy
 import hashlib
 import json
 import secrets
-import threading
 from datetime import datetime, timezone
 
 import polars as pl
@@ -56,101 +55,19 @@ ROI_META_SCHEMA = {
 CELL_ROIS_SCHEMA = {"cell_id": pl.Int64, "roi_id": pl.Utf8, "fraction": pl.Float32,
                     "method": pl.Utf8, "geometry_hash": pl.Utf8}
 
-_LOCKS: dict = {}
-_GUARD = threading.Lock()
-
-
-class _ProjectLock:
-    """A re-entrant lock that also holds an advisory lock on the store's
-    folder while it is held: a server and a headless `plexora ai run qc` on
-    the same project are two processes, and the thread lock alone let one
-    overwrite the other's document."""
-
-    def __init__(self, datasource):
-        self._datasource = str(datasource)
-        self._lock = threading.RLock()
-        self._depth = 0
-        self._handle = None
-
-    def _path(self):
-        try:
-            return _store(self._datasource).directory() / "qc.lock"
-        except Exception:  # no store folder (a test double): the thread lock alone
-            return None
-
-    def _take_file(self):
-        path = self._path()
-        if path is None:
-            return
-        try:
-            handle = open(path, "a+b")
-        except OSError:
-            return
-        try:
-            if _fcntl is not None:
-                _fcntl.flock(handle.fileno(), _fcntl.LOCK_EX)
-            elif _msvcrt is not None:
-                handle.seek(0)
-                _msvcrt.locking(handle.fileno(), _msvcrt.LK_LOCK, 1)
-        except OSError:
-            handle.close()
-            return
-        self._handle = handle
-
-    def _drop_file(self):
-        handle, self._handle = self._handle, None
-        if handle is None:
-            return
-        try:
-            if _fcntl is not None:
-                _fcntl.flock(handle.fileno(), _fcntl.LOCK_UN)
-            elif _msvcrt is not None:
-                handle.seek(0)
-                _msvcrt.locking(handle.fileno(), _msvcrt.LK_UNLCK, 1)
-        except OSError:
-            pass
-        finally:
-            handle.close()
-
-    def acquire(self, blocking=True, timeout=-1):
-        if not self._lock.acquire(blocking, timeout):
-            return False
-        self._depth += 1
-        if self._depth == 1:
-            self._take_file()
-        return True
-
-    def release(self):
-        if self._depth == 1:
-            self._drop_file()
-        self._depth -= 1
-        self._lock.release()
-
-    def __enter__(self):
-        self.acquire()
-        return self
-
-    def __exit__(self, *exc):
-        self.release()
-        return False
-
-
-try:
-    import fcntl as _fcntl
-    _msvcrt = None
-except ImportError:  # Windows
-    _fcntl = None
-    try:
-        import msvcrt as _msvcrt
-    except ImportError:
-        _msvcrt = None
-
 
 def lock(datasource):
     """The read-modify-write lock of one project's QC store (re-entrant, and
-    held across processes for its outermost hold)."""
-    with _GUARD:
-        return _LOCKS.setdefault(str(datasource), _ProjectLock(datasource))
+    held across processes for its outermost hold): a server and a headless
+    `plexora ai run qc` on the same project are two processes, and a thread
+    lock alone let one overwrite the other's document. `plexora._process_lock`
+    -- which polls on Windows rather than giving up after `msvcrt.LK_LOCK`'s
+    ten one-second tries and writing unlocked."""
+    from plexora import _process_lock
+
+    name = str(datasource)
+    return _process_lock.lock_for(("qc.results", name),
+                                  lambda: _store(name).directory() / "qc.lock")
 
 
 def now_iso():

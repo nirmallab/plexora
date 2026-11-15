@@ -164,12 +164,15 @@ def square():
         return jsonify({"inside": False})
     names = [n for n in (request.args.get("genes") or "").split(",") if n]
     names = names or [bin_tiles.TOTAL]
-    rows = bin_tiles.gene_indices(stored, names)
+    # One lookup per name: gene_indices drops unknown names, so pairing its
+    # list with `names` would hand a later gene an earlier one's count.
+    rows = {name: (bin_tiles.gene_indices(stored, [name]) or [None])[0]
+            for name in names}
+    wanted = [i for i in rows.values() if i is not None]
     counts = bin_tiles.square_at(datasource, layer_id, stored, column, row,
-                                 rows + [int(stored["total_index"])], pooling)
-    by_name = {}
-    for name, index in zip(names, rows):
-        by_name[name] = counts.get(index, 0)
+                                 wanted + [int(stored["total_index"])], pooling)
+    by_name = {name: (counts.get(index, 0) if index is not None else 0)
+               for name, index in rows.items()}
     return jsonify({
         "inside": True, "column": (column // pooling) * pooling,
         "row": (row // pooling) * pooling,

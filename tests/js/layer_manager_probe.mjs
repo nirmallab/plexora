@@ -1161,6 +1161,57 @@ check("a second layer's card arrives folded",
 }
 
 
+// -- a layer edit still waiting when the page goes ---------------------------
+//
+// `persist` holds a layer's change for PERSIST_DELAY (a drag is one request,
+// not sixty). A navigation throws that timer away with the page, so the
+// change has to be sent when the page leaves: `flush`, with keepalive, which
+// views/datasetNav.js calls on a walk and on pagehide.
+
+{
+    const mounts = [];
+    const timers = new Map();
+    let nextTimer = 1;
+    const sent = [];
+    ctx.setTimeout = (fn) => { const id = nextTimer++; timers.set(id, fn); return id; };
+    ctx.clearTimeout = (id) => { timers.delete(id); };
+    ctx.fetch = (address, options = {}) => {
+        sent.push({ address: String(address), ...options });
+        return Promise.resolve({ ok: true, json: async () => ({}) });
+    };
+    ctx.plexoraUrl = (path) => `/${path}`;
+    ctx.flaskVariables = { datasource: "demo" };
+    ctx.PlexoraLayerChannels = {
+        mount(options) {
+            const node = makeNode("div");
+            const footer = makeNode("div");
+            node.appendChild(footer);
+            const mounted = { node, footer, options, setAlignment() {}, destroy() {} };
+            mounts.push(mounted);
+            return mounted;
+        },
+    };
+    stack.register("mx_leave", {
+        kind: "image", label: "Multiplex",
+        spec: { channels: [{ name: "mx_0", src: "/mx/mx_0/" }] },
+    });
+    const panel = mounts.find((m) => m.options.layer.id === "mx_leave");
+    panel?.options.persist({ render: { channels: [{ name: "mx_0", color: "ff0000" }] } });
+    const before = sent.length;
+    const flushed = typeof ctx.PlexoraLayerManager.flush === "function";
+    if (flushed) ctx.PlexoraLayerManager.flush({ keepalive: true });
+    const patch = sent.slice(before).find((r) => r.method === "PATCH" && r.address.includes("/layers/mx_leave"));
+    check("a layer edit still waiting on its debounce is sent by flush, with keepalive",
+        Boolean(panel) && flushed && Boolean(patch) && patch.keepalive === true,
+        flushed ? JSON.stringify(sent) : "the panel has no flush: the edit dies with the page");
+    for (const fn of [...timers.values()]) fn();
+    check("...and only once: the debounce it replaced does not send it again",
+        sent.filter((r) => r.method === "PATCH").length === 1, JSON.stringify(sent));
+    stack.unregister("mx_leave");
+    for (const key of ["setTimeout", "clearTimeout", "fetch", "plexoraUrl", "PlexoraLayerChannels"]) delete ctx[key];
+}
+
+
 // -- removing --------------------------------------------------------------
 
 {

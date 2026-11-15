@@ -94,3 +94,10 @@ def test_a_tile_the_browser_has_is_answered_before_a_pixel_is_read(tmp_path, cli
     monkeypatch.setattr(model, "encode_tile", boom)
     again = client.get(base + "/0/0_0.png?view=z7", headers={"If-None-Match": tag})
     assert again.status_code == 304 and again.headers["ETag"] == tag
+
+
+def test_a_half_way_z_is_on_the_plane_roi_mapping_puts_it_on():
+    """floor(z + 0.5), as the ROI mapping and the viewer (audit lead flow-coords-6)."""
+    from plexora.agent.sections import plane_of
+
+    assert [plane_of(z, 10) for z in (6.5, 7.5, 6.49, 0.5, -0.4, 99.0)] == [7, 8, 6, 1, 0, 9]

@@ -195,6 +195,8 @@ class QcRegistration {
         document.removeEventListener("visibilitychange", this._onVisibility);
         window.removeEventListener("blur", this._onVisibility);
         window.removeEventListener("focus", this._onVisibility);
+        this._unbindColors?.();
+        this._unbindColors = null;
         this.pickers.forEach((picker) => picker.destroy?.());
         this.pickers.clear();
         this.overlay?.remove?.();
@@ -533,7 +535,7 @@ class QcRegistration {
                 const slot = panel.channelSlots[i];
                 if (!slot || !name) return;
                 if (slot.name !== name || !slot.enabled || slot.visible === false) {
-                    panel.setSlotMarker(i, name, { enable: true, keepColor: true });
+                    QcRegistration.quietMarker(panel, i, name, { enable: true, keepColor: true });
                 }
                 this._appliedNames[i] = name;
                 const wanted = this.wantedColor(role, name);
@@ -556,6 +558,19 @@ class QcRegistration {
         this.syncFlicker();
     }
 
+    /** setSlotMarker without the save its late auto-level makes after
+     *  persistence is resumed (as QcArtifactsQc.quietMarker): the check's
+     *  channels, and the ones it puts back, are not the user's edit. */
+    static quietMarker(panel, index, name, options) {
+        const slot = panel.channelSlots?.[index];
+        const quiet = Boolean(slot) && !slot.autoLeveling && !slot.autoSilent;
+        if (quiet) slot.autoSilent = true;
+        panel.setSlotMarker(index, name, options);
+        if (quiet && (slot.autoLeveled || slot.userRangeChanged || !slot.enabled)) {
+            slot.autoSilent = false;
+        }
+    }
+
     restore(panel) {
         const snap = this._snapshot;
         if (!snap) return;
@@ -570,7 +585,8 @@ class QcRegistration {
                     return;
                 }
                 if (slot.name !== was.name || slot.enabled !== was.enabled) {
-                    panel.setSlotMarker(i, was.name, { enable: was.enabled, keepColor: true });
+                    QcRegistration.quietMarker(panel, i, was.name,
+                                               { enable: was.enabled, keepColor: true });
                     if (!was.enabled && slot.enabled) panel.setSlotEnabled(i, false);
                 }
                 if (was.colorHex && slot.colorHex !== was.colorHex) {
@@ -617,9 +633,13 @@ class QcRegistration {
         const events = window.__plexora?.viewerSidebar?.eventHandler;
         const name = window.ChannelList?.events?.COLOR_TRANSFER_CHANGE || "COLOR_TRANSFER_CHANGE";
         if (!events || typeof events.bind !== "function") return;
-        events.bind(name, (packet) => {
+        this._unbindColors?.();
+        // Unbound in destroy: held by the page's event handler, the listener
+        // would keep this whole controller alive after the tool closes.
+        const off = events.bind(name, (packet) => {
             if (this._alive) this.onChannelColor(packet);
         });
+        this._unbindColors = typeof off === "function" ? off : null;
     }
 
     onChannelColor(packet) {

@@ -214,7 +214,13 @@
         /** Element pixels -> full-resolution image pixels, or null. */
         imagePoint(position) {
             const viewer = this.viewer;
-            const item = viewer?.world?.getItemAt?.(0);
+            // The reference image, not world item 0: a registered layer can
+            // sit at 0, and reading through it lands the square (and the 3-D
+            // crop) offset by its registration.
+            const scene = global.PlexoraViewerScene;
+            const item = typeof scene?.referenceItem === "function"
+                ? scene.referenceItem(this.imageViewer)
+                : viewer?.world?.getItemAt?.(0);
             if (!item || !position) return null;
             const transform = global.PlexoraViewTransform?.screenToImage;
             const p = transform ? transform(viewer, item, position)

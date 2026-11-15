@@ -655,3 +655,34 @@ def test_a_node_that_reported_outlines_is_left_alone(tmp_path, monkeypatch):
     data_model.load_config("sample")
 
     assert data_model.config["sample"]["segmentationMode"] == sp.MODE_OUTLINES
+
+
+def test_the_backfill_write_keeps_edits_made_during_the_load(tmp_path, monkeypatch):
+    """The mapping refresh can stat and sample files, outside the config lock.
+    An edit to the same entry that lands meanwhile (a rename of the title, a
+    channel set -- here a `note`) must survive the load's write: it writes
+    back only what it changed, not its whole stale copy (audit lead S5)."""
+    source = _filled_mask(tmp_path / "mask.tiff")
+    data_dir, config_path = _data_dir(tmp_path, monkeypatch, {"dataset": None})
+    derived = sp.pyramidize_segmentation_mask(
+        source, sp.outline_output_path(source, data_dir / "sample"), tile_size=256
+    )
+    config_path.write_text(
+        json.dumps({"sample": {"dataset": None, "segmentation": derived}}), encoding="utf-8"
+    )
+    _capture_jobs(monkeypatch)
+    real_refresh = data_model.refresh_segmentation_mapping
+
+    def refresh_while_someone_edits(entry, name):
+        stored = json.loads(config_path.read_text(encoding="utf-8"))
+        stored["sample"]["note"] = "written during the load"
+        config_path.write_text(json.dumps(stored), encoding="utf-8")
+        return real_refresh(entry, name)
+
+    monkeypatch.setattr(data_model, "refresh_segmentation_mapping", refresh_while_someone_edits)
+    data_model.load_config("sample")
+
+    stored = json.loads(config_path.read_text(encoding="utf-8"))["sample"]
+    assert stored.get("note") == "written during the load"
+    # And the load's own backfill landed.
+    assert stored.get("segmentationSourceKey") and stored.get("segmentationMode")

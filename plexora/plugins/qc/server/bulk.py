@@ -208,6 +208,7 @@ def _superseded(engine):
 
 def run(call, inp):
     """The bulk job's handler."""
+    from plexora.agent.jobs import JobCancelled
     from plexora.plugins.qc.server import scan as scanmod
     from plexora.plugins.qc.server.detectors import DetectorContext, run_all, versions
 
@@ -215,6 +216,20 @@ def run(call, inp):
     announce = _progress_announcer(call, session_id)
     try:
         return _run_bulk(call, session_id, announce, scanmod, DetectorContext, run_all, versions)
+    except JobCancelled:
+        raise
+    except Exception as exc:
+        # Any failure ends the session, as the scan's own does: left
+        # `bulk_running`, every qc_next would resubmit the failing job
+        # (`SessionTools.resume_bulk`) and wait on it forever.
+        with engine_for(call, session_id) as engine:
+            if engine.record.get("state") == "bulk_running" \
+                    and getattr(exc, "code", None) != "cancelled":
+                engine.record["state"] = "failed"
+                engine.record["error"] = {
+                    "code": getattr(exc, "code", None) or "internal_error",
+                    "message": getattr(exc, "message", None) or str(exc) or type(exc).__name__}
+        raise
     finally:
         # Whatever happened -- done, failed, cancelled from the viewer -- the
         # pass's last stage must not linger in `bulk_progress`, or a status

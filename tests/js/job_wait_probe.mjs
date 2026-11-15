@@ -93,6 +93,7 @@ function boot() {
     const retried = [];
     const win = {
         setTimeout(fn) { timers.push(fn); return timers.length; },
+        clearTimeout(id) { if (id) timers[id - 1] = null; },
         addEventListener(name, fn) {
             if (!windowListeners.has(name)) windowListeners.set(name, []);
             windowListeners.get(name).push(fn);
@@ -126,6 +127,8 @@ function boot() {
     const overlays = () => body.find("segmentation-progress-overlay");
     return {
         win, chips, retried, overlays,
+        /** Run every timer due so far, as the clock passing would. */
+        flush() { timers.splice(0).forEach((fn) => fn && fn()); },
         mask: win.PlexoraMaskSurfaceWait,
         segmentation: win.PlexoraSegmentationWait,
         press(key) { (documentListeners.get("keydown") || []).slice().forEach((fn) => fn({ key })); },
@@ -212,6 +215,37 @@ function boot() {
     app.segmentation.failed("bad mask");
     const retry = app.overlays()[0].find("btn-primary")[0];
     check("a wait that cannot retry offers no Retry", !retry || retry.hidden);
+}
+
+{
+    // The ready dwell: the finished bar stays up READY_DWELL_MS, then closes.
+    const app = boot();
+    app.mask.start();
+    app.mask.ready();
+    app.mask.start();
+    app.flush();
+    check("a start() inside the ready dwell is taken, and the dwell does not close it",
+        app.mask.state === "working" && app.overlays().length === 1
+        && app.titleOf(app.overlays()[0]) === "Converting the mask to 3-D surfaces", app.mask.state);
+}
+
+{
+    const app = boot();
+    app.mask.start();
+    app.mask.ready();
+    app.mask.failed("the surfaces could not be written");
+    app.flush();
+    check("a failure inside the ready dwell stays on screen",
+        app.mask.state === "failed" && app.overlays().length === 1, app.mask.state);
+}
+
+{
+    const app = boot();
+    app.mask.start();
+    app.mask.ready();
+    app.flush();
+    check("...and a dwell left alone still closes the finished modal",
+        app.mask.state === "idle" && app.overlays().length === 0);
 }
 
 console.log(`\n${failures.length ? `FAILURES: ${failures.join(", ")}` : "all checks passed"}`);

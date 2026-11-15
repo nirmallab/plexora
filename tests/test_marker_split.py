@@ -76,6 +76,7 @@ def test_a_plugin_reads_the_recorded_split_rather_than_guessing_from_numbers():
         "a recorded marker the loaded table no longer holds is dropped",
         "an unclassified project still gets a usable list",
         "a split with nothing describable in it falls back rather than emptying",
+        "a dataset object held from before a refresh reads the new schema and table",
     ):
         assert line in proc.stdout, proc.stdout
 

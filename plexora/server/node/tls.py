@@ -183,11 +183,15 @@ class TlsFront:
 
     @staticmethod
     def _pump(secure, backend):
-        """Both directions until either side closes."""
+        """Both directions until either side closes.
+
+        No idle timeout of its own: a request can be silent for longer than
+        any fixed figure while the node computes its answer. Waitress closes
+        a connection that is idle with no request in flight
+        (`channel_timeout`), and that EOF on `backend` is what ends this.
+        """
         while True:
-            readable, _w, _x = select.select([secure, backend], [], [], 300)
-            if not readable:
-                return
+            readable, _w, _x = select.select([secure, backend], [], [])
             if secure in readable:
                 data = secure.recv(CHUNK)
                 if not data:

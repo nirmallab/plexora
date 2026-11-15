@@ -81,6 +81,11 @@ class FigureImagePanel {
         //: The SortableJS instance over the caption list, rebuilt on every
         //: render because the list is rebuilt on every render. See bindSorting.
         this.sorter = null;
+        //: Which selection the markup was last drawn for; see `focused`.
+        this.renderedIds = null;
+        //: The captions a rename in progress stands for, as "panel\0label"
+        //: keys, or null. See `labelRows`.
+        this.renaming = null;
     }
 
     setup() {
@@ -89,6 +94,7 @@ class FigureImagePanel {
         this.root.addEventListener("change", (event) => this.changed(event));
         this.root.addEventListener("click", (event) => this.clicked(event));
         this.root.addEventListener("focusin", (event) => this.focusedIn(event));
+        this.root.addEventListener("focusout", (event) => this.focusedOut(event));
         this.root.addEventListener("keydown", (event) => this.keyDown(event));
     }
 
@@ -106,6 +112,17 @@ class FigureImagePanel {
         if (!this.preset) return;
         if (input?.dataset?.field !== "new_label_text") return;
         try { input.select(); } catch (error) { /* not a text field */ }
+    }
+
+    /** Leaving a caption's text field ends the rename it pinned; the list is
+     *  redrawn a task later so that it merges by text again without pulling
+     *  the field the keyboard is going to out from under it. */
+    focusedOut(event) {
+        if (event.target?.dataset?.field !== "label_text" || !this.renaming) return;
+        this.renaming = null;
+        if (typeof setTimeout === "function") {
+            setTimeout(() => { if (this.panels.length) this.render(); }, 0);
+        }
     }
 
     /**
@@ -292,6 +309,7 @@ class FigureImagePanel {
             ${this.labelsSection(panels)}
             ${single ? this.panelLabelSection(single) : ""}`;
 
+        this.renderedIds = this.ids.join(",");
         this.restore(focus);
         this.bindSorting();
     }
@@ -737,7 +755,12 @@ class FigureImagePanel {
         const byText = new Map();
         for (const panel of this.panels) {
             for (const entry of panel.labels || []) {
-                const key = String(entry.text || "").trim();
+                // A row being renamed keeps to itself until its field is
+                // left. Keyed by its text, typing "SOX10" through "DNA" would
+                // merge it into the DNA row mid-word: the next keystroke would
+                // rename both, and the field being typed in would be gone.
+                const key = this.renaming?.has(`${panel.panel_id}\0${entry.label_id}`)
+                    ? "\0renaming" : String(entry.text || "").trim();
                 let row = byText.get(key);
                 if (!row) {
                     row = { key: key, text: entry.text,
@@ -1048,13 +1071,22 @@ class FigureImagePanel {
                 caret = [active.selectionStart, active.selectionEnd];
             }
         } catch (error) { caret = null; }
-        return { where: where, caret: caret };
+        // A number box commits on every keystroke and is then redrawn from the
+        // number it committed, which is not what was typed: "0." stores 0 and
+        // comes back as "0", so the next "5" made 5 mm of a 0.5 mm margin. The
+        // text under the caret is put back as typed -- but only while the
+        // selection is the one it was typed for.
+        const decimal = active.getAttribute?.("inputmode") === "decimal";
+        const text = decimal && this.ids.join(",") === this.renderedIds
+            ? active.value : null;
+        return { where: where, caret: caret, text: text };
     }
 
     restore(focus) {
         if (!focus) return;
         const again = this.root.querySelector(focus.where);
         if (!again) return;
+        if (typeof focus.text === "string") again.value = focus.text;
         again.focus();
         if (focus.caret) {
             try {
@@ -1225,6 +1257,13 @@ class FigureImagePanel {
                 this.render();
             }
             return;         // no redraw: the caret is in the field being typed in
+        }
+        if (field === "label_text" && !this.renaming) {
+            // Pinned BEFORE the first commit, while the row is still the row.
+            const targets = this.rowTargets(Number(input.dataset.row));
+            this.renaming = targets ? new Set(Array.from(targets).flatMap(
+                ([panelId, ids]) => Array.from(ids, (id) => `${panelId}\0${id}`)))
+                : null;
         }
         if (field === "label_text" || field === "label_size") {
             this.rowFieldChanged(field, input);

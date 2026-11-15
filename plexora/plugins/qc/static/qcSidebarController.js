@@ -238,6 +238,10 @@ class QcSidebarController {
     }
 
     destroy() {
+        // followBulk, mid-request, stops here rather than writing the
+        // reopened panel's status line.
+        this._destroyed = true;
+        this.stack?.destroy?.();
         this.registration.destroy();
         this.segmentation.destroy();
         this.blur.destroy();
@@ -353,6 +357,7 @@ class QcSidebarController {
         try {
             while (this.session && this.session.state !== "finished" && this.session.jobId) {
                 const answer = await this.api.job(this.session.jobId).catch(() => null);
+                if (this._destroyed || !this.session) break;
                 const job = answer && answer.ok ? answer.data.job : null;
                 if (!job || !["queued", "running"].includes(job.status)) {
                     if (this.session) this.session.job = null;
@@ -362,6 +367,7 @@ class QcSidebarController {
                 this.session.job = job.progress || {};
                 this.renderStatus();
                 await new Promise((resolve) => setTimeout(resolve, 2000));
+                if (this._destroyed) break;
             }
         } finally {
             this._followingBulk = false;
@@ -386,6 +392,15 @@ class QcSidebarController {
         } finally {
             this.busy = false;
             this.el("qc_panel_section")?.classList.remove("is-busy");
+        }
+    }
+
+    /** Resolves once no `act` is running (checked every 50 ms). The caller's
+     *  own `act` must follow without an await between, so it takes `busy`
+     *  before another waiter sees it free. */
+    async untilIdle() {
+        while (this.busy) {
+            await new Promise((resolve) => window.setTimeout(resolve, 50));
         }
     }
 
@@ -775,8 +790,10 @@ class QcSidebarController {
             return roiId;
         }
         if (!target) return null;
+        const views = this.currentView();
+        await this.untilIdle();
         const done = await this.act("Saving the region", () => this.api.drawRegion(
-            { ...target.target, geometry, method: "sam", views: this.currentView() }));
+            { ...target.target, geometry, method: "sam", views }));
         if (!done) return null;
         this._roiWatch?.known.add(done.roi?.id);
         this.message(`Added "${(done.roi && done.roi.name) || target.label}"`);
@@ -817,8 +834,14 @@ class QcSidebarController {
     async saveStroke(points, shape = "freehand") {
         const target = this.drawTarget;
         if (!target) return;
+        // What was on screen as it was drawn, not after the wait below.
+        const views = this.currentView();
+        // A region drawn while the last one (or any other change) is still
+        // saving waits its turn: `act` refuses while busy, and the stroke,
+        // already gone from the image, would be lost with nothing said.
+        await this.untilIdle();
         const done = await this.act("Saving the region", () => this.api.drawRegion(
-            { ...target.target, points, method: shape, views: this.currentView() }));
+            { ...target.target, points, method: shape, views }));
         if (!done) return;
         // Known to the ROI watch already, so it is not taken in twice.
         this._roiWatch?.known.add(done.roi?.id);

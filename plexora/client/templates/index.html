@@ -538,7 +538,7 @@
    listen for. #}
 {# The modal-and-chip of a background job (views/jobWait.js), and its waits:
    the mask pyramid here, the 3-D mask's cell surfaces below. #}
-<script src="{{ data.base_url }}/client/src/js/views/jobWait.js?v=20261013_mask_surfaces" defer></script>
+<script src="{{ data.base_url }}/client/src/js/views/jobWait.js?v=20261114_audit_leads2" defer></script>
 <script src="{{ data.base_url }}/client/src/js/views/segmentationWait.js?v=20261013_mask_surfaces" defer></script>
 <script src="{{ data.base_url }}/client/src/js/views/loadProgress.js?v=20261112_tile_progress" defer></script>
 {# Brightfield display adjustments. Deferred like main.js and loaded
@@ -551,7 +551,7 @@
    are the channel list and a registered layer's channel panel, and both are the
    viewer's. Only has to exist by the time the user clicks one of those upload
    buttons, so deferred is ample. #}
-<script src="{{ data.base_url }}/client/src/js/views/channelNamesUpload.js?v=20261027_machine_chip" defer></script>
+<script src="{{ data.base_url }}/client/src/js/views/channelNamesUpload.js?v=20261114_audit_leads2" defer></script>
 {# What the last sample arranged, on its way into this one. BEFORE main.js
    and deferred like it, so the snapshot is on hand by the time init() builds
    the channel slots -- the sidebar reads it while deciding which channels to
@@ -564,7 +564,7 @@
    all, and this is the way out of it. It mounts off its own fetch and asks
    the viewer for nothing. #}
 <script src="{{ data.base_url }}/client/src/js/views/datasetStrip.js?v=20261105_gating_v4" defer></script>
-<script src="{{ data.base_url }}/client/src/js/views/datasetNav.js?v=20261114_audit" defer></script>
+<script src="{{ data.base_url }}/client/src/js/views/datasetNav.js?v=20261114_audit_leads2" defer></script>
 <script src="{{ data.base_url }}/client/src/js/views/pluginHelp.js?v=20261025_roi_map_confirm" defer></script>
 {# Why the canvas is empty, when it is. Before main.js, which calls it from
    the boot path the moment a load comes back without an image. #}
@@ -584,7 +584,7 @@
 <script src="{{ data.base_url }}/client/src/js/services/inspectState.js?v=20261022_bookmarks" defer></script>
 <script src="{{ data.base_url }}/client/src/js/services/perfProbe.js?v=20261010_perf" defer></script>
 <script src="{{ data.base_url }}/client/src/js/services/volumeWindows.js?v=20261010_windows" defer></script>
-<script src="{{ data.base_url }}/client/src/js/services/viewerPrefs.js?v=20261114_audit" defer></script>
+<script src="{{ data.base_url }}/client/src/js/services/viewerPrefs.js?v=20261114_audit_leads2" defer></script>
 {# A channel switched on comes in rather than lands, on every surface the
    channel section drives (the plane, layers, section panes). Before main.js,
    whose boot adds the first channels. #}
@@ -600,13 +600,13 @@
    service that loads and styles them, their card, Surface Studio's dock, the
    picked object's card and the objects table. #}
 <script src="{{ data.base_url }}/client/src/js/views/surfaceRenderer.js?v=20261021_area" defer></script>
-<script src="{{ data.base_url }}/client/src/js/services/surfaceLayers.js?v=20261022_bookmarks" defer></script>
+<script src="{{ data.base_url }}/client/src/js/services/surfaceLayers.js?v=20261114_audit_leads2" defer></script>
 {# A 3-D mask drawn in 3-D: the Cells control's Outlines and Filled as cell
    surfaces, and the wait while the mask is converted. #}
 <script src="{{ data.base_url }}/client/src/js/views/maskSurfaceWait.js?v=20261013_mask_surfaces" defer></script>
 <script src="{{ data.base_url }}/client/src/js/services/maskSurfaces.js?v=20261021_pro" defer></script>
 <script src="{{ data.base_url }}/client/src/js/views/surfaceCard.js?v=20261021_pro" defer></script>
-<script src="{{ data.base_url }}/client/src/js/views/surfaceStudio.js?v=20261021_pro" defer></script>
+<script src="{{ data.base_url }}/client/src/js/views/surfaceStudio.js?v=20261114_audit_leads2" defer></script>
 <script src="{{ data.base_url }}/client/src/js/views/surfaceInspect.js?v=20261021_pro" defer></script>
 <script src="{{ data.base_url }}/client/src/js/views/surfaceObjects.js?v=20261011_surfaces" defer></script>
 <script src="{{ data.base_url }}/client/src/js/views/volumeRenderer.js?v=20261114_audit" defer></script>
@@ -615,16 +615,16 @@
 <script src="{{ data.base_url }}/client/src/js/views/volumeHandles.js?v=20261022_bookmarks" defer></script>
 {# The Area tool (a square on the image, opened in 3-D), and Back (B) to the
    view it was opened from. #}
-<script src="{{ data.base_url }}/client/src/js/views/areaTool.js?v=20261022_views2" defer></script>
+<script src="{{ data.base_url }}/client/src/js/views/areaTool.js?v=20261114_audit_leads2" defer></script>
 <script src="{{ data.base_url }}/client/src/js/services/viewHistory.js?v=20261022_bookmarks" defer></script>
 <script src="{{ data.base_url }}/client/src/js/views/backButton.js?v=20261022_bookmarks" defer></script>
 {# Bookmarks: views kept as captures of the plugin that keeps them, and their
    tray. The store registers itself (Plugin.viewer_scripts, in <head>). #}
 <script src="{{ data.base_url }}/client/src/js/services/bookmarks.js?v=20261022_views2" defer></script>
 <script src="{{ data.base_url }}/client/src/js/views/bookmarkTray.js?v=20261025_contrast" defer></script>
-<script src="{{ data.base_url }}/client/src/js/views/sectionPanes.js?v=20261022_channel_sync" defer></script>
+<script src="{{ data.base_url }}/client/src/js/views/sectionPanes.js?v=20261114_audit_leads2" defer></script>
 <script src="{{ data.base_url }}/client/src/js/views/paneStatus.js?v=20261013_pane_status" defer></script>
-<script src="{{ data.base_url }}/client/src/js/views/sectionCells.js?v=20261014_late_mask" defer></script>
+<script src="{{ data.base_url }}/client/src/js/views/sectionCells.js?v=20261114_audit_leads2" defer></script>
 <script src="{{ data.base_url }}/client/src/js/views/planeMotion.js?v=20261013_znav" defer></script>
 {# An external agent driving this viewer (the live viewer control plane,
    /agent/v1). Deferred and BEFORE main.js: it waits for DOMContentLoaded and
@@ -637,13 +637,13 @@
 <script src="{{ data.base_url }}/client/src/js/views/agentPanel.js?v=20261105_gating_v4" defer></script>
 {# Plexora AI chat (/ai/v1/conversations): a launcher chip and a non-modal
    panel in the viewer's lower-left corner. #}
-<script src="{{ data.base_url }}/client/src/js/views/chatPanel.js?v=20261012_merge_main" defer></script>
-<script src="{{ data.base_url }}/client/src/js/services/agentBridge.js?v=20261114_audit" defer></script>
+<script src="{{ data.base_url }}/client/src/js/views/chatPanel.js?v=20261114_audit_leads2" defer></script>
+<script src="{{ data.base_url }}/client/src/js/services/agentBridge.js?v=20261114_audit_leads2" defer></script>
 {# What a launch link asked this page to show beyond its channels -- a colour-by
    column, cells, regions, a viewport (page_routes.launch_from_dict). After
    agentBridge.js: it applies them through the bridge's own handlers. #}
 <script src="{{ data.base_url }}/client/src/js/services/launchContext.js?v=20261005_bridge" defer></script>
-<script src="{{ data.base_url }}/client/src/js/main.js?v=20261114_audit" defer></script>
+<script src="{{ data.base_url }}/client/src/js/main.js?v=20261114_audit_leads2" defer></script>
 {% else %}
 {# The home page: `/` with no datasource named, whether or not anything is
    registered yet.
@@ -847,6 +847,6 @@
         {% endif %}
     </div>
 </div>
-<script src="{{ data.base_url }}/client/src/js/views/quickViewLanding.js?v=20261111_ets" defer></script>
+<script src="{{ data.base_url }}/client/src/js/views/quickViewLanding.js?v=20261114_audit_leads2" defer></script>
 {% endif %}
 {% endblock %}

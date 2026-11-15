@@ -40,6 +40,19 @@ def _read(path: Path) -> dict:
     return data if isinstance(data, dict) else {}
 
 
+def _registry_lock(path: Path):
+    """Held across processes for each read-modify-write of servers.json.
+
+    Every running viewer, `plexora mcp serve` and notebook server rewrites
+    this one file; with a thread lock alone two starting at once each read
+    the old file and the second write dropped the first's record (audit
+    S21). The advisory lock lives beside it (`plexora._process_lock`)."""
+    from plexora import _process_lock
+
+    lock_path = path.with_name(path.name + ".lock")
+    return _process_lock.lock_for(("server_records", str(lock_path)), lambda: lock_path)
+
+
 def _alive(pid) -> bool:
     """Whether `pid` is a running process. True when that cannot be
     established: a wrong "yes" costs one wasted probe, a wrong "no" hides a
@@ -136,10 +149,11 @@ def announce(port, token=None, *, mode="terminal", host="127.0.0.1", base_url=""
     }
     try:
         path = _path(root) / SERVERS_FILENAME
-        data = {key: value for key, value in _read(path).items()
-                if isinstance(value, dict) and _alive(value.get("pid"))}
-        data[str(pid)] = record
-        write_private_json(path, data)
+        with _registry_lock(path):
+            data = {key: value for key, value in _read(path).items()
+                    if isinstance(value, dict) and _alive(value.get("pid"))}
+            data[str(pid)] = record
+            write_private_json(path, data)
     except Exception:
         pass
     return record
@@ -151,9 +165,10 @@ def forget(pid=None, root=None) -> None:
     pid = str(int(pid or os.getpid()))
     try:
         path = _path(root) / SERVERS_FILENAME
-        data = _read(path)
-        if data.pop(pid, None) is not None:
-            write_private_json(path, data)
+        with _registry_lock(path):
+            data = _read(path)
+            if data.pop(pid, None) is not None:
+                write_private_json(path, data)
     except Exception:
         pass
 
@@ -179,13 +194,14 @@ def _prune(path: Path, dead) -> None:
     from plexora.server.models.secret_store import write_private_json
 
     try:
-        data = _read(path)
-        gone = [key for key in dead if key in data]
-        if not gone:
-            return
-        for key in gone:
-            data.pop(key, None)
-        write_private_json(path, data)
+        with _registry_lock(path):
+            data = _read(path)
+            gone = [key for key in dead if key in data]
+            if not gone:
+                return
+            for key in gone:
+                data.pop(key, None)
+            write_private_json(path, data)
     except Exception:
         pass
 

@@ -27,7 +27,7 @@ function check(name, condition, detail = "") {
     if (!condition) failures.push(name);
 }
 
-function boot({ labels3d = true, open = true } = {}) {
+function boot({ labels3d = true, open = true, fetchImpl = null } = {}) {
     const listeners = new Map();
     const win = {
         addEventListener(type, fn) {
@@ -41,11 +41,11 @@ function boot({ labels3d = true, open = true } = {}) {
         },
     };
     const fetched = [];
-    win.fetch = (url) => {
+    win.fetch = fetchImpl || ((url) => {
         fetched.push(String(url));
         return new Promise(() => {});
-    };
-    const context = createContext({ console, Math, Object, Array, Number, String, Boolean, JSON,
+    });
+    const context = createContext({ console, Math, Object, Array, Number, String, Boolean, JSON, ArrayBuffer,
                                     Map, Set, Promise, Error, Uint16Array, Uint32Array, URLSearchParams,
                                     window: win });
     runInContext(readFileSync(SOURCE, "utf8"), context, { filename: "sectionCells.js" });
@@ -104,6 +104,35 @@ function boot({ labels3d = true, open = true } = {}) {
     app.emit("plexora:labels-changed", { ndim: 3 });
     check("news that is not of a 3-D mask leaves the panes alone",
         app.overlays.size === 0 && app.listening("plexora:labels-changed") === 1);
+}
+
+{
+    // A late answer for an older cut must not replace the newer one: the
+    // panes would draw another line's cells until the next move.
+    const answers = [];
+    const fetchImpl = (url) => new Promise((resolve) => answers.push({ url: String(url), resolve }));
+    const app = boot({ fetchImpl });
+    const answer = (entry, id) => {
+        const n = 1;
+        const buffer = new ArrayBuffer(14 * n);
+        new Uint16Array(buffer, 0, 1)[0] = 3;
+        const labels = new Uint32Array(1); labels[0] = id;
+        new Uint8Array(buffer).set(new Uint8Array(labels.buffer), 2);
+        entry.resolve({ ok: true, headers: { get: () => JSON.stringify({ n, level: 0 }) },
+                        arrayBuffer: async () => buffer });
+    };
+    const flush = () => new Promise((resolve) => setTimeout(resolve, 0));
+    const firstXz = answers.find((a) => a.url.includes("axis=xz"));
+    app.emit("plexora:sections-moved", { x: 150, y: 120 });
+    const secondXz = answers.filter((a) => a.url.includes("axis=xz"))[1];
+    check("a move reads the new cut", Boolean(firstXz && secondXz && firstXz !== secondXz));
+    answer(secondXz, 2);
+    await flush();
+    check("...and the new cut is held once it lands", app.cells.last.xz?.at === 120);
+    answer(firstXz, 1);
+    await flush();
+    check("...a late answer for the older cut does not replace it",
+        app.cells.last.xz?.at === 120, `at=${app.cells.last.xz?.at}`);
 }
 
 console.log(`\n${failures.length ? `FAILURES: ${failures.join(", ")}` : "all checks passed"}`);

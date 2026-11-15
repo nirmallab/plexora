@@ -536,12 +536,17 @@ def _wait(operation, project, what, timeout=OPERATION_TIMEOUT):
         where = f"zones/{_q(zone)}" if zone else "global"
         operation = _call("POST", f"{compute_api()}/projects/{_q(project)}/{where}/operations/"
                                   f"{_q(operation.get('name') or '')}/wait", what) or {}
-    failure = (operation.get("error") or {}).get("errors") or ()
-    if failure:
-        detail = " ".join(f"{one.get('code') or ''} {one.get('message') or ''}".strip()
-                          for one in failure if isinstance(one, dict))
+    detail = _operation_failure(operation)
+    if detail:
         raise GcloudError(what, detail)
     return operation
+
+
+def _operation_failure(operation):
+    """What a finished operation's `error` says, or "" when it succeeded."""
+    failure = ((operation or {}).get("error") or {}).get("errors") or ()
+    return " ".join(f"{one.get('code') or ''} {one.get('message') or ''}".strip()
+                    for one in failure if isinstance(one, dict))
 
 
 def _verb(cfg, verb, what, block):
@@ -570,10 +575,16 @@ def stop_instance(cfg, block=True):
     return _verb(cfg, "stop", f"Could not stop the VM “{name}”.", block)
 
 
-def delete_instance(cfg, block=True):
+def delete_instance(cfg, block=None):
     """Delete a VM **Plexora created**, and its boot disk. Never the bucket.
 
-    The label is read off the instance first, as the CLI backend reads it."""
+    The label is read off the instance first, as the CLI backend reads it.
+    `block` None waits for Compute Engine except on the website, where Python
+    has one thread and every other request would wait behind it for minutes:
+    there it returns "deleting" once Google has accepted the delete, as Stop
+    does (`stop_instance(block=False)`)."""
+    if block is None:
+        block = not in_browser()
     project = cli._cfg(cfg, "project")
     zone = cli._cfg(cfg, "zone")
     name = cli._cfg(cfg, "vm_name")
@@ -587,8 +598,9 @@ def delete_instance(cfg, block=True):
             f"Machines you already ran are yours to remove, in the Google Cloud console.")
     what = f"Could not delete the VM “{name}”."
     operation = _call("DELETE", _instance_url(project, zone, name), what)
-    if block:
-        _wait(operation, project, what, timeout=cli.START_TIMEOUT)
+    if not block:
+        return "deleting"
+    _wait(operation, project, what, timeout=cli.START_TIMEOUT)
     return True
 
 
@@ -651,6 +663,10 @@ if ! command -v gcsfuse >/dev/null 2>&1; then
   apt-get install -y gcsfuse python3-venv python3-pip fuse openssl
 fi
 command -v gcsfuse >/dev/null 2>&1 || { say state failed-install; exit 1; }
+# The desktop's mark (gcloud.STARTUP_MARK): a desktop connecting to this VM
+# waits for it before using its ssh session, ten minutes when it never comes.
+sync
+echo ok > __STARTUP_MARK__
 
 id -u plexora >/dev/null 2>&1 || useradd --system --create-home \
   --home-dir /home/plexora --shell /usr/sbin/nologin plexora
@@ -705,7 +721,10 @@ if [ "${IDLE:-0}" -gt 0 ]; then
 # Shut this VM down once nobody has used the node for $IDLE minutes: the last
 # line of defence against a bill, and it runs here, where the bill is.
 STAMP=/var/lib/plexora-last-active
+# Busy: a page on the node's port, or a desktop's ssh session (as the desktop's
+# own idle check counts it) -- the same VM can be connected either way.
 if ss -Htn state established "( sport = :$PORT )" | grep -q .; then date +%s > \$STAMP; exit 0; fi
+if who 2>/dev/null | grep -q . || pgrep -f '^sshd: .*@' >/dev/null 2>&1; then date +%s > \$STAMP; exit 0; fi
 [ -f \$STAMP ] || { date +%s > \$STAMP; exit 0; }
 idle=\$(( (\$(date +%s) - \$(cat \$STAMP)) / 60 ))
 [ "\$idle" -ge $IDLE ] && /sbin/shutdown -h now
@@ -743,7 +762,8 @@ fi
 
 
 def node_startup_script(port=NODE_PORT):
-    return NODE_STARTUP_SCRIPT.replace("__NODE_PORT__", str(int(port)))
+    return (NODE_STARTUP_SCRIPT.replace("__NODE_PORT__", str(int(port)))
+            .replace("__STARTUP_MARK__", cli.STARTUP_MARK))
 
 
 def _package():
@@ -881,6 +901,40 @@ def ensure_node_firewall(project, port=NODE_PORT):
     return notes
 
 
+#: The website's creates not yet seen through: (project, zone, VM) -> the
+#: `instances.insert` operation. `ensure_node` does not wait on it, and a full
+#: zone or a spent quota is reported on the operation, not on the insert call
+#: -- so `node_status` reads it while the VM is still absent, rather than
+#: calling a create Google turned down "gone".
+_INSERTING = {}
+
+
+def _pending_create(cfg, project, zone, name):
+    """`None` when no create of this VM is pending (or it finished well),
+    "running" while it is; raises the create's own failure once it has
+    failed, said once."""
+    key = (project, zone, name)
+    operation = _INSERTING.get(key)
+    if not operation:
+        return None
+    what = f"Could not create the VM “{name}”."
+    where = str(operation.get("zone") or zone).rsplit("/", 1)[-1]
+    current = _call("GET", f"{compute_api()}/projects/{_q(project)}/zones/{_q(where)}"
+                           f"/operations/{_q(operation.get('name') or '')}", what,
+                    missing=None)
+    if not current:
+        _INSERTING.pop(key, None)
+        return None
+    if str(current.get("status") or "").upper() != "DONE":
+        return "running"
+    _INSERTING.pop(key, None)
+    detail = _operation_failure(current)
+    if detail:
+        sentence, recovery = cli._create_failure(cfg, detail)
+        raise GcloudError(sentence, detail, recovery=recovery)
+    return None
+
+
 def ensure_node(cfg, block=False):
     """Have this profile's VM running a web node: created, started or reused.
 
@@ -917,6 +971,8 @@ def ensure_node(cfg, block=False):
                               body=node_instance_body(cfg, secrets.token_hex(16), port))
             if block:
                 _wait(operation, project, what, timeout=cli.CREATE_TIMEOUT)
+            elif isinstance(operation, dict) and operation.get("name"):
+                _INSERTING[(project, zone, name)] = operation
         except GcloudError as exc:
             if exc.reauth:
                 raise
@@ -995,7 +1051,10 @@ def node_status(cfg):
            "fingerprint": "", "app_url": "", "pair_url": ""}
     described = _described(project, zone, name)
     if described is None:
+        if _pending_create(cfg, project, zone, name) == "running":
+            out["status"] = "PROVISIONING"
         return out
+    _INSERTING.pop((project, zone, name), None)
     view = _view(described)
     meta = _metadata(described)
     try:

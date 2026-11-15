@@ -189,7 +189,15 @@ def plan(session, project, *, reference=None, params=None) -> tuple:
                          "DNA retention needs two or more cycles with a DNA channel each "
                          f"(found {len(dna)}); set the cycles (set_qc_cycles) if the names "
                          "do not say", detail={"channels": names[:100]})
-    channels = [d["channel"] for d in dna]
+    # Comparing one cycle's DNA with another's on a guessed assignment of
+    # DNA channels to cycles is what registration QC refuses too
+    # (`cycles.resolved`): its losses would become exclude-level marker flags.
+    certain, why = cycle_rules.resolved(found)
+    if not certain:
+        raise AgentError("precondition_missing", f"DNA retention compares cycles, but {why}",
+                         detail={"channels": names[:100], "method": found.get("method"),
+                                 "confidence": found.get("confidence")})
+    channels =[d["channel"] for d in dna]
     chosen = reference or segqc.settings(project).get("dna_channel") \
         or segqc.detected_dna(names)
     if reference and reference not in channels:

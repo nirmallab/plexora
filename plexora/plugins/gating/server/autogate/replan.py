@@ -172,7 +172,11 @@ def rescreen(engine, accepted):
 
 def queue(engine, unit, why):
     """Put a suspect marker to the planner -- after the whole-image check,
-    for a lineage suspect no whole-image view has judged."""
+    for a lineage suspect no whole-image view has judged. With replan off
+    nothing is queued: no `replan` packet goes out (`Engine._replan_due`),
+    so a held unit would wait for ever; it carries on where it was."""
+    if not enabled(engine):
+        return
     if why["why"] == "lineage_contamination" and not unit.get("qc_done") \
             and not unit.get("whole_image") and check_whole_image(engine, unit):
         return

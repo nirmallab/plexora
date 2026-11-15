@@ -22,6 +22,8 @@ from __future__ import annotations
 
 import datetime as _dt
 import json
+import os
+import threading
 from dataclasses import replace
 from pathlib import Path
 
@@ -125,10 +127,28 @@ def apply(surface, op, params, *, scale=(1.0, 1.0, 1.0)):
     return out, f"decimated to {out.n_triangles} triangles ({ratio:.0%} kept)"
 
 
+_EDITING: dict[str, threading.Lock] = {}
+_EDITING_LOCK = threading.Lock()
+
+
+def _editing(folder: Path) -> threading.Lock:
+    """One lock per surface folder: two edits at once read the same version,
+    number theirs alike and race on the manifest -- one after the other."""
+    key = os.path.normcase(os.path.abspath(folder))
+    with _EDITING_LOCK:
+        return _EDITING.setdefault(key, threading.Lock())
+
+
 def refine(folder, op, params, *, scale, frame_for, physical):
     """Apply `op` to the surface in `folder` as a new version; returns the
     updated manifest. `frame_for(mesh) -> polars frame` measures a version."""
     folder = Path(folder)
+    with _editing(folder):
+        return _refine(folder, op, params, scale=scale, frame_for=frame_for,
+                       physical=physical)
+
+
+def _refine(folder, op, params, *, scale, frame_for, physical):
     manifest = json.loads((folder / "manifest.json").read_text(encoding="utf-8"))
     lods = list(manifest.get("lods") or [])
     if not lods:

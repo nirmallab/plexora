@@ -1032,9 +1032,13 @@ class RemoteSession:
             pass
 
     def _fail(self, exc):
+        # Outside the lock: `_diagnose` drains the watchers, joining reader
+        # threads whose next step is `_echo` -- on this same lock. Held, every
+        # drain ran out its timeout and the lines it waited for never arrived.
+        error = self._diagnose(exc)
         with self._lock:
             self.state = STATE_FAILED
-            self.error = self._diagnose(exc)
+            self.error = error
             # Only what the raiser attached. Nothing here reads the sentence
             # back to work out what went wrong -- a recovery offered on a
             # substring match is a button that changes a saved profile because

@@ -2178,3 +2178,39 @@ def test_a_technical_check_that_cannot_tell_asks_the_regions(tmp_path):
     # A second picture needs room for other regions; this scene is small.
     assert kinds[:2] == ["qc_confirm", "absence_check"]
     assert units(session, started["session_id"])["CD20"]["state"] == "no_positive_population"
+
+
+def test_a_lattice_point_above_the_column_maximum_is_written_as_the_empty_gate(tmp_path):
+    """pg-autogate-a-1: a lattice point may sit above every cell (an up-step
+    or a guard edge past the column's maximum). Placing the gate there must
+    write -- as the empty gate at the column's maximum, which counts the same
+    cells (none) -- not raise `set_gate`'s low < high ValueError on every try."""
+    from plexora.agent.audit import AuditLog
+    from plexora.agent.policy import Policy
+    from plexora.agent.receipts import operation_id
+    from plexora.agent.registry import Call
+    from plexora.plugins.gating.server import model
+    from plexora.plugins.gating.server.autogate import engine as engines
+
+    make_gating_project(tmp_path, variant="flat")
+    session = AgentSession()
+    started = start(session, markers=["CD20"])
+    sid = started["session_id"]
+    call = Call(capability=registry.get("gating.answer"), session=session, policy=Policy(),
+                operation_id=operation_id(), audit=AuditLog(), arguments={})
+    ds = session.data("gsynth")
+    top = float(model._description(ds)["CD20"]["max"])
+    with engines.engine_for(call, sid, save=False) as engine:
+        assert engine.options["mode"] == "apply"
+        unit = next(u for u in engine.record["units"].values() if u["marker"] == "CD20")
+        gate = model.get_gate(ds, "CD20")
+        unit["seen"] = [gate["low"], gate["high"]]
+        unit.pop("high", None)
+        for low in (top + 1.0, top):
+            op = engine.write(unit, low, method="ai_refined", confidence="moderate",
+                              state="accepted", tier="T4")
+            assert op is not None or unit["written"] == [top, top]
+            written = model.get_gate(ds, "CD20")
+            assert written["low"] == written["high"] == top
+            assert model.gated_summary(ds, "CD20")["n_positive"] == 0
+            assert unit["final"] == top

@@ -155,6 +155,7 @@ def test_the_page_cleans_up_after_itself(probe):
     `document` rather than to an element that goes with the fragment."""
     assert "Escape is listened for on the document" in probe, probe
     assert "and the page takes its listener off when it is torn down" in probe, probe
+    assert "PASS and takes back window.PlexoraOpenProject, which only a mounted page can answer" in probe, probe
 
 
 # --------------------------------------------------------------------------
@@ -234,3 +235,9 @@ def test_the_bootstrap_delete_modal_is_gone():
     markup = TEMPLATE.read_text(encoding="utf-8")
     assert "deleteProjectModal" not in markup
     assert "data-bs-toggle" not in markup
+
+
+def test_an_older_reload_does_not_draw_over_a_newer_one(probe):
+    """Two moves in a row reload twice; the slower, older /projects answer
+    landing last used to repaint the page as it was before the second move."""
+    assert "PASS an older /projects answer landing last does not draw over a newer one" in probe, probe

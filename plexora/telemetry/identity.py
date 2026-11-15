@@ -48,10 +48,13 @@ def install_id(*, mint=True) -> str | None:
 
 
 def reset_install_id() -> str:
-    """Forget the id and mint a new one. Returns the new id."""
-    global _ephemeral
+    """Forget the id and mint a new one. Returns the new id. The process's
+    session id is renewed too: a session id seen under both install ids
+    would link them."""
+    global _ephemeral, _session_id
     with _lock:
         _ephemeral = None
+        _session_id = uuid.uuid4().hex
         fresh = uuid.uuid4().hex
         if config.write_prefs(install_id=fresh) is None:
             _ephemeral = fresh

@@ -212,9 +212,20 @@ def build_layer(project, layer, stage, report) -> None:
             _cancel.pop((project.name, layer.id), None)
 
 
-def _block_side(volume, spec: ViewSpec) -> int:
+def _run_depth(source) -> int:
+    """Planes one read of level 0 should span: a whole z chunk when the store
+    keeps several planes per chunk (Imaris, a z-chunked OME-Zarr), where a
+    read of one plane decodes the whole chunk; else 1."""
+    from plexora.server.volume import model
+
+    return model.block_depth(source, 0) if model.reads_blocks(source, 0) else 1
+
+
+def _block_side(volume, spec: ViewSpec, run: int = 1) -> int:
     z0, z1 = spec.planes
     planes = (z1 - z0 + 1) if spec.op in ("med", "pct") else 2
+    # A run of `run` planes is held while it is folded in.
+    planes = max(planes, min(run, z1 - z0 + 1) + 1)
     itemsize = max(np.dtype(volume.dtype).itemsize, 8 if spec.op in ("mean", "std") else 1)
     side = int((BLOCK_BUDGET / max(1, planes * itemsize)) ** 0.5)
     return max(256, min(4096, side // 256 * 256))
@@ -239,7 +250,8 @@ def write_projection(source, spec: ViewSpec, destination: Path, *, project=None,
                                      prefix=f".{destination.name}-scratch-")
     try:
         stage("reading")
-        side = _block_side(volume, spec)
+        run = _run_depth(source)
+        side = _block_side(volume, spec, run)
         blocks = [(y, x) for y in range(0, height, side) for x in range(0, width, side)]
         total = channels * len(blocks)
         done = 0
@@ -250,7 +262,7 @@ def write_projection(source, spec: ViewSpec, destination: Path, *, project=None,
                     raise InterruptedError("cancelled")
                 rows, cols = slice(y, min(height, y + side)), slice(x, min(width, x + side))
                 level0[channel, rows, cols] = volume_reduce.reduce_planes(
-                    lambda z: source.read_plane(0, spec.t, z, channel, rows, cols),
+                    _plane_reader(source, spec.t, channel, rows, cols, z1, run),
                     z0, z1, spec.op, spec.q, dtype=dtype)
                 done += 1
                 report(done, total)
@@ -285,6 +297,24 @@ def write_projection(source, spec: ViewSpec, destination: Path, *, project=None,
             tile_size=TILE, progress_callback=report)
     finally:
         scratch.close()
+
+
+def _plane_reader(source, t, channel, rows, cols, last, run):
+    """`read_plane(z)` for `reduce_planes`, asked in increasing z: with
+    `run` > 1, each z chunk's planes up to `last` are read in one block (one
+    decode of the chunk) and handed out a plane at a time."""
+    if run <= 1:
+        return lambda z: source.read_plane(0, t, z, channel, rows, cols)
+    held = {"start": None, "block": None}
+
+    def read(z):
+        start = held["start"]
+        if start is None or not start <= z < start + len(held["block"]):
+            stop = min(last, (z // run + 1) * run - 1)
+            held["start"], held["block"] = z, source.read_block(0, t, channel, z, stop, rows, cols)
+        return held["block"][z - held["start"]]
+
+    return read
 
 
 def provenance(source, spec: ViewSpec, project=None) -> dict:

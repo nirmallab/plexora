@@ -304,6 +304,7 @@ def apply(video_id, base_revision, ops, *, origin="ui") -> dict:
         connection = _open(video_id)
         try:
             with connection:
+                _claim(connection, base_revision)
                 _write_document(connection, updated, stamp)
                 _append_journal(connection, base_revision, ops, origin, stamp)
         finally:
@@ -326,10 +327,29 @@ def replace(video_id, base_revision, document) -> int:
         connection = _open(video_id)
         try:
             with connection:
+                _claim(connection, base_revision)
                 _write_document(connection, updated, stamp)
         finally:
             connection.close()
         return updated["revision"]
+
+
+def _claim(connection, base_revision):
+    """Take the database's write lock and check the revision again under it.
+
+    `_lock_for` serializes this process's threads only, and `plexora mcp serve`
+    is a second process editing the same video.db through the same
+    capabilities. The revision read by `load` came from another connection, so
+    without this both processes could pass the check on revision N and both
+    write N+1, one of them silently lost. `BEGIN IMMEDIATE` is SQLite's own
+    cross-process write lock (waited for up to `BUSY_TIMEOUT`); the `with
+    connection` around the caller commits it, or rolls back on the conflict.
+    """
+    connection.execute("BEGIN IMMEDIATE")
+    row = connection.execute("SELECT revision FROM document WHERE id = 1").fetchone()
+    current = int(row["revision"]) if row is not None else None
+    if current != base_revision:
+        raise ConflictError(current)
 
 
 def _write_document(connection, document, stamp):

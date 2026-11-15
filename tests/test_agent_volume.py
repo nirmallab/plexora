@@ -128,6 +128,34 @@ def test_render_region_draws_the_plane_it_is_asked_for(tmp_path):
     assert default["manifest"]["view_source"] == "default"
 
 
+def test_render_region_keeps_a_plane_views_reader_open_between_renders(tmp_path,
+                                                                         monkeypatch):
+    """Gallery tiles and gate panels render one plane view after another: the
+    volume is opened once and its reader kept on the shelf, not reopened per
+    render."""
+    from plexora.server.utils import source_image
+
+    _volume(tmp_path)
+    source_image.close_readers()
+    opened = []
+    real = source_image.open_project_volume
+
+    def counting(project):
+        opened.append(project)
+        return real(project)
+    monkeypatch.setattr(source_image, "open_project_volume", counting)
+    session = AgentSession()
+    base = {"project": "vol", "view": "z3", "segmentation": "none", "scale_bar": False,
+            "channels": [{"name": "CD8", "color": "#ffffff", "window": [2000, 3100]}],
+            "output": {"width": 112}}
+    try:
+        for _ in range(3):
+            assert _ok(invoke(session, "render_region", base))["manifest"]["view"] == "z3"
+        assert len(opened) == 1, f"the volume was opened {len(opened)} times for one view"
+    finally:
+        source_image.close_readers()
+
+
 def test_render_projection_is_labelled_as_one(tmp_path):
     _volume(tmp_path)
     out = _ok(invoke(AgentSession(), "render_projection", {

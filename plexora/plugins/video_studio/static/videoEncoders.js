@@ -350,7 +350,25 @@
             this.exportId = answer.export_id;
             this.chunkFrames = Math.max(1, answer.chunk_frames || 8);
             if (this.png) this.chunkFrames = Math.min(this.chunkFrames, 8);
+            // A page that goes away mid-export sends no more frames; without
+            // this the server's job (and its ffmpeg) stays `running` until its
+            // 15-minute idle timeout, and the agent's export_video refuses the
+            // video meanwhile. keepalive: the only request a leaving page may
+            // still send.
+            this._onLeave = () => {
+                this.release();
+                this.api.cancelExport(this.videoId, this.exportId, { keepalive: true })
+                    .catch(() => {});
+            };
+            global.addEventListener?.("pagehide", this._onLeave);
             return answer;
+        }
+
+        /** Stop cancelling on pagehide: finished, cancelled, or left. */
+        release() {
+            if (!this._onLeave) return;
+            global.removeEventListener?.("pagehide", this._onLeave);
+            this._onLeave = null;
         }
 
         async push({ index }) {
@@ -412,6 +430,9 @@
                 // finish waited); the status below says why, with the tail.
                 if (error.status !== 410) throw error;
             }
+            // From here the server completes the file on its own; leaving
+            // the page must not throw it away.
+            this.release();
             for (;;) {
                 const status = await this.api.exportStatus(this.videoId, this.exportId);
                 if (status.status === "done") {
@@ -438,6 +459,7 @@
         }
 
         async cancel() {
+            this.release();
             if (!this.exportId) return;
             try {
                 await this.api.cancelExport(this.videoId, this.exportId);

@@ -45,6 +45,9 @@ def sockets(monkeypatch):
             return _Answer()
 
     monkeypatch.setattr(http, "pool", lambda: _Pool())
+    # nodes.json is stat'd at most once a second; the other process can finish
+    # inside that second (it does on macOS), so the test must not depend on it.
+    monkeypatch.setattr(node_registry, "_DISK_CHECK_SECONDS", 0.0)
     return calls
 
 

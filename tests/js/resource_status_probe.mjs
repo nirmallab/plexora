@@ -547,6 +547,37 @@ const CONVERTING = {
 }
 
 {
+    // The mask's row gone from the report (the project's mask replaced, the
+    // node's segmentation unavailable): the poll ends after a while instead
+    // of asking every 2 s for as long as the page is open.
+    const rig = load({ status: CONVERTING });
+    await rig.api.report("demo", {});
+    rig.answer({ unavailable: {}, nodes: [], masks: [] });
+    for (let i = 0; i < 200 && rig.running(); i += 1) {
+        rig.tick();
+        await settle();
+    }
+    assert.equal(rig.running(), 0, "the poll stops once the mask has gone from the report");
+    assert.notEqual(rig.chip[rig.chip.length - 1][0], "progress", "the chip is not left converting");
+    console.log("ok - a mask gone from the report ends its poll");
+}
+
+{
+    // A poll still waiting on the server when the next is due is not joined
+    // by another: each holds a request to the server.
+    const rig = load({ status: CONVERTING });
+    await rig.api.report("demo", {});
+    const before = rig.fetched.filter((url) => url.includes("resource_status")).length;
+    rig.tick();
+    rig.tick();
+    rig.tick();
+    const during = rig.fetched.filter((url) => url.includes("resource_status")).length - before;
+    await settle();
+    assert.equal(during, 1, `polls overlapped: ${during} requests at once`);
+    console.log("ok - a mask poll does not overlap the one still waiting");
+}
+
+{
     const storage = makeStorage();
     const failed = {
         unavailable: {}, nodes: [],

@@ -92,6 +92,8 @@ class QcArtifactsQc {
     destroy() {
         window.clearTimeout(this._pollTimer);
         this._pollTimer = null;
+        // A poll mid-request when the tool closes stops at its job check.
+        this.job = null;
         for (const entry of this.cats.values()) this.dropEntry(entry);
         this.cats.clear();
         for (const line of this.lines.values()) this.dropLine(line);
@@ -291,7 +293,10 @@ class QcArtifactsQc {
             this.objectsFingerprint = null;
             this.paths.clear();
             this.selectedId = null;
-        } else if (results.fingerprint !== this.objectsFingerprint) {
+        } else if (results.fingerprint !== this.objectsFingerprint
+                   && results.fingerprint !== this._objectsLoading) {
+            // Not again while the same objects are on their way (a reload
+            // while they load): they are the heaviest thing the tool reads.
             this.loadObjects(results.fingerprint);
         }
         if (status.job && !this.job) this.follow(status.job.job_id);
@@ -320,8 +325,10 @@ class QcArtifactsQc {
 
     async loadObjects(fingerprint) {
         const seq = ++this._objectsSeq;
+        this._objectsLoading = fingerprint;
         const answer = await this.api.artifactsObjects().catch(() => null);
         if (seq !== this._objectsSeq) return;
+        this._objectsLoading = null;
         if (!answer || !answer.ok || !answer.data.available) return;
         this.objects = answer.data.objects || [];
         this.objectsFingerprint = answer.data.fingerprint || fingerprint;
@@ -781,9 +788,25 @@ class QcArtifactsQc {
     place(panel, index, name) {
         panel.suspendPersistence?.();
         try {
-            panel.setSlotMarker(index, name, { enable: true, keepColor: true, reveal: true });
+            QcArtifactsQc.quietMarker(panel, index, name,
+                                      { enable: true, keepColor: true, reveal: true });
         } finally {
             panel.resumePersistence?.();
+        }
+    }
+
+    /** setSlotMarker for QC's own look: the auto-level it schedules lands
+     *  after persistence is resumed, and would save the channel into the
+     *  project's list then. `autoSilent` (viewerSidebar's applyAutoRange)
+     *  keeps that one levelling quiet; put up only when a levelling follows,
+     *  since a flag left up would swallow the user's next one. */
+    static quietMarker(panel, index, name, options) {
+        const slot = panel.channelSlots?.[index];
+        const quiet = Boolean(slot) && !slot.autoLeveling && !slot.autoSilent;
+        if (quiet) slot.autoSilent = true;
+        panel.setSlotMarker(index, name, options);
+        if (quiet && (slot.autoLeveled || slot.userRangeChanged || !slot.enabled)) {
+            slot.autoSilent = false;
         }
     }
 

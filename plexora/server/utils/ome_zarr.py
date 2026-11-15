@@ -1282,9 +1282,10 @@ def build_extension(pyramid, dest, target: int = EXTENSION_TARGET,
     if max(shapes[-1]) <= target:
         return None
 
+    import shutil
+
     destination = Path(dest)
     if destination.exists():
-        import shutil
         shutil.rmtree(destination)
     destination.parent.mkdir(parents=True, exist_ok=True)
 
@@ -1312,7 +1313,42 @@ def build_extension(pyramid, dest, target: int = EXTENSION_TARGET,
     tab_room.check_build(channels * derived * dtype.itemsize, "This image's missing pyramid levels")
     slab_bytes = tab_room.slab_max(_DOWNSAMPLE_SLAB_BYTES)
 
-    group = zarr.open_group(str(destination), mode="w")
+    # Written beside `dest` and renamed into place, as `build_volume_extension`
+    # is: a build stopped partway (a crash, a full disk, the app quit) leaves
+    # no store at `dest` for the next open to append, unwritten chunks and all.
+    building = destination.with_name(destination.name + ".building")
+    if building.exists():
+        shutil.rmtree(building)
+    try:
+        _write_extension(pyramid, building, destination, source_level, base_levels, target,
+                         total, slab_bytes, progress_callback)
+        from plexora._transient_locks import past_transient_locks
+
+        # Moved past Windows' brief refusals while a scanner reads the new chunks.
+        past_transient_locks(lambda: os.replace(building, destination))
+    except BaseException:
+        shutil.rmtree(building, ignore_errors=True)
+        raise
+    return str(destination)
+
+
+def is_complete_extension(path) -> bool:
+    """Whether the store at `path` is a finished extension: its stamp is the
+    last thing `build_extension` writes. False for a missing or unreadable one."""
+    try:
+        return bool(dict(_open_group(path).attrs).get("plexora_extension"))
+    except Exception:
+        return False
+
+
+def _write_extension(pyramid, building, destination, source_level, base_levels, target,
+                     total, slab_bytes, progress_callback):
+    """`build_extension`'s levels and stamp, written into `building`;
+    `destination` is where the store will be (its fallback source key)."""
+    dtype = np.dtype(source_level.dtype)
+    channels = int(source_level.shape[0])
+    height, width = int(source_level.shape[-2]), int(source_level.shape[-1])
+    group = zarr.open_group(str(building), mode="w")
     written = 0
     index = base_levels
     while max(height, width) > target:
@@ -1347,7 +1383,6 @@ def build_extension(pyramid, dest, target: int = EXTENSION_TARGET,
         "source_key": _source_key(
             getattr(pyramid, "path", "") or destination) or "",
     })
-    return str(destination)
 
 
 def extension_source_key(extension) -> Optional[str]:

@@ -613,6 +613,40 @@ function makeLayer(overrides = {}) {
             && heat.groups.reduce((n, g) => n + g.spots.length, 0) === 3);
 }
 
+// -- a failed /spot_values is not remembered as zeros -------------------------------
+
+{
+    const spotCtx = {
+        datasource: "s", url: (path) => `/base/${path}`,
+        layers: { get: () => ({ visible: true, transform: [1, 0, 0, 1, 0, 0] }),
+                  claim() {}, setOpacity() {} },
+    };
+    let fail = true;
+    let calls = 0;
+    const spots = new SpotLayer(spotCtx, "spots", {
+        spotValues: async (_layer, genes) => {
+            calls += 1;
+            if (fail === "throw") throw new Error("network");
+            if (fail) return null;  // `_get` on a refused response
+            return { values: Object.fromEntries(genes.map((g) => [g, [5, 6, 7]])),
+                     windows: Object.fromEntries(genes.map((g) => [g, 7])) };
+        },
+    });
+    spots.manifest = { status: "ready", spot_count: 3, genes: ["A"], gene_counts: [4],
+                       x: [0, 10, 20], y: [0, 0, 0], radius: 4 };
+    fail = "throw";
+    const [first] = await spots.load(["A"]);
+    check("a failed request still answers a field of the spot count",
+        first?.length === 3 && first.every((v) => v === 0));
+    fail = true;
+    await spots.load(["A"]);
+    fail = false;
+    const [second] = await spots.load(["A"]);
+    check("a failed request is asked again, not cached as zeros",
+        calls === 3 && second?.[0] === 5 && second?.[2] === 7,
+        `calls=${calls} second=${second && Array.from(second)}`);
+}
+
 // -- the group dialog: where each gene already is ---------------------------------
 
 {

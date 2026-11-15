@@ -363,6 +363,11 @@ def test_a_cache_at_the_old_stride_reports_stale_rather_than_ready(
 
     assert body["status"] == "stale"
     assert body["genes"] == []
+    # And /status must not call it ready either, or the panel loops
+    # start -> build -> `ready` -> start on a cache it cannot attach.
+    state = client.get(
+        "/plugins/transcripts/status?datasource=xen&layer=tx").get_json()
+    assert state["status"] == "missing"
 
 
 # -- the panel's own state --------------------------------------------------

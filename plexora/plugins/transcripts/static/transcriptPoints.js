@@ -347,8 +347,51 @@ ${branches.join("\n")}
             this.canvas = null;
             return;
         }
+        // A GPU reset, or one WebGL context too many on the page, takes the
+        // program, the gene table and every tile buffer with it. Asking for
+        // the context back (preventDefault) and rebuilding from what is kept
+        // on the CPU side is what stops the molecules vanishing for good.
+        canvas.addEventListener?.("webglcontextlost", (event) => {
+            event.preventDefault?.();
+            this._lost = true;
+            if (this._frame) window.cancelAnimationFrame?.(this._frame);
+            this._frame = null;
+        });
+        canvas.addEventListener?.("webglcontextrestored", () => this.restore());
         this.initProgram();
         this.resize();
+    }
+
+    /** Rebuild the GPU side after a lost context comes back. */
+    restore() {
+        if (!this.gl) return;
+        this._lost = false;
+        const table = this._tableData;
+        const width = this.geneCount;
+        this.initProgram();
+        if (!this.gl) return;
+        if (table) {
+            const gl = this.gl;
+            this.geneCount = width;
+            this._tableData = table;
+            gl.bindTexture(gl.TEXTURE_2D, this._table);
+            gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, width, 2, 0, gl.RGBA,
+                          gl.UNSIGNED_BYTE, table);
+        }
+        for (const entry of this.tiles.values()) {
+            entry.buffer = null;
+            if (entry.packed) this.upload(entry, entry.packed);
+        }
+        this.invalidate();
+    }
+
+    upload(entry, packed) {
+        const gl = this.gl;
+        entry.buffer = entry.buffer || gl.createBuffer();
+        entry.count = packed.count;
+        entry.packed = packed;
+        gl.bindBuffer(gl.ARRAY_BUFFER, entry.buffer);
+        gl.bufferData(gl.ARRAY_BUFFER, packed.data, gl.STATIC_DRAW);
     }
 
     initProgram() {
@@ -655,13 +698,13 @@ void main() {
         if (!gl || !packed) return;
         let entry = this.tiles.get(key);
         if (!entry) {
-            entry = { buffer: gl.createBuffer(), count: 0 };
+            entry = { buffer: null, count: 0 };
             this.tiles.set(key, entry);
         }
         entry.tag = tag;
-        entry.count = packed.count;
-        gl.bindBuffer(gl.ARRAY_BUFFER, entry.buffer);
-        gl.bufferData(gl.ARRAY_BUFFER, packed.data, gl.STATIC_DRAW);
+        // `packed` is the layer's own copy (no second one is made), kept so a
+        // restored context can upload it again.
+        this.upload(entry, packed);
     }
 
     hasTile(key) { return this.tiles.has(key); }
@@ -736,7 +779,7 @@ void main() {
 
     /** Redraw on the next frame. Several calls in one frame cost one draw. */
     invalidate() {
-        if (this._frame || !this.gl) return;
+        if (this._frame || !this.gl || this._lost) return;
         this._frame = window.requestAnimationFrame(() => {
             this._frame = null;
             this.draw();

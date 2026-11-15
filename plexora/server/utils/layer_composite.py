@@ -174,61 +174,63 @@ def _draw_image_layer(record, layer, where, rgb, box, out_size):
         return None, "it does not reach this region"
     if not lw or not lh:
         cx0, cy0, cx1, cy1 = lx0, ly0, lx1, ly1
-    source = source_image.SourceImage(_project_data_for(_stand_in(record, layer)))
-    # The output pixels the covered part lands on.
-    px0 = int(math.floor((cx0 - lx0) / (lx1 - lx0) * out_w))
-    py0 = int(math.floor((cy0 - ly0) / (ly1 - ly0) * out_h))
-    px1 = int(math.ceil((cx1 - lx0) / (lx1 - lx0) * out_w))
-    py1 = int(math.ceil((cy1 - ly0) / (ly1 - ly0) * out_h))
-    tw, th = max(1, px1 - px0), max(1, py1 - py0)
-    level = source_image.choose_level(source, cx1 - cx0, tw)
-    level = min(level, max(0, int(source.levels) - 1))
-    div = 2 ** level
-    lbox = (int(math.floor(cx0 / div)), int(math.floor(cy0 / div)),
-            max(int(math.floor(cx0 / div)) + 1, int(math.ceil(cx1 / div))),
-            max(int(math.floor(cy0 / div)) + 1, int(math.ceil(cy1 / div))))
-    opacity = (layer.render or {}).get("opacity")
-    opacity = 1.0 if opacity is None else max(0.0, min(1.0, float(opacity)))
-    channels, windows = [], []
-    if not source.is_brightfield:
-        for key, colour, window in _layer_channels(layer, source):
-            if window is None:
-                stats = source_image.channel_stats(source, key)
-                window = [stats["p01"], stats["p999"]]
-                if not window[0] < window[1]:
-                    window = [stats["min"], max(stats["min"] + 1.0, stats["max"])]
-                how = f"auto:p01-p999@level{stats['level']}"
-            else:
-                how = "layer"
-            channels.append({"key": key, "window": [float(window[0]), float(window[1])],
-                             "visible": True, "color": dict(zip("rgb", _rgb(colour)))})
-            windows.append({"key": key, "color": colour,
-                            "window": [float(window[0]), float(window[1])],
-                            "window_source": how})
-        if not channels:
-            return None, "none of its stored channels exist in its image"
-    pixels, _rendered, _background = source_image.composite(source, channels, level, lbox)
-    patch = Image.fromarray(np.ascontiguousarray(pixels), "RGB").resize((tw, th),
-                                                                        Image.LANCZOS)
-    patch = np.asarray(patch).astype(np.float32)
-    # Paste into the output, clipped to it.
-    ox0, oy0 = max(0, px0), max(0, py0)
-    ox1, oy1 = min(out_w, px0 + tw), min(out_h, py0 + th)
-    if ox1 <= ox0 or oy1 <= oy0:
-        return None, "it does not reach this region"
-    piece = patch[oy0 - py0:oy1 - py0, ox0 - px0:ox1 - px0]
-    region = rgb[oy0:oy1, ox0:ox1].astype(np.float32)
-    if source.is_brightfield:
-        blended = region * (1 - opacity) + piece * opacity
-        blend = "over"
-    else:
-        blended = region + piece * opacity
-        blend = "add"
-    rgb[oy0:oy1, ox0:ox1] = np.clip(blended, 0, 255).astype(np.uint8)
-    return {"layer": layer.id, "label": layer.label or layer.id, "kind": "image",
-            "transform": list(layer.affine), "level": level, "opacity": opacity,
-            "blend": blend, "channels": windows,
-            "covered_output_px": [ox0, oy0, ox1 - ox0, oy1 - oy0]}, None
+    # Closed when drawn: a reader left to the garbage collector holds its
+    # file open, and on Windows a held file cannot be replaced or deleted.
+    with source_image.SourceImage(_project_data_for(_stand_in(record, layer))) as source:
+        # The output pixels the covered part lands on.
+        px0 = int(math.floor((cx0 - lx0) / (lx1 - lx0) * out_w))
+        py0 = int(math.floor((cy0 - ly0) / (ly1 - ly0) * out_h))
+        px1 = int(math.ceil((cx1 - lx0) / (lx1 - lx0) * out_w))
+        py1 = int(math.ceil((cy1 - ly0) / (ly1 - ly0) * out_h))
+        tw, th = max(1, px1 - px0), max(1, py1 - py0)
+        level = source_image.choose_level(source, cx1 - cx0, tw)
+        level = min(level, max(0, int(source.levels) - 1))
+        div = 2 ** level
+        lbox = (int(math.floor(cx0 / div)), int(math.floor(cy0 / div)),
+                max(int(math.floor(cx0 / div)) + 1, int(math.ceil(cx1 / div))),
+                max(int(math.floor(cy0 / div)) + 1, int(math.ceil(cy1 / div))))
+        opacity = (layer.render or {}).get("opacity")
+        opacity = 1.0 if opacity is None else max(0.0, min(1.0, float(opacity)))
+        channels, windows = [], []
+        if not source.is_brightfield:
+            for key, colour, window in _layer_channels(layer, source):
+                if window is None:
+                    stats = source_image.channel_stats(source, key)
+                    window = [stats["p01"], stats["p999"]]
+                    if not window[0] < window[1]:
+                        window = [stats["min"], max(stats["min"] + 1.0, stats["max"])]
+                    how = f"auto:p01-p999@level{stats['level']}"
+                else:
+                    how = "layer"
+                channels.append({"key": key, "window": [float(window[0]), float(window[1])],
+                                 "visible": True, "color": dict(zip("rgb", _rgb(colour)))})
+                windows.append({"key": key, "color": colour,
+                                "window": [float(window[0]), float(window[1])],
+                                "window_source": how})
+            if not channels:
+                return None, "none of its stored channels exist in its image"
+        pixels, _rendered, _background = source_image.composite(source, channels, level, lbox)
+        patch = Image.fromarray(np.ascontiguousarray(pixels), "RGB").resize((tw, th),
+                                                                            Image.LANCZOS)
+        patch = np.asarray(patch).astype(np.float32)
+        # Paste into the output, clipped to it.
+        ox0, oy0 = max(0, px0), max(0, py0)
+        ox1, oy1 = min(out_w, px0 + tw), min(out_h, py0 + th)
+        if ox1 <= ox0 or oy1 <= oy0:
+            return None, "it does not reach this region"
+        piece = patch[oy0 - py0:oy1 - py0, ox0 - px0:ox1 - px0]
+        region = rgb[oy0:oy1, ox0:ox1].astype(np.float32)
+        if source.is_brightfield:
+            blended = region * (1 - opacity) + piece * opacity
+            blend = "over"
+        else:
+            blended = region + piece * opacity
+            blend = "add"
+        rgb[oy0:oy1, ox0:ox1] = np.clip(blended, 0, 255).astype(np.uint8)
+        return {"layer": layer.id, "label": layer.label or layer.id, "kind": "image",
+                "transform": list(layer.affine), "level": level, "opacity": opacity,
+                "blend": blend, "channels": windows,
+                "covered_output_px": [ox0, oy0, ox1 - ox0, oy1 - oy0]}, None
 
 
 # -- points layers ---------------------------------------------------------
@@ -304,7 +306,12 @@ def _draw_labels_layer(record, layer, where, rgb, box, level, out_size):
     div = 2 ** level
     lbox = (int(math.floor(box[0] / div)), int(math.floor(box[1] / div)),
             int(math.ceil(box[2] / div)), int(math.ceil(box[3] / div)))
-    labels = provider.read_region(level, lbox)
+    try:
+        labels = provider.read_region(level, lbox)
+    finally:
+        close = getattr(provider, "close", None)
+        if callable(close):
+            close()
     labels = resize_labels_nearest(labels, *out_size)
     colour = (layer.render or {}).get("color") or "#ffd60a"
     paint_labels(rgb, labels, mode="outlines", colour_for=lambda _label: colour, alpha=1.0,

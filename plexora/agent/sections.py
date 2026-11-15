@@ -173,7 +173,8 @@ def render_sections(session, inp, *, store=True):
         seg = record.segmentation
         # Local or on a data node (providers/node.NodeLabelVolume reads the
         # same planes over the wire).
-        labels = volume_labels.project_label_volume(record)
+        # The frame drawn: a time series' frames number their cells apart.
+        labels = volume_labels.project_label_volume(record, t)
         if labels is None:
             raise AgentError("precondition_missing", "outlines in sections need a 3-D label "
                              "volume; this project's mask is flat or absent")
@@ -303,10 +304,12 @@ def field_plane(data, bounds):
 
 
 def plane_of(z, depth):
-    """The plane a table's z value falls on, or None when it has none."""
+    """The plane a table's z value falls on, or None when it has none:
+    floor(z + 0.5), the ROI mapping's and the viewer's rule (Python's round
+    sends 6.5 to 6)."""
     if z is None or not np.isfinite(z):
         return None
-    return int(np.clip(round(float(z)), 0, depth - 1))
+    return int(np.clip(math.floor(float(z) + 0.5), 0, depth - 1))
 
 
 def _default_channel(channels, index):

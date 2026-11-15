@@ -720,8 +720,8 @@ def record_limit_answers(st, session_id, record, answers) -> dict:
         else:
             raise AgentError("invalid_input", f"{name!r} is not a unit of this session",
                              detail={"units": sorted(by_id)[:50]})
-    control = st.control(session_id)
-    st.set_control(session_id, limit_answers={**(control.get("limit_answers") or {}), **keys})
+    st.update_control(session_id, lambda control: {
+        "limit_answers": {**(control.get("limit_answers") or {}), **keys}})
     return keys
 
 

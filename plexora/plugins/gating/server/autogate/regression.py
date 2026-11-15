@@ -76,11 +76,13 @@ def tile_residuals(ds, marker, low, high=None):
     return outliers, int(ok.sum()), ratio
 
 
-def numeric_checks(ds, marker, final, gmm, prior=None, partners=(), guard=None) -> dict:
+def numeric_checks(ds, marker, final, gmm, prior=None, partners=(), guard=None,
+                   high=None) -> dict:
     """The seven checks for `final` against the GMM gate `gmm`. `guard`
     ([low, high], table units) is the band the unit's lattice walks
     (`lattice.build`, widened to its scored candidates); without it, the
-    mixture's own band."""
+    mixture's own band. `high`: the gate's upper bound as it will be written
+    (None: the column's maximum), so the counts are the written gate's."""
     from plexora.plugins.gating.server.autogate import bivariate, candidates
 
     t = THRESHOLDS
@@ -92,8 +94,8 @@ def numeric_checks(ds, marker, final, gmm, prior=None, partners=(), guard=None) 
         checks.append({"name": name, "ok": bool(ok) if ok is not None else None,
                        "value": value, "limit": limit, **({"note": note} if note else {})})
 
-    n_final = col.n_positive(final)
-    n_gmm = col.n_positive(gmm)
+    n_final = col.n_positive(final, high)
+    n_gmm = col.n_positive(gmm, high)
     pf = n_final / col.n_finite if col.n_finite else None
     if prior and pf is not None:
         lo, hi = float(prior[0]), float(prior[1])
@@ -125,13 +127,13 @@ def numeric_checks(ds, marker, final, gmm, prior=None, partners=(), guard=None) 
     share = flips / max(1, max(n_final, n_gmm))
     limit, note = t["max_flip_share"], None
     if stepped is not None:
-        n_step = col.n_positive(float(col.from_fit(stepped)))
+        n_step = col.n_positive(float(col.from_fit(stepped)), high)
         share_small = abs(n_step - n_gmm) / max(1, max(n_step, n_gmm))
         if share_small > limit:
             limit = float(share_small)
             note = "limit raised to the share the smallest candidate step flips"
     check("flip_share", share <= limit + 1e-12, share, limit, note)
-    outliers, occupied, edge_ratio = tile_residuals(ds, marker, final)
+    outliers, occupied, edge_ratio = tile_residuals(ds, marker, final, high)
     tile_share = outliers / occupied if occupied else 0.0
     check("spatial_tiles", tile_share <= t["max_outlier_tile_share"], tile_share,
           t["max_outlier_tile_share"], f"{outliers} of {occupied} tiles")

@@ -216,7 +216,23 @@ def read(data: bytes, fmt: str):
         raise ImportRefused(f"format is one of {', '.join(READERS)}")
     if len(data) > MAX_BYTES:
         raise ImportRefused("the file is larger than a surface can be (512 MB)")
-    return READERS[fmt](data)
+    try:
+        positions, triangles, ids, comments = READERS[fmt](data)
+    except ImportRefused:
+        raise
+    except (ValueError, TypeError, KeyError, IndexError, struct.error) as error:
+        # A truncated or malformed file: a reason, not a server error.
+        raise ImportRefused(f"the file could not be read as {fmt.upper()} ({error})") from error
+    # Held to the budget every built surface is (store.py): past it the
+    # browser would be asked to draw more than it can hold.
+    from plexora.server.surface import levels
+
+    count = len(triangles)
+    if count > levels.RESIDENT_TRIANGLES:
+        raise ImportRefused(
+            f"the mesh has {count / 1e6:.1f} M triangles, more than a browser can hold "
+            f"({levels.RESIDENT_TRIANGLES / 1e6:.0f} M); decimate it before importing")
+    return positions, triangles, ids, comments
 
 
 def place(positions, triangles, ids, *, units, spacing_um, offset=(0.0, 0.0, 0.0)):
@@ -258,7 +274,11 @@ def from_bundle(data: bytes, name: str):
     """A zip Plexora exported: the mesh inside and its manifest."""
     import zipfile
 
-    with zipfile.ZipFile(io.BytesIO(data)) as archive:
+    try:
+        archive = zipfile.ZipFile(io.BytesIO(data))
+    except zipfile.BadZipFile as error:
+        raise ImportRefused(f"not a zip file ({error})") from error
+    with archive:
         members = archive.namelist()
         mesh_name = next((m for m in members if sniff(m) in READERS), None)
         if mesh_name is None:

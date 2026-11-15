@@ -1996,14 +1996,12 @@ async function init(config, savedViewTransform = null) {
         const own = (id) => `${definition.name}:${id}`;
         const handles = new Map();
         const claimed = new Set();
-        let unsubscribe = null;
 
         record.cleanups.push(() => {
             handles.forEach((handle) => handle.remove());
             handles.clear();
             claimed.forEach((id) => stack()?.claim(id, null));
             claimed.clear();
-            unsubscribe?.();
         });
 
         return {
@@ -2136,9 +2134,12 @@ async function init(config, savedViewTransform = null) {
                 record.cleanups.push(off);
                 return off;
             },
+            // Every subscription is released at teardown, not only the last:
+            // a plugin may subscribe more than once.
             onLayerChange: (fn) => {
-                unsubscribe = stack().subscribe(fn);
-                return unsubscribe;
+                const off = stack().subscribe(fn);
+                record.cleanups.push(off);
+                return off;
             },
         };
     }
