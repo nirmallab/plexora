@@ -458,24 +458,54 @@ class FigureImagePanel {
                     layout: "grid", variant: "anchor", options: FigureChoiceField.anchorOptions(),
                     label: "Bar position" })}
             </div>
+            ${this.ioBarExtras(panels)}
             ${calibration}
-            ${this.ioMore("io_bar_more", "More scale bar settings", () => `
-                <div class="fb-insp-switch-row"><span>Print the length beside the bar</span>
-                    ${this.switchButton("scalebar_label", panels.every((p) => p.scalebar.label),
-                                        "Print the length beside the bar")}</div>
-                <div class="fb-insp-grid2">
-                    <label class="fb-insp-field" title="Size of the printed length"><span class="fb-insp-field-label">Text</span>
-                        <input class="fb-insp-input" type="text" inputmode="decimal" data-field="scalebar_label_size"
-                               aria-label="Text size" placeholder="${escape(String(this.state.document.settings.style.font_size_pt))}"
-                               value="${escape(bar.label_size_pt === null || bar.label_size_pt === undefined ? "" : String(bar.label_size_pt))}">
-                        <span class="fb-insp-suffix">pt</span></label>
-                    <label class="fb-insp-field" title="Distance from the panel's edge"><span class="fb-insp-field-label">Inset</span>
-                        <input class="fb-insp-input" type="text" inputmode="decimal" data-field="scalebar_margin"
-                               aria-label="Inset from the edge" value="${escape(String(bar.margin_mm))}">
-                        <span class="fb-insp-suffix">mm</span></label>
-                </div>
-                <p class="fb-insp-note">The bar keeps its physical length when the panel is resized, cropped or exported.</p>`)}
         </section>`;
+    }
+
+    /**
+     * The scale bar's second row, always shown: the printed length's size,
+     * the inset from the panel's edge, and a round tick that prints the length
+     * or not (its name is the tooltip). With the length off, its size is
+     * disabled; the inset still moves the bar. One row for one image or many:
+     * a value the images disagree on reads "Mixed", and a tick some have and
+     * some lack is half-on.
+     */
+    ioBarExtras(panels) {
+        const escape = FigureSchema.escapeHtml.bind(FigureSchema);
+        const shared = (read) => {
+            const values = new Set(panels.map(read));
+            return values.size === 1 ? [...values][0] : null;
+        };
+        const labelled = panels.filter((panel) => panel.scalebar.label).length;
+        const on = labelled === panels.length;
+        const mixedTick = labelled > 0 && !on;
+        const size = shared((panel) => panel.scalebar.label_size_pt ?? "");
+        const margin = shared((panel) => panel.scalebar.margin_mm);
+        const figureSize = escape(String(this.state.document.settings.style.font_size_pt));
+        const tickName = "Show length label";
+        return `<div class="fb-io-bar-extra">
+                <span class="fb-io-cap">Label size</span>
+                <span class="fb-io-cap">Inset</span>
+                <span></span>
+                <label class="fb-insp-field${labelled ? "" : " is-disabled"}" title="${labelled
+                        ? "Size of the printed length" : "Turn on the length label to set its size"}">
+                    <input class="fb-insp-input" type="text" inputmode="decimal" data-field="scalebar_label_size"
+                           aria-label="Label size" ${labelled ? "" : "disabled"}
+                           placeholder="${size === null ? "Mixed" : figureSize}"
+                           value="${escape(String(size ?? ""))}">
+                    <span class="fb-insp-suffix">pt</span></label>
+                <label class="fb-insp-field" title="Distance from the panel's edge">
+                    <input class="fb-insp-input" type="text" inputmode="decimal" data-field="scalebar_margin"
+                           aria-label="Inset from the edge" placeholder="${margin === null ? "Mixed" : ""}"
+                           value="${escape(String(margin ?? ""))}">
+                    <span class="fb-insp-suffix">mm</span></label>
+                <button type="button" role="checkbox"
+                        class="fb-io-tick${on ? " is-on" : ""}${mixedTick ? " is-mixed" : ""}"
+                        data-act="scalebar_label" aria-checked="${mixedTick ? "mixed" : String(on)}"
+                        title="${tickName}" aria-label="${tickName}">${
+                    FigureIcons.svg(mixedTick ? "minus" : "check", 12)}</button>
+            </div>`;
     }
 
     ioLabels(panels) {
@@ -549,10 +579,6 @@ class FigureImagePanel {
         const length = this.lengthField(panels);
         const unitEntry = FigureImagePanel.unitOptions().find((entry) => entry.value === this.unitOf(panels[0]));
         const thickness = new Set(panels.map((panel) => FigureImagePanel.thicknessPt(panel.scalebar)));
-        const shared = (read) => {
-            const values = new Set(panels.map(read));
-            return values.size === 1 ? [...values][0] : null;
-        };
         const aside = !count ? "Off" : (!all ? `On for ${count} of ${panels.length}`
             : (length.value ? `${length.value} ${unitEntry ? unitEntry.short : ""}`.trim() : "Mixed"));
         const head = this.ioHead("io_m_bars", FigureInspector.ioIcon("bar"), "Scale bars", {
@@ -590,27 +616,10 @@ class FigureImagePanel {
                     layout: "grid", variant: "anchor", options: FigureChoiceField.anchorOptions(),
                     label: "Bar position" })}
             </div>
+            ${this.ioBarExtras(panels)}
             ${mixed ? `<p class="fb-insp-note">${escape(mixed)}</p>` : ""}
             <p class="fb-io-calib">Each image is measured with its own calibration.${pixelOnly
                 ? ` ${pixelOnly} of ${panels.length} ha${pixelOnly === 1 ? "s" : "ve"} no pixel size and measure${pixelOnly === 1 ? "s" : ""} in pixels.` : ""}</p>
-            ${this.ioMore("io_m_bar_more", "More scale bar settings", () => `
-                <div class="fb-insp-switch-row"><span>Print the length beside the bar</span>
-                    ${this.switchButton("scalebar_label", panels.every((p) => p.scalebar.label),
-                                        "Print the length beside the bar")}</div>
-                <div class="fb-insp-grid2">
-                    <label class="fb-insp-field" title="Size of the printed length"><span class="fb-insp-field-label">Text</span>
-                        <input class="fb-insp-input" type="text" inputmode="decimal" data-field="scalebar_label_size"
-                               aria-label="Text size"
-                               placeholder="${shared((p) => p.scalebar.label_size_pt ?? "") === null ? "Mixed"
-                                   : escape(String(this.state.document.settings.style.font_size_pt))}"
-                               value="${escape(String(shared((p) => p.scalebar.label_size_pt ?? "") ?? ""))}">
-                        <span class="fb-insp-suffix">pt</span></label>
-                    <label class="fb-insp-field" title="Distance from the panel's edge"><span class="fb-insp-field-label">Inset</span>
-                        <input class="fb-insp-input" type="text" inputmode="decimal" data-field="scalebar_margin"
-                               aria-label="Inset from the edge" placeholder="${shared((p) => p.scalebar.margin_mm) === null ? "Mixed" : ""}"
-                               value="${escape(String(shared((p) => p.scalebar.margin_mm) ?? ""))}">
-                        <span class="fb-insp-suffix">mm</span></label>
-                </div>`)}
         </section>`;
     }
 
@@ -634,14 +643,27 @@ class FigureImagePanel {
         const count = panels.filter((panel) => panel.label.visible).length;
         const all = count === panels.length;
         const open = FigureInspector.foldOpen("io_m_letters");
+        // The size each image's letter is drawn at: its own, or the figure's.
+        const figureSize = this.state.document.settings.style.label_size_pt;
+        const sizes = new Set(panels.map((panel) => panel.label.size_pt || figureSize));
+        const size = sizes.size === 1 ? [...sizes][0] : null;
+        const sizeText = size === null ? "Mixed sizes" : `${size} pt`;
         const head = this.ioHead("io_m_letters", '<span class="fb-io-letter-glyph">A</span>', "Panel labels", {
-            aside: !count ? "Off" : (all ? "" : `On for ${count} of ${panels.length}`),
+            aside: !count ? "Off" : (all ? sizeText : `On for ${count} of ${panels.length} · ${sizeText}`),
             control: this.switchButton("labels_visible", all, all ? "Hide the panel labels" : "Show panel labels on every selected image") });
         if (!open) return `<section class="fb-io fb-io-sec fb-io-mletters">${head}</section>`;
         return `<section class="fb-io fb-io-sec fb-io-mletters is-open${FigureInspector.entering("io_m_letters") ? " is-entering" : ""}">
             ${head}
+            <div class="fb-io-mletters-size">
+                <span class="fb-io-cap">Size</span>
+                <label class="fb-insp-field" title="The letter size on every selected image; the figure's size is set in Document properties">
+                    <input class="fb-insp-input" type="text" inputmode="decimal" data-field="letter_size"
+                           aria-label="Label size for the selected images" placeholder="${size === null ? "Mixed" : ""}"
+                           value="${size === null ? "" : escape(String(size))}">
+                    <span class="fb-insp-suffix">pt</span></label>
+            </div>
             <div class="fb-io-note-row">
-                <span class="fb-insp-note">Each image keeps its own letter; size and color follow the figure style.</span>
+                <span class="fb-insp-note">Each image keeps its own letter. A size set here wins until the figure's size is changed.</span>
                 <button type="button" class="fb-link" data-act="relabel">Relabel ${escape(this.letterRange(panels.length))}</button>
             </div>
         </section>`;

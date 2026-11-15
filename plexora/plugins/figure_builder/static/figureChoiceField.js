@@ -382,6 +382,148 @@ class FigureChoiceField {
     }
 }
 
+/**
+ * FigureLiveFields - number fields that apply as they are typed.
+ *
+ * Every panel commits a typed number on `change` (Enter, Tab, leaving the
+ * field), and that stays the one road in: this only fires that same `change`
+ * a moment after typing pauses, so each panel's own handler, clamps and
+ * units do the work. Two things made live typing go wrong before, and both
+ * are answered here rather than in each panel:
+ *
+ *   - the commit redraws the panel, which REPLACES the field being typed in.
+ *     The new field is given back the text as typed (not the clamped value:
+ *     "1" on the way to "12" must not turn into "4"), the caret and the focus;
+ *   - each commit was an undo step. They are made under one merge key per
+ *     field and selection (FigureDocumentState.mergingAs), so a sitting at
+ *     one field undoes in one step.
+ *
+ * Only number fields: a name or a caption is still committed when finished.
+ */
+class FigureLiveFields {
+
+    static get DELAY_MS() { return 280; }
+
+    /** A field typed as a number: `inputmode="decimal"` or `type="number"`. */
+    static isNumberField(input) {
+        if (!input || input.tagName !== "INPUT" || !FigureLiveFields.selectorFor(input)) return false;
+        // Quick Edit's fields work on its own session, live already.
+        if (input.closest?.(".fb-quickedit")) return false;
+        const type = String(input.type || "").toLowerCase();
+        return type === "number" || (type === "text" && input.getAttribute("inputmode") === "decimal");
+    }
+
+    /** How the same field is found again after a redraw: its `data-field`
+     *  (and row), or its id. Null for a field with neither. */
+    static selectorFor(input) {
+        const field = input.dataset?.field;
+        if (field) {
+            const row = input.dataset.row;
+            return `input[data-field="${CSS.escape(field)}"]${
+                row !== undefined ? `[data-row="${CSS.escape(row)}"]` : ""}`;
+        }
+        return input.id ? `#${CSS.escape(input.id)}` : null;
+    }
+
+    /** Text that is not a number yet: nothing, a sign, a lone point. */
+    static unfinished(text) {
+        const value = String(text).trim().replace(",", ".");
+        return !value || !/\d/.test(value) || /[.\-+]$/.test(value) || !Number.isFinite(parseFloat(value));
+    }
+
+    /**
+     * Watch `root` (the workspace). `state` merges the commits; `keyOf()`
+     * names what is selected, so the same field on another image is another
+     * undo step.
+     */
+    constructor(root, state, keyOf) {
+        this.root = root;
+        this.state = state;
+        this.keyOf = keyOf || (() => "");
+        this.timer = null;
+        this._onInput = (event) => this.input(event);
+        this._onChange = (event) => this.change(event);
+        root.addEventListener("input", this._onInput);
+        root.addEventListener("change", this._onChange, true);
+    }
+
+    destroy() {
+        clearTimeout(this.timer);
+        this.root.removeEventListener("input", this._onInput);
+        this.root.removeEventListener("change", this._onChange, true);
+    }
+
+    mergeKey(input) {
+        return `live:${FigureLiveFields.selectorFor(input)}:${this.keyOf()}`;
+    }
+
+    input(event) {
+        const input = event.target;
+        if (!FigureLiveFields.isNumberField(input)) return;
+        clearTimeout(this.timer);
+        this.timer = setTimeout(() => this.fire(input), FigureLiveFields.DELAY_MS);
+    }
+
+    /** Commit what is typed now, and put the typing back where it was. */
+    fire(input) {
+        if (!input.isConnected || document.activeElement !== input) return;
+        const text = input.value;
+        if (FigureLiveFields.unfinished(text) || input.dataset.liveSent === text) return;
+        const selector = FigureLiveFields.selectorFor(input);
+        const start = input.selectionStart;
+        const end = input.selectionEnd;
+        // The containers above the field, nearest first: after the redraw, the
+        // nearest one still on the page is where its replacement is.
+        const chain = [];
+        for (let el = input.parentElement; el && el !== this.root.parentElement; el = el.parentElement) chain.push(el);
+
+        input.dataset.liveSent = text;
+        this._live = true;
+        try {
+            input.dispatchEvent(new Event("change", { bubbles: true }));
+        } finally {
+            this._live = false;
+        }
+        const restore = () => {
+            if (input.isConnected) return;
+            const active = document.activeElement;
+            if (active && active !== document.body && active.tagName === "INPUT") return;
+            const holder = chain.find((el) => el.isConnected) || this.root;
+            const next = holder.querySelector(selector);
+            if (!next || next.disabled) return;
+            next.value = text;
+            next.dataset.liveSent = text;
+            next.focus({ preventScroll: true });
+            try { next.setSelectionRange(start, end); } catch (error) { /* type=number */ }
+        };
+        restore();
+        // A panel that redraws on the next frame rather than at once.
+        requestAnimationFrame?.(restore);
+    }
+
+    /** Every commit of a number field goes through the merge key: the live
+     *  ones, and the last one when the field is left. A `change` carrying
+     *  only what was already sent live is not sent again. */
+    change(event) {
+        const input = event.target;
+        if (!FigureLiveFields.isNumberField(input)) return;
+        if (!this._live) {
+            clearTimeout(this.timer);
+            if (input.dataset.liveSent === input.value) {
+                event.stopImmediatePropagation();
+                return;
+            }
+        }
+        if (!this.state?.mergingAs) return;
+        // The commit happens in the handlers this event is on its way to,
+        // synchronously; the key is held for exactly that long.
+        const key = this.mergeKey(input);
+        const previous = this.state._mergeKey;
+        this.state._mergeKey = key;
+        queueMicrotask(() => { this.state._mergeKey = previous; });
+    }
+}
+
 //: The open popover, or null. Static because there is one for the page -- see
 //: the note at the top about panels that redraw underneath it.
 FigureChoiceField.state = null;

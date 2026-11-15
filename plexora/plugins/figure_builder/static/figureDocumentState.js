@@ -37,6 +37,9 @@ class FigureDocumentState {
     /** How many undo steps are kept. Past this, the oldest is dropped. */
     static get HISTORY_LIMIT() { return 50; }
 
+    /** How long a pause still counts as the same sitting at one field. */
+    static get MERGE_MS() { return 4000; }
+
     constructor(options) {
         this.api = options.api;
         this.figureId = options.figureId;
@@ -139,8 +142,20 @@ class FigureDocumentState {
         }
 
         this.document = draft;
-        this._undo.push(before);
-        if (this._undo.length > FigureDocumentState.HISTORY_LIMIT) this._undo.shift();
+        // A field edited live (FigureLiveFields) commits as the value is
+        // typed; every commit of one field in one sitting is ONE undo step,
+        // back to what it was before the first.
+        const key = this._mergeKey || null;
+        const merged = key !== null && key === this._lastMergeKey
+            && this._undo.length > 0 && this._undo[this._undo.length - 1] === this._lastMergeEntry
+            && Date.now() - (this._lastMergeAt || 0) < FigureDocumentState.MERGE_MS;
+        if (!merged) {
+            this._undo.push(before);
+            if (this._undo.length > FigureDocumentState.HISTORY_LIMIT) this._undo.shift();
+            this._lastMergeEntry = before;
+        }
+        this._lastMergeKey = key;
+        this._lastMergeAt = Date.now();
         // A new edit is a new branch: whatever was undone is no longer
         // reachable, and offering a redo that would reinstate a state the user
         // has since edited past is offering an action nobody can predict.
@@ -154,8 +169,21 @@ class FigureDocumentState {
         return this._enqueue(() => this._save(batch));
     }
 
+    /** Run `fn` with its commits merged into one undo step with the last
+     *  ones made under the same `key` (see `commit`). */
+    mergingAs(key, fn) {
+        const previous = this._mergeKey;
+        this._mergeKey = key;
+        try {
+            return fn();
+        } finally {
+            this._mergeKey = previous;
+        }
+    }
+
     /** Roll back one committed action. */
     undo() {
+        this._lastMergeKey = null;
         if (!this._undo.length) return Promise.resolve(false);
         const target = this._undo.pop();
         const pushed = this._snapshot();
@@ -168,6 +196,7 @@ class FigureDocumentState {
     }
 
     redo() {
+        this._lastMergeKey = null;
         if (!this._redo.length) return Promise.resolve(false);
         const target = this._redo.pop();
         const pushed = this._snapshot();

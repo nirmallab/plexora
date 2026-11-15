@@ -71,6 +71,12 @@ const FigureScene = {
                 fullname_at_capture: fullname,
                 color: { r: slot.color.r, g: slot.color.g, b: slot.color.b },
                 window: [Number(window_[0]), Number(window_[1])],
+                // The display curve the channel is drawn with (Log is asinh).
+                // Left out, the export and every panel rendered from this
+                // scene -- a split's channels -- drew it linear: darker than
+                // the capture, and darker than what was on screen.
+                ...(slot.curve && slot.curve.kind === "asinh" && Number(slot.curve.cofactor) > 0
+                    ? { curve: { kind: "asinh", cofactor: Number(slot.curve.cofactor) } } : {}),
                 visible: true,
             });
         }
@@ -247,6 +253,9 @@ const FigureScene = {
                 // and there is one of it.
                 start: channel.window[0],
                 end: channel.window[1],
+                // The curve it was captured with, as the saved list keeps it.
+                ...(channel.curve && channel.curve.cofactor > 0
+                    ? { curve: "asinh", cofactor: channel.curve.cofactor } : {}),
             });
         }
         return { rows: rows, missing: missing };

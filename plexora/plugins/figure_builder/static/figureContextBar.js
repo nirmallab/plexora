@@ -277,18 +277,19 @@ class FigureContextBar {
      */
     /** The actions the compact bar keeps, in the order it shows them. */
     static get COMPACT() {
-        return ["edit_text", "editpoints", "quick_edit", "replace", "layouts",
-                "group", "ungroup", "duplicate", "delete"];
+        return ["edit_text", "editpoints", "quick_edit", "layouts",
+                "group", "ungroup", "duplicate", "remove_page", "delete"];
     }
 
     /** The bar's actions, cut to the compact set when there is an inspector
-     *  to hold the rest. Delete stays only for annotations: a panel is put
-     *  away with Delete on the keyboard, and the bar keeps its four icons. */
+     *  to hold the rest. On a panel the last is Remove from page (to the
+     *  tray); Delete from figure stays for annotations, and is in More. */
     barActions(context) {
         const all = FigureActions.forSurface("bar", context.sel, context);
         if (!this.compact) return all;
         const keep = FigureContextBar.COMPACT;
-        // One object: the design's four (Crop, Replace, Duplicate, More).
+        // One image: Quick Edit, Duplicate, Remove from page, More. Replace
+        // is in More and the right-click menu.
         // Grouping is a several-object verb; for one it is in More.
         const one = context.ids.length < 2;
         return all.filter((action) => keep.includes(action.id)
