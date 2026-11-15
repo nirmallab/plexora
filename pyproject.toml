@@ -48,7 +48,7 @@ dependencies = [
     # Stdlib-only at import; it verifies certificates with `cryptography`
     # (imported only when a Pro feature or the licence status is asked for)
     # and locates its files with platformdirs.
-    "biocognia>=0.1.2,<0.2",
+    "biocognia>=0.1.3,<0.2",
     # Biocognia Intelligence (the `biocognia` app), installed with every
     # BioCognia product: Plexora registers in it (plexora_intelligence/) and,
     # in a SCIMAP Pro workspace, its tools -- its Pro AI gating and QC on a Pro
