@@ -1,10 +1,10 @@
 {
   "$comment": "Old URL -> new URL. scripts/write_redirects.mjs writes a stub page at each old path after next build. Prefix rules mirror every page under the new prefix.",
   "pages": {
-    "/docs/contributing/": "https://github.com/nirmallab/plexora/blob/main/CONTRIBUTING_DOCS.md",
-    "/docs/contributing/development-setup/": "https://github.com/nirmallab/plexora/blob/main/CONTRIBUTING_DOCS.md",
-    "/docs/contributing/documentation/": "https://github.com/nirmallab/plexora/blob/main/CONTRIBUTING_DOCS.md",
-    "/docs/contributing/release-process/": "https://github.com/nirmallab/plexora/blob/main/CONTRIBUTING_DOCS.md",
+    "/docs/contributing/": "/docs/",
+    "/docs/contributing/development-setup/": "/docs/",
+    "/docs/contributing/documentation/": "/docs/",
+    "/docs/contributing/release-process/": "/docs/",
     "/docs/data/cell-tables/": "/docs/features/opening-data/",
     "/docs/data/data-locations/": "/docs/features/projects/",
     "/docs/data/datasets/": "/docs/features/opening-data/",

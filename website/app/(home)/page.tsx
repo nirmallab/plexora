@@ -25,7 +25,7 @@ import { NodeDiagram } from '@/components/home/node-diagram';
 import { OsDownloadButton } from '@/components/home/os-download';
 import { Reveal } from '@/components/home/reveal';
 import { UiVideo } from '@/components/home/ui-video';
-import { asset, demoVideo, downloads, pypiUrl, release, repoUrl } from '@/lib/site';
+import { asset, demoVideo, downloads, pypiUrl, release } from '@/lib/site';
 
 /** The image area of home/video-frame.webp, in its 2000x1250 pixels. */
 const videoCanvas = { x: 594, y: 63, w: 1406, h: 1187 };
@@ -424,9 +424,6 @@ export default function HomePage() {
           <Link href="/docs/reference" className="hover:text-fd-foreground">
             Reference
           </Link>
-          <a href={repoUrl} className="hover:text-fd-foreground">
-            GitHub
-          </a>
           <a href={pypiUrl} className="hover:text-fd-foreground">
             PyPI
           </a>
