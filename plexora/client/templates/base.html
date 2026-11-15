@@ -8,7 +8,7 @@
     <link rel="apple-touch-icon" href="{{ data.base_url }}/client/src/img/apple-touch-icon.png">
     <!-- Styles -->
     <link rel="stylesheet" href="{{ data.base_url }}/client/src/css/tokens.css?v=20261027_sidebar_radius">
-    <link rel="stylesheet" href="{{ data.base_url }}/client/src/css/main.css?v=20261114_web7">
+    <link rel="stylesheet" href="{{ data.base_url }}/client/src/css/main.css?v=20261115_feedback">
     {# Here and not in a page block: the explorer opens from every page, and
        appRouter.adoptStyles turns page stylesheets off on navigation. #}
     <link rel="stylesheet" href="{{ data.base_url }}/client/src/css/explorer.css?v=20261110_file_or_folder">
@@ -39,7 +39,7 @@
          window, null in any browser. Early and not deferred, so its
          subscriptions to the shell exist before a menu or a drop can arrive,
          and so every later script can feature-test it synchronously. -->
-    <script src="{{ data.base_url }}/client/src/js/services/desktopBridge.js?v=20261114_audit" type="text/javascript"></script>
+    <script src="{{ data.base_url }}/client/src/js/services/desktopBridge.js?v=20261115_feedback" type="text/javascript"></script>
     <!-- Who answers this page's requests: window.PlexoraBackend. Here the
          Plexora that served it, and the file is a pass-through (its fetch is
          window.fetch). Before appStatus.js and not deferred, so a static
@@ -60,7 +60,7 @@
          no-ops once /telemetry/status says off, and neither ever talks to
          anything but this page's own server. -->
     <script src="{{ data.base_url }}/client/src/js/services/telemetry.js?v=20260928_qc_owner" type="text/javascript"></script>
-    <script src="{{ data.base_url }}/client/src/js/services/errors.js?v=20260927_telemetry" type="text/javascript"></script>
+    <script src="{{ data.base_url }}/client/src/js/services/errors.js?v=20261115_feedback" type="text/javascript"></script>
     <!-- Whether this browser fetches a node-backed layer from this server or
          straight from the machine holding it. Not deferred, because main.js
          awaits it before it builds a single tile source, and every page that
@@ -181,7 +181,7 @@
        it after pageBoot.js below (a normal script beats every deferred one),
        so PlexoraPage.register exists by the time this file's last line runs.
        It needs popoverPortal.js, loaded above with the other widgets. #}
-    <script src="{{ data.base_url }}/client/src/js/services/remoteGlobe.js?v=20261020_sftp_files" defer></script>
+    <script src="{{ data.base_url }}/client/src/js/services/remoteGlobe.js?v=20261115_feedback" defer></script>
     {# Says so before a scheduled job ends, from whichever page the user is on.
        After connectionModal.js, which its one button opens; passive, so it
        costs nothing while a connection sits settled. #}
@@ -234,6 +234,17 @@
        nothing until something calls show(): there is no host element until
        then. #}
     <script src="{{ data.base_url }}/client/src/js/services/toast.js?v=20261112_tile_progress" defer></script>
+    {# Bug reports and feature requests: what is sent with one, the form, and
+       the navbar icon's menu that opens it (helpMenu.js's Report a Bug too).
+       After errors.js, whose recent failures the diagnostics read, and
+       confirmDialog.js and toast.js, on the same terms: a <dialog> of its own
+       and its CSS in main.css. Before helpMenu.js, which opens the form. #}
+    <script src="{{ data.base_url }}/client/src/js/services/feedbackDiagnostics.js?v=20261115_feedback" defer></script>
+    <script src="{{ data.base_url }}/client/src/js/views/feedbackDialog.js?v=20261115_feedback" defer></script>
+    <script src="{{ data.base_url }}/client/src/js/services/feedbackMenu.js?v=20261115_feedback" defer></script>
+    {# The File/View/Tools/Help menus close back into their toggle, as the
+       feedback menu does (their opening is CSS alone, main.css). #}
+    <script src="{{ data.base_url }}/client/src/js/services/navMenuMotion.js?v=20261115_feedback" defer></script>
     {% if data.backend == 'browser' %}
     {# The website's first-use onboarding (PlexoraOnboarding): where the
        user's work is kept, asked at the first action that keeps something,
@@ -278,7 +289,7 @@
        confirmDialog and toast, which both use; <dialog>s of their own with
        their CSS in main.css, like importHelp below. #}
     <script src="{{ data.base_url }}/client/src/js/views/updateDialog.js?v=20261107_website" defer></script>
-    <script src="{{ data.base_url }}/client/src/js/views/helpMenu.js?v=20261109_docsdomain" defer></script>
+    <script src="{{ data.base_url }}/client/src/js/views/helpMenu.js?v=20261115_feedback" defer></script>
     <script src="{{ data.base_url }}/client/src/js/views/importHelp.js?v=20261112_compressed_pyramids" defer></script>
     {# What kind of address a string is: a web address, a `node://` locator
        or a plain path. Read by importSample.js and quickViewLanding.js, so
@@ -630,8 +641,8 @@
                on the row is the once-a-day background check finding a newer
                release (never a pop-up); it is `hidden` until then. The rows
                are buttons rather than links because none of them navigates:
-               Documentation and Report an Issue open a new tab, which in the
-               desktop app has to go through the shell. #}
+               Documentation opens a new tab, which in the desktop app has to
+               go through the shell. #}
             <li class="nav-item dropdown">
                 <span class="nav-link dropdown-toggle" id="navbarHelpDropdown" role="button" data-bs-toggle="dropdown"
                       aria-haspopup="true" aria-expanded="false">
@@ -652,9 +663,15 @@
                     <button type="button" class="dropdown-item" id="nav_docs">
                         <span class="fas fa-book nav-item-icon"></span>
                         <span class="nav-item-label">Documentation</span></button>
+                    {# Both open views/feedbackDialog.js, as the navbar's
+                       feedback icon does; the id is the desktop menu's too
+                       (desktopBridge.js `page:report_issue`). #}
                     <button type="button" class="dropdown-item" id="nav_report_issue">
                         <span class="fas fa-bug nav-item-icon"></span>
-                        <span class="nav-item-label">Report an Issue&hellip;</span></button>
+                        <span class="nav-item-label">Report a Bug&hellip;</span></button>
+                    <button type="button" class="dropdown-item" id="nav_request_feature">
+                        <span class="fas fa-lightbulb nav-item-icon"></span>
+                        <span class="nav-item-label">Request a Feature&hellip;</span></button>
                     {% for item in data.plugin_nav_items if item.menu == 'help' %}
                     <a class="dropdown-item" id="{{ item.id }}" href="{{ item.href }}"
                        {% if item.shortcut %}data-shortcut="{{ item.shortcut }}"{% endif %}>
@@ -710,6 +727,9 @@
        empty mount, like #segmentation_chip and #app_status: grey and silent
        for the ordinary desktop launch, and it costs no polling at all until
        something is connected or somebody opens it. #}
+    {# Report a Bug / Request a Feature (services/feedbackMenu.js): a small
+       menu that grows out of the icon. An empty mount like the globe's. #}
+    <button type="button" id="feedback_button" class="feedback-button" hidden></button>
     <button type="button" id="remote_globe" class="remote-globe" hidden></button>
     <!-- Sits outside .navbar-collapse so it stays visible when the navbar
          collapses. Filled in by appStatus.js. -->

@@ -401,6 +401,61 @@ input[type="number"]::-webkit-inner-spin-button {
     min-width: 220px;
 }
 
+/* The navbar's motion, shared with the feedback menu (services/feedbackMenu.js):
+   a menu grows out of its toggle, scaled and faded from the corner nearest
+   it, its rows rising a few pixels in a short stagger; it shrinks back on the
+   way out (a copy of it, services/navMenuMotion.js, since Bootstrap hides the
+   menu at once). Transform and opacity only; the duration tokens are 0 under
+   reduced motion. Bootstrap places these menus statically in a navbar (no
+   transform of its own), so the keyframes move nothing else. */
+@keyframes plx-nav-pop-in {
+    from { opacity: 0; transform: scale(0.35); }
+}
+
+@keyframes plx-nav-pop-out {
+    to { opacity: 0; transform: scale(0.6); }
+}
+
+@keyframes plx-nav-row-in {
+    from { opacity: 0; transform: translateY(4px); }
+}
+
+#topBar .dropdown-menu.show {
+    animation: plx-nav-pop-in var(--duration-base) var(--ease-standard);
+    transform-origin: 24px -8px;
+}
+
+#topBar .dropdown-menu-end.show {
+    transform-origin: calc(100% - 24px) -8px;
+}
+
+#topBar .dropdown-menu.show > * {
+    animation: plx-nav-row-in var(--duration-base) var(--ease-standard) both;
+    animation-delay: 160ms;
+}
+
+#topBar .dropdown-menu.show > :nth-child(1) { animation-delay: 40ms; }
+#topBar .dropdown-menu.show > :nth-child(2) { animation-delay: 52ms; }
+#topBar .dropdown-menu.show > :nth-child(3) { animation-delay: 64ms; }
+#topBar .dropdown-menu.show > :nth-child(4) { animation-delay: 76ms; }
+#topBar .dropdown-menu.show > :nth-child(5) { animation-delay: 88ms; }
+#topBar .dropdown-menu.show > :nth-child(6) { animation-delay: 100ms; }
+#topBar .dropdown-menu.show > :nth-child(7) { animation-delay: 112ms; }
+#topBar .dropdown-menu.show > :nth-child(8) { animation-delay: 124ms; }
+#topBar .dropdown-menu.show > :nth-child(9) { animation-delay: 136ms; }
+#topBar .dropdown-menu.show > :nth-child(10) { animation-delay: 148ms; }
+
+/* The copy that shrinks back into the toggle after Bootstrap has hidden the
+   real menu: never clickable, gone when its animation ends. */
+#topBar .dropdown-menu.is-leaving {
+    animation: plx-nav-pop-out var(--duration-fast) var(--ease-standard) forwards;
+    pointer-events: none;
+}
+
+#topBar .dropdown-menu.is-leaving > * {
+    animation: none;
+}
+
 /* Three columns: the icon in a fixed gutter on the left, the label taking
    whatever is left, the shortcut ranged right against the far edge. Same
    arrangement as the figure canvas's context menu (.fb-menu-item), because
@@ -4913,6 +4968,978 @@ html.is-native-dragging.has-drop-target body::after {
 .remote-globe.is-opening .remote-globe-dot { background: var(--accent-warning); }
 .remote-globe.is-problem .remote-globe-dot { background: var(--accent-warning); }
 
+/* ------------------------------------------------------------------ */
+/* Feedback: the navbar icon, its menu (services/feedbackMenu.js) and  */
+/* the form it opens (views/feedbackDialog.js). Here because base.html */
+/* loads all three on every page.                                      */
+/* ------------------------------------------------------------------ */
+
+/* The globe's size and quiet, beside it. */
+.feedback-button {
+    position: relative;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 30px;
+    height: 30px;
+    margin-right: var(--space-2);
+    flex-shrink: 0;
+    padding: 0;
+    background: transparent;
+    border: 1px solid transparent;
+    border-radius: var(--radius-sm);
+    color: var(--text-muted);
+    font-size: 15px;
+    cursor: pointer;
+    transition: color var(--duration-base) var(--ease-standard),
+                border-color var(--duration-base) var(--ease-standard),
+                background-color var(--duration-base) var(--ease-standard);
+}
+
+.feedback-button[hidden] {
+    display: none;
+}
+
+.feedback-button:hover,
+.feedback-button:focus-visible {
+    color: var(--text-primary);
+    border-color: var(--border-subtle);
+}
+
+.feedback-button:focus-visible {
+    outline: 2px solid var(--accent-channel);
+    outline-offset: 2px;
+}
+
+.feedback-button.is-open {
+    color: var(--text-primary);
+    background: var(--surface-2);
+    border-color: var(--border-subtle);
+}
+
+/* Two glyphs in one place: the speech bubble, and the close mark that turns
+   in while the menu is open. Opacity and rotation only. */
+.feedback-button-glyph {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: opacity var(--duration-base) var(--ease-standard),
+                transform var(--duration-base) var(--ease-standard);
+}
+
+.feedback-button-glyph.is-open {
+    opacity: 0;
+    transform: rotate(-90deg) scale(0.6);
+}
+
+.feedback-button.is-open .feedback-button-glyph.is-idle {
+    opacity: 0;
+    transform: rotate(90deg) scale(0.6);
+}
+
+.feedback-button.is-open .feedback-button-glyph.is-open {
+    opacity: 1;
+    transform: none;
+}
+
+/* Grows out of the icon: scaled from the corner nearest it, faded in, the
+   rows rising after it by a few pixels each. Fixed and portaled, like the
+   globe's panel; positioned by the script. */
+.feedback-menu {
+    position: fixed;
+    z-index: 1000;
+    width: 260px;
+    padding: 6px;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    background: var(--surface-1);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-lg);
+    box-shadow:
+        inset 0 1px 0 rgba(255, 255, 255, 0.04),
+        var(--shadow-md);
+    color: var(--text-primary);
+    opacity: 0;
+    transform: scale(0.35);
+    transform-origin: var(--feedback-origin-x, calc(100% - 15px)) -8px;
+    transition: opacity var(--duration-base) var(--ease-standard),
+                transform var(--duration-base) var(--ease-standard);
+    will-change: transform, opacity;
+}
+
+.feedback-menu.is-open {
+    opacity: 1;
+    transform: none;
+}
+
+/* Out faster than in, and smaller: it is going back into the icon. */
+.feedback-menu.is-closing {
+    opacity: 0;
+    transform: scale(0.6);
+    transition-duration: var(--duration-fast);
+}
+
+.feedback-menu-item {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    width: 100%;
+    padding: 8px 10px;
+    background: transparent;
+    border: 0;
+    border-radius: var(--radius-md);
+    color: var(--text-secondary);
+    font: inherit;
+    text-align: left;
+    cursor: pointer;
+    opacity: 0;
+    transform: translateY(4px);
+    transition: opacity var(--duration-base) var(--ease-standard),
+                transform var(--duration-base) var(--ease-standard),
+                background-color var(--duration-fast) var(--ease-standard),
+                color var(--duration-fast) var(--ease-standard);
+}
+
+.feedback-menu.is-open .feedback-menu-item {
+    opacity: 1;
+    transform: none;
+    transition-delay: calc(40ms + var(--feedback-row, 0) * 30ms), calc(40ms + var(--feedback-row, 0) * 30ms), 0ms, 0ms;
+}
+
+.feedback-menu-item:hover,
+.feedback-menu-item:focus-visible {
+    background: var(--surface-2);
+    color: var(--text-primary);
+    outline: none;
+}
+
+.feedback-menu-item:focus-visible {
+    box-shadow: inset 0 0 0 1px var(--accent-channel-soft);
+}
+
+.feedback-menu-icon {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    width: 30px;
+    height: 30px;
+    border-radius: var(--radius-sm);
+    font-size: 14px;
+    transition: transform var(--duration-base) var(--ease-standard);
+}
+
+.feedback-menu-item:hover .feedback-menu-icon {
+    transform: scale(1.06);
+}
+
+.feedback-menu-icon.is-bug {
+    background: var(--accent-danger-soft);
+    color: var(--accent-danger);
+}
+
+.feedback-menu-icon.is-feature {
+    background: var(--accent-warning-soft);
+    color: var(--accent-warning);
+}
+
+.feedback-menu-words {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+}
+
+.feedback-menu-label {
+    font-size: 13px;
+    font-weight: 600;
+    color: inherit;
+}
+
+.feedback-menu-note {
+    font-size: 11.5px;
+    color: var(--text-muted);
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .feedback-menu,
+    .feedback-menu-item,
+    .feedback-button-glyph {
+        transition: none;
+    }
+}
+
+/* -- the form ------------------------------------------------------------ */
+
+/* Wide and short: labels in a 110px column, each field one row beside its
+   label, a darker footer band. No padding on the dialog itself: the head,
+   body and footer each carry their own. */
+/* Two classes: .plx-dialog's padding comes later in this file. */
+.plx-dialog.plx-feedback {
+    width: min(720px, 94vw);
+    padding: 0;
+    overflow: hidden;
+    border-color: rgba(255, 255, 255, 0.18);
+    box-shadow: 0 24px 60px rgba(0, 0, 0, 0.55);
+}
+
+.plx-feedback[open] {
+    animation: plx-feedback-in var(--duration-base) var(--ease-standard);
+}
+
+@keyframes plx-feedback-in {
+    from { opacity: 0; transform: translateY(6px) scale(0.985); }
+}
+
+.plx-feedback-spacer {
+    flex: 1;
+}
+
+.plx-feedback-head {
+    display: flex;
+    align-items: center;
+    gap: var(--space-3);
+    padding: 12px 14px 12px 20px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.plx-feedback-title {
+    margin: 0;
+    font-size: 15px;
+    font-weight: 600;
+    letter-spacing: -0.01em;
+}
+
+/* Bug | Feature: a segmented well, the chosen one raised. */
+.plx-feedback-kinds {
+    display: flex;
+    gap: 2px;
+    padding: 3px;
+    background: var(--surface-0);
+    border: 1px solid rgba(255, 255, 255, 0.10);
+    border-radius: var(--radius-md);
+}
+
+.plx-feedback-kind {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    height: 26px;
+    padding: 0 10px;
+    background: transparent;
+    border: 0;
+    border-radius: var(--radius-sm);
+    color: var(--text-muted);
+    font: inherit;
+    font-size: 12.5px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: background-color var(--duration-fast) var(--ease-standard),
+                color var(--duration-fast) var(--ease-standard);
+}
+
+.plx-feedback-kind:hover {
+    color: var(--text-primary);
+}
+
+.plx-feedback-kind[aria-checked="true"] {
+    background: #1a2230;
+    color: var(--text-primary);
+}
+
+.plx-feedback-kind:focus-visible {
+    outline: 1px solid rgba(255, 255, 255, 0.4);
+    outline-offset: 1px;
+}
+
+.plx-feedback-kind:disabled {
+    cursor: default;
+}
+
+.plx-feedback-kind.is-bug > .fas,
+.plx-feedback-kind.is-bug > svg {
+    color: var(--accent-danger);
+}
+
+.plx-feedback-kind.is-feature > .fas,
+.plx-feedback-kind.is-feature > svg {
+    color: var(--accent-warning);
+}
+
+.plx-feedback-close {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 28px;
+    height: 28px;
+    padding: 0;
+    background: transparent;
+    border: 0;
+    border-radius: var(--radius-sm);
+    color: var(--text-muted);
+    font-size: 14px;
+    cursor: pointer;
+}
+
+.plx-feedback-close:hover,
+.plx-feedback-close:focus-visible {
+    background: var(--surface-2);
+    color: var(--text-primary);
+    outline: none;
+}
+
+.plx-feedback-form {
+    display: flex;
+    flex-direction: column;
+}
+
+.plx-feedback-form[hidden] {
+    display: none;
+}
+
+.plx-feedback-body {
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+    max-height: calc(86vh - 120px);
+    overflow-y: auto;
+    padding: 18px 20px 16px;
+}
+
+.plx-feedback-row {
+    display: grid;
+    grid-template-columns: 110px minmax(0, 1fr);
+    align-items: center;
+    column-gap: var(--space-3);
+}
+
+.plx-feedback-row.is-top {
+    align-items: start;
+}
+
+.plx-feedback-label {
+    margin: 0;
+    color: #b6c2d3;
+    font-size: 12.5px;
+    font-weight: 500;
+}
+
+.plx-feedback-row.is-top > .plx-feedback-label {
+    padding-top: 9px;
+}
+
+.plx-feedback-cell {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    min-width: 0;
+}
+
+/* Focus is a brighter hairline, never a coloured ring. */
+.plx-feedback-input,
+.plx-textarea {
+    width: 100%;
+    box-sizing: border-box;
+    background: var(--surface-2);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-sm);
+    color: var(--text-primary);
+    font: inherit;
+    font-size: 13px;
+    transition: border-color var(--duration-fast) var(--ease-standard);
+}
+
+.plx-feedback-input {
+    height: 34px;
+    padding: 0 12px;
+}
+
+.plx-feedback-input[hidden] {
+    display: none;
+}
+
+/* The one multi-line text box: grows with what is typed
+   (views/feedbackDialog.js `grow`) up to max-height, then scrolls. */
+.plx-textarea {
+    min-height: 116px;
+    max-height: min(220px, 32vh);
+    padding: 9px 12px;
+    line-height: 1.5;
+    resize: none;
+    overflow-y: hidden;
+}
+
+.plx-feedback-input:hover,
+.plx-textarea:hover {
+    border-color: rgba(255, 255, 255, 0.2);
+}
+
+.plx-feedback-input:focus,
+.plx-textarea:focus {
+    border-color: rgba(255, 255, 255, 0.34);
+    box-shadow: none;
+    outline: none;
+}
+
+.plx-feedback-input::placeholder,
+.plx-textarea::placeholder {
+    color: #6b7c93;
+}
+
+.plx-feedback-input[aria-invalid="true"],
+.plx-textarea[aria-invalid="true"] {
+    border-color: var(--accent-danger);
+}
+
+/* Signed in: who replies go to, one line where the field would be. */
+.plx-feedback-who {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    min-height: 34px;
+    color: var(--text-secondary);
+    font-size: 13px;
+}
+
+.plx-feedback-who[hidden] {
+    display: none;
+}
+
+.plx-feedback-avatar {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    width: 22px;
+    height: 22px;
+    border-radius: 50%;
+    background: var(--accent-channel-tint);
+    color: var(--accent-channel);
+    font-size: 10.5px;
+    font-weight: 600;
+}
+
+.plx-feedback-who-email {
+    overflow: hidden;
+    color: var(--text-primary);
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.plx-feedback-who-note {
+    flex-shrink: 0;
+    color: #6b7c93;
+}
+
+.plx-feedback-meta {
+    display: flex;
+    justify-content: space-between;
+    gap: var(--space-3);
+}
+
+.plx-feedback-error {
+    color: var(--accent-danger);
+    font-size: 12px;
+}
+
+.plx-feedback-error:empty {
+    display: none;
+}
+
+.plx-feedback-count {
+    margin-left: auto;
+    color: #6b7c93;
+    font-size: 11px;
+    font-variant-numeric: tabular-nums;
+}
+
+.plx-feedback-count.is-near {
+    color: var(--accent-warning);
+}
+
+/* Attachments: a dashed bar while there are none. */
+.plx-feedback-dropbar,
+.plx-feedback-add {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    height: 44px;
+    box-sizing: border-box;
+    padding: 0 12px;
+    background: transparent;
+    border: 1px dashed rgba(255, 255, 255, 0.18);
+    border-radius: var(--radius-sm);
+    color: var(--text-muted);
+    font: inherit;
+    font-size: 12.5px;
+    text-align: left;
+    cursor: pointer;
+    transition: border-color var(--duration-fast) var(--ease-standard),
+                background-color var(--duration-fast) var(--ease-standard);
+}
+
+.plx-feedback-dropbar[hidden],
+.plx-feedback-add[hidden] {
+    display: none;
+}
+
+.plx-feedback-dropbar > .fas,
+.plx-feedback-dropbar > svg,
+.plx-feedback-add > .fas,
+.plx-feedback-add > svg {
+    color: var(--accent-channel);
+}
+
+.plx-feedback-add {
+    gap: 6px;
+    flex-shrink: 0;
+}
+
+.plx-feedback-dropbar:hover,
+.plx-feedback-add:hover,
+.plx-feedback-dropbar:focus-visible,
+.plx-feedback-add:focus-visible,
+.plx-feedback-files-field.is-drop .plx-feedback-dropbar,
+.plx-feedback-files-field.is-drop .plx-feedback-add {
+    border-color: rgba(255, 255, 255, 0.34);
+    background: rgba(255, 255, 255, 0.02);
+    outline: none;
+}
+
+.plx-feedback-dropbar:disabled,
+.plx-feedback-add:disabled {
+    cursor: default;
+    opacity: 0.6;
+}
+
+.plx-feedback-dropbar-lead {
+    color: #e2e8f0;
+}
+
+.plx-feedback-chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-2);
+}
+
+.plx-feedback-chips[hidden] {
+    display: none;
+}
+
+.plx-feedback-files {
+    display: contents;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+}
+
+.plx-feedback-file {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    max-width: 240px;
+    height: 44px;
+    box-sizing: border-box;
+    padding: 0 4px;
+    background: var(--surface-2);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-sm);
+    animation: plx-feedback-file-in var(--duration-base) var(--ease-standard);
+}
+
+@keyframes plx-feedback-file-in {
+    from { opacity: 0; transform: translateY(-3px); }
+}
+
+.plx-feedback-file.is-text {
+    border-color: rgba(243, 184, 69, 0.45);
+}
+
+.plx-feedback-file.is-failed {
+    border-color: var(--accent-danger);
+}
+
+.plx-feedback-thumb,
+.plx-feedback-file-icon {
+    width: 36px;
+    height: 34px;
+    flex-shrink: 0;
+    border-radius: 4px;
+}
+
+.plx-feedback-thumb {
+    object-fit: cover;
+    background: var(--surface-0);
+}
+
+.plx-feedback-file-icon {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    background: var(--surface-1);
+    color: var(--text-muted);
+}
+
+.plx-feedback-file-words {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+}
+
+.plx-feedback-file-name {
+    overflow: hidden;
+    color: var(--text-primary);
+    font-size: 12px;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.plx-feedback-file-size {
+    color: #6b7c93;
+    font-size: 10.5px;
+}
+
+.plx-feedback-file-remove {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 24px;
+    height: 24px;
+    flex-shrink: 0;
+    padding: 0;
+    background: transparent;
+    border: 0;
+    border-radius: 4px;
+    color: var(--text-muted);
+    font-size: 11px;
+    cursor: pointer;
+}
+
+.plx-feedback-file-remove:hover,
+.plx-feedback-file-remove:focus-visible {
+    background: var(--surface-1);
+    color: var(--text-primary);
+    outline: none;
+}
+
+.plx-feedback-warning {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin: 2px 0 0;
+    color: #e9c47a;
+    font-size: 11.5px;
+}
+
+.plx-feedback-warning[hidden] {
+    display: none;
+}
+
+.plx-feedback-warning > .fas,
+.plx-feedback-warning > svg {
+    color: var(--accent-warning);
+    font-size: 11px;
+}
+
+/* What is sent, opened from the footer: aligned with the fields. */
+.plx-feedback-diag {
+    margin-left: 122px;
+    max-height: 200px;
+    overflow-y: auto;
+    padding: var(--space-2) var(--space-3);
+    background: var(--surface-0);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-sm);
+    color: var(--text-muted);
+    font-size: 11.5px;
+}
+
+.plx-feedback-diag[hidden] {
+    display: none;
+}
+
+.plx-feedback-diag-head {
+    margin: 2px 0 6px;
+    color: var(--text-secondary);
+}
+
+.plx-feedback-diag-table {
+    width: 100%;
+    border-collapse: collapse;
+}
+
+.plx-feedback-diag-table th {
+    width: 36%;
+    padding: 1px var(--space-2) 1px 0;
+    color: var(--text-muted);
+    font-weight: 500;
+    text-align: left;
+    vertical-align: top;
+}
+
+.plx-feedback-diag-table td {
+    padding: 1px 0;
+    color: var(--text-secondary);
+    overflow-wrap: anywhere;
+}
+
+.plx-feedback-diag-errors {
+    margin: 0;
+    padding-left: var(--space-4);
+    color: var(--text-secondary);
+}
+
+.plx-feedback-diag-source {
+    color: var(--text-muted);
+}
+
+.plx-feedback-alert {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px 10px;
+    margin-left: 122px;
+    padding: 9px 12px;
+    background: rgba(248, 113, 113, 0.10);
+    border: 1px solid rgba(248, 113, 113, 0.35);
+    border-radius: var(--radius-sm);
+    color: var(--text-primary);
+    font-size: 12.5px;
+    line-height: 1.45;
+    animation: plx-feedback-file-in var(--duration-base) var(--ease-standard);
+}
+
+.plx-feedback-alert[hidden] {
+    display: none;
+}
+
+.plx-feedback-alert > .fas,
+.plx-feedback-alert > svg {
+    color: var(--accent-danger);
+}
+
+.plx-feedback-alert > span {
+    flex: 1;
+    min-width: 0;
+}
+
+.plx-feedback-alert-list {
+    flex-basis: 100%;
+    margin: 0;
+    padding-left: var(--space-5);
+    color: var(--text-secondary);
+}
+
+.plx-feedback-skip {
+    margin-top: var(--space-2);
+}
+
+.plx-feedback-foot {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 12px 16px 12px 20px;
+    background: #090c11;
+    border-top: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.plx-feedback-review {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 0;
+    background: none;
+    border: 0;
+    color: var(--text-muted);
+    font: inherit;
+    font-size: 12px;
+    cursor: pointer;
+}
+
+.plx-feedback-review-link {
+    color: var(--accent-channel);
+}
+
+.plx-feedback-review:hover .plx-feedback-review-link,
+.plx-feedback-review[aria-expanded="true"] .plx-feedback-review-link {
+    text-decoration: underline;
+}
+
+.plx-feedback-review:focus-visible {
+    outline: 1px solid rgba(255, 255, 255, 0.4);
+    outline-offset: 2px;
+    border-radius: 2px;
+}
+
+.plx-feedback-foot .plx-button {
+    height: 32px;
+    padding: 0 14px;
+}
+
+/* The send button keeps its width while it spins: the label changes, the
+   spinner takes no room until it shows. */
+.plx-feedback-submit {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0;
+    min-width: 120px;
+    font-weight: 600;
+}
+
+.plx-feedback-spinner {
+    width: 0;
+    height: 13px;
+    border: 2px solid currentColor;
+    border-right-color: transparent;
+    border-radius: 50%;
+    opacity: 0;
+    transition: opacity var(--duration-fast) var(--ease-standard);
+}
+
+.plx-feedback-submit.is-busy {
+    gap: var(--space-2);
+}
+
+.plx-feedback-submit.is-busy .plx-feedback-spinner {
+    width: 13px;
+    opacity: 1;
+    animation: plx-feedback-spin 0.7s linear infinite;
+}
+
+@keyframes plx-feedback-spin {
+    to { transform: rotate(360deg); }
+}
+
+/* Sent: the head goes, and a short card with a ring that draws itself. */
+.plx-feedback.is-done .plx-feedback-head {
+    display: none;
+}
+
+.plx-feedback-done {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    min-height: 260px;
+    padding: var(--space-6) var(--space-4);
+    text-align: center;
+}
+
+.plx-feedback-done[hidden] {
+    display: none;
+}
+
+.plx-feedback-check {
+    width: 56px;
+    height: 56px;
+    margin-bottom: 6px;
+    transform: scale(0.8);
+    opacity: 0;
+    transition: transform 280ms cubic-bezier(0.34, 1.56, 0.64, 1), opacity 160ms var(--ease-standard);
+}
+
+.plx-feedback-check-ring {
+    stroke: var(--accent-success);
+    stroke-width: 2.5;
+    stroke-dasharray: 151;
+    stroke-dashoffset: 151;
+    transition: stroke-dashoffset 420ms var(--ease-standard);
+}
+
+.plx-feedback-check-tick {
+    stroke: var(--accent-success);
+    stroke-width: 3.5;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+    stroke-dasharray: 36;
+    stroke-dashoffset: 36;
+    transition: stroke-dashoffset 260ms var(--ease-standard) 300ms;
+}
+
+.plx-feedback-done-title,
+.plx-feedback-done-text,
+.plx-feedback-done-note {
+    margin: 0;
+    opacity: 0;
+    transform: translateY(4px);
+    transition: opacity 200ms var(--ease-standard) 260ms, transform 200ms var(--ease-standard) 260ms;
+}
+
+.plx-feedback-done-title {
+    color: var(--text-primary);
+    font-size: 15px;
+    font-weight: 600;
+}
+
+.plx-feedback-done-text {
+    color: var(--text-muted);
+    font-size: 12.5px;
+}
+
+.plx-feedback-done-note {
+    color: #6b7c93;
+    font-size: 11.5px;
+    font-variant-numeric: tabular-nums;
+}
+
+.plx-feedback-done.is-shown .plx-feedback-check {
+    transform: none;
+    opacity: 1;
+}
+
+.plx-feedback-done.is-shown .plx-feedback-check-ring,
+.plx-feedback-done.is-shown .plx-feedback-check-tick {
+    stroke-dashoffset: 0;
+}
+
+.plx-feedback-done.is-shown .plx-feedback-done-title,
+.plx-feedback-done.is-shown .plx-feedback-done-text,
+.plx-feedback-done.is-shown .plx-feedback-done-note {
+    opacity: 1;
+    transform: none;
+}
+
+@media (max-width: 620px) {
+    .plx-feedback-row {
+        grid-template-columns: minmax(0, 1fr);
+        row-gap: 6px;
+    }
+
+    .plx-feedback-row.is-top > .plx-feedback-label {
+        padding-top: 0;
+    }
+
+    .plx-feedback-diag,
+    .plx-feedback-alert {
+        margin-left: 0;
+    }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .plx-feedback[open],
+    .plx-feedback-file,
+    .plx-feedback-alert {
+        animation: none;
+    }
+
+    .plx-feedback-check,
+    .plx-feedback-check-ring,
+    .plx-feedback-check-tick,
+    .plx-feedback-done-title,
+    .plx-feedback-done-text,
+    .plx-feedback-done-note {
+        transition: none;
+    }
+
+    .plx-feedback-submit.is-busy .plx-feedback-spinner {
+        animation-duration: 1.6s;
+    }
+}
+
 /* -- the panel -------------------------------------------------------- */
 
 /* Fixed, positioned in viewport coordinates by the script, and portaled — see
@@ -4925,6 +5952,10 @@ html.is-native-dragging.has-drop-target body::after {
 .remote-panel {
     position: fixed;
     z-index: 1000;
+    /* Grows out of the globe and shrinks back into it, the navbar's shared
+       motion (the dropdown menus above, the feedback menu). */
+    animation: plx-nav-pop-in var(--duration-base) var(--ease-standard);
+    transform-origin: calc(100% - 15px) -8px;
     width: min(24rem, calc(100vw - 16px));
     max-height: min(32rem, calc(100vh - 96px));
     display: flex;
@@ -4935,6 +5966,11 @@ html.is-native-dragging.has-drop-target body::after {
     box-shadow: var(--shadow-md);
     color: var(--text-primary);
     overflow: hidden;
+}
+
+.remote-panel.is-closing {
+    animation: plx-nav-pop-out var(--duration-fast) var(--ease-standard) forwards;
+    pointer-events: none;
 }
 
 /* Full-bleed rows separated by hairlines, not a stack of floating cards.

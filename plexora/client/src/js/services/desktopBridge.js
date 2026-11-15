@@ -226,6 +226,7 @@
         "page:check_updates": "#nav_check_updates",
         "page:shortcuts": "#nav_shortcuts",
         "page:report_issue": "#nav_report_issue",
+        "page:request_feature": "#nav_request_feature",
         "page:docs": "#nav_docs",
     };
 

@@ -798,7 +798,16 @@ def cmd_wheel(ctx, args=None):
     if ctx.dist_dir.exists() and ctx.clean:
         shutil.rmtree(ctx.dist_dir)
     ctx.dist_dir.mkdir(parents=True, exist_ok=True)
-    run(["uv", "build", "--out-dir", ctx.dist_dir], env=uv_env(), ctx=ctx)
+    # The commit, stamped into plexora/_build.py for this build only: a bug
+    # report names the build it came from, and the tree is left as it was.
+    stamp = ROOT / "plexora" / "_build.py"
+    original = stamp.read_text(encoding="utf-8")
+    if not ctx.dry_run:
+        _write_text_lf(stamp, original.replace('\nBUILD = ""\n', f'\nBUILD = "{git_sha()}"\n', 1))
+    try:
+        run(["uv", "build", "--out-dir", ctx.dist_dir], env=uv_env(), ctx=ctx)
+    finally:
+        _write_text_lf(stamp, original)
     # setuptools stages the sdist in the repository and deletes it after; a
     # sync client holding one of its files open leaves it behind.
     for leftover in (ROOT / f"plexora-{read_version()}", ROOT / "build" / "lib"):

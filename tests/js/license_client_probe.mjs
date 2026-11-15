@@ -103,6 +103,9 @@ function platform(clock, { bindVersion = 1, pendingPolls = 1 } = {}) {
                 return [200, { email: "ada@lab.example.org", name: "Ada Lovelace",
                                org: { name: "Example Lab", kind: "institution" }, server_time: t }];
             }
+            if (path === "/feedback") {
+                return [201, { id: "fb_0123456789abcdef", upload: { token: `${t + 900}.test`, expires_at: t + 900 } }];
+            }
             if (path === "/ai/token") {
                 return [200, { token: `BIOCAI1.test.${requests.length}`, expires_at: t + 1800, server_time: t,
                                gateway: "https://ai.biocognia.test", mode: "credits", mods: ["chat"] }];
@@ -459,6 +462,25 @@ await check("the routes answer in license_routes.py's shapes, and other paths ar
     assert.ok(client.files().environment, "releasing keeps the device secret; Forget does not");
     const removed = await ask(client, "POST", "/settings/license/remove");
     assert.equal(removed.status, 200);
+});
+
+await check("feedback goes with the certificate and binding when connected, with the address given when not", async () => {
+    const report = { kind: "bug", description: "The channel list goes blank.", diagnostics: { mode: "website" } };
+    let t = 1_800_000_000;
+    const service = platform(() => t);
+    const free = tab({ clock: () => t, service });
+    await free.client.restore({ heartbeatEveryMs: 0 });
+    const anonymous = await free.client.feedback({ ...report, email: "pat@lab.example.org" });
+    assert.equal(anonymous.id, "fb_0123456789abcdef");
+    const sent = service.of("/feedback")[0];
+    assert.deepEqual(Object.keys(sent.body).sort(), ["description", "diagnostics", "email", "kind", "product"]);
+    assert.equal(free.client.api, API);
+    const page = await connected();
+    await page.client.feedback({ ...report, email: "" });
+    const signed = page.service.of("/feedback")[0].body;
+    assert.ok(signed.certificate.startsWith("BIOC1.") && /^[0-9a-f]{64}$/.test(signed.binding));
+    assert.equal(signed.email, undefined, "the platform takes the account's address");
+    assert.ok(!JSON.stringify(page.store.dump()).includes("channel list"), "nothing of the report is kept");
 });
 
 await check("the platform's address must be https, unless it is this machine", async () => {

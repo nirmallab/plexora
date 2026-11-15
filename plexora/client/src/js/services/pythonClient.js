@@ -345,7 +345,19 @@
         if (data.attached) attached(data.attached);
         if (data.syncChannel) syncChannel = data.syncChannel;
         if (data.mark) emit("mark", data);
-        if (data.log) console.warn("[python]", data.log);
+        if (data.log) {
+            console.warn("[python]", data.log);
+            // The worker's uncaught errors, kept for a bug report (errors.js
+            // `recent` reads them from here and scrubs them; capped twice).
+            if (/^uncaught: /.test(data.log)) {
+                const kept = (window.PlexoraPythonErrors ||= []);
+                const text = String(data.log).slice("uncaught: ".length);
+                const [message, ...stack] = text.split("\n");
+                kept.push({ at: new Date().toISOString(), message: message.slice(0, 500),
+                            stack: stack.join("\n").slice(0, 2048) });
+                if (kept.length > 10) kept.splice(0, kept.length - 10);
+            }
+        }
     }
 
     //: The site's base path ("" at a site's root; see services/shell.js):

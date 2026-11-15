@@ -782,6 +782,27 @@ export function createLicenseClient({
     }
 
     /**
+     * A bug report or feature request (biocognia/client.py `feedback`): `report`
+     * is {kind, description, diagnostics, email?}. Connected, the certificate
+     * and binding go with it and the platform replies to the account's
+     * address; otherwise `email` must be given. Answers {id, upload}. Nothing
+     * is kept.
+     */
+    async function feedback(report) {
+        const body = { product: PRODUCT };
+        for (const key of ["kind", "description", "diagnostics", "email"]) {
+            if (report && report[key] !== undefined && report[key] !== null && report[key] !== "") body[key] = report[key];
+        }
+        const held = await current();
+        if (record && record.certificate && !record.revoked && held.source === "cache"
+            && (held.certificate_type === null || held.certificate_type === "env")) {
+            body.certificate = record.certificate;
+            body.binding = await binding();
+        }
+        return post("/feedback", body, { action: "Sending feedback" });
+    }
+
+    /**
      * The 30-minute AI token for this browser, from memory until two thirds
      * of its life has passed (biocognia/gateway.py TokenSource). Never stored.
      */
@@ -1022,7 +1043,9 @@ export function createLicenseClient({
 
     return {
         answer, restore, stop, on, load, current, heartbeat, refresh, connect, poll, activate, install,
-        deactivate, remove, forget, account, aiToken, aiTokenForPython, installId, files,
+        deactivate, remove, forget, account, aiToken, aiTokenForPython, installId, files, feedback,
+        //: The platform's /v1, for a feedback file sent with the upload token feedback() answered.
+        api: base,
         status: () => status,
         state: () => state,
         // The certificate as held, for a service that checks it itself: the

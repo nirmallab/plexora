@@ -92,6 +92,7 @@ CLIENT_CHECKS = (
     "a release that fails asks first",
     "the AI token is exchanged once, held in memory, renewed at two thirds of its life, and never kept",
     "the routes answer in license_routes.py's shapes, and other paths are not the licence's",
+    "feedback goes with the certificate and binding when connected, with the address given when not",
     "the platform's address must be https, unless it is this machine",
 )
 

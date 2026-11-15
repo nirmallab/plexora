@@ -1,22 +1,19 @@
 /**
  * helpMenu.js -- the Help menu's rows other than Check for Updates.
  *
- * About, Keyboard Shortcuts, Documentation and Report an Issue. All four are
- * built on PlexoraConfirm.tell with a content node, like pluginHelp.js, so
- * they open, trap focus and close the way every other core dialog does.
+ * About, Keyboard Shortcuts and Documentation are built on PlexoraConfirm
+ * with a content node, like pluginHelp.js, so they open, trap focus and close
+ * the way every other core dialog does. Report a Bug and Request a Feature
+ * open the feedback form (views/feedbackDialog.js), as the navbar's feedback
+ * icon does; the native menus reach them through the same rows.
  *
  * About reads `/desktop/info`, which answers in every mode despite its name
  * (desktop_routes.py) and never carries the token or the port -- except on
- * the website, which has no installed Plexora to describe (`siteInfo`). The same
- * document, minus the paths, is what Report an Issue puts in the new issue's
- * body: a GitHub issue is public, and a data root is usually a home directory
- * with somebody's name in it.
+ * the website, which has no installed Plexora to describe (`siteInfo`).
  */
 window.PlexoraHelpMenu = (function () {
     "use strict";
 
-    const REPO = "https://github.com/nirmallab/plexora";
-    const ISSUES_URL = `${REPO}/issues/new`;
     //: Fallback only. The page renders `plexora.links.DOCS_URL` into
     //: <body data-plexora-docs-url>, so the site's address has one home.
     const DEFAULT_DOCS_URL = "https://plexoraapp.com/";
@@ -29,8 +26,6 @@ window.PlexoraHelpMenu = (function () {
         if (!path) return base;
         return `${base}docs/${String(path).replace(/^\/+|\/+$/g, "")}/`;
     }
-    //: GitHub refuses a URL much past 8 KB; the body is kept well inside it.
-    const ISSUE_BODY_LIMIT = 5000;
 
     function el(tag, className, text) {
         const node = document.createElement(tag);
@@ -159,25 +154,14 @@ window.PlexoraHelpMenu = (function () {
         }
     }
 
-    async function reportIssue() {
-        const data = await info();
-        const environment = asText(facts(data, { withPaths: false }));
-        let body = "### What happened\n\n\n\n### What you expected\n\n\n\n"
-                   + "### Steps to reproduce\n\n1. \n\n"
-                   + "### Environment\n\n```\n" + environment + "\n```\n";
-        if (body.length > ISSUE_BODY_LIMIT) body = body.slice(0, ISSUE_BODY_LIMIT);
-        const go = await window.PlexoraConfirm.choose({
-            title: "Report an Issue",
-            body: "This opens a new issue on GitHub with your Plexora version, Python, "
-                  + "platform and plugins filled in. No file paths or data are included.\n\n"
-                  + "A screenshot, and the steps that led to the problem, help most.",
-            choices: [
-                { value: false, label: "Cancel" },
-                { value: true, label: "Open GitHub", kind: "primary", focus: true },
-            ],
-        });
-        if (!go) return;
-        openExternal(`${ISSUES_URL}?body=${encodeURIComponent(body)}`);
+    /** Help > Report a Bug: the feedback form, as a bug report. */
+    function reportIssue() {
+        window.PlexoraFeedback?.open("bug");
+    }
+
+    /** Help > Request a Feature: the same form, as a feature request. */
+    function requestFeature() {
+        window.PlexoraFeedback?.open("feature");
     }
 
     // -- keyboard shortcuts --------------------------------------------------
@@ -258,9 +242,11 @@ window.PlexoraHelpMenu = (function () {
     onReady(() => {
         document.getElementById("nav_about")?.addEventListener("click", () => { about(); });
         document.getElementById("nav_report_issue")?.addEventListener("click", () => { reportIssue(); });
+        document.getElementById("nav_request_feature")?.addEventListener("click", () => { requestFeature(); });
         document.getElementById("nav_docs")?.addEventListener("click", () => openExternal(docsUrl()));
         document.getElementById("nav_shortcuts")?.addEventListener("click", () => { shortcuts(); });
     });
 
-    return { about, reportIssue, shortcuts, docsUrl, openDocs: (path) => openExternal(docsUrl(path)) };
+    return { about, reportIssue, requestFeature, shortcuts, docsUrl, info, facts,
+             openDocs: (path) => openExternal(docsUrl(path)) };
 })();

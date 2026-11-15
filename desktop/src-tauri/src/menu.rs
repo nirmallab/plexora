@@ -116,13 +116,15 @@ pub fn build(app: &AppHandle, info: &serde_json::Value) -> tauri::Result<Menu<Wr
         tools_menu = tools_menu.item(&item(&format!("page:tool:{name}"), label)?);
     }
 
-    // The shortcut sheet and Report an Issue are the page's own Help rows
-    // (helpMenu.js), reached the same way as every other `page:` item. Check
+    // The shortcut sheet, Report a Bug and Request a Feature are the page's
+    // own Help rows (helpMenu.js, feedbackDialog.js), reached the same way as
+    // every other `page:` item. Check
     // for Updates sits under About in the app menu, where Mac users look.
     let help = SubmenuBuilder::new(app, "Help")
         .item(&item("page:shortcuts", "Keyboard Shortcuts")?)
         .item(&item("docs", "Plexora Documentation")?)
-        .item(&item("page:report_issue", "Report an Issue…")?)
+        .item(&item("page:report_issue", "Report a Bug…")?)
+        .item(&item("page:request_feature", "Request a Feature…")?)
         .separator()
         .item(&item("show_data", "Show Data Folder")?)
         .item(&item("show_logs", "Show Logs")?);

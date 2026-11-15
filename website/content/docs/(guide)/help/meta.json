@@ -2,5 +2,5 @@
   "title": "Help",
   "icon": "LifeBuoy",
   "defaultOpen": false,
-  "pages": ["keyboard-shortcuts", "troubleshooting"]
+  "pages": ["keyboard-shortcuts", "troubleshooting", "feedback"]
 }

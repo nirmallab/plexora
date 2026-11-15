@@ -380,6 +380,10 @@ def create_app(plugins=None):
     # modal. Nothing Free calls it; its mutations answer this machine only.
     from plexora.server.routes.license_routes import license_bp
     app.register_blueprint(license_bp)
+    # Bug reports and feature requests (the navbar's feedback menu), relayed
+    # to the platform with this device's certificate. Writes nothing here.
+    from plexora.server.routes.feedback_routes import feedback_bp
+    app.register_blueprint(feedback_bp)
     # Plexora AI runs from the viewer (plexora/ai/harness): the `ai.*`
     # capabilities over HTTP, behind the `ai` entitlement and this machine.
     from plexora.server.routes.ai_routes import ai_bp

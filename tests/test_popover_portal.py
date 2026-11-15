@@ -85,6 +85,7 @@ VIEWER_POPUPS = (
     "plexora/client/src/js/views/colorSwatchPicker.js",
     "plexora/client/src/js/views/jobWait.js",
     "plexora/client/src/js/services/remoteGlobe.js",
+    "plexora/client/src/js/services/feedbackMenu.js",
     "plexora/plugins/cell_explorer/static/cellExplorerRoiBridge.js",
     "plexora/client/src/js/views/popoverMenu.js",
 )

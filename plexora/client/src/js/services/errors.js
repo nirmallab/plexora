@@ -17,6 +17,13 @@
  * Also listens for uncaught errors and unhandled rejections, as components
  * `window` and `promise`. `console.error` is deliberately NOT patched: most of
  * its callers log a condition, not a failure.
+ *
+ * And keeps the last RECENT_MAX failures in memory, for a bug report the user
+ * sends (`recent()`, read by services/feedbackDiagnostics.js and shown in the
+ * report form before anything is sent). Each is scrubbed as it is captured:
+ * a URL becomes its script's name, an absolute path `<path>`, an email
+ * address `<email>`, a certificate, token or long key `<redacted>`, and every
+ * text is capped. Never written anywhere, and gone with the tab.
  */
 window.PlexoraErrors = (function () {
     "use strict";
@@ -35,6 +42,11 @@ window.PlexoraErrors = (function () {
     //: not allowed to fill the aggregate.
     const MAX_NEW = 20;
     const WINDOW_MS = 5 * 60 * 1000;
+
+    //: The failures kept for a bug report, newest last.
+    const RECENT_MAX = 10;
+    const TEXT_MAX = 2048;
+    const recentErrors = [];
 
     let windowStart = Date.now();
     let fresh = new Set();
@@ -86,6 +98,70 @@ window.PlexoraErrors = (function () {
     }
 
     /**
+     * `text` with what must not leave the machine taken out: a URL is cut to
+     * its last path segment (a script's name, its line and column kept), an
+     * absolute path is `<path>`, an email `<email>`, a certificate, token or
+     * long key `<redacted>`. Then capped at `max`.
+     */
+    function scrub(text, max = TEXT_MAX) {
+        let out = String(text ?? "");
+        out = out.replace(/\b(?:BIOC1\.|BIOCAI1\.|BIOCT1_|BIOC-)[\w.-]+/g, "<redacted>");
+        out = out.replace(/\b[a-z][a-z0-9+.-]*:\/\/[^\s)'"<>]+/gi, (url) => {
+            const tail = url.replace(/[?#].*?(?=(?::\d+)*$)/, "").match(/([^/]*?)((?::\d+)*)$/);
+            const name = (tail && tail[1]) || "";
+            return /\.m?js$|\.py$|\.wasm$/i.test(name) ? `${name}${tail[2] || ""}` : "<url>";
+        });
+        out = out.replace(/[\w.+-]+@[\w-]+(?:\.[\w-]+)+/g, "<email>");
+        out = out.replace(/(?:[A-Za-z]:\\|\\\\)[^\s'"()<>,;]*/g, "<path>");
+        out = out.replace(/(^|[\s('"=:,[])~?\/(?:[^\s/'"()<>,;]+\/)+[^\s'"()<>,;]*/g, "$1<path>");
+        // A path with spaces in it: the words after `<path>` that are still
+        // part of it (they hold a slash) go too.
+        out = out.replace(/<path>(?: [^\s/'"()<>,;]*\/[^\s'"()<>,;]*)+/g, "<path>");
+        out = out.replace(/\b[A-Za-z0-9_-]{40,}\b/g, "<redacted>");
+        return out.length > max ? `${out.slice(0, max - 1)}…` : out;
+    }
+
+    /** Keep `error` for a bug report, scrubbed. `source` names who caught it. */
+    function remember(error, source) {
+        try {
+            const message = error && typeof error === "object"
+                ? (error.message || error.reason || String(error.name || "Error")) : String(error);
+            const entry = {
+                at: new Date().toISOString(),
+                kind: error && NAME.test(String(error.name || "")) ? String(error.name) : "Error",
+                message: scrub(message, 500),
+                source: scrub(source || "other", 200),
+            };
+            const stack = error && typeof error === "object" ? error.stack : "";
+            if (stack) entry.stack = scrub(stack);
+            recentErrors.push(entry);
+            if (recentErrors.length > RECENT_MAX) recentErrors.splice(0, recentErrors.length - RECENT_MAX);
+        } catch (e) {
+            // Keeping it must never be the second failure.
+        }
+    }
+
+    /**
+     * The failures kept for a bug report, oldest first, at most RECENT_MAX:
+     * this page's, and on the website the Python worker's uncaught errors the
+     * host page kept (services/pythonClient.js), each scrubbed again here.
+     */
+    function recent() {
+        let worker = [];
+        try {
+            const host = window.parent && window.parent !== window ? window.parent : window;
+            worker = (host.PlexoraPythonErrors || []).map((entry) => ({
+                at: entry.at, kind: "PythonError", source: "python worker",
+                message: scrub(entry.message, 500), stack: scrub(entry.stack || ""),
+            }));
+        } catch (error) { /* another origin */ }
+        return [...recentErrors, ...worker]
+            .sort((a, b) => String(a.at).localeCompare(String(b.at)))
+            .slice(-RECENT_MAX)
+            .map((entry) => Object.fromEntries(Object.entries(entry).filter(([, v]) => v)));
+    }
+
+    /**
      * Report a failure: log it, and count its fingerprint.
      *
      * @param error the Error (or anything thrown)
@@ -101,6 +177,7 @@ window.PlexoraErrors = (function () {
         } catch (e) {
             // A console that throws is not worth a second failure.
         }
+        remember(error, [settings.plugin, settings.component, settings.action].filter(Boolean).join(" "));
         try {
             count(error instanceof Error ? error : { name: "Error", stack: "" }, settings);
             // So a caller further up that catches the same error knows it has
@@ -115,6 +192,7 @@ window.PlexoraErrors = (function () {
         // A resource that failed to load raises `error` on its element, not
         // here, unless it bubbles; only script errors carry `event.error`.
         if (!event || !event.error) return;
+        remember(event.error, "uncaught");
         try {
             count(event.error, { component: "window", action: "other" });
         } catch (e) {
@@ -124,6 +202,8 @@ window.PlexoraErrors = (function () {
 
     window.addEventListener("unhandledrejection", (event) => {
         const reason = event && event.reason;
+        remember(reason instanceof Error ? reason : { name: "Error", message: String(reason ?? "") },
+                 "unhandled rejection");
         try {
             count(reason instanceof Error ? reason : { name: "Error", stack: "" },
                   { component: "promise", action: "other" });
@@ -132,5 +212,5 @@ window.PlexoraErrors = (function () {
         }
     });
 
-    return { report, assetOf, fingerprintOf };
+    return { report, assetOf, fingerprintOf, recent, scrub };
 })();

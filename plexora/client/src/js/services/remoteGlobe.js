@@ -288,7 +288,17 @@ window.PlexoraRemoteGlobe = (function () {
             if (!panel) return;
             if (watchingOpen) watchingOpen();
             watchingOpen = null;
-            PopoverPortal.detach(panel);
+            // Shrinks back into the globe (main.css `.remote-panel.is-closing`,
+            // the navbar's shared motion), then leaves the portal once that
+            // animation has finished -- the browser's own promise, no timer.
+            // With motion off its duration is 0 and it finishes at once; with
+            // no animation API at all the panel simply goes.
+            const leaving = panel;
+            const gone = () => PopoverPortal.detach(leaving);
+            leaving.classList.add("is-closing");
+            const running = typeof leaving.getAnimations === "function" ? leaving.getAnimations() : [];
+            if (running.length) Promise.all(running.map((a) => a.finished)).then(gone, gone);
+            else gone();
             panel = null;
             root.setAttribute("aria-expanded", "false");
             document.removeEventListener("keydown", onKey, true);

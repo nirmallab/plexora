@@ -502,6 +502,11 @@ adding a ninth variant.
   fill, no layout shift.
 - **Readonly / Disabled:** Text drops to Muted and the cursor becomes
   `not-allowed`. The field is still readable; it is not greyed out of legibility.
+- **Multi-line text:** `.plx-textarea` (main.css), the one textarea class:
+  the field fill, Hairline border and 6px radius, focus a brighter hairline
+  (`rgba(255,255,255,0.34)`) with no coloured ring, no resize handle, and it grows with what is typed (the feedback form's `grow`) up to
+  `min(220px, 32vh)`, then scrolls. A new free-text box uses it rather than a
+  class of its own.
 
 ### Cards / Containers
 
@@ -525,6 +530,14 @@ adding a ninth variant.
   row has an icon, because a menu where only some rows are indented has a ragged
   left edge and the eye reads the ragged edge before it reads any of the words.
   The figure canvas's context menu uses the identical arrangement.
+- **Navbar motion:** every navbar menu moves the same way -- File, View,
+  Tools and Help (main.css `#topBar .dropdown-menu.show`, closing through
+  services/navMenuMotion.js), the globe's panel and the feedback icon's menu
+  (services/feedbackMenu.js). Each grows out of its toggle (scale 0.35 → 1 and
+  fade, `transform-origin` at the icon, `--duration-base`, `--ease-standard`),
+  its rows rise 4px in a short stagger, and it shrinks back into the toggle
+  when it closes; the feedback icon's glyph also turns into a close mark. Transform and opacity only; the duration tokens are 0 under reduced
+  motion, so it then simply appears.
 - **Mobile:** None. See The Desktop Rule.
 
 ### Toggle Switch
