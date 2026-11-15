@@ -28,6 +28,9 @@ class FigureIcons {
             circle: "M12 4a8 8 0 1 0 0 16 8 8 0 0 0 0-16z",
             line: "M5 19L19 5", arrow: "M5 19L19 5M10 5h9v9",
             grid: "M4 4h7v7H4zM13 4h7v7h-7zM4 13h7v7H4zM13 13h7v7h-7z",
+            guides: "M7 3v18M17 3v18M3 7h18M3 17h18",
+            split: "M3 6h18v12H3zM9 6v12M15 6v12",
+            frame: "M3 3h18v18H3zM7 7h10v10H7z",
             layers: "M12 3l9 5-9 5-9-5zM3 12.5l9 5 9-5M3 17l9 5 9-5",
             plusSq: "M4 4h16v16H4zM12 8v8M8 12h8",
             shapes: "M8 3l5 8H3zM14 14h7v7h-7zM7.5 14a3.5 3.5 0 1 0 0 7 3.5 3.5 0 0 0 0-7z",
@@ -129,6 +132,7 @@ class FigureIcons {
             "arrows-up-down": "distV", "arrows-left-right": "distH",
             "angles-up": "front", "angles-down": "back", "angle-up": "up", "angle-down": "down",
             "circle-check": "check", "inbox-in": "inbox", "file": "file",
+            "table-columns": "split", "vector-square": "frame", "heading": "label",
         }[name] || null;
     }
 

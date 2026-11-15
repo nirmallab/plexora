@@ -38,6 +38,9 @@ class FigureCanvas {
 
     /** Nudge distance in mm, and the coarse one with Shift. */
     static get NUDGE_MM() { return 0.5; }
+
+    /** The color a new shape, line or arrow is drawn in. */
+    static get DRAW_COLOR() { return "#ffffff"; }
     static get NUDGE_COARSE_MM() { return 5; }
 
     /** Smallest panel, in mm. Below this the handles overlap and it cannot be
@@ -115,6 +118,9 @@ class FigureCanvas {
         //: the tray needs telling separately that the panels it was holding
         //: have gone.
         this.onPlaced = options.onPlaced || (() => {});
+        //: Panels have gone back to the tray (Remove from page), so Assets
+        //: can show where they went.
+        this.onRemoved = options.onRemoved || (() => {});
         //: The low-resolution badge on a panel was pressed. The workspace opens
         //: the explanation, which lives in the overlay this does not own.
         this.onResolution = options.onResolution || (() => {});
@@ -657,8 +663,18 @@ class FigureCanvas {
                          title="This panel's source has ${status === "missing" ? "gone" : "changed"}">
                        <span class="fas fa-triangle-exclamation"></span></span>`
                 : this.resolutionBadgeMarkup(panel)}
+            ${this.isEditable(panel.panel_id) ? this.removeButtonMarkup(panel) : ""}
             ${this.showHandles(selected) ? this.handlesMarkup(true) : ""}
         </div>`;
+    }
+
+    /** The X a panel shows under the pointer: Remove from page, the same as
+     *  Delete on the keyboard. Chrome, not artwork: the exporters never see it. */
+    removeButtonMarkup(panel) {
+        const id = FigureSchema.escapeHtml(panel.panel_id);
+        return `<button type="button" class="fb-panel-remove" data-remove-panel="${id}"
+                        tabindex="-1" title="Remove from page (Delete)"
+                        aria-label="Remove from page">${typeof FigureIcons !== "undefined" ? FigureIcons.svg("x", 12) : "×"}</button>`;
     }
 
     /**
@@ -1811,6 +1827,14 @@ class FigureCanvas {
             this.onResolution(badge.dataset.lowres);
             return;
         }
+        // The hover X, likewise: it removes the panel and never selects it.
+        const remove = event.target.closest?.("[data-remove-panel]");
+        if (remove) {
+            event.preventDefault();
+            event.stopPropagation();
+            this.removeObjects([remove.dataset.removePanel]);
+            return;
+        }
 
         const handle = event.target.closest?.(".fb-handle");
         let panelEl = event.target.closest?.(".fb-panel");
@@ -2483,7 +2507,7 @@ class FigureCanvas {
                 // them the Dashed and Double-arrow tools preview as a plain
                 // line and only become what was asked for on release, which is
                 // after the decision the preview exists to inform.
-                style: { ...this.drawStyle(), ...overlay },
+                style: { ...this.drawStyle("line"), ...overlay },
             });
         } else if (preset) {
             // The real thing, not an outline of its box. A pentagon previewed
@@ -2494,7 +2518,7 @@ class FigureCanvas {
                 annotation_id: "__draft", type: "shape", z: 999,
                 geometry: { ...box, rotation: 0 },
                 shape: { preset: preset.id, closed: preset.closed, nodes: preset.nodes },
-                style: this.drawStyle(),
+                style: this.drawStyle("shape"),
             });
         } else {
             // The KIND, not the tool: `text:heading` in a class name is a
@@ -2575,10 +2599,14 @@ class FigureCanvas {
      * something else changes it in the sidebar -- which is where the number now
      * is, in a stepper, rather than nowhere.
      */
-    drawStyle() {
+    drawStyle(kind) {
         const style = this.state.document.settings.style;
         return {
-            color: style.text_color || "#000000",
+            // Shapes, lines and arrows start white: they are drawn over
+            // images, which are mostly dark. Text keeps the figure's text
+            // color, because it is mostly set on the white page.
+            color: kind === "text" || kind === undefined
+                ? (style.text_color || "#000000") : FigureCanvas.DRAW_COLOR,
             fill: "",
             line_width_pt: 0.75,
             font_size_pt: FigureRichText.DEFAULT_SIZE_PT,
@@ -2674,7 +2702,7 @@ class FigureCanvas {
             // a property of characters here, not of boxes, and there are none
             // yet -- so the weight travels with the editor instead, and lands
             // on the first thing typed. See FigureTextEditor.open.
-            style: { ...this.drawStyle(), ...(overlay || {}),
+            style: { ...this.drawStyle(text ? "text" : "shape"), ...(overlay || {}),
                      ...(text ? { font_size_pt: text.size_pt } : {}) },
             z: this.nextAnnotationZ(),
         };
@@ -3028,7 +3056,13 @@ class FigureCanvas {
         // also nudge the selected panel, and a Backspace on a focused dropdown
         // must not delete the text box it belongs to. Delete on a Layers row
         // still deletes, as in every layers list.
-        if (active && active !== document.body && FigureCanvas.WIDGET_KEYS.has(event.key)) {
+        // The sheet itself is a listbox too (describeObjects), and is NOT one
+        // of those widgets: with the keyboard on it or on an object in it --
+        // where a click on a text box leaves it -- Delete deletes.
+        // The arrows stay the sheet's own (surfaceKeyDown walks with them).
+        const onSheet = Boolean(active && this.surfaceEl?.contains?.(active))
+            && (event.key === "Delete" || event.key === "Backspace");
+        if (active && active !== document.body && !onSheet && FigureCanvas.WIDGET_KEYS.has(event.key)) {
             const widget = active.closest?.(".fb-dd, .fb-choice-popover, .fb-menu, [role='listbox'], "
                 + "[role='menu'], [role='radiogroup'], [role='tablist'], .fb-insp-seg, .fb-pg-seg, dialog");
             const row = active.closest?.(".fb-layers");
@@ -3141,12 +3175,25 @@ class FigureCanvas {
      * under the pointer.
      */
     removeSelection() {
+        this.removeObjects(Array.from(this.selection));
+    }
+
+    /**
+     * Take these objects off the page: panels to the tray, annotations
+     * destroyed (see `removeSelection`). The panel's hover X calls this with
+     * one id, which need not be selected; whatever else is selected stays so.
+     * Each object leaves as a puff of smoke (`vanish`), drawn from a copy of
+     * its element, so the document is committed at once and the animation
+     * has nothing to wait for.
+     */
+    removeObjects(ids) {
         // A locked object stays where it is. A hidden one too: it cannot be
         // seen, so it cannot be what the user meant to delete.
-        const panels = this.selectedPanels()
-            .filter((panel) => panel.placement && this.isEditable(panel.panel_id));
-        const annotationIds = Array.from(this.selection)
-            .filter((id) => this.state.document.annotations[id] && this.isEditable(id));
+        const doc = this.state.document;
+        const panels = ids.map((id) => doc.panels[id])
+            .filter((panel) => panel && panel.placement && this.isEditable(panel.panel_id));
+        const annotationIds = ids
+            .filter((id) => doc.annotations[id] && this.isEditable(id));
 
         const operations = [];
         if (panels.length) {
@@ -3166,13 +3213,52 @@ class FigureCanvas {
         const regroup = this.regroupWithout(panels.map((panel) => panel.panel_id));
         operations.push(...regroup.operations);
 
-        this.selection.clear();
+        const gone = panels.map((panel) => panel.panel_id).concat(annotationIds);
+        // The smoke is for images only; text, shapes and lines just go.
+        this.vanish(panels.map((panel) => panel.panel_id));
+        const selectionChanged = gone.some((id) => this.selection.has(id));
+        for (const id of gone) this.selection.delete(id);
         this.state.commit(operations, (draft) => {
             for (const panel of panels) draft.panels[panel.panel_id].placement = null;
             for (const id of annotationIds) delete draft.annotations[id];
             regroup.mutate(draft);
         });
-        this.onSelectionChange([]);
+        if (selectionChanged) this.onSelectionChange(Array.from(this.selection));
+        if (panels.length) this.onRemoved(panels.map((panel) => panel.panel_id));
+    }
+
+    /**
+     * The Lite badge's tooltip exit, on objects: a copy of each element is
+     * left over the page and drifts up, spreading, blurring and fading
+     * (`.fb-vanish` in the stylesheet). Drawn above the surface, which the
+     * commit's render rewrites, and never hit-tested. Nothing to do under
+     * reduced motion, or in a probe with no real elements.
+     */
+    vanish(ids) {
+        const host = this.pageEl;
+        if (!host || typeof host.appendChild !== "function"
+                || typeof this.surfaceEl.querySelector !== "function") return;
+        if (window.matchMedia?.("(prefers-reduced-motion: reduce)").matches) return;
+        for (const id of ids) {
+            const key = FigureSchema.cssEscape(id);
+            const el = this.surfaceEl.querySelector(
+                `[data-panel-id="${key}"], [data-annotation-id="${key}"]`);
+            if (!el) continue;
+            const ghost = el.cloneNode(true);
+            ghost.classList.remove("is-selected");
+            ghost.classList.add("fb-vanish");
+            ghost.removeAttribute("data-panel-id");
+            ghost.removeAttribute("data-annotation-id");
+            ghost.removeAttribute("tabindex");
+            ghost.removeAttribute("role");
+            ghost.setAttribute("aria-hidden", "true");
+            for (const extra of ghost.querySelectorAll(
+                ".fb-handle, .fb-panel-remove, .fb-panel-badge")) extra.remove();
+            host.appendChild(ghost);
+            const done = () => ghost.remove();
+            ghost.addEventListener("animationend", done, { once: true });
+            setTimeout(done, 900);
+        }
     }
     // -- duplicating, copying, grouping, stacking --------------------------
 
@@ -4253,8 +4339,15 @@ class FigureCanvas {
                 sync: ["viewport", "size"],
             },
         });
+        // Grouped too, so the row moves as one: the composite and its
+        // channels are one figure element. Not when the composite is already
+        // in a group (a layout), which would be a group inside a group.
+        const grouping = this.groupFor(panelId) ? null
+            : { group_id: FigureSchema.newGroupId(), member_ids: row.slice() };
+        if (grouping) operations.push({ op: "group_items", group: grouping });
 
         this.state.commit(operations, (draft) => {
+            if (grouping) (draft.groups ||= {})[grouping.group_id] = grouping;
             for (const entry of derived) draft.panels[entry.panel_id] = entry;
             for (const id of row) {
                 if (draft.panels[id]) draft.panels[id].placement = placements[id];
@@ -4266,7 +4359,9 @@ class FigureCanvas {
                 if (draft.panels[id]) draft.panels[id].link_group = groupId;
             }
         });
-        this.select(derived.map((entry) => entry.panel_id), false);
+        // The channels, reached inside the new group, so Delete still takes
+        // just them and leaves the composite.
+        this.select(derived.map((entry) => entry.panel_id), false, true);
         return groupId;
     }
     /**

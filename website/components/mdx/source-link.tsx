@@ -1,6 +1,5 @@
-import { sourceUrl } from '@/lib/site';
-
-/** Link to lines of a repository file at the ref these docs were built from. */
-export function SourceLink({ path, start, end, children }: { path: string; start?: number; end?: number; children?: React.ReactNode }) {
-  return <a href={sourceUrl(path, start, end)}>{children ?? path}</a>;
+/** A repository file named in the docs: shown as its path, not linked (the
+ * site links to no code host). start/end are kept so existing pages compile. */
+export function SourceLink({ path, children }: { path: string; start?: number; end?: number; children?: React.ReactNode }) {
+  return <code>{children ?? path}</code>;
 }

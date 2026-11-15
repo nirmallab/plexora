@@ -200,7 +200,7 @@ class FigureShapeDrawing {
             geometry: geometry.geometry,
             text: "",
             shape: { preset: "custom", closed: geometry.closed, nodes: geometry.nodes },
-            style: this.canvas.drawStyle(),
+            style: this.canvas.drawStyle("shape"),
             z: this.canvas.nextAnnotationZ(),
         };
         this.canvas.state.commit(

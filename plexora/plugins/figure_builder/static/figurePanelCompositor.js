@@ -61,8 +61,16 @@ class FigurePanelCompositor {
             const colour = [plane.color.r * weight,
                             plane.color.g * weight,
                             plane.color.b * weight];
+            // The channel's display curve (`display_curve.transfer`): linear,
+            // or asinh with a raw-unit cofactor. Left out, a channel drawn Log
+            // in the viewer came out of a split linear -- a different picture
+            // from its composite and from the export.
+            const cofactor = FigurePanelCompositor.cofactor(plane.curve);
+            const top = cofactor ? Math.asinh(span / cofactor) : 1;
             for (let index = 0; index < plane.data.length; index += 1) {
-                const t = Math.min(1, Math.max(0, (plane.data[index] - low) / span));
+                const raw = plane.data[index] - low;
+                const t = Math.min(1, Math.max(0, cofactor
+                    ? Math.asinh(raw / cofactor) / top : raw / span));
                 if (t <= 0) continue;
                 const at = index * 4;
                 out[at] = Math.min(255, out[at] + t * colour[0]);
@@ -75,6 +83,14 @@ class FigurePanelCompositor {
         canvas.height = first.height;
         canvas.getContext("2d").putImageData(pixels, 0, 0);
         return canvas;
+    }
+
+    /** An asinh curve's cofactor, or 0 for linear (`display_curve.normalise`). */
+    static cofactor(curve) {
+        if (!curve || typeof curve !== "object") return 0;
+        const kind = curve.kind === undefined ? "asinh" : curve.kind;
+        const value = Number(curve.cofactor);
+        return kind === "asinh" && Number.isFinite(value) && value > 0 ? value : 0;
     }
 
     /**
@@ -136,6 +152,7 @@ class FigurePanelCompositor {
                 data: result.data, width: result.width, height: result.height,
                 window: channel.window || [0, 65535],
                 color: channel.color || { r: 255, g: 255, b: 255 },
+                curve: channel.curve || null,
             });
         }
         const sheet = FigurePanelCompositor.composite(planes);

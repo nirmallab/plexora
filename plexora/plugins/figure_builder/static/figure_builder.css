@@ -117,12 +117,12 @@
        selection colour has to work in both places this page puts it -- chrome
        on white, and handles over a fluorescence image -- so it is one step
        deeper and one step more saturated. */
-    --accent-channel: #2563eb;
-    --accent-channel-soft: rgba(37, 99, 235, 0.28);
+    --accent-channel: #0284c7;
+    --accent-channel-soft: rgba(2, 132, 199, 0.28);
     /* One step deeper again, for the hover of a filled accent button. Named
        rather than written as a literal in three places: it is the accent's
        pressed end, not a second blue. */
-    --accent-channel-strong: #1d4fd8;
+    --accent-channel-strong: #0369a1;
     /* What legibly sits ON the accent. It flips with the accent inside Quick
        Edit, where the surround goes back to dark and the accent back to sky. */
     --fb-on-accent: #ffffff;
@@ -165,7 +165,7 @@
     --fb-hover: rgba(15, 23, 42, 0.06);
     /* A shade darker than the hover, for the moment a control is pressed. */
     --fb-press: rgba(15, 23, 42, 0.10);
-    --fb-tint: rgba(37, 99, 235, 0.10);
+    --fb-tint: rgba(2, 132, 199, 0.10);
     /* The design's ink for a line icon on a quiet control: darker than Muted,
        lighter than Primary text. */
     --fb-icon-ink: #3f4a5c;
@@ -501,17 +501,21 @@
     cursor: default;
 }
 
+/* Plexora's own primary face (the home page's Load button): the sky
+   gradient with near-black lettering, not a generic blue. */
 .fb-button-primary {
-    background: var(--accent-channel);
-    border-color: transparent;
-    color: var(--fb-on-accent);
+    background: linear-gradient(180deg, #5cc9fb 0%, #38bdf8 100%);
+    border-color: rgba(14, 165, 233, 0.55);
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.35), 0 4px 12px -6px rgba(56, 189, 248, 0.6);
+    color: #05070a;
     font-weight: 600;
     padding: 0 var(--space-4);
 }
 
 .fb-button-primary:hover:not(:disabled) {
-    background: var(--accent-channel-strong);
-    border-color: transparent;
+    background: linear-gradient(180deg, #6fd0fc 0%, #22b4f5 100%);
+    border-color: rgba(14, 165, 233, 0.75);
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.4), 0 6px 16px -6px rgba(56, 189, 248, 0.75);
 }
 
 /* A filled button cannot go quiet by changing its ink: the fill is what carries
@@ -519,6 +523,7 @@
 .fb-button-primary:disabled {
     background: var(--surface-2);
     border-color: var(--border-subtle);
+    box-shadow: none;
     color: var(--fb-disabled-ink);
 }
 
@@ -3075,6 +3080,85 @@
     color: var(--accent-danger);
 }
 
+/* The X a panel shows under the pointer (FigureCanvas.removeButtonMarkup).
+   Dark glass in the top-right corner, so it reads on a black field and on a
+   white one; the warning badge that also lives there steps aside for it. */
+.fb-panel-remove {
+    align-items: center;
+    -webkit-backdrop-filter: blur(6px);
+    backdrop-filter: blur(6px);
+    background: rgba(14, 20, 30, 0.72);
+    border: 1px solid rgba(255, 255, 255, 0.16);
+    border-radius: 999px;
+    box-shadow: 0 1px 4px rgba(0, 0, 0, 0.4);
+    color: #ffffff;
+    cursor: pointer;
+    display: flex;
+    height: 22px;
+    justify-content: center;
+    opacity: 0;
+    padding: 0;
+    pointer-events: none;
+    position: absolute;
+    right: 6px;
+    top: 6px;
+    transform: scale(0.85);
+    transition: opacity 140ms var(--ease-standard, ease-out),
+                transform 140ms var(--ease-standard, ease-out),
+                background-color 140ms var(--ease-standard, ease-out);
+    width: 22px;
+    z-index: 11;
+}
+
+.fb-panel-remove .fb-ic {
+    height: 12px;
+    stroke-width: 2.2;
+    width: 12px;
+}
+
+.fb-panel:hover .fb-panel-remove {
+    opacity: 1;
+    pointer-events: auto;
+    transform: scale(1);
+}
+
+.fb-panel .fb-panel-remove:hover {
+    background: var(--accent-danger, #ef4444);
+    border-color: transparent;
+}
+
+.fb-panel:hover .fb-panel-badge {
+    right: 32px;
+}
+
+/* Not while something else owns the pointer: a drag, a drawing tool, a pan. */
+.fb-workspace.is-gesturing .fb-panel-remove,
+.fb-page-surface.is-drawing .fb-panel-remove,
+.fb-canvas-scroll.is-pannable .fb-panel-remove {
+    display: none;
+}
+
+/* An object leaving the page (FigureCanvas.vanish): the Lite tooltip's exit,
+   smoke rather than a cut -- it drifts up, spreads and blurs as it fades.
+   `translate` and `scale` rather than `transform`, which keeps a panel's
+   rotation. */
+.fb-vanish {
+    animation: fb-vanish 560ms cubic-bezier(0.4, 0, 0.6, 1) forwards;
+    pointer-events: none;
+    z-index: 100000;
+}
+
+@keyframes fb-vanish {
+    0%   { filter: blur(0); opacity: 1; scale: 1; translate: 0 0; }
+    35%  { opacity: 0.75; }
+    100% { filter: blur(8px); opacity: 0; scale: 1.06; translate: 0 -10px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .fb-vanish { display: none; }
+    .fb-panel-remove { transition: none; }
+}
+
 .fb-annotation {
     position: absolute;
 }
@@ -4181,13 +4265,13 @@
     --text-primary: #344054;
     --text-secondary: #526075;
     --text-muted: #6b7689;
-    --accent-channel: #2563eb;
-    --accent-channel-strong: #1d4fd8;
-    --accent-channel-soft: rgba(37, 99, 235, 0.28);
+    --accent-channel: #0284c7;
+    --accent-channel-strong: #0369a1;
+    --accent-channel-soft: rgba(2, 132, 199, 0.28);
     --accent-danger: #d64545;
     --fb-hover: rgba(15, 23, 42, 0.06);
     --fb-press: rgba(15, 23, 42, 0.10);
-    --fb-tint: rgba(37, 99, 235, 0.10);
+    --fb-tint: rgba(2, 132, 199, 0.10);
     --fb-icon-ink: #3f4a5c;
     --fb-disabled-ink: #8993a3;
     --fb-focus-ring: 0 0 0 2px var(--accent-channel-soft);
@@ -8397,8 +8481,8 @@
 
 /* Drag-to-select: the box, over everything, letting the pointer through. */
 .fb-bin-marquee {
-    background: rgba(37, 99, 235, 0.12);
-    border: 1px solid #2563eb;
+    background: rgba(2, 132, 199, 0.12);
+    border: 1px solid #0284c7;
     border-radius: 2px;
     pointer-events: none;
     position: fixed;
@@ -8898,7 +8982,7 @@
 }
 
 .fb-workspace .fb-page-margins {
-    border: 1px dashed rgba(37, 99, 235, 0.32);
+    border: 1px dashed rgba(2, 132, 199, 0.32);
 }
 
 .fb-workspace .fb-panel.is-selected {
@@ -8983,7 +9067,7 @@
 }
 
 .fb-layout-tile.is-on {
-    background: rgba(37, 99, 235, 0.08);
+    background: rgba(2, 132, 199, 0.08);
     color: var(--accent-channel-strong);
 }
 
@@ -9204,7 +9288,7 @@
 }
 
 .fb-workspace .fb-insp-ib.is-on {
-    background: rgba(37, 99, 235, 0.1);
+    background: rgba(2, 132, 199, 0.1);
     color: var(--accent-channel);
 }
 
@@ -9681,9 +9765,11 @@
 #fb_inspector_tail { order: 3; }
 .fb-right .fb-object-panel > .fb-insp-extras { order: 4; }
 
-/* The design gives the title a 200px field; a longer one still grows. */
+/* The title is as wide as the name in it, so "Saved" sits right after the
+   name rather than after a fixed box (FigureWorkspace.fitTitle where the
+   browser has no `field-sizing`). */
 .fb-docbar .fb-title-input {
-    min-width: 200px;
+    min-width: 48px;
 }
 
 /* -- the Page view (FigureInspector.pageSections) ----------------------------
@@ -10095,10 +10181,12 @@ button.fb-pg-head {
     min-height: 48px;
 }
 
+/* The image settings' section icons' size and line (FigureInspector.ioIcon):
+   17px, a 1.8 stroke, full strength. */
 .fb-pg-icon {
-    height: 15px;
-    opacity: 0.9;
-    width: 15px;
+    height: 17px;
+    stroke-width: 1.8;
+    width: 17px;
 }
 
 .fb-pg-title {
@@ -10117,6 +10205,26 @@ button.fb-pg-head {
 .fb-pg-prop {
     gap: 12px;
     min-height: 32px;
+}
+
+/* Layout's second line: the spacing field beside its label, and the way to
+   every preset on the right. */
+.fb-pg-prop.fb-pg-spacing {
+    justify-content: flex-start;
+}
+
+.fb-pg-all-layouts {
+    align-items: center;
+    display: inline-flex;
+    flex: none;
+    gap: 2px;
+    margin-left: auto;
+    white-space: nowrap;
+}
+
+.fb-pg-all-layouts .fb-ic {
+    height: 12px;
+    width: 12px;
 }
 
 .fb-pg-label {
@@ -10606,6 +10714,19 @@ button.fb-pg-head {
     margin-left: auto;
 }
 
+/* Layout's spacing row has a third column: "All layouts" at the right. */
+.fb-pg-prop.fb-pg-spacing {
+    grid-template-columns: minmax(84px, max-content) max-content minmax(0, 1fr);
+}
+
+.fb-pg-spacing > .fb-pg-control > .fb-insp-field {
+    margin-left: 0;
+}
+
+.fb-pg-spacing > .fb-pg-all-layouts {
+    justify-self: end;
+}
+
 .fb-pg-control > .fb-pg-seg {
     display: flex;
     flex: 1 1 auto;
@@ -11008,6 +11129,85 @@ button.fb-pg-head {
     font-size: 12px;
 }
 
+/* Several images' Panel labels: the letter size on one line. */
+.fb-io-mletters-size {
+    align-items: center;
+    display: grid;
+    gap: 8px;
+    grid-template-columns: minmax(0, 1fr) 110px;
+    margin-bottom: 6px;
+}
+
+/* The scale bar's second row (FigureImagePanel.ioBarExtras): Label size,
+   Inset and the round "Show length label" tick, the tick on the fields'
+   line rather than the captions'. */
+.fb-io-bar-extra {
+    align-items: center;
+    column-gap: 8px;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) var(--io-h);
+    margin-top: 8px;
+    row-gap: 4px;
+}
+
+.fb-io-bar-extra > .fb-insp-field {
+    min-width: 0;
+}
+
+.fb-io-bar-extra > .fb-insp-field.is-disabled {
+    opacity: 0.5;
+}
+
+.fb-io-bar-extra > .fb-insp-field.is-disabled .fb-insp-input {
+    cursor: not-allowed;
+}
+
+.fb-io-tick {
+    align-items: center;
+    background: transparent;
+    border: 1.5px solid var(--border-strong);
+    border-radius: 999px;
+    color: transparent;
+    cursor: pointer;
+    display: flex;
+    height: 20px;
+    justify-content: center;
+    justify-self: center;
+    padding: 0;
+    transition: background-color 140ms var(--ease-standard, ease-out),
+                border-color 140ms var(--ease-standard, ease-out),
+                color 140ms var(--ease-standard, ease-out);
+    width: 20px;
+}
+
+.fb-io-tick .fb-ic {
+    height: 12px;
+    stroke-width: 2.6;
+    width: 12px;
+}
+
+.fb-io-tick:hover {
+    border-color: var(--fb-accent, var(--accent-channel));
+}
+
+.fb-io-tick.is-on,
+.fb-io-tick.is-mixed {
+    background: var(--fb-accent, var(--accent-channel));
+    border-color: var(--fb-accent, var(--accent-channel));
+    color: var(--fb-on-accent, #ffffff);
+}
+
+.fb-io-tick:focus-visible {
+    outline: 2px solid var(--fb-focus, var(--accent-channel));
+    outline-offset: 2px;
+}
+
+@media (max-width: 1280px) {
+    .fb-io-bar-extra {
+        column-gap: 6px;
+    }
+}
+
 .fb-io-len,
 .fb-io-thick {
     min-width: 0;
@@ -11228,8 +11428,9 @@ button.fb-pg-head {
     color: var(--text-primary);
 }
 
+/* Every section icon in the image settings is the accent, folded or not. */
 .fb-isec .fb-isec-icon {
-    color: var(--text-secondary);
+    color: var(--accent-channel);
 }
 
 .fb-isec-title {
@@ -11591,25 +11792,6 @@ button.fb-pg-head {
     height: 28px;
     justify-content: center;
     width: 28px;
-}
-
-.fb-pg-guides .fb-pg-head {
-    gap: 12px;
-    min-height: 52px;
-}
-
-.fb-pg-guides .fb-pg-aside {
-    background: color-mix(in srgb, var(--accent-channel) 9%, var(--surface-1));
-    border-radius: 999px;
-    color: var(--accent-channel);
-    font-size: 11px;
-    font-weight: 500;
-    line-height: 20px;
-    padding: 0 9px;
-}
-
-.fb-pg-guides .fb-pg-caret {
-    margin-left: 4px;
 }
 
 .fb-pg-guides .fb-pg-body {
@@ -12073,7 +12255,7 @@ select.fb-dd-native {
 }
 
 .fb-quickedit .channel-slot.is-selected {
-    background: rgba(37, 99, 235, 0.06);
+    background: rgba(2, 132, 199, 0.06);
     border-color: var(--accent-channel);
     box-shadow: 0 0 0 1px var(--accent-channel);
 }
@@ -12186,7 +12368,7 @@ select.fb-dd-native {
 
 .fb-quickedit .channel-slot-add:hover,
 .fb-quickedit .channel-slot-add:focus-visible {
-    background: rgba(37, 99, 235, 0.04);
+    background: rgba(2, 132, 199, 0.04);
 }
 
 /* Quick Edit's histogram, in the portal outside the card: light like the
@@ -12200,7 +12382,7 @@ select.fb-dd-native {
     --text-primary: #344054;
     --text-secondary: #526075;
     --text-muted: #6b7689;
-    --accent-channel: #2563eb;
+    --accent-channel: #0284c7;
     --plx-slider-halo: rgba(15, 23, 42, 0.10);
     --plx-slider-halo-active: rgba(15, 23, 42, 0.16);
     background: #ffffff;
@@ -12236,7 +12418,7 @@ select.fb-dd-native {
 
 .marker-combobox-menu.fb-qe-pop .marker-combobox-option:hover,
 .marker-combobox-menu.fb-qe-pop .marker-combobox-option.is-active {
-    background: rgba(37, 99, 235, 0.08);
+    background: rgba(2, 132, 199, 0.08);
 }
 
 /* The contrast bar here edits the picked channel and nothing else: no
@@ -12333,6 +12515,7 @@ select.fb-dd-native {
 /* The edit bar: the four tools centred, the two ends on equal tracks so
    neither pulls the middle off centre. */
 .fb-workspace .fb-editbar {
+    background: #f3f6fa;
     display: grid;
     grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
 }
@@ -12524,11 +12707,11 @@ select.fb-dd-native {
 }
 
 .fb-layer.is-selected:hover {
-    background: rgba(37, 99, 235, 0.14);
+    background: rgba(2, 132, 199, 0.14);
 }
 
 .fb-layer.is-selected:active {
-    background: rgba(37, 99, 235, 0.18);
+    background: rgba(2, 132, 199, 0.18);
 }
 
 /* The focus ring wins over the raised thumb's own shadow. */
@@ -12571,4 +12754,277 @@ select.fb-dd-native {
     .fb-col-resize::after {
         transition: none;
     }
+}
+
+/* -- no scroll bars ----------------------------------------------------------
+   The figure page draws no scroll bar anywhere: its columns, lists, menus,
+   popovers and the canvas still scroll (wheel, trackpad, keyboard, the
+   canvas's Space-drag), but a platform bar is never drawn over them. Last in
+   the file and marked important, because the thin bars styled above are the
+   very thing this replaces. Matched by class prefix so a popover mounted
+   outside the workspace is covered too. */
+.fb-workspace,
+.fb-workspace *,
+[class^="fb-"],
+[class*=" fb-"] {
+    -ms-overflow-style: none !important;
+    scrollbar-width: none !important;
+}
+
+.fb-workspace::-webkit-scrollbar,
+.fb-workspace *::-webkit-scrollbar,
+[class^="fb-"]::-webkit-scrollbar,
+[class*=" fb-"]::-webkit-scrollbar {
+    display: none !important;
+    height: 0 !important;
+    width: 0 !important;
+}
+
+/* -- the doc bar, dark ------------------------------------------------------
+   #2a324b with white type and icons. Hover and press are white tints, and the
+   title field edits on a slightly lighter ground. Export is a flat light
+   button, the one bright thing in the bar. */
+.fb-workspace .fb-docbar {
+    background: #2a324b;
+    border-bottom-color: rgba(255, 255, 255, 0.08);
+    color: #ffffff;
+    color-scheme: dark;
+}
+
+/* Thinner: 36px, 12px type, 26px controls. */
+.fb-workspace .fb-docbar {
+    --fb-docbar-h: 36px;
+    height: 36px;
+    min-height: 36px;
+}
+
+.fb-workspace .fb-docbar .fb-title-input {
+    font-size: 12px;
+    height: 24px;
+}
+
+.fb-workspace .fb-docbar .fb-save-status {
+    font-size: 10.5px;
+}
+
+.fb-workspace .fb-docbar .fb-button,
+.fb-workspace .fb-docbar .fb-icon-button,
+.fb-workspace .fb-docbar .fb-back {
+    font-size: 12px;
+    height: 26px;
+    min-height: 26px;
+}
+
+.fb-workspace .fb-docbar .fb-icon-button,
+.fb-workspace .fb-docbar .fb-back {
+    width: 26px;
+}
+
+.fb-workspace .fb-docbar .fb-button-primary {
+    padding: 0 12px;
+}
+
+.fb-workspace .fb-docbar .fb-ic {
+    height: 14px;
+    width: 14px;
+}
+
+.fb-workspace .fb-docbar .fb-bar-divider {
+    height: 16px;
+}
+
+.fb-workspace .fb-docbar .fb-back,
+.fb-workspace .fb-docbar .fb-title-input,
+.fb-workspace .fb-docbar .fb-button-quiet,
+.fb-workspace .fb-docbar .fb-icon-button,
+.fb-workspace .fb-docbar .fb-preview-only,
+.fb-workspace .fb-docbar .fb-ic,
+.fb-workspace .fb-docbar .fb-caret {
+    color: #ffffff;
+}
+
+.fb-workspace .fb-docbar .fb-save-status,
+.fb-workspace .fb-docbar .fb-save-status.fb-status-saved {
+    color: rgba(255, 255, 255, 0.62);
+}
+
+.fb-workspace .fb-docbar .fb-save-status.fb-status-failed,
+.fb-workspace .fb-docbar .fb-save-status.fb-status-conflict,
+.fb-workspace .fb-docbar .fb-save-status.fb-status-unreadable {
+    color: #fca5a5;
+}
+
+.fb-workspace .fb-docbar .fb-back:hover,
+.fb-workspace .fb-docbar .fb-title-input:hover,
+.fb-workspace .fb-docbar .fb-button-quiet:hover:not(:disabled),
+.fb-workspace .fb-docbar .fb-icon-button:hover:not(:disabled) {
+    background: rgba(255, 255, 255, 0.09);
+}
+
+.fb-workspace .fb-docbar .fb-button-quiet:active:not(:disabled),
+.fb-workspace .fb-docbar .fb-icon-button:active:not(:disabled) {
+    background: rgba(255, 255, 255, 0.14);
+}
+
+.fb-workspace .fb-docbar .fb-title-input:focus {
+    background: #343d59;
+    border-color: #38bdf8;
+    box-shadow: 0 0 0 2px rgba(56, 189, 248, 0.35);
+}
+
+.fb-workspace .fb-docbar .fb-title-input::selection {
+    background: rgba(56, 189, 248, 0.45);
+}
+
+.fb-workspace .fb-docbar .fb-icon-button:disabled,
+.fb-workspace .fb-docbar .fb-button-quiet:disabled,
+.fb-workspace .fb-docbar .fb-icon-button:disabled .fb-ic,
+.fb-workspace .fb-docbar .fb-button-quiet:disabled .fb-ic {
+    color: rgba(255, 255, 255, 0.32);
+}
+
+.fb-workspace .fb-docbar .fb-bar-divider {
+    background: rgba(255, 255, 255, 0.14);
+}
+
+/* Export: flat #f1f0ea with black lettering and icon -- no gradient, no
+   shadow; hover and press only shade the fill. On hover the download arrow
+   drops toward its tray, again and again, until the pointer leaves. */
+.fb-workspace .fb-docbar #fb_export_open:not(:disabled) {
+    background: #f1f0ea;
+    border-color: #f1f0ea;
+    box-shadow: none;
+    color: #000000;
+}
+
+.fb-workspace .fb-docbar #fb_export_open:hover:not(:disabled) {
+    background: #ffffff;
+    border-color: #ffffff;
+    box-shadow: none;
+}
+
+.fb-workspace .fb-docbar #fb_export_open:active:not(:disabled) {
+    background: #e2e0d6;
+    border-color: #e2e0d6;
+}
+
+.fb-workspace .fb-docbar #fb_export_open .fb-ic {
+    color: #000000;
+}
+
+.fb-workspace .fb-docbar #fb_export_open:hover:not(:disabled) .fb-ic {
+    animation: fb-export-drop 900ms cubic-bezier(0.45, 0, 0.55, 1) infinite;
+}
+
+@keyframes fb-export-drop {
+    0%, 100% { transform: translateY(0); }
+    45% { transform: translateY(2.5px); }
+    60% { transform: translateY(1.5px); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .fb-workspace .fb-docbar #fb_export_open:hover .fb-ic { animation: none; }
+}
+
+/* -- Document properties: the image settings' type sizes ---------------------
+   Values 12px, units 11px, as in every image section (`.fb-io`). */
+.fb-right .fb-pg .fb-insp-input,
+.fb-right .fb-pg .fb-insp-select {
+    font-size: 12px;
+}
+
+.fb-right .fb-pg .fb-insp-suffix {
+    font-size: 11px;
+}
+
+/* -- the Insert tab: three groups of six, ruled apart -------------------------
+   Three columns always, so each group is a full 3 x 2 block with no gap. */
+.fb-workspace .fb-insert-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.fb-workspace .fb-insert-group + .fb-insert-group {
+    border-top: 1px solid var(--border-subtle);
+    margin-top: var(--space-4);
+    padding-top: var(--space-4);
+}
+
+/* -- the page Background: four round choices --------------------------------
+   White, black, any color (a color wheel; the chosen color sits in its
+   middle), transparent (the checkerboard). The chosen one carries the accent
+   ring. */
+.fb-pg-bg {
+    gap: 8px;
+}
+
+.fb-pg-control > .fb-pg-bg {
+    justify-content: flex-end;
+}
+
+.fb-pg-dot {
+    align-items: center;
+    border: 1px solid var(--border-strong);
+    border-radius: 999px;
+    box-shadow: 0 0 0 0 transparent;
+    cursor: pointer;
+    display: inline-flex;
+    flex: 0 0 auto;
+    height: 24px;
+    justify-content: center;
+    padding: 0;
+    transition: box-shadow 140ms var(--ease-standard, ease-out),
+                transform 140ms var(--ease-standard, ease-out);
+    width: 24px;
+}
+
+.fb-pg-dot:hover {
+    transform: scale(1.08);
+}
+
+.fb-pg-dot.is-on {
+    box-shadow: 0 0 0 2px var(--surface-1), 0 0 0 4px var(--accent-channel);
+}
+
+.fb-pg-dot:focus-visible {
+    outline: 2px solid var(--accent-channel);
+    outline-offset: 3px;
+}
+
+.fb-pg-dot.is-white {
+    background: #ffffff;
+}
+
+.fb-pg-dot.is-black {
+    background: #000000;
+    border-color: #000000;
+}
+
+/* No border: a transparent one let the gradient tile under it and left a
+   ragged rim. Drawn from the border box, with a hairline inner edge. */
+.fb-pg-dot.is-wheel {
+    background: conic-gradient(from 0deg, #ff4d4d, #ffb84d, #f5f54d, #4dff88, #4dd2ff, #6b6bff, #d24dff, #ff4d4d)
+        border-box;
+    border: 0;
+    box-shadow: inset 0 0 0 1px rgba(15, 23, 42, 0.12);
+}
+
+.fb-pg-dot.is-wheel.is-on {
+    box-shadow: inset 0 0 0 1px rgba(15, 23, 42, 0.12),
+                0 0 0 2px var(--surface-1), 0 0 0 4px var(--accent-channel);
+}
+
+.fb-pg-dot-core {
+    border: 2px solid #ffffff;
+    border-radius: 999px;
+    height: 14px;
+    width: 14px;
+}
+
+.fb-pg-dot.is-clear {
+    background: repeating-conic-gradient(#d9dde5 0% 25%, #ffffff 0% 50%) 0 0 / 8px 8px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .fb-pg-dot { transition: none; }
+    .fb-pg-dot:hover { transform: none; }
 }

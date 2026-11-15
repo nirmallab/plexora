@@ -103,6 +103,11 @@ class FigureCaptureBinGrid {
         //: no switch, all of it shown.
         this.usedToggle = !(options && options.usedToggle === false);
         this.showUsed = !this.usedToggle;
+        //: Uploads: every one is the figure's own, so "used" means ON A PAGE.
+        //: Off, the uploads off the page; "Previously used", those on one.
+        this.byPlacement = Boolean(options && options.byPlacement);
+        //: {off, on}: the uploads off and on the page, before any search.
+        this.extrasSplit = { off: 0, on: 0 };
         //: Cards are ticked to act on several at once: always for captures,
         //: for bookmarks where asked (the Assets tab; the dialog keeps its
         //: two buttons per card).
@@ -289,7 +294,9 @@ class FigureCaptureBinGrid {
         if (!this.usedToggle) return "";
         return `<button class="fb-bin-chip fb-bin-used${this.showUsed ? " is-active" : ""}" type="button"
                         data-role="used" aria-pressed="${this.showUsed}"
-                        title="Show the images already used in a figure, instead of those not used yet">
+                        title="${this.byPlacement
+                            ? "Show the uploads on a page, instead of those off the page"
+                            : "Show the images already used in a figure, instead of those not used yet"}">
                     Previously used</button>`;
     }
 
@@ -338,17 +345,26 @@ class FigureCaptureBinGrid {
     /** The figure's own images, shown under "Previously used" only: being in
      *  the figure, they have been used. */
     shownExtras() {
+        if (this.byPlacement) {
+            return this.extras.filter((item) => Boolean(item.placed) === this.showUsed);
+        }
         return this.showUsed ? this.extras : [];
     }
 
     shownTotal() {
+        if (this.byPlacement) return this.showUsed ? this.extrasSplit.on : this.extrasSplit.off;
         return this.showUsed ? this.extrasTotal : 0;
     }
 
     /** The figure's own images for this grid (see `extras`). A ticked one
-     *  that is no longer listed is let go. */
+     *  that is no longer listed is let go. `total` is a count, or for
+     *  Uploads `{off, on}`. */
     setExtras(items, total) {
         this.extras = items || [];
+        if (total && typeof total === "object") {
+            this.extrasSplit = { off: total.off || 0, on: total.on || 0 };
+            total = this.extrasSplit.off + this.extrasSplit.on;
+        }
         this.extrasTotal = Number.isFinite(total) ? total : this.extras.length;
         const live = new Set(this.extras.filter((item) => !item.placed).map((item) => item.id));
         for (const id of Array.from(this.checked)) {
@@ -674,7 +690,8 @@ class FigureCaptureBinGrid {
 
         // The figure's own images (off the page) count with the rest; a
         // search's matches on the page are shown but not counted.
-        const own = this.shownExtras().filter((item) => !item.placed).length;
+        const own = this.byPlacement ? this.shownExtras().length
+            : this.shownExtras().filter((item) => !item.placed).length;
         const count = this.el("count");
         if (count) {
             // "2 of 9 captures" while a search or filter narrows the list.
@@ -888,7 +905,8 @@ class FigureCaptureBinGrid {
         return `<div class="fb-bin-card${checked ? " is-checked" : ""}" role="button" tabindex="0"
                      data-role="card" data-panel-id="${id}" data-drag="${id}"
                      ${this.draggable ? 'draggable="true"' : ""}
-                     aria-pressed="${checked}" title="${escape(item.name)} — used in this figure, off the page">
+                     aria-pressed="${checked}" title="${escape(item.name)} — ${
+                         this.byPlacement ? "off the page" : "used in this figure, off the page"}">
             <span class="fb-bin-thumb">${thumbnail}</span>
             <span class="fb-bin-tick" aria-hidden="true">
                 <span class="fas fa-check"></span>

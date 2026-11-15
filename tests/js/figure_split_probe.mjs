@@ -170,9 +170,12 @@ const split = runInContext(`(() => {
 check("a split is one commit", commits.length, 1);
 
 const operations = commits[0];
-check("the batch is add x3, one move, one link",
+check("the batch is add x3, one move, one link, one group",
     operations.map((op) => op.op),
-    ["add_panel", "add_panel", "add_panel", "move_panels", "link_panels"]);
+    ["add_panel", "add_panel", "add_panel", "move_panels", "link_panels", "group_items"]);
+// The row is grouped: the composite and its channels, as one element.
+const grouped = operations.find((op) => op.op === "group_items").group;
+check("the group is the whole row", grouped.member_ids.length, 4);
 
 const derived = operations.filter((op) => op.op === "add_panel").map((op) => op.panel);
 check("one derived panel per channel", derived.length, 3);

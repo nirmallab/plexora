@@ -195,6 +195,7 @@ class FigureWorkspace {
                 ids.forEach((id) => this.traySelection.delete(id));
                 this.renderTray();
             },
+            onRemoved: (ids) => this.showRemoved(ids),
             onEditText: (annotationId, options) => this.editText(annotationId, options),
             onEditPoints: (annotationId) => this.editPoints(annotationId),
             onResolution: (panelId) => this.showResolution(panelId),
@@ -282,6 +283,14 @@ class FigureWorkspace {
             state: this.state, canvas: this.canvas, workspace: this,
         });
         this.inspector.setup();
+
+        // Number fields apply as they are typed, one undo step per sitting.
+        if (typeof FigureLiveFields !== "undefined" && this.root
+                && typeof this.root.addEventListener === "function") {
+            this.liveFields = new FigureLiveFields(this.root, this.state,
+                () => Array.from(this.canvas.selection || []).sort().join(",")
+                    || `page:${this.canvas.pageId || ""}`);
+        }
 
         this.contextBar = new FigureContextBar({
             overlayEl: this.el("fb_overlay_layer"),
@@ -438,6 +447,7 @@ class FigureWorkspace {
         window.removeEventListener("blur", this._releaseSpace);
         this._detachDrop?.();
         this._detachDrop = null;
+        this.liveFields?.destroy();
         this.closeMenu();
         this.closeResolution();
         this.contextMenu?.destroy();
@@ -457,6 +467,7 @@ class FigureWorkspace {
 
     bindTopbar() {
         this.el("fb_title")?.addEventListener("change", () => this.commitTitle());
+        this.el("fb_title")?.addEventListener("input", () => this.fitTitle());
         this.el("fb_title")?.addEventListener("keydown", (event) => {
             // Enter commits and gets out of the way; blur commits too, so a
             // title typed and then clicked away from is not silently discarded.
@@ -957,12 +968,40 @@ class FigureWorkspace {
                     onAddOne: (capture) => this.adoptCaptures([capture.capture_id], { place: true }),
                 })
                 : new FigureCaptureBinGrid(host, {
-                    ...shared, collection: false, noun: "upload", usedToggle: false });
+                    ...shared, collection: false, noun: "upload",
+                    excludeBookmarked: true, byPlacement: true });
         grids[name].setQuery(this.traySearch);
         grids[name].setPredicate(this.assetPredicate());
         if (grids[name].usedToggle && (this.usedPanes || {})[name]) grids[name].showUsed = true;
         grids[name].setup();
         this.renderTray();
+    }
+
+    /**
+     * Images just taken off the page are in Assets now: show them there.
+     * The tab they came from (Captures, Bookmarks, Uploads), on the list that
+     * holds them -- "Previously used" for a capture or a bookmark, which has
+     * been in a figure; the off-page list for an upload. The side column's
+     * own tab (Assets or Layers) is left as it is.
+     */
+    showRemoved(panelIds) {
+        const panel = panelIds.map((id) => this.state.panel(id)).find(Boolean);
+        if (!panel) return;
+        const origin = FigureSchema.panelOrigin(panel, this.state.source(panel.source_id));
+        const pane = { capture: "captures", bookmark: "bookmarks", upload: "uploads" }[origin];
+        if (!pane) return;
+        const showUsed = pane !== "uploads";
+        this.usedPanes = { ...(this.usedPanes || {}), [pane]: showUsed };
+        const grid = (this.assetGrids || {})[pane];
+        if (grid && grid.usedToggle && grid.showUsed !== showUsed) {
+            grid.showUsed = showUsed;
+            grid.checked.clear();
+        }
+        if (this.assetsPane !== pane) this.showAssets(pane);
+        else {
+            this.saveView();
+            this.renderTray();
+        }
     }
 
     /** Select one of the figure's images where it is on the page. */
@@ -1076,8 +1115,57 @@ class FigureWorkspace {
             scalebar: () => this.scaleBarsOn(),
             channels: () => this.channelCaptions(),
             colorbar: () => this.colorBarsOn(),
+            borders: () => this.bordersOn(),
+            split: () => this.splitSelected(),
+            duplicate: () => (this.selectedImageIds().length
+                ? this.canvas.duplicateSelection() : this.toast("Select the images to duplicate.")),
+            replace: () => (this.selectedImageIds().length === 1
+                ? this.openReplace(this.selectedImageIds()[0], anchor)
+                : this.toast("Select one image to replace.")),
         }[act];
         run?.();
+        this.revealFor(act);
+    }
+
+    /**
+     * After an insertion, the settings for what was inserted, in the right
+     * column: its section opened and brought into view. One image or several
+     * have different sections; Panel letters with nothing selected are the
+     * page's (Document properties). The drawing tools only open the column --
+     * what they make is selected once placed, and its own panel shows there.
+     */
+    revealFor(act) {
+        const several = this.selectedImageIds().length > 1;
+        const any = this.selectedImageIds().length > 0;
+        const sections = {
+            channels: ["io_labels", "io_m_labels"],
+            scalebar: ["io_bar", "io_m_bars"],
+            colorbar: ["io_look", "io_m_look"],
+            borders: ["io_look", "io_m_look"],
+            letters: ["io_letter", "io_m_letters"],
+        }[act];
+        if (sections && any) {
+            this.revealSection(sections[several ? 1 : 0]);
+        } else if (act === "letters") {
+            this.revealSection("style");
+        } else if (["text", "shapes", "lines", "rect", "ellipse", "line", "arrow"].includes(act)) {
+            this.setColumn("right", true);
+        }
+    }
+
+    /** Open the right column on one fold (an image section or a page
+     *  section) and scroll it into view. */
+    revealSection(id) {
+        this.setColumn("right", true);
+        if (typeof FigureInspector !== "undefined" && !FigureInspector.foldOpen(id)) {
+            FigureInspector.foldFlip(id);
+        }
+        // After both halves of the column have redrawn on the fold change.
+        window.setTimeout(() => {
+            const head = this.root?.querySelector(
+                `.fb-right [data-ifold="${id}"], .fb-right [data-style="${id}"]`);
+            head?.scrollIntoView?.({ block: "start", behavior: "smooth" });
+        }, 120);
     }
 
     /** The Insert tab: everything that can be put on the page, by kind. */
@@ -1086,15 +1174,17 @@ class FigureWorkspace {
                 data-insert="${act}" title="${FigureSchema.escapeHtml(title || label)}">
                 ${FigureIcons.fa(icon)}
                 <span>${FigureSchema.escapeHtml(label)}</span></button>`;
-        const group = (title, tiles, note) => `<section class="fb-insert-group">
+        // Three groups of six, a full 3 x 2 grid each, ruled apart.
+        const group = (title, tiles) => `<section class="fb-insert-group">
                 <h3 class="fb-insert-title">${title}</h3>
-                <div class="fb-insert-grid">${tiles.join("")}</div>
-                ${note ? `<p class="fb-insert-note">${note}</p>` : ""}</section>`;
+                <div class="fb-insert-grid">${tiles.join("")}</div></section>`;
         return group("Images", [
             tile("viewer", "camera", "From a viewer", "Open a project and capture fields into this figure"),
             tile("captures", "inbox", "Captures", "Captures not yet in any figure"),
             tile("bookmarks", "bookmark", "Bookmarks", "Views saved in the viewer"),
             tile("file", "file-image", "Image file", "A PNG, JPEG or TIFF from your computer"),
+            tile("duplicate", "clone", "Duplicate", "Duplicate the selected images (⌘D)"),
+            tile("replace", "arrow-right-arrow-left", "Replace", "Put another of the figure's images in the selected one's place"),
         ]) + group("Annotations", [
             tile("text", "font", "Text"),
             tile("rect", "square", "Rectangle"),
@@ -1103,12 +1193,38 @@ class FigureWorkspace {
             tile("arrow", "arrow-right-long", "Arrow"),
             tile("shapes", "shapes", "More shapes"),
         ]) + group("Scientific", [
-            tile("letters", "font", "Panel letters", "Letter the selected images A, B, C… in reading order"),
+            tile("letters", "heading", "Panel letters", "Letter the selected images A, B, C… in reading order"),
             tile("scalebar", "ruler-horizontal", "Scale bars", "Turn on scale bars on the selected images"),
             tile("channels", "palette", "Channel labels", "Label the selected images with their channels, in their colors"),
             tile("colorbar", "swatchbook", "Color bars", "An intensity ramp per channel on the selected images"),
-        ], "Scale bars and channel names act on the selected images and read their sources. "
-           + "An image without a pixel size gets a bar in pixels, never an assumed length.");
+            tile("split", "table-columns", "Split channels", "The selected composite and one image per channel, in a row"),
+            tile("borders", "vector-square", "Borders", "A border round each selected image"),
+        ]);
+    }
+
+    /** Borders on for the selected images, at their own (or default) width
+     *  and color. */
+    bordersOn() {
+        const ids = this.selectedImageIds();
+        if (!ids.length) {
+            this.toast("Select the images to put borders on.");
+            return;
+        }
+        this.updatePanels(ids.map((id) => this.state.panel(id))
+            .map((panel) => ({ panel_id: panel.panel_id,
+                               changes: { border: { ...(panel.border || {}), visible: true } } })));
+    }
+
+    /** Insert's Split channels: one composite image with two channels or more. */
+    splitSelected() {
+        const ids = this.selectedImageIds();
+        const panel = ids.length === 1 ? this.state.panel(ids[0]) : null;
+        const channels = (panel?.scene?.channels || []).filter((channel) => channel.visible !== false);
+        if (!panel || channels.length < 2) {
+            this.toast("Select one image with two or more channels to split.");
+            return;
+        }
+        this.split();
     }
 
     /**
@@ -3033,6 +3149,27 @@ class FigureWorkspace {
         if (typeof input.select === "function") input.select();
     }
 
+    /**
+     * The title field as wide as the name in it, so the save status sits
+     * right after it. CSS `field-sizing: content` does this where the browser
+     * has it; elsewhere (Safari) the text is measured here. Capped by the
+     * stylesheet's max-width, past which the name ellipsises.
+     */
+    fitTitle() {
+        const input = this.el("fb_title");
+        if (!input || typeof getComputedStyle !== "function"
+                || CSS?.supports?.("field-sizing", "content")) return;
+        const style = getComputedStyle(input);
+        const canvas = this._titleRuler || (this._titleRuler = document.createElement("canvas"));
+        const context = canvas.getContext?.("2d");
+        if (!context) return;
+        context.font = `${style.fontWeight} ${style.fontSize} ${style.fontFamily}`;
+        const text = input.value || input.placeholder || "";
+        const pad = parseFloat(style.paddingLeft) + parseFloat(style.paddingRight)
+            + parseFloat(style.borderLeftWidth) + parseFloat(style.borderRightWidth);
+        input.style.width = `${Math.ceil(context.measureText(text).width + pad + 2)}px`;
+    }
+
     commitTitle() {
         const input = this.el("fb_title");
         const title = (input.value || "").trim();
@@ -3060,6 +3197,27 @@ class FigureWorkspace {
                 for (const entry of real) {
                     Object.assign(draft.panels[entry.panel_id], entry.changes);
                 }
+            });
+    }
+
+    /**
+     * The figure's panel-letter size, from Document properties. The latest
+     * size set wins wherever it was set: an image or a selection given its
+     * own size keeps it until this is changed, and changing this hands every
+     * image back to the figure's size, in the same commit (one undo step).
+     */
+    setLetterSize(size) {
+        const settings = this.state.document.settings;
+        const style = { ...settings.style, label_size_pt: size };
+        const own = Object.values(this.state.document.panels)
+            .filter((panel) => panel.label && panel.label.size_pt);
+        this.state.commit(
+            [{ op: "set_meta", changes: { settings: { style: style } } }]
+                .concat(own.map((panel) => ({ op: "update_panel", panel_id: panel.panel_id,
+                                              changes: { label: { ...panel.label, size_pt: null } } }))),
+            (draft) => {
+                draft.settings.style = style;
+                for (const panel of own) draft.panels[panel.panel_id].label.size_pt = null;
             });
     }
 
@@ -3384,6 +3542,7 @@ class FigureWorkspace {
             return;
         }
         const pageId = this.canvas.pageId;
+        const index = this.state.pages.findIndex((page) => page.page_id === pageId);
         const panels = FigureSchema.panelsOnPage(this.state.document, pageId);
 
         // Three answers, and it used to be asked with two.
@@ -3428,8 +3587,15 @@ class FigureWorkspace {
                     if (draft.annotations[id].page_id === pageId) delete draft.annotations[id];
                 });
             });
-        // Null: the page list picks the first page left on its next draw.
-        this.canvas.setPage(null);
+        // To the page before the one deleted (the first, if that was it),
+        // through the one page switch. This used to set the canvas to no page
+        // and leave the page list to pick one on its next draw -- but the
+        // commit's draw had already happened, so the canvas was left on no
+        // page, and the next click on the sheet drew Document properties for
+        // a page that did not exist: an empty column.
+        const pages = this.state.pages;
+        const next = pages[Math.max(0, index - 1)] || pages[0];
+        if (next) this.goToPage(next.page_id);
     }
 
     // -- the tray ------------------------------------------------------------
@@ -3777,6 +3943,16 @@ class FigureWorkspace {
                 draft.panels[record.panel.panel_id] = record.panel;
             }
         });
+        // They land on the page, which in the Uploads list is "Previously
+        // used": switched to, so what was just added is there to see.
+        this.usedPanes = { ...(this.usedPanes || {}), uploads: true };
+        const uploads = this.assetGrids?.uploads;
+        if (uploads && !uploads.showUsed) {
+            uploads.showUsed = true;
+            uploads.checked.clear();
+        }
+        this.saveView();
+        this.renderTray();
         task?.done();
     }
 
@@ -4001,6 +4177,7 @@ class FigureWorkspace {
         if (!this.state.document || !this.root) return;
         const title = this.el("fb_title");
         if (title && title !== document.activeElement) title.value = this.state.title;
+        this.fitTitle();
 
         if (!this._fitted) {
             // Coming back (from the viewer, Back, a reload): the page that
@@ -4200,7 +4377,17 @@ class FigureWorkspace {
         const grid = (this.assetGrids || {})[this.assetsPane || "captures"];
         if (!grid) return;
         const total = all.filter((panel) => this.inAssetsPane(panel)).length;
-        grid.setExtras(shown.concat(this.placedMatches()).map((panel) => this.assetCard(panel)), total);
+        if (grid.byPlacement) {
+            // Uploads: every one of the figure's, off the page and on it;
+            // the grid's "Previously used" switch picks which half shows.
+            const placed = Object.values(this.state.document?.panels || {})
+                .filter((panel) => panel.placement && this.inAssetsPane(panel));
+            const onPage = placed.filter((panel) => this.passesAssetFilter(panel));
+            grid.setExtras(shown.concat(onPage).map((panel) => this.assetCard(panel)),
+                           { off: total, on: placed.length });
+        } else {
+            grid.setExtras(shown.concat(this.placedMatches()).map((panel) => this.assetCard(panel)), total);
+        }
         this.fitSourceCard();
     }
 

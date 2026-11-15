@@ -456,7 +456,7 @@ class FigureInspector {
         const escape = FigureInspector.escape;
         const open = !foldable || this.isOpen(id);
         // An icon is a FigureIcons name, or (starting with "<") markup of its own.
-        const glyph = String(icon).startsWith("<") ? icon : FigureIcons.svg(icon, 15, "fb-pg-icon");
+        const glyph = String(icon).startsWith("<") ? icon : FigureIcons.svg(icon, 17, "fb-pg-icon");
         const head = `${glyph}
             <span class="fb-pg-title">${escape(title)}</span>
             ${aside ? `<span class="fb-pg-aside">${escape(aside)}</span>` : ""}
@@ -525,21 +525,24 @@ class FigureInspector {
                 <button type="button" class="${page.orientation === value ? "is-on" : ""}" data-seg="orientation"
                         data-value="${value}" aria-pressed="${page.orientation === value}" title="${text}">
                     ${svg}<span>${text}</span></button>`).join("")}</span>`;
-        // The swatch opens the app's colour palette; the only background that
-        // is not a colour, Transparent, is a toggle beside it.
-        const named = FigureColorField.PRESETS.find((preset) =>
-            preset.hex === FigureColorField.hex(page.background));
-        const bgName = clear ? "Transparent"
-            : (white ? "White" : (named ? named.label : String(page.background).toUpperCase()));
-        const background = `<span class="fb-pg-bg">
-            ${FigureColorField.swatch({ field: "page_background", value: clear ? "#ffffff" : page.background,
-                label: "Background color" })
-                .replace('class="fb-color-well', `class="fb-color-well fb-pg-swatch${clear ? " is-clear" : ""}`)}
-            ${clear ? "" : `<span class="fb-pg-bg-name">${escape(bgName)}</span>`}
-            <button type="button" class="fb-pg-clear${clear ? " is-on" : ""}" data-seg="background"
-                    data-value="${clear ? "#ffffff" : FigureCanvas.TRANSPARENT}" aria-pressed="${clear}"
-                    title="${clear ? "Use a white background" : "No background (PNG export keeps it transparent)"}">
-                Transparent</button></span>`;
+        // Four round choices: white, black, any color (the wheel opens the
+        // app's palette, and shows the chosen color in its middle), and
+        // Transparent, the one background that is not a color.
+        const hex = clear ? "" : FigureColorField.hex(page.background);
+        const black = hex === "#000000";
+        const custom = !clear && !white && !black;
+        const dot = (value, cls, label, on) => `<button type="button" class="fb-pg-dot ${cls}${on ? " is-on" : ""}"
+                data-seg="background" data-value="${value}" aria-pressed="${on}"
+                title="${label}" aria-label="${label}"></button>`;
+        const background = `<span class="fb-pg-bg" role="group" aria-label="Background">
+            ${dot("#ffffff", "is-white", "White", white)}
+            ${dot("#000000", "is-black", "Black", black)}
+            <button type="button" class="fb-pg-dot is-wheel${custom ? " is-on" : ""}" data-swatch="page_background"
+                    aria-pressed="${custom}" title="${custom ? `Color ${escape(String(page.background).toUpperCase())}` : "Choose a color"}"
+                    aria-label="Choose a background color">${custom
+                ? `<span class="fb-pg-dot-core" style="background:${escape(page.background)}"></span>` : ""}</button>
+            ${dot(FigureCanvas.TRANSPARENT, "is-clear", "Transparent (PNG export keeps it transparent)", clear)}
+        </span>`;
         const more = `<div class="fb-insp-grid2">
                 ${this.field("page_w", "W", this.show(page.size_mm.w), { suffix: u, aria: "Page width" })}
                 ${this.field("page_h", "H", this.show(page.size_mm.h), { suffix: u, aria: "Page height" })}
@@ -563,9 +566,15 @@ class FigureInspector {
                 ${command("fit_content", "fit", "Fit", "Fit everything on this page inside its margins")}
                 ${command("center_content", "alignC", "Center", "Center everything on the page")}
             </div>
-            ${this.prop("Panel spacing", this.field("gutter", "", String(Number(style.gutter_mm.toFixed(2))),
+            <div class="fb-pg-prop fb-pg-spacing">
+                <span class="fb-pg-label">Panel spacing</span>
+                <span class="fb-pg-control">${this.field("gutter", "", String(Number(style.gutter_mm.toFixed(2))),
                         { suffix: "mm", aria: "Space between panels", cls: "fb-pg-num",
-                          title: "The space between panels in new layouts and arrangements" }))}`;
+                          title: "The space between panels in new layouts and arrangements" })}</span>
+                <button type="button" class="fb-link fb-pg-all-layouts" data-act="layouts"
+                        title="Every layout preset, with its gaps and options">All layouts${
+                    FigureIcons.svg("chevR", 12)}</button>
+            </div>`;
 
         // -- Panel labels: the figure's lettering scheme and size. Scale bars,
         // borders and type are set with images selected.
@@ -595,9 +604,8 @@ class FigureInspector {
             + switches(guideKeys.slice(3))
             + '<p class="fb-pg-note">Guides are never exported.</p>';
         // Crop marks round a frame: the page's guides, drawn as guides.
-        const guidesGlyph = `<span class="fb-pg-tile"><svg viewBox="0 0 24 24" width="17" height="17" aria-hidden="true"
-            fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
-            <path d="M7 3v18M17 3v18M3 7h18M3 17h18"/></svg></span>`;
+        // A line icon like every other section's: no tile, the same size.
+        const guidesGlyph = "guides";
 
         return `<div class="fb-pg">`
             + this.pageSection("page", "file", "Page setup", preset ? "" : "Custom", pageBody, true)
@@ -1082,6 +1090,11 @@ class FigureInspector {
         const number = parseFloat(String(raw).replace(",", "."));
         if (field === "label_size" || field === "text_size" || field === "gutter") {
             if (!(number > 0) && !(field === "gutter" && number === 0)) return this.refresh();
+            if (field === "label_size") {
+                // 4-72 pt, the range the server keeps for a letter.
+                this.workspace.setLetterSize(Math.min(72, Math.max(4, number)));
+                return;
+            }
             const key = { label_size: "label_size_pt", text_size: "font_size_pt", gutter: "gutter_mm" }[field];
             this.workspace.updateSettings({ style: { ...settings.style, [key]: number } });
             return;

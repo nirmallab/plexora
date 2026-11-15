@@ -199,9 +199,9 @@ class FigureActions {
             // double-click. The bar sits ON the artwork, so a button there that
             // opened a popover covered the panel it was about, and only one of
             // them could be open at a time.
-            // On the compact bar too, drawn as a crop: reframing the field is
-            // what most people open Quick Edit to do.
-            { id: "quick_edit", icon: "crop", label: "Quick Edit…",
+            // On the compact bar too, first, with the sliders the inspector's
+            // Quick Edit button carries.
+            { id: "quick_edit", icon: "sliders", label: "Quick Edit…",
               short: "Quick Edit", surface: ["bar", "menu", "sidebar"], group: "image",
               sidebar: { section: "actions", label: "Quick Edit" },
               applies: (sel) => Boolean(sel.singlePanel),
