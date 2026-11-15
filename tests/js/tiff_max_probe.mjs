@@ -21,6 +21,13 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 
 const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 const NODE = path.join(REPO, "plexora", "client", "src", "js", "node");
+// Where the page's worker runs from (client/dist/tiffWorker_bundle.js): what
+// the JPEG 2000 decoder finds OpenJPEG beside (client/external).
+// OpenJPEG's Emscripten build, run in Node, reads its .wasm with CommonJS
+// `require`, which an ES module does not have.
+globalThis.require ??= (await import("node:module")).createRequire(import.meta.url);
+globalThis.__dirname ??= path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "plexora", "client", "external", "openjpeg-1.3.6");
+globalThis.self ??= { location: { href: pathToFileURL(path.join(REPO, "plexora", "client", "dist", "tiffWorker_bundle.js")).href } };
 const { createTiffReader } = await import(pathToFileURL(path.join(NODE, "tiffReader.js")).href);
 
 class FileSource {

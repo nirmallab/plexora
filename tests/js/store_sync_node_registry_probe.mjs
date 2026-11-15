@@ -189,6 +189,30 @@ check("another browser's registry never replaces this browser's: its relay node 
 check("the project registry is still shared", FS2.exists("/data/config.json")
       && text(FS2.readFile("/data/config.json")).includes("lung"));
 
+// The website's settings (plexora/browser/boot.py XDG_CONFIG_HOME: /data/.config):
+// this browser's, kept in its own storage -- never in the shared folder, never
+// read from another browser's -- and back after a reload.
+{
+    const shared = new DirHandle("projects");
+    shared.put("config.json", "{}");
+    const mine = new DirHandle("state");
+    const FS3 = memfs();
+    const store = createStore(FS3, "/data", () => {}, { own: async () => mine });
+    await store.open(shared, { shared: true });
+    FS3.mkdirTree("/data/.config/plexora");
+    FS3.writeFile("/data/.config/plexora/settings.json", JSON.stringify({ path_picker: { view: { layout: "grid" } } }));
+    await store.push();
+    check("the website's settings are not written into the shared folder", !shared.children.has(".config"),
+          [...shared.children.keys()].join(","));
+    check("...they are kept in this browser's own storage", mine.children.has(".config"),
+          [...mine.children.keys()].join(","));
+    const FS4 = memfs();
+    const again = createStore(FS4, "/data", () => {}, { own: async () => mine });
+    await again.open(shared, { shared: true });
+    check("...and a reload finds them", FS4.exists("/data/.config/plexora/settings.json")
+          && text(FS4.readFile("/data/.config/plexora/settings.json")).includes("grid"));
+}
+
 const failed = results.filter((r) => !r.ok);
 for (const r of results) console.log(`${r.ok ? "ok  " : "FAIL"} ${r.name}${r.ok || !r.detail ? "" : ` -- ${r.detail}`}`);
 if (failed.length) {

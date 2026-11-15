@@ -2560,8 +2560,102 @@ def _page_window_look(channel_name, datasource_name, *, wait_ms, urgent, ahead=(
             others.append(real_channel_index(name, datasource_name))
         except UnknownChannelError:
             continue
-    return page.page_window(_providers.image, channels, index, wait_ms=wait_ms,
-                            urgent=urgent, ahead=others)
+    looked = page.page_window(_providers.image, channels, index, wait_ms=wait_ms,
+                              urgent=urgent, ahead=others)
+    if looked is None and os.environ.get("PLEXORA_BACKEND") == "browser":
+        # Not a file the page's workers read (JPEG 2000, JPEG, a format the
+        # page has no exact codec for): Python scans it itself, a block at a
+        # time between requests, rather than every pixel inside one.
+        return _stepped_window(channel_name, datasource_name, index)
+    return looked
+
+
+#: (datasource, load_generation, channel) -> Python's own scan of a channel's
+#: plane on the website, a block a task (`_stepped_window`):
+#: {blocks, at, ceiling, failed}.
+_stepped_windows: dict = {}
+#: Samples' bytes a step of that scan reads at most (whole chunks, at least
+#: one): a JPEG 2000 tile of 1024 x 1024 16-bit samples is 2 MB.
+_STEPPED_WINDOW_BYTES = 4 * 2**20
+
+
+def _stepped_window(channel_name, datasource_name, index):
+    """On the website, a channel's window from a plane the page cannot scan:
+    the window once Python has read every block of it, `WINDOW_PENDING`
+    while it reads, a chunk-aligned block a queued task (`_step_window`) --
+    so the worker answers requests between blocks, and nothing is ever
+    waited for inside one. Without it, `get_channel_quantization_window` read
+    the whole plane inside the request that asked: 102 s for a 1.2-gigapixel
+    JPEG 2000 Xenium plane, the page frozen throughout (the mini-map black,
+    blur QC not starting). None where the inline read is the right one (an
+    8-bit plane on the website has its window at once; an unusual shape) or
+    the scan failed: the caller then reads as it always did."""
+    from plexora.server.providers import browser as page
+
+    known = _gmm_cache.get(('qwindow', datasource_name, channel_name))
+    if known is not None:
+        return known
+    key = (datasource_name, load_generation, channel_name)
+    state = _stepped_windows.get(key)
+    if state is None:
+        try:
+            plane = _zarr_level(channels, 0)
+        except Exception:  # noqa: BLE001 -- not a level group: the inline read
+            return None
+        if _eight_bit_on_the_website(plane) or getattr(plane, "ndim", 0) != 3:
+            return None
+        for old in [k for k in _stepped_windows if k[:2] != key[:2]]:
+            _stepped_windows.pop(old, None)
+        state = {"blocks": _scan_blocks(plane), "at": 0, "ceiling": 0.0, "failed": False}
+        _stepped_windows[key] = state
+        _work.spawn(_step_window, datasource_name, load_generation, channel_name, index,
+                    name=f"window-scan-{channel_name}")
+    if state["failed"]:
+        return None
+    return page.WINDOW_PENDING
+
+
+def _scan_blocks(plane):
+    """(y0, y1, x0, x1) blocks covering a (channels, height, width) plane,
+    whole chunks each, about `_STEPPED_WINDOW_BYTES` a block."""
+    height, width = int(plane.shape[-2]), int(plane.shape[-1])
+    chunks = getattr(plane, "chunks", None) or (1, min(height, 1024), min(width, 1024))
+    rows, cols = max(1, int(chunks[-2])), max(1, int(chunks[-1]))
+    itemsize = max(1, getattr(getattr(plane, "dtype", None), "itemsize", 2))
+    across = max(1, _STEPPED_WINDOW_BYTES // max(1, rows * cols * itemsize))
+    span = cols * across
+    return [(y, min(y + rows, height), x, min(x + span, width))
+            for y in range(0, height, rows) for x in range(0, width, span)]
+
+
+def _step_window(datasource_name, generation, channel_name, index):
+    """One block of `_stepped_window`'s scan, then the next one queued; the
+    window kept once the last is read."""
+    key = (datasource_name, generation, channel_name)
+    state = _stepped_windows.get(key)
+    if state is None:
+        return
+    if generation != load_generation or not is_loaded(datasource_name):
+        _stepped_windows.pop(key, None)
+        return
+    try:
+        y0, y1, x0, x1 = state["blocks"][state["at"]]
+        block = np.asarray(_zarr_level(channels, 0)[index, y0:y1, x0:x1])
+    except Exception as exc:  # noqa: BLE001 -- the inline read reports it
+        _log.debug("Stepped window of %s in %s failed: %s", channel_name, datasource_name, exc)
+        state["failed"] = True
+        return
+    if block.size:
+        state["ceiling"] = max(state["ceiling"], float(block.max()))
+    state["at"] += 1
+    if state["at"] < len(state["blocks"]):
+        _work.spawn(_step_window, datasource_name, generation, channel_name, index,
+                    name=f"window-scan-{channel_name}")
+        return
+    window = (0.0, max(state["ceiling"], 1.0))
+    _gmm_cache[('qwindow', datasource_name, channel_name)] = window
+    _remember_quantization_window(datasource_name, channel_name, window)
+    _stepped_windows.pop(key, None)
 
 
 def _page_window_or_retry(channel_name, datasource_name, wait_ms=None):
@@ -5150,6 +5244,39 @@ def generate_channel_overview(datasource_name, channel_name, view=None):
             return encode_overview(overview[image_channelIdx], qmin, qmax)
     return encode_overview(
         _require_overview(datasource_name)[image_channelIdx], qmin, qmax)
+
+
+def provisional_channel_overview(datasource_name, channel_name):
+    """On the website, a planar channel's overview while the page still reads
+    its full-resolution plane for the exact window: quantized with the
+    provisional window its stats packet carries meanwhile (`_provisional_stats`:
+    0 to the overview's largest value), so the mini-map's bytes line up with
+    the window the sidebar holds, and drawn at once. None when the window is
+    known or not the page's to make: `generate_channel_overview` then answers
+    as it always did. The scan is asked for, not waited on (`wait_ms` 0).
+
+    Without it the overview route made the exact window inside the request --
+    Python's one thread held for the whole scan (103 s on a 1.2-gigapixel
+    Xenium plane), the mini-map black throughout and every request queued
+    behind it. The viewer asks again once the exact window lands
+    (views/miniMap.js, `plexora:channel-window`)."""
+    from plexora.server.providers import browser as page
+
+    if _work.threaded():
+        return None
+    ensure_loaded(datasource_name)
+    if config[datasource_name].get('image_kind') == brightfield.BRIGHTFIELD:
+        return None
+    try:
+        index = real_channel_index(channel_name, datasource_name)
+        looked = _page_window_look(channel_name, datasource_name, wait_ms=0, urgent=False)
+    except UnknownChannelError:
+        return None
+    if looked is not page.WINDOW_PENDING:
+        return None
+    plane = _require_overview(datasource_name)[index]
+    top = float(np.max(plane)) if getattr(plane, "size", 0) else 0.0
+    return encode_overview(plane, 0.0, max(top, 1.0))
 
 
 def encode_overview(image_data, qmin, qmax):

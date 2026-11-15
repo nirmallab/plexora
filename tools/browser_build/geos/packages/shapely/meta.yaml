@@ -1,0 +1,36 @@
+package:
+  name: shapely
+  version: 2.1.2
+  top-level:
+    - shapely
+source:
+  url: https://files.pythonhosted.org/packages/source/s/shapely/shapely-2.1.2.tar.gz
+  sha256: 2ed4ecb28320a433db18a5bf029986aa8afcfd740745e78847e330d5d94922a9
+build:
+  vendor-sharedlib: true
+  script: |
+    export GEOS_CONFIG=${WASM_LIBRARY_DIR}/bin/geos-config
+  cxxflags: |
+    -fwasm-exceptions
+  ldflags: |
+    -fwasm-exceptions
+requirements:
+  run:
+    - numpy
+  host:
+    - libgeos
+    - numpy
+test:
+  imports:
+    - shapely
+    - shapely.geos
+    - shapely.geometry
+    - shapely.ops
+    - shapely.prepared
+    - shapely.validation
+    - shapely.strtree
+about:
+  home: https://github.com/shapely/shapely
+  PyPI: https://pypi.org/project/shapely
+  summary: Geometric objects, predicates, and operations
+  license: BSD-3-Clause

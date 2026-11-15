@@ -113,9 +113,76 @@ class Lzw extends BaseDecoder {
     }
 }
 
+//: JPEG 2000's TIFF code.
+export const JPEG2000 = 34712;
+
+//: OpenJPEG in WebAssembly (client/external/openjpeg-1.3.6): the very build
+//: the website's Python decodes JPEG 2000 with (workers/pythonWorker.js
+//: `j2kDecode`, through plexora/browser/imagecodecs_shim.py), so a tile the
+//: page decodes is the tile Python would have. Loaded the first time a tile
+//: needs it, from beside the worker's bundle (client/dist -> client/external,
+//: under the site's base path).
+let openjpeg = null;
+function openjpegModule() {
+    if (!openjpeg) {
+        openjpeg = (async () => {
+            // Only in the page's worker: Node has no OpenJPEG to load (and a
+            // bundle must not carry the build machine's path, import.meta.url).
+            if (typeof self === "undefined" || !self.location) throw new Error("JPEG 2000 is decoded in the page's worker only");
+            const base = new URL("../external/openjpeg-1.3.6/", self.location.href).href;
+            const { default: factory } = await import(/* webpackIgnore: true */ `${base}openjpegwasm_decode.mjs`);
+            return factory({ locateFile: (name) => `${base}${name}` });
+        })();
+        openjpeg.catch(() => { openjpeg = null; });
+    }
+    return openjpeg;
+}
+
+/** A JPEG 2000 tile, one sample a pixel, as tifffile hands it on: the
+ *  decoder's samples as they come, padded from the top left to the tile's
+ *  size when the stream is smaller. Several components (a colour slide's)
+ *  are refused: those tiles stay Python's. */
+class Jpeg2000 extends BaseDecoder {
+    async decodeBlock(buffer) {
+        const t0 = now();
+        const module = await openjpegModule();
+        const decoder = new module.J2KDecoder();
+        try {
+            const bytes = new Uint8Array(buffer);
+            decoder.getEncodedBuffer(bytes.length).set(bytes);
+            decoder.decode();
+            const frame = decoder.getFrameInfo();
+            if (frame.componentCount !== 1) {
+                throw new Error(`JPEG 2000 with ${frame.componentCount} components is read by Python`);
+            }
+            const decoded = new Uint8Array(decoder.getDecodedBuffer());
+            const sample = frame.bitsPerSample <= 8 ? 1 : 2;
+            const { tileWidth, tileHeight } = this.parameters;
+            let out;
+            if (frame.width === tileWidth && frame.height === tileHeight) {
+                out = decoded.slice().buffer;
+            } else {
+                const padded = new Uint8Array(tileWidth * tileHeight * sample);
+                const row = Math.min(frame.width, tileWidth) * sample;
+                for (let y = 0; y < Math.min(frame.height, tileHeight); y += 1) {
+                    padded.set(decoded.subarray(y * frame.width * sample, y * frame.width * sample + row),
+                               y * tileWidth * sample);
+                }
+                out = padded.buffer;
+            }
+            decodeClock.ms += now() - t0;
+            decodeClock.calls += 1;
+            return out;
+        } finally {
+            decoder.delete();
+        }
+    }
+}
+
 function useDecoder(kind) {
     addDecoder(DEFLATE, async () => ({ pako: PakoDeflate, "native-blob": NativeDeflateBlob }[kind] || NativeDeflate));
     addDecoder(5, async () => Lzw);
+    addDecoder(JPEG2000, async () => Jpeg2000);
 }
 
 /**

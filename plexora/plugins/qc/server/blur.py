@@ -409,6 +409,29 @@ def _own_foreground(source, index, brightfield):
 
 
 def run(session, project, fp, context, *, progress=None, check_cancelled=None) -> dict:
+    """The run, start to end (`run_steps` driven through)."""
+    return drive(run_steps(session, project, fp, context, progress=progress,
+                           check_cancelled=check_cancelled))
+
+
+def drive(steps):
+    """A generator's return value, every step taken now."""
+    while True:
+        try:
+            next(steps)
+        except StopIteration as done:
+            return done.value
+
+
+def run_steps(session, project, fp, context, *, progress=None, check_cancelled=None):
+    """The run as a generator: one step a block, the run's result returned.
+
+    On the website a job hands Python back between steps (agent/jobs.py
+    `_advance`), so a whole slide's blur map -- 54 s a channel on a
+    1.2-gigapixel plane, one Python thread -- no longer freezes every
+    request of the page meanwhile. The image's reader is held only inside a
+    step: held across one, a request reading the same image would wait on its
+    lock on the one thread, for good."""
     import cv2
 
     from plexora.plugins.qc.server import scan
@@ -455,53 +478,56 @@ def run(session, project, fp, context, *, progress=None, check_cancelled=None) -
         tissue_fraction, tissue_method = _tissue(source, context, grid)
         fg_level = _own_foreground(source, index, brightfield)
         ceiling = scan._ceiling(source, index, brightfield)
-        top = SATURATION_OF_CEILING * (ceiling if ceiling else np.inf)
-        erode = cv2.getStructuringElement(cv2.MORPH_RECT, (2 * reach + 1, 2 * reach + 1))
-        timing["tissue_s"] = round(perf_counter() - started, 3)
-        t0 = perf_counter()
-        for done, (y0, x0, y1, x1) in enumerate(blocks):
-            stop_if_asked()
-            say(done + 1, total, PHASES[1])
-            hy0, hx0 = max(0, y0 - reach), max(0, x0 - reach)
-            hy1, hx1 = min(lh, y1 + reach), min(lw, x1 + reach)
+    top = SATURATION_OF_CEILING * (ceiling if ceiling else np.inf)
+    erode = cv2.getStructuringElement(cv2.MORPH_RECT, (2 * reach + 1, 2 * reach + 1))
+    timing["tissue_s"] = round(perf_counter() - started, 3)
+    yield
+    t0 = perf_counter()
+    for done, (y0, x0, y1, x1) in enumerate(blocks):
+        stop_if_asked()
+        say(done + 1, total, PHASES[1])
+        hy0, hx0 = max(0, y0 - reach), max(0, x0 - reach)
+        hy1, hx1 = min(lh, y1 + reach), min(lw, x1 + reach)
+        with qc_plane.reader(context["image_data"]) as source:
             plane, _clipped = scan._read(source, index, level, (hx0, hy0, hx1, hy1),
                                          brightfield)
-            plane = np.ascontiguousarray(plane, dtype=np.float32)
-            want = (hy1 - hy0, hx1 - hx0)
-            if plane.shape != want:
-                fixed = np.zeros(want, dtype=np.float32)
-                fixed[:plane.shape[0], :plane.shape[1]] = plane[:want[0], :want[1]]
-                plane = fixed
-            # Zeros are padding on a fluorescence image; glass counts on a
-            # brightfield darkness plane (it is where the noise is measured).
-            valid = plane < top
-            if not brightfield:
-                valid &= plane > 0
-            valid_u8 = valid.astype(np.uint8)
-            # A gradient is only trusted where its whole filter window is valid.
-            support = cv2.erode(valid_u8, erode, borderType=cv2.BORDER_REPLICATE).astype(bool)
-            window = (slice(y0 - hy0, y1 - hy0), slice(x0 - hx0, x1 - hx0))
-            cy, cx = int(math.ceil((y1 - y0) / s)), int(math.ceil((x1 - x0) / s))
-            gy0, gx0 = y0 // s, x0 // s
-            inner_support = support[window]
-            weight = inner_support.astype(np.float32)
-            n_valid[gy0:gy0 + cy, gx0:gx0 + cx] += _cell_sums(weight, s, cy, cx)
-            if fg_level is not None:
-                fg = ((plane[window] >= fg_level) & inner_support).astype(np.float32)
-                n_fg[gy0:gy0 + cy, gx0:gx0 + cx] += _cell_sums(fg, s, cy, cx)
-                del fg
-            inner = plane[window] * weight
-            sum_i[gy0:gy0 + cy, gx0:gx0 + cx] += _cell_sums(inner, s, cy, cx)
-            sum_i2[gy0:gy0 + cy, gx0:gx0 + cx] += _cell_sums(inner * inner, s, cy, cx)
-            del inner
-            for k, sigma in enumerate(scales):
-                smoothed = cv2.GaussianBlur(plane, (0, 0), sigma) if sigma > 0 else plane
-                gx = cv2.Sobel(smoothed, cv2.CV_32F, 1, 0, ksize=3)
-                gy = cv2.Sobel(smoothed, cv2.CV_32F, 0, 1, ksize=3)
-                energy = (gx * gx + gy * gy)[window] * weight
-                sum_e[k, gy0:gy0 + cy, gx0:gx0 + cx] += _cell_sums(energy, s, cy, cx)
-                del gx, gy, energy
-        timing["blocks_s"] = round(perf_counter() - t0, 3)
+        plane = np.ascontiguousarray(plane, dtype=np.float32)
+        want = (hy1 - hy0, hx1 - hx0)
+        if plane.shape != want:
+            fixed = np.zeros(want, dtype=np.float32)
+            fixed[:plane.shape[0], :plane.shape[1]] = plane[:want[0], :want[1]]
+            plane = fixed
+        # Zeros are padding on a fluorescence image; glass counts on a
+        # brightfield darkness plane (it is where the noise is measured).
+        valid = plane < top
+        if not brightfield:
+            valid &= plane > 0
+        valid_u8 = valid.astype(np.uint8)
+        # A gradient is only trusted where its whole filter window is valid.
+        support = cv2.erode(valid_u8, erode, borderType=cv2.BORDER_REPLICATE).astype(bool)
+        window = (slice(y0 - hy0, y1 - hy0), slice(x0 - hx0, x1 - hx0))
+        cy, cx = int(math.ceil((y1 - y0) / s)), int(math.ceil((x1 - x0) / s))
+        gy0, gx0 = y0 // s, x0 // s
+        inner_support = support[window]
+        weight = inner_support.astype(np.float32)
+        n_valid[gy0:gy0 + cy, gx0:gx0 + cx] += _cell_sums(weight, s, cy, cx)
+        if fg_level is not None:
+            fg = ((plane[window] >= fg_level) & inner_support).astype(np.float32)
+            n_fg[gy0:gy0 + cy, gx0:gx0 + cx] += _cell_sums(fg, s, cy, cx)
+            del fg
+        inner = plane[window] * weight
+        sum_i[gy0:gy0 + cy, gx0:gx0 + cx] += _cell_sums(inner, s, cy, cx)
+        sum_i2[gy0:gy0 + cy, gx0:gx0 + cx] += _cell_sums(inner * inner, s, cy, cx)
+        del inner
+        for k, sigma in enumerate(scales):
+            smoothed = cv2.GaussianBlur(plane, (0, 0), sigma) if sigma > 0 else plane
+            gx = cv2.Sobel(smoothed, cv2.CV_32F, 1, 0, ksize=3)
+            gy = cv2.Sobel(smoothed, cv2.CV_32F, 0, 1, ksize=3)
+            energy = (gx * gx + gy * gy)[window] * weight
+            sum_e[k, gy0:gy0 + cy, gx0:gx0 + cx] += _cell_sums(energy, s, cy, cx)
+            del gx, gy, energy
+        yield
+    timing["blocks_s"] = round(perf_counter() - t0, 3)
     stop_if_asked()
     say(len(blocks) + 1, total, PHASES[2])
     t0 = perf_counter()
@@ -841,6 +867,14 @@ def resolve(session, project, channel=None) -> str:
 def load_or_run(session, project, *, channel=None, params=None, force=False,
                 progress=None, check_cancelled=None) -> tuple:
     """(summary, reused), for one channel."""
+    return drive(load_or_run_steps(session, project, channel=channel, params=params,
+                                   force=force, progress=progress,
+                                   check_cancelled=check_cancelled))
+
+
+def load_or_run_steps(session, project, *, channel=None, params=None, force=False,
+                      progress=None, check_cancelled=None):
+    """`load_or_run` as a generator (`run_steps`): (summary, reused) returned."""
     fp, context = plan(session, project, channel=None if channel == BRIGHTFIELD else channel,
                        params=params)
     if not force:
@@ -848,8 +882,8 @@ def load_or_run(session, project, *, channel=None, params=None, force=False,
         if summary is not None:
             _point(project, label_of(context["channel"]), fp)
             return summary, True
-    result = run(session, project, fp, context, progress=progress,
-                 check_cancelled=check_cancelled)
+    result = yield from run_steps(session, project, fp, context, progress=progress,
+                                  check_cancelled=check_cancelled)
     return _save(project, fp, result), False
 
 

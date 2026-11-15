@@ -22,6 +22,7 @@ test's root has gone (it would write into the developer's real install).
 
 from __future__ import annotations
 
+import inspect
 import json
 import os
 import threading
@@ -42,7 +43,7 @@ MAX_JOBS = 200
 #: Progress is written to disk at most this often, unless its message changes.
 PERSIST_INTERVAL_S = 0.5
 
-_PRIVATE = ("_cancel", "_done", "_thread", "_folder", "_last_persist")
+_PRIVATE = ("_cancel", "_done", "_thread", "_folder", "_last_persist", "_steps")
 
 #: Told every public record as it is written (`observe`). The website's page
 #: answers `GET /agent/v1/jobs/<id>` from what it was told while its worker is
@@ -229,65 +230,132 @@ class JobStore:
             self._persist(record)
 
     def _run(self, record, call, inp):
-        from pydantic import BaseModel
-
         from time import perf_counter
 
-        capability = call.capability
         started = perf_counter()
         record["status"] = "running"
         record["started_at"] = now_iso()
         record["progress"] = {**record["progress"], "message": "running"}
         self._persist(record)
+        handed_on = False
         try:
             if cancel_requested(record):
                 raise JobCancelled()
             # The grants the licence had when this job was admitted: a job that
             # started on a valid licence finishes, whatever the licence does
             # meanwhile (plexora/licensing/tokens.py).
-            from plexora.licensing import tokens as license_tokens
+            with self._scope(call, inp):
+                result = call.capability.handler(call, inp)
+            if inspect.isgenerator(result):
+                # A handler that hands Python back between its steps (on the
+                # website: blur QC, a block a step), taken a few at a time.
+                record["_steps"] = result
+                handed_on = True
+                self._advance(record, call, inp, started)
+                return
+            self._succeeded(record, result)
+        except (JobCancelled, Exception) as exc:
+            self._ended(record, call, exc)
+        finally:
+            if not handed_on:
+                self._finished(record, call, started)
 
-            from plexora.agent import cell_exclusions
+    #: Seconds of a stepped handler's steps one queued task takes (`_advance`)
+    #: before the page's requests are answered.
+    STEP_S = 0.1
 
-            with license_tokens.admitted(call.extras.get("license_grants")), \
-                    cell_exclusions.scope_for(inp):
-                result = capability.handler(call, inp)
-            if isinstance(result, BaseModel):
-                result = result.model_dump(mode="json")
-            if isinstance(result, dict):
-                result = {key: value for key, value in result.items() if key != "_images"}
-            record["result"] = result
-            record["status"] = "done"
-            # A finished job is all the way through, whatever its last report
-            # said (a handler's count of steps is an estimate).
-            total = record["progress"].get("total")
-            total = total if total else max(1, int(record["progress"].get("done") or 0))
-            record["progress"] = {**record["progress"], "done": total, "total": total,
-                                  "message": "done"}
-        except JobCancelled:
+    @staticmethod
+    def _scope(call, inp):
+        """The grants the licence had when the job was admitted, and its cell
+        exclusions: around the handler, and around every step of one."""
+        from contextlib import ExitStack
+
+        from plexora.agent import cell_exclusions
+        from plexora.licensing import tokens as license_tokens
+
+        stack = ExitStack()
+        stack.enter_context(license_tokens.admitted(call.extras.get("license_grants")))
+        stack.enter_context(cell_exclusions.scope_for(inp))
+        return stack
+
+    def _advance(self, record, call, inp, started):
+        """A stepped handler's steps for about `STEP_S`, then the next ones
+        queued as a task of their own -- so on the website, whose one Python
+        thread runs the job, the page's requests are answered between them.
+        Its return, a cancel or a raise ends the job as a handler's does. A
+        step holds no lock across its `yield` (blur.run_steps): a request
+        that waited on one would wait on the only thread, for good."""
+        steps = record["_steps"]
+        try:
+            if cancel_requested(record):
+                raise JobCancelled()
+            deadline = time.monotonic() + self.STEP_S
+            with self._scope(call, inp):
+                while True:
+                    next(steps)
+                    if time.monotonic() >= deadline:
+                        break
+        except StopIteration as done:
+            self._succeeded(record, done.value)
+        except (JobCancelled, Exception) as exc:
+            steps.close()
+            self._ended(record, call, exc)
+        else:
+            # The task `drain` joins is the one that carries the job on.
+            record["_thread"] = _work.spawn(self._advance, record, call, inp, started,
+                                            name=f"agent-job-{record['job_id']}")
+            return
+        record.pop("_steps", None)
+        self._finished(record, call, started)
+
+    @staticmethod
+    def _succeeded(record, result):
+        from pydantic import BaseModel
+
+        if isinstance(result, BaseModel):
+            result = result.model_dump(mode="json")
+        if isinstance(result, dict):
+            result = {key: value for key, value in result.items() if key != "_images"}
+        record["result"] = result
+        record["status"] = "done"
+        # A finished job is all the way through, whatever its last report
+        # said (a handler's count of steps is an estimate).
+        total = record["progress"].get("total")
+        total = total if total else max(1, int(record["progress"].get("done") or 0))
+        record["progress"] = {**record["progress"], "done": total, "total": total,
+                              "message": "done"}
+
+    @staticmethod
+    def _ended(record, call, exc):
+        """A job cancelled or failed, said in its record and the audit."""
+        capability = call.capability
+        if isinstance(exc, JobCancelled):
             record["status"] = "cancelled"
             record["progress"] = {**record["progress"], "message": "cancelled"}
             if capability.permission != "read":
                 call.audit.append({"status": "cancelled", "operation_id": call.operation_id,
                                    "capability": capability.name,
                                    "project": call.project_name, "job_id": record["job_id"]})
-        except Exception as exc:
-            error = as_agent_error(exc)
-            record["status"] = "failed"
-            record["error"] = error.to_problem()
-            if capability.permission != "read" and not call.receipted:
-                call.audit.append({"status": "failed", "operation_id": call.operation_id,
-                                   "capability": capability.name,
-                                   "project": call.project_name,
-                                   "arguments": call.arguments, "job_id": record["job_id"],
-                                   "error": error.to_problem()})
-        finally:
-            record["finished_at"] = now_iso()
-            self._persist(record)
-            record["_done"].set()
-            from plexora.telemetry.agent_hooks import job_finished
+            return
+        error = as_agent_error(exc)
+        record["status"] = "failed"
+        record["error"] = error.to_problem()
+        if capability.permission != "read" and not call.receipted:
+            call.audit.append({"status": "failed", "operation_id": call.operation_id,
+                               "capability": capability.name,
+                               "project": call.project_name,
+                               "arguments": call.arguments, "job_id": record["job_id"],
+                               "error": error.to_problem()})
 
-            job_finished(capability, record.get("status"), (perf_counter() - started) * 1000.0)
+    def _finished(self, record, call, started):
+        from time import perf_counter
+
+        from plexora.telemetry.agent_hooks import job_finished
+
+        record["finished_at"] = now_iso()
+        self._persist(record)
+        record["_done"].set()
+        job_finished(call.capability, record.get("status"), (perf_counter() - started) * 1000.0)
 
     # -- asking ----------------------------------------------------------
 

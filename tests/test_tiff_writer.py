@@ -510,3 +510,31 @@ def test_the_pages_maximum_of_a_tiled_plane_is_every_pixels(tmp_path, dtype, opt
         assert got["refused"] is None and (got["width"], got["height"]) == (x1 - x0, y1 - y0), got["box"]
         assert np.array_equal(np.array(got["values"], dtype=data.dtype).reshape(y1 - y0, x1 - x0),
                               data[got["channel"], y0:y1, x0:x1]), got["box"]
+
+
+def test_the_page_decodes_jpeg_2000_to_python_s_samples(tmp_path):
+    """A JPEG 2000 TIFF (a Xenium morphology image) read by the page's own
+    workers (node/tiffReader.js `Jpeg2000`, OpenJPEG -- the build the
+    website's Python decodes it with), not left to Python: Python served
+    every tile and read every pixel of the plane itself, 100 s on a
+    1.2-gigapixel plane. Lossless here, so every sample is numpy's."""
+    pytest.importorskip("imagecodecs")
+    data = _pixels("uint16", (2, 300, 517), seed=5)
+    data[1, -1, -1] = 65535
+    path = tmp_path / "j2k.tif"
+    with tifffile.TiffWriter(path) as tiff:
+        for plane in data:
+            tiff.write(plane, tile=(128, 128), photometric="minisblack", metadata=None,
+                       compression="jpeg2000", compressionargs={"level": 0}, predictor=None)
+    assert tifffile.TiffFile(path).pages[0].compression == 34712
+    done = subprocess.run([NODE, str(MAX_PROBE), str(path), str(data.shape[0])], capture_output=True,
+                          text=True, encoding="utf-8", timeout=300)
+    assert done.returncode == 0, done.stderr[-3000:]
+    found = json.loads(done.stdout.strip().splitlines()[-1])
+    for row, plane in zip(found["channels"], data):
+        assert row["whole"] == int(plane.max()) == row["regionWhole"], row
+    for got in found["regions"]:
+        x0, y0, x1, y1 = got["box"]
+        assert got["refused"] is None, got
+        assert np.array_equal(np.array(got["values"], dtype=data.dtype).reshape(y1 - y0, x1 - x0),
+                              data[got["channel"], y0:y1, x0:x1]), got["box"]

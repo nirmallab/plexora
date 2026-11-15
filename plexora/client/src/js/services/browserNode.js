@@ -396,10 +396,12 @@
     const checks = new Map();
 
     //: Compressions the page decodes to Python's very samples (none, LZW,
-    //: deflate both codes, PackBits, Zstandard). A lossy one (JPEG, JPEG
-    //: 2000, WebP, ...) is decoded by another library than Python's, which
-    //: rounds differently: those tiles stay Python's.
-    const EXACT = new Set([1, 5, 8, 32946, 32773, 50000]);
+    //: deflate both codes, PackBits, Zstandard; and JPEG 2000, whose tiles
+    //: Python on the website decodes with the page's own OpenJPEG build --
+    //: node/tiffReader.js `Jpeg2000`). Another lossy one (JPEG, WebP, ...) is
+    //: decoded by another library than Python's, which rounds differently:
+    //: those tiles stay Python's.
+    const EXACT = new Set([1, 5, 8, 32946, 32773, 50000, 34712]);
 
     const BITS = { uint8: 8, uint16: 16, uint32: 32, int32: 32 };
     //: How often a mask still being prepared is asked about again.

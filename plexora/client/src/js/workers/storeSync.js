@@ -62,12 +62,14 @@ const now = () => performance.now();
 //: another browser on the same folder would take this one's relay nodes off
 //: the map, and their tokens are not the folder's to hold); and write probes.
 const KEPT_OUT = new Set([".remote_cache", ".ims_index", ".models", ".telemetry", "server_token.json",
-    "nodes.json", "remotes.json", "servers.json", "sidecars.json", ".agent"]);
+    "nodes.json", "remotes.json", "servers.json", "sidecars.json", ".agent", ".config"]);
 //: Of those, what the user typed or connected once and should not have to
 //: again (the registries): while a shared folder is the store, kept in this
 //: browser's own storage (`browserOwn`) -- the place they live when no folder
 //: is -- so a reload, or a move to a folder and back, keeps them.
-const OWN = new Set(["nodes.json", "remotes.json", "servers.json", "sidecars.json", ".agent"]);
+//: `.config` is the website's settings (plexora/browser/boot.py
+//: `CONFIG_DIRNAME`): this browser's, never the desktop's folder's.
+const OWN = new Set(["nodes.json", "remotes.json", "servers.json", "sidecars.json", ".agent", ".config"]);
 //: ... and every name that begins with one of these: what project bundles
 //: keep beside the projects (server/models/bundles.py) -- an import's staging
 //: folder (`.importing-<bundle>`) and exports waiting to be fetched

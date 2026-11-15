@@ -32,7 +32,7 @@ _BOOT_KEYS = (
     "PLEXORA_WORK", "PLEXORA_BACKEND", "PLEXORA_NO_NUMBA", "BIOCOGNIA_DIR",
     "BIOCOGNIA_NO_HEARTBEAT", "PLEXORA_LIBRARY_PATH", "PLEXORA_SHARED_PATH",
     "PLEXORA_AUTH_TOKEN", "PLEXORA_TRUSTED_HOSTS", "PLEXORA_PLUGINS", "PLEXORA_TELEMETRY",
-    "PLEXORA_TELEMETRY_ENDPOINT", "DO_NOT_TRACK",
+    "PLEXORA_TELEMETRY_ENDPOINT", "DO_NOT_TRACK", "XDG_CONFIG_HOME",
 )
 
 
@@ -62,6 +62,23 @@ def booted(monkeypatch):
         else:
             os.environ[key] = value
     paths.reset()
+
+
+def test_the_website_s_settings_file_is_in_the_store_it_keeps(booted):
+    """Python's settings file on the website: inside /data, which the page
+    keeps across reloads and releases (workers/storeSync.js keeps `.config` in
+    this browser's own storage), not in the worker's memory, where every
+    reload lost it."""
+    from platformdirs.unix import Unix
+
+    from plexora import paths
+    from plexora.browser import boot
+
+    assert booted["XDG_CONFIG_HOME"] == f"/data/{boot.CONFIG_DIRNAME}"
+    # Pyodide is platformdirs' Unix (this suite's settings_path is stubbed by
+    # conftest, and a Mac's ignores XDG): where paths.settings_path lands there.
+    where = Unix(paths.APP_NAME, appauthor=False, roaming=False).user_config_dir
+    assert where == f"/data/{boot.CONFIG_DIRNAME}/{paths.APP_NAME}"
 
 
 # -- D. the website's cache budgets -------------------------------------------------

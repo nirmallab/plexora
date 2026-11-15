@@ -494,6 +494,43 @@ def precompile(wheel: Path, out: Path, python314: str | None, stored: bool) -> N
                     dst.write(path, path.relative_to(root).as_posix(), compress_type=compression)
 
 
+#: tools/browser_build/geos/build.sh's output: shapely for this Pyodide against
+#: a newer GEOS than the release ships, with `shapely-geos.json` saying which.
+GEOS_DIST = Path(__file__).resolve().parent / "geos" / "dist"
+
+
+def shapely_wheel(given) -> Path | None:
+    """The shapely wheel to ship in place of Pyodide's: `given`, else the one
+    in GEOS_DIST, else None (Pyodide's own, GEOS 3.12.1 -- whose outlines
+    mask_polygon.geos_again asks again)."""
+    if given:
+        return Path(given)
+    found = sorted(GEOS_DIST.glob("shapely-*.whl"), key=lambda p: p.stat().st_mtime)
+    return found[-1] if found else None
+
+
+def swap_shapely(out: Path, lock: dict, wheel: Path | None, python314, encoder) -> dict | None:
+    """`wheel` shipped as the lockfile's shapely, and the manifest's `shapely`
+    entry ({wheel, sha256, geos}); None and nothing changed without one. The
+    wheel must have the very file name Pyodide's has (version, ABI, platform):
+    a shapely built for another Pyodide would load and crash."""
+    if wheel is None:
+        return None
+    entry = lock["packages"]["shapely"]
+    if wheel.name != entry["file_name"]:
+        raise SystemExit(f"{wheel.name} is not this Pyodide's shapely ({entry['file_name']}): "
+                         "rebuild it with tools/browser_build/geos/build.sh")
+    target = out / "pyodide" / entry["file_name"]
+    precompile(wheel, target, python314, encoder is not None)
+    if encoder:
+        brotli(target, encoder)
+    entry["sha256"] = sha256(target)
+    (out / "pyodide" / "pyodide-lock.json").write_text(json.dumps(lock), encoding="utf-8")
+    told = wheel.parent / "shapely-geos.json"
+    geos = json.loads(told.read_text(encoding="utf-8")).get("geos") if told.exists() else None
+    return {"wheel": wheel.name, "sha256": sha256(wheel), "geos": geos}
+
+
 def brotli(path: Path, encoder: str) -> None:
     subprocess.run([encoder, "-q", "11", "-w", "24", "-f", "-o", f"{path}.br", str(path)],
                    check=True)
@@ -535,7 +572,8 @@ def add_kernels(out: Path, wheel: Path, stages: dict, python314, encoder) -> dic
             "fingerprints": recorded["FINGERPRINTS"]}
 
 
-def build(out_root: Path, python314: str | None, encoder: str | None, kernels=None) -> Path:
+def build(out_root: Path, python314: str | None, encoder: str | None, kernels=None,
+          shapely=None) -> Path:
     from plexora import __version__
 
     dist = release()
@@ -597,11 +635,15 @@ def build(out_root: Path, python314: str | None, encoder: str | None, kernels=No
     held = None
     if kernels is not False:
         held = add_kernels(out, kernels_wheel(kernels, lock), stages, python314, encoder)
+    swapped = swap_shapely(out, lock, shapely_wheel(shapely), python314, encoder)
+    if swapped is None:
+        print("note: shipping Pyodide's own shapely (GEOS 3.12.1); build a newer one with "
+              "tools/browser_build/geos/build.sh", flush=True)
 
     core_bytes = account(out, lock, stages)
     (out / "stages.json").write_text(json.dumps(stages, indent=1), encoding="utf-8")
     manifest = {"plexora": __version__, "pyodide": PYODIDE, "python": lock["info"]["python"],
-                "kernels": held,
+                "kernels": held, "shapely": swapped,
                 "precompiled": python314 is not None, "brotli": encoder is not None,
                 "first_visit_bytes": core_bytes + stages["base"]["bytes"],
                 "stages": {name: stage["bytes"] for name, stage in stages.items()},
@@ -632,7 +674,7 @@ def listing(out: Path) -> dict:
 
 
 def plexora_only(out_root: Path, python314: str | None, encoder: str | None,
-                 kernels=None) -> Path:
+                 kernels=None, shapely=None) -> Path:
     """Rebuild Plexora's own wheels inside an existing bundle (development: a
     change to Plexora's Python without the 15 minutes of brotli the packages
     take): the plexora wheel, and plexora-kernels' when one is handed over or
@@ -687,6 +729,11 @@ def plexora_only(out_root: Path, python314: str | None, encoder: str | None,
         if stale:
             raise SystemExit(f"the bundle's {held['wheel']} ports older kernels than this "
                              f"checkout's ({stale}): rebuild it and pass --kernels-wheel")
+    # shapely against a newer GEOS when one is handed over or built
+    # (tools/browser_build/geos/); otherwise the bundle keeps the one it has.
+    swapped = swap_shapely(out, lock, shapely_wheel(shapely), python314, encoder)
+    if swapped is not None:
+        manifest["shapely"] = swapped
     core_bytes = account(out, lock, stages)
     (out / "stages.json").write_text(json.dumps(stages, indent=1), encoding="utf-8")
     manifest.update({"plexora": __version__, "kernels": held if bundled else None,
@@ -711,13 +758,16 @@ def main(argv=None) -> int:
                         help="plexora-kernels' Pyodide wheel (default: the newest in kernels/dist)")
     parser.add_argument("--no-kernels", action="store_true",
                         help="ship without plexora-kernels (every kernel then runs as Python)")
+    parser.add_argument("--shapely-wheel", default=os.environ.get("PLEXORA_SHAPELY_WHEEL"),
+                        help="shapely built against a newer GEOS (default: the one in "
+                             "tools/browser_build/geos/dist, if built)")
     args = parser.parse_args(argv)
     kernels = False if args.no_kernels else args.kernels_wheel
     if args.plexora_only:
         print(json.dumps({"out": str(plexora_only(Path(args.out), args.python314, args.brotli,
-                                                  kernels))}))
+                                                  kernels, args.shapely_wheel))}))
         return 0
-    out = build(Path(args.out), args.python314, args.brotli, kernels)
+    out = build(Path(args.out), args.python314, args.brotli, kernels, args.shapely_wheel)
     manifest = json.loads((out / "manifest.json").read_text(encoding="utf-8"))
     print(json.dumps({"out": str(out), "first_visit_mb": round(manifest["first_visit_bytes"] / 1e6, 1),
                       "stages_mb": {k: round(v / 1e6, 1) for k, v in manifest["stages"].items()}},

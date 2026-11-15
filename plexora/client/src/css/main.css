@@ -1106,6 +1106,16 @@ html.is-website .not-website {
     outline-offset: -2px;
 }
 
+/* The viewer and the library taking a drop on the website
+   (dropRouter.js mountWebZone): nothing to plan until the files are mounted,
+   so no hint beside the pointer; the edge lights instead. Inset, so the
+   viewer's own frame is not pushed. */
+#bodyDiv.is-drop-over,
+.open-project-page.is-drop-over {
+    outline: 2px dashed var(--accent-channel);
+    outline-offset: -4px;
+}
+
 .channel-names-modal.is-drop-refused,
 .plx-import.is-drop-refused {
     outline: 2px solid var(--accent-danger);

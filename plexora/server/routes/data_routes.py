@@ -1828,6 +1828,11 @@ def generate_rgb_image(datasource):
     return send_file(src)
 
 
+#: Set to "provisional" on an overview quantized with a channel's provisional
+#: window (the website, while the page scans for the exact one).
+OVERVIEW_WINDOW_HEADER = 'X-Plexora-Window'
+
+
 # The viewer mini-map's source: one channel's whole tissue, ~200-400 px, in the
 # same [0, 255] domain as the WebP tiles. Separate from the tile route on
 # purpose -- see data_model.generate_channel_overview for why no tile level is
@@ -1859,6 +1864,16 @@ def generate_overview(datasource, channel):
                                                            entry.get('name'))), '')
     stamp = f"{generation}.{_tile_content_version(datasource, key, generation)}.{key}"
     etag = f'"{stamp}-overview-{datasource}-{channel}' + (f'-{view}"' if view else '"')
+    # On the website, a channel whose exact window the page is still scanning
+    # is drawn now with its provisional one, said so and never cached; the
+    # map asks again once the exact window lands (views/miniMap.js).
+    provisional = (data_model.provisional_channel_overview(datasource, channel)
+                   if _patient() and not view else None)
+    if provisional is not None:
+        response = send_file(io.BytesIO(provisional), mimetype='image/webp')
+        response.headers[OVERVIEW_WINDOW_HEADER] = 'provisional'
+        response.headers['Cache-Control'] = 'no-store'
+        return response
     if request.headers.get('If-None-Match') == etag:
         response = app.response_class(status=304)
     else:

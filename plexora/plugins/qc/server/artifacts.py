@@ -57,6 +57,7 @@ from __future__ import annotations
 import hashlib
 import io
 import json
+import logging
 import math
 import os
 import threading
@@ -67,6 +68,8 @@ import numpy as np
 
 from plexora.agent.errors import AgentError
 from plexora.plugins.qc.server import plane as qc_plane
+
+_log = logging.getLogger(__name__)
 
 #: 3: the cycle rule for folds (`cycle_groups`, `_cycle_seeds`).
 VERSION = "3"
@@ -1254,10 +1257,14 @@ def _upsample(crop, shape):
 def _shape_of(mask, offset_xy, scale):
     """A shapely (Multi)Polygon of a boolean mask, in level-0 pixels: the
     contours (holes kept) through pixel centres, grown half a pixel back to
-    the pixel edges (so a one-pixel fiber keeps its width)."""
+    the pixel edges (so a one-pixel fiber keeps its width). None when there
+    is nothing -- or when GEOS refuses the outline twice
+    (`mask_polygon.geos_again`): one object missing, never the run."""
     import cv2
     import shapely
     from shapely.geometry import LineString, Point, Polygon
+
+    from plexora.server.utils.mask_polygon import geos_again
 
     contours, hierarchy = cv2.findContours(mask.astype(np.uint8), cv2.RETR_CCOMP,
                                            cv2.CHAIN_APPROX_SIMPLE)
@@ -1277,8 +1284,23 @@ def _shape_of(mask, offset_xy, scale):
             parts.append(LineString(ring))
         else:
             parts.append(Point(ring[0]))
-    shape = shapely.make_valid(shapely.union_all(parts))
-    return shape.buffer(0.5 * scale, join_style=2)
+
+    def outline(pieces):
+        shape = shapely.make_valid(shapely.union_all(pieces))
+        return shape.buffer(0.5 * scale, join_style=2)
+
+    shape = geos_again(lambda: outline(parts),
+                       lambda: outline([shapely.set_precision(p, 0.01) for p in parts]))
+    if shape is None or shape.is_empty or not _finite(shape):
+        return None
+    return shape
+
+
+def _finite(shape):
+    """Whether every coordinate of a shape is a number."""
+    import shapely
+
+    return bool(np.isfinite(shapely.get_coordinates(shape)).all())
 
 
 def _objects_in(lab, n, seed_lab, *, category, offset_xy, scale, level, um_px, context,
@@ -1342,7 +1364,9 @@ def _geojson(shape, scale, max_vertices):
     the vertex budget (a ragged outline can need it); None if it never does."""
     from plexora.plugins.qc.server import polygons
 
-    if shape is None or shape.is_empty:
+    import shapely
+
+    if shape is None or shape.is_empty or not _finite(shape):
         return None
     for tolerance in (0.7, 2.0, 6.0, 18.0):
         try:
@@ -1350,6 +1374,11 @@ def _geojson(shape, scale, max_vertices):
                                        max_vertices=max_vertices)
         except ValueError:
             continue
+        except shapely.errors.GEOSException:
+            # Refused even after `to_geojson`'s second try: one outline
+            # missing, never the run.
+            _log.warning("artifact outline dropped: GEOS refused it", exc_info=True)
+            return None
     return None
 
 

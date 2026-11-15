@@ -417,3 +417,47 @@ def test_a_lone_evaluable_cell_is_not_a_tile():
     kept, lone = blur.drop_lone(evaluable)
     assert lone[1, 1] and not kept[1, 1]
     assert kept[4:6, 4:6].all() and int(lone.sum()) == 1
+
+
+def test_on_the_website_a_blur_job_hands_python_back_between_blocks(tmp_path, monkeypatch):
+    """The website runs a job on its one Python thread. A blur map read a
+    whole slide's plane in one go -- 54 s a channel on a 1.2-gigapixel plane,
+    every request of the page waiting behind it. Now the job is taken a step
+    at a time (agent/jobs.py `_advance`), with no reader of the image held
+    between steps, and its result is the one the desktop's thread makes."""
+    from plexora import _work
+    from plexora.agent import AgentSession, jobs, registry
+    from plexora.plugins.qc.server import blur, scan
+    from plexora.server.utils import source_image
+
+    _project(tmp_path)
+    monkeypatch.setattr(scan, "BLOCK_PX", 64)
+    expected, _ = _run(channel="DNA_2", force=True)
+
+    monkeypatch.setenv("PLEXORA_WORK", "cooperative")
+    monkeypatch.setattr(jobs.JobStore, "STEP_S", 0.0)
+    _work._reset_for_tests()
+    try:
+        registry.discover(["qc"])
+        started = registry.invoke(AgentSession(), "run_blur_check",
+                                  {"project": "qcsynth", "channel": "DNA_2", "force": True})
+        job_id = started["result"]["job_id"]
+        tasks = 0
+        while jobs.store().get(job_id)["status"] in ("queued", "running"):
+            assert _work.run_pending(budget_s=0.0), "the job stopped without ending"
+            tasks += 1
+            # Between two steps the image is free for a request to read.
+            assert not any(held.lock.locked() for group in source_image.SHELF._held.values()
+                           for held in group)
+            assert tasks < 10_000
+        record = jobs.store().get(job_id)
+    finally:
+        _work._reset_for_tests()
+    assert record["status"] == "done", record.get("error")
+    # Many tasks: one a block and more, not one for the whole plane.
+    blocks = len(list(scan.iter_blocks(expected["grid"])))
+    assert tasks > blocks
+    got = record["result"]["results"][0]["summary"]
+    assert got["fingerprint"] == expected["fingerprint"]
+    for key in ("auto_threshold", "global_blur", "noise"):
+        assert got[key] == expected[key]

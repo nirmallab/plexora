@@ -8,7 +8,7 @@
     <link rel="apple-touch-icon" href="{{ data.base_url }}/client/src/img/apple-touch-icon.png">
     <!-- Styles -->
     <link rel="stylesheet" href="{{ data.base_url }}/client/src/css/tokens.css?v=20261027_sidebar_radius">
-    <link rel="stylesheet" href="{{ data.base_url }}/client/src/css/main.css?v=20261114_idr_merge">
+    <link rel="stylesheet" href="{{ data.base_url }}/client/src/css/main.css?v=20261114_web7">
     {# Here and not in a page block: the explorer opens from every page, and
        appRouter.adoptStyles turns page stylesheets off on navigation. #}
     <link rel="stylesheet" href="{{ data.base_url }}/client/src/css/explorer.css?v=20261110_file_or_folder">
@@ -110,7 +110,7 @@
     <script src="{{ data.base_url }}/client/src/js/services/viewRaster.js?v=20261022_bookmarks"></script>
     <script src="{{ data.base_url }}/client/src/js/services/canvasLayout.js?v=20261022_bookmarks"></script>
     <script src="{{ data.base_url }}/client/src/js/views/imageViewer.js?v=20261114_audit"></script>
-    <script src="{{ data.base_url }}/client/src/js/views/miniMap.js?v=20261022_views3d"></script>
+    <script src="{{ data.base_url }}/client/src/js/views/miniMap.js?v=20261114_web7"></script>
     <script src="{{ data.base_url }}/client/src/js/views/rgbImageViewer.js?v=20261012_project_title"></script>
     {# Must precede the two widgets below: both hand their popup to it on construction. #}
     <script src="{{ data.base_url }}/client/src/js/views/popoverPortal.js?v=20261014_import_progressive"></script>
@@ -124,7 +124,7 @@
     <script src="{{ data.base_url }}/client/src/js/views/geneGroupModal.js?v=20261027_machine_chip"></script>
     <script src="{{ data.base_url }}/client/src/js/views/viewerControls.js?v=20261029_bucket_datasets"></script>
     <script src="{{ data.base_url }}/client/src/js/views/scaleCalibration.js?v=20260910_scalebar_pencil"></script>
-    <script src="{{ data.base_url }}/client/src/js/views/viewerSidebar.js?v=20261114_audit"></script>
+    <script src="{{ data.base_url }}/client/src/js/views/viewerSidebar.js?v=20261114_web7"></script>
     {# After viewerSidebar (whose class it instantiates) and before
        layerManager (which mounts it). Both only have to be PRESENT -- the
        mount happens when a card is built -- but the order is what says so. #}
@@ -154,7 +154,7 @@
     <script src="{{ data.base_url }}/client/src/js/services/browsePicker.js?v=20261110_instant_first_view" defer></script>
     {# What a file dropped on the window does where it lands (desktop app):
        right after browsePicker, whose drop registry it extends. #}
-    <script src="{{ data.base_url }}/client/src/js/services/dropRouter.js?v=20261027_drop_router" defer></script>
+    <script src="{{ data.base_url }}/client/src/js/services/dropRouter.js?v=20261114_web7" defer></script>
     <script src="{{ data.base_url }}/client/src/js/views/columnClassifier.js?v=20260925_desktop_app" defer></script>
     <script src="{{ data.base_url }}/client/src/js/views/coordinateField.js?v=20260819_ask_cell_id" defer></script>
     {# Before every field that mounts one. The switch is drawn on every launch

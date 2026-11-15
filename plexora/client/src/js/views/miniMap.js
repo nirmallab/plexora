@@ -53,6 +53,11 @@ class MiniMap {
     static MAX_HEIGHT = 220;
     static MIN_LONG_SIDE = 180;
 
+    /** The re-ask of a provisional overview: first after this, backing off
+     *  to the cap (`_followProvisional`). */
+    static EXACT_FIRST_MS = 3000;
+    static EXACT_MAX_MS = 20000;
+
     /** A frame with a viewport box inside it -- the same two things the
      *  expanded map shows, which is the whole hint the collapsed state gets. */
     static LENS_ICON =
@@ -240,6 +245,64 @@ class MiniMap {
         window.addEventListener("plexora:view-requested", () => {
             if (this.expanded && this._inVolume()) this._syncIndicator();
         });
+        // A channel drawn with its provisional window (the website, while the
+        // page reads its full-resolution plane): its exact window landed
+        // (views/channelList.js awaitExactWindow), so its overview is asked
+        // for again, in the exact window the sidebar now holds.
+        window.addEventListener("plexora:channel-window", (event) => {
+            if (event.detail && event.detail.exact) this._refreshProvisional(event.detail.name);
+        });
+        this._exactTimer = null;
+        this._exactWait = 0;
+    }
+
+    /**
+     * Fetch again the overviews the server quantized with a provisional
+     * window (`provisional` on the cached greyscale), keeping each one on
+     * screen until its replacement arrives. `fullName`: only that channel.
+     * While any stays provisional, asked again on a backing-off timer too --
+     * the event above is the usual way, this the one that cannot be missed.
+     */
+    async _refreshProvisional(fullName = null) {
+        const due = this._activeChannels().filter((channel) => {
+            const gray = this._gray.get(channel.srcIdx);
+            return gray && gray.provisional && !this._pending.has(channel.srcIdx)
+                && (!fullName || channel.fullName === fullName);
+        });
+        const view = this._grayView;
+        await Promise.all(due.map(async (channel) => {
+            this._pending.add(channel.srcIdx);
+            try {
+                const gray = await this._fetchOverview(channel.fullName, view);
+                if (gray && view === this._grayView) this._gray.set(channel.srcIdx, gray);
+            } catch (error) {
+                // The provisional overview stays: a picture slightly off in
+                // brightness is better than none.
+            } finally {
+                this._pending.delete(channel.srcIdx);
+            }
+        }));
+        if (due.length) this._draw();
+        this._followProvisional();
+    }
+
+    /** Arm the backing-off re-ask while a shown channel is provisional. */
+    _followProvisional() {
+        const waiting = this._activeChannels().some(
+            (channel) => this._gray.get(channel.srcIdx)?.provisional);
+        clearTimeout(this._exactTimer);
+        this._exactTimer = null;
+        if (!waiting) {
+            this._exactWait = 0;
+            return;
+        }
+        this._exactWait = Math.min(Math.max(this._exactWait * 1.5, MiniMap.EXACT_FIRST_MS),
+                                   MiniMap.EXACT_MAX_MS);
+        this._exactTimer = setTimeout(() => {
+            this._exactTimer = null;
+            if (this.expanded) this._refreshProvisional();
+            else this._exactWait = 0;
+        }, this._exactWait);
     }
 
     /** The z-stack's view state, or null for a planar image. */
@@ -836,6 +899,7 @@ class MiniMap {
             (channel) => !this._gray.has(channel.srcIdx) && !this._pending.has(channel.srcIdx)
         );
         if (!missing.length) {
+            this._followProvisional();
             return;
         }
 
@@ -876,6 +940,7 @@ class MiniMap {
         const workers = Math.min(MiniMap.FETCH_CONCURRENCY, missing.length);
         await Promise.all(Array.from({ length: workers }, drain));
         if (stale) this.invalidate({ refetch: true });
+        else this._followProvisional();
     }
 
     /**
@@ -923,6 +988,10 @@ class MiniMap {
             error.status = response.status;
             throw error;
         }
+        // Quantized with the channel's provisional window (the website,
+        // data_routes.OVERVIEW_WINDOW_HEADER): asked again once it is exact.
+        const provisional = Boolean(response.headers && typeof response.headers.get === "function"
+            && response.headers.get("X-Plexora-Window") === "provisional");
         const blob = await response.blob();
         const bitmap = await createImageBitmap(blob, {
             premultiplyAlpha: "none",
@@ -945,7 +1014,7 @@ class MiniMap {
         for (let pixel = 0, offset = 0; pixel < data.length; pixel += 1, offset += 4) {
             data[pixel] = rgba[offset];
         }
-        return { data, width, height };
+        return { data, width, height, provisional };
     }
 
     // -- drawing ---------------------------------------------------------

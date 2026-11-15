@@ -184,12 +184,16 @@ class ViewerSidebar {
         this.histogram = null;
         this._slotSortable = null;
         this._channelKeyListener = null;
-        this.defaultColors = [
-            { label: "Blue", hex: "#2388ff", rgb: { r: 35, g: 136, b: 255 } },
-            { label: "Red", hex: "#ff2d2d", rgb: { r: 255, g: 45, b: 45 } },
-            { label: "Green", hex: "#2bd46f", rgb: { r: 43, g: 212, b: 111 } },
-            { label: "White", hex: "#ffffff", rgb: { r: 255, g: 255, b: 255 } },
-        ];
+        //: A new slot's colour, in slot order: the whole Quick Select palette
+        //: (ColorSwatchPicker.DEFAULT_PRESETS, loaded before this file), so a
+        //: fifth channel is Yellow rather than Blue again. The first four were
+        //: this list on its own once and stay first, so a saved project's
+        //: first four channels look as they did.
+        this.defaultColors = ViewerSidebar.slotPalette().map((preset) => ({
+            label: preset.label,
+            hex: preset.hex,
+            rgb: this.hexToRgb(preset.hex),
+        }));
         // Per-channel range sliders live in [0, 255] byte units by default
         // (matching the quantized WebP tile data 1:1) and switch to raw
         // 16-bit units when HD is on (see getImageRange/toImageConnectorRange/
@@ -3864,6 +3868,26 @@ class ViewerSidebar {
         return this.defaultColors[slotIndex % this.defaultColors.length];
     }
 }
+
+//: Used only where colorSwatchPicker.js is not loaded (a probe, a page that
+//: never loads the picker); base.html loads it first.
+ViewerSidebar.FALLBACK_PALETTE = [
+    { label: "Blue", hex: "#2388ff" },
+    { label: "Red", hex: "#ff2d2d" },
+    { label: "Green", hex: "#2bd46f" },
+    { label: "White", hex: "#ffffff" },
+];
+
+ViewerSidebar.slotPalette = function slotPalette() {
+    //: A top-level `class` is a global binding, not a window property, so
+    //: it is read by its bare name (see layerManager.js groundPresets).
+    const presets = typeof ColorSwatchPicker !== "undefined"
+        && Array.isArray(ColorSwatchPicker.DEFAULT_PRESETS)
+        ? ColorSwatchPicker.DEFAULT_PRESETS.filter(
+            (preset) => /^#[0-9a-f]{6}$/i.test(String(preset?.hex || "")))
+        : [];
+    return presets.length ? presets : ViewerSidebar.FALLBACK_PALETTE;
+};
 
 //: Byte levels a stack's fast tiles must spend on its default contrast range
 //: before the viewer stops asking for HD (askForHdIfCoarse).

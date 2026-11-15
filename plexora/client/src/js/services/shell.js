@@ -533,14 +533,41 @@
     //: values back. A page shown from here is checked against Python's own
     //: answer once Python is up (frameBoot `early`).
     const PAGE_CACHE = "plexora-pages";
+    //: The home page's Recent rows, kept under no version (`pageStore` `recent`).
+    const RECENT_CACHE = "plexora-recent";
     const EARLY_ROUTES = new Set(["/"]);
 
     function pageStore(shell, py) {
         const caches = global.caches;
         const stamp = encodeURIComponent(`${shell.version || ""}|${py}`);
         const key = (route) => new URL(at(`/__plexora/page${route}?v=${stamp}`), global.location.origin).href;
-        const open = () => (caches ? caches.open(PAGE_CACHE) : Promise.reject(new Error("no Cache Storage")));
+        //: The home page's Recent rows on their own, under no version: the
+        //: page above is dropped at every release (it names that release's
+        //: scripts), and the rows -- links and words, nothing versioned --
+        //: are what tells a returning user their projects are still here.
+        const recentKey = new URL(at("/__plexora/recent"), global.location.origin).href;
+        const open = (name = PAGE_CACHE) => (caches ? caches.open(name) : Promise.reject(new Error("no Cache Storage")));
         return Object.freeze({
+            //: The Recent rows Python drew last, under any version: the
+            //: section's HTML, "" for none to show, or null for never kept.
+            async recent() {
+                try {
+                    const found = await (await open(RECENT_CACHE)).match(recentKey);
+                    if (found) return await found.text();
+                    const cache = await open();
+                    // Kept by a release from before the rows were kept on
+                    // their own: the home page it kept, whatever its version.
+                    const home = new URL(key("/")).pathname;
+                    for (const request of await cache.keys()) {
+                        if (new URL(request.url).pathname !== home) continue;
+                        const page = await cache.match(request.url);
+                        if (page) return recentOf(await page.text());
+                    }
+                    return null;
+                } catch (error) {
+                    return null;
+                }
+            },
             //: The HTML kept for `route`, or null.
             async get(route) {
                 if (!EARLY_ROUTES.has(route)) return null;
@@ -563,6 +590,10 @@
                         if (url.pathname === new URL(mine).pathname && request.url !== mine) await cache.delete(request);
                     }
                     await cache.put(mine, new Response(html, { headers: { "Content-Type": "text/html; charset=utf-8" } }));
+                    if (route === "/") {
+                        await (await open(RECENT_CACHE)).put(recentKey, new Response(recentOf(html),
+                            { headers: { "Content-Type": "text/html; charset=utf-8" } }));
+                    }
                 } catch (error) { /* nothing kept: the next visit waits for Python, as before */ }
             },
         });
@@ -580,6 +611,27 @@
         } catch (error) {
             return null;
         }
+    }
+
+    //: The Recent section of a home page Python drew (templates/index.html),
+    //: or "" where it has none: nothing to reopen.
+    const RECENT_MARK = "<!--plexora:recent-->";
+    function recentOf(html) {
+        const found = /<section class="quick-view-recent"[\s\S]*?<\/section>/.exec(String(html));
+        return found ? found[0] : "";
+    }
+
+    //: A home page drawn before Python has started (the build's, which knows
+    //: no projects) with the Recent rows kept from the last one Python drew,
+    //: put where the template marks: the user's projects on the first paint
+    //: after a release as on any other visit. Python's own page is checked
+    //: against it once Python is up and faded in if they differ (earlyPage).
+    function withRecent(html, rows) {
+        if (!html || !rows || recentOf(html)) return html;
+        const mark = html.indexOf(RECENT_MARK);
+        if (mark < 0) return html;
+        const end = mark + RECENT_MARK.length;
+        return `${html.slice(0, end)}\n        ${rows}${html.slice(end)}`;
     }
 
     //: Two answers for a page the same but for what time has changed: the
@@ -894,7 +946,9 @@
         // A project's viewer, kept with what its first screen asks Python
         // (services/keptAnswers.js), once the services are in: shown while
         // Python starts when the page can draw its image without it.
-        const kept = route === "/" ? pages.get(route).then((html) => html || builtHome(shell, route))
+        const kept = route === "/"
+            ? pages.get(route).then(async (html) => html
+                || withRecent(await builtHome(shell, route), await pages.recent()))
             : services.then(() => {
                 global.PlexoraKept.configure({ stamp: `${shell.version || ""}|${py}` });
                 return global.PlexoraKept.early(route);

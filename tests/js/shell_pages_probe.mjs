@@ -70,10 +70,14 @@ function cacheStorage() {
 
 const make = new Function("global", "at", `
     ${lift("PAGE_CACHE")}
+    ${lift("RECENT_CACHE")}
     ${lift("EARLY_ROUTES")}
+    ${lift("RECENT_MARK")}
+    ${lift("recentOf")}
+    ${lift("withRecent")}
     ${lift("pageStore")}
     ${lift("timeless")}
-    return { pageStore, timeless, EARLY_ROUTES };
+    return { pageStore, timeless, withRecent, EARLY_ROUTES };
 `);
 
 function site({ caches, base = "" } = {}) {
@@ -120,6 +124,47 @@ const HOME = "<!doctype html><title>Plexora</title><body>Recent <time datetime=\
     await portal.put("/", "<p>portal</p>");
     check("a site under a path (a node behind a portal) keeps its own home page",
           (await root.get("/")) === "<p>root</p>" && (await portal.get("/")) === "<p>portal</p>");
+}
+
+// -- the Recent rows, across a release ----------------------------------------------------------
+
+const ROWS = '<section class="quick-view-recent" aria-labelledby="h"><ul><li><a href="/tonsil">tonsil</a></li></ul></section>';
+const PYTHON_HOME = `<body><div class="quick-view">card<!--plexora:recent-->\n        ${ROWS}\n    </div></body>`;
+const BUILT_HOME = "<body><div class=\"quick-view\">card<!--plexora:recent-->\n    </div></body>";
+
+{
+    const caches = cacheStorage();
+    const { pageStore, withRecent } = site({ caches });
+    const old = pageStore({ version: "0.0.55" }, "py/0.0.55/");
+    check("no rows kept at first", (await old.recent()) === null);
+    await old.put("/", PYTHON_HOME);
+    check("the home page's Recent rows are kept on their own", (await old.recent()) === ROWS);
+    const next = pageStore({ version: "0.0.56" }, "py/0.0.56/");
+    check("a release keeps no page of the old one", (await next.get("/")) === null);
+    check("...but the rows outlive it", (await next.recent()) === ROWS);
+    const shown = withRecent(BUILT_HOME, await next.recent());
+    check("the built home page is shown with the rows, where the template marks",
+          shown.includes(ROWS) && shown.indexOf("<!--plexora:recent-->") < shown.indexOf(ROWS)
+          && shown.indexOf(ROWS) < shown.indexOf("</div>"), shown);
+    check("a page with rows of its own is left as it is", withRecent(PYTHON_HOME, "<section>x</section>") === PYTHON_HOME);
+    check("no rows, or a page with no mark, is left as it is",
+          withRecent(BUILT_HOME, "") === BUILT_HOME && withRecent(BUILT_HOME, null) === BUILT_HOME
+          && withRecent("<body>x</body>", ROWS) === "<body>x</body>" && withRecent(null, ROWS) === null);
+    await next.put("/", BUILT_HOME);
+    check("a home page Python draws with nothing to reopen keeps no rows", (await next.recent()) === "");
+}
+
+{
+    // Kept by a release from before the rows were kept on their own.
+    const caches = cacheStorage();
+    const { pageStore } = site({ caches });
+    const before = pageStore({ version: "0.0.55" }, "py/0.0.55/");
+    await before.put("/", PYTHON_HOME);
+    caches.stores.delete("plexora-recent");
+    const after = pageStore({ version: "0.0.56" }, "py/0.0.56/");
+    check("the first visit after the update finds the rows in the old release's page", (await after.recent()) === ROWS);
+    const none = site({ caches: undefined }).pageStore({ version: "1" }, "py/");
+    check("without Cache Storage there are no rows, and nothing is thrown", (await none.recent()) === null);
 }
 
 // -- no Cache Storage -------------------------------------------------------------------------

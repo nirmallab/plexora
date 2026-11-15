@@ -1166,22 +1166,40 @@ PlexoraPage.register(function () {
     // Browse pick is (attachWebDrop) -- a run folder, an OME-Zarr, a slide of
     // any size. One opens; several go to the import dialog, as above.
     if (landing && typeof attachWebDrop === "function") {
+        //: Whether this drop's first view began (onFiles, same turn).
+        let previewed = false;
         attachWebDrop(landing, {
             count: "many",
             quiet: true,
             // The image on screen in the drop's own turn, read by the page
             // (services/firstView.js), while it is mounted and imported.
             onFiles: (files) => {
-                if (files.length === 1 && !busy()) window.PlexoraFirstView?.begin?.({file: files[0]});
+                previewed = false;
+                if (files.length === 1 && !busy() && window.PlexoraFirstView?.begin) {
+                    window.PlexoraFirstView.begin({file: files[0]});
+                    previewed = true;
+                }
             },
             enabled: () => !busy(),
             onOver: (lit) => {
                 dropping = lit;
                 paint();
             },
-            onDrop: (paths) => {
+            onDrop: async (paths) => {
                 problem = "";
                 if (menuOpen()) closeMenu(false);
+                // A folder or several files: what the page's Python reads
+                // them as, as the desktop asks while they hover -- a project
+                // folder opens, a mask goes to its sample. A lone file whose
+                // first view is already on screen opens as it is.
+                const router = window.PlexoraDropRouter;
+                if (!previewed && router) {
+                    const plan = await router.planFor(paths, {target: "home", forget: true});
+                    if (router.claims(plan)) {
+                        router.runPlan(plan, paths);
+                        return;
+                    }
+                }
                 if (paths.length > 1) {
                     window.PlexoraImportSample?.open({paths});
                     return;

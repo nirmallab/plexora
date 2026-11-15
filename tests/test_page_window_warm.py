@@ -375,3 +375,192 @@ def test_the_page_scans_one_line_urgent_first_and_keeps_the_answers():
     assert out["notHeld"] == "the page does not hold that file now"
     # The scan pool is let go once the line is empty.
     assert out["workersLeft"] == 0
+
+
+def _overview_request(name, retryable=True):
+    from urllib.parse import quote
+
+    import plexora
+    from plexora.browser import bridge
+
+    return bridge.handle(plexora.app, {"method": "GET",
+                                       "path": f"/generated/overview/{NAME}/{quote(name)}",
+                                       "query": "", "headers": [], "retryable": retryable},
+                         "http://127.0.0.1")
+
+
+def _header(answer, name):
+    return dict((k.lower(), v) for k, v in answer["headers"]).get(name.lower())
+
+
+def _decoded(body):
+    import io
+
+    from PIL import Image
+
+    return np.asarray(Image.open(io.BytesIO(bytes(body))))
+
+
+def test_the_mini_map_is_drawn_at_once_while_the_page_scans(project, monkeypatch):
+    """The website's mini-map (views/miniMap.js) asked for a channel whose
+    plane the page is still reading: the overview at once, quantized with the
+    provisional window the channel's stats carry meanwhile, said so and not
+    cached -- not Python held for the whole scan inside the request (103 s on
+    a 1.2-gigapixel plane, the map black throughout). Asked again once the
+    scan is done: the exact window's overview, cacheable."""
+    from plexora.server.routes import data_routes
+
+    scans = Page(monkeypatch, pending=1)
+    _work.set_idle(lambda seconds: pytest.fail("paused inside a request"))
+    name = _channels()[1]
+
+    first = _overview_request(name)
+    assert first["status"] == 200 and "retry" not in first
+    assert _header(first, data_routes.OVERVIEW_WINDOW_HEADER) == "provisional"
+    assert _header(first, "Cache-Control") == "no-store"
+    # The scan asked for, not waited on.
+    assert scans.waits == [] and [look["wait_ms"] for look in scans.looks] == [0]
+    # The bytes are in the provisional stats window, the one the sidebar holds.
+    index = data_model.real_channel_index(name, NAME)
+    plane = np.asarray(data_model._require_overview(NAME)[index])
+    stats = data_model._provisional_stats(name, NAME)
+    expected = _decoded(data_model.encode_overview(plane, stats["qmin"], stats["qmax"]))
+    assert np.array_equal(_decoded(first["body"]), expected)
+
+    second = _overview_request(name)
+    assert _header(second, data_routes.OVERVIEW_WINDOW_HEADER) is None
+    assert _header(second, "ETag")
+    assert np.array_equal(_decoded(second["body"]),
+                          _decoded(data_model.encode_overview(plane, 0.0, 1000.0 + index)))
+
+
+def test_an_overview_with_its_window_known_is_answered_as_always(project, monkeypatch):
+    from plexora.server.routes import data_routes
+
+    scans = Page(monkeypatch, pending=10_000)
+    name = _channels()[0]
+    data_model._gmm_cache[("qwindow", NAME, name)] = (0.0, 77.0)
+
+    answered = _overview_request(name)
+
+    assert _header(answered, data_routes.OVERVIEW_WINDOW_HEADER) is None
+    assert scans.looks == [] and scans.waits == []
+
+
+def test_the_overview_on_threads_and_for_an_older_worker_is_unchanged(project, monkeypatch):
+    from plexora.server.routes import data_routes
+
+    scans = Page(monkeypatch, pending=10_000)
+    name = _channels()[0]
+    # A worker that does not follow a retry is not the website's newer one:
+    # the route answers as it always did.
+    answered = _overview_request(name, retryable=False)
+    assert _header(answered, data_routes.OVERVIEW_WINDOW_HEADER) is None
+    assert scans.looks == []
+
+    data_model._gmm_cache.pop(("qwindow", NAME, name), None)
+    monkeypatch.setenv("PLEXORA_WORK", "threads")
+    assert data_model.provisional_channel_overview(NAME, name) is None
+
+
+class Declines:
+    """The page, for a file its workers cannot read exactly (JPEG 2000):
+    every look answers None, and a wait would too."""
+
+    def __init__(self, monkeypatch):
+        self.asked = 0
+        monkeypatch.setattr(page, "page_window", self)
+        monkeypatch.setenv("PLEXORA_BACKEND", "browser")
+
+    def __call__(self, provider, pyramid, index, *, wait_ms=None, urgent=True, ahead=()):
+        self.asked += 1
+        return None
+
+
+def _run_queued(limit=10_000):
+    for _ in range(limit):
+        if not _work.run_pending(budget_s=0.0):
+            return
+
+
+def test_a_plane_the_page_cannot_scan_is_scanned_by_python_between_requests(project, monkeypatch):
+    """The website, a plane the page's workers cannot read (a JPEG 2000
+    Xenium image): the window was every pixel read inside the request that
+    asked -- 102 s for 1.2 gigapixels, the page frozen. Now the request is
+    answered at once (provisional, or "again later"), and Python reads the
+    plane a block a queued task, the exact window kept at the end."""
+    Declines(monkeypatch)
+    monkeypatch.setattr(data_model, "_STEPPED_WINDOW_BYTES", 1)
+    _work.set_idle(lambda seconds: pytest.fail("paused inside a request"))
+    name = _channels()[1]
+    index = data_model.real_channel_index(name, NAME)
+
+    # The HD viewer's ask: the provisional packet now.
+    stats = data_model.get_image_channel_stats(name, NAME, patient=True, provisional=True)
+    assert stats["window_exact"] is False
+    # Anyone else is asked to come back.
+    with pytest.raises(page.WindowPending):
+        data_model.get_image_channel_stats(name, NAME, patient=True)
+    # The mini-map is drawn now, in the provisional window.
+    assert data_model.provisional_channel_overview(NAME, name) is not None
+
+    # One block a task, each a whole chunk: never the plane in one read.
+    reads = []
+    real_level = data_model._zarr_level
+
+    class Watched:
+        def __init__(self, plane):
+            self.plane = plane
+
+        def __getitem__(self, key):
+            reads.append(key)
+            return self.plane[key]
+
+    monkeypatch.setattr(data_model, "_zarr_level", lambda group, level: Watched(real_level(group, level)))
+    _run_queued()
+    # Whole chunks only (this fixture's plane is one chunk).
+    assert reads == [(index, slice(0, 96), slice(0, 80))]
+    plane = np.asarray(real_level(data_model.channels, 0))
+    assert data_model._gmm_cache[("qwindow", NAME, name)] == (0.0, float(plane[index].max()))
+    # ...and the next ask is exact.
+    exact = data_model.get_image_channel_stats(name, NAME, patient=True)
+    assert exact.get("window_exact", True) is not False and exact["qmax"] == float(plane[index].max())
+    assert data_model.provisional_channel_overview(NAME, name) is None
+
+
+def test_a_reload_ends_python_s_own_scan(project, monkeypatch):
+    Declines(monkeypatch)
+    monkeypatch.setattr(data_model, "_STEPPED_WINDOW_BYTES", 1)
+    name = _channels()[0]
+    with pytest.raises(page.WindowPending):
+        data_model._page_window_or_retry(name, NAME)
+    data_model.load_datasource(NAME, reload=True)
+    _run_queued()
+    assert ("qwindow", NAME, name) not in data_model._gmm_cache
+
+
+def test_off_the_website_a_declined_plane_is_read_as_it_always_was(project, monkeypatch):
+    Declines(monkeypatch)
+    monkeypatch.delenv("PLEXORA_BACKEND")
+    name = _channels()[0]
+    assert data_model._page_window_look(name, NAME, wait_ms=0, urgent=False) is None
+    assert data_model._stepped_windows == {}
+
+
+def test_python_s_own_scan_reads_whole_chunks_a_few_at_a_time():
+    import zarr
+
+    plane = zarr.zeros((2, 50, 70), chunks=(1, 16, 16), dtype="uint16")
+    blocks = data_model._scan_blocks(plane)
+    # 16-row bands, at most _STEPPED_WINDOW_BYTES of whole chunks across.
+    covered = np.zeros((50, 70), dtype=int)
+    for y0, y1, x0, x1 in blocks:
+        assert y0 % 16 == 0 and x0 % 16 == 0 and y1 - y0 <= 16
+        covered[y0:y1, x0:x1] += 1
+    assert (covered == 1).all()
+    small = data_model._STEPPED_WINDOW_BYTES
+    try:
+        data_model._STEPPED_WINDOW_BYTES = 16 * 16 * 2 * 2
+        assert {x1 - x0 for _, _, x0, x1 in data_model._scan_blocks(plane)} <= {32, 6}
+    finally:
+        data_model._STEPPED_WINDOW_BYTES = small
